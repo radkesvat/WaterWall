@@ -1191,7 +1191,7 @@ static void onUdpPacketReceived(wio_t *io, sbuf_t *buf)
     uint16_t   remote_port = sockaddrPort(wioGetPeerAddrU(io));
     wid_t      target_wid  = (wid_t) remote_port % (getWorkersCount());
 
-    if (GSTATE.application_stopping_flag)
+    if (UNLIKELY(signalmanagerIsTerminating()))
     {
         sbufDestroy(buf);
         return;
@@ -1216,7 +1216,7 @@ static void onUdpPacketReceivedMultiPort(wio_t *io, sbuf_t *buf)
     wid_t      target_wid  = (wid_t) remote_port % (getWorkersCount());
     uint16_t   real_local_port = sockaddrPort(wioGetLocaladdrU(io)); // default fallback
 
-    if (GSTATE.application_stopping_flag)
+    if (UNLIKELY(signalmanagerIsTerminating()))
     {
         sbufDestroy(buf);
         return;

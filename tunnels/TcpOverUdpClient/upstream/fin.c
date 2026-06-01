@@ -13,7 +13,7 @@ void tcpoverudpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     lineLock(l);
 
-    if (UNLIKELY(GSTATE.application_stopping_flag))
+    if (UNLIKELY(signalmanagerIsTerminating()))
     {
         tcpoverudpclientLinestateDestroy(ls);
         if (lineIsAlive(l))

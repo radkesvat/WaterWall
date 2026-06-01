@@ -103,7 +103,6 @@ static void exitHandle(void *userdata, int signum)
 {
     discard signum;
     discard userdata;
-    atomicStoreExplicit(&GSTATE.application_stopping_flag, true, memory_order_release);
 
     // join only worker threads that were spawned via workerSpawn()
     for (unsigned int wid = 1; wid < WORKERS_COUNT - WORKER_ADDITIONS; ++wid)

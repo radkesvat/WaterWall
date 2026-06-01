@@ -108,7 +108,7 @@ void registerAtExitCallBack(SignalHandler handle, void *userdata)
     {
         if (signalmanager_gstate->handlers[i].handle == NULL)
         {
-            signalmanager_gstate->handlers[i] = (signal_handler_t){.handle = handle, .userdata = userdata};
+            signalmanager_gstate->handlers[i] = (signal_handler_t) {.handle = handle, .userdata = userdata};
             signalmanager_gstate->handlers_len++;
             mutexUnlock(&(signalmanager_gstate->mutex));
 
@@ -134,9 +134,10 @@ void removeAtExitCallBack(SignalHandler handle, void *userdata)
 
     for (int i = 0; i < kMaxSigHandles; i++)
     {
-        if (signalmanager_gstate->handlers[i].handle == handle && signalmanager_gstate->handlers[i].userdata == userdata)
+        if (signalmanager_gstate->handlers[i].handle == handle &&
+            signalmanager_gstate->handlers[i].userdata == userdata)
         {
-            signalmanager_gstate->handlers[i] = (signal_handler_t){.handle = NULL, .userdata = NULL};
+            signalmanager_gstate->handlers[i] = (signal_handler_t) {.handle = NULL, .userdata = NULL};
             signalmanager_gstate->handlers_len--;
             mutexUnlock(&(signalmanager_gstate->mutex));
 
@@ -147,14 +148,25 @@ void removeAtExitCallBack(SignalHandler handle, void *userdata)
     mutexUnlock(&(signalmanager_gstate->mutex));
 }
 
-static bool exit_handler_ran_once = false;
+
+static void proceedWithNextExitHandler(void)
+{
+    for (unsigned int i = signalmanager_gstate->current_handler_index; i < kMaxSigHandles; i++)
+    {
+        if (signalmanager_gstate->handlers[i].handle != NULL)
+        {
+            signalmanager_gstate->current_handler_index = i + 1;
+            signalmanager_gstate->handlers[i].handle(signalmanager_gstate->handlers[i].userdata, 0);
+        }
+    }
+}
 
 /**
  * @brief Execute all registered shutdown callbacks once.
  */
 static void exitHandler(void)
 {
-    if (exit_handler_ran_once)
+    if (atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_relaxed))
     {
         const char *msg     = "SignalManager: Finished\n";
         int         written = write(STDOUT_FILENO, msg, stringLength(msg));
@@ -166,17 +178,10 @@ static void exitHandler(void)
     int     written = write(STDOUT_FILENO, "SignalManager: Exiting... \n", 27);
     discard written;
 
-    exit_handler_ran_once = true;
+    atomicStoreExplicit(&GSTATE.application_stopping_flag, true, memory_order_release);
 
-    for (unsigned int i = 0; i < kMaxSigHandles; i++)
-    {
-        if (signalmanager_gstate->handlers[i].handle != NULL)
-        {
-            // written = write(STDOUT_FILENO, ".", 1);
-            // discard written;
-            signalmanager_gstate->handlers[i].handle(signalmanager_gstate->handlers[i].userdata, 0);
-        }
-    }
+
+    proceedWithNextExitHandler();
 }
 
 #if defined(OS_WIN)
@@ -190,9 +195,8 @@ static void exitHandler(void)
 static BOOL WINAPI CtrlHandler(_In_ DWORD CtrlType)
 {
     // return TRUE;
-    printError("SignalManager: Received windows event %s (%lu)\n",
-               windowsCtrlEventName(CtrlType),
-               (unsigned long) CtrlType);
+    printError(
+        "SignalManager: Received windows event %s (%lu)\n", windowsCtrlEventName(CtrlType), (unsigned long) CtrlType);
 
     switch (CtrlType)
     {
@@ -393,19 +397,20 @@ signal_manager_t *signalmanagerCreate(void)
     assert(signalmanager_gstate == NULL);
     signalmanager_gstate = memoryAllocate(sizeof(signal_manager_t));
 
-    *signalmanager_gstate = (signal_manager_t){.handlers_len   = 0,
-                                .started        = false,
-                                .raise_defaults = true,
-                                .handle_sigint  = true,
-                                .handle_sigquit = true,
-                                .handle_sighup  = false, // exits after ssh closed even with nohup
-                                .handle_sigill  = false,
-                                .handle_sigfpe  = true,
-                                .handle_sigabrt = false,
-                                .handle_sigsegv = false,
-                                .handle_sigterm = true,
-                                .handle_sigpipe = true,
-                                .handle_sigalrm = true};
+    *signalmanager_gstate = (signal_manager_t) {.handlers_len   = 0,
+                                                .current_handler_index = 0,
+                                                .started        = false,
+                                                .raise_defaults = true,
+                                                .handle_sigint  = true,
+                                                .handle_sigquit = true,
+                                                .handle_sighup  = false, // exits after ssh closed even with nohup
+                                                .handle_sigill  = false,
+                                                .handle_sigfpe  = true,
+                                                .handle_sigabrt = false,
+                                                .handle_sigsegv = false,
+                                                .handle_sigterm = true,
+                                                .handle_sigpipe = true,
+                                                .handle_sigalrm = true};
 
     mutexInit(&(signalmanager_gstate->mutex));
     return signalmanager_gstate;
@@ -446,21 +451,32 @@ _Noreturn void terminateProgram(int exit_code)
         }
         else
         {
-            printError("SignalManager: Terminating program with exit-code %d, please read above logs to understand why\n",
-                       exit_code);
+            printError(
+                "SignalManager: Terminating program with exit-code %d, please read above logs to understand why\n",
+                exit_code);
         }
 
-        if (signalmanager_gstate->double_terminated)
+        // if (signalmanager_gstate->double_terminated)
+        // {
+        //     assert(false);
+        //     const char msg[]   = "double terminated.\n";
+        //     int        written = write(STDOUT_FILENO, msg, stringLength(msg));
+        //     discard    written;
+        //     exit(exit_code);
+        // }
+        // signalmanager_gstate->double_terminated = true;
+
+        // termiateprogram is called when porccesing exit handlers, so we should not call exit handlers again to avoid
+        // infinite loop
+        if (atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_relaxed))
         {
-            assert(false);
-            const char msg[]   = "double terminated.\n";
-            int        written = write(STDOUT_FILENO, msg, stringLength(msg));
-            discard    written;
-            exit(exit_code);
+            proceedWithNextExitHandler();
         }
-        signalmanager_gstate->double_terminated = true;
+        else
+        {
+            exitHandler();
+        }
 
-        exitHandler();
         // terminateCurrentThread();
     }
     else
@@ -475,10 +491,16 @@ _Noreturn void terminateProgram(int exit_code)
         }
         else
         {
-            printError("SignalManager: Terminating program with exit-code %d, please read above logs to understand why\n"
-                       "Since signal manager is not initialized, we cannot run exit handlers, so just exiting now\n",
-                       exit_code);
+            printError(
+                "SignalManager: Terminating program with exit-code %d, please read above logs to understand why\n"
+                "Since signal manager is not initialized, we cannot run exit handlers, so just exiting now\n",
+                exit_code);
         }
     }
     exit(exit_code);
+}
+
+bool signalmanagerIsTerminating(void)
+{
+    return atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_relaxed);
 }

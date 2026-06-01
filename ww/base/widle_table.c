@@ -47,7 +47,6 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct idle_table_s
 
 void idleCallBack(wtimer_t *timer);
 
-
 idle_table_t *idleTableCreate(wloop_t *loop)
 {
     wloopUpdateTime(loop);
@@ -66,18 +65,17 @@ idle_table_t *idleTableCreate(wloop_t *loop)
 
     idle_table_t *newtable = (idle_table_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
 
-    *newtable = (idle_table_t){.memptr         = ptr,
-                               .loop           = loop,
-                               .idle_handle    = wtimerAdd(loop, idleCallBack, kDefaultTimeout, INFINITE),
-                               .hqueue         = heapq_idles_t_with_capacity(kIdleTableCap),
-                               .hmap           = hmap_idles_t_with_capacity(kIdleTableCap),
-                               .last_update_ms = wloopNowMS(loop)};
+    *newtable = (idle_table_t) {.memptr         = ptr,
+                                .loop           = loop,
+                                .idle_handle    = wtimerAdd(loop, idleCallBack, kDefaultTimeout, INFINITE),
+                                .hqueue         = heapq_idles_t_with_capacity(kIdleTableCap),
+                                .hmap           = hmap_idles_t_with_capacity(kIdleTableCap),
+                                .last_update_ms = wloopNowMS(loop)};
 
     mutexInit(&(newtable->mutex));
     weventSetUserData(newtable->idle_handle, newtable);
     return newtable;
 }
-
 
 idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t wid,
                                  uint64_t age_ms)
@@ -86,12 +84,12 @@ idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata,
     idle_item_t *item = memoryAllocate(sizeof(idle_item_t));
     mutexLock(&(self->mutex));
 
-    *item = (idle_item_t){.expire_at_ms = wloopNowMS(self->loop) + age_ms,
-                          .hash         = key,
-                          .wid          = wid,
-                          .userdata     = userdata,
-                          .cb           = cb,
-                          .table        = self};
+    *item = (idle_item_t) {.expire_at_ms = wloopNowMS(self->loop) + age_ms,
+                           .hash         = key,
+                           .wid          = wid,
+                           .userdata     = userdata,
+                           .cb           = cb,
+                           .table        = self};
 
     // LOGD("add to expire on idle table, wid: %ld, hash: %lx, expire_at_ms: %lu", wid, key, item->expire_at_ms);
     if (! hmap_idles_t_insert(&(self->hmap), item->hash, item).inserted)
@@ -105,7 +103,6 @@ idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata,
     mutexUnlock(&(self->mutex));
     return item;
 }
-
 
 void idletableKeepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_ms)
 {
@@ -123,7 +120,6 @@ void idletableKeepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint
     // mutexUnlock(&(self->mutex));
 }
 
-
 idle_item_t *idletableGetIdleItemByHash(wid_t wid, idle_table_t *self, hash_t key)
 {
     mutexLock(&(self->mutex));
@@ -137,7 +133,6 @@ idle_item_t *idletableGetIdleItemByHash(wid_t wid, idle_table_t *self, hash_t ke
     mutexUnlock(&(self->mutex));
     return (find_result.ref->second);
 }
-
 
 bool idletableRemoveIdleItemByHash(wid_t wid, idle_table_t *self, hash_t key)
 {
@@ -208,7 +203,6 @@ static void beforeCloseCallBack(wevent_t *ev)
     }
 }
 
-
 void idleCallBack(wtimer_t *timer)
 {
     uint64_t next_timeout = kDefaultTimeout;
@@ -256,11 +250,10 @@ void idleCallBack(wtimer_t *timer)
     wtimerReset(timer, (uint32_t) (next_timeout));
 }
 
-
 void idletableDestroy(idle_table_t *self)
 {
     // if our loop is destroyed then the loop it self has freed the timer handle
-    if (! atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_acquire))
+    if (LIKELY(! signalmanagerIsTerminating()))
     {
         wtimerDelete(self->idle_handle);
     }

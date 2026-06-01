@@ -126,7 +126,7 @@ void workerRun(worker_t *worker)
 
     while (atomicLoadExplicit(&GSTATE.workers_run_flag, memory_order_acquire) == false)
     {
-        if (atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_acquire) == true)
+        if (UNLIKELY(signalmanagerIsTerminating()))
         {
             workerDestroyResources(worker);
             LOGD("Worker %d exited", wid);

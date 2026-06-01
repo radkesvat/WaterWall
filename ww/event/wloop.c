@@ -330,7 +330,7 @@ static void wloopDestroyEventFDS(wloop_t *loop)
 
 bool wloopPostEvent(wloop_t *loop, wevent_t *ev)
 {
-    if (atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_acquire))
+    if (UNLIKELY(signalmanagerIsTerminating()))
     {
         return false;
     }

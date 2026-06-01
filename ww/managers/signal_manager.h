@@ -24,6 +24,7 @@ typedef struct signal_manager_s
 {
     signal_handler_t handlers[kMaxSigHandles];
     unsigned int     handlers_len;
+    unsigned int     current_handler_index;
     wmutex_t         mutex;
     uint32_t         started : 1;
     uint32_t         raise_defaults : 1;
@@ -38,7 +39,6 @@ typedef struct signal_manager_s
     uint32_t         handle_sigpipe : 1;
     uint32_t         handle_sigalrm : 1;
     uint32_t         double_terminated : 1;
-    
 
 } signal_manager_t;
 
@@ -52,7 +52,7 @@ signal_manager_t *signalmanagerCreate(void);
 /**
  * @brief Destroy global signal manager state.
  */
-void              signalmanagerDestroy(void);
+void signalmanagerDestroy(void);
 
 /**
  * @brief Get global signal manager state.
@@ -66,12 +66,12 @@ signal_manager_t *signalmanagerGet(void);
  *
  * @param sm Signal manager instance.
  */
-void              signalmanagerSet(signal_manager_t *sm);
+void signalmanagerSet(signal_manager_t *sm);
 
 /**
  * @brief Install configured signal handlers for current process.
  */
-void              signalmanagerStart(void);
+void signalmanagerStart(void);
 
 /**
  * @brief Register callback invoked during exit/signal shutdown sequence.
@@ -90,3 +90,5 @@ void registerAtExitCallBack(SignalHandler handle, void *userdata);
 void removeAtExitCallBack(SignalHandler handle, void *userdata);
 
 // void terminateProgram(int exit_code); in wlibc.h
+
+bool signalmanagerIsTerminating(void);
