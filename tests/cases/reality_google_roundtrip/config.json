@@ -1,0 +1,78 @@
+{
+  "name": "reality-google-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true
+      },
+      "next": "reality-client"
+    },
+    {
+      "name": "reality-client",
+      "type": "RealityClient",
+      "settings": {
+        "sni": "google.com",
+        "verify": true,
+        "password": "waterwall-reality-integration",
+        "algorithm": "chacha20-poly1305",
+        "salt": "waterwall-reality-google-test",
+        "kdf-iterations": 12000
+      },
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41201,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41201,
+        "nodelay": true
+      },
+      "next": "reality-server"
+    },
+    {
+      "name": "reality-server",
+      "type": "RealityServer",
+      "settings": {
+        "destination": "google-visitor",
+        "password": "waterwall-reality-integration",
+        "algorithm": "chacha20-poly1305",
+        "salt": "waterwall-reality-google-test",
+        "kdf-iterations": 12000,
+        "sniffing-attempts": 8
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "google-visitor",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "google.com",
+        "port": 443,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "streaming-response": true
+      }
+    }
+  ]
+}
