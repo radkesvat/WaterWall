@@ -15,7 +15,7 @@ endif()
 set(CMAKE_UNITY_BUILD_BATCH_SIZE 500)
 
 project(Waterwall
-  VERSION 1.43.5
+  VERSION 1.44.0
   DESCRIPTION "A fast and secure VPN tunnel"
   HOMEPAGE_URL "https://github.com/radkesvat/waterwall"
   LANGUAGES C CXX
@@ -139,9 +139,9 @@ option(INCLUDE_TESTER_CLIENT            "link TesterClient staticly to the core"
 option(INCLUDE_TESTER_SERVER            "link TesterServer staticly to the core"             TRUE)
 option(INCLUDE_SPEEDTEST_CLIENT         "link SpeedTestClient staticly to the core"          TRUE)
 option(INCLUDE_SPEEDTEST_SERVER         "link SpeedTestServer staticly to the core"          TRUE)
-option(INCLUDE_AUTHENTICATION_SERVER     "link AuthenticationServer staticly to the core"      TRUE)
+option(INCLUDE_AUTHENTICATION_SERVER     "link AuthenticationServer staticly to the core"    TRUE)
 option(INCLUDE_WIREGUARD_DEVICE         "link WireGuardDevice staticly to the core"          TRUE)
-option(INCLUDE_PACKET_TO_CONNECTION     "link PacketsToConnection staticly to the core"       TRUE)
+option(INCLUDE_PACKET_TO_CONNECTION     "link PacketsToConnection staticly to the core"      TRUE)
 option(INCLUDE_STREAM_TO_PACKETS        "link StreamToPackets staticly to the core"          TRUE)
 option(INCLUDE__PACKETS_TO_STREAM        "link PacketsToStream staticly to the core"         TRUE)
 option(INCLUDE_PACKET_SPLIT_STREAM      "link PacketSplitStream staticly to the core"        TRUE)
@@ -201,7 +201,7 @@ option(INCLUDE_PACKET_SENDER            "link PacketSender staticly to the core"
 option(INCLUDE_PACKET_RECEIVER          "link PacketReceiver staticly to the core"           TRUE)
 option(INCLUDE_RAWSOCKET                "link RawSocket staticly to the core"                ${RAWSOCKET_SUPPORTED})
 option(INCLUDE_DISTURBER                "link Disturber staticly to the core"                TRUE)
-option(INCLUDE_BLACKHOLE                "link BlackHole staticly to the core"                 TRUE)
+option(INCLUDE_BLACKHOLE                "link BlackHole staticly to the core"                TRUE)
 option(INCLUDE_SPEEDLIMIT               "link SpeedLimit staticly to the core"               TRUE)
 
 # Determine if OpenSSL is required based on included tunnels
