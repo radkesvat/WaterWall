@@ -7,14 +7,7 @@ typedef enum sniffrouter_host_parse_e
     kSniffHostFound    = 2
 } sniffrouter_host_parse_t;
 
-static uint8_t asciiLower(uint8_t c)
-{
-    if (c >= 'A' && c <= 'Z')
-    {
-        return (uint8_t) (c | 0x20U);
-    }
-    return c;
-}
+
 
 static bool headerNameEquals(const uint8_t *p, uint32_t n, const char *name)
 {

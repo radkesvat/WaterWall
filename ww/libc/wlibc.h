@@ -563,6 +563,16 @@ WW_EXPORT char *stringChrDir(const char *filepath);
 
 #define stringCopy strcpy
 
+static inline uint8_t asciiLower(uint8_t c)
+{
+    if (c >= 'A' && c <= 'Z')
+    {
+        return (uint8_t) (c | 0x20U);
+    }
+    return c;
+}
+
+
 //--------------------file-------------------------------
 
 char *readFile(const char *path);

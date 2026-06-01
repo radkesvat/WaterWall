@@ -1,13 +1,5 @@
 #include "structure.h"
 
-static uint8_t asciiLower(uint8_t c)
-{
-    if (c >= 'A' && c <= 'Z')
-    {
-        return (uint8_t) (c | 0x20U);
-    }
-    return c;
-}
 
 static bool hostEndsWith(const uint8_t *host, uint32_t host_len, const char *suffix, uint32_t suffix_len)
 {

@@ -64,14 +64,6 @@ static void ptcDnsWrite32(uint8_t *p, uint32_t value)
     p[3] = (uint8_t) value;
 }
 
-static char ptcDnsAsciiLower(char c)
-{
-    if (c >= 'A' && c <= 'Z')
-    {
-        return (char) (c + ('a' - 'A'));
-    }
-    return c;
-}
 
 static bool ptcDnsReadQuestionName(const uint8_t *packet, uint32_t packet_len, uint32_t *offset, char *domain,
                                    uint8_t *domain_len)
@@ -113,7 +105,7 @@ static bool ptcDnsReadQuestionName(const uint8_t *packet, uint32_t packet_len, u
 
         for (uint8_t i = 0; i < label_len; ++i)
         {
-            domain[out++] = ptcDnsAsciiLower((char) packet[pos + i]);
+            domain[out++] = asciiLower((char) packet[pos + i]);
         }
         pos += label_len;
     }
