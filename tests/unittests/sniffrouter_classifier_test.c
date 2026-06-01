@@ -137,10 +137,29 @@ int main(void)
         return 1;
     }
 
+    if (expect_match("partial tls record body",
+                     sniffrouterClassify(&ts, hello, 5),
+                     kSniffClassifyNeedMore,
+                     NULL) != 0)
+    {
+        return 1;
+    }
+
     if (expect_match("tls route",
                      sniffrouterClassify(&ts, hello, hello_len),
                      kSniffClassifyTarget,
                      tls_target) != 0)
+    {
+        return 1;
+    }
+
+    uint8_t bad_version_hello[256];
+    memoryCopy(bad_version_hello, hello, hello_len);
+    bad_version_hello[2] = 0x04;
+    if (expect_match("invalid tls record version",
+                     sniffrouterClassify(&ts, bad_version_hello, hello_len),
+                     kSniffClassifyDefault,
+                     NULL) != 0)
     {
         return 1;
     }

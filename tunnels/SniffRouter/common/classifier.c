@@ -221,6 +221,11 @@ static sniffrouter_host_parse_t classifyHttpHost(const uint8_t *p, uint32_t n, c
     return findHttpHost(p, n, host, host_len);
 }
 
+static bool remainingAtLeast(const uint8_t *cursor, const uint8_t *end, size_t needed)
+{
+    return cursor <= end && (size_t) (end - cursor) >= needed;
+}
+
 static sniffrouter_host_parse_t findTlsClientHelloSni(const uint8_t *p, uint32_t n, const uint8_t **host,
                                                       uint32_t *host_len)
 {
@@ -239,7 +244,7 @@ static sniffrouter_host_parse_t findTlsClientHelloSni(const uint8_t *p, uint32_t
         return kSniffHostNeedMore;
     }
 
-    if (p[1] != 0x03 || p[2] > 0x04)
+    if (p[1] != 0x03 || p[2] > 0x03)
     {
         return kSniffHostMissing;
     }
@@ -271,14 +276,14 @@ static sniffrouter_host_parse_t findTlsClientHelloSni(const uint8_t *p, uint32_t
     const uint8_t *cursor       = client_hello + 34;
     const uint8_t *hello_end    = client_hello + client_hello_len;
 
-    if (cursor >= hello_end)
+    if (! remainingAtLeast(cursor, hello_end, 1U))
     {
         return kSniffHostMissing;
     }
 
     uint8_t session_id_len = cursor[0];
     cursor += 1;
-    if ((size_t) (hello_end - cursor) < (size_t) session_id_len + 2U)
+    if (! remainingAtLeast(cursor, hello_end, (size_t) session_id_len + 2U))
     {
         return kSniffHostMissing;
     }
@@ -286,7 +291,7 @@ static sniffrouter_host_parse_t findTlsClientHelloSni(const uint8_t *p, uint32_t
 
     uint16_t cipher_suites_len = GET_BE16(cursor);
     cursor += 2;
-    if ((size_t) (hello_end - cursor) < (size_t) cipher_suites_len + 1U)
+    if (! remainingAtLeast(cursor, hello_end, (size_t) cipher_suites_len + 1U))
     {
         return kSniffHostMissing;
     }
@@ -294,7 +299,7 @@ static sniffrouter_host_parse_t findTlsClientHelloSni(const uint8_t *p, uint32_t
 
     uint8_t compression_methods_len = cursor[0];
     cursor += 1;
-    if ((size_t) (hello_end - cursor) < (size_t) compression_methods_len + 2U)
+    if (! remainingAtLeast(cursor, hello_end, (size_t) compression_methods_len + 2U))
     {
         return kSniffHostMissing;
     }
@@ -302,23 +307,22 @@ static sniffrouter_host_parse_t findTlsClientHelloSni(const uint8_t *p, uint32_t
 
     uint16_t extensions_len = GET_BE16(cursor);
     cursor += 2;
-    if ((size_t) (hello_end - cursor) < extensions_len)
+    if (! remainingAtLeast(cursor, hello_end, extensions_len))
     {
         return kSniffHostMissing;
     }
 
     const uint8_t *extensions_end = cursor + extensions_len;
-    while (cursor + 4 <= extensions_end)
+    while (remainingAtLeast(cursor, extensions_end, 4U))
     {
         uint16_t       extension_type = GET_BE16(cursor);
         uint16_t       extension_len  = GET_BE16(cursor + 2);
         const uint8_t *extension_data = cursor + 4;
-        const uint8_t *next_extension = extension_data + extension_len;
-
-        if (next_extension > extensions_end)
+        if (! remainingAtLeast(extension_data, extensions_end, extension_len))
         {
             return kSniffHostMissing;
         }
+        const uint8_t *next_extension = extension_data + extension_len;
 
         if (extension_type == 0x0000)
         {
@@ -329,24 +333,23 @@ static sniffrouter_host_parse_t findTlsClientHelloSni(const uint8_t *p, uint32_t
 
             uint16_t       server_name_list_len = GET_BE16(extension_data);
             const uint8_t *server_name_cursor   = extension_data + 2;
-            const uint8_t *server_name_list_end = server_name_cursor + server_name_list_len;
 
-            if (server_name_list_end > next_extension)
+            if (server_name_list_len > extension_len - 2U)
             {
                 return kSniffHostMissing;
             }
+            const uint8_t *server_name_list_end = server_name_cursor + server_name_list_len;
 
-            while (server_name_cursor + 3 <= server_name_list_end)
+            while (remainingAtLeast(server_name_cursor, server_name_list_end, 3U))
             {
                 uint8_t        name_type = server_name_cursor[0];
                 uint16_t       name_len  = GET_BE16(server_name_cursor + 1);
                 const uint8_t *name_data = server_name_cursor + 3;
-                const uint8_t *next_name = name_data + name_len;
-
-                if (next_name > server_name_list_end)
+                if (! remainingAtLeast(name_data, server_name_list_end, name_len))
                 {
                     return kSniffHostMissing;
                 }
+                const uint8_t *next_name = name_data + name_len;
 
                 if (name_type == 0x00)
                 {
