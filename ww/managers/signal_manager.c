@@ -504,3 +504,8 @@ bool signalmanagerIsTerminating(void)
 {
     return atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_relaxed);
 }
+
+bool isApplicationTerminating(void)
+{
+    return signalmanagerIsTerminating();
+}

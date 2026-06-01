@@ -995,7 +995,7 @@ static void speedtestclientFinishLine(tunnel_t *t, line_t *l, bool success, bool
     if (all_done)
     {
         speedtestclientLogAggregate(t, final_success);
-        if (state->terminate_on_complete && ! signalmanagerIsTerminating())
+        if (state->terminate_on_complete && ! isApplicationTerminating())
         {
             terminateProgram(final_success ? 0 : 1);
         }

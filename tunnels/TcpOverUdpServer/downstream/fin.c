@@ -13,7 +13,7 @@ void tcpoverudpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     lineLock(l);
 
-    if (UNLIKELY(signalmanagerIsTerminating()))
+    if (UNLIKELY(isApplicationTerminating()))
     {
         tcpoverudpserverLinestateDestroy(ls);
         if (lineIsAlive(l))

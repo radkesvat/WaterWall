@@ -21,7 +21,7 @@ void initWLibc(void);
 
 
 _Noreturn void terminateProgram(int exit_code); // in signal_manager.c
-
+bool isApplicationTerminating(void); // in signal_manager.c
 
 //--------------------Memory-------------------------------
 

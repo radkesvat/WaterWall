@@ -253,7 +253,7 @@ void idleCallBack(wtimer_t *timer)
 void idletableDestroy(idle_table_t *self)
 {
     // if our loop is destroyed then the loop it self has freed the timer handle
-    if (LIKELY(! signalmanagerIsTerminating()))
+    if (LIKELY(! isApplicationTerminating()))
     {
         wtimerDelete(self->idle_handle);
     }

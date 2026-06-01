@@ -330,7 +330,7 @@ static void wloopDestroyEventFDS(wloop_t *loop)
 
 bool wloopPostEvent(wloop_t *loop, wevent_t *ev)
 {
-    if (UNLIKELY(signalmanagerIsTerminating()))
+    if (UNLIKELY(isApplicationTerminating()))
     {
         return false;
     }
