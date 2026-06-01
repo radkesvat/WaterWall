@@ -253,11 +253,11 @@
 #endif
 
 #ifdef INCLUDE_REALITY_SERVER
-#include "tunnels/server/reality/reality_server.h"
+#include "tunnels/RealityServer/include/interface.h"
 #endif
 
 #ifdef INCLUDE_REALITY_CLIENT
-#include "tunnels/client/reality/reality_client.h"
+#include "tunnels/RealityClient/include/interface.h"
 #endif
 
 #ifdef INCLUDE_HALFDUPLEX_SERVER

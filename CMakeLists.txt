@@ -752,16 +752,19 @@ endif()
 #reality server
 if(INCLUDE_REALITY_SERVER)
   target_compile_definitions(Waterwall PUBLIC INCLUDE_REALITY_SERVER=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/reality)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/reality)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/RealityServer)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/RealityServer)
   target_link_libraries(Waterwall RealityServer)
 endif()
 
 #reality client
 if(INCLUDE_REALITY_CLIENT)
+  if(NOT TARGET TlsClient)
+    message(FATAL_ERROR "RealityClient requires INCLUDE_TLS_CLIENT=ON")
+  endif()
   target_compile_definitions(Waterwall PUBLIC INCLUDE_REALITY_CLIENT=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/reality)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/reality)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/RealityClient)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/RealityClient)
   target_link_libraries(Waterwall RealityClient)
 endif()
 
