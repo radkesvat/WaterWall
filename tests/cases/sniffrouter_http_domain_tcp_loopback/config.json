@@ -52,6 +52,7 @@
         "routes": [
           {
             "domains": ["a.x.com", "b.x.com", "*.route.example.test"],
+            "detection": ["http", "tls"],
             "next": "http-server"
           }
         ]

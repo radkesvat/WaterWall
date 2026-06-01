@@ -204,17 +204,221 @@ static sniffrouter_host_parse_t findHttpHost(const uint8_t *p, uint32_t n, const
     return kSniffHostMissing;
 }
 
-static tunnel_t *findMatchingRoute(sniffrouter_tstate_t *ts, const uint8_t *host, uint32_t host_len)
+static sniffrouter_host_parse_t classifyHttpHost(const uint8_t *p, uint32_t n, const uint8_t **host,
+                                                 uint32_t *host_len)
+{
+    int http_method = classifyHttpMethod(p, n);
+    if (http_method < 0 && n < (uint32_t) kSniffMethodDecideBytes)
+    {
+        return kSniffHostNeedMore;
+    }
+
+    if (http_method <= 0)
+    {
+        return kSniffHostMissing;
+    }
+
+    return findHttpHost(p, n, host, host_len);
+}
+
+static sniffrouter_host_parse_t findTlsClientHelloSni(const uint8_t *p, uint32_t n, const uint8_t **host,
+                                                      uint32_t *host_len)
+{
+    if (n == 0)
+    {
+        return kSniffHostNeedMore;
+    }
+
+    if (p[0] != 0x16)
+    {
+        return kSniffHostMissing;
+    }
+
+    if (n < 5U)
+    {
+        return kSniffHostNeedMore;
+    }
+
+    if (p[1] != 0x03 || p[2] > 0x04)
+    {
+        return kSniffHostMissing;
+    }
+
+    uint16_t tls_record_len = GET_BE16(p + 3);
+    if (tls_record_len < 4U)
+    {
+        return kSniffHostMissing;
+    }
+
+    uint32_t tls_record_total_len = (uint32_t) tls_record_len + 5U;
+    if (n < tls_record_total_len)
+    {
+        return n < (uint32_t) kSniffMaxHeaderBytes ? kSniffHostNeedMore : kSniffHostMissing;
+    }
+
+    if (p[5] != 0x01)
+    {
+        return kSniffHostMissing;
+    }
+
+    uint32_t client_hello_len = GET_BE24(p + 6);
+    if (client_hello_len < 34U || client_hello_len + 4U > (uint32_t) tls_record_len)
+    {
+        return kSniffHostMissing;
+    }
+
+    const uint8_t *client_hello = p + 9;
+    const uint8_t *cursor       = client_hello + 34;
+    const uint8_t *hello_end    = client_hello + client_hello_len;
+
+    if (cursor >= hello_end)
+    {
+        return kSniffHostMissing;
+    }
+
+    uint8_t session_id_len = cursor[0];
+    cursor += 1;
+    if ((size_t) (hello_end - cursor) < (size_t) session_id_len + 2U)
+    {
+        return kSniffHostMissing;
+    }
+    cursor += session_id_len;
+
+    uint16_t cipher_suites_len = GET_BE16(cursor);
+    cursor += 2;
+    if ((size_t) (hello_end - cursor) < (size_t) cipher_suites_len + 1U)
+    {
+        return kSniffHostMissing;
+    }
+    cursor += cipher_suites_len;
+
+    uint8_t compression_methods_len = cursor[0];
+    cursor += 1;
+    if ((size_t) (hello_end - cursor) < (size_t) compression_methods_len + 2U)
+    {
+        return kSniffHostMissing;
+    }
+    cursor += compression_methods_len;
+
+    uint16_t extensions_len = GET_BE16(cursor);
+    cursor += 2;
+    if ((size_t) (hello_end - cursor) < extensions_len)
+    {
+        return kSniffHostMissing;
+    }
+
+    const uint8_t *extensions_end = cursor + extensions_len;
+    while (cursor + 4 <= extensions_end)
+    {
+        uint16_t       extension_type = GET_BE16(cursor);
+        uint16_t       extension_len  = GET_BE16(cursor + 2);
+        const uint8_t *extension_data = cursor + 4;
+        const uint8_t *next_extension = extension_data + extension_len;
+
+        if (next_extension > extensions_end)
+        {
+            return kSniffHostMissing;
+        }
+
+        if (extension_type == 0x0000)
+        {
+            if (extension_len < 2U)
+            {
+                return kSniffHostMissing;
+            }
+
+            uint16_t       server_name_list_len = GET_BE16(extension_data);
+            const uint8_t *server_name_cursor   = extension_data + 2;
+            const uint8_t *server_name_list_end = server_name_cursor + server_name_list_len;
+
+            if (server_name_list_end > next_extension)
+            {
+                return kSniffHostMissing;
+            }
+
+            while (server_name_cursor + 3 <= server_name_list_end)
+            {
+                uint8_t        name_type = server_name_cursor[0];
+                uint16_t       name_len  = GET_BE16(server_name_cursor + 1);
+                const uint8_t *name_data = server_name_cursor + 3;
+                const uint8_t *next_name = name_data + name_len;
+
+                if (next_name > server_name_list_end)
+                {
+                    return kSniffHostMissing;
+                }
+
+                if (name_type == 0x00)
+                {
+                    const uint8_t *value     = name_data;
+                    uint32_t       value_len = name_len;
+                    stripHostPortAndDot(&value, &value_len);
+
+                    if (value_len == 0)
+                    {
+                        return kSniffHostMissing;
+                    }
+
+                    *host     = value;
+                    *host_len = value_len;
+                    return kSniffHostFound;
+                }
+
+                server_name_cursor = next_name;
+            }
+
+            return kSniffHostMissing;
+        }
+
+        cursor = next_extension;
+    }
+
+    return kSniffHostMissing;
+}
+
+static bool anyRouteHasDetection(sniffrouter_tstate_t *ts, uint8_t detection)
+{
+    for (uint32_t ri = 0; ri < ts->routes_count; ++ri)
+    {
+        if ((ts->routes[ri].detection & detection) != 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool routeMatchesHost(sniffrouter_route_t *route, const uint8_t *host, uint32_t host_len)
+{
+    for (uint32_t di = 0; di < route->domains_count; ++di)
+    {
+        if (sniffrouterDomainMatches(route->domains[di], host, host_len))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static tunnel_t *findMatchingRoute(sniffrouter_tstate_t *ts, const uint8_t *http_host, uint32_t http_host_len,
+                                   bool http_found, const uint8_t *tls_sni, uint32_t tls_sni_len, bool tls_found)
 {
     for (uint32_t ri = 0; ri < ts->routes_count; ++ri)
     {
         sniffrouter_route_t *route = &ts->routes[ri];
-        for (uint32_t di = 0; di < route->domains_count; ++di)
+
+        if (http_found && (route->detection & kSniffDetectionHttp) != 0 &&
+            routeMatchesHost(route, http_host, http_host_len))
         {
-            if (sniffrouterDomainMatches(route->domains[di], host, host_len))
-            {
-                return route->tunnel;
-            }
+            return route->tunnel;
+        }
+
+        if (tls_found && (route->detection & kSniffDetectionTlsClientHello) != 0 &&
+            routeMatchesHost(route, tls_sni, tls_sni_len))
+        {
+            return route->tunnel;
         }
     }
 
@@ -228,35 +432,66 @@ sniffrouter_match_t sniffrouterClassify(sniffrouter_tstate_t *ts, const uint8_t 
         .target = NULL,
     };
 
-    int http_method = classifyHttpMethod(p, n);
-    if (http_method < 0 && n < (uint32_t) kSniffMethodDecideBytes)
-    {
-        match.result = kSniffClassifyNeedMore;
-        return match;
-    }
-
-    if (http_method <= 0)
+    if (ts->routes_count == 0)
     {
         return match;
     }
 
-    const uint8_t *host     = NULL;
-    uint32_t       host_len = 0;
+    bool http_enabled = anyRouteHasDetection(ts, kSniffDetectionHttp);
+    bool tls_enabled  = anyRouteHasDetection(ts, kSniffDetectionTlsClientHello);
 
-    switch (findHttpHost(p, n, &host, &host_len))
+    const uint8_t *http_host     = NULL;
+    uint32_t       http_host_len = 0;
+    bool           http_found    = false;
+    bool           need_more     = false;
+
+    if (http_enabled)
     {
-    case kSniffHostNeedMore:
-        match.result = kSniffClassifyNeedMore;
-        return match;
-    case kSniffHostFound:
-        match.target = findMatchingRoute(ts, host, host_len);
-        if (match.target != NULL)
+        switch (classifyHttpHost(p, n, &http_host, &http_host_len))
         {
-            match.result = kSniffClassifyTarget;
+        case kSniffHostNeedMore:
+            need_more = true;
+            break;
+        case kSniffHostFound:
+            http_found = true;
+            break;
+        case kSniffHostMissing:
+        default:
+            break;
         }
-        return match;
-    case kSniffHostMissing:
-    default:
+    }
+
+    const uint8_t *tls_sni     = NULL;
+    uint32_t       tls_sni_len = 0;
+    bool           tls_found   = false;
+
+    if (tls_enabled)
+    {
+        switch (findTlsClientHelloSni(p, n, &tls_sni, &tls_sni_len))
+        {
+        case kSniffHostNeedMore:
+            need_more = true;
+            break;
+        case kSniffHostFound:
+            tls_found = true;
+            break;
+        case kSniffHostMissing:
+        default:
+            break;
+        }
+    }
+
+    match.target = findMatchingRoute(ts, http_host, http_host_len, http_found, tls_sni, tls_sni_len, tls_found);
+    if (match.target != NULL)
+    {
+        match.result = kSniffClassifyTarget;
         return match;
     }
+
+    if (need_more)
+    {
+        match.result = kSniffClassifyNeedMore;
+    }
+
+    return match;
 }

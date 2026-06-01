@@ -76,7 +76,8 @@ Practical rule:
   transport; a configured `google.com` route points at an invalid local connector so accidental route selection fails.
 - `sniffrouter_http_domain_tcp_loopback`
   Verifies that `SniffRouter` parses an HTTP/1.1 Host header, matches a wildcard domain from a multi-domain route, and
-  forwards to that route's target while the top-level fallback `next` points at an invalid connector.
+  forwards to that route's target while the top-level fallback `next` points at an invalid connector. The route enables
+  both HTTP and TLS detection to exercise the combined detection setting while matching HTTP.
 - `udp_over_tcp_roundtrip`
   Verifies that `UdpOverTcpClient` and `UdpOverTcpServer` preserve end-to-end byte stream integrity through their
   length-prefixed framing.

@@ -1,11 +1,13 @@
 # SniffRouter
 
-A layer-4 content router. It is meant to be placed **right after a `TlsServer`**
-(TLS termination) and routes each connection by inspecting the first decrypted
-HTTP/1 request.
+A layer-4 content router. It can be placed **right after a `TlsServer`**
+(TLS termination) to route by the first decrypted HTTP/1 request, or before TLS
+termination to route by the TLS ClientHello SNI.
 
 - if the request `Host` header matches a configured route, the connection is
   handed to that route's `next` node;
+- if TLS ClientHello detection is enabled for a route and the SNI matches, the
+  connection is handed to that route's `next` node;
 - otherwise, including non-HTTP traffic and HTTP traffic with no matching host,
   the connection continues to the node's normal top-level `next`.
 
@@ -19,7 +21,8 @@ a default tunnel/fail path.
   gets a per-line state slot and its downstream traffic returns through the
   router to the previous node.
 - Upstream `Init` is deferred until the first payload selects a branch. The
-  buffered bytes are then replayed to the chosen branch with no loss.
+  buffered bytes are then replayed to the chosen branch with no loss. This is
+  the same for HTTP Host and TLS SNI routing.
 
 ## Domain Matching
 
@@ -36,6 +39,9 @@ Host header ports are ignored for matching, so `example.com:443` matches
 HTTP/2 cleartext prefaces do not carry an HTTP/1 `Host` header, so they fall
 back to top-level `next` unless routed by some earlier tunnel.
 
+TLS SNI matching uses the same domain patterns as HTTP Host matching. The TLS
+ClientHello must arrive within the bounded sniff window.
+
 ## Settings
 
 | key | type | required | description |
@@ -47,6 +53,7 @@ Each route object:
 | key | type | required | description |
 |-----|------|----------|-------------|
 | `domains` | string or array of strings | yes | domain patterns for this route |
+| `detection` | string or array of strings | no | `http` by default; use `tls`, `client-hello`, or `tls-client-hello` for SNI routing; use `["http", "tls"]` to enable both |
 | `next` | string | yes | target node name for matching domains |
 
 `domain` may be used instead of `domains` for a single domain. `target` is

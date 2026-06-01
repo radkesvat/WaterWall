@@ -54,6 +54,15 @@ if(TARGET nghttp2_static)
   add_waterwall_unit_test(waterwall.nghttp2_large_recv_unit nghttp2_large_recv_test "unit;tunnels;http;nghttp2")
 endif()
 
+if(TARGET SniffRouter)
+  add_executable(sniffrouter_classifier_test sniffrouter_classifier_test.c)
+  target_include_directories(sniffrouter_classifier_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/SniffRouter/include)
+  target_link_libraries(sniffrouter_classifier_test PRIVATE SniffRouter ww)
+  add_dependencies(waterwall_unit_tests sniffrouter_classifier_test)
+
+  add_waterwall_unit_test(waterwall.sniffrouter_classifier_unit sniffrouter_classifier_test "unit;tunnels;sniffrouter")
+endif()
+
 add_custom_target(check_waterwall_unit_tests
   COMMAND
     "${CMAKE_CTEST_COMMAND}"

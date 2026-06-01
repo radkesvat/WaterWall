@@ -1,0 +1,167 @@
+#include "structure.h"
+
+#include <stdio.h>
+
+static void put_be16(uint8_t *p, uint16_t v)
+{
+    p[0] = (uint8_t) ((v >> 8) & 0xFFU);
+    p[1] = (uint8_t) (v & 0xFFU);
+}
+
+static void put_be24(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t) ((v >> 16) & 0xFFU);
+    p[1] = (uint8_t) ((v >> 8) & 0xFFU);
+    p[2] = (uint8_t) (v & 0xFFU);
+}
+
+static uint32_t make_client_hello(uint8_t *buf, const char *sni)
+{
+    uint8_t *cursor = buf;
+    uint32_t sni_len = (uint32_t) stringLength(sni);
+
+    *cursor++ = 0x16;
+    *cursor++ = 0x03;
+    *cursor++ = 0x01;
+    uint8_t *record_len = cursor;
+    cursor += 2;
+
+    *cursor++ = 0x01;
+    uint8_t *hello_len = cursor;
+    cursor += 3;
+
+    uint8_t *body = cursor;
+    *cursor++ = 0x03;
+    *cursor++ = 0x03;
+    memorySet(cursor, 0x11, 32);
+    cursor += 32;
+
+    *cursor++ = 0;
+
+    put_be16(cursor, 2);
+    cursor += 2;
+    put_be16(cursor, 0x1301);
+    cursor += 2;
+
+    *cursor++ = 1;
+    *cursor++ = 0;
+
+    uint8_t *extensions_len = cursor;
+    cursor += 2;
+
+    put_be16(cursor, 0x0000);
+    cursor += 2;
+    put_be16(cursor, (uint16_t) (2U + 3U + sni_len));
+    cursor += 2;
+    put_be16(cursor, (uint16_t) (3U + sni_len));
+    cursor += 2;
+    *cursor++ = 0;
+    put_be16(cursor, (uint16_t) sni_len);
+    cursor += 2;
+    memoryCopy(cursor, sni, sni_len);
+    cursor += sni_len;
+
+    uint32_t ext_len = (uint32_t) (cursor - extensions_len - 2);
+    uint32_t body_len = (uint32_t) (cursor - body);
+
+    put_be16(extensions_len, (uint16_t) ext_len);
+    put_be24(hello_len, body_len);
+    put_be16(record_len, (uint16_t) (4U + body_len));
+
+    return (uint32_t) (cursor - buf);
+}
+
+static int expect_match(const char *name, sniffrouter_match_t got, enum sniffrouter_classify_result_e result,
+                        tunnel_t *target)
+{
+    if (got.result == result && got.target == target)
+    {
+        return 0;
+    }
+
+    fprintf(stderr, "%s: got result=%d target=%p, expected result=%d target=%p\n",
+            name,
+            got.result,
+            (void *) got.target,
+            result,
+            (void *) target);
+    return 1;
+}
+
+int main(void)
+{
+    tunnel_t *http_target = (tunnel_t *) (uintptr_t) 0x10;
+    tunnel_t *tls_target  = (tunnel_t *) (uintptr_t) 0x20;
+
+    char http_domain[] = "api.example.test";
+    char tls_domain[]  = "*.example.test";
+    char *http_domains[] = {http_domain};
+    char *tls_domains[]  = {tls_domain};
+
+    sniffrouter_route_t routes[] = {
+        {
+            .tunnel        = http_target,
+            .domains       = http_domains,
+            .domains_count = 1,
+            .detection     = kSniffDetectionHttp,
+        },
+        {
+            .tunnel        = tls_target,
+            .domains       = tls_domains,
+            .domains_count = 1,
+            .detection     = kSniffDetectionTlsClientHello,
+        },
+    };
+
+    sniffrouter_tstate_t ts = {
+        .routes       = routes,
+        .routes_count = 2,
+    };
+
+    const uint8_t http_request[] = "GET / HTTP/1.1\r\nHost: api.example.test:443\r\n\r\n";
+    if (expect_match("http route",
+                     sniffrouterClassify(&ts, http_request, (uint32_t) sizeof(http_request) - 1U),
+                     kSniffClassifyTarget,
+                     http_target) != 0)
+    {
+        return 1;
+    }
+
+    uint8_t  hello[256];
+    uint32_t hello_len = make_client_hello(hello, "www.example.test");
+    if (expect_match("partial tls route",
+                     sniffrouterClassify(&ts, hello, 3),
+                     kSniffClassifyNeedMore,
+                     NULL) != 0)
+    {
+        return 1;
+    }
+
+    if (expect_match("tls route",
+                     sniffrouterClassify(&ts, hello, hello_len),
+                     kSniffClassifyTarget,
+                     tls_target) != 0)
+    {
+        return 1;
+    }
+
+    routes[1].detection = kSniffDetectionHttp;
+    if (expect_match("tls disabled for route",
+                     sniffrouterClassify(&ts, hello, hello_len),
+                     kSniffClassifyDefault,
+                     NULL) != 0)
+    {
+        return 1;
+    }
+
+    routes[1].detection = kSniffDetectionHttp | kSniffDetectionTlsClientHello;
+    if (expect_match("combined detection route",
+                     sniffrouterClassify(&ts, hello, hello_len),
+                     kSniffClassifyTarget,
+                     tls_target) != 0)
+    {
+        return 1;
+    }
+
+    return 0;
+}

@@ -5,13 +5,14 @@
 /*
  * SniffRouter
  * -----------
- * A layer-4 content router that is meant to sit right after a TlsServer
- * (TLS termination) node. It peeks at the first decrypted HTTP/1 request and
+ * A layer-4 content router. It can sit right after a TlsServer (TLS
+ * termination) node and inspect the first decrypted HTTP/1 request, or sit
+ * before TLS termination and inspect the TLS ClientHello SNI. It then
  * decides where the connection should go:
  *
- *   - if the Host header matches one configured route -> send to that route's
- *                                                        target node
- *   - otherwise                                      -> send to normal "next"
+ *   - if the HTTP Host or TLS SNI matches one configured route -> send to
+ *                                                                  that route
+ *   - otherwise                                               -> normal "next"
  *
  * The "next" branch is a normal chain continuation (upstream payload). The
  * configured route targets are folded into the same chain during onChain so
@@ -34,12 +35,19 @@ enum sniffrouter_classify_result_e
     kSniffClassifyTarget   = 2
 };
 
+enum sniffrouter_detection_e
+{
+    kSniffDetectionHttp           = 1U << 0U,
+    kSniffDetectionTlsClientHello = 1U << 1U
+};
+
 typedef struct sniffrouter_route_s
 {
     node_t   *node;
     tunnel_t *tunnel;
     char    **domains;
     uint32_t  domains_count;
+    uint8_t   detection;
 } sniffrouter_route_t;
 
 typedef struct sniffrouter_match_s
@@ -71,8 +79,9 @@ enum
     // Longest HTTP method token we test ("CONNECT "/"OPTIONS ") is 8 bytes.
     kSniffMethodDecideBytes = 8,
 
-    // Keep the sniff window bounded. Normal Host headers arrive well before
-    // this; if they do not, traffic falls back to "next".
+    // Keep the sniff window bounded. Normal Host headers and ClientHello SNI
+    // extensions arrive well before this; if they do not, traffic falls back
+    // to "next".
     kSniffMaxHeaderBytes = 8192
 };
 

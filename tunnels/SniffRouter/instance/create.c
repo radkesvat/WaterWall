@@ -116,6 +116,72 @@ static bool loadRouteDomains(sniffrouter_route_t *route, const cJSON *route_json
     return true;
 }
 
+static bool loadDetectionString(uint8_t *detection, const cJSON *detection_json, const char *json_path)
+{
+    char *value = NULL;
+    if (! getStringFromJson(&value, detection_json))
+    {
+        LOGF("JSON Error: %s (string field) : expected http, tls, client-hello, or tls-client-hello", json_path);
+        return false;
+    }
+
+    stringLowerCase(value);
+
+    if (stringCompare(value, "http") == 0)
+    {
+        *detection |= kSniffDetectionHttp;
+        memoryFree(value);
+        return true;
+    }
+
+    if (stringCompare(value, "tls") == 0 || stringCompare(value, "client-hello") == 0 ||
+        stringCompare(value, "tls-client-hello") == 0)
+    {
+        *detection |= kSniffDetectionTlsClientHello;
+        memoryFree(value);
+        return true;
+    }
+
+    LOGF("JSON Error: %s (string field) : unsupported detection \"%s\"", json_path, value);
+    memoryFree(value);
+    return false;
+}
+
+static bool loadRouteDetection(sniffrouter_route_t *route, const cJSON *route_json)
+{
+    const cJSON *detection = cJSON_GetObjectItemCaseSensitive(route_json, "detection");
+
+    if (detection == NULL)
+    {
+        route->detection = kSniffDetectionHttp;
+        return true;
+    }
+
+    route->detection = 0;
+
+    if (cJSON_IsString(detection))
+    {
+        return loadDetectionString(&route->detection, detection, "SniffRouter->settings->routes[]->detection");
+    }
+
+    if (! cJSON_IsArray(detection) || cJSON_GetArraySize(detection) <= 0)
+    {
+        LOGF("JSON Error: SniffRouter->settings->routes[]->detection (string or array field) : expected one or more detection modes");
+        return false;
+    }
+
+    const cJSON *item = NULL;
+    cJSON_ArrayForEach(item, detection)
+    {
+        if (! loadDetectionString(&route->detection, item, "SniffRouter->settings->routes[]->detection[]"))
+        {
+            return false;
+        }
+    }
+
+    return route->detection != 0;
+}
+
 static bool loadRouteTarget(sniffrouter_route_t *route, node_t *node, const cJSON *route_json, uint32_t route_index)
 {
     char *target_name = NULL;
@@ -184,7 +250,8 @@ static bool loadRoutes(sniffrouter_tstate_t *ts, node_t *node, const cJSON *sett
         }
 
         if (! loadRouteTarget(&ts->routes[index], node, route_json, index) ||
-            ! loadRouteDomains(&ts->routes[index], route_json, index))
+            ! loadRouteDomains(&ts->routes[index], route_json, index) ||
+            ! loadRouteDetection(&ts->routes[index], route_json))
         {
             return false;
         }
