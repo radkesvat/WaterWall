@@ -2,6 +2,17 @@
 
 #include "wwapi.h"
 
+typedef struct tcpconnector_socket_options_s
+{
+    bool        option_tcp_no_delay;
+    bool        option_tcp_fast_open;
+    bool        option_reuse_addr;
+    int         domain_strategy;
+    int         fwmark;
+    const char *interface_name;
+    const char *source_ip;
+} tcpconnector_socket_options_t;
+
 typedef struct tcpconnector_tstate_s
 {
     idle_table_t *idle_table; // idle table for closing dead connections
@@ -34,14 +45,22 @@ typedef struct tcpconnector_destination_s
     address_context_t constant_dest_addr;
     uint64_t          outbound_ip_range;
     uint32_t          weight;
+    bool              option_tcp_no_delay;
+    bool              option_tcp_fast_open;
+    bool              option_reuse_addr;
+    int               domain_strategy;
+    int               fwmark;
+    char             *interface_name;
+    char             *source_ip;
 } tcpconnector_destination_t;
 
 typedef struct tcpconnector_dns_request_s
 {
-    tunnel_t *tunnel;
-    line_t   *line;
-    uint64_t  outbound_ip_range;
-    bool      cancelled;
+    tunnel_t                      *tunnel;
+    line_t                        *line;
+    uint64_t                       outbound_ip_range;
+    tcpconnector_socket_options_t  socket_options;
+    bool                           cancelled;
 } tcpconnector_dns_request_t;
 
 typedef struct tcpconnector_lstate_s
@@ -79,6 +98,14 @@ static inline void tcpconnectorDestinationDeinit(tcpconnector_destination_t *des
 {
     dynamicvalueDestroy(destination->dest_addr_selected);
     dynamicvalueDestroy(destination->dest_port_selected);
+    if (destination->interface_name != NULL)
+    {
+        memoryFree(destination->interface_name);
+    }
+    if (destination->source_ip != NULL)
+    {
+        memoryFree(destination->source_ip);
+    }
 }
 
 typedef enum tcpconnector_strategy

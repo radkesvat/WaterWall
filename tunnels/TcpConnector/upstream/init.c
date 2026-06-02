@@ -26,6 +26,32 @@ static const tcpconnector_destination_t *selectWeightedDestination(const tcpconn
     return &ts->destinations[ts->destinations_count - 1];
 }
 
+static tcpconnector_socket_options_t getRootSocketOptions(const tcpconnector_tstate_t *ts)
+{
+    return (tcpconnector_socket_options_t) {
+        .option_tcp_no_delay  = ts->option_tcp_no_delay,
+        .option_tcp_fast_open = ts->option_tcp_fast_open,
+        .option_reuse_addr    = ts->option_reuse_addr,
+        .domain_strategy      = ts->domain_strategy,
+        .fwmark               = ts->fwmark,
+        .interface_name       = ts->interface_name,
+        .source_ip            = ts->source_ip,
+    };
+}
+
+static tcpconnector_socket_options_t getDestinationSocketOptions(const tcpconnector_destination_t *destination)
+{
+    return (tcpconnector_socket_options_t) {
+        .option_tcp_no_delay  = destination->option_tcp_no_delay,
+        .option_tcp_fast_open = destination->option_tcp_fast_open,
+        .option_reuse_addr    = destination->option_reuse_addr,
+        .domain_strategy      = destination->domain_strategy,
+        .fwmark               = destination->fwmark,
+        .interface_name       = destination->interface_name,
+        .source_ip            = destination->source_ip,
+    };
+}
+
 static void setupDestinationAddress(const dynamic_value_t *dest_addr_selected, const address_context_t *constant_dest_addr,
                                     address_context_t *dest_ctx, const address_context_t *original_dest_ctx,
                                     address_context_t *src_ctx)
@@ -67,35 +93,37 @@ static void setupDestinationPort(const dynamic_value_t *dest_port_selected, cons
     }
 }
 
-static const char *getSourceBindIp(const tcpconnector_tstate_t *ts, char *interface_ip, size_t interface_ip_len)
+static const char *getSourceBindIp(const tcpconnector_socket_options_t *socket_options, char *interface_ip,
+                                   size_t interface_ip_len)
 {
-    if (ts->source_ip != NULL)
+    if (socket_options->source_ip != NULL)
     {
-        return ts->source_ip;
+        return socket_options->source_ip;
     }
 
-    if (ts->interface_name == NULL || socketOptionBindToDeviceSupported())
+    if (socket_options->interface_name == NULL || socketOptionBindToDeviceSupported())
     {
         return NULL;
     }
 
-    if (! getInterfaceIpString(ts->interface_name, interface_ip, interface_ip_len))
+    if (! getInterfaceIpString(socket_options->interface_name, interface_ip, interface_ip_len))
     {
-        LOGE("TcpConnector: could not get interface \"%s\" ip", ts->interface_name);
+        LOGE("TcpConnector: could not get interface \"%s\" ip", socket_options->interface_name);
         return NULL;
     }
 
     return interface_ip;
 }
 
-static bool bindSourceIpIfNeeded(int sockfd, int addr_type, const tcpconnector_tstate_t *ts)
+static bool bindSourceIpIfNeeded(int sockfd, int addr_type, const tcpconnector_socket_options_t *socket_options)
 {
     char        interface_ip[INET_ADDRSTRLEN] = {0};
-    const char *source_ip = getSourceBindIp(ts, interface_ip, sizeof(interface_ip));
+    const char *source_ip = getSourceBindIp(socket_options, interface_ip, sizeof(interface_ip));
 
     if (source_ip == NULL)
     {
-        if (ts->source_ip == NULL && ts->interface_name != NULL && ! socketOptionBindToDeviceSupported())
+        if (socket_options->source_ip == NULL && socket_options->interface_name != NULL &&
+            ! socketOptionBindToDeviceSupported())
         {
             return false;
         }
@@ -202,7 +230,8 @@ static bool tcpconnectorApplyResolvedAddress(address_context_t *dest_ctx, const 
     return true;
 }
 
-static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate_t *ls, uint64_t outbound_ip_range)
+static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate_t *ls, uint64_t outbound_ip_range,
+                                     const tcpconnector_socket_options_t *socket_options)
 {
     tcpconnector_tstate_t *ts       = tunnelGetState(t);
     address_context_t    *dest_ctx = &(l->routing_context.dest_ctx);
@@ -232,41 +261,41 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
         goto fail;
     }
 
-    if (ts->option_tcp_no_delay)
+    if (socket_options->option_tcp_no_delay)
     {
         tcpNoDelay(sockfd, 1);
     }
 
-    if (socketOptionBindToDevice(sockfd, ts->interface_name) != 0)
+    if (socketOptionBindToDevice(sockfd, socket_options->interface_name) != 0)
     {
         LOGE("TcpConnector: setsockopt SO_BINDTODEVICE error");
         goto fail;
     }
 
 #ifdef TCP_FASTOPEN
-    if (ts->option_tcp_fast_open)
+    if (socket_options->option_tcp_fast_open)
     {
         const int yes = 1;
         setsockopt(sockfd, IPPROTO_TCP, TCP_FASTOPEN, (const char *) &yes, sizeof(yes));
     }
 #endif
 
-    if (ts->fwmark != kFwMarkInvalid)
+    if (socket_options->fwmark != kFwMarkInvalid)
     {
-        if (socketOptionSetFwMark(sockfd, ts->fwmark) < 0)
+        if (socketOptionSetFwMark(sockfd, socket_options->fwmark) < 0)
         {
             LOGE("TcpConnector: setsockopt SO_MARK error");
             goto fail;
         }
     }
 
-    if (ts->option_reuse_addr && socketOptionReuseAddr(sockfd, 1) != 0)
+    if (socket_options->option_reuse_addr && socketOptionReuseAddr(sockfd, 1) != 0)
     {
         LOGE("TcpConnector: set socket reuseaddr failed");
         goto fail;
     }
 
-    if (! bindSourceIpIfNeeded(sockfd, addr_type, ts))
+    if (! bindSourceIpIfNeeded(sockfd, addr_type, socket_options))
     {
         goto fail;
     }
@@ -347,8 +376,7 @@ static void tcpconnectorOnDnsResolved(void *userdata, int status, const char *er
         return;
     }
 
-    tcpconnector_tstate_t *ts       = tunnelGetState(t);
-    address_context_t    *dest_ctx = &(l->routing_context.dest_ctx);
+    address_context_t *dest_ctx = &(l->routing_context.dest_ctx);
 
     const char *domain = dest_ctx->domain != NULL ? dest_ctx->domain : "<unknown>";
 
@@ -363,7 +391,8 @@ static void tcpconnectorOnDnsResolved(void *userdata, int status, const char *er
         return;
     }
 
-    const dns_resolved_addr_t *selected = tcpconnectorSelectResolvedAddress(addrs, naddrs, ts->domain_strategy);
+    const dns_resolved_addr_t *selected =
+        tcpconnectorSelectResolvedAddress(addrs, naddrs, request->socket_options.domain_strategy);
     if (! tcpconnectorApplyResolvedAddress(dest_ctx, selected))
     {
         LOGE("TcpConnector: async dns resolve returned no usable address for %s", domain);
@@ -381,14 +410,16 @@ static void tcpconnectorOnDnsResolved(void *userdata, int status, const char *er
         LOGD("TcpConnector: %s resolved to %s", domain, SOCKADDR_STR(&resolved_addr, ip));
     }
 
-    uint64_t outbound_ip_range = request->outbound_ip_range;
+    uint64_t                      outbound_ip_range = request->outbound_ip_range;
+    tcpconnector_socket_options_t socket_options    = request->socket_options;
     memoryFree(request);
 
-    discard tcpconnectorBeginConnect(t, l, ls, outbound_ip_range);
+    discard tcpconnectorBeginConnect(t, l, ls, outbound_ip_range, &socket_options);
     lineUnlock(l);
 }
 
-static bool tcpconnectorStartDnsResolve(tunnel_t *t, line_t *l, tcpconnector_lstate_t *ls, uint64_t outbound_ip_range)
+static bool tcpconnectorStartDnsResolve(tunnel_t *t, line_t *l, tcpconnector_lstate_t *ls, uint64_t outbound_ip_range,
+                                        const tcpconnector_socket_options_t *socket_options)
 {
     address_context_t *dest_ctx = &(l->routing_context.dest_ctx);
 
@@ -409,6 +440,7 @@ static bool tcpconnectorStartDnsResolve(tunnel_t *t, line_t *l, tcpconnector_lst
         .tunnel            = t,
         .line              = l,
         .outbound_ip_range = outbound_ip_range,
+        .socket_options    = *socket_options,
         .cancelled         = false,
     };
 
@@ -448,6 +480,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     const dynamic_value_t    *dest_port_selected = &ts->dest_port_selected;
     const address_context_t  *constant_dest_addr = &ts->constant_dest_addr;
     uint64_t                  outbound_ip_range  = ts->outbound_ip_range;
+    tcpconnector_socket_options_t socket_options = getRootSocketOptions(ts);
     const tcpconnector_destination_t *selected_destination = selectWeightedDestination(ts);
 
     if (selected_destination != NULL)
@@ -456,6 +489,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         dest_port_selected = &selected_destination->dest_port_selected;
         constant_dest_addr = &selected_destination->constant_dest_addr;
         outbound_ip_range  = selected_destination->outbound_ip_range;
+        socket_options     = getDestinationSocketOptions(selected_destination);
     }
 
     address_context_t original_dest_ctx = {0};
@@ -463,6 +497,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     setupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, &original_dest_ctx, src_ctx);
     setupDestinationPort(dest_port_selected, constant_dest_addr, dest_ctx, &original_dest_ctx, src_ctx);
+    addresscontextSetDomainStrategy(dest_ctx, (enum domain_strategy) socket_options.domain_strategy);
     addresscontextReset(&original_dest_ctx);
 
     if (! addresscontextHasPort(dest_ctx))
@@ -475,14 +510,14 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     // DNS/connect completion keep using the normal pre-connect write queue.
     if (! dest_ctx->type_ip)
     {
-        if (! tcpconnectorStartDnsResolve(t, l, ls, outbound_ip_range))
+        if (! tcpconnectorStartDnsResolve(t, l, ls, outbound_ip_range, &socket_options))
         {
             goto fail;
         }
         return;
     }
 
-    if (! tcpconnectorBeginConnect(t, l, ls, outbound_ip_range))
+    if (! tcpconnectorBeginConnect(t, l, ls, outbound_ip_range, &socket_options))
     {
         return;
     }

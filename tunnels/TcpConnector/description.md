@@ -46,17 +46,28 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
       {
         "address": "192.0.2.10",
         "port": 443,
-        "weight": 5
+        "weight": 5,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false,
+        "fwmark": 10,
+        "interface": "eth0",
+        "source-ip": "192.0.2.10",
+        "domain-strategy": 1
       },
       {
         "address": "198.51.100.20",
         "port": "dest_context->port",
-        "weight": 1
+        "weight": 1,
+        "interface": "eth1",
+        "source-ip": "198.51.100.10"
       }
     ],
     "nodelay": true,
     "fastopen": false,
-    "reuseaddr": false
+    "reuseaddr": false,
+    "fwmark": -1,
+    "domain-strategy": 0
   }
 }
 ```
@@ -120,6 +131,17 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
   `weight` must be a positive integer.
   Each new line chooses exactly one element from the array, with probability proportional to its weight.
 
+  Each object may also contain its own:
+  - `nodelay`
+  - `fastopen`
+  - `reuseaddr`
+  - `fwmark`
+  - `interface`
+  - `source-ip`
+  - `domain-strategy`
+
+  If any of these fields is omitted in an address object, the top-level value from `settings` is used as that object's default. For `interface` and `source-ip`, a per-address JSON `null` disables an inherited top-level value.
+
 ## Optional `settings` Fields
 
 - `nodelay` `(boolean)`
@@ -148,10 +170,17 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
   This is useful when the host has multiple local addresses and the default route would choose the wrong source address.
 
 - `domain-strategy` `(integer)`
-  Parsed and stored in the tunnel state.
+  Selects how domain DNS results are chosen.
   Default: `0`
 
-  Note: the current connector path does not apply this value during DNS resolution.
+  Supported values follow WaterWall's domain strategy enum:
+  - `0`: invalid/unspecified, accept either IPv4 or IPv6
+  - `1`: prefer IPv4
+  - `2`: prefer IPv6
+  - `3`: only IPv4
+  - `4`: only IPv6
+
+When `addresses` is used, these optional fields can be set at the top level as defaults and overridden independently by each address object.
 
 ## Detailed Behavior
 
@@ -181,12 +210,13 @@ The same is true for `port`.
 
 When `addresses` is used, the same selection rules apply inside each array element.
 The connector first picks one destination object by weight, then resolves that chosen object's `address` and `port` for the line.
+The chosen object's socket options and `domain-strategy` are used for that line; omitted option fields inherit the top-level defaults.
 
 This makes `TcpConnector` useful in chains where earlier nodes decode or rewrite routing information. For example, a protocol-aware node can fill `dest_context`, and `TcpConnector` can connect to that decoded target.
 
 ### Domain resolution
 
-If the selected destination is a domain name, the connector resolves it synchronously during upstream `init`. If resolution fails, the line is finished immediately and no outbound connection is created.
+If the selected destination is a domain name, the connector resolves it asynchronously after upstream `init`. Payloads that arrive while DNS or connect is pending are kept in the normal pre-connect write queue. If resolution fails, the line is finished and no outbound connection is created.
 
 ### Subnet randomization on constant IP addresses
 
@@ -217,6 +247,8 @@ After the destination is ready, `TcpConnector` creates a TCP socket and may appl
 - `SO_BINDTODEVICE` when `interface` is set and the platform supports it
 - `bind(source-ip, 0)` when `source-ip` is set
 
+For weighted `addresses`, these options are taken from the selected address object after applying top-level defaults.
+
 ### Data flow direction
 
 - Previous node to remote server: upstream payload -> socket write
@@ -243,6 +275,5 @@ Each outbound connection is tracked in an idle table with a timeout of about `30
 ## Notes And Caveats
 
 - This node is meant to be used as an outbound chain end.
-- `domain-strategy` is currently stored but not actively used by the connector path.
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
-- DNS resolution in this path is synchronous.
+- DNS resolution in this path is asynchronous.

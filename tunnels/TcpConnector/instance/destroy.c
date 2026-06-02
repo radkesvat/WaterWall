@@ -6,7 +6,10 @@ void tcpconnectorTunnelDestroy(tunnel_t *t)
 {
     tcpconnector_tstate_t *ts = tunnelGetState(t);
 
-    idletableDestroy(ts->idle_table);
+    if (ts->idle_table != NULL)
+    {
+        idletableDestroy(ts->idle_table);
+    }
 
     if (ts->destinations != NULL)
     {

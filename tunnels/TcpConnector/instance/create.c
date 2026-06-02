@@ -18,7 +18,7 @@ static void initializeTunnelCallbacks(tunnel_t *t)
 
 static bool parseBasicSettings(tcpconnector_tstate_t *state, const cJSON *settings)
 {
-    if (!checkJsonIsObjectAndHasChild(settings))
+    if (! checkJsonIsObjectAndHasChild(settings))
     {
         LOGF("JSON Error: TcpConnector->settings (object field) : The object was empty or invalid");
         return false;
@@ -28,6 +28,74 @@ static bool parseBasicSettings(tcpconnector_tstate_t *state, const cJSON *settin
     getBoolFromJsonObjectOrDefault(&(state->option_tcp_fast_open), settings, "fastopen", false);
     getBoolFromJsonObjectOrDefault(&(state->option_reuse_addr), settings, "reuseaddr", false);
     getIntFromJsonObjectOrDefault(&(state->domain_strategy), settings, "domain-strategy", 0);
+    getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", kFwMarkInvalid);
+    getStringFromJsonObject(&(state->interface_name), settings, "interface");
+    getStringFromJsonObject(&(state->source_ip), settings, "source-ip");
+    if (state->source_ip != NULL && ! addressIsIp(state->source_ip))
+    {
+        LOGF("JSON Error: TcpConnector->settings->source-ip (string field) : The value must be a valid IP address");
+        memoryFree(state->source_ip);
+        state->source_ip = NULL;
+        return false;
+    }
+
+    return true;
+}
+
+static bool parseDestinationStringOption(char **dest, const cJSON *settings, const char *key,
+                                         const char *default_value, const char *error_path)
+{
+    assert(*dest == NULL);
+
+    const cJSON *jstr = cJSON_GetObjectItemCaseSensitive(settings, key);
+    if (jstr == NULL)
+    {
+        *dest = stringDuplicate(default_value);
+        return default_value == NULL || *dest != NULL;
+    }
+
+    if (cJSON_IsNull(jstr))
+    {
+        return true;
+    }
+
+    if (! cJSON_IsString(jstr) || jstr->valuestring == NULL)
+    {
+        LOGF("JSON Error: %s->%s (string or null field) : The value was invalid", error_path, key);
+        return false;
+    }
+
+    *dest = stringDuplicate(jstr->valuestring);
+    return *dest != NULL;
+}
+
+static bool parseDestinationSocketOptions(tcpconnector_destination_t *destination,
+                                          const tcpconnector_tstate_t *state, const cJSON *settings,
+                                          const char *error_path)
+{
+    getBoolFromJsonObjectOrDefault(&destination->option_tcp_no_delay, settings, "nodelay",
+                                   state->option_tcp_no_delay);
+    getBoolFromJsonObjectOrDefault(&destination->option_tcp_fast_open, settings, "fastopen",
+                                   state->option_tcp_fast_open);
+    getBoolFromJsonObjectOrDefault(&destination->option_reuse_addr, settings, "reuseaddr",
+                                   state->option_reuse_addr);
+    getIntFromJsonObjectOrDefault(&destination->fwmark, settings, "fwmark", state->fwmark);
+    getIntFromJsonObjectOrDefault(&destination->domain_strategy, settings, "domain-strategy",
+                                  state->domain_strategy);
+
+    if (! parseDestinationStringOption(&destination->interface_name, settings, "interface", state->interface_name,
+                                       error_path) ||
+        ! parseDestinationStringOption(&destination->source_ip, settings, "source-ip", state->source_ip,
+                                       error_path))
+    {
+        return false;
+    }
+
+    if (destination->source_ip != NULL && ! addressIsIp(destination->source_ip))
+    {
+        LOGF("JSON Error: %s->source-ip (string field) : The value must be a valid IP address", error_path);
+        return false;
+    }
 
     return true;
 }
@@ -256,7 +324,8 @@ static bool parseDestinationArray(tcpconnector_tstate_t *state, const cJSON *set
                                       &destination->outbound_ip_range, entry, error_path) ||
             ! parseDestinationPort(&destination->dest_port_selected, &destination->constant_dest_addr, entry,
                                    error_path) ||
-            ! parseDestinationWeight(entry, index, &destination->weight))
+            ! parseDestinationWeight(entry, index, &destination->weight) ||
+            ! parseDestinationSocketOptions(destination, state, entry, error_path))
         {
             cleanupDestinationArray(state);
             return false;
@@ -277,8 +346,9 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     tcpconnector_tstate_t *state = tunnelGetState(t);
     const cJSON *settings = node->node_settings_json;
 
-    if (!parseBasicSettings(state, settings))
+    if (! parseBasicSettings(state, settings))
     {
+        tcpconnectorTunnelDestroy(t);
         return NULL;
     }
 
@@ -286,6 +356,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     {
         if (! parseDestinationArray(state, settings))
         {
+            tcpconnectorTunnelDestroy(t);
             return NULL;
         }
     }
@@ -294,25 +365,16 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
         if (! parseDestinationAddress(&state->dest_addr_selected, &state->constant_dest_addr,
                                       &state->outbound_ip_range, settings, "TcpConnector->settings"))
         {
+            tcpconnectorTunnelDestroy(t);
             return NULL;
         }
 
         if (! parseDestinationPort(&state->dest_port_selected, &state->constant_dest_addr, settings,
                                    "TcpConnector->settings"))
         {
+            tcpconnectorTunnelDestroy(t);
             return NULL;
         }
-    }
-
-    getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", kFwMarkInvalid);
-    getStringFromJsonObject(&(state->interface_name), settings, "interface");
-    getStringFromJsonObject(&(state->source_ip), settings, "source-ip");
-    if (state->source_ip != NULL && ! addressIsIp(state->source_ip))
-    {
-        LOGF("JSON Error: TcpConnector->settings->source-ip (string field) : The value must be a valid IP address");
-        memoryFree(state->source_ip);
-        state->source_ip = NULL;
-        return NULL;
     }
 
     state->idle_table = idleTableCreate(getWorkerLoop(getWID()));
