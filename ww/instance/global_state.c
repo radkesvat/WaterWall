@@ -502,10 +502,11 @@ void runMainThread(void)
 void finishGlobalState(void)
 {
     // its not important which thread called this, at this point only 1 thread is running
+    const int exit_code = signalmanagerGetExitCode();
     atomicThreadFence(memory_order_seq_cst);
     destroyGlobalState();
 
-    exit(0);
+    exit(exit_code);
 }
 
 void initTcpIpStack(void)

@@ -25,6 +25,7 @@ typedef struct signal_manager_s
     signal_handler_t handlers[kMaxSigHandles];
     unsigned int     handlers_len;
     unsigned int     current_handler_index;
+    atomic_int       exit_code;
     wmutex_t         mutex;
     uint32_t         started : 1;
     uint32_t         raise_defaults : 1;
@@ -92,3 +93,6 @@ void removeAtExitCallBack(SignalHandler handle, void *userdata);
 // void terminateProgram(int exit_code); in wlibc.h
 
 bool signalmanagerIsTerminating(void);
+
+void signalmanagerSetExitCode(int exit_code);
+int  signalmanagerGetExitCode(void);

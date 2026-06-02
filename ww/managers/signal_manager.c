@@ -161,6 +161,26 @@ static void proceedWithNextExitHandler(void)
     }
 }
 
+void signalmanagerSetExitCode(int exit_code)
+{
+    if (signalmanager_gstate == NULL)
+    {
+        return;
+    }
+
+    atomicStoreExplicit(&signalmanager_gstate->exit_code, exit_code, memory_order_release);
+}
+
+int signalmanagerGetExitCode(void)
+{
+    if (signalmanager_gstate == NULL)
+    {
+        return 0;
+    }
+
+    return (int) atomicLoadExplicit(&signalmanager_gstate->exit_code, memory_order_acquire);
+}
+
 /**
  * @brief Execute all registered shutdown callbacks once.
  */
@@ -171,7 +191,7 @@ static void exitHandler(void)
         const char *msg     = "SignalManager: Finished\n";
         int         written = write(STDOUT_FILENO, msg, stringLength(msg));
         discard     written;
-        exit(1);
+        _Exit(signalmanagerGetExitCode());
         return;
     }
 
@@ -179,7 +199,6 @@ static void exitHandler(void)
     discard written;
 
     atomicStoreExplicit(&GSTATE.application_stopping_flag, true, memory_order_release);
-
 
     proceedWithNextExitHandler();
 }
@@ -202,8 +221,9 @@ static BOOL WINAPI CtrlHandler(_In_ DWORD CtrlType)
     {
     case CTRL_C_EVENT:
     case CTRL_BREAK_EVENT:
+        signalmanagerSetExitCode(130);
         exitHandler();
-        _Exit(0);
+        _Exit(130);
         break;
 
     case CTRL_CLOSE_EVENT:
@@ -229,6 +249,8 @@ static void multiplexedSignalHandler(int signum)
 
     const char *name = signalName(signum);
     int         written;
+    const int   exit_code      = 128 + signum;
+    bool        raise_defaults = true;
 
     written = write(STDOUT_FILENO, prefix, sizeof(prefix) - 1);
     discard written;
@@ -237,10 +259,26 @@ static void multiplexedSignalHandler(int signum)
     written = write(STDOUT_FILENO, suffix, sizeof(suffix) - 1);
     discard written;
 
-    if (signalmanager_gstate == NULL || signalmanager_gstate->raise_defaults)
+    if (signalmanager_gstate != NULL)
+    {
+        raise_defaults = signalmanager_gstate->raise_defaults;
+        signalmanagerSetExitCode(exit_code);
+    }
+
+    if (raise_defaults)
     {
         signal(signum, SIG_DFL);
     }
+
+    if (signalmanager_gstate == NULL)
+    {
+        if (raise_defaults)
+        {
+            raise(signum);
+        }
+        _Exit(exit_code);
+    }
+
     // if (signum == SIGABRT)
     // {
     //     // assert fails in the handler, so we need to exit here
@@ -252,12 +290,17 @@ static void multiplexedSignalHandler(int signum)
     exitHandler();
 
     // allowing normal exit
-    if (signalmanager_gstate->raise_defaults)
+    if (raise_defaults)
     {
         raise(signum);
     }
 
-    _Exit(128 + signum);
+    int final_exit_code = signalmanagerGetExitCode();
+    if (final_exit_code == 0)
+    {
+        final_exit_code = exit_code;
+    }
+    _Exit(final_exit_code);
 }
 
 /**
@@ -399,6 +442,7 @@ signal_manager_t *signalmanagerCreate(void)
 
     *signalmanager_gstate = (signal_manager_t) {.handlers_len   = 0,
                                                 .current_handler_index = 0,
+                                                .exit_code             = 0,
                                                 .started        = false,
                                                 .raise_defaults = true,
                                                 .handle_sigint  = true,
@@ -445,6 +489,8 @@ _Noreturn void terminateProgram(int exit_code)
 
     if (signalmanager_gstate)
     {
+        signalmanagerSetExitCode(exit_code);
+
         if (exit_code == 0)
         {
             printError("SignalManager: Terminating program with exit-code 0 after successful completion\n");
