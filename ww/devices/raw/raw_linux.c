@@ -17,9 +17,9 @@
 enum
 {
     kMaxWriteablePacketSize  = 1500,
-    kRawWriteChannelQueueMax = 8192 * 2,
-    kBatchSize               = 64,
-    kMaxDrain                = 63 //(kBatchSize - 1)
+    kRawWriteChannelQueueMax = 1024 * 64,
+    kBatchSize               = 512,
+    kMaxDrain                = 511 //(kBatchSize - 1)
 };
 
 static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT

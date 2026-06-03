@@ -32,8 +32,8 @@
 
 enum
 {
-    kTunWriteChannelQueueMax    = 4096,
-    kMaxReadDistributeQueueSize = 128
+    kTunWriteChannelQueueMax    = 1024 * 64,
+    kMaxReadDistributeQueueSize = 512
 };
 
 static inline uint16_t tunDeviceMtu(const tun_device_t *tdev)
@@ -314,7 +314,7 @@ static void distributePacketPayloads(tun_device_t *tdev, wid_t target_wid, sbuf_
 // returns 1 to continue, 0 on EOF (caller should exit), -1 on other errors (caller may continue)
 static int tunDrainPackets(tun_device_t *tdev)
 {
-    uint8_t  queued_count = 0;
+    uint16_t queued_count = 0;
     sbuf_t  *bufs[kMaxReadDistributeQueueSize];
     uint32_t read_size = tunDeviceMtu(tdev);
 
@@ -799,7 +799,7 @@ bool tundeviceAddRoute(tun_device_t *tdev, const char *cidr, const char *route_t
         return false;
     }
 
-    const char *family = stringChr(cidr, ':') != NULL ? "-inet6" : "-inet";
+    const char       *family = stringChr(cidr, ':') != NULL ? "-inet6" : "-inet";
     const char *const argv[] = {"route", "-n", "add", family, cidr, "-interface", tdev->name, NULL};
     if (tunRunCommand("route", argv) != 0)
     {
@@ -853,7 +853,7 @@ bool tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *rout
         return false;
     }
 
-    const char *family = stringChr(cidr, ':') != NULL ? "-inet6" : "-inet";
+    const char       *family = stringChr(cidr, ':') != NULL ? "-inet6" : "-inet";
     const char *const argv[] = {"route", "-n", "delete", family, cidr, "-interface", tdev->name, NULL};
     if (tunRunCommand("route", argv) != 0)
     {
@@ -963,7 +963,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
 tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb)
 {
     discard offload; // todo (send/receive offloading)
-    
+
     if (mtu <= 16)
     {
         LOGE("TunDevice: Invalid MTU size: %u", mtu);

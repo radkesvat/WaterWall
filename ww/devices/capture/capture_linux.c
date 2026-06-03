@@ -2,8 +2,8 @@
 #include "generic_pool.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
-#include "wproc.h"
 #include "worker.h"
+#include "wproc.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -29,9 +29,9 @@
 enum
 {
     kReadPacketSize             = 1500, // its ok to be >= mtu
-    kMaxReadDistributeQueueSize = 128,
+    kMaxReadDistributeQueueSize = 512,
     kEthDataLen                 = 1500,
-    kNetfilterQueueLen          = 16384 * 32
+    kNetfilterQueueLen          = 16384 * 64
 };
 
 static const char *sysctl_set_rmem_max     = "net.core.rmem_max=67108864";
@@ -55,8 +55,13 @@ static uint8_t capturedeviceIpv4MaskPrefixLength(const ip_addr_t *mask)
 
 static void capturedeviceFormatIpv4(uint32_t addr_host, char *dest, size_t dest_len)
 {
-    stringNPrintf(dest, dest_len, "%u.%u.%u.%u", (addr_host >> 24U) & 0xFFU, (addr_host >> 16U) & 0xFFU,
-                  (addr_host >> 8U) & 0xFFU, addr_host & 0xFFU);
+    stringNPrintf(dest,
+                  dest_len,
+                  "%u.%u.%u.%u",
+                  (addr_host >> 24U) & 0xFFU,
+                  (addr_host >> 16U) & 0xFFU,
+                  (addr_host >> 8U) & 0xFFU,
+                  addr_host & 0xFFU);
 }
 
 static void capturedeviceFormatCidr(const ipmask_t *range, char *dest, size_t dest_len)
@@ -81,8 +86,7 @@ static void capturedeviceFormatCommand(const char *const argv[], char *dest, siz
 
     for (size_t i = 0; argv[i] != NULL && offset < dest_len; ++i)
     {
-        int written =
-            stringNPrintf(dest + offset, dest_len - offset, "%s%s", i == 0 ? "" : " ", argv[i]);
+        int written = stringNPrintf(dest + offset, dest_len - offset, "%s%s", i == 0 ? "" : " ", argv[i]);
         if (written < 0)
         {
             break;
@@ -151,7 +155,7 @@ static int capturedeviceRunCommand(const char *command_name, const char *const a
 static void capturedeviceSetSysctl(const char *setting)
 {
     const char *const argv[] = {"sysctl", "-w", setting, NULL};
-    discard capturedeviceRunCommand("sysctl", argv);
+    discard           capturedeviceRunCommand("sysctl", argv);
 }
 
 static bool capturedeviceRunIptablesQueueRule(const char *operation, const char *cidr, uint32_t queue_number)
@@ -159,8 +163,8 @@ static bool capturedeviceRunIptablesQueueRule(const char *operation, const char 
     char queue_number_arg[16];
     stringNPrintf(queue_number_arg, sizeof(queue_number_arg), "%u", queue_number);
 
-    const char *const argv[] = {"iptables", operation, "INPUT", "-s", cidr, "-j", "NFQUEUE", "--queue-num",
-                                queue_number_arg, NULL};
+    const char *const argv[] = {
+        "iptables", operation, "INPUT", "-s", cidr, "-j", "NFQUEUE", "--queue-num", queue_number_arg, NULL};
     return capturedeviceRunCommand("iptables", argv) == 0;
 }
 
@@ -349,8 +353,8 @@ static bool netfilterSetConfig(int netfilter_socket, uint8_t cmd, uint16_t qnum,
 static bool netfilterSetParams(int netfilter_socket, uint16_t qnumber, uint8_t mode, uint32_t range)
 {
     struct nfqnl_msg_config_params nl_params = {.copy_mode = mode, .copy_range = htonl(range)};
-    return netfilterSendMessage(netfilter_socket, NFQNL_MSG_CONFIG, NFQA_CFG_PARAMS, qnumber, true, &nl_params,
-                                sizeof(nl_params));
+    return netfilterSendMessage(
+        netfilter_socket, NFQNL_MSG_CONFIG, NFQA_CFG_PARAMS, qnumber, true, &nl_params, sizeof(nl_params));
 }
 
 /*
@@ -358,8 +362,8 @@ static bool netfilterSetParams(int netfilter_socket, uint16_t qnumber, uint8_t m
  */
 static bool netfilterSetQueueLength(int netfilter_socket, uint16_t qnumber, uint32_t qlen)
 {
-    return netfilterSendMessage(netfilter_socket, NFQNL_MSG_CONFIG, NFQA_CFG_QUEUE_MAXLEN, qnumber, true, &qlen,
-                                sizeof(qlen));
+    return netfilterSendMessage(
+        netfilter_socket, NFQNL_MSG_CONFIG, NFQA_CFG_QUEUE_MAXLEN, qnumber, true, &qlen, sizeof(qlen));
 }
 
 /*
@@ -461,8 +465,8 @@ static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, sbuf_t *bu
     struct nfqnl_msg_verdict_hdr nl_verdict;
     nl_verdict.verdict = htonl(NF_DROP);
     nl_verdict.id      = nl_pkt_hdr->packet_id;
-    if (! netfilterSendMessage(netfilter_socket, NFQNL_MSG_VERDICT, NFQA_VERDICT_HDR, qnumber, false, &nl_verdict,
-                               sizeof(nl_verdict)))
+    if (! netfilterSendMessage(
+            netfilter_socket, NFQNL_MSG_VERDICT, NFQA_VERDICT_HDR, qnumber, false, &nl_verdict, sizeof(nl_verdict)))
     {
         return -1;
     }
@@ -529,15 +533,18 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
             socklen_t err_len      = sizeof(socket_error);
             getsockopt(cdev->socket, SOL_SOCKET, SO_ERROR, &socket_error, &err_len);
             LOGE("CaptureDevice: Exit read routine due to socket error event: %s%s%s, socket error: %d (%s)",
-                 (fds[0].revents & POLLERR) ? "POLLERR " : "", (fds[0].revents & POLLHUP) ? "POLLHUP " : "",
-                 (fds[0].revents & POLLNVAL) ? "POLLNVAL " : "", socket_error, strerror(socket_error));
+                 (fds[0].revents & POLLERR) ? "POLLERR " : "",
+                 (fds[0].revents & POLLHUP) ? "POLLHUP " : "",
+                 (fds[0].revents & POLLNVAL) ? "POLLNVAL " : "",
+                 socket_error,
+                 strerror(socket_error));
             break;
         }
 
         if (fds[0].revents & POLLIN)
         {
-            uint8_t queued_count = 0;
-            sbuf_t *bufs[kMaxReadDistributeQueueSize];
+            uint16_t queued_count = 0;
+            sbuf_t  *bufs[kMaxReadDistributeQueueSize];
 
             // Drain multiple packets while the socket remains readable
             for (uint32_t i = 0; i < RAM_PROFILE && queued_count < kMaxReadDistributeQueueSize; ++i)
@@ -575,7 +582,8 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
                     {
                         break;
                     }
-                    LOGW("CaptureDevice: failed to read a packet from netfilter socket, errno is %d (%s)", saved_errno,
+                    LOGW("CaptureDevice: failed to read a packet from netfilter socket, errno is %d (%s)",
+                         saved_errno,
                          strerror(saved_errno));
                     // On other errors, also go back to poll to avoid a tight loop
                     break;
@@ -586,7 +594,8 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
                 {
                     // we are capturing packets and this can happen, so we just log it
                     LOGW("CaptureDevice: ReadThread: discarded a packet -> size %d exceeds kMaxAllowedPacketLength %d",
-                         sbufGetLength(bufs[queued_count]), kMaxAllowedPacketLength);
+                         sbufGetLength(bufs[queued_count]),
+                         kMaxAllowedPacketLength);
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     continue;
                 }
@@ -604,7 +613,8 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
         // If we get here, poll returned > 0 but none of our expected events occurred
         LOGE("CaptureDevice: Exit read routine due to unexpected poll events - fd[0].revents=0x%x, fd[1].revents=0x%x",
-             fds[0].revents, fds[1].revents);
+             fds[0].revents,
+             fds[1].revents);
         return 0;
     }
 
@@ -665,8 +675,8 @@ bool caputredeviceBringDown(capture_device_t *cdev)
     return true;
 }
 
-capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
-                                      uint32_t capture_range_count, void *userdata, CaptureReadEventHandle cb)
+capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,
+                                      void *userdata, CaptureReadEventHandle cb)
 {
     if (capture_ranges == NULL || capture_range_count == 0)
     {
@@ -785,12 +795,13 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         return NULL;
     }
 
-    buffer_pool_t *reader_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
-                         bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
-                         bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
+    buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+                                                   GSTATE.masterpool_buffer_pools_small,
+                                                   RAM_PROFILE,
+                                                   bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
+                                                   bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
 
-        );
+    );
 
     capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
 
