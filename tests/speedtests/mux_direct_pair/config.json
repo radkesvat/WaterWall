@@ -42,7 +42,8 @@
       "type": "SpeedTestServer",
       "settings": {
         "report-interval-ms": 1000,
-        "json-summary": true
+        "json-summary": true,
+        "quiet": false
       }
     }
   ]

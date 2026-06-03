@@ -12,7 +12,7 @@ void speedtestserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     }
     else if (ls->hello_received)
     {
-        if (ls->upload && ! ls->receiver_finished)
+        if (ls->upload && ! ls->receiver_finished && speedtestserverLogsEnabled(t))
         {
             LOGW("SpeedTestServer: stream %u closed before upload END", (unsigned int) ls->stream_id);
         }

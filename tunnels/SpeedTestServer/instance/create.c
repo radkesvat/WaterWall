@@ -35,6 +35,7 @@ tunnel_t *speedtestserverTunnelCreate(node_t *node)
 
     mutexInit(&state->aggregate_mutex);
     getBoolFromJsonObjectOrDefault(&state->json_summary, settings, "json-summary", false);
+    getBoolFromJsonObjectOrDefault(&state->quiet, settings, "quiet", false);
     getIntFromJsonObjectOrDefault(&report_interval_ms, settings, "report-interval-ms",
                                   kSpeedTestServerDefaultIntervalMs);
 
@@ -49,4 +50,3 @@ tunnel_t *speedtestserverTunnelCreate(node_t *node)
     atomicStoreRelaxed(&state->completed_streams, 0);
     return t;
 }
-

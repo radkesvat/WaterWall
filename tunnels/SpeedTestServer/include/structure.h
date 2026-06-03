@@ -74,6 +74,7 @@ typedef struct speedtestserver_tstate_s
 {
     uint32_t report_interval_ms;
     bool     json_summary;
+    bool     quiet;
     wmutex_t aggregate_mutex;
     speedtestserver_stats_t aggregate_sender;
     speedtestserver_stats_t aggregate_receiver;
@@ -149,6 +150,7 @@ uint64_t speedtestserverNowUs(void);
 uint16_t speedtestserverBaseFlags(const speedtestserver_lstate_t *ls);
 void speedtestserverFormatBytes(uint64_t bytes, char *out, size_t out_len);
 void speedtestserverFormatBitrate(double bits_per_sec, char *out, size_t out_len);
+bool speedtestserverLogsEnabled(tunnel_t *t);
 void speedtestserverWriteHeader(uint8_t *ptr, uint8_t type, uint16_t flags, uint32_t stream_id, uint32_t payload_len,
                                 uint64_t sequence, uint64_t timestamp_us, uint64_t aux1, uint64_t aux2);
 bool speedtestserverReadHeader(const uint8_t *ptr, size_t len, speedtestserver_frame_t *frame);
@@ -165,4 +167,3 @@ void speedtestserverScheduleReport(tunnel_t *t, line_t *l, speedtestserver_lstat
 void speedtestserverProcessIncoming(tunnel_t *t, line_t *l, sbuf_t *buf);
 void speedtestserverMaybeComplete(tunnel_t *t, line_t *l);
 void speedtestserverFailLine(tunnel_t *t, line_t *l, const char *reason);
-

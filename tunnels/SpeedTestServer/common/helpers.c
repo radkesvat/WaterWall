@@ -101,6 +101,12 @@ void speedtestserverFormatBitrate(double bits_per_sec, char *out, size_t out_len
     stringNPrintf(out, out_len, "%.2f %s", value, units[unit]);
 }
 
+bool speedtestserverLogsEnabled(tunnel_t *t)
+{
+    speedtestserver_tstate_t *state = tunnelGetState(t);
+    return ! state->quiet;
+}
+
 void speedtestserverWriteHeader(uint8_t *ptr, uint8_t type, uint16_t flags, uint32_t stream_id, uint32_t payload_len,
                                 uint64_t sequence, uint64_t timestamp_us, uint64_t aux1, uint64_t aux2)
 {
@@ -196,10 +202,12 @@ sbuf_t *speedtestserverCreateFrame(tunnel_t *t, line_t *l, uint8_t type, uint16_
                                    uint64_t sequence, uint32_t payload_len, uint64_t timestamp_us, uint64_t aux1,
                                    uint64_t aux2)
 {
-    discard t;
     if (payload_len > UINT32_MAX - kSpeedTestServerFrameHeaderSize)
     {
-        LOGE("SpeedTestServer: frame payload is too large");
+        if (speedtestserverLogsEnabled(t))
+        {
+            LOGE("SpeedTestServer: frame payload is too large");
+        }
         return NULL;
     }
 
@@ -497,11 +505,15 @@ void speedtestserverSendTask(tunnel_t *t, line_t *l)
 
 static void speedtestserverLogInterval(tunnel_t *t, line_t *l, speedtestserver_lstate_t *ls, bool final)
 {
-    discard t;
     discard l;
     const uint64_t now_ms = speedtestserverNowMs();
     uint64_t from_ms = ls->last_report_ms;
     uint64_t to_ms = now_ms;
+
+    if (! speedtestserverLogsEnabled(t))
+    {
+        return;
+    }
 
     if (! ls->hello_received)
     {
@@ -697,10 +709,13 @@ static void speedtestserverHandleHello(tunnel_t *t, line_t *l, const speedtestse
     ls->receiver_finished = ! ls->upload;
     ls->hello_received = true;
 
-    LOGI("SpeedTestServer: stream %u accepted (%s, %s%s%s, duration=%u ms, warmup=%u ms, payload=%u bytes)",
-         (unsigned int) ls->stream_id, ls->mode == kSpeedTestServerModeUdp ? "udp" : "tcp",
-         ls->upload ? "upload" : "", (ls->upload && ls->download) ? "+" : "", ls->download ? "download" : "",
-         (unsigned int) ls->duration_ms, (unsigned int) ls->warmup_ms, (unsigned int) ls->payload_size);
+    if (speedtestserverLogsEnabled(t))
+    {
+        LOGI("SpeedTestServer: stream %u accepted (%s, %s%s%s, duration=%u ms, warmup=%u ms, payload=%u bytes)",
+             (unsigned int) ls->stream_id, ls->mode == kSpeedTestServerModeUdp ? "udp" : "tcp",
+             ls->upload ? "upload" : "", (ls->upload && ls->download) ? "+" : "", ls->download ? "download" : "",
+             (unsigned int) ls->duration_ms, (unsigned int) ls->warmup_ms, (unsigned int) ls->payload_size);
+    }
 
     if (! speedtestserverSendAck(t, l, ls))
     {
@@ -851,7 +866,7 @@ static void speedtestserverCloseLineInternal(tunnel_t *t, line_t *l, bool count_
         atomicIncRelaxed(&state->completed_streams);
     }
 
-    if (ls->json_summary)
+    if (ls->json_summary && speedtestserverLogsEnabled(t))
     {
         LOGI("SpeedTestServer: json-summary {\"stream\":%u,\"sent_bytes\":%llu,\"received_bytes\":%llu,\"lost_packets\":%llu,\"validation_errors\":%llu}",
              (unsigned int) ls->stream_id, (unsigned long long) ls->sender.bytes,
@@ -900,7 +915,10 @@ void speedtestserverFailLine(tunnel_t *t, line_t *l, const char *reason)
         return;
     }
 
-    LOGE("SpeedTestServer: stream %u failed: %s", (unsigned int) ls->stream_id, reason);
+    if (speedtestserverLogsEnabled(t))
+    {
+        LOGE("SpeedTestServer: stream %u failed: %s", (unsigned int) ls->stream_id, reason);
+    }
     ls->closing = true;
 
     sbuf_t *buf = speedtestserverCreateFrame(t, l, kSpeedTestServerFrameError, speedtestserverBaseFlags(ls),

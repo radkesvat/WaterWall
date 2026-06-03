@@ -55,7 +55,8 @@ Server side:
     "type": "SpeedTestServer",
     "settings": {
       "report-interval-ms": 1000,
-      "json-summary": true
+      "json-summary": true,
+      "quiet": false
     }
   }
 ]
@@ -165,6 +166,11 @@ Matching client side:
 - `json-summary` `(boolean)`
   Default value for JSON-style per-stream summaries. A client `HELLO` with `json-summary` enabled can also request this
   per line.
+  Default: `false`
+
+- `quiet` `(boolean)`
+  Suppresses SpeedTestServer runtime logs, including accepted-stream, interval, final summary, and per-stream failure
+  messages. Fatal configuration or invalid-chain diagnostics may still be logged.
   Default: `false`
 
 ## Detailed Behavior
