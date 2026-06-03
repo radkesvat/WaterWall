@@ -1,7 +1,7 @@
 # EncryptionServer
 
 `EncryptionServer` is the server-side counterpart of `EncryptionClient`.
-It decrypts framed AEAD traffic on upstream and encrypts downstream responses.
+It decrypts upstream traffic carried in TLS-like application-data records and encrypts downstream responses the same way.
 
 Recommended chain usage:
 
@@ -14,7 +14,7 @@ Recommended chain usage:
 - `password` (string, required): shared secret used for key derivation
 - `salt` (string, optional): key-derivation salt, default `waterwall-encryption`
 - `kdf-iterations` (number, optional): key derivation rounds, default `12000`
-- `max-frame-size` (number, optional): maximum plaintext frame size in bytes, default `65535`
+- `max-frame-size` (number, optional): maximum plaintext frame size in bytes, default `16356`
 
 ## Example
 
@@ -27,7 +27,18 @@ Recommended chain usage:
     "password": "replace-with-a-strong-secret",
     "salt": "chain-A",
     "kdf-iterations": 20000,
-    "max-frame-size": 65535
+    "max-frame-size": 16356
   }
 }
 ```
+
+## Wire Format
+
+Encrypted payloads are sent as TLS-like application-data records:
+
+- TLS record type `0x17`
+- TLS version `0x0303`
+- 16-bit record body length
+- random nonce followed by AEAD ciphertext and tag
+
+The selected algorithm is configured locally on both peers and is not exposed in the record header.

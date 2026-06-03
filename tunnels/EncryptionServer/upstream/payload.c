@@ -13,30 +13,29 @@ enum frame_read_result_e
 
 static int tryReadCompleteFrame(buffer_stream_t *stream, const encryptionserver_tstate_t *ts, sbuf_t **frame_buffer)
 {
-    if (bufferstreamGetBufLen(stream) < kEncryptionFramePrefixSize)
+    if (bufferstreamGetBufLen(stream) < kEncryptionTlsHeaderSize)
     {
         return kFrameReadNeedMore;
     }
 
-    uint8_t prefix[kEncryptionFramePrefixSize];
-    bufferstreamViewBytesAt(stream, 0, prefix, sizeof(prefix));
+    uint8_t header[kEncryptionTlsHeaderSize];
+    bufferstreamViewBytesAt(stream, 0, header, sizeof(header));
 
-    if (prefix[0] != kEncryptionFrameMagic0 || prefix[1] != kEncryptionFrameMagic1 ||
-        prefix[2] != kEncryptionFrameVersion || prefix[3] != (uint8_t) ts->algorithm)
+    if (header[0] != kEncryptionTlsApplicationData || header[1] != kEncryptionTlsVersionMajor ||
+        header[2] != kEncryptionTlsVersionMinor)
     {
         return kFrameReadInvalid;
     }
 
-    uint32_t ciphertext_len_be;
-    memoryCopy(&ciphertext_len_be, prefix + 4, sizeof(ciphertext_len_be));
-
-    uint32_t ciphertext_len = be32toh(ciphertext_len_be);
-    if (ciphertext_len < kEncryptionTagSize || ciphertext_len > ts->max_frame_payload + kEncryptionTagSize)
+    uint32_t body_len = ((uint32_t) header[3] << 8) | (uint32_t) header[4];
+    if (body_len < kEncryptionNonceSize + kEncryptionTagSize ||
+        body_len > ts->max_frame_payload + kEncryptionNonceSize + kEncryptionTagSize ||
+        body_len > kEncryptionMaxTlsRecordBody)
     {
         return kFrameReadInvalid;
     }
 
-    uint32_t frame_len = kEncryptionFramePrefixSize + ciphertext_len;
+    uint32_t frame_len = kEncryptionTlsHeaderSize + body_len;
     if (frame_len > bufferstreamGetBufLen(stream))
     {
         return kFrameReadNeedMore;
@@ -94,15 +93,14 @@ void encryptionserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         uint8_t *frame = sbufGetMutablePtr(frame_buffer);
 
-        uint32_t ciphertext_len_be;
-        memoryCopy(&ciphertext_len_be, frame + 4, sizeof(ciphertext_len_be));
-        uint32_t ciphertext_len = be32toh(ciphertext_len_be);
+        uint32_t body_len       = ((uint32_t) frame[3] << 8) | (uint32_t) frame[4];
+        uint32_t ciphertext_len = body_len - kEncryptionNonceSize;
 
-        uint8_t *nonce      = frame + kEncryptionFrameHeaderSize;
+        uint8_t *nonce      = frame + kEncryptionTlsHeaderSize;
         uint8_t *ciphertext = frame + kEncryptionFramePrefixSize;
 
         if (0 != encryptionserverDecryptAead(ts->algorithm, ciphertext, ciphertext, ciphertext_len, frame,
-                                             kEncryptionFramePrefixSize, nonce, ts->key))
+                                             kEncryptionTlsHeaderSize, nonce, ts->key))
         {
             LOGW("EncryptionServer: failed to decrypt frame, closing line");
             lineReuseBuffer(l, frame_buffer);

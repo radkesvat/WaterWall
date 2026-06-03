@@ -23,18 +23,20 @@ typedef struct encryptionserver_lstate_s
 
 enum
 {
-    kTunnelStateSize                    = sizeof(encryptionserver_tstate_t),
-    kLineStateSize                      = sizeof(encryptionserver_lstate_t),
-    kEncryptionFrameMagic0              = 'W',
-    kEncryptionFrameMagic1              = 'E',
-    kEncryptionFrameVersion             = 1,
-    kEncryptionFrameHeaderSize          = 8,
-    kEncryptionNonceSize                = 12,
-    kEncryptionTagSize                  = 16,
-    kEncryptionFramePrefixSize          = kEncryptionFrameHeaderSize + kEncryptionNonceSize,
-    kEncryptionDefaultKdfIterations     = 12000,
-    kEncryptionDefaultMaxFramePayload   = 65535,
-    kEncryptionHardMaxFramePayload      = 1024 * 1024,
+    kTunnelStateSize                  = sizeof(encryptionserver_tstate_t),
+    kLineStateSize                    = sizeof(encryptionserver_lstate_t),
+    kEncryptionTlsHeaderSize          = 5,
+    kEncryptionTlsApplicationData     = 0x17,
+    kEncryptionTlsVersionMajor        = 0x03,
+    kEncryptionTlsVersionMinor        = 0x03,
+    kEncryptionNonceSize              = 12,
+    kEncryptionTagSize                = 16,
+    kEncryptionFramePrefixSize        = kEncryptionTlsHeaderSize + kEncryptionNonceSize,
+    kEncryptionMaxTlsRecordBody       = 16384,
+    kEncryptionMaxFramePayload        = kEncryptionMaxTlsRecordBody - kEncryptionNonceSize - kEncryptionTagSize,
+    kEncryptionDefaultKdfIterations   = 12000,
+    kEncryptionDefaultMaxFramePayload = kEncryptionMaxFramePayload,
+    kEncryptionHardMaxFramePayload    = kEncryptionMaxFramePayload,
 };
 
 WW_EXPORT void         encryptionserverTunnelDestroy(tunnel_t *t);
