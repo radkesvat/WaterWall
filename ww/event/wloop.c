@@ -1262,25 +1262,6 @@ wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio
         return NULL;
     }
 
-    if (type == WIO_TYPE_UDP)
-    {
-        int size   = 4 * 1024 * 1024; // 4MB
-        int so_ret = socketOptionSendBuf(sockfd, size);
-        if (so_ret != 0)
-        {
-            printError("set socket send buffer failed, call: setsockopt , value: %d\n", so_ret);
-            closesocket(sockfd);
-            return NULL;
-        }
-        so_ret = socketOptionRecvBuf(sockfd, size);
-        if (so_ret != 0)
-        {
-            printError("set socket recv buffer failed, call: setsockopt , value: %d\n", so_ret);
-            closesocket(sockfd);
-            return NULL;
-        }
-    }
-
     wio_t *io = NULL;
     if (side == WIO_SERVER_SIDE)
     {
@@ -1364,10 +1345,57 @@ wio_t *wloopCreateUdpServer(wloop_t *loop, const char *host, int port)
 
 wio_t *wloopCreateUdpServerWithOptions(wloop_t *loop, const char *host, int port, const char *interface_name, int fwmark)
 {
-    return wioCreateSocketWithOptions(loop, host, port, WIO_TYPE_UDP, WIO_SERVER_SIDE, interface_name, fwmark);
+    return wloopCreateUdpServerWithBufferOptions(loop, host, port, interface_name, fwmark,
+                                                 kDefaultLargeSocketBufferSize, kDefaultLargeSocketBufferSize);
+}
+
+wio_t *wloopCreateUdpServerWithBufferOptions(wloop_t *loop, const char *host, int port, const char *interface_name,
+                                             int fwmark, int send_buffer_size, int recv_buffer_size)
+{
+    wio_t *io = wioCreateSocketWithOptions(loop, host, port, WIO_TYPE_UDP, WIO_SERVER_SIDE, interface_name, fwmark);
+    if (io == NULL)
+    {
+        return NULL;
+    }
+
+    if (! socketOptionApplySendBuffer(wioGetFD(io), send_buffer_size))
+    {
+        printError("set socket send buffer failed, call: setsockopt , value: %d\n", send_buffer_size);
+        wioClose(io);
+        return NULL;
+    }
+
+    if (! socketOptionApplyRecvBuffer(wioGetFD(io), recv_buffer_size))
+    {
+        printError("set socket recv buffer failed, call: setsockopt , value: %d\n", recv_buffer_size);
+        wioClose(io);
+        return NULL;
+    }
+
+    return io;
 }
 
 wio_t *wloopCreateUdpClient(wloop_t *loop, const char *host, int port)
 {
-    return wioCreateSocket(loop, host, port, WIO_TYPE_UDP, WIO_CLIENT_SIDE);
+    wio_t *io = wioCreateSocket(loop, host, port, WIO_TYPE_UDP, WIO_CLIENT_SIDE);
+    if (io == NULL)
+    {
+        return NULL;
+    }
+
+    if (! socketOptionApplySendBuffer(wioGetFD(io), kDefaultLargeSocketBufferSize))
+    {
+        printError("set socket send buffer failed, call: setsockopt , value: %d\n", kDefaultLargeSocketBufferSize);
+        wioClose(io);
+        return NULL;
+    }
+
+    if (! socketOptionApplyRecvBuffer(wioGetFD(io), kDefaultLargeSocketBufferSize))
+    {
+        printError("set socket recv buffer failed, call: setsockopt , value: %d\n", kDefaultLargeSocketBufferSize);
+        wioClose(io);
+        return NULL;
+    }
+
+    return io;
 }

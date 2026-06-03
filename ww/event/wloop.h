@@ -420,6 +420,9 @@ WW_EXPORT wio_t* wloopCreateTcpClient(wloop_t* loop, const char* host, int port,
 WW_EXPORT wio_t* wloopCreateUdpServer(wloop_t* loop, const char* host, int port);
 WW_EXPORT wio_t* wloopCreateUdpServerWithOptions(wloop_t* loop, const char* host, int port,
                                                  const char* interface_name, int fwmark);
+WW_EXPORT wio_t* wloopCreateUdpServerWithBufferOptions(wloop_t* loop, const char* host, int port,
+                                                       const char* interface_name, int fwmark,
+                                                       int send_buffer_size, int recv_buffer_size);
 
 // @udp_server: wioCreateSocket(loop, host, port, WIO_TYPE_UDP, WIO_CLIENT_SIDE)
 // @see examples/nc.c

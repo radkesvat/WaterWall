@@ -58,6 +58,33 @@ static inline bool getIntFromJsonObjectOrDefault(int *dest, const cJSON *json_ob
     return false;
 }
 
+static inline bool getPositiveIntFromJsonObjectOrBoolDefault(int *dest, const cJSON *json_obj, const char *key,
+                                                             int true_value, int def)
+{
+    assert(dest != NULL);
+
+    const cJSON *jvalue = cJSON_GetObjectItemCaseSensitive(json_obj, key);
+    if (jvalue == NULL)
+    {
+        *dest = def;
+        return true;
+    }
+
+    if (cJSON_IsBool(jvalue))
+    {
+        *dest = cJSON_IsTrue(jvalue) ? true_value : 0;
+        return true;
+    }
+
+    if (cJSON_IsNumber(jvalue) && jvalue->valueint > 0 && jvalue->valuedouble == (double) jvalue->valueint)
+    {
+        *dest = jvalue->valueint;
+        return true;
+    }
+
+    return false;
+}
+
 static inline bool getStringFromJson(char **dest, const cJSON *json_str_node)
 {
     assert(*dest == NULL);

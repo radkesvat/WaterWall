@@ -255,6 +255,11 @@ WW_INLINE void sockaddr_set_path(sockaddr_u *addr, const char *path)
 #define SOCKADDR_STRLEN 64 // ipv4:port | [ipv6]:port
 #endif
 
+enum
+{
+    kDefaultLargeSocketBufferSize = 4 * 1024 * 1024
+};
+
 /**
  * @brief Print a socket address to stdout.
  *
@@ -573,6 +578,16 @@ WW_INLINE int socketOptionSendBuf(int sockfd, int len)
 WW_INLINE int socketOptionRecvBuf(int sockfd, int len)
 {
     return setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, (const char *) &len, sizeof(int));
+}
+
+WW_INLINE bool socketOptionApplySendBuffer(int sockfd, int len)
+{
+    return len <= 0 || socketOptionSendBuf(sockfd, len) == 0;
+}
+
+WW_INLINE bool socketOptionApplyRecvBuffer(int sockfd, int len)
+{
+    return len <= 0 || socketOptionRecvBuf(sockfd, len) == 0;
 }
 
 /**
