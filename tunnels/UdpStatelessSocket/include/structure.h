@@ -29,6 +29,8 @@ typedef struct udpstatelesssocket_tstate_s
     char    *interface_name; // optional network device for the UDP socket
     uint16_t listen_port;    // port to listen on
     int      fwmark;         // fwmark to set on the socket
+    int      send_buffer_size;
+    int      recv_buffer_size;
 
     wio_t *io;     // socket file descriptor
     wid_t  io_wid; // the worker id that created the io

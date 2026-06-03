@@ -9,6 +9,8 @@ typedef struct tcpconnector_socket_options_s
     bool        option_reuse_addr;
     int         domain_strategy;
     int         fwmark;
+    int         send_buffer_size;
+    int         recv_buffer_size;
     const char *interface_name;
     const char *source_ip;
 } tcpconnector_socket_options_t;
@@ -25,6 +27,10 @@ typedef struct tcpconnector_tstate_s
     bool            option_reuse_addr;    // apply reuse address option on sockets
     int             domain_strategy;      // prefer ipv4 or ipv6
     int             fwmark;               // firewall mark on linux (beta)
+    int             send_buffer_size;     // optional socket SO_SNDBUF size
+    int             recv_buffer_size;     // optional socket SO_RCVBUF size
+    bool            send_buffer_size_set; // whether large-send-buffer was explicitly configured
+    bool            recv_buffer_size_set; // whether large-recv-buffer was explicitly configured
     char           *interface_name;       // optional network device for outbound sockets
     char           *source_ip;            // optional local source IP for outbound sockets
     uint64_t        outbound_ip_range;    // range for outbound ip (this means free bind)
@@ -50,6 +56,10 @@ typedef struct tcpconnector_destination_s
     bool              option_reuse_addr;
     int               domain_strategy;
     int               fwmark;
+    int               send_buffer_size;
+    int               recv_buffer_size;
+    bool              send_buffer_size_set;
+    bool              recv_buffer_size_set;
     char             *interface_name;
     char             *source_ip;
 } tcpconnector_destination_t;

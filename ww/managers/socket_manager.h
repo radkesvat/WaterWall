@@ -104,6 +104,15 @@ void                     socketmanagerStart(void);
 void                     socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
 
 /**
+ * @brief Update send/receive buffer options for filters registered by a tunnel.
+ *
+ * This is used by tunnels that need finalized-chain metadata before deciding
+ * their effective accepted-socket buffer defaults.
+ */
+void                     socketacceptorUpdateBufferOptions(tunnel_t *tunnel, int send_buffer_size,
+                                                          int recv_buffer_size);
+
+/**
  * @brief Post an asynchronous UDP write to socket-manager worker context.
  *
  * @param socket_io UDP socket wrapper.

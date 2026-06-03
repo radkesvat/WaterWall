@@ -366,6 +366,20 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
     getBoolFromJsonObject(&(state->reuse_addr), settings, "reuseaddr");
     getIntFromJsonObjectOrDefault(&(state->domain_strategy), settings, "domain-strategy", 0);
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", -1);
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->send_buffer_size, settings, "large-send-buffer",
+                                                    kDefaultLargeSocketBufferSize,
+                                                    kDefaultLargeSocketBufferSize))
+    {
+        LOGF("JSON Error: UdpConnector->settings->large-send-buffer (boolean-or-positive-integer field) : The value was empty or invalid");
+        return NULL;
+    }
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->recv_buffer_size, settings, "large-recv-buffer",
+                                                    kDefaultLargeSocketBufferSize,
+                                                    kDefaultLargeSocketBufferSize))
+    {
+        LOGF("JSON Error: UdpConnector->settings->large-recv-buffer (boolean-or-positive-integer field) : The value was empty or invalid");
+        return NULL;
+    }
     getStringFromJsonObject(&(state->interface_name), settings, "interface");
     getStringFromJsonObject(&(state->source_ip), settings, "source-ip");
     if (! parseBalanceMode(state, settings))

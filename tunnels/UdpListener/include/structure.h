@@ -10,6 +10,8 @@ typedef struct udplistener_tstate_s
     int      listen_multiport_backend; // multiport backend (iptable? sockets?)
     uint16_t listen_port_min;          // min port to listen on (minimum of the range)
     uint16_t listen_port_max;          // max port to listen on (maximum of the range)
+    int      send_buffer_size;         // optional socket SO_SNDBUF size
+    int      recv_buffer_size;         // optional socket SO_RCVBUF size
 
 } udplistener_tstate_t;
 

@@ -10,6 +10,11 @@
 
 #include "loggers/internal_logger.h"
 
+static bool tunnelchainNodeIsMuxTunnel(const node_t *node)
+{
+    return stringCompare(node->type, "MuxClient") == 0 || stringCompare(node->type, "MuxServer") == 0;
+}
+
 void tunnelarrayInsert(tunnel_array_t *tc, tunnel_t *t)
 {
     if (tc->len >= kMaxChainLen)
@@ -29,6 +34,10 @@ void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t)
     if ((tunnelGetNode(t)->layer_group & kNodeLayer3) == kNodeLayer3)
     {
         tci->contains_packet_node = true;
+    }
+    if (tunnelchainNodeIsMuxTunnel(tunnelGetNode(t)))
+    {
+        tci->mux_tunnel_present = true;
     }
 
     t->chain = tci;
@@ -127,6 +136,7 @@ void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
     source->sum_padding_left     = 0;
     source->sum_line_state_size  = 0;
     source->contains_packet_node = false;
+    source->mux_tunnel_present   = false;
 
     tunnelchainDestroy(source);
 }

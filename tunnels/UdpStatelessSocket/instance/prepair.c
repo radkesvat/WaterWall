@@ -18,8 +18,9 @@ void udpstatelesssocketTunnelOnPrepair(tunnel_t *t)
         bind_address = interface_ip;
     }
 
-    state->io = wloopCreateUdpServerWithOptions(getWorkerLoop(getWID()), bind_address, state->listen_port,
-                                                state->interface_name, state->fwmark);
+    state->io = wloopCreateUdpServerWithBufferOptions(getWorkerLoop(getWID()), bind_address, state->listen_port,
+                                                      state->interface_name, state->fwmark, state->send_buffer_size,
+                                                      state->recv_buffer_size);
 
     if (! state->io)
     {

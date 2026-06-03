@@ -29,6 +29,8 @@ typedef struct udpconnector_tstate_s
     bool              reuse_addr;         // whether to reuse address
     int               domain_strategy;    // DNS resolution strategy
     int               fwmark;             // firewall mark on linux (beta)
+    int               send_buffer_size;   // optional socket SO_SNDBUF size
+    int               recv_buffer_size;   // optional socket SO_RCVBUF size
     char             *interface_name;     // optional network device for outbound sockets
     char             *source_ip;          // optional local source IP for outbound sockets
 

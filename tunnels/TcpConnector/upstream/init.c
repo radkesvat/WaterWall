@@ -34,6 +34,8 @@ static tcpconnector_socket_options_t getRootSocketOptions(const tcpconnector_tst
         .option_reuse_addr    = ts->option_reuse_addr,
         .domain_strategy      = ts->domain_strategy,
         .fwmark               = ts->fwmark,
+        .send_buffer_size     = ts->send_buffer_size,
+        .recv_buffer_size     = ts->recv_buffer_size,
         .interface_name       = ts->interface_name,
         .source_ip            = ts->source_ip,
     };
@@ -47,6 +49,8 @@ static tcpconnector_socket_options_t getDestinationSocketOptions(const tcpconnec
         .option_reuse_addr    = destination->option_reuse_addr,
         .domain_strategy      = destination->domain_strategy,
         .fwmark               = destination->fwmark,
+        .send_buffer_size     = destination->send_buffer_size,
+        .recv_buffer_size     = destination->recv_buffer_size,
         .interface_name       = destination->interface_name,
         .source_ip            = destination->source_ip,
     };
@@ -264,6 +268,18 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
     if (socket_options->option_tcp_no_delay)
     {
         tcpNoDelay(sockfd, 1);
+    }
+
+    if (! socketOptionApplySendBuffer(sockfd, socket_options->send_buffer_size))
+    {
+        LOGE("TcpConnector: set socket send buffer failed");
+        goto fail;
+    }
+
+    if (! socketOptionApplyRecvBuffer(sockfd, socket_options->recv_buffer_size))
+    {
+        LOGE("TcpConnector: set socket recv buffer failed");
+        goto fail;
     }
 
     if (socketOptionBindToDevice(sockfd, socket_options->interface_name) != 0)

@@ -76,6 +76,20 @@ static bool validateAndSetAddress(udplistener_tstate_t *state, const cJSON *sett
         LOGF("JSON Error: UdpListener->settings->address (string field) : The data was empty or invalid");
         return false;
     }
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->send_buffer_size, settings, "large-send-buffer",
+                                                    kDefaultLargeSocketBufferSize,
+                                                    kDefaultLargeSocketBufferSize))
+    {
+        LOGF("JSON Error: UdpListener->settings->large-send-buffer (boolean-or-positive-integer field) : The value was empty or invalid");
+        return false;
+    }
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->recv_buffer_size, settings, "large-recv-buffer",
+                                                    kDefaultLargeSocketBufferSize,
+                                                    kDefaultLargeSocketBufferSize))
+    {
+        LOGF("JSON Error: UdpListener->settings->large-recv-buffer (boolean-or-positive-integer field) : The value was empty or invalid");
+        return false;
+    }
     
     return true;
 }
@@ -150,6 +164,8 @@ static void parseIpMaskList(const cJSON *settings, const char *list_name, vec_ip
 static void setupFilterOptions(socket_filter_option_t *filter_opt, udplistener_tstate_t *state, const cJSON *settings)
 {
     socketfilteroptionInit(filter_opt);
+    filter_opt->send_buffer_size = state->send_buffer_size;
+    filter_opt->recv_buffer_size = state->recv_buffer_size;
 
     getStringFromJsonObject(&(filter_opt->interface_name), settings, "interface");
     getStringFromJsonObject(&(filter_opt->balance_group_name), settings, "balance-group");

@@ -371,6 +371,24 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
     mutexUnlock(&(socketmanager_gstate->mutex));
 }
 
+void socketacceptorUpdateBufferOptions(tunnel_t *tunnel, int send_buffer_size, int recv_buffer_size)
+{
+    mutexLock(&(socketmanager_gstate->mutex));
+    for (size_t i = 0; i < kFilterLevels; ++i)
+    {
+        c_foreach(filter, filters_t, socketmanager_gstate->filters[i])
+        {
+            socket_filter_t *f = *filter.ref;
+            if (f->tunnel == tunnel)
+            {
+                f->option.send_buffer_size = send_buffer_size;
+                f->option.recv_buffer_size = recv_buffer_size;
+            }
+        }
+    }
+    mutexUnlock(&(socketmanager_gstate->mutex));
+}
+
 /**
  * @brief Forward accepted socket to selected worker and tunnel callback.
  *
@@ -410,6 +428,28 @@ static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_p
             socketacceptresultDestroy(result);
         }
     }
+}
+
+static bool applyAcceptedTcpSocketOptions(wio_t *io, const socket_filter_option_t *option)
+{
+    if (option->no_delay)
+    {
+        tcpNoDelay(wioGetFD(io), 1);
+    }
+
+    if (! socketOptionApplySendBuffer(wioGetFD(io), option->send_buffer_size))
+    {
+        LOGE("SocketManager: set TCP socket send buffer failed");
+        return false;
+    }
+
+    if (! socketOptionApplyRecvBuffer(wioGetFD(io), option->recv_buffer_size))
+    {
+        LOGE("SocketManager: set TCP socket recv buffer failed");
+        return false;
+    }
+
+    return true;
 }
 
 /**
@@ -576,9 +616,10 @@ static bool handleBalancedFilter(socket_filter_t *filter, const socket_filter_op
         idletableKeepIdleItemForAtleast(option.shared_balance_table, idle_item,
                                         option.balance_group_interval == 0 ? kDefaultBalanceInterval
                                                                            : option.balance_group_interval);
-        if (option.no_delay)
+        if (! applyAcceptedTcpSocketOptions(io, &target_filter->option))
         {
-            tcpNoDelay(wioGetFD(io), 1);
+            wioClose(io);
+            return true;
         }
         distributeSocket(io, target_filter, local_port);
         return true;
@@ -604,13 +645,14 @@ static void finalizeTcpDistribution(socket_filter_t **balance_selection_filters,
     if (balance_selection_filters_length > 0)
     {
         socket_filter_t *filter = balance_selection_filters[fastRand() % balance_selection_filters_length];
+        if (! applyAcceptedTcpSocketOptions(io, &filter->option))
+        {
+            wioClose(io);
+            return;
+        }
         idletableCreateItem(filter->option.shared_balance_table, src_hash, filter, NULL, socketmanager_gstate->wid,
                             filter->option.balance_group_interval == 0 ? kDefaultBalanceInterval
                                                                        : filter->option.balance_group_interval);
-        if (filter->option.no_delay)
-        {
-            tcpNoDelay(wioGetFD(io), 1);
-        }
         distributeSocket(io, filter, local_port);
     }
     else
@@ -683,9 +725,10 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
             }
             else
             {
-                if (option.no_delay)
+                if (! applyAcceptedTcpSocketOptions(io, &filter->option))
                 {
-                    tcpNoDelay(wioGetFD(io), 1);
+                    wioClose(io);
+                    return;
                 }
                 distributeSocket(io, filter, local_port);
                 return;
@@ -800,24 +843,12 @@ static wio_t *createUdpServerWithSocketOptions(wloop_t *loop, socket_filter_t *f
     char        host_if[INET_ADDRSTRLEN] = {0};
     const char *bind_host                = getSocketBindHost(filter, host, host_if);
     wio_t      *io                       =
-        wloopCreateUdpServerWithOptions(loop, bind_host, port, filter->option.interface_name, filter->option.fwmark);
+        wloopCreateUdpServerWithBufferOptions(loop, bind_host, port, filter->option.interface_name,
+                                              filter->option.fwmark, filter->option.send_buffer_size,
+                                              filter->option.recv_buffer_size);
 
     if (io == NULL)
     {
-        return NULL;
-    }
-
-    int size = 4 * 1024 * 1024;
-    if (socketOptionSendBuf(wioGetFD(io), size) != 0)
-    {
-        LOGE("SocketManager: set UDP socket send buffer failed");
-        wioClose(io);
-        return NULL;
-    }
-    if (socketOptionRecvBuf(wioGetFD(io), size) != 0)
-    {
-        LOGE("SocketManager: set UDP socket recv buffer failed");
-        wioClose(io);
         return NULL;
     }
 

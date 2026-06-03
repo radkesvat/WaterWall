@@ -95,18 +95,15 @@ static int createAndBindSocket(int family, const udpconnector_tstate_t *ts)
         LOGE("UdpConnector: socket fd < 0");
         return -1;
     }
-    int size   = 4 * 1024 * 1024; // 4MB
-    int so_ret = socketOptionSendBuf(sockfd, size);
-    if (so_ret != 0)
+    if (! socketOptionApplySendBuffer(sockfd, ts->send_buffer_size))
     {
-        LOGE("UdpConnector: set socket send buffer failed, call: setsockopt , value: %d\n", so_ret);
+        LOGE("UdpConnector: set socket send buffer failed");
         closesocket(sockfd);
         return -1;
     }
-    so_ret = socketOptionRecvBuf(sockfd, size);
-    if (so_ret != 0)
+    if (! socketOptionApplyRecvBuffer(sockfd, ts->recv_buffer_size))
     {
-        LOGE("UdpConnector: set socket recv buffer failed, call: setsockopt , value: %d\n", so_ret);
+        LOGE("UdpConnector: set socket recv buffer failed");
         closesocket(sockfd);
         return -1;
     }

@@ -72,6 +72,20 @@ static bool parseBasicSettings(tcplistener_tstate_t *state, const cJSON *setting
     }
 
     getBoolFromJsonObject(&(state->option_tcp_no_delay), settings, "nodelay");
+    state->send_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-send-buffer") != NULL;
+    state->recv_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-recv-buffer") != NULL;
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->send_buffer_size, settings, "large-send-buffer",
+                                                    kDefaultLargeSocketBufferSize, 0))
+    {
+        LOGF("JSON Error: TcpListener->settings->large-send-buffer (boolean-or-positive-integer field) : The value was empty or invalid");
+        return false;
+    }
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->recv_buffer_size, settings, "large-recv-buffer",
+                                                    kDefaultLargeSocketBufferSize, 0))
+    {
+        LOGF("JSON Error: TcpListener->settings->large-recv-buffer (boolean-or-positive-integer field) : The value was empty or invalid");
+        return false;
+    }
 
     if (!getStringFromJsonObject(&(state->listen_address), settings, "address"))
     {
@@ -151,6 +165,8 @@ static void setupFilterOptions(socket_filter_option_t *filter_opt, tcplistener_t
 {
     socketfilteroptionInit(filter_opt);
     filter_opt->no_delay = state->option_tcp_no_delay;
+    filter_opt->send_buffer_size = state->send_buffer_size;
+    filter_opt->recv_buffer_size = state->recv_buffer_size;
 
     getStringFromJsonObject(&(filter_opt->interface_name), settings, "interface");
     getStringFromJsonObject(&(filter_opt->balance_group_name), settings, "balance-group");

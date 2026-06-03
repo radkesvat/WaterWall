@@ -29,6 +29,20 @@ static bool parseBasicSettings(tcpconnector_tstate_t *state, const cJSON *settin
     getBoolFromJsonObjectOrDefault(&(state->option_reuse_addr), settings, "reuseaddr", false);
     getIntFromJsonObjectOrDefault(&(state->domain_strategy), settings, "domain-strategy", 0);
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", kFwMarkInvalid);
+    state->send_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-send-buffer") != NULL;
+    state->recv_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-recv-buffer") != NULL;
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->send_buffer_size, settings, "large-send-buffer",
+                                                    kDefaultLargeSocketBufferSize, 0))
+    {
+        LOGF("JSON Error: TcpConnector->settings->large-send-buffer (boolean-or-positive-integer field) : The value was empty or invalid");
+        return false;
+    }
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->recv_buffer_size, settings, "large-recv-buffer",
+                                                    kDefaultLargeSocketBufferSize, 0))
+    {
+        LOGF("JSON Error: TcpConnector->settings->large-recv-buffer (boolean-or-positive-integer field) : The value was empty or invalid");
+        return false;
+    }
     getStringFromJsonObject(&(state->interface_name), settings, "interface");
     getStringFromJsonObject(&(state->source_ip), settings, "source-ip");
     if (state->source_ip != NULL && ! addressIsIp(state->source_ip))
@@ -82,6 +96,22 @@ static bool parseDestinationSocketOptions(tcpconnector_destination_t *destinatio
     getIntFromJsonObjectOrDefault(&destination->fwmark, settings, "fwmark", state->fwmark);
     getIntFromJsonObjectOrDefault(&destination->domain_strategy, settings, "domain-strategy",
                                   state->domain_strategy);
+    destination->send_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-send-buffer") != NULL;
+    destination->recv_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-recv-buffer") != NULL;
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(&destination->send_buffer_size, settings, "large-send-buffer",
+                                                    kDefaultLargeSocketBufferSize, state->send_buffer_size))
+    {
+        LOGF("JSON Error: %s->large-send-buffer (boolean-or-positive-integer field) : The value was empty or invalid",
+             error_path);
+        return false;
+    }
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(&destination->recv_buffer_size, settings, "large-recv-buffer",
+                                                    kDefaultLargeSocketBufferSize, state->recv_buffer_size))
+    {
+        LOGF("JSON Error: %s->large-recv-buffer (boolean-or-positive-integer field) : The value was empty or invalid",
+             error_path);
+        return false;
+    }
 
     if (! parseDestinationStringOption(&destination->interface_name, settings, "interface", state->interface_name,
                                        error_path) ||

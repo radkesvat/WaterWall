@@ -39,6 +39,8 @@ typedef struct socket_filter_option_s
     bool                fast_open;
     bool                no_delay;
     int                 fwmark;
+    int                 send_buffer_size;
+    int                 recv_buffer_size;
     unsigned int        balance_group_interval;
 
     vec_ipmask_t white_list;

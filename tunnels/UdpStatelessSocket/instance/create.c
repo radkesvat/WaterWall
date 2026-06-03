@@ -62,6 +62,20 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
 
     getStringFromJsonObject(&(state->interface_name), settings, "interface");
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", -1);
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->send_buffer_size, settings, "large-send-buffer",
+                                                    kDefaultLargeSocketBufferSize,
+                                                    kDefaultLargeSocketBufferSize))
+    {
+        LOGF("JSON Error: UdpStatelessSocket->settings->large-send-buffer (boolean-or-positive-integer field) : The value was empty or invalid");
+        return NULL;
+    }
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->recv_buffer_size, settings, "large-recv-buffer",
+                                                    kDefaultLargeSocketBufferSize,
+                                                    kDefaultLargeSocketBufferSize))
+    {
+        LOGF("JSON Error: UdpStatelessSocket->settings->large-recv-buffer (boolean-or-positive-integer field) : The value was empty or invalid");
+        return NULL;
+    }
 
     int temp_port;
     if (! getIntFromJsonObject(&(temp_port), settings, "listen-port"))

@@ -41,6 +41,7 @@ typedef struct tunnel_chain_s
     uint32_t        sum_line_state_size;
     wid_t           workers_count;
     bool            contains_packet_node : 1;
+    bool            mux_tunnel_present : 1;
     bool            packet_chain_init_sent : 1;
     bool            finalized : 1;
     bool            started : 1;
