@@ -65,13 +65,6 @@ void encryptionclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
     bufferstreamPush(&(ls->read_stream), buf);
 
-    if (isOverflow(&(ls->read_stream), ts))
-    {
-        bufferstreamEmpty(&(ls->read_stream));
-        encryptionclientCloseLineBidirectional(t, l);
-        return;
-    }
-
     while (true)
     {
         sbuf_t *frame_buffer = NULL;
@@ -115,5 +108,11 @@ void encryptionclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
         {
             return;
         }
+    }
+
+    if (isOverflow(&(ls->read_stream), ts))
+    {
+        bufferstreamEmpty(&(ls->read_stream));
+        encryptionclientCloseLineBidirectional(t, l);
     }
 }
