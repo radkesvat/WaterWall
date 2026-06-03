@@ -42,6 +42,8 @@ Practical rule:
 - `cases/<name>/workers.txt`
   Optional worker-count override for a case.
   If omitted, the runner uses its default worker count.
+- `speedtests/<name>/config.json`
+  One Waterwall config file for a SpeedTestClient/SpeedTestServer case.
 - `run_waterwall_case.sh`
   The low-level single-case runner.
   It creates a temporary `core.json`, launches `Waterwall`, watches the tester log, and fails on crash or timeout.
@@ -49,6 +51,9 @@ Practical rule:
   The generated `core.json` uses `4` workers by default, unless the case directory provides `workers.txt`.
   The generated `core.json` uses the `client` RAM profile so stream cases are not bottlenecked by the minimal 4 KB
   large-buffer size.
+- `run_waterwall_speedtest.sh`
+  The low-level speedtest runner. It uses the same temporary `core.json` pattern but treats Waterwall exit status `0` as
+  success, because `SpeedTestClient` terminates the process when all streams complete.
 - `CMakeLists.txt`
   Registers integration cases with CTest and delegates unit-test registration to `unittests/CMakeLists.txt`.
 
@@ -203,6 +208,15 @@ Practical rule:
   Verifies two `WireGuardDevice` nodes across real UDP loopback sockets, using packet-mode testers with IPv4 packet
   payloads so AllowedIPs routing and transport encryption are both exercised end to end.
 
+## Current speedtests
+
+- `mux_direct_pair`
+  Runs `SpeedTestClient -> MuxClient -> MuxServer -> SpeedTestServer` to exercise mux overhead without socket adapters
+  between the mux peers.
+- `mux_tcp_sandwich`
+  Runs each mux node behind a loopback `TcpListener`/`TcpConnector` pair so the mux peers communicate through TCP
+  adapters.
+
 ## Case selection notes
 
 The current tester sends very large stream chunks up to `2 MB`, so not every tunnel is a valid fit for this harness.
@@ -295,6 +309,9 @@ Success and failure are decided inside Waterwall:
 - `TesterClient` logs the success marker on a passing run, and the helper accepts any worker count in that message
 - `run_waterwall_case.sh` only watches for that success marker so it knows when the test is finished and can stop the
   still-running Waterwall process
+
+`run_waterwall_speedtest.sh` is similar, but speedtests do not use `TesterClient`.
+They pass when `SpeedTestClient` completes and Waterwall exits with status `0`.
 
 ## Listing available cases
 
