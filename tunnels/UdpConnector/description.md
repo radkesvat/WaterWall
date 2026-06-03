@@ -27,6 +27,8 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
     "address": "example.com",
     "port": "random(40000,40100)",
     "reuseaddr": true,
+    "large-send-buffer": true,
+    "large-recv-buffer": true,
     "fwmark": 10,
     "interface": "eth0",
     "source-ip": "192.0.2.10"
@@ -54,7 +56,9 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
         "weight": 1
       }
     ],
-    "reuseaddr": true
+    "reuseaddr": true,
+    "large-send-buffer": true,
+    "large-recv-buffer": true
   }
 }
 ```
@@ -132,6 +136,16 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
 - `reuseaddr` `(boolean)`
   Enables `SO_REUSEADDR` on the created UDP socket.
 
+- `large-send-buffer` `(boolean or positive integer)`
+  Sets `SO_SNDBUF` on created UDP sockets.
+  `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
+  Default: `true`
+
+- `large-recv-buffer` `(boolean or positive integer)`
+  Sets `SO_RCVBUF` on created UDP sockets.
+  `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
+  Default: `true`
+
 - `fwmark` `(integer)`
   Linux-style socket mark.
   When the platform provides `SO_MARK`, this value is applied to the UDP socket before bind.
@@ -152,7 +166,7 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
 During upstream `init`, `UdpConnector`:
 
 - creates a UDP socket
-- enlarges the send and receive socket buffers to about `4 MB`
+- applies the configured send and receive socket buffer sizes
 - applies optional `interface`, `fwmark`, and `reuseaddr` socket options
 - binds the socket to `source-ip:0` when `source-ip` is configured, otherwise to the wildcard address for the selected address family
 - starts reading immediately

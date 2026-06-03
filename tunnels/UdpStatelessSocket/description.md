@@ -37,6 +37,8 @@ or the reverse, depending on chain wiring.
     "listen-port": 51820,
     "interface": "eth0",
     "fwmark": 10,
+    "large-send-buffer": true,
+    "large-recv-buffer": true,
     "source-ip": "192.0.2.10"
   }
 }
@@ -78,6 +80,16 @@ or the reverse, depending on chain wiring.
 - `source-ip` `(string)`
   Uses a specific local source IP for the UDP socket.
   For this stateless socket, `source-ip` is treated as an override for `listen-address`, because the same bound UDP socket is used for both receiving and sending.
+
+- `large-send-buffer` `(boolean or positive integer)`
+  Sets `SO_SNDBUF` on the UDP socket.
+  `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
+  Default: `true`
+
+- `large-recv-buffer` `(boolean or positive integer)`
+  Sets `SO_RCVBUF` on the UDP socket.
+  `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
+  Default: `true`
 
 ## Detailed Behavior
 

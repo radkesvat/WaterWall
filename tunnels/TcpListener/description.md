@@ -25,6 +25,8 @@ This node is a chain head. Its upstream entry callbacks are disabled because con
     "address": "0.0.0.0",
     "port": 443,
     "nodelay": true,
+    "large-send-buffer": true,
+    "large-recv-buffer": true,
     "interface": "eth0",
     "fwmark": 10,
     "balance-group": "public-443",
@@ -74,6 +76,16 @@ This node is a chain head. Its upstream entry callbacks are disabled because con
 - `nodelay` `(boolean)`
   Enables `TCP_NODELAY` on accepted sockets.
   Default: `false`
+
+- `large-send-buffer` `(boolean or positive integer)`
+  Sets `SO_SNDBUF` on accepted TCP sockets.
+  `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
+  Default: `false`, or `true` when this option is omitted and the chain contains `MuxClient` or `MuxServer`.
+
+- `large-recv-buffer` `(boolean or positive integer)`
+  Sets `SO_RCVBUF` on accepted TCP sockets.
+  `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
+  Default: `false`, or `true` when this option is omitted and the chain contains `MuxClient` or `MuxServer`.
 
 - `interface` `(string)`
   Restricts the listener to a local network interface.

@@ -24,6 +24,8 @@ This node is a chain head. Its upstream entry callbacks are disabled because pac
   "settings": {
     "address": "0.0.0.0",
     "port": [20000, 20100],
+    "large-send-buffer": true,
+    "large-recv-buffer": true,
     "interface": "eth0",
     "fwmark": 10,
     "balance-group": "udp-public",
@@ -78,6 +80,16 @@ This node is a chain head. Its upstream entry callbacks are disabled because pac
   Linux-style socket mark.
   When the platform provides `SO_MARK`, this value is applied to the listening socket before bind.
   Default: not set
+
+- `large-send-buffer` `(boolean or positive integer)`
+  Sets `SO_SNDBUF` on UDP listener sockets.
+  `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
+  Default: `true`
+
+- `large-recv-buffer` `(boolean or positive integer)`
+  Sets `SO_RCVBUF` on UDP listener sockets.
+  `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
+  Default: `true`
 
 - `balance-group` `(string)`
   Places this listener into a socket-manager balance group shared with other compatible listeners on the same port.
