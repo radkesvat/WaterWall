@@ -154,19 +154,22 @@ void tcplistenerOnWriteComplete(wio_t *io)
         // assert(false);
         return;
     }
+    if (! wioCheckWriteComplete(io))
+    {
+        wioSetCallBackWrite(lstate->io, tcplistenerOnWriteComplete);
+        return;
+    }
+
     wioSetCallBackWrite(lstate->io, NULL);
 
-    if (wioCheckWriteComplete(io))
+    if (! resumeWriteQueue(lstate))
     {
-        if (! resumeWriteQueue(lstate))
-        {
-            wioSetCallBackWrite(lstate->io, tcplistenerOnWriteComplete);
-            return;
-        }
-        lstate->write_paused = false;
-
-        tunnelNextUpStreamResume(lstate->tunnel, lstate->line);
+        wioSetCallBackWrite(lstate->io, tcplistenerOnWriteComplete);
+        return;
     }
+    lstate->write_paused = false;
+
+    tunnelNextUpStreamResume(lstate->tunnel, lstate->line);
 }
 
 void tcplistenerOnIdleConnectionExpire(idle_item_t *idle_tcp)

@@ -111,12 +111,12 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
         }
         else
         {
-
             if (! lineIsAlive(l))
             {
                 LOGW("TcpConnector: line destroyed when resumed after connection !");
                 return;
             }
+            wioSetCallBackWrite(lstate->io, tcpconnectorOnWriteComplete);
         }
     }
     else
@@ -155,19 +155,22 @@ void tcpconnectorOnWriteComplete(wio_t *io)
         return;
     }
 
+    if (! wioCheckWriteComplete(io))
+    {
+        wioSetCallBackWrite(lstate->io, tcpconnectorOnWriteComplete);
+        return;
+    }
+
     wioSetCallBackWrite(lstate->io, NULL);
 
-    if (wioCheckWriteComplete(io))
+    if (! resumeWriteQueue(lstate))
     {
-        if (! resumeWriteQueue(lstate))
-        {
-            wioSetCallBackWrite(lstate->io, tcpconnectorOnWriteComplete);
-            return;
-        }
-        lstate->write_paused = false;
-
-        tunnelPrevDownStreamResume(lstate->tunnel, lstate->line);
+        wioSetCallBackWrite(lstate->io, tcpconnectorOnWriteComplete);
+        return;
     }
+    lstate->write_paused = false;
+
+    tunnelPrevDownStreamResume(lstate->tunnel, lstate->line);
 }
 
 void tcpconnectorOnIdleConnectionExpire(idle_item_t *idle_tcp)
