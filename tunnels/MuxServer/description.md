@@ -69,8 +69,8 @@ There are no required tunnel-specific settings in the current implementation.
 - `log-main-line-stats` `(boolean, optional)`
   When `true`, each active parent transport line logs mux diagnostics every `5` seconds.
 
-  The log includes parent pause state, live child count, buffered frame bytes, queued child bytes, and per-child pause
-  counters. Default: `false`.
+  The log includes `wid`, parent-line write/read pause state, child count, child read-pause count, and child
+  write-pause count. Default: `false`.
 
 ## Detailed Behavior
 

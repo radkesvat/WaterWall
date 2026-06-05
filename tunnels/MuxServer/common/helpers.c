@@ -52,14 +52,9 @@ void muxserverLeaveConnection(muxserver_lstate_t *child)
 
 typedef struct muxserver_parent_stats_s
 {
-    uint32_t linked_children;
-    uint32_t child_write_paused;
-    uint32_t flow_paused_sent;
-    uint32_t peer_flow_paused;
     uint32_t parent_write_paused;
-    uint32_t parent_read_paused_children;
-    size_t   pending_child_bytes;
-    size_t   max_child_pending_bytes;
+    uint32_t child_read_paused;
+    uint32_t child_write_paused;
 } muxserver_parent_stats_t;
 
 static const char *muxserverBoolText(bool value)
@@ -73,31 +68,17 @@ static void muxserverCollectParentStats(muxserver_lstate_t *parent_ls, muxserver
 
     for (muxserver_lstate_t *child_ls = parent_ls->child_next; child_ls != NULL; child_ls = child_ls->child_next)
     {
-        size_t pending_bytes = bufferqueueGetBufLen(&child_ls->pending_child_data);
-
-        stats->linked_children++;
-        stats->pending_child_bytes += pending_bytes;
-        stats->max_child_pending_bytes = max(stats->max_child_pending_bytes, pending_bytes);
-
-        if (child_ls->paused)
+        if (child_ls->peer_flow_paused || child_ls->parent_write_paused)
         {
-            stats->child_write_paused++;
-        }
-        if (child_ls->flow_paused_sent)
-        {
-            stats->flow_paused_sent++;
-        }
-        if (child_ls->peer_flow_paused)
-        {
-            stats->peer_flow_paused++;
+            stats->child_read_paused++;
         }
         if (child_ls->parent_write_paused)
         {
             stats->parent_write_paused++;
         }
-        if (child_ls->parent_read_paused)
+        if (child_ls->paused)
         {
-            stats->parent_read_paused_children++;
+            stats->child_write_paused++;
         }
     }
 }
@@ -115,16 +96,11 @@ static void muxserverParentStatsLogTask(tunnel_t *t, line_t *parent_l)
     muxserver_parent_stats_t stats;
     muxserverCollectParentStats(parent_ls, &stats);
 
-    LOGI("MuxServer: main line stats wid=%u line=%p children=%u linked-children=%u "
-         "parent-read-paused=%s parent-read-pause-count=%u parent-finishing=%s read-stream-bytes=%zu "
-         "pending-child-bytes=%zu max-child-pending-bytes=%zu child-write-paused=%u flow-paused-sent=%u "
-         "peer-flow-paused=%u parent-write-paused=%u parent-read-paused-children=%u",
-         (unsigned int) lineGetWID(parent_l), (void *) parent_l, parent_ls->children_count, stats.linked_children,
-         muxserverBoolText(parent_ls->parent_read_pause_count > 0), parent_ls->parent_read_pause_count,
-         muxserverBoolText(parent_ls->parent_finishing), bufferstreamGetBufLen(&parent_ls->read_stream),
-         stats.pending_child_bytes, stats.max_child_pending_bytes, stats.child_write_paused,
-         stats.flow_paused_sent, stats.peer_flow_paused, stats.parent_write_paused,
-         stats.parent_read_paused_children);
+    LOGI("MuxServer: main line stats wid=%u parent-line-write-paused=%s parent-line-read-paused=%s "
+         "children-count=%u childs-read-paused=%u childs-write-paused=%u",
+         (unsigned int) lineGetWID(parent_l), muxserverBoolText(stats.parent_write_paused > 0),
+         muxserverBoolText(parent_ls->parent_read_pause_count > 0), parent_ls->children_count,
+         stats.child_read_paused, stats.child_write_paused);
 
     if (! parent_ls->parent_finishing)
     {
