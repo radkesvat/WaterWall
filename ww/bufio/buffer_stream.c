@@ -22,6 +22,28 @@ static inline void bufferstreamCheckSbufByteCount(size_t bytes, const char *oper
     }
 }
 
+static sbuf_t *bufferstreamAllocExactReadBuffer(buffer_stream_t *self, uint32_t bytes)
+{
+    sbuf_t *slice;
+
+    if (bytes <= bufferpoolGetSmallBufferSize(self->pool))
+    {
+        slice = bufferpoolGetSmallBuffer(self->pool);
+    }
+    else
+    {
+        slice = bufferpoolGetLargeBuffer(self->pool);
+    }
+
+    if (self->use_left_padding > 0)
+    {
+        sbufShiftLeft(slice, self->use_left_padding);
+        sbufSetLength(slice, 0);
+    }
+
+    return sbufReserveSpace(slice, bytes);
+}
+
 buffer_stream_t bufferstreamCreate(buffer_pool_t *pool, uint16_t use_left_padding)
 {
     assert(pool != NULL);
@@ -92,14 +114,7 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)
         size_t available = sbufGetLength(container);
         if (available > bytes)
         {
-            sbuf_t *slice = bufferpoolGetLargeBuffer(self->pool);
-
-            if (self->use_left_padding > 0)
-            {
-                sbufShiftLeft(slice, self->use_left_padding);
-                sbufSetLength(slice, 0);
-            }
-            slice = sbufReserveSpace(slice, (uint32_t) bytes);
+            sbuf_t *slice = bufferstreamAllocExactReadBuffer(self, (uint32_t) bytes);
 
             slice = sbufMoveTo(slice, container, (uint32_t) bytes);
             bs_doublequeue_t_push_front(&self->q, container);
