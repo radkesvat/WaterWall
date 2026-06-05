@@ -66,6 +66,12 @@ There are no required tunnel-specific settings in the current implementation.
   Default: `524288` (`512 KB`). Set to `0` to pause parent reads as soon as data must be queued for a paused child.
   Values above `child-buffer-limit` are capped to `child-buffer-limit`.
 
+- `log-main-line-stats` `(boolean, optional)`
+  When `true`, each active parent transport line logs mux diagnostics every `5` seconds.
+
+  The log includes parent pause state, live child count, buffered frame bytes, queued child bytes, and per-child pause
+  counters. Default: `false`.
+
 ## Detailed Behavior
 
 ### Parent and child model

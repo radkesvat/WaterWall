@@ -19,6 +19,7 @@ typedef struct muxclient_tstate_s
     uint32_t fixed_connections_count;
     uint32_t child_buffer_limit;
     uint32_t child_buffer_pause_tolerance;
+    bool     log_main_line_stats;
 
     line_t  **fixed_parent_lines;
     uint32_t *fixed_next_parent_indexes;
@@ -61,6 +62,7 @@ enum
     kMuxDefaultChildBufferPauseTolerance = 512 * 1024,
     kMuxChildBufferResumeThreshold = 512 * 1024,
     kMuxChildBufferQueueCap = 8,
+    kMuxMainLineStatsLogIntervalMs = 5000,
 };
 
 /*
@@ -132,6 +134,7 @@ void muxclientLinestateDestroy(muxclient_lstate_t *ls);
 bool muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstate_t *ls);
 void muxclientForgetParentLine(muxclient_tstate_t *ts, wid_t wid, line_t *parent_l);
 line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l);
+void muxclientScheduleParentStatsLog(tunnel_t *t, line_t *parent_l);
 
 void muxclientJoinConnection(muxclient_lstate_t *parent, muxclient_lstate_t *child);
 void muxclientLeaveConnection(muxclient_lstate_t *child);

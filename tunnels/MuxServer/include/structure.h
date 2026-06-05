@@ -15,6 +15,7 @@ typedef struct muxserver_tstate_s
 {
     uint32_t child_buffer_limit;
     uint32_t child_buffer_pause_tolerance;
+    bool     log_main_line_stats;
 } muxserver_tstate_t;
 
 typedef struct muxserver_lstate_s
@@ -50,6 +51,7 @@ enum
     kMuxDefaultChildBufferPauseTolerance = 512 * 1024,
     kMuxChildBufferResumeThreshold = 512 * 1024,
     kMuxChildBufferQueueCap = 8,
+    kMuxMainLineStatsLogIntervalMs = 5000,
 };
 
 /*
@@ -117,6 +119,7 @@ void muxserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void muxserverLinestateInitialize(muxserver_lstate_t *ls, line_t *l, bool is_child, cid_t connection_id);
 void muxserverLinestateDestroy(muxserver_lstate_t *ls);
+void muxserverScheduleParentStatsLog(tunnel_t *t, line_t *parent_l);
 
 bool muxserverCheckConnectionIsExhausted(muxserver_tstate_t *ts, muxserver_lstate_t *ls);
 

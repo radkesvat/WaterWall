@@ -30,6 +30,7 @@ tunnel_t *muxserverTunnelCreate(node_t *node)
     muxserver_tstate_t *ts       = tunnelGetState(t);
     int                 child_buffer_limit = kMuxDefaultChildBufferLimit;
     int                 child_buffer_pause_tolerance = kMuxDefaultChildBufferPauseTolerance;
+    bool                log_main_line_stats = false;
 
     if (cJSON_IsObject(settings))
     {
@@ -37,6 +38,7 @@ tunnel_t *muxserverTunnelCreate(node_t *node)
                                       kMuxDefaultChildBufferLimit);
         getIntFromJsonObjectOrDefault(&child_buffer_pause_tolerance, settings, "child-buffer-pause-tolerance",
                                       kMuxDefaultChildBufferPauseTolerance);
+        getBoolFromJsonObjectOrDefault(&log_main_line_stats, settings, "log-main-line-stats", false);
     }
     if (child_buffer_limit <= 0)
     {
@@ -54,6 +56,7 @@ tunnel_t *muxserverTunnelCreate(node_t *node)
     ts->child_buffer_limit = (uint32_t) child_buffer_limit;
     ts->child_buffer_pause_tolerance =
         (uint32_t) min((size_t) child_buffer_pause_tolerance, (size_t) child_buffer_limit);
+    ts->log_main_line_stats = log_main_line_stats;
 
     return t;
 }
