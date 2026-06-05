@@ -588,8 +588,6 @@ config_file_t *configfileParse(const char *const file_path)
     state->file_prebuffer_size = stringLength(resolved_json);
 
     cJSON *json = cJSON_ParseWithLength(resolved_json, state->file_prebuffer_size);
-    state->root = json;
-    memoryFree(resolved_json);
 
     if (json == NULL)
     {
@@ -599,9 +597,13 @@ config_file_t *configfileParse(const char *const file_path)
         {
             LOGF("JSON Error: before: %s\n", error_ptr);
         }
+        memoryFree(resolved_json);
         configfileDestroy(state);
         return NULL;
     }
+
+    state->root = json;
+    memoryFree(resolved_json);
 
     if (! getStringFromJsonObject((&state->name), json, "name"))
     {
