@@ -4,10 +4,17 @@
 
 static muxserver_lstate_t *findChildByConnectionId(muxserver_lstate_t *parent_ls, uint32_t cid);
 
-static void muxserverCloseOwnedChildLineFromUpstreamPayload(tunnel_t *t, line_t *child_l,
-                                                            muxserver_lstate_t *child_ls)
+static bool muxserverCloseOwnedChildLineFromUpstreamPayload(tunnel_t *t, line_t *parent_l,
+                                                            muxserver_lstate_t *parent_ls, line_t *child_l,
+                                                            muxserver_lstate_t *child_ls,
+                                                            bool release_parent_input)
 {
     muxserverLeaveConnection(child_ls);
+    bool parent_alive = true;
+    if (release_parent_input)
+    {
+        parent_alive = muxserverResumeParentInputForChild(t, parent_l, parent_ls, child_ls);
+    }
     muxserverLinestateDestroy(child_ls);
     tunnelNextUpStreamFinish(t, child_l);
 
@@ -15,6 +22,7 @@ static void muxserverCloseOwnedChildLineFromUpstreamPayload(tunnel_t *t, line_t 
     {
         lineDestroy(child_l);
     }
+    return parent_alive && (! release_parent_input || lineIsAlive(parent_l));
 }
 
 static sbuf_t *tryReadCompleteFrame(muxserver_lstate_t *parent_ls, mux_frame_t *frame)
@@ -117,7 +125,10 @@ static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
         lineReuseBuffer(parent_l, frame_buffer);
         if (muxserverFlushChildPending(t, parent_l, parent_ls, child_l, child_ls, true))
         {
-            muxserverCloseOwnedChildLineFromUpstreamPayload(t, child_l, child_ls);
+            if (! muxserverCloseOwnedChildLineFromUpstreamPayload(t, parent_l, parent_ls, child_l, child_ls, true))
+            {
+                return false;
+            }
         }
         if (! lineIsAlive(parent_l))
         {
@@ -184,7 +195,7 @@ static void handleOverFlow(tunnel_t *t, line_t *parent_l)
     {
         muxserver_lstate_t *temp    = child_ls->child_next;
         line_t             *child_l = child_ls->l;
-        muxserverCloseOwnedChildLineFromUpstreamPayload(t, child_l, child_ls);
+        discard muxserverCloseOwnedChildLineFromUpstreamPayload(t, parent_l, parent_ls, child_l, child_ls, false);
         child_ls = temp;
     }
 

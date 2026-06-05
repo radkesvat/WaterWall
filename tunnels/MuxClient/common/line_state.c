@@ -15,11 +15,13 @@ void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_chi
                                       .creation_epoch = is_child ? 0 : wloopNowMS(getWorkerLoop(wid)),
                                       .connection_id  = connection_id,
                                       .children_count = 0,
+                                      .parent_read_pause_count = 0,
                                       .is_child       = is_child,
                                       .paused         = false,
                                       .flow_paused_sent = false,
                                       .peer_flow_paused = false,
                                       .parent_write_paused = false,
+                                      .parent_read_paused = false,
                                       .parent_finishing = false};
 }
 

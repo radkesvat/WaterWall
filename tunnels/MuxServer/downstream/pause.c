@@ -11,11 +11,10 @@ void muxserverTunnelDownStreamPause(tunnel_t *t, line_t *child_l)
     child_ls->paused = true;
 
     muxserver_lstate_t *parent_ls = child_ls->parent;
-    if (parent_ls->parent_finishing || child_ls->flow_paused_sent)
+    if (parent_ls->parent_finishing)
     {
         return;
     }
 
-    muxserver_tstate_t *ts = tunnelGetState(t);
-    discard muxserverMaybeSendChildFlowPause(t, parent_ls->l, ts, parent_ls, child_l, child_ls);
+    discard muxserverSendChildFlowPause(t, parent_ls->l, parent_ls, child_l, child_ls);
 }

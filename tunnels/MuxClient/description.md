@@ -124,10 +124,10 @@ Fixed connection count mode:
   Default: `8388608` (`8 MB`).
 
 - `child-buffer-pause-tolerance` `(integer, bytes, optional)`
-  Minimum queued data for a paused child line before `MuxClient` sends that child's `FlowPause` frame to the peer.
+  Queued-data threshold where a paused child also pauses reads on the shared parent transport.
 
-  Default: `524288` (`512 KB`). Set to `0` for immediate per-child pause frames. Values above `child-buffer-limit`
-  are capped to `child-buffer-limit`.
+  Default: `524288` (`512 KB`). Set to `0` to pause parent reads as soon as data must be queued for a paused child.
+  Values above `child-buffer-limit` are capped to `child-buffer-limit`.
 
 ## Detailed Behavior
 
@@ -204,14 +204,15 @@ For replies, it reads complete frames from the parent line, looks up the child b
 ### Pause and resume behavior
 
 When a child line is paused or resumed by the previous node, `MuxClient` uses `FlowPause` and `FlowResume` frames for
-that child's `cid`; pause frames may be delayed by `child-buffer-pause-tolerance`.
+that child's `cid`. `FlowPause` is sent as soon as the local child write side pauses.
 
 If writing parent-delivered data to a child causes that child to pause, `MuxClient` queues later data for that child.
-It sends `FlowPause` to the remote peer once that child's pending queue reaches `child-buffer-pause-tolerance`. Queued
-child data is flushed when the child resumes. A `FlowResume` is sent once the child's pending data drops below `512 KB`,
-so the peer can begin sending before the queue is fully empty.
+If the queued data reaches `child-buffer-pause-tolerance`, `MuxClient` also pauses parent transport reads locally so the
+shared parent cannot keep draining into that child's queue. Queued child data is flushed when the child resumes. A
+`FlowResume` is sent once the child's pending data drops below `512 KB`, so the peer can begin sending before the queue
+is fully empty; parent reads resume when no child queue still requires the parent pause.
 
-If one paused child's queue reaches `child-buffer-limit`, `MuxClient` sends a `Close` for that child and finishes the local child line. The shared parent mux input stays unpaused so unrelated child streams can continue.
+If one paused child's queue still reaches `child-buffer-limit`, `MuxClient` sends a `Close` for that child and finishes the local child line.
 
 When the remote side pauses the shared parent line, `MuxClient` tries to pause the child that most recently wrote to that parent. If no recent writer is known, it pauses all attached children. Resume only clears parent-write pressure; a child that is still under peer `FlowPause` remains paused.
 

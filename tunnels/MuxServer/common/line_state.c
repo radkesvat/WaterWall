@@ -13,11 +13,13 @@ void muxserverLinestateInitialize(muxserver_lstate_t *ls, line_t *l, bool is_chi
                                       .pending_child_data = bufferqueueCreate(kMuxChildBufferQueueCap),
                                       .connection_id  = connection_id,
                                       .children_count = 0,
+                                      .parent_read_pause_count = 0,
                                       .is_child       = is_child,
                                       .paused         = false,
                                       .flow_paused_sent = false,
                                       .peer_flow_paused = false,
                                       .parent_write_paused = false,
+                                      .parent_read_paused = false,
                                       .parent_finishing = false};
 }
 

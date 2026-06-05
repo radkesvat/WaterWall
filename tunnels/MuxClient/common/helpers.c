@@ -301,7 +301,30 @@ bool muxclientMaybeSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_t
                                       muxclient_lstate_t *parent_ls, line_t *child_l,
                                       muxclient_lstate_t *child_ls)
 {
+    if (bufferqueueGetBufLen(&child_ls->pending_child_data) < ts->child_buffer_pause_tolerance)
+    {
+        return true;
+    }
+
+    return muxclientSendChildFlowPause(t, parent_l, parent_ls, child_l, child_ls);
+}
+
+bool muxclientSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l,
+                                 muxclient_lstate_t *child_ls)
+{
     if (parent_ls->parent_finishing || child_ls->flow_paused_sent)
+    {
+        return true;
+    }
+
+    child_ls->flow_paused_sent = true;
+    return muxclientSendControlFrame(t, parent_l, parent_ls, child_l, child_ls->connection_id, kMuxFlagFlowPause);
+}
+
+bool muxclientMaybePauseParentInputForChild(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts,
+                                            muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls)
+{
+    if (parent_ls->parent_finishing || child_ls->parent_read_paused)
     {
         return true;
     }
@@ -311,8 +334,31 @@ bool muxclientMaybeSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_t
         return true;
     }
 
-    child_ls->flow_paused_sent = true;
-    return muxclientSendControlFrame(t, parent_l, parent_ls, child_l, child_ls->connection_id, kMuxFlagFlowPause);
+    child_ls->parent_read_paused = true;
+    parent_ls->parent_read_pause_count++;
+
+    return withLineLocked(parent_l, tunnelNextUpStreamPause, t);
+}
+
+bool muxclientResumeParentInputForChild(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls,
+                                        muxclient_lstate_t *child_ls)
+{
+    if (! child_ls->parent_read_paused)
+    {
+        return true;
+    }
+
+    assert(parent_ls->parent_read_pause_count > 0);
+
+    child_ls->parent_read_paused = false;
+    parent_ls->parent_read_pause_count--;
+
+    if (parent_ls->parent_read_pause_count > 0 || parent_ls->parent_finishing)
+    {
+        return true;
+    }
+
+    return withLineLocked(parent_l, tunnelNextUpStreamResume, t);
 }
 
 static bool muxclientChildSourcePaused(muxclient_lstate_t *child_ls)
@@ -382,9 +428,10 @@ static bool muxclientCloseChildForBufferLimit(tunnel_t *t, line_t *parent_l, mux
     }
 
     muxclientLeaveConnection(child_ls);
+    bool parent_alive = muxclientResumeParentInputForChild(t, parent_l, parent_ls, child_ls);
     muxclientLinestateDestroy(child_ls);
     tunnelPrevDownStreamFinish(t, child_l);
-    return lineIsAlive(parent_l);
+    return parent_alive && lineIsAlive(parent_l);
 }
 
 bool muxclientQueueChildPayload(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts,
@@ -398,6 +445,11 @@ bool muxclientQueueChildPayload(tunnel_t *t, line_t *parent_l, muxclient_tstate_
     }
 
     if (! muxclientMaybeSendChildFlowPause(t, parent_l, ts, parent_ls, child_ls->l, child_ls))
+    {
+        return false;
+    }
+
+    if (! muxclientMaybePauseParentInputForChild(t, parent_l, ts, parent_ls, child_ls))
     {
         return false;
     }
@@ -418,6 +470,11 @@ static bool muxclientHandleChildBufferAfterDrain(tunnel_t *t, line_t *parent_l, 
         {
             return false;
         }
+    }
+
+    if (! child_ls->paused && pending_bytes < muxclientChildResumeThreshold(ts))
+    {
+        return muxclientResumeParentInputForChild(t, parent_l, parent_ls, child_ls);
     }
 
     return true;

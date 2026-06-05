@@ -98,9 +98,10 @@ static bool handleCloseFrame(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, 
     if (child_alive)
     {
         muxclientLeaveConnection(child_ls);
+        bool parent_alive = muxclientResumeParentInputForChild(t, parent_l, parent_ls, child_ls);
         muxclientLinestateDestroy(child_ls);
         tunnelPrevDownStreamFinish(t, child_l);
-        if (! lineIsAlive(parent_l))
+        if (! parent_alive || ! lineIsAlive(parent_l))
         {
             return false;
         }

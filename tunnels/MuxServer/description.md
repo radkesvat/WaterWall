@@ -61,10 +61,10 @@ There are no required tunnel-specific settings in the current implementation.
   Default: `8388608` (`8 MB`).
 
 - `child-buffer-pause-tolerance` `(integer, bytes, optional)`
-  Minimum queued data for a paused child line before `MuxServer` sends that child's `FlowPause` frame to the peer.
+  Queued-data threshold where a paused child also pauses reads on the shared parent transport.
 
-  Default: `524288` (`512 KB`). Set to `0` for immediate per-child pause frames. Values above `child-buffer-limit`
-  are capped to `child-buffer-limit`.
+  Default: `524288` (`512 KB`). Set to `0` to pause parent reads as soon as data must be queued for a paused child.
+  Values above `child-buffer-limit` are capped to `child-buffer-limit`.
 
 ## Detailed Behavior
 
@@ -132,11 +132,13 @@ If the parent transport line itself finishes, `MuxServer` closes all currently a
 Per-child `FlowPause` and `FlowResume` frames are forwarded to the matching child line.
 
 If writing parent-delivered data to a child causes that child to pause, `MuxServer` queues later data for that child.
-It sends `FlowPause` to the remote peer once that child's pending queue reaches `child-buffer-pause-tolerance`. Queued
-child data is flushed when the child resumes. A `FlowResume` is sent once the child's pending data drops below `512 KB`,
-so the peer can begin sending before the queue is fully empty.
+`FlowPause` is sent as soon as the local child write side pauses. If the queued data reaches
+`child-buffer-pause-tolerance`, `MuxServer` also pauses parent transport reads locally so the shared parent cannot keep
+draining into that child's queue. Queued child data is flushed when the child resumes. A `FlowResume` is sent once the
+child's pending data drops below `512 KB`, so the peer can begin sending before the queue is fully empty; parent reads
+resume when no child queue still requires the parent pause.
 
-If one paused child's queue reaches `child-buffer-limit`, `MuxServer` sends a `Close` for that child and finishes the local child line. The shared parent mux input stays unpaused so unrelated child streams can continue.
+If one paused child's queue still reaches `child-buffer-limit`, `MuxServer` sends a `Close` for that child and finishes the local child line.
 
 If the parent transport is paused without a known recent writer, `MuxServer` pauses all child lines attached to that parent. Resume only clears parent-write pressure; a child that is still under peer `FlowPause` remains paused.
 

@@ -39,11 +39,13 @@ typedef struct muxclient_lstate_s
     uint64_t                   creation_epoch; // epoch of the connection creation, used for concurrency mode timer
     cid_t                      connection_id;  // unique connection id, used for multiplexing
     uint32_t children_count; // number of children in the parent connection, used for concurrency mode counter
+    uint32_t parent_read_pause_count; // parent: child queues currently pausing parent reads
     bool     is_child : 1;              // if this connection is muxed into a parent connection
     bool     paused : 1;                // child: local child write side is paused
     bool     flow_paused_sent : 1;      // child: FlowPause was sent to the peer for this cid
     bool     peer_flow_paused : 1;      // child: peer sent FlowPause for this cid
     bool     parent_write_paused : 1;   // child: parent transport write pause was reflected to this child
+    bool     parent_read_paused : 1;    // child: queued child data paused parent transport reads
     bool     parent_finishing : 1;      // parent: main FIN is being handled, suppress parent writes
 } muxclient_lstate_t;
 
@@ -137,9 +139,15 @@ void muxclientLeaveConnection(muxclient_lstate_t *child);
 void muxclientMakeMuxFrame(sbuf_t *buf, cid_t cid, uint8_t flag);
 bool muxclientSendControlFrame(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l,
                                cid_t cid, uint8_t flag);
+bool muxclientSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l,
+                                 muxclient_lstate_t *child_ls);
 bool muxclientMaybeSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts,
                                       muxclient_lstate_t *parent_ls, line_t *child_l,
                                       muxclient_lstate_t *child_ls);
+bool muxclientMaybePauseParentInputForChild(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts,
+                                            muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls);
+bool muxclientResumeParentInputForChild(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls,
+                                        muxclient_lstate_t *child_ls);
 bool muxclientPauseChildSource(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *child_ls, bool peer_flow,
                                bool parent_write);
 bool muxclientResumeChildSource(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *child_ls, bool peer_flow,
