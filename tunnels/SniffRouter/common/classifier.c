@@ -379,6 +379,32 @@ static sniffrouter_host_parse_t findTlsClientHelloSni(const uint8_t *p, uint32_t
     return kSniffHostMissing;
 }
 
+// Detects the ReverseClient/ReverseServer reverse-link handshake: a leading run
+// of kSniffReverseHandshakeLength bytes that all equal kSniffReverseHandshakeByte.
+// This mirrors ReverseServer's own validation, so SniffRouter only claims a
+// connection as "reverse" when ReverseServer would also accept it. SniffRouter
+// merely peeks; the buffered bytes are replayed intact to the chosen route, and
+// ReverseServer re-validates and strips the handshake itself.
+static sniffrouter_host_parse_t findReverseHandshake(const uint8_t *p, uint32_t n)
+{
+    uint32_t limit = n < (uint32_t) kSniffReverseHandshakeLength ? n : (uint32_t) kSniffReverseHandshakeLength;
+
+    for (uint32_t i = 0; i < limit; ++i)
+    {
+        if (p[i] != (uint8_t) kSniffReverseHandshakeByte)
+        {
+            return kSniffHostMissing;
+        }
+    }
+
+    if (n < (uint32_t) kSniffReverseHandshakeLength)
+    {
+        return kSniffHostNeedMore;
+    }
+
+    return kSniffHostFound;
+}
+
 static bool anyRouteHasDetection(sniffrouter_tstate_t *ts, uint8_t detection)
 {
     for (uint32_t ri = 0; ri < ts->routes_count; ++ri)
@@ -406,7 +432,8 @@ static bool routeMatchesHost(sniffrouter_route_t *route, const uint8_t *host, ui
 }
 
 static tunnel_t *findMatchingRoute(sniffrouter_tstate_t *ts, const uint8_t *http_host, uint32_t http_host_len,
-                                   bool http_found, const uint8_t *tls_sni, uint32_t tls_sni_len, bool tls_found)
+                                   bool http_found, const uint8_t *tls_sni, uint32_t tls_sni_len, bool tls_found,
+                                   bool reverse_found)
 {
     for (uint32_t ri = 0; ri < ts->routes_count; ++ri)
     {
@@ -420,6 +447,13 @@ static tunnel_t *findMatchingRoute(sniffrouter_tstate_t *ts, const uint8_t *http
 
         if (tls_found && (route->detection & kSniffDetectionTlsClientHello) != 0 &&
             routeMatchesHost(route, tls_sni, tls_sni_len))
+        {
+            return route->tunnel;
+        }
+
+        // Reverse detection is a binary-signature match and intentionally ignores
+        // "domains": the reverse link carries no Host/SNI of its own.
+        if (reverse_found && (route->detection & kSniffDetectionReverse) != 0)
         {
             return route->tunnel;
         }
@@ -440,8 +474,9 @@ sniffrouter_match_t sniffrouterClassify(sniffrouter_tstate_t *ts, const uint8_t 
         return match;
     }
 
-    bool http_enabled = anyRouteHasDetection(ts, kSniffDetectionHttp);
-    bool tls_enabled  = anyRouteHasDetection(ts, kSniffDetectionTlsClientHello);
+    bool http_enabled    = anyRouteHasDetection(ts, kSniffDetectionHttp);
+    bool tls_enabled     = anyRouteHasDetection(ts, kSniffDetectionTlsClientHello);
+    bool reverse_enabled = anyRouteHasDetection(ts, kSniffDetectionReverse);
 
     const uint8_t *http_host     = NULL;
     uint32_t       http_host_len = 0;
@@ -484,7 +519,26 @@ sniffrouter_match_t sniffrouterClassify(sniffrouter_tstate_t *ts, const uint8_t 
         }
     }
 
-    match.target = findMatchingRoute(ts, http_host, http_host_len, http_found, tls_sni, tls_sni_len, tls_found);
+    bool reverse_found = false;
+
+    if (reverse_enabled)
+    {
+        switch (findReverseHandshake(p, n))
+        {
+        case kSniffHostNeedMore:
+            need_more = true;
+            break;
+        case kSniffHostFound:
+            reverse_found = true;
+            break;
+        case kSniffHostMissing:
+        default:
+            break;
+        }
+    }
+
+    match.target =
+        findMatchingRoute(ts, http_host, http_host_len, http_found, tls_sni, tls_sni_len, tls_found, reverse_found);
     if (match.target != NULL)
     {
         match.result = kSniffClassifyTarget;

@@ -8,6 +8,9 @@ termination to route by the TLS ClientHello SNI.
   handed to that route's `next` node;
 - if TLS ClientHello detection is enabled for a route and the SNI matches, the
   connection is handed to that route's `next` node;
+- if reverse detection is enabled for a route and the decrypted stream begins
+  with the `ReverseClient`/`ReverseServer` reverse-link handshake, the
+  connection is handed to that route's `next` node (no domain match needed);
 - otherwise, including non-HTTP traffic and HTTP traffic with no matching host,
   the connection continues to the node's normal top-level `next`.
 
@@ -52,12 +55,13 @@ Each route object:
 
 | key | type | required | description |
 |-----|------|----------|-------------|
-| `domains` | string or array of strings | yes | domain patterns for this route |
-| `detection` | string or array of strings | no | `http` by default; use `tls`, `client-hello`, or `tls-client-hello` for SNI routing; use `["http", "tls"]` to enable both |
-| `next` | string | yes | target node name for matching domains |
+| `domains` | string or array of strings | required unless detection is reverse-only | domain patterns for this route |
+| `detection` | string or array of strings | no | `http` by default; use `tls`, `client-hello`, or `tls-client-hello` for SNI routing; use `reverse` (aliases `reverse-tls`, `reverse-handshake`) for reverse-link routing; combine in an array, e.g. `["http", "tls"]` |
+| `next` | string | yes | target node name for matching connections |
 
 `domain` may be used instead of `domains` for a single domain. `target` is
-accepted as an alias for route `next`.
+accepted as an alias for route `next`. `domains` is ignored for a route whose
+only detection mode is `reverse`, and may be omitted there.
 
 The node itself must define top-level `next`, which is the default fallback.
 Routes are checked in order; the first matching domain wins.
@@ -83,3 +87,44 @@ Routes are checked in order; the first matching domain wins.
     "next": "default_fail_path"
 }
 ```
+
+## Reverse-link detection (single-SNI tunnels)
+
+`reverse` detection lets one TLS entry point carry both a `ReverseServer`
+reverse tunnel and a real camouflage website without giving the tunnel a
+different SNI. Host/SNI routing cannot separate them when everything shares one
+SNI, but the reverse link is identifiable by its content: `ReverseClient` sends
+a fixed handshake (a 640-byte run of `0xFF`) as the first bytes of every reverse
+connection, which never collides with an HTTP request or a TLS ClientHello.
+
+A route with reverse detection matches purely on that signature and ignores
+`domains`. Place `SniffRouter` on the **decrypted** stream (i.e. after TLS has
+been terminated, whether by an upstream `TlsServer` node or by a fronting proxy
+that forwards the plaintext), send the matched route to `ReverseServer`, and let
+the top-level `next` fallback serve the camouflage site:
+
+```json
+{
+    "name": "sniff-router",
+    "type": "SniffRouter",
+    "settings": {
+        "routes": [
+            {
+                "detection": "reverse",
+                "next": "reverse_server"
+            }
+        ]
+    },
+    "next": "tcp_to_nginx"
+}
+```
+
+`SniffRouter` only peeks at the handshake; the buffered bytes are replayed
+intact to `ReverseServer`, which re-validates the full handshake and strips it.
+A connection that merely starts with `0xFF` but is not a real reverse link is
+forwarded to `ReverseServer` and dropped there by the same validation, so it
+cannot leak into the tunnel.
+
+The handshake must be at the very start of the decrypted stream. If a fronting
+proxy forwards traffic with a PROXY-protocol header prepended, strip it before
+`SniffRouter` (the leading bytes would otherwise not be the handshake).

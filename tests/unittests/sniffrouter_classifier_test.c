@@ -182,5 +182,97 @@ int main(void)
         return 1;
     }
 
+    // Reverse-link handshake detection.
+    tunnel_t *reverse_target = (tunnel_t *) (uintptr_t) 0x30;
+
+    char  reverse_http_domain[]  = "api.example.test";
+    char *reverse_http_domains[] = {reverse_http_domain};
+
+    sniffrouter_route_t reverse_routes[] = {
+        {
+            .tunnel        = http_target,
+            .domains       = reverse_http_domains,
+            .domains_count = 1,
+            .detection     = kSniffDetectionHttp,
+        },
+        {
+            .tunnel        = reverse_target,
+            .domains       = NULL,
+            .domains_count = 0,
+            .detection     = kSniffDetectionReverse,
+        },
+    };
+
+    sniffrouter_tstate_t reverse_ts = {
+        .routes       = reverse_routes,
+        .routes_count = 2,
+    };
+
+    uint8_t handshake[kSniffReverseHandshakeLength + 16];
+    memorySet(handshake, (uint8_t) kSniffReverseHandshakeByte, sizeof(handshake));
+
+    if (expect_match("reverse handshake route",
+                     sniffrouterClassify(&reverse_ts, handshake, (uint32_t) kSniffReverseHandshakeLength),
+                     kSniffClassifyTarget,
+                     reverse_target) != 0)
+    {
+        return 1;
+    }
+
+    if (expect_match("reverse handshake with trailer",
+                     sniffrouterClassify(&reverse_ts, handshake, (uint32_t) sizeof(handshake)),
+                     kSniffClassifyTarget,
+                     reverse_target) != 0)
+    {
+        return 1;
+    }
+
+    if (expect_match("reverse handshake partial needs more",
+                     sniffrouterClassify(&reverse_ts, handshake, (uint32_t) kSniffReverseHandshakeLength - 1U),
+                     kSniffClassifyNeedMore,
+                     NULL) != 0)
+    {
+        return 1;
+    }
+
+    uint8_t broken_handshake[kSniffReverseHandshakeLength];
+    memorySet(broken_handshake, (uint8_t) kSniffReverseHandshakeByte, sizeof(broken_handshake));
+    broken_handshake[100] = 0x00;
+    if (expect_match("reverse handshake interrupted falls back",
+                     sniffrouterClassify(&reverse_ts, broken_handshake, (uint32_t) sizeof(broken_handshake)),
+                     kSniffClassifyDefault,
+                     NULL) != 0)
+    {
+        return 1;
+    }
+
+    if (expect_match("http route beside reverse route",
+                     sniffrouterClassify(&reverse_ts, http_request, (uint32_t) sizeof(http_request) - 1U),
+                     kSniffClassifyTarget,
+                     http_target) != 0)
+    {
+        return 1;
+    }
+
+    reverse_routes[1].detection     = kSniffDetectionHttp | kSniffDetectionReverse;
+    reverse_routes[1].domains       = reverse_http_domains;
+    reverse_routes[1].domains_count = 1;
+    if (expect_match("combined http+reverse matches handshake",
+                     sniffrouterClassify(&reverse_ts, handshake, (uint32_t) kSniffReverseHandshakeLength),
+                     kSniffClassifyTarget,
+                     reverse_target) != 0)
+    {
+        return 1;
+    }
+
+    reverse_routes[1].detection = kSniffDetectionHttp;
+    if (expect_match("reverse detection disabled falls back",
+                     sniffrouterClassify(&reverse_ts, handshake, (uint32_t) kSniffReverseHandshakeLength),
+                     kSniffClassifyDefault,
+                     NULL) != 0)
+    {
+        return 1;
+    }
+
     return 0;
 }

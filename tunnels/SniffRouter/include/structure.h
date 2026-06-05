@@ -38,7 +38,12 @@ enum sniffrouter_classify_result_e
 enum sniffrouter_detection_e
 {
     kSniffDetectionHttp           = 1U << 0U,
-    kSniffDetectionTlsClientHello = 1U << 1U
+    kSniffDetectionTlsClientHello = 1U << 1U,
+    // Recognizes the ReverseClient/ReverseServer reverse-link handshake on the
+    // decrypted stream. Unlike http/tls detection this is a fixed binary
+    // signature, so a route using it matches purely on the handshake and does
+    // not consult "domains".
+    kSniffDetectionReverse        = 1U << 2U
 };
 
 typedef struct sniffrouter_route_s
@@ -82,7 +87,15 @@ enum
     // Keep the sniff window bounded. Normal Host headers and ClientHello SNI
     // extensions arrive well before this; if they do not, traffic falls back
     // to "next".
-    kSniffMaxHeaderBytes = 8192
+    kSniffMaxHeaderBytes = 8192,
+
+    // Reverse-link handshake signature, mirrored from ReverseClient/ReverseServer
+    // (their shared kHandShakeByte / kHandShakeLength). ReverseClient sends this
+    // exact run of bytes as the first payload of every reverse link, and
+    // ReverseServer validates the full run before accepting the connection. Keep
+    // these values in sync with those tunnels.
+    kSniffReverseHandshakeByte   = 0xFF,
+    kSniffReverseHandshakeLength = 640
 };
 
 WW_EXPORT void         sniffrouterTunnelDestroy(tunnel_t *t);

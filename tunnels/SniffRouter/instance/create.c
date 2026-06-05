@@ -72,6 +72,25 @@ static bool loadRouteDomains(sniffrouter_route_t *route, const cJSON *route_json
     const cJSON *domains = cJSON_GetObjectItemCaseSensitive(route_json, "domains");
     const cJSON *domain  = cJSON_GetObjectItemCaseSensitive(route_json, "domain");
 
+    // Host/SNI detection needs domain patterns to match against; signature-based
+    // detection (reverse) does not. Detection is parsed before domains so the
+    // requirement is known here.
+    bool domains_required = (route->detection & (kSniffDetectionHttp | kSniffDetectionTlsClientHello)) != 0;
+
+    if (domains == NULL && domain == NULL)
+    {
+        if (domains_required)
+        {
+            LOGF("SniffRouter: route %u uses http/tls detection and requires \"domains\" or \"domain\"",
+                 (unsigned int) route_index);
+            return false;
+        }
+
+        route->domains       = NULL;
+        route->domains_count = 0;
+        return true;
+    }
+
     if (domains != NULL && domain != NULL)
     {
         LOGF("SniffRouter: route %u must use either \"domains\" or \"domain\", not both", (unsigned int) route_index);
@@ -121,7 +140,7 @@ static bool loadDetectionString(uint8_t *detection, const cJSON *detection_json,
     char *value = NULL;
     if (! getStringFromJson(&value, detection_json))
     {
-        LOGF("JSON Error: %s (string field) : expected http, tls, client-hello, or tls-client-hello", json_path);
+        LOGF("JSON Error: %s (string field) : expected http, tls, client-hello, tls-client-hello, or reverse", json_path);
         return false;
     }
 
@@ -138,6 +157,14 @@ static bool loadDetectionString(uint8_t *detection, const cJSON *detection_json,
         stringCompare(value, "tls-client-hello") == 0)
     {
         *detection |= kSniffDetectionTlsClientHello;
+        memoryFree(value);
+        return true;
+    }
+
+    if (stringCompare(value, "reverse") == 0 || stringCompare(value, "reverse-tls") == 0 ||
+        stringCompare(value, "reverse-handshake") == 0)
+    {
+        *detection |= kSniffDetectionReverse;
         memoryFree(value);
         return true;
     }
@@ -249,9 +276,12 @@ static bool loadRoutes(sniffrouter_tstate_t *ts, node_t *node, const cJSON *sett
             return false;
         }
 
+        // Detection must be parsed before domains: signature-based detection
+        // (reverse) makes "domains" optional, so loadRouteDomains needs to know
+        // the detection mode first.
         if (! loadRouteTarget(&ts->routes[index], node, route_json, index) ||
-            ! loadRouteDomains(&ts->routes[index], route_json, index) ||
-            ! loadRouteDetection(&ts->routes[index], route_json))
+            ! loadRouteDetection(&ts->routes[index], route_json) ||
+            ! loadRouteDomains(&ts->routes[index], route_json, index))
         {
             return false;
         }
