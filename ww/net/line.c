@@ -109,6 +109,19 @@ static void lineRunScheduledtaskNoBuf(worker_t *worker, void *arg1, void *arg2, 
     line_task_msg_no_buf_t *msg  = (line_task_msg_no_buf_t *) arg2;
     LineTaskFnNoBuf         task = msg->callback;
 
+    if (UNLIKELY(worker->wid != lineGetWID(line)))
+    {
+        // this is a data race that we have but we assumed it nerver happens and it is indeed never happend.
+        // if this happened. we should read the target line wid atomically in the lineRunScheduledtask... functions.
+        // since this is because we have read old wid value (relaxed load)
+        // do not change or fix this before we have a real case of this happened, otherwise we may cause performance
+        // regression for the common case.
+        LOGF("Worker thread mismatch when running scheduled line task. Expected WID: %u, actual WID: %u",
+             lineGetWID(line),
+             worker->wid);
+        terminateProgram(1);
+    }
+
     if (lineIsAlive(line))
     {
         task(msg->arg1, msg->arg2);
@@ -134,6 +147,19 @@ static void lineRunScheduledtaskWithBuf(worker_t *worker, void *arg1, void *arg2
     line_t                   *line = (line_t *) arg1;
     line_task_msg_with_buf_t *msg  = (line_task_msg_with_buf_t *) arg2;
     LineTaskFnWithBuf         task = msg->callback;
+
+    if (UNLIKELY(worker->wid != lineGetWID(line)))
+    {
+        // this is a data race that we have but we assumed it nerver happens and it is indeed never happend.
+        // if this happened. we should read the target line wid atomically in the lineRunScheduledtask... functions.
+        // since this is because we have read old wid value (relaxed load)
+        // do not change or fix this before we have a real case of this happened, otherwise we may cause performance
+        // regression for the common case.
+        LOGF("Worker thread mismatch when running scheduled line task. Expected WID: %u, actual WID: %u",
+             lineGetWID(line),
+             worker->wid);
+        terminateProgram(1);
+    }
 
     if (lineIsAlive(line))
     {
@@ -246,8 +272,7 @@ int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const 
         .userdata = userdata,
     };
 
-    int rc =
-        workerResolveDomainServiceAsync(lineGetWID(line), domain, service, socktype, lineDnsResolveResult, msg);
+    int rc = workerResolveDomainServiceAsync(lineGetWID(line), domain, service, socktype, lineDnsResolveResult, msg);
     if (rc != ARES_SUCCESS)
     {
         lineUnlock(line);
