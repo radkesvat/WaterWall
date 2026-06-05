@@ -32,13 +32,15 @@ void muxclientTunnelUpStreamFinish(tunnel_t *t, line_t *child_l)
     cid_t               cid       = child_ls->connection_id;
     muxclientLeaveConnection(child_ls);
 
-    if (parent_ls->parent_finishing)
+    bool parent_alive = muxclientReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
+
+    if (! parent_alive)
     {
         muxclientLinestateDestroy(child_ls);
         return;
     }
 
-    if (! muxclientResumeParentInputForChild(t, parent_l, parent_ls, child_ls))
+    if (parent_ls->parent_finishing)
     {
         muxclientLinestateDestroy(child_ls);
         return;

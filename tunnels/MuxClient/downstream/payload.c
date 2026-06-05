@@ -98,7 +98,7 @@ static bool handleCloseFrame(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, 
     if (child_alive)
     {
         muxclientLeaveConnection(child_ls);
-        bool parent_alive = muxclientResumeParentInputForChild(t, parent_l, parent_ls, child_ls);
+        bool parent_alive = muxclientReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
         muxclientLinestateDestroy(child_ls);
         tunnelPrevDownStreamFinish(t, child_l);
         if (! parent_alive || ! lineIsAlive(parent_l))
@@ -191,12 +191,15 @@ static void handleOverFlow(tunnel_t *t, line_t *parent_l)
     muxclient_tstate_t *ts        = tunnelGetState(t);
     muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
 
+    parent_ls->parent_finishing = true;
+
     muxclient_lstate_t *child_ls = parent_ls->child_next;
     while (child_ls)
     {
         muxclient_lstate_t *temp    = child_ls->child_next;
         line_t             *child_l = child_ls->l;
         muxclientLeaveConnection(child_ls);
+        discard muxclientReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
         muxclientLinestateDestroy(child_ls);
         tunnelPrevDownStreamFinish(t, child_l);
         child_ls = temp;

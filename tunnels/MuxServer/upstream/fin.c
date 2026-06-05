@@ -29,6 +29,7 @@ void muxserverTunnelUpStreamFinish(tunnel_t *t, line_t *parent_l)
 
         if (muxserverFlushChildPending(t, parent_l, parent_ls, child_l, child_ls, true))
         {
+            discard muxserverReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
             muxserverCloseOwnedChildLineFromUpstreamFinish(t, child_l, child_ls);
         }
 

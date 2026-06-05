@@ -218,6 +218,9 @@ shared parent cannot keep draining into that child's queue. Queued child data is
 `FlowResume` is sent once the child's pending data drops below `512 KB`, so the peer can begin sending before the queue
 is fully empty; parent reads resume when no child queue still requires the parent pause.
 
+The same pause threshold is also applied to the aggregate queued child data on the parent line. This prevents a fixed
+parent from continuing to read while many paused children each have a smaller-than-threshold queue.
+
 If one paused child's queue still reaches `child-buffer-limit`, `MuxClient` sends a `Close` for that child and finishes the local child line.
 
 When the remote side pauses the shared parent line, `MuxClient` tries to pause the child that most recently wrote to that parent. If no recent writer is known, it pauses all attached children. Resume only clears parent-write pressure; a child that is still under peer `FlowPause` remains paused.

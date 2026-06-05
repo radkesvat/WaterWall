@@ -143,6 +143,33 @@ static size_t muxserverChildResumeThreshold(muxserver_tstate_t *ts)
     return min((size_t) kMuxChildBufferResumeThreshold, (size_t) ts->child_buffer_limit);
 }
 
+static void muxserverAddParentPendingChildBytes(muxserver_lstate_t *parent_ls, size_t bytes)
+{
+    assert(parent_ls != NULL && ! parent_ls->is_child);
+    assert(parent_ls->pending_child_data_len <= SIZE_MAX - bytes);
+
+    parent_ls->pending_child_data_len += bytes;
+}
+
+static void muxserverSubtractParentPendingChildBytes(muxserver_lstate_t *parent_ls, size_t bytes)
+{
+    assert(parent_ls != NULL && ! parent_ls->is_child);
+    assert(parent_ls->pending_child_data_len >= bytes);
+
+    parent_ls->pending_child_data_len -= bytes;
+}
+
+static void muxserverReleaseChildPendingBytes(muxserver_lstate_t *parent_ls, muxserver_lstate_t *child_ls)
+{
+    size_t pending_bytes = bufferqueueGetBufLen(&child_ls->pending_child_data);
+    if (pending_bytes == 0)
+    {
+        return;
+    }
+
+    muxserverSubtractParentPendingChildBytes(parent_ls, pending_bytes);
+}
+
 bool muxserverSendControlFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, line_t *child_l,
                                cid_t cid, uint8_t flag)
 {
@@ -210,6 +237,25 @@ bool muxserverMaybePauseParentInputForChild(tunnel_t *t, line_t *parent_l, muxse
     return withLineLocked(parent_l, tunnelPrevDownStreamPause, t);
 }
 
+static bool muxserverMaybePauseParentInputForAggregate(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
+                                                       muxserver_lstate_t *parent_ls)
+{
+    if (parent_ls->parent_finishing || parent_ls->aggregate_read_paused)
+    {
+        return true;
+    }
+
+    if (parent_ls->pending_child_data_len < ts->child_buffer_pause_tolerance)
+    {
+        return true;
+    }
+
+    parent_ls->aggregate_read_paused = true;
+    parent_ls->parent_read_pause_count++;
+
+    return withLineLocked(parent_l, tunnelPrevDownStreamPause, t);
+}
+
 bool muxserverResumeParentInputForChild(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
                                         muxserver_lstate_t *child_ls)
 {
@@ -229,6 +275,47 @@ bool muxserverResumeParentInputForChild(tunnel_t *t, line_t *parent_l, muxserver
     }
 
     return withLineLocked(parent_l, tunnelPrevDownStreamResume, t);
+}
+
+static bool muxserverResumeParentInputForAggregate(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
+                                                   muxserver_lstate_t *parent_ls)
+{
+    if (! parent_ls->aggregate_read_paused)
+    {
+        return true;
+    }
+
+    if (parent_ls->pending_child_data_len >= muxserverChildResumeThreshold(ts))
+    {
+        return true;
+    }
+
+    assert(parent_ls->parent_read_pause_count > 0);
+
+    parent_ls->aggregate_read_paused = false;
+    parent_ls->parent_read_pause_count--;
+
+    if (parent_ls->parent_read_pause_count > 0 || parent_ls->parent_finishing)
+    {
+        return true;
+    }
+
+    return withLineLocked(parent_l, tunnelPrevDownStreamResume, t);
+}
+
+bool muxserverReleaseParentInputForChildClose(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
+                                              muxserver_lstate_t *child_ls)
+{
+    muxserver_tstate_t *ts = tunnelGetState(t);
+
+    muxserverReleaseChildPendingBytes(parent_ls, child_ls);
+
+    if (! muxserverResumeParentInputForChild(t, parent_l, parent_ls, child_ls))
+    {
+        return false;
+    }
+
+    return muxserverResumeParentInputForAggregate(t, parent_l, ts, parent_ls);
 }
 
 static bool muxserverChildSourcePaused(muxserver_lstate_t *child_ls)
@@ -298,7 +385,7 @@ static bool muxserverCloseChildForBufferLimit(tunnel_t *t, line_t *parent_l, mux
     }
 
     muxserverLeaveConnection(child_ls);
-    bool parent_alive = muxserverResumeParentInputForChild(t, parent_l, parent_ls, child_ls);
+    bool parent_alive = muxserverReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
     muxserverLinestateDestroy(child_ls);
     tunnelNextUpStreamFinish(t, child_l);
     if (lineIsAlive(child_l))
@@ -311,7 +398,10 @@ static bool muxserverCloseChildForBufferLimit(tunnel_t *t, line_t *parent_l, mux
 bool muxserverQueueChildPayload(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
                                 muxserver_lstate_t *parent_ls, muxserver_lstate_t *child_ls, sbuf_t *buf)
 {
+    size_t buf_len = sbufGetLength(buf);
+
     bufferqueuePushBack(&child_ls->pending_child_data, buf);
+    muxserverAddParentPendingChildBytes(parent_ls, buf_len);
 
     if (bufferqueueGetBufLen(&child_ls->pending_child_data) >= ts->child_buffer_limit)
     {
@@ -324,6 +414,10 @@ bool muxserverQueueChildPayload(tunnel_t *t, line_t *parent_l, muxserver_tstate_
     }
 
     if (! muxserverMaybePauseParentInputForChild(t, parent_l, ts, parent_ls, child_ls))
+    {
+        return false;
+    }
+    if (! muxserverMaybePauseParentInputForAggregate(t, parent_l, ts, parent_ls))
     {
         return false;
     }
@@ -348,10 +442,13 @@ static bool muxserverHandleChildBufferAfterDrain(tunnel_t *t, line_t *parent_l, 
 
     if (! child_ls->paused && pending_bytes < muxserverChildResumeThreshold(ts))
     {
-        return muxserverResumeParentInputForChild(t, parent_l, parent_ls, child_ls);
+        if (! muxserverResumeParentInputForChild(t, parent_l, parent_ls, child_ls))
+        {
+            return false;
+        }
     }
 
-    return true;
+    return muxserverResumeParentInputForAggregate(t, parent_l, ts, parent_ls);
 }
 
 bool muxserverFlushChildPending(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, line_t *child_l,
@@ -368,6 +465,7 @@ bool muxserverFlushChildPending(tunnel_t *t, line_t *parent_l, muxserver_lstate_
         }
 
         sbuf_t *buf = bufferqueuePopFront(&child_ls->pending_child_data);
+        muxserverSubtractParentPendingChildBytes(parent_ls, sbufGetLength(buf));
         if (! withLineLockedWithBuf(child_l, tunnelNextUpStreamPayload, t, buf))
         {
             lineUnlock(parent_l);

@@ -11,9 +11,9 @@ static bool muxserverCloseOwnedChildLineFromUpstreamPayload(tunnel_t *t, line_t 
 {
     muxserverLeaveConnection(child_ls);
     bool parent_alive = true;
-    if (release_parent_input)
+    if (release_parent_input || parent_ls->parent_finishing)
     {
-        parent_alive = muxserverResumeParentInputForChild(t, parent_l, parent_ls, child_ls);
+        parent_alive = muxserverReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
     }
     muxserverLinestateDestroy(child_ls);
     tunnelNextUpStreamFinish(t, child_l);
@@ -190,6 +190,8 @@ static void handleOverFlow(tunnel_t *t, line_t *parent_l)
 {
     muxserver_lstate_t *parent_ls = lineGetState(parent_l, t);
     muxserver_lstate_t *child_ls  = parent_ls->child_next;
+
+    parent_ls->parent_finishing = true;
 
     while (child_ls)
     {

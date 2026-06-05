@@ -23,6 +23,7 @@ void muxclientTunnelDownStreamFinish(tunnel_t *t, line_t *parent_l)
         if (muxclientFlushChildPending(t, parent_l, parent_ls, child_l, child_ls, true))
         {
             muxclientLeaveConnection(child_ls);
+            discard muxclientReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
             muxclientLinestateDestroy(child_ls);
             tunnelPrevDownStreamFinish(t, child_l);
         }

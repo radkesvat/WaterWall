@@ -12,6 +12,7 @@ void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_chi
                                       .child_next     = NULL,
                                       .read_stream    = bufferstreamCreate(getWorkerBufferPool(wid), kMuxFrameLength),
                                       .pending_child_data = bufferqueueCreate(kMuxChildBufferQueueCap),
+                                      .pending_child_data_len = 0,
                                       .creation_epoch = is_child ? 0 : wloopNowMS(getWorkerLoop(wid)),
                                       .connection_id  = connection_id,
                                       .children_count = 0,
@@ -22,6 +23,7 @@ void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_chi
                                       .peer_flow_paused = false,
                                       .parent_write_paused = false,
                                       .parent_read_paused = false,
+                                      .aggregate_read_paused = false,
                                       .parent_finishing = false};
 }
 
