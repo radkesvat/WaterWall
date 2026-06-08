@@ -1,0 +1,47 @@
+{
+  "name": "tcp-connector-race-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "addresses": [
+          {
+            "address": "127.0.0.1",
+            "port": 41054
+          },
+          {
+            "address": "127.0.0.1",
+            "port": 41055
+          }
+        ],
+        "address-selection": "race",
+        "address-max-consecutive-failures": 1,
+        "race-tries": 2,
+        "race-timeout-ms": 3000,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41055,
+        "nodelay": true
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}

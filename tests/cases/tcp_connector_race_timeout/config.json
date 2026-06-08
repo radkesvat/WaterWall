@@ -1,0 +1,33 @@
+{
+  "name": "tcp-connector-race-timeout",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "addresses": [
+          {
+            "address": "127.0.0.1",
+            "port": 41056
+          },
+          {
+            "address": "127.0.0.1",
+            "port": 41057
+          }
+        ],
+        "address-selection": "race",
+        "address-max-consecutive-failures": 1,
+        "race-tries": 2,
+        "race-timeout-ms": 500,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    }
+  ]
+}

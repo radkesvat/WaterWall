@@ -1,0 +1,59 @@
+{
+  "name": "tcp-connector-healthy-only-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "addresses": [
+          {
+            "address": "127.0.0.1",
+            "port": 41050
+          },
+          {
+            "address": "127.0.0.1",
+            "port": 41051
+          }
+        ],
+        "address-selection": "healthy-only",
+        "address-max-consecutive-failures": 1,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-listener-a",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41050,
+        "nodelay": true
+      },
+      "next": "tester-server-a"
+    },
+    {
+      "name": "tester-server-a",
+      "type": "TesterServer"
+    },
+    {
+      "name": "tcp-listener-b",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41051,
+        "nodelay": true
+      },
+      "next": "tester-server-b"
+    },
+    {
+      "name": "tester-server-b",
+      "type": "TesterServer"
+    }
+  ]
+}

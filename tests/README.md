@@ -79,6 +79,19 @@ Practical rule:
 - `tcp_connector_multi_address_round_robin`
   Verifies `TcpConnector.settings.addresses` with `address-selection: "round-robin"` across two loopback listener
   endpoints.
+- `tcp_connector_healthy_only_roundtrip`
+  Verifies `TcpConnector.settings.addresses` with `address-selection: "healthy-only"` and passive health settings across
+  two loopback listener endpoints.
+- `tcp_connector_least_rtt_roundtrip`
+  Verifies `address-selection: "least-rtt"` falls back cleanly before RTT samples exist and preserves a TCP roundtrip.
+- `tcp_connector_race_roundtrip`
+  Verifies TCP address race mode succeeds when one candidate has no listener and a later candidate connects.
+- `tcp_connector_race_timeout`
+  Negative case: verifies TCP address race mode fails the line when no candidate can connect.
+- `tcp_connector_rejects_probe_without_addresses`
+  Negative case: verifies active TCP probe settings require `TcpConnector.settings.addresses`.
+- `tcp_connector_rejects_race_without_addresses`
+  Negative case: verifies TCP address race mode requires `TcpConnector.settings.addresses`.
 - `tcp_connector_rejects_address_and_addresses`
   Negative case: verifies `TcpConnector` rejects configs that mix top-level `address`/`port` with `addresses`.
 - `tcp_connector_rejects_empty_addresses`
@@ -241,6 +254,9 @@ Practical rule:
 - `reverse_tls_sni_endpoint_pair_roundtrip`
   Verifies paired SNI endpoint routing where `TlsClient.settings.sni-endpoints` fills `dest_context` and `TcpConnector`
   connects through `"dest_context->address"` / `"dest_context->port"`.
+- `reverse_tls_multi_sni_tcp_race_roundtrip`
+  Verifies multi-SNI reverse TLS still roundtrips when `TcpConnector` races multiple TCP address candidates and one
+  candidate fails.
 - `wireguard_udpstateless_packet_roundtrip`
   Verifies two `WireGuardDevice` nodes across real UDP loopback sockets, using packet-mode testers with IPv4 packet
   payloads so AllowedIPs routing and transport encryption are both exercised end to end.

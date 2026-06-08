@@ -1,0 +1,19 @@
+{
+  "name": "tcp-connector-rejects-probe-without-addresses",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41060,
+        "address-probe-interval-ms": 1000
+      }
+    }
+  ]
+}

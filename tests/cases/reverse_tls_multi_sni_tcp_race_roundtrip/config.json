@@ -1,0 +1,97 @@
+{
+  "name": "reverse-tls-multi-sni-tcp-race-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "bridge-client"
+    },
+    {
+      "name": "bridge-client",
+      "type": "Bridge",
+      "settings": {
+        "pair": "bridge-server"
+      },
+      "next": "reverse-client"
+    },
+    {
+      "name": "reverse-client",
+      "type": "ReverseClient",
+      "settings": {
+        "minimum-unused": 2
+      },
+      "next": "tls-client"
+    },
+    {
+      "name": "tls-client",
+      "type": "TlsClient",
+      "settings": {
+        "snis": ["tcp-race-a.multi.reverse.test", "tcp-race-b.multi.reverse.test"],
+        "sni-selection": "round-robin",
+        "verify": false
+      },
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "addresses": [
+          {
+            "address": "127.0.0.1",
+            "port": 41058
+          },
+          {
+            "address": "127.0.0.1",
+            "port": 41059
+          }
+        ],
+        "address-selection": "race",
+        "address-max-consecutive-failures": 1,
+        "race-tries": 2,
+        "race-timeout-ms": 3000,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41059,
+        "whitelist": ["127.0.0.1/32"],
+        "nodelay": true
+      },
+      "next": "tls-server"
+    },
+    {
+      "name": "tls-server",
+      "type": "TlsServer",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "snis": ["tcp-race-a.multi.reverse.test", "tcp-race-b.multi.reverse.test"]
+      },
+      "next": "reverse-server"
+    },
+    {
+      "name": "reverse-server",
+      "type": "ReverseServer",
+      "next": "bridge-server"
+    },
+    {
+      "name": "bridge-server",
+      "type": "Bridge",
+      "settings": {
+        "pair": "bridge-client"
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}
