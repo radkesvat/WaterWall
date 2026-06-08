@@ -1,7 +1,7 @@
 #pragma once
 
-#include "threadsafe_generic_pool.h"
 #include "async_dns.h"
+#include "threadsafe_generic_pool.h"
 #include "watomic.h"
 #include "wlibc.h"
 #include "wloop.h"
@@ -9,6 +9,8 @@
 
 typedef uint8_t        wid_t;
 typedef _Atomic(wid_t) atomic_wid_t;
+
+typedef struct worker_message_queue_s worker_message_queue_t;
 
 /**
  * @brief Structure representing a worker.
@@ -20,14 +22,14 @@ typedef struct worker_s
     // functions like wloopPostEvent allocate WIO from target wid loop.
     threadsafe_generic_pool_t *wios_pool;
 
-    wloop_t        *loop;                // Event loop associated with the worker.
-    dns_resolver_t  dns_resolver;        // Worker-local async DNS resolver.
-    buffer_pool_t  *buffer_pool;         // Buffer pool for managing memory buffers.
-    generic_pool_t *context_pool;        // Generic pool for managing context objects.
-    generic_pool_t *pipetunnel_msg_pool; // Generic pool for managing pipe tunnel messages.
-    wthread_t       thread;              // Thread associated with the worker.
-    tid_t           tid;                 // Os Thread Id
-    wid_t           wid;                 // Worker ID.
+    wloop_t                *loop;          // Event loop associated with the worker.
+    dns_resolver_t          dns_resolver;  // Worker-local async DNS resolver.
+    buffer_pool_t          *buffer_pool;   // Buffer pool for managing memory buffers.
+    generic_pool_t         *context_pool;  // Generic pool for managing context objects.
+    worker_message_queue_t *message_queue; // Worker-owned queued/timed messages.
+    wthread_t               thread;        // Thread associated with the worker.
+    tid_t                   tid;           // Os Thread Id
+    wid_t                   wid;           // Worker ID.
 
 } worker_t;
 
@@ -67,8 +69,8 @@ int workerResolveDomainAsync(wid_t wid, const char *domain, dns_resolve_cb cb, v
  * The caller must pass its own worker ID. socktype may be 0, SOCK_STREAM, or
  * SOCK_DGRAM depending on the intended socket use.
  */
-int workerResolveDomainServiceAsync(wid_t wid, const char *domain, const char *service, int socktype,
-                                    dns_resolve_cb cb, void *userdata);
+int workerResolveDomainServiceAsync(wid_t wid, const char *domain, const char *service, int socktype, dns_resolve_cb cb,
+                                    void *userdata);
 
 /**
  * @brief Gets the worker ID of the current thread.

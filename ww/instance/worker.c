@@ -2,10 +2,11 @@
 #include "context.h"
 #include "global_state.h"
 #include "managers/signal_manager.h"
-#include "pipe_tunnel.h"
+#include "managers/socket_manager.h"
 #include "tunnel.h"
 #include "wevent.h"
 #include "wloop.h"
+#include "worker_messages.h"
 #include "wthread.h"
 
 #include "loggers/internal_logger.h"
@@ -22,9 +23,13 @@ static void workerDestroyResources(worker_t *worker)
          * socket watches registered on worker->loop, so it must run while the
          * event loop and its wio/timer storage are still alive.
          */
+        socketmanagerDrainUdpIdleForWorker(worker->wid);
+        socketmanagerCloseListenersForLoop(worker->loop);
         asyncdnsCleanup(&worker->dns_resolver);
+        workerMessagesCleanupPending(worker);
         wloopDestroy(&worker->loop);
     }
+    workerMessagesDestroy(worker);
     if (worker->wios_pool)
     {
         threadsafegenericpoolDestroy(worker->wios_pool);
@@ -33,20 +38,15 @@ static void workerDestroyResources(worker_t *worker)
     {
         genericpoolDestroy(worker->context_pool);
     }
-    if (worker->pipetunnel_msg_pool)
-    {
-        genericpoolDestroy(worker->pipetunnel_msg_pool);
-    }
     if (worker->buffer_pool)
     {
         bufferpoolDestroy(worker->buffer_pool);
     }
 
-    worker->loop                = NULL;
-    worker->wios_pool           = NULL;
-    worker->context_pool        = NULL;
-    worker->pipetunnel_msg_pool = NULL;
-    worker->buffer_pool         = NULL;
+    worker->loop         = NULL;
+    worker->wios_pool    = NULL;
+    worker->context_pool = NULL;
+    worker->buffer_pool  = NULL;
 }
 
 void workerFinish(worker_t *worker)
@@ -85,14 +85,13 @@ void workerInit(worker_t *worker, wid_t wid, bool eventloop)
 {
     *worker = (worker_t) {.wid = wid};
 
+    workerMessagesInit(worker);
+
     worker->wios_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(GSTATE.masterpool_wios, sizeof(wio_t), RAM_PROFILE);
 
     worker->context_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(
         GSTATE.masterpool_context_pools, sizeof(context_t), RAM_PROFILE);
-
-    worker->pipetunnel_msg_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(
-        GSTATE.masterpool_pipetunnel_msg_pools, (uint32_t) pipeTunnelGetMesageSize(), RAM_PROFILE);
 
     worker->buffer_pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
                                            GSTATE.masterpool_buffer_pools_small,

@@ -85,6 +85,7 @@ add_library(ww STATIC
     # Instance management
     instance/global_state.c
     instance/worker.c
+    instance/worker_messages.c
     instance/wversion.c
     
     # Networking

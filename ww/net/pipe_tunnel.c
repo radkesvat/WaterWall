@@ -4,8 +4,8 @@
  * Implements pipe tunnel behavior for forwarding line events across workers.
  */
 
-#include "context.h"
-#include "generic_pool.h"
+#include "global_state.h"
+#include "line.h"
 #include "loggers/internal_logger.h"
 #include "managers/node_manager.h"
 #include "tunnel.h"
@@ -16,13 +16,15 @@ typedef struct pipetunnel_line_state_s
 
 } pipetunnel_line_state_t;
 
-typedef struct pipetunnel_msg_event_s
+typedef enum pipe_message_type_e
 {
-    tunnel_t *tunnel;
-    context_t ctx;
-    wid_t     pool_wid;
-
-} pipetunnel_msg_event_t;
+    kPipeMessageInit,
+    kPipeMessageEst,
+    kPipeMessageFin,
+    kPipeMessagePayload,
+    kPipeMessagePause,
+    kPipeMessageResume,
+} pipe_message_type_t;
 
 /**
  * @brief Return the parent tunnel that owns this piped child.
@@ -33,16 +35,6 @@ typedef struct pipetunnel_msg_event_s
 static tunnel_t *getParentTunnel(tunnel_t *t)
 {
     return t->prev;
-}
-
-/**
- * @brief Get the size of the pipeline message.
- *
- * @return size_t Size of the pipeline message.
- */
-size_t pipeTunnelGetMesageSize(void)
-{
-    return sizeof(pipetunnel_msg_event_t);
 }
 
 /**
@@ -61,183 +53,265 @@ static inline void lineLockForce(line_t *const line)
     }
 }
 
-/**
- * @brief Send a message upstream.
- *
- * @param ls Pointer to the line state.
- * @param msg Pointer to the message event.
- * @param wid_to WID to send the message to.
- */
-static void sendMessageUp(line_t *l_to, pipetunnel_msg_event_t *msg);
-
-/**
- * @brief Send a message downstream.
- *
- * @param ls Pointer to the line state.
- * @param msg Pointer to the message event.
- * @param wid_to WID to send the message to.
- */
-static void sendMessageDown(line_t *l_to, pipetunnel_msg_event_t *msg);
-
-static pipetunnel_msg_event_t *allocatePipeMessage(line_t *source_line)
+static void pipeReleasePayloadForLine(line_t *line_to, sbuf_t *payload)
 {
-    wid_t                    pool_wid = lineGetWID(source_line);
-    pipetunnel_msg_event_t  *msg      = genericpoolGetItem(getWorkerPipeTunnelMsgPool(pool_wid));
-    msg->pool_wid                     = pool_wid;
-    return msg;
-}
-/**
- * @brief Callback for when a message is received upstream.
- *
- * @param ev Pointer to the event.
- */
-static void onMsgReceivedUp(wevent_t *ev)
-{
-    pipetunnel_msg_event_t  *msg_ev     = weventGetUserdata(ev);
-    tunnel_t                *parent_tun = msg_ev->tunnel;
-    line_t                  *line_to    = msg_ev->ctx.line;
-    wid_t                    wid        = lineGetWID(line_to);
-    pipetunnel_line_state_t *lstate     = (pipetunnel_line_state_t *) lineGetState(line_to, parent_tun);
-
-    if (! lineIsAlive(line_to))
+    if (payload == NULL)
     {
-        assert(line_to->refc > 0);
-        if (msg_ev->ctx.payload != NULL)
+        return;
+    }
+
+    if (getWID() == lineGetWID(line_to))
+    {
+        lineReuseBuffer(line_to, payload);
+        return;
+    }
+
+    sbufDestroy(payload);
+}
+
+static void cleanupQueuedPipeMessage(void *arg1, void *arg2, void *arg3)
+{
+    discard arg1;
+
+    line_t *line_to = arg2;
+    sbuf_t *payload = arg3;
+
+    pipeReleasePayloadForLine(line_to, payload);
+    lineUnlock(line_to);
+}
+
+static bool pipeMessageLineIsUsable(line_t *line_to, sbuf_t *payload)
+{
+    if (lineIsAlive(line_to))
+    {
+        return true;
+    }
+
+    assert(line_to->refc > 0);
+    pipeReleasePayloadForLine(line_to, payload);
+    lineUnlock(line_to);
+    return false;
+}
+
+static void pipeApplyUp(tunnel_t *parent_tun, line_t *line_to, sbuf_t *payload, pipe_message_type_t type)
+{
+    if (! pipeMessageLineIsUsable(line_to, payload))
+    {
+        return;
+    }
+
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line_to, parent_tun);
+
+    if (type == kPipeMessageFin)
+    {
+        if (lstate->pair_line != NULL)
         {
-            contextReusePayload(&msg_ev->ctx);
+            lineUnlock(lstate->pair_line);
+            lstate->pair_line = NULL;
         }
     }
     else
     {
-
-        if (msg_ev->ctx.fin)
-        {
-            if (lstate->pair_line != NULL)
-            {
-                lineUnlock(lstate->pair_line);
-                lstate->pair_line = NULL;
-            }
-        }
-        else
-        {
-            assert(lstate->pair_line);
-        }
-        contextApplyOnTunnelU(&msg_ev->ctx, parent_tun->next);
-
-        if (msg_ev->ctx.fin)
-        {
-            lineDestroy(line_to);
-        }
+        assert(lstate->pair_line);
     }
+
+    tunnel_t *next = parent_tun->next;
+    switch (type)
+    {
+    case kPipeMessageInit:
+        next->fnInitU(next, line_to);
+        break;
+    case kPipeMessageEst:
+        next->fnEstU(next, line_to);
+        break;
+    case kPipeMessageFin:
+        next->fnFinU(next, line_to);
+        lineDestroy(line_to);
+        break;
+    case kPipeMessagePayload:
+        next->fnPayloadU(next, line_to, payload);
+        break;
+    case kPipeMessagePause:
+        next->fnPauseU(next, line_to);
+        break;
+    case kPipeMessageResume:
+        next->fnResumeU(next, line_to);
+        break;
+    }
+
     lineUnlock(line_to);
-
-    genericpoolReuseItem(getWorkerPipeTunnelMsgPool(wid), msg_ev);
 }
 
-/**
- * @brief Send a message upstream.
- *
- * @param ls Pointer to the line state.
- * @param msg Pointer to the message event.
- * @param wid_to WID to send the message to.
- */
-static void sendMessageUp(line_t *l_to, pipetunnel_msg_event_t *msg)
+static void pipeApplyDown(tunnel_t *parent_tun, line_t *line_to, sbuf_t *payload, pipe_message_type_t type)
 {
-
-    lineLockForce(l_to);
-    wid_t wid_to = lineGetWID(l_to);
-
-    wevent_t ev;
-    memorySet(&ev, 0, sizeof(ev));
-    ev.loop = getWorkerLoop(wid_to);
-    ev.cb   = onMsgReceivedUp;
-    weventSetUserData(&ev, msg);
-    if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(wid_to), &ev)))
+    if (! pipeMessageLineIsUsable(line_to, payload))
     {
-        if (msg->ctx.payload != NULL)
-        {
-            // the l_to can be from a different worker, so we must reuse to current wid
-            reuseBuffer(msg->ctx.payload);
-            msg->ctx.payload = NULL;
-        }
-        genericpoolReuseItem(getWorkerPipeTunnelMsgPool(msg->pool_wid), msg);
-        lineUnlock(l_to);
+        return;
     }
-}
 
-/**
- * @brief Callback for when a message is received downstream.
- *
- * @param ev Pointer to the event.
- */
-static void onMsgReceivedDown(wevent_t *ev)
-{
-    pipetunnel_msg_event_t  *msg_ev     = weventGetUserdata(ev);
-    tunnel_t                *parent_tun = msg_ev->tunnel;
-    line_t                  *line_to    = msg_ev->ctx.line;
-    wid_t                    wid        = lineGetWID(line_to);
-    pipetunnel_line_state_t *lstate     = (pipetunnel_line_state_t *) lineGetState(line_to, parent_tun);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line_to, parent_tun);
 
-    if (! lineIsAlive(line_to))
+    if (type == kPipeMessageFin)
     {
-        assert(line_to->refc > 0);
-        if (msg_ev->ctx.payload != NULL)
+        if (lstate->pair_line != NULL)
         {
-            contextReusePayload(&msg_ev->ctx);
+            lineUnlock(lstate->pair_line);
+            lstate->pair_line = NULL;
         }
     }
-    else
+
+    if (type == kPipeMessageEst && lineIsEstablished(line_to))
     {
-        if (msg_ev->ctx.fin)
-        {
-            if (lstate->pair_line != NULL)
-            {
-                lineUnlock(lstate->pair_line);
-                lstate->pair_line = NULL;
-            }
-        }
-        if (msg_ev->ctx.est && lineIsEstablished(line_to))
-        {
-            ;
-        }
-        else
-        {
-            contextApplyOnTunnelD(&msg_ev->ctx, parent_tun->prev);
-        }
+        lineUnlock(line_to);
+        return;
     }
+
+    tunnel_t *prev = parent_tun->prev;
+    switch (type)
+    {
+    case kPipeMessageInit:
+        prev->fnInitD(prev, line_to);
+        break;
+    case kPipeMessageEst:
+        prev->fnEstD(prev, line_to);
+        break;
+    case kPipeMessageFin:
+        prev->fnFinD(prev, line_to);
+        break;
+    case kPipeMessagePayload:
+        prev->fnPayloadD(prev, line_to, payload);
+        break;
+    case kPipeMessagePause:
+        prev->fnPauseD(prev, line_to);
+        break;
+    case kPipeMessageResume:
+        prev->fnResumeD(prev, line_to);
+        break;
+    }
+
     lineUnlock(line_to);
-
-    genericpoolReuseItem(getWorkerPipeTunnelMsgPool(wid), msg_ev);
 }
 
-/**
- * @brief Send a message downstream.
- *
- * @param ls Pointer to the line state.
- * @param msg Pointer to the message event.
- * @param wid_to WID to send the message to.
- */
-static void sendMessageDown(line_t *l_to, pipetunnel_msg_event_t *msg)
+static void onMsgReceivedUpInit(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    pipeApplyUp(arg1, arg2, arg3, kPipeMessageInit);
+}
+
+static void onMsgReceivedUpEst(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    pipeApplyUp(arg1, arg2, arg3, kPipeMessageEst);
+}
+
+static void onMsgReceivedUpFin(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    pipeApplyUp(arg1, arg2, arg3, kPipeMessageFin);
+}
+
+static void onMsgReceivedUpPayload(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    pipeApplyUp(arg1, arg2, arg3, kPipeMessagePayload);
+}
+
+static void onMsgReceivedUpPause(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    pipeApplyUp(arg1, arg2, arg3, kPipeMessagePause);
+}
+
+static void onMsgReceivedUpResume(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    pipeApplyUp(arg1, arg2, arg3, kPipeMessageResume);
+}
+
+static void onMsgReceivedDownEst(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    pipeApplyDown(arg1, arg2, arg3, kPipeMessageEst);
+}
+
+static void onMsgReceivedDownFin(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    pipeApplyDown(arg1, arg2, arg3, kPipeMessageFin);
+}
+
+static void onMsgReceivedDownPayload(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    pipeApplyDown(arg1, arg2, arg3, kPipeMessagePayload);
+}
+
+static void onMsgReceivedDownPause(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    pipeApplyDown(arg1, arg2, arg3, kPipeMessagePause);
+}
+
+static void onMsgReceivedDownResume(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    pipeApplyDown(arg1, arg2, arg3, kPipeMessageResume);
+}
+
+static WorkerMessageCallback pipeUpCallback(pipe_message_type_t type)
+{
+    switch (type)
+    {
+    case kPipeMessageInit:
+        return (WorkerMessageCallback) onMsgReceivedUpInit;
+    case kPipeMessageEst:
+        return (WorkerMessageCallback) onMsgReceivedUpEst;
+    case kPipeMessageFin:
+        return (WorkerMessageCallback) onMsgReceivedUpFin;
+    case kPipeMessagePayload:
+        return (WorkerMessageCallback) onMsgReceivedUpPayload;
+    case kPipeMessagePause:
+        return (WorkerMessageCallback) onMsgReceivedUpPause;
+    case kPipeMessageResume:
+        return (WorkerMessageCallback) onMsgReceivedUpResume;
+    }
+    assert(false);
+    return NULL;
+}
+
+static WorkerMessageCallback pipeDownCallback(pipe_message_type_t type)
+{
+    switch (type)
+    {
+    case kPipeMessageEst:
+        return (WorkerMessageCallback) onMsgReceivedDownEst;
+    case kPipeMessageFin:
+        return (WorkerMessageCallback) onMsgReceivedDownFin;
+    case kPipeMessagePayload:
+        return (WorkerMessageCallback) onMsgReceivedDownPayload;
+    case kPipeMessagePause:
+        return (WorkerMessageCallback) onMsgReceivedDownPause;
+    case kPipeMessageResume:
+        return (WorkerMessageCallback) onMsgReceivedDownResume;
+    case kPipeMessageInit:
+        break;
+    }
+    assert(false);
+    return NULL;
+}
+
+static void sendMessageUp(tunnel_t *t, line_t *l_to, pipe_message_type_t type, sbuf_t *payload)
 {
     lineLockForce(l_to);
-    wid_t wid_to = lineGetWID(l_to);
+    discard sendWorkerMessageForceQueueWithCleanup(
+        lineGetWID(l_to), pipeUpCallback(type), cleanupQueuedPipeMessage, t, l_to, payload);
+}
 
-    wevent_t ev;
-    memorySet(&ev, 0, sizeof(ev));
-    ev.loop = getWorkerLoop(wid_to);
-    ev.cb   = onMsgReceivedDown;
-    weventSetUserData(&ev, msg);
-    if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(wid_to), &ev)))
-    {
-        if (msg->ctx.payload != NULL)
-        {
-            // the l_to can be from a different worker, so we must reuse to current wid
-            reuseBuffer(msg->ctx.payload);
-            msg->ctx.payload = NULL;
-        }
-        genericpoolReuseItem(getWorkerPipeTunnelMsgPool(msg->pool_wid), msg);
-        lineUnlock(l_to);
-    }
+static void sendMessageDown(tunnel_t *t, line_t *l_to, pipe_message_type_t type, sbuf_t *payload)
+{
+    lineLockForce(l_to);
+    discard sendWorkerMessageForceQueueWithCleanup(
+        lineGetWID(l_to), pipeDownCallback(type), cleanupQueuedPipeMessage, t, l_to, payload);
 }
 
 /**
@@ -257,15 +331,7 @@ static void pipetunnelDefaultUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    line_t *line_to = lstate->pair_line;
-
-    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
-    context_t               ctx = {.line = line_to, .init = true};
-
-    msg->tunnel = t;
-    msg->ctx    = ctx;
-
-    sendMessageUp(line_to, msg);
+    sendMessageUp(t, lstate->pair_line, kPipeMessageInit, NULL);
 }
 
 /**
@@ -284,15 +350,7 @@ static void pipetunnelDefaultUpStreamEst(tunnel_t *t, line_t *l)
         return;
     }
 
-    line_t *line_to = lstate->pair_line;
-
-    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
-    context_t               ctx = {.line = line_to, .est = true};
-
-    msg->tunnel = t;
-    msg->ctx    = ctx;
-
-    sendMessageUp(line_to, msg);
+    sendMessageUp(t, lstate->pair_line, kPipeMessageEst, NULL);
 }
 
 /**
@@ -316,13 +374,7 @@ static void pipetunnelDefaultUpStreamFin(tunnel_t *t, line_t *l)
     line_t *line_to   = lstate->pair_line;
     lstate->pair_line = NULL;
 
-    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
-    context_t               ctx = {.line = line_to, .fin = true};
-
-    msg->tunnel = t;
-    msg->ctx    = ctx;
-
-    sendMessageUp(line_to, msg);
+    sendMessageUp(t, line_to, kPipeMessageFin, NULL);
     lineUnlock(line_to);
 }
 
@@ -343,15 +395,7 @@ static void pipetunnelDefaultUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *pay
         return;
     }
 
-    line_t *line_to = lstate->pair_line;
-
-    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
-    context_t               ctx = {.line = line_to, .payload = payload};
-
-    msg->tunnel = t;
-    msg->ctx    = ctx;
-
-    sendMessageUp(line_to, msg);
+    sendMessageUp(t, lstate->pair_line, kPipeMessagePayload, payload);
 }
 
 /**
@@ -370,15 +414,7 @@ static void pipetunnelDefaultUpStreamPause(tunnel_t *t, line_t *l)
         return;
     }
 
-    line_t *line_to = lstate->pair_line;
-
-    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
-    context_t               ctx = {.line = line_to, .pause = true};
-
-    msg->tunnel = t;
-    msg->ctx    = ctx;
-
-    sendMessageUp(line_to, msg);
+    sendMessageUp(t, lstate->pair_line, kPipeMessagePause, NULL);
 }
 
 /**
@@ -397,15 +433,7 @@ static void pipetunnelDefaultUpStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
-    line_t *line_to = lstate->pair_line;
-
-    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
-    context_t               ctx = {.line = line_to, .resume = true};
-
-    msg->tunnel = t;
-    msg->ctx    = ctx;
-
-    sendMessageUp(line_to, msg);
+    sendMessageUp(t, lstate->pair_line, kPipeMessageResume, NULL);
 }
 
 /*
@@ -443,15 +471,7 @@ static void pipetunnelDefaultDownStreamEst(tunnel_t *t, line_t *l)
 
     lineMarkEstablished(l);
 
-    line_t *line_to = lstate->pair_line;
-
-    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
-    context_t               ctx = {.line = line_to, .est = true};
-
-    msg->tunnel = t;
-    msg->ctx    = ctx;
-
-    sendMessageDown(line_to, msg);
+    sendMessageDown(t, lstate->pair_line, kPipeMessageEst, NULL);
 }
 
 /**
@@ -475,13 +495,7 @@ static void pipetunnelDefaultDownStreamFin(tunnel_t *t, line_t *l)
     line_t *line_to   = lstate->pair_line;
     lstate->pair_line = NULL;
 
-    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
-    context_t               ctx = {.line = line_to, .fin = true};
-
-    msg->tunnel = t;
-    msg->ctx    = ctx;
-
-    sendMessageDown(line_to, msg);
+    sendMessageDown(t, line_to, kPipeMessageFin, NULL);
     lineUnlock(line_to);
     lineDestroy(l);
 }
@@ -503,15 +517,7 @@ static void pipetunnelDefaultDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *p
         return;
     }
 
-    line_t *line_to = lstate->pair_line;
-
-    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
-    context_t               ctx = {.line = line_to, .payload = payload};
-
-    msg->tunnel = t;
-    msg->ctx    = ctx;
-
-    sendMessageDown(line_to, msg);
+    sendMessageDown(t, lstate->pair_line, kPipeMessagePayload, payload);
 }
 
 /**
@@ -530,15 +536,7 @@ static void pipetunnelDefaultDownStreamPause(tunnel_t *t, line_t *l)
         return;
     }
 
-    line_t *line_to = lstate->pair_line;
-
-    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
-    context_t               ctx = {.line = line_to, .pause = true};
-
-    msg->tunnel = t;
-    msg->ctx    = ctx;
-
-    sendMessageDown(line_to, msg);
+    sendMessageDown(t, lstate->pair_line, kPipeMessagePause, NULL);
 }
 
 /**
@@ -557,15 +555,7 @@ static void pipetunnelDefaultDownStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
-    line_t *line_to = lstate->pair_line;
-
-    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
-    context_t               ctx = {.line = line_to, .resume = true};
-
-    msg->tunnel = t;
-    msg->ctx    = ctx;
-
-    sendMessageDown(line_to, msg);
+    sendMessageDown(t, lstate->pair_line, kPipeMessageResume, NULL);
 }
 
 /**
@@ -624,6 +614,17 @@ static void pipetunnelDefaultOnStart(tunnel_t *t)
 }
 
 /**
+ * @brief Stop the tunnel.
+ *
+ * @param t Pointer to the tunnel.
+ */
+static void pipetunnelDefaultOnStop(tunnel_t *t)
+{
+    tunnel_t *child = *(tunnel_t **) tunnelGetState(t);
+    child->onStop(child);
+}
+
+/**
  * @brief Create a new pipeline tunnel.
  *
  * @param child Pointer to the child tunnel.
@@ -631,8 +632,8 @@ static void pipetunnelDefaultOnStart(tunnel_t *t)
  */
 tunnel_t *pipetunnelCreate(tunnel_t *child)
 {
-    tunnel_t *pt = tunnelCreate(tunnelGetNode(child), sizeof(tunnel_t *),
-                                tunnelGetLineStateSize(child) + sizeof(pipetunnel_line_state_t));
+    tunnel_t *pt = tunnelCreate(
+        tunnelGetNode(child), sizeof(tunnel_t *), tunnelGetLineStateSize(child) + sizeof(pipetunnel_line_state_t));
     if (pt == NULL)
     {
         // Handle memory allocation failure
@@ -656,6 +657,7 @@ tunnel_t *pipetunnelCreate(tunnel_t *child)
     pt->onIndex   = &pipetunnelDefaultOnIndex;
     pt->onPrepare = &pipetunnelDefaultOnPrepair;
     pt->onStart   = &pipetunnelDefaultOnStart;
+    pt->onStop    = &pipetunnelDefaultOnStop;
 
     pt->onDestroy = &pipetunnelDestroy;
 

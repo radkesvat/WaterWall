@@ -7,6 +7,7 @@
 #include "threadsafe_generic_pool.h"
 #include "wloop.h"
 #include "worker.h"
+#include "worker_messages.h"
 
 /*
     This is a global state file that powers many WW things up
@@ -25,16 +26,6 @@ typedef struct
 } logger_construction_data_t;
 
 typedef err_t (*LwipV4Hook)(struct pbuf *, struct netif *);
-//real:                               worker*, void* arg1, void* arg2, void* arg3
-typedef void (*WorkerMessageCallback)(void *, void *, void *, void *);
-
-typedef struct worker_msg_s
-{
-    WorkerMessageCallback callback;
-    void                *arg1;
-    void                *arg2;
-    void                *arg3;
-} worker_msg_t;
 
 typedef struct ww_global_state_s
 {
@@ -42,12 +33,10 @@ typedef struct ww_global_state_s
     buffer_pool_t             **shortcut_buffer_pools;
     threadsafe_generic_pool_t **shortcut_wios_pools;
     generic_pool_t            **shortcut_context_pools;
-    generic_pool_t            **shortcut_pipetunnel_msg_pools;
     master_pool_t              *masterpool_buffer_pools_large;
     master_pool_t              *masterpool_buffer_pools_small;
     master_pool_t              *masterpool_wios;
     master_pool_t              *masterpool_context_pools;
-    master_pool_t              *masterpool_pipetunnel_msg_pools;
     master_pool_t              *masterpool_messages;
     worker_t                   *workers;
     struct signal_manager_s    *signal_manager;
@@ -169,17 +158,6 @@ static inline generic_pool_t *getWorkerContextPool(wid_t wid)
 }
 
 /*!
- * @brief Get the pipe tunnel message pool for a worker.
- *
- * @param wid The worker ID.
- * @return A pointer to the pipe tunnel message pool.
- */
-static inline generic_pool_t *getWorkerPipeTunnelMsgPool(wid_t wid)
-{
-    return GSTATE.shortcut_pipetunnel_msg_pools[wid];
-}
-
-/*!
  * @brief Get the event loop for a worker.
  *
  * @param wid The worker ID.
@@ -203,23 +181,6 @@ static inline wid_t getNextDistributionWID(void)
 
     return wid;
 }
-
-/*!
- * @brief Send a worker message.
- *
- * @param wid The worker ID. (that receives the message)
- * @param cb The callback function.
- * @param arg1 The first argument.
- * @param arg2 The second argument.
- * @param arg3 The third argument.
- */
-void sendWorkerMessage(wid_t wid, WorkerMessageCallback cb, void *arg1, void *arg2, void *arg3);
-
-// same as above but dose not do a dircet call if the wid is the same as the current worker
-void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCallback cb, void *arg1, void *arg2, void *arg3);
-
-// same as above but with a delay in ms, this is useful for waiting some time before executing the task
-void sendWorkerMessageTimed(wid_t wid, WorkerMessageCallback cb, uint32_t delay_ms, void *arg1, void *arg2, void *arg3);
 
 /*!
  * @brief Runs the main thread.

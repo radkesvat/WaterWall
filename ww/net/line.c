@@ -6,27 +6,20 @@
 
 #include "loggers/internal_logger.h"
 
-typedef struct line_task_msg_no_buf_s
+typedef union line_task_callback_u {
+    LineTaskFnNoBuf   no_buf;
+    LineTaskFnWithBuf with_buf;
+} line_task_callback_t;
+
+typedef struct line_task_msg_s
 {
-    LineTaskFnNoBuf callback;
-    void           *arg1;
-    void           *arg2;
-    void           *arg3;
-} line_task_msg_no_buf_t;
+    line_task_callback_t callback;
+    tunnel_t            *tunnel;
+    line_t              *line;
+    sbuf_t              *buf;
+} line_task_msg_t;
 
-static_assert(sizeof(line_task_msg_no_buf_t) == sizeof(worker_msg_t),
-              "line_task_msg_no_buf_t size should match worker_msg_t size");
-
-typedef struct line_task_msg_with_buf_s
-{
-    LineTaskFnWithBuf callback;
-    void             *arg1;
-    void             *arg2;
-    void             *arg3; // this will be sbuf_t* if not NULL
-} line_task_msg_with_buf_t;
-
-static_assert(sizeof(line_task_msg_with_buf_t) == sizeof(worker_msg_t),
-              "line_task_msg_with_buf_t size should match worker_msg_t size");
+static_assert(sizeof(line_task_msg_t) == sizeof(worker_msg_t), "line_task_msg_t size should match worker_msg_t size");
 
 typedef struct line_dns_resolve_msg_s
 {
@@ -36,45 +29,77 @@ typedef struct line_dns_resolve_msg_s
     void            *userdata;
 } line_dns_resolve_msg_t;
 
-static void lineScheduledWorkerMessageReceived(wevent_t *ev)
+static void lineCheckScheduledTaskWorker(worker_t *worker, const line_t *line)
 {
-    worker_msg_t *msg = weventGetUserdata(ev);
-    wid_t         wid = (wid_t) wloopGetWid(weventGetLoop(ev));
-
-    msg->callback(getWorker(wid), msg->arg1, msg->arg2, msg->arg3);
-    masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1, NULL);
-}
-
-static bool linePostScheduledTask(wid_t target_wid, WorkerMessageCallback callback, line_t *line, void *task_msg)
-{
-    worker_msg_t *queue_msg;
-    masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(queue_msg), 1, NULL);
-    *queue_msg = (worker_msg_t) {.callback = callback, .arg1 = line, .arg2 = task_msg, .arg3 = NULL};
-
-    wevent_t ev;
-    memorySet(&ev, 0, sizeof(ev));
-    ev.loop = getWorkerLoop(target_wid);
-    ev.cb   = lineScheduledWorkerMessageReceived;
-    weventSetUserData(&ev, queue_msg);
-
-    if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(target_wid), &ev)))
+    if (UNLIKELY(worker->wid != lineGetWID(line)))
     {
-        lineUnlock(line);
-        masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &task_msg, 1, NULL);
-        masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &queue_msg, 1, NULL);
-        return false;
+        // This would mean the line moved workers after the task was posted. We have never seen that happen.
+        LOGF("Worker thread mismatch when running scheduled line task. Expected WID: %u, actual WID: %u",
+             lineGetWID(line),
+             worker->wid);
+        terminateProgram(1);
     }
-
-    return true;
 }
 
-static void lineDnsResolveMsgDestroy(line_dns_resolve_msg_t *msg)
+static line_task_msg_t *lineTaskMessageCreate(line_t *line, tunnel_t *t)
 {
-    if (msg == NULL)
+    line_task_msg_t *msg;
+
+    masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
+    *msg = (line_task_msg_t) {.tunnel = t, .line = line, .buf = NULL};
+
+    return msg;
+}
+
+static void lineTaskMessageRelease(line_task_msg_t *msg)
+{
+    masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1);
+}
+
+static void lineReleaseScheduledTaskBuffer(line_t *line, sbuf_t *buf)
+{
+    if (buf == NULL)
     {
         return;
     }
 
+    if (getWID() == lineGetWID(line))
+    {
+        lineReuseBuffer(line, buf);
+        return;
+    }
+
+    sbufDestroy(buf);
+}
+
+static void lineCleanupScheduledTaskNoBuf(void *arg1, void *arg2, void *arg3)
+{
+    discard arg2;
+    discard arg3;
+
+    line_task_msg_t *msg  = (line_task_msg_t *) arg1;
+    line_t          *line = msg->line;
+
+    lineUnlock(line);
+    lineTaskMessageRelease(msg);
+}
+
+static void lineCleanupScheduledTaskWithBuf(void *arg1, void *arg2, void *arg3)
+{
+    discard arg2;
+    discard arg3;
+
+    line_task_msg_t *msg  = (line_task_msg_t *) arg1;
+    line_t          *line = msg->line;
+
+    lineReleaseScheduledTaskBuffer(line, msg->buf);
+
+    lineUnlock(line);
+    lineTaskMessageRelease(msg);
+}
+
+static void lineDnsResolveMsgDestroy(line_dns_resolve_msg_t *msg)
+{
     memoryFree(msg);
 }
 
@@ -96,111 +121,95 @@ static void lineDnsResolveResult(void *userdata, int status, const char *error, 
 /**
  * @brief Execute a scheduled no-buffer line task on the worker thread.
  *
- * @param worker Worker context (unused).
- * @param arg1 Line pointer.
- * @param arg2 Packed task message.
+ * @param worker Worker context.
+ * @param arg1 Packed task message.
+ * @param arg2 Unused.
  * @param arg3 Unused.
  */
-static void lineRunScheduledtaskNoBuf(worker_t *worker, void *arg1, void *arg2, void *arg3)
+static void lineRunScheduledTaskNoBuf(worker_t *worker, void *arg1, void *arg2, void *arg3)
 {
-    discard                 worker;
-    discard                 arg3;
-    line_t                 *line = (line_t *) arg1;
-    line_task_msg_no_buf_t *msg  = (line_task_msg_no_buf_t *) arg2;
-    LineTaskFnNoBuf         task = msg->callback;
+    discard arg2;
+    discard arg3;
 
-    if (UNLIKELY(worker->wid != lineGetWID(line)))
-    {
-        // this is a data race that we have but we assumed it nerver happens and it is indeed never happend.
-        // if this happened. we should read the target line wid atomically in the lineRunScheduledtask... functions.
-        // since this is because we have read old wid value (relaxed load)
-        // do not change or fix this before we have a real case of this happened, otherwise we may cause performance
-        // regression for the common case.
-        LOGF("Worker thread mismatch when running scheduled line task. Expected WID: %u, actual WID: %u",
-             lineGetWID(line),
-             worker->wid);
-        terminateProgram(1);
-    }
+    line_task_msg_t *msg  = (line_task_msg_t *) arg1;
+    LineTaskFnNoBuf  task = msg->callback.no_buf;
+    tunnel_t        *t    = msg->tunnel;
+    line_t          *line = msg->line;
+
+    lineCheckScheduledTaskWorker(worker, line);
 
     if (lineIsAlive(line))
     {
-        task(msg->arg1, msg->arg2);
+        task(t, line);
     }
 
     lineUnlock(line);
-
-    masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1, NULL);
+    lineTaskMessageRelease(msg);
 }
 
 /**
  * @brief Execute a scheduled buffered line task on the worker thread.
  *
- * @param worker Worker context (unused).
- * @param arg1 Line pointer.
- * @param arg2 Packed task message.
+ * @param worker Worker context.
+ * @param arg1 Packed task message.
+ * @param arg2 Unused.
  * @param arg3 Unused.
  */
-static void lineRunScheduledtaskWithBuf(worker_t *worker, void *arg1, void *arg2, void *arg3)
+static void lineRunScheduledTaskWithBuf(worker_t *worker, void *arg1, void *arg2, void *arg3)
 {
-    discard                   worker;
-    discard                   arg3;
-    line_t                   *line = (line_t *) arg1;
-    line_task_msg_with_buf_t *msg  = (line_task_msg_with_buf_t *) arg2;
-    LineTaskFnWithBuf         task = msg->callback;
+    discard arg2;
+    discard arg3;
 
-    if (UNLIKELY(worker->wid != lineGetWID(line)))
-    {
-        // this is a data race that we have but we assumed it nerver happens and it is indeed never happend.
-        // if this happened. we should read the target line wid atomically in the lineRunScheduledtask... functions.
-        // since this is because we have read old wid value (relaxed load)
-        // do not change or fix this before we have a real case of this happened, otherwise we may cause performance
-        // regression for the common case.
-        LOGF("Worker thread mismatch when running scheduled line task. Expected WID: %u, actual WID: %u",
-             lineGetWID(line),
-             worker->wid);
-        terminateProgram(1);
-    }
+    line_task_msg_t  *msg  = (line_task_msg_t *) arg1;
+    LineTaskFnWithBuf task = msg->callback.with_buf;
+    tunnel_t         *t    = msg->tunnel;
+    line_t           *line = msg->line;
+    sbuf_t           *buf  = msg->buf;
+
+    lineCheckScheduledTaskWorker(worker, line);
 
     if (lineIsAlive(line))
     {
-        task(msg->arg1, msg->arg2, msg->arg3);
+        task(t, line, buf);
     }
     else
     {
-        if (msg->arg3 != NULL)
-        {
-            sbuf_t *buf = (sbuf_t *) msg->arg3;
-            lineReuseBuffer(line, buf);
-        }
+        lineReleaseScheduledTaskBuffer(line, buf);
     }
-    lineUnlock(line);
 
-    masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1, NULL);
+    lineUnlock(line);
+    lineTaskMessageRelease(msg);
 }
 
 void lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
 {
     lineLock(line);
 
-    line_task_msg_no_buf_t *msg;
+    line_task_msg_t *msg = lineTaskMessageCreate(line, t);
+    msg->callback.no_buf = task;
 
-    masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
-
-    *msg = (line_task_msg_no_buf_t) {.callback = task, .arg1 = (void *) t, .arg2 = (void *) line, .arg3 = NULL};
-    discard linePostScheduledTask(lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskNoBuf, line, msg);
+    sendWorkerMessageForceQueueWithCleanup(lineGetWID(line),
+                                           (WorkerMessageCallback) lineRunScheduledTaskNoBuf,
+                                           lineCleanupScheduledTaskNoBuf,
+                                           msg,
+                                           NULL,
+                                           NULL);
 }
 
 void lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t, sbuf_t *buf)
 {
     lineLock(line);
 
-    line_task_msg_with_buf_t *msg;
+    line_task_msg_t *msg   = lineTaskMessageCreate(line, t);
+    msg->callback.with_buf = task;
+    msg->buf               = buf;
 
-    masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
-
-    *msg =
-        (line_task_msg_with_buf_t) {.callback = task, .arg1 = (void *) t, .arg2 = (void *) line, .arg3 = (void *) buf};
-    discard linePostScheduledTask(lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskWithBuf, line, msg);
+    sendWorkerMessageForceQueueWithCleanup(lineGetWID(line),
+                                           (WorkerMessageCallback) lineRunScheduledTaskWithBuf,
+                                           lineCleanupScheduledTaskWithBuf,
+                                           msg,
+                                           NULL,
+                                           NULL);
 }
 
 void lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms, tunnel_t *t)
@@ -214,14 +223,16 @@ void lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t 
 
     lineLock(line);
 
-    line_task_msg_no_buf_t *msg;
+    line_task_msg_t *msg = lineTaskMessageCreate(line, t);
+    msg->callback.no_buf = task;
 
-    masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
-
-    *msg = (line_task_msg_no_buf_t) {.callback = task, .arg1 = (void *) t, .arg2 = (void *) line, .arg3 = NULL};
-
-    sendWorkerMessageTimed(
-        lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskNoBuf, delay_ms, line, (void *) msg, NULL);
+    sendWorkerMessageTimedWithCleanup(lineGetWID(line),
+                                      (WorkerMessageCallback) lineRunScheduledTaskNoBuf,
+                                      lineCleanupScheduledTaskNoBuf,
+                                      delay_ms,
+                                      (void *) msg,
+                                      NULL,
+                                      NULL);
 }
 
 void lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, uint32_t delay_ms, tunnel_t *t,
@@ -236,15 +247,17 @@ void lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, 
 
     lineLock(line);
 
-    line_task_msg_with_buf_t *msg;
+    line_task_msg_t *msg   = lineTaskMessageCreate(line, t);
+    msg->callback.with_buf = task;
+    msg->buf               = buf;
 
-    masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
-
-    *msg =
-        (line_task_msg_with_buf_t) {.callback = task, .arg1 = (void *) t, .arg2 = (void *) line, .arg3 = (void *) buf};
-
-    sendWorkerMessageTimed(
-        lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskWithBuf, delay_ms, line, (void *) msg, NULL);
+    sendWorkerMessageTimedWithCleanup(lineGetWID(line),
+                                      (WorkerMessageCallback) lineRunScheduledTaskWithBuf,
+                                      lineCleanupScheduledTaskWithBuf,
+                                      delay_ms,
+                                      (void *) msg,
+                                      NULL,
+                                      NULL);
 }
 
 int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const char *service, int socktype,

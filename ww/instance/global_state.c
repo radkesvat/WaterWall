@@ -28,16 +28,8 @@
 
 #endif
 
-
-
 // Global instance of the ww_global_state_t structure.
 ww_global_state_t global_ww_state = {0};
-
-typedef struct timed_worker_msg_s
-{
-    worker_msg_t base;
-    uint64_t     deadline_us;
-} timed_worker_msg_t;
 
 // --- Static helper functions ---
 
@@ -48,54 +40,37 @@ static err_t wwDefaultInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp)
     return 0;
 }
 
-static pool_item_t *allocWorkerMessage(master_pool_t *pool, void *userdata)
-{
-    discard userdata;
-    discard pool;
-    return memoryAllocate(sizeof(timed_worker_msg_t));
-}
-
-static void destroyWorkerMessage(master_pool_t *pool, master_pool_item_t *item, void *userdata)
-{
-    discard pool;
-    discard userdata;
-    memoryFree(item);
-}
-
 static void initializeMasterPools(void)
 {
-    GSTATE.masterpool_buffer_pools_large   = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
-    GSTATE.masterpool_buffer_pools_small   = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
-    GSTATE.masterpool_wios                 = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
-    GSTATE.masterpool_context_pools        = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
-    GSTATE.masterpool_pipetunnel_msg_pools = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
-    GSTATE.masterpool_messages             = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    GSTATE.masterpool_buffer_pools_large = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    GSTATE.masterpool_buffer_pools_small = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    GSTATE.masterpool_wios               = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    GSTATE.masterpool_context_pools      = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    GSTATE.masterpool_messages           = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
 
-    masterpoolInstallCallBacks(GSTATE.masterpool_messages, allocWorkerMessage, destroyWorkerMessage);
+    workerMessagesInstallMasterPoolCallbacks(GSTATE.masterpool_messages);
 }
 
 static void initializeShortCuts(void)
 {
-    static const int kShortcutsCount = 5;
+    static const int kShortcutsCount = 4;
 
     const uintptr_t total_workers = (uintptr_t) WORKERS_COUNT;
 
     void **space = (void **) memoryAllocate(sizeof(void *) * (uintptr_t) kShortcutsCount * total_workers);
 
-    GSTATE.shortcut_loops                = (wloop_t **) (space + (0 * total_workers));
-    GSTATE.shortcut_buffer_pools         = (buffer_pool_t **) (space + (1 * total_workers));
-    GSTATE.shortcut_wios_pools           = (threadsafe_generic_pool_t **) (space + (2 * total_workers));
-    GSTATE.shortcut_context_pools        = (generic_pool_t **) (space + (3 * total_workers));
-    GSTATE.shortcut_pipetunnel_msg_pools = (generic_pool_t **) (space + (4 * total_workers));
+    GSTATE.shortcut_loops         = (wloop_t **) (space + (0 * total_workers));
+    GSTATE.shortcut_buffer_pools  = (buffer_pool_t **) (space + (1 * total_workers));
+    GSTATE.shortcut_wios_pools    = (threadsafe_generic_pool_t **) (space + (2 * total_workers));
+    GSTATE.shortcut_context_pools = (generic_pool_t **) (space + (3 * total_workers));
 
     for (unsigned int wid = 0; wid < total_workers; wid++)
     {
 
-        GSTATE.shortcut_buffer_pools[wid]         = WORKERS[wid].buffer_pool;
-        GSTATE.shortcut_loops[wid]                = WORKERS[wid].loop;
-        GSTATE.shortcut_wios_pools[wid]           = WORKERS[wid].wios_pool;
-        GSTATE.shortcut_context_pools[wid]        = WORKERS[wid].context_pool;
-        GSTATE.shortcut_pipetunnel_msg_pools[wid] = WORKERS[wid].pipetunnel_msg_pool;
+        GSTATE.shortcut_buffer_pools[wid]  = WORKERS[wid].buffer_pool;
+        GSTATE.shortcut_loops[wid]         = WORKERS[wid].loop;
+        GSTATE.shortcut_wios_pools[wid]    = WORKERS[wid].wios_pool;
+        GSTATE.shortcut_context_pools[wid] = WORKERS[wid].context_pool;
     }
 }
 
@@ -103,6 +78,8 @@ static void exitHandle(void *userdata, int signum)
 {
     discard signum;
     discard userdata;
+
+    nodemanagerStop();
 
     // join only worker threads that were spawned via workerSpawn()
     for (unsigned int wid = 1; wid < WORKERS_COUNT - WORKER_ADDITIONS; ++wid)
@@ -123,15 +100,6 @@ static void exitHandle(void *userdata, int signum)
         // when main thread finishes it will tear down the global state
         workerExitJoin(getWorker(0));
     }
-}
-
-static void workerMessageReceived(wevent_t *ev)
-{
-    worker_msg_t *msg = weventGetUserdata(ev);
-    wid_t         wid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
-
-    msg->callback(getWorker(wid), msg->arg1, msg->arg2, msg->arg3);
-    masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1, NULL);
 }
 
 static void tcpipInitDone(void *arg)
@@ -338,141 +306,6 @@ void createGlobalState(const ww_construction_data_t init_data)
 }
 
 /*!
- * @brief Send a worker message.
- *
- * @param wid The worker ID. (that receives the message)
- * @param cb The callback function.
- * @param arg1 The first argument.
- * @param arg2 The second argument.
- * @param arg3 The third argument.
- */
-void sendWorkerMessage(wid_t wid, WorkerMessageCallback cb, void *arg1, void *arg2, void *arg3)
-{
-
-    if (getWID() == wid)
-    {
-        cb(getWorker(wid), arg1, arg2, arg3);
-        return;
-    }
-
-    assert(wid < getWorkersCount());
-    sendWorkerMessageForceQueue(wid, cb, arg1, arg2, arg3);
-}
-
-void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCallback cb, void *arg1, void *arg2, void *arg3)
-{
-    worker_msg_t *msg;
-
-    assert(wid < getWorkersCount());
-
-    masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
-    *msg = (worker_msg_t) {.callback = cb, .arg1 = arg1, .arg2 = arg2, .arg3 = arg3};
-    wevent_t ev;
-    memorySet(&ev, 0, sizeof(ev));
-    ev.loop = getWorkerLoop(wid);
-    ev.cb   = workerMessageReceived;
-    weventSetUserData(&ev, msg);
-    if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(wid), &ev)))
-    {
-        masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1, NULL);
-    }
-}
-
-static void runTimedTask(wtimer_t *timer)
-{
-    timed_worker_msg_t *timed_msg = weventGetUserdata(timer);
-    wloop_t            *loop      = weventGetLoop(timer);
-    const uint64_t      now_us    = wloopNowUS(loop);
-
-    if (now_us < timed_msg->deadline_us)
-    {
-        const uint64_t remaining_us = timed_msg->deadline_us - now_us;
-        uint32_t       remaining_ms =
-            (remaining_us > ((uint64_t) UINT32_MAX * 1000ULL)) ? UINT32_MAX : (uint32_t) ((remaining_us + 999ULL) / 1000ULL);
-
-        if (remaining_ms == 0)
-        {
-            remaining_ms = 1;
-        }
-
-        // Some timeout buckets are rounded early, so do not release delayed work before its true deadline.
-        wtimerReset(timer, remaining_ms);
-        return;
-    }
-
-    WorkerMessageCallback cb = timed_msg->base.callback;
-    cb(getWorker(getWID()), timed_msg->base.arg1, timed_msg->base.arg2, timed_msg->base.arg3);
-
-    masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &timed_msg, 1, NULL);
-    wtimerDelete(timer);
-}
-
-static void setupTimedTask(worker_t *worker, void *arg1, void *arg2, void *arg3)
-{
-
-    uint32_t           delay_ms   = (uint32_t) (uintptr_t) arg1;
-    timed_worker_msg_t *timed_msg = (timed_worker_msg_t *) arg2;
-    discard            arg3;
-
-    wtimer_t *k_timer = wtimerAdd(worker->loop, runTimedTask, delay_ms, 1);
-    if (UNLIKELY(k_timer == NULL))
-    {
-        // fallback to immediate execution if timer creation fails
-        WorkerMessageCallback cb = timed_msg->base.callback;
-        cb(worker, timed_msg->base.arg1, timed_msg->base.arg2, timed_msg->base.arg3);
-        masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &timed_msg, 1, NULL);
-        return;
-    }
-
-    timed_msg->deadline_us = wloopNowUS(worker->loop) + ((uint64_t) delay_ms * 1000ULL);
-    weventSetUserData(k_timer, timed_msg);
-}
-
-void sendWorkerMessageTimed(wid_t wid, WorkerMessageCallback cb, uint32_t delay_ms, void *arg1, void *arg2, void *arg3)
-{
-
-    assert(wid < getWorkersCount());
-
-    // delay=0 means "run on next event-loop iteration", not immediate inline execution
-    if (delay_ms == 0)
-    {
-        sendWorkerMessageForceQueue(wid, cb, arg1, arg2, arg3);
-        return;
-    }
-
-    uintptr_t delay_ms_uiptr = (uintptr_t) delay_ms;
-
-    worker_msg_t *msg;
-
-    masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
-    *msg = (worker_msg_t) {.callback = cb, .arg1 = arg1, .arg2 = arg2, .arg3 = arg3};
-
-    if (getWID() == wid)
-    {
-        setupTimedTask(getWorker(wid), (void *) delay_ms_uiptr, msg, NULL);
-        return;
-    }
-
-    // queue setupTimedTask manually so both wrapper and payload are reclaimed on post failure
-    worker_msg_t *queue_msg;
-    masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(queue_msg), 1, NULL);
-    *queue_msg = (worker_msg_t) {
-        .callback = (WorkerMessageCallback) setupTimedTask, .arg1 = (void *) delay_ms_uiptr, .arg2 = msg, .arg3 = NULL};
-
-    wevent_t ev;
-    memorySet(&ev, 0, sizeof(ev));
-    ev.loop = getWorkerLoop(wid);
-    ev.cb   = workerMessageReceived;
-    weventSetUserData(&ev, queue_msg);
-
-    if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(wid), &ev)))
-    {
-        masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &queue_msg, 1, NULL);
-        masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1, NULL);
-    }
-}
-
-/*!
  * @brief Runs the main thread's event loop.
  *
  * This function runs the event loop for the main worker thread. It asserts that the global state is initialized.
@@ -502,7 +335,9 @@ void runMainThread(void)
 void finishGlobalState(void)
 {
     // its not important which thread called this, at this point only 1 thread is running
+    assert(isApplicationTerminating());
     const int exit_code = signalmanagerGetExitCode();
+    nodemanagerStop();
     atomicThreadFence(memory_order_seq_cst);
     destroyGlobalState();
 
@@ -525,8 +360,6 @@ extern void call_freeres(void);
 WW_EXPORT void destroyGlobalState(void)
 {
 
-    memoryFree((void *) GSTATE.shortcut_loops);
-
     socketmanagerDestroy();
     nodemanagerDestroy();
     signalmanagerDestroy();
@@ -537,15 +370,23 @@ WW_EXPORT void destroyGlobalState(void)
     internaloggerDestroy();
     loggerDestroyDefaultLogger();
 
+    masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_large);
+    masterpoolMakeEmpty(GSTATE.masterpool_buffer_pools_small);
+    masterpoolMakeEmpty(GSTATE.masterpool_wios);
+    masterpoolMakeEmpty(GSTATE.masterpool_context_pools);
+    masterpoolMakeEmpty(GSTATE.masterpool_messages);
+
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_large);
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_small);
     masterpoolDestroy(GSTATE.masterpool_wios);
     masterpoolDestroy(GSTATE.masterpool_context_pools);
-    masterpoolDestroy(GSTATE.masterpool_pipetunnel_msg_pools);
-
-    // this pool belongs to us and we are rosponsible for making it empty
-    masterpoolMakeEmpty(GSTATE.masterpool_messages, NULL);
     masterpoolDestroy(GSTATE.masterpool_messages);
+
+    memoryFree((void *) GSTATE.shortcut_loops);
+    GSTATE.shortcut_loops         = NULL;
+    GSTATE.shortcut_buffer_pools  = NULL;
+    GSTATE.shortcut_wios_pools    = NULL;
+    GSTATE.shortcut_context_pools = NULL;
 
     memoryFree(WORKERS);
     WORKERS = NULL;
