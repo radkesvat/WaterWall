@@ -76,6 +76,17 @@ Practical rule:
 - `tls_roundtrip`
   Verifies `TlsClient` and `TlsServer` chained directly with a self-signed test certificate, peer verification disabled
   on the client, SNI checked by the server, and streaming responses enabled so TLS traffic flows in both directions.
+- `tcp_connector_multi_address_round_robin`
+  Verifies `TcpConnector.settings.addresses` with `address-selection: "round-robin"` across two loopback listener
+  endpoints.
+- `tcp_connector_rejects_address_and_addresses`
+  Negative case: verifies `TcpConnector` rejects configs that mix top-level `address`/`port` with `addresses`.
+- `tcp_connector_rejects_empty_addresses`
+  Negative case: verifies `TcpConnector` rejects empty `addresses` arrays.
+- `tcp_listener_multi_whitelist_roundtrip`
+  Verifies `TcpListener.settings.whitelist` accepts a multi-entry CIDR allow-list when the client IP matches one entry.
+- `tcp_listener_rejects_whitelist`
+  Negative case: verifies `TcpListener.settings.whitelist` rejects a client IP outside the allow-list.
 - `tls_multi_sni_round_robin`
   Verifies `TlsClient.settings.snis` parsing, round-robin selection, and matching `TlsServer.settings.snis` allow-list behavior.
 - `tls_multi_sni_race`
@@ -86,6 +97,10 @@ Practical rule:
   Negative case: verifies `TlsClient` rejects configs that set both `sni` and `snis`.
 - `tls_client_rejects_empty_snis`
   Negative case: verifies `TlsClient` rejects empty `snis` arrays.
+- `tls_client_rejects_sni_and_endpoints`
+  Negative case: verifies `TlsClient` rejects configs that mix `sni` with `sni-endpoints`.
+- `tls_client_rejects_empty_sni_endpoints`
+  Negative case: verifies `TlsClient` rejects empty `sni-endpoints` arrays.
 - `tls_server_rejects_sni_and_snis`
   Negative case: verifies `TlsServer` rejects configs that set both `sni` and `snis`.
 - `tls_server_rejects_empty_snis`
@@ -223,6 +238,9 @@ Practical rule:
 - `reverse_tls_multi_sni_roundtrip`
   Verifies `Bridge -> ReverseClient -> TlsClient -> TcpConnector` and
   `TcpListener -> TlsServer -> ReverseServer -> Bridge` with multi-SNI round-robin and a server SNI allow-list.
+- `reverse_tls_sni_endpoint_pair_roundtrip`
+  Verifies paired SNI endpoint routing where `TlsClient.settings.sni-endpoints` fills `dest_context` and `TcpConnector`
+  connects through `"dest_context->address"` / `"dest_context->port"`.
 - `wireguard_udpstateless_packet_roundtrip`
   Verifies two `WireGuardDevice` nodes across real UDP loopback sockets, using packet-mode testers with IPv4 packet
   payloads so AllowedIPs routing and transport encryption are both exercised end to end.

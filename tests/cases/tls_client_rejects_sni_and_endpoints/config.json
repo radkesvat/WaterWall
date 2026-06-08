@@ -1,0 +1,30 @@
+{
+  "name": "tls-client-rejects-sni-and-endpoints",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "tls-client"
+    },
+    {
+      "name": "tls-client",
+      "type": "TlsClient",
+      "settings": {
+        "sni": "single.multi.sni.test",
+        "sni-endpoints": [
+          {
+            "sni": "endpoint.multi.sni.test",
+            "address": "127.0.0.1",
+            "port": 41046
+          }
+        ],
+        "verify": false
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}

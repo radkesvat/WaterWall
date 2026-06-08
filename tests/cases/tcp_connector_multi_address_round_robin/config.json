@@ -1,0 +1,58 @@
+{
+  "name": "tcp-connector-multi-address-round-robin",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "addresses": [
+          {
+            "address": "127.0.0.1",
+            "port": 41041
+          },
+          {
+            "address": "127.0.0.1",
+            "port": 41042
+          }
+        ],
+        "address-selection": "round-robin",
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-listener-a",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41041,
+        "nodelay": true
+      },
+      "next": "tester-server-a"
+    },
+    {
+      "name": "tester-server-a",
+      "type": "TesterServer"
+    },
+    {
+      "name": "tcp-listener-b",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41042,
+        "nodelay": true
+      },
+      "next": "tester-server-b"
+    },
+    {
+      "name": "tester-server-b",
+      "type": "TesterServer"
+    }
+  ]
+}

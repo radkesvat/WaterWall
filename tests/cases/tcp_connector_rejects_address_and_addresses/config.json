@@ -1,0 +1,29 @@
+{
+  "name": "tcp-connector-rejects-address-and-addresses",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41041,
+        "addresses": [
+          {
+            "address": "127.0.0.1",
+            "port": 41042
+          }
+        ]
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}
