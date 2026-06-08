@@ -29,6 +29,7 @@ A common layout is:
 Example:
 
 - `HttpClient -> TlsClient -> TcpConnector`
+- `Bridge -> ReverseClient -> TlsClient -> TcpConnector`
 
 That arrangement lets:
 
@@ -64,12 +65,64 @@ That arrangement lets:
 
 ### `settings`
 
-- `sni` `(string)`
-  Required TLS server name indication.
+Provide exactly one of:
 
-  The current implementation rejects missing or empty `sni`.
+- `sni` `(string)`
+  Single TLS server name indication. Existing single-SNI configs keep this form.
+
+- `snis` `(array of strings)`
+  One or more TLS server names. Empty arrays and empty string items are rejected.
+
+  `sni` and `snis` are mutually exclusive.
 
 ## Optional `settings` Fields
+
+- `sni-selection` `(string)`
+  Selects which SNI is used for a new line.
+
+  Defaults to `fixed` for one configured SNI and `round-robin` for `snis`.
+
+  Supported values:
+
+  - `fixed`
+    Always uses the first configured SNI.
+  - `round-robin`
+    Rotates through the configured SNI list.
+  - `random`
+    Picks a pseudo-random configured SNI for each new line.
+  - `race`
+    Opens multiple internal TLS candidate lines and keeps the first one whose TLS handshake succeeds.
+  - `healthy-only`
+    Round-robins across SNIs that passive health tracking still marks healthy, falling back to all SNIs if none are healthy.
+  - `least-rtt`
+    Picks the healthy SNI with the lowest passive handshake RTT estimate.
+  - `weighted-round-robin`
+    Rotates through SNIs according to `sni-weights`.
+
+- `race-tries` `(integer, default: snis.length)`
+  Maximum number of SNI candidates used by `sni-selection: "race"`.
+
+  Values above the configured SNI count are capped to that count.
+
+- `race-timeout-ms` `(integer, default: 5000)`
+  Maximum time to wait for a race winner before closing the line.
+
+- `sni-weights` `(array of positive integers)`
+  Per-SNI weights used by `weighted-round-robin`.
+
+  The array length must match the configured SNI count.
+
+- `sni-max-consecutive-failures` `(integer, default: 3)`
+  Consecutive TLS handshake failures after which passive tracking marks an SNI unhealthy.
+
+- `sni-probe-interval-ms` `(integer, default: 0)`
+  Reserved for active probe scheduling. Current `TlsClient` does not start active probes because this tunnel cannot know
+  whether the downstream chain can safely accept probe-only connections. Passive health and RTT tracking are always
+  updated from real TLS handshakes.
+
+- `min-unused-per-sni` `(integer, default: 0)`
+  When greater than zero, selection prefers SNIs with fewer active successful TLS lines than this value. If every SNI is
+  at or above the quota, selection falls back to the normal pool.
 
 - `verify` `(boolean, default: true)`
   Controls whether BoringSSL verifies the peer certificate chain.
@@ -88,7 +141,7 @@ That arrangement lets:
 - `ech-sni-trick` `(string)`
   When set, `TlsClient` generates a full fake TLS ClientHello using this hostname and embeds those bytes as the GREASE `encrypted_client_hello` payload before the outer ClientHello is serialized and hashed.
 
-  The outer cleartext SNI remains `settings.sni`.
+  The outer cleartext SNI remains the selected configured SNI.
 
   The embedded fake ClientHello is generated with `x25519mlkem768` disabled, even if the outer tunnel keeps `x25519mlkem768` enabled. This keeps the embedded payload small enough for the packet-side trick while leaving the real outer ClientHello Chrome-like.
 
@@ -137,7 +190,7 @@ On upstream `Init`, `TlsClient`:
 - creates per-line SSL state
 - allocates memory BIOs
 - switches the SSL object into client mode
-- sets the configured SNI
+- selects and sets the configured SNI
 - forwards upstream `Init` to the next tunnel
 - immediately calls `SSL_connect()` to generate the first handshake flight
 
@@ -178,6 +231,22 @@ If `SSL_write()` or BIO flushing fails:
 - line state is destroyed first
 - upstream `Finish` is sent
 - downstream `Finish` is sent
+
+### Race mode behavior
+
+When `sni-selection` is `race`, the original line remains connected only to the previous tunnel. `TlsClient` creates
+internal child lines toward the next tunnel, one per selected SNI candidate, and each child performs its own TLS
+handshake with its assigned SNI.
+
+The first child that completes the TLS handshake becomes the winner:
+
+- pending upstream application payload from the original line is encrypted through the winning child
+- losing child lines are closed toward the next tunnel
+- downstream plaintext from the winning child is forwarded back on the original line
+- if every child fails or the race timeout expires, the original line is closed
+
+Race mode does not introduce a new reverse-TLS tunnel type; it only composes internal `TlsClient` child lines with the
+existing next tunnel.
 
 ### Downstream payload behavior
 

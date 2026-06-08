@@ -76,6 +76,22 @@ Practical rule:
 - `tls_roundtrip`
   Verifies `TlsClient` and `TlsServer` chained directly with a self-signed test certificate, peer verification disabled
   on the client, SNI checked by the server, and streaming responses enabled so TLS traffic flows in both directions.
+- `tls_multi_sni_round_robin`
+  Verifies `TlsClient.settings.snis` parsing, round-robin selection, and matching `TlsServer.settings.snis` allow-list behavior.
+- `tls_multi_sni_race`
+  Verifies SNI race mode succeeds when one candidate is rejected by the server allow-list and another candidate completes TLS.
+- `tls_multi_sni_weighted_roundtrip`
+  Verifies weighted-round-robin configuration, `sni-weights`, and `min-unused-per-sni` with a multi-SNI server allow-list.
+- `tls_client_rejects_sni_and_snis`
+  Negative case: verifies `TlsClient` rejects configs that set both `sni` and `snis`.
+- `tls_client_rejects_empty_snis`
+  Negative case: verifies `TlsClient` rejects empty `snis` arrays.
+- `tls_server_rejects_sni_and_snis`
+  Negative case: verifies `TlsServer` rejects configs that set both `sni` and `snis`.
+- `tls_server_rejects_empty_snis`
+  Negative case: verifies `TlsServer` rejects empty `snis` arrays.
+- `tls_server_rejects_sni_allow_list`
+  Negative case: verifies `TlsServer.settings.snis` rejects a client SNI outside the allow-list.
 - `reality_google_roundtrip`
   Verifies `TesterClient -> RealityClient -> TcpConnector` and `TcpListener -> RealityServer -> TesterServer` across a
   real TCP loopback hop while the Reality visitor branch handshakes with `google.com:443`.
@@ -204,6 +220,9 @@ Practical rule:
 - `reverse_tcp_bridge_roundtrip`
   Verifies `ReverseClient` and `ReverseServer` across a real TCP loopback transport while a paired `Bridge` links
   `TesterClient` to the reverse-server local side and `TesterServer` to the reverse-client local side.
+- `reverse_tls_multi_sni_roundtrip`
+  Verifies `Bridge -> ReverseClient -> TlsClient -> TcpConnector` and
+  `TcpListener -> TlsServer -> ReverseServer -> Bridge` with multi-SNI round-robin and a server SNI allow-list.
 - `wireguard_udpstateless_packet_roundtrip`
   Verifies two `WireGuardDevice` nodes across real UDP loopback sockets, using packet-mode testers with IPv4 packet
   payloads so AllowedIPs routing and transport encryption are both exercised end to end.

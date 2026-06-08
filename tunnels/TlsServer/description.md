@@ -12,7 +12,7 @@ This tunnel is meant to behave like a basic nginx `stream` TLS server, not like 
 - Performs a real OpenSSL server handshake.
 - Decrypts upstream TLS records into cleartext for the next node.
 - Encrypts downstream cleartext into TLS records for the previous node.
-- Optionally rejects handshakes by exact SNI match.
+- Optionally rejects handshakes by exact SNI allow-list match.
 - Optionally limits ALPN negotiation to a configured allow-list.
 - Supports nginx-like stock defaults for protocol versions, ciphers, tickets, timeout, and soft-off session cache behavior.
 
@@ -80,9 +80,16 @@ Both fields are required. If either one is missing or invalid, tunnel creation f
 ## Optional `settings` Fields
 
 - `sni` `(string)`
-  Optional exact-match SNI gate.
+  Optional single-hostname SNI allow-list.
 
   If set, clients that do not send this exact SNI are rejected during handshake. This is only a filter; it does not change certificates dynamically.
+
+- `snis` `(array of strings)`
+  Optional multi-hostname SNI allow-list.
+
+  If set, clients must send one of the listed SNIs or the handshake is rejected with `unrecognized_name`.
+
+  `sni` and `snis` are mutually exclusive.
 
 - `alpns` `(array of strings)`
   Optional ALPN allow-list and server preference order.
