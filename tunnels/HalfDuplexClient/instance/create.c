@@ -22,9 +22,10 @@ tunnel_t *halfduplexclientTunnelCreate(node_t *node)
 
     t->onPrepare = &halfduplexclientTunnelOnPrepair;
     t->onStart   = &halfduplexclientTunnelOnStart;
+    t->onStop    = &halfduplexclientTunnelOnStop;
     t->onDestroy = &halfduplexclientTunnelDestroy;
 
-    halfduplexclient_tstate_t* state = tunnelGetState(t);
-    state->identifier = fastRand64() % 10000000;
+    halfduplexclient_tstate_t *state = tunnelGetState(t);
+    state->identifier                = fastRand64() % 10000000;
     return t;
 }

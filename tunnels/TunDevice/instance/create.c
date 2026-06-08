@@ -28,6 +28,7 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
 
     t->onPrepare = &tundeviceTunnelOnPrepair;
     t->onStart   = &tundeviceTunnelOnStart;
+    t->onStop    = &tundeviceTunnelOnStop;
     t->onDestroy = &tundeviceTunnelDestroy;
 
     tundevice_tstate_t *state = tunnelGetState(t);
@@ -65,7 +66,6 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
     char *subnet_part = slash + 1;
 
     state->subnet_mask = atoi(subnet_part);
-
 
     int dev_mtu = 0;
     getIntFromJsonObjectOrDefault(&dev_mtu, settings, "device-mtu", GLOBAL_MTU_SIZE);

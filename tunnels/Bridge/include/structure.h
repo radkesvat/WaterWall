@@ -28,6 +28,7 @@ void bridgeTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void bridgeTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void bridgeTunnelOnPrepair(tunnel_t *t);
 void bridgeTunnelOnStart(tunnel_t *t);
+void bridgeTunnelOnStop(tunnel_t *t);
 
 void bridgeTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void bridgeTunnelUpStreamEst(tunnel_t *t, line_t *l);

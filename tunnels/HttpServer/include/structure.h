@@ -9,7 +9,7 @@
 
 #define i_type hmap_httpserver_split_t      // NOLINT
 #define i_key  hash_t                       // NOLINT
-#define i_val  struct httpserver_lstate_s  *// NOLINT
+#define i_val  struct httpserver_lstate_s * // NOLINT
 #include "stc/hmap.h"
 
 typedef enum httpserver_version_mode_e
@@ -51,10 +51,10 @@ typedef enum httpserver_split_role_e
 
 typedef struct httpserver_h2_data_item_s
 {
-    sbuf_t                          *payload;
-    uint32_t                         offset;
-    bool                             end_stream;
-    bool                             complete;
+    sbuf_t                           *payload;
+    uint32_t                          offset;
+    bool                              end_stream;
+    bool                              complete;
     struct httpserver_h2_data_item_s *next;
 } httpserver_h2_data_item_t;
 
@@ -73,9 +73,9 @@ typedef struct httpserver_lstate_s
 
     nghttp2_session *session;
 
-    buffer_stream_t in_stream;
-    buffer_queue_t  pending_down;
-    context_queue_t events_up;
+    buffer_stream_t            in_stream;
+    buffer_queue_t             pending_down;
+    context_queue_t            events_up;
     httpserver_h2_data_item_t *h2_data_head;
     httpserver_h2_data_item_t *h2_data_tail;
     httpserver_h2_data_item_t *h2_data_active;
@@ -206,6 +206,7 @@ void httpserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void httpserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void httpserverTunnelOnPrepair(tunnel_t *t);
 void httpserverTunnelOnStart(tunnel_t *t);
+void httpserverTunnelOnStop(tunnel_t *t);
 
 void httpserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void httpserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

@@ -49,7 +49,7 @@ static uint16_t testerclientPacketIpv4MinimumPacketSize(const testerclient_tstat
 }
 
 static bool testerclientLoadPacketIpv4TransportSetting(testerclient_packet_ipv4_transport_e *dest,
-                                                       const cJSON *packet_ipv4)
+                                                       const cJSON                          *packet_ipv4)
 {
     char *transport = NULL;
 
@@ -78,7 +78,8 @@ static bool testerclientLoadPacketIpv4TransportSetting(testerclient_packet_ipv4_
     }
     else
     {
-        LOGF("JSON Error: TesterClient->settings->packet-ipv4->transport (string field) : expected tcp, udp, icmp, raw, or none");
+        LOGF("JSON Error: TesterClient->settings->packet-ipv4->transport (string field) : expected tcp, udp, icmp, "
+             "raw, or none");
         memoryFree(transport);
         return false;
     }
@@ -120,9 +121,9 @@ static bool testerclientLoadPacketIpv4Settings(testerclient_tstate_t *ts, const 
 {
     const cJSON *packet_ipv4 = cJSON_GetObjectItemCaseSensitive(settings, "packet-ipv4");
 
-    ts->packet_ipv4_mode     = false;
-    ts->packet_ipv4_protocol = kTesterClientPacketIpv4ProtocolDefault;
-    ts->packet_ipv4_ttl      = kTesterClientPacketIpv4TtlDefault;
+    ts->packet_ipv4_mode      = false;
+    ts->packet_ipv4_protocol  = kTesterClientPacketIpv4ProtocolDefault;
+    ts->packet_ipv4_ttl       = kTesterClientPacketIpv4TtlDefault;
     ts->packet_ipv4_transport = kTesterClientPacketIpv4TransportNone;
     atomicStoreRelaxed(&ts->packet_ipv4_identification, 0);
 
@@ -148,18 +149,22 @@ static bool testerclientLoadPacketIpv4Settings(testerclient_tstate_t *ts, const 
 
     if (protocol_value < 0 || protocol_value > UINT8_MAX)
     {
-        LOGF("JSON Error: TesterClient->settings->packet-ipv4->protocol (int field) : expected a value between 0 and %u",
-             (unsigned int) UINT8_MAX);
+        LOGF(
+            "JSON Error: TesterClient->settings->packet-ipv4->protocol (int field) : expected a value between 0 and %u",
+            (unsigned int) UINT8_MAX);
         return false;
     }
 
     ts->packet_ipv4_protocol = (uint8_t) protocol_value;
 
-    if (! testerclientLoadRequiredIpv4Setting(&ts->packet_ipv4_source_addr, packet_ipv4, "source-ip",
-                                              "TesterClient->settings->packet-ipv4->source-ip") ||
-        ! testerclientLoadRequiredIpv4Setting(&ts->packet_ipv4_dest_addr, packet_ipv4, "dest-ip",
-                                              "TesterClient->settings->packet-ipv4->dest-ip") ||
-        ! testerclientLoadUint8Setting(&ts->packet_ipv4_ttl, packet_ipv4, "ttl", kTesterClientPacketIpv4TtlDefault,
+    if (! testerclientLoadRequiredIpv4Setting(
+            &ts->packet_ipv4_source_addr, packet_ipv4, "source-ip", "TesterClient->settings->packet-ipv4->source-ip") ||
+        ! testerclientLoadRequiredIpv4Setting(
+            &ts->packet_ipv4_dest_addr, packet_ipv4, "dest-ip", "TesterClient->settings->packet-ipv4->dest-ip") ||
+        ! testerclientLoadUint8Setting(&ts->packet_ipv4_ttl,
+                                       packet_ipv4,
+                                       "ttl",
+                                       kTesterClientPacketIpv4TtlDefault,
                                        "TesterClient->settings->packet-ipv4->ttl") ||
         ! testerclientLoadPacketIpv4TransportSetting(&ts->packet_ipv4_transport, packet_ipv4))
     {
@@ -203,13 +208,14 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
 
     t->onPrepare = &testerclientTunnelOnPrepair;
     t->onStart   = &testerclientTunnelOnStart;
+    t->onStop    = &testerclientTunnelOnStop;
     t->onDestroy = &testerclientTunnelDestroy;
 
-    testerclient_tstate_t *ts       = tunnelGetState(t);
-    const cJSON           *settings = node->node_settings_json;
+    testerclient_tstate_t *ts                    = tunnelGetState(t);
+    const cJSON           *settings              = node->node_settings_json;
     int                    packet_start_delay_ms = 0;
-    int                    chunk_count = kTesterClientChunkCount;
-    int                    max_payload_size = 0;
+    int                    chunk_count           = kTesterClientChunkCount;
+    int                    max_payload_size      = 0;
 
     getBoolFromJsonObjectOrDefault(&ts->allow_early_response, settings, "allow-early-response", false);
     getBoolFromJsonObjectOrDefault(&ts->packet_mode, settings, "packet-mode", false);

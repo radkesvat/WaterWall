@@ -24,6 +24,7 @@ tunnel_t *packetsplitstreamTunnelCreate(node_t *node)
     t->onChain   = &packetsplitstreamTunnelOnChain;
     t->onPrepare = &packetsplitstreamTunnelOnPrepair;
     t->onStart   = &packetsplitstreamTunnelOnStart;
+    t->onStop    = &packetsplitstreamTunnelOnStop;
 
     if (nodeHasNext(node))
     {

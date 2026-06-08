@@ -77,6 +77,7 @@ static void configureTunnelCallbacks(tunnel_t *t)
 
     t->onPrepare = &tlsserverTunnelOnPrepair;
     t->onStart   = &tlsserverTunnelOnStart;
+    t->onStop    = &tlsserverTunnelOnStop;
     t->onDestroy = &tlsserverTunnelDestroy;
 }
 
@@ -362,8 +363,7 @@ static SSL_CTX *createServerSslContext(tlsserver_tstate_t *ts)
     SSL_CTX *ctx = (SSL_CTX *) sslCtxNew(&params);
     if (ctx == NULL)
     {
-        LOGE("TlsServer: failed to create SSL_CTX with cert-file=\"%s\" key-file=\"%s\"",
-             ts->cert_file, ts->key_file);
+        LOGE("TlsServer: failed to create SSL_CTX with cert-file=\"%s\" key-file=\"%s\"", ts->cert_file, ts->key_file);
         tlsserverPrintSSLError();
         return NULL;
     }
@@ -411,9 +411,8 @@ static SSL_CTX *createServerSslContext(tlsserver_tstate_t *ts)
         break;
     case kTlsServerSessionCacheNone:
     default:
-        SSL_CTX_set_session_cache_mode(ctx,
-                                       SSL_SESS_CACHE_SERVER | SSL_SESS_CACHE_NO_INTERNAL_LOOKUP |
-                                           SSL_SESS_CACHE_NO_INTERNAL_STORE);
+        SSL_CTX_set_session_cache_mode(
+            ctx, SSL_SESS_CACHE_SERVER | SSL_SESS_CACHE_NO_INTERNAL_LOOKUP | SSL_SESS_CACHE_NO_INTERNAL_STORE);
         break;
     }
 
@@ -467,8 +466,7 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
 
     if (! parseRequiredString(&ts->cert_file, settings, "cert-file", t) ||
         ! parseRequiredString(&ts->key_file, settings, "key-file", t) ||
-        ! parseOptionalString(&ts->expected_sni, settings, "sni", t) ||
-        ! parseTlsDefaults(ts, settings, t) ||
+        ! parseOptionalString(&ts->expected_sni, settings, "sni", t) || ! parseTlsDefaults(ts, settings, t) ||
         ! parseAlpns(ts, settings, t))
     {
         return NULL;
@@ -479,20 +477,21 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
     int worker_count = getWorkersCount();
     if (ts->verbose)
     {
-        LOGD("TlsServer: creating node \"%s\" cert-file=\"%s\" key-file=\"%s\" sni=\"%s\" min-version=%d max-version=%d "
-             "ciphers=\"%s\" session-cache=%s session-cache-size=%d session-tickets=%d alpns=%u workers=%d",
-             node->name,
-             ts->cert_file,
-             ts->key_file,
-             ts->expected_sni != NULL ? ts->expected_sni : "<none>",
-             ts->min_proto_version,
-             ts->max_proto_version,
-             ts->ciphers,
-             tlsserverSessionCacheName(ts->session_cache_mode),
-             ts->session_cache_size,
-             (int) ts->session_tickets,
-             ts->alpns_length,
-             worker_count);
+        LOGD(
+            "TlsServer: creating node \"%s\" cert-file=\"%s\" key-file=\"%s\" sni=\"%s\" min-version=%d max-version=%d "
+            "ciphers=\"%s\" session-cache=%s session-cache-size=%d session-tickets=%d alpns=%u workers=%d",
+            node->name,
+            ts->cert_file,
+            ts->key_file,
+            ts->expected_sni != NULL ? ts->expected_sni : "<none>",
+            ts->min_proto_version,
+            ts->max_proto_version,
+            ts->ciphers,
+            tlsserverSessionCacheName(ts->session_cache_mode),
+            ts->session_cache_size,
+            (int) ts->session_tickets,
+            ts->alpns_length,
+            worker_count);
     }
 
     ts->threadlocal_ssl_contexts = memoryAllocate((size_t) worker_count * sizeof(SSL_CTX *));

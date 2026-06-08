@@ -10,7 +10,6 @@ typedef struct packetsplitstream_tstate_s
     tunnel_t *down_tunnel;
 } packetsplitstream_tstate_t;
 
-
 typedef struct packetsplitstream_lstate_s
 {
     int unused;
@@ -28,6 +27,7 @@ WW_EXPORT api_result_t packetsplitstreamTunnelApi(tunnel_t *instance, sbuf_t *me
 
 void packetsplitstreamTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void packetsplitstreamTunnelOnStart(tunnel_t *t);
+void packetsplitstreamTunnelOnStop(tunnel_t *t);
 void packetsplitstreamTunnelOnPrepair(tunnel_t *t);
 
 void packetsplitstreamTunnelUpStreamInit(tunnel_t *t, line_t *l);
@@ -50,5 +50,5 @@ void packetsplitstreamLinestateDestroy(packetsplitstream_lstate_t *ls);
 
 line_t *packetsplitstreamEnsureUploadLine(tunnel_t *t, line_t *packet_line, packetsplitstream_lstate_t *packet_ls);
 line_t *packetsplitstreamEnsureDownloadLine(tunnel_t *t, line_t *packet_line, packetsplitstream_lstate_t *packet_ls);
-void packetsplitstreamEnsureSplitLines(tunnel_t *t, line_t *packet_line, packetsplitstream_lstate_t *packet_ls);
-void packetsplitstreamDestroyOwnedLine(tunnel_t *t, line_t **slot);
+void    packetsplitstreamEnsureSplitLines(tunnel_t *t, line_t *packet_line, packetsplitstream_lstate_t *packet_ls);
+void    packetsplitstreamDestroyOwnedLine(tunnel_t *t, line_t **slot);

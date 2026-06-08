@@ -31,18 +31,19 @@ typedef struct connectionfisherclient_lstate_s
 
 enum
 {
-    kConnectionFisherHandshakeLength  = 5,
-    kConnectionFisherTimeoutMs        = 5000,
+    kConnectionFisherHandshakeLength   = 5,
+    kConnectionFisherTimeoutMs         = 5000,
     kConnectionFisherMaxPendingUpBytes = 1024 * 1024,
     kConnectionFisherMaxHandshakeBytes = 4096,
-    kConnectionFisherPendingQueueCap  = 8,
-    kTunnelStateSize                  = sizeof(connectionfisherclient_tstate_t),
-    kLineStateSize                    = sizeof(connectionfisherclient_lstate_t)
+    kConnectionFisherPendingQueueCap   = 8,
+    kTunnelStateSize                   = sizeof(connectionfisherclient_tstate_t),
+    kLineStateSize                     = sizeof(connectionfisherclient_lstate_t)
 };
 
 WW_EXPORT void         connectionfisherclientTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *connectionfisherclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t connectionfisherclientTunnelApi(tunnel_t *instance, sbuf_t *message);
+void                   connectionfisherclientTunnelOnStop(tunnel_t *t);
 
 void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void connectionfisherclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -58,7 +59,8 @@ void connectionfisherclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_
 void connectionfisherclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void connectionfisherclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void connectionfisherclientLinestateInitializeMain(connectionfisherclient_lstate_t *ls, line_t *l, uint32_t child_count);
+void connectionfisherclientLinestateInitializeMain(connectionfisherclient_lstate_t *ls, line_t *l,
+                                                   uint32_t child_count);
 void connectionfisherclientLinestateInitializeChild(connectionfisherclient_lstate_t *ls, line_t *l, line_t *main_l,
                                                     uint32_t slot);
 void connectionfisherclientLinestateDestroyMain(connectionfisherclient_lstate_t *ls);

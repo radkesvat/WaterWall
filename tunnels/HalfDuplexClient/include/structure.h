@@ -8,7 +8,6 @@ enum
     kHLFDCmdDownload = 128
 };
 
-
 typedef struct halfduplexclient_tstate_s
 {
     atomic_ullong identifier;
@@ -36,6 +35,7 @@ void halfduplexclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_of
 void halfduplexclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void halfduplexclientTunnelOnPrepair(tunnel_t *t);
 void halfduplexclientTunnelOnStart(tunnel_t *t);
+void halfduplexclientTunnelOnStop(tunnel_t *t);
 
 void halfduplexclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void halfduplexclientTunnelUpStreamEst(tunnel_t *t, line_t *l);

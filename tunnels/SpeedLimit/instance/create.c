@@ -85,15 +85,13 @@ static bool parseLimitMode(speedlimit_tstate_t *state, const cJSON *settings)
         return false;
     }
 
-    if (stringCompare(mode->valuestring, "per-connection") == 0 ||
-        stringCompare(mode->valuestring, "per-line") == 0)
+    if (stringCompare(mode->valuestring, "per-connection") == 0 || stringCompare(mode->valuestring, "per-line") == 0)
     {
         state->limit_mode = kSpeedLimitLimitModePerLine;
         return true;
     }
 
-    if (stringCompare(mode->valuestring, "all-connections") == 0 ||
-        stringCompare(mode->valuestring, "all-lines") == 0)
+    if (stringCompare(mode->valuestring, "all-connections") == 0 || stringCompare(mode->valuestring, "all-lines") == 0)
     {
         state->limit_mode = kSpeedLimitLimitModeAllLines;
         return true;
@@ -184,9 +182,9 @@ tunnel_t *speedlimitTunnelCreate(node_t *node)
 {
     const int workers_count = getWorkersCount();
 
-    tunnel_t *t =
-        tunnelCreate(node, sizeof(speedlimit_tstate_t) + ((uint32_t) workers_count * sizeof(speedlimit_bucket_t)),
-                     sizeof(speedlimit_lstate_t));
+    tunnel_t *t = tunnelCreate(node,
+                               sizeof(speedlimit_tstate_t) + ((uint32_t) workers_count * sizeof(speedlimit_bucket_t)),
+                               sizeof(speedlimit_lstate_t));
 
     t->fnInitU    = &speedlimitTunnelUpStreamInit;
     t->fnEstU     = &speedlimitTunnelUpStreamEst;
@@ -204,6 +202,7 @@ tunnel_t *speedlimitTunnelCreate(node_t *node)
 
     t->onPrepare = &speedlimitTunnelOnPrepair;
     t->onStart   = &speedlimitTunnelOnStart;
+    t->onStop    = &speedlimitTunnelOnStop;
     t->onDestroy = &speedlimitTunnelDestroy;
 
     const cJSON         *settings = node->node_settings_json;

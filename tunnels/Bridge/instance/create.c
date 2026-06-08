@@ -22,6 +22,7 @@ tunnel_t *bridgeTunnelCreate(node_t *node)
 
     t->onPrepare = &bridgeTunnelOnPrepair;
     t->onStart   = &bridgeTunnelOnStart;
+    t->onStop    = &bridgeTunnelOnStop;
     t->onDestroy = &bridgeTunnelDestroy;
 
     t->onChain = &bridgeTunnelOnChain;
@@ -50,13 +51,11 @@ tunnel_t *bridgeTunnelCreate(node_t *node)
     state->pair_node   = pair_node;
     state->mode_upside = ! nodeHasNext(node);
 
-    if(state->mode_upside)
+    if (state->mode_upside)
     {
-        
     }
     else
     {
-        
     }
 
     return t;

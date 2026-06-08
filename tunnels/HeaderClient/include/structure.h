@@ -40,6 +40,7 @@ WW_EXPORT api_result_t headerclientTunnelApi(tunnel_t *instance, sbuf_t *message
 
 void headerclientTunnelOnPrepair(tunnel_t *t);
 void headerclientTunnelOnStart(tunnel_t *t);
+void headerclientTunnelOnStop(tunnel_t *t);
 
 void headerclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void headerclientTunnelUpStreamEst(tunnel_t *t, line_t *l);

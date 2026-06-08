@@ -40,8 +40,8 @@
 static bool validatePrivateKeyLength(const char *private_key)
 {
     uint8_t dummy_key[WIREGUARD_PRIVATE_KEY_LEN];
-    size_t private_key_len = sizeof(dummy_key);
-    
+    size_t  private_key_len = sizeof(dummy_key);
+
     if (BASE64_ENCODE_OUT_SIZE(private_key_len) != stringLength((char *) private_key))
     {
         LOGE("Error: WireGuardDevice->settings->privatekey (string field) : The data was empty or invalid");
@@ -69,14 +69,14 @@ static bool decodeOptionalPresharedKey(const char *preshared_key_b64, uint8_t *d
 static bool decodeAndInitializeDevice(wireguard_device_t *device, const char *private_key)
 {
     uint8_t decoded_key[WIREGUARD_PRIVATE_KEY_LEN];
-    
-    if (wwBase64Decode((char *) private_key, (unsigned int) stringLength((char *) private_key),
-                       decoded_key) != WIREGUARD_PRIVATE_KEY_LEN)
+
+    if (wwBase64Decode((char *) private_key, (unsigned int) stringLength((char *) private_key), decoded_key) !=
+        WIREGUARD_PRIVATE_KEY_LEN)
     {
         return false;
     }
 
-    if (!wireguardDeviceInit(device, decoded_key))
+    if (! wireguardDeviceInit(device, decoded_key))
     {
         return false;
     }
@@ -96,14 +96,15 @@ static tunnel_t *createBaseTunnel(node_t *node)
     t->fnInitD    = &wireguarddeviceTunnelDownStreamInit;
     t->fnPayloadU = &wireguarddeviceTunnelUpStreamPayload;
     t->fnPayloadD = &wireguarddeviceTunnelDownStreamPayload;
-    t->onPrepare = &wireguarddeviceTunnelOnPrepair;
-    t->onStart   = &wireguarddeviceTunnelOnStart;
-    t->onDestroy = &wireguarddeviceTunnelDestroy;
+    t->onPrepare  = &wireguarddeviceTunnelOnPrepair;
+    t->onStart    = &wireguarddeviceTunnelOnStart;
+    t->onStop     = &wireguarddeviceTunnelOnStop;
+    t->onDestroy  = &wireguarddeviceTunnelDestroy;
 
     wgd_tstate_t *state = tunnelGetState(t);
-    state->tunnel = t;
+    state->tunnel       = t;
     mutexInit(&state->mutex);
-    
+
     return t;
 }
 
@@ -138,14 +139,16 @@ static bool parseAllowedIps(const char *allowed_ips, ip_addr_t *allowed_ip_list,
 
         if (count >= WIREGUARD_MAX_SRC_IPS)
         {
-            LOGF("JSON Error: WireGuardDevice->settings->peers [ index %d  ]->allowedips exceeds WIREGUARD_MAX_SRC_IPS", peer_index);
+            LOGF("JSON Error: WireGuardDevice->settings->peers [ index %d  ]->allowedips exceeds WIREGUARD_MAX_SRC_IPS",
+                 peer_index);
             memoryFree(allowed_ips_nospace);
             return false;
         }
 
         if (parseIPWithSubnetMask(cursor, &allowed_ip_list[count], &allowed_mask_list[count]) == ERR_ARG)
         {
-            LOGF("JSON Error: WireGuardDevice->settings->peers [ index %d  ]->allowedips entry could not be parsed", peer_index);
+            LOGF("JSON Error: WireGuardDevice->settings->peers [ index %d  ]->allowedips entry could not be parsed",
+                 peer_index);
             memoryFree(allowed_ips_nospace);
             return false;
         }
@@ -162,9 +165,9 @@ static bool parseAllowedIps(const char *allowed_ips, ip_addr_t *allowed_ip_list,
 static bool parseEndpoint(const char *endpoint, wireguard_peer_init_data_t *peer)
 {
     char *endpoint_copy = stringDuplicate(endpoint);
-    char *host_ptr = endpoint_copy;
+    char *host_ptr      = endpoint_copy;
     char *colon_ptr;
-    
+
     if ((endpoint_copy == NULL) || (endpoint_copy[0] == '\0'))
     {
         memoryFree(endpoint_copy);
@@ -220,31 +223,37 @@ static bool parseEndpoint(const char *endpoint, wireguard_peer_init_data_t *peer
     }
 
     peer->endpoint_port = (uint16_t) parsed_port;
-    
+
     memoryFree(endpoint_copy);
     return true;
 }
 
-static bool extractPeerFields(cJSON *peer_object, char **public_key, char **preshared_key, 
-                             char **allowed_ips, char **endpoint, int *keepalive, int peer_index)
+static bool extractPeerFields(cJSON *peer_object, char **public_key, char **preshared_key, char **allowed_ips,
+                              char **endpoint, int *keepalive, int peer_index)
 {
-    if (!getStringFromJsonObject(public_key, peer_object, "publickey"))
+    if (! getStringFromJsonObject(public_key, peer_object, "publickey"))
     {
-        LOGF("JSON Error: WireGuardDevice->settings->peers [ index %d  ]->publickey (string field) : The data was empty or invalid", peer_index);
+        LOGF("JSON Error: WireGuardDevice->settings->peers [ index %d  ]->publickey (string field) : The data was "
+             "empty or invalid",
+             peer_index);
         return false;
     }
 
     getStringFromJsonObject(preshared_key, peer_object, "presharedkey");
 
-    if (!getStringFromJsonObject(allowed_ips, peer_object, "allowedips"))
+    if (! getStringFromJsonObject(allowed_ips, peer_object, "allowedips"))
     {
-        LOGF("JSON Error: WireGuardDevice->settings->peers [ index %d  ]->allowedips (string field) : The data was empty or invalid", peer_index);
+        LOGF("JSON Error: WireGuardDevice->settings->peers [ index %d  ]->allowedips (string field) : The data was "
+             "empty or invalid",
+             peer_index);
         return false;
     }
 
-    if (!getStringFromJsonObject(endpoint, peer_object, "endpoint"))
+    if (! getStringFromJsonObject(endpoint, peer_object, "endpoint"))
     {
-        LOGF("JSON Error: WireGuardDevice->settings->peers [ index %d  ]->endpoint (string field) : The data was empty or invalid", peer_index);
+        LOGF("JSON Error: WireGuardDevice->settings->peers [ index %d  ]->endpoint (string field) : The data was empty "
+             "or invalid",
+             peer_index);
         return false;
     }
 
@@ -254,20 +263,25 @@ static bool extractPeerFields(cJSON *peer_object, char **public_key, char **pres
 
 static bool processPeer(cJSON *peer_object, wireguard_device_t *device, int peer_index)
 {
-    char    *peer_public_key       = NULL;
-    char    *peer_preshared_key    = NULL;
-    char    *peer_allowed_ips      = NULL;
-    char    *peer_endpoint         = NULL;
-    int      persistentkeepalive   = 0;
-    bool     ok                    = false;
-    uint8_t  peer_index_on_device  = WIREGUARDIF_INVALID_INDEX;
-    uint8_t  allowed_ip_count      = 0;
+    char     *peer_public_key      = NULL;
+    char     *peer_preshared_key   = NULL;
+    char     *peer_allowed_ips     = NULL;
+    char     *peer_endpoint        = NULL;
+    int       persistentkeepalive  = 0;
+    bool      ok                   = false;
+    uint8_t   peer_index_on_device = WIREGUARDIF_INVALID_INDEX;
+    uint8_t   allowed_ip_count     = 0;
     ip_addr_t allowed_ip_list[WIREGUARD_MAX_SRC_IPS];
     ip_addr_t allowed_mask_list[WIREGUARD_MAX_SRC_IPS];
-    uint8_t  decoded_preshared_key[WIREGUARD_SESSION_KEY_LEN];
+    uint8_t   decoded_preshared_key[WIREGUARD_SESSION_KEY_LEN];
 
-    if (!extractPeerFields(peer_object, &peer_public_key, &peer_preshared_key, 
-                          &peer_allowed_ips, &peer_endpoint, &persistentkeepalive, peer_index))
+    if (! extractPeerFields(peer_object,
+                            &peer_public_key,
+                            &peer_preshared_key,
+                            &peer_allowed_ips,
+                            &peer_endpoint,
+                            &persistentkeepalive,
+                            peer_index))
     {
         return false;
     }
@@ -278,18 +292,20 @@ static bool processPeer(cJSON *peer_object, wireguard_device_t *device, int peer
 
     if ((persistentkeepalive < 0) || (persistentkeepalive > UINT16_MAX))
     {
-        LOGF("JSON Error: WireGuardDevice->settings->peers [ index %d  ]->persistentkeepalive must be between 0 and 65535", peer_index);
+        LOGF("JSON Error: WireGuardDevice->settings->peers [ index %d  ]->persistentkeepalive must be between 0 and "
+             "65535",
+             peer_index);
         goto cleanup;
     }
 
     peer.keep_alive = (uint16_t) persistentkeepalive;
 
-    if (!parseEndpoint(peer_endpoint, &peer))
+    if (! parseEndpoint(peer_endpoint, &peer))
     {
         goto cleanup;
     }
 
-    if (!parseAllowedIps(peer_allowed_ips, allowed_ip_list, allowed_mask_list, &allowed_ip_count, peer_index))
+    if (! parseAllowedIps(peer_allowed_ips, allowed_ip_list, allowed_mask_list, &allowed_ip_count, peer_index))
     {
         goto cleanup;
     }
@@ -299,7 +315,9 @@ static bool processPeer(cJSON *peer_object, wireguard_device_t *device, int peer
 
     if (! decodeOptionalPresharedKey(peer_preshared_key, decoded_preshared_key))
     {
-        LOGF("JSON Error: WireGuardDevice->settings->peers [ index %d  ]->presharedkey must be a base64-encoded 32-byte key", peer_index);
+        LOGF("JSON Error: WireGuardDevice->settings->peers [ index %d  ]->presharedkey must be a base64-encoded "
+             "32-byte key",
+             peer_index);
         goto cleanup;
     }
 
@@ -349,7 +367,7 @@ cleanup:
 
 static bool validatePeersArray(const cJSON *peers_array)
 {
-    if (!cJSON_IsArray(peers_array))
+    if (! cJSON_IsArray(peers_array))
     {
         LOGF("JSON Error: WireGuardDevice->settings->peers (array field) : The data was empty or invalid");
         return false;
@@ -374,17 +392,19 @@ static bool validatePeersArray(const cJSON *peers_array)
 static bool processAllPeers(const cJSON *peers_array, wireguard_device_t *device)
 {
     int peers_count = cJSON_GetArraySize(peers_array);
-    
+
     for (int i = 0; i < peers_count; i++)
     {
         cJSON *peer_object = cJSON_GetArrayItem(peers_array, i);
-        if (!checkJsonIsObjectAndHasChild(peer_object))
+        if (! checkJsonIsObjectAndHasChild(peer_object))
         {
-            LOGF("JSON Error: WireGuardDevice->settings->peers (array of objects field) index %d : The data was empty or invalid", i);
+            LOGF("JSON Error: WireGuardDevice->settings->peers (array of objects field) index %d : The data was empty "
+                 "or invalid",
+                 i);
             return false;
         }
 
-        if (!processPeer(peer_object, device, i))
+        if (! processPeer(peer_object, device, i))
         {
             return false;
         }
@@ -436,12 +456,12 @@ static void wireguarddeviceInit(wireguard_device_t *device, wireguard_device_ini
 
     wireguardInit();
 
-    if (!validatePrivateKeyLength((char *) data->private_key))
+    if (! validatePrivateKeyLength((char *) data->private_key))
     {
         terminateProgram(1);
     }
 
-    if (!decodeAndInitializeDevice(device, (char *) data->private_key))
+    if (! decodeAndInitializeDevice(device, (char *) data->private_key))
     {
         terminateProgram(1);
     }
@@ -455,18 +475,18 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
         return NULL;
     }
 
-    wgd_tstate_t *state = tunnelGetState(t);
-    char *device_private_key = NULL;
+    wgd_tstate_t *state              = tunnelGetState(t);
+    char         *device_private_key = NULL;
 
     const cJSON *settings = node->node_settings_json;
 
-    if (!checkJsonIsObjectAndHasChild(settings))
+    if (! checkJsonIsObjectAndHasChild(settings))
     {
         LOGF("JSON Error: WireGuardDevice->settings (object field) : The object was empty or invalid");
         goto fail;
     }
 
-    if (!getStringFromJsonObject(&device_private_key, node->node_settings_json, "privatekey"))
+    if (! getStringFromJsonObject(&device_private_key, node->node_settings_json, "privatekey"))
     {
         LOGF("JSON Error: WireGuardDevice->settings->privatekey (string field) : The data was empty or invalid");
         goto fail;
@@ -478,20 +498,20 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
     }
 
     wireguard_device_init_data_t device_configuration = {0};
-    device_configuration.private_key = (const uint8_t *) device_private_key;
-    state->device_configuration = device_configuration;
+    device_configuration.private_key                  = (const uint8_t *) device_private_key;
+    state->device_configuration                       = device_configuration;
 
     wireguard_device_t *device = &state->wg_device;
     wireguarddeviceInit(device, &state->device_configuration);
 
     const cJSON *peers_array = cJSON_GetObjectItemCaseSensitive(settings, "peers");
-    
-    if (!validatePeersArray(peers_array))
+
+    if (! validatePeersArray(peers_array))
     {
         goto fail;
     }
 
-    if (!processAllPeers(peers_array, device))
+    if (! processAllPeers(peers_array, device))
     {
         goto fail;
     }

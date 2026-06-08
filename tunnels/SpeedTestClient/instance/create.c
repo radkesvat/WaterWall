@@ -39,27 +39,28 @@ static bool speedtestclientParseDirection(speedtestclient_tstate_t *state, const
 
     if (speedtestclientStringEquals(direction, "upload", "UPLOAD", "send"))
     {
-        state->upload = true;
+        state->upload   = true;
         state->download = false;
         memoryFree(direction);
         return true;
     }
     if (speedtestclientStringEquals(direction, "download", "DOWNLOAD", "receive"))
     {
-        state->upload = false;
+        state->upload   = false;
         state->download = true;
         memoryFree(direction);
         return true;
     }
     if (speedtestclientStringEquals(direction, "bidirectional", "both", "BOTH"))
     {
-        state->upload = true;
+        state->upload   = true;
         state->download = true;
         memoryFree(direction);
         return true;
     }
 
-    LOGF("JSON Error: SpeedTestClient->settings->direction (string field) : expected upload, download, or bidirectional");
+    LOGF("JSON Error: SpeedTestClient->settings->direction (string field) : expected upload, download, or "
+         "bidirectional");
     memoryFree(direction);
     return false;
 }
@@ -94,17 +95,18 @@ static bool speedtestclientParseNonNegativeInt(const cJSON *settings, const char
 
 static bool speedtestclientLoadBandwidth(speedtestclient_tstate_t *state, const cJSON *settings)
 {
-    const cJSON *bits = cJSON_GetObjectItemCaseSensitive(settings, "target-bits-per-sec");
+    const cJSON *bits     = cJSON_GetObjectItemCaseSensitive(settings, "target-bits-per-sec");
     const cJSON *udp_bits = cJSON_GetObjectItemCaseSensitive(settings, "udp-target-bits-per-sec");
-    const cJSON *mbits = cJSON_GetObjectItemCaseSensitive(settings, "target-megabits-per-sec");
-    int selected = 0;
-    double value = 0.0;
+    const cJSON *mbits    = cJSON_GetObjectItemCaseSensitive(settings, "target-megabits-per-sec");
+    int          selected = 0;
+    double       value    = 0.0;
 
     if (bits != NULL)
     {
         if (! cJSON_IsNumber(bits) || bits->valuedouble < 0.0)
         {
-            LOGF("JSON Error: SpeedTestClient->settings->target-bits-per-sec (number field) : expected a non-negative value");
+            LOGF("JSON Error: SpeedTestClient->settings->target-bits-per-sec (number field) : expected a non-negative "
+                 "value");
             return false;
         }
         value = bits->valuedouble;
@@ -115,7 +117,8 @@ static bool speedtestclientLoadBandwidth(speedtestclient_tstate_t *state, const 
     {
         if (! cJSON_IsNumber(udp_bits) || udp_bits->valuedouble < 0.0)
         {
-            LOGF("JSON Error: SpeedTestClient->settings->udp-target-bits-per-sec (number field) : expected a non-negative value");
+            LOGF("JSON Error: SpeedTestClient->settings->udp-target-bits-per-sec (number field) : expected a "
+                 "non-negative value");
             return false;
         }
         value = udp_bits->valuedouble;
@@ -126,7 +129,8 @@ static bool speedtestclientLoadBandwidth(speedtestclient_tstate_t *state, const 
     {
         if (! cJSON_IsNumber(mbits) || mbits->valuedouble < 0.0)
         {
-            LOGF("JSON Error: SpeedTestClient->settings->target-megabits-per-sec (number field) : expected a non-negative value");
+            LOGF("JSON Error: SpeedTestClient->settings->target-megabits-per-sec (number field) : expected a "
+                 "non-negative value");
             return false;
         }
         value = mbits->valuedouble * 1000.0 * 1000.0;
@@ -181,39 +185,48 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
 
     t->onPrepare = &speedtestclientTunnelOnPrepair;
     t->onStart   = &speedtestclientTunnelOnStart;
+    t->onStop    = &speedtestclientTunnelOnStop;
     t->onDestroy = &speedtestclientTunnelDestroy;
 
-    speedtestclient_tstate_t *state = tunnelGetState(t);
-    const cJSON *settings = node->node_settings_json;
-    int duration_ms = kSpeedTestClientDefaultDurationMs;
-    int warmup_ms = 0;
-    int interval_ms = kSpeedTestClientDefaultIntervalMs;
-    int start_delay_ms = kSpeedTestClientDefaultStartDelayMs;
-    int timeout_ms = 0;
-    int payload_size = 0;
-    int connection_count = 1;
+    speedtestclient_tstate_t *state            = tunnelGetState(t);
+    const cJSON              *settings         = node->node_settings_json;
+    int                       duration_ms      = kSpeedTestClientDefaultDurationMs;
+    int                       warmup_ms        = 0;
+    int                       interval_ms      = kSpeedTestClientDefaultIntervalMs;
+    int                       start_delay_ms   = kSpeedTestClientDefaultStartDelayMs;
+    int                       timeout_ms       = 0;
+    int                       payload_size     = 0;
+    int                       connection_count = 1;
 
     mutexInit(&state->aggregate_mutex);
     getBoolFromJsonObjectOrDefault(&state->json_summary, settings, "json-summary", false);
     getBoolFromJsonObjectOrDefault(&state->terminate_on_complete, settings, "terminate-on-complete", true);
 
     if (! speedtestclientParseMode(state, settings) || ! speedtestclientParseDirection(state, settings) ||
-        ! speedtestclientParsePositiveInt(settings, "duration-ms", duration_ms, &duration_ms,
-                                          "SpeedTestClient->settings->duration-ms") ||
-        ! speedtestclientParseNonNegativeInt(settings, "warmup-ms", warmup_ms, &warmup_ms,
-                                             "SpeedTestClient->settings->warmup-ms") ||
-        ! speedtestclientParsePositiveInt(settings, "report-interval-ms", interval_ms, &interval_ms,
+        ! speedtestclientParsePositiveInt(
+            settings, "duration-ms", duration_ms, &duration_ms, "SpeedTestClient->settings->duration-ms") ||
+        ! speedtestclientParseNonNegativeInt(
+            settings, "warmup-ms", warmup_ms, &warmup_ms, "SpeedTestClient->settings->warmup-ms") ||
+        ! speedtestclientParsePositiveInt(settings,
+                                          "report-interval-ms",
+                                          interval_ms,
+                                          &interval_ms,
                                           "SpeedTestClient->settings->report-interval-ms") ||
-        ! speedtestclientParseNonNegativeInt(settings, "start-delay-ms", start_delay_ms, &start_delay_ms,
-                                             "SpeedTestClient->settings->start-delay-ms") ||
-        ! speedtestclientParsePositiveInt(settings, "connection-count", connection_count, &connection_count,
+        ! speedtestclientParseNonNegativeInt(
+            settings, "start-delay-ms", start_delay_ms, &start_delay_ms, "SpeedTestClient->settings->start-delay-ms") ||
+        ! speedtestclientParsePositiveInt(settings,
+                                          "connection-count",
+                                          connection_count,
+                                          &connection_count,
                                           "SpeedTestClient->settings->connection-count"))
     {
         speedtestclientTunnelDestroy(t);
         return NULL;
     }
 
-    getIntFromJsonObjectOrDefault(&payload_size, settings, "payload-size",
+    getIntFromJsonObjectOrDefault(&payload_size,
+                                  settings,
+                                  "payload-size",
                                   state->mode == kSpeedTestClientModeUdp ? kSpeedTestClientDefaultUdpPayloadSize
                                                                          : kSpeedTestClientDefaultTcpPayloadSize);
 
@@ -233,11 +246,11 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
         return NULL;
     }
 
-    getIntFromJsonObjectOrDefault(&timeout_ms, settings, "timeout-ms",
-                                  duration_ms + warmup_ms + 30000);
+    getIntFromJsonObjectOrDefault(&timeout_ms, settings, "timeout-ms", duration_ms + warmup_ms + 30000);
     if (timeout_ms <= duration_ms + warmup_ms)
     {
-        LOGF("JSON Error: SpeedTestClient->settings->timeout-ms (int field) : expected a value greater than warmup-ms + duration-ms");
+        LOGF("JSON Error: SpeedTestClient->settings->timeout-ms (int field) : expected a value greater than warmup-ms "
+             "+ duration-ms");
         speedtestclientTunnelDestroy(t);
         return NULL;
     }
@@ -261,4 +274,3 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
 
     return t;
 }
-

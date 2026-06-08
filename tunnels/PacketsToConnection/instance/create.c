@@ -6,8 +6,8 @@ static bool ptcLoadSettings(ptc_tstate_t *ts, const cJSON *settings)
 {
     int udp_idle_timeout_ms = (int) kPtcDefaultUdpIdleTimeoutMs;
 
-    getIntFromJsonObjectOrDefault(&udp_idle_timeout_ms, settings, "udp-idle-timeout-ms",
-                                  (int) kPtcDefaultUdpIdleTimeoutMs);
+    getIntFromJsonObjectOrDefault(
+        &udp_idle_timeout_ms, settings, "udp-idle-timeout-ms", (int) kPtcDefaultUdpIdleTimeoutMs);
 
     if (udp_idle_timeout_ms < 1)
     {
@@ -21,8 +21,8 @@ static bool ptcLoadSettings(ptc_tstate_t *ts, const cJSON *settings)
 
 tunnel_t *ptcTunnelCreate(node_t *node)
 {
-    tunnel_t     *t  = tunnelCreate(node, sizeof(ptc_tstate_t), sizeof(ptc_lstate_t));
-    ptc_tstate_t *ts = tunnelGetState(t);
+    tunnel_t     *t        = tunnelCreate(node, sizeof(ptc_tstate_t), sizeof(ptc_lstate_t));
+    ptc_tstate_t *ts       = tunnelGetState(t);
     const cJSON  *settings = node->node_settings_json;
 
     t->fnInitU    = &ptcTunnelUpStreamInit;
@@ -36,6 +36,7 @@ tunnel_t *ptcTunnelCreate(node_t *node)
 
     t->onPrepare = &ptcTunnelOnPrepair;
     t->onStart   = &ptcTunnelOnStart;
+    t->onStop    = &ptcTunnelOnStop;
     t->onDestroy = &ptcTunnelDestroy;
 
     *ts = (ptc_tstate_t) {

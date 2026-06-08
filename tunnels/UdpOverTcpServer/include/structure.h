@@ -29,6 +29,7 @@ void udpovertcpserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_of
 void udpovertcpserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void udpovertcpserverTunnelOnPrepair(tunnel_t *t);
 void udpovertcpserverTunnelOnStart(tunnel_t *t);
+void udpovertcpserverTunnelOnStop(tunnel_t *t);
 
 void udpovertcpserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void udpovertcpserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

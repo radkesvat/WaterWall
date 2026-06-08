@@ -14,17 +14,15 @@ static bool parseBlackHoleMode(blackhole_tstate_t *state, const cJSON *settings)
 
     const char *value = mode->valuestring;
 
-    if (strcasecmp(value, "passive") == 0 || strcasecmp(value, "drop") == 0 ||
-        strcasecmp(value, "packet-drop") == 0 || strcasecmp(value, "silent") == 0 ||
-        strcasecmp(value, "calm") == 0)
+    if (strcasecmp(value, "passive") == 0 || strcasecmp(value, "drop") == 0 || strcasecmp(value, "packet-drop") == 0 ||
+        strcasecmp(value, "silent") == 0 || strcasecmp(value, "calm") == 0)
     {
         state->mode = kBlackHoleModePassive;
         return true;
     }
 
-    if (strcasecmp(value, "active") == 0 || strcasecmp(value, "close") == 0 ||
-        strcasecmp(value, "aggressive") == 0 || strcasecmp(value, "kill") == 0 ||
-        strcasecmp(value, "kill-connection") == 0)
+    if (strcasecmp(value, "active") == 0 || strcasecmp(value, "close") == 0 || strcasecmp(value, "aggressive") == 0 ||
+        strcasecmp(value, "kill") == 0 || strcasecmp(value, "kill-connection") == 0)
     {
         state->mode = kBlackHoleModeActive;
         return true;
@@ -57,6 +55,7 @@ tunnel_t *blackholeTunnelCreate(node_t *node)
     t->fnPauseD   = &blackholeTunnelDownStreamPause;
     t->fnResumeD  = &blackholeTunnelDownStreamResume;
 
+    t->onStop    = &blackholeTunnelOnStop;
     t->onDestroy = &blackholeTunnelDestroy;
 
     blackhole_tstate_t *state = tunnelGetState(t);

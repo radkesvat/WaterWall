@@ -23,15 +23,16 @@ typedef struct connectionfisherserver_lstate_s
 
 enum
 {
-    kConnectionFisherServerHandshakeLength = 5,
+    kConnectionFisherServerHandshakeLength   = 5,
     kConnectionFisherServerMaxHandshakeBytes = 4096,
-    kTunnelStateSize = sizeof(connectionfisherserver_tstate_t),
-    kLineStateSize   = sizeof(connectionfisherserver_lstate_t)
+    kTunnelStateSize                         = sizeof(connectionfisherserver_tstate_t),
+    kLineStateSize                           = sizeof(connectionfisherserver_lstate_t)
 };
 
 WW_EXPORT void         connectionfisherserverTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *connectionfisherserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t connectionfisherserverTunnelApi(tunnel_t *instance, sbuf_t *message);
+void                   connectionfisherserverTunnelOnStop(tunnel_t *t);
 
 void connectionfisherserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void connectionfisherserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

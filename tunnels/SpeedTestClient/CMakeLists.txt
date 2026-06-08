@@ -5,6 +5,7 @@ add_library(SpeedTestClient STATIC
                     instance/node.c
                     instance/prepair.c
                     instance/start.c
+                    instance/stop.c
                     common/helpers.c
                     common/line_state.c
                     upstream/init.c

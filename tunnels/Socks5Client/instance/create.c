@@ -110,7 +110,8 @@ static bool parseTargetPort(socks5client_tstate_t *ts, const cJSON *settings)
 
     if (! cJSON_IsNumber(port_json) || port_json->valueint <= 0 || port_json->valueint > UINT16_MAX)
     {
-        LOGF("JSON Error: Socks5Client->settings->port must be a valid number in range [1, %u] or \"dest_context->port\"",
+        LOGF("JSON Error: Socks5Client->settings->port must be a valid number in range [1, %u] or "
+             "\"dest_context->port\"",
              (unsigned int) UINT16_MAX);
         return false;
     }
@@ -194,9 +195,9 @@ static bool parseCredentials(socks5client_tstate_t *ts, const cJSON *settings)
 
 tunnel_t *socks5clientTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(socks5client_tstate_t), sizeof(socks5client_lstate_t));
-    socks5client_tstate_t *ts = tunnelGetState(t);
-    const cJSON *settings = node->node_settings_json;
+    tunnel_t              *t        = tunnelCreate(node, sizeof(socks5client_tstate_t), sizeof(socks5client_lstate_t));
+    socks5client_tstate_t *ts       = tunnelGetState(t);
+    const cJSON           *settings = node->node_settings_json;
 
     t->fnInitU    = &socks5clientTunnelUpStreamInit;
     t->fnEstU     = &socks5clientTunnelUpStreamEst;
@@ -214,6 +215,7 @@ tunnel_t *socks5clientTunnelCreate(node_t *node)
 
     t->onPrepare = &socks5clientTunnelOnPrepair;
     t->onStart   = &socks5clientTunnelOnStart;
+    t->onStop    = &socks5clientTunnelOnStop;
     t->onDestroy = &socks5clientTunnelDestroy;
 
     if (! checkJsonIsObjectAndHasChild(settings))

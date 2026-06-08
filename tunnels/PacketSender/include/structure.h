@@ -1,10 +1,10 @@
 #pragma once
 
-#include "wwapi.h"
 #include "lwip/prot/icmp.h"
 #include "lwip/prot/ip4.h"
 #include "lwip/prot/tcp.h"
 #include "lwip/prot/udp.h"
+#include "wwapi.h"
 
 typedef struct packetsender_worker_state_s
 {
@@ -28,15 +28,15 @@ typedef struct packetsender_source_range_s
 typedef struct packetsender_tstate_s
 {
     packetsender_source_range_t *source_ranges;
-    uint32_t source_range_count;
-    uint32_t dest_addr_host;
-    uint32_t dest_addr_network;
-    uint32_t duration_ms;
-    uint16_t dest_port;
-    uint16_t src_port;
-    uint8_t  protocol_mode;
-    bool     src_port_random;
-    uint8_t  _padding0;
+    uint32_t                     source_range_count;
+    uint32_t                     dest_addr_host;
+    uint32_t                     dest_addr_network;
+    uint32_t                     duration_ms;
+    uint16_t                     dest_port;
+    uint16_t                     src_port;
+    uint8_t                      protocol_mode;
+    bool                         src_port_random;
+    uint8_t                      _padding0;
 
     atomic_uint completed_workers;
 
@@ -51,11 +51,11 @@ typedef struct packetsender_tstate_s
     uint16_t protocol_lengths[255];
     uint32_t protocol_offsets[256];
 
-    uint8_t                    *packet_bytes;
+    uint8_t                     *packet_bytes;
     packetsender_worker_state_t *workers;
-    wid_t                       workers_count;
-    wid_t                       active_workers;
-    uint64_t                    schedule_start_ms;
+    wid_t                        workers_count;
+    wid_t                        active_workers;
+    uint64_t                     schedule_start_ms;
 } packetsender_tstate_t;
 
 typedef struct packetsender_lstate_s
@@ -102,6 +102,7 @@ void packetsenderTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset
 void packetsenderTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void packetsenderTunnelOnPrepair(tunnel_t *t);
 void packetsenderTunnelOnStart(tunnel_t *t);
+void packetsenderTunnelOnStop(tunnel_t *t);
 
 void packetsenderTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void packetsenderTunnelUpStreamEst(tunnel_t *t, line_t *l);

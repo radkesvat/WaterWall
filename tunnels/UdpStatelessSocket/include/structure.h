@@ -11,12 +11,12 @@ typedef struct udpstatelesssocket_dns_cache_entry_s udpstatelesssocket_dns_cache
 
 struct udpstatelesssocket_dns_cache_entry_s
 {
-    char                                   *domain;
-    uint16_t                                port;
-    int                                     strategy;
-    sockaddr_u                              peer_addr;
-    unsigned int                            resolved_at_ms;
-    udpstatelesssocket_dns_cache_entry_t   *next;
+    char                                 *domain;
+    uint16_t                              port;
+    int                                   strategy;
+    sockaddr_u                            peer_addr;
+    unsigned int                          resolved_at_ms;
+    udpstatelesssocket_dns_cache_entry_t *next;
 };
 
 typedef struct udpstatelesssocket_tstate_s
@@ -62,6 +62,7 @@ void udpstatelesssocketTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_
 void udpstatelesssocketTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void udpstatelesssocketTunnelOnPrepair(tunnel_t *t);
 void udpstatelesssocketTunnelOnStart(tunnel_t *t);
+void udpstatelesssocketTunnelOnStop(tunnel_t *t);
 
 void udpstatelesssocketTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void udpstatelesssocketTunnelUpStreamEst(tunnel_t *t, line_t *l);

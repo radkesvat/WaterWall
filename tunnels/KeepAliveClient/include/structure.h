@@ -6,19 +6,18 @@ typedef struct keepaliveclient_lstate_s keepaliveclient_lstate_t;
 
 typedef struct keepaliveclient_tstate_s
 {
-    wmutex_t                 lines_mutex;
+    wmutex_t                  lines_mutex;
     keepaliveclient_lstate_t *lines_head;
-    wtimer_t               **worker_timers;
-    uint32_t                 ping_interval_ms;
+    uint32_t                  ping_interval_ms;
 } keepaliveclient_tstate_t;
 
 struct keepaliveclient_lstate_s
 {
-    buffer_stream_t          read_stream;
-    line_t                  *line;
+    buffer_stream_t           read_stream;
+    line_t                   *line;
     keepaliveclient_lstate_t *tracked_prev;
     keepaliveclient_lstate_t *tracked_next;
-    wid_t                    wid;
+    wid_t                     wid;
 };
 
 enum
@@ -45,6 +44,7 @@ void keepaliveclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_off
 void keepaliveclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void keepaliveclientTunnelOnPrepair(tunnel_t *t);
 void keepaliveclientTunnelOnStart(tunnel_t *t);
+void keepaliveclientTunnelOnStop(tunnel_t *t);
 
 void keepaliveclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelUpStreamEst(tunnel_t *t, line_t *l);

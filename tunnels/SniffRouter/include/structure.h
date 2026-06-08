@@ -64,11 +64,11 @@ typedef struct sniffrouter_tstate_s
 
 typedef struct sniffrouter_lstate_s
 {
-    sbuf_t *pending;       // bytes buffered before a routing decision is made
-    tunnel_t *target;      // selected route tunnel; NULL means normal next branch
-    uint8_t decided;       // enum sniffrouter_route_e
-    bool    next_finished; // finish already propagated to the chosen upstream branch
-    bool    prev_finished; // finish already propagated downstream to prev (TlsServer)
+    sbuf_t   *pending;       // bytes buffered before a routing decision is made
+    tunnel_t *target;        // selected route tunnel; NULL means normal next branch
+    uint8_t   decided;       // enum sniffrouter_route_e
+    bool      next_finished; // finish already propagated to the chosen upstream branch
+    bool      prev_finished; // finish already propagated downstream to prev (TlsServer)
 } sniffrouter_lstate_t;
 
 enum
@@ -99,6 +99,7 @@ void sniffrouterTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset)
 void sniffrouterTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void sniffrouterTunnelOnPrepair(tunnel_t *t);
 void sniffrouterTunnelOnStart(tunnel_t *t);
+void sniffrouterTunnelOnStop(tunnel_t *t);
 
 void sniffrouterTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void sniffrouterTunnelUpStreamEst(tunnel_t *t, line_t *l);

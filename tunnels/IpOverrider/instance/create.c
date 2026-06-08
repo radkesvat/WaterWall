@@ -39,7 +39,7 @@ static bool ipoverriderParseRuleIpv4(ipoverrider_rule_t *rule, const cJSON *ipv4
         return false;
     }
 
-    rule->ov_4_list = memoryAllocate((size_t) array_size * sizeof(*(rule->ov_4_list)));
+    rule->ov_4_list  = memoryAllocate((size_t) array_size * sizeof(*(rule->ov_4_list)));
     rule->ov_4_count = (uint32_t) array_size;
     atomicStoreRelaxed(&(rule->ov_4_rr_cursor), 0);
 
@@ -142,9 +142,8 @@ static bool ipoverriderParseLegacySettings(ipoverrider_tstate_t *state, const cJ
         terminateProgram(1);
     }
 
-    uint8_t direction_index =
-        (directon_dv.status == kDvsUp) ? kIpOverriderDirectionUp : kIpOverriderDirectionDown;
-    uint8_t mode_index = (mode_dv.status == kDvsSourceMode) ? kIpOverriderModeSource : kIpOverriderModeDest;
+    uint8_t direction_index = (directon_dv.status == kDvsUp) ? kIpOverriderDirectionUp : kIpOverriderDirectionDown;
+    uint8_t mode_index      = (mode_dv.status == kDvsSourceMode) ? kIpOverriderModeSource : kIpOverriderModeDest;
 
     dynamicvalueDestroy(directon_dv);
     dynamicvalueDestroy(mode_dv);
@@ -153,8 +152,8 @@ static bool ipoverriderParseLegacySettings(ipoverrider_tstate_t *state, const cJ
 
 static bool ipoverriderParseDirectionalSettings(ipoverrider_tstate_t *state, const cJSON *settings)
 {
-    const char *direction_keys[kIpOverriderDirectionCount] = {"up", "down"};
-    const char *mode_keys[kIpOverriderModeCount]           = {"source-ip", "dest-ip"};
+    const char *direction_keys[kIpOverriderDirectionCount]                    = {"up", "down"};
+    const char *mode_keys[kIpOverriderModeCount]                              = {"source-ip", "dest-ip"};
     const char *json_paths[kIpOverriderDirectionCount][kIpOverriderModeCount] = {
         {"IpOverrider->settings->up->source-ip", "IpOverrider->settings->up->dest-ip"},
         {"IpOverrider->settings->down->source-ip", "IpOverrider->settings->down->dest-ip"},
@@ -185,7 +184,8 @@ static bool ipoverriderParseDirectionalSettings(ipoverrider_tstate_t *state, con
                 continue;
             }
 
-            if (! ipoverriderParseRule(&(state->rules[direction_index][mode_index]), rule_settings,
+            if (! ipoverriderParseRule(&(state->rules[direction_index][mode_index]),
+                                       rule_settings,
                                        json_paths[direction_index][mode_index]))
             {
                 return false;
@@ -212,6 +212,7 @@ tunnel_t *ipoverriderCreate(node_t *node)
     t->fnPayloadD = &ipoverriderDownStreamPayload;
     t->onPrepare  = &ipoverriderOnPrepair;
     t->onStart    = &ipoverriderOnStart;
+    t->onStop     = &ipoverriderOnStop;
     t->onDestroy  = &ipoverriderDestroy;
 
     ipoverrider_tstate_t *state = tunnelGetState(t);

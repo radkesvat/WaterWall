@@ -65,6 +65,7 @@ void halfduplexserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_of
 void halfduplexserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void halfduplexserverTunnelOnPrepair(tunnel_t *t);
 void halfduplexserverTunnelOnStart(tunnel_t *t);
+void halfduplexserverTunnelOnStop(tunnel_t *t);
 
 void halfduplexserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void halfduplexserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

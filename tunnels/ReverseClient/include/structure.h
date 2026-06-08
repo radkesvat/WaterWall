@@ -12,9 +12,9 @@ typedef struct reverseclient_thread_box_s
 typedef struct reverseclient_tstate_s
 {
     idle_table_t *starved_connections;
-    atomic_uint    reverse_cons;
-    atomic_uint    round_index;
-    uint32_t       min_unused_cons;
+    atomic_uint   reverse_cons;
+    atomic_uint   round_index;
+    uint32_t      min_unused_cons;
 
     MSVC_ATTR_ALIGNED_16 reverseclient_thread_box_t threadlocal_pool[] GNU_ATTR_ALIGNED_16;
 } reverseclient_tstate_t;
@@ -23,10 +23,10 @@ typedef struct reverseclient_lstate_s
 {
 
     idle_item_t *idle_handle;
-    tunnel_t     *t;
-    line_t       *u;
-    line_t       *d;
-    bool          pair_connected : 1;
+    tunnel_t    *t;
+    line_t      *u;
+    line_t      *d;
+    bool         pair_connected : 1;
 } reverseclient_lstate_t;
 
 enum
@@ -48,6 +48,7 @@ void reverseclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offse
 void reverseclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void reverseclientTunnelOnPrepair(tunnel_t *t);
 void reverseclientTunnelOnStart(tunnel_t *t);
+void reverseclientTunnelOnStop(tunnel_t *t);
 
 void reverseclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void reverseclientTunnelUpStreamEst(tunnel_t *t, line_t *l);

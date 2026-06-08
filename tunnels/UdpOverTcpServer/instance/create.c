@@ -22,7 +22,8 @@ tunnel_t *udpovertcpserverTunnelCreate(node_t *node)
 
     t->onPrepare = &udpovertcpserverTunnelOnPrepair;
     t->onStart   = &udpovertcpserverTunnelOnStart;
+    t->onStop    = &udpovertcpserverTunnelOnStop;
     t->onDestroy = &udpovertcpserverTunnelDestroy;
-    
+
     return t;
 }

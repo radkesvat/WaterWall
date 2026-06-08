@@ -11,10 +11,10 @@ static void parseSinglePort(tcplistener_tstate_t *state, const cJSON *port_json)
 static void parsePortRange(tcplistener_tstate_t *state, const cJSON *port_json)
 {
     const cJSON *port_minmax;
-    int i = 0;
+    int          i = 0;
     cJSON_ArrayForEach(port_minmax, port_json)
     {
-        if (!(cJSON_IsNumber(port_minmax) && (port_minmax->valuedouble != 0)))
+        if (! (cJSON_IsNumber(port_minmax) && (port_minmax->valuedouble != 0)))
         {
             LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid");
             terminateProgram(1);
@@ -60,12 +60,13 @@ static void initializeTunnelCallbacks(tunnel_t *t)
 
     t->onPrepare = &tcplistenerTunnelOnPrepair;
     t->onStart   = &tcplistenerTunnelOnStart;
+    t->onStop    = &tcplistenerTunnelOnStop;
     t->onDestroy = &tcplistenerTunnelDestroy;
 }
 
 static bool parseBasicSettings(tcplistener_tstate_t *state, const cJSON *settings)
 {
-    if (!checkJsonIsObjectAndHasChild(settings))
+    if (! checkJsonIsObjectAndHasChild(settings))
     {
         LOGF("JSON Error: TcpListener->settings (object field) : The object was empty or invalid");
         return false;
@@ -74,20 +75,22 @@ static bool parseBasicSettings(tcplistener_tstate_t *state, const cJSON *setting
     getBoolFromJsonObject(&(state->option_tcp_no_delay), settings, "nodelay");
     state->send_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-send-buffer") != NULL;
     state->recv_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-recv-buffer") != NULL;
-    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->send_buffer_size, settings, "large-send-buffer",
-                                                    kDefaultLargeSocketBufferSize, 0))
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(
+            &state->send_buffer_size, settings, "large-send-buffer", kDefaultLargeSocketBufferSize, 0))
     {
-        LOGF("JSON Error: TcpListener->settings->large-send-buffer (boolean-or-positive-integer field) : The value was empty or invalid");
+        LOGF("JSON Error: TcpListener->settings->large-send-buffer (boolean-or-positive-integer field) : The value was "
+             "empty or invalid");
         return false;
     }
-    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->recv_buffer_size, settings, "large-recv-buffer",
-                                                    kDefaultLargeSocketBufferSize, 0))
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(
+            &state->recv_buffer_size, settings, "large-recv-buffer", kDefaultLargeSocketBufferSize, 0))
     {
-        LOGF("JSON Error: TcpListener->settings->large-recv-buffer (boolean-or-positive-integer field) : The value was empty or invalid");
+        LOGF("JSON Error: TcpListener->settings->large-recv-buffer (boolean-or-positive-integer field) : The value was "
+             "empty or invalid");
         return false;
     }
 
-    if (!getStringFromJsonObject(&(state->listen_address), settings, "address"))
+    if (! getStringFromJsonObject(&(state->listen_address), settings, "address"))
     {
         LOGF("JSON Error: TcpListener->settings->address (string field) : The data was empty or invalid");
         return false;
@@ -96,14 +99,16 @@ static bool parseBasicSettings(tcplistener_tstate_t *state, const cJSON *setting
     return true;
 }
 
-static void configureMultiportBackend(socket_filter_option_t *filter_opt, tcplistener_tstate_t *state, const cJSON *settings)
+static void configureMultiportBackend(socket_filter_option_t *filter_opt, tcplistener_tstate_t *state,
+                                      const cJSON *settings)
 {
     filter_opt->multiport_backend = kMultiportBackendNone;
-    
+
     if (state->listen_port_max != 0)
     {
         filter_opt->multiport_backend = kMultiportBackendDefault;
-        dynamic_value_t dy_mb = parseDynamicStrValueFromJsonObject(settings, "multiport-backend", 2, "iptables", "socket");
+        dynamic_value_t dy_mb =
+            parseDynamicStrValueFromJsonObject(settings, "multiport-backend", 2, "iptables", "socket");
         if (dy_mb.status == kDvsFirstOption)
         {
             filter_opt->multiport_backend = kMultiportBackendIptables;
@@ -117,13 +122,14 @@ static void configureMultiportBackend(socket_filter_option_t *filter_opt, tcplis
 
 static void parseIpMaskListEntry(const cJSON *list_item, vec_ipmask_t *target_list, const char *list_name, int index)
 {
-    char *ip_str = NULL;
+    char    *ip_str = NULL;
     ipmask_t ipmask;
 
-    if (!getStringFromJson(&(ip_str), list_item) || !verifyIPCdir(ip_str))
+    if (! getStringFromJson(&(ip_str), list_item) || ! verifyIPCdir(ip_str))
     {
         LOGF("JSON Error: TcpListener->settings->%s (array of strings field) index %d : The data was empty or invalid",
-             list_name, index);
+             list_name,
+             index);
         terminateProgram(1);
     }
 
@@ -141,7 +147,7 @@ static void parseIpMaskListEntry(const cJSON *list_item, vec_ipmask_t *target_li
 static void parseIpMaskList(const cJSON *settings, const char *list_name, vec_ipmask_t *target_list)
 {
     const cJSON *list = cJSON_GetObjectItemCaseSensitive(settings, list_name);
-    if (!cJSON_IsArray(list))
+    if (! cJSON_IsArray(list))
     {
         return;
     }
@@ -152,7 +158,7 @@ static void parseIpMaskList(const cJSON *settings, const char *list_name, vec_ip
         return;
     }
 
-    int i = 0;
+    int          i         = 0;
     const cJSON *list_item = NULL;
     cJSON_ArrayForEach(list_item, list)
     {
@@ -164,7 +170,7 @@ static void parseIpMaskList(const cJSON *settings, const char *list_name, vec_ip
 static void setupFilterOptions(socket_filter_option_t *filter_opt, tcplistener_tstate_t *state, const cJSON *settings)
 {
     socketfilteroptionInit(filter_opt);
-    filter_opt->no_delay = state->option_tcp_no_delay;
+    filter_opt->no_delay         = state->option_tcp_no_delay;
     filter_opt->send_buffer_size = state->send_buffer_size;
     filter_opt->recv_buffer_size = state->recv_buffer_size;
 
@@ -178,7 +184,7 @@ static void setupFilterOptions(socket_filter_option_t *filter_opt, tcplistener_t
     parseIpMaskList(settings, "whitelist", &filter_opt->white_list);
     parseIpMaskList(settings, "blacklist", &filter_opt->black_list);
 
-    filter_opt->host = state->listen_address;
+    filter_opt->host     = state->listen_address;
     filter_opt->port_min = state->listen_port_min;
     filter_opt->port_max = state->listen_port_max;
     filter_opt->protocol = IPPROTO_TCP;
@@ -187,20 +193,20 @@ static void setupFilterOptions(socket_filter_option_t *filter_opt, tcplistener_t
 tunnel_t *tcplistenerTunnelCreate(node_t *node)
 {
     tunnel_t *t = adapterCreate(node, sizeof(tcplistener_tstate_t), sizeof(tcplistener_lstate_t), false);
-    
+
     initializeTunnelCallbacks(t);
 
-    tcplistener_tstate_t *state = tunnelGetState(t);
-    const cJSON *settings = node->node_settings_json;
+    tcplistener_tstate_t *state    = tunnelGetState(t);
+    const cJSON          *settings = node->node_settings_json;
 
-    if (!parseBasicSettings(state, settings))
+    if (! parseBasicSettings(state, settings))
     {
         return NULL;
     }
 
     socket_filter_option_t filter_opt;
     setupFilterOptions(&filter_opt, state, settings);
-    
+
     state->idle_table = idleTableCreate(getWorkerLoop(getWID()));
     socketacceptorRegister(t, filter_opt, tcplistenerOnInboundConnected);
 

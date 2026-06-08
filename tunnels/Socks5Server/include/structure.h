@@ -1,7 +1,7 @@
 #pragma once
 
-#include "wwapi.h"
 #include "bufio/buffer_stream.h"
+#include "wwapi.h"
 
 #define i_type socks5server_remote_map_t // NOLINT
 #define i_key  hash_t                    // NOLINT
@@ -83,6 +83,7 @@ void socks5serverTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset
 void socks5serverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void socks5serverTunnelOnPrepair(tunnel_t *t);
 void socks5serverTunnelOnStart(tunnel_t *t);
+void socks5serverTunnelOnStop(tunnel_t *t);
 
 void socks5serverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void socks5serverTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -101,17 +102,17 @@ void socks5serverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void socks5serverLinestateInitialize(socks5server_lstate_t *ls, tunnel_t *t, line_t *l, socks5server_line_kind_t kind);
 void socks5serverLinestateDestroy(socks5server_lstate_t *ls);
 
-void socks5serverTunnelstateDestroy(socks5server_tstate_t *ts);
-bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t *ls);
-void socks5serverOnControlEstablished(tunnel_t *t, line_t *l, socks5server_lstate_t *ls);
-void socks5serverCloseControlLineFromUpstream(tunnel_t *t, line_t *l);
-void socks5serverCloseControlLineBidirectional(tunnel_t *t, line_t *l);
-void socks5serverCloseUdpClientLineFromUpstream(tunnel_t *t, line_t *client_l);
-void socks5serverCloseUdpClientLine(tunnel_t *t, line_t *client_l);
-void socks5serverCloseUdpRemoteLine(tunnel_t *t, line_t *remote_l);
-bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lstate_t *ls, sbuf_t *buf);
-bool socks5serverWrapUdpPayloadForClient(line_t *l, sbuf_t **buf_io, const address_context_t *addr_ctx);
-bool socks5serverLookupUdpAssociation(line_t *l, const socks5server_user_t **user_out, hash_t *key_out);
-void socks5serverDetachRemoteFromClient(socks5server_lstate_t *remote_ls);
-void socks5serverUnregisterUdpAssociation(socks5server_lstate_t *ls);
+void    socks5serverTunnelstateDestroy(socks5server_tstate_t *ts);
+bool    socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t *ls);
+void    socks5serverOnControlEstablished(tunnel_t *t, line_t *l, socks5server_lstate_t *ls);
+void    socks5serverCloseControlLineFromUpstream(tunnel_t *t, line_t *l);
+void    socks5serverCloseControlLineBidirectional(tunnel_t *t, line_t *l);
+void    socks5serverCloseUdpClientLineFromUpstream(tunnel_t *t, line_t *client_l);
+void    socks5serverCloseUdpClientLine(tunnel_t *t, line_t *client_l);
+void    socks5serverCloseUdpRemoteLine(tunnel_t *t, line_t *remote_l);
+bool    socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lstate_t *ls, sbuf_t *buf);
+bool    socks5serverWrapUdpPayloadForClient(line_t *l, sbuf_t **buf_io, const address_context_t *addr_ctx);
+bool    socks5serverLookupUdpAssociation(line_t *l, const socks5server_user_t **user_out, hash_t *key_out);
+void    socks5serverDetachRemoteFromClient(socks5server_lstate_t *remote_ls);
+void    socks5serverUnregisterUdpAssociation(socks5server_lstate_t *ls);
 sbuf_t *socks5serverCreateCommandReply(line_t *l, uint8_t rep, const address_context_t *ctx);

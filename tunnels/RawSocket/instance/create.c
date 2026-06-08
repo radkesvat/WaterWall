@@ -4,8 +4,8 @@
 
 static void rawsocketSetFullIpv4Mask(ip_addr_t *mask)
 {
-    mask->type                = IPADDR_TYPE_V4;
-    mask->u_addr.ip4.addr     = lwip_htonl(0xFFFFFFFFU);
+    mask->type            = IPADDR_TYPE_V4;
+    mask->u_addr.ip4.addr = lwip_htonl(0xFFFFFFFFU);
 }
 
 static bool rawsocketParseIpv4CaptureRange(ipmask_t *dest, const char *value, const char *json_path)
@@ -27,8 +27,8 @@ static bool rawsocketParseIpv4CaptureRange(ipmask_t *dest, const char *value, co
             return false;
         }
 
-        dest->ip.type            = IPADDR_TYPE_V4;
-        dest->ip.u_addr.ip4      = ip4;
+        dest->ip.type       = IPADDR_TYPE_V4;
+        dest->ip.u_addr.ip4 = ip4;
         rawsocketSetFullIpv4Mask(&dest->mask);
         return true;
     }
@@ -58,9 +58,9 @@ static bool rawsocketParseIpv4CaptureRange(ipmask_t *dest, const char *value, co
         mask_host = 0xFFFFFFFFU << (32U - (uint32_t) prefix_len);
     }
 
-    dest->ip.type             = IPADDR_TYPE_V4;
-    dest->ip.u_addr.ip4.addr  = lwip_htonl(lwip_ntohl(ip4.addr) & mask_host);
-    dest->mask.type           = IPADDR_TYPE_V4;
+    dest->ip.type              = IPADDR_TYPE_V4;
+    dest->ip.u_addr.ip4.addr   = lwip_htonl(lwip_ntohl(ip4.addr) & mask_host);
+    dest->mask.type            = IPADDR_TYPE_V4;
     dest->mask.u_addr.ip4.addr = lwip_htonl(mask_host);
 
     return true;
@@ -78,12 +78,13 @@ static bool rawsocketLoadCaptureRanges(rawsocket_tstate_t *state, const cJSON *s
     {
         if (! cJSON_IsArray(ranges_json) || cJSON_GetArraySize(ranges_json) <= 0)
         {
-            LOGF("JSON Error: RawSocket->settings->capture-ips (array field) : expected a non-empty array of IPv4 addresses or IPv4 CIDR ranges");
+            LOGF("JSON Error: RawSocket->settings->capture-ips (array field) : expected a non-empty array of IPv4 "
+                 "addresses or IPv4 CIDR ranges");
             return false;
         }
 
-        const int range_count = cJSON_GetArraySize(ranges_json);
-        state->capture_ranges = memoryAllocate((size_t) range_count * sizeof(*(state->capture_ranges)));
+        const int range_count      = cJSON_GetArraySize(ranges_json);
+        state->capture_ranges      = memoryAllocate((size_t) range_count * sizeof(*(state->capture_ranges)));
         state->capture_range_count = (uint32_t) range_count;
 
         for (int i = 0; i < range_count; ++i)
@@ -110,14 +111,15 @@ static bool rawsocketLoadCaptureRanges(rawsocket_tstate_t *state, const cJSON *s
     char *legacy_capture_ip = NULL;
     if (! getStringFromJsonObject(&legacy_capture_ip, settings, "capture-ip"))
     {
-        LOGF("JSON Error: RawSocket->settings->capture-ips (array field) : expected a non-empty array of IPv4 addresses or IPv4 CIDR ranges");
+        LOGF("JSON Error: RawSocket->settings->capture-ips (array field) : expected a non-empty array of IPv4 "
+             "addresses or IPv4 CIDR ranges");
         return false;
     }
 
-    state->capture_ranges = memoryAllocate(sizeof(*(state->capture_ranges)));
+    state->capture_ranges      = memoryAllocate(sizeof(*(state->capture_ranges)));
     state->capture_range_count = 1;
-    const bool ok = rawsocketParseIpv4CaptureRange(&(state->capture_ranges[0]), legacy_capture_ip,
-                                                   "RawSocket->settings->capture-ip");
+    const bool ok              = rawsocketParseIpv4CaptureRange(
+        &(state->capture_ranges[0]), legacy_capture_ip, "RawSocket->settings->capture-ip");
     memoryFree(legacy_capture_ip);
     return ok;
 }
@@ -142,14 +144,15 @@ tunnel_t *rawsocketCreate(node_t *node)
 
     t->onPrepare = &rawsocketOnPrepair;
     t->onStart   = &rawsocketOnStart;
+    t->onStop    = &rawsocketOnStop;
     t->onDestroy = &rawsocketDestroy;
 
     rawsocket_tstate_t *state    = tunnelGetState(t);
     const cJSON        *settings = node->node_settings_json;
 
     // not forced
-    getStringFromJsonObjectOrDefault(&(state->capture_device_name), settings, "capture-device-name",
-                                     "unnamed-capture-device");
+    getStringFromJsonObjectOrDefault(
+        &(state->capture_device_name), settings, "capture-device-name", "unnamed-capture-device");
     getStringFromJsonObjectOrDefault(&(state->raw_device_name), settings, "raw-device-name", "unnamed-raw-device");
 
     dynamic_value_t fmode =

@@ -84,35 +84,35 @@ struct udpconnector_packet_destination_s
 
 typedef struct udpconnector_lstate_s
 {
-    tunnel_t                   *tunnel;      // reference to the tunnel
-    line_t                     *line;        // reference to the line
-    wio_t                      *io;          // IO handle for the connection (socket)
-    idle_item_t                *idle_handle; // reference to the idle item for this connection
-    udpconnector_dns_request_t *dns_request;
+    tunnel_t                          *tunnel;      // reference to the tunnel
+    line_t                            *line;        // reference to the line
+    wio_t                             *io;          // IO handle for the connection (socket)
+    idle_item_t                       *idle_handle; // reference to the idle item for this connection
+    udpconnector_dns_request_t        *dns_request;
     udpconnector_packet_dns_request_t *packet_dns_requests;
     udpconnector_packet_destination_t *packet_destinations;
     uint32_t                           packet_destinations_count;
     uint32_t                           packet_initial_destination_index;
     address_context_t                  packet_base_dest_ctx;
-    sockaddr_u                  peer_addr;   // selected remote peer for this line
-    buffer_queue_t              pause_queue;
-    bool                        read_paused : 1;        // whether the read is paused
-    bool                        established : 1;        // whether downstream est was sent
-    bool                        resolving : 1;          // whether async DNS is pending
-    bool                        write_paused : 1;       // whether upstream writes are queued
-    bool                        queue_pause_sent : 1;   // whether downstream pause was sent for the queue
+    sockaddr_u                         peer_addr; // selected remote peer for this line
+    buffer_queue_t                     pause_queue;
+    bool                               read_paused : 1;      // whether the read is paused
+    bool                               established : 1;      // whether downstream est was sent
+    bool                               resolving : 1;        // whether async DNS is pending
+    bool                               write_paused : 1;     // whether upstream writes are queued
+    bool                               queue_pause_sent : 1; // whether downstream pause was sent for the queue
 
 } udpconnector_lstate_t;
 
 enum
 {
-    kTunnelStateSize        = sizeof(udpconnector_tstate_t),
-    kLineStateSize          = sizeof(udpconnector_lstate_t),
-    kUdpInitExpireTime      = 30 * 1000,
-    kUdpKeepExpireTime      = 300 * 1000,
-    kUdpMaxPauseQueueSize   = (1U << 24), // 16MB
-    kUdpMinPauseQueueSize   = (1U << 10), // 1KB
-    kUdpPauseQueueCapacity  = 2
+    kTunnelStateSize       = sizeof(udpconnector_tstate_t),
+    kLineStateSize         = sizeof(udpconnector_lstate_t),
+    kUdpInitExpireTime     = 30 * 1000,
+    kUdpKeepExpireTime     = 300 * 1000,
+    kUdpMaxPauseQueueSize  = (1U << 24), // 16MB
+    kUdpMinPauseQueueSize  = (1U << 10), // 1KB
+    kUdpPauseQueueCapacity = 2
 };
 
 static inline hash_t udpconnectorIdleKey(const wio_t *io)
@@ -132,7 +132,7 @@ static inline bool udpconnectorDynamicValueUsesLineContext(const dynamic_value_t
 }
 
 static inline bool udpconnectorDestinationUsesLineContext(const dynamic_value_t *dest_addr_selected,
-                                                         const dynamic_value_t *dest_port_selected)
+                                                          const dynamic_value_t *dest_port_selected)
 {
     return udpconnectorDynamicValueUsesLineContext(dest_addr_selected) ||
            udpconnectorDynamicValueUsesLineContext(dest_port_selected);
@@ -146,6 +146,7 @@ void udpconnectorTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset
 void udpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void udpconnectorTunnelOnPrepair(tunnel_t *t);
 void udpconnectorTunnelOnStart(tunnel_t *t);
+void udpconnectorTunnelOnStop(tunnel_t *t);
 
 void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void udpconnectorTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -161,29 +162,27 @@ void udpconnectorTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void udpconnectorTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void udpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, line_t *l, wio_t *io);
-void udpconnectorLinestateDestroy(udpconnector_lstate_t *ls);
-void udpconnectorCancelDnsRequest(udpconnector_lstate_t *ls);
-void udpconnectorCancelPacketDnsRequests(udpconnector_lstate_t *ls);
-void udpconnectorOnRecvFrom(wio_t *io, sbuf_t *buf);
-void udpconnectorOnClose(wio_t *io);
+void   udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, line_t *l, wio_t *io);
+void   udpconnectorLinestateDestroy(udpconnector_lstate_t *ls);
+void   udpconnectorCancelDnsRequest(udpconnector_lstate_t *ls);
+void   udpconnectorCancelPacketDnsRequests(udpconnector_lstate_t *ls);
+void   udpconnectorOnRecvFrom(wio_t *io, sbuf_t *buf);
+void   udpconnectorOnClose(wio_t *io);
 size_t udpconnectorQueuedWriteBytes(udpconnector_lstate_t *ls);
-void udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls);
-bool udpconnectorReplayWriteQueue(udpconnector_lstate_t *ls);
+void   udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls);
+bool   udpconnectorReplayWriteQueue(udpconnector_lstate_t *ls);
 
 void udpconnectorOnIdleConnectionExpire(idle_item_t *idle_udp);
 
-uint32_t udpconnectorSelectWeightedDestinationIndex(const udpconnector_tstate_t *ts);
+uint32_t                          udpconnectorSelectWeightedDestinationIndex(const udpconnector_tstate_t *ts);
 const udpconnector_destination_t *udpconnectorSelectWeightedDestination(const udpconnector_tstate_t *ts);
-void udpconnectorSetupDestinationAddress(const dynamic_value_t *dest_addr_selected,
-                                         const address_context_t *constant_dest_addr,
-                                         address_context_t *dest_ctx, const address_context_t *original_dest_ctx,
-                                         address_context_t *src_ctx);
-void udpconnectorSetupDestinationPort(const dynamic_value_t *dest_port_selected,
-                                      const address_context_t *constant_dest_addr,
-                                      uint16_t random_dest_port_x, uint16_t random_dest_port_y,
-                                      address_context_t *dest_ctx, const address_context_t *original_dest_ctx,
-                                      address_context_t *src_ctx);
-const dns_resolved_addr_t *udpconnectorSelectResolvedAddress(const dns_resolved_addr_t *addrs, size_t naddrs,
-                                                            int strategy);
+void                              udpconnectorSetupDestinationAddress(const dynamic_value_t   *dest_addr_selected,
+                                                                      const address_context_t *constant_dest_addr, address_context_t *dest_ctx,
+                                                                      const address_context_t *original_dest_ctx, address_context_t *src_ctx);
+void                              udpconnectorSetupDestinationPort(const dynamic_value_t   *dest_port_selected,
+                                                                   const address_context_t *constant_dest_addr, uint16_t random_dest_port_x,
+                                                                   uint16_t random_dest_port_y, address_context_t *dest_ctx,
+                                                                   const address_context_t *original_dest_ctx, address_context_t *src_ctx);
+const dns_resolved_addr_t        *udpconnectorSelectResolvedAddress(const dns_resolved_addr_t *addrs, size_t naddrs,
+                                                                    int strategy);
 bool udpconnectorApplyResolvedAddress(address_context_t *dest_ctx, const dns_resolved_addr_t *resolved);

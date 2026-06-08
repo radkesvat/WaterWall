@@ -44,6 +44,7 @@ void reverseserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offse
 void reverseserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void reverseserverTunnelOnPrepair(tunnel_t *t);
 void reverseserverTunnelOnStart(tunnel_t *t);
+void reverseserverTunnelOnStop(tunnel_t *t);
 
 void reverseserverTunnelUpStreamInit(tunnel_t *t, line_t *d);
 void reverseserverTunnelUpStreamEst(tunnel_t *t, line_t *d);

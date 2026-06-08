@@ -409,6 +409,7 @@ tunnel_t *httpserverTunnelCreate(node_t *node)
 
     t->onPrepare = &httpserverTunnelOnPrepair;
     t->onStart   = &httpserverTunnelOnStart;
+    t->onStop    = &httpserverTunnelOnStop;
     t->onDestroy = &httpserverTunnelDestroy;
 
     httpserver_tstate_t *ts       = tunnelGetState(t);

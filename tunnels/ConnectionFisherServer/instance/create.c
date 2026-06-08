@@ -20,6 +20,7 @@ tunnel_t *connectionfisherserverTunnelCreate(node_t *node)
     t->fnPauseD   = &connectionfisherserverTunnelDownStreamPause;
     t->fnResumeD  = &connectionfisherserverTunnelDownStreamResume;
 
+    t->onStop    = &connectionfisherserverTunnelOnStop;
     t->onDestroy = &connectionfisherserverTunnelDestroy;
 
     return t;

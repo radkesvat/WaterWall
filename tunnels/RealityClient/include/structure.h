@@ -29,15 +29,15 @@ enum realityclient_algorithm_e
 
 enum realityclient_frame_e
 {
-    kRealityClientTlsHeaderSize        = 5,
-    kRealityClientTlsApplicationData   = 0x17,
-    kRealityClientTlsVersionMajor      = 0x03,
-    kRealityClientTlsVersionMinor      = 0x03,
-    kRealityClientNonceSize            = 12,
-    kRealityClientTagSize              = 16,
-    kRealityClientFramePrefixSize      = kRealityClientTlsHeaderSize + kRealityClientNonceSize,
-    kRealityClientMaxTlsRecordBody     = 16384,
-    kRealityClientMaxFramePayload      = kRealityClientMaxTlsRecordBody - kRealityClientNonceSize - kRealityClientTagSize,
+    kRealityClientTlsHeaderSize      = 5,
+    kRealityClientTlsApplicationData = 0x17,
+    kRealityClientTlsVersionMajor    = 0x03,
+    kRealityClientTlsVersionMinor    = 0x03,
+    kRealityClientNonceSize          = 12,
+    kRealityClientTagSize            = 16,
+    kRealityClientFramePrefixSize    = kRealityClientTlsHeaderSize + kRealityClientNonceSize,
+    kRealityClientMaxTlsRecordBody   = 16384,
+    kRealityClientMaxFramePayload    = kRealityClientMaxTlsRecordBody - kRealityClientNonceSize - kRealityClientTagSize,
     kRealityClientDefaultKdfIterations = 12000,
 };
 
@@ -55,6 +55,7 @@ void realityclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offse
 void realityclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void realityclientTunnelOnPrepair(tunnel_t *t);
 void realityclientTunnelOnStart(tunnel_t *t);
+void realityclientTunnelOnStop(tunnel_t *t);
 
 void realityclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void realityclientTunnelUpStreamEst(tunnel_t *t, line_t *l);

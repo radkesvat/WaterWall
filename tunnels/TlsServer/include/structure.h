@@ -12,7 +12,7 @@ typedef struct tlsserver_tstate_s
     {
         char        *name;
         unsigned int name_length;
-    } *alpns;
+    }           *alpns;
     unsigned int alpns_length;
 
     char *expected_sni;
@@ -91,6 +91,7 @@ void tlsserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void tlsserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tlsserverTunnelOnPrepair(tunnel_t *t);
 void tlsserverTunnelOnStart(tunnel_t *t);
+void tlsserverTunnelOnStop(tunnel_t *t);
 
 void tlsserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tlsserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

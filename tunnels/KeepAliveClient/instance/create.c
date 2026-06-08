@@ -23,7 +23,7 @@ static bool keepaliveclientLoadPingInterval(keepaliveclient_tstate_t *ts, const 
 
 tunnel_t *keepaliveclientTunnelCreate(node_t *node)
 {
-    tunnel_t *t  = tunnelCreate(node, sizeof(keepaliveclient_tstate_t), sizeof(keepaliveclient_lstate_t));
+    tunnel_t *t = tunnelCreate(node, sizeof(keepaliveclient_tstate_t), sizeof(keepaliveclient_lstate_t));
     keepaliveclient_tstate_t *ts = tunnelGetState(t);
 
     t->fnInitU    = &keepaliveclientTunnelUpStreamInit;
@@ -42,11 +42,11 @@ tunnel_t *keepaliveclientTunnelCreate(node_t *node)
 
     t->onPrepare = &keepaliveclientTunnelOnPrepair;
     t->onStart   = &keepaliveclientTunnelOnStart;
+    t->onStop    = &keepaliveclientTunnelOnStop;
     t->onDestroy = &keepaliveclientTunnelDestroy;
 
     mutexInit(&ts->lines_mutex);
-    ts->lines_head      = NULL;
-    ts->worker_timers   = memoryAllocateZero(sizeof(wtimer_t *) * getWorkersCount());
+    ts->lines_head       = NULL;
     ts->ping_interval_ms = kKeepAliveDefaultPingMs;
 
     if (! keepaliveclientLoadPingInterval(ts, node->node_settings_json))

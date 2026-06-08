@@ -13,6 +13,7 @@ static void initializeTunnelCallbacks(tunnel_t *t)
 
     t->onPrepare = &tcpconnectorTunnelOnPrepair;
     t->onStart   = &tcpconnectorTunnelOnStart;
+    t->onStop    = &tcpconnectorTunnelOnStop;
     t->onDestroy = &tcpconnectorTunnelDestroy;
 }
 
@@ -31,16 +32,18 @@ static bool parseBasicSettings(tcpconnector_tstate_t *state, const cJSON *settin
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", kFwMarkInvalid);
     state->send_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-send-buffer") != NULL;
     state->recv_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-recv-buffer") != NULL;
-    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->send_buffer_size, settings, "large-send-buffer",
-                                                    kDefaultLargeSocketBufferSize, 0))
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(
+            &state->send_buffer_size, settings, "large-send-buffer", kDefaultLargeSocketBufferSize, 0))
     {
-        LOGF("JSON Error: TcpConnector->settings->large-send-buffer (boolean-or-positive-integer field) : The value was empty or invalid");
+        LOGF("JSON Error: TcpConnector->settings->large-send-buffer (boolean-or-positive-integer field) : The value "
+             "was empty or invalid");
         return false;
     }
-    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->recv_buffer_size, settings, "large-recv-buffer",
-                                                    kDefaultLargeSocketBufferSize, 0))
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(
+            &state->recv_buffer_size, settings, "large-recv-buffer", kDefaultLargeSocketBufferSize, 0))
     {
-        LOGF("JSON Error: TcpConnector->settings->large-recv-buffer (boolean-or-positive-integer field) : The value was empty or invalid");
+        LOGF("JSON Error: TcpConnector->settings->large-recv-buffer (boolean-or-positive-integer field) : The value "
+             "was empty or invalid");
         return false;
     }
     getStringFromJsonObject(&(state->interface_name), settings, "interface");
@@ -56,8 +59,8 @@ static bool parseBasicSettings(tcpconnector_tstate_t *state, const cJSON *settin
     return true;
 }
 
-static bool parseDestinationStringOption(char **dest, const cJSON *settings, const char *key,
-                                         const char *default_value, const char *error_path)
+static bool parseDestinationStringOption(char **dest, const cJSON *settings, const char *key, const char *default_value,
+                                         const char *error_path)
 {
     assert(*dest == NULL);
 
@@ -83,40 +86,41 @@ static bool parseDestinationStringOption(char **dest, const cJSON *settings, con
     return *dest != NULL;
 }
 
-static bool parseDestinationSocketOptions(tcpconnector_destination_t *destination,
-                                          const tcpconnector_tstate_t *state, const cJSON *settings,
-                                          const char *error_path)
+static bool parseDestinationSocketOptions(tcpconnector_destination_t *destination, const tcpconnector_tstate_t *state,
+                                          const cJSON *settings, const char *error_path)
 {
-    getBoolFromJsonObjectOrDefault(&destination->option_tcp_no_delay, settings, "nodelay",
-                                   state->option_tcp_no_delay);
-    getBoolFromJsonObjectOrDefault(&destination->option_tcp_fast_open, settings, "fastopen",
-                                   state->option_tcp_fast_open);
-    getBoolFromJsonObjectOrDefault(&destination->option_reuse_addr, settings, "reuseaddr",
-                                   state->option_reuse_addr);
+    getBoolFromJsonObjectOrDefault(&destination->option_tcp_no_delay, settings, "nodelay", state->option_tcp_no_delay);
+    getBoolFromJsonObjectOrDefault(
+        &destination->option_tcp_fast_open, settings, "fastopen", state->option_tcp_fast_open);
+    getBoolFromJsonObjectOrDefault(&destination->option_reuse_addr, settings, "reuseaddr", state->option_reuse_addr);
     getIntFromJsonObjectOrDefault(&destination->fwmark, settings, "fwmark", state->fwmark);
-    getIntFromJsonObjectOrDefault(&destination->domain_strategy, settings, "domain-strategy",
-                                  state->domain_strategy);
+    getIntFromJsonObjectOrDefault(&destination->domain_strategy, settings, "domain-strategy", state->domain_strategy);
     destination->send_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-send-buffer") != NULL;
     destination->recv_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-recv-buffer") != NULL;
-    if (! getPositiveIntFromJsonObjectOrBoolDefault(&destination->send_buffer_size, settings, "large-send-buffer",
-                                                    kDefaultLargeSocketBufferSize, state->send_buffer_size))
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(&destination->send_buffer_size,
+                                                    settings,
+                                                    "large-send-buffer",
+                                                    kDefaultLargeSocketBufferSize,
+                                                    state->send_buffer_size))
     {
         LOGF("JSON Error: %s->large-send-buffer (boolean-or-positive-integer field) : The value was empty or invalid",
              error_path);
         return false;
     }
-    if (! getPositiveIntFromJsonObjectOrBoolDefault(&destination->recv_buffer_size, settings, "large-recv-buffer",
-                                                    kDefaultLargeSocketBufferSize, state->recv_buffer_size))
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(&destination->recv_buffer_size,
+                                                    settings,
+                                                    "large-recv-buffer",
+                                                    kDefaultLargeSocketBufferSize,
+                                                    state->recv_buffer_size))
     {
         LOGF("JSON Error: %s->large-recv-buffer (boolean-or-positive-integer field) : The value was empty or invalid",
              error_path);
         return false;
     }
 
-    if (! parseDestinationStringOption(&destination->interface_name, settings, "interface", state->interface_name,
-                                       error_path) ||
-        ! parseDestinationStringOption(&destination->source_ip, settings, "source-ip", state->source_ip,
-                                       error_path))
+    if (! parseDestinationStringOption(
+            &destination->interface_name, settings, "interface", state->interface_name, error_path) ||
+        ! parseDestinationStringOption(&destination->source_ip, settings, "source-ip", state->source_ip, error_path))
     {
         return false;
     }
@@ -135,7 +139,8 @@ static bool parseDestinationWeight(const cJSON *settings, int index, uint32_t *w
     const cJSON *jweight = cJSON_GetObjectItemCaseSensitive(settings, "weight");
     if (! cJSON_IsNumber(jweight) || jweight->valueint <= 0 || jweight->valuedouble != (double) jweight->valueint)
     {
-        LOGF("JSON Error: TcpConnector->settings->addresses[%d]->weight (positive integer field) : The value was empty or invalid",
+        LOGF("JSON Error: TcpConnector->settings->addresses[%d]->weight (positive integer field) : The value was empty "
+             "or invalid",
              index);
         return false;
     }
@@ -350,10 +355,13 @@ static bool parseDestinationArray(tcpconnector_tstate_t *state, const cJSON *set
         char                        error_path[96];
         snprintf(error_path, sizeof(error_path), "TcpConnector->settings->addresses[%d]", index);
 
-        if (! parseDestinationAddress(&destination->dest_addr_selected, &destination->constant_dest_addr,
-                                      &destination->outbound_ip_range, entry, error_path) ||
-            ! parseDestinationPort(&destination->dest_port_selected, &destination->constant_dest_addr, entry,
-                                   error_path) ||
+        if (! parseDestinationAddress(&destination->dest_addr_selected,
+                                      &destination->constant_dest_addr,
+                                      &destination->outbound_ip_range,
+                                      entry,
+                                      error_path) ||
+            ! parseDestinationPort(
+                &destination->dest_port_selected, &destination->constant_dest_addr, entry, error_path) ||
             ! parseDestinationWeight(entry, index, &destination->weight) ||
             ! parseDestinationSocketOptions(destination, state, entry, error_path))
         {
@@ -370,11 +378,11 @@ static bool parseDestinationArray(tcpconnector_tstate_t *state, const cJSON *set
 tunnel_t *tcpconnectorTunnelCreate(node_t *node)
 {
     tunnel_t *t = adapterCreate(node, sizeof(tcpconnector_tstate_t), sizeof(tcpconnector_lstate_t), true);
-    
+
     initializeTunnelCallbacks(t);
 
-    tcpconnector_tstate_t *state = tunnelGetState(t);
-    const cJSON *settings = node->node_settings_json;
+    tcpconnector_tstate_t *state    = tunnelGetState(t);
+    const cJSON           *settings = node->node_settings_json;
 
     if (! parseBasicSettings(state, settings))
     {
@@ -392,15 +400,18 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     }
     else
     {
-        if (! parseDestinationAddress(&state->dest_addr_selected, &state->constant_dest_addr,
-                                      &state->outbound_ip_range, settings, "TcpConnector->settings"))
+        if (! parseDestinationAddress(&state->dest_addr_selected,
+                                      &state->constant_dest_addr,
+                                      &state->outbound_ip_range,
+                                      settings,
+                                      "TcpConnector->settings"))
         {
             tcpconnectorTunnelDestroy(t);
             return NULL;
         }
 
-        if (! parseDestinationPort(&state->dest_port_selected, &state->constant_dest_addr, settings,
-                                   "TcpConnector->settings"))
+        if (! parseDestinationPort(
+                &state->dest_port_selected, &state->constant_dest_addr, settings, "TcpConnector->settings"))
         {
             tcpconnectorTunnelDestroy(t);
             return NULL;

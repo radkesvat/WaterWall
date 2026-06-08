@@ -16,6 +16,7 @@ add_library(SniffRouter STATIC
     instance/node.c
     instance/prepair.c
     instance/start.c
+    instance/stop.c
     upstream/est.c
     upstream/fin.c
     upstream/init.c

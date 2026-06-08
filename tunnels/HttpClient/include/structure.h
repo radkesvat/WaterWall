@@ -26,10 +26,10 @@ typedef enum httpclient_runtime_proto_e
 
 typedef enum httpclient_h1_body_mode_e
 {
-    kHttpClientH1BodyNone         = 0,
-    kHttpClientH1BodyChunked      = 1,
-    kHttpClientH1BodyContentLen   = 2,
-    kHttpClientH1BodyUntilClose   = 3
+    kHttpClientH1BodyNone       = 0,
+    kHttpClientH1BodyChunked    = 1,
+    kHttpClientH1BodyContentLen = 2,
+    kHttpClientH1BodyUntilClose = 3
 } httpclient_h1_body_mode_t;
 
 typedef enum httpclient_h1_transport_mode_e
@@ -48,10 +48,10 @@ typedef enum httpclient_split_role_e
 
 typedef struct httpclient_h2_data_item_s
 {
-    sbuf_t                          *payload;
-    uint32_t                         offset;
-    bool                             end_stream;
-    bool                             complete;
+    sbuf_t                           *payload;
+    uint32_t                          offset;
+    bool                              end_stream;
+    bool                              complete;
     struct httpclient_h2_data_item_s *next;
 } httpclient_h2_data_item_t;
 
@@ -106,17 +106,17 @@ typedef struct httpclient_tstate_s
     size_t   upgrade_settings_payload_len;
     char    *upgrade_settings_b64;
 
-    httpclient_version_mode_t version_mode;
+    httpclient_version_mode_t      version_mode;
     httpclient_h1_transport_mode_t h1_transport_mode;
     httpclient_split_placement_t   split_id_placement;
     httpclient_split_placement_t   split_direction_placement;
     httpclient_split_placement_t   split_token_placement;
     atomic_ullong                  split_identifier;
-    bool                      enable_upgrade;
-    bool                      websocket_enabled;
-    bool                      full_duplex;
-    bool                      split_cache_bypass;
-    bool                      verbose;
+    bool                           enable_upgrade;
+    bool                           websocket_enabled;
+    bool                           full_duplex;
+    bool                           split_cache_bypass;
+    bool                           verbose;
 } httpclient_tstate_t;
 
 typedef struct httpclient_lstate_s
@@ -126,9 +126,9 @@ typedef struct httpclient_lstate_s
 
     nghttp2_session *session;
 
-    buffer_stream_t in_stream;
-    buffer_queue_t  pending_up;
-    context_queue_t events_down;
+    buffer_stream_t            in_stream;
+    buffer_queue_t             pending_up;
+    context_queue_t            events_down;
     httpclient_h2_data_item_t *h2_data_head;
     httpclient_h2_data_item_t *h2_data_tail;
     httpclient_h2_data_item_t *h2_data_active;
@@ -140,9 +140,9 @@ typedef struct httpclient_lstate_s
     int64_t h1_chunk_expected;
     int64_t h1_body_remaining;
 
-    bool h1_headers_parsed;
-    bool h1_response_chunked;
-    bool h1_upgrade_accepted;
+    bool                      h1_headers_parsed;
+    bool                      h1_response_chunked;
+    bool                      h1_upgrade_accepted;
     httpclient_h1_body_mode_t h1_body_mode;
 
     bool h2_headers_received;
@@ -195,6 +195,7 @@ void httpclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void httpclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void httpclientTunnelOnPrepair(tunnel_t *t);
 void httpclientTunnelOnStart(tunnel_t *t);
+void httpclientTunnelOnStop(tunnel_t *t);
 
 void httpclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void httpclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -214,15 +215,11 @@ void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t 
 void httpclientLinestateDestroy(httpclient_lstate_t *ls);
 void httpclientH2DataQueueDestroy(httpclient_lstate_t *ls);
 
-
-
-
-
-bool httpclientStringCaseEquals(const char *a, const char *b);
-bool httpclientStringCaseContains(const char *haystack, const char *needle);
-bool httpclientStringCaseContainsToken(const char *value, const char *token);
-bool bufferstreamFindCRLF(buffer_stream_t *stream, size_t *line_end);
-bool bufferstreamFindDoubleCRLF(buffer_stream_t *stream, size_t *header_end);
+bool    httpclientStringCaseEquals(const char *a, const char *b);
+bool    httpclientStringCaseContains(const char *haystack, const char *needle);
+bool    httpclientStringCaseContainsToken(const char *value, const char *token);
+bool    bufferstreamFindCRLF(buffer_stream_t *stream, size_t *line_end);
+bool    bufferstreamFindDoubleCRLF(buffer_stream_t *stream, size_t *header_end);
 sbuf_t *allocBufferForLength(line_t *l, uint32_t len);
 
 bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upgrade_to_h2);

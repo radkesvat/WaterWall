@@ -7,7 +7,8 @@ tunnel_t *reverseserverTunnelCreate(node_t *node)
 
     int wc = getWorkersCount();
 
-    tunnel_t *t = tunnelCreate(node, sizeof(reverseserver_tstate_t) + (wc * sizeof(reverseserver_thread_box_t)),
+    tunnel_t *t = tunnelCreate(node,
+                               sizeof(reverseserver_tstate_t) + (wc * sizeof(reverseserver_thread_box_t)),
                                sizeof(reverseserver_lstate_t));
 
     t->fnInitU    = &reverseserverTunnelUpStreamInit;
@@ -26,6 +27,7 @@ tunnel_t *reverseserverTunnelCreate(node_t *node)
 
     t->onPrepare = &reverseserverTunnelOnPrepair;
     t->onStart   = &reverseserverTunnelOnStart;
+    t->onStop    = &reverseserverTunnelOnStop;
     t->onDestroy = &reverseserverTunnelDestroy;
 
     tunnel_t *pipe_tunnel = pipetunnelCreate(t);

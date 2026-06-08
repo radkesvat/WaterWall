@@ -73,6 +73,7 @@ void tlsclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void tlsclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tlsclientTunnelOnPrepair(tunnel_t *t);
 void tlsclientTunnelOnStart(tunnel_t *t);
+void tlsclientTunnelOnStop(tunnel_t *t);
 
 void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tlsclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -97,7 +98,7 @@ void tlsclientPrintSSLError(void);
 void tlsclientPrintSSLErrorAndAbort(void);
 bool tlsclientConfigureSslForConnect(SSL *ssl, BIO *rbio, BIO *wbio, const char *sni,
                                      const uint8_t *ech_grease_override_payload,
-                                     size_t ech_grease_override_payload_len);
+                                     size_t         ech_grease_override_payload_len);
 bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
                                            const uint8_t *ech_grease_override_payload,
                                            size_t ech_grease_override_payload_len, sbuf_t **out);

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "wwapi.h"
 #include "bufio/buffer_stream.h"
+#include "wwapi.h"
 
 typedef enum socks5client_protocol_e
 {
@@ -20,33 +20,33 @@ typedef enum socks5client_phase_e
 
 typedef struct socks5client_tstate_s
 {
-    address_context_t        target_addr;
-    char                    *username;
-    char                    *password;
-    uint32_t                 target_addr_source;
-    uint32_t                 target_port_source;
-    socks5client_protocol_t  protocol;
-    uint8_t                  username_len;
-    uint8_t                  password_len;
-    bool                     verbose;
+    address_context_t       target_addr;
+    char                   *username;
+    char                   *password;
+    uint32_t                target_addr_source;
+    uint32_t                target_port_source;
+    socks5client_protocol_t protocol;
+    uint8_t                 username_len;
+    uint8_t                 password_len;
+    bool                    verbose;
 } socks5client_tstate_t;
 
 typedef struct socks5client_lstate_s
 {
-    tunnel_t              *tunnel;
-    line_t                *line;
-    buffer_stream_t        in_stream;
-    buffer_queue_t         pending_up;
-    socks5client_phase_t   phase;
+    tunnel_t            *tunnel;
+    line_t              *line;
+    buffer_stream_t      in_stream;
+    buffer_queue_t       pending_up;
+    socks5client_phase_t phase;
 } socks5client_lstate_t;
 
 enum
 {
-    kTunnelStateSize                  = sizeof(socks5client_tstate_t),
-    kLineStateSize                    = sizeof(socks5client_lstate_t),
-    kSocks5ClientPendingQueueCap      = 8,
-    kSocks5ClientMaxPendingUpBytes    = 1024 * 1024,
-    kSocks5ClientMaxHandshakeBytes    = 4096
+    kTunnelStateSize               = sizeof(socks5client_tstate_t),
+    kLineStateSize                 = sizeof(socks5client_lstate_t),
+    kSocks5ClientPendingQueueCap   = 8,
+    kSocks5ClientMaxPendingUpBytes = 1024 * 1024,
+    kSocks5ClientMaxHandshakeBytes = 4096
 };
 
 WW_EXPORT void         socks5clientTunnelDestroy(tunnel_t *t);
@@ -57,6 +57,7 @@ void socks5clientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset
 void socks5clientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void socks5clientTunnelOnPrepair(tunnel_t *t);
 void socks5clientTunnelOnStart(tunnel_t *t);
+void socks5clientTunnelOnStop(tunnel_t *t);
 
 void socks5clientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void socks5clientTunnelUpStreamEst(tunnel_t *t, line_t *l);

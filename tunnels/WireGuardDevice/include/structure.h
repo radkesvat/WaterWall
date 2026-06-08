@@ -40,6 +40,7 @@ void wireguarddeviceTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_off
 void wireguarddeviceTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void wireguarddeviceTunnelOnPrepair(tunnel_t *t);
 void wireguarddeviceTunnelOnStart(tunnel_t *t);
+void wireguarddeviceTunnelOnStop(tunnel_t *t);
 
 void wireguarddeviceTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void wireguarddeviceTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -55,15 +56,15 @@ void wireguarddeviceTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 void wireguarddeviceTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void wireguarddeviceTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void wireguarddeviceLinestateInitialize(wgd_lstate_t *ls);
-void wireguarddeviceLinestateDestroy(wgd_lstate_t *ls);
-void wireguarddeviceStateLock(wgd_tstate_t *state);
-void wireguarddeviceStateUnlock(wgd_tstate_t *state);
-bool wireguarddeviceTransportSideIsNext(const wgd_tstate_t *state);
-void wireguarddeviceForwardTransportPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf);
-void wireguarddeviceForwardInnerPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf);
-void wireguarddeviceHandleInnerPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void wireguarddeviceHandleTransportPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void              wireguarddeviceLinestateInitialize(wgd_lstate_t *ls);
+void              wireguarddeviceLinestateDestroy(wgd_lstate_t *ls);
+void              wireguarddeviceStateLock(wgd_tstate_t *state);
+void              wireguarddeviceStateUnlock(wgd_tstate_t *state);
+bool              wireguarddeviceTransportSideIsNext(const wgd_tstate_t *state);
+void              wireguarddeviceForwardTransportPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf);
+void              wireguarddeviceForwardInnerPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf);
+void              wireguarddeviceHandleInnerPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void              wireguarddeviceHandleTransportPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 wireguard_peer_t *wireguarddevicePeerLookupByAllowedIp(wireguard_device_t *device, const ip_addr_t *ipaddr);
 bool              wireguarddeviceCheckPeerAllowedIp(const wireguard_peer_t *peer, const ip_addr_t *ipaddr);
 
@@ -78,7 +79,8 @@ void wireguardifPeerInit(wireguard_peer_init_data_t *peer);
 // Add a new peer to the specified interface - see wireguard.h for maximum number of peers allowed
 // On success the peer_index can be used to reference this peer in future function calls
 err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t *peer, uint8_t *peer_index);
-err_t wireguardifAddAllowedIp(wireguard_device_t *device, uint8_t peer_index, const ip_addr_t *ip, const ip_addr_t *mask);
+err_t wireguardifAddAllowedIp(wireguard_device_t *device, uint8_t peer_index, const ip_addr_t *ip,
+                              const ip_addr_t *mask);
 
 // Remove the given peer from the network interface
 err_t wireguardifRemovePeer(wireguard_device_t *device, uint8_t peer_index);

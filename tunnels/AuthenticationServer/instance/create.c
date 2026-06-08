@@ -20,6 +20,7 @@ static void authenticationserverInitializeCallbacks(tunnel_t *t)
 
     t->onPrepare = &authenticationserverTunnelOnPrepair;
     t->onStart   = &authenticationserverTunnelOnStart;
+    t->onStop    = &authenticationserverTunnelOnStop;
     t->onDestroy = &authenticationserverTunnelDestroy;
 }
 
@@ -48,7 +49,8 @@ static bool authenticationserverParseSettings(authenticationserver_tstate_t *ts,
     int file_save_rate_ms = 0;
     if (! getIntFromJsonObject(&file_save_rate_ms, settings, "file-save-rate-ms") || file_save_rate_ms <= 0)
     {
-        LOGF("JSON Error: AuthenticationServer->settings->file-save-rate-ms (positive integer field) : The data was empty or invalid");
+        LOGF("JSON Error: AuthenticationServer->settings->file-save-rate-ms (positive integer field) : The data was "
+             "empty or invalid");
         return false;
     }
 

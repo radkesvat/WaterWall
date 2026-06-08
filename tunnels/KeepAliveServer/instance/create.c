@@ -22,6 +22,7 @@ tunnel_t *keepaliveserverTunnelCreate(node_t *node)
 
     t->onPrepare = &keepaliveserverTunnelOnPrepair;
     t->onStart   = &keepaliveserverTunnelOnStart;
+    t->onStop    = &keepaliveserverTunnelOnStop;
     t->onDestroy = &keepaliveserverTunnelDestroy;
 
     return t;

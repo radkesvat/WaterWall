@@ -3,7 +3,7 @@
 #include "loggers/network_logger.h"
 
 static bool packetstostreamLoadPacketValidationLevel(packetstostream_packet_validation_level_t *level,
-                                                     const cJSON *settings)
+                                                     const cJSON                               *settings)
 {
     const cJSON *jlevel = cJSON_GetObjectItemCaseSensitive(settings, "packet-validation-level");
 
@@ -16,7 +16,8 @@ static bool packetstostreamLoadPacketValidationLevel(packetstostream_packet_vali
 
     if (! cJSON_IsString(jlevel) || jlevel->valuestring == NULL)
     {
-        LOGF("JSON Error: PacketsToStream->settings->packet-validation-level (string field) : expected none, loose, or hard");
+        LOGF("JSON Error: PacketsToStream->settings->packet-validation-level (string field) : expected none, loose, or "
+             "hard");
         return false;
     }
 
@@ -38,7 +39,8 @@ static bool packetstostreamLoadPacketValidationLevel(packetstostream_packet_vali
         return true;
     }
 
-    LOGF("JSON Error: PacketsToStream->settings->packet-validation-level (string field) : expected none, loose, or hard");
+    LOGF("JSON Error: PacketsToStream->settings->packet-validation-level (string field) : expected none, loose, or "
+         "hard");
     return false;
 }
 
@@ -76,7 +78,7 @@ static bool packetstostreamLoadSettings(packetstostream_tstate_t *ts, const cJSO
 
 tunnel_t *packetstostreamTunnelCreate(node_t *node)
 {
-    tunnel_t                *t  = tunnelCreate(node, sizeof(packetstostream_tstate_t), sizeof(packetstostream_lstate_t));
+    tunnel_t *t = tunnelCreate(node, sizeof(packetstostream_tstate_t), sizeof(packetstostream_lstate_t));
     packetstostream_tstate_t *ts = tunnelGetState(t);
 
     t->fnInitU    = &packetstostreamTunnelUpStreamInit;
@@ -95,14 +97,15 @@ tunnel_t *packetstostreamTunnelCreate(node_t *node)
 
     t->onPrepare = &packetstostreamTunnelOnPrepair;
     t->onStart   = &packetstostreamTunnelOnStart;
+    t->onStop    = &packetstostreamTunnelOnStop;
     t->onDestroy = &packetstostreamTunnelDestroy;
 
-    ts->worker_timers = NULL;
-    ts->worker_timeout_timers = NULL;
-    ts->interval_ms  = kSensitiveDefaultIntervalMs;
-    ts->tolerance_ms = kSensitiveDefaultToleranceMs;
+    ts->worker_timers           = NULL;
+    ts->worker_timeout_timers   = NULL;
+    ts->interval_ms             = kSensitiveDefaultIntervalMs;
+    ts->tolerance_ms            = kSensitiveDefaultToleranceMs;
     ts->packet_validation_level = kPacketsToStreamPacketValidationNone;
-    ts->sensitive_mode = false;
+    ts->sensitive_mode          = false;
 
     if (! packetstostreamLoadSettings(ts, node->node_settings_json))
     {

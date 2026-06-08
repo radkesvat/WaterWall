@@ -21,7 +21,7 @@ enum capturedevice_filter_type_dynamic_value_status
 typedef struct rawsocket_tstate_s
 {
     TunnelFlowRoutinePayload WriteReceivedPacket; // function to give received data to the next/prev tunnel
-    tunnel_t* write_tunnel; // tunnel to write data to
+    tunnel_t                *write_tunnel;        // tunnel to write data to
 
     capture_device_t *capture_device;
     ipmask_t         *capture_ranges;
@@ -31,7 +31,6 @@ typedef struct rawsocket_tstate_s
 
     char         *raw_device_name;
     raw_device_t *raw_device;
-
 
     int  firewall_mark;
     bool write_direction_upstream; // this means we write to upstream when receiving packets
@@ -57,6 +56,7 @@ void rawsocketOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void rawsocketOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void rawsocketOnPrepair(tunnel_t *t);
 void rawsocketOnStart(tunnel_t *t);
+void rawsocketOnStop(tunnel_t *t);
 
 void rawsocketUpStreamInit(tunnel_t *t, line_t *l);
 void rawsocketUpStreamEst(tunnel_t *t, line_t *l);

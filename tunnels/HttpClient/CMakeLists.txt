@@ -6,6 +6,7 @@ add_library(HttpClient STATIC
                     instance/node.c
                     instance/prepair.c
                     instance/start.c
+                    instance/stop.c
                     instance/chain.c
                     instance/index.c
                     common/transport.c

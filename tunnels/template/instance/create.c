@@ -22,7 +22,8 @@ tunnel_t *templateTunnelCreate(node_t *node)
 
     t->onPrepare = &templateTunnelOnPrepair;
     t->onStart   = &templateTunnelOnStart;
+    t->onStop    = &templateTunnelOnStop;
     t->onDestroy = &templateTunnelDestroy;
-    
+
     return t;
 }

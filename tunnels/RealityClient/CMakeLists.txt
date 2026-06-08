@@ -5,6 +5,7 @@ add_library(RealityClient STATIC
     instance/node.c
     instance/prepair.c
     instance/start.c
+    instance/stop.c
     instance/chain.c
     instance/index.c
     common/helpers.c

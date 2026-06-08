@@ -21,13 +21,13 @@ typedef struct tundevice_tstate_s
     int      subnet_mask; // only subnet mask
     uint16_t mtu;         // device mtu, default is GLOBAL_MTU_SIZE
 
-    bool    system_route_enabled;
-    char   *route_table;
-    char  **system_routes;
-    size_t  system_route_count;
-    size_t  system_routes_installed;
-    char   *post_up_script;
-    char   *pre_down_script;
+    bool   system_route_enabled;
+    char  *route_table;
+    char **system_routes;
+    size_t system_route_count;
+    size_t system_routes_installed;
+    char  *post_up_script;
+    char  *pre_down_script;
 
     tun_device_t *tdev;
 
@@ -52,6 +52,7 @@ void tundeviceTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void tundeviceTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tundeviceTunnelOnPrepair(tunnel_t *t);
 void tundeviceTunnelOnStart(tunnel_t *t);
+void tundeviceTunnelOnStop(tunnel_t *t);
 
 void tundeviceTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tundeviceTunnelUpStreamEst(tunnel_t *t, line_t *l);

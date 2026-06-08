@@ -60,6 +60,7 @@ void tcplistenerTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset)
 void tcplistenerTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tcplistenerTunnelOnPrepair(tunnel_t *t);
 void tcplistenerTunnelOnStart(tunnel_t *t);
+void tcplistenerTunnelOnStop(tunnel_t *t);
 
 void tcplistenerTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tcplistenerTunnelUpStreamEst(tunnel_t *t, line_t *l);

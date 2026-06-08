@@ -47,6 +47,7 @@ void encryptionserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_of
 void encryptionserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void encryptionserverTunnelOnPrepair(tunnel_t *t);
 void encryptionserverTunnelOnStart(tunnel_t *t);
+void encryptionserverTunnelOnStop(tunnel_t *t);
 
 void encryptionserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void encryptionserverTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -73,5 +74,5 @@ int encryptionserverEncryptAead(uint32_t algorithm, unsigned char *dst, const un
 int encryptionserverDecryptAead(uint32_t algorithm, unsigned char *dst, const unsigned char *src, size_t src_len,
                                 const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
                                 const unsigned char *key);
-                                
+
 void encryptionserverCloseLineBidirectional(tunnel_t *t, line_t *l);

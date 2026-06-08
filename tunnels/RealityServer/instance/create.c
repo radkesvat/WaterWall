@@ -21,6 +21,7 @@ static void configureTunnelCallbacks(tunnel_t *t)
     t->onChain   = &realityserverTunnelOnChain;
     t->onPrepare = &realityserverTunnelOnPrepair;
     t->onStart   = &realityserverTunnelOnStart;
+    t->onStop    = &realityserverTunnelOnStop;
     t->onDestroy = &realityserverTunnelDestroy;
 }
 
@@ -74,8 +75,8 @@ static bool deriveKeyFromPassword(const char *password, const char *salt, uint32
         iterations = 1;
     }
 
-    if (-1 == blake2s(out_key, 32, (const unsigned char *) salt, salt_len, (const unsigned char *) password,
-                      password_len))
+    if (-1 ==
+        blake2s(out_key, 32, (const unsigned char *) salt, salt_len, (const unsigned char *) password, password_len))
     {
         return false;
     }
@@ -88,8 +89,7 @@ static bool deriveKeyFromPassword(const char *password, const char *salt, uint32
         memoryCopy(iter_block, out_key, 32);
         memoryCopy(iter_block + 32, &iter_be, sizeof(iter_be));
 
-        if (-1 == blake2s(out_key, 32, (const unsigned char *) password, password_len, iter_block,
-                          sizeof(iter_block)))
+        if (-1 == blake2s(out_key, 32, (const unsigned char *) password, password_len, iter_block, sizeof(iter_block)))
         {
             wCryptoZero(iter_block, sizeof(iter_block));
             return false;
@@ -103,16 +103,16 @@ static bool deriveKeyFromPassword(const char *password, const char *salt, uint32
 
 static bool realityserverTunnelstateInitialize(realityserver_tstate_t *ts, node_t *node)
 {
-    const cJSON *settings = node->node_settings_json;
-    char        *password = NULL;
-    char        *salt     = NULL;
-    char        *destination_name = NULL;
-    int          kdf_iterations   = kRealityServerDefaultKdfIterations;
-    int          max_frame_size   = kRealityServerMaxFramePayload;
+    const cJSON *settings          = node->node_settings_json;
+    char        *password          = NULL;
+    char        *salt              = NULL;
+    char        *destination_name  = NULL;
+    int          kdf_iterations    = kRealityServerDefaultKdfIterations;
+    int          max_frame_size    = kRealityServerMaxFramePayload;
     int          sniffing_attempts = kRealityServerDefaultSniffingAttempts;
-    bool         result           = false;
+    bool         result            = false;
 
-    memoryZeroAligned32(ts, sizeof(*ts));
+    memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 
     if (node->hash_next == 0)
     {

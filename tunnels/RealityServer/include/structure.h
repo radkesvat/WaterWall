@@ -41,16 +41,16 @@ typedef struct realityserver_lstate_s
 
 enum realityserver_frame_e
 {
-    kRealityServerTlsHeaderSize        = 5,
-    kRealityServerTlsApplicationData   = 0x17,
-    kRealityServerTlsVersionMajor      = 0x03,
-    kRealityServerTlsVersionMinor      = 0x03,
-    kRealityServerNonceSize            = 12,
-    kRealityServerTagSize              = 16,
-    kRealityServerFramePrefixSize      = kRealityServerTlsHeaderSize + kRealityServerNonceSize,
-    kRealityServerMaxTlsRecordBody     = 16384,
-    kRealityServerMaxFramePayload      = kRealityServerMaxTlsRecordBody - kRealityServerNonceSize - kRealityServerTagSize,
-    kRealityServerDefaultKdfIterations = 12000,
+    kRealityServerTlsHeaderSize      = 5,
+    kRealityServerTlsApplicationData = 0x17,
+    kRealityServerTlsVersionMajor    = 0x03,
+    kRealityServerTlsVersionMinor    = 0x03,
+    kRealityServerNonceSize          = 12,
+    kRealityServerTagSize            = 16,
+    kRealityServerFramePrefixSize    = kRealityServerTlsHeaderSize + kRealityServerNonceSize,
+    kRealityServerMaxTlsRecordBody   = 16384,
+    kRealityServerMaxFramePayload    = kRealityServerMaxTlsRecordBody - kRealityServerNonceSize - kRealityServerTagSize,
+    kRealityServerDefaultKdfIterations    = 12000,
     kRealityServerDefaultSniffingAttempts = 8,
 };
 
@@ -68,6 +68,7 @@ void realityserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offse
 void realityserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void realityserverTunnelOnPrepair(tunnel_t *t);
 void realityserverTunnelOnStart(tunnel_t *t);
+void realityserverTunnelOnStop(tunnel_t *t);
 
 void realityserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void realityserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

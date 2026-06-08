@@ -12,12 +12,13 @@ tunnel_t *obfuscatorclientTunnelCreate(node_t *node)
 
     t->onPrepare = &obfuscatorclientTunnelOnPrepair;
     t->onStart   = &obfuscatorclientTunnelOnStart;
+    t->onStop    = &obfuscatorclientTunnelOnStop;
     t->onDestroy = &obfuscatorclientTunnelDestroy;
 
     obfuscatorclient_tstate_t *ts = tunnelGetState(t);
 
-    const cJSON *settings = node->node_settings_json;
-    dynamic_value_t skip  = parseDynamicNumericValueFromJsonObject(settings, "skip", 3, "none", "ipv4", "transport");
+    const cJSON    *settings = node->node_settings_json;
+    dynamic_value_t skip     = parseDynamicNumericValueFromJsonObject(settings, "skip", 3, "none", "ipv4", "transport");
 
     ts->method = parseDynamicNumericValueFromJsonObject(settings, "method", 1, "xor").status;
     ts->skip   = (skip.status == kDvsEmpty) ? kObfuscatorSkipNone : skip.status;

@@ -173,6 +173,7 @@ tunnel_t *loggertunnelTunnelCreate(node_t *node)
     t->fnPauseD   = &loggertunnelTunnelDownStreamPause;
     t->fnResumeD  = &loggertunnelTunnelDownStreamResume;
 
+    t->onStop    = &loggertunnelTunnelOnStop;
     t->onDestroy = &loggertunnelTunnelDestroy;
 
     const cJSON           *settings = node->node_settings_json;

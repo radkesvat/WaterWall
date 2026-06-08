@@ -94,11 +94,12 @@ static bool loadRouteDomains(sniffrouter_route_t *route, const cJSON *route_json
 
     if (! cJSON_IsArray(domains) || cJSON_GetArraySize(domains) <= 0)
     {
-        LOGF("JSON Error: SniffRouter->settings->routes[]->domains (array field) : expected one or more domain patterns");
+        LOGF("JSON Error: SniffRouter->settings->routes[]->domains (array field) : expected one or more domain "
+             "patterns");
         return false;
     }
 
-    int count = cJSON_GetArraySize(domains);
+    int count            = cJSON_GetArraySize(domains);
     route->domains_count = (uint32_t) count;
     route->domains       = memoryAllocateZero(sizeof(*route->domains) * (size_t) route->domains_count);
 
@@ -166,7 +167,8 @@ static bool loadRouteDetection(sniffrouter_route_t *route, const cJSON *route_js
 
     if (! cJSON_IsArray(detection) || cJSON_GetArraySize(detection) <= 0)
     {
-        LOGF("JSON Error: SniffRouter->settings->routes[]->detection (string or array field) : expected one or more detection modes");
+        LOGF("JSON Error: SniffRouter->settings->routes[]->detection (string or array field) : expected one or more "
+             "detection modes");
         return false;
     }
 
@@ -238,7 +240,7 @@ static bool loadRoutes(sniffrouter_tstate_t *ts, node_t *node, const cJSON *sett
     ts->routes_count = (uint32_t) routes_count;
     ts->routes       = memoryAllocateZero(sizeof(*ts->routes) * (size_t) ts->routes_count);
 
-    uint32_t     index = 0;
+    uint32_t     index      = 0;
     const cJSON *route_json = NULL;
     cJSON_ArrayForEach(route_json, routes)
     {
@@ -284,6 +286,7 @@ tunnel_t *sniffrouterTunnelCreate(node_t *node)
     t->onIndex   = &sniffrouterTunnelOnIndex;
     t->onPrepare = &sniffrouterTunnelOnPrepair;
     t->onStart   = &sniffrouterTunnelOnStart;
+    t->onStop    = &sniffrouterTunnelOnStop;
     t->onDestroy = &sniffrouterTunnelDestroy;
 
     if (! nodeHasNext(node))

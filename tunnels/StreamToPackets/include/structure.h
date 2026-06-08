@@ -25,13 +25,13 @@ typedef struct streamtopackets_lstate_s
 
 enum
 {
-    kTunnelStateSize             = sizeof(streamtopackets_tstate_t),
-    kLineStateSize               = sizeof(streamtopackets_lstate_t),
-    kMaxBufferSize               = 65536 * 2, // Maximum buffer size for reading data packets
-    kHeaderSize                  = 2,         // add 2 bytes to packet to store real size
-    kSensitivePayloadSize        = 5,
-    kSensitivePingByte           = 0xFF,
-    kSensitivePongByte           = 0xDD
+    kTunnelStateSize      = sizeof(streamtopackets_tstate_t),
+    kLineStateSize        = sizeof(streamtopackets_lstate_t),
+    kMaxBufferSize        = 65536 * 2, // Maximum buffer size for reading data packets
+    kHeaderSize           = 2,         // add 2 bytes to packet to store real size
+    kSensitivePayloadSize = 5,
+    kSensitivePingByte    = 0xFF,
+    kSensitivePongByte    = 0xDD
 };
 
 WW_EXPORT void         streamtopacketsTunnelDestroy(tunnel_t *t);
@@ -42,6 +42,7 @@ void streamtopacketsTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_off
 void streamtopacketsTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void streamtopacketsTunnelOnPrepair(tunnel_t *t);
 void streamtopacketsTunnelOnStart(tunnel_t *t);
+void streamtopacketsTunnelOnStop(tunnel_t *t);
 
 void streamtopacketsTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void streamtopacketsTunnelUpStreamEst(tunnel_t *t, line_t *l);

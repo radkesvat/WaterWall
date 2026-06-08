@@ -47,6 +47,7 @@ void encryptionclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_of
 void encryptionclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void encryptionclientTunnelOnPrepair(tunnel_t *t);
 void encryptionclientTunnelOnStart(tunnel_t *t);
+void encryptionclientTunnelOnStop(tunnel_t *t);
 
 void encryptionclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void encryptionclientTunnelUpStreamEst(tunnel_t *t, line_t *l);

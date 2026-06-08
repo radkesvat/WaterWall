@@ -10,9 +10,20 @@
 
 static bool parseTcpBitActionField(enum tcp_bit_action_dynamic_value *dest, const cJSON *settings, const char *key)
 {
-    dynamic_value_t action = parseDynamicStrValueFromJsonObject(
-        settings, key, 11, "off", "on", "toggle", "packet->cwr", "packet->ece", "packet->urg", "packet->ack",
-        "packet->psh", "packet->rst", "packet->syn", "packet->fin");
+    dynamic_value_t action = parseDynamicStrValueFromJsonObject(settings,
+                                                                key,
+                                                                11,
+                                                                "off",
+                                                                "on",
+                                                                "toggle",
+                                                                "packet->cwr",
+                                                                "packet->ece",
+                                                                "packet->urg",
+                                                                "packet->ack",
+                                                                "packet->psh",
+                                                                "packet->rst",
+                                                                "packet->syn",
+                                                                "packet->fin");
 
     if (action.status == kDvsConstant)
     {
@@ -56,17 +67,18 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     t->onChain    = &ipmanipulatorOnChain;
     t->onPrepare  = &ipmanipulatorOnPrepair;
     t->onStart    = &ipmanipulatorOnStart;
+    t->onStop     = &ipmanipulatorOnStop;
     t->onDestroy  = &ipmanipulatorDestroy;
 
     ipmanipulator_tstate_t *state    = tunnelGetState(t);
     const cJSON            *settings = node->node_settings_json;
 
-    state->trick_proto_swap_tcp_number      = -1;
-    state->trick_proto_swap_tcp_number_2    = -1;
-    state->trick_proto_swap_udp_number      = -1;
-    state->trick_proto_swap_tcp_toggle_up   = 0;
-    state->trick_proto_swap_tcp_toggle_down = 0;
-    state->trick_overlap_sni_syn_ttl        = -1;
+    state->trick_proto_swap_tcp_number           = -1;
+    state->trick_proto_swap_tcp_number_2         = -1;
+    state->trick_proto_swap_udp_number           = -1;
+    state->trick_proto_swap_tcp_toggle_up        = 0;
+    state->trick_proto_swap_tcp_toggle_down      = 0;
+    state->trick_overlap_sni_syn_ttl             = -1;
     state->trick_synfin_sni_syn_ttl              = -1;
     state->trick_synfin_sni_fin_ttl              = -1;
     state->trick_synfin_sni_fake_ttl             = -1;
@@ -79,19 +91,17 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     bool has_proto_swap_tcp    = false;
     bool has_proto_swap_udp    = false;
     bool has_proto_swap_tcp_2  = false;
-    has_proto_swap_legacy = getIntFromJsonObject(&state->trick_proto_swap_tcp_number, settings, "protoswap");
-    has_proto_swap_tcp    = getIntFromJsonObject(&state->trick_proto_swap_tcp_number, settings, "protoswap-tcp");
-    has_proto_swap_udp    = getIntFromJsonObject(&state->trick_proto_swap_udp_number, settings, "protoswap-udp");
-    has_proto_swap_tcp_2 =
-        getIntFromJsonObject(&state->trick_proto_swap_tcp_number_2, settings, "protoswap-tcp-2");
+    has_proto_swap_legacy      = getIntFromJsonObject(&state->trick_proto_swap_tcp_number, settings, "protoswap");
+    has_proto_swap_tcp         = getIntFromJsonObject(&state->trick_proto_swap_tcp_number, settings, "protoswap-tcp");
+    has_proto_swap_udp         = getIntFromJsonObject(&state->trick_proto_swap_udp_number, settings, "protoswap-udp");
+    has_proto_swap_tcp_2 = getIntFromJsonObject(&state->trick_proto_swap_tcp_number_2, settings, "protoswap-tcp-2");
 
     const char *proto_swap_tcp_key = has_proto_swap_tcp ? "protoswap-tcp" : "protoswap";
 
     if (((has_proto_swap_legacy || has_proto_swap_tcp) &&
          ! validateProtocolSwapNumber(proto_swap_tcp_key, state->trick_proto_swap_tcp_number)) ||
         (has_proto_swap_udp && ! validateProtocolSwapNumber("protoswap-udp", state->trick_proto_swap_udp_number)) ||
-        (has_proto_swap_tcp_2 &&
-         ! validateProtocolSwapNumber("protoswap-tcp-2", state->trick_proto_swap_tcp_number_2)))
+        (has_proto_swap_tcp_2 && ! validateProtocolSwapNumber("protoswap-tcp-2", state->trick_proto_swap_tcp_number_2)))
     {
         tunnelDestroy(t);
         return NULL;
@@ -247,8 +257,8 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     if (has_smuggle_sni)
     {
         char  *real_sni_upstream_node_name = NULL;
-        int    smuggle_sni_delay_ms         = 0;
-        size_t smuggle_sni_len              = stringLength(state->trick_smuggle_sni_value);
+        int    smuggle_sni_delay_ms        = 0;
+        size_t smuggle_sni_len             = stringLength(state->trick_smuggle_sni_value);
 
         if (smuggle_sni_len == 0)
         {
@@ -278,7 +288,8 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
             return NULL;
         }
 
-        node_t *real_sni_upstream_node = nodemanagerGetConfigNodeByName(node->node_manager_config, real_sni_upstream_node_name);
+        node_t *real_sni_upstream_node =
+            nodemanagerGetConfigNodeByName(node->node_manager_config, real_sni_upstream_node_name);
 
         if (real_sni_upstream_node == NULL)
         {
@@ -308,21 +319,27 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
             }
         }
 
-        char* name_of_new_tlsclient_node = memoryAllocate(128);
+        char *name_of_new_tlsclient_node = memoryAllocate(128);
         stringNPrintf(name_of_new_tlsclient_node, 128, "ipm_tlsc_%s", state->trick_smuggle_sni_value);
 
-        char* json_string_of_tls_client = memoryAllocate(256 + smuggle_sni_len);
-        static const char* tls_client_json = "{\"name\":\"%s\",\"type\":\"TlsClient\",\"settings\":{\"sni\":\"%s\",\"x25519mlkem768\":false}}";
-        stringNPrintf(json_string_of_tls_client, 256 + smuggle_sni_len, tls_client_json, name_of_new_tlsclient_node, state->trick_smuggle_sni_value);
-        cJSON *json_of_tls_client = cJSON_ParseWithLength(json_string_of_tls_client, stringLength(json_string_of_tls_client));
+        char              *json_string_of_tls_client = memoryAllocate(256 + smuggle_sni_len);
+        static const char *tls_client_json =
+            "{\"name\":\"%s\",\"type\":\"TlsClient\",\"settings\":{\"sni\":\"%s\",\"x25519mlkem768\":false}}";
+        stringNPrintf(json_string_of_tls_client,
+                      256 + smuggle_sni_len,
+                      tls_client_json,
+                      name_of_new_tlsclient_node,
+                      state->trick_smuggle_sni_value);
+        cJSON *json_of_tls_client =
+            cJSON_ParseWithLength(json_string_of_tls_client, stringLength(json_string_of_tls_client));
         nodemanagerCreateNodeInstance(node->node_manager_config, json_of_tls_client);
 
-
-        state->trick_real_sni_tls_client_node = nodemanagerGetConfigNodeByName(node->node_manager_config, name_of_new_tlsclient_node);
-        state->trick_smuggle_sni_value_len     = (uint16_t) smuggle_sni_len;
-        state->trick_smuggle_sni_delay_ms      = (uint32_t) smuggle_sni_delay_ms;
-        state->trick_real_sni_upstream_node   = real_sni_upstream_node;
-        state->trick_smuggle_sni              = true;
+        state->trick_real_sni_tls_client_node =
+            nodemanagerGetConfigNodeByName(node->node_manager_config, name_of_new_tlsclient_node);
+        state->trick_smuggle_sni_value_len  = (uint16_t) smuggle_sni_len;
+        state->trick_smuggle_sni_delay_ms   = (uint32_t) smuggle_sni_delay_ms;
+        state->trick_real_sni_upstream_node = real_sni_upstream_node;
+        state->trick_smuggle_sni            = true;
 
         state->trick_real_sni_tls_client_node->flags |= kNodeFlagNoChain;
 
@@ -333,10 +350,10 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     bool has_overlap_sni = getStringFromJsonObject(&state->trick_overlap_sni_value, settings, "overlap-sni");
     if (has_overlap_sni)
     {
-        char  *server_hello_upstream_node_name   = NULL;
-        int    overlap_sni_delay_ms              = 0;
-        int    overlap_sni_syn_ttl               = -1;
-        size_t overlap_sni_len                   = stringLength(state->trick_overlap_sni_value);
+        char  *server_hello_upstream_node_name = NULL;
+        int    overlap_sni_delay_ms            = 0;
+        int    overlap_sni_syn_ttl             = -1;
+        size_t overlap_sni_len                 = stringLength(state->trick_overlap_sni_value);
 
         if (overlap_sni_len == 0)
         {
@@ -407,12 +424,9 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
             }
         }
 
-        size_t name_len = 32 + overlap_sni_len;
+        size_t name_len                   = 32 + overlap_sni_len;
         char  *name_of_new_tlsclient_node = memoryAllocate(name_len);
-        stringNPrintf(name_of_new_tlsclient_node,
-                      name_len,
-                      "ipm_tlsc_overlap_%s",
-                      state->trick_overlap_sni_value);
+        stringNPrintf(name_of_new_tlsclient_node, name_len, "ipm_tlsc_overlap_%s", state->trick_overlap_sni_value);
 
         char              *json_string_of_tls_client = memoryAllocate(256 + overlap_sni_len);
         static const char *tls_client_json =
@@ -422,7 +436,8 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
                       tls_client_json,
                       name_of_new_tlsclient_node,
                       state->trick_overlap_sni_value);
-        cJSON *json_of_tls_client = cJSON_ParseWithLength(json_string_of_tls_client, stringLength(json_string_of_tls_client));
+        cJSON *json_of_tls_client =
+            cJSON_ParseWithLength(json_string_of_tls_client, stringLength(json_string_of_tls_client));
         nodemanagerCreateNodeInstance(node->node_manager_config, json_of_tls_client);
 
         state->trick_overlap_sni_tls_client_node =
@@ -437,11 +452,11 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
             return NULL;
         }
 
-        state->trick_overlap_sni_value_len = (uint16_t) overlap_sni_len;
-        state->trick_overlap_sni_delay_ms  = (uint32_t) overlap_sni_delay_ms;
-        state->trick_overlap_sni_syn_ttl   = overlap_sni_syn_ttl;
+        state->trick_overlap_sni_value_len                  = (uint16_t) overlap_sni_len;
+        state->trick_overlap_sni_delay_ms                   = (uint32_t) overlap_sni_delay_ms;
+        state->trick_overlap_sni_syn_ttl                    = overlap_sni_syn_ttl;
         state->trick_overlap_sni_server_hello_upstream_node = server_hello_upstream_node;
-        state->trick_overlap_sni           = true;
+        state->trick_overlap_sni                            = true;
 
         state->trick_overlap_sni_tls_client_node->flags |= kNodeFlagNoChain;
 
@@ -452,15 +467,13 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     bool has_synfin_sni = getStringFromJsonObject(&state->trick_synfin_sni_value, settings, "synfin-sni");
     if (has_synfin_sni)
     {
-        size_t synfin_sni_len = stringLength(state->trick_synfin_sni_value);
+        size_t synfin_sni_len                  = stringLength(state->trick_synfin_sni_value);
         int    synfin_sni_additional_range_min = 0;
         int    synfin_sni_additional_range_max = 0;
         bool   has_synfin_sni_additional_range_min =
-            getIntFromJsonObject(
-                &synfin_sni_additional_range_min, settings, "synfin-sni-additional-range-min");
+            getIntFromJsonObject(&synfin_sni_additional_range_min, settings, "synfin-sni-additional-range-min");
         bool has_synfin_sni_additional_range_max =
-            getIntFromJsonObject(
-                &synfin_sni_additional_range_max, settings, "synfin-sni-additional-range-max");
+            getIntFromJsonObject(&synfin_sni_additional_range_max, settings, "synfin-sni-additional-range-max");
 
         if (synfin_sni_len == 0)
         {
@@ -534,22 +547,15 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
             }
         }
 
-        getBoolFromJsonObject(
-            &state->trick_synfin_sni_random_syn_checksum, settings, "synfin-sni-random-syn-checksum");
-        getBoolFromJsonObject(
-            &state->trick_synfin_sni_random_fin_checksum, settings, "synfin-sni-random-fin-checksum");
-        getBoolFromJsonObject(
-            &state->trick_synfin_sni_random_syn_sequence, settings, "synfin-sni-random-syn-sequence");
-        getBoolFromJsonObject(
-            &state->trick_synfin_sni_random_fin_sequence, settings, "synfin-sni-random-fin-sequence");
+        getBoolFromJsonObject(&state->trick_synfin_sni_random_syn_checksum, settings, "synfin-sni-random-syn-checksum");
+        getBoolFromJsonObject(&state->trick_synfin_sni_random_fin_checksum, settings, "synfin-sni-random-fin-checksum");
+        getBoolFromJsonObject(&state->trick_synfin_sni_random_syn_sequence, settings, "synfin-sni-random-syn-sequence");
+        getBoolFromJsonObject(&state->trick_synfin_sni_random_fin_sequence, settings, "synfin-sni-random-fin-sequence");
         getBoolFromJsonObject(&state->trick_synfin_sni_use_rst, settings, "synfin-sni-use-rst");
 
-        size_t name_len = 32 + synfin_sni_len;
+        size_t name_len                   = 32 + synfin_sni_len;
         char  *name_of_new_tlsclient_node = memoryAllocate(name_len);
-        stringNPrintf(name_of_new_tlsclient_node,
-                      name_len,
-                      "ipm_tlsc_synfin_%s",
-                      state->trick_synfin_sni_value);
+        stringNPrintf(name_of_new_tlsclient_node, name_len, "ipm_tlsc_synfin_%s", state->trick_synfin_sni_value);
 
         char              *json_string_of_tls_client = memoryAllocate(256 + synfin_sni_len);
         static const char *tls_client_json =
@@ -648,10 +654,10 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
             return NULL;
         }
 
-        state->trick_ech_sni_value_len        = (uint16_t) ech_sni_len;
-        state->trick_ech_sni_shard1_delay_ms  = (uint32_t) shard1_delay_ms;
-        state->trick_ech_sni_shard2_delay_ms  = (uint32_t) shard2_delay_ms;
-        state->trick_ech_sni                  = true;
+        state->trick_ech_sni_value_len       = (uint16_t) ech_sni_len;
+        state->trick_ech_sni_shard1_delay_ms = (uint32_t) shard1_delay_ms;
+        state->trick_ech_sni_shard2_delay_ms = (uint32_t) shard2_delay_ms;
+        state->trick_ech_sni                 = true;
     }
 
     if (state->trick_smuggle_sni && state->trick_overlap_sni)
@@ -700,7 +706,7 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     getBoolFromJsonObject(&smuggle_fin_enabled, settings, "smuggle-fin");
     if (smuggle_fin_enabled)
     {
-        int   smuggle_fin_delay_ms      = 0;
+        int   smuggle_fin_delay_ms        = 0;
         char *real_fin_upstream_node_name = NULL;
 
         if (! nodeHasNext(node))
@@ -790,9 +796,8 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
 
     if (! (state->trick_proto_swap || state->trick_sni_blender || state->trick_first_sni || state->trick_smuggle_sni ||
            state->trick_overlap_sni || state->trick_synfin_sni || state->trick_ech_sni || state->trick_smuggle_fin ||
-           state->trick_tcp_bit_changes ||
-           state->trick_packet_duplicate || state->trick_bit_transport || state->trick_source_port_ghost ||
-           state->trick_dest_port_ghost))
+           state->trick_tcp_bit_changes || state->trick_packet_duplicate || state->trick_bit_transport ||
+           state->trick_source_port_ghost || state->trick_dest_port_ghost))
     {
         LOGF("IpManipulator: no tricks are enabled, nothing to do");
         tunnelDestroy(t);
@@ -803,7 +808,8 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     {
         mutexInit(&state->tls_capture_mutex);
         state->tls_capture_slots_count = (uint32_t) getTotalWorkersCount() * kIpManipulatorTlsCaptureSlotsPerWorker;
-        state->tls_capture_slots = memoryAllocateZero(sizeof(*state->tls_capture_slots) * state->tls_capture_slots_count);
+        state->tls_capture_slots =
+            memoryAllocateZero(sizeof(*state->tls_capture_slots) * state->tls_capture_slots_count);
         state->tls_prestart_slots_count = state->tls_capture_slots_count;
         state->tls_prestart_slots =
             memoryAllocateZero(sizeof(*state->tls_prestart_slots) * state->tls_prestart_slots_count);
@@ -856,8 +862,8 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         uint32_t initial_flows = max(kIpManipulatorSmuggleInitialFlows, (uint32_t) getTotalWorkersCount() * 8U);
 
         mutexInit(&state->smuggle_fin_mutex);
-        state->smuggle_fin_flows_capacity = initial_flows;
-        state->smuggle_fin_flows          = memoryAllocateZero(sizeof(*state->smuggle_fin_flows) * initial_flows);
+        state->smuggle_fin_flows_capacity      = initial_flows;
+        state->smuggle_fin_flows               = memoryAllocateZero(sizeof(*state->smuggle_fin_flows) * initial_flows);
         state->smuggle_fin_worker_states_count = (uint32_t) getTotalWorkersCount();
         state->smuggle_fin_worker_states =
             memoryAllocateZero(sizeof(*state->smuggle_fin_worker_states) * state->smuggle_fin_worker_states_count);

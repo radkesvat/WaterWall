@@ -2,7 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-
 static uint32_t normalizeAlgorithm(dynamic_value_t algorithm_dv)
 {
     switch (algorithm_dv.status)
@@ -35,22 +34,20 @@ static uint32_t normalizeAlgorithm(dynamic_value_t algorithm_dv)
     }
 }
 
-
 static uint32_t parseAlgorithmFromSettings(const cJSON *settings)
 {
-    const cJSON *algorithm_json = cJSON_GetObjectItemCaseSensitive(settings, "algorithm");
-    dynamic_value_t algorithm_dv = parseDynamicNumericValueFromJsonObject(
-        settings,
-        "algorithm",
-        8,
-        "chacha20-poly1305",
-        "chacha20poly1305",
-        "chacha20",
-        "chacha",
-        "aes-gcm",
-        "aes256gcm",
-        "aes-256-gcm",
-        "aes256-gcm");
+    const cJSON    *algorithm_json = cJSON_GetObjectItemCaseSensitive(settings, "algorithm");
+    dynamic_value_t algorithm_dv   = parseDynamicNumericValueFromJsonObject(settings,
+                                                                          "algorithm",
+                                                                          8,
+                                                                          "chacha20-poly1305",
+                                                                          "chacha20poly1305",
+                                                                          "chacha20",
+                                                                          "chacha",
+                                                                          "aes-gcm",
+                                                                          "aes256gcm",
+                                                                          "aes-256-gcm",
+                                                                          "aes256-gcm");
 
     if (algorithm_dv.status != kDvsEmpty)
     {
@@ -65,18 +62,17 @@ static uint32_t parseAlgorithmFromSettings(const cJSON *settings)
     const cJSON *method_json = cJSON_GetObjectItemCaseSensitive(settings, "method");
     if (method_json != NULL)
     {
-        algorithm_dv = parseDynamicNumericValueFromJsonObject(
-            settings,
-            "method",
-            8,
-            "chacha20-poly1305",
-            "chacha20poly1305",
-            "chacha20",
-            "chacha",
-            "aes-gcm",
-            "aes256gcm",
-            "aes-256-gcm",
-            "aes256-gcm");
+        algorithm_dv = parseDynamicNumericValueFromJsonObject(settings,
+                                                              "method",
+                                                              8,
+                                                              "chacha20-poly1305",
+                                                              "chacha20poly1305",
+                                                              "chacha20",
+                                                              "chacha",
+                                                              "aes-gcm",
+                                                              "aes256gcm",
+                                                              "aes-256-gcm",
+                                                              "aes256-gcm");
 
         if (algorithm_dv.status == kDvsEmpty)
         {
@@ -88,7 +84,6 @@ static uint32_t parseAlgorithmFromSettings(const cJSON *settings)
 
     return kEncryptionAlgorithmChaCha20Poly1305;
 }
-
 
 static bool deriveKeyFromPassword(const char *password, const char *salt, uint32_t iterations, uint8_t out_key[32])
 {
@@ -105,7 +100,8 @@ static bool deriveKeyFromPassword(const char *password, const char *salt, uint32
         iterations = 1;
     }
 
-    if (-1 == blake2s(out_key, 32, (const unsigned char *) salt, salt_len, (const unsigned char *) password, password_len))
+    if (-1 ==
+        blake2s(out_key, 32, (const unsigned char *) salt, salt_len, (const unsigned char *) password, password_len))
     {
         return false;
     }
@@ -130,7 +126,6 @@ static bool deriveKeyFromPassword(const char *password, const char *salt, uint32
     return true;
 }
 
-
 static bool encryptionserverTunnelstateInitialize(encryptionserver_tstate_t *ts, const cJSON *settings)
 {
     char    *password       = NULL;
@@ -140,7 +135,7 @@ static bool encryptionserverTunnelstateInitialize(encryptionserver_tstate_t *ts,
     uint32_t algorithm;
     bool     result = false;
 
-    memoryZeroAligned32(ts, sizeof(*ts));
+    memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 
     if (! checkJsonIsObjectAndHasChild(settings))
     {
@@ -221,7 +216,6 @@ cleanup:
     return result;
 }
 
-
 tunnel_t *encryptionserverTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(encryptionserver_tstate_t), sizeof(encryptionserver_lstate_t));
@@ -242,6 +236,7 @@ tunnel_t *encryptionserverTunnelCreate(node_t *node)
 
     t->onPrepare = &encryptionserverTunnelOnPrepair;
     t->onStart   = &encryptionserverTunnelOnStart;
+    t->onStop    = &encryptionserverTunnelOnStop;
     t->onDestroy = &encryptionserverTunnelDestroy;
 
     encryptionserver_tstate_t *ts       = tunnelGetState(t);

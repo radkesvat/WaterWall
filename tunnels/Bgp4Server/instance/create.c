@@ -26,6 +26,7 @@ tunnel_t *bgp4serverTunnelCreate(node_t *node)
 
     t->onPrepare = &bgp4serverTunnelOnPrepair;
     t->onStart   = &bgp4serverTunnelOnStart;
+    t->onStop    = &bgp4serverTunnelOnStop;
     t->onDestroy = &bgp4serverTunnelDestroy;
 
     bgp4server_tstate_t *ts = tunnelGetState(t);

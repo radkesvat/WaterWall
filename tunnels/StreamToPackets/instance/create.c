@@ -3,7 +3,7 @@
 #include "loggers/network_logger.h"
 
 static bool streamtopacketsLoadPacketValidationLevel(streamtopackets_packet_validation_level_t *level,
-                                                     const cJSON *settings)
+                                                     const cJSON                               *settings)
 {
     const cJSON *jlevel = cJSON_GetObjectItemCaseSensitive(settings, "packet-validation-level");
 
@@ -16,7 +16,8 @@ static bool streamtopacketsLoadPacketValidationLevel(streamtopackets_packet_vali
 
     if (! cJSON_IsString(jlevel) || jlevel->valuestring == NULL)
     {
-        LOGF("JSON Error: StreamToPackets->settings->packet-validation-level (string field) : expected none, loose, or hard");
+        LOGF("JSON Error: StreamToPackets->settings->packet-validation-level (string field) : expected none, loose, or "
+             "hard");
         return false;
     }
 
@@ -38,7 +39,8 @@ static bool streamtopacketsLoadPacketValidationLevel(streamtopackets_packet_vali
         return true;
     }
 
-    LOGF("JSON Error: StreamToPackets->settings->packet-validation-level (string field) : expected none, loose, or hard");
+    LOGF("JSON Error: StreamToPackets->settings->packet-validation-level (string field) : expected none, loose, or "
+         "hard");
     return false;
 }
 
@@ -50,7 +52,7 @@ static bool streamtopacketsLoadSettings(streamtopackets_tstate_t *ts, const cJSO
 
 tunnel_t *streamtopacketsTunnelCreate(node_t *node)
 {
-    tunnel_t                *t  = tunnelCreate(node, sizeof(streamtopackets_tstate_t), sizeof(streamtopackets_lstate_t));
+    tunnel_t *t = tunnelCreate(node, sizeof(streamtopackets_tstate_t), sizeof(streamtopackets_lstate_t));
     streamtopackets_tstate_t *ts = tunnelGetState(t);
 
     t->fnInitU    = &streamtopacketsTunnelUpStreamInit;
@@ -69,6 +71,7 @@ tunnel_t *streamtopacketsTunnelCreate(node_t *node)
 
     t->onPrepare = &streamtopacketsTunnelOnPrepair;
     t->onStart   = &streamtopacketsTunnelOnStart;
+    t->onStop    = &streamtopacketsTunnelOnStop;
     t->onDestroy = &streamtopacketsTunnelDestroy;
 
     ts->packet_validation_level = kStreamToPacketsPacketValidationNone;

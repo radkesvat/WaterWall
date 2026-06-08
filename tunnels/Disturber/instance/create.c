@@ -22,6 +22,7 @@ tunnel_t *disturberTunnelCreate(node_t *node)
 
     t->onPrepare = &disturberTunnelOnPrepair;
     t->onStart   = &disturberTunnelOnStart;
+    t->onStop    = &disturberTunnelOnStop;
     t->onDestroy = &disturberTunnelDestroy;
 
     const cJSON        *settings = node->node_settings_json;
@@ -47,7 +48,8 @@ tunnel_t *disturberTunnelCreate(node_t *node)
     }
     if (ts->delay_max_ms < ts->delay_min_ms)
     {
-        LOGW("Disturber: delay_max_ms (%d) < delay_min_ms (%d), clamping max to min", ts->delay_max_ms,
+        LOGW("Disturber: delay_max_ms (%d) < delay_min_ms (%d), clamping max to min",
+             ts->delay_max_ms,
              ts->delay_min_ms);
         ts->delay_max_ms = ts->delay_min_ms;
     }

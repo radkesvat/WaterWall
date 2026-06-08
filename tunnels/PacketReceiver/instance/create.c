@@ -21,16 +21,16 @@ static bool packetreceiverParseSourceRange(packetreceiver_source_range_t *range,
         return false;
     }
 
-    if (parseIPWithSubnetMask(cidr, &ip, &subnet_mask) != 4 ||
-        sscanf(cidr, "%*[^/]/%d", &prefix_length) != 1 || prefix_length < 0 || prefix_length > 32)
+    if (parseIPWithSubnetMask(cidr, &ip, &subnet_mask) != 4 || sscanf(cidr, "%*[^/]/%d", &prefix_length) != 1 ||
+        prefix_length < 0 || prefix_length > 32)
     {
         LOGF("JSON Error: %s (string field) : expected an IPv4 CIDR range", json_path);
         return false;
     }
 
-    range->base_host    = lwip_ntohl(ip.u_addr.ip4.addr) & lwip_ntohl(subnet_mask.u_addr.ip4.addr);
+    range->base_host     = lwip_ntohl(ip.u_addr.ip4.addr) & lwip_ntohl(subnet_mask.u_addr.ip4.addr);
     range->prefix_length = (uint8_t) prefix_length;
-    range->count        = 1ULL << (32U - (uint32_t) prefix_length);
+    range->count         = 1ULL << (32U - (uint32_t) prefix_length);
     return true;
 }
 
@@ -40,7 +40,8 @@ static bool packetreceiverLoadSourceRanges(packetreceiver_tstate_t *state, const
 
     if (range_json == NULL)
     {
-        LOGF("JSON Error: PacketReceiver->settings->source-ip4-range (string or array field) : expected one or more IPv4 CIDR ranges");
+        LOGF("JSON Error: PacketReceiver->settings->source-ip4-range (string or array field) : expected one or more "
+             "IPv4 CIDR ranges");
         return false;
     }
 
@@ -58,11 +59,12 @@ static bool packetreceiverLoadSourceRanges(packetreceiver_tstate_t *state, const
 
     if (range_count <= 0)
     {
-        LOGF("JSON Error: PacketReceiver->settings->source-ip4-range (string or array field) : expected one or more IPv4 CIDR ranges");
+        LOGF("JSON Error: PacketReceiver->settings->source-ip4-range (string or array field) : expected one or more "
+             "IPv4 CIDR ranges");
         return false;
     }
 
-    state->source_ranges = memoryAllocateZero((size_t) range_count * sizeof(*(state->source_ranges)));
+    state->source_ranges      = memoryAllocateZero((size_t) range_count * sizeof(*(state->source_ranges)));
     state->source_range_count = (uint32_t) range_count;
 
     uint64_t total_source_count = 0;
@@ -123,7 +125,8 @@ static bool packetreceiverLoadExpectedPacketsPerIp(packetreceiver_tstate_t *stat
 
     if (packets_per_ip <= 0)
     {
-        LOGF("JSON Error: PacketReceiver->settings->expected-packets-per-ip (int field) : expected a positive packet count");
+        LOGF("JSON Error: PacketReceiver->settings->expected-packets-per-ip (int field) : expected a positive packet "
+             "count");
         return false;
     }
 
@@ -152,7 +155,8 @@ static bool packetreceiverLoadReportAfterMs(packetreceiver_tstate_t *state, cons
 
     if (report_after_ms <= 0)
     {
-        LOGF("JSON Error: PacketReceiver->settings->report-after-ms (int field) : expected a positive millisecond value");
+        LOGF("JSON Error: PacketReceiver->settings->report-after-ms (int field) : expected a positive millisecond "
+             "value");
         return false;
     }
 
@@ -185,6 +189,7 @@ tunnel_t *packetreceiverTunnelCreate(node_t *node)
 
     t->onPrepare = &packetreceiverTunnelOnPrepair;
     t->onStart   = &packetreceiverTunnelOnStart;
+    t->onStop    = &packetreceiverTunnelOnStop;
     t->onDestroy = &packetreceiverTunnelDestroy;
 
     packetreceiver_tstate_t *state    = tunnelGetState(t);
@@ -200,8 +205,9 @@ tunnel_t *packetreceiverTunnelCreate(node_t *node)
     }
     state->expected_packets_per_ip = 1;
 
-    if (! packetreceiverLoadSourceRanges(state, settings) || ! packetreceiverLoadExpectedPacketsPerIp(state, settings) ||
-        ! packetreceiverLoadOutputFile(state, settings) || ! packetreceiverLoadReportAfterMs(state, settings))
+    if (! packetreceiverLoadSourceRanges(state, settings) ||
+        ! packetreceiverLoadExpectedPacketsPerIp(state, settings) || ! packetreceiverLoadOutputFile(state, settings) ||
+        ! packetreceiverLoadReportAfterMs(state, settings))
     {
         packetreceiverTunnelDestroy(t);
         return NULL;

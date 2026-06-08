@@ -27,17 +27,18 @@ tunnel_t *speedtestserverTunnelCreate(node_t *node)
 
     t->onPrepare = &speedtestserverTunnelOnPrepair;
     t->onStart   = &speedtestserverTunnelOnStart;
+    t->onStop    = &speedtestserverTunnelOnStop;
     t->onDestroy = &speedtestserverTunnelDestroy;
 
-    speedtestserver_tstate_t *state = tunnelGetState(t);
-    const cJSON *settings = node->node_settings_json;
-    int report_interval_ms = kSpeedTestServerDefaultIntervalMs;
+    speedtestserver_tstate_t *state              = tunnelGetState(t);
+    const cJSON              *settings           = node->node_settings_json;
+    int                       report_interval_ms = kSpeedTestServerDefaultIntervalMs;
 
     mutexInit(&state->aggregate_mutex);
     getBoolFromJsonObjectOrDefault(&state->json_summary, settings, "json-summary", false);
     getBoolFromJsonObjectOrDefault(&state->quiet, settings, "quiet", false);
-    getIntFromJsonObjectOrDefault(&report_interval_ms, settings, "report-interval-ms",
-                                  kSpeedTestServerDefaultIntervalMs);
+    getIntFromJsonObjectOrDefault(
+        &report_interval_ms, settings, "report-interval-ms", kSpeedTestServerDefaultIntervalMs);
 
     if (report_interval_ms <= 0)
     {

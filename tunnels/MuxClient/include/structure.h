@@ -29,42 +29,42 @@ typedef struct muxclient_tstate_s
 
 typedef struct muxclient_lstate_s
 {
-    line_t *l; // the line this state is associated with
+    line_t *l;           // the line this state is associated with
     line_t *last_writer; // used when parent, to track the last writer line
 
-    struct muxclient_lstate_s *parent;         // the parent  f is_child is true
-    struct muxclient_lstate_s *child_prev;     // previous child in the parent connection
-    struct muxclient_lstate_s *child_next;     // next child in the parent connection
-    buffer_stream_t            read_stream;    // stream for reading data from the parent connection
+    struct muxclient_lstate_s *parent;             // the parent  f is_child is true
+    struct muxclient_lstate_s *child_prev;         // previous child in the parent connection
+    struct muxclient_lstate_s *child_next;         // next child in the parent connection
+    buffer_stream_t            read_stream;        // stream for reading data from the parent connection
     buffer_queue_t             pending_child_data; // child-destined data queued while the child write side is paused
     size_t                     pending_child_data_len; // parent: total queued child-destined bytes
     uint64_t                   creation_epoch; // epoch of the connection creation, used for concurrency mode timer
     cid_t                      connection_id;  // unique connection id, used for multiplexing
-    uint32_t children_count; // number of children in the parent connection, used for concurrency mode counter
+    uint32_t children_count;          // number of children in the parent connection, used for concurrency mode counter
     uint32_t parent_read_pause_count; // parent: child queues currently pausing parent reads
-    bool     is_child : 1;              // if this connection is muxed into a parent connection
-    bool     paused : 1;                // child: local child write side is paused
-    bool     flow_paused_sent : 1;      // child: FlowPause was sent to the peer for this cid
-    bool     peer_flow_paused : 1;      // child: peer sent FlowPause for this cid
-    bool     parent_write_paused : 1;   // child: parent transport write pause was reflected to this child
-    bool     parent_read_paused : 1;    // child: queued child data paused parent transport reads
+    bool     is_child : 1;            // if this connection is muxed into a parent connection
+    bool     paused : 1;              // child: local child write side is paused
+    bool     flow_paused_sent : 1;    // child: FlowPause was sent to the peer for this cid
+    bool     peer_flow_paused : 1;    // child: peer sent FlowPause for this cid
+    bool     parent_write_paused : 1; // child: parent transport write pause was reflected to this child
+    bool     parent_read_paused : 1;  // child: queued child data paused parent transport reads
     bool     aggregate_read_paused : 1; // parent: aggregate child queues paused parent transport reads
     bool     parent_finishing : 1;      // parent: main FIN is being handled, suppress parent writes
 } muxclient_lstate_t;
 
 enum
 {
-    kTunnelStateSize        = sizeof(muxclient_tstate_t),
-    kLineStateSize          = sizeof(muxclient_lstate_t),
-    kConcurrencyModeTimer   = kDvsFirstOption,
-    kConcurrencyModeCounter = kDvsSecondOption,
+    kTunnelStateSize                      = sizeof(muxclient_tstate_t),
+    kLineStateSize                        = sizeof(muxclient_lstate_t),
+    kConcurrencyModeTimer                 = kDvsFirstOption,
+    kConcurrencyModeCounter               = kDvsSecondOption,
     kConcurrencyModeFixedConnectionsCount = kDvsThirdOption,
-    kMaxMainChannelBufferSize = 1024 * 1024, // 1MB
-    kMuxDefaultChildBufferLimit = 8 * 1024 * 1024,
-    kMuxDefaultChildBufferPauseTolerance = 512 * 1024,
-    kMuxChildBufferResumeThreshold = 512 * 1024,
-    kMuxChildBufferQueueCap = 8,
-    kMuxMainLineStatsLogIntervalMs = 5000,
+    kMaxMainChannelBufferSize             = 1024 * 1024, // 1MB
+    kMuxDefaultChildBufferLimit           = 8 * 1024 * 1024,
+    kMuxDefaultChildBufferPauseTolerance  = 512 * 1024,
+    kMuxChildBufferResumeThreshold        = 512 * 1024,
+    kMuxChildBufferQueueCap               = 8,
+    kMuxMainLineStatsLogIntervalMs        = 5000,
 };
 
 /*
@@ -115,6 +115,7 @@ void muxclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void muxclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void muxclientTunnelOnPrepair(tunnel_t *t);
 void muxclientTunnelOnStart(tunnel_t *t);
+void muxclientTunnelOnStop(tunnel_t *t);
 
 void muxclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void muxclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -130,25 +131,24 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void muxclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void muxclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_child,cid_t connection_id);
+void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_child, cid_t connection_id);
 void muxclientLinestateDestroy(muxclient_lstate_t *ls);
 
-bool muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstate_t *ls);
-void muxclientForgetParentLine(muxclient_tstate_t *ts, wid_t wid, line_t *parent_l);
+bool    muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstate_t *ls);
+void    muxclientForgetParentLine(muxclient_tstate_t *ts, wid_t wid, line_t *parent_l);
 line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l);
-void muxclientScheduleParentStatsLog(tunnel_t *t, line_t *parent_l);
+void    muxclientScheduleParentStatsLog(tunnel_t *t, line_t *parent_l);
 
 void muxclientJoinConnection(muxclient_lstate_t *parent, muxclient_lstate_t *child);
 void muxclientLeaveConnection(muxclient_lstate_t *child);
 
 void muxclientMakeMuxFrame(sbuf_t *buf, cid_t cid, uint8_t flag);
-bool muxclientSendControlFrame(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l,
-                               cid_t cid, uint8_t flag);
+bool muxclientSendControlFrame(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l, cid_t cid,
+                               uint8_t flag);
 bool muxclientSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l,
                                  muxclient_lstate_t *child_ls);
 bool muxclientMaybeSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts,
-                                      muxclient_lstate_t *parent_ls, line_t *child_l,
-                                      muxclient_lstate_t *child_ls);
+                                      muxclient_lstate_t *parent_ls, line_t *child_l, muxclient_lstate_t *child_ls);
 bool muxclientMaybePauseParentInputForChild(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts,
                                             muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls);
 bool muxclientResumeParentInputForChild(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls,
@@ -159,7 +159,7 @@ bool muxclientPauseChildSource(tunnel_t *t, line_t *parent_l, muxclient_lstate_t
                                bool parent_write);
 bool muxclientResumeChildSource(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *child_ls, bool peer_flow,
                                 bool parent_write);
-bool muxclientQueueChildPayload(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts,
-                                muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls, sbuf_t *buf);
+bool muxclientQueueChildPayload(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts, muxclient_lstate_t *parent_ls,
+                                muxclient_lstate_t *child_ls, sbuf_t *buf);
 bool muxclientFlushChildPending(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l,
                                 muxclient_lstate_t *child_ls, bool fin_mode);

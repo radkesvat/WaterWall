@@ -6,16 +6,16 @@ typedef struct disturber_tstate_s
 {
     bool disturb_upstream;
     bool disturb_downstream;
-    int chance_instant_close;
-    int chance_middle_close;
-    int chance_payload_corruption;
-    int chance_payload_loss;
-    int chance_payload_duplication;
-    int chance_payload_out_of_order;
-    int chance_payload_delay;
-    int chance_connection_deadhang;
-    int delay_min_ms;
-    int delay_max_ms;
+    int  chance_instant_close;
+    int  chance_middle_close;
+    int  chance_payload_corruption;
+    int  chance_payload_loss;
+    int  chance_payload_duplication;
+    int  chance_payload_out_of_order;
+    int  chance_payload_delay;
+    int  chance_connection_deadhang;
+    int  delay_min_ms;
+    int  delay_max_ms;
 
 } disturber_tstate_t;
 
@@ -34,7 +34,7 @@ typedef struct disturber_lstate_s
 
 typedef enum disturber_payload_direction_e
 {
-    kDisturberPayloadDirectionUpstream = 0,
+    kDisturberPayloadDirectionUpstream   = 0,
     kDisturberPayloadDirectionDownstream = 1
 } disturber_payload_direction_e;
 
@@ -52,6 +52,7 @@ void disturberTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void disturberTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void disturberTunnelOnPrepair(tunnel_t *t);
 void disturberTunnelOnStart(tunnel_t *t);
+void disturberTunnelOnStop(tunnel_t *t);
 
 void disturberTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void disturberTunnelUpStreamEst(tunnel_t *t, line_t *l);

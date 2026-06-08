@@ -35,6 +35,7 @@ void keepaliveserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_off
 void keepaliveserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void keepaliveserverTunnelOnPrepair(tunnel_t *t);
 void keepaliveserverTunnelOnStart(tunnel_t *t);
+void keepaliveserverTunnelOnStop(tunnel_t *t);
 
 void keepaliveserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void keepaliveserverTunnelUpStreamEst(tunnel_t *t, line_t *l);

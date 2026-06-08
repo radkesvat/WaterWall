@@ -24,17 +24,18 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
 
     t->onPrepare = &muxclientTunnelOnPrepair;
     t->onStart   = &muxclientTunnelOnStart;
+    t->onStop    = &muxclientTunnelOnStop;
     t->onDestroy = &muxclientTunnelDestroy;
 
-    const cJSON        *settings = node->node_settings_json;
-    muxclient_tstate_t *ts       = tunnelGetState(t);
-    int                 child_buffer_limit = kMuxDefaultChildBufferLimit;
+    const cJSON        *settings                     = node->node_settings_json;
+    muxclient_tstate_t *ts                           = tunnelGetState(t);
+    int                 child_buffer_limit           = kMuxDefaultChildBufferLimit;
     int                 child_buffer_pause_tolerance = kMuxDefaultChildBufferPauseTolerance;
-    bool                log_main_line_stats = false;
+    bool                log_main_line_stats          = false;
 
     getIntFromJsonObjectOrDefault(&child_buffer_limit, settings, "child-buffer-limit", kMuxDefaultChildBufferLimit);
-    getIntFromJsonObjectOrDefault(&child_buffer_pause_tolerance, settings, "child-buffer-pause-tolerance",
-                                  kMuxDefaultChildBufferPauseTolerance);
+    getIntFromJsonObjectOrDefault(
+        &child_buffer_pause_tolerance, settings, "child-buffer-pause-tolerance", kMuxDefaultChildBufferPauseTolerance);
     getBoolFromJsonObjectOrDefault(&log_main_line_stats, settings, "log-main-line-stats", false);
     if (child_buffer_limit <= 0)
     {
@@ -54,8 +55,9 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
         (uint32_t) min((size_t) child_buffer_pause_tolerance, (size_t) child_buffer_limit);
     ts->log_main_line_stats = log_main_line_stats;
 
-    ts->concurrency_mode = parseDynamicNumericValueFromJsonObject(settings, "mode", 3, "timer", "counter",
-                                                                  "fixed-connections-count").status;
+    ts->concurrency_mode =
+        parseDynamicNumericValueFromJsonObject(settings, "mode", 3, "timer", "counter", "fixed-connections-count")
+            .status;
 
     if (ts->concurrency_mode != kConcurrencyModeTimer && ts->concurrency_mode != kConcurrencyModeCounter &&
         ts->concurrency_mode != kConcurrencyModeFixedConnectionsCount)
@@ -123,8 +125,7 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
 
         if (fixed_connections_count <= 0)
         {
-            LOGF("MuxClient: \"per-worker-connections-count\" must be greater than 0, got %d",
-                 fixed_connections_count);
+            LOGF("MuxClient: \"per-worker-connections-count\" must be greater than 0, got %d", fixed_connections_count);
             tunnelDestroy(t);
             return NULL;
         }
@@ -137,9 +138,9 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
             return NULL;
         }
 
-        ts->fixed_connections_count    = (uint32_t) fixed_connections_count;
-        ts->fixed_parent_lines         = memoryAllocate(fixed_slots_count * sizeof(line_t *));
-        ts->fixed_next_parent_indexes  = memoryAllocate((size_t) wc * sizeof(uint32_t));
+        ts->fixed_connections_count   = (uint32_t) fixed_connections_count;
+        ts->fixed_parent_lines        = memoryAllocate(fixed_slots_count * sizeof(line_t *));
+        ts->fixed_next_parent_indexes = memoryAllocate((size_t) wc * sizeof(uint32_t));
 
         memorySet(ts->fixed_parent_lines, 0, fixed_slots_count * sizeof(line_t *));
         memorySet(ts->fixed_next_parent_indexes, 0, (size_t) wc * sizeof(uint32_t));

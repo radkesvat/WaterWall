@@ -46,16 +46,16 @@ static bool packetsenderParseSourceRange(packetsender_source_range_t *range, con
         return false;
     }
 
-    if (parseIPWithSubnetMask(cidr, &ip, &subnet_mask) != 4 ||
-        sscanf(cidr, "%*[^/]/%d", &prefix_length) != 1 || prefix_length < 0 || prefix_length > 32)
+    if (parseIPWithSubnetMask(cidr, &ip, &subnet_mask) != 4 || sscanf(cidr, "%*[^/]/%d", &prefix_length) != 1 ||
+        prefix_length < 0 || prefix_length > 32)
     {
         LOGF("JSON Error: %s (string field) : expected an IPv4 CIDR range", json_path);
         return false;
     }
 
-    range->base_host = lwip_ntohl(ip.u_addr.ip4.addr) & lwip_ntohl(subnet_mask.u_addr.ip4.addr);
+    range->base_host     = lwip_ntohl(ip.u_addr.ip4.addr) & lwip_ntohl(subnet_mask.u_addr.ip4.addr);
     range->prefix_length = (uint8_t) prefix_length;
-    range->count = 1ULL << (32U - (uint32_t) prefix_length);
+    range->count         = 1ULL << (32U - (uint32_t) prefix_length);
     return true;
 }
 
@@ -65,7 +65,8 @@ static bool packetsenderLoadSourceRanges(packetsender_tstate_t *state, const cJS
 
     if (range_json == NULL)
     {
-        LOGF("JSON Error: PacketSender->settings->source-ip4-range (string or array field) : expected one or more IPv4 CIDR ranges");
+        LOGF("JSON Error: PacketSender->settings->source-ip4-range (string or array field) : expected one or more IPv4 "
+             "CIDR ranges");
         return false;
     }
 
@@ -83,11 +84,12 @@ static bool packetsenderLoadSourceRanges(packetsender_tstate_t *state, const cJS
 
     if (range_count <= 0)
     {
-        LOGF("JSON Error: PacketSender->settings->source-ip4-range (string or array field) : expected one or more IPv4 CIDR ranges");
+        LOGF("JSON Error: PacketSender->settings->source-ip4-range (string or array field) : expected one or more IPv4 "
+             "CIDR ranges");
         return false;
     }
 
-    state->source_ranges = memoryAllocateZero((size_t) range_count * sizeof(*(state->source_ranges)));
+    state->source_ranges      = memoryAllocateZero((size_t) range_count * sizeof(*(state->source_ranges)));
     state->source_range_count = (uint32_t) range_count;
 
     uint64_t total_source_count = 0;
@@ -150,8 +152,7 @@ static bool packetsenderLoadDestIpv4(packetsender_tstate_t *state, const cJSON *
         return false;
     }
 
-    const bool ok = packetsenderParseIpv4String(&state->dest_addr_network, ipbuf,
-                                                "PacketSender->settings->dest-ip4");
+    const bool ok = packetsenderParseIpv4String(&state->dest_addr_network, ipbuf, "PacketSender->settings->dest-ip4");
     memoryFree(ipbuf);
 
     if (! ok)
@@ -256,7 +257,8 @@ static bool packetsenderLoadDestPort(packetsender_tstate_t *state, const cJSON *
 
     if (required && item->valueint == 0)
     {
-        LOGF("JSON Error: PacketSender->settings->dest-port (int field) : expected a non-zero port for TCP, UDP, or ALL");
+        LOGF("JSON Error: PacketSender->settings->dest-port (int field) : expected a non-zero port for TCP, UDP, or "
+             "ALL");
         return false;
     }
 
@@ -291,7 +293,8 @@ static bool packetsenderLoadSrcPort(packetsender_tstate_t *state, const cJSON *s
             return true;
         }
 
-        LOGF("JSON Error: PacketSender->settings->src-port (int-or-string field) : expected a port number or \"random\"");
+        LOGF("JSON Error: PacketSender->settings->src-port (int-or-string field) : expected a port number or "
+             "\"random\"");
         return false;
     }
 
@@ -304,7 +307,8 @@ static bool packetsenderLoadSrcPort(packetsender_tstate_t *state, const cJSON *s
 
     if (required && item->valueint == 0)
     {
-        LOGF("JSON Error: PacketSender->settings->src-port (int-or-string field) : expected a non-zero port or \"random\" for TCP, UDP, or ALL");
+        LOGF("JSON Error: PacketSender->settings->src-port (int-or-string field) : expected a non-zero port or "
+             "\"random\" for TCP, UDP, or ALL");
         return false;
     }
 
@@ -326,6 +330,7 @@ tunnel_t *packetsenderTunnelCreate(node_t *node)
 
     t->onPrepare = &packetsenderTunnelOnPrepair;
     t->onStart   = &packetsenderTunnelOnStart;
+    t->onStop    = &packetsenderTunnelOnStop;
     t->onDestroy = &packetsenderTunnelDestroy;
 
     packetsender_tstate_t *state    = tunnelGetState(t);

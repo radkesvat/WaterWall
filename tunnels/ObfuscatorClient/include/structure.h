@@ -4,8 +4,7 @@
 
 enum obfuscator_methods_e
 {
-    kObfuscatorMethodXor  = kDvsFirstOption,
-
+    kObfuscatorMethodXor = kDvsFirstOption,
 };
 
 enum obfuscator_skip_parts_e
@@ -20,8 +19,8 @@ typedef struct obfuscatorclient_tstate_s
     uint32_t method; // Obfuscation method
     uint32_t skip;   // Headers that remain unobfuscated inside packet payloads
 
-    uint8_t  xor_key; // Key for XOR obfuscation, if used
-    bool     tls_record_header;
+    uint8_t xor_key; // Key for XOR obfuscation, if used
+    bool    tls_record_header;
 } obfuscatorclient_tstate_t;
 
 typedef struct obfuscatorclient_lstate_s
@@ -31,8 +30,8 @@ typedef struct obfuscatorclient_lstate_s
 
 enum
 {
-    kTunnelStateSize = sizeof(obfuscatorclient_tstate_t),
-    kLineStateSize   = 0,
+    kTunnelStateSize               = sizeof(obfuscatorclient_tstate_t),
+    kLineStateSize                 = 0,
     kObfuscatorTlsRecordHeaderSize = 5
 };
 
@@ -44,6 +43,7 @@ void obfuscatorclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_of
 void obfuscatorclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void obfuscatorclientTunnelOnPrepair(tunnel_t *t);
 void obfuscatorclientTunnelOnStart(tunnel_t *t);
+void obfuscatorclientTunnelOnStop(tunnel_t *t);
 
 void obfuscatorclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void obfuscatorclientTunnelUpStreamEst(tunnel_t *t, line_t *l);

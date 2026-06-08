@@ -6,6 +6,7 @@ add_library(PacketSplitStream STATIC
                     instance/node.c
                     instance/prepair.c
                     instance/start.c
+                    instance/stop.c
                     instance/chain.c
                     common/helpers.c
                     common/line_state.c

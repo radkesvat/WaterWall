@@ -66,19 +66,19 @@ typedef struct tcpconnector_destination_s
 
 typedef struct tcpconnector_dns_request_s
 {
-    tunnel_t                      *tunnel;
-    line_t                        *line;
-    uint64_t                       outbound_ip_range;
-    tcpconnector_socket_options_t  socket_options;
-    bool                           cancelled;
+    tunnel_t                     *tunnel;
+    line_t                       *line;
+    uint64_t                      outbound_ip_range;
+    tcpconnector_socket_options_t socket_options;
+    bool                          cancelled;
 } tcpconnector_dns_request_t;
 
 typedef struct tcpconnector_lstate_s
 {
-    tunnel_t     *tunnel;      // reference to the tunnel (TcpConnector)
-    line_t       *line;        // reference to the line
-    wio_t        *io;          // IO handle for the connection (socket)
-    idle_item_t *idle_handle; // reference to the idle item for this connection
+    tunnel_t                   *tunnel;      // reference to the tunnel (TcpConnector)
+    line_t                     *line;        // reference to the line
+    wio_t                      *io;          // IO handle for the connection (socket)
+    idle_item_t                *idle_handle; // reference to the idle item for this connection
     tcpconnector_dns_request_t *dns_request;
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t pause_queue;
@@ -93,8 +93,8 @@ enum
 {
     kTunnelStateSize    = sizeof(tcpconnector_tstate_t),
     kLineStateSize      = sizeof(tcpconnector_lstate_t),
-    kMaxPauseQueueSize  = (1U << 24),  // 16MB
-    kMinPauseQueueSize  = (1U << 10),  // 1KB
+    kMaxPauseQueueSize  = (1U << 24), // 16MB
+    kMinPauseQueueSize  = (1U << 10), // 1KB
     kReadWriteTimeoutMs = 300 * 1000,
     kPauseQueueCapacity = 2
 };
@@ -139,6 +139,7 @@ void tcpconnectorTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset
 void tcpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tcpconnectorTunnelOnPrepair(tunnel_t *t);
 void tcpconnectorTunnelOnStart(tunnel_t *t);
+void tcpconnectorTunnelOnStop(tunnel_t *t);
 
 void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tcpconnectorTunnelUpStreamEst(tunnel_t *t, line_t *l);

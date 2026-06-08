@@ -30,8 +30,8 @@ static bool tcpoverudpserverParseSettings(tcpoverudpserver_tstate_t *ts, node_t 
 
     getBoolFromJsonObjectOrDefault(&ts->fec_enabled, settings, "fec", false);
     getBoolFromJsonObjectOrDefault(&ts->kcp_nodelay, settings, "kcp-nodelay", ts->kcp_nodelay);
-    getBoolFromJsonObjectOrDefault(&ts->kcp_no_congestion_control, settings, "kcp-no-congestion-control",
-                                   ts->kcp_no_congestion_control);
+    getBoolFromJsonObjectOrDefault(
+        &ts->kcp_no_congestion_control, settings, "kcp-no-congestion-control", ts->kcp_no_congestion_control);
 
     int  data_shards        = ts->fec_data_shards;
     int  parity_shards      = ts->fec_parity_shards;
@@ -46,8 +46,8 @@ static bool tcpoverudpserverParseSettings(tcpoverudpserver_tstate_t *ts, node_t 
     getIntFromJsonObjectOrDefault(&ts->kcp_send_window, settings, "kcp-send-window", ts->kcp_send_window);
     getIntFromJsonObjectOrDefault(&ts->kcp_recv_window, settings, "kcp-recv-window", ts->kcp_recv_window);
     getIntFromJsonObjectOrDefault(&ts->kcp_rx_minrto_ms, settings, "kcp-rx-minrto-ms", ts->kcp_rx_minrto_ms);
-    getIntFromJsonObjectOrDefault(&ts->kcp_send_buffer_limit, settings, "kcp-send-buffer-limit",
-                                  ts->kcp_send_buffer_limit);
+    getIntFromJsonObjectOrDefault(
+        &ts->kcp_send_buffer_limit, settings, "kcp-send-buffer-limit", ts->kcp_send_buffer_limit);
     getIntFromJsonObjectOrDefault(&ping_interval_ms, settings, "ping-interval-ms", ping_interval_ms);
     getIntFromJsonObjectOrDefault(&no_recv_timeout_ms, settings, "no-recv-timeout-ms", no_recv_timeout_ms);
 
@@ -107,10 +107,10 @@ static bool tcpoverudpserverParseSettings(tcpoverudpserver_tstate_t *ts, node_t 
     ts->ping_interval_ms   = (uint32_t) ping_interval_ms;
     ts->no_recv_timeout_ms = (uint32_t) no_recv_timeout_ms;
 
-    if (ts->fec_enabled &&
-        (data_shards <= 0 || parity_shards <= 0 || data_shards + parity_shards > 255))
+    if (ts->fec_enabled && (data_shards <= 0 || parity_shards <= 0 || data_shards + parity_shards > 255))
     {
-        LOGF("JSON Error: TcpOverUdpServer->settings FEC requires 1..255 total shards with positive data/parity values");
+        LOGF(
+            "JSON Error: TcpOverUdpServer->settings FEC requires 1..255 total shards with positive data/parity values");
         return false;
     }
 
@@ -149,6 +149,7 @@ tunnel_t *tcpoverudpserverTunnelCreate(node_t *node)
 
     t->onPrepare = &tcpoverudpserverTunnelOnPrepair;
     t->onStart   = &tcpoverudpserverTunnelOnStart;
+    t->onStop    = &tcpoverudpserverTunnelOnStop;
     t->onDestroy = &tcpoverudpserverTunnelDestroy;
 
     tcpoverudpserver_tstate_t *ts = tunnelGetState(t);

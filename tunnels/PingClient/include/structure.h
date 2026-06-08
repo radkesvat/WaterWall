@@ -1,8 +1,8 @@
 #pragma once
 
-#include "wwapi.h"
 #include "lwip/prot/icmp.h"
 #include "lwip/prot/ip4.h"
+#include "wwapi.h"
 
 typedef struct pingclient_tstate_s
 {
@@ -36,25 +36,25 @@ enum
     kPingClientStrategyChangeOnlyIpv4ProtocolNumber,
     kPingClientDefaultStrategy = kPingClientStrategyWrapIcmpHeaderAndReuseIpv4Addrs,
 
-    kPingClientNetworkMtu            = kMaxAllowedPacketLength,
-    kPingClientIpv4HeaderLength      = sizeof(struct ip_hdr),
-    kPingClientIcmpHeaderLength      = sizeof(struct icmp_echo_hdr),
-    kPingClientEncapsulationOverhead = kPingClientIpv4HeaderLength + kPingClientIcmpHeaderLength,
-    kPingClientSizePrefixLength      = sizeof(uint16_t),
-    kPingClientReuseTrailerLength    = 5,
-    kPingClientMaxIcmpPayloadLength  = kPingClientNetworkMtu - kPingClientEncapsulationOverhead,
+    kPingClientNetworkMtu               = kMaxAllowedPacketLength,
+    kPingClientIpv4HeaderLength         = sizeof(struct ip_hdr),
+    kPingClientIcmpHeaderLength         = sizeof(struct icmp_echo_hdr),
+    kPingClientEncapsulationOverhead    = kPingClientIpv4HeaderLength + kPingClientIcmpHeaderLength,
+    kPingClientSizePrefixLength         = sizeof(uint16_t),
+    kPingClientReuseTrailerLength       = 5,
+    kPingClientMaxIcmpPayloadLength     = kPingClientNetworkMtu - kPingClientEncapsulationOverhead,
     kPingClientMaxOnlyIcmpPayloadLength = kPingClientNetworkMtu - kPingClientIcmpHeaderLength,
-    kPingClientMaxInnerPacketLength  = kPingClientMaxIcmpPayloadLength,
-    kPingClientDefaultIdentifier     = 0xAFAF,
-    kPingClientDefaultTtl            = 64,
-    kPingClientDefaultTos            = 0,
-    kPingClientDefaultSequenceStart  = 0,
-    kPingClientDefaultIpv4IdStart    = 0,
-    kPingClientDefaultPayloadXorByte = -1,
-    kPingClientDefaultRoundupPayload = false,
-    kPingClientDefaultIdentifierCheck = true,
-    kTunnelStateSize                 = sizeof(pingclient_tstate_t),
-    kLineStateSize                   = sizeof(pingclient_lstate_t)
+    kPingClientMaxInnerPacketLength     = kPingClientMaxIcmpPayloadLength,
+    kPingClientDefaultIdentifier        = 0xAFAF,
+    kPingClientDefaultTtl               = 64,
+    kPingClientDefaultTos               = 0,
+    kPingClientDefaultSequenceStart     = 0,
+    kPingClientDefaultIpv4IdStart       = 0,
+    kPingClientDefaultPayloadXorByte    = -1,
+    kPingClientDefaultRoundupPayload    = false,
+    kPingClientDefaultIdentifierCheck   = true,
+    kTunnelStateSize                    = sizeof(pingclient_tstate_t),
+    kLineStateSize                      = sizeof(pingclient_lstate_t)
 };
 
 WW_EXPORT void         pingclientDestroy(tunnel_t *t);
@@ -65,6 +65,7 @@ void pingclientOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void pingclientOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void pingclientOnPrepair(tunnel_t *t);
 void pingclientOnStart(tunnel_t *t);
+void pingclientOnStop(tunnel_t *t);
 
 void pingclientUpStreamInit(tunnel_t *t, line_t *l);
 void pingclientUpStreamEst(tunnel_t *t, line_t *l);

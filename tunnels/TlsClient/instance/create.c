@@ -25,6 +25,7 @@ static void configureTunnelCallbacks(tunnel_t *t)
 
     t->onPrepare = &tlsclientTunnelOnPrepair;
     t->onStart   = &tlsclientTunnelOnStart;
+    t->onStop    = &tlsclientTunnelOnStop;
     t->onDestroy = &tlsclientTunnelDestroy;
 }
 
@@ -292,13 +293,12 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (ts->ech_grease_sni_override != NULL &&
-        ! createSslContextPool(&(ts->threadlocal_ech_grease_inner_ssl_contexts),
-                               (void *) &chrome_alpn[0],
-                               sizeof(chrome_alpn),
-                               worker_count,
-                               false,
-                               false))
+    if (ts->ech_grease_sni_override != NULL && ! createSslContextPool(&(ts->threadlocal_ech_grease_inner_ssl_contexts),
+                                                                      (void *) &chrome_alpn[0],
+                                                                      sizeof(chrome_alpn),
+                                                                      worker_count,
+                                                                      false,
+                                                                      false))
     {
         tlsclientTunnelstateDestroy(ts);
         tunnelDestroy(t);

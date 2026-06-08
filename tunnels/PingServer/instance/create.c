@@ -16,24 +16,21 @@ static bool pingserverLoadIntSetting(int *dest, const cJSON *settings, const cha
 
     if (! cJSON_IsNumber(item))
     {
-        LOGF("JSON Error: %s (int field) : expected a whole number between %d and %d", json_path, min_value,
-             max_value);
+        LOGF("JSON Error: %s (int field) : expected a whole number between %d and %d", json_path, min_value, max_value);
         return false;
     }
 
     const double value = item->valuedouble;
     if (! (value >= (double) min_value && value <= (double) max_value))
     {
-        LOGF("JSON Error: %s (int field) : expected a whole number between %d and %d", json_path, min_value,
-             max_value);
+        LOGF("JSON Error: %s (int field) : expected a whole number between %d and %d", json_path, min_value, max_value);
         return false;
     }
 
     const int int_value = (int) value;
     if ((double) int_value < value || (double) int_value > value)
     {
-        LOGF("JSON Error: %s (int field) : expected a whole number between %d and %d", json_path, min_value,
-             max_value);
+        LOGF("JSON Error: %s (int field) : expected a whole number between %d and %d", json_path, min_value, max_value);
         return false;
     }
 
@@ -251,6 +248,7 @@ tunnel_t *pingserverCreate(node_t *node)
     t->fnResumeD  = &pingserverDownStreamResume;
     t->onPrepare  = &pingserverOnPrepair;
     t->onStart    = &pingserverOnStart;
+    t->onStop     = &pingserverOnStop;
     t->onDestroy  = &pingserverDestroy;
 
     pingserver_tstate_t *state    = tunnelGetState(t);
@@ -263,35 +261,52 @@ tunnel_t *pingserverCreate(node_t *node)
         return NULL;
     }
 
-    if (! pingserverLoadUint16Setting(&state->identifier, settings, "identifier", kPingServerDefaultIdentifier,
+    if (! pingserverLoadUint16Setting(&state->identifier,
+                                      settings,
+                                      "identifier",
+                                      kPingServerDefaultIdentifier,
                                       "PingServer->settings->identifier") ||
-        ! pingserverLoadBoolSetting(&state->identifier_check_enabled, settings, "check-identifier",
-                                    kPingServerDefaultIdentifierCheck, "PingServer->settings->check-identifier") ||
+        ! pingserverLoadBoolSetting(&state->identifier_check_enabled,
+                                    settings,
+                                    "check-identifier",
+                                    kPingServerDefaultIdentifierCheck,
+                                    "PingServer->settings->check-identifier") ||
         ! pingserverLoadStrategy(state, settings) ||
-        ! pingserverLoadUint8Setting(&state->ttl, settings, "ttl", kPingServerDefaultTtl, "PingServer->settings->ttl") ||
-        ! pingserverLoadUint8Setting(&state->tos, settings, "tos", kPingServerDefaultTos, "PingServer->settings->tos") ||
-        ! pingserverLoadOptionalXorByteSetting(&state->payload_xor_enabled, &state->payload_xor_byte, settings,
-                                               "xor-byte", "PingServer->settings->xor-byte"))
+        ! pingserverLoadUint8Setting(
+            &state->ttl, settings, "ttl", kPingServerDefaultTtl, "PingServer->settings->ttl") ||
+        ! pingserverLoadUint8Setting(
+            &state->tos, settings, "tos", kPingServerDefaultTos, "PingServer->settings->tos") ||
+        ! pingserverLoadOptionalXorByteSetting(&state->payload_xor_enabled,
+                                               &state->payload_xor_byte,
+                                               settings,
+                                               "xor-byte",
+                                               "PingServer->settings->xor-byte"))
     {
         pingserverDestroy(t);
         return NULL;
     }
 
-    getBoolFromJsonObjectOrDefault(&state->roundup_payload_size, settings, "roundup-size",
-                                   kPingServerDefaultRoundupPayload);
+    getBoolFromJsonObjectOrDefault(
+        &state->roundup_payload_size, settings, "roundup-size", kPingServerDefaultRoundupPayload);
 
     if (! state->roundup_payload_size)
     {
-        getBoolFromJsonObjectOrDefault(&state->roundup_payload_size, settings, "roundup",
-                                       kPingServerDefaultRoundupPayload);
+        getBoolFromJsonObjectOrDefault(
+            &state->roundup_payload_size, settings, "roundup", kPingServerDefaultRoundupPayload);
     }
 
     uint16_t sequence_start = kPingServerDefaultSequenceStart;
     uint16_t ipv4_id_start  = kPingServerDefaultIpv4IdStart;
 
-    if (! pingserverLoadUint16Setting(&sequence_start, settings, "sequence-start", kPingServerDefaultSequenceStart,
+    if (! pingserverLoadUint16Setting(&sequence_start,
+                                      settings,
+                                      "sequence-start",
+                                      kPingServerDefaultSequenceStart,
                                       "PingServer->settings->sequence-start") ||
-        ! pingserverLoadUint16Setting(&ipv4_id_start, settings, "ipv4-id-start", kPingServerDefaultIpv4IdStart,
+        ! pingserverLoadUint16Setting(&ipv4_id_start,
+                                      settings,
+                                      "ipv4-id-start",
+                                      kPingServerDefaultIpv4IdStart,
                                       "PingServer->settings->ipv4-id-start"))
     {
         pingserverDestroy(t);
@@ -303,10 +318,13 @@ tunnel_t *pingserverCreate(node_t *node)
 
     if (state->strategy == kPingServerStrategyWrapNewIpAndIcmpHeader)
     {
-        if (! pingserverLoadOptionalIpv4Setting(&state->source_addr, &state->source_addr_configured, settings,
-                                                "source", "PingServer->settings->source") ||
-            ! pingserverLoadOptionalIpv4Setting(&state->dest_addr, &state->dest_addr_configured, settings, "dest",
-                                                "PingServer->settings->dest"))
+        if (! pingserverLoadOptionalIpv4Setting(&state->source_addr,
+                                                &state->source_addr_configured,
+                                                settings,
+                                                "source",
+                                                "PingServer->settings->source") ||
+            ! pingserverLoadOptionalIpv4Setting(
+                &state->dest_addr, &state->dest_addr_configured, settings, "dest", "PingServer->settings->dest"))
         {
             pingserverDestroy(t);
             return NULL;

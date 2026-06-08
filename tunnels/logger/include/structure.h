@@ -40,6 +40,7 @@ enum loggertunnel_output_mode_e
 WW_EXPORT void         loggertunnelTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *loggertunnelTunnelCreate(node_t *node);
 WW_EXPORT api_result_t loggertunnelTunnelApi(tunnel_t *instance, sbuf_t *message);
+void                   loggertunnelTunnelOnStop(tunnel_t *t);
 
 void loggertunnelTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void loggertunnelTunnelUpStreamEst(tunnel_t *t, line_t *l);

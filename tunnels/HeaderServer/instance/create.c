@@ -26,6 +26,7 @@ tunnel_t *headerserverTunnelCreate(node_t *node)
 
     t->onPrepare = &headerserverTunnelOnPrepair;
     t->onStart   = &headerserverTunnelOnStart;
+    t->onStop    = &headerserverTunnelOnStop;
     t->onDestroy = &headerserverTunnelDestroy;
 
     headerserver_tstate_t *ts = tunnelGetState(t);

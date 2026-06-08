@@ -81,13 +81,11 @@ static bool parseUsers(socks5server_tstate_t *ts, const cJSON *settings)
             single_pass = stringDuplicate("");
         }
 
-        ts->users = memoryAllocate(sizeof(*ts->users));
-        ts->users[0] = (socks5server_user_t) {
-            .username     = single_user,
-            .password     = single_pass,
-            .username_len = (uint8_t) username_len,
-            .password_len = (uint8_t) password_len
-        };
+        ts->users      = memoryAllocate(sizeof(*ts->users));
+        ts->users[0]   = (socks5server_user_t) {.username     = single_user,
+                                                .password     = single_pass,
+                                                .username_len = (uint8_t) username_len,
+                                                .password_len = (uint8_t) password_len};
         ts->user_count = 1;
     }
 
@@ -138,8 +136,8 @@ static bool parseUsers(socks5server_tstate_t *ts, const cJSON *settings)
             return false;
         }
 
-        size_t username_len = stringLength(username_json->valuestring);
-        size_t password_len = 0;
+        size_t      username_len   = stringLength(username_json->valuestring);
+        size_t      password_len   = 0;
         const char *password_value = "";
         if (password_json != NULL)
         {
@@ -223,6 +221,7 @@ tunnel_t *socks5serverTunnelCreate(node_t *node)
 
     t->onPrepare = &socks5serverTunnelOnPrepair;
     t->onStart   = &socks5serverTunnelOnStart;
+    t->onStop    = &socks5serverTunnelOnStop;
     t->onDestroy = &socks5serverTunnelDestroy;
 
     if (! checkJsonIsObjectAndHasChild(settings))

@@ -30,33 +30,33 @@ typedef struct speedlimit_tstate_s
 
 typedef struct speedlimit_lstate_s
 {
-    tunnel_t       *tunnel;
-    line_t         *line;
-    buffer_queue_t  up_queue;
-    buffer_queue_t  down_queue;
-    wtimer_t       *up_timer;
-    wtimer_t       *down_timer;
+    tunnel_t           *tunnel;
+    line_t             *line;
+    buffer_queue_t      up_queue;
+    buffer_queue_t      down_queue;
+    wtimer_t           *up_timer;
+    wtimer_t           *down_timer;
     speedlimit_bucket_t line_bucket;
-    bool            prev_side_externally_paused;
-    bool            next_side_externally_paused;
-    bool            prev_side_locally_paused;
-    bool            next_side_locally_paused;
+    bool                prev_side_externally_paused;
+    bool                next_side_externally_paused;
+    bool                prev_side_locally_paused;
+    bool                next_side_locally_paused;
 } speedlimit_lstate_t;
 
 enum
 {
-    kTunnelStateSize        = sizeof(speedlimit_tstate_t),
-    kLineStateSize          = sizeof(speedlimit_lstate_t),
-    kSpeedLimitQueueCap     = 4,
-    kSpeedLimitImmediateMs  = 1,
+    kTunnelStateSize         = sizeof(speedlimit_tstate_t),
+    kLineStateSize           = sizeof(speedlimit_lstate_t),
+    kSpeedLimitQueueCap      = 4,
+    kSpeedLimitImmediateMs   = 1,
     kSpeedLimitDefaultTickMs = 10,
-    kSpeedLimitUnitsPerByte = 1000
+    kSpeedLimitUnitsPerByte  = 1000
 };
 
 enum speedlimit_limit_mode_e
 {
-    kSpeedLimitLimitModePerLine  = kDvsFirstOption,
-    kSpeedLimitLimitModeAllLines = kDvsSecondOption,
+    kSpeedLimitLimitModePerLine   = kDvsFirstOption,
+    kSpeedLimitLimitModeAllLines  = kDvsSecondOption,
     kSpeedLimitLimitModePerWorker = kDvsThirdOption
 };
 
@@ -72,6 +72,7 @@ WW_EXPORT api_result_t speedlimitTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void speedlimitTunnelOnPrepair(tunnel_t *t);
 void speedlimitTunnelOnStart(tunnel_t *t);
+void speedlimitTunnelOnStop(tunnel_t *t);
 
 void speedlimitTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void speedlimitTunnelUpStreamEst(tunnel_t *t, line_t *l);

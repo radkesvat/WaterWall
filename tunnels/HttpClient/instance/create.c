@@ -277,10 +277,22 @@ static bool parseHttp1SplitSettings(httpclient_tstate_t *ts, const cJSON *settin
         download = NULL;
     }
 
-    if (! parseSplitMethod(&ts->split_upload_method, &ts->split_upload_method_enum, split, upload, "upload-method",
-                           "method", ts->method, "split.upload-method") ||
-        ! parseSplitMethod(&ts->split_download_method, &ts->split_download_method_enum, split, download,
-                           "download-method", "method", "GET", "split.download-method"))
+    if (! parseSplitMethod(&ts->split_upload_method,
+                           &ts->split_upload_method_enum,
+                           split,
+                           upload,
+                           "upload-method",
+                           "method",
+                           ts->method,
+                           "split.upload-method") ||
+        ! parseSplitMethod(&ts->split_download_method,
+                           &ts->split_download_method_enum,
+                           split,
+                           download,
+                           "download-method",
+                           "method",
+                           "GET",
+                           "split.download-method"))
     {
         return false;
     }
@@ -375,7 +387,7 @@ static void parsePortAndUpgrade(httpclient_tstate_t *ts, const cJSON *settings)
     if (! getIntFromJsonObject(&ts->host_port, settings, "port"))
     {
         ts->host_port = strEqualsAnyIgnoreCase(ts->scheme, "https", NULL, NULL, NULL) ? kHttpClientDefaultHttpsPort
-                                                                                        : kHttpClientDefaultHttp1Port;
+                                                                                      : kHttpClientDefaultHttp1Port;
     }
 
     bool default_upgrade = (ts->version_mode == kHttpClientVersionModeBoth);
@@ -436,13 +448,11 @@ static bool buildUpgradeSettings(httpclient_tstate_t *ts)
         return true;
     }
 
-    nghttp2_settings_entry settings[] = {
-        {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 1},
-        {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, (1U << 20)},
-        {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, (uint32_t) kHttpClientHttp2FrameBytes}
-    };
+    nghttp2_settings_entry settings[] = {{NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 1},
+                                         {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, (1U << 20)},
+                                         {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, (uint32_t) kHttpClientHttp2FrameBytes}};
 
-    uint8_t payload[128];
+    uint8_t       payload[128];
     nghttp2_ssize raw_len = nghttp2_pack_settings_payload2(payload, sizeof(payload), settings, ARRAY_SIZE(settings));
     if (raw_len <= 0)
     {
@@ -454,10 +464,10 @@ static bool buildUpgradeSettings(httpclient_tstate_t *ts)
     ts->upgrade_settings_payload     = memoryAllocate(ts->upgrade_settings_payload_len);
     memoryCopy(ts->upgrade_settings_payload, payload, ts->upgrade_settings_payload_len);
 
-    size_t b64_cap            = ((ts->upgrade_settings_payload_len + 2U) / 3U) * 4U + 2U;
-    ts->upgrade_settings_b64  = memoryAllocate(b64_cap);
-    size_t b64_len            = base64UrlEncode(ts->upgrade_settings_payload, ts->upgrade_settings_payload_len,
-                                                ts->upgrade_settings_b64, b64_cap);
+    size_t b64_cap           = ((ts->upgrade_settings_payload_len + 2U) / 3U) * 4U + 2U;
+    ts->upgrade_settings_b64 = memoryAllocate(b64_cap);
+    size_t b64_len           = base64UrlEncode(
+        ts->upgrade_settings_payload, ts->upgrade_settings_payload_len, ts->upgrade_settings_b64, b64_cap);
     if (b64_len == 0)
     {
         LOGF("HttpClient: HTTP2-Settings encoding failed");
@@ -487,6 +497,7 @@ tunnel_t *httpclientTunnelCreate(node_t *node)
 
     t->onPrepare = &httpclientTunnelOnPrepair;
     t->onStart   = &httpclientTunnelOnStart;
+    t->onStop    = &httpclientTunnelOnStop;
     t->onDestroy = &httpclientTunnelDestroy;
 
     httpclient_tstate_t *ts       = tunnelGetState(t);

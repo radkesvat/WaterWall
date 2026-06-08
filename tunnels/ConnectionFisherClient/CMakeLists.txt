@@ -1,6 +1,7 @@
 add_library(ConnectionFisherClient STATIC
     instance/create.c
     instance/destroy.c
+    instance/stop.c
     instance/api.c
     instance/node.c
     common/helpers.c

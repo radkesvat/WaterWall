@@ -22,6 +22,7 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
 
     t->onPrepare = &udpstatelesssocketTunnelOnPrepair;
     t->onStart   = &udpstatelesssocketTunnelOnStart;
+    t->onStop    = &udpstatelesssocketTunnelOnStop;
     t->onDestroy = &udpstatelesssocketTunnelDestroy;
 
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
@@ -42,7 +43,8 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
     }
     if (! addressIsIp(state->listen_address))
     {
-        LOGF("JSON Error: UdpStatelessSocket->settings->listen-address (string field) : The data is not a valid ip address");
+        LOGF("JSON Error: UdpStatelessSocket->settings->listen-address (string field) : The data is not a valid ip "
+             "address");
         return NULL;
     }
 
@@ -51,29 +53,36 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
     {
         if (! addressIsIp(source_ip))
         {
-            LOGF("JSON Error: UdpStatelessSocket->settings->source-ip (string field) : The value must be a valid IP address");
+            LOGF("JSON Error: UdpStatelessSocket->settings->source-ip (string field) : The value must be a valid IP "
+                 "address");
             memoryFree(source_ip);
             return NULL;
         }
         memoryFree(state->listen_address);
-        state->listen_address = source_ip;
+        state->listen_address       = source_ip;
         state->source_ip_configured = true;
     }
 
     getStringFromJsonObject(&(state->interface_name), settings, "interface");
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", -1);
-    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->send_buffer_size, settings, "large-send-buffer",
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->send_buffer_size,
+                                                    settings,
+                                                    "large-send-buffer",
                                                     kDefaultLargeSocketBufferSize,
                                                     kDefaultLargeSocketBufferSize))
     {
-        LOGF("JSON Error: UdpStatelessSocket->settings->large-send-buffer (boolean-or-positive-integer field) : The value was empty or invalid");
+        LOGF("JSON Error: UdpStatelessSocket->settings->large-send-buffer (boolean-or-positive-integer field) : The "
+             "value was empty or invalid");
         return NULL;
     }
-    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->recv_buffer_size, settings, "large-recv-buffer",
+    if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->recv_buffer_size,
+                                                    settings,
+                                                    "large-recv-buffer",
                                                     kDefaultLargeSocketBufferSize,
                                                     kDefaultLargeSocketBufferSize))
     {
-        LOGF("JSON Error: UdpStatelessSocket->settings->large-recv-buffer (boolean-or-positive-integer field) : The value was empty or invalid");
+        LOGF("JSON Error: UdpStatelessSocket->settings->large-recv-buffer (boolean-or-positive-integer field) : The "
+             "value was empty or invalid");
         return NULL;
     }
 

@@ -68,12 +68,11 @@ static inline uint64_t ptcFakeDnsNameKeyHash(const ptc_fake_dns_name_key_t *key)
     return hash;
 }
 
-#define i_type ptc_fake_dns_name_map_t // NOLINT
-#define i_key  ptc_fake_dns_name_key_t // NOLINT
-#define i_val  ptc_fake_dns_entry_t *  // NOLINT
-#define i_hash ptcFakeDnsNameKeyHash   // NOLINT
-#define i_eq(x, y)                                                                                                     \
-    ((x)->len == (y)->len && memoryCompare((x)->name, (y)->name, (x)->len) == 0) // NOLINT
+#define i_type     ptc_fake_dns_name_map_t                                                      // NOLINT
+#define i_key      ptc_fake_dns_name_key_t                                                      // NOLINT
+#define i_val      ptc_fake_dns_entry_t *                                                       // NOLINT
+#define i_hash     ptcFakeDnsNameKeyHash                                                        // NOLINT
+#define i_eq(x, y) ((x)->len == (y)->len && memoryCompare((x)->name, (y)->name, (x)->len) == 0) // NOLINT
 #include "stc/hmap.h"
 #undef i_eq
 #undef i_hash
@@ -105,12 +104,12 @@ struct interface_route_context_s
 {
     interface_route_context_t *next;
     tunnel_t                  *tunnel;
-    struct netif              netif;
+    struct netif               netif;
     struct tcp_pcb            *tcp_pcb;
     struct udp_pcb            *udp_pcb;
     ptc_udp_flow_map_t         udp_flows;
-    uint32_t                  last_tick;
-    wid_t                     packet_wid;
+    uint32_t                   last_tick;
+    wid_t                      packet_wid;
 };
 
 struct ptc_fake_dns_entry_s
@@ -153,18 +152,17 @@ typedef struct ptc_lstate_s
     tunnel_t *tunnel;
     line_t   *line;
 
-    union
-    {
+    union {
         struct tcp_pcb *tcp_pcb;
         struct udp_pcb *udp_pcb;
     };
 
     interface_route_context_t *route_ctx;
-    buffer_queue_t      pause_queue;
-    sbuf_ack_queue_t    ack_queue;
+    buffer_queue_t             pause_queue;
+    sbuf_ack_queue_t           ack_queue;
 
-    uint64_t udp_idle_deadline_ms;
-    uint32_t read_paused_len;
+    uint64_t           udp_idle_deadline_ms;
+    uint32_t           read_paused_len;
     ptc_udp_flow_key_t udp_flow_key;
     ip_addr_t          udp_local_addr;
     ip_addr_t          udp_peer_addr;
@@ -198,6 +196,7 @@ void ptcTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void ptcTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void ptcTunnelOnPrepair(tunnel_t *t);
 void ptcTunnelOnStart(tunnel_t *t);
+void ptcTunnelOnStop(tunnel_t *t);
 
 void ptcTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void ptcTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -232,15 +231,15 @@ void  ptcUdpIdleTask(tunnel_t *t, line_t *l);
 bool  ptcFakeDnsLoadSettings(ptc_tstate_t *ts, const cJSON *settings);
 void  ptcFakeDnsDestroy(ptc_tstate_t *ts);
 bool  ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_line, sbuf_t *buf, const struct ip_hdr *iphdr,
-                                     const struct udp_hdr *udphdr);
-bool  ptcFakeDnsApplyMappedDestination(tunnel_t *t, address_context_t *dest_ctx, const ip_addr_t *ip,
-                                        uint16_t port, uint8_t protocol);
+                                    const struct udp_hdr *udphdr);
+bool  ptcFakeDnsApplyMappedDestination(tunnel_t *t, address_context_t *dest_ctx, const ip_addr_t *ip, uint16_t port,
+                                       uint8_t protocol);
 err_t ptcEnsureTcpListener(interface_route_context_t *route_ctx, tunnel_t *t, const ip_addr_t *dest_ip,
                            uint16_t dest_port);
 err_t ptcEnsureUdpListener(interface_route_context_t *route_ctx, tunnel_t *t, const ip_addr_t *dest_ip,
                            uint16_t dest_port);
 interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t packet_wid, const ip4_addr_t *dest_ip);
-void                     ptcDestroyRouteContexts(interface_route_context_t *root);
+void                       ptcDestroyRouteContexts(interface_route_context_t *root);
 
 // Error callback: called when something goes wrong on the connection.
 void lwipThreadPtcTcpConnectionErrorCallback(void *arg, err_t err);
