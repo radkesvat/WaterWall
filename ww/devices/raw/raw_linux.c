@@ -5,6 +5,7 @@
 #include "wchan.h"
 #include "worker.h"
 #include <arpa/inet.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <linux/if.h>
 #include <linux/ipv6.h>
@@ -12,15 +13,30 @@
 #include <poll.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 enum
 {
     kMaxWriteablePacketSize  = 1500,
-    kRawWriteChannelQueueMax = 1024 * 64,
+    kRawWriteChannelQueueMax = 128 * 1024,
     kBatchSize               = 512,
-    kMaxDrain                = 511 //(kBatchSize - 1)
+    kRawSocketSendBuffer     = 16 * 1024 * 1024
 };
+
+static void rawdeviceLogSocketBufferSize(int socket_fd, int option, const char *name)
+{
+    int       actual = 0;
+    socklen_t len    = sizeof(actual);
+
+    if (getsockopt(socket_fd, SOL_SOCKET, option, &actual, &len) != 0)
+    {
+        LOGW("RawDevice: failed to read actual %s: %s", name, strerror(errno));
+        return;
+    }
+
+    LOGD("RawDevice: actual %s is %d bytes", name, actual);
+}
 
 static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 {
@@ -44,7 +60,9 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
         int len0 = sbufGetLength(buf);
         if (UNLIKELY(kMaxAllowedPacketLength < len0))
         {
-            LOGE("RawDevice: WriteThread: Packet size %d exceeds kMaxAllowedPacketLength %d", len0, kMaxAllowedPacketLength);
+            LOGE("RawDevice: WriteThread: Packet size %d exceeds kMaxAllowedPacketLength %d",
+                 len0,
+                 kMaxAllowedPacketLength);
             LOGF("RawDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in the "
                  "'misc' section");
             bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
@@ -84,13 +102,14 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 
             if (UNLIKELY(kMaxWriteablePacketSize < sbufGetLength(b2)))
             {
-                LOGE("RawDevice: WriteThread: Packet size %d exceeds kMaxWriteablePacketSize %d", sbufGetLength(b2),
+                LOGE("RawDevice: WriteThread: Packet size %d exceeds kMaxWriteablePacketSize %d",
+                     sbufGetLength(b2),
                      kMaxWriteablePacketSize);
                 bufferpoolReuseBuffer(rdev->writer_buffer_pool, b2);
                 terminateProgram(1);
             }
 
-            struct iphdr *ip_header  = (struct iphdr *) sbufGetRawPtr(b2);
+            struct iphdr *ip_header = (struct iphdr *) sbufGetRawPtr(b2);
             memorySet(&addrs[i], 0, sizeof(addrs[i]));
             addrs[i].sin_family      = AF_INET;
             addrs[i].sin_addr.s_addr = ip_header->daddr;
@@ -251,19 +270,36 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
         perror("setsockopt IP_HDRINCL");
         terminateProgram(1);
     }
-    fcntl(rsocket, F_SETFL, O_NONBLOCK);
+    int flags = fcntl(rsocket, F_GETFL, 0);
+    if (flags < 0)
+    {
+        LOGE("RawDevice: unable to get raw socket flags: %s", strerror(errno));
+        close(rsocket);
+        return NULL;
+    }
+    if (fcntl(rsocket, F_SETFL, flags | O_NONBLOCK) < 0)
+    {
+        LOGE("RawDevice: unable to set raw socket nonblocking mode: %s", strerror(errno));
+        close(rsocket);
+        return NULL;
+    }
 
-    int sndbuf = 4 * 1024 * 1024; /* 4MB */
-    setsockopt(rsocket, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+    int sndbuf = kRawSocketSendBuffer;
+    if (setsockopt(rsocket, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0)
+    {
+        LOGW("RawDevice: failed to set SO_SNDBUF: %s", strerror(errno));
+    }
+    rawdeviceLogSocketBufferSize(rsocket, SO_SNDBUF, "SO_SNDBUF");
 
     raw_device_t *rdev = memoryAllocate(sizeof(raw_device_t));
 
-    buffer_pool_t *writer_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
-                         bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
-                         bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
+    buffer_pool_t *writer_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+                                                   GSTATE.masterpool_buffer_pools_small,
+                                                   RAM_PROFILE,
+                                                   bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
+                                                   bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
 
-        );
+    );
 
     *rdev = (raw_device_t) {.name                  = stringDuplicate(name),
                             .running               = false,

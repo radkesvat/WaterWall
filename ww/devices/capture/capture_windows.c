@@ -29,18 +29,35 @@ struct msg_event
     sbuf_t           *buf;
 };
 
-static pool_item_t *allocCaptureMsgPoolHandle(master_pool_t *pool, void *userdata)
+static pool_item_t *allocCaptureMsgPoolHandle(void *userdata)
 {
     discard userdata;
-    discard pool;
     return memoryAllocate(sizeof(struct msg_event));
 }
 
-static void destroyCaptureMsgPoolHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
+static void destroyCaptureMsgPoolHandle(master_pool_item_t *item)
 {
-    discard pool;
-    discard userdata;
     memoryFree(item);
+}
+
+static void cleanupCaptureMessage(struct msg_event *msg)
+{
+    if (msg == NULL)
+    {
+        return;
+    }
+
+    sbufDestroy(msg->buf);
+    masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1);
+}
+
+static void cleanupPostedCaptureMessage(void *arg1, void *arg2, void *arg3)
+{
+    struct msg_event *msg = arg1;
+    discard           arg2;
+    discard           arg3;
+
+    cleanupCaptureMessage(msg);
 }
 
 /*
@@ -185,8 +202,13 @@ static uint8_t capturedeviceIpv4MaskPrefixLength(const ip_addr_t *mask)
 
 static void capturedeviceFormatIpv4(uint32_t addr_host, char *dest, size_t dest_len)
 {
-    stringNPrintf(dest, dest_len, "%u.%u.%u.%u", (addr_host >> 24U) & 0xFFU, (addr_host >> 16U) & 0xFFU,
-                  (addr_host >> 8U) & 0xFFU, addr_host & 0xFFU);
+    stringNPrintf(dest,
+                  dest_len,
+                  "%u.%u.%u.%u",
+                  (addr_host >> 24U) & 0xFFU,
+                  (addr_host >> 16U) & 0xFFU,
+                  (addr_host >> 8U) & 0xFFU,
+                  addr_host & 0xFFU);
 }
 
 static char *capturedeviceBuildWinDivertFilter(const ipmask_t *ranges, uint32_t range_count)
@@ -223,13 +245,12 @@ static char *capturedeviceBuildWinDivertFilter(const ipmask_t *ranges, uint32_t 
 
         if (capturedeviceIpv4MaskPrefixLength(&ranges[i].mask) == 32)
         {
-            offset +=
-                (size_t) stringNPrintf(filter + offset, filter_len - offset, "ip.SrcAddr == %s", min_ip);
+            offset += (size_t) stringNPrintf(filter + offset, filter_len - offset, "ip.SrcAddr == %s", min_ip);
         }
         else
         {
-            offset += (size_t) stringNPrintf(filter + offset, filter_len - offset,
-                                             "(ip.SrcAddr >= %s and ip.SrcAddr <= %s)", min_ip, max_ip);
+            offset += (size_t) stringNPrintf(
+                filter + offset, filter_len - offset, "(ip.SrcAddr >= %s and ip.SrcAddr <= %s)", min_ip, max_ip);
         }
     }
 
@@ -395,35 +416,33 @@ static void rawWindowsStartup(void)
     free(tempSysPath);
 }
 
-static void localThreadEventReceived(wevent_t *ev)
+static void localThreadMessageReceived(void *worker, void *arg1, void *arg2, void *arg3)
 {
-    struct msg_event *msg = weventGetUserdata(ev);
-    wid_t             tid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
+    struct msg_event *msg = arg1;
+    wid_t             wid = ((worker_t *) worker)->wid;
+    discard           arg2;
+    discard           arg3;
 
-    msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->buf, tid);
+    msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->buf, wid);
 
-    masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1, msg->cdev);
+    masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1);
 }
 
 static void distributePacketPayload(capture_device_t *cdev, wid_t target_wid, sbuf_t *buf)
 {
+    if (UNLIKELY(isApplicationTerminating() || GSTATE.shortcut_loops == NULL))
+    {
+        bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+        return;
+    }
 
     struct msg_event *msg;
     masterpoolGetItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
 
     *msg = (struct msg_event) {.cdev = cdev, .buf = buf};
 
-    wevent_t ev;
-    memorySet(&ev, 0, sizeof(ev));
-    ev.loop = getWorkerLoop(target_wid);
-    ev.cb   = localThreadEventReceived;
-    weventSetUserData(&ev, msg);
-
-    if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(target_wid), &ev)))
-    {
-        bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
-        masterpoolReuseItems(cdev->reader_message_pool, (void **) &msg, 1, cdev);
-    }
+    sendWorkerMessageForceQueueWithCleanup(
+        target_wid, localThreadMessageReceived, cleanupPostedCaptureMessage, msg, NULL, NULL);
 }
 static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 {
@@ -464,8 +483,9 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
         {
             // we are capturing packets and this can happen, so we just log it
             LOGW("CaptureDevice: ReadThread: discarded a packet -> size %d exceeds kMaxAllowedPacketLength %d",
-                 sbufGetLength(buf), kMaxAllowedPacketLength);
-  
+                 sbufGetLength(buf),
+                 kMaxAllowedPacketLength);
+
             bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
             continue;
         }
@@ -529,8 +549,8 @@ static bool loadFunctionFromDLL(const char *function_name, void *target)
     memoryCopy(target, &proc, sizeof(FARPROC));
     return true;
 }
-capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
-                                      uint32_t capture_range_count, void *userdata, CaptureReadEventHandle cb)
+capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,
+                                      void *userdata, CaptureReadEventHandle cb)
 {
     if (capture_ranges == NULL || capture_range_count == 0)
     {
@@ -555,12 +575,13 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
 
     LOGI("CaptureDevice: WinDivert loaded successfully");
 
-    buffer_pool_t *reader_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
-                         bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
-                         bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
+    buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+                                                   GSTATE.masterpool_buffer_pools_small,
+                                                   RAM_PROFILE,
+                                                   bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
+                                                   bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
 
-        );
+    );
 
     capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
 
@@ -590,7 +611,7 @@ void capturedeviceDestroy(capture_device_t *cdev)
     memoryFree(cdev->name);
     memoryFree(cdev->filter);
     bufferpoolDestroy(cdev->reader_buffer_pool);
-    masterpoolMakeEmpty(cdev->reader_message_pool, NULL);
+    masterpoolMakeEmpty(cdev->reader_message_pool);
     masterpoolDestroy(cdev->reader_message_pool);
 
     memoryFree(cdev);

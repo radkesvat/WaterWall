@@ -245,36 +245,67 @@ struct msg_event
 };
 
 // Allocate memory for message pool handle
-static pool_item_t *allocTunMsgPoolHandle(master_pool_t *pool, void *userdata)
+static pool_item_t *allocTunMsgPoolHandle(void *userdata)
 {
     discard userdata;
-    discard pool;
     return memoryAllocate(sizeof(struct msg_event));
 }
 
 // Free memory for message pool handle
-static void destroyTunMsgPoolHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
+static void destroyTunMsgPoolHandle(master_pool_item_t *item)
 {
-    discard pool;
-    discard userdata;
     memoryFree(item);
+}
+
+static void reuseTunReadBuffers(tun_device_t *tdev, sbuf_t **bufs, unsigned int count)
+{
+    for (unsigned int i = 0; i < count; i++)
+    {
+        bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[i]);
+    }
+}
+
+static void cleanupTunMessage(struct msg_event *msg)
+{
+    if (msg == NULL)
+    {
+        return;
+    }
+
+    for (unsigned int i = 0; i < msg->count; i++)
+    {
+        sbufDestroy(msg->bufs[i]);
+    }
+    masterpoolReuseItems(msg->tdev->reader_message_pool, (void **) &msg, 1);
+}
+
+static void cleanupPostedTunMessage(void *arg1, void *arg2, void *arg3)
+{
+    struct msg_event *msg = arg1;
+    discard           arg2;
+    discard           arg3;
+
+    cleanupTunMessage(msg);
 }
 
 /**
  * Handles events received on the local thread
- * @param ev Event containing message data
+ * @param worker Worker receiving message
+ * @param arg1 Message data
  */
-static void localThreadEventReceived(wevent_t *ev)
+static void localThreadMessageReceived(void *worker, void *arg1, void *arg2, void *arg3)
 {
-    struct msg_event *msg = weventGetUserdata(ev);
-    wid_t             wid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
+    struct msg_event *msg = arg1;
+    wid_t             wid = ((worker_t *) worker)->wid;
+    discard           arg2;
+    discard           arg3;
 
     for (unsigned int i = 0; i < msg->count; i++)
     {
         msg->tdev->read_event_callback(msg->tdev, msg->tdev->userdata, msg->bufs[i], wid);
     }
 
-    masterpoolReuseItems(msg->tdev->reader_message_pool, (void **) &msg, 1, msg->tdev);
+    masterpoolReuseItems(msg->tdev->reader_message_pool, (void **) &msg, 1);
 }
 
 /**
@@ -285,6 +316,12 @@ static void localThreadEventReceived(wevent_t *ev)
  */
 static void distributePacketPayloads(tun_device_t *tdev, wid_t target_wid, sbuf_t **buf, unsigned int queued_count)
 {
+    if (UNLIKELY(isApplicationTerminating() || GSTATE.shortcut_loops == NULL))
+    {
+        reuseTunReadBuffers(tdev, buf, queued_count);
+        return;
+    }
+
     struct msg_event *msg;
     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
 
@@ -295,34 +332,9 @@ static void distributePacketPayloads(tun_device_t *tdev, wid_t target_wid, sbuf_
         msg->bufs[i] = buf[i];
     }
 
-    wevent_t ev;
-    memorySet(&ev, 0, sizeof(ev));
-    ev.loop = getWorkerLoop(target_wid);
-    ev.cb   = localThreadEventReceived;
-    weventSetUserData(&ev, msg);
-    if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(target_wid), &ev)))
-    {
-        for (unsigned int i = 0; i < queued_count; i++)
-        {
-            bufferpoolReuseBuffer(tdev->reader_buffer_pool, msg->bufs[i]);
-        }
-        masterpoolReuseItems(tdev->reader_message_pool, (void **) &msg, 1, tdev);
-    }
+    sendWorkerMessageForceQueueWithCleanup(
+        target_wid, localThreadMessageReceived, cleanupPostedTunMessage, msg, NULL, NULL);
 }
-// {
-//     struct msg_event *msg;
-//     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
-
-//     *msg = (struct msg_event){.tdev = tdev, .buf = buf};
-
-//     wevent_t ev;
-//     memorySet(&ev, 0, sizeof(ev));
-//     ev.loop = getWorkerLoop(target_wid);
-//     ev.cb   = localThreadEventReceived;
-//     weventSetUserData(&ev, msg);
-//     wloopPostEvent(getWorkerLoop(target_wid), &ev);
-// }
-
 /**
  * Reader thread routine - reads packets from TUN device
  */
@@ -983,7 +995,7 @@ void tundeviceDestroy(tun_device_t *tdev)
     memoryFree(tdev->name_w);
     bufferpoolDestroy(tdev->reader_buffer_pool);
     bufferpoolDestroy(tdev->writer_buffer_pool);
-    masterpoolMakeEmpty(tdev->reader_message_pool, NULL);
+    masterpoolMakeEmpty(tdev->reader_message_pool);
     masterpoolDestroy(tdev->reader_message_pool);
 
     memoryFree(tdev);

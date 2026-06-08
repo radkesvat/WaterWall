@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -31,10 +32,13 @@ enum
     kReadPacketSize             = 1500, // its ok to be >= mtu
     kMaxReadDistributeQueueSize = 512,
     kEthDataLen                 = 1500,
-    kNetfilterQueueLen          = 16384 * 64
+    kNetfilterQueueLen          = 64 * 1024,
+    kNetfilterSocketRecvBuffer  = 64 * 1024 * 1024
 };
 
-static const char *sysctl_set_rmem_max     = "net.core.rmem_max=67108864";
+static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "capture read batch count must fit in msg_event.count");
+
+static const char *sysctl_set_rmem_max     = "net.core.rmem_max=134217728";
 static const char *sysctl_set_rmem_default = "net.core.rmem_default=33554432";
 static const char *sysctl_set_wmem_max     = "net.core.wmem_max=33554432";
 static const char *sysctl_set_wmem_default = "net.core.wmem_default=16777216";
@@ -158,6 +162,20 @@ static void capturedeviceSetSysctl(const char *setting)
     discard           capturedeviceRunCommand("sysctl", argv);
 }
 
+static void capturedeviceLogSocketBufferSize(int socket_fd, int option, const char *name)
+{
+    int       actual = 0;
+    socklen_t len    = sizeof(actual);
+
+    if (getsockopt(socket_fd, SOL_SOCKET, option, &actual, &len) != 0)
+    {
+        LOGW("CaptureDevice: failed to read actual %s: %s", name, strerror(errno));
+        return;
+    }
+
+    LOGD("CaptureDevice: actual %s is %d bytes", name, actual);
+}
+
 static bool capturedeviceRunIptablesQueueRule(const char *operation, const char *cidr, uint32_t queue_number)
 {
     char queue_number_arg[16];
@@ -200,37 +218,68 @@ struct msg_event
 {
     capture_device_t *cdev;
     sbuf_t           *bufs[kMaxReadDistributeQueueSize];
-    uint8_t           count;
+    uint16_t          count;
 };
-static pool_item_t *allocCaptureMsgPoolHandle(master_pool_t *pool, void *userdata)
+static pool_item_t *allocCaptureMsgPoolHandle(void *userdata)
 {
     discard userdata;
-    discard pool;
     return memoryAllocate(sizeof(struct msg_event));
 }
 
-static void destroyCaptureMsgPoolHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
+static void destroyCaptureMsgPoolHandle(master_pool_item_t *item)
 {
-    discard pool;
-    discard userdata;
     memoryFree(item);
+}
+
+static void reuseCaptureBuffers(capture_device_t *cdev, sbuf_t **bufs, unsigned int count)
+{
+    for (unsigned int i = 0; i < count; i++)
+    {
+        bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[i]);
+    }
+}
+
+static void cleanupCaptureMessage(struct msg_event *msg)
+{
+    if (msg == NULL)
+    {
+        return;
+    }
+
+    for (unsigned int i = 0; i < msg->count; i++)
+    {
+        sbufDestroy(msg->bufs[i]);
+    }
+    masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1);
+}
+
+static void cleanupPostedCaptureMessage(void *arg1, void *arg2, void *arg3)
+{
+    struct msg_event *msg = arg1;
+    discard           arg2;
+    discard           arg3;
+
+    cleanupCaptureMessage(msg);
 }
 
 /**
  * Handles events received on the local thread
- * @param ev Event containing message data
+ * @param worker Worker receiving message
+ * @param arg1 Message data
  */
-static void localThreadEventReceived(wevent_t *ev)
+static void localThreadMessageReceived(void *worker, void *arg1, void *arg2, void *arg3)
 {
-    struct msg_event *msg = weventGetUserdata(ev);
-    wid_t             wid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
+    struct msg_event *msg = arg1;
+    wid_t             wid = ((worker_t *) worker)->wid;
+    discard           arg2;
+    discard           arg3;
 
-    for (uint8_t i = 0; i < msg->count; i++)
+    for (unsigned int i = 0; i < msg->count; i++)
     {
         msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->bufs[i], wid);
     }
 
-    masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1, msg->cdev);
+    masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1);
 }
 
 /**
@@ -239,31 +288,29 @@ static void localThreadEventReceived(wevent_t *ev)
  * @param target_wid Target thread ID
  * @param buf Buffer containing packet data
  */
-static void distributePacketPayloads(capture_device_t *cdev, wid_t target_wid, sbuf_t **buf, uint8_t queued_count)
+static void distributePacketPayloads(capture_device_t *cdev, wid_t target_wid, sbuf_t **buf, unsigned int queued_count)
 {
+    assert(queued_count <= kMaxReadDistributeQueueSize);
+    assert(queued_count <= UINT16_MAX);
+
+    if (UNLIKELY(isApplicationTerminating() || GSTATE.shortcut_loops == NULL))
+    {
+        reuseCaptureBuffers(cdev, buf, queued_count);
+        return;
+    }
+
     struct msg_event *msg;
     masterpoolGetItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
 
     msg->cdev  = cdev;
-    msg->count = queued_count;
-    for (uint8_t i = 0; i < queued_count; i++)
+    msg->count = (uint16_t) queued_count;
+    for (unsigned int i = 0; i < queued_count; i++)
     {
         msg->bufs[i] = buf[i];
     }
 
-    wevent_t ev;
-    memorySet(&ev, 0, sizeof(ev));
-    ev.loop = getWorkerLoop(target_wid);
-    ev.cb   = localThreadEventReceived;
-    weventSetUserData(&ev, msg);
-    if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(target_wid), &ev)))
-    {
-        for (uint8_t i = 0; i < queued_count; i++)
-        {
-            bufferpoolReuseBuffer(cdev->reader_buffer_pool, msg->bufs[i]);
-        }
-        masterpoolReuseItems(cdev->reader_message_pool, (void **) &msg, 1, cdev);
-    }
+    sendWorkerMessageForceQueueWithCleanup(
+        target_wid, localThreadMessageReceived, cleanupPostedCaptureMessage, msg, NULL, NULL);
 }
 
 /*
@@ -786,7 +833,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
         return NULL;
     }
-    int rcvbuf_size = 64 * 1024 * 1024; // 64MB
+    int rcvbuf_size = kNetfilterSocketRecvBuffer;
     if (setsockopt(socket_netfilter, SOL_SOCKET, SO_RCVBUF, &rcvbuf_size, sizeof(rcvbuf_size)) < 0)
     {
         LOGE("CaptureDevice: failed to set SO_RCVBUF: %s", strerror(errno));
@@ -794,6 +841,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
         return NULL;
     }
+    capturedeviceLogSocketBufferSize(socket_netfilter, SO_RCVBUF, "SO_RCVBUF");
 
     buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
                                                    GSTATE.masterpool_buffer_pools_small,
@@ -844,7 +892,7 @@ void capturedeviceDestroy(capture_device_t *cdev)
     memoryFree(cdev->name);
     capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
     bufferpoolDestroy(cdev->reader_buffer_pool);
-    masterpoolMakeEmpty(cdev->reader_message_pool, NULL);
+    masterpoolMakeEmpty(cdev->reader_message_pool);
     masterpoolDestroy(cdev->reader_message_pool);
     close(cdev->socket);
     close(cdev->linux_pipe_fds[0]);
