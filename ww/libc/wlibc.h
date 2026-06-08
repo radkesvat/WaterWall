@@ -84,32 +84,12 @@ static inline void memoryCopyAVX512(void *dest, const void *src, intmax_t n)
         head = (size_t) n;
     }
 
-    // small head copy (8/4/2/1)
+    // The prefix can be arbitrarily aligned.
     size_t t = head;
-    while (t >= 8)
-    {
-        *(uint64_t *) d8 = *(const uint64_t *) s8;
-        d8 += 8;
-        s8 += 8;
-        t -= 8;
-    }
-    if (t >= 4)
-    {
-        *(uint32_t *) d8 = *(const uint32_t *) s8;
-        d8 += 4;
-        s8 += 4;
-        t -= 4;
-    }
-    if (t >= 2)
-    {
-        *(uint16_t *) d8 = *(const uint16_t *) s8;
-        d8 += 2;
-        s8 += 2;
-        t -= 2;
-    }
-    if (t)
+    while (t > 0)
     {
         *d8++ = *s8++;
+        --t;
     }
 
     n -= (intmax_t) head;
@@ -291,32 +271,12 @@ static inline void memoryCopyAVX2(void *dest, const void *src, intmax_t n)
         head = (size_t) n;
     }
 
-    // small head copy (8/4/2/1)
+    // The prefix can be arbitrarily aligned.
     size_t t = head;
-    while (t >= 8)
-    {
-        *(uint64_t *) d8 = *(const uint64_t *) s8;
-        d8 += 8;
-        s8 += 8;
-        t -= 8;
-    }
-    if (t >= 4)
-    {
-        *(uint32_t *) d8 = *(const uint32_t *) s8;
-        d8 += 4;
-        s8 += 4;
-        t -= 4;
-    }
-    if (t >= 2)
-    {
-        *(uint16_t *) d8 = *(const uint16_t *) s8;
-        d8 += 2;
-        s8 += 2;
-        t -= 2;
-    }
-    if (t)
+    while (t > 0)
     {
         *d8++ = *s8++;
+        --t;
     }
 
     n -= (intmax_t) head;
