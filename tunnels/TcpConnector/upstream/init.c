@@ -26,6 +26,33 @@ static const tcpconnector_destination_t *selectWeightedDestination(const tcpconn
     return &ts->destinations[ts->destinations_count - 1];
 }
 
+static const tcpconnector_destination_t *selectDestination(tcpconnector_tstate_t *ts)
+{
+    if (ts->destinations_count == 0)
+    {
+        return NULL;
+    }
+
+    switch (ts->address_selection)
+    {
+    case kTcpConnectorAddressSelectionFixed:
+        return &ts->destinations[0];
+    case kTcpConnectorAddressSelectionRoundRobin:
+    {
+        uint32_t index = (uint32_t) atomic_fetch_add(&ts->destination_round_index, 1) % ts->destinations_count;
+        return &ts->destinations[index];
+    }
+    case kTcpConnectorAddressSelectionRandom:
+    {
+        uint32_t index = (uint32_t) (fastRand64() % ts->destinations_count);
+        return &ts->destinations[index];
+    }
+    case kTcpConnectorAddressSelectionWeightedRandom:
+    default:
+        return selectWeightedDestination(ts);
+    }
+}
+
 static tcpconnector_socket_options_t getRootSocketOptions(const tcpconnector_tstate_t *ts)
 {
     return (tcpconnector_socket_options_t) {
@@ -497,7 +524,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     const address_context_t  *constant_dest_addr = &ts->constant_dest_addr;
     uint64_t                  outbound_ip_range  = ts->outbound_ip_range;
     tcpconnector_socket_options_t socket_options = getRootSocketOptions(ts);
-    const tcpconnector_destination_t *selected_destination = selectWeightedDestination(ts);
+    const tcpconnector_destination_t *selected_destination = selectDestination(ts);
 
     if (selected_destination != NULL)
     {

@@ -59,6 +59,50 @@ static bool parseBasicSettings(tcpconnector_tstate_t *state, const cJSON *settin
     return true;
 }
 
+static bool parseAddressSelection(tcpconnector_tstate_t *state, const cJSON *settings)
+{
+    state->address_selection = kTcpConnectorAddressSelectionWeightedRandom;
+
+    const cJSON *selection = cJSON_GetObjectItemCaseSensitive(settings, "address-selection");
+    if (selection == NULL)
+    {
+        return true;
+    }
+
+    if (! cJSON_IsString(selection) || selection->valuestring == NULL || selection->valuestring[0] == '\0')
+    {
+        LOGF("JSON Error: TcpConnector->settings->address-selection (string field) : The value was empty or invalid");
+        return false;
+    }
+
+    const char *selection_name = selection->valuestring;
+
+    if (stricmp(selection_name, "weighted-random") == 0)
+    {
+        state->address_selection = kTcpConnectorAddressSelectionWeightedRandom;
+    }
+    else if (stricmp(selection_name, "fixed") == 0)
+    {
+        state->address_selection = kTcpConnectorAddressSelectionFixed;
+    }
+    else if (stricmp(selection_name, "round-robin") == 0)
+    {
+        state->address_selection = kTcpConnectorAddressSelectionRoundRobin;
+    }
+    else if (stricmp(selection_name, "random") == 0)
+    {
+        state->address_selection = kTcpConnectorAddressSelectionRandom;
+    }
+    else
+    {
+        LOGF("JSON Error: TcpConnector->settings->address-selection (string field) : unsupported value \"%s\"",
+             selection_name);
+        return false;
+    }
+
+    return true;
+}
+
 static bool parseDestinationStringOption(char **dest, const cJSON *settings, const char *key, const char *default_value,
                                          const char *error_path)
 {
@@ -137,6 +181,12 @@ static bool parseDestinationSocketOptions(tcpconnector_destination_t *destinatio
 static bool parseDestinationWeight(const cJSON *settings, int index, uint32_t *weight)
 {
     const cJSON *jweight = cJSON_GetObjectItemCaseSensitive(settings, "weight");
+    if (jweight == NULL)
+    {
+        *weight = 1;
+        return true;
+    }
+
     if (! cJSON_IsNumber(jweight) || jweight->valueint <= 0 || jweight->valuedouble != (double) jweight->valueint)
     {
         LOGF("JSON Error: TcpConnector->settings->addresses[%d]->weight (positive integer field) : The value was empty "
@@ -385,6 +435,12 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     const cJSON           *settings = node->node_settings_json;
 
     if (! parseBasicSettings(state, settings))
+    {
+        tcpconnectorTunnelDestroy(t);
+        return NULL;
+    }
+
+    if (! parseAddressSelection(state, settings))
     {
         tcpconnectorTunnelDestroy(t);
         return NULL;

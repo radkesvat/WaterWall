@@ -15,6 +15,14 @@ typedef struct tcpconnector_socket_options_s
     const char *source_ip;
 } tcpconnector_socket_options_t;
 
+typedef enum tcpconnector_address_selection_e
+{
+    kTcpConnectorAddressSelectionWeightedRandom = 0,
+    kTcpConnectorAddressSelectionFixed,
+    kTcpConnectorAddressSelectionRoundRobin,
+    kTcpConnectorAddressSelectionRandom,
+} tcpconnector_address_selection_e;
+
 typedef struct tcpconnector_tstate_s
 {
     idle_table_t *idle_table; // idle table for closing dead connections
@@ -33,7 +41,9 @@ typedef struct tcpconnector_tstate_s
     bool            recv_buffer_size_set; // whether large-recv-buffer was explicitly configured
     char           *interface_name;       // optional network device for outbound sockets
     char           *source_ip;            // optional local source IP for outbound sockets
-    uint64_t        outbound_ip_range;    // range for outbound ip (this means free bind)
+    uint64_t                         outbound_ip_range;        // range for outbound ip (this means free bind)
+    tcpconnector_address_selection_e address_selection;        // strategy for destination arrays
+    atomic_uint                      destination_round_index;
 
     // These options are evaluatde at start
     // constant destination address to avoid copy, can contain the domain name, used if possible
