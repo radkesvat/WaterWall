@@ -1,8 +1,9 @@
 #include "structure.h"
+#include "race.h"
 
 #include "loggers/network_logger.h"
 
-void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx)
+static void tlsclientLinestateSetupSslInternal(tlsclient_lstate_t *ls, SSL_CTX *sctx)
 {
     // Chrome's h2 ALPS payload is a fixed three-byte value captured on the wire.
     // Do not replace this with a serialized HTTP/2 SETTINGS frame.
@@ -11,8 +12,6 @@ void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx)
     static const uint8_t kChromeH1AlpsPayloadLen = 0;
 
     static_assert(sizeof(kChromeH2AlpsPayload) == 3, "Chrome h2 ALPS payload must stay 0x026832");
-
-    *ls = (tlsclient_lstate_t) {0};
 
     ls->rbio = BIO_new(BIO_s_mem());
     ls->wbio = BIO_new(BIO_s_mem());
@@ -60,6 +59,17 @@ void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx)
     SSL_enable_signed_cert_timestamps(ls->ssl);
 }
 
+void tlsclientLinestateSetupSsl(tlsclient_lstate_t *ls, SSL_CTX *sctx)
+{
+    tlsclientLinestateSetupSslInternal(ls, sctx);
+}
+
+void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx)
+{
+    *ls = (tlsclient_lstate_t) {0};
+    tlsclientLinestateSetupSslInternal(ls, sctx);
+}
+
 void tlsclientLinestateRelease(tlsclient_lstate_t *ls)
 {
     if (ls->resources_released)
@@ -78,6 +88,19 @@ void tlsclientLinestateRelease(tlsclient_lstate_t *ls)
 
 void tlsclientLinestateDestroy(tlsclient_lstate_t *ls)
 {
+    if (ls->role == kTlsClientLineRoleRaceMain)
+    {
+        tlsclientLinestateDestroyRaceMain(ls);
+        return;
+    }
+
+    if (ls->role == kTlsClientLineRoleRaceChild)
+    {
+        tlsclientLinestateRelease(ls);
+        tlsclientLinestateDestroyRaceChild(ls);
+        return;
+    }
+
     tlsclientLinestateRelease(ls);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tlsclient_lstate_t)));
 }

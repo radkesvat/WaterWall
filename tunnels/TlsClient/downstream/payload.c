@@ -1,4 +1,6 @@
 #include "structure.h"
+#include "race.h"
+#include "sni_pool.h"
 
 #include "loggers/network_logger.h"
 
@@ -13,6 +15,28 @@ static inline bool flushWriteQueue(tunnel_t *t, line_t *l, tlsclient_lstate_t *l
         }
     }
     return true;
+}
+
+static void tlsclientCloseAfterDownstreamFailure(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
+{
+    tlsclientRecordSniFailureForLine(t, ls);
+
+    if (tlsclientRaceIsChildLine(ls))
+    {
+        tlsclientRaceCloseChildLine(t, l, false);
+        return;
+    }
+
+    if (tlsclientRaceIsMainLine(ls))
+    {
+        tlsclientRaceCloseMainLine(t, l);
+        return;
+    }
+
+    tlsclientReleaseActiveSniLine(t, ls);
+    tlsclientLinestateDestroy(ls);
+    tunnelNextUpStreamFinish(t, l);
+    tunnelPrevDownStreamFinish(t, l);
 }
 
 static inline bool flushSSLOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
@@ -87,6 +111,16 @@ static inline int performHandshake(tunnel_t *t, line_t *l, tlsclient_lstate_t *l
     {
         LOGD("TlsClient: Tls handshake complete");
         ls->handshake_completed = true;
+        tlsclientRecordSniSuccessForLine(t, ls);
+
+        if (tlsclientRaceIsChildLine(ls))
+        {
+            tlsclientRaceOnChildHandshakeComplete(t, l);
+            if (! lineIsAlive(l))
+            {
+                return -1;
+            }
+        }
 
         if (ts->handshake_takeover_enabled)
         {
@@ -169,7 +203,33 @@ static inline bool readDecryptedData(tunnel_t *t, line_t *l, tlsclient_lstate_t 
         if (n > 0)
         {
             sbufSetLength(data_buf, n);
-            tunnelPrevDownStreamPayload(t, l, data_buf);
+
+            if (tlsclientRaceIsChildLine(ls))
+            {
+                line_t *main_l = ls->race_main_line;
+                if (main_l == NULL || ! lineIsAlive(main_l))
+                {
+                    lineReuseBuffer(l, data_buf);
+                    return false;
+                }
+
+                tlsclient_lstate_t *main_ls = lineGetState(main_l, t);
+                if (main_ls->role != kTlsClientLineRoleRaceMain || main_ls->race_selected_child != l)
+                {
+                    lineReuseBuffer(l, data_buf);
+                    return false;
+                }
+
+                if (! withLineLockedWithBuf(main_l, tunnelPrevDownStreamPayload, t, data_buf))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                tunnelPrevDownStreamPayload(t, l, data_buf);
+            }
+
             if (! lineIsAlive(l))
             {
                 return false;
@@ -199,6 +259,14 @@ void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     tlsclient_lstate_t *ls = lineGetState(l, t);
     int                 n;
+
+    if (tlsclientRaceIsMainLine(ls))
+    {
+        LOGW("TlsClient: unexpected downstream payload on SNI race main line");
+        lineReuseBuffer(l, buf);
+        tlsclientRaceCloseMainLine(t, l);
+        return;
+    }
 
     if (ls->passthrough)
     {
@@ -291,7 +359,5 @@ failed:
         tlsclientPrintSSLState(ls->ssl);
     }
 
-    tlsclientLinestateDestroy(ls);
-    tunnelNextUpStreamFinish(t, l);
-    tunnelPrevDownStreamFinish(t, l);
+    tlsclientCloseAfterDownstreamFailure(t, l, ls);
 }

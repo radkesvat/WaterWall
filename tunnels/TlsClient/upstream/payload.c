@@ -1,10 +1,37 @@
 #include "structure.h"
+#include "race.h"
+#include "sni_pool.h"
 
 #include "loggers/network_logger.h"
 
 void tlsclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     tlsclient_lstate_t *ls = lineGetState(l, t);
+
+    if (tlsclientRaceIsMainLine(ls))
+    {
+        if (ls->race_selected_child != NULL && lineIsAlive(ls->race_selected_child))
+        {
+            discard withLineLockedWithBuf(ls->race_selected_child, tlsclientTunnelUpStreamPayload, t, buf);
+            return;
+        }
+
+        if (ls->race_selected_child != NULL)
+        {
+            lineReuseBuffer(l, buf);
+            tlsclientRaceCloseMainLine(t, l);
+            return;
+        }
+
+        bufferqueuePushBack(&ls->race_pending_up, buf);
+        if (bufferqueueGetBufLen(&ls->race_pending_up) > kTlsClientRaceMaxPendingUpBytes)
+        {
+            LOGW("TlsClient: pending upstream payload exceeded %u bytes while waiting for SNI race winner",
+                 (unsigned int) kTlsClientRaceMaxPendingUpBytes);
+            tlsclientRaceCloseMainLine(t, l);
+        }
+        return;
+    }
 
     if (ls->passthrough)
     {
@@ -87,8 +114,22 @@ failed:
         tlsclientPrintSSLState(ls->ssl);
     }
 
-    tlsclientLinestateDestroy(ls);
+    tlsclientRecordSniFailureForLine(t, ls);
 
+    if (tlsclientRaceIsChildLine(ls))
+    {
+        tlsclientRaceCloseChildLine(t, l, false);
+        return;
+    }
+
+    if (tlsclientRaceIsMainLine(ls))
+    {
+        tlsclientRaceCloseMainLine(t, l);
+        return;
+    }
+
+    tlsclientReleaseActiveSniLine(t, ls);
+    tlsclientLinestateDestroy(ls);
     tunnelNextUpStreamFinish(t, l);
     tunnelPrevDownStreamFinish(t, l);
 }

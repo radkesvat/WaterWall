@@ -1,4 +1,5 @@
 #include "structure.h"
+#include "sni_pool.h"
 
 #include "utils/cacert.h"
 
@@ -27,32 +28,6 @@ static void configureTunnelCallbacks(tunnel_t *t)
     t->onStart   = &tlsclientTunnelOnStart;
     t->onStop    = &tlsclientTunnelOnStop;
     t->onDestroy = &tlsclientTunnelDestroy;
-}
-
-static bool getandvalidateSniSetting(tlsclient_tstate_t *ts, const cJSON *settings, tunnel_t *t)
-{
-    if (! getStringFromJsonObject(&(ts->sni), settings, "sni") || stringLength(ts->sni) == 0)
-    {
-        LOGF("JSON Error: OpenSSLClient->settings->sni (string field) : The data was empty or invalid");
-        tunnelDestroy(t);
-        return false;
-    }
-    return true;
-}
-
-static bool getandvalidateAlpnSetting(tlsclient_tstate_t *ts, const cJSON *settings, tunnel_t *t)
-{
-    getStringFromJsonObjectOrDefault(&(ts->alpn), settings, "alpn", "http/1.1");
-
-    if (stringLength(ts->alpn) == 0)
-    {
-        LOGF("JSON Error: OpenSSLClient->settings->alpn (string field) : The data was empty or invalid");
-        memoryFree(ts->sni);
-        memoryFree(ts->alpn);
-        tunnelDestroy(t);
-        return false;
-    }
-    return true;
 }
 
 static void getX25519MLKEM768Setting(tlsclient_tstate_t *ts, const cJSON *settings)
@@ -247,7 +222,8 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
     tlsclient_tstate_t *ts           = tunnelGetState(t);
     const cJSON        *settings     = node->node_settings_json;
 
-    if (! getandvalidateSniSetting(ts, settings, t))
+    if (! tlsclientParseSniSettings(ts, settings, t) || ! tlsclientParseSniSelectionSettings(ts, settings, t) ||
+        ! tlsclientParseSniHealthSettings(ts, settings, t))
     {
         return NULL;
     }

@@ -90,6 +90,8 @@ add_library(TlsClient STATIC
     instance/index.c
     common/helpers.c
     common/line_state.c
+    common/sni_pool.c
+    common/race.c
     upstream/init.c
     upstream/est.c
     upstream/fin.c

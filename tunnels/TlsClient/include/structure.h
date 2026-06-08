@@ -6,11 +6,51 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 
+typedef enum tlsclient_sni_selection_e
+{
+    kTlsClientSniSelectionFixed = 0,
+    kTlsClientSniSelectionRoundRobin,
+    kTlsClientSniSelectionRandom,
+    kTlsClientSniSelectionRace,
+    kTlsClientSniSelectionHealthyOnly,
+    kTlsClientSniSelectionLeastRtt,
+    kTlsClientSniSelectionWeightedRoundRobin,
+} tlsclient_sni_selection_e;
+
+typedef enum tlsclient_line_role_e
+{
+    kTlsClientLineRoleNormal = 0,
+    kTlsClientLineRoleRaceMain,
+    kTlsClientLineRoleRaceChild,
+} tlsclient_line_role_e;
+
+typedef struct tlsclient_sni_stat_s
+{
+    atomic_uint successes;
+    atomic_uint failures;
+    atomic_uint consecutive_failures;
+    atomic_uint active_lines;
+    atomic_uint healthy;
+    atomic_uint rtt_ema_ms;
+    uint32_t    weight;
+} tlsclient_sni_stat_t;
+
 typedef struct tlsclient_tstate_s
 {
     // settings
     char *alpn;
-    char *sni;
+    char **snis;
+    uint32_t snis_count;
+    tlsclient_sni_selection_e sni_selection;
+    atomic_uint sni_round_index;
+    atomic_uint sni_weight_index;
+    uint32_t    sni_weight_total;
+    uint32_t    race_tries;
+    uint32_t    race_timeout_ms;
+    uint32_t    sni_max_consecutive_failures;
+    uint32_t    sni_probe_interval_ms;
+    uint32_t    min_unused_per_sni;
+    tlsclient_sni_stat_t *sni_stats;
     char *ech_grease_sni_override;
     bool  verify;
     bool  x25519mlkem768_enabled;
@@ -31,10 +71,32 @@ typedef struct tlsclient_lstate_s
     bool           handshake_est_sent;
     bool           resources_released;
     bool           passthrough;
+    tlsclient_line_role_e role;
+    const char            *selected_sni;
+    uint32_t               selected_sni_index;
+    bool                   sni_success_recorded;
+    bool                   sni_failure_recorded;
+    bool                   sni_active_tracked;
+    uint64_t               handshake_start_ms;
+
+    line_t       **race_child_lines;
+    line_t        *race_selected_child;
+    line_t        *race_main_line;
+    uint32_t       race_child_count;
+    uint32_t       race_child_slot;
+    uint32_t       race_open_children;
+    bool           race_main_est_forwarded;
+    buffer_queue_t race_pending_up;
 } tlsclient_lstate_t;
 
 enum
 {
+    kTlsClientDefaultRaceTimeoutMs             = 5000,
+    kTlsClientRaceMaxPendingUpBytes            = 1024 * 1024,
+    kTlsClientRacePendingQueueCap              = 8,
+    kTlsClientDefaultSniWeight                 = 1,
+    kTlsClientDefaultSniMaxConsecutiveFailures = 3,
+    kTlsClientUnknownRttMs                     = UINT32_MAX,
     kTunnelStateSize = sizeof(tlsclient_tstate_t),
     kLineStateSize   = sizeof(tlsclient_lstate_t)
 };
@@ -90,6 +152,7 @@ void tlsclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void tlsclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx);
+void tlsclientLinestateSetupSsl(tlsclient_lstate_t *ls, SSL_CTX *sctx);
 void tlsclientLinestateDestroy(tlsclient_lstate_t *ls);
 void tlsclientLinestateRelease(tlsclient_lstate_t *ls);
 

@@ -1,14 +1,45 @@
 #include "structure.h"
+#include "race.h"
+#include "sni_pool.h"
 
 #include "loggers/network_logger.h"
 
-void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
+static void tlsclientCloseAfterInitFailure(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
+{
+    tlsclientRecordSniFailureForLine(t, ls);
+
+    if (tlsclientRaceIsChildLine(ls))
+    {
+        tlsclientRaceCloseChildLine(t, l, false);
+        return;
+    }
+
+    tlsclientReleaseActiveSniLine(t, ls);
+    tlsclientLinestateDestroy(ls);
+    tunnelNextUpStreamFinish(t, l);
+    tunnelPrevDownStreamFinish(t, l);
+}
+
+void tlsclientPerformUpStreamInit(tunnel_t *t, line_t *l)
 {
     tlsclient_tstate_t *ts = tunnelGetState(t);
     tlsclient_lstate_t *ls = lineGetState(l, t);
     sbuf_t             *ech_payload = NULL;
+    const char         *sni         = NULL;
 
-    tlsclientLinestateInitialize(ls, ts->threadlocal_ssl_contexts[lineGetWID(l)]);
+    if (tlsclientRaceIsChildLine(ls))
+    {
+        tlsclientLinestateSetupSsl(ls, ts->threadlocal_ssl_contexts[lineGetWID(l)]);
+        sni = ls->selected_sni;
+    }
+    else
+    {
+        tlsclientLinestateInitialize(ls, ts->threadlocal_ssl_contexts[lineGetWID(l)]);
+        tlsclientSelectSniForLine(ts, ls, l);
+        sni = ls->selected_sni;
+    }
+
+    ls->handshake_start_ms = getTimeOfDayMS();
 
     if (! tlsclientCreateEchGreaseInnerClientHello(ts, lineGetWID(l), &ech_payload))
     {
@@ -19,7 +50,7 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
             ls->ssl,
             ls->rbio,
             ls->wbio,
-            ts->sni,
+            sni,
             ech_payload != NULL ? (const uint8_t *) sbufGetRawPtr(ech_payload) : NULL,
             ech_payload != NULL ? sbufGetLength(ech_payload) : 0))
     {
@@ -57,7 +88,7 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
             if (n > 0)
             {
                 sbufSetLength(buf, n);
-                tunnelNextUpStreamPayload(t, l, buf);
+                discard withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf);
                 return;
             }
 
@@ -87,10 +118,25 @@ failed:
         lineReuseBuffer(l, ech_payload);
     }
 
-    LOGW("TlsClient: upstream init failed: boringssl state is printed below");
-    tlsclientPrintSSLState(ls->ssl);
+    LOGW("TlsClient: upstream init failed for SNI \"%s\": boringssl state is printed below",
+         sni != NULL ? sni : "<none>");
+    if (ls->ssl != NULL)
+    {
+        tlsclientPrintSSLState(ls->ssl);
+    }
 
-    tlsclientLinestateDestroy(ls);
-    tunnelNextUpStreamFinish(t, l);
-    tunnelPrevDownStreamFinish(t, l);
+    tlsclientCloseAfterInitFailure(t, l, ls);
+}
+
+void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
+{
+    tlsclient_tstate_t *ts = tunnelGetState(t);
+
+    if (tlsclientRaceIsEnabled(ts))
+    {
+        tlsclientRaceUpStreamInit(t, l);
+        return;
+    }
+
+    tlsclientPerformUpStreamInit(t, l);
 }

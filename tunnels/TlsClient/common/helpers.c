@@ -1,4 +1,5 @@
 #include "structure.h"
+#include "sni_pool.h"
 
 #include "loggers/network_logger.h"
 
@@ -251,11 +252,10 @@ void tlsclientTunnelstateDestroy(tlsclient_tstate_t *ts)
     tlsclientFreeSslContextPool(&ts->threadlocal_ech_grease_inner_ssl_contexts);
 
     memoryFree(ts->alpn);
-    memoryFree(ts->sni);
+    tlsclientFreeSniSettings(ts);
     memoryFree(ts->ech_grease_sni_override);
 
     ts->alpn                            = NULL;
-    ts->sni                             = NULL;
     ts->ech_grease_sni_override         = NULL;
     ts->verify                          = false;
     ts->x25519mlkem768_enabled          = false;
