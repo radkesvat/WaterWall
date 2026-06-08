@@ -58,3 +58,7 @@ Paired SNI/IP routing uses the same `sni-endpoints` behavior as `TlsClient`. Con
   }
 }
 ```
+
+If `RealityClient` uses `snis` and the following `TcpConnector` uses its own `addresses` pool, SNI selection and TCP
+address selection are independent. Use `sni-endpoints` plus `dest_context` when a specific SNI must always connect to a
+specific IP address.

@@ -206,6 +206,45 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
     Rotates through destination objects.
   - `random`
     Picks a pseudo-random destination and ignores weights.
+  - `healthy-only`
+    Round-robins across destinations that passive health tracking still marks healthy. If every destination is
+    unhealthy, selection falls back to all destinations so traffic can recover when no active probe is configured.
+  - `least-rtt`
+    Picks the healthy destination with the lowest observed TCP connect RTT. Before any RTT sample exists, it falls back
+    to healthy round-robin selection.
+  - `race`
+    Starts several TCP connect attempts for one line and keeps the first candidate that connects. Losing candidates are
+    closed before the line is established.
+
+- `address-max-consecutive-failures` `(integer)`
+  Number of consecutive TCP connect failures after which a destination object is marked unhealthy.
+  Default: `3`
+
+- `address-probe-interval-ms` `(integer)`
+  Enables active TCP probes for `addresses` when greater than zero.
+  Default: `0` (disabled)
+
+  Active probes currently run only for `addresses` entries whose address and port are constant IP values after JSON
+  parsing. Domain destinations and routing-context destinations still use passive health and RTT tracking from real
+  traffic.
+
+  Probes are TCP-connect-only checks. They open a socket, wait for connect success or failure, and close it without
+  sending application data. Keep this disabled unless the remote service can safely tolerate short-lived empty TCP
+  connections.
+
+- `address-probe-timeout-ms` `(integer)`
+  TCP connect timeout used by active probes.
+  Default: `5000`
+
+- `race-tries` `(integer)`
+  Maximum number of destination candidates attempted by `address-selection: "race"`.
+  Default: all configured destinations
+
+  Values above the configured destination count are capped to that count.
+
+- `race-timeout-ms` `(integer)`
+  Maximum time to wait for a race winner before finishing the line.
+  Default: `5000`
 
 - `domain-strategy` `(integer)`
   Selects how domain DNS results are chosen.
@@ -269,6 +308,33 @@ For paired SNI/IP reverse TLS or Reality-style paths, keep the layers decoupled 
 
 If you instead configure `TlsClient.settings.snis` and `TcpConnector.settings.addresses`, SNI selection and TCP
 destination selection are independent.
+
+### Health, RTT, and TCP race behavior
+
+`TcpConnector` tracks passive per-destination statistics when `addresses` is configured:
+
+- successful TCP connects reset the destination's consecutive failure count and update its RTT estimate
+- TCP connect failures increment the destination's consecutive failure count
+- a destination becomes unhealthy after `address-max-consecutive-failures`
+- a later successful real connection or active probe marks the destination healthy again
+
+`least-rtt` uses the TCP connect-time RTT estimate only. It does not measure TLS handshake time or application latency.
+
+`address-selection: "race"` is implemented inside `TcpConnector` and does not create any TLS/SNI dependency. Each race
+attempt uses one selected `addresses` entry and its own socket. The first successful TCP connect becomes the line's
+socket, and all losing attempts are closed with their callbacks detached.
+
+Current race/probe limits:
+
+- TCP race requires `addresses`
+- active probes require `addresses`
+- active probes only probe constant IP+port entries
+- race attempts only start for candidates that resolve to an IP+port before connect
+- constant domains still use the normal async DNS path with non-race selection modes
+
+For deterministic SNI/IP pairing, prefer `TlsClient.settings.sni-endpoints` or `RealityClient.settings.sni-endpoints`
+with `TcpConnector` configured to read `dest_context`. TCP race over an independent `addresses` pool intentionally keeps
+SNI and IP selection decoupled.
 
 ### Domain resolution
 
