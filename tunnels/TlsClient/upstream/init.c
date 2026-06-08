@@ -30,6 +30,7 @@ void tlsclientPerformUpStreamInit(tunnel_t *t, line_t *l)
     if (tlsclientRaceIsChildLine(ls))
     {
         tlsclientLinestateSetupSsl(ls, ts->threadlocal_ssl_contexts[lineGetWID(l)]);
+        tlsclientApplySelectedSniRoute(ts, ls, l);
         sni = ls->selected_sni;
     }
     else

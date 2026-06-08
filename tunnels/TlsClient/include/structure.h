@@ -35,12 +35,20 @@ typedef struct tlsclient_sni_stat_s
     uint32_t    weight;
 } tlsclient_sni_stat_t;
 
+typedef struct tlsclient_sni_route_s
+{
+    address_context_t dest_ctx;
+    bool              has_address;
+    bool              has_port;
+} tlsclient_sni_route_t;
+
 typedef struct tlsclient_tstate_s
 {
     // settings
     char *alpn;
     char **snis;
     uint32_t snis_count;
+    tlsclient_sni_route_t *sni_routes;
     tlsclient_sni_selection_e sni_selection;
     atomic_uint sni_round_index;
     atomic_uint sni_weight_index;

@@ -22,6 +22,67 @@ static bool tlsclientLoadSniString(char **dest, const cJSON *item, const char *j
     return true;
 }
 
+static bool tlsclientLoadEndpointAddress(tlsclient_sni_route_t *route, const cJSON *item, const char *json_path)
+{
+    if (item == NULL)
+    {
+        return true;
+    }
+
+    if (! cJSON_IsString(item) || item->valuestring == NULL || item->valuestring[0] == '\0')
+    {
+        LOGF("JSON Error: %s (string field) : The data was empty or invalid", json_path);
+        return false;
+    }
+
+    if (stringContains(item->valuestring, "://") || stringChr(item->valuestring, '/') != NULL)
+    {
+        LOGF("JSON Error: %s (string field) : expected a host, domain, or IP address, not a URL", json_path);
+        return false;
+    }
+
+    if (addressIsIp(item->valuestring))
+    {
+        if (! addresscontextSetIpAddress(&route->dest_ctx, item->valuestring))
+        {
+            LOGF("JSON Error: %s (string field) : The value was empty or invalid", json_path);
+            return false;
+        }
+    }
+    else
+    {
+        size_t len = stringLength(item->valuestring);
+        if (len == 0 || len > UINT8_MAX)
+        {
+            LOGF("JSON Error: %s (string field) : The data was empty or invalid", json_path);
+            return false;
+        }
+        addresscontextDomainSet(&route->dest_ctx, item->valuestring, (uint8_t) len);
+    }
+
+    route->has_address = true;
+    return true;
+}
+
+static bool tlsclientLoadEndpointPort(tlsclient_sni_route_t *route, const cJSON *item, const char *json_path)
+{
+    if (item == NULL)
+    {
+        return true;
+    }
+
+    if (! cJSON_IsNumber(item) || item->valueint <= 0 || item->valueint > UINT16_MAX ||
+        item->valuedouble != (double) item->valueint)
+    {
+        LOGF("JSON Error: %s (number field) : expected a valid port number", json_path);
+        return false;
+    }
+
+    addresscontextSetPort(&route->dest_ctx, (uint16_t) item->valueint);
+    route->has_port = true;
+    return true;
+}
+
 static bool tlsclientAllocateSniStats(tlsclient_tstate_t *ts)
 {
     if (ts->sni_stats != NULL)
@@ -66,25 +127,82 @@ void tlsclientFreeSniSettings(tlsclient_tstate_t *ts)
 
     memoryFree(ts->sni_stats);
 
+    if (ts->sni_routes != NULL)
+    {
+        for (uint32_t i = 0; i < ts->snis_count; ++i)
+        {
+            addresscontextReset(&ts->sni_routes[i].dest_ctx);
+        }
+        memoryFree(ts->sni_routes);
+    }
+
     ts->snis          = NULL;
     ts->snis_count    = 0;
+    ts->sni_routes    = NULL;
     ts->sni_stats     = NULL;
     ts->sni_weight_total = 0;
 }
 
 bool tlsclientParseSniSettings(tlsclient_tstate_t *ts, const cJSON *settings, tunnel_t *t)
 {
-    const cJSON *sni_field  = cJSON_GetObjectItemCaseSensitive(settings, "sni");
-    const cJSON *snis_field = cJSON_GetObjectItemCaseSensitive(settings, "snis");
+    const cJSON *sni_field       = cJSON_GetObjectItemCaseSensitive(settings, "sni");
+    const cJSON *snis_field      = cJSON_GetObjectItemCaseSensitive(settings, "snis");
+    const cJSON *endpoints_field = cJSON_GetObjectItemCaseSensitive(settings, "sni-endpoints");
+    uint32_t     configured_forms = 0;
 
-    if (sni_field != NULL && snis_field != NULL)
+    configured_forms += sni_field != NULL ? 1U : 0U;
+    configured_forms += snis_field != NULL ? 1U : 0U;
+    configured_forms += endpoints_field != NULL ? 1U : 0U;
+
+    if (configured_forms > 1)
     {
-        LOGF("JSON Error: TlsClient->settings must use either \"sni\" or \"snis\", not both");
+        LOGF("JSON Error: TlsClient->settings must use only one of \"sni\", \"snis\", or \"sni-endpoints\"");
         tlsclientDestroyAfterSniConfigError(ts, t);
         return false;
     }
 
-    if (snis_field != NULL)
+    if (endpoints_field != NULL)
+    {
+        if (! cJSON_IsArray(endpoints_field) || cJSON_GetArraySize(endpoints_field) <= 0)
+        {
+            LOGF("JSON Error: TlsClient->settings->sni-endpoints (array field) : expected one or more endpoints");
+            tlsclientDestroyAfterSniConfigError(ts, t);
+            return false;
+        }
+
+        const int count = cJSON_GetArraySize(endpoints_field);
+        ts->snis_count = (uint32_t) count;
+        ts->snis       = memoryAllocateZero(sizeof(*ts->snis) * (size_t) ts->snis_count);
+        ts->sni_routes = memoryAllocateZero(sizeof(*ts->sni_routes) * (size_t) ts->snis_count);
+
+        int          index = 0;
+        const cJSON *item  = NULL;
+        cJSON_ArrayForEach(item, endpoints_field)
+        {
+            if (! cJSON_IsObject(item) || item->child == NULL)
+            {
+                LOGF("JSON Error: TlsClient->settings->sni-endpoints[] (object field) : The data was empty or invalid");
+                tlsclientDestroyAfterSniConfigError(ts, t);
+                return false;
+            }
+
+            const cJSON *endpoint_sni     = cJSON_GetObjectItemCaseSensitive(item, "sni");
+            const cJSON *endpoint_address = cJSON_GetObjectItemCaseSensitive(item, "address");
+            const cJSON *endpoint_port    = cJSON_GetObjectItemCaseSensitive(item, "port");
+
+            if (! tlsclientLoadSniString(&ts->snis[index], endpoint_sni, "TlsClient->settings->sni-endpoints[]->sni") ||
+                ! tlsclientLoadEndpointAddress(&ts->sni_routes[index], endpoint_address,
+                                               "TlsClient->settings->sni-endpoints[]->address") ||
+                ! tlsclientLoadEndpointPort(&ts->sni_routes[index], endpoint_port,
+                                            "TlsClient->settings->sni-endpoints[]->port"))
+            {
+                tlsclientDestroyAfterSniConfigError(ts, t);
+                return false;
+            }
+            ++index;
+        }
+    }
+    else if (snis_field != NULL)
     {
         if (! cJSON_IsArray(snis_field) || cJSON_GetArraySize(snis_field) <= 0)
         {
@@ -113,7 +231,7 @@ bool tlsclientParseSniSettings(tlsclient_tstate_t *ts, const cJSON *settings, tu
     {
         if (sni_field == NULL)
         {
-            LOGF("JSON Error: TlsClient->settings must provide either \"sni\" or \"snis\"");
+            LOGF("JSON Error: TlsClient->settings must provide one of \"sni\", \"snis\", or \"sni-endpoints\"");
             tlsclientDestroyAfterSniConfigError(ts, t);
             return false;
         }
@@ -509,6 +627,37 @@ void tlsclientSelectSniForLine(tlsclient_tstate_t *ts, tlsclient_lstate_t *ls, l
 {
     ls->selected_sni_index = tlsclientPickSniIndex(ts, l);
     ls->selected_sni       = ts->snis[ls->selected_sni_index];
+    tlsclientApplySelectedSniRoute(ts, ls, l);
+}
+
+void tlsclientApplySelectedSniRoute(tlsclient_tstate_t *ts, tlsclient_lstate_t *ls, line_t *l)
+{
+    if (ts->sni_routes == NULL || ls->selected_sni_index >= ts->snis_count)
+    {
+        return;
+    }
+
+    tlsclient_sni_route_t *route = &ts->sni_routes[ls->selected_sni_index];
+    if (! route->has_address && ! route->has_port)
+    {
+        return;
+    }
+
+    address_context_t *dest_ctx     = &l->routing_context.dest_ctx;
+    uint16_t           current_port = dest_ctx->port;
+    if (route->has_address)
+    {
+        addresscontextAddrCopy(dest_ctx, &route->dest_ctx);
+    }
+
+    if (route->has_port)
+    {
+        addresscontextCopyPort(dest_ctx, &route->dest_ctx);
+    }
+    else if (route->has_address)
+    {
+        addresscontextSetPort(dest_ctx, current_port);
+    }
 }
 
 static bool tlsclientIndexAlreadySelected(const uint32_t *indices, uint32_t count, uint32_t index)
