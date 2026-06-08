@@ -35,6 +35,12 @@ if(TARGET ww)
   add_dependencies(waterwall_unit_tests users_sync_test)
 
   add_waterwall_unit_test(waterwall.users_sync_unit users_sync_test "unit;objects;users;sync;thread")
+
+  add_executable(wlibc_memcopy_test wlibc_memcopy_test.c)
+  target_link_libraries(wlibc_memcopy_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests wlibc_memcopy_test)
+
+  add_waterwall_unit_test(waterwall.wlibc_memcopy_unit wlibc_memcopy_test "unit;libc;memory")
 endif()
 
 if(TARGET tcp_over_udp_fec)
