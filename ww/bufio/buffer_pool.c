@@ -83,10 +83,8 @@ uint16_t bufferpoolGetSmallBufferPadding(buffer_pool_t *pool)
  * @param userdata User data passed to the create handler.
  * @return A pointer to the created large buffer.
  */
-static master_pool_item_t *createLargeBufHandle(master_pool_t *pool, void *userdata)
+static master_pool_item_t *createLargeBufHandle(void *userdata)
 {
-    discard pool;
-
     buffer_pool_t *bpool = userdata;
     return sbufCreateWithPadding(bpool->large_buffers_size, bpool->large_buffer_left_padding);
 }
@@ -97,9 +95,8 @@ static master_pool_item_t *createLargeBufHandle(master_pool_t *pool, void *userd
  * @param userdata User data passed to the create handler.
  * @return A pointer to the created small buffer.
  */
-static master_pool_item_t *createSmallBufHandle(master_pool_t *pool, void *userdata)
+static master_pool_item_t *createSmallBufHandle(void *userdata)
 {
-    discard        pool;
     buffer_pool_t *bpool = userdata;
     return sbufCreateWithPadding(bpool->small_buffers_size, bpool->small_buffer_left_padding);
 }
@@ -110,10 +107,8 @@ static master_pool_item_t *createSmallBufHandle(master_pool_t *pool, void *userd
  * @param item The large buffer to destroy.
  * @param userdata User data passed to the destroy handler.
  */
-static void destroyLargeBufHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
+static void destroyLargeBufHandle(master_pool_item_t *item)
 {
-    discard pool;
-    discard userdata;
     sbufDestroy(item);
 }
 
@@ -123,10 +118,8 @@ static void destroyLargeBufHandle(master_pool_t *pool, master_pool_item_t *item,
  * @param item The small buffer to destroy.
  * @param userdata User data passed to the destroy handler.
  */
-static void destroySmallBufHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
+static void destroySmallBufHandle(master_pool_item_t *item)
 {
-    discard pool;
-    discard userdata;
     sbufDestroy(item);
 }
 
@@ -139,7 +132,9 @@ static void reChargeLargeBuffers(buffer_pool_t *pool)
     const uint32_t increase = min((pool->cap - pool->large_buffers_container_len), pool->cap / 2);
 
     masterpoolGetItems(pool->large_buffers_mp,
-                       (void const **) &(pool->large_buffers[pool->large_buffers_container_len]), increase, pool);
+                       (void const **) &(pool->large_buffers[pool->large_buffers_container_len]),
+                       increase,
+                       pool);
 
     pool->large_buffers_container_len += increase;
 #if BUFFER_POOL_DEBUG == 1
@@ -156,7 +151,9 @@ static void reChargeSmallBuffers(buffer_pool_t *pool)
     const uint32_t increase = min((pool->cap - pool->small_buffers_container_len), pool->cap / 2);
 
     masterpoolGetItems(pool->small_buffers_mp,
-                       (void const **) &(pool->small_buffers[pool->small_buffers_container_len]), increase, pool);
+                       (void const **) &(pool->small_buffers[pool->small_buffers_container_len]),
+                       increase,
+                       pool);
 
     pool->small_buffers_container_len += increase;
 #if BUFFER_POOL_DEBUG == 1
@@ -189,8 +186,8 @@ static void shrinkLargeBuffers(buffer_pool_t *pool)
     const uint32_t decrease = min(pool->large_buffers_container_len, pool->cap / 2);
 
     masterpoolReuseItems(pool->large_buffers_mp,
-                         (void **) &(pool->large_buffers[pool->large_buffers_container_len - decrease]), decrease,
-                         pool);
+                         (void **) &(pool->large_buffers[pool->large_buffers_container_len - decrease]),
+                         decrease);
 
     pool->large_buffers_container_len -= decrease;
 
@@ -208,8 +205,8 @@ static void shrinkSmallBuffers(buffer_pool_t *pool)
     const uint32_t decrease = min(pool->small_buffers_container_len, pool->cap / 2);
 
     masterpoolReuseItems(pool->small_buffers_mp,
-                         (void **) &(pool->small_buffers[pool->small_buffers_container_len - decrease]), decrease,
-                         pool);
+                         (void **) &(pool->small_buffers[pool->small_buffers_container_len - decrease]),
+                         decrease);
 
     pool->small_buffers_container_len -= decrease;
 
@@ -434,8 +431,6 @@ void bufferpoolDestroy(buffer_pool_t *pool)
     {
         sbufDestroy(pool->large_buffers[l_i]);
     }
-    masterpoolMakeEmpty(pool->large_buffers_mp, pool);
-    masterpoolMakeEmpty(pool->small_buffers_mp, pool);
     memoryFree((void *) pool->large_buffers);
     memoryFree((void *) pool->small_buffers);
     memoryFree(pool);

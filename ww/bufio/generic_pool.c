@@ -16,26 +16,11 @@
  * @param userdata User data passed to the create handler.
  * @return A pointer to the created pool item.
  */
-static master_pool_item_t *poolCreateItemHandle(master_pool_t *pool, void *userdata)
+static master_pool_item_t *poolCreateItemHandle(void *userdata)
 {
-    discard         pool;
     generic_pool_t *gpool = userdata;
 
     return gpool->create_item_handle(gpool);
-}
-
-/**
- * Destroys a pool item using the provided destroy handler.
- * @param pool The master pool.
- * @param item The pool item to destroy.
- * @param userdata User data passed to the destroy handler.
- */
-static void poolDestroyItemHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
-{
-    discard         pool;
-    generic_pool_t *gpool = userdata;
-
-    gpool->destroy_item_handle(gpool, item);
 }
 
 void genericpoolReCharge(generic_pool_t *pool)
@@ -50,12 +35,11 @@ void genericpoolReCharge(generic_pool_t *pool)
 #endif
 }
 
-
 void genericpoolShrink(generic_pool_t *pool)
 {
     const uint32_t decrease = (pool->len < (pool->cap / 2) ? pool->len : (pool->cap / 2));
 
-    masterpoolReuseItems(pool->mp, &(pool->available[pool->len - decrease]), decrease, pool);
+    masterpoolReuseItems(pool->mp, &(pool->available[pool->len - decrease]), decrease);
 
     pool->len -= decrease;
 
@@ -106,7 +90,7 @@ static generic_pool_t *allocateGenericPool(master_pool_t *mp, uint32_t item_size
         .destroy_item_handle = destroy_h,
 
 #if POOL_THREAD_CHECK
-        .tid = 0,
+        .tid             = 0,
         .no_thread_check = false,
 #endif
 
@@ -115,7 +99,7 @@ static generic_pool_t *allocateGenericPool(master_pool_t *mp, uint32_t item_size
 #endif
 
     };
-    masterpoolInstallCallBacks(pool_ptr->mp, poolCreateItemHandle, poolDestroyItemHandle);
+    masterpoolInstallCallBacks(pool_ptr->mp, poolCreateItemHandle, destroy_h);
     // poolFirstCharge(pool_ptr);
     return pool_ptr;
 }
@@ -132,13 +116,30 @@ static pool_item_t *poolDefaultAllocator(generic_pool_t *pool)
 
 /**
  * Default deallocator for pool items.
- * @param pool The generic pool.
  * @param item The pool item to deallocate.
  */
-static void poolDefaultDeallocator(generic_pool_t *pool, pool_item_t *item)
+static void poolDefaultDeallocator(pool_item_t *item)
 {
-    discard pool;
     memoryFree(item);
+}
+
+/**
+ * Default cache-line aligned allocator for pool items.
+ * @param pool The generic pool.
+ * @return A pointer to the allocated pool item.
+ */
+static pool_item_t *poolDefaultCacheAlignedAllocator(generic_pool_t *pool)
+{
+    return memoryAllocateCacheAligned(pool->item_size);
+}
+
+/**
+ * Default cache-line aligned deallocator for pool items.
+ * @param item The pool item to deallocate.
+ */
+static void poolDefaultCacheAlignedDeallocator(pool_item_t *item)
+{
+    memoryFreeAligned(item);
 }
 
 generic_pool_t *genericpoolCreate(master_pool_t *mp, PoolItemCreateHandle create_h, PoolItemDestroyHandle destroy_h)
@@ -163,12 +164,18 @@ generic_pool_t *genericpoolCreateWithDefaultAllocatorAndCapacity(master_pool_t *
     return allocateGenericPool(mp, item_size, pool_width, poolDefaultAllocator, poolDefaultDeallocator);
 }
 
+generic_pool_t *genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(master_pool_t *mp, uint32_t item_size,
+                                                                             uint32_t pool_width)
+{
+    return allocateGenericPool(
+        mp, item_size, pool_width, poolDefaultCacheAlignedAllocator, poolDefaultCacheAlignedDeallocator);
+}
+
 void genericpoolDestroy(generic_pool_t *pool)
 {
     for (uint32_t i = 0; i < pool->len; ++i)
     {
-        pool->destroy_item_handle(pool, pool->available[i]);
+        pool->destroy_item_handle(pool->available[i]);
     }
-    masterpoolMakeEmpty(pool->mp, pool);
     memoryFree(pool);
 }

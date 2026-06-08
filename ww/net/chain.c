@@ -60,13 +60,15 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
 
     for (wid_t i = 0; i < tc->workers_count; i++)
     {
-        tc->line_pools[i] = genericpoolCreateWithDefaultAllocatorAndCapacity(
+        tc->line_pools[i] = genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(
             tc->masterpool_line_pool, sizeof(line_t) + tc->sum_line_state_size, (8) + GSTATE.ram_profile);
 
         if (tc->contains_packet_node)
         {
             tc->packet_lines[i] = lineCreateForWorker(0, tc->line_pools, i);
-        }else {
+        }
+        else
+        {
             tc->packet_lines[i] = NULL;
         }
     }
@@ -96,6 +98,7 @@ void tunnelchainDestroy(tunnel_chain_t *tc)
 
     if (tc->masterpool_line_pool)
     {
+        masterpoolMakeEmpty(tc->masterpool_line_pool);
         masterpoolDestroy(tc->masterpool_line_pool);
     }
 
@@ -111,15 +114,18 @@ void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
     // Check if combining would exceed maximum chain length
     if (destination->tunnels.len + source->tunnels.len > kMaxChainLen)
     {
-        LOGF("tunnelchainCombine: Combined chain would exceed maximum length (%d + %d > %d)", destination->tunnels.len,
-             source->tunnels.len, kMaxChainLen);
+        LOGF("tunnelchainCombine: Combined chain would exceed maximum length (%d + %d > %d)",
+             destination->tunnels.len,
+             source->tunnels.len,
+             kMaxChainLen);
         terminateProgram(1);
     }
 
     // Check if worker counts match
     if (destination->workers_count != source->workers_count)
     {
-        LOGF("tunnelchainCombine: Worker counts don't match (%d != %d)", destination->workers_count,
+        LOGF("tunnelchainCombine: Worker counts don't match (%d != %d)",
+             destination->workers_count,
              source->workers_count);
         terminateProgram(1);
     }

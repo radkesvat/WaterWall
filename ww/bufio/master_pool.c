@@ -10,9 +10,8 @@
  * @param userdata User data passed to the create handler.
  * @return A pointer to the created pool item.
  */
-static master_pool_item_t *defaultCreateHandle(master_pool_t *pool, void *userdata)
+static master_pool_item_t *defaultCreateHandle(void *userdata)
 {
-    discard pool;
     discard userdata;
     printError("MasterPool CallBack is not set. this is a bug");
     terminateProgram(1);
@@ -24,15 +23,12 @@ static master_pool_item_t *defaultCreateHandle(master_pool_t *pool, void *userda
  * @param item The pool item to destroy.
  * @param userdata User data passed to the destroy handler.
  */
-static void defaultDestroyHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
+static void defaultDestroyHandle(master_pool_item_t *item)
 {
-    discard pool;
-    discard userdata;
     discard item;
     printError("MasterPool CallBack is not set. this is a bug");
     terminateProgram(1);
 }
-
 
 master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
 {
@@ -41,8 +37,7 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
     // half of the pool is used, other half is free at startup
     pool_width = 2 * pool_width;
 
-    // Calculate all sizes in size_t and keep full alignment slack (kCpuLineCacheSize - 1),
-    // so an aligned pointer always has enough trailing bytes for the full object payload.
+    // Calculate all sizes in size_t.
     const uint64_t container_len64 = ((uint64_t) pool_width) * ((uint64_t) sizeof(master_pool_item_t *));
     if (container_len64 > ((uint64_t) SIZE_MAX))
     {
@@ -58,25 +53,19 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
     }
     const size_t required_size = sizeof(master_pool_t) + container_len;
 
-    if (required_size > (SIZE_MAX - kCpuLineCacheSizeMin1))
+    // allocate memory, placing master_pool_t at a line cache address boundary
+    master_pool_t *pool_ptr = memoryAllocateCacheAligned(required_size);
+    if (pool_ptr == NULL)
     {
         printError("buffer size out of range");
         terminateProgram(1);
     }
-    const size_t memsize = required_size + kCpuLineCacheSizeMin1;
-
-    // allocate memory, placing master_pool_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t) memoryAllocate(memsize);
-
-
-    // align pointer to line cache boundary
-    master_pool_t *pool_ptr = (master_pool_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
 
 #ifdef DEBUG
     memorySet(pool_ptr, 0xEB, required_size);
 #endif
 
-    master_pool_t pool = {.memptr              = (void *) ptr,
+    master_pool_t pool = {.memptr              = pool_ptr,
                           .cap                 = pool_width,
                           .len                 = 0,
                           .create_item_handle  = defaultCreateHandle,
@@ -89,7 +78,6 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
     return pool_ptr;
 }
 
-
 void masterpoolInstallCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle create_h,
                                 MasterPoolItemDestroyHandle destroy_h)
 {
@@ -99,19 +87,17 @@ void masterpoolInstallCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle 
     mutexUnlock(&(pool->mutex));
 }
 
-
-void masterpoolMakeEmpty(master_pool_t *pool, void *userdata)
+void masterpoolMakeEmpty(master_pool_t *pool)
 {
     mutexLock(&(pool->mutex));
     const uint32_t current_len = (uint32_t) atomicLoadExplicit(&(pool->len), memory_order_relaxed);
     for (uint32_t i = 0; i < current_len; i++)
     {
-        pool->destroy_item_handle(pool, pool->available[i], userdata);
+        pool->destroy_item_handle(pool->available[i]);
     }
     atomicStoreExplicit(&(pool->len), 0, memory_order_relaxed);
     mutexUnlock(&(pool->mutex));
 }
-
 
 void masterpoolDestroy(master_pool_t *pool)
 {
@@ -126,5 +112,5 @@ void masterpoolDestroy(master_pool_t *pool)
     mutexUnlock(&(pool->mutex));
 
     mutexDestroy(&pool->mutex);
-    memoryFree(pool->memptr);
+    memoryFreeAligned(pool->memptr);
 }

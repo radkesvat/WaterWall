@@ -57,8 +57,8 @@ struct master_pool_s;
 typedef void master_pool_item_t;
 
 // pool handles are assumed to be thread safe
-typedef master_pool_item_t *(*MasterPoolItemCreateHandle)(struct master_pool_s *pool, void *userdata);
-typedef void (*MasterPoolItemDestroyHandle)(struct master_pool_s *pool, master_pool_item_t *item, void *userdata);
+typedef master_pool_item_t *(*MasterPoolItemCreateHandle)(void *userdata);
+typedef void (*MasterPoolItemDestroyHandle)(master_pool_item_t *item);
 
 /*
     do not read this pool properties from the struct, its a multi-threaded object
@@ -85,11 +85,6 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct master_pool_s
 static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_item_t const **const iptr,
                                       const uint32_t count, void *userdata)
 {
-    // for (uint32_t i = 0; i < count; i++)
-    // {
-    //     iptr[i] = pool->create_item_handle(pool, userdata);
-    // }
-    // return;
     uint32_t i = 0;
 
     if (atomicLoadExplicit(&(pool->len), memory_order_acquire) > 0)
@@ -112,7 +107,7 @@ static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_ite
 
     for (; i < count; i++)
     {
-        iptr[i] = pool->create_item_handle(pool, userdata);
+        iptr[i] = pool->create_item_handle(userdata);
     }
 }
 
@@ -121,22 +116,15 @@ static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_ite
  * @param pool The master pool.
  * @param iptr Pointer to the array of items to be reused.
  * @param count The number of items to reuse.
- * @param userdata User data passed to the destroy handler.
  */
 static inline void masterpoolReuseItems(master_pool_t *const pool, master_pool_item_t **const iptr,
-                                        const uint32_t count, void *userdata)
+                                        const uint32_t count)
 {
-    // for (uint32_t i = 0; i < count; i++)
-    // {
-    //     pool->destroy_item_handle(pool, iptr[i], userdata);
-    // }
-    // return;
-
     if (pool->cap == (uint32_t) atomicLoadExplicit(&(pool->len), memory_order_acquire))
     {
         for (uint32_t i = 0; i < count; i++)
         {
-            pool->destroy_item_handle(pool, iptr[i], userdata);
+            pool->destroy_item_handle(iptr[i]);
         }
         return;
     }
@@ -159,7 +147,7 @@ static inline void masterpoolReuseItems(master_pool_t *const pool, master_pool_i
 
     for (; i < count; i++)
     {
-        pool->destroy_item_handle(pool, iptr[i], userdata);
+        pool->destroy_item_handle(iptr[i]);
     }
 }
 
@@ -183,9 +171,8 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width);
  * @brief Remove all items from the pool without destroying the pool object.
  *
  * @param pool Master pool instance.
- * @param userdata User data forwarded to destroy callback.
  */
-void masterpoolMakeEmpty(master_pool_t *pool, void *userdata);
+void masterpoolMakeEmpty(master_pool_t *pool);
 
 /**
  * Destroys the master pool and frees its resources.

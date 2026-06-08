@@ -687,22 +687,16 @@ wchan_t *chanOpen(size_t elemsize, uint32_t cap)
     }
     const size_t required_size = sizeof(wchan_t) + buffer_size;
 
-    // Keep full alignment slack so ALIGN2(ptr, kCpuLineCacheSize) always has enough trailing bytes.
-    if (required_size > (SIZE_MAX - kCpuLineCacheSizeMin1))
+    // allocate memory, placing wchan_t at a line cache address boundary
+    wchan_t *c = memoryAllocateCacheAligned(required_size);
+    if (c == NULL)
     {
         printError("buffer size out of range");
         terminateProgram(1);
     }
-    const size_t memsize = required_size + kCpuLineCacheSizeMin1;
+    memorySet(c, 0, required_size);
 
-    // allocate memory, placing wchan_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t) memoryAllocate(memsize);
-    memorySet((void *) ptr, 0, memsize);
-
-    // align c to line cache boundary
-    wchan_t *c = (wchan_t *) ALIGN2(ptr, kCpuLineCacheSize);
-
-    c->memptr   = ptr;
+    c->memptr   = (uintptr_t) c;
     c->elemsize = elemsize;
     c->qcap     = cap;
     chan_lock_init(&c->lock);
@@ -757,7 +751,7 @@ void chanFree(wchan_t *c)
 {
     assert(atomicLoadExplicit(&c->closed, memory_order_acquire)); // must close channel before freeing its memory
     chan_lock_destroy(&c->lock);
-    memoryFree((void *) c->memptr);
+    memoryFreeAligned((void *) c->memptr);
 }
 
 uint32_t chanCap(const wchan_t *c)

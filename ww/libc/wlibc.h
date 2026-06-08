@@ -1,8 +1,8 @@
 #pragma once
 
-#include "wplatform.h"
-#include "wmem.h"
 #include "wdef.h"
+#include "wmem.h"
+#include "wplatform.h"
 
 #include "wexport.h"
 
@@ -18,10 +18,8 @@
 
 void initWLibc(void);
 
-
-
 _Noreturn void terminateProgram(int exit_code); // in signal_manager.c
-bool isApplicationTerminating(void); // in signal_manager.c
+bool           isApplicationTerminating(void);  // in signal_manager.c
 
 //--------------------Memory-------------------------------
 
@@ -430,15 +428,18 @@ static inline void memoryCopyAVX2(void *dest, const void *src, intmax_t n)
 // n is in bytes
 static inline void memoryZeroAligned32(void *ptr, size_t n)
 {
+    assert(ptr != NULL);
+    assert((((uintptr_t) ptr) & 31U) == 0);
+    assert((n & 31U) == 0);
+
     n = ALIGN2(n, 32);
 
-    __m256i *vec = (__m256i *) ptr;
-    size_t   i;
+    __m256i      *vec  = (__m256i *) ptr;
+    const __m256i zero = _mm256_setzero_si256();
 
-    // n is always a multiple of 32 bytes, so no tail handling needed
-    for (i = 0; i < n / 32; i++)
+    for (size_t i = 0; i < n / 32; i++)
     {
-        _mm256_store_si256(&vec[i], _mm256_setzero_si256());
+        _mm256_store_si256(&vec[i], zero);
     }
 }
 
@@ -446,20 +447,23 @@ static inline void memoryZeroAligned32(void *ptr, size_t n)
 // n is in bytes
 static inline void memoryZeroAligned32(void *ptr, size_t n)
 {
-    uintmax_t *maxptr  = (uintmax_t *) ptr;
-    size_t     maxsize = sizeof(uintmax_t);
-    size_t     i;
+    assert(ptr != NULL);
+    assert((((uintptr_t) ptr) & 31U) == 0);
+    assert((n & 31U) == 0);
 
-    for (i = 0; i < n / maxsize; i++)
+    n = ALIGN2(n, 32);
+
+    uintmax_t *cur = ptr;
+    size_t     i;
+    for (i = 0; i < n / sizeof(uintmax_t); i++)
     {
-        maxptr[i] = 0;
+        cur[i] = 0;
     }
 
-    // Handle remaining bytes
-    uint8_t *byteptr = (uint8_t *) ptr;
-    for (i = (n / maxsize) * maxsize; i < n; i++)
+    uint8_t *cur2 = (uint8_t *) &(cur[i]);
+    for (size_t j = 0; j < n % sizeof(uintmax_t); j++)
     {
-        byteptr[i] = 0;
+        cur2[j] = 0;
     }
 }
 
@@ -468,7 +472,6 @@ static inline void memoryZeroAligned32(void *ptr, size_t n)
 // same as memoryCopyLarge, but defines the symbol for the linker, used for extranl libraries that dont want to include
 // this file, use the 'memoryCopyLarge' above for your use
 void wwMemoryCopyLarge(void *dest, const void *src, intmax_t n);
-
 
 //--------------------string-------------------------------
 
@@ -531,7 +534,6 @@ static inline uint8_t asciiLower(uint8_t c)
     }
     return c;
 }
-
 
 //--------------------file-------------------------------
 

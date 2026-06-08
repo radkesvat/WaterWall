@@ -28,7 +28,7 @@ typedef struct generic_pool_s generic_pool_t;
 typedef void pool_item_t;
 
 typedef pool_item_t *(*PoolItemCreateHandle)(generic_pool_t *pool);
-typedef void (*PoolItemDestroyHandle)(generic_pool_t *pool, pool_item_t *item);
+typedef void (*PoolItemDestroyHandle)(pool_item_t *item);
 
 #if POOL_DEBUG == 1
 #define GENERIC_POOL_FIELDS                                                                                            \
@@ -144,7 +144,7 @@ static inline pool_item_t *genericpoolGetItem(generic_pool_t *pool)
 static inline void genericpoolReuseItem(generic_pool_t *pool, pool_item_t *b)
 {
 #if BYPASS_GENERIC_POOL == 1
-    pool->destroy_item_handle(pool, b);
+    pool->destroy_item_handle(b);
     return;
 #endif
 
@@ -218,6 +218,16 @@ generic_pool_t *genericpoolCreateWithDefaultAllocator(master_pool_t *mp, uint32_
  */
 generic_pool_t *genericpoolCreateWithDefaultAllocatorAndCapacity(master_pool_t *mp, uint32_t item_size,
                                                                  uint32_t pool_width);
+
+/**
+ * Creates a generic pool with a cache-line aligned default allocator and a specified capacity.
+ * @param mp The master pool.
+ * @param item_size The size of each item in the pool.
+ * @param pool_width The width of the pool.
+ * @return A pointer to the created generic pool.
+ */
+generic_pool_t *genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(master_pool_t *mp, uint32_t item_size,
+                                                                             uint32_t pool_width);
 
 /**
  * Destroys the generic pool and frees its resources.
