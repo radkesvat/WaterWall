@@ -7,9 +7,14 @@ static void keepaliveclientStartWorkerTimer(void *worker_ptr, void *arg1, void *
     discard arg2;
     discard arg3;
 
-    worker_t *worker = worker_ptr;
-    tunnel_t *t      = arg1;
-    keepaliveclient_tstate_t *ts = tunnelGetState(t);
+    worker_t                 *worker = worker_ptr;
+    tunnel_t                 *t      = arg1;
+    keepaliveclient_tstate_t *ts     = tunnelGetState(t);
+
+    if (UNLIKELY(isApplicationTerminating()))
+    {
+        return;
+    }
 
     wtimer_t *timer = wtimerAdd(worker->loop, keepaliveclientWorkerTimerCallback, ts->ping_interval_ms, INFINITE);
     if (timer == NULL)
@@ -20,7 +25,6 @@ static void keepaliveclientStartWorkerTimer(void *worker_ptr, void *arg1, void *
     }
 
     weventSetUserData(timer, t);
-    ts->worker_timers[worker->wid] = timer;
 }
 
 void keepaliveclientTunnelOnStart(tunnel_t *t)

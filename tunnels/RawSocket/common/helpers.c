@@ -5,15 +5,20 @@
 void rawsocketExitHook(void *userdata, int sig)
 {
     discard sig;
-    char *cmdbuf = userdata;
+    char   *cmdbuf = userdata;
     execCmd(cmdbuf);
 }
 
 void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, sbuf_t *buf, wid_t wid)
 {
     // packet is correctly filtered based on src/dest ip since we told net filter system
-    discard cdev;
     tunnel_t *t = userdata;
+
+    if (UNLIKELY(isApplicationTerminating() || cdev->up == false))
+    {
+        bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+        return;
+    }
 
     // printIPPacketInfo("RawSocket received", sbufGetRawPtr(buf));
     struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
@@ -28,7 +33,7 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
     line_t *l = tunnelchainGetWorkerPacketLine(t->chain, wid);
 
     rawsocket_tstate_t *state = tunnelGetState(t);
-    
+
     state->WriteReceivedPacket(state->write_tunnel, l, buf);
 }
 

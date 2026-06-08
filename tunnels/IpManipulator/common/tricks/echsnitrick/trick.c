@@ -159,8 +159,7 @@ static void echsnitrickFinalizeFlowLocked(ipmanipulator_echsni_flow_t *flow, boo
 
     echsnitrickDestroyCapturedPacket(&flow->held_packet);
     flow->warmup_packets_seen = kEchSniWarmupPackets;
-    flow->phase               = block_flow ? kIpManipulatorEchSniFlowPhaseBlocked
-                                           : kIpManipulatorEchSniFlowPhasePassthrough;
+    flow->phase = block_flow ? kIpManipulatorEchSniFlowPhaseBlocked : kIpManipulatorEchSniFlowPhasePassthrough;
 
     if (block_flow || ! start_delay || state == NULL)
     {
@@ -281,7 +280,7 @@ static bool echsnitrickFlowMatches(const ipmanipulator_echsni_flow_t *flow, cons
            flow->src_port == info->src_port && flow->dst_port == info->dst_port;
 }
 
-static bool echsnitrickFlowMatchesReverse(const ipmanipulator_echsni_flow_t *flow,
+static bool echsnitrickFlowMatchesReverse(const ipmanipulator_echsni_flow_t   *flow,
                                           const echsnitrick_tcp_packet_info_t *info)
 {
     return flow->active && flow->src_addr == info->dst_addr && flow->dst_addr == info->src_addr &&
@@ -308,7 +307,7 @@ static void echsnitrickCleanupIdleFlowsLocked(ipmanipulator_tstate_t *state, uin
     }
 }
 
-static ipmanipulator_echsni_flow_t *echsnitrickFindFlowLocked(ipmanipulator_tstate_t *state,
+static ipmanipulator_echsni_flow_t *echsnitrickFindFlowLocked(ipmanipulator_tstate_t              *state,
                                                               const echsnitrick_tcp_packet_info_t *info)
 {
     for (uint32_t i = 0; i < state->echsni_flows_capacity; ++i)
@@ -322,7 +321,7 @@ static ipmanipulator_echsni_flow_t *echsnitrickFindFlowLocked(ipmanipulator_tsta
     return NULL;
 }
 
-static ipmanipulator_echsni_flow_t *echsnitrickFindReverseFlowLocked(ipmanipulator_tstate_t *state,
+static ipmanipulator_echsni_flow_t *echsnitrickFindReverseFlowLocked(ipmanipulator_tstate_t              *state,
                                                                      const echsnitrick_tcp_packet_info_t *info)
 {
     for (uint32_t i = 0; i < state->echsni_flows_capacity; ++i)
@@ -336,9 +335,9 @@ static ipmanipulator_echsni_flow_t *echsnitrickFindReverseFlowLocked(ipmanipulat
     return NULL;
 }
 
-static ipmanipulator_echsni_flow_t *echsnitrickCreateFlowLocked(ipmanipulator_tstate_t *state,
+static ipmanipulator_echsni_flow_t *echsnitrickCreateFlowLocked(ipmanipulator_tstate_t              *state,
                                                                 const echsnitrick_tcp_packet_info_t *info,
-                                                                uint64_t now_ms)
+                                                                uint64_t                             now_ms)
 {
     for (uint32_t i = 0; i < state->echsni_flows_capacity; ++i)
     {
@@ -353,8 +352,8 @@ static ipmanipulator_echsni_flow_t *echsnitrickCreateFlowLocked(ipmanipulator_ts
         return flow;
     }
 
-    uint32_t                    old_capacity = state->echsni_flows_capacity;
-    uint32_t                    new_capacity = max(kIpManipulatorSmuggleInitialFlows, old_capacity * 2U);
+    uint32_t                     old_capacity = state->echsni_flows_capacity;
+    uint32_t                     new_capacity = max(kIpManipulatorSmuggleInitialFlows, old_capacity * 2U);
     ipmanipulator_echsni_flow_t *grown =
         memoryReAllocate(state->echsni_flows, sizeof(*state->echsni_flows) * new_capacity);
 
@@ -372,8 +371,8 @@ static ipmanipulator_echsni_flow_t *echsnitrickCreateFlowLocked(ipmanipulator_ts
     return flow;
 }
 
-static echsnitrick_clienthello_parse_status_e
-echsnitrickParseClientHello(const uint8_t *packet, uint32_t packet_length, echsnitrick_clienthello_match_t *match)
+static echsnitrick_clienthello_parse_status_e echsnitrickParseClientHello(const uint8_t *packet, uint32_t packet_length,
+                                                                          echsnitrick_clienthello_match_t *match)
 {
     echsnitrick_tcp_packet_info_t tcp = {0};
 
@@ -585,15 +584,15 @@ echsnitrickParseClientHello(const uint8_t *packet, uint32_t packet_length, echsn
 
     if (match != NULL)
     {
-        match->has_ech         = found_ech;
-        match->ech_before_sni  = found_ech && ech_index < sni_index;
+        match->has_ech        = found_ech;
+        match->ech_before_sni = found_ech && ech_index < sni_index;
     }
 
     return kEchSniClientHelloParseReady;
 }
 
-static void echsnitrickCopySniName(const uint8_t *packet, const echsnitrick_clienthello_match_t *match,
-                                   char *dst, size_t dst_size)
+static void echsnitrickCopySniName(const uint8_t *packet, const echsnitrick_clienthello_match_t *match, char *dst,
+                                   size_t dst_size)
 {
     if (dst == NULL || dst_size == 0)
     {
@@ -612,8 +611,8 @@ static void echsnitrickCopySniName(const uint8_t *packet, const echsnitrick_clie
 }
 
 static bool echsnitrickFindInnerClientHello(const uint8_t *packet, uint32_t packet_length,
-                                            const echsnitrick_clienthello_match_t *match,
-                                            uint32_t *inner_offset_out, uint32_t *inner_len_out)
+                                            const echsnitrick_clienthello_match_t *match, uint32_t *inner_offset_out,
+                                            uint32_t *inner_len_out)
 {
     if (packet == NULL || match == NULL || inner_offset_out == NULL || inner_len_out == NULL ||
         match->ech_payload_offset >= packet_length)
@@ -777,12 +776,12 @@ static uint8_t echsnitrickGetContinuationPushFlags(uint8_t original_flags)
 
 static void echsnitrickSelectTemplateForOffset(const ipmanipulator_captured_packet_t *held_packet,
                                                const echsnitrick_tcp_packet_info_t *held_info, sbuf_t *current_buf,
-                                               const echsnitrick_tcp_packet_info_t *current_info, uint32_t payload_offset,
-                                               sbuf_t **template_buf,
+                                               const echsnitrick_tcp_packet_info_t *current_info,
+                                               uint32_t payload_offset, sbuf_t **template_buf,
                                                const echsnitrick_tcp_packet_info_t **template_info)
 {
-    if (template_buf == NULL || template_info == NULL || held_packet == NULL || held_info == NULL || current_buf == NULL ||
-        current_info == NULL)
+    if (template_buf == NULL || template_info == NULL || held_packet == NULL || held_info == NULL ||
+        current_buf == NULL || current_info == NULL)
     {
         return;
     }
@@ -829,10 +828,10 @@ static void echsnitrickRunDelayedOriginalRelease(worker_t *worker, void *arg1, v
 {
     discard worker;
 
-    tunnel_t                         *t       = arg1;
-    line_t                           *l       = arg2;
-    echsnitrick_delayed_release_t    *release = arg3;
-    bool                              alive   = lineIsAlive(l);
+    tunnel_t                      *t       = arg1;
+    line_t                        *l       = arg2;
+    echsnitrick_delayed_release_t *release = arg3;
+    bool                           alive   = lineIsAlive(l);
 
     if (release != NULL && release->buf != NULL)
     {
@@ -850,8 +849,7 @@ static void echsnitrickRunDelayedOriginalRelease(worker_t *worker, void *arg1, v
     {
         if (alive)
         {
-            discard echsnitrickScheduleOriginalReleasePacket(
-                t, l, release->next_buf, NULL, release->next_delay_ms, 0);
+            discard echsnitrickScheduleOriginalReleasePacket(t, l, release->next_buf, NULL, release->next_delay_ms, 0);
         }
         else
         {
@@ -861,6 +859,45 @@ static void echsnitrickRunDelayedOriginalRelease(worker_t *worker, void *arg1, v
 
     if (release != NULL)
     {
+        memoryFree(release);
+    }
+
+    lineUnlock(l);
+}
+
+static void echsnitrickCleanupDelayedBuffer(line_t *l, sbuf_t *buf)
+{
+    if (buf == NULL)
+    {
+        return;
+    }
+
+    if (getWID() == lineGetWID(l))
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
+
+    sbufDestroy(buf);
+}
+
+static void echsnitrickCleanupDelayedOriginalRelease(void *arg1, void *arg2, void *arg3)
+{
+    discard arg1;
+
+    line_t                        *l       = arg2;
+    echsnitrick_delayed_release_t *release = arg3;
+
+    if (release != NULL)
+    {
+        if (release->buf != NULL)
+        {
+            echsnitrickCleanupDelayedBuffer(l, release->buf);
+        }
+        if (release->next_buf != NULL)
+        {
+            echsnitrickCleanupDelayedBuffer(l, release->next_buf);
+        }
         memoryFree(release);
     }
 
@@ -925,19 +962,20 @@ static bool echsnitrickScheduleOriginalReleasePacket(tunnel_t *t, line_t *l, sbu
     }
 
     echsnitrick_delayed_release_t *release = memoryAllocate(sizeof(*release));
-    *release = (echsnitrick_delayed_release_t) {
-        .buf           = buf,
-        .next_buf      = next_buf,
-        .next_delay_ms = next_delay_ms,
+    *release                               = (echsnitrick_delayed_release_t) {
+                                      .buf           = buf,
+                                      .next_buf      = next_buf,
+                                      .next_delay_ms = next_delay_ms,
     };
 
     lineLock(l);
-    sendWorkerMessageTimed(lineGetWID(l),
-                           (WorkerMessageCallback) echsnitrickRunDelayedOriginalRelease,
-                           delay_ms,
-                           t,
-                           l,
-                           release);
+    sendWorkerMessageTimedWithCleanup(lineGetWID(l),
+                                      (WorkerMessageCallback) echsnitrickRunDelayedOriginalRelease,
+                                      echsnitrickCleanupDelayedOriginalRelease,
+                                      delay_ms,
+                                      t,
+                                      l,
+                                      release);
     return lineIsAlive(l);
 }
 
@@ -949,14 +987,12 @@ static bool echsnitrickScheduleOriginalRelease(tunnel_t *t, line_t *l, sbuf_t *h
         return echsnitrickScheduleOriginalReleasePacket(t, l, current_buf, NULL, shard1_delay_ms, 0);
     }
 
-    return echsnitrickScheduleOriginalReleasePacket(
-        t, l, held_buf, current_buf, shard1_delay_ms, shard2_delay_ms);
+    return echsnitrickScheduleOriginalReleasePacket(t, l, held_buf, current_buf, shard1_delay_ms, shard2_delay_ms);
 }
 
 static void echsnitrickSendInnerThenOriginalDelayed(tunnel_t *t, line_t *l, sbuf_t *inner_packet,
-                                                    ipmanipulator_captured_packet_t *held_packet,
-                                                    sbuf_t *current_buf, uint32_t shard1_delay_ms,
-                                                    uint32_t shard2_delay_ms)
+                                                    ipmanipulator_captured_packet_t *held_packet, sbuf_t *current_buf,
+                                                    uint32_t shard1_delay_ms, uint32_t shard2_delay_ms)
 {
     line_t *line = held_packet != NULL && held_packet->line != NULL ? held_packet->line : l;
 
@@ -1005,8 +1041,8 @@ static void echsnitrickSendInnerThenOriginalDelayed(tunnel_t *t, line_t *l, sbuf
     {
         if (alive)
         {
-            discard echsnitrickScheduleOriginalRelease(t, line, held_buf, current_buf, shard1_delay_ms,
-                                                       shard2_delay_ms);
+            discard echsnitrickScheduleOriginalRelease(
+                t, line, held_buf, current_buf, shard1_delay_ms, shard2_delay_ms);
         }
         else
         {
@@ -1161,8 +1197,7 @@ static void echsnitrickLogCandidateMatch(const char *sni_name, const echsnitrick
 
 static void echsnitrickLogCraftedSuccess(const char *original_sni, const char *replacement_sni,
                                          const echsnitrick_clienthello_match_t *match, uint32_t inner_stream_offset,
-                                         uint32_t inner_payload_len, uint32_t shard1_delay_ms,
-                                         uint32_t shard2_delay_ms)
+                                         uint32_t inner_payload_len, uint32_t shard1_delay_ms, uint32_t shard2_delay_ms)
 {
     if (original_sni == NULL || replacement_sni == NULL || match == NULL)
     {
@@ -1275,10 +1310,9 @@ static bool echsnitrickHandleHeldStandalone(tunnel_t *t, line_t *l, ipmanipulato
         return true;
     }
 
-    echsnitrick_clienthello_match_t      match        = {0};
-    echsnitrick_clienthello_parse_status_e parse_status =
-        echsnitrickParseClientHello((const uint8_t *) sbufGetRawPtr(combined_packet), sbufGetLength(combined_packet),
-                                    &match);
+    echsnitrick_clienthello_match_t        match        = {0};
+    echsnitrick_clienthello_parse_status_e parse_status = echsnitrickParseClientHello(
+        (const uint8_t *) sbufGetRawPtr(combined_packet), sbufGetLength(combined_packet), &match);
 
     if (parse_status == kEchSniClientHelloParseMiss)
     {
@@ -1348,8 +1382,8 @@ static bool echsnitrickHandleHeldStandalone(tunnel_t *t, line_t *l, ipmanipulato
 
     uint32_t inner_offset = 0;
     uint32_t inner_len    = 0;
-    if (! echsnitrickFindInnerClientHello(combined_packet_bytes, sbufGetLength(combined_packet), &match, &inner_offset,
-                                          &inner_len))
+    if (! echsnitrickFindInnerClientHello(
+            combined_packet_bytes, sbufGetLength(combined_packet), &match, &inner_offset, &inner_len))
     {
         echsnitrickLogMissingInnerReject(sni_name);
 
@@ -1392,7 +1426,7 @@ static bool echsnitrickHandleHeldStandalone(tunnel_t *t, line_t *l, ipmanipulato
     }
 
     const uint8_t *combined_payload = ((const uint8_t *) sbufGetRawPtr(combined_packet)) + held_info->headers_len;
-    uint32_t packet_len       = (uint32_t) held_info->headers_len + inner_len;
+    uint32_t       packet_len       = (uint32_t) held_info->headers_len + inner_len;
     if (packet_len > GLOBAL_MTU_SIZE)
     {
         echsnitrickLogInnerMtuReject(sni_name, inner_len, packet_len);
@@ -1411,16 +1445,15 @@ static bool echsnitrickHandleHeldStandalone(tunnel_t *t, line_t *l, ipmanipulato
         return true;
     }
 
-    uint8_t inner_flags = echsnitrickGetContinuationPushFlags(held_info->tcp_flags);
-    sbuf_t *inner_packet =
-        echsnitrickBuildPacketFromTemplate(held_packet->line,
-                                           held_packet->buf,
-                                           held_info,
-                                           combined_payload + inner_stream_offset,
-                                           inner_len,
-                                           held_info->seq + inner_stream_offset,
-                                           held_info->ip_identification,
-                                           inner_flags);
+    uint8_t inner_flags  = echsnitrickGetContinuationPushFlags(held_info->tcp_flags);
+    sbuf_t *inner_packet = echsnitrickBuildPacketFromTemplate(held_packet->line,
+                                                              held_packet->buf,
+                                                              held_info,
+                                                              combined_payload + inner_stream_offset,
+                                                              inner_len,
+                                                              held_info->seq + inner_stream_offset,
+                                                              held_info->ip_identification,
+                                                              inner_flags);
 
     if (inner_packet == NULL)
     {
@@ -1436,14 +1469,13 @@ static bool echsnitrickHandleHeldStandalone(tunnel_t *t, line_t *l, ipmanipulato
         current_buf = NULL;
     }
 
-    echsnitrickSendInnerThenOriginalDelayed(
-        t,
-        l,
-        inner_packet,
-        held_packet,
-        current_buf,
-        state->trick_ech_sni_shard1_delay_ms,
-        state->trick_ech_sni_shard2_delay_ms);
+    echsnitrickSendInnerThenOriginalDelayed(t,
+                                            l,
+                                            inner_packet,
+                                            held_packet,
+                                            current_buf,
+                                            state->trick_ech_sni_shard1_delay_ms,
+                                            state->trick_ech_sni_shard2_delay_ms);
     echsnitrickLogCraftedSuccess(sni_name,
                                  state->trick_ech_sni_value,
                                  &match,
@@ -1525,14 +1557,14 @@ static bool echsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_capt
         return true;
     }
 
-    echsnitrick_clienthello_match_t      match        = {0};
-    echsnitrick_clienthello_parse_status_e parse_status =
-        echsnitrickParseClientHello((const uint8_t *) sbufGetRawPtr(combined_packet), sbufGetLength(combined_packet),
-                                    &match);
+    echsnitrick_clienthello_match_t        match        = {0};
+    echsnitrick_clienthello_parse_status_e parse_status = echsnitrickParseClientHello(
+        (const uint8_t *) sbufGetRawPtr(combined_packet), sbufGetLength(combined_packet), &match);
 
     if (parse_status == kEchSniClientHelloParseMiss)
     {
-        echsnitrickLogParseMissPassthrough((uint32_t) held_info.tcp_payload_len + (uint32_t) current_info->tcp_payload_len);
+        echsnitrickLogParseMissPassthrough((uint32_t) held_info.tcp_payload_len +
+                                           (uint32_t) current_info->tcp_payload_len);
         sbufDestroy(combined_packet);
         echsnitrickSendHeldThenCurrentNormal(t, held_packet, l, current_buf);
         return true;
@@ -1589,8 +1621,8 @@ static bool echsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_capt
 
     uint32_t inner_offset = 0;
     uint32_t inner_len    = 0;
-    if (! echsnitrickFindInnerClientHello(combined_packet_bytes, sbufGetLength(combined_packet), &match, &inner_offset,
-                                          &inner_len))
+    if (! echsnitrickFindInnerClientHello(
+            combined_packet_bytes, sbufGetLength(combined_packet), &match, &inner_offset, &inner_len))
     {
         echsnitrickLogMissingInnerReject(sni_name);
 
@@ -1626,8 +1658,8 @@ static bool echsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_capt
         return true;
     }
 
-    const uint8_t *combined_payload = ((const uint8_t *) sbufGetRawPtr(combined_packet)) + held_info.headers_len;
-    sbuf_t  *inner_template_buf                    = NULL;
+    const uint8_t *combined_payload   = ((const uint8_t *) sbufGetRawPtr(combined_packet)) + held_info.headers_len;
+    sbuf_t        *inner_template_buf = NULL;
     const echsnitrick_tcp_packet_info_t *inner_template_info = NULL;
     echsnitrickSelectTemplateForOffset(held_packet,
                                        &held_info,
@@ -1660,16 +1692,15 @@ static bool echsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_capt
         return true;
     }
 
-    uint8_t inner_flags = echsnitrickGetContinuationPushFlags(inner_template_info->tcp_flags);
-    sbuf_t *inner_packet =
-        echsnitrickBuildPacketFromTemplate(held_packet->line,
-                                           inner_template_buf,
-                                           inner_template_info,
-                                           combined_payload + inner_stream_offset,
-                                           inner_len,
-                                           held_info.seq + inner_stream_offset,
-                                           inner_template_info->ip_identification,
-                                           inner_flags);
+    uint8_t inner_flags  = echsnitrickGetContinuationPushFlags(inner_template_info->tcp_flags);
+    sbuf_t *inner_packet = echsnitrickBuildPacketFromTemplate(held_packet->line,
+                                                              inner_template_buf,
+                                                              inner_template_info,
+                                                              combined_payload + inner_stream_offset,
+                                                              inner_len,
+                                                              held_info.seq + inner_stream_offset,
+                                                              inner_template_info->ip_identification,
+                                                              inner_flags);
 
     if (inner_packet == NULL)
     {
@@ -1679,14 +1710,13 @@ static bool echsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_capt
     }
 
     sbufDestroy(combined_packet);
-    echsnitrickSendInnerThenOriginalDelayed(
-        t,
-        l,
-        inner_packet,
-        held_packet,
-        current_buf,
-        state->trick_ech_sni_shard1_delay_ms,
-        state->trick_ech_sni_shard2_delay_ms);
+    echsnitrickSendInnerThenOriginalDelayed(t,
+                                            l,
+                                            inner_packet,
+                                            held_packet,
+                                            current_buf,
+                                            state->trick_ech_sni_shard1_delay_ms,
+                                            state->trick_ech_sni_shard2_delay_ms);
     echsnitrickLogCraftedSuccess(sni_name,
                                  state->trick_ech_sni_value,
                                  &match,
@@ -1730,9 +1760,9 @@ bool echsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard l;
 
-    ipmanipulator_tstate_t    *state  = tunnelGetState(t);
-    echsnitrick_tcp_packet_info_t info = {0};
-    uint64_t                    now_ms = getTickMS();
+    ipmanipulator_tstate_t       *state  = tunnelGetState(t);
+    echsnitrick_tcp_packet_info_t info   = {0};
+    uint64_t                      now_ms = getTickMS();
 
     if (! echsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
     {
@@ -1759,9 +1789,9 @@ bool echsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 bool echsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    ipmanipulator_tstate_t    *state  = tunnelGetState(t);
-    echsnitrick_tcp_packet_info_t info = {0};
-    uint64_t                    now_ms = getTickMS();
+    ipmanipulator_tstate_t       *state  = tunnelGetState(t);
+    echsnitrick_tcp_packet_info_t info   = {0};
+    uint64_t                      now_ms = getTickMS();
 
     if (! echsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
     {

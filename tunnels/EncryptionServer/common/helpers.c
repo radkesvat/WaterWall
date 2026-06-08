@@ -2,11 +2,10 @@
 
 #include "loggers/network_logger.h"
 
-
 void encryptionserverTunnelstateDestroy(encryptionserver_tstate_t *ts)
 {
     wCryptoZero(ts->key, sizeof(ts->key));
-    memoryZeroAligned32(ts, sizeof(*ts));
+    memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }
 
 int encryptionserverEncryptAead(uint32_t algorithm, unsigned char *dst, const unsigned char *src, size_t src_len,

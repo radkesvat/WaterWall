@@ -43,7 +43,8 @@ static bool keepaliveclientSendFrameNext(tunnel_t *t, line_t *l, sbuf_t *buf, ui
     if (keepaliveclientIsPacketLine(t, l) && frame_len > kMaxAllowedPacketLength)
     {
         LOGE("KeepAliveClient: worker packet line payload exceeds kMaxAllowedPacketLength after framing: %u > %u",
-             (unsigned int) frame_len, (unsigned int) kMaxAllowedPacketLength);
+             (unsigned int) frame_len,
+             (unsigned int) kMaxAllowedPacketLength);
         lineReuseBuffer(l, buf);
         return true;
     }
@@ -62,7 +63,7 @@ static bool keepaliveclientSendFrameNext(tunnel_t *t, line_t *l, sbuf_t *buf, ui
 
     sbufShiftLeft(buf, kKeepAliveFramePrefixSize);
 
-    uint8_t *frame = sbufGetMutablePtr(buf);
+    uint8_t *frame                  = sbufGetMutablePtr(buf);
     uint16_t frame_body_len_network = htons((uint16_t) frame_body_len);
     sbufByteCopy(frame, &frame_body_len_network, (uint32_t) sizeof(frame_body_len_network));
     frame[kKeepAliveFrameLengthSize] = frame_kind;
@@ -200,17 +201,17 @@ void keepaliveclientUntrackLine(tunnel_t *t, line_t *l)
 void keepaliveclientWorkerTimerCallback(wtimer_t *timer)
 {
     tunnel_t *t = weventGetUserdata(timer);
-    if (t == NULL)
+    if (t == NULL || isApplicationTerminating())
     {
         return;
     }
 
-    keepaliveclient_tstate_t *ts = tunnelGetState(t);
-    keepaliveclient_lstate_t *it = NULL;
-    line_t                 **lines = NULL;
-    size_t                   count = 0;
-    size_t                   index = 0;
-    const wid_t              wid   = getWID();
+    keepaliveclient_tstate_t *ts    = tunnelGetState(t);
+    keepaliveclient_lstate_t *it    = NULL;
+    line_t                  **lines = NULL;
+    size_t                    count = 0;
+    size_t                    index = 0;
+    const wid_t               wid   = getWID();
 
     mutexLock(&ts->lines_mutex);
 
@@ -270,7 +271,8 @@ bool keepaliveclientSendNormalFrameUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (keepaliveclientIsPacketLine(t, l) && payload_len + kKeepAliveFramePrefixSize > kMaxAllowedPacketLength)
     {
         LOGE("KeepAliveClient: worker packet line payload exceeds kMaxAllowedPacketLength after framing: %u > %u",
-             (unsigned int) (payload_len + kKeepAliveFramePrefixSize), (unsigned int) kMaxAllowedPacketLength);
+             (unsigned int) (payload_len + kKeepAliveFramePrefixSize),
+             (unsigned int) kMaxAllowedPacketLength);
         lineReuseBuffer(l, buf);
         return true;
     }
@@ -313,7 +315,8 @@ bool keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l)
     if (bufferstreamGetBufLen(&ls->read_stream) > kKeepAliveReadOverflowLimit)
     {
         LOGW("KeepAliveClient: downstream framed stream overflow, size=%zu limit=%u",
-             bufferstreamGetBufLen(&ls->read_stream), (unsigned int) kKeepAliveReadOverflowLimit);
+             bufferstreamGetBufLen(&ls->read_stream),
+             (unsigned int) kKeepAliveReadOverflowLimit);
         bufferstreamEmpty(&ls->read_stream);
         return true;
     }

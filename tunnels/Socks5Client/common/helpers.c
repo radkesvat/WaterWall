@@ -19,8 +19,8 @@ enum
 static sbuf_t *allocHandshakeBuffer(line_t *l, uint32_t len)
 {
     buffer_pool_t *pool = lineGetBufferPool(l);
-    sbuf_t        *buf  = len <= bufferpoolGetSmallBufferSize(pool) ? bufferpoolGetSmallBuffer(pool)
-                                                                    : bufferpoolGetLargeBuffer(pool);
+    sbuf_t        *buf =
+        len <= bufferpoolGetSmallBufferSize(pool) ? bufferpoolGetSmallBuffer(pool) : bufferpoolGetLargeBuffer(pool);
 
     buf = sbufReserveSpace(buf, len);
     sbufSetLength(buf, len);
@@ -124,7 +124,7 @@ void socks5clientTunnelstateDestroy(socks5client_tstate_t *ts)
         ts->password = NULL;
     }
 
-    memoryZeroAligned32(ts, sizeof(*ts));
+    memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }
 
 bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l)
@@ -133,8 +133,7 @@ bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l)
     address_context_t     *dest_ctx = lineGetDestinationAddressContext(l);
     routing_context_t     *route    = lineGetRoutingContext(l);
     address_context_t      current  = {0};
-    bool                   uses_current_dest =
-        (ts->target_addr_source != kDvsConstant) || (ts->target_port_source != kDvsConstant);
+    bool uses_current_dest = (ts->target_addr_source != kDvsConstant) || (ts->target_port_source != kDvsConstant);
 
     if (uses_current_dest)
     {
@@ -194,9 +193,9 @@ bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l)
 
 bool socks5clientSendGreeting(tunnel_t *t, line_t *l, socks5client_lstate_t *ls)
 {
-    socks5client_tstate_t *ts     = tunnelGetState(t);
+    socks5client_tstate_t *ts        = tunnelGetState(t);
     uint8_t                packet[4] = {kSocks5Version, 1, kSocks5NoAuthMethod, 0};
-    uint32_t               len    = 3;
+    uint32_t               len       = 3;
 
     if (ts->username_len > 0 || ts->password_len > 0)
     {
@@ -220,10 +219,10 @@ bool socks5clientSendGreeting(tunnel_t *t, line_t *l, socks5client_lstate_t *ls)
 
 bool socks5clientSendAuthRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *ls)
 {
-    socks5client_tstate_t *ts = tunnelGetState(t);
-    uint32_t len = 3U + (uint32_t) ts->username_len + (uint32_t) ts->password_len;
-    sbuf_t  *buf = allocHandshakeBuffer(l, len);
-    uint8_t *ptr = sbufGetMutablePtr(buf);
+    socks5client_tstate_t *ts  = tunnelGetState(t);
+    uint32_t               len = 3U + (uint32_t) ts->username_len + (uint32_t) ts->password_len;
+    sbuf_t                *buf = allocHandshakeBuffer(l, len);
+    uint8_t               *ptr = sbufGetMutablePtr(buf);
 
     ptr[0] = kSocks5AuthVersion;
     ptr[1] = ts->username_len;
@@ -243,22 +242,22 @@ bool socks5clientSendAuthRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *
 
 bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *ls)
 {
-    socks5client_tstate_t *ts      = tunnelGetState(t);
-    address_context_t     *target  = lineGetDestinationAddressContext(l);
-    uint8_t                cmd     = protocolToCommand(ts->protocol);
-    uint8_t                atyp    = 0;
+    socks5client_tstate_t *ts       = tunnelGetState(t);
+    address_context_t     *target   = lineGetDestinationAddressContext(l);
+    uint8_t                cmd      = protocolToCommand(ts->protocol);
+    uint8_t                atyp     = 0;
     uint32_t               addr_len = 0;
 
     if (addresscontextIsIp(target))
     {
         if (target->ip_address.type == IPADDR_TYPE_V4)
         {
-            atyp    = kSocks5AddrTypeIpv4;
+            atyp     = kSocks5AddrTypeIpv4;
             addr_len = 4;
         }
         else if (target->ip_address.type == IPADDR_TYPE_V6)
         {
-            atyp    = kSocks5AddrTypeIpv6;
+            atyp     = kSocks5AddrTypeIpv6;
             addr_len = 16;
         }
         else
@@ -269,7 +268,7 @@ bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_
     }
     else if (addresscontextIsDomain(target))
     {
-        atyp    = kSocks5AddrTypeDomain;
+        atyp     = kSocks5AddrTypeDomain;
         addr_len = (uint32_t) target->domain_len + 1U;
     }
     else
@@ -312,7 +311,8 @@ bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_
 
     if (ts->verbose)
     {
-        LOGD("Socks5Client: sending proxy command %u for target port %u", (unsigned int) cmd,
+        LOGD("Socks5Client: sending proxy command %u for target port %u",
+             (unsigned int) cmd,
              (unsigned int) target->port);
     }
 
@@ -375,7 +375,8 @@ bool socks5clientDrainHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate
             {
                 if (ts->username_len == 0 || ts->password_len == 0)
                 {
-                    LOGE("Socks5Client: proxy requested username/password authentication but no credentials are configured");
+                    LOGE("Socks5Client: proxy requested username/password authentication but no credentials are "
+                         "configured");
                     socks5clientCloseLineBidirectional(t, l);
                     return false;
                 }

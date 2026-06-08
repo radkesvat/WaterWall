@@ -5,27 +5,7 @@
 void packetstostreamTunnelDestroy(tunnel_t *t)
 {
     packetstostream_tstate_t *ts    = tunnelGetState(t);
-    tunnel_chain_t *chain = tunnelGetChain(t);
-
-    if (ts->worker_timers != NULL)
-    {
-        for (wid_t wi = 0; wi < getWorkersCount(); ++wi)
-        {
-            if (ts->worker_timers[wi] != NULL)
-            {
-                weventSetUserData(ts->worker_timers[wi], NULL);
-                wtimerDelete(ts->worker_timers[wi]);
-                ts->worker_timers[wi] = NULL;
-            }
-
-            if (ts->worker_timeout_timers != NULL && ts->worker_timeout_timers[wi] != NULL)
-            {
-                weventSetUserData(ts->worker_timeout_timers[wi], NULL);
-                wtimerDelete(ts->worker_timeout_timers[wi]);
-                ts->worker_timeout_timers[wi] = NULL;
-            }
-        }
-    }
+    tunnel_chain_t           *chain = tunnelGetChain(t);
 
     if (chain && chain->packet_lines)
     {

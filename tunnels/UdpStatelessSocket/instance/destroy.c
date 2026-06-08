@@ -6,11 +6,6 @@ void udpstatelesssocketTunnelDestroy(tunnel_t *t)
 {
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
 
-    if (state->io)
-    {
-        wioClose(state->io);
-    }
-
     udpstatelesssocket_dns_cache_entry_t *entry = state->dns_cache;
     while (entry != NULL)
     {

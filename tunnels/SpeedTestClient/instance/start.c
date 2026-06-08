@@ -4,16 +4,16 @@
 
 static void speedtestclientStartStream(void *worker, void *arg1, void *arg2, void *arg3)
 {
-    worker_t *real_worker = worker;
-    tunnel_t *t = arg1;
-    uint32_t *stream_id_ptr = arg2;
-    uint32_t stream_id = *stream_id_ptr;
-    speedtestclient_tstate_t *state = tunnelGetState(t);
+    worker_t                 *real_worker   = worker;
+    tunnel_t                 *t             = arg1;
+    uint32_t                 *stream_id_ptr = arg2;
+    uint32_t                  stream_id     = *stream_id_ptr;
+    speedtestclient_tstate_t *state         = tunnelGetState(t);
 
     discard arg3;
     memoryFree(stream_id_ptr);
 
-    line_t *l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), real_worker->wid);
+    line_t                   *l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), real_worker->wid);
     speedtestclient_lstate_t *ls = lineGetState(l, t);
 
     speedtestclientLinestateInitialize(ls, t, l, stream_id);
@@ -26,9 +26,17 @@ static void speedtestclientStartStream(void *worker, void *arg1, void *arg2, voi
     lineScheduleDelayedTask(l, speedtestclientWatchdogTask, state->timeout_ms, t);
 }
 
+static void speedtestclientCleanupStartStream(void *arg1, void *arg2, void *arg3)
+{
+    discard arg1;
+    discard arg3;
+
+    memoryFree(arg2);
+}
+
 void speedtestclientTunnelOnStart(tunnel_t *t)
 {
-    tunnel_chain_t *chain = tunnelGetChain(t);
+    tunnel_chain_t           *chain = tunnelGetChain(t);
     speedtestclient_tstate_t *state = tunnelGetState(t);
 
     for (uint32_t stream_id = 0; stream_id < state->connection_count; ++stream_id)
@@ -43,7 +51,12 @@ void speedtestclientTunnelOnStart(tunnel_t *t)
         *stream_id_ptr = stream_id;
 
         wid_t wid = (wid_t) (stream_id % chain->workers_count);
-        sendWorkerMessageTimed(wid, speedtestclientStartStream, state->start_delay_ms, t, stream_id_ptr, NULL);
+        sendWorkerMessageTimedWithCleanup(wid,
+                                          speedtestclientStartStream,
+                                          speedtestclientCleanupStartStream,
+                                          state->start_delay_ms,
+                                          t,
+                                          stream_id_ptr,
+                                          NULL);
     }
 }
-

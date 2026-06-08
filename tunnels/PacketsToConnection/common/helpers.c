@@ -8,35 +8,13 @@ typedef struct ptc_packet_emit_msg_s
     uint8_t  data[];
 } ptc_packet_emit_msg_t;
 
-static void ptcWorkerMessageReceived(wevent_t *ev)
+static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3);
+
+static void ptcEmitPacketCleanup(void *arg1, void *arg2, void *arg3)
 {
-    worker_msg_t *msg = weventGetUserdata(ev);
-    wid_t         wid = (wid_t) wloopGetWid(weventGetLoop(ev));
-
-    msg->callback(getWorker(wid), msg->arg1, msg->arg2, msg->arg3);
-    masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1, NULL);
-}
-
-static bool ptcPostWorkerMessage(wid_t target_wid, WorkerMessageCallback callback, void *arg1, void *arg2, void *arg3)
-{
-    worker_msg_t *queue_msg;
-
-    masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(queue_msg), 1, NULL);
-    *queue_msg = (worker_msg_t) {.callback = callback, .arg1 = arg1, .arg2 = arg2, .arg3 = arg3};
-
-    wevent_t ev;
-    memorySet(&ev, 0, sizeof(ev));
-    ev.loop = getWorkerLoop(target_wid);
-    ev.cb   = ptcWorkerMessageReceived;
-    weventSetUserData(&ev, queue_msg);
-
-    if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(target_wid), &ev)))
-    {
-        masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &queue_msg, 1, NULL);
-        return false;
-    }
-
-    return true;
+    discard arg1;
+    discard arg3;
+    memoryFree(arg2);
 }
 
 static sbuf_t *ptcAllocateBufferForPool(buffer_pool_t *pool, uint32_t len)
@@ -120,7 +98,7 @@ static void ptcDestroyUdpFlowPcbs(interface_route_context_t *route)
 void ptcDestroyRouteContexts(interface_route_context_t *route_head)
 {
     interface_route_context_t *route = route_head->next;
-    route_head->next = NULL;
+    route_head->next                 = NULL;
 
     while (route != NULL)
     {
@@ -182,7 +160,7 @@ interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t pack
         return cur;
     }
 
-    cur = memoryAllocateZero(sizeof(interface_route_context_t));
+    cur             = memoryAllocateZero(sizeof(interface_route_context_t));
     cur->tunnel     = t;
     cur->packet_wid = packet_wid;
     cur->udp_flows  = ptc_udp_flow_map_t_with_capacity(64);
@@ -205,14 +183,15 @@ interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t pack
 
     netif_set_up(&cur->netif);
     netif_set_link_up(&cur->netif);
-    cur->last_tick            = getTickMS();
-    cur->next                 = state->route_context4.next;
+    cur->last_tick             = getTickMS();
+    cur->next                  = state->route_context4.next;
     state->route_context4.next = cur;
 
     return cur;
 }
 
-err_t ptcEnsureTcpListener(interface_route_context_t *route_ctx, tunnel_t *t, const ip_addr_t *dest_ip, uint16_t dest_port)
+err_t ptcEnsureTcpListener(interface_route_context_t *route_ctx, tunnel_t *t, const ip_addr_t *dest_ip,
+                           uint16_t dest_port)
 {
     discard t;
     discard dest_ip;
@@ -253,7 +232,8 @@ err_t ptcEnsureTcpListener(interface_route_context_t *route_ctx, tunnel_t *t, co
     return ERR_OK;
 }
 
-err_t ptcEnsureUdpListener(interface_route_context_t *route_ctx, tunnel_t *t, const ip_addr_t *dest_ip, uint16_t dest_port)
+err_t ptcEnsureUdpListener(interface_route_context_t *route_ctx, tunnel_t *t, const ip_addr_t *dest_ip,
+                           uint16_t dest_port)
 {
     discard t;
     discard dest_ip;
@@ -290,7 +270,7 @@ void updateCheckSumTcp(u16_t *_hc, const void *_orig, const void *_new, int n)
 {
     const u16_t *orig = _orig;
     const u16_t *new  = _new;
-    u16_t        hc   = ~*_hc;
+    u16_t hc          = ~*_hc;
 
     while (n--)
     {
@@ -348,9 +328,9 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     packet_msg->len                   = p->tot_len;
     pbufLargeCopyToPtr(p, packet_msg->data);
 
-    if (! ptcPostWorkerMessage(packet_wid, (WorkerMessageCallback) ptcEmitPacketOnWorker, t, packet_msg, NULL))
+    if (! sendWorkerMessageForceQueueWithCleanup(
+            packet_wid, (WorkerMessageCallback) ptcEmitPacketOnWorker, ptcEmitPacketCleanup, t, packet_msg, NULL))
     {
-        memoryFree(packet_msg);
         return ERR_MEM;
     }
 
@@ -472,7 +452,7 @@ err_t ptcTcpSendCompleteCallback(void *arg, struct tcp_pcb *tpcb, u16_t len)
         uint16_t    cost      = min(remaining, len);
 
         ack->written += cost;
-        len          -= cost;
+        len -= cost;
 
         if (ack->written == ack->total)
         {
@@ -682,8 +662,8 @@ void ptcUdpIdleTask(tunnel_t *t, line_t *l)
             remaining_ms = 1;
         }
 
-        lineScheduleDelayedTask(l, ptcUdpIdleTask,
-                                (remaining_ms > UINT32_MAX) ? UINT32_MAX : (uint32_t) remaining_ms, t);
+        lineScheduleDelayedTask(
+            l, ptcUdpIdleTask, (remaining_ms > UINT32_MAX) ? UINT32_MAX : (uint32_t) remaining_ms, t);
         return;
     }
 

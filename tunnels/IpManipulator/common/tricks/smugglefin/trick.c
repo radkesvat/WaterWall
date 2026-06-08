@@ -132,14 +132,14 @@ static uint32_t smugglefintrickAckAdvance(const smugglefintrick_tcp_packet_info_
     return advance;
 }
 
-static bool smugglefintrickFlowMatches(const ipmanipulator_smuggle_fin_flow_t *flow,
+static bool smugglefintrickFlowMatches(const ipmanipulator_smuggle_fin_flow_t  *flow,
                                        const smugglefintrick_tcp_packet_info_t *info)
 {
     return flow->active && flow->src_addr == info->src_addr && flow->dst_addr == info->dst_addr &&
            flow->src_port == info->src_port && flow->dst_port == info->dst_port;
 }
 
-static bool smugglefintrickFlowMatchesReverse(const ipmanipulator_smuggle_fin_flow_t *flow,
+static bool smugglefintrickFlowMatchesReverse(const ipmanipulator_smuggle_fin_flow_t  *flow,
                                               const smugglefintrick_tcp_packet_info_t *info)
 {
     return flow->active && flow->src_addr == info->dst_addr && flow->dst_addr == info->src_addr &&
@@ -166,7 +166,7 @@ static void smugglefintrickCleanupIdleFlowsLocked(ipmanipulator_tstate_t *state,
     }
 }
 
-static ipmanipulator_smuggle_fin_flow_t *smugglefintrickFindFlowLocked(ipmanipulator_tstate_t *state,
+static ipmanipulator_smuggle_fin_flow_t *smugglefintrickFindFlowLocked(ipmanipulator_tstate_t                  *state,
                                                                        const smugglefintrick_tcp_packet_info_t *info)
 {
     for (uint32_t i = 0; i < state->smuggle_fin_flows_capacity; ++i)
@@ -180,8 +180,8 @@ static ipmanipulator_smuggle_fin_flow_t *smugglefintrickFindFlowLocked(ipmanipul
     return NULL;
 }
 
-static ipmanipulator_smuggle_fin_flow_t *smugglefintrickFindReverseFlowLocked(ipmanipulator_tstate_t *state,
-                                                                              const smugglefintrick_tcp_packet_info_t *info)
+static ipmanipulator_smuggle_fin_flow_t *smugglefintrickFindReverseFlowLocked(
+    ipmanipulator_tstate_t *state, const smugglefintrick_tcp_packet_info_t *info)
 {
     for (uint32_t i = 0; i < state->smuggle_fin_flows_capacity; ++i)
     {
@@ -194,7 +194,7 @@ static ipmanipulator_smuggle_fin_flow_t *smugglefintrickFindReverseFlowLocked(ip
     return NULL;
 }
 
-static ipmanipulator_smuggle_fin_flow_t *smugglefintrickCreateFlowLocked(ipmanipulator_tstate_t *state,
+static ipmanipulator_smuggle_fin_flow_t *smugglefintrickCreateFlowLocked(ipmanipulator_tstate_t                  *state,
                                                                          const smugglefintrick_tcp_packet_info_t *info,
                                                                          uint64_t now_ms)
 {
@@ -219,8 +219,8 @@ static ipmanipulator_smuggle_fin_flow_t *smugglefintrickCreateFlowLocked(ipmanip
         return flow;
     }
 
-    uint32_t old_capacity = state->smuggle_fin_flows_capacity;
-    uint32_t new_capacity = max(kSmuggleFinInitialFlows, old_capacity * 2U);
+    uint32_t                          old_capacity = state->smuggle_fin_flows_capacity;
+    uint32_t                          new_capacity = max(kSmuggleFinInitialFlows, old_capacity * 2U);
     ipmanipulator_smuggle_fin_flow_t *grown =
         memoryReAllocate(state->smuggle_fin_flows, sizeof(*state->smuggle_fin_flows) * new_capacity);
 
@@ -234,14 +234,14 @@ static ipmanipulator_smuggle_fin_flow_t *smugglefintrickCreateFlowLocked(ipmanip
     state->smuggle_fin_flows_capacity = new_capacity;
 
     ipmanipulator_smuggle_fin_flow_t *flow = &state->smuggle_fin_flows[old_capacity];
-    *flow = (ipmanipulator_smuggle_fin_flow_t) {
-        .last_activity_ms = now_ms,
-        .src_addr         = info->src_addr,
-        .dst_addr         = info->dst_addr,
-        .src_port         = info->src_port,
-        .dst_port         = info->dst_port,
-        .active           = true,
-        .confirmed        = false,
+    *flow                                  = (ipmanipulator_smuggle_fin_flow_t) {
+                                         .last_activity_ms = now_ms,
+                                         .src_addr         = info->src_addr,
+                                         .dst_addr         = info->dst_addr,
+                                         .src_port         = info->src_port,
+                                         .dst_port         = info->dst_port,
+                                         .active           = true,
+                                         .confirmed        = false,
     };
     return flow;
 }
@@ -283,7 +283,7 @@ static bool smugglefintrickQueuePacketOrDieLocked(ipmanipulator_smuggle_fin_work
 }
 
 static bool smugglefintrickExpectedFinMatches(const ipmanipulator_smuggle_fin_worker_state_t *worker_state,
-                                              const smugglefintrick_tcp_packet_info_t *info)
+                                              const smugglefintrick_tcp_packet_info_t        *info)
 {
     return worker_state->paused && info != NULL && info->tcp_payload_len == 0 &&
            info->tcp_flags == (TCP_FIN | TCP_ACK) && info->src_addr == worker_state->expected_src_addr &&
@@ -308,13 +308,13 @@ static sbuf_t *smugglefintrickBuildMirrorFinPacket(line_t *l, sbuf_t *source_buf
     struct ip_hdr  *ipheader   = (struct ip_hdr *) packet;
     struct tcp_hdr *tcp_header = (struct tcp_hdr *) (packet + info->ip_header_len);
 
-    uint32_t src_addr = ipheader->src.addr;
+    uint32_t src_addr   = ipheader->src.addr;
     ipheader->src.addr  = ipheader->dest.addr;
     ipheader->dest.addr = src_addr;
 
     uint16_t src_port = tcp_header->src;
-    tcp_header->src  = tcp_header->dest;
-    tcp_header->dest = src_port;
+    tcp_header->src   = tcp_header->dest;
+    tcp_header->dest  = src_port;
 
     IPH_LEN_SET(ipheader, lwip_htons(info->headers_len));
     tcp_header->seqno = lwip_htonl(info->ack);
@@ -326,10 +326,10 @@ static sbuf_t *smugglefintrickBuildMirrorFinPacket(line_t *l, sbuf_t *source_buf
 
 static void smugglefintrickFlushQueuedPackets(tunnel_t *t, line_t *l,
                                               ipmanipulator_smuggle_fin_queued_packet_t *queued_packets,
-                                              uint32_t queued_packets_count)
+                                              uint32_t                                   queued_packets_count)
 {
     ipmanipulator_tstate_t *state = tunnelGetState(t);
-    wid_t                   wid    = lineGetWID(l);
+    wid_t                   wid   = lineGetWID(l);
 
     for (uint32_t i = 0; i < queued_packets_count; ++i)
     {
@@ -351,7 +351,8 @@ static void smugglefintrickFlushQueuedPackets(tunnel_t *t, line_t *l,
         }
 
         mutexLock(&state->smuggle_fin_mutex);
-        bool paused_again = (wid < state->smuggle_fin_worker_states_count) && state->smuggle_fin_worker_states[wid].paused;
+        bool paused_again =
+            (wid < state->smuggle_fin_worker_states_count) && state->smuggle_fin_worker_states[wid].paused;
 
         if (paused_again)
         {
@@ -359,8 +360,8 @@ static void smugglefintrickFlushQueuedPackets(tunnel_t *t, line_t *l,
 
             for (uint32_t remain = i + 1; remain < queued_packets_count; ++remain)
             {
-                smugglefintrickQueuePacketOrDieLocked(worker_state, queued_packets[remain].buf,
-                                                      queued_packets[remain].direction);
+                smugglefintrickQueuePacketOrDieLocked(
+                    worker_state, queued_packets[remain].buf, queued_packets[remain].direction);
                 queued_packets[remain].buf = NULL;
             }
 
@@ -376,8 +377,8 @@ static void smugglefintrickFlushQueuedPackets(tunnel_t *t, line_t *l,
 
 static void smugglefintrickReleaseQueuedPacketsNow(tunnel_t *t, line_t *l)
 {
-    ipmanipulator_tstate_t *state = tunnelGetState(t);
-    wid_t                   wid   = lineGetWID(l);
+    ipmanipulator_tstate_t                    *state                = tunnelGetState(t);
+    wid_t                                      wid                  = lineGetWID(l);
     ipmanipulator_smuggle_fin_queued_packet_t *queued_packets       = NULL;
     uint32_t                                   queued_packets_count = 0;
 
@@ -429,6 +430,14 @@ static void smugglefintrickRunDelayedRelease(worker_t *worker, void *arg1, void 
     lineUnlock(l);
 }
 
+static void smugglefintrickCleanupDelayedRelease(void *arg1, void *arg2, void *arg3)
+{
+    discard arg1;
+    discard arg3;
+
+    lineUnlock((line_t *) arg2);
+}
+
 static void smugglefintrickScheduleQueuedRelease(tunnel_t *t, line_t *l, uint32_t delay_ms)
 {
     if (delay_ms == 0 && getWID() == lineGetWID(l))
@@ -438,16 +447,21 @@ static void smugglefintrickScheduleQueuedRelease(tunnel_t *t, line_t *l, uint32_
     }
 
     lineLock(l);
-    sendWorkerMessageTimed(lineGetWID(l), (WorkerMessageCallback) smugglefintrickRunDelayedRelease, delay_ms, t, l,
-                           NULL);
+    sendWorkerMessageTimedWithCleanup(lineGetWID(l),
+                                      (WorkerMessageCallback) smugglefintrickRunDelayedRelease,
+                                      smugglefintrickCleanupDelayedRelease,
+                                      delay_ms,
+                                      t,
+                                      l,
+                                      NULL);
 }
 
 bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    ipmanipulator_tstate_t            *state = tunnelGetState(t);
-    smugglefintrick_tcp_packet_info_t  info  = {0};
-    uint64_t                           now_ms = getTickMS();
-    wid_t                              wid    = lineGetWID(l);
+    ipmanipulator_tstate_t           *state  = tunnelGetState(t);
+    smugglefintrick_tcp_packet_info_t info   = {0};
+    uint64_t                          now_ms = getTickMS();
+    wid_t                             wid    = lineGetWID(l);
 
     if (state->trick_real_fin_upstream_tunnel == NULL || wid >= state->smuggle_fin_worker_states_count)
     {
@@ -515,11 +529,11 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return false;
     }
 
-    flow->last_activity_ms        = now_ms;
-    worker_state->flow_src_addr   = info.src_addr;
-    worker_state->flow_dst_addr   = info.dst_addr;
-    worker_state->flow_src_port   = info.src_port;
-    worker_state->flow_dst_port   = info.dst_port;
+    flow->last_activity_ms          = now_ms;
+    worker_state->flow_src_addr     = info.src_addr;
+    worker_state->flow_dst_addr     = info.dst_addr;
+    worker_state->flow_src_port     = info.src_port;
+    worker_state->flow_dst_port     = info.dst_port;
     worker_state->expected_src_addr = info.dst_addr;
     worker_state->expected_dst_addr = info.src_addr;
     worker_state->expected_src_port = info.dst_port;
@@ -556,12 +570,11 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    ipmanipulator_tstate_t            *state = tunnelGetState(t);
-    smugglefintrick_tcp_packet_info_t  info  = {0};
-    uint64_t                           now_ms = getTickMS();
-    wid_t                              wid    = lineGetWID(l);
-    bool                               parsed = smugglefintrickParseTcpPacketInfo(
-        (const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info);
+    ipmanipulator_tstate_t           *state  = tunnelGetState(t);
+    smugglefintrick_tcp_packet_info_t info   = {0};
+    uint64_t                          now_ms = getTickMS();
+    wid_t                             wid    = lineGetWID(l);
+    bool parsed = smugglefintrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info);
 
     if (wid >= state->smuggle_fin_worker_states_count)
     {
@@ -625,7 +638,7 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     worker_state->release_pending = true;
-    uint32_t release_delay_ms = state->trick_smuggle_fin_delay_ms;
+    uint32_t release_delay_ms     = state->trick_smuggle_fin_delay_ms;
 
     mutexUnlock(&state->smuggle_fin_mutex);
 
@@ -682,8 +695,8 @@ void smugglefintrickDestroyState(tunnel_t *t)
 
     memoryFree(state->smuggle_fin_flows);
     memoryFree(state->smuggle_fin_worker_states);
-    state->smuggle_fin_flows              = NULL;
-    state->smuggle_fin_flows_capacity     = 0;
-    state->smuggle_fin_worker_states      = NULL;
+    state->smuggle_fin_flows               = NULL;
+    state->smuggle_fin_flows_capacity      = 0;
+    state->smuggle_fin_worker_states       = NULL;
     state->smuggle_fin_worker_states_count = 0;
 }

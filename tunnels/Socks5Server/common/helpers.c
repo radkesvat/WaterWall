@@ -10,27 +10,27 @@ typedef struct socks5server_assoc_entry_s
     hash_t                     key;
 } socks5server_assoc_entry_t;
 
-#define i_type socks5server_assoc_map_t   // NOLINT
-#define i_key  hash_t                     // NOLINT
+#define i_type socks5server_assoc_map_t     // NOLINT
+#define i_key  hash_t                       // NOLINT
 #define i_val  socks5server_assoc_entry_t * // NOLINT
 #include "stc/hmap.h"
 
 enum
 {
-    kSocks5Version         = 0x05,
-    kSocks5NoAuthMethod    = 0x00,
-    kSocks5UserPassMethod  = 0x02,
-    kSocks5NoAcceptable    = 0xFF,
-    kSocks5CommandConnect  = 0x01,
-    kSocks5CommandBind     = 0x02,
-    kSocks5CommandUdpAssoc = 0x03,
-    kSocks5AddrTypeIpv4    = 0x01,
-    kSocks5AddrTypeDomain  = 0x03,
-    kSocks5AddrTypeIpv6    = 0x04,
-    kSocks5AuthVersion     = 0x01,
-    kSocks5ReplySucceeded  = 0x00,
-    kSocks5ReplyGeneralFailure = 0x01,
-    kSocks5ReplyCmdNotSupported = 0x07,
+    kSocks5Version               = 0x05,
+    kSocks5NoAuthMethod          = 0x00,
+    kSocks5UserPassMethod        = 0x02,
+    kSocks5NoAcceptable          = 0xFF,
+    kSocks5CommandConnect        = 0x01,
+    kSocks5CommandBind           = 0x02,
+    kSocks5CommandUdpAssoc       = 0x03,
+    kSocks5AddrTypeIpv4          = 0x01,
+    kSocks5AddrTypeDomain        = 0x03,
+    kSocks5AddrTypeIpv6          = 0x04,
+    kSocks5AuthVersion           = 0x01,
+    kSocks5ReplySucceeded        = 0x00,
+    kSocks5ReplyGeneralFailure   = 0x01,
+    kSocks5ReplyCmdNotSupported  = 0x07,
     kSocks5ReplyAddrNotSupported = 0x08
 };
 
@@ -59,10 +59,10 @@ static hash_t socks5serverCalcAssociationKey(const ip_addr_t *ip, uint16_t udp_p
 {
     struct
     {
-        uint16_t listener_port;
-        uint16_t client_port;
-        uint8_t  ip_type;
-        uint8_t  padding[5];
+        uint16_t   listener_port;
+        uint16_t   client_port;
+        uint8_t    ip_type;
+        uint8_t    padding[5];
         ip4_addr_t ip4;
         ip6_addr_t ip6;
     } key = {0};
@@ -106,8 +106,8 @@ static hash_t socks5serverCalcAddressHash(const address_context_t *ctx)
 static sbuf_t *socks5serverAllocBuffer(line_t *l, uint32_t len)
 {
     buffer_pool_t *pool = lineGetBufferPool(l);
-    sbuf_t        *buf  = len <= bufferpoolGetSmallBufferSize(pool) ? bufferpoolGetSmallBuffer(pool)
-                                                                    : bufferpoolGetLargeBuffer(pool);
+    sbuf_t        *buf =
+        len <= bufferpoolGetSmallBufferSize(pool) ? bufferpoolGetSmallBuffer(pool) : bufferpoolGetLargeBuffer(pool);
     buf = sbufReserveSpace(buf, len);
     sbufSetLength(buf, len);
     return buf;
@@ -202,7 +202,7 @@ static sbuf_t *socks5serverCreateAuthReply(line_t *l, uint8_t status)
 
 sbuf_t *socks5serverCreateCommandReply(line_t *l, uint8_t rep, const address_context_t *ctx)
 {
-    address_context_t zero_addr = {0};
+    address_context_t        zero_addr  = {0};
     const address_context_t *reply_addr = ctx;
 
     if (reply_addr == NULL)
@@ -252,9 +252,9 @@ static int socks5serverParseAddressBytes(const uint8_t *buf, size_t len, address
             return 0;
         }
 
-        ip_addr_t ip = {0};
+        ip_addr_t ip      = {0};
         uint16_t  port_be = 0;
-        ip.type = IPADDR_TYPE_V4;
+        ip.type           = IPADDR_TYPE_V4;
         memoryCopy(&ip.u_addr.ip4.addr, buf + 1, 4);
         memoryCopy(&port_be, buf + 5, sizeof(port_be));
         addresscontextSetIpPort(out, &ip, be16toh(port_be));
@@ -269,9 +269,9 @@ static int socks5serverParseAddressBytes(const uint8_t *buf, size_t len, address
             return 0;
         }
 
-        ip_addr_t ip = {0};
+        ip_addr_t ip      = {0};
         uint16_t  port_be = 0;
-        ip.type = IPADDR_TYPE_V6;
+        ip.type           = IPADDR_TYPE_V6;
         memoryCopy(&ip.u_addr.ip6, buf + 1, 16);
         memoryCopy(&port_be, buf + 17, sizeof(port_be));
         addresscontextSetIpPort(out, &ip, be16toh(port_be));
@@ -346,7 +346,7 @@ static const socks5server_user_t *socks5serverMatchUser(tunnel_t *t, const uint8
 static bool socks5serverRegisterUdpAssociation(line_t *l, const socks5server_user_t *user,
                                                const address_context_t *udp_peer_hint, hash_t *out_key)
 {
-    const address_context_t *src_ctx = lineGetSourceAddressContext(l);
+    const address_context_t *src_ctx    = lineGetSourceAddressContext(l);
     uint16_t                 local_port = socks5serverGetLocalPort(l);
     ip_addr_t                key_ip     = src_ctx->ip_address;
     uint16_t                 key_port   = 0;
@@ -360,13 +360,13 @@ static bool socks5serverRegisterUdpAssociation(line_t *l, const socks5server_use
 
     if (udp_peer_hint != NULL && addresscontextIsIp(udp_peer_hint) && udp_peer_hint->port > 0)
     {
-        key_ip = ipAddrIsAny(&udp_peer_hint->ip_address) ? src_ctx->ip_address : udp_peer_hint->ip_address;
+        key_ip   = ipAddrIsAny(&udp_peer_hint->ip_address) ? src_ctx->ip_address : udp_peer_hint->ip_address;
         key_port = udp_peer_hint->port;
     }
 
-    hash_t key = socks5serverCalcAssociationKey(&key_ip, key_port, local_port);
+    hash_t                      key   = socks5serverCalcAssociationKey(&key_ip, key_port, local_port);
     socks5server_assoc_entry_t *entry = memoryAllocate(sizeof(*entry));
-    *entry = (socks5server_assoc_entry_t) {.control_line = l, .user = user, .key = key};
+    *entry                            = (socks5server_assoc_entry_t) {.control_line = l, .user = user, .key = key};
     lineLock(l);
 
     socks5server_assoc_entry_t *old_entry = NULL;
@@ -404,7 +404,8 @@ void socks5serverUnregisterUdpAssociation(socks5server_lstate_t *ls)
 
     mutexLock(&g_socks5server_assoc_mutex);
     socks5server_assoc_map_t_iter it = socks5server_assoc_map_t_find(&g_socks5server_assoc_map, ls->association_key);
-    if (it.ref != socks5server_assoc_map_t_end(&g_socks5server_assoc_map).ref && it.ref->second->control_line == ls->line)
+    if (it.ref != socks5server_assoc_map_t_end(&g_socks5server_assoc_map).ref &&
+        it.ref->second->control_line == ls->line)
     {
         entry = it.ref->second;
         socks5server_assoc_map_t_erase_at(&g_socks5server_assoc_map, it);
@@ -422,9 +423,9 @@ void socks5serverUnregisterUdpAssociation(socks5server_lstate_t *ls)
 
 bool socks5serverLookupUdpAssociation(line_t *l, const socks5server_user_t **user_out, hash_t *key_out)
 {
-    const address_context_t *src_ctx    = lineGetSourceAddressContext(l);
-    uint16_t                 local_port = socks5serverGetLocalPort(l);
-    socks5server_assoc_entry_t *entry   = NULL;
+    const address_context_t    *src_ctx    = lineGetSourceAddressContext(l);
+    uint16_t                    local_port = socks5serverGetLocalPort(l);
+    socks5server_assoc_entry_t *entry      = NULL;
 
     wonce(&g_socks5server_assoc_once, socks5serverInitAssocRegistry);
 
@@ -472,10 +473,11 @@ void socks5serverDetachRemoteFromClient(socks5server_lstate_t *remote_ls)
     {
         if (lineIsAlive(client_line))
         {
-            socks5server_lstate_t *client_ls = lineGetState(client_line, remote_ls->tunnel);
+            socks5server_lstate_t         *client_ls = lineGetState(client_line, remote_ls->tunnel);
             socks5server_remote_map_t_iter it =
                 socks5server_remote_map_t_find(&client_ls->udp_remote_lines, remote_ls->remote_key);
-            if (it.ref != socks5server_remote_map_t_end(&client_ls->udp_remote_lines).ref && it.ref->second == remote_ls->line)
+            if (it.ref != socks5server_remote_map_t_end(&client_ls->udp_remote_lines).ref &&
+                it.ref->second == remote_ls->line)
             {
                 socks5server_remote_map_t_erase_at(&client_ls->udp_remote_lines, it);
             }
@@ -489,8 +491,8 @@ void socks5serverDetachRemoteFromClient(socks5server_lstate_t *remote_ls)
 }
 
 static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, socks5server_lstate_t *client_ls,
-                                                    const address_context_t *target,
-                                                    const socks5server_user_t *user, hash_t assoc_key)
+                                                    const address_context_t *target, const socks5server_user_t *user,
+                                                    hash_t assoc_key)
 {
     hash_t remote_key = socks5serverCalcAddressHash(target);
 
@@ -549,7 +551,7 @@ void socks5serverTunnelstateDestroy(socks5server_tstate_t *ts)
         memoryFree(ts->users);
     }
 
-    memoryZeroAligned32(ts, sizeof(*ts));
+    memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }
 
 static bool socks5serverControlHasUpstreamPeer(const socks5server_lstate_t *ls)
@@ -559,8 +561,8 @@ static bool socks5serverControlHasUpstreamPeer(const socks5server_lstate_t *ls)
 
 static void socks5serverCloseControlLineInternal(tunnel_t *t, line_t *l, bool close_prev)
 {
-    socks5server_lstate_t *ls = lineGetState(l, t);
-    bool close_next = socks5serverControlHasUpstreamPeer(ls);
+    socks5server_lstate_t *ls         = lineGetState(l, t);
+    bool                   close_next = socks5serverControlHasUpstreamPeer(ls);
     socks5serverUnregisterUdpAssociation(ls);
 
     socks5serverLinestateDestroy(ls);
@@ -869,14 +871,14 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
                 return true;
             }
 
-            sbuf_t        *method_buf = bufferstreamReadExact(&ls->in_stream, total);
-            const uint8_t *methods    = sbufGetRawPtr(method_buf);
-            bool           offers_noauth = false;
+            sbuf_t        *method_buf      = bufferstreamReadExact(&ls->in_stream, total);
+            const uint8_t *methods         = sbufGetRawPtr(method_buf);
+            bool           offers_noauth   = false;
             bool           offers_userpass = false;
 
             for (uint8_t i = 0; i < head[1]; ++i)
             {
-                offers_noauth   |= methods[2 + i] == kSocks5NoAuthMethod;
+                offers_noauth |= methods[2 + i] == kSocks5NoAuthMethod;
                 offers_userpass |= methods[2 + i] == kSocks5UserPassMethod;
             }
             lineReuseBuffer(l, method_buf);
@@ -945,10 +947,9 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
                 return true;
             }
 
-            sbuf_t        *auth_buf = bufferstreamReadExact(&ls->in_stream, required);
-            const uint8_t *raw      = sbufGetRawPtr(auth_buf);
-            const socks5server_user_t *user =
-                socks5serverMatchUser(t, raw + 2, head[1], raw + 3 + head[1], plen);
+            sbuf_t                    *auth_buf = bufferstreamReadExact(&ls->in_stream, required);
+            const uint8_t             *raw      = sbufGetRawPtr(auth_buf);
+            const socks5server_user_t *user     = socks5serverMatchUser(t, raw + 2, head[1], raw + 3 + head[1], plen);
             lineReuseBuffer(l, auth_buf);
 
             sbuf_t *reply = socks5serverCreateAuthReply(l, user != NULL ? 0x00 : 0x01);
@@ -987,11 +988,11 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
                 return socks5serverSendReplyAndClose(t, l, kSocks5ReplyGeneralFailure, NULL);
             }
 
-            uint8_t         request_buf[sizeof(head) + 1 + 16 + 2 + UINT8_MAX] = {0};
-            size_t          available = bufferstreamGetBufLen(&ls->in_stream);
-            size_t          copy_len  = min((size_t) sizeof(request_buf), available);
-            address_context_t target  = {0};
-            size_t           consumed = 0;
+            uint8_t           request_buf[sizeof(head) + 1 + 16 + 2 + UINT8_MAX] = {0};
+            size_t            available = bufferstreamGetBufLen(&ls->in_stream);
+            size_t            copy_len  = min((size_t) sizeof(request_buf), available);
+            address_context_t target    = {0};
+            size_t            consumed  = 0;
 
             bufferstreamViewBytesAt(&ls->in_stream, 0, request_buf, copy_len);
             int parse_res = socks5serverParseAddressBytes(request_buf + 3, copy_len - 3, &target, &consumed);
@@ -1033,7 +1034,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
 
             if (head[1] == kSocks5CommandUdpAssoc)
             {
-                address_context_t bind_ctx = {0};
+                address_context_t bind_ctx   = {0};
                 uint16_t          local_port = socks5serverGetLocalPort(l);
 
                 if (! ts->allow_udp)

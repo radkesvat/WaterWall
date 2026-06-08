@@ -24,7 +24,7 @@ static sbuf_t *packetstostreamCreateSensitiveFrame(line_t *packet_line, uint8_t 
 
 static void packetstostreamArmTimeoutTimer(tunnel_t *t, wid_t wid)
 {
-    packetstostream_tstate_t *ts = tunnelGetState(t);
+    packetstostream_tstate_t *ts         = tunnelGetState(t);
     wtimer_t                **timer_slot = &ts->worker_timeout_timers[wid];
 
     if (*timer_slot != NULL)
@@ -53,7 +53,7 @@ static void packetstostreamDisarmTimeoutTimer(tunnel_t *t, wid_t wid)
         return;
     }
 
-    wtimer_t                **timer_slot = &ts->worker_timeout_timers[wid];
+    wtimer_t **timer_slot = &ts->worker_timeout_timers[wid];
 
     if (*timer_slot == NULL)
     {
@@ -70,7 +70,7 @@ static bool packetstostreamSendSensitivePing(tunnel_t *t, line_t *packet_line, p
 {
     packetstostream_tstate_t *ts  = tunnelGetState(t);
     const uint64_t            now = wloopNowMS(getWorkerLoop(lineGetWID(packet_line)));
-    sbuf_t *buf = packetstostreamCreateSensitiveFrame(packet_line, kSensitivePingByte);
+    sbuf_t                   *buf = packetstostreamCreateSensitiveFrame(packet_line, kSensitivePingByte);
     if (buf == NULL)
     {
         return true;
@@ -119,7 +119,8 @@ bool packetstostreamReadStreamIsOverflowed(buffer_stream_t *read_stream)
 {
     if (bufferstreamGetBufLen(read_stream) > kMaxBufferSize)
     {
-        LOGW("PacketsToStream: read stream overflow, size: %zu, limit: %zu", bufferstreamGetBufLen(read_stream),
+        LOGW("PacketsToStream: read stream overflow, size: %zu, limit: %zu",
+             bufferstreamGetBufLen(read_stream),
              (size_t) kMaxBufferSize);
         return true;
     }
@@ -145,8 +146,10 @@ static const char *packetstostreamValidationLevelName(packetstostream_packet_val
 static bool packetstostreamDropInvalidPacket(packetstostream_packet_validation_level_t level, const char *direction,
                                              const char *reason)
 {
-    LOGW("PacketsToStream: dropping packet during %s packet validation (%s): %s", direction,
-         packetstostreamValidationLevelName(level), reason);
+    LOGW("PacketsToStream: dropping packet during %s packet validation (%s): %s",
+         direction,
+         packetstostreamValidationLevelName(level),
+         reason);
     return false;
 }
 
@@ -202,8 +205,8 @@ static bool packetstostreamValidateIpv4PacketHeader(packetstostream_packet_valid
 
     if (total_len < packet_len)
     {
-        return packetstostreamDropInvalidPacket(level, direction,
-                                                "IPv4 total length is smaller than the packet buffer");
+        return packetstostreamDropInvalidPacket(
+            level, direction, "IPv4 total length is smaller than the packet buffer");
     }
 
     if (total_len > packet_len)
@@ -211,15 +214,14 @@ static bool packetstostreamValidateIpv4PacketHeader(packetstostream_packet_valid
         return packetstostreamDropInvalidPacket(level, direction, "buffer is shorter than the IPv4 total length");
     }
 
-    *iphdr_out       = iphdr;
-    *header_len_out  = header_len;
-    *total_len_out   = total_len;
+    *iphdr_out      = iphdr;
+    *header_len_out = header_len;
+    *total_len_out  = total_len;
     return true;
 }
 
 static bool packetstostreamValidateIpv4HeaderChecksum(packetstostream_packet_validation_level_t level,
-                                                       struct ip_hdr *iphdr, uint16_t header_len,
-                                                       const char *direction)
+                                                      struct ip_hdr *iphdr, uint16_t header_len, const char *direction)
 {
     uint16_t original_checksum = IPH_CHKSUM(iphdr);
 
@@ -292,8 +294,8 @@ static bool packetstostreamValidateUdpChecksum(packetstostream_packet_validation
 
     uint16_t original_checksum = udphdr->chksum;
     udphdr->chksum             = 0;
-    uint16_t expected_checksum = calcGenericChecksum(
-        transport, udp_len, packetstostreamChecksumPseudoHeader(iphdr, IP_PROTO_UDP, udp_len));
+    uint16_t expected_checksum =
+        calcGenericChecksum(transport, udp_len, packetstostreamChecksumPseudoHeader(iphdr, IP_PROTO_UDP, udp_len));
     udphdr->chksum = original_checksum;
 
     if (expected_checksum == 0)
@@ -324,7 +326,7 @@ static bool packetstostreamValidateIcmpChecksum(packetstostream_packet_validatio
     uint16_t original_checksum = icmphdr->chksum;
     icmphdr->chksum            = 0;
     uint16_t expected_checksum = calcGenericChecksum(transport, transport_len, 0);
-    icmphdr->chksum = original_checksum;
+    icmphdr->chksum            = original_checksum;
 
     if (original_checksum != expected_checksum)
     {
@@ -416,8 +418,9 @@ bool packetstostreamTryReadIPv4Packet(buffer_stream_t *stream, sbuf_t **packet_o
     uint16_t total_packet_size_network;
     sbufByteCopy(&total_packet_size_network, packet_first_bytes, (uint32_t) sizeof(total_packet_size_network));
     uint16_t total_packet_size = ntohs(total_packet_size_network);
-    
-    if (total_packet_size < 1 ||  ((uint32_t) (total_packet_size  + kHeaderSize)) > (uint32_t) bufferstreamGetBufLen(stream))
+
+    if (total_packet_size < 1 ||
+        ((uint32_t) (total_packet_size + kHeaderSize)) > (uint32_t) bufferstreamGetBufLen(stream))
     {
         return false;
     }
@@ -458,7 +461,9 @@ void packetstostreamResetOutputLineState(tunnel_t *t, line_t *packet_line, packe
 
 void packetstostreamCloseOutputLineAndScheduleRecreate(tunnel_t *t, line_t *packet_line, packetstostream_lstate_t *ls)
 {
-    LOGW("PacketsToStream: closing output line and scheduling recreate, packet_line: %p, current stream_line: %p", packet_line, ls->line);
+    LOGW("PacketsToStream: closing output line and scheduling recreate, packet_line: %p, current stream_line: %p",
+         packet_line,
+         ls->line);
     line_t *stream_line = ls->line;
 
     packetstostreamResetOutputLineState(t, packet_line, ls);
@@ -529,7 +534,7 @@ line_t *packetstostreamEnsureOutputLine(tunnel_t *t, line_t *packet_line, packet
 void packetstostreamHeartbeatTimerCallback(wtimer_t *timer)
 {
     tunnel_t *t = weventGetUserdata(timer);
-    if (t == NULL)
+    if (t == NULL || isApplicationTerminating())
     {
         return;
     }
@@ -569,12 +574,12 @@ void packetstostreamHeartbeatTimerCallback(wtimer_t *timer)
 void packetstostreamTimeoutTimerCallback(wtimer_t *timer)
 {
     tunnel_t *t = weventGetUserdata(timer);
-    if (t == NULL)
+    if (t == NULL || isApplicationTerminating())
     {
         return;
     }
 
-    packetstostream_tstate_t *ts = tunnelGetState(t);
+    packetstostream_tstate_t *ts  = tunnelGetState(t);
     const wid_t               wid = getWID();
 
     line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), getWID());
@@ -595,8 +600,7 @@ void packetstostreamTimeoutTimerCallback(wtimer_t *timer)
     if (now < ls->pong_deadline_ms)
     {
         const uint64_t remaining_ms_u64 = ls->pong_deadline_ms - now;
-        const uint32_t remaining_ms =
-            (remaining_ms_u64 > UINT32_MAX) ? UINT32_MAX : (uint32_t) remaining_ms_u64;
+        const uint32_t remaining_ms     = (remaining_ms_u64 > UINT32_MAX) ? UINT32_MAX : (uint32_t) remaining_ms_u64;
 
         /*
          * The event loop can schedule timeout callbacks slightly before the
@@ -610,11 +614,11 @@ void packetstostreamTimeoutTimerCallback(wtimer_t *timer)
     }
 
     ts->worker_timeout_timers[wid] = NULL;
-    const uint64_t elapsed_ms = (ls->ping_sent_at_ms > 0 && now >= ls->ping_sent_at_ms) ?
-                                    (now - ls->ping_sent_at_ms) :
-                                    ts->tolerance_ms;
+    const uint64_t elapsed_ms =
+        (ls->ping_sent_at_ms > 0 && now >= ls->ping_sent_at_ms) ? (now - ls->ping_sent_at_ms) : ts->tolerance_ms;
 
     LOGW("PacketsToStream: sensitive-mode ping timed out after %llums (limit=%u ms), resetting connection",
-         (unsigned long long) elapsed_ms, (unsigned int) ts->tolerance_ms);
+         (unsigned long long) elapsed_ms,
+         (unsigned int) ts->tolerance_ms);
     packetstostreamCloseOutputLineAndScheduleRecreate(t, packet_line, ls);
 }

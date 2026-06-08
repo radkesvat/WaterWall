@@ -8,19 +8,20 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
     tunnel_t                    *t           = arg1;
     wid_t                        wid         = real_worker->wid;
     testerclient_tstate_t       *ts          = tunnelGetState(t);
-    line_t                      *l           = ts->packet_mode
-                                                   ? tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wid)
-                                                   : lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
+    line_t                      *l           = ts->packet_mode ? tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wid)
+                                                               : lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
     testerclient_lstate_t       *ls          = lineGetState(l, t);
-    testerclient_worker_state_t *slot = &ts->workers[wid];
+    testerclient_worker_state_t *slot        = &ts->workers[wid];
 
     discard arg2;
     discard arg3;
 
     testerclientLinestateInitialize(ls, lineGetBufferPool(l));
-    ls->flow_id = (uint8_t) wid;
-    slot->line = l;
-    slot->completed = false;
+    ls->flow_id           = (uint8_t) wid;
+    slot->line            = l;
+    slot->completed       = false;
+    slot->close_scheduled = false;
+    slot->closed          = false;
 
     if (! withLineLocked(l, tunnelNextUpStreamInit, t))
     {

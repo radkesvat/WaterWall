@@ -203,13 +203,13 @@ static void testerclientPacketIpv4DirectionPorts(testerclient_direction_e direct
 static void testerclientWritePacketIpv4Header(testerclient_tstate_t *ts, sbuf_t *buf,
                                               testerclient_direction_e direction)
 {
-    uint8_t       *packet      = sbufGetMutablePtr(buf);
-    struct ip_hdr *ipheader    = (struct ip_hdr *) packet;
-    uint32_t       src_addr    = 0;
-    uint32_t       dest_addr   = 0;
-    uint16_t       packet_len  = (uint16_t) sbufGetLength(buf);
-    uint16_t       header_len  = testerclientPacketIpv4HeaderLength();
-    uint16_t       packet_id   = (uint16_t) (atomicAdd(&ts->packet_ipv4_identification, 1U) + 1U);
+    uint8_t       *packet     = sbufGetMutablePtr(buf);
+    struct ip_hdr *ipheader   = (struct ip_hdr *) packet;
+    uint32_t       src_addr   = 0;
+    uint32_t       dest_addr  = 0;
+    uint16_t       packet_len = (uint16_t) sbufGetLength(buf);
+    uint16_t       header_len = testerclientPacketIpv4HeaderLength();
+    uint16_t       packet_id  = (uint16_t) (atomicAdd(&ts->packet_ipv4_identification, 1U) + 1U);
 
     testerclientPacketIpv4DirectionAddrs(ts, direction, &src_addr, &dest_addr);
 
@@ -230,11 +230,11 @@ static void testerclientWritePacketIpv4Header(testerclient_tstate_t *ts, sbuf_t 
 static void testerclientWritePacketIpv4Transport(testerclient_tstate_t *ts, sbuf_t *buf, uint8_t chunk_index,
                                                  testerclient_direction_e direction)
 {
-    uint8_t  *packet        = sbufGetMutablePtr(buf);
-    uint8_t  *transport     = packet + testerclientPacketIpv4HeaderLength();
-    uint16_t  transport_len = (uint16_t) (sbufGetLength(buf) - testerclientPacketIpv4HeaderLength());
-    uint16_t  src_port      = 0;
-    uint16_t  dest_port     = 0;
+    uint8_t *packet        = sbufGetMutablePtr(buf);
+    uint8_t *transport     = packet + testerclientPacketIpv4HeaderLength();
+    uint16_t transport_len = (uint16_t) (sbufGetLength(buf) - testerclientPacketIpv4HeaderLength());
+    uint16_t src_port      = 0;
+    uint16_t dest_port     = 0;
 
     testerclientPacketIpv4DirectionPorts(direction, &src_port, &dest_port);
 
@@ -280,12 +280,12 @@ static void testerclientWritePacketIpv4Transport(testerclient_tstate_t *ts, sbuf
 static bool testerclientVerifyPacketIpv4Transport(testerclient_tstate_t *ts, sbuf_t *buf, uint8_t chunk_index,
                                                   testerclient_direction_e direction)
 {
-    uint8_t       *packet        = sbufGetMutablePtr(buf);
-    struct ip_hdr *ipheader      = (struct ip_hdr *) packet;
-    uint8_t       *transport     = packet + testerclientPacketIpv4HeaderLength();
-    uint16_t       transport_len = (uint16_t) (sbufGetLength(buf) - testerclientPacketIpv4HeaderLength());
-    uint16_t       src_port      = 0;
-    uint16_t       dest_port     = 0;
+    uint8_t       *packet             = sbufGetMutablePtr(buf);
+    struct ip_hdr *ipheader           = (struct ip_hdr *) packet;
+    uint8_t       *transport          = packet + testerclientPacketIpv4HeaderLength();
+    uint16_t       transport_len      = (uint16_t) (sbufGetLength(buf) - testerclientPacketIpv4HeaderLength());
+    uint16_t       src_port           = 0;
+    uint16_t       dest_port          = 0;
     uint16_t       transport_checksum = 0;
 
     if (ts->packet_ipv4_transport == kTesterClientPacketIpv4TransportNone)
@@ -301,8 +301,7 @@ static bool testerclientVerifyPacketIpv4Transport(testerclient_tstate_t *ts, sbu
         struct tcp_hdr *tcpheader = (struct tcp_hdr *) transport;
 
         if (transport_len < sizeof(*tcpheader) || tcpheader->src != lwip_htons(src_port) ||
-            tcpheader->dest != lwip_htons(dest_port) ||
-            TCPH_HDRLEN_BYTES(tcpheader) != sizeof(*tcpheader) ||
+            tcpheader->dest != lwip_htons(dest_port) || TCPH_HDRLEN_BYTES(tcpheader) != sizeof(*tcpheader) ||
             TCPH_FLAGS(tcpheader) != (TCP_ACK | TCP_PSH) ||
             tcpheader->seqno != lwip_htonl(0x10203040U + (uint32_t) chunk_index) ||
             tcpheader->ackno != lwip_htonl(0x50607080U + (uint32_t) chunk_index) ||
@@ -325,7 +324,7 @@ static bool testerclientVerifyPacketIpv4Transport(testerclient_tstate_t *ts, sbu
         break;
     }
     case kTesterClientPacketIpv4TransportIcmp: {
-        struct icmp_echo_hdr *icmpheader = (struct icmp_echo_hdr *) transport;
+        struct icmp_echo_hdr *icmpheader    = (struct icmp_echo_hdr *) transport;
         uint8_t               expected_type = direction == kTesterClientDirectionRequest ? ICMP_ECHO : ICMP_ER;
 
         if (transport_len < sizeof(*icmpheader) || icmpheader->type != expected_type || icmpheader->code != 0 ||
@@ -364,9 +363,9 @@ static bool testerclientVerifyPacketIpv4Transport(testerclient_tstate_t *ts, sbu
 static bool testerclientDecodePacketIpv4(tunnel_t *t, sbuf_t *buf, testerclient_direction_e direction,
                                          uint8_t chunk_index, uint8_t **payload_ptr, uint32_t *payload_len)
 {
-    testerclient_tstate_t *ts         = tunnelGetState(t);
-    const uint32_t         packet_len = sbufGetLength(buf);
-    const uint16_t         header_len = testerclientPacketIpv4HeaderLength();
+    testerclient_tstate_t *ts             = tunnelGetState(t);
+    const uint32_t         packet_len     = sbufGetLength(buf);
+    const uint16_t         header_len     = testerclientPacketIpv4HeaderLength();
     const uint16_t         payload_offset = testerclientPacketIpv4PayloadOffset(ts);
 
     if (packet_len < payload_offset)
@@ -507,8 +506,12 @@ sbuf_t *testerclientCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, u
 
         testerclientWritePacketIpv4Header(ts, buf, direction);
         testerclientWritePacketIpv4Transport(ts, buf, chunk_index, direction);
-        testerclientFillBytesForFlow(testerclientGetFlowId(t, l), sbufGetMutablePtr(buf) + payload_offset,
-                                     payload_len - payload_offset, chunk_index, chunk_offset, direction);
+        testerclientFillBytesForFlow(testerclientGetFlowId(t, l),
+                                     sbufGetMutablePtr(buf) + payload_offset,
+                                     payload_len - payload_offset,
+                                     chunk_index,
+                                     chunk_offset,
+                                     direction);
         calcFullPacketChecksum(sbufGetMutablePtr(buf));
         return buf;
     }
@@ -598,9 +601,9 @@ void testerclientScheduleRequestSend(tunnel_t *t, line_t *l, testerclient_lstate
 
 void testerclientRequestSendTask(tunnel_t *t, line_t *l)
 {
-    testerclient_lstate_t *ls = lineGetState(l, t);
+    testerclient_lstate_t *ls   = lineGetState(l, t);
     buffer_pool_t         *pool = lineGetBufferPool(l);
-    testerclient_tstate_t *ts = tunnelGetState(t);
+    testerclient_tstate_t *ts   = tunnelGetState(t);
 
     ls->request_send_scheduled = false;
 
@@ -644,8 +647,7 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
             return;
         }
 
-        if (! ts->packet_mode && ts->max_payload_size > 0 && ! ls->request_paused &&
-            ls->request_tx_index < chunk_count)
+        if (! ts->packet_mode && ts->max_payload_size > 0 && ! ls->request_paused && ls->request_tx_index < chunk_count)
         {
             ls->request_send_scheduled = true;
             lineScheduleDelayedTask(l, testerclientRequestSendTask, kTesterClientSplitPayloadDelayMs, t);
@@ -676,6 +678,71 @@ void testerclientWatchdogTask(tunnel_t *t, line_t *l)
     }
 }
 
+static void testerclientScheduleCompletedStreamClose(tunnel_t *t)
+{
+    testerclient_tstate_t *ts = tunnelGetState(t);
+    tunnel_chain_t        *tc = tunnelGetChain(t);
+
+    for (wid_t wi = 0; wi < tc->workers_count; ++wi)
+    {
+        testerclient_worker_state_t *slot = &ts->workers[wi];
+        if (slot->line != NULL && slot->completed && ! slot->close_scheduled)
+        {
+            slot->close_scheduled = true;
+            lineScheduleTask(slot->line, testerclientCloseCompletedStreamTask, t);
+        }
+    }
+}
+
+static bool testerclientShouldCloseCompletedStreams(tunnel_t *t)
+{
+    return t->next != NULL && t->next->node != NULL && stringCompare(t->next->node->type, "TcpOverUdpClient") == 0;
+}
+
+void testerclientCloseCompletedStreamTask(tunnel_t *t, line_t *l)
+{
+    testerclient_tstate_t       *ts   = tunnelGetState(t);
+    testerclient_worker_state_t *slot = &ts->workers[lineGetWID(l)];
+    testerclient_lstate_t       *ls   = lineGetState(l, t);
+    tunnel_chain_t              *tc   = tunnelGetChain(t);
+
+    if (slot->closed)
+    {
+        return;
+    }
+
+    if (! ls->response_complete)
+    {
+        testerclientFail(t, l, "scheduled close before response verification completed");
+        return;
+    }
+
+    if (! ls->request_complete)
+    {
+        slot->close_scheduled = false;
+        lineScheduleDelayedTask(l, testerclientCloseCompletedStreamTask, kTesterClientSplitPayloadDelayMs, t);
+        slot->close_scheduled = true;
+        return;
+    }
+
+    tunnelNextUpStreamFinish(t, l);
+    testerclientLinestateDestroy(ls);
+    slot->line   = NULL;
+    slot->closed = true;
+
+    if (lineIsAlive(l))
+    {
+        lineDestroy(l);
+    }
+
+    unsigned int closed = (unsigned int) atomicIncRelaxed(&ts->closed_workers) + 1U;
+    if (closed == (unsigned int) tc->workers_count)
+    {
+        LOGI("TesterClient: all %u worker lines closed successfully", (unsigned int) tc->workers_count);
+        terminateProgram(0);
+    }
+}
+
 void testerclientMarkWorkerComplete(tunnel_t *t, line_t *l)
 {
     testerclient_tstate_t       *ts   = tunnelGetState(t);
@@ -689,7 +756,10 @@ void testerclientMarkWorkerComplete(tunnel_t *t, line_t *l)
     }
 
     slot->completed = true;
-    slot->line      = NULL;
+    if (ts->packet_mode)
+    {
+        slot->line = NULL;
+    }
 
     done = (unsigned int) atomicIncRelaxed(&ts->completed_workers) + 1U;
 
@@ -698,6 +768,12 @@ void testerclientMarkWorkerComplete(tunnel_t *t, line_t *l)
     if (done == (unsigned int) tc->workers_count)
     {
         LOGI("TesterClient: all %u worker lines completed successfully", (unsigned int) tc->workers_count);
-        terminateProgram(0);
+        if (ts->packet_mode || ! testerclientShouldCloseCompletedStreams(t))
+        {
+            terminateProgram(0);
+            return;
+        }
+
+        testerclientScheduleCompletedStreamClose(t);
     }
 }

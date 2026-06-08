@@ -201,7 +201,8 @@ bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts)
 
     if (! authenticationserverRewritePrimaryFromMemory(ts))
     {
-        LOGE("AuthenticationServer: recovery failed because recovered data could not be written to \"%s\"", ts->db_path);
+        LOGE("AuthenticationServer: recovery failed because recovered data could not be written to \"%s\"",
+             ts->db_path);
         return false;
     }
 
@@ -212,7 +213,7 @@ bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts)
 void authenticationserverSaveTimerCallback(wtimer_t *timer)
 {
     tunnel_t *t = weventGetUserdata(timer);
-    if (t == NULL)
+    if (t == NULL || isApplicationTerminating())
     {
         return;
     }

@@ -63,8 +63,9 @@ static bool realityserverEncryptFrame(realityserver_tstate_t *ts, sbuf_t **buf, 
     getRandomBytes(nonce, kRealityServerNonceSize);
 
     uint8_t *ciphertext = frame + kRealityServerFramePrefixSize;
-    if (0 != realityserverEncryptAead(ts->algorithm, ciphertext, ciphertext, plaintext_len, frame,
-                                      kRealityServerTlsHeaderSize, nonce, ts->key))
+    if (0 !=
+        realityserverEncryptAead(
+            ts->algorithm, ciphertext, ciphertext, plaintext_len, frame, kRealityServerTlsHeaderSize, nonce, ts->key))
     {
         return false;
     }
@@ -106,27 +107,27 @@ static bool realityserverIsRealityCandidate(const realityserver_tstate_t *ts, sb
         return false;
     }
 
-    const uint8_t *frame = sbufGetRawPtr(record);
+    const uint8_t *frame    = sbufGetRawPtr(record);
     uint32_t       body_len = ((uint32_t) frame[3] << 8) | (uint32_t) frame[4];
 
     return frame[0] == kRealityServerTlsApplicationData && frame[1] == kRealityServerTlsVersionMajor &&
-           frame[2] == kRealityServerTlsVersionMinor &&
-           body_len >= kRealityServerNonceSize + kRealityServerTagSize &&
+           frame[2] == kRealityServerTlsVersionMinor && body_len >= kRealityServerNonceSize + kRealityServerTagSize &&
            body_len <= ts->max_frame_payload + kRealityServerNonceSize + kRealityServerTagSize &&
            body_len <= kRealityServerMaxTlsRecordBody;
 }
 
 static bool realityserverDecryptFrame(realityserver_tstate_t *ts, sbuf_t *frame_buffer)
 {
-    uint8_t *frame    = sbufGetMutablePtr(frame_buffer);
-    uint32_t body_len = ((uint32_t) frame[3] << 8) | (uint32_t) frame[4];
+    uint8_t *frame          = sbufGetMutablePtr(frame_buffer);
+    uint32_t body_len       = ((uint32_t) frame[3] << 8) | (uint32_t) frame[4];
     uint32_t ciphertext_len = body_len - kRealityServerNonceSize;
 
     uint8_t *nonce      = frame + kRealityServerTlsHeaderSize;
     uint8_t *ciphertext = frame + kRealityServerFramePrefixSize;
 
-    if (0 != realityserverDecryptAead(ts->algorithm, ciphertext, ciphertext, ciphertext_len, frame,
-                                      kRealityServerTlsHeaderSize, nonce, ts->key))
+    if (0 !=
+        realityserverDecryptAead(
+            ts->algorithm, ciphertext, ciphertext, ciphertext_len, frame, kRealityServerTlsHeaderSize, nonce, ts->key))
     {
         return false;
     }
@@ -367,7 +368,7 @@ bool realityserverProcessUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
 void realityserverTunnelstateDestroy(realityserver_tstate_t *ts)
 {
     wCryptoZero(ts->key, sizeof(ts->key));
-    memoryZeroAligned32(ts, sizeof(*ts));
+    memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }
 
 int realityserverEncryptAead(uint32_t algorithm, unsigned char *dst, const unsigned char *src, size_t src_len,
@@ -414,9 +415,9 @@ void realityserverCloseLineBidirectional(tunnel_t *t, line_t *l)
     realityserver_tstate_t *ts = tunnelGetState(t);
     realityserver_lstate_t *ls = lineGetState(l, t);
 
-    bool close_protected   = ls->protected_init_sent;
-    bool close_destination = ls->destination_init_sent && ! ls->destination_up_finished &&
-                             ls->mode != kRealityServerModeAuthorized;
+    bool close_protected = ls->protected_init_sent;
+    bool close_destination =
+        ls->destination_init_sent && ! ls->destination_up_finished && ls->mode != kRealityServerModeAuthorized;
 
     realityserverLinestateDestroy(ls);
 

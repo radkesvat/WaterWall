@@ -14,16 +14,6 @@ void packetsenderTunnelDestroy(tunnel_t *t)
 
     if (state->workers != NULL)
     {
-        for (wid_t wi = 0; wi < state->workers_count; ++wi)
-        {
-            if (state->workers[wi].timer != NULL)
-            {
-                weventSetUserData(state->workers[wi].timer, NULL);
-                wtimerDelete(state->workers[wi].timer);
-                state->workers[wi].timer = NULL;
-            }
-        }
-
         memoryFree(state->workers);
         state->workers = NULL;
     }

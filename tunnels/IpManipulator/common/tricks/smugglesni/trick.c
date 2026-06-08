@@ -238,7 +238,7 @@ static ipmanipulator_smuggle_flow_t *smugglesnitrickFindFlowLocked(ipmanipulator
     return NULL;
 }
 
-static ipmanipulator_smuggle_flow_t *smugglesnitrickFindReverseFlowLocked(ipmanipulator_tstate_t                  *state,
+static ipmanipulator_smuggle_flow_t *smugglesnitrickFindReverseFlowLocked(ipmanipulator_tstate_t *state,
                                                                           const smugglesnitrick_tcp_packet_info_t *info)
 {
     for (uint32_t i = 0; i < state->smuggle_flows_capacity; ++i)
@@ -295,14 +295,14 @@ static ipmanipulator_smuggle_flow_t *smugglesnitrickCreateFlowLocked(ipmanipulat
 
     ipmanipulator_smuggle_flow_t *flow = &state->smuggle_flows[old_capacity];
     *flow                              = (ipmanipulator_smuggle_flow_t) {
-        .created_ms       = now_ms,
-        .last_activity_ms = now_ms,
-        .src_addr         = info->src_addr,
-        .dst_addr         = info->dst_addr,
-        .src_port         = info->src_port,
-        .dst_port         = info->dst_port,
-        .phase            = kIpManipulatorSmuggleFlowPhaseWarmup,
-        .active           = true,
+                                     .created_ms       = now_ms,
+                                     .last_activity_ms = now_ms,
+                                     .src_addr         = info->src_addr,
+                                     .dst_addr         = info->dst_addr,
+                                     .src_port         = info->src_port,
+                                     .dst_port         = info->dst_port,
+                                     .phase            = kIpManipulatorSmuggleFlowPhaseWarmup,
+                                     .active           = true,
     };
 
     return flow;
@@ -348,6 +348,33 @@ static void smugglesnitrickRunDelayedNormal(worker_t *worker, void *arg1, void *
     lineUnlock(l);
 }
 
+static void smugglesnitrickCleanupDelayedBuffer(line_t *l, sbuf_t *buf)
+{
+    if (buf == NULL)
+    {
+        return;
+    }
+
+    if (getWID() == lineGetWID(l))
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
+
+    sbufDestroy(buf);
+}
+
+static void smugglesnitrickCleanupDelayedNormal(void *arg1, void *arg2, void *arg3)
+{
+    discard arg1;
+
+    line_t *l   = arg2;
+    sbuf_t *buf = arg3;
+
+    smugglesnitrickCleanupDelayedBuffer(l, buf);
+    lineUnlock(l);
+}
+
 static void smugglesnitrickScheduleNormalSend(tunnel_t *t, line_t *l, sbuf_t *buf, uint32_t delay_ms)
 {
     if (delay_ms == 0 && getWID() == lineGetWID(l))
@@ -357,7 +384,13 @@ static void smugglesnitrickScheduleNormalSend(tunnel_t *t, line_t *l, sbuf_t *bu
     }
 
     lineLock(l);
-    sendWorkerMessageTimed(lineGetWID(l), (WorkerMessageCallback) smugglesnitrickRunDelayedNormal, delay_ms, t, l, buf);
+    sendWorkerMessageTimedWithCleanup(lineGetWID(l),
+                                      (WorkerMessageCallback) smugglesnitrickRunDelayedNormal,
+                                      smugglesnitrickCleanupDelayedNormal,
+                                      delay_ms,
+                                      t,
+                                      l,
+                                      buf);
 }
 
 static sbuf_t *smugglesnitrickAllocateRequestBuffer(uint32_t len)

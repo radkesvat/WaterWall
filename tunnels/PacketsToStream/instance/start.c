@@ -7,9 +7,14 @@ static void packetstostreamStartWorkerTimer(void *worker_ptr, void *arg1, void *
     discard arg2;
     discard arg3;
 
-    worker_t               *worker = worker_ptr;
-    tunnel_t               *t      = arg1;
-    packetstostream_tstate_t *ts   = tunnelGetState(t);
+    worker_t                 *worker = worker_ptr;
+    tunnel_t                 *t      = arg1;
+    packetstostream_tstate_t *ts     = tunnelGetState(t);
+
+    if (UNLIKELY(isApplicationTerminating()))
+    {
+        return;
+    }
 
     wtimer_t *timer = wtimerAdd(worker->loop, packetstostreamHeartbeatTimerCallback, ts->interval_ms, INFINITE);
     if (timer == NULL)

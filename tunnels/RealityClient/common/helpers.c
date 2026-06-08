@@ -52,8 +52,9 @@ static bool realityclientEncryptFrame(realityclient_tstate_t *ts, sbuf_t **buf, 
     getRandomBytes(nonce, kRealityClientNonceSize);
 
     uint8_t *ciphertext = frame + kRealityClientFramePrefixSize;
-    if (0 != realityclientEncryptAead(ts->algorithm, ciphertext, ciphertext, plaintext_len, frame,
-                                      kRealityClientTlsHeaderSize, nonce, ts->key))
+    if (0 !=
+        realityclientEncryptAead(
+            ts->algorithm, ciphertext, ciphertext, plaintext_len, frame, kRealityClientTlsHeaderSize, nonce, ts->key))
     {
         return false;
     }
@@ -185,15 +186,21 @@ bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
             return false;
         }
 
-        uint8_t *frame    = sbufGetMutablePtr(frame_buffer);
-        uint32_t body_len = ((uint32_t) frame[3] << 8) | (uint32_t) frame[4];
+        uint8_t *frame          = sbufGetMutablePtr(frame_buffer);
+        uint32_t body_len       = ((uint32_t) frame[3] << 8) | (uint32_t) frame[4];
         uint32_t ciphertext_len = body_len - kRealityClientNonceSize;
 
         uint8_t *nonce      = frame + kRealityClientTlsHeaderSize;
         uint8_t *ciphertext = frame + kRealityClientFramePrefixSize;
 
-        if (0 != realityclientDecryptAead(ts->algorithm, ciphertext, ciphertext, ciphertext_len, frame,
-                                          kRealityClientTlsHeaderSize, nonce, ts->key))
+        if (0 != realityclientDecryptAead(ts->algorithm,
+                                          ciphertext,
+                                          ciphertext,
+                                          ciphertext_len,
+                                          frame,
+                                          kRealityClientTlsHeaderSize,
+                                          nonce,
+                                          ts->key))
         {
             LOGW("RealityClient: failed to decrypt Reality record");
             lineReuseBuffer(l, frame_buffer);
@@ -231,7 +238,7 @@ void realityclientTunnelstateDestroy(realityclient_tstate_t *ts)
     ts->tls_node.next = NULL;
 
     wCryptoZero(ts->key, sizeof(ts->key));
-    memoryZeroAligned32(ts, sizeof(*ts));
+    memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }
 
 int realityclientEncryptAead(uint32_t algorithm, unsigned char *dst, const unsigned char *src, size_t src_len,

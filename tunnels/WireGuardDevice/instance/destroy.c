@@ -5,11 +5,6 @@
 void wireguarddeviceTunnelDestroy(tunnel_t *t)
 {
     wgd_tstate_t *state = tunnelGetState(t);
-    if (state->wg_device.loop_timer != NULL)
-    {
-        wtimerDelete(state->wg_device.loop_timer);
-        state->wg_device.loop_timer = NULL;
-    }
     if (state->device_configuration.private_key != NULL)
     {
         memoryFree((void *) state->device_configuration.private_key);

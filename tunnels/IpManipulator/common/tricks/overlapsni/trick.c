@@ -828,6 +828,33 @@ static void overlapsnitrickRunDelayedNormal(worker_t *worker, void *arg1, void *
     lineUnlock(l);
 }
 
+static void overlapsnitrickCleanupDelayedBuffer(line_t *l, sbuf_t *buf)
+{
+    if (buf == NULL)
+    {
+        return;
+    }
+
+    if (getWID() == lineGetWID(l))
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
+
+    sbufDestroy(buf);
+}
+
+static void overlapsnitrickCleanupDelayedNormal(void *arg1, void *arg2, void *arg3)
+{
+    discard arg1;
+
+    line_t *l   = arg2;
+    sbuf_t *buf = arg3;
+
+    overlapsnitrickCleanupDelayedBuffer(l, buf);
+    lineUnlock(l);
+}
+
 static bool overlapsnitrickScheduleNormalSend(tunnel_t *t, line_t *l, sbuf_t *buf, uint32_t delay_ms)
 {
     if (t == NULL || l == NULL || buf == NULL)
@@ -856,7 +883,13 @@ static bool overlapsnitrickScheduleNormalSend(tunnel_t *t, line_t *l, sbuf_t *bu
     }
 
     lineLock(l);
-    sendWorkerMessageTimed(lineGetWID(l), (WorkerMessageCallback) overlapsnitrickRunDelayedNormal, delay_ms, t, l, buf);
+    sendWorkerMessageTimedWithCleanup(lineGetWID(l),
+                                      (WorkerMessageCallback) overlapsnitrickRunDelayedNormal,
+                                      overlapsnitrickCleanupDelayedNormal,
+                                      delay_ms,
+                                      t,
+                                      l,
+                                      buf);
     return lineIsAlive(l);
 }
 
