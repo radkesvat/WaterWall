@@ -28,6 +28,14 @@
 
 static void __widle_del(widle_t *idle);
 static void __wtimer_del(wtimer_t *timer);
+static void wioReleaseNoCloseNow(wio_t *io);
+
+typedef struct wio_release_no_close_msg_s
+{
+    wio_t   *io;
+    uint32_t id;
+    bool     detached;
+} wio_release_no_close_msg_t;
 
 static int timersCompare(const struct heap_node *lhs, const struct heap_node *rhs)
 {
@@ -436,7 +444,14 @@ static void wloopCleanup(wloop_t *loop)
         wio_t *io = loop->ios.ptr[i];
         if (io)
         {
-            wioFree(io);
+            if (io->release_no_close)
+            {
+                wioReleaseNoCloseNow(io);
+            }
+            else
+            {
+                wioFree(io);
+            }
         }
     }
     io_array_cleanup(&loop->ios);
@@ -966,21 +981,45 @@ static void wioReleaseNoCloseNow(wio_t *io)
     wioDelHeartBeatTimer(io);
     wioDone(io);
 
+    io->release_no_close = 0;
     io->destroy = 1;
     EVENTLOOP_FREE(io->localaddr);
     EVENTLOOP_FREE(io->peeraddr);
     threadsafegenericpoolReuseItem(getWorkerWiosPool(loop->wid), io);
 }
 
-static void wioReleaseNoCloseEvent(wevent_t *ev)
+static void wioReleaseNoCloseMessageRun(void *worker_arg, void *arg1, void *arg2, void *arg3)
 {
-    wio_t   *io = (wio_t *) ev->userdata;
-    uint32_t id = (uint32_t) (uintptr_t) ev->privdata;
+    discard worker_arg;
+    discard arg2;
+    discard arg3;
 
-    if (io != NULL && io->id == id)
+    wio_release_no_close_msg_t *msg = arg1;
+    if (msg->detached && msg->io != NULL && msg->io->id == msg->id)
     {
-        wioReleaseNoCloseNow(io);
+        wioReleaseNoCloseNow(msg->io);
     }
+    memoryFree(msg);
+}
+
+static void wioReleaseNoCloseMessageCleanup(void *arg1, void *arg2, void *arg3)
+{
+    discard arg2;
+    discard arg3;
+
+    wio_release_no_close_msg_t *msg = arg1;
+    if (msg->io != NULL && msg->io->id == msg->id)
+    {
+        if (msg->detached)
+        {
+            wioReleaseNoCloseNow(msg->io);
+        }
+        else
+        {
+            msg->io->release_no_close = 1;
+        }
+    }
+    memoryFree(msg);
 }
 
 void wioReleaseNoClose(wio_t *io)
@@ -994,33 +1033,52 @@ void wioReleaseNoClose(wio_t *io)
     int      fd   = io->fd;
     bool     was_pending = io->pending;
 
+    assert(loop != NULL);
+    assert((wid_t) loop->wid == getWID());
+
     if (io->events != 0)
     {
         wioDel(io, WW_RDWR);
+    }
+
+    if (was_pending)
+    {
+        /*
+         * EVENT_UNPENDING makes the loop skip callbacks it has not entered yet,
+         * but wloopProcessPendings() may already hold this wio_t in a local
+         * cur/next pointer. Defer returning the object to the pool until a later
+         * worker message; worker-message cleanup releases it if shutdown drops
+         * the deferred message before it runs.
+         */
+        /*
+         * wioClose doesnt have to do this because it only has to close the socket, it is not actually freeing a wio_t, 
+         * so no use-after-free issue. But wioReleaseNoClose will free the wio_t, so we need to defer it to avoid use-after-free issue.
+         */
+        wio_release_no_close_msg_t *msg = memoryAllocate(sizeof(*msg));
+        *msg = (wio_release_no_close_msg_t) {.io = io, .id = io->id};
+
+        if (sendWorkerMessageForceQueueWithCleanup((wid_t) loop->wid,
+                                                   wioReleaseNoCloseMessageRun,
+                                                   wioReleaseNoCloseMessageCleanup,
+                                                   msg,
+                                                   NULL,
+                                                   NULL))
+        {
+            msg->detached = true;
+            if (loop != NULL && fd >= 0 && fd < (int) loop->ios.maxsize && loop->ios.ptr[fd] == io)
+            {
+                loop->ios.ptr[fd] = NULL;
+            }
+            return;
+        }
+
+        return;
     }
 
     if (loop != NULL && fd >= 0 && fd < (int) loop->ios.maxsize && loop->ios.ptr[fd] == io)
     {
         loop->ios.ptr[fd] = NULL;
     }
-
-    if (was_pending)
-    {
-        wevent_t ev;
-        memorySet(&ev, 0, sizeof(ev));
-        ev.cb       = wioReleaseNoCloseEvent;
-        ev.userdata = io;
-        ev.privdata = (void *) (uintptr_t) io->id;
-        if (wloopPostEvent(loop, &ev))
-        {
-            return;
-        }
-
-        // During global shutdown custom posting may be disabled. In that case
-        // avoid freeing the current pending event under the event loop.
-        return;
-    }
-
     wioReleaseNoCloseNow(io);
 }
 

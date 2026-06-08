@@ -4,7 +4,8 @@
  *
  * The idle table stores idle_item_t objects that each have an expiration timeout.
  * When the timeout expires, the idle item is removed and its callback is invoked.
- * Items are thread-local, and operations must be performed on the same thread that created them.
+ * Each item belongs to a worker. Expiration callbacks run on that worker via the
+ * worker-message queue when the table's timer loop is not the item owner.
  *
  * The adding or modifying of idle items will not cause heap reordering and therefore is performant.
  *
@@ -28,19 +29,20 @@ typedef struct idle_item_s idle_item_t;
 typedef void (*ExpireCallBack)(idle_item_t *);
 
 /**
- * @brief Idle item structure (thread-local).
+ * @brief Idle item structure.
  *
  * This structure represents an item in the idle table.
  */
 struct idle_item_s
 {
-    void                *userdata;     ///< User data associated with the item.
-    struct idle_table_s *table;        ///< Pointer to the parent idle table.
-    uint64_t             expire_at_ms; ///< Expiration time in milliseconds.
-    ExpireCallBack       cb;           ///< Expiration callback.
-    hash_t               hash;         ///< Hash used for item lookup.
-    wid_t                wid;          ///< Worker ID that owns this item.
-    bool                 removed;      ///< Flag indicating if the item is removed.
+    void            *userdata;               ///< User data associated with the item.
+    atomic_uintptr_t table;                  ///< Parent idle table pointer, or 0 when detached.
+    atomic_ullong    expire_at_ms;           ///< Expiration time in milliseconds.
+    ExpireCallBack   cb;                     ///< Expiration callback.
+    hash_t           hash;                   ///< Hash used for item lookup.
+    wid_t            wid;                    ///< Worker ID that owns this item.
+    atomic_bool      removed;                ///< Flag indicating if the item is removed.
+    atomic_bool      worker_message_pending; ///< An expiration worker message owns the item memory.
 };
 typedef struct idle_table_s idle_table_t;
 
@@ -97,6 +99,17 @@ idle_item_t *idletableGetIdleItemByHash(wid_t wid, idle_table_t *self, hash_t ke
  * @param age_ms Minimum age to keep the item.
  */
 void idletableKeepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_ms);
+
+/**
+ * @brief Drain active idle items owned by one worker.
+ *
+ * Invokes each item's expiration callback and releases the idle item. This is
+ * intended for worker shutdown, before that worker's line pools are destroyed.
+ *
+ * @param self Pointer to the idle table.
+ * @param wid Worker ID whose active items should be drained.
+ */
+void idletableDrainWorkerItems(idle_table_t *self, wid_t wid);
 
 /**
  * @brief Remove an idle item by hash.

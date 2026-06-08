@@ -129,6 +129,7 @@ void wioReady(wio_t *io)
     io->recv = io->send = 0;
     io->recvfrom = io->sendto = 0;
     io->close                 = 0;
+    io->release_no_close      = 0;
     // public:
     io->id      = wioSetNextID();
     io->io_type = WIO_TYPE_UNKNOWN;

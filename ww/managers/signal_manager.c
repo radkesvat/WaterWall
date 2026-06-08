@@ -148,7 +148,6 @@ void removeAtExitCallBack(SignalHandler handle, void *userdata)
     mutexUnlock(&(signalmanager_gstate->mutex));
 }
 
-
 static void proceedWithNextExitHandler(void)
 {
     for (unsigned int i = signalmanager_gstate->current_handler_index; i < kMaxSigHandles; i++)
@@ -440,13 +439,13 @@ signal_manager_t *signalmanagerCreate(void)
     assert(signalmanager_gstate == NULL);
     signalmanager_gstate = memoryAllocate(sizeof(signal_manager_t));
 
-    *signalmanager_gstate = (signal_manager_t) {.handlers_len   = 0,
+    *signalmanager_gstate = (signal_manager_t) {.handlers_len          = 0,
                                                 .current_handler_index = 0,
                                                 .exit_code             = 0,
-                                                .started        = false,
-                                                .raise_defaults = true,
-                                                .handle_sigint  = true,
-                                                .handle_sigquit = true,
+                                                .started               = false,
+                                                .raise_defaults        = true,
+                                                .handle_sigint         = true,
+                                                .handle_sigquit        = true,
                                                 .handle_sighup  = false, // exits after ssh closed even with nohup
                                                 .handle_sigill  = false,
                                                 .handle_sigfpe  = true,
@@ -548,7 +547,7 @@ _Noreturn void terminateProgram(int exit_code)
 
 bool signalmanagerIsTerminating(void)
 {
-    return atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_relaxed);
+    return atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_acquire);
 }
 
 bool isApplicationTerminating(void)

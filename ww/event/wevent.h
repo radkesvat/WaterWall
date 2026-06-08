@@ -114,6 +114,7 @@ struct wio_s {
     unsigned    recvfrom    :1;
     unsigned    sendto      :1;
     unsigned    close       :1;
+    unsigned    release_no_close :1;
 // public:
     wio_type_e  io_type;
     uint32_t    id; // fd cannot be used as unique identifier, so we provide an id
