@@ -13,7 +13,9 @@ bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, bool
     if (ls->rbio == NULL || ls->wbio == NULL || ls->ssl == NULL)
     {
         LOGE("TlsServer: failed to allocate per-line TLS objects (rbio=%p, wbio=%p, ssl=%p)",
-             (void *) ls->rbio, (void *) ls->wbio, (void *) ls->ssl);
+             (void *) ls->rbio,
+             (void *) ls->wbio,
+             (void *) ls->ssl);
         tlsserverPrintSSLError();
         tlsserverLinestateDestroy(ls);
         return false;
@@ -78,5 +80,5 @@ void tlsserverLinestateRelease(tlsserver_lstate_t *ls)
 void tlsserverLinestateDestroy(tlsserver_lstate_t *ls)
 {
     tlsserverLinestateRelease(ls);
-    memoryZeroAligned32(ls, sizeof(tlsserver_lstate_t));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tlsserver_lstate_t)));
 }

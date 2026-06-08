@@ -16,8 +16,12 @@ void udplistenerLinestateInitialize(udplistener_lstate_t *ls, line_t *l, tunnel_
 
     l->routing_context.local_listener_port = real_localport;
 
-    *ls = (udplistener_lstate_t) {
-        .line = l, .uio = uio, .tunnel = t, .read_paused = false, .peer_addr = *peer_addr};
+    *ls = (udplistener_lstate_t) {.line        = l,
+                                  .uio         = uio,
+                                  .tunnel      = t,
+                                  .listener_fd = wioGetFD(uio->io),
+                                  .read_paused = false,
+                                  .peer_addr   = *peer_addr};
 
     if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
     {
@@ -28,12 +32,14 @@ void udplistenerLinestateInitialize(udplistener_lstate_t *ls, line_t *l, tunnel_
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-        LOGD("UdpListener: Accepted FD:%x  [%s] <= [%s]", wioGetFD(uio->io), SOCKADDR_STR(&log_localaddr, localaddrstr),
+        LOGD("UdpListener: Accepted FD:%x  [%s] <= [%s]",
+             ls->listener_fd,
+             SOCKADDR_STR(&log_localaddr, localaddrstr),
              SOCKADDR_STR((sockaddr_u *) peer_addr, peeraddrstr));
     }
 }
 
 void udplistenerLinestateDestroy(udplistener_lstate_t *ls)
 {
-    memoryZeroAligned32(ls, sizeof(udplistener_lstate_t));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(udplistener_lstate_t)));
 }

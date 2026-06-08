@@ -13,5 +13,5 @@ void encryptionserverLinestateDestroy(encryptionserver_lstate_t *ls)
 
     bufferstreamDestroy(&ls->read_stream);
 
-    memoryZeroAligned32(ls, sizeof(encryptionserver_lstate_t));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(encryptionserver_lstate_t)));
 }

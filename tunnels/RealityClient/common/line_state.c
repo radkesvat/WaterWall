@@ -12,5 +12,5 @@ void realityclientLinestateDestroy(realityclient_lstate_t *ls)
 {
     bufferstreamDestroy(&ls->read_stream);
     bufferqueueDestroy(&ls->pending_up);
-    memoryZeroAligned32(ls, sizeof(*ls));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }

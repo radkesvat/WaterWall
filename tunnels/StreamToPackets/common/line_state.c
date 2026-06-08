@@ -4,9 +4,8 @@
 
 void streamtopacketsLinestateInitialize(streamtopackets_lstate_t *ls, buffer_pool_t *pool)
 {
-    *ls = (streamtopackets_lstate_t) {.line        = NULL,
-                                      .read_stream = bufferstreamCreate(pool, kHeaderSize),
-                                      .paused      = false};
+    *ls = (streamtopackets_lstate_t) {
+        .line = NULL, .read_stream = bufferstreamCreate(pool, kHeaderSize), .paused = false};
 }
 
 void streamtopacketsLinestateReset(streamtopackets_lstate_t *ls)
@@ -27,5 +26,5 @@ void streamtopacketsLinestateDestroy(streamtopackets_lstate_t *ls)
         bufferstreamDestroy(&ls->read_stream);
     }
 
-    memoryZeroAligned32(ls, sizeof(streamtopackets_lstate_t));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(streamtopackets_lstate_t)));
 }

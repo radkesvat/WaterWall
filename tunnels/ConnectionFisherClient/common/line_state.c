@@ -44,7 +44,7 @@ void connectionfisherclientLinestateDestroyMain(connectionfisherclient_lstate_t 
     {
         memoryFree(ls->child_lines);
     }
-    memoryZeroAligned32(ls, sizeof(*ls));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }
 
 void connectionfisherclientLinestateDestroyChild(connectionfisherclient_lstate_t *ls)
@@ -55,5 +55,5 @@ void connectionfisherclientLinestateDestroyChild(connectionfisherclient_lstate_t
     }
 
     bufferstreamDestroy(&ls->read_stream);
-    memoryZeroAligned32(ls, sizeof(*ls));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }

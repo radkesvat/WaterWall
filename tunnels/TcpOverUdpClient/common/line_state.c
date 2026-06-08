@@ -24,8 +24,8 @@ void tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *
 
     ikcp_setoutput(k_handle, tcpoverudpclientKUdpOutput);
 
-    ikcp_nodelay(k_handle, ts->kcp_nodelay ? 1 : 0, ts->kcp_interval_ms, ts->kcp_resend,
-                 ts->kcp_no_congestion_control ? 1 : 0);
+    ikcp_nodelay(
+        k_handle, ts->kcp_nodelay ? 1 : 0, ts->kcp_interval_ms, ts->kcp_resend, ts->kcp_no_congestion_control ? 1 : 0);
 
     ikcp_wndsize(k_handle, ts->kcp_send_window, ts->kcp_recv_window);
 
@@ -43,8 +43,10 @@ void tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *
 
     k_handle->rx_minrto = (IINT32) ts->kcp_rx_minrto_ms;
 
-    wtimer_t *k_timer = wtimerAdd(getWorkerLoop(lineGetWID(l)), tcpoverudpclientKcpLoopIntervalCallback,
-                                  (uint32_t) ts->kcp_interval_ms, INFINITE);
+    wtimer_t *k_timer = wtimerAdd(getWorkerLoop(lineGetWID(l)),
+                                  tcpoverudpclientKcpLoopIntervalCallback,
+                                  (uint32_t) ts->kcp_interval_ms,
+                                  INFINITE);
 
     weventSetUserData(k_timer, ls);
 
@@ -110,5 +112,5 @@ void tcpoverudpclientLinestateDestroy(tcpoverudpclient_lstate_t *ls)
         ikcp_release(ls->k_handle);
     }
 
-    memoryZeroAligned32(ls, sizeof(tcpoverudpclient_lstate_t));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tcpoverudpclient_lstate_t)));
 }

@@ -17,5 +17,5 @@ void headerclientLinestateDestroy(headerclient_lstate_t *ls)
         return;
     }
 
-    memoryZeroAligned32(ls, sizeof(*ls));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }

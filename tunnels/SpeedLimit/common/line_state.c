@@ -6,18 +6,17 @@ void speedlimitLinestateInitialize(speedlimit_lstate_t *ls, tunnel_t *t, line_t 
 {
     speedlimit_tstate_t *ts = tunnelGetState(t);
 
-    *ls = (speedlimit_lstate_t) {.tunnel                  = t,
-                                 .line                    = l,
-                                 .up_queue                = bufferqueueCreate(kSpeedLimitQueueCap),
-                                 .down_queue              = bufferqueueCreate(kSpeedLimitQueueCap),
-                                 .up_timer                = NULL,
-                                 .down_timer              = NULL,
-                                 .line_bucket             = {.tokens_units = ts->bucket_capacity_units,
-                                                             .last_refill_ms = 0},
-                                 .prev_side_externally_paused   = false,
-                                 .next_side_externally_paused   = false,
-                                 .prev_side_locally_paused      = false,
-                                 .next_side_locally_paused      = false};
+    *ls = (speedlimit_lstate_t) {.tunnel      = t,
+                                 .line        = l,
+                                 .up_queue    = bufferqueueCreate(kSpeedLimitQueueCap),
+                                 .down_queue  = bufferqueueCreate(kSpeedLimitQueueCap),
+                                 .up_timer    = NULL,
+                                 .down_timer  = NULL,
+                                 .line_bucket = {.tokens_units = ts->bucket_capacity_units, .last_refill_ms = 0},
+                                 .prev_side_externally_paused = false,
+                                 .next_side_externally_paused = false,
+                                 .prev_side_locally_paused    = false,
+                                 .next_side_locally_paused    = false};
 }
 
 void speedlimitLinestateDestroy(speedlimit_lstate_t *ls)
@@ -39,5 +38,5 @@ void speedlimitLinestateDestroy(speedlimit_lstate_t *ls)
     bufferqueueDestroy(&ls->up_queue);
     bufferqueueDestroy(&ls->down_queue);
 
-    memoryZeroAligned32(ls, sizeof(speedlimit_lstate_t));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(speedlimit_lstate_t)));
 }

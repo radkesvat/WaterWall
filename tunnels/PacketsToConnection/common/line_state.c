@@ -6,7 +6,7 @@ void ptcLinestateInitialize(ptc_lstate_t *ls, tunnel_t *t, line_t *l, ptc_line_k
 {
     lineLock(l);
 
-    memoryZeroAligned32(ls, sizeof(*ls));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
     ls->tunnel      = t;
     ls->line        = l;
     ls->pause_queue = bufferqueueCreate(8);
@@ -63,6 +63,6 @@ void ptcLinestateDestroy(ptc_lstate_t *ls)
     UNLOCK_TCPIP_CORE();
 #endif
 
-    memoryZeroAligned32(ls, sizeof(ptc_lstate_t));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(ptc_lstate_t)));
     lineUnlock(l);
 }

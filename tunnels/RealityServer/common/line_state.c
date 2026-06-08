@@ -11,5 +11,5 @@ void realityserverLinestateInitialize(realityserver_lstate_t *ls, buffer_pool_t 
 void realityserverLinestateDestroy(realityserver_lstate_t *ls)
 {
     bufferstreamDestroy(&ls->read_stream);
-    memoryZeroAligned32(ls, sizeof(*ls));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }

@@ -22,5 +22,5 @@ void reverseserverLinestateDestroy(reverseserver_lstate_t *ls)
         assert(false);
     }
 
-    memoryZeroAligned32(ls, sizeof(reverseserver_lstate_t));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(reverseserver_lstate_t)));
 }

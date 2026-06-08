@@ -4,12 +4,7 @@
 
 void reverseclientLinestateInitialize(reverseclient_lstate_t *ls, tunnel_t *t, line_t *u, line_t *d)
 {
-    *ls = (reverseclient_lstate_t){
-        .t = t,
-        .u = u,
-        .d = d,
-        .idle_handle = NULL
-    };
+    *ls = (reverseclient_lstate_t) {.t = t, .u = u, .d = d, .idle_handle = NULL};
 }
 
 void reverseclientLinestateDestroy(reverseclient_lstate_t *ls)
@@ -22,6 +17,5 @@ void reverseclientLinestateDestroy(reverseclient_lstate_t *ls)
         return;
     }
 
-
-    memoryZeroAligned32(ls, sizeof(reverseclient_lstate_t));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(reverseclient_lstate_t)));
 }

@@ -4,7 +4,7 @@
 
 void udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, line_t *l, wio_t *io)
 {
-    *ls = (udpconnector_lstate_t){
+    *ls = (udpconnector_lstate_t) {
         .tunnel                           = t,
         .line                             = l,
         .io                               = io,
@@ -57,10 +57,10 @@ void udpconnectorCancelPacketDnsRequests(udpconnector_lstate_t *ls)
     while (request != NULL)
     {
         udpconnector_packet_dns_request_t *next = request->next;
-        request->cancelled                     = true;
-        request->prev                          = NULL;
-        request->next                          = NULL;
-        request                                = next;
+        request->cancelled                      = true;
+        request->prev                           = NULL;
+        request->next                           = NULL;
+        request                                 = next;
     }
 
     ls->packet_dns_requests = NULL;
@@ -95,5 +95,5 @@ void udpconnectorLinestateDestroy(udpconnector_lstate_t *ls)
         LOGF("UdpConnector: idle item still exists for FD:%x ", ls->io ? wioGetFD(ls->io) : -1);
         terminateProgram(1);
     }
-    memoryZeroAligned32(ls, sizeof(udpconnector_lstate_t));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(udpconnector_lstate_t)));
 }

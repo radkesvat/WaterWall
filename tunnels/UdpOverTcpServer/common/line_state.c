@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-void udpovertcpserverLinestateInitialize(udpovertcpserver_lstate_t *ls,buffer_pool_t *pool)
+void udpovertcpserverLinestateInitialize(udpovertcpserver_lstate_t *ls, buffer_pool_t *pool)
 {
     ls->read_stream = bufferstreamCreate(pool, kHeaderSize);
 }
@@ -10,5 +10,5 @@ void udpovertcpserverLinestateInitialize(udpovertcpserver_lstate_t *ls,buffer_po
 void udpovertcpserverLinestateDestroy(udpovertcpserver_lstate_t *ls)
 {
     bufferstreamDestroy(&ls->read_stream);
-    memoryZeroAligned32(ls, sizeof(udpovertcpserver_lstate_t));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(udpovertcpserver_lstate_t)));
 }

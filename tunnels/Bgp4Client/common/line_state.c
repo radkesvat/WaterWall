@@ -13,5 +13,5 @@ void bgp4clientLinestateInitialize(bgp4client_lstate_t *ls, line_t *l)
 void bgp4clientLinestateDestroy(bgp4client_lstate_t *ls)
 {
     bufferstreamDestroy(&ls->read_stream);
-    memoryZeroAligned32(ls, sizeof(*ls));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }

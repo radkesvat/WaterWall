@@ -6,8 +6,8 @@ void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx)
 {
     // Chrome's h2 ALPS payload is a fixed three-byte value captured on the wire.
     // Do not replace this with a serialized HTTP/2 SETTINGS frame.
-    static const uint8_t kChromeH2AlpsPayload[] = {0x02, 0x68, 0x32};
-    static const void   *kChromeH1AlpsPayload   = NULL;
+    static const uint8_t kChromeH2AlpsPayload[]  = {0x02, 0x68, 0x32};
+    static const void   *kChromeH1AlpsPayload    = NULL;
     static const uint8_t kChromeH1AlpsPayloadLen = 0;
 
     static_assert(sizeof(kChromeH2AlpsPayload) == 3, "Chrome h2 ALPS payload must stay 0x026832");
@@ -20,8 +20,8 @@ void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx)
     ls->bq   = bufferqueueCreate(2);
 
     // Add ALPS for h2
-    if (SSL_add_application_settings(ls->ssl, (const uint8_t *) "h2", 2, kChromeH2AlpsPayload,
-                                     sizeof(kChromeH2AlpsPayload)) != 1)
+    if (SSL_add_application_settings(
+            ls->ssl, (const uint8_t *) "h2", 2, kChromeH2AlpsPayload, sizeof(kChromeH2AlpsPayload)) != 1)
     {
         LOGF("Failed to add ALPS for HTTP/2   (part of matching Chrome)");
         SSL_free(ls->ssl);
@@ -34,8 +34,8 @@ void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx)
     }
 
     // Add ALPS for http/1.1
-    if (SSL_add_application_settings(ls->ssl, (const uint8_t *) "http/1.1", 8, kChromeH1AlpsPayload,
-                                     kChromeH1AlpsPayloadLen) != 1)
+    if (SSL_add_application_settings(
+            ls->ssl, (const uint8_t *) "http/1.1", 8, kChromeH1AlpsPayload, kChromeH1AlpsPayloadLen) != 1)
     {
         LOGF("Failed to add ALPS for HTTP/1   (part of matching Chrome)");
         SSL_free(ls->ssl);
@@ -79,5 +79,5 @@ void tlsclientLinestateRelease(tlsclient_lstate_t *ls)
 void tlsclientLinestateDestroy(tlsclient_lstate_t *ls)
 {
     tlsclientLinestateRelease(ls);
-    memoryZeroAligned32(ls, sizeof(tlsclient_lstate_t));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tlsclient_lstate_t)));
 }
