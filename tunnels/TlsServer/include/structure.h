@@ -15,7 +15,8 @@ typedef struct tlsserver_tstate_s
     }           *alpns;
     unsigned int alpns_length;
 
-    char *expected_sni;
+    char **expected_snis;
+    uint32_t expected_snis_count;
     char *cert_file;
     char *key_file;
     char *ciphers;

@@ -93,18 +93,62 @@ static bool parseRequiredString(char **dest, const cJSON *settings, const char *
     return true;
 }
 
-static bool parseOptionalString(char **dest, const cJSON *settings, const char *key, tunnel_t *t)
+static bool parseSniAllowList(tlsserver_tstate_t *ts, const cJSON *settings, tunnel_t *t)
 {
-    if (! getStringFromJsonObject(dest, settings, key))
+    const cJSON *sni_field  = cJSON_GetObjectItemCaseSensitive(settings, "sni");
+    const cJSON *snis_field = cJSON_GetObjectItemCaseSensitive(settings, "snis");
+
+    if (sni_field != NULL && snis_field != NULL)
+    {
+        LOGF("JSON Error: TlsServer->settings must use either \"sni\" or \"snis\", not both");
+        tlsserverTunnelDestroy(t);
+        return false;
+    }
+
+    if (sni_field != NULL)
+    {
+        if (! cJSON_IsString(sni_field) || sni_field->valuestring == NULL || sni_field->valuestring[0] == '\0')
+        {
+            LOGF("JSON Error: TlsServer->settings->sni (string field) : The data was empty or invalid");
+            tlsserverTunnelDestroy(t);
+            return false;
+        }
+
+        ts->expected_snis_count = 1;
+        ts->expected_snis       = memoryAllocateZero(sizeof(*ts->expected_snis));
+        ts->expected_snis[0]    = stringDuplicate(sni_field->valuestring);
+        return true;
+    }
+
+    if (snis_field == NULL)
     {
         return true;
     }
 
-    if (stringLength(*dest) == 0)
+    if (! cJSON_IsArray(snis_field) || cJSON_GetArraySize(snis_field) <= 0)
     {
-        LOGF("JSON Error: TlsServer->settings->%s (string field) : The data was empty or invalid", key);
+        LOGF("JSON Error: TlsServer->settings->snis (array field) : expected one or more SNIs");
         tlsserverTunnelDestroy(t);
         return false;
+    }
+
+    const int count = cJSON_GetArraySize(snis_field);
+    ts->expected_snis_count = (uint32_t) count;
+    ts->expected_snis       = memoryAllocateZero(sizeof(*ts->expected_snis) * (size_t) ts->expected_snis_count);
+
+    int          index = 0;
+    const cJSON *item  = NULL;
+    cJSON_ArrayForEach(item, snis_field)
+    {
+        if (! cJSON_IsString(item) || item->valuestring == NULL || item->valuestring[0] == '\0')
+        {
+            LOGF("JSON Error: TlsServer->settings->snis[] (string field) : The data was empty or invalid");
+            tlsserverTunnelDestroy(t);
+            return false;
+        }
+
+        ts->expected_snis[index] = stringDuplicate(item->valuestring);
+        ++index;
     }
 
     return true;
@@ -425,11 +469,12 @@ static SSL_CTX *createServerSslContext(tlsserver_tstate_t *ts)
 #endif
     }
 
-    if (ts->expected_sni != NULL)
+    if (ts->expected_snis_count > 0)
     {
         if (ts->verbose)
         {
-            LOGD("TlsServer: enabling exact SNI check for \"%s\"", ts->expected_sni);
+            LOGD("TlsServer: enabling SNI allow-list with %u configured hostname(s)",
+                 (unsigned int) ts->expected_snis_count);
         }
         SSL_CTX_set_tlsext_servername_callback(ctx, tlsserverOnServername);
         SSL_CTX_set_tlsext_servername_arg(ctx, ts);
@@ -466,7 +511,8 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
 
     if (! parseRequiredString(&ts->cert_file, settings, "cert-file", t) ||
         ! parseRequiredString(&ts->key_file, settings, "key-file", t) ||
-        ! parseOptionalString(&ts->expected_sni, settings, "sni", t) || ! parseTlsDefaults(ts, settings, t) ||
+        ! parseSniAllowList(ts, settings, t) ||
+        ! parseTlsDefaults(ts, settings, t) ||
         ! parseAlpns(ts, settings, t))
     {
         return NULL;
@@ -477,21 +523,20 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
     int worker_count = getWorkersCount();
     if (ts->verbose)
     {
-        LOGD(
-            "TlsServer: creating node \"%s\" cert-file=\"%s\" key-file=\"%s\" sni=\"%s\" min-version=%d max-version=%d "
-            "ciphers=\"%s\" session-cache=%s session-cache-size=%d session-tickets=%d alpns=%u workers=%d",
-            node->name,
-            ts->cert_file,
-            ts->key_file,
-            ts->expected_sni != NULL ? ts->expected_sni : "<none>",
-            ts->min_proto_version,
-            ts->max_proto_version,
-            ts->ciphers,
-            tlsserverSessionCacheName(ts->session_cache_mode),
-            ts->session_cache_size,
-            (int) ts->session_tickets,
-            ts->alpns_length,
-            worker_count);
+        LOGD("TlsServer: creating node \"%s\" cert-file=\"%s\" key-file=\"%s\" sni-count=%u min-version=%d max-version=%d "
+             "ciphers=\"%s\" session-cache=%s session-cache-size=%d session-tickets=%d alpns=%u workers=%d",
+             node->name,
+             ts->cert_file,
+             ts->key_file,
+             (unsigned int) ts->expected_snis_count,
+             ts->min_proto_version,
+             ts->max_proto_version,
+             ts->ciphers,
+             tlsserverSessionCacheName(ts->session_cache_mode),
+             ts->session_cache_size,
+             (int) ts->session_tickets,
+             ts->alpns_length,
+             worker_count);
     }
 
     ts->threadlocal_ssl_contexts = memoryAllocate((size_t) worker_count * sizeof(SSL_CTX *));

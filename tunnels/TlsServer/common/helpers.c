@@ -7,27 +7,41 @@ int tlsserverOnServername(SSL *ssl, int *ad, void *arg)
     tlsserver_tstate_t *ts = arg;
     const char         *sni;
 
-    if (ts->expected_sni == NULL)
+    if (ts->expected_snis_count == 0)
     {
         return SSL_TLSEXT_ERR_OK;
     }
 
     sni = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
 
-    if (sni == NULL || stricmp(sni, ts->expected_sni) != 0)
+    if (sni != NULL)
+    {
+        for (uint32_t i = 0; i < ts->expected_snis_count; ++i)
+        {
+            if (stricmp(sni, ts->expected_snis[i]) == 0)
+            {
+                if (ts->verbose)
+                {
+                    LOGD("TlsServer: accepted SNI \"%s\"", sni);
+                }
+                return SSL_TLSEXT_ERR_OK;
+            }
+        }
+    }
+
+    if (ts->expected_snis_count == 1)
     {
         LOGW("TlsServer: rejected TLS connection due to SNI mismatch, expected=\"%s\", got=\"%s\"",
-             ts->expected_sni, sni != NULL ? sni : "<none>");
-        *ad = SSL_AD_UNRECOGNIZED_NAME;
-        return SSL_TLSEXT_ERR_ALERT_FATAL;
+             ts->expected_snis[0],
+             sni != NULL ? sni : "<none>");
     }
-
-    if (ts->verbose)
+    else
     {
-        LOGD("TlsServer: accepted SNI \"%s\"", sni);
+        LOGW("TlsServer: rejected TLS connection due to SNI mismatch, got=\"%s\"",
+             sni != NULL ? sni : "<none>");
     }
-
-    return SSL_TLSEXT_ERR_OK;
+    *ad = SSL_AD_UNRECOGNIZED_NAME;
+    return SSL_TLSEXT_ERR_ALERT_FATAL;
 }
 
 int tlsserverOnAlpnSelect(SSL *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in,
@@ -135,11 +149,19 @@ void tlsserverTunnelstateDestroy(tlsserver_tstate_t *ts)
 
     ts->alpns_length = 0;
 
-    memoryFree(ts->expected_sni);
+    if (ts->expected_snis != NULL)
+    {
+        for (uint32_t i = 0; i < ts->expected_snis_count; ++i)
+        {
+            memoryFree(ts->expected_snis[i]);
+        }
+        memoryFree(ts->expected_snis);
+    }
     memoryFree(ts->cert_file);
     memoryFree(ts->key_file);
     memoryFree(ts->ciphers);
-    ts->expected_sni = NULL;
+    ts->expected_snis = NULL;
+    ts->expected_snis_count = 0;
     ts->cert_file = NULL;
     ts->key_file  = NULL;
     ts->ciphers   = NULL;
