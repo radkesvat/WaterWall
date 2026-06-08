@@ -178,10 +178,11 @@ enum
     kPauseQueueCapacity = 2,
     kTcpConnectorDefaultMaxConsecutiveFailures = 3,
     kTcpConnectorDefaultProbeTimeoutMs         = 5000,
-    kTcpConnectorDefaultRaceTimeoutMs          = 5000,
-    kTcpConnectorUnknownRttMs                  = UINT32_MAX,
-    kTcpConnectorNoDestinationIndex            = UINT32_MAX
+    kTcpConnectorDefaultRaceTimeoutMs          = 5000
 };
+
+static const uint32_t kTcpConnectorUnknownRttMs       = UINT32_MAX;
+static const uint32_t kTcpConnectorNoDestinationIndex = UINT32_MAX;
 
 static inline hash_t tcpconnectorIdleKey(const wio_t *io)
 {
