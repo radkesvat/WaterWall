@@ -73,14 +73,32 @@ Provide exactly one of:
 - `snis` `(array of strings)`
   One or more TLS server names. Empty arrays and empty string items are rejected.
 
-  `sni` and `snis` are mutually exclusive.
+- `sni-endpoints` `(array of objects)`
+  One or more SNI endpoint objects. Empty arrays are rejected.
+
+  Each object must contain:
+  - `sni` `(string)`
+    TLS server name indication for that endpoint.
+
+  Each object may contain:
+  - `address` `(string)`
+    Host, domain, or IP address to write into the line destination context when this SNI is selected.
+  - `port` `(number)`
+    TCP destination port to write into the line destination context when this SNI is selected.
+
+  `address` is not a full URL parser. Use `"example.com"` or `"203.0.113.10"`, not `"https://example.com/path"`.
+
+  `sni-endpoints` is intended for paired SNI/IP routing with `TcpConnector` configured to read
+  `"dest_context->address"` and `"dest_context->port"`.
+
+  `sni`, `snis`, and `sni-endpoints` are mutually exclusive.
 
 ## Optional `settings` Fields
 
 - `sni-selection` `(string)`
   Selects which SNI is used for a new line.
 
-  Defaults to `fixed` for one configured SNI and `round-robin` for `snis`.
+  Defaults to `fixed` for one configured SNI and `round-robin` for multi-entry `snis` or `sni-endpoints`.
 
   Supported values:
 
@@ -191,6 +209,7 @@ On upstream `Init`, `TlsClient`:
 - allocates memory BIOs
 - switches the SSL object into client mode
 - selects and sets the configured SNI
+- when `sni-endpoints` is used, writes that endpoint's optional `address`/`port` into the line destination context
 - forwards upstream `Init` to the next tunnel
 - immediately calls `SSL_connect()` to generate the first handshake flight
 
@@ -247,6 +266,51 @@ The first child that completes the TLS handshake becomes the winner:
 
 Race mode does not introduce a new reverse-TLS tunnel type; it only composes internal `TlsClient` child lines with the
 existing next tunnel.
+
+When `sni-endpoints` is used with race mode, each race child receives the routing context for its own selected SNI before
+the child line enters the next tunnel.
+
+### SNI/IP endpoint routing
+
+`TlsClient` does not open sockets and does not directly know about TCP. Paired SNI/IP routing uses WaterWall's existing
+line routing context instead:
+
+- `TlsClient` selects one `sni-endpoints` object
+- `TlsClient` sets that object's `address` and `port` on `line.routing_context.dest_ctx`
+- `TcpConnector` reads the values through `"dest_context->address"` and `"dest_context->port"`
+
+Example:
+
+```json
+{
+  "name": "tls-client",
+  "type": "TlsClient",
+  "settings": {
+    "sni-endpoints": [
+      { "sni": "white-a.example.com", "address": "203.0.113.10", "port": 443 },
+      { "sni": "white-b.example.com", "address": "198.51.100.20", "port": 443 }
+    ],
+    "sni-selection": "round-robin",
+    "verify": false
+  },
+  "next": "tcp-connector"
+}
+```
+
+```json
+{
+  "name": "tcp-connector",
+  "type": "TcpConnector",
+  "settings": {
+    "address": "dest_context->address",
+    "port": "dest_context->port"
+  }
+}
+```
+
+This is deterministic pair mode: the selected SNI and the selected destination endpoint come from the same
+`sni-endpoints` entry. If you configure `snis` on `TlsClient` and `addresses` on `TcpConnector` instead, the SNI and TCP
+address pools are selected independently.
 
 ### Downstream payload behavior
 

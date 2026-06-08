@@ -37,7 +37,7 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
 }
 ```
 
-### Weighted Multi-Destination Example
+### Multi-Destination Example
 
 ```json
 {
@@ -67,6 +67,7 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
         "source-ip": "198.51.100.10"
       }
     ],
+    "address-selection": "weighted-random",
     "nodelay": true,
     "fastopen": false,
     "reuseaddr": false,
@@ -94,7 +95,7 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
 
   Choose exactly one style:
   - legacy single-destination fields: `address` and `port`
-  - weighted multi-destination field: `addresses` (the parser also accepts `adresses`)
+  - multi-destination field: `addresses` (the parser also accepts `adresses`)
 
   Do not mix `addresses` with the top-level `address` / `port` fields.
 
@@ -114,6 +115,9 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
   - `"example.com"`
   - `"src_context->address"`
 
+  This field expects a host, domain, IP address, CIDR IP range, or supported routing-context token. It is not a full URL
+  parser; do not include a scheme such as `https://` or a path.
+
 - `port` `(number or special string)`
   Destination port selection for the legacy single-destination form.
 
@@ -123,19 +127,18 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
   - `"dest_context->port"`
 
 - `addresses` `(array of objects)`
-  Weighted destination list.
+  Destination list.
 
   The parser also accepts the alias `adresses`, but `addresses` is the documented spelling.
 
   Each object must contain:
   - `address`
   - `port`
-  - `weight`
 
   `address` and `port` inside each element support the same forms as the legacy top-level fields.
 
-  `weight` must be a positive integer.
-  Each new line chooses exactly one element from the array, with probability proportional to its weight.
+  `weight` is optional and defaults to `1`. If set, it must be a positive integer. The default `address-selection` mode
+  uses these weights to choose one destination for each new line.
 
   Each object may also contain its own:
   - `nodelay`
@@ -187,6 +190,23 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
   Binds the outbound socket to a specific local source IP with an ephemeral source port before connect.
   This is useful when the host has multiple local addresses and the default route would choose the wrong source address.
 
+  When `addresses` is used, each destination object can override `source-ip`. This is the supported local source-address
+  pool model: add multiple destination objects with the same remote `address`/`port` and different `source-ip` values
+  if the foreign host owns multiple floating/helper IPs.
+
+- `address-selection` `(string)`
+  Selects how `addresses` chooses one destination object for a new line.
+
+  Supported values:
+  - `weighted-random`
+    Default. Picks a pseudo-random destination with probability proportional to each object's `weight`.
+  - `fixed`
+    Always uses the first destination object.
+  - `round-robin`
+    Rotates through destination objects.
+  - `random`
+    Picks a pseudo-random destination and ignores weights.
+
 - `domain-strategy` `(integer)`
   Selects how domain DNS results are chosen.
   Default: `0`
@@ -228,10 +248,27 @@ The normal flow is:
 The same is true for `port`.
 
 When `addresses` is used, the same selection rules apply inside each array element.
-The connector first picks one destination object by weight, then resolves that chosen object's `address` and `port` for the line.
+The connector first picks one destination object using `address-selection`, then resolves that chosen object's `address` and `port` for the line.
 The chosen object's socket options and `domain-strategy` are used for that line; omitted option fields inherit the top-level defaults.
 
 This makes `TcpConnector` useful in chains where earlier nodes decode or rewrite routing information. For example, a protocol-aware node can fill `dest_context`, and `TcpConnector` can connect to that decoded target.
+
+For paired SNI/IP reverse TLS or Reality-style paths, keep the layers decoupled by using `TlsClient`/`RealityClient`
+`sni-endpoints` to fill the generic destination context, then configure:
+
+```json
+{
+  "name": "tcp-connector",
+  "type": "TcpConnector",
+  "settings": {
+    "address": "dest_context->address",
+    "port": "dest_context->port"
+  }
+}
+```
+
+If you instead configure `TlsClient.settings.snis` and `TcpConnector.settings.addresses`, SNI selection and TCP
+destination selection are independent.
 
 ### Domain resolution
 

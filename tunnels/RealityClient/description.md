@@ -6,11 +6,14 @@ Typical placement:
 
 - `TcpListener -> RealityClient -> TcpConnector`
 
-The configured `next` node is the transport to the Reality server. The client still needs TLS settings such as `sni` because the first phase is a real TLS handshake with the visitor domain through the server.
+The configured `next` node is the transport to the Reality server. The client still needs TLS settings such as `sni`,
+`snis`, or `sni-endpoints` because the first phase is a real TLS handshake with the visitor domain through the server.
 
 ## Settings
 
-- `sni` (string, required): passed to the internal `TlsClient`
+- `sni` / `snis` / `sni-endpoints` (required, mutually exclusive): passed to the internal `TlsClient`
+- `sni-selection` (string, optional): passed to the internal `TlsClient`
+- `sni-weights` (array, optional): passed to the internal `TlsClient`
 - `verify` (boolean, optional): passed to the internal `TlsClient`, default `true`
 - `ech-sni-trick` (string, optional): passed to the internal `TlsClient`
 - `x25519mlkem768` (boolean, optional): passed to the internal `TlsClient`
@@ -39,5 +42,19 @@ The node advertises enough left padding for the TLS record header and nonce pref
     "algorithm": "chacha20-poly1305"
   },
   "next": "server-tcp"
+}
+```
+
+Paired SNI/IP routing uses the same `sni-endpoints` behavior as `TlsClient`. Configure the following `TcpConnector` after
+`RealityClient` to connect to the endpoint selected for the chosen SNI:
+
+```json
+{
+  "name": "server-tcp",
+  "type": "TcpConnector",
+  "settings": {
+    "address": "dest_context->address",
+    "port": "dest_context->port"
+  }
 }
 ```

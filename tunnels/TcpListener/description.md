@@ -123,6 +123,13 @@ This node is a chain head. Its upstream entry callbacks are disabled because con
   ["10.0.0.0/8", "2001:db8::/64"]
   ```
 
+  For reverse TLS or Reality-style deployments where the foreign side owns multiple floating/helper source IPs, list
+  every allowed helper address:
+
+  ```json
+  ["1.2.3.4/32", "5.6.7.8/32"]
+  ```
+
 - `blacklist` `(array of strings)`
   List of blocked client IPs or CIDR ranges.
   Supports IPv4 and IPv6.
