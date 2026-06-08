@@ -1,0 +1,40 @@
+{
+  "name": "tls-multi-sni-round-robin",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true
+      },
+      "next": "tls-client"
+    },
+    {
+      "name": "tls-client",
+      "type": "TlsClient",
+      "settings": {
+        "snis": ["round-robin-a.multi.sni.test", "round-robin-b.multi.sni.test"],
+        "sni-selection": "round-robin",
+        "verify": false
+      },
+      "next": "tls-server"
+    },
+    {
+      "name": "tls-server",
+      "type": "TlsServer",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "snis": ["round-robin-a.multi.sni.test", "round-robin-b.multi.sni.test"]
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "streaming-response": true
+      }
+    }
+  ]
+}

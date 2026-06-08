@@ -1,0 +1,36 @@
+{
+  "name": "tls-server-rejects-sni-allow-list",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true
+      },
+      "next": "tls-client"
+    },
+    {
+      "name": "tls-client",
+      "type": "TlsClient",
+      "settings": {
+        "sni": "blocked.allow-list.multi.sni.test",
+        "verify": false
+      },
+      "next": "tls-server"
+    },
+    {
+      "name": "tls-server",
+      "type": "TlsServer",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "snis": ["allowed.allow-list.multi.sni.test"]
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}

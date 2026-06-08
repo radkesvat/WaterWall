@@ -1,0 +1,24 @@
+{
+  "name": "tls-client-rejects-sni-and-snis",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "tls-client"
+    },
+    {
+      "name": "tls-client",
+      "type": "TlsClient",
+      "settings": {
+        "sni": "single.multi.sni.test",
+        "snis": ["multi.multi.sni.test"],
+        "verify": false
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}

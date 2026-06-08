@@ -1,0 +1,84 @@
+{
+  "name": "reverse-tls-multi-sni-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "bridge-client"
+    },
+    {
+      "name": "bridge-client",
+      "type": "Bridge",
+      "settings": {
+        "pair": "bridge-server"
+      },
+      "next": "reverse-client"
+    },
+    {
+      "name": "reverse-client",
+      "type": "ReverseClient",
+      "settings": {
+        "minimum-unused": 2
+      },
+      "next": "tls-client"
+    },
+    {
+      "name": "tls-client",
+      "type": "TlsClient",
+      "settings": {
+        "snis": ["sni1.multi.reverse.test", "sni2.multi.reverse.test", "sni3.multi.reverse.test"],
+        "sni-selection": "round-robin",
+        "verify": false
+      },
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41031,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41031,
+        "nodelay": true
+      },
+      "next": "tls-server"
+    },
+    {
+      "name": "tls-server",
+      "type": "TlsServer",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "snis": ["sni1.multi.reverse.test", "sni2.multi.reverse.test", "sni3.multi.reverse.test"]
+      },
+      "next": "reverse-server"
+    },
+    {
+      "name": "reverse-server",
+      "type": "ReverseServer",
+      "next": "bridge-server"
+    },
+    {
+      "name": "bridge-server",
+      "type": "Bridge",
+      "settings": {
+        "pair": "bridge-client"
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}
