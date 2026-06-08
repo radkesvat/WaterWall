@@ -83,6 +83,7 @@ struct tunnel_s
     TunnelIndexFn  onIndex;
     TunnelStatusCb onPrepare;
     TunnelStatusCb onStart;
+    TunnelStatusCb onStop;
     TunnelStatusCb onDestroy;
 
     uint32_t tstate_size;
@@ -279,6 +280,12 @@ void tunnelDefaultOnPrepare(tunnel_t *t);
  * @param t Pointer to the tunnel.
  */
 void tunnelDefaultOnStart(tunnel_t *t);
+/**
+ * @brief Default function to stop the tunnel.
+ *
+ * @param t Pointer to the tunnel.
+ */
+void tunnelDefaultOnStop(tunnel_t *t);
 
 /**
  * @brief Retrieves the state of the tunnel.

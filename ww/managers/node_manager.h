@@ -36,7 +36,7 @@ typedef struct node_manager_config_s node_manager_config_t;
  * @param n1 Node to run.
  * @param chain_index Chain index.
  */
-void                   nodemanagerRunNode(node_manager_config_t *cfg, node_t *n1, uint8_t chain_index);
+void nodemanagerRunNode(node_manager_config_t *cfg, node_t *n1, uint8_t chain_index);
 
 /**
  * @brief Find a node in config by hashed name.
@@ -45,7 +45,7 @@ void                   nodemanagerRunNode(node_manager_config_t *cfg, node_t *n1
  * @param hash_node_name Hashed node name.
  * @return node_t* Found node or NULL.
  */
-node_t                *nodemanagerGetConfigNodeByHash(node_manager_config_t *cfg, hash_t hash_node_name);
+node_t *nodemanagerGetConfigNodeByHash(node_manager_config_t *cfg, hash_t hash_node_name);
 
 /**
  * @brief Find a node in config by plain name.
@@ -54,14 +54,14 @@ node_t                *nodemanagerGetConfigNodeByHash(node_manager_config_t *cfg
  * @param name Node name.
  * @return node_t* Found node or NULL.
  */
-node_t                *nodemanagerGetConfigNodeByName(node_manager_config_t *cfg, const char *name);
+node_t *nodemanagerGetConfigNodeByName(node_manager_config_t *cfg, const char *name);
 
 /**
  * @brief Allocate and zero-initialize a new node object.
  *
  * @return node_t* Allocated node.
  */
-node_t                *nodemanagerNewNode(void);
+node_t *nodemanagerNewNode(void);
 
 /**
  * @brief Build a node instance from one node JSON object.
@@ -69,14 +69,33 @@ node_t                *nodemanagerNewNode(void);
  * @param cfg Node manager config.
  * @param node_json Node JSON object.
  */
-void                   nodemanagerCreateNodeInstance(node_manager_config_t *cfg, cJSON *node_json);
+void nodemanagerCreateNodeInstance(node_manager_config_t *cfg, cJSON *node_json);
 
 /**
  * @brief Run a parsed config file through node manager pipeline.
  *
  * @param config_file Parsed config file.
  */
-void                   nodemanagerRunConfigFile(config_file_t *config_file);
+void nodemanagerRunConfigFile(config_file_t *config_file);
+
+/**
+ * @brief Stop one node runtime instance without destroying owned memory.
+ *
+ * @param node Node object.
+ */
+void nodemanagerStopNode(node_t *node);
+
+/**
+ * @brief Stop all node runtime instances in one config.
+ *
+ * @param cfg Config object.
+ */
+void nodemanagerStopConfig(node_manager_config_t *cfg);
+
+/**
+ * @brief Stop all loaded node runtime instances.
+ */
+void nodemanagerStop(void);
 
 /**
  * @brief Get global node manager state pointer.
@@ -90,7 +109,7 @@ struct node_manager_s *nodemanagerGetState(void);
  *
  * @param state External state object.
  */
-void                   nodemanagerSetState(struct node_manager_s *state);
+void nodemanagerSetState(struct node_manager_s *state);
 
 /**
  * @brief Create and initialize global node manager state.

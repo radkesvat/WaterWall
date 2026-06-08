@@ -137,8 +137,10 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
     tunnel_t *tnext = next->instance;
     if (tnext->prev != NULL)
     {
-        LOGF("Node Map Failure: Node (%s) wanted to bind to (%s) which is already bounded by %s", t->node->name,
-             tnext->node->name, tnext->prev->node->name);
+        LOGF("Node Map Failure: Node (%s) wanted to bind to (%s) which is already bounded by %s",
+             t->node->name,
+             tnext->node->name,
+             tnext->prev->node->name);
         terminateProgram(1);
     }
 
@@ -181,6 +183,11 @@ void tunnelDefaultOnStart(tunnel_t *t)
     }
 }
 
+void tunnelDefaultOnStop(tunnel_t *t)
+{
+    discard t;
+}
+
 // Creates a new tunnel instance
 tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
 {
@@ -192,27 +199,18 @@ tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
     {
         return NULL;
     }
-    // Keep full alignment slack so ALIGN2(ptr, kCpuLineCacheSize) always has enough trailing bytes.
-    if (required_size > (SIZE_MAX - kCpuLineCacheSizeMin1))
-    {
-        return NULL;
-    }
-    const size_t tsize = required_size + kCpuLineCacheSizeMin1;
 
     // allocate memory, placing tunnel_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t) memoryAllocate(tsize);
-    if (ptr == 0x0)
+    tunnel_t *tunnel_ptr = memoryAllocateCacheAligned(required_size);
+    if (tunnel_ptr == NULL)
     {
         // Handle memory allocation failure
         return NULL;
     }
 
-    // align pointer to line cache boundary
-    tunnel_t *tunnel_ptr = (tunnel_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
-
     memorySet(tunnel_ptr, 0, sizeof(tunnel_t) + tstate_size);
 
-    *tunnel_ptr = (tunnel_t) {.memptr      = ptr,
+    *tunnel_ptr = (tunnel_t) {.memptr      = (uintptr_t) tunnel_ptr,
                               .fnInitU     = &tunnelDefaultUpStreamInit,
                               .fnInitD     = &tunnelDefaultDownStreamInit,
                               .fnPayloadU  = &tunnelDefaultUpStreamPayload,
@@ -229,6 +227,7 @@ tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
                               .onIndex     = &tunnelDefaultOnIndex,
                               .onPrepare   = &tunnelDefaultOnPrepare,
                               .onStart     = &tunnelDefaultOnStart,
+                              .onStop      = &tunnelDefaultOnStop,
                               .onDestroy   = &tunnelDestroy,
                               .tstate_size = tstate_size,
                               .lstate_size = lstate_size,
@@ -240,5 +239,5 @@ tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
 // Destroys a tunnel instance
 void tunnelDestroy(tunnel_t *self)
 {
-    memoryFree((void *) self->memptr);
+    memoryFreeAligned((void *) self->memptr);
 }

@@ -597,6 +597,42 @@ void nodemanagerRunConfigFile(config_file_t *config_file)
     startInstallingConfigFile(cfg);
 }
 
+void nodemanagerStopNode(node_t *node)
+{
+    if (node == NULL || node->instance == NULL)
+    {
+        return;
+    }
+
+    node->instance->onStop(node->instance);
+}
+
+void nodemanagerStopConfig(node_manager_config_t *cfg)
+{
+    if (cfg == NULL)
+    {
+        return;
+    }
+
+    c_foreach(node_key_pair, map_node_t, cfg->node_map)
+    {
+        nodemanagerStopNode((node_key_pair.ref)->second);
+    }
+}
+
+void nodemanagerStop(void)
+{
+    if (nodemanager_gstate == NULL)
+    {
+        return;
+    }
+
+    c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
+    {
+        nodemanagerStopConfig(*conf.ref);
+    }
+}
+
 node_manager_t *nodemanagerCreate(void)
 {
     assert(nodemanager_gstate == NULL);
