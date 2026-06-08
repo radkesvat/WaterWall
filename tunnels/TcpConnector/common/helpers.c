@@ -2,6 +2,57 @@
 
 #include "loggers/network_logger.h"
 
+static void tcpconnectorUpdateRttEma(tcpconnector_destination_stat_t *stat, uint32_t sample_ms)
+{
+    uint32_t previous = (uint32_t) atomicLoadRelaxed(&stat->rtt_ema_ms);
+
+    if (previous == kTcpConnectorUnknownRttMs)
+    {
+        atomicStoreRelaxed(&stat->rtt_ema_ms, sample_ms);
+        return;
+    }
+
+    atomicStoreRelaxed(&stat->rtt_ema_ms, (previous * 7U + sample_ms) / 8U);
+}
+
+void tcpconnectorRecordDestinationSuccess(tunnel_t *t, uint32_t destination_index, uint32_t rtt_ms)
+{
+    tcpconnector_tstate_t *ts = tunnelGetState(t);
+
+    if (ts->destination_stats == NULL || destination_index >= ts->destinations_count)
+    {
+        return;
+    }
+
+    tcpconnector_destination_stat_t *stat = &ts->destination_stats[destination_index];
+    atomic_fetch_add(&stat->successes, 1);
+    atomicStoreRelaxed(&stat->consecutive_failures, 0);
+    atomicStoreRelaxed(&stat->healthy, 1);
+    tcpconnectorUpdateRttEma(stat, rtt_ms);
+}
+
+void tcpconnectorRecordDestinationFailure(tunnel_t *t, uint32_t destination_index)
+{
+    tcpconnector_tstate_t *ts = tunnelGetState(t);
+
+    if (ts->destination_stats == NULL || destination_index >= ts->destinations_count)
+    {
+        return;
+    }
+
+    tcpconnector_destination_stat_t *stat = &ts->destination_stats[destination_index];
+    uint32_t consecutive = (uint32_t) atomic_fetch_add(&stat->consecutive_failures, 1) + 1U;
+
+    atomic_fetch_add(&stat->failures, 1);
+    if (consecutive >= ts->address_max_consecutive_failures)
+    {
+        atomicStoreRelaxed(&stat->healthy, 0);
+        LOGW("TcpConnector: marking address candidate %u unhealthy after %u consecutive TCP failures",
+             (unsigned int) destination_index,
+             (unsigned int) consecutive);
+    }
+}
+
 void tcpconnectorOnClose(wio_t *io)
 {
     tcpconnector_lstate_t *ls = (tcpconnector_lstate_t *) (weventGetUserdata(io));
@@ -21,6 +72,11 @@ void tcpconnectorOnClose(wio_t *io)
             terminateProgram(1);
         }
         ls->idle_handle = NULL; // mark as removed
+
+        if (! ls->connected)
+        {
+            tcpconnectorRecordDestinationFailure(t, ls->destination_index);
+        }
 
         tcpconnectorLinestateDestroy(ls);
 
@@ -80,6 +136,16 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
 
     tunnel_t *t = lstate->tunnel;
     line_t   *l = lstate->line;
+    uint64_t now_ms = getTimeOfDayMS();
+    uint32_t rtt_ms = 0;
+    if (lstate->connect_start_ms > 0 && now_ms >= lstate->connect_start_ms)
+    {
+        rtt_ms = (uint32_t) (now_ms - lstate->connect_start_ms);
+    }
+
+    lstate->connected = true;
+    tcpconnectorRecordDestinationSuccess(t, lstate->destination_index, rtt_ms);
+
     wioSetCallBackRead(upstream_io, onRecv);
 
     if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))

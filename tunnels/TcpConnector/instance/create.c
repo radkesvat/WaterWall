@@ -93,6 +93,18 @@ static bool parseAddressSelection(tcpconnector_tstate_t *state, const cJSON *set
     {
         state->address_selection = kTcpConnectorAddressSelectionRandom;
     }
+    else if (stricmp(selection_name, "healthy-only") == 0)
+    {
+        state->address_selection = kTcpConnectorAddressSelectionHealthyOnly;
+    }
+    else if (stricmp(selection_name, "least-rtt") == 0)
+    {
+        state->address_selection = kTcpConnectorAddressSelectionLeastRtt;
+    }
+    else if (stricmp(selection_name, "race") == 0)
+    {
+        state->address_selection = kTcpConnectorAddressSelectionRace;
+    }
     else
     {
         LOGF("JSON Error: TcpConnector->settings->address-selection (string field) : unsupported value \"%s\"",
@@ -100,6 +112,58 @@ static bool parseAddressSelection(tcpconnector_tstate_t *state, const cJSON *set
         return false;
     }
 
+    return true;
+}
+
+static bool parseAddressHealthSettings(tcpconnector_tstate_t *state, const cJSON *settings)
+{
+    int max_failures       = kTcpConnectorDefaultMaxConsecutiveFailures;
+    int probe_interval_ms  = 0;
+    int probe_timeout_ms   = kTcpConnectorDefaultProbeTimeoutMs;
+    int race_tries         = 0;
+    int race_timeout_ms    = kTcpConnectorDefaultRaceTimeoutMs;
+
+    getIntFromJsonObjectOrDefault(&max_failures, settings, "address-max-consecutive-failures", max_failures);
+    getIntFromJsonObjectOrDefault(&probe_interval_ms, settings, "address-probe-interval-ms", probe_interval_ms);
+    getIntFromJsonObjectOrDefault(&probe_timeout_ms, settings, "address-probe-timeout-ms", probe_timeout_ms);
+    getIntFromJsonObjectOrDefault(&race_tries, settings, "race-tries", race_tries);
+    getIntFromJsonObjectOrDefault(&race_timeout_ms, settings, "race-timeout-ms", race_timeout_ms);
+
+    if (max_failures < 1)
+    {
+        LOGF("JSON Error: TcpConnector->settings->address-max-consecutive-failures (integer field) : must be >= 1");
+        return false;
+    }
+
+    if (probe_interval_ms < 0)
+    {
+        LOGF("JSON Error: TcpConnector->settings->address-probe-interval-ms (integer field) : must be >= 0");
+        return false;
+    }
+
+    if (probe_timeout_ms <= 0)
+    {
+        LOGF("JSON Error: TcpConnector->settings->address-probe-timeout-ms (integer field) : must be > 0");
+        return false;
+    }
+
+    if (race_tries < 0)
+    {
+        LOGF("JSON Error: TcpConnector->settings->race-tries (integer field) : must be >= 0");
+        return false;
+    }
+
+    if (race_timeout_ms <= 0)
+    {
+        LOGF("JSON Error: TcpConnector->settings->race-timeout-ms (integer field) : must be > 0");
+        return false;
+    }
+
+    state->address_max_consecutive_failures = (uint32_t) max_failures;
+    state->address_probe_interval_ms        = (uint32_t) probe_interval_ms;
+    state->address_probe_timeout_ms         = (uint32_t) probe_timeout_ms;
+    state->race_tries                       = (uint32_t) race_tries;
+    state->race_timeout_ms                  = (uint32_t) race_timeout_ms;
     return true;
 }
 
@@ -425,6 +489,54 @@ static bool parseDestinationArray(tcpconnector_tstate_t *state, const cJSON *set
     return true;
 }
 
+static bool initializeDestinationStats(tcpconnector_tstate_t *state)
+{
+    if (state->destinations_count == 0)
+    {
+        return true;
+    }
+
+    state->destination_stats = memoryAllocateZero(sizeof(*state->destination_stats) * state->destinations_count);
+    if (state->destination_stats == NULL)
+    {
+        return false;
+    }
+
+    for (uint32_t i = 0; i < state->destinations_count; ++i)
+    {
+        atomicStoreRelaxed(&state->destination_stats[i].healthy, 1);
+        atomicStoreRelaxed(&state->destination_stats[i].rtt_ema_ms, kTcpConnectorUnknownRttMs);
+    }
+
+    return true;
+}
+
+static bool validateAddressPoolSettings(tcpconnector_tstate_t *state)
+{
+    bool needs_destinations = state->address_selection == kTcpConnectorAddressSelectionHealthyOnly ||
+                              state->address_selection == kTcpConnectorAddressSelectionLeastRtt ||
+                              state->address_selection == kTcpConnectorAddressSelectionRace ||
+                              state->address_probe_interval_ms > 0;
+
+    if (needs_destinations && state->destinations_count == 0)
+    {
+        LOGF("JSON Error: TcpConnector->settings : address health, probe, and race options require \"addresses\"");
+        return false;
+    }
+
+    if (state->race_tries == 0)
+    {
+        state->race_tries = state->destinations_count;
+    }
+
+    if (state->race_tries > state->destinations_count)
+    {
+        state->race_tries = state->destinations_count;
+    }
+
+    return true;
+}
+
 tunnel_t *tcpconnectorTunnelCreate(node_t *node)
 {
     tunnel_t *t = adapterCreate(node, sizeof(tcpconnector_tstate_t), sizeof(tcpconnector_lstate_t), true);
@@ -434,6 +546,9 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     tcpconnector_tstate_t *state    = tunnelGetState(t);
     const cJSON           *settings = node->node_settings_json;
 
+    mutexInit(&state->probe_mutex);
+    state->probe_mutex_initialized = true;
+
     if (! parseBasicSettings(state, settings))
     {
         tcpconnectorTunnelDestroy(t);
@@ -441,6 +556,12 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     }
 
     if (! parseAddressSelection(state, settings))
+    {
+        tcpconnectorTunnelDestroy(t);
+        return NULL;
+    }
+
+    if (! parseAddressHealthSettings(state, settings))
     {
         tcpconnectorTunnelDestroy(t);
         return NULL;
@@ -472,6 +593,12 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
             tcpconnectorTunnelDestroy(t);
             return NULL;
         }
+    }
+
+    if (! validateAddressPoolSettings(state) || ! initializeDestinationStats(state))
+    {
+        tcpconnectorTunnelDestroy(t);
+        return NULL;
     }
 
     state->idle_table = idleTableCreate(getWorkerLoop(getWID()));

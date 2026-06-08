@@ -21,7 +21,27 @@ typedef enum tcpconnector_address_selection_e
     kTcpConnectorAddressSelectionFixed,
     kTcpConnectorAddressSelectionRoundRobin,
     kTcpConnectorAddressSelectionRandom,
+    kTcpConnectorAddressSelectionHealthyOnly,
+    kTcpConnectorAddressSelectionLeastRtt,
+    kTcpConnectorAddressSelectionRace,
 } tcpconnector_address_selection_e;
+
+typedef enum tcpconnector_line_role_e
+{
+    kTcpConnectorLineRoleNormal = 0,
+    kTcpConnectorLineRoleRace,
+} tcpconnector_line_role_e;
+
+typedef struct tcpconnector_destination_stat_s
+{
+    atomic_uint successes;
+    atomic_uint failures;
+    atomic_uint consecutive_failures;
+    atomic_uint healthy;
+    atomic_uint rtt_ema_ms;
+} tcpconnector_destination_stat_t;
+
+typedef struct tcpconnector_probe_attempt_s tcpconnector_probe_attempt_t;
 
 typedef struct tcpconnector_tstate_s
 {
@@ -41,9 +61,19 @@ typedef struct tcpconnector_tstate_s
     bool            recv_buffer_size_set; // whether large-recv-buffer was explicitly configured
     char           *interface_name;       // optional network device for outbound sockets
     char           *source_ip;            // optional local source IP for outbound sockets
-    uint64_t                         outbound_ip_range;        // range for outbound ip (this means free bind)
-    tcpconnector_address_selection_e address_selection;        // strategy for destination arrays
+    uint64_t                         outbound_ip_range; // range for outbound ip (this means free bind)
+    tcpconnector_address_selection_e address_selection; // strategy for destination arrays
     atomic_uint                      destination_round_index;
+    uint32_t                         address_max_consecutive_failures;
+    uint32_t                         address_probe_interval_ms;
+    uint32_t                         address_probe_timeout_ms;
+    uint32_t                         race_tries;
+    uint32_t                         race_timeout_ms;
+    tcpconnector_destination_stat_t *destination_stats;
+    wtimer_t                        *probe_timer;
+    wmutex_t                         probe_mutex;
+    bool                             probe_mutex_initialized;
+    tcpconnector_probe_attempt_t     *probe_attempts;
 
     // These options are evaluatde at start
     // constant destination address to avoid copy, can contain the domain name, used if possible
@@ -74,22 +104,61 @@ typedef struct tcpconnector_destination_s
     char             *source_ip;
 } tcpconnector_destination_t;
 
+typedef struct tcpconnector_race_attempt_s tcpconnector_race_attempt_t;
+
 typedef struct tcpconnector_dns_request_s
 {
-    tunnel_t                     *tunnel;
-    line_t                       *line;
-    uint64_t                      outbound_ip_range;
-    tcpconnector_socket_options_t socket_options;
-    bool                          cancelled;
+    tunnel_t                      *tunnel;
+    line_t                        *line;
+    uint64_t                       outbound_ip_range;
+    tcpconnector_socket_options_t  socket_options;
+    uint32_t                       destination_index;
+    bool                           cancelled;
 } tcpconnector_dns_request_t;
+
+struct tcpconnector_probe_attempt_s
+{
+    tunnel_t                       *tunnel;
+    uint32_t                        destination_index;
+    address_context_t               dest_ctx;
+    uint64_t                        outbound_ip_range;
+    wio_t                          *io;
+    uint64_t                        start_ms;
+    bool                            cancelled;
+    struct tcpconnector_probe_attempt_s *prev;
+    struct tcpconnector_probe_attempt_s *next;
+};
+
+struct tcpconnector_race_attempt_s
+{
+    tunnel_t                       *tunnel;
+    line_t                         *line;
+    uint32_t                        destination_index;
+    uint32_t                        slot;
+    address_context_t               dest_ctx;
+    uint64_t                        outbound_ip_range;
+    tcpconnector_socket_options_t   socket_options;
+    wio_t                          *io;
+    uint64_t                        start_ms;
+    bool                            cancelled;
+    bool                            completed;
+};
 
 typedef struct tcpconnector_lstate_s
 {
-    tunnel_t                   *tunnel;      // reference to the tunnel (TcpConnector)
-    line_t                     *line;        // reference to the line
-    wio_t                      *io;          // IO handle for the connection (socket)
-    idle_item_t                *idle_handle; // reference to the idle item for this connection
-    tcpconnector_dns_request_t *dns_request;
+    tunnel_t                      *tunnel;      // reference to the tunnel (TcpConnector)
+    line_t                        *line;        // reference to the line
+    wio_t                         *io;          // IO handle for the connection (socket)
+    idle_item_t                   *idle_handle; // reference to the idle item for this connection
+    tcpconnector_dns_request_t    *dns_request;
+    tcpconnector_line_role_e       role;
+    uint32_t                       destination_index;
+    uint64_t                       connect_start_ms;
+    bool                           connected;
+    tcpconnector_race_attempt_t **race_attempts;
+    uint32_t                       race_attempt_count;
+    uint32_t                       race_open_attempts;
+    bool                           race_completed;
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t pause_queue;
     buffer_pool_t *buffer_pool;
@@ -106,7 +175,12 @@ enum
     kMaxPauseQueueSize  = (1U << 24), // 16MB
     kMinPauseQueueSize  = (1U << 10), // 1KB
     kReadWriteTimeoutMs = 300 * 1000,
-    kPauseQueueCapacity = 2
+    kPauseQueueCapacity = 2,
+    kTcpConnectorDefaultMaxConsecutiveFailures = 3,
+    kTcpConnectorDefaultProbeTimeoutMs         = 5000,
+    kTcpConnectorDefaultRaceTimeoutMs          = 5000,
+    kTcpConnectorUnknownRttMs                  = UINT32_MAX,
+    kTcpConnectorNoDestinationIndex            = UINT32_MAX
 };
 
 static inline hash_t tcpconnectorIdleKey(const wio_t *io)
@@ -175,3 +249,8 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io);
 void tcpconnectorOnWriteComplete(wio_t *io);
 void tcpconnectorOnClose(wio_t *io);
 void tcpconnectorOnIdleConnectionExpire(idle_item_t *idle_tcp);
+void tcpconnectorRaceTimeoutTask(tunnel_t *t, line_t *l);
+void tcpconnectorProbeTimerCallback(wtimer_t *timer);
+void tcpconnectorCancelActiveProbes(tunnel_t *t);
+void tcpconnectorRecordDestinationSuccess(tunnel_t *t, uint32_t destination_index, uint32_t rtt_ms);
+void tcpconnectorRecordDestinationFailure(tunnel_t *t, uint32_t destination_index);

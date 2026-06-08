@@ -11,6 +11,20 @@ void tcpconnectorTunnelDestroy(tunnel_t *t)
         idletableDestroy(ts->idle_table);
     }
 
+    if (ts->probe_timer != NULL)
+    {
+        weventSetUserData(ts->probe_timer, NULL);
+        wtimerDelete(ts->probe_timer);
+        ts->probe_timer = NULL;
+    }
+    tcpconnectorCancelActiveProbes(t);
+
+    if (ts->probe_mutex_initialized)
+    {
+        mutexDestroy(&ts->probe_mutex);
+        ts->probe_mutex_initialized = false;
+    }
+
     if (ts->destinations != NULL)
     {
         for (uint32_t i = 0; i < ts->destinations_count; ++i)
@@ -19,6 +33,8 @@ void tcpconnectorTunnelDestroy(tunnel_t *t)
         }
         memoryFree(ts->destinations);
     }
+
+    memoryFree(ts->destination_stats);
 
     dynamicvalueDestroy(ts->dest_addr_selected);
     dynamicvalueDestroy(ts->dest_port_selected);
