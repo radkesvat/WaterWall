@@ -2,6 +2,32 @@
 
 #include "loggers/network_logger.h"
 
+local_idle_table_t *tcpconnectorGetWorkerIdleTable(tcpconnector_tstate_t *ts)
+{
+    assert(ts != NULL);
+    assert(ts->idle_tables != NULL);
+
+    wid_t wid = getWID();
+    assert(wid < getWorkersCount());
+
+    local_idle_table_t *table = ts->idle_tables[wid];
+    if (table == NULL)
+    {
+        table                = localIdleTableCreate(getWorkerLoop(wid));
+        ts->idle_tables[wid] = table;
+    }
+
+    return table;
+}
+
+local_idle_table_t *tcpconnectorGetLineIdleTable(tcpconnector_tstate_t *ts, line_t *l)
+{
+    assert(l != NULL);
+    assert(lineGetWID(l) == getWID());
+    discard l;
+    return tcpconnectorGetWorkerIdleTable(ts);
+}
+
 void tcpconnectorOnClose(wio_t *io)
 {
     tcpconnector_lstate_t *ls = (tcpconnector_lstate_t *) (weventGetUserdata(io));
@@ -14,7 +40,7 @@ void tcpconnectorOnClose(wio_t *io)
         tunnel_t              *t  = ls->tunnel;
         tcpconnector_tstate_t *ts = tunnelGetState(t);
 
-        bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, tcpconnectorIdleKey(io));
+        bool removed = localidletableRemoveIdleItemByHash(tcpconnectorGetLineIdleTable(ts, l), tcpconnectorIdleKey(io));
         if (! removed)
         {
             LOGF("TcpConnector: failed to remove idle item for FD:%x ", wioGetFD(io));
@@ -45,7 +71,9 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     line_t                *l  = lstate->line;
     tcpconnector_tstate_t *ts = tunnelGetState(t);
     tcpconnector_lstate_t *ls = lineGetState(l, t);
-    idletableKeepIdleItemForAtleast(ts->idle_table, ls->idle_handle, kReadWriteTimeoutMs);
+    localidletableKeepIdleItemForAtleast(tcpconnectorGetLineIdleTable(ts, l),
+                                         ls->idle_handle,
+                                         kReadWriteTimeoutMs);
 
     tunnelPrevDownStreamPayload(t, l, buf);
 }
@@ -173,7 +201,7 @@ void tcpconnectorOnWriteComplete(wio_t *io)
     tunnelPrevDownStreamResume(lstate->tunnel, lstate->line);
 }
 
-void tcpconnectorOnIdleConnectionExpire(idle_item_t *idle_tcp)
+void tcpconnectorOnIdleConnectionExpire(local_idle_item_t *idle_tcp)
 {
     tcpconnector_lstate_t *ls = idle_tcp->userdata;
 

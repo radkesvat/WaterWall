@@ -14,6 +14,7 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->onPrepare = &tcpconnectorTunnelOnPrepair;
     t->onStart   = &tcpconnectorTunnelOnStart;
     t->onStop    = &tcpconnectorTunnelOnStop;
+    t->onWorkerStop = &tcpconnectorTunnelOnWorkerStop;
     t->onDestroy = &tcpconnectorTunnelDestroy;
 }
 
@@ -418,7 +419,8 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
         }
     }
 
-    state->idle_table = idleTableCreate(getWorkerLoop(getWID()));
+    state->idle_tables = memoryAllocate(sizeof(*state->idle_tables) * getWorkersCount());
+    memorySet(state->idle_tables, 0, sizeof(*state->idle_tables) * getWorkersCount());
 
     return t;
 }

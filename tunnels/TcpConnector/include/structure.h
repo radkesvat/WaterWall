@@ -17,7 +17,7 @@ typedef struct tcpconnector_socket_options_s
 
 typedef struct tcpconnector_tstate_s
 {
-    idle_table_t *idle_table; // idle table for closing dead connections
+    local_idle_table_t **idle_tables; // worker-local idle tables for closing dead connections
 
     // These options are read form the json configuration
     dynamic_value_t dest_addr_selected;   // dynamic value for destination address
@@ -78,7 +78,7 @@ typedef struct tcpconnector_lstate_s
     tunnel_t                   *tunnel;      // reference to the tunnel (TcpConnector)
     line_t                     *line;        // reference to the line
     wio_t                      *io;          // IO handle for the connection (socket)
-    idle_item_t                *idle_handle; // reference to the idle item for this connection
+    local_idle_item_t          *idle_handle; // reference to the idle item for this connection
     tcpconnector_dns_request_t *dns_request;
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t pause_queue;
@@ -140,6 +140,7 @@ void tcpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tcpconnectorTunnelOnPrepair(tunnel_t *t);
 void tcpconnectorTunnelOnStart(tunnel_t *t);
 void tcpconnectorTunnelOnStop(tunnel_t *t);
+void tcpconnectorTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
 
 void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tcpconnectorTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -158,10 +159,12 @@ void tcpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void tcpconnectorLinestateInitialize(tcpconnector_lstate_t *ls);
 void tcpconnectorLinestateDestroy(tcpconnector_lstate_t *ls);
 void tcpconnectorCancelDnsRequest(tcpconnector_lstate_t *ls);
+local_idle_table_t *tcpconnectorGetWorkerIdleTable(tcpconnector_tstate_t *ts);
+local_idle_table_t *tcpconnectorGetLineIdleTable(tcpconnector_tstate_t *ts, line_t *l);
 
 bool tcpconnectorApplyFreeBindRandomDestIp(address_context_t *dest_ctx, uint64_t outbound_ip_range);
 void tcpconnectorFlushWriteQueue(tcpconnector_lstate_t *lstate);
 void tcpconnectorOnOutBoundConnected(wio_t *upstream_io);
 void tcpconnectorOnWriteComplete(wio_t *io);
 void tcpconnectorOnClose(wio_t *io);
-void tcpconnectorOnIdleConnectionExpire(idle_item_t *idle_tcp);
+void tcpconnectorOnIdleConnectionExpire(local_idle_item_t *idle_tcp);

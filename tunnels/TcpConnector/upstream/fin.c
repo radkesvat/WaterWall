@@ -15,7 +15,7 @@ void tcpconnectorTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     // This indicates that line is closed. Even if we get the closeCallback
     // while flushing the queue, no FIN will be sent to downstroam
-    bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, tcpconnectorIdleKey(ls->io));
+    bool removed = localidletableRemoveIdleItemByHash(tcpconnectorGetLineIdleTable(ts, l), tcpconnectorIdleKey(ls->io));
     if (! removed)
     {
         LOGF("TcpConnector: failed to remove idle item for FD:%x ", wioGetFD(ls->io));

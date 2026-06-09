@@ -326,8 +326,11 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
     ls->io = io;
     weventSetUserData(io, ls);
 
-    ls->idle_handle = idletableCreateItem(ts->idle_table, tcpconnectorIdleKey(io), ls,
-                                          tcpconnectorOnIdleConnectionExpire, lineGetWID(l), kReadWriteTimeoutMs);
+    ls->idle_handle = localidletableCreateItem(tcpconnectorGetLineIdleTable(ts, l),
+                                               tcpconnectorIdleKey(io),
+                                               ls,
+                                               tcpconnectorOnIdleConnectionExpire,
+                                               kReadWriteTimeoutMs);
     if (UNLIKELY(ls->idle_handle == NULL))
     {
         LOGE("TcpConnector: failed to register idle item for io id:%u FD:%x", wioGetID(io), wioGetFD(io));

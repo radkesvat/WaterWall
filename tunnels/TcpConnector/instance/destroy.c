@@ -6,9 +6,17 @@ void tcpconnectorTunnelDestroy(tunnel_t *t)
 {
     tcpconnector_tstate_t *ts = tunnelGetState(t);
 
-    if (ts->idle_table != NULL)
+    if (ts->idle_tables != NULL)
     {
-        idletableDestroy(ts->idle_table);
+        for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
+        {
+            if (ts->idle_tables[wid] != NULL)
+            {
+                LOGW("TcpConnector: destroying with active worker-local idle table for worker %u", (unsigned int) wid);
+            }
+        }
+        memoryFree(ts->idle_tables);
+        ts->idle_tables = NULL;
     }
 
     if (ts->destinations != NULL)
