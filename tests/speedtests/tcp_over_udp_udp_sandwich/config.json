@@ -1,0 +1,60 @@
+{
+  "name": "speedtest-tcp-over-udp-udp-sandwich",
+  "nodes": [
+    {
+      "name": "speedtest-client",
+      "type": "SpeedTestClient",
+      "settings": {
+        "mode": "tcp",
+        "direction": "bidirectional",
+        "duration-ms": 2000,
+        "warmup-ms": 250,
+        "report-interval-ms": 1000,
+        "connection-count": 1,
+        "payload-size": 32768,
+        "target-megabits-per-sec": 10,
+        "json-summary": true,
+        "terminate-on-complete": true
+      },
+      "next": "tou-client"
+    },
+    {
+      "name": "tou-client",
+      "type": "TcpOverUdpClient",
+      "next": "udp-connector"
+    },
+    {
+      "name": "udp-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42430,
+        "balance-mode": "packet",
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "udp-listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42430
+      },
+      "next": "tou-server"
+    },
+    {
+      "name": "tou-server",
+      "type": "TcpOverUdpServer",
+      "next": "speedtest-server"
+    },
+    {
+      "name": "speedtest-server",
+      "type": "SpeedTestServer",
+      "settings": {
+        "report-interval-ms": 1000,
+        "json-summary": true,
+        "quiet": false
+      }
+    }
+  ]
+}
