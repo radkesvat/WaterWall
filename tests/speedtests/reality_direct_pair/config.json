@@ -1,0 +1,67 @@
+{
+  "name": "speedtest-reality-direct-pair",
+  "nodes": [
+    {
+      "name": "speedtest-client",
+      "type": "SpeedTestClient",
+      "settings": {
+        "mode": "tcp",
+        "direction": "bidirectional",
+        "duration-ms": 2000,
+        "warmup-ms": 250,
+        "report-interval-ms": 1000,
+        "connection-count": 16,
+        "payload-size": 32768,
+        "json-summary": true,
+        "terminate-on-complete": true
+      },
+      "next": "reality-client"
+    },
+    {
+      "name": "reality-client",
+      "type": "RealityClient",
+      "settings": {
+        "sni": "google.com",
+        "verify": true,
+        "password": "speedtest-reality-secret",
+        "algorithm": "chacha20-poly1305",
+        "salt": "speedtest-reality-suite",
+        "kdf-iterations": 12000
+      },
+      "next": "reality-server"
+    },
+    {
+      "name": "reality-server",
+      "type": "RealityServer",
+      "settings": {
+        "destination": "google-visitor",
+        "password": "speedtest-reality-secret",
+        "algorithm": "chacha20-poly1305",
+        "salt": "speedtest-reality-suite",
+        "kdf-iterations": 12000,
+        "sniffing-attempts": 8
+      },
+      "next": "speedtest-server"
+    },
+    {
+      "name": "speedtest-server",
+      "type": "SpeedTestServer",
+      "settings": {
+        "report-interval-ms": 1000,
+        "json-summary": true,
+        "quiet": false
+      }
+    },
+    {
+      "name": "google-visitor",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "google.com",
+        "port": 443,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    }
+  ]
+}

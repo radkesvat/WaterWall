@@ -53,6 +53,11 @@ cleanup() {
 
 trap cleanup EXIT
 
+shared_dir="$speedtest_dir/../_shared"
+if [[ -d "$shared_dir" ]]; then
+  cp -R "$shared_dir"/. "$run_dir"/
+fi
+
 cp -R "$speedtest_dir"/. "$run_dir"/
 
 test_workers=$DEFAULT_TEST_WORKERS

@@ -1,0 +1,52 @@
+{
+  "name": "speedtest-obfuscator-direct-pair",
+  "nodes": [
+    {
+      "name": "speedtest-client",
+      "type": "SpeedTestClient",
+      "settings": {
+        "mode": "tcp",
+        "direction": "bidirectional",
+        "duration-ms": 2000,
+        "warmup-ms": 250,
+        "report-interval-ms": 1000,
+        "connection-count": 16,
+        "payload-size": 32768,
+        "json-summary": true,
+        "terminate-on-complete": true
+      },
+      "next": "obfuscator-client"
+    },
+    {
+      "name": "obfuscator-client",
+      "type": "ObfuscatorClient",
+      "settings": {
+        "method": "xor",
+        "xor_key": 90,
+        "skip": "none",
+        "tls_record_header": false
+      },
+      "next": "obfuscator-server"
+    },
+    {
+      "name": "obfuscator-server",
+      "type": "ObfuscatorServer",
+      "settings": {
+        "method": "xor",
+        "xor_key": 90,
+        "skip": "none",
+        "tls_record_header": false
+      },
+      "next": "speedtest-server"
+    },
+    {
+      "name": "speedtest-server",
+      "type": "SpeedTestServer",
+      "settings": {
+        "report-interval-ms": 1000,
+        "json-summary": true,
+        "quiet": false
+      }
+    }
+  ]
+}

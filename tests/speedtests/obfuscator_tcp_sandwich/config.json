@@ -1,0 +1,94 @@
+{
+  "name": "speedtest-obfuscator-tcp-sandwich",
+  "nodes": [
+    {
+      "name": "speedtest-client",
+      "type": "SpeedTestClient",
+      "settings": {
+        "mode": "tcp",
+        "direction": "bidirectional",
+        "duration-ms": 2000,
+        "warmup-ms": 250,
+        "report-interval-ms": 1000,
+        "connection-count": 1,
+        "payload-size": 32768,
+        "json-summary": true,
+        "terminate-on-complete": true
+      },
+      "next": "client-to-obfuscator"
+    },
+    {
+      "name": "client-to-obfuscator",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42440,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "obfuscator-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42440,
+        "nodelay": true
+      },
+      "next": "obfuscator-client"
+    },
+    {
+      "name": "obfuscator-client",
+      "type": "ObfuscatorClient",
+      "settings": {
+        "method": "xor",
+        "xor_key": 165,
+        "skip": "none",
+        "tls_record_header": false
+      },
+      "next": "obfuscator-server"
+    },
+    {
+      "name": "obfuscator-server",
+      "type": "ObfuscatorServer",
+      "settings": {
+        "method": "xor",
+        "xor_key": 165,
+        "skip": "none",
+        "tls_record_header": false
+      },
+      "next": "obfuscator-to-server"
+    },
+    {
+      "name": "obfuscator-to-server",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42441,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "speedtest-server-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42441,
+        "nodelay": true
+      },
+      "next": "speedtest-server"
+    },
+    {
+      "name": "speedtest-server",
+      "type": "SpeedTestServer",
+      "settings": {
+        "report-interval-ms": 1000,
+        "json-summary": true,
+        "quiet": false
+      }
+    }
+  ]
+}

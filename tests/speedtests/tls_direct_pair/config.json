@@ -1,0 +1,49 @@
+{
+  "name": "speedtest-tls-direct-pair",
+  "nodes": [
+    {
+      "name": "speedtest-client",
+      "type": "SpeedTestClient",
+      "settings": {
+        "mode": "tcp",
+        "direction": "bidirectional",
+        "duration-ms": 2000,
+        "warmup-ms": 250,
+        "report-interval-ms": 1000,
+        "connection-count": 16,
+        "payload-size": 32768,
+        "json-summary": true,
+        "terminate-on-complete": true
+      },
+      "next": "tls-client"
+    },
+    {
+      "name": "tls-client",
+      "type": "TlsClient",
+      "settings": {
+        "sni": "tls.integration.test",
+        "verify": false
+      },
+      "next": "tls-server"
+    },
+    {
+      "name": "tls-server",
+      "type": "TlsServer",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "sni": "tls.integration.test"
+      },
+      "next": "speedtest-server"
+    },
+    {
+      "name": "speedtest-server",
+      "type": "SpeedTestServer",
+      "settings": {
+        "report-interval-ms": 1000,
+        "json-summary": true,
+        "quiet": false
+      }
+    }
+  ]
+}

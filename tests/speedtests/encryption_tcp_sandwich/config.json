@@ -1,0 +1,73 @@
+{
+  "name": "speedtest-encryption-tcp-sandwich",
+  "nodes": [
+    {
+      "name": "speedtest-client",
+      "type": "SpeedTestClient",
+      "settings": {
+        "mode": "tcp",
+        "direction": "bidirectional",
+        "duration-ms": 2000,
+        "warmup-ms": 250,
+        "report-interval-ms": 1000,
+        "connection-count": 16,
+        "payload-size": 32768,
+        "json-summary": true,
+        "terminate-on-complete": true
+      },
+      "next": "encryption-client"
+    },
+    {
+      "name": "encryption-client",
+      "type": "EncryptionClient",
+      "settings": {
+        "algorithm": "chacha20-poly1305",
+        "password": "speedtest-secret",
+        "salt": "speedtest-suite",
+        "kdf-iterations": 12000
+      },
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42450,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42450,
+        "nodelay": true
+      },
+      "next": "encryption-server"
+    },
+    {
+      "name": "encryption-server",
+      "type": "EncryptionServer",
+      "settings": {
+        "algorithm": "chacha20-poly1305",
+        "password": "speedtest-secret",
+        "salt": "speedtest-suite",
+        "kdf-iterations": 12000
+      },
+      "next": "speedtest-server"
+    },
+    {
+      "name": "speedtest-server",
+      "type": "SpeedTestServer",
+      "settings": {
+        "report-interval-ms": 1000,
+        "json-summary": true,
+        "quiet": false
+      }
+    }
+  ]
+}
