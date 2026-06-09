@@ -15,7 +15,7 @@ void udpconnectorTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         return;
     }
 
-    bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, udpconnectorIdleKey(ls->io));
+    bool removed = localidletableRemoveIdleItemByHash(udpconnectorGetLineIdleTable(ts, l), udpconnectorIdleKey(ls->io));
     if (! removed)
     {
         LOGF("UdpConnector: failed to remove idle item for FD:%x ", wioGetFD(ls->io));

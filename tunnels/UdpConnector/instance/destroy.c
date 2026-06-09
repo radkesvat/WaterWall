@@ -6,7 +6,18 @@ void udpconnectorTunnelDestroy(tunnel_t *t)
 {
     udpconnector_tstate_t *ts = tunnelGetState(t);
 
-    idletableDestroy(ts->idle_table);
+    if (ts->idle_tables != NULL)
+    {
+        for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
+        {
+            if (ts->idle_tables[wid] != NULL)
+            {
+                LOGW("UdpConnector: destroying with active worker-local idle table for worker %u", (unsigned int) wid);
+            }
+        }
+        memoryFree(ts->idle_tables);
+        ts->idle_tables = NULL;
+    }
 
     if (ts->destinations != NULL)
     {

@@ -307,9 +307,11 @@ static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_
     udpconnectorSeedPacketDestinationCache(ts, ls, dest_ctx);
     weventSetUserData(io, ls);
 
-    ls->idle_handle =
-        idletableCreateItem(ts->idle_table, udpconnectorIdleKey(io), ls, udpconnectorOnIdleConnectionExpire,
-                            lineGetWID(l), kUdpInitExpireTime);
+    ls->idle_handle = localidletableCreateItem(udpconnectorGetLineIdleTable(ts, l),
+                                               udpconnectorIdleKey(io),
+                                               ls,
+                                               udpconnectorOnIdleConnectionExpire,
+                                               kUdpInitExpireTime);
     if (UNLIKELY(ls->idle_handle == NULL))
     {
         LOGE("UdpConnector: failed to register idle item for io id:%u FD:%x", wioGetID(io), wioGetFD(io));

@@ -21,7 +21,7 @@ typedef struct udpconnector_packet_destination_s udpconnector_packet_destination
 
 typedef struct udpconnector_tstate_s
 {
-    idle_table_t *idle_table; // idle table for closing dead connections
+    local_idle_table_t **idle_tables; // worker-local idle tables for closing dead connections
 
     dynamic_value_t   dest_addr_selected; // selected destination address
     dynamic_value_t   dest_port_selected; // selected destination port
@@ -87,7 +87,7 @@ typedef struct udpconnector_lstate_s
     tunnel_t                          *tunnel;      // reference to the tunnel
     line_t                            *line;        // reference to the line
     wio_t                             *io;          // IO handle for the connection (socket)
-    idle_item_t                       *idle_handle; // reference to the idle item for this connection
+    local_idle_item_t                 *idle_handle; // reference to the idle item for this connection
     udpconnector_dns_request_t        *dns_request;
     udpconnector_packet_dns_request_t *packet_dns_requests;
     udpconnector_packet_destination_t *packet_destinations;
@@ -147,6 +147,7 @@ void udpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void udpconnectorTunnelOnPrepair(tunnel_t *t);
 void udpconnectorTunnelOnStart(tunnel_t *t);
 void udpconnectorTunnelOnStop(tunnel_t *t);
+void udpconnectorTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
 
 void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void udpconnectorTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -172,7 +173,10 @@ size_t udpconnectorQueuedWriteBytes(udpconnector_lstate_t *ls);
 void   udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls);
 bool   udpconnectorReplayWriteQueue(udpconnector_lstate_t *ls);
 
-void udpconnectorOnIdleConnectionExpire(idle_item_t *idle_udp);
+local_idle_table_t *udpconnectorGetWorkerIdleTable(udpconnector_tstate_t *ts);
+local_idle_table_t *udpconnectorGetLineIdleTable(udpconnector_tstate_t *ts, line_t *l);
+
+void udpconnectorOnIdleConnectionExpire(local_idle_item_t *idle_udp);
 
 uint32_t                          udpconnectorSelectWeightedDestinationIndex(const udpconnector_tstate_t *ts);
 const udpconnector_destination_t *udpconnectorSelectWeightedDestination(const udpconnector_tstate_t *ts);

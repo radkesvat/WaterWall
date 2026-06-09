@@ -12,7 +12,8 @@ static void closeLine(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconn
 {
     if (ls->io != NULL)
     {
-        bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, udpconnectorIdleKey(ls->io));
+        bool removed =
+            localidletableRemoveIdleItemByHash(udpconnectorGetLineIdleTable(ts, l), udpconnectorIdleKey(ls->io));
         if (! removed)
         {
             LOGF("UdpConnector: failed to remove idle item for FD:%x ", wioGetFD(ls->io));
@@ -140,7 +141,7 @@ static void udpconnectorWriteToPeer(tunnel_t *t, line_t *l, udpconnector_tstate_
         return;
     }
 
-    idletableKeepIdleItemForAtleast(ts->idle_table, ls->idle_handle, kUdpKeepExpireTime);
+    localidletableKeepIdleItemForAtleast(udpconnectorGetLineIdleTable(ts, l), ls->idle_handle, kUdpKeepExpireTime);
 
     ls->peer_addr = *peer_addr;
     if (! udpconnectorPayloadSockAddrEquals(wioGetPeerAddrU(ls->io), peer_addr))

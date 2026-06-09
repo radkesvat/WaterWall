@@ -21,6 +21,7 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->onPrepare = &udpconnectorTunnelOnPrepair;
     t->onStart   = &udpconnectorTunnelOnStart;
     t->onStop    = &udpconnectorTunnelOnStop;
+    t->onWorkerStop = &udpconnectorTunnelOnWorkerStop;
     t->onDestroy = &udpconnectorTunnelDestroy;
 }
 
@@ -433,7 +434,8 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
             return NULL;
         }
     }
-    state->idle_table = idleTableCreate(getWorkerLoop(getWID()));
+    state->idle_tables = memoryAllocate(sizeof(*state->idle_tables) * getWorkersCount());
+    memorySet(state->idle_tables, 0, sizeof(*state->idle_tables) * getWorkersCount());
 
     return t;
 }

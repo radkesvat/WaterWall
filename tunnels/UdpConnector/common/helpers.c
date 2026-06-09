@@ -2,6 +2,32 @@
 
 #include "loggers/network_logger.h"
 
+local_idle_table_t *udpconnectorGetWorkerIdleTable(udpconnector_tstate_t *ts)
+{
+    assert(ts != NULL);
+    assert(ts->idle_tables != NULL);
+
+    wid_t wid = getWID();
+    assert(wid < getWorkersCount());
+
+    local_idle_table_t *table = ts->idle_tables[wid];
+    if (table == NULL)
+    {
+        table                = localIdleTableCreate(getWorkerLoop(wid));
+        ts->idle_tables[wid] = table;
+    }
+
+    return table;
+}
+
+local_idle_table_t *udpconnectorGetLineIdleTable(udpconnector_tstate_t *ts, line_t *l)
+{
+    assert(l != NULL);
+    assert(lineGetWID(l) == getWID());
+    discard l;
+    return udpconnectorGetWorkerIdleTable(ts);
+}
+
 static bool udpconnectorSockAddrEquals(const sockaddr_u *lhs, const sockaddr_u *rhs)
 {
     if (lhs == NULL || rhs == NULL || lhs->sa.sa_family != rhs->sa.sa_family)
@@ -67,7 +93,7 @@ void udpconnectorOnRecvFrom(wio_t *io, sbuf_t *buf)
         }
     }
 
-    idletableKeepIdleItemForAtleast(ts->idle_table, ls->idle_handle, kUdpKeepExpireTime);
+    localidletableKeepIdleItemForAtleast(udpconnectorGetLineIdleTable(ts, l), ls->idle_handle, kUdpKeepExpireTime);
 
     tunnelPrevDownStreamPayload(t, l, payload);
 }
@@ -85,7 +111,8 @@ void udpconnectorOnClose(wio_t *io)
 
         udpconnector_tstate_t *ts = tunnelGetState(ls->tunnel);
 
-        bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, udpconnectorIdleKey(io));
+        bool removed =
+            localidletableRemoveIdleItemByHash(udpconnectorGetLineIdleTable(ts, l), udpconnectorIdleKey(io));
         if (! removed)
         {
             LOGF("UdpConnector: failed to remove idle item for FD:%x ", wioGetFD(io));
@@ -103,7 +130,7 @@ void udpconnectorOnClose(wio_t *io)
     }
 }
 
-void udpconnectorOnIdleConnectionExpire(idle_item_t *idle_udp)
+void udpconnectorOnIdleConnectionExpire(local_idle_item_t *idle_udp)
 {
     udpconnector_lstate_t *ls = (udpconnector_lstate_t *) (idle_udp->userdata);
 
