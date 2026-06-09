@@ -263,6 +263,15 @@
             ]
         },
         {
+            "name": "linux-debug",
+            "configurePreset": "linux",
+            "configuration": "Debug",
+            "inherits": [
+                "host-linux",
+                "options"
+            ]
+        },
+        {
             "name": "linux-clang",
             "configurePreset": "linux-clang-x64",
             "inherits": [
