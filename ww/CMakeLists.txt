@@ -43,6 +43,7 @@ add_library(ww STATIC
     
     # Base functionality
     base/wchan.c
+    base/local_widle_table.c
     base/widle_table.c
     base/wlog.c
     base/wlsem.c
