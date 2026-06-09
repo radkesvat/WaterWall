@@ -22,6 +22,7 @@ enum
 };
 
 static uint64_t idleItemGetExpireAt(const idle_item_t *item);
+static void     idleItemKeepExpireAtForAtleast(idle_item_t *item, uint64_t expire_at_ms);
 
 #define i_type                    heapq_idles_t
 #define i_key                     idle_item_t *
@@ -98,6 +99,42 @@ static void idleItemSetExpireAt(idle_item_t *item, uint64_t expire_at_ms)
     atomicStoreExplicit(&(item->expire_at_ms), expire_at_ms, memory_order_release);
 }
 
+static bool idleItemCompareExchangeExpireAt(idle_item_t *item, uint64_t *expected, uint64_t desired)
+{
+#if HAVE_STDATOMIC_H
+    unsigned long long expected_value = (unsigned long long) *expected;
+    const bool         exchanged      = atomic_compare_exchange_weak_explicit(&(item->expire_at_ms),
+                                                                         &expected_value,
+                                                                         (unsigned long long) desired,
+                                                                         memory_order_acq_rel,
+                                                                         memory_order_acquire);
+    *expected                         = (uint64_t) expected_value;
+    return exchanged;
+#else
+    intptr_t   expected_value = (intptr_t) *expected;
+    const bool exchanged      = atomic_compare_exchange_weak_explicit(&(item->expire_at_ms),
+                                                                 &expected_value,
+                                                                 (intptr_t) desired,
+                                                                 memory_order_acq_rel,
+                                                                 memory_order_acquire);
+    *expected                 = (uint64_t) expected_value;
+    return exchanged;
+#endif
+}
+
+static void idleItemKeepExpireAtForAtleast(idle_item_t *item, uint64_t expire_at_ms)
+{
+    uint64_t current_expire_at_ms = idleItemGetExpireAt(item);
+
+    while (current_expire_at_ms < expire_at_ms)
+    {
+        if (idleItemCompareExchangeExpireAt(item, &current_expire_at_ms, expire_at_ms))
+        {
+            return;
+        }
+    }
+}
+
 idle_table_t *idleTableCreate(wloop_t *loop)
 {
     wloopUpdateTime(loop);
@@ -166,21 +203,14 @@ void idletableKeepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint
     assert(item != NULL);
     assert(idleItemGetTable(item) == self);
 
-    mutexLock(&(self->mutex));
-    if (idleItemIsRemoved(item))
+    if (UNLIKELY(idleItemGetTable(item) != self || idleItemIsRemoved(item)))
     {
-        mutexUnlock(&(self->mutex));
         printError("IdleTable: Attempt to keep an already removed idle item alive");
         terminateProgram(1);
         return;
     }
-    idleItemSetExpireAt(item, wloopNowMS(self->loop) + age_ms);
-    mutexUnlock(&(self->mutex));
 
-    // calling it before processing the heap
-    // mutexLock(&(self->mutex));
-    // heapq_idles_t_make_heap(&self->hqueue);
-    // mutexUnlock(&(self->mutex));
+    idleItemKeepExpireAtForAtleast(item, getTimeOfDayMS() + age_ms);
 }
 
 idle_item_t *idletableGetIdleItemByHash(wid_t wid, idle_table_t *self, hash_t key)
