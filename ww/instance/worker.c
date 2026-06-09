@@ -1,6 +1,7 @@
 #include "worker.h"
 #include "context.h"
 #include "global_state.h"
+#include "managers/node_manager.h"
 #include "managers/signal_manager.h"
 #include "managers/socket_manager.h"
 #include "tunnel.h"
@@ -23,6 +24,7 @@ static void workerDestroyResources(worker_t *worker)
          * socket watches registered on worker->loop, so it must run while the
          * event loop and its wio/timer storage are still alive.
          */
+        nodemanagerStopWorkerResources(worker->wid);
         socketmanagerDrainUdpIdleForWorker(worker->wid);
         socketmanagerCloseListenersForLoop(worker->loop);
         asyncdnsCleanup(&worker->dns_resolver);

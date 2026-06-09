@@ -188,6 +188,12 @@ void tunnelDefaultOnStop(tunnel_t *t)
     discard t;
 }
 
+void tunnelDefaultOnWorkerStop(tunnel_t *t, wid_t wid)
+{
+    discard t;
+    discard wid;
+}
+
 // Creates a new tunnel instance
 tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
 {
@@ -228,6 +234,7 @@ tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
                               .onPrepare   = &tunnelDefaultOnPrepare,
                               .onStart     = &tunnelDefaultOnStart,
                               .onStop      = &tunnelDefaultOnStop,
+                              .onWorkerStop = &tunnelDefaultOnWorkerStop,
                               .onDestroy   = &tunnelDestroy,
                               .tstate_size = tstate_size,
                               .lstate_size = lstate_size,

@@ -8,6 +8,7 @@
 #include "node_builder/config_file.h"
 #include "node_builder/node_library.h"
 #include "wlibc.h"
+#include "worker.h"
 
 //  configFile:
 //      info
@@ -96,6 +97,16 @@ void nodemanagerStopConfig(node_manager_config_t *cfg);
  * @brief Stop all loaded node runtime instances.
  */
 void nodemanagerStop(void);
+
+/**
+ * @brief Stop worker-local resources owned by all loaded tunnel instances.
+ *
+ * Must be called on the worker identified by @p wid before that worker's loop
+ * and pools are destroyed.
+ *
+ * @param wid Worker whose local tunnel resources should be stopped.
+ */
+void nodemanagerStopWorkerResources(wid_t wid);
 
 /**
  * @brief Get global node manager state pointer.

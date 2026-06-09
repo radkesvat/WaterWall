@@ -46,6 +46,7 @@ typedef struct tunnel_chain_s tunnel_chain_t;
 typedef struct tunnel_array_s tunnel_array_t;
 
 typedef void (*TunnelStatusCb)(tunnel_t *);
+typedef void (*TunnelWorkerCb)(tunnel_t *, wid_t wid);
 typedef void (*TunnelChainFn)(tunnel_t *, tunnel_chain_t *chain);
 typedef void (*TunnelIndexFn)(tunnel_t *, uint16_t index, uint16_t *mem_offset);
 typedef void (*TunnelFlowRoutineInit)(tunnel_t *, line_t *line);
@@ -84,6 +85,7 @@ struct tunnel_s
     TunnelStatusCb onPrepare;
     TunnelStatusCb onStart;
     TunnelStatusCb onStop;
+    TunnelWorkerCb onWorkerStop;
     TunnelStatusCb onDestroy;
 
     uint32_t tstate_size;
@@ -286,6 +288,14 @@ void tunnelDefaultOnStart(tunnel_t *t);
  * @param t Pointer to the tunnel.
  */
 void tunnelDefaultOnStop(tunnel_t *t);
+
+/**
+ * @brief Default function to stop worker-local tunnel resources.
+ *
+ * @param t Tunnel instance.
+ * @param wid Worker whose local resources are being stopped.
+ */
+void tunnelDefaultOnWorkerStop(tunnel_t *t, wid_t wid);
 
 /**
  * @brief Retrieves the state of the tunnel.

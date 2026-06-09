@@ -633,6 +633,34 @@ void nodemanagerStop(void)
     }
 }
 
+void nodemanagerStopWorkerResources(wid_t wid)
+{
+    if (nodemanager_gstate == NULL)
+    {
+        return;
+    }
+
+    assert(wid == getWID());
+
+    c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
+    {
+        node_manager_config_t *cfg = *conf.ref;
+        if (cfg == NULL)
+        {
+            continue;
+        }
+
+        c_foreach(node_key_pair, map_node_t, cfg->node_map)
+        {
+            node_t *node = (node_key_pair.ref)->second;
+            if (node != NULL && node->instance != NULL && node->instance->onWorkerStop != NULL)
+            {
+                node->instance->onWorkerStop(node->instance, wid);
+            }
+        }
+    }
+}
+
 node_manager_t *nodemanagerCreate(void)
 {
     assert(nodemanager_gstate == NULL);
