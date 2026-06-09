@@ -54,6 +54,8 @@ Practical rule:
 - `run_waterwall_speedtest.sh`
   The low-level speedtest runner. It uses the same temporary `core.json` pattern but treats Waterwall exit status `0` as
   success, because `SpeedTestClient` terminates the process when all streams complete.
+  If `speedtests/_shared/` exists next to the selected speedtest directory, the runner copies those shared fixtures into
+  the temporary run directory before copying the selected case.
 - `CMakeLists.txt`
   Registers integration cases with CTest and delegates unit-test registration to `unittests/CMakeLists.txt`.
 
@@ -210,6 +212,34 @@ Practical rule:
 
 ## Current speedtests
 
+- `direct_pair`
+  Runs `SpeedTestClient -> SpeedTestServer` with no tunnel between them as the in-process baseline.
+- `tcp_loopback`
+  Runs `SpeedTestClient -> TcpConnector` and `TcpListener -> SpeedTestServer` across one loopback TCP hop.
+- `tcp_over_udp_direct_pair`
+  Runs a paced `SpeedTestClient -> TcpOverUdpClient -> TcpOverUdpServer -> SpeedTestServer` path with FEC disabled.
+- `tcp_over_udp_udp_sandwich`
+  Runs `SpeedTestClient -> TcpOverUdpClient -> UdpConnector` and
+  `UdpListener -> TcpOverUdpServer -> SpeedTestServer`, paced to avoid UDP adapter drop/backpressure noise and leaving
+  FEC disabled.
+- `obfuscator_direct_pair`
+  Runs `SpeedTestClient -> ObfuscatorClient -> ObfuscatorServer -> SpeedTestServer`.
+- `obfuscator_tcp_sandwich`
+  Runs one loopback TCP hop into a middle `ObfuscatorClient -> ObfuscatorServer` pair, then one loopback TCP hop out to
+  `SpeedTestServer`.
+- `tls_direct_pair`
+  Runs `SpeedTestClient -> TlsClient -> TlsServer -> SpeedTestServer` using the shared self-signed test certificate.
+- `tls_tcp_sandwich`
+  Runs a paced TLS pair across one loopback TCP hop between `TlsClient` and `TlsServer`.
+- `encryption_direct_pair`
+  Runs `SpeedTestClient -> EncryptionClient -> EncryptionServer -> SpeedTestServer`.
+- `encryption_tcp_sandwich`
+  Runs the encryption pair across one loopback TCP hop between `EncryptionClient` and `EncryptionServer`.
+- `reality_direct_pair`
+  Runs `SpeedTestClient -> RealityClient -> RealityServer -> SpeedTestServer` with a `google.com:443` visitor branch.
+- `reality_tcp_sandwich`
+  Runs the Reality pair across one loopback TCP hop between `RealityClient` and `RealityServer`, also using a
+  `google.com:443` visitor branch.
 - `mux_direct_pair`
   Runs `SpeedTestClient -> MuxClient -> MuxServer -> SpeedTestServer` to exercise mux overhead without socket adapters
   between the mux peers.
