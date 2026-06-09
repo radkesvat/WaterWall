@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-static void onUdpConnectonExpire(idle_item_t *idle_udp)
+static void onUdpConnectonExpire(local_idle_item_t *idle_udp)
 {
     udplistener_lstate_t *ls = idle_udp->userdata;
     assert(ls != NULL && ls->tunnel != NULL);
@@ -21,23 +21,24 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
 {
     udp_payload_t *data = (udp_payload_t *) weventGetUserdata(ev);
 
-    idle_table_t *table          = data->sock->table;
-    udpsock_t    *sock           = data->sock;
-    tunnel_t     *t              = data->tunnel;
-    wid_t         wid            = data->wid;
-    sbuf_t       *buf            = data->buf;
-    uint16_t      real_localport = data->real_localport;
+    udpsock_t          *sock           = data->sock;
+    tunnel_t           *t              = data->tunnel;
+    wid_t               wid            = data->wid;
+    sbuf_t             *buf            = data->buf;
+    uint16_t            real_localport = data->real_localport;
+    local_idle_table_t *table          = udpsockGetWorkerIdleTable(sock);
+
+    assert(wid == getWID());
 
     // Hash the packet snapshot, not the shared socket's mutable peer address.
     hash_t peeraddr_hash = sockaddrCalcHashWithPort(&data->peer_addr);
 
-    idle_item_t *idle = idletableGetIdleItemByHash(wid, table, peeraddr_hash);
+    local_idle_item_t *idle = localidletableGetIdleItemByHash(table, peeraddr_hash);
     // if idle is NULL, it means this is the first packet from this peer, so we need to create a new connection
     // and add it to the idle table
     if (idle == NULL)
     {
-        idle =
-            idletableCreateItem(table, peeraddr_hash, NULL, onUdpConnectonExpire, wid, (uint64_t) kUdpInitExpireTime);
+        idle = localidletableCreateItem(table, peeraddr_hash, NULL, onUdpConnectonExpire, kUdpInitExpireTime);
         // if idle is NULL, it means we failed to create a new idle item (duplicate hash, etc)
         if (! idle)
         {
@@ -65,7 +66,7 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
     }
     else
     {
-        idletableKeepIdleItemForAtleast(table, idle, (uint64_t) kUdpKeepExpireTime);
+        localidletableKeepIdleItemForAtleast(table, idle, kUdpKeepExpireTime);
     }
 
     udplistener_lstate_t *ls = idle->userdata;

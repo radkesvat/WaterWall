@@ -5,6 +5,7 @@
  */
 
 #include "shiftbuffer.h"
+#include "local_widle_table.h"
 #include "socket_filter_option.h"
 #include "tunnel.h"
 #include "widle_table.h"
@@ -30,10 +31,12 @@ typedef void (*onAccept)(wevent_t *ev);
 
 typedef struct udpsock_s
 {
-    wio_t        *io;
-    idle_table_t *table;
+    wio_t               *io;
+    local_idle_table_t **idle_tables;
 
 } udpsock_t;
+
+local_idle_table_t *udpsockGetWorkerIdleTable(udpsock_t *socket);
 
 // if you asked for udp, you'll get such struct when a udp packet is received and passes all filters
 typedef struct udp_payload_s

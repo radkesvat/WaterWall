@@ -5,6 +5,7 @@
 #include "socket_manager.h"
 
 #include "global_state.h"
+#include "local_widle_table.h"
 #include "loggers/internal_logger.h"
 #include "stc/common.h"
 #include "threadsafe_generic_pool.h"
@@ -87,6 +88,37 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port);
  * @brief Forward declaration for UDP payload dispatch.
  */
 static void distributeUdpPayload(udp_payload_t pl);
+
+local_idle_table_t *udpsockGetWorkerIdleTable(udpsock_t *socket)
+{
+    assert(socket != NULL);
+    assert(socket->idle_tables != NULL);
+
+    wid_t wid = getWID();
+    assert(wid < getWorkersCount());
+
+    local_idle_table_t *table = socket->idle_tables[wid];
+    if (table == NULL)
+    {
+        table                    = localIdleTableCreate(getWorkerLoop(wid));
+        socket->idle_tables[wid] = table;
+    }
+
+    return table;
+}
+
+static udpsock_t *createUdpSocketSideData(wio_t *io)
+{
+    udpsock_t *socket = memoryAllocate(sizeof(*socket));
+    assert(socket != NULL);
+
+    socket->idle_tables = memoryAllocate(sizeof(*socket->idle_tables) * getWorkersCount());
+    assert(socket->idle_tables != NULL);
+    memorySet(socket->idle_tables, 0, sizeof(*socket->idle_tables) * getWorkersCount());
+
+    socket->io = io;
+    return socket;
+}
 
 static void runAcceptedSocketCallback(void *worker_ptr, void *arg1, void *arg2, void *arg3);
 static void cleanupAcceptedSocketDispatch(void *arg1, void *arg2, void *arg3);
@@ -1396,8 +1428,7 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
         LOGF("SocketManager: stopping due to null socket handle");
         terminateProgram(1);
     }
-    udpsock_t *socket         = memoryAllocate(sizeof(udpsock_t));
-    *socket                   = (udpsock_t) {.io = filter->listen_io, .table = idleTableCreate(loop)};
+    udpsock_t *socket         = createUdpSocketSideData(filter->listen_io);
     filter->listen_udp_socket = socket;
     weventSetUserData(filter->listen_io, socket);
     wioSetCallBackRead(filter->listen_io, onUdpPacketReceived);
@@ -1439,8 +1470,7 @@ static void listenUdpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
     filter->v6_dualstack = wioGetLocaladdr(filter->listen_io)->sa_family == AF_INET6;
 
     // Set up the UDP socket with multiport packet handler
-    udpsock_t *socket         = memoryAllocate(sizeof(udpsock_t));
-    *socket                   = (udpsock_t) {.io = filter->listen_io, .table = idleTableCreate(loop)};
+    udpsock_t *socket         = createUdpSocketSideData(filter->listen_io);
     filter->listen_udp_socket = socket;
     weventSetUserData(filter->listen_io, socket);
     wioSetCallBackRead(filter->listen_io, onUdpPacketReceivedMultiPort);
@@ -1488,8 +1518,7 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
         filter->v6_dualstack  = wioGetLocaladdr(udp_io)->sa_family == AF_INET6;
 
         // Set up the UDP socket
-        udpsock_t *socket             = memoryAllocate(sizeof(udpsock_t));
-        *socket                       = (udpsock_t) {.io = udp_io, .table = idleTableCreate(loop)};
+        udpsock_t *socket             = createUdpSocketSideData(udp_io);
         filter->listen_udp_sockets[i] = socket;
         weventSetUserData(udp_io, socket);
         wioSetCallBackRead(udp_io, onUdpPacketReceived);
@@ -1727,10 +1756,18 @@ static void cleanupOneUdpSocket(udpsock_t **socket_slot)
     assert(socket_slot != NULL && *socket_slot != NULL);
 
     udpsock_t *socket = *socket_slot;
-    if (socket->table != NULL)
+    if (socket->idle_tables != NULL)
     {
-        idletableDestroy(socket->table);
-        socket->table = NULL;
+        for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
+        {
+            if (socket->idle_tables[wid] != NULL)
+            {
+                LOGW("SocketManager: destroying UDP socket with active worker-local idle table for worker %u",
+                     (unsigned int) wid);
+            }
+        }
+        memoryFree(socket->idle_tables);
+        socket->idle_tables = NULL;
     }
     memoryFree(socket);
     *socket_slot = NULL;
@@ -1768,9 +1805,17 @@ static void cleanupFilterUdpSockets(socket_filter_t *filter)
  */
 static void drainOneUdpSocketForWorker(udpsock_t *socket, wid_t wid)
 {
-    if (socket != NULL && socket->table != NULL)
+    assert(wid == getWID());
+
+    if (socket != NULL && socket->idle_tables != NULL && wid < getWorkersCount())
     {
-        idletableDrainWorkerItems(socket->table, wid);
+        local_idle_table_t *table = socket->idle_tables[wid];
+        if (table != NULL)
+        {
+            localidletableDrainItems(table);
+            localidletableDestroy(table);
+            socket->idle_tables[wid] = NULL;
+        }
     }
 }
 

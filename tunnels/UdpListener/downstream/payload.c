@@ -6,7 +6,7 @@ void udplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     udplistener_lstate_t *ls = lineGetState(l, t);
 
-    idletableKeepIdleItemForAtleast(ls->uio->table, ls->idle_handle, (uint64_t) kUdpKeepExpireTime);
+    localidletableKeepIdleItemForAtleast(udpsockGetWorkerIdleTable(ls->uio), ls->idle_handle, kUdpKeepExpireTime);
 
     // LOGD(" writing %d bytes", sbufGetLength(buf));
 

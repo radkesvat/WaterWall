@@ -17,12 +17,12 @@ typedef struct udplistener_tstate_s
 
 typedef struct udplistener_lstate_s
 {
-    tunnel_t    *tunnel; // reference to the tunnel (UdpListener)
-    line_t      *line;   // reference to the line
-    udpsock_t   *uio;    // IO handle for the connection (socket)
-    idle_item_t *idle_handle;
-    int          listener_fd;
-    sockaddr_u   peer_addr; // peer address of the connection
+    tunnel_t          *tunnel; // reference to the tunnel (UdpListener)
+    line_t            *line;   // reference to the line
+    udpsock_t         *uio;    // IO handle for the connection (socket)
+    local_idle_item_t *idle_handle;
+    int                listener_fd;
+    sockaddr_u         peer_addr; // peer address of the connection
     // These fields are used internally for the queue implementation for TCP
     bool read_paused : 1;
 
