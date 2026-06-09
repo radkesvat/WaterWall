@@ -4,7 +4,8 @@
 
 typedef struct tcplistener_tstate_s
 {
-    idle_table_t *idle_table; // idle table for closing dead connections
+    local_idle_table_t **idle_tables; // worker-local idle tables for closing dead connections
+    atomic_bool          stopping;    // prevents queued accepts after tunnel stop
 
     // These fields are read from json
     char    *listen_address;           // address to listen on
@@ -26,7 +27,7 @@ typedef struct tcplistener_lstate_s
     tunnel_t    *tunnel;      // reference to the tunnel (TcpListener)
     line_t      *line;        // reference to the line
     wio_t       *io;          // IO handle for the connection (socket)
-    idle_item_t *idle_handle; // reference to the idle item for this connection
+    local_idle_item_t *idle_handle; // reference to the idle item for this connection
 
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t pause_queue;
@@ -61,6 +62,7 @@ void tcplistenerTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tcplistenerTunnelOnPrepair(tunnel_t *t);
 void tcplistenerTunnelOnStart(tunnel_t *t);
 void tcplistenerTunnelOnStop(tunnel_t *t);
+void tcplistenerTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
 
 void tcplistenerTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tcplistenerTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -79,8 +81,10 @@ void tcplistenerTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void tcplistenerLinestateInitialize(tcplistener_lstate_t *ls, wio_t *io, tunnel_t *t, line_t *l);
 void tcplistenerLinestateDestroy(tcplistener_lstate_t *ls);
 
+local_idle_table_t *tcplistenerGetWorkerIdleTable(tcplistener_tstate_t *ts);
+local_idle_table_t *tcplistenerGetLineIdleTable(tcplistener_tstate_t *ts, line_t *l);
 void tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate);
 void tcplistenerOnInboundConnected(wevent_t *ev);
 void tcplistenerOnWriteComplete(wio_t *io);
 
-void tcplistenerOnIdleConnectionExpire(idle_item_t *idle_tcp);
+void tcplistenerOnIdleConnectionExpire(local_idle_item_t *idle_tcp);

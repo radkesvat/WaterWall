@@ -6,7 +6,18 @@ void tcplistenerTunnelDestroy(tunnel_t *t)
 {
     tcplistener_tstate_t *tstate = tunnelGetState(t);
 
-    idletableDestroy(tstate->idle_table);
+    if (tstate->idle_tables)
+    {
+        for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
+        {
+            if (tstate->idle_tables[wid] != NULL)
+            {
+                LOGW("TcpListener: local idle table for worker %u was not stopped before destroy", (unsigned int) wid);
+            }
+        }
+        memoryFree(tstate->idle_tables);
+        tstate->idle_tables = NULL;
+    }
 
     if (tstate->listen_address)
     {

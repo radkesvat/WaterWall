@@ -1,5 +1,32 @@
 #include "loggers/network_logger.h"
 #include "structure.h"
+#include "wevent.h"
+
+local_idle_table_t *tcplistenerGetWorkerIdleTable(tcplistener_tstate_t *ts)
+{
+    assert(ts != NULL);
+    assert(ts->idle_tables != NULL);
+
+    wid_t wid = getWID();
+    assert(wid < getWorkersCount());
+
+    local_idle_table_t *table = ts->idle_tables[wid];
+    if (table == NULL)
+    {
+        table                = localIdleTableCreate(getWorkerLoop(wid));
+        ts->idle_tables[wid] = table;
+    }
+    return table;
+}
+
+local_idle_table_t *tcplistenerGetLineIdleTable(tcplistener_tstate_t *ts, line_t *l)
+{
+    assert(l != NULL);
+    assert(lineGetWID(l) == getWID());
+    discard l;
+
+    return tcplistenerGetWorkerIdleTable(ts);
+}
 
 static void onRecv(wio_t *io, sbuf_t *buf)
 {
@@ -15,7 +42,9 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     tcplistener_lstate_t *ls = lineGetState(l, t);
     tcplistener_tstate_t *ts = tunnelGetState(t);
 
-    idletableKeepIdleItemForAtleast(ts->idle_table, ls->idle_handle, kEstablishedKeepAliveTimeOutMs);
+    localidletableKeepIdleItemForAtleast(tcplistenerGetLineIdleTable(ts, l),
+                                         ls->idle_handle,
+                                         kEstablishedKeepAliveTimeOutMs);
 
     tunnelNextUpStreamPayload(t, l, buf);
 }
@@ -31,7 +60,7 @@ static void onClose(wio_t *io)
         tcplistener_tstate_t *ts = tunnelGetState(t);
 
         weventSetUserData(ls->io, NULL);
-        bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, tcplistenerIdleKey(io));
+        bool removed = localidletableRemoveIdleItemByHash(tcplistenerGetLineIdleTable(ts, l), tcplistenerIdleKey(io));
         if (! removed)
         {
             LOGF("TcpListener: failed to remove idle item for FD:%x ", wioGetFD(io));
@@ -57,6 +86,14 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     wid_t                   wid  = data->wid;
     tunnel_t               *t    = data->tunnel;
     tcplistener_tstate_t   *ts   = tunnelGetState(t);
+
+    if (UNLIKELY(atomicLoadExplicit(&ts->stopping, memory_order_acquire)))
+    {
+        LOGD("TcpListener: rejecting accepted FD:%x because tunnel is stopping", wioGetFD(io));
+        wioFree(io);
+        socketacceptresultDestroy(data);
+        return;
+    }
 
     wioAttach(loop, io);
 
@@ -91,8 +128,11 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     wioSetCallBackClose(io, onClose);
     // wioSetReadTimeout(io, 1600 * 1000);
 
-    ls->idle_handle = idletableCreateItem(ts->idle_table, tcplistenerIdleKey(io), ls,
-                                          tcplistenerOnIdleConnectionExpire, wid, kDefaultKeepAliveTimeOutMs);
+    ls->idle_handle = localidletableCreateItem(tcplistenerGetLineIdleTable(ts, l),
+                                               tcplistenerIdleKey(io),
+                                               ls,
+                                               tcplistenerOnIdleConnectionExpire,
+                                               kDefaultKeepAliveTimeOutMs);
     if (UNLIKELY(ls->idle_handle == NULL))
     {
         LOGE("TcpListener: failed to register idle item for io id:%u FD:%x", wioGetID(io), wioGetFD(io));
@@ -172,7 +212,7 @@ void tcplistenerOnWriteComplete(wio_t *io)
     tunnelNextUpStreamResume(lstate->tunnel, lstate->line);
 }
 
-void tcplistenerOnIdleConnectionExpire(idle_item_t *idle_tcp)
+void tcplistenerOnIdleConnectionExpire(local_idle_item_t *idle_tcp)
 {
     tcplistener_lstate_t *ls = idle_tcp->userdata;
 

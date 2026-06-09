@@ -7,7 +7,7 @@ static void handleQueueOverflow(tunnel_t *t, line_t *l, tcplistener_tstate_t *ts
     LOGE("TcpListener: DownStream write queue overflow, size: %d , limit: %d", bufferqueueGetBufLen(&ls->pause_queue),
          kMaxPauseQueueSize);
 
-    bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, tcplistenerIdleKey(ls->io));
+    bool removed = localidletableRemoveIdleItemByHash(tcplistenerGetLineIdleTable(ts, l), tcplistenerIdleKey(ls->io));
     if (! removed)
     {
         LOGF("TcpListener: failed to remove idle item for FD:%x ", wioGetFD(ls->io));
@@ -28,7 +28,7 @@ static void handlePausedWrite(tunnel_t *t, line_t *l, tcplistener_tstate_t *ts, 
     {
         tunnelNextUpStreamPause(t, l);
     }
-    
+
     bufferqueuePushBack(&ls->pause_queue, buf);
 
     if (bufferqueueGetBufLen(&ls->pause_queue) > kMaxPauseQueueSize)
@@ -42,7 +42,9 @@ static void handleNormalWrite(tunnel_t *t, line_t *l, tcplistener_tstate_t *ts, 
     int bytes  = (int) sbufGetLength(buf);
     int nwrite = wioWrite(ls->io, buf);
 
-    idletableKeepIdleItemForAtleast(ts->idle_table, ls->idle_handle, kEstablishedKeepAliveTimeOutMs);
+    localidletableKeepIdleItemForAtleast(tcplistenerGetLineIdleTable(ts, l),
+                                         ls->idle_handle,
+                                         kEstablishedKeepAliveTimeOutMs);
 
     if (nwrite >= 0 && nwrite < bytes)
     {
