@@ -106,7 +106,7 @@ void workerInit(worker_t *worker, wid_t wid, bool eventloop)
         // note that loop depeneds on worker->buffer_pool
         worker->loop = wloopCreate(0, worker->buffer_pool, wid);
 
-        int dns_rc = asyncdnsInit(&worker->dns_resolver, worker->loop);
+        int dns_rc = asyncdnsInit(&worker->dns_resolver, worker->loop, &GSTATE.dns_options);
         if (dns_rc != ARES_SUCCESS)
         {
             LOGF("Worker %d failed to initialize async DNS resolver: %s", wid, ares_strerror(dns_rc));

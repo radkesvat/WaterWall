@@ -185,6 +185,11 @@ void createGlobalState(const ww_construction_data_t init_data)
     GSTATE = (ww_global_state_t) {0};
 
     GSTATE.flag_initialized = true;
+    GSTATE.dns_options      = init_data.dns_options;
+    if (! GSTATE.dns_options.defaults_initialized)
+    {
+        asyncdnsOptionsSetDefaults(&GSTATE.dns_options);
+    }
     atomicStoreRelaxed(&GSTATE.application_stopping_flag, false);
     atomicStoreRelaxed(&GSTATE.workers_run_flag, false);
     int ares_rc = ares_library_init(ARES_LIB_INIT_ALL);

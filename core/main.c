@@ -50,6 +50,7 @@ int main(void)
         .workers_count = getCoreSettings()->workers_count,
         .ram_profile   = getCoreSettings()->ram_profile,
         .mtu_size      = getCoreSettings()->mtu_size,
+        .dns_options   = getCoreSettings()->dns_options,
         .internal_logger_data =
             (logger_construction_data_t) {.log_file_path = getCoreSettings()->internal_log_file_fullpath,
                                           .log_level     = getCoreSettings()->internal_log_level,

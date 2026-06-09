@@ -52,6 +52,7 @@ typedef struct ww_global_state_s
     void                       *windivert_dll_handle;
     uint32_t                    workers_count;
     uint32_t                    ram_profile;
+    asyncdns_options_t          dns_options;
     uint64_t                    main_thread_id;
     wid_t                       lwip_wid;
     atomic_wid_t                distribute_wid;
@@ -74,6 +75,7 @@ typedef struct
     unsigned int               workers_count;
     enum ram_profiles_e        ram_profile;
     uint16_t                   mtu_size;
+    asyncdns_options_t         dns_options;
     logger_construction_data_t internal_logger_data;
     logger_construction_data_t core_logger_data;
     logger_construction_data_t network_logger_data;

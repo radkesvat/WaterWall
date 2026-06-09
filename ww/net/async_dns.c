@@ -14,13 +14,29 @@ typedef struct asyncdns_request_s
 
 enum
 {
-    kAsyncDnsQueryCacheMaxTtlSeconds = 30 * 60,
-    kAsyncDnsInitialTimeoutMs        = 1000,
-    kAsyncDnsMaxTimeoutMs            = 5000,
-    kAsyncDnsTries                   = 2
+    kAsyncDnsQueryCacheMaxTtlSeconds      = 30 * 60,
+    kAsyncDnsInitialTimeoutMs             = 1000,
+    kAsyncDnsMaxTimeoutMs                 = 5000,
+    kAsyncDnsTries                        = 2,
+    kAsyncDnsServerFailoverRetryChance    = 10,
+    kAsyncDnsServerFailoverRetryDelayMs   = 5000
 };
 
 static void asyncdnsTimerCallback(wtimer_t *timer);
+
+void asyncdnsOptionsSetDefaults(asyncdns_options_t *options)
+{
+    assert(options != NULL);
+
+    memoryZero(options, sizeof(*options));
+    options->defaults_initialized            = true;
+    options->query_cache_max_ttl             = kAsyncDnsQueryCacheMaxTtlSeconds;
+    options->timeout_ms                      = kAsyncDnsInitialTimeoutMs;
+    options->max_timeout_ms                  = kAsyncDnsMaxTimeoutMs;
+    options->tries                           = kAsyncDnsTries;
+    options->server_failover_retry_chance    = kAsyncDnsServerFailoverRetryChance;
+    options->server_failover_retry_delay_ms  = kAsyncDnsServerFailoverRetryDelayMs;
+}
 
 static dns_watch_t *asyncdnsFindWatch(dns_resolver_t *r, ares_socket_t fd)
 {
@@ -358,11 +374,18 @@ static void asyncdnsAddrInfoCallback(void *arg, int status, int timeouts, struct
     asyncdnsRequestDestroy(req);
 }
 
-int asyncdnsInit(dns_resolver_t *r, wloop_t *loop)
+int asyncdnsInit(dns_resolver_t *r, wloop_t *loop, const asyncdns_options_t *dns_options)
 {
     if (r == NULL || loop == NULL)
     {
         return ARES_EFORMERR;
+    }
+
+    asyncdns_options_t default_options;
+    if (dns_options == NULL || ! dns_options->defaults_initialized)
+    {
+        asyncdnsOptionsSetDefaults(&default_options);
+        dns_options = &default_options;
     }
 
     memoryZero(r, sizeof(*r));
@@ -372,18 +395,113 @@ int asyncdnsInit(dns_resolver_t *r, wloop_t *loop)
     memoryZero(&options, sizeof(options));
     options.sock_state_cb      = asyncdnsSockStateCallback;
     options.sock_state_cb_data = r;
-    options.qcache_max_ttl     = kAsyncDnsQueryCacheMaxTtlSeconds;
-    options.timeout            = kAsyncDnsInitialTimeoutMs;
-    options.maxtimeout         = kAsyncDnsMaxTimeoutMs;
-    options.tries              = kAsyncDnsTries;
+    options.qcache_max_ttl     = dns_options->query_cache_max_ttl;
+    options.timeout            = dns_options->timeout_ms;
+    options.maxtimeout         = dns_options->max_timeout_ms;
+    options.tries              = dns_options->tries;
 
-    const int optmask = ARES_OPT_SOCK_STATE_CB | ARES_OPT_QUERY_CACHE | ARES_OPT_TIMEOUTMS | ARES_OPT_MAXTIMEOUTMS |
-                        ARES_OPT_TRIES;
+    int optmask = ARES_OPT_SOCK_STATE_CB | ARES_OPT_QUERY_CACHE | ARES_OPT_TIMEOUTMS | ARES_OPT_MAXTIMEOUTMS |
+                  ARES_OPT_TRIES;
+
+    if (dns_options->flags_set)
+    {
+        options.flags = dns_options->flags;
+        optmask |= ARES_OPT_FLAGS;
+    }
+    if (dns_options->ndots_set)
+    {
+        options.ndots = dns_options->ndots;
+        optmask |= ARES_OPT_NDOTS;
+    }
+    if (dns_options->udp_port_set)
+    {
+        options.udp_port = dns_options->udp_port;
+        optmask |= ARES_OPT_UDP_PORT;
+    }
+    if (dns_options->tcp_port_set)
+    {
+        options.tcp_port = dns_options->tcp_port;
+        optmask |= ARES_OPT_TCP_PORT;
+    }
+    if (dns_options->socket_send_buffer_size_set)
+    {
+        options.socket_send_buffer_size = dns_options->socket_send_buffer_size;
+        optmask |= ARES_OPT_SOCK_SNDBUF;
+    }
+    if (dns_options->socket_receive_buffer_size_set)
+    {
+        options.socket_receive_buffer_size = dns_options->socket_receive_buffer_size;
+        optmask |= ARES_OPT_SOCK_RCVBUF;
+    }
+    if (dns_options->ednspsz_set)
+    {
+        options.ednspsz = dns_options->ednspsz;
+        optmask |= ARES_OPT_EDNSPSZ;
+    }
+    if (dns_options->udp_max_queries_set)
+    {
+        options.udp_max_queries = dns_options->udp_max_queries;
+        optmask |= ARES_OPT_UDP_MAX_QUERIES;
+    }
+    if (dns_options->domains != NULL && dns_options->ndomains > 0)
+    {
+        options.domains  = dns_options->domains;
+        options.ndomains = dns_options->ndomains;
+        optmask |= ARES_OPT_DOMAINS;
+    }
+    if (dns_options->lookups != NULL)
+    {
+        options.lookups = dns_options->lookups;
+        optmask |= ARES_OPT_LOOKUPS;
+    }
+    if (dns_options->resolvconf_path != NULL)
+    {
+        options.resolvconf_path = dns_options->resolvconf_path;
+        optmask |= ARES_OPT_RESOLVCONF;
+    }
+    if (dns_options->hosts_path != NULL)
+    {
+        options.hosts_path = dns_options->hosts_path;
+        optmask |= ARES_OPT_HOSTS_FILE;
+    }
+    if (dns_options->rotate_set)
+    {
+        optmask |= dns_options->rotate ? ARES_OPT_ROTATE : ARES_OPT_NOROTATE;
+    }
+    if (dns_options->server_failover_set)
+    {
+        options.server_failover_opts.retry_chance = dns_options->server_failover_retry_chance;
+        options.server_failover_opts.retry_delay  = dns_options->server_failover_retry_delay_ms;
+        optmask |= ARES_OPT_SERVER_FAILOVER;
+    }
+
     int rc = ares_init_options(&r->channel, &options, optmask);
     if (rc != ARES_SUCCESS)
     {
         memoryZero(r, sizeof(*r));
         return rc;
+    }
+
+    if (dns_options->servers_csv != NULL)
+    {
+        rc = ares_set_servers_ports_csv(r->channel, dns_options->servers_csv);
+        if (rc != ARES_SUCCESS)
+        {
+            ares_destroy(r->channel);
+            memoryZero(r, sizeof(*r));
+            return rc;
+        }
+    }
+
+    if (dns_options->sortlist != NULL)
+    {
+        rc = ares_set_sortlist(r->channel, dns_options->sortlist);
+        if (rc != ARES_SUCCESS)
+        {
+            ares_destroy(r->channel);
+            memoryZero(r, sizeof(*r));
+            return rc;
+        }
     }
 
     return ARES_SUCCESS;
