@@ -2,6 +2,8 @@
 
 void sniffrouterTunnelDestroy(tunnel_t *t)
 {
-    sniffrouterRouteTableDestroy(tunnelGetState(t));
+    sniffrouter_tstate_t *ts = tunnelGetState(t);
+    sniffrouterRouteTableDestroy(ts);
+    reverseclientHandshakeDestroy(ts->reverse_handshake_bytes);
     tunnelDestroy(t);
 }

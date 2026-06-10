@@ -335,6 +335,13 @@ tunnel_t *sniffrouterTunnelCreate(node_t *node)
     }
 
     sniffrouter_tstate_t *ts = tunnelGetState(t);
+    if (! reverseclientHandshakeBuildFromSettings(settings, "SniffRouter", &ts->reverse_handshake_bytes,
+                                                  &ts->reverse_handshake_length))
+    {
+        sniffrouterTunnelDestroy(t);
+        return NULL;
+    }
+
     if (settings != NULL && ! loadRoutes(ts, node, settings))
     {
         sniffrouterTunnelDestroy(t);

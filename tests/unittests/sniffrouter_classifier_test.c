@@ -220,9 +220,9 @@ int main(void)
         return 1;
     }
 
-    if (expect_match("reverse handshake partial needs more",
+    if (expect_match("reverse handshake partial falls back",
                      sniffrouterClassify(&reverse_ts, handshake, reverseclientHandshakeLength - 1U),
-                     kSniffClassifyNeedMore,
+                     kSniffClassifyDefault,
                      NULL) != 0)
     {
         return 1;
@@ -261,6 +261,50 @@ int main(void)
     reverse_routes[1].detection = kSniffDetectionHttp;
     if (expect_match("reverse detection disabled falls back",
                      sniffrouterClassify(&reverse_ts, handshake, reverseclientHandshakeLength),
+                     kSniffClassifyDefault,
+                     NULL) != 0)
+    {
+        return 1;
+    }
+
+    uint8_t custom_handshake[32];
+    const char custom_secret[] = "unit-secret";
+    for (uint32_t i = 0; i < (uint32_t) sizeof(custom_handshake); ++i)
+    {
+        custom_handshake[i] = reverseclientHandshakeBytes[i % reverseclientHandshakeLength] ^
+                              (uint8_t) custom_secret[i % ((uint32_t) sizeof(custom_secret) - 1U)];
+    }
+
+    reverse_routes[1].detection     = kSniffDetectionReverse;
+    reverse_routes[1].domains       = NULL;
+    reverse_routes[1].domains_count = 0;
+
+    sniffrouter_tstate_t custom_reverse_ts = {
+        .routes                   = reverse_routes,
+        .routes_count             = 2,
+        .reverse_handshake_bytes  = custom_handshake,
+        .reverse_handshake_length = (uint32_t) sizeof(custom_handshake),
+    };
+
+    if (expect_match("custom reverse handshake route",
+                     sniffrouterClassify(&custom_reverse_ts, custom_handshake, (uint32_t) sizeof(custom_handshake)),
+                     kSniffClassifyTarget,
+                     reverse_target) != 0)
+    {
+        return 1;
+    }
+
+    if (expect_match("default reverse handshake misses custom route",
+                     sniffrouterClassify(&custom_reverse_ts, handshake, reverseclientHandshakeLength),
+                     kSniffClassifyDefault,
+                     NULL) != 0)
+    {
+        return 1;
+    }
+
+    if (expect_match("custom reverse partial falls back",
+                     sniffrouterClassify(&custom_reverse_ts, custom_handshake,
+                                         (uint32_t) sizeof(custom_handshake) - 1U),
                      kSniffClassifyDefault,
                      NULL) != 0)
     {

@@ -1,5 +1,7 @@
 #include "structure.h"
 
+#include "loggers/network_logger.h"
+
 typedef enum sniffrouter_host_parse_e
 {
     kSniffHostNeedMore = 0,
@@ -7,6 +9,12 @@ typedef enum sniffrouter_host_parse_e
     kSniffHostFound    = 2
 } sniffrouter_host_parse_t;
 
+typedef enum sniffrouter_reverse_parse_e
+{
+    kSniffReverseMissing    = 0,
+    kSniffReverseIncomplete = 1,
+    kSniffReverseFound      = 2
+} sniffrouter_reverse_parse_t;
 
 
 static bool headerNameEquals(const uint8_t *p, uint32_t n, const char *name)
@@ -383,24 +391,38 @@ static sniffrouter_host_parse_t findTlsClientHelloSni(const uint8_t *p, uint32_t
 // ReverseClient's exported byte sequence. SniffRouter merely peeks; the buffered
 // bytes are replayed intact to the chosen route, and ReverseServer re-validates
 // and strips the handshake itself.
-static sniffrouter_host_parse_t findReverseHandshake(const uint8_t *p, uint32_t n)
+static const uint8_t *getReverseHandshakeBytes(sniffrouter_tstate_t *ts)
 {
-    uint32_t limit = n < reverseclientHandshakeLength ? n : reverseclientHandshakeLength;
+    return ts->reverse_handshake_bytes != NULL ? ts->reverse_handshake_bytes : reverseclientHandshakeBytes;
+}
 
-    for (uint32_t i = 0; i < limit; ++i)
+static uint32_t getReverseHandshakeLength(sniffrouter_tstate_t *ts)
+{
+    return ts->reverse_handshake_length > 0 ? ts->reverse_handshake_length : reverseclientHandshakeLength;
+}
+
+static sniffrouter_reverse_parse_t findReverseHandshake(sniffrouter_tstate_t *ts, const uint8_t *p, uint32_t n)
+{
+    const uint8_t *handshake_bytes  = getReverseHandshakeBytes(ts);
+    uint32_t       handshake_length = getReverseHandshakeLength(ts);
+
+    if (n < handshake_length)
     {
-        if (p[i] != reverseclientHandshakeBytes[i])
+        if (n > 0 && memoryCompare(p, handshake_bytes, n) == 0)
         {
-            return kSniffHostMissing;
+            LOGW("SniffRouter: reverse handshake is incomplete in first payload, using default route");
+            return kSniffReverseIncomplete;
         }
+
+        return kSniffReverseMissing;
     }
 
-    if (n < reverseclientHandshakeLength)
+    if (memoryCompare(p, handshake_bytes, handshake_length) != 0)
     {
-        return kSniffHostNeedMore;
+        return kSniffReverseMissing;
     }
 
-    return kSniffHostFound;
+    return kSniffReverseFound;
 }
 
 static bool anyRouteHasDetection(sniffrouter_tstate_t *ts, uint8_t detection)
@@ -518,21 +540,27 @@ sniffrouter_match_t sniffrouterClassify(sniffrouter_tstate_t *ts, const uint8_t 
     }
 
     bool reverse_found = false;
+    bool reverse_incomplete = false;
 
     if (reverse_enabled)
     {
-        switch (findReverseHandshake(p, n))
+        switch (findReverseHandshake(ts, p, n))
         {
-        case kSniffHostNeedMore:
-            need_more = true;
+        case kSniffReverseIncomplete:
+            reverse_incomplete = true;
             break;
-        case kSniffHostFound:
+        case kSniffReverseFound:
             reverse_found = true;
             break;
-        case kSniffHostMissing:
+        case kSniffReverseMissing:
         default:
             break;
         }
+    }
+
+    if (reverse_incomplete)
+    {
+        return match;
     }
 
     match.target =

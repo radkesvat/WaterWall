@@ -50,6 +50,8 @@ ClientHello must arrive within the bounded sniff window.
 | key | type | required | description |
 |-----|------|----------|-------------|
 | `routes` | array | no | ordered list of domain routes |
+| `reverse-secret-length` | integer | no | reverse handshake length for `reverse` detection; default `640`, valid range `1` to `1024` |
+| `reverse-secret` | string | no | XOR secret used to derive the reverse handshake bytes for `reverse` detection |
 
 Each route object:
 
@@ -93,9 +95,17 @@ Routes are checked in order; the first matching domain wins.
 `reverse` detection lets one TLS entry point carry both a `ReverseServer`
 reverse tunnel and a real camouflage website without giving the tunnel a
 different SNI. Host/SNI routing cannot separate them when everything shares one
-SNI, but the reverse link is identifiable by its content: `ReverseClient` sends
-a fixed handshake (a 640-byte run of `0xFF`) as the first bytes of every reverse
-connection, which never collides with an HTTP request or a TLS ClientHello.
+SNI, but the reverse link is identifiable by its content: by default,
+`ReverseClient` sends a fixed handshake (a 640-byte run of `0xFF`) as the first
+bytes of every reverse connection, which does not collide with an HTTP request
+or a TLS ClientHello.
+
+If `reverse-secret-length` and/or `reverse-secret` are configured, the reverse
+signature is derived the same way as `ReverseClient` and `ReverseServer`: the
+default handshake bytes are repeated as needed and XORed with the ASCII bytes of
+`reverse-secret` repeatedly. These settings must match the `ReverseClient` and
+`ReverseServer` nodes. If they do not match, SniffRouter will not classify the
+connection as reverse traffic and will use the default `next` path.
 
 A route with reverse detection matches purely on that signature and ignores
 `domains`. Place `SniffRouter` on the **decrypted** stream (i.e. after TLS has
@@ -124,6 +134,11 @@ intact to `ReverseServer`, which re-validates the full handshake and strips it.
 A connection that merely starts with `0xFF` but is not a real reverse link is
 forwarded to `ReverseServer` and dropped there by the same validation, so it
 cannot leak into the tunnel.
+
+The complete reverse handshake must be present in the first payload chunk seen
+by `SniffRouter`. If the first payload only contains a prefix of the configured
+reverse handshake, `SniffRouter` logs a warning and immediately uses the default
+`next` path instead of buffering more bytes.
 
 The handshake must be at the very start of the decrypted stream. If a fronting
 proxy forwards traffic with a PROXY-protocol header prepended, strip it before
