@@ -567,8 +567,13 @@ set(LIBS ${LIBS} sodium)
 # Openssl Library
 if(PROJECT_REQUIRERS_OPENSSL)
     if(NOT TARGET OpenSSL::SSL OR NOT TARGET OpenSSL::Crypto)
+        set(WW_OPENSSL_CONFIGURE_OPTIONS ${OPENSSL_CONFIGURE_OPTIONS})
+        if(WW_OPENSSL_CONFIGURE_OPTIONS)
+            list(REMOVE_DUPLICATES WW_OPENSSL_CONFIGURE_OPTIONS)
+        endif()
+        set(OPENSSL_CONFIGURE_OPTIONS ${WW_OPENSSL_CONFIGURE_OPTIONS})
+
         set(WW_OPENSSL_CPM_OPTIONS
-            "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
             "BUILD_SHARED_LIBS OFF"
             "OPENSSL_TEST OFF"
             "OPENSSL_CONFIGURE_VERBOSE OFF"
@@ -603,9 +608,9 @@ if(PROJECT_REQUIRERS_OPENSSL)
                 set(WW_OPENSSL_TARGET_PLATFORM VC-WIN64-ARM)
             endif()
         elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-            if(CMAKE_OSX_SYSROOT STREQUAL "iphoneos")
-                set(WW_OPENSSL_TARGET_PLATFORM ios64-xcrun)
-            elseif(CMAKE_OSX_SYSROOT STREQUAL "iphonesimulator")
+            string(TOLOWER "${CMAKE_OSX_SYSROOT}" WW_IOS_SYSROOT_LOWER)
+
+            if(WW_IOS_SYSROOT_LOWER MATCHES "iphonesimulator")
                 set(WW_IOS_SIM_ARCHS "${CMAKE_OSX_ARCHITECTURES}")
                 if(NOT WW_IOS_SIM_ARCHS)
                     set(WW_IOS_SIM_ARCHS "${CMAKE_HOST_SYSTEM_PROCESSOR}")
@@ -627,6 +632,12 @@ if(PROJECT_REQUIRERS_OPENSSL)
                     message(FATAL_ERROR
                         "Unsupported iOS simulator architecture for OpenSSL: ${WW_IOS_SIM_ARCH}")
                 endif()
+            elseif(WW_IOS_SYSROOT_LOWER MATCHES "iphoneos")
+                set(WW_OPENSSL_TARGET_PLATFORM ios64-xcrun)
+            else()
+                message(FATAL_ERROR
+                    "Unsupported iOS SDK for OpenSSL: ${CMAKE_OSX_SYSROOT}. "
+                    "Expected iphoneos or iphonesimulator.")
             endif()
         elseif(ANDROID)
             if(CMAKE_ANDROID_ARCH_ABI STREQUAL "armeabi-v7a")
@@ -645,6 +656,8 @@ if(PROJECT_REQUIRERS_OPENSSL)
         endif()
 
         if(DEFINED WW_OPENSSL_TARGET_PLATFORM)
+            set(OPENSSL_TARGET_PLATFORM "${WW_OPENSSL_TARGET_PLATFORM}")
+            message(STATUS "OpenSSL target platform: ${WW_OPENSSL_TARGET_PLATFORM}")
             list(APPEND WW_OPENSSL_CPM_OPTIONS
                 "OPENSSL_TARGET_PLATFORM ${WW_OPENSSL_TARGET_PLATFORM}"
             )
@@ -652,22 +665,30 @@ if(PROJECT_REQUIRERS_OPENSSL)
 
         # openssl-cmake chooses the OpenSSL Configure target, but it does not
         # automatically inherit CMake's cross-compiler/binutils selection.
-        # Export the active toolchain so ARM cross-builds use the same tools.
+        # Export the active toolchain for cross-builds, except for iOS xcrun
+        # targets where OpenSSL's target already selects the correct SDK.
         set(WW_OPENSSL_PREV_ENV_CC "$ENV{CC}")
         set(WW_OPENSSL_PREV_ENV_CXX "$ENV{CXX}")
         set(WW_OPENSSL_PREV_ENV_AR "$ENV{AR}")
         set(WW_OPENSSL_PREV_ENV_RANLIB "$ENV{RANLIB}")
 
-        if(CMAKE_C_COMPILER)
+        set(WW_OPENSSL_USE_CMAKE_TOOLCHAIN_ENV TRUE)
+        if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND WW_OPENSSL_TARGET_PLATFORM MATCHES "-xcrun$")
+            set(WW_OPENSSL_USE_CMAKE_TOOLCHAIN_ENV FALSE)
+            unset(ENV{CC})
+            unset(ENV{CXX})
+        endif()
+
+        if(WW_OPENSSL_USE_CMAKE_TOOLCHAIN_ENV AND CMAKE_C_COMPILER)
             set(ENV{CC} "${CMAKE_C_COMPILER}")
         endif()
-        if(CMAKE_CXX_COMPILER)
+        if(WW_OPENSSL_USE_CMAKE_TOOLCHAIN_ENV AND CMAKE_CXX_COMPILER)
             set(ENV{CXX} "${CMAKE_CXX_COMPILER}")
         endif()
-        if(CMAKE_AR)
+        if(WW_OPENSSL_USE_CMAKE_TOOLCHAIN_ENV AND CMAKE_AR)
             set(ENV{AR} "${CMAKE_AR}")
         endif()
-        if(CMAKE_RANLIB)
+        if(WW_OPENSSL_USE_CMAKE_TOOLCHAIN_ENV AND CMAKE_RANLIB)
             set(ENV{RANLIB} "${CMAKE_RANLIB}")
         endif()
 
