@@ -1,6 +1,7 @@
 #pragma once
 
 #include "wwapi.h"
+#include "reverseclient_handshake.h"
 
 typedef struct reverseclient_thread_box_s
 {
@@ -33,8 +34,6 @@ enum
 {
     kTunnelStateSize                = sizeof(reverseclient_tstate_t),
     kLineStateSize                  = sizeof(reverseclient_lstate_t),
-    kHandShakeByte                  = 0xFF, // shared with ReverseServer
-    kHandShakeLength                = 640,  // shared with ReverseServer
     kPreconnectDelayShort           = 10,
     kPreconnectDelayLong            = 750,
     kConnectionStarvationTimeOutSec = 30

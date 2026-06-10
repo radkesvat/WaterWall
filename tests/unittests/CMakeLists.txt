@@ -56,8 +56,11 @@ endif()
 
 if(TARGET SniffRouter)
   add_executable(sniffrouter_classifier_test sniffrouter_classifier_test.c)
-  target_include_directories(sniffrouter_classifier_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/SniffRouter/include)
-  target_link_libraries(sniffrouter_classifier_test PRIVATE SniffRouter ww)
+  target_include_directories(sniffrouter_classifier_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/SniffRouter/include
+    ${CMAKE_SOURCE_DIR}/tunnels/ReverseClient/include
+  )
+  target_link_libraries(sniffrouter_classifier_test PRIVATE SniffRouter ReverseClient ww)
   add_dependencies(waterwall_unit_tests sniffrouter_classifier_test)
 
   add_waterwall_unit_test(waterwall.sniffrouter_classifier_unit sniffrouter_classifier_test "unit;tunnels;sniffrouter")

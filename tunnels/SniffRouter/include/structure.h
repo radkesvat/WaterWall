@@ -1,6 +1,7 @@
 #pragma once
 
 #include "wwapi.h"
+#include "reverseclient_handshake.h"
 
 /*
  * SniffRouter
@@ -89,13 +90,9 @@ enum
     // to "next".
     kSniffMaxHeaderBytes = 8192,
 
-    // Reverse-link handshake signature, mirrored from ReverseClient/ReverseServer
-    // (their shared kHandShakeByte / kHandShakeLength). ReverseClient sends this
-    // exact run of bytes as the first payload of every reverse link, and
-    // ReverseServer validates the full run before accepting the connection. Keep
-    // these values in sync with those tunnels.
-    kSniffReverseHandshakeByte   = 0xFF,
-    kSniffReverseHandshakeLength = 640
+    // Reverse-link handshake detection uses ReverseClient's exported handshake
+    // bytes and length so SniffRouter, ReverseClient, and ReverseServer cannot
+    // drift apart when the reverse-link handshake changes.
 };
 
 WW_EXPORT void         sniffrouterTunnelDestroy(tunnel_t *t);

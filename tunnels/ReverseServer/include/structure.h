@@ -1,6 +1,7 @@
 #pragma once
 
 #include "wwapi.h"
+#include "reverseclient_handshake.h"
 
 typedef struct reverseserver_lstate_s
 {
@@ -31,8 +32,6 @@ enum
 {
     kTunnelStateSize = sizeof(reverseserver_tstate_t),
     kLineStateSize   = sizeof(reverseserver_lstate_t),
-    kHandShakeByte   = 0xFF, // shared with ReverseClient
-    kHandShakeLength = 640,  // shared with ReverseClient
     kMaxBuffering = 65535 // 64kB maximum buffering size for a single connection that handshaked and awiting for a peer
 };
 

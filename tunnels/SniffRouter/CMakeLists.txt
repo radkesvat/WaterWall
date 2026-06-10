@@ -24,9 +24,12 @@ add_library(SniffRouter STATIC
     upstream/resume.c
 )
 
-target_include_directories(SniffRouter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(SniffRouter PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../ReverseClient/include
+)
 
-target_link_libraries(SniffRouter ww)
+target_link_libraries(SniffRouter PRIVATE ww ReverseClient)
 if(NOT APPLE)
     target_precompile_headers(SniffRouter REUSE_FROM ww)
 endif()

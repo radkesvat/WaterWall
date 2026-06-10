@@ -33,14 +33,7 @@ static bool checkBufferSizeLimitD(tunnel_t *t, line_t *d, reverseserver_lstate_t
 
 static bool validateHandshake(sbuf_t *buf)
 {
-    for (int i = 0; i < kHandShakeLength; i++)
-    {
-        if (sbufGetMutablePtr(buf)[i] != kHandShakeByte)
-        {
-            return false;
-        }
-    }
-    return true;
+    return memoryCompare(sbufGetMutablePtr(buf), reverseclientHandshakeBytes, reverseclientHandshakeLength) == 0;
 }
 
 static bool processHandshakeD(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls, reverseserver_thread_box_t *this_tb,
@@ -52,7 +45,7 @@ static bool processHandshakeD(tunnel_t *t, line_t *d, reverseserver_lstate_t *dl
         return true;
     }
 
-    if (sbufGetLength(buf) >= kHandShakeLength)
+    if (sbufGetLength(buf) >= reverseclientHandshakeLength)
     {
         if (! validateHandshake(buf))
         {
@@ -64,7 +57,7 @@ static bool processHandshakeD(tunnel_t *t, line_t *d, reverseserver_lstate_t *dl
         }
 
         dls->handshaked = true;
-        sbufShiftRight(buf, kHandShakeLength);
+        sbufShiftRight(buf, reverseclientHandshakeLength);
         reverseserverAddConnectionD(this_tb, dls);
 
         if (sbufGetLength(buf) <= 0)
@@ -132,9 +125,9 @@ static bool pairWithLocalUpstreamConnection(tunnel_t *t, line_t *d, reverseserve
 static sbuf_t *createHandshakeBuffer(line_t *d)
 {
     sbuf_t *handshake_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(d));
-    handshake_buf = sbufReserveSpace(handshake_buf, kHandShakeLength);
-    sbufSetLength(handshake_buf, kHandShakeLength);
-    memorySet(sbufGetMutablePtr(handshake_buf), kHandShakeByte, kHandShakeLength);
+    handshake_buf = sbufReserveSpace(handshake_buf, reverseclientHandshakeLength);
+    sbufSetLength(handshake_buf, reverseclientHandshakeLength);
+    memoryCopy(sbufGetMutablePtr(handshake_buf), reverseclientHandshakeBytes, reverseclientHandshakeLength);
     return handshake_buf;
 }
 

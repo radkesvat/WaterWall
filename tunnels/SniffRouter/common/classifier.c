@@ -379,25 +379,23 @@ static sniffrouter_host_parse_t findTlsClientHelloSni(const uint8_t *p, uint32_t
     return kSniffHostMissing;
 }
 
-// Detects the ReverseClient/ReverseServer reverse-link handshake: a leading run
-// of kSniffReverseHandshakeLength bytes that all equal kSniffReverseHandshakeByte.
-// This mirrors ReverseServer's own validation, so SniffRouter only claims a
-// connection as "reverse" when ReverseServer would also accept it. SniffRouter
-// merely peeks; the buffered bytes are replayed intact to the chosen route, and
-// ReverseServer re-validates and strips the handshake itself.
+// Detects the ReverseClient/ReverseServer reverse-link handshake using
+// ReverseClient's exported byte sequence. SniffRouter merely peeks; the buffered
+// bytes are replayed intact to the chosen route, and ReverseServer re-validates
+// and strips the handshake itself.
 static sniffrouter_host_parse_t findReverseHandshake(const uint8_t *p, uint32_t n)
 {
-    uint32_t limit = n < (uint32_t) kSniffReverseHandshakeLength ? n : (uint32_t) kSniffReverseHandshakeLength;
+    uint32_t limit = n < reverseclientHandshakeLength ? n : reverseclientHandshakeLength;
 
     for (uint32_t i = 0; i < limit; ++i)
     {
-        if (p[i] != (uint8_t) kSniffReverseHandshakeByte)
+        if (p[i] != reverseclientHandshakeBytes[i])
         {
             return kSniffHostMissing;
         }
     }
 
-    if (n < (uint32_t) kSniffReverseHandshakeLength)
+    if (n < reverseclientHandshakeLength)
     {
         return kSniffHostNeedMore;
     }
