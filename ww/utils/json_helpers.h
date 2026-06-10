@@ -1,5 +1,6 @@
 #pragma once
 #include "cJSON.h"
+#include "net/address_context.h"
 #include "objects/dynamic_value.h"
 #include "wlibc.h"
 
@@ -56,6 +57,67 @@ static inline bool getIntFromJsonObjectOrDefault(int *dest, const cJSON *json_ob
     }
     *dest = def;
     return false;
+}
+
+static inline bool getDomainStrategyFromJson(const cJSON *json_value, enum domain_strategy *dest)
+{
+    assert(dest != NULL);
+
+    if (cJSON_IsNumber(json_value) && json_value->valuedouble == (double) json_value->valueint &&
+        json_value->valueint >= kDsInvalid && json_value->valueint <= kDsOnlyIpV6)
+    {
+        *dest = (enum domain_strategy) json_value->valueint;
+        return true;
+    }
+
+    if (! cJSON_IsString(json_value) || json_value->valuestring == NULL || json_value->valuestring[0] == '\0')
+    {
+        return false;
+    }
+
+    const char *strategy = json_value->valuestring;
+    if (stricmp(strategy, "accept-dns-returned-order") == 0)
+    {
+        *dest = kDsInvalid;
+        return true;
+    }
+    if (stricmp(strategy, "prefer-ipv4") == 0)
+    {
+        *dest = kDsPreferIpV4;
+        return true;
+    }
+    if (stricmp(strategy, "prefer-ipv6") == 0)
+    {
+        *dest = kDsPreferIpV6;
+        return true;
+    }
+    if (stricmp(strategy, "only-ipv4") == 0)
+    {
+        *dest = kDsOnlyIpV4;
+        return true;
+    }
+    if (stricmp(strategy, "only-ipv6") == 0)
+    {
+        *dest = kDsOnlyIpV6;
+        return true;
+    }
+
+    return false;
+}
+
+static inline bool getDomainStrategyFromJsonObjectOrDefault(enum domain_strategy *dest, const cJSON *json_obj,
+                                                            const char *key, enum domain_strategy def)
+{
+    assert(dest != NULL);
+
+    const cJSON *json_value = cJSON_GetObjectItemCaseSensitive(json_obj, key);
+    if (json_value == NULL)
+    {
+        *dest = def;
+        return true;
+    }
+
+    return getDomainStrategyFromJson(json_value, dest);
 }
 
 static inline bool getPositiveIntFromJsonObjectOrBoolDefault(int *dest, const cJSON *json_obj, const char *key,

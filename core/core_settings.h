@@ -1,6 +1,7 @@
 #pragma once
 
 #include "net/async_dns.h"
+#include "net/address_context.h"
 #include "wlibc.h"
 
 #define i_type vec_config_path_t // NOLINT
@@ -35,6 +36,7 @@ struct core_settings_s
     unsigned int workers_count;
     unsigned int ram_profile;
     asyncdns_options_t dns_options;
+    enum domain_strategy domain_strategy;
     char        *libs_path;
 
     uint16_t mtu_size;

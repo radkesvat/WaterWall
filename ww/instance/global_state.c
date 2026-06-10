@@ -186,6 +186,7 @@ void createGlobalState(const ww_construction_data_t init_data)
 
     GSTATE.flag_initialized = true;
     GSTATE.dns_options      = init_data.dns_options;
+    GSTATE.domain_strategy  = init_data.domain_strategy;
     if (! GSTATE.dns_options.defaults_initialized)
     {
         asyncdnsOptionsSetDefaults(&GSTATE.dns_options);

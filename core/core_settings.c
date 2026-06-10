@@ -344,6 +344,7 @@ static void dnsJsonParseFlags(const cJSON *dns_obj, asyncdns_options_t *options)
 static void parseDnsPartOfJson(const cJSON *dns_obj)
 {
     asyncdnsOptionsSetDefaults(&settings->dns_options);
+    settings->domain_strategy = kDsPreferIpV4;
 
     if (dns_obj == NULL)
     {
@@ -360,6 +361,15 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
 
     asyncdns_options_t *options = &settings->dns_options;
     int                 value   = 0;
+
+    const cJSON *domain_strategy_json = cJSON_GetObjectItemCaseSensitive(dns_obj, "domain-strategy");
+    if (domain_strategy_json != NULL &&
+        ! getDomainStrategyFromJson(domain_strategy_json, &settings->domain_strategy))
+    {
+        dnsJsonError("domain-strategy",
+                     "must be one of \"accept-dns-returned-order\", \"prefer-ipv4\", \"prefer-ipv6\", "
+                     "\"only-ipv4\", or \"only-ipv6\"");
+    }
 
     if (dnsJsonGetOptionalInt(dns_obj, "timeout-ms", &value))
     {
@@ -777,6 +787,12 @@ void parseCoreSettings(const char *data_json)
         {
             printError("JSON Error before: %s\n", error_ptr);
         }
+        terminateProgram(1);
+    }
+
+    if (cJSON_GetObjectItemCaseSensitive(json, "domain-strategy") != NULL)
+    {
+        printError("CoreSettings: domain-strategy must be configured inside the dns object as dns.domain-strategy\n");
         terminateProgram(1);
     }
 

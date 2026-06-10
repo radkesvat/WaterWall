@@ -373,7 +373,14 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
     }
 
     getBoolFromJsonObject(&(state->reuse_addr), settings, "reuseaddr");
-    getIntFromJsonObjectOrDefault(&(state->domain_strategy), settings, "domain-strategy", 0);
+    enum domain_strategy domain_strategy = GSTATE.domain_strategy;
+    if (! getDomainStrategyFromJsonObjectOrDefault(
+            &domain_strategy, settings, "domain-strategy", GSTATE.domain_strategy))
+    {
+        LOGF("JSON Error: UdpConnector->settings->domain-strategy (string or integer field) : The value was invalid");
+        return NULL;
+    }
+    state->domain_strategy = domain_strategy;
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", -1);
     if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->send_buffer_size,
                                                     settings,
