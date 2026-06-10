@@ -220,11 +220,11 @@ Practical rule:
 - `tcp_loopback`
   Runs `SpeedTestClient -> TcpConnector` and `TcpListener -> SpeedTestServer` across one loopback TCP hop.
 - `tcp_over_udp_direct_pair`
-  Runs a paced `SpeedTestClient -> TcpOverUdpClient -> TcpOverUdpServer -> SpeedTestServer` path with FEC disabled.
+  Runs an unpaced `SpeedTestClient -> TcpOverUdpClient -> TcpOverUdpServer -> SpeedTestServer` path with FEC disabled.
 - `tcp_over_udp_udp_sandwich`
   Runs `SpeedTestClient -> TcpOverUdpClient -> UdpConnector` and
-  `UdpListener -> TcpOverUdpServer -> SpeedTestServer`, paced to avoid UDP adapter drop/backpressure noise and leaving
-  FEC disabled.
+  `UdpListener -> TcpOverUdpServer -> SpeedTestServer`, paced at `100 Mbits/sec` to avoid UDP adapter drop/backpressure
+  noise and leaving FEC disabled.
 - `obfuscator_direct_pair`
   Runs `SpeedTestClient -> ObfuscatorClient -> ObfuscatorServer -> SpeedTestServer`.
 - `obfuscator_tcp_sandwich`

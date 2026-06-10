@@ -12,7 +12,7 @@
         "report-interval-ms": 1000,
         "connection-count": 1,
         "payload-size": 32768,
-        "target-megabits-per-sec": 10,
+        "target-megabits-per-sec": 300,
         "json-summary": true,
         "terminate-on-complete": true
       },
