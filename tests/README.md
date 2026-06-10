@@ -329,6 +329,7 @@ When you run the helper script directly, it:
 5. sends `SIGTERM` after success and checks that Waterwall exits cleanly
 6. fails if `Waterwall` crashes, exits early, exits with an unexpected status after success, or times out
 7. prints logs on failure to help debugging
+8. optionally prints the captured `stdout.log` on success when `WATERWALL_TEST_SHOW_STDOUT_ON_SUCCESS=1` is set
 
 So `run_waterwall_case.sh` is not a second testing system.
 It is the small runner that powers each integration test invocation.
@@ -342,6 +343,29 @@ Success and failure are decided inside Waterwall:
 
 `run_waterwall_speedtest.sh` is similar, but speedtests do not use `TesterClient`.
 They pass when `SpeedTestClient` completes and Waterwall exits with status `0`.
+
+## Showing stdout for passing tests
+
+CTest only shows passing test output when the test writes to stdout/stderr and CTest is run in verbose mode.
+The Waterwall integration runners normally keep successful runs quiet because they capture the process output in a
+temporary `stdout.log`.
+
+To print that captured log for successful runs:
+
+```sh
+WATERWALL_TEST_SHOW_STDOUT_ON_SUCCESS=1 \
+  ctest --preset linux-gcc --verbose -R '^waterwall\.tls_roundtrip$'
+```
+
+For VS Code CMake Tools, add this to `.vscode/settings.json`:
+
+```json
+{
+  "cmake.testEnvironment": {
+    "WATERWALL_TEST_SHOW_STDOUT_ON_SUCCESS": "1"
+  }
+}
+```
 
 ## Listing available cases
 

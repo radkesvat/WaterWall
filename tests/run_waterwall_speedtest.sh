@@ -42,6 +42,26 @@ dump_logs() {
   done
 }
 
+show_stdout_on_success() {
+  case "${WATERWALL_TEST_SHOW_STDOUT_ON_SUCCESS:-}" in
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+finish_success() {
+  if show_stdout_on_success && [[ -f "$run_dir/stdout.log" ]]; then
+    echo "===== stdout.log ====="
+    cat "$run_dir/stdout.log"
+  fi
+
+  exit 0
+}
+
 cleanup() {
   if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
     kill -TERM "$pid" 2>/dev/null || true
@@ -73,10 +93,10 @@ cat >"$run_dir/core.json" <<EOF
 {
   "log": {
     "path": "log/",
-    "internal": { "loglevel": "DEBUG", "file": "internal.log", "console": false },
-    "core":     { "loglevel": "DEBUG", "file": "core.log",     "console": false },
-    "network":  { "loglevel": "DEBUG", "file": "network.log",  "console": false },
-    "dns":      { "loglevel": "DEBUG", "file": "dns.log",      "console": false }
+    "internal": { "loglevel": "DEBUG", "file": "internal.log", "console": true },
+    "core":     { "loglevel": "DEBUG", "file": "core.log",     "console": true },
+    "network":  { "loglevel": "DEBUG", "file": "network.log",  "console": true },
+    "dns":      { "loglevel": "DEBUG", "file": "dns.log",      "console": true }
   },
   "configs": [
     "config.json"
@@ -106,7 +126,7 @@ while true; do
     pid=""
 
     if [[ $status -eq 0 ]]; then
-      exit 0
+      finish_success
     fi
 
     echo "Waterwall speedtest exited with non-zero status=$status." >&2

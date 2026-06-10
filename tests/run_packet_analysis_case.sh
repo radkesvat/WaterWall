@@ -24,6 +24,26 @@ dump_logs() {
   done
 }
 
+show_stdout_on_success() {
+  case "${WATERWALL_TEST_SHOW_STDOUT_ON_SUCCESS:-}" in
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+finish_success() {
+  if show_stdout_on_success && [[ -f "$run_dir/stdout.log" ]]; then
+    echo "===== stdout.log ====="
+    cat "$run_dir/stdout.log"
+  fi
+
+  exit 0
+}
+
 cleanup() {
   if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
     kill -TERM "$pid" 2>/dev/null || true
@@ -123,4 +143,4 @@ if grep -qF "PacketReceiver report" "$run_dir/stdout.log"; then
   exit 1
 fi
 
-exit 0
+finish_success
