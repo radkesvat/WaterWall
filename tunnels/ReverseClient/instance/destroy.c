@@ -6,6 +6,10 @@ void reverseclientTunnelDestroy(tunnel_t *t)
 {
     reverseclient_tstate_t *ts = tunnelGetState(t);
 
-    idletableDestroy(ts->starved_connections);
+    reverseclientHandshakeDestroy(ts->handshake_bytes);
+    if (ts->starved_connections != NULL)
+    {
+        idletableDestroy(ts->starved_connections);
+    }
     tunnelDestroy(t);
 }

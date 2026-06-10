@@ -1,7 +1,7 @@
 #pragma once
 
 #include "wwapi.h"
-#include "reverseclient_handshake.h"
+#include "ReverseClient/reverseclient_handshake.h"
 
 typedef struct reverseclient_thread_box_s
 {
@@ -15,6 +15,8 @@ typedef struct reverseclient_tstate_s
     idle_table_t *starved_connections;
     atomic_uint   reverse_cons;
     atomic_uint   round_index;
+    uint8_t      *handshake_bytes;
+    uint32_t      handshake_length;
     uint32_t      min_unused_cons;
 
     MSVC_ATTR_ALIGNED_16 reverseclient_thread_box_t threadlocal_pool[] GNU_ATTR_ALIGNED_16;

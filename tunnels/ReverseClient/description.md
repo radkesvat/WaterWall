@@ -34,7 +34,9 @@ A common setup is:
   "name": "reverse-client",
   "type": "ReverseClient",
   "settings": {
-    "minimum-unused": 16
+    "minimum-unused": 16,
+    "reverse-secret-length": 640,
+    "reverse-secret": "shared-secret"
   },
   "next": "outbound-chain-node"
 }
@@ -55,7 +57,8 @@ A common setup is:
 
 ### `settings`
 
-The current implementation works with an empty `settings` object, but it also supports one optional tuning field.
+The implementation works with an empty `settings` object. Optional fields tune
+the spare connection pool and the reverse-link handshake signature.
 
 ## Optional `settings` Fields
 
@@ -65,6 +68,20 @@ The current implementation works with an empty `settings` object, but it also su
   Default: `workers * 4`
 
   This value must be greater than `0`.
+
+- `reverse-secret-length` `(integer)`
+  Overrides the reverse handshake length.
+
+  Default: `640`
+
+  This value must be in range `1` to `1024`.
+
+- `reverse-secret` `(string)`
+  Changes the reverse handshake bytes by XORing the default handshake bytes with
+  the ASCII bytes of this string repeatedly.
+
+  `ReverseClient`, `ReverseServer`, and any `SniffRouter` reverse route in front
+  of them must use the same `reverse-secret-length` and `reverse-secret`.
 
 ## Detailed Behavior
 
@@ -86,7 +103,11 @@ For each spare reverse connection, `ReverseClient` creates two internal lines:
 - one line that goes to the next node and carries the real transport
 - one paired local-facing line that will later be exposed to the previous node if the reverse connection becomes active
 
-As soon as the outbound side is initialized, `ReverseClient` sends an internal handshake buffer made of `640` bytes of value `0xFF`. `ReverseServer` uses that handshake to recognize these spare reverse connections.
+As soon as the outbound side is initialized, `ReverseClient` sends the full
+internal handshake in one payload. By default this is `640` bytes of value
+`0xFF`. If `reverse-secret` is configured, the default bytes are XORed with the
+secret bytes repeatedly. `ReverseServer` uses the same configured handshake to
+recognize these spare reverse connections.
 
 ### When a spare connection becomes active
 
@@ -135,6 +156,7 @@ A spare reverse connection counts as established after the next node reports dow
 
 ## Notes And Caveats
 
-- `minimum-unused` is the only tunnel-specific JSON setting in the current implementation.
-- This node relies on an internal fixed handshake shared with `ReverseServer`.
+- `reverse-secret-length` and `reverse-secret` must match the peer
+  `ReverseServer` and any `SniffRouter` reverse detector in front of it.
+- This node relies on an internal handshake format shared with `ReverseServer`.
 - Spare reverse connections are created proactively, so this tunnel intentionally keeps some idle outbound connections open.

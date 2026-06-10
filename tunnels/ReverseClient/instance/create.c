@@ -32,6 +32,20 @@ tunnel_t *reverseclientTunnelCreate(node_t *node)
     const cJSON            *settings = node->node_settings_json;
     reverseclient_tstate_t *ts       = tunnelGetState(t);
 
+    if (settings != NULL && ! cJSON_IsObject(settings))
+    {
+        LOGF("JSON Error: ReverseClient->settings (object field) : expected an object");
+        tunnelDestroy(t);
+        return NULL;
+    }
+
+    if (! reverseclientHandshakeBuildFromSettings(settings, "ReverseClient", &ts->handshake_bytes,
+                                                  &ts->handshake_length))
+    {
+        tunnelDestroy(t);
+        return NULL;
+    }
+
     int min_unused = 0;
     if (! getIntFromJsonObject(&min_unused, settings, "minimum-unused"))
     {
@@ -42,6 +56,7 @@ tunnel_t *reverseclientTunnelCreate(node_t *node)
         if (min_unused <= 0)
         {
             LOGF("ReverseClient: minimum-unused must be greater than 0, got %d", min_unused);
+            reverseclientHandshakeDestroy(ts->handshake_bytes);
             tunnelDestroy(t);
             return NULL;
         }
