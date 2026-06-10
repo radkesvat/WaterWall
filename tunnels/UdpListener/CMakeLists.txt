@@ -30,6 +30,9 @@ add_library(UdpListener STATIC
 
 target_include_directories(UdpListener PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(UdpListener PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(UdpListener PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/UdpListener)
+
 target_link_libraries(UdpListener ww)
 if(NOT APPLE)
     target_precompile_headers(UdpListener REUSE_FROM ww)

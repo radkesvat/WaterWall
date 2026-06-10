@@ -30,6 +30,9 @@ add_library(UdpOverTcpClient STATIC
 
 target_include_directories(UdpOverTcpClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(UdpOverTcpClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(UdpOverTcpClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/UdpOverTcpClient)
+
 target_link_libraries(UdpOverTcpClient ww)
 if(NOT APPLE)
     target_precompile_headers(UdpOverTcpClient REUSE_FROM ww)

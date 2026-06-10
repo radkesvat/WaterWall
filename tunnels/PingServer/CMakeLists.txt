@@ -26,6 +26,9 @@ add_library(PingServer STATIC
 
 target_include_directories(PingServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(PingServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(PingServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/PingServer)
+
 target_link_libraries(PingServer ww)
 if(NOT APPLE)
     target_precompile_headers(PingServer REUSE_FROM ww)

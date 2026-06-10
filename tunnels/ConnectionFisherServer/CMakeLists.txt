@@ -22,6 +22,9 @@ add_library(ConnectionFisherServer STATIC
 
 target_include_directories(ConnectionFisherServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(ConnectionFisherServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(ConnectionFisherServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/ConnectionFisherServer)
+
 target_link_libraries(ConnectionFisherServer ww)
 if(NOT APPLE)
     target_precompile_headers(ConnectionFisherServer REUSE_FROM ww)

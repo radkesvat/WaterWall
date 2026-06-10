@@ -24,6 +24,9 @@ add_library(Bgp4Server STATIC
 
 target_include_directories(Bgp4Server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(Bgp4Server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(Bgp4Server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Bgp4Server)
+
 target_link_libraries(Bgp4Server ww)
 if(NOT APPLE)
     target_precompile_headers(Bgp4Server REUSE_FROM ww)

@@ -30,6 +30,9 @@ add_library(HttpClient STATIC
 
 target_include_directories(HttpClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(HttpClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(HttpClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/HttpClient)
+
 target_link_libraries(HttpClient ww)
 
 if(NOT TARGET http_def)
@@ -37,6 +40,7 @@ if(NOT TARGET http_def)
         common/http_def.c
     )
     target_include_directories(http_def PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_include_directories(http_def PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/HttpClient)
 endif()
 
 target_link_libraries(HttpClient http_def)

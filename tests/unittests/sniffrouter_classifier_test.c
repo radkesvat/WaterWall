@@ -1,4 +1,4 @@
-#include "structure.h"
+#include "SniffRouter/structure.h"
 
 #include <stdio.h>
 

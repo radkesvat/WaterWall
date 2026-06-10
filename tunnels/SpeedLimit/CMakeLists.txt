@@ -24,6 +24,9 @@ add_library(SpeedLimit STATIC
 
 target_include_directories(SpeedLimit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(SpeedLimit PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(SpeedLimit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/SpeedLimit)
+
 target_link_libraries(SpeedLimit ww)
 if(NOT APPLE)
     target_precompile_headers(SpeedLimit REUSE_FROM ww)

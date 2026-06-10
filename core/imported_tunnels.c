@@ -5,59 +5,59 @@
 #define USING(x) nodelibraryRegister(node##x##Get());
 
 #ifdef INCLUDE_TEMPLATE
-#include "tunnels/template/include/interface.h"
+#include "Template/interface.h"
 #endif
 
 #ifdef INCLUDE_TESTER_CLIENT
-#include "tunnels/TesterClient/include/interface.h"
+#include "TesterClient/interface.h"
 #endif
 
 #ifdef INCLUDE_TESTER_SERVER
-#include "tunnels/TesterServer/include/interface.h"
+#include "TesterServer/interface.h"
 #endif
 
 #ifdef INCLUDE_SPEEDTEST_CLIENT
-#include "tunnels/SpeedTestClient/include/interface.h"
+#include "SpeedTestClient/interface.h"
 #endif
 
 #ifdef INCLUDE_SPEEDTEST_SERVER
-#include "tunnels/SpeedTestServer/include/interface.h"
+#include "SpeedTestServer/interface.h"
 #endif
 
 #ifdef INCLUDE_AUTHENTICATION_SERVER
-#include "tunnels/AuthenticationServer/include/interface.h"
+#include "AuthenticationServer/interface.h"
 #endif
 
 #ifdef INCLUDE_TUN_DEVICE
-#include "tunnels/TunDevice/include/interface.h"
+#include "TunDevice/interface.h"
 #endif
 
 #ifdef INCLUDE_PACKET_SENDER
-#include "tunnels/PacketSender/include/interface.h"
+#include "PacketSender/interface.h"
 #endif
 
 #ifdef INCLUDE_PACKET_RECEIVER
-#include "tunnels/PacketReceiver/include/interface.h"
+#include "PacketReceiver/interface.h"
 #endif
 
 #ifdef INCLUDE_PACKET_TO_CONNECTION
-#include "tunnels/PacketsToConnection/include/interface.h"
+#include "PacketsToConnection/interface.h"
 #endif
 
 #ifdef INCLUDE__PACKETS_TO_STREAM
-#include "tunnels/PacketsToStream/include/interface.h"
+#include "PacketsToStream/interface.h"
 #endif
 
 #ifdef INCLUDE_PACKET_SPLIT_STREAM
-#include "tunnels/PacketSplitStream/include/interface.h"
+#include "PacketSplitStream/interface.h"
 #endif
 
 #ifdef INCLUDE_STREAM_TO_PACKETS
-#include "tunnels/StreamToPackets/include/interface.h"
+#include "StreamToPackets/interface.h"
 #endif
 
 #ifdef INCLUDE_WIREGUARD_DEVICE
-#include "tunnels/WireGuardDevice/include/interface.h"
+#include "WireGuardDevice/interface.h"
 #endif
 
 #ifdef INCLUDE_LAYER3_IP_ROUTING_TABLE
@@ -65,35 +65,35 @@
 #endif
 
 #ifdef INCLUDE_IP_OVERRIDER
-#include "tunnels/IpOverrider/include/interface.h"
+#include "IpOverrider/interface.h"
 #endif
 
 #ifdef INCLUDE_IP_MANIPULATOR
-#include "tunnels/IpManipulator/include/interface.h"
+#include "IpManipulator/interface.h"
 #endif
 
 #ifdef INCLUDE_PING_CLIENT
-#include "tunnels/PingClient/include/interface.h"
+#include "PingClient/interface.h"
 #endif
 
 #ifdef INCLUDE_PING_SERVER
-#include "tunnels/PingServer/include/interface.h"
+#include "PingServer/interface.h"
 #endif
 
 #ifdef INCLUDE_KEEPALIVE_CLIENT
-#include "tunnels/KeepAliveClient/include/interface.h"
+#include "KeepAliveClient/interface.h"
 #endif
 
 #ifdef INCLUDE_KEEPALIVE_SERVER
-#include "tunnels/KeepAliveServer/include/interface.h"
+#include "KeepAliveServer/interface.h"
 #endif
 
 #ifdef INCLUDE_CONNECTION_FISHER_CLIENT
-#include "tunnels/ConnectionFisherClient/include/interface.h"
+#include "ConnectionFisherClient/interface.h"
 #endif
 
 #ifdef INCLUDE_CONNECTION_FISHER_SERVER
-#include "tunnels/ConnectionFisherServer/include/interface.h"
+#include "ConnectionFisherServer/interface.h"
 #endif
 
 #ifdef INCLUDE_LAYER3_TCP_MANIPULATOR
@@ -101,11 +101,11 @@
 #endif
 
 #ifdef INCLUDE_TCP_LISTENER
-#include "tunnels/TcpListener/include/interface.h"
+#include "TcpListener/interface.h"
 #endif
 
 #ifdef INCLUDE_UDP_LISTENER
-#include "tunnels/UdpListener/include/interface.h"
+#include "UdpListener/interface.h"
 #endif
 
 #ifdef INCLUDE_LISTENER
@@ -117,15 +117,15 @@
 #endif
 
 #ifdef INCLUDE_TLS_CLIENT
-#include "tunnels/TlsClient/include/interface.h"
+#include "TlsClient/interface.h"
 #endif
 
 #ifdef INCLUDE_TLS_SERVER
-#include "tunnels/TlsServer/include/interface.h"
+#include "TlsServer/interface.h"
 #endif
 
 #ifdef INCLUDE_LOGGER_TUNNEL
-#include "tunnels/logger/include/interface.h"
+#include "LoggerTunnel/interface.h"
 #endif
 
 #ifdef INCLUDE_TROJAN_AUTH_SERVER
@@ -141,43 +141,43 @@
 #endif
 
 #ifdef INCLUDE_TCPCONNECTOR
-#include "tunnels/TcpConnector/include/interface.h"
+#include "TcpConnector/interface.h"
 #endif
 
 #ifdef INCLUDE_UDP_CONNECTOR
-#include "tunnels/UdpConnector/include/interface.h"
+#include "UdpConnector/interface.h"
 #endif
 
 #ifdef INCLUDE_UDP_OVER_TCP_CLIENT
-#include "tunnels/UdpOverTcpClient/include/interface.h"
+#include "UdpOverTcpClient/interface.h"
 #endif
 
 #ifdef INCLUDE_UDP_OVER_TCP_SERVER
-#include "tunnels/UdpOverTcpServer/include/interface.h"
+#include "UdpOverTcpServer/interface.h"
 #endif
 
 #ifdef INCLUDE_TCP_OVER_UDP_CLIENT
-#include "tunnels/TcpOverUdpClient/include/interface.h"
+#include "TcpOverUdpClient/interface.h"
 #endif
 
 #ifdef INCLUDE_TCP_OVER_UDP_SERVER
-#include "tunnels/TcpOverUdpServer/include/interface.h"
+#include "TcpOverUdpServer/interface.h"
 #endif
 
 #ifdef INCLUDE_UDP_STATELESS_SOCKET
-#include "tunnels/UdpStatelessSocket/include/interface.h"
+#include "UdpStatelessSocket/interface.h"
 #endif
 
 #ifdef INCLUDE_RAWSOCKET
-#include "tunnels/RawSocket/include/interface.h"
+#include "RawSocket/interface.h"
 #endif
 
 #ifdef INCLUDE_BRIDGE
-#include "tunnels/Bridge/include/interface.h"
+#include "Bridge/interface.h"
 #endif
 
 #ifdef INCLUDE_SNIFF_ROUTER
-#include "tunnels/SniffRouter/include/interface.h"
+#include "SniffRouter/interface.h"
 #endif
 
 #ifdef INCLUDE_WOLFSSL_SERVER
@@ -189,15 +189,15 @@
 #endif
 
 #ifdef INCLUDE_HTTP_SERVER
-#include "tunnels/HttpServer/include/interface.h"
+#include "HttpServer/interface.h"
 #endif
 
 #ifdef INCLUDE_HTTP_CLIENT
-#include "tunnels/HttpClient/include/interface.h"
+#include "HttpClient/interface.h"
 #endif
 
 #ifdef INCLUDE_SOCKS5_CLIENT
-#include "tunnels/Socks5Client/include/interface.h"
+#include "Socks5Client/interface.h"
 #endif
 
 #ifdef INCLUDE_PROTOBUF_SERVER
@@ -209,35 +209,35 @@
 #endif
 
 #ifdef INCLUDE_REVERSE_SERVER
-#include "tunnels/ReverseServer/include/interface.h"
+#include "ReverseServer/interface.h"
 #endif
 
 #ifdef INCLUDE_REVERSE_CLIENT
-#include "tunnels/ReverseClient/include/interface.h"
+#include "ReverseClient/interface.h"
 #endif
 
 #ifdef INCLUDE_HEADER_SERVER
-#include "tunnels/HeaderServer/include/interface.h"
+#include "HeaderServer/interface.h"
 #endif
 
 #ifdef INCLUDE_HEADER_CLIENT
-#include "tunnels/HeaderClient/include/interface.h"
+#include "HeaderClient/interface.h"
 #endif
 
 #ifdef INCLUDE_OBFUSCATOR_CLIENT
-#include "tunnels/ObfuscatorClient/include/interface.h"
+#include "ObfuscatorClient/interface.h"
 #endif
 
 #ifdef INCLUDE_OBFUSCATOR_SERVER
-#include "tunnels/ObfuscatorServer/include/interface.h"
+#include "ObfuscatorServer/interface.h"
 #endif
 
 #ifdef INCLUDE_ENCRYPTION_CLIENT
-#include "tunnels/EncryptionClient/include/interface.h"
+#include "EncryptionClient/interface.h"
 #endif
 
 #ifdef INCLUDE_ENCRYPTION_SERVER
-#include "tunnels/EncryptionServer/include/interface.h"
+#include "EncryptionServer/interface.h"
 #endif
 
 #ifdef INCLUDE_PRECONNECT_SERVER
@@ -249,51 +249,51 @@
 #endif
 
 #ifdef INCLUDE_SOCKS_5_SERVER
-#include "tunnels/Socks5Server/include/interface.h"
+#include "Socks5Server/interface.h"
 #endif
 
 #ifdef INCLUDE_REALITY_SERVER
-#include "tunnels/RealityServer/include/interface.h"
+#include "RealityServer/interface.h"
 #endif
 
 #ifdef INCLUDE_REALITY_CLIENT
-#include "tunnels/RealityClient/include/interface.h"
+#include "RealityClient/interface.h"
 #endif
 
 #ifdef INCLUDE_HALFDUPLEX_SERVER
-#include "tunnels/HalfDuplexServer/include/interface.h"
+#include "HalfDuplexServer/interface.h"
 #endif
 
 #ifdef INCLUDE_HALFDUPLEX_CLIENT
-#include "tunnels/HalfDuplexClient/include/interface.h"
+#include "HalfDuplexClient/interface.h"
 #endif
 
 #ifdef INCLUDE_BGP4_SERVER
-#include "tunnels/Bgp4Server/include/interface.h"
+#include "Bgp4Server/interface.h"
 #endif
 
 #ifdef INCLUDE_BGP4_CLIENT
-#include "tunnels/Bgp4Client/include/interface.h"
+#include "Bgp4Client/interface.h"
 #endif
 
 #ifdef INCLUDE_MUX_SERVER
-#include "tunnels/MuxServer/include/interface.h"
+#include "MuxServer/interface.h"
 #endif
 
 #ifdef INCLUDE_MUX_CLIENT
-#include "tunnels/MuxClient/include/interface.h"
+#include "MuxClient/interface.h"
 #endif
 
 #ifdef INCLUDE_DISTURBER
-#include "tunnels/Disturber/include/interface.h"
+#include "Disturber/interface.h"
 #endif
 
 #ifdef INCLUDE_BLACKHOLE
-#include "tunnels/BlackHole/include/interface.h"
+#include "BlackHole/interface.h"
 #endif
 
 #ifdef INCLUDE_SPEEDLIMIT
-#include "tunnels/SpeedLimit/include/interface.h"
+#include "SpeedLimit/interface.h"
 #endif
 
 void loadImportedTunnelsIntoCore(void)

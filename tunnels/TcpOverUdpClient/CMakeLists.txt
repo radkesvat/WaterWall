@@ -56,6 +56,9 @@ target_include_directories(TcpOverUdpClient PRIVATE
     ${TCP_OVER_UDP_FEC_DIR}
     ${TCP_OVER_UDP_KCP_DIR}
 )
+
+target_include_directories(TcpOverUdpClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(TcpOverUdpClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/TcpOverUdpClient)
 target_sources(TcpOverUdpClient PRIVATE
     $<TARGET_OBJECTS:tcp_over_udp_fec>
     $<TARGET_OBJECTS:tcp_over_udp_client_kcp>

@@ -32,6 +32,9 @@ add_library(PacketsToConnection STATIC
 )
 
 target_include_directories(PacketsToConnection PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+target_include_directories(PacketsToConnection PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(PacketsToConnection PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/PacketsToConnection)
 target_include_directories(PacketsToConnection PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/)
 
 # in this moduel we get this warring, but we assert that the alignment is correct

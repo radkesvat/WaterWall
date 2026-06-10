@@ -26,6 +26,9 @@ add_library(PacketSender STATIC
 
 target_include_directories(PacketSender PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(PacketSender PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(PacketSender PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/PacketSender)
+
 target_link_libraries(PacketSender ww)
 if(NOT APPLE)
     target_precompile_headers(PacketSender REUSE_FROM ww)

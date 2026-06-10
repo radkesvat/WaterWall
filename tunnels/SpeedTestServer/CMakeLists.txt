@@ -24,6 +24,9 @@ add_library(SpeedTestServer STATIC
 
 target_include_directories(SpeedTestServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(SpeedTestServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(SpeedTestServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/SpeedTestServer)
+
 target_link_libraries(SpeedTestServer ww)
 if(NOT APPLE)
     target_precompile_headers(SpeedTestServer REUSE_FROM ww)

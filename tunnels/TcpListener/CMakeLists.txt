@@ -30,6 +30,9 @@ add_library(TcpListener STATIC
 
 target_include_directories(TcpListener PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(TcpListener PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(TcpListener PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/TcpListener)
+
 target_link_libraries(TcpListener ww)
 if(NOT APPLE)
     target_precompile_headers(TcpListener REUSE_FROM ww)

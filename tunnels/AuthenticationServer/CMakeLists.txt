@@ -42,6 +42,9 @@ target_include_directories(AuthenticationServer PRIVATE
                     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+target_include_directories(AuthenticationServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(AuthenticationServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/AuthenticationServer)
+
 target_link_libraries(AuthenticationServer ww)
 if(NOT APPLE)
     target_precompile_headers(AuthenticationServer REUSE_FROM ww)

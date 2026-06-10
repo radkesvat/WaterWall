@@ -21,6 +21,9 @@ add_library(PacketSplitStream STATIC
 
 target_include_directories(PacketSplitStream PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(PacketSplitStream PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(PacketSplitStream PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/PacketSplitStream)
+
 target_link_libraries(PacketSplitStream ww)
 if(NOT APPLE)
     target_precompile_headers(PacketSplitStream REUSE_FROM ww)

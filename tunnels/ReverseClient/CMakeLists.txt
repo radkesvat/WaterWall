@@ -31,6 +31,9 @@ add_library(ReverseClient STATIC
 
 target_include_directories(ReverseClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(ReverseClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(ReverseClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/ReverseClient)
+
 target_link_libraries(ReverseClient ww)
 if(NOT APPLE)
     target_precompile_headers(ReverseClient REUSE_FROM ww)

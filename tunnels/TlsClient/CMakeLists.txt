@@ -110,6 +110,9 @@ target_include_directories(TlsClient PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+target_include_directories(TlsClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(TlsClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/TlsClient)
+
 
 
 

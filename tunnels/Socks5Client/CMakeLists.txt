@@ -28,6 +28,9 @@ add_library(Socks5Client STATIC
 
 target_include_directories(Socks5Client PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(Socks5Client PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(Socks5Client PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Socks5Client)
+
 target_link_libraries(Socks5Client ww)
 if(NOT APPLE)
     target_precompile_headers(Socks5Client REUSE_FROM ww)

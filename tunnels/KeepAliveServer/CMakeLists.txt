@@ -30,6 +30,9 @@ add_library(KeepAliveServer STATIC
 
 target_include_directories(KeepAliveServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(KeepAliveServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(KeepAliveServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/KeepAliveServer)
+
 target_link_libraries(KeepAliveServer ww)
 if(NOT APPLE)
     target_precompile_headers(KeepAliveServer REUSE_FROM ww)

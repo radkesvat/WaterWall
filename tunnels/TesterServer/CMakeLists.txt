@@ -24,6 +24,9 @@ add_library(TesterServer STATIC
 
 target_include_directories(TesterServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(TesterServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(TesterServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/TesterServer)
+
 target_link_libraries(TesterServer ww)
 if(NOT APPLE)
     target_precompile_headers(TesterServer REUSE_FROM ww)

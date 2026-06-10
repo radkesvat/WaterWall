@@ -30,6 +30,9 @@ add_library(Disturber STATIC
 
 target_include_directories(Disturber PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(Disturber PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(Disturber PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Disturber)
+
 target_link_libraries(Disturber ww)
 if(NOT APPLE)
     target_precompile_headers(Disturber REUSE_FROM ww)

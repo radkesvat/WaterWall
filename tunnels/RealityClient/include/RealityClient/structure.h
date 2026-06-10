@@ -1,6 +1,7 @@
 #pragma once
 
 #include "wwapi.h"
+#include "TlsClient/interface.h"
 
 typedef struct realityclient_tstate_s
 {
@@ -84,9 +85,3 @@ int  realityclientDecryptAead(uint32_t algorithm, unsigned char *dst, const unsi
 bool realityclientEncryptAndSend(tunnel_t *t, line_t *l, sbuf_t *buf);
 bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf);
 void realityclientCloseLineBidirectional(tunnel_t *t, line_t *l);
-
-node_t    nodeTlsClientGet(void);
-tunnel_t *tlsclientTunnelCreate(node_t *node);
-void      tlsclientTunnelEnableHandshakeTakeover(tunnel_t *t);
-bool      tlsclientTunnelIsHandshakeCompleted(tunnel_t *t, line_t *l);
-bool      tlsclientTunnelDeinitAfterHandshake(tunnel_t *t, line_t *l, sbuf_t **pending_raw);

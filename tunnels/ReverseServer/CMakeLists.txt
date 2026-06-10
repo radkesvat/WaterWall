@@ -33,6 +33,9 @@ target_include_directories(ReverseServer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../ReverseClient/include
 )
 
+target_include_directories(ReverseServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(ReverseServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/ReverseServer)
+
 target_link_libraries(ReverseServer PRIVATE ww ReverseClient)
 if(NOT APPLE)
     target_precompile_headers(ReverseServer REUSE_FROM ww)

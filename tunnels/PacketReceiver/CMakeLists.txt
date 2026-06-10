@@ -24,6 +24,9 @@ add_library(PacketReceiver STATIC
 
 target_include_directories(PacketReceiver PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(PacketReceiver PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(PacketReceiver PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/PacketReceiver)
+
 target_link_libraries(PacketReceiver ww)
 if(NOT APPLE)
     target_precompile_headers(PacketReceiver REUSE_FROM ww)

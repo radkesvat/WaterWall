@@ -31,6 +31,9 @@ add_library(TcpConnector STATIC
 
 target_include_directories(TcpConnector PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_include_directories(TcpConnector PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(TcpConnector PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/TcpConnector)
+
 target_link_libraries(TcpConnector ww)
 if(NOT APPLE)
     target_precompile_headers(TcpConnector REUSE_FROM ww)
