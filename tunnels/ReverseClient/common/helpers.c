@@ -35,9 +35,9 @@ static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg
 
 
     sbuf_t *handshakebuf = bufferpoolGetLargeBuffer(lineGetBufferPool(ul));
-    handshakebuf = sbufReserveSpace(handshakebuf, kHandShakeLength);
-    memorySet(sbufGetMutablePtr(handshakebuf), kHandShakeByte, kHandShakeLength);
-    sbufSetLength(handshakebuf, kHandShakeLength);
+    handshakebuf = sbufReserveSpace(handshakebuf, reverseclientHandshakeLength);
+    memoryCopy(sbufGetMutablePtr(handshakebuf), reverseclientHandshakeBytes, reverseclientHandshakeLength);
+    sbufSetLength(handshakebuf, reverseclientHandshakeLength);
 
     tunnelNextUpStreamPayload(t, ul, handshakebuf);
 }

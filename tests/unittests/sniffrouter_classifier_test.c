@@ -2,19 +2,6 @@
 
 #include <stdio.h>
 
-static void put_be16(uint8_t *p, uint16_t v)
-{
-    p[0] = (uint8_t) ((v >> 8) & 0xFFU);
-    p[1] = (uint8_t) (v & 0xFFU);
-}
-
-static void put_be24(uint8_t *p, uint32_t v)
-{
-    p[0] = (uint8_t) ((v >> 16) & 0xFFU);
-    p[1] = (uint8_t) ((v >> 8) & 0xFFU);
-    p[2] = (uint8_t) (v & 0xFFU);
-}
-
 static uint32_t make_client_hello(uint8_t *buf, const char *sni)
 {
     uint8_t *cursor = buf;
@@ -38,9 +25,9 @@ static uint32_t make_client_hello(uint8_t *buf, const char *sni)
 
     *cursor++ = 0;
 
-    put_be16(cursor, 2);
+    PUT_BE16(cursor, 2);
     cursor += 2;
-    put_be16(cursor, 0x1301);
+    PUT_BE16(cursor, 0x1301);
     cursor += 2;
 
     *cursor++ = 1;
@@ -49,14 +36,14 @@ static uint32_t make_client_hello(uint8_t *buf, const char *sni)
     uint8_t *extensions_len = cursor;
     cursor += 2;
 
-    put_be16(cursor, 0x0000);
+    PUT_BE16(cursor, 0x0000);
     cursor += 2;
-    put_be16(cursor, (uint16_t) (2U + 3U + sni_len));
+    PUT_BE16(cursor, (uint16_t) (2U + 3U + sni_len));
     cursor += 2;
-    put_be16(cursor, (uint16_t) (3U + sni_len));
+    PUT_BE16(cursor, (uint16_t) (3U + sni_len));
     cursor += 2;
     *cursor++ = 0;
-    put_be16(cursor, (uint16_t) sni_len);
+    PUT_BE16(cursor, (uint16_t) sni_len);
     cursor += 2;
     memoryCopy(cursor, sni, sni_len);
     cursor += sni_len;
@@ -64,9 +51,9 @@ static uint32_t make_client_hello(uint8_t *buf, const char *sni)
     uint32_t ext_len = (uint32_t) (cursor - extensions_len - 2);
     uint32_t body_len = (uint32_t) (cursor - body);
 
-    put_be16(extensions_len, (uint16_t) ext_len);
-    put_be24(hello_len, body_len);
-    put_be16(record_len, (uint16_t) (4U + body_len));
+    PUT_BE16(extensions_len, (uint16_t) ext_len);
+    PUT_BE24(hello_len, body_len);
+    PUT_BE16(record_len, (uint16_t) (4U + body_len));
 
     return (uint32_t) (cursor - buf);
 }
@@ -178,6 +165,104 @@ int main(void)
                      sniffrouterClassify(&ts, hello, hello_len),
                      kSniffClassifyTarget,
                      tls_target) != 0)
+    {
+        return 1;
+    }
+
+    // Reverse-link handshake detection.
+    tunnel_t *reverse_target = (tunnel_t *) (uintptr_t) 0x30;
+
+    char  reverse_http_domain[]  = "api.example.test";
+    char *reverse_http_domains[] = {reverse_http_domain};
+
+    sniffrouter_route_t reverse_routes[] = {
+        {
+            .tunnel        = http_target,
+            .domains       = reverse_http_domains,
+            .domains_count = 1,
+            .detection     = kSniffDetectionHttp,
+        },
+        {
+            .tunnel        = reverse_target,
+            .domains       = NULL,
+            .domains_count = 0,
+            .detection     = kSniffDetectionReverse,
+        },
+    };
+
+    sniffrouter_tstate_t reverse_ts = {
+        .routes       = reverse_routes,
+        .routes_count = 2,
+    };
+
+    uint8_t handshake[8192];
+    if (reverseclientHandshakeLength == 0 || reverseclientHandshakeLength + 16U > sizeof(handshake))
+    {
+        fprintf(stderr, "reverse handshake test buffer is too small\n");
+        return 1;
+    }
+    memoryCopy(handshake, reverseclientHandshakeBytes, reverseclientHandshakeLength);
+    memorySet(handshake + reverseclientHandshakeLength, 0x55, 16U);
+
+    if (expect_match("reverse handshake route",
+                     sniffrouterClassify(&reverse_ts, handshake, reverseclientHandshakeLength),
+                     kSniffClassifyTarget,
+                     reverse_target) != 0)
+    {
+        return 1;
+    }
+
+    if (expect_match("reverse handshake with trailer",
+                     sniffrouterClassify(&reverse_ts, handshake, reverseclientHandshakeLength + 16U),
+                     kSniffClassifyTarget,
+                     reverse_target) != 0)
+    {
+        return 1;
+    }
+
+    if (expect_match("reverse handshake partial needs more",
+                     sniffrouterClassify(&reverse_ts, handshake, reverseclientHandshakeLength - 1U),
+                     kSniffClassifyNeedMore,
+                     NULL) != 0)
+    {
+        return 1;
+    }
+
+    uint8_t broken_handshake[8192];
+    memoryCopy(broken_handshake, reverseclientHandshakeBytes, reverseclientHandshakeLength);
+    broken_handshake[reverseclientHandshakeLength / 2U] ^= 0x01U;
+    if (expect_match("reverse handshake interrupted falls back",
+                     sniffrouterClassify(&reverse_ts, broken_handshake, reverseclientHandshakeLength),
+                     kSniffClassifyDefault,
+                     NULL) != 0)
+    {
+        return 1;
+    }
+
+    if (expect_match("http route beside reverse route",
+                     sniffrouterClassify(&reverse_ts, http_request, (uint32_t) sizeof(http_request) - 1U),
+                     kSniffClassifyTarget,
+                     http_target) != 0)
+    {
+        return 1;
+    }
+
+    reverse_routes[1].detection     = kSniffDetectionHttp | kSniffDetectionReverse;
+    reverse_routes[1].domains       = reverse_http_domains;
+    reverse_routes[1].domains_count = 1;
+    if (expect_match("combined http+reverse matches handshake",
+                     sniffrouterClassify(&reverse_ts, handshake, reverseclientHandshakeLength),
+                     kSniffClassifyTarget,
+                     reverse_target) != 0)
+    {
+        return 1;
+    }
+
+    reverse_routes[1].detection = kSniffDetectionHttp;
+    if (expect_match("reverse detection disabled falls back",
+                     sniffrouterClassify(&reverse_ts, handshake, reverseclientHandshakeLength),
+                     kSniffClassifyDefault,
+                     NULL) != 0)
     {
         return 1;
     }

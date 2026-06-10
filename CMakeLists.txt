@@ -564,8 +564,19 @@ if(INCLUDE_BRIDGE)
   target_link_libraries(Waterwall Bridge)
 endif()
 
+#reverse client
+if(INCLUDE_REVERSE_CLIENT)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_REVERSE_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ReverseClient)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ReverseClient)
+  target_link_libraries(Waterwall ReverseClient)
+endif()
+
 #sniff router
 if(INCLUDE_SNIFF_ROUTER)
+  if(NOT TARGET ReverseClient)
+    message(FATAL_ERROR "SniffRouter requires INCLUDE_REVERSE_CLIENT=ON")
+  endif()
   target_compile_definitions(Waterwall PUBLIC INCLUDE_SNIFF_ROUTER=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/SniffRouter)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/SniffRouter)
@@ -663,18 +674,13 @@ endif()
 
 #reverse server
 if(INCLUDE_REVERSE_SERVER)
+  if(NOT TARGET ReverseClient)
+    message(FATAL_ERROR "ReverseServer requires INCLUDE_REVERSE_CLIENT=ON")
+  endif()
   target_compile_definitions(Waterwall PUBLIC INCLUDE_REVERSE_SERVER=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ReverseServer)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ReverseServer)
   target_link_libraries(Waterwall ReverseServer)
-endif()
-
-#reverse client
-if(INCLUDE_REVERSE_CLIENT)
-  target_compile_definitions(Waterwall PUBLIC INCLUDE_REVERSE_CLIENT=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ReverseClient)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ReverseClient)
-  target_link_libraries(Waterwall ReverseClient)
 endif()
 
 #header server
