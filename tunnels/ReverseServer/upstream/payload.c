@@ -45,38 +45,35 @@ static bool processHandshakeD(tunnel_t *t, line_t *d, reverseserver_lstate_t *dl
         return true;
     }
 
-    if (sbufGetLength(buf) < ts->handshake_length)
+    if (sbufGetLength(buf) >= ts->handshake_length)
     {
-        LOGW("ReverseServer: reverse handshake is incomplete in first payload, dropping connection");
-        lineReuseBuffer(d, buf);
-        reverseserverLinestateDestroy(dls);
-        tunnelPrevDownStreamFinish(t, d);
-        return false;
+        if (! validateHandshake(ts, buf))
+        {
+            LOGD("ReverseServer: Handshake failed, dropping connection");
+            lineReuseBuffer(d, buf);
+            reverseserverLinestateDestroy(dls);
+            tunnelPrevDownStreamFinish(t, d);
+            return false;
+        }
+
+        dls->handshaked = true;
+        sbufShiftRight(buf, ts->handshake_length);
+        reverseserverAddConnectionD(this_tb, dls);
+
+        if (sbufGetLength(buf) <= 0)
+        {
+            lineReuseBuffer(d, buf);
+        }
+        else
+        {
+            dls->buffering = buf;
+        }
+        // LOGD("ReverseServer: Handshake successful");
+        return true;
     }
 
-    if (! validateHandshake(ts, buf))
-    {
-        LOGD("ReverseServer: Handshake failed, dropping connection");
-        lineReuseBuffer(d, buf);
-        reverseserverLinestateDestroy(dls);
-        tunnelPrevDownStreamFinish(t, d);
-        return false;
-    }
-
-    dls->handshaked = true;
-    sbufShiftRight(buf, ts->handshake_length);
-    reverseserverAddConnectionD(this_tb, dls);
-
-    if (sbufGetLength(buf) <= 0)
-    {
-        lineReuseBuffer(d, buf);
-    }
-    else
-    {
-        dls->buffering = buf;
-    }
-    // LOGD("ReverseServer: Handshake successful");
-    return true;
+    dls->buffering = buf;
+    return false;
 }
 
 static bool pairWithLocalUpstreamConnection(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls,
@@ -189,28 +186,16 @@ static bool tryPairWithRemoteUpstreamConnection(tunnel_t *t, line_t *d, reverses
 static void handleUnpairedConnectionD(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls, reverseserver_tstate_t *ts,
                                       reverseserver_thread_box_t *this_tb, sbuf_t *buf)
 {
-    if (dls->handshaked)
+    reverseclienthandleBufferMerging(d, dls, &buf);
+
+    if (! checkBufferSizeLimitD(t, d, dls, this_tb, buf))
     {
-        reverseclienthandleBufferMerging(d, dls, &buf);
-
-        if (! checkBufferSizeLimitD(t, d, dls, this_tb, buf))
-        {
-            return;
-        }
-
-        dls->buffering = buf;
+        return;
     }
-    else
-    {
-        if (! checkBufferSizeLimitD(t, d, dls, this_tb, buf))
-        {
-            return;
-        }
 
-        if (! processHandshakeD(t, d, dls, this_tb, ts, buf))
-        {
-            return;
-        }
+    if (! processHandshakeD(t, d, dls, this_tb, ts, buf))
+    {
+        return;
     }
 
     if (pairWithLocalUpstreamConnection(t, d, dls, this_tb))

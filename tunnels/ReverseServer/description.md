@@ -93,9 +93,8 @@ with the secret bytes repeatedly.
 
 When payload arrives from the reverse side before pairing:
 
-- the first payload must contain the complete reverse handshake
-- if the first payload is shorter than the expected handshake length, a warning
-  is logged and that half-connection is dropped
+- payload is buffered until enough bytes are available to validate the complete
+  reverse handshake
 - if the handshake is invalid, that half-connection is dropped
 - if the handshake is valid, the handshake bytes are removed
 - the reverse-side half is placed into a waiting list
