@@ -23,7 +23,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": [
+        "port-range": [
           42360,
           42363
         ],

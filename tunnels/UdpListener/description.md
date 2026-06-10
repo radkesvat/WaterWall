@@ -6,7 +6,7 @@ In practice, this node is used at the beginning of a chain.
 
 ## What It Does
 
-- Binds and listens on one UDP port or a UDP port range.
+- Binds and listens on one UDP port, several explicit UDP ports, or a UDP port range.
 - Accepts inbound UDP packets through the socket manager.
 - Applies optional filtering such as whitelist/blacklist checks and balance groups.
 - Creates one line per remote peer address and port.
@@ -23,7 +23,7 @@ This node is a chain head. Its upstream entry callbacks are disabled because pac
   "type": "UdpListener",
   "settings": {
     "address": "0.0.0.0",
-    "port": [20000, 20100],
+    "port": [5353, 853, 123],
     "large-send-buffer": true,
     "large-recv-buffer": true,
     "interface": "eth0",
@@ -62,11 +62,17 @@ This node is a chain head. Its upstream entry callbacks are disabled because pac
   Bind address for the UDP socket.
   Common values are `"0.0.0.0"`, `"::"`, or a specific local address.
 
-- `port` `(number or array[2])`
+One of `port` or `port-range` is required.
+
+- `port` `(number or array of numbers)`
   Listening port definition.
-  Supported forms in the current implementation are:
+  Supported forms are:
   - a single number, for example `5353`
-  - a two-item array, for example `[20000, 20100]`
+  - an array of explicit ports, for example `[5353, 853, 123]`
+
+- `port-range` `(array[2])`
+  A contiguous listening port range, for example `[20000, 20100]`.
+  Use this only when every port between the two endpoints should be accepted.
 
 ## Optional `settings` Fields
 
@@ -98,10 +104,12 @@ This node is a chain head. Its upstream entry callbacks are disabled because pac
   Sticky duration used by the balance group.
 
 - `multiport-backend` `(string)`
-  Backend used when `port` is a range.
+  Backend used when `port-range` is configured.
   Supported values:
   - `"iptables"`
   - `"socket"`
+
+  This field only matters for contiguous port ranges. Explicit `port` arrays use socket-per-port listening.
 
 - `whitelist` `(array of strings)`
   List of allowed client IPs or CIDR ranges.
@@ -174,12 +182,15 @@ Filtering and balancing are handled through the shared socket manager:
 - `whitelist` limits which peer IPs are accepted by this listener
 - `blacklist` rejects matching peer IPs for this listener
 - `balance-group` enables sticky distribution between multiple listeners on the same port
-- `multiport-backend` controls how port ranges are implemented
+- `multiport-backend` controls how `port-range` listeners are implemented
 
 When both ACL lists are configured, a peer must match the whitelist, if any, and must not match the blacklist.
 
+For `port` arrays, each element is treated as one explicit port. For example, `[5353, 853, 123]` listens only on those
+three ports, not on the whole range between `123` and `5353`.
+
 ## Notes And Caveats
 
-- `port` is currently parsed as a number or a two-item array.
+- `port` is parsed as a number or an array of explicit port numbers, and `port-range` is parsed as a two-item range array.
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
 - Paused peer lines drop inbound datagrams instead of buffering them.
