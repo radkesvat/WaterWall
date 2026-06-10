@@ -6,7 +6,7 @@ In practice, this node is used at the beginning of a chain.
 
 ## What It Does
 
-- Binds and listens on one TCP port or a TCP port range.
+- Binds and listens on one TCP port, several explicit TCP ports, or a TCP port range.
 - Accepts incoming client connections.
 - Creates a WaterWall line for each accepted socket.
 - Sends data received from the client to the next node.
@@ -23,7 +23,7 @@ This node is a chain head. Its upstream entry callbacks are disabled because con
   "type": "TcpListener",
   "settings": {
     "address": "0.0.0.0",
-    "port": 443,
+    "port": [443, 80, 2083],
     "nodelay": true,
     "large-send-buffer": true,
     "large-recv-buffer": true,
@@ -63,11 +63,17 @@ This node is a chain head. Its upstream entry callbacks are disabled because con
   The bind address for the listener.
   Common values are `"0.0.0.0"`, `"::"`, or a specific local address.
 
-- `port` `(number or array[2])`
+One of `port` or `port-range` is required.
+
+- `port` `(number or array of numbers)`
   The listening port definition.
-  Supported forms in the current implementation are:
+  Supported forms are:
   - a single number, for example `443`
-  - a two-item array, for example `[40000, 40100]`
+  - an array of explicit ports, for example `[443, 80, 2083]`
+
+- `port-range` `(array[2])`
+  A contiguous listening port range, for example `[40000, 40100]`.
+  Use this only when every port between the two endpoints should be accepted.
 
   Older string-style examples such as `"40000-40100"` are not what the current code parses.
 
@@ -107,12 +113,12 @@ This node is a chain head. Its upstream entry callbacks are disabled because con
   After this interval expires, the next connection from that client can be routed to a different listener in the same group.
 
 - `multiport-backend` `(string)`
-  Backend used when `port` is a range.
+  Backend used when `port-range` is configured.
   Supported values:
   - `"iptables"`
   - `"socket"`
 
-  This field only matters for port ranges.
+  This field only matters for contiguous port ranges. Explicit `port` arrays use socket-per-port listening.
 
 - `whitelist` `(array of strings)`
   List of allowed client IPs or CIDR ranges.
@@ -185,15 +191,18 @@ If `blacklist` is present, matching client IPs are rejected by this listener. Wh
 
 ### Multiport backend notes
 
-For port ranges, the runtime can either:
+For `port-range`, the runtime can either:
 
 - create one listening socket per port with the `socket` backend
 - use a single main socket plus redirection rules with the `iptables` backend
 
 If you want `iptables` specifically, set it explicitly.
 
+For `port` arrays, each element is treated as one explicit port. For example, `[443, 80, 2083]` listens only on those
+three ports, not on the whole range between `80` and `2083`.
+
 ## Notes And Caveats
 
-- The current parser expects `port` as a number or a two-item array, not a string range.
+- The parser expects `port` as a number or an array of explicit port numbers, or `port-range` as a two-item range array.
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
 - This node is designed to be used as an inbound entry point in the chain.
