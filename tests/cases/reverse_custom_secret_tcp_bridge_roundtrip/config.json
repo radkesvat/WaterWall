@@ -1,0 +1,70 @@
+{
+  "name": "reverse-custom-secret-tcp-bridge-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "bridge-client"
+    },
+    {
+      "name": "bridge-client",
+      "type": "Bridge",
+      "settings": {
+        "pair": "bridge-server"
+      },
+      "next": "reverse-client"
+    },
+    {
+      "name": "reverse-client",
+      "type": "ReverseClient",
+      "settings": {
+        "minimum-unused": 1,
+        "reverse-secret-length": 64,
+        "reverse-secret": "custom-reverse-secret"
+      },
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41022,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41022,
+        "nodelay": true
+      },
+      "next": "reverse-server"
+    },
+    {
+      "name": "reverse-server",
+      "type": "ReverseServer",
+      "settings": {
+        "reverse-secret-length": 64,
+        "reverse-secret": "custom-reverse-secret"
+      },
+      "next": "bridge-server"
+    },
+    {
+      "name": "bridge-server",
+      "type": "Bridge",
+      "settings": {
+        "pair": "bridge-client"
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}

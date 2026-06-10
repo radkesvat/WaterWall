@@ -30,6 +30,22 @@ tunnel_t *reverseserverTunnelCreate(node_t *node)
     t->onStop    = &reverseserverTunnelOnStop;
     t->onDestroy = &reverseserverTunnelDestroy;
 
+    const cJSON *settings = node->node_settings_json;
+    if (settings != NULL && ! cJSON_IsObject(settings))
+    {
+        LOGF("JSON Error: ReverseServer->settings (object field) : expected an object");
+        tunnelDestroy(t);
+        return NULL;
+    }
+
+    reverseserver_tstate_t *ts = tunnelGetState(t);
+    if (! reverseclientHandshakeBuildFromSettings(settings, "ReverseServer", &ts->handshake_bytes,
+                                                  &ts->handshake_length))
+    {
+        tunnelDestroy(t);
+        return NULL;
+    }
+
     tunnel_t *pipe_tunnel = pipetunnelCreate(t);
     return pipe_tunnel;
 }

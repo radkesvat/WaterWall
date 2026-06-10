@@ -34,6 +34,10 @@ The important requirement is conceptual rather than positional: one side must ca
 {
   "name": "reverse-server",
   "type": "ReverseServer",
+  "settings": {
+    "reverse-secret-length": 640,
+    "reverse-secret": "shared-secret"
+  },
   "next": "next-node-name"
 }
 ```
@@ -53,7 +57,24 @@ The important requirement is conceptual rather than positional: one side must ca
 
 ### `settings`
 
-The current implementation does not read any tunnel-specific JSON settings for `ReverseServer`.
+The implementation works with an empty `settings` object. Optional fields tune
+the reverse-link handshake signature.
+
+## Optional `settings` Fields
+
+- `reverse-secret-length` `(integer)`
+  Overrides the reverse handshake length.
+
+  Default: `640`
+
+  This value must be in range `1` to `1024`.
+
+- `reverse-secret` `(string)`
+  Changes the expected reverse handshake bytes by XORing the default handshake
+  bytes with the ASCII bytes of this string repeatedly.
+
+  `ReverseServer`, `ReverseClient`, and any `SniffRouter` reverse route in front
+  of them must use the same `reverse-secret-length` and `reverse-secret`.
 
 ## Detailed Behavior
 
@@ -64,13 +85,17 @@ The current implementation does not read any tunnel-specific JSON settings for `
 - reverse-side connections coming from `ReverseClient`
 - local-side connections coming from the other side of the chain
 
-The reverse-side half is recognized by an internal handshake of `640` bytes of value `0xFF`.
+The reverse-side half is recognized by an internal handshake. By default this is
+`640` bytes of value `0xFF`; with `reverse-secret`, those default bytes are XORed
+with the secret bytes repeatedly.
 
 ### Reverse-side handshake processing
 
 When payload arrives from the reverse side before pairing:
 
-- data is buffered until enough bytes are available to check the handshake
+- the first payload must contain the complete reverse handshake
+- if the first payload is shorter than the expected handshake length, a warning
+  is logged and that half-connection is dropped
 - if the handshake is invalid, that half-connection is dropped
 - if the handshake is valid, the handshake bytes are removed
 - the reverse-side half is placed into a waiting list
@@ -124,6 +149,7 @@ Instead:
 
 ## Notes And Caveats
 
-- `ReverseServer` currently has no tunnel-specific JSON settings.
-- It is tightly coupled to `ReverseClient` through the fixed handshake format.
+- `reverse-secret-length` and `reverse-secret` must match the peer
+  `ReverseClient` and any `SniffRouter` reverse detector in front of it.
+- It is tightly coupled to `ReverseClient` through the shared handshake format.
 - Unpaired halves can be buffered temporarily, but large buffered payloads are dropped once they exceed the per-half limit.

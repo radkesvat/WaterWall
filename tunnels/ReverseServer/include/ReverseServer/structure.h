@@ -1,7 +1,7 @@
 #pragma once
 
 #include "wwapi.h"
-#include "reverseclient_handshake.h"
+#include "ReverseClient/reverseclient_handshake.h"
 
 typedef struct reverseserver_lstate_s
 {
@@ -24,7 +24,8 @@ typedef struct reverseserver_thread_box_s
 
 typedef struct reverseserver_tstate_s
 {
-    void                      *unused;
+    uint8_t                   *handshake_bytes;
+    uint32_t                   handshake_length;
     reverseserver_thread_box_t threadlocal_pool[];
 } reverseserver_tstate_t;
 

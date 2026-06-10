@@ -31,13 +31,13 @@ static bool checkBufferSizeLimitD(tunnel_t *t, line_t *d, reverseserver_lstate_t
     return true;
 }
 
-static bool validateHandshake(sbuf_t *buf)
+static bool validateHandshake(reverseserver_tstate_t *ts, sbuf_t *buf)
 {
-    return memoryCompare(sbufGetMutablePtr(buf), reverseclientHandshakeBytes, reverseclientHandshakeLength) == 0;
+    return memoryCompare(sbufGetMutablePtr(buf), ts->handshake_bytes, ts->handshake_length) == 0;
 }
 
 static bool processHandshakeD(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls, reverseserver_thread_box_t *this_tb,
-                              sbuf_t *buf)
+                              reverseserver_tstate_t *ts, sbuf_t *buf)
 {
     if (dls->handshaked)
     {
@@ -45,35 +45,38 @@ static bool processHandshakeD(tunnel_t *t, line_t *d, reverseserver_lstate_t *dl
         return true;
     }
 
-    if (sbufGetLength(buf) >= reverseclientHandshakeLength)
+    if (sbufGetLength(buf) < ts->handshake_length)
     {
-        if (! validateHandshake(buf))
-        {
-            LOGD("ReverseServer: Handshake failed, dropping connection");
-            lineReuseBuffer(d, buf);
-            reverseserverLinestateDestroy(dls);
-            tunnelPrevDownStreamFinish(t, d);
-            return false;
-        }
-
-        dls->handshaked = true;
-        sbufShiftRight(buf, reverseclientHandshakeLength);
-        reverseserverAddConnectionD(this_tb, dls);
-
-        if (sbufGetLength(buf) <= 0)
-        {
-            lineReuseBuffer(d, buf);
-        }
-        else
-        {
-            dls->buffering = buf;
-        }
-        // LOGD("ReverseServer: Handshake successful");
-        return true;
+        LOGW("ReverseServer: reverse handshake is incomplete in first payload, dropping connection");
+        lineReuseBuffer(d, buf);
+        reverseserverLinestateDestroy(dls);
+        tunnelPrevDownStreamFinish(t, d);
+        return false;
     }
 
-    dls->buffering = buf;
-    return false;
+    if (! validateHandshake(ts, buf))
+    {
+        LOGD("ReverseServer: Handshake failed, dropping connection");
+        lineReuseBuffer(d, buf);
+        reverseserverLinestateDestroy(dls);
+        tunnelPrevDownStreamFinish(t, d);
+        return false;
+    }
+
+    dls->handshaked = true;
+    sbufShiftRight(buf, ts->handshake_length);
+    reverseserverAddConnectionD(this_tb, dls);
+
+    if (sbufGetLength(buf) <= 0)
+    {
+        lineReuseBuffer(d, buf);
+    }
+    else
+    {
+        dls->buffering = buf;
+    }
+    // LOGD("ReverseServer: Handshake successful");
+    return true;
 }
 
 static bool pairWithLocalUpstreamConnection(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls,
@@ -122,17 +125,17 @@ static bool pairWithLocalUpstreamConnection(tunnel_t *t, line_t *d, reverseserve
     return true;
 }
 
-static sbuf_t *createHandshakeBuffer(line_t *d)
+static sbuf_t *createHandshakeBuffer(line_t *d, reverseserver_tstate_t *ts)
 {
     sbuf_t *handshake_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(d));
-    handshake_buf = sbufReserveSpace(handshake_buf, reverseclientHandshakeLength);
-    sbufSetLength(handshake_buf, reverseclientHandshakeLength);
-    memoryCopy(sbufGetMutablePtr(handshake_buf), reverseclientHandshakeBytes, reverseclientHandshakeLength);
+    handshake_buf = sbufReserveSpace(handshake_buf, ts->handshake_length);
+    sbufSetLength(handshake_buf, ts->handshake_length);
+    memoryCopy(sbufGetMutablePtr(handshake_buf), ts->handshake_bytes, ts->handshake_length);
     return handshake_buf;
 }
 
 static bool pipeToRemoteWorker(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls, reverseserver_thread_box_t *this_tb,
-                               wid_t wi, sbuf_t *buf)
+                               reverseserver_tstate_t *ts, wid_t wi, sbuf_t *buf)
 {
     if (! pipeTo(t, d, wi))
     {
@@ -142,7 +145,7 @@ static bool pipeToRemoteWorker(tunnel_t *t, line_t *d, reverseserver_lstate_t *d
     reverseserverRemoveConnectionD(this_tb, dls);
     reverseserverLinestateDestroy(dls);
 
-    sbuf_t   *handshake_buf = createHandshakeBuffer(d);
+    sbuf_t   *handshake_buf = createHandshakeBuffer(d, ts);
     tunnel_t *prev_tun      = t->prev;
 
     if (! withLineLockedWithBuf(d, tunnelUpStreamPayload, prev_tun, handshake_buf))
@@ -172,7 +175,7 @@ static bool tryPairWithRemoteUpstreamConnection(tunnel_t *t, line_t *d, reverses
     {
         if (wi != lineGetWID(d) && ts->threadlocal_pool[wi].u_count > 0)
         {
-            if (pipeToRemoteWorker(t, d, dls, this_tb, wi, dbuf))
+            if (pipeToRemoteWorker(t, d, dls, this_tb, ts, wi, dbuf))
             {
                 return true;
             }
@@ -186,16 +189,28 @@ static bool tryPairWithRemoteUpstreamConnection(tunnel_t *t, line_t *d, reverses
 static void handleUnpairedConnectionD(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls, reverseserver_tstate_t *ts,
                                       reverseserver_thread_box_t *this_tb, sbuf_t *buf)
 {
-    reverseclienthandleBufferMerging(d, dls, &buf);
-
-    if (! checkBufferSizeLimitD(t, d, dls, this_tb, buf))
+    if (dls->handshaked)
     {
-        return;
+        reverseclienthandleBufferMerging(d, dls, &buf);
+
+        if (! checkBufferSizeLimitD(t, d, dls, this_tb, buf))
+        {
+            return;
+        }
+
+        dls->buffering = buf;
     }
-
-    if (! processHandshakeD(t, d, dls, this_tb, buf))
+    else
     {
-        return;
+        if (! checkBufferSizeLimitD(t, d, dls, this_tb, buf))
+        {
+            return;
+        }
+
+        if (! processHandshakeD(t, d, dls, this_tb, ts, buf))
+        {
+            return;
+        }
     }
 
     if (pairWithLocalUpstreamConnection(t, d, dls, this_tb))

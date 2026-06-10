@@ -206,6 +206,9 @@ Practical rule:
 - `reverse_tcp_bridge_roundtrip`
   Verifies `ReverseClient` and `ReverseServer` across a real TCP loopback transport while a paired `Bridge` links
   `TesterClient` to the reverse-server local side and `TesterServer` to the reverse-client local side.
+- `reverse_custom_secret_tcp_bridge_roundtrip`
+  Verifies the same reverse TCP bridge path when `ReverseClient` and `ReverseServer` use matching
+  `reverse-secret-length` and `reverse-secret` settings.
 - `wireguard_udpstateless_packet_roundtrip`
   Verifies two `WireGuardDevice` nodes across real UDP loopback sockets, using packet-mode testers with IPv4 packet
   payloads so AllowedIPs routing and transport encryption are both exercised end to end.
