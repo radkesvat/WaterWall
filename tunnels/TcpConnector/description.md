@@ -32,7 +32,7 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
     "fwmark": 10,
     "interface": "eth0",
     "source-ip": "192.0.2.10",
-    "domain-strategy": 0
+    "domain-strategy": "prefer-ipv4"
   }
 }
 ```
@@ -57,7 +57,7 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
         "fwmark": 10,
         "interface": "eth0",
         "source-ip": "192.0.2.10",
-        "domain-strategy": 1
+        "domain-strategy": "prefer-ipv4"
       },
       {
         "address": "198.51.100.20",
@@ -73,7 +73,7 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
     "large-send-buffer": true,
     "large-recv-buffer": true,
     "fwmark": -1,
-    "domain-strategy": 0
+    "domain-strategy": "prefer-ipv4"
   }
 }
 ```
@@ -187,12 +187,19 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
   Binds the outbound socket to a specific local source IP with an ephemeral source port before connect.
   This is useful when the host has multiple local addresses and the default route would choose the wrong source address.
 
-- `domain-strategy` `(integer)`
+- `domain-strategy` `(string or integer)`
   Selects how domain DNS results are chosen.
-  Default: `0`
+  Default: the core `dns.domain-strategy` value. If the core value is omitted, the default is `"prefer-ipv4"`.
 
-  Supported values follow WaterWall's domain strategy enum:
-  - `0`: invalid/unspecified, accept either IPv4 or IPv6
+  Supported string values:
+  - `"accept-dns-returned-order"`: use addresses in the resolver's returned order
+  - `"prefer-ipv4"`: use IPv4 first, fallback to IPv6
+  - `"prefer-ipv6"`: use IPv6 first, fallback to IPv4
+  - `"only-ipv4"`: use only IPv4 addresses
+  - `"only-ipv6"`: use only IPv6 addresses
+
+  Legacy integer values are still accepted:
+  - `0`: accept DNS returned order
   - `1`: prefer IPv4
   - `2`: prefer IPv6
   - `3`: only IPv4
