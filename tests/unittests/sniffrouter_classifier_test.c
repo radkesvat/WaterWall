@@ -2,19 +2,6 @@
 
 #include <stdio.h>
 
-static void put_be16(uint8_t *p, uint16_t v)
-{
-    p[0] = (uint8_t) ((v >> 8) & 0xFFU);
-    p[1] = (uint8_t) (v & 0xFFU);
-}
-
-static void put_be24(uint8_t *p, uint32_t v)
-{
-    p[0] = (uint8_t) ((v >> 16) & 0xFFU);
-    p[1] = (uint8_t) ((v >> 8) & 0xFFU);
-    p[2] = (uint8_t) (v & 0xFFU);
-}
-
 static uint32_t make_client_hello(uint8_t *buf, const char *sni)
 {
     uint8_t *cursor = buf;
@@ -38,9 +25,9 @@ static uint32_t make_client_hello(uint8_t *buf, const char *sni)
 
     *cursor++ = 0;
 
-    put_be16(cursor, 2);
+    PUT_BE16(cursor, 2);
     cursor += 2;
-    put_be16(cursor, 0x1301);
+    PUT_BE16(cursor, 0x1301);
     cursor += 2;
 
     *cursor++ = 1;
@@ -49,14 +36,14 @@ static uint32_t make_client_hello(uint8_t *buf, const char *sni)
     uint8_t *extensions_len = cursor;
     cursor += 2;
 
-    put_be16(cursor, 0x0000);
+    PUT_BE16(cursor, 0x0000);
     cursor += 2;
-    put_be16(cursor, (uint16_t) (2U + 3U + sni_len));
+    PUT_BE16(cursor, (uint16_t) (2U + 3U + sni_len));
     cursor += 2;
-    put_be16(cursor, (uint16_t) (3U + sni_len));
+    PUT_BE16(cursor, (uint16_t) (3U + sni_len));
     cursor += 2;
     *cursor++ = 0;
-    put_be16(cursor, (uint16_t) sni_len);
+    PUT_BE16(cursor, (uint16_t) sni_len);
     cursor += 2;
     memoryCopy(cursor, sni, sni_len);
     cursor += sni_len;
@@ -64,9 +51,9 @@ static uint32_t make_client_hello(uint8_t *buf, const char *sni)
     uint32_t ext_len = (uint32_t) (cursor - extensions_len - 2);
     uint32_t body_len = (uint32_t) (cursor - body);
 
-    put_be16(extensions_len, (uint16_t) ext_len);
-    put_be24(hello_len, body_len);
-    put_be16(record_len, (uint16_t) (4U + body_len));
+    PUT_BE16(extensions_len, (uint16_t) ext_len);
+    PUT_BE24(hello_len, body_len);
+    PUT_BE16(record_len, (uint16_t) (4U + body_len));
 
     return (uint32_t) (cursor - buf);
 }
