@@ -361,7 +361,7 @@ static unsigned int calculateFilterPriority(const socket_filter_option_t option)
 {
     unsigned int priority = 0;
 
-    if (option.multiport_backend == kMultiportBackendNone)
+    if (option.multiport_backend == kMultiportBackendNone || vec_listener_port_t_size(&option.ports) > 0)
     {
         priority++;
     }
@@ -375,6 +375,23 @@ static unsigned int calculateFilterPriority(const socket_filter_option_t option)
     }
 
     return priority;
+}
+
+static bool socketFilterOptionHasPortList(const socket_filter_option_t *option)
+{
+    return vec_listener_port_t_size(&option->ports) > 0;
+}
+
+static bool socketFilterOptionPortListContains(const socket_filter_option_t *option, uint16_t port)
+{
+    for (isize i = 0; i < vec_listener_port_t_size(&option->ports); ++i)
+    {
+        if (*vec_listener_port_t_at(&option->ports, i) == port)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 /**
@@ -751,7 +768,19 @@ static void finalizeTcpDistribution(socket_filter_t **balance_selection_filters,
  */
 static bool processFilterMatch(const socket_filter_option_t option, uint16_t local_port, const ip_addr_t paddr)
 {
-    if (option.protocol != IPPROTO_TCP || option.port_min > local_port || option.port_max < local_port)
+    if (option.protocol != IPPROTO_TCP)
+    {
+        return false;
+    }
+
+    if (socketFilterOptionHasPortList(&option))
+    {
+        if (! socketFilterOptionPortListContains(&option, local_port))
+        {
+            return false;
+        }
+    }
+    else if (option.port_min > local_port || option.port_max < local_port)
     {
         return false;
     }
@@ -1064,6 +1093,43 @@ static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
 }
 
 /**
+ * @brief Listen TCP on each explicitly listed port via socket-per-port backend.
+ */
+static void listenTcpPortListSockets(wloop_t *loop, socket_filter_t *filter, char *host, uint8_t *ports_overlapped,
+                                     const vec_listener_port_t *ports)
+{
+    const isize length = vec_listener_port_t_size(ports);
+    filter->listen_ios = (wio_t **) memoryAllocate(sizeof(wio_t *) * ((size_t) length + 1));
+    memorySet(filter->listen_ios, 0, sizeof(wio_t *) * ((size_t) length + 1));
+    int i = 0;
+
+    for (isize pi = 0; pi < length; ++pi)
+    {
+        uint16_t p = *vec_listener_port_t_at(ports, pi);
+
+        if (ports_overlapped[p] == 1)
+        {
+            LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p);
+            continue;
+        }
+        ports_overlapped[p] = 1;
+
+        filter->listen_ios[i] = createTcpServerWithSocketOptions(loop, filter, host, p, onAcceptTcpSinglePort);
+
+        if (filter->listen_ios[i] == NULL)
+        {
+            LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p);
+            continue;
+        }
+        filter->v6_dualstack = wioGetLocaladdr(filter->listen_ios[i])->sa_family == AF_INET6;
+
+        i++;
+        LOGI("SocketManager: listening on %s:[%u] (%s)", host, p, "TCP");
+    }
+    filter->listen_ios_count = (size_t) i;
+}
+
+/**
  * @brief Listen TCP on single port.
  */
 static void listenTcpSinglePort(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
@@ -1117,7 +1183,11 @@ static void listenTcp(wloop_t *loop, uint8_t *ports_overlapped)
             }
             if (option.protocol == IPPROTO_TCP)
             {
-                if (option.multiport_backend == kMultiportBackendIptables)
+                if (socketFilterOptionHasPortList(&option))
+                {
+                    listenTcpPortListSockets(loop, filter, option.host, ports_overlapped, &option.ports);
+                }
+                else if (option.multiport_backend == kMultiportBackendIptables)
                 {
                     listenTcpMultiPortIptables(loop, filter, option.host, port_min, ports_overlapped, port_max);
                 }
@@ -1187,7 +1257,19 @@ static void postUdpPayload(udp_payload_t post_pl, socket_filter_t *filter)
  */
 static bool processUdpFilterMatch(const socket_filter_option_t option, uint16_t local_port, const ip_addr_t paddr)
 {
-    if (option.protocol != IPPROTO_UDP || option.port_min > local_port || option.port_max < local_port)
+    if (UNLIKELY(option.protocol != IPPROTO_UDP))
+    {
+        return false;
+    }
+
+    if (socketFilterOptionHasPortList(&option))
+    {
+        if (! socketFilterOptionPortListContains(&option, local_port))
+        {
+            return false;
+        }
+    }
+    else if (option.port_min > local_port || option.port_max < local_port)
     {
         return false;
     }
@@ -1532,6 +1614,53 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
 }
 
 /**
+ * @brief Listen UDP on each explicitly listed port via socket-per-port backend.
+ */
+static void listenUdpPortListSockets(wloop_t *loop, socket_filter_t *filter, char *host, uint8_t *ports_overlapped,
+                                     const vec_listener_port_t *ports)
+{
+    const isize length = vec_listener_port_t_size(ports);
+    filter->listen_ios = (wio_t **) memoryAllocate(sizeof(wio_t *) * ((size_t) length + 1));
+    memorySet(filter->listen_ios, 0, sizeof(wio_t *) * ((size_t) length + 1));
+    filter->listen_udp_sockets = (udpsock_t **) memoryAllocate(sizeof(udpsock_t *) * (size_t) length);
+    memorySet(filter->listen_udp_sockets, 0, sizeof(udpsock_t *) * (size_t) length);
+    int i = 0;
+
+    for (isize pi = 0; pi < length; ++pi)
+    {
+        uint16_t p = *vec_listener_port_t_at(ports, pi);
+
+        if (ports_overlapped[p] == 1)
+        {
+            LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p);
+            continue;
+        }
+        ports_overlapped[p] = 1;
+
+        wio_t *udp_io = createUdpServerWithSocketOptions(loop, filter, host, p);
+        if (udp_io == NULL)
+        {
+            LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p);
+            continue;
+        }
+
+        filter->listen_ios[i] = udp_io;
+        filter->v6_dualstack  = wioGetLocaladdr(udp_io)->sa_family == AF_INET6;
+
+        udpsock_t *socket             = createUdpSocketSideData(udp_io);
+        filter->listen_udp_sockets[i] = socket;
+        weventSetUserData(udp_io, socket);
+        wioSetCallBackRead(udp_io, onUdpPacketReceived);
+        wioRead(udp_io);
+
+        i++;
+        LOGI("SocketManager: listening on %s:[%u] (%s)", host, p, "UDP");
+    }
+    filter->listen_ios_count         = (size_t) i;
+    filter->listen_udp_sockets_count = (size_t) i;
+}
+
+/**
  * @brief Build UDP listeners for all registered UDP filters.
  */
 static void listenUdp(wloop_t *loop, uint8_t *ports_overlapped)
@@ -1560,7 +1689,11 @@ static void listenUdp(wloop_t *loop, uint8_t *ports_overlapped)
             }
             if (option.protocol == IPPROTO_UDP)
             {
-                if (option.multiport_backend == kMultiportBackendIptables)
+                if (socketFilterOptionHasPortList(&option))
+                {
+                    listenUdpPortListSockets(loop, filter, option.host, ports_overlapped, &option.ports);
+                }
+                else if (option.multiport_backend == kMultiportBackendIptables)
                 {
                     listenUdpMultiPortIptables(loop, filter, option.host, port_min, ports_overlapped, port_max);
                 }

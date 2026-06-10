@@ -11,6 +11,9 @@
 #define i_type vec_ipmask_t, ipmask_t
 #include "stc/vec.h"
 
+#define i_type vec_listener_port_t, uint16_t
+#include "stc/vec.h"
+
 typedef enum
 {
     kMultiportBackendNone, // Changed from 'Nothing' for consistency
@@ -36,6 +39,7 @@ typedef struct socket_filter_option_s
     multiport_backend_t multiport_backend;
     uint16_t            port_min;
     uint16_t            port_max;
+    vec_listener_port_t ports;
     bool                fast_open;
     bool                no_delay;
     int                 fwmark;
