@@ -14,6 +14,7 @@ enum ssl_endpoint
 };
 
 void opensslGlobalInit(void);
+void opensslGlobalCleanup(void);
 
 typedef struct
 {

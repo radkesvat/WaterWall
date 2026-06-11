@@ -368,6 +368,9 @@ WW_EXPORT void destroyGlobalState(void)
 
     socketmanagerDestroy();
     nodemanagerDestroy();
+#if defined(WCRYPTO_USING_OPENSSL)
+    opensslGlobalCleanup();
+#endif
     signalmanagerDestroy();
 
     coreloggerDestroy();

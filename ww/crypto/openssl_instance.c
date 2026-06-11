@@ -49,16 +49,44 @@ void opensslGlobalInit(void)
             terminateProgram(1);
         }
 
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+        uint64_t init_flags = OPENSSL_INIT_SSL_DEFAULT | OPENSSL_INIT_ADD_ALL_CIPHERS | OPENSSL_INIT_ADD_ALL_DIGESTS |
+                              OPENSSL_INIT_NO_ATEXIT;
+        if (OPENSSL_init_ssl(init_flags, NULL) != 1)
+        {
+            LOGF("OpenSSL Global: OpenSSL initialization failed");
+            terminateProgram(1);
+        }
+#else
         SSL_library_init();
         OpenSSL_add_all_algorithms();
         SSL_load_error_strings();
         ERR_load_crypto_strings();
-
 #if OPENSSL_VERSION_MAJOR < 3
         ERR_load_BIO_strings(); // deprecated since OpenSSL 3.0
 #endif
+#endif
         GSTATE.flag_openssl_initialized = 1;
     }
+}
+
+void opensslGlobalCleanup(void)
+{
+    if (GSTATE.flag_openssl_initialized == 0)
+    {
+        return;
+    }
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+    OPENSSL_cleanup();
+#else
+    ERR_free_strings();
+    EVP_cleanup();
+    CRYPTO_cleanup_all_ex_data();
+#endif
+
+    GSTATE.flag_openssl_initialized = 0;
+    GSTATE.openssl_dedicated_memory = NULL;
 }
 
 
