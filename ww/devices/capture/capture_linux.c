@@ -38,10 +38,29 @@ enum
 
 static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "capture read batch count must fit in msg_event.count");
 
-static const char *sysctl_set_rmem_max     = "net.core.rmem_max=134217728";
-static const char *sysctl_set_rmem_default = "net.core.rmem_default=33554432";
-static const char *sysctl_set_wmem_max     = "net.core.wmem_max=33554432";
-static const char *sysctl_set_wmem_default = "net.core.wmem_default=16777216";
+typedef struct capturedevice_sysctl_setting_s
+{
+    const char *argv_setting;
+    const char *shell_setting;
+} capturedevice_sysctl_setting_t;
+
+static const capturedevice_sysctl_setting_t sysctl_settings[] = {
+    {"net.core.rmem_max=134217728", "net.core.rmem_max=134217728"},
+    {"net.core.wmem_max=134217728", "net.core.wmem_max=134217728"},
+    {"net.ipv4.tcp_rmem=4096 87380 134217728", "net.ipv4.tcp_rmem='4096 87380 134217728'"},
+    {"net.ipv4.tcp_wmem=4096 65536 134217728", "net.ipv4.tcp_wmem='4096 65536 134217728'"},
+    {"net.core.netdev_max_backlog=250000", "net.core.netdev_max_backlog=250000"},
+    {"net.core.somaxconn=65535", "net.core.somaxconn=65535"},
+    {"net.ipv4.tcp_window_scaling=1", "net.ipv4.tcp_window_scaling=1"},
+    {"net.ipv4.tcp_timestamps=0", "net.ipv4.tcp_timestamps=0"},
+    {"net.ipv4.tcp_sack=1", "net.ipv4.tcp_sack=1"},
+    {"net.ipv4.tcp_no_metrics_save=1", "net.ipv4.tcp_no_metrics_save=1"},
+    {"net.ipv4.tcp_mtu_probing=1", "net.ipv4.tcp_mtu_probing=1"},
+    {"net.ipv4.tcp_tw_reuse=1", "net.ipv4.tcp_tw_reuse=1"},
+    {"net.ipv4.tcp_fin_timeout=15", "net.ipv4.tcp_fin_timeout=15"},
+    {"net.ipv4.ip_local_port_range=10000 65535", "net.ipv4.ip_local_port_range='10000 65535'"},
+    {"net.netfilter.nf_conntrack_max=1048576", "net.netfilter.nf_conntrack_max=1048576"},
+};
 
 static uint8_t capturedeviceIpv4MaskPrefixLength(const ip_addr_t *mask)
 {
@@ -158,10 +177,25 @@ static int capturedeviceRunCommand(const char *command_name, const char *const a
 #endif
 }
 
-static void capturedeviceSetSysctl(const char *setting)
+static void capturedeviceSetSysctl(const capturedevice_sysctl_setting_t *setting)
 {
-    const char *const argv[] = {"sysctl", "-w", setting, NULL};
+#if useExecCmd
+    char command[256];
+    stringNPrintf(command, sizeof(command), "sysctl -w %s", setting->shell_setting);
+    LOGD("CaptureDevice: Running command: %s", command);
+    discard execCmd(command).exit_code;
+#else
+    const char *const argv[] = {"sysctl", "-w", setting->argv_setting, NULL};
     discard           capturedeviceRunCommand("sysctl", argv);
+#endif
+}
+
+static void capturedeviceApplySysctls(void)
+{
+    for (size_t i = 0; i < sizeof(sysctl_settings) / sizeof(sysctl_settings[0]); ++i)
+    {
+        capturedeviceSetSysctl(&sysctl_settings[i]);
+    }
 }
 
 static void capturedeviceLogSocketBufferSize(int socket_fd, int option, const char *name)
@@ -735,11 +769,8 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         return NULL;
     }
 
-    /* Fixing the most crazy socket stop reason */
-    capturedeviceSetSysctl(sysctl_set_rmem_max);
-    capturedeviceSetSysctl(sysctl_set_rmem_default);
-    capturedeviceSetSysctl(sysctl_set_wmem_max);
-    capturedeviceSetSysctl(sysctl_set_wmem_default);
+    /* Best-effort kernel tuning; capture startup must continue if a sysctl fails. */
+    capturedeviceApplySysctls();
 
     int socket_netfilter = socket(AF_NETLINK, SOCK_RAW, NETLINK_NETFILTER);
     if (socket_netfilter < 0)
