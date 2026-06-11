@@ -116,6 +116,7 @@ static int capturedeviceRunCommand(const char *command_name, const char *const a
     discard command_name;
     return execCmd(command).exit_code;
 #else
+    long  open_max = execCmdOpenMax();
     pid_t childpid = fork();
     if (childpid < 0)
     {
@@ -125,6 +126,7 @@ static int capturedeviceRunCommand(const char *command_name, const char *const a
 
     if (childpid == 0)
     {
+        execCmdCloseInheritedFds(open_max);
         execvp(command_name, (char *const *) argv);
         perror(command_name);
         _exit(127);
@@ -699,6 +701,8 @@ bool caputredeviceBringDown(capture_device_t *cdev)
 {
     assert(cdev->up);
 
+    bool result = true;
+
     cdev->running = false;
     cdev->up      = false;
 
@@ -709,7 +713,7 @@ bool caputredeviceBringDown(capture_device_t *cdev)
         if (! capturedeviceRunIptablesQueueRule("-D", cdev->capture_cidrs[i], cdev->queue_number))
         {
             LOGE("CaptureDevice: failed to remove iptables NFQUEUE rule for %s", cdev->capture_cidrs[i]);
-            terminateProgram(1);
+            result = false;
         }
     }
 
@@ -719,7 +723,7 @@ bool caputredeviceBringDown(capture_device_t *cdev)
 
     LOGI("CaptureDevice: device %s is now down", cdev->name);
 
-    return true;
+    return result;
 }
 
 capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,

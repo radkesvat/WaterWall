@@ -3,6 +3,7 @@
 #include "loggers/internal_logger.h"
 #include "tun.h"
 #include "wchan.h"
+#include "wproc.h"
 
 #include <arpa/inet.h>
 #include <ctype.h>
@@ -189,6 +190,7 @@ static bool routeTableArgIsSafe(const char *route_table)
 
 static int tunRunCommand(const char *command_name, const char *const argv[])
 {
+    long  open_max = execCmdOpenMax();
     pid_t childpid = fork();
     if (childpid < 0)
     {
@@ -198,6 +200,7 @@ static int tunRunCommand(const char *command_name, const char *const argv[])
 
     if (childpid == 0)
     {
+        execCmdCloseInheritedFds(open_max);
         execvp(command_name, (char *const *) argv);
         perror(command_name);
         _exit(127);

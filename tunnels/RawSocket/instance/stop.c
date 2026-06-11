@@ -6,7 +6,10 @@ static void rawsocketStopDevices(rawsocket_tstate_t *state)
 {
     if (state->capture_device && state->capture_device->up)
     {
-        caputredeviceBringDown(state->capture_device);
+        if (! caputredeviceBringDown(state->capture_device))
+        {
+            LOGW("RawSocket: capture device bring down completed with cleanup errors");
+        }
     }
     if (state->raw_device && state->raw_device->up)
     {
