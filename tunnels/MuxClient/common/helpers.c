@@ -321,22 +321,55 @@ line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l)
     return ts->unsatisfied_lines[wid];
 }
 
-void muxclientMakeMuxFrame(sbuf_t *buf, cid_t cid, uint8_t flag)
+static void muxclientSetMuxFrameHeader(mux_frame_t *frame, mux_length_t length, cid_t cid, uint8_t flag)
 {
-    if (sbufGetLength(buf) > 0xFFFF - kMuxFrameLength)
+    *frame = (mux_frame_t) {.length = htobe16(length), .flags = flag, ._pad1 = 0, .cid = htobe32(cid)};
+}
+
+static void muxclientCheckPayloadFrameLength(uint32_t payload_length)
+{
+    if (payload_length > 0xFFFF - kMuxFrameLength)
     {
-        LOGF("MuxClient: Buffer length exceeds maximum allowed size for MUX frame: %zu", sbufGetLength(buf));
+        LOGF("MuxClient: Buffer length exceeds maximum allowed size for MUX frame: %u", payload_length);
         terminateProgram(1);
     }
+}
 
-    mux_frame_t frame = {.length = sbufGetLength(buf),
-                         .cid    = cid, // will be set later
-                         .flags  = flag,
-                         ._pad1  = 0};
-    frame.length = htobe16(frame.length);
-    frame.cid    = htobe32(frame.cid);
+void muxclientMakeMuxFrame(sbuf_t *buf, cid_t cid, uint8_t flag)
+{
+    muxclientCheckPayloadFrameLength(sbufGetLength(buf));
+
+    mux_frame_t frame;
+    muxclientSetMuxFrameHeader(&frame, (mux_length_t) sbufGetLength(buf), cid, flag);
     sbufShiftLeft(buf, kMuxFrameLength);
     sbufWrite(buf, &frame, kMuxFrameLength);
+}
+
+void muxclientMakeMuxOpenDataFrames(sbuf_t *buf, cid_t cid)
+{
+    uint32_t payload_length = sbufGetLength(buf);
+    muxclientCheckPayloadFrameLength(payload_length);
+
+    mux_frame_t open_frame;
+    mux_frame_t data_frame;
+    muxclientSetMuxFrameHeader(&open_frame, 0, cid, kMuxFlagOpen);
+    muxclientSetMuxFrameHeader(&data_frame, (mux_length_t) payload_length, cid, kMuxFlagData);
+
+    sbufShiftLeft(buf, kMuxFrameLength * 2);
+    sbufWrite(buf, &open_frame, kMuxFrameLength);
+    memoryCopy(sbufGetMutablePtr(buf) + kMuxFrameLength, &data_frame, kMuxFrameLength);
+}
+
+void muxclientMakeMuxOpenCloseFrames(sbuf_t *buf, cid_t cid)
+{
+    mux_frame_t open_frame;
+    mux_frame_t close_frame;
+    muxclientSetMuxFrameHeader(&open_frame, 0, cid, kMuxFlagOpen);
+    muxclientSetMuxFrameHeader(&close_frame, 0, cid, kMuxFlagClose);
+
+    sbufShiftLeft(buf, kMuxFrameLength * 2);
+    sbufWrite(buf, &open_frame, kMuxFrameLength);
+    memoryCopy(sbufGetMutablePtr(buf) + kMuxFrameLength, &close_frame, kMuxFrameLength);
 }
 
 static size_t muxclientChildResumeThreshold(muxclient_tstate_t *ts)

@@ -20,8 +20,7 @@ node_t nodeMuxClientGet(void)
              .node_manager_config   = NULL,
              .instance              = NULL,
              .flags                 = kNodeFlagNone,
-             .required_padding_left = 8, // This is required for the mux_frame_t structure to be aligned correctly, see
-                                    // kMuxFrameLength in structure.h
+             .required_padding_left = kMuxFrameLength * 2, // First child payload may prepend Open and Data frames.
              .layer_group           = kNodeLayerAnything,
              .layer_group_next_node = kNodeLayerAnything,
              .layer_group_prev_node = kNodeLayerAnything,

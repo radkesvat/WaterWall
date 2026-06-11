@@ -30,6 +30,7 @@ void muxclientTunnelUpStreamFinish(tunnel_t *t, line_t *child_l)
     muxclient_lstate_t *parent_ls = child_ls->parent;
     line_t             *parent_l  = parent_ls->l;
     cid_t               cid       = child_ls->connection_id;
+    bool                open_sent = child_ls->open_frame_sent;
     muxclientLeaveConnection(child_ls);
 
     bool parent_alive = muxclientReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
@@ -47,7 +48,14 @@ void muxclientTunnelUpStreamFinish(tunnel_t *t, line_t *child_l)
     }
 
     sbuf_t *finishpacket_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(child_l));
-    muxclientMakeMuxFrame(finishpacket_buf, cid, kMuxFlagClose);
+    if (open_sent)
+    {
+        muxclientMakeMuxFrame(finishpacket_buf, cid, kMuxFlagClose);
+    }
+    else
+    {
+        muxclientMakeMuxOpenCloseFrames(finishpacket_buf, cid);
+    }
     muxclientLinestateDestroy(child_ls);
 
     if (! withLineLockedWithBuf(parent_l, tunnelNextUpStreamPayload, t, finishpacket_buf))

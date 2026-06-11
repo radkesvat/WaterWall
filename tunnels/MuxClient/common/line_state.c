@@ -24,7 +24,8 @@ void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_chi
                                       .parent_write_paused     = false,
                                       .parent_read_paused      = false,
                                       .aggregate_read_paused   = false,
-                                      .parent_finishing        = false};
+                                      .parent_finishing        = false,
+                                      .open_frame_sent         = ! is_child};
 }
 
 void muxclientLinestateDestroy(muxclient_lstate_t *ls)

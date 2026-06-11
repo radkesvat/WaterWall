@@ -50,6 +50,7 @@ typedef struct muxclient_lstate_s
     bool     parent_read_paused : 1;  // child: queued child data paused parent transport reads
     bool     aggregate_read_paused : 1; // parent: aggregate child queues paused parent transport reads
     bool     parent_finishing : 1;      // parent: main FIN is being handled, suppress parent writes
+    bool     open_frame_sent : 1;       // child: peer has received the Open frame for this cid
 } muxclient_lstate_t;
 
 enum
@@ -143,6 +144,8 @@ void muxclientJoinConnection(muxclient_lstate_t *parent, muxclient_lstate_t *chi
 void muxclientLeaveConnection(muxclient_lstate_t *child);
 
 void muxclientMakeMuxFrame(sbuf_t *buf, cid_t cid, uint8_t flag);
+void muxclientMakeMuxOpenDataFrames(sbuf_t *buf, cid_t cid);
+void muxclientMakeMuxOpenCloseFrames(sbuf_t *buf, cid_t cid);
 bool muxclientSendControlFrame(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l, cid_t cid,
                                uint8_t flag);
 bool muxclientSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l,

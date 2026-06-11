@@ -15,7 +15,16 @@ void muxclientTunnelUpStreamPayload(tunnel_t *t, line_t *child_l, sbuf_t *buf)
         return;
     }
 
-    muxclientMakeMuxFrame(buf, child_ls->connection_id, kMuxFlagData);
+    bool send_open = ! child_ls->open_frame_sent;
+    if (UNLIKELY(send_open))
+    {
+        muxclientMakeMuxOpenDataFrames(buf, child_ls->connection_id);
+        child_ls->open_frame_sent = true;
+    }
+    else
+    {
+        muxclientMakeMuxFrame(buf, child_ls->connection_id, kMuxFlagData);
+    }
 
     line_t *parent_line = child_ls->parent->l;
 
