@@ -17,7 +17,16 @@ void httpclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     ls->next_finished = true;
 
-    if (! ts->websocket_enabled && ! ls->prev_finished)
+    if (ls->prev_finished)
+    {
+        // Re-entrant downstream Finish: our own upStreamFinish is currently flushing final
+        // bytes toward next and has already marked prev as finished. That frame owns the
+        // line-state destruction, and nothing may be sent back toward the finished prev.
+        lineUnlock(l);
+        return;
+    }
+
+    if (! ts->websocket_enabled)
     {
         bool truncated = false;
 

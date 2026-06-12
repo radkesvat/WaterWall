@@ -85,7 +85,12 @@ static void httpclientSplitDestroyCreatedLine(tunnel_t *t, line_t *l, bool send_
     }
 }
 
-static void httpclientSplitCloseFromTransport(tunnel_t *t, line_t *transport_line, bool finish_main)
+// finish_sender controls whether the transport line we entered on still needs its own next
+// side finished. When this is called because the transport's next already finished us (a real
+// downstream Finish), pass false. When we close proactively (response complete, error, peer
+// died) the next side is still open and must be finished, so pass true.
+static void httpclientSplitCloseFromTransport(tunnel_t *t, line_t *transport_line, bool finish_main,
+                                              bool finish_sender)
 {
     httpclient_lstate_t *transport_ls = lineGetState(transport_line, t);
     line_t              *main_line    = transport_ls->split_main_line;
@@ -133,8 +138,10 @@ static void httpclientSplitCloseFromTransport(tunnel_t *t, line_t *transport_lin
 
     if (lineIsAlive(transport_line))
     {
-        httpclientLinestateDestroy(transport_ls);
-        lineDestroy(transport_line);
+        // The transport line is one we created, so finish its next side (unless our caller
+        // already received that Finish) and destroy it. We hold an extra lock above, so the
+        // line survives until the unlock below.
+        httpclientSplitDestroyCreatedLine(t, transport_line, finish_sender);
     }
 
     if (download_locked)
@@ -309,11 +316,17 @@ void httpclientSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 void httpclientSplitUpStreamFinish(tunnel_t *t, line_t *l)
 {
     httpclient_lstate_t *ls = lineGetState(l, t);
-    line_t              *upload_line = ls->split_upload_line;
+    line_t              *upload_line   = ls->split_upload_line;
     line_t              *download_line = ls->split_download_line;
 
     lineLock(l);
     ls->prev_finished = true;
+
+    // The main line was created by the upstream adapter (e.g. TcpListener), which destroys it
+    // as soon as this upstream Finish returns. We therefore cannot keep the main line alive to
+    // wait for the response; we must tear the whole trio down now. We must NOT send a Finish
+    // back toward main's prev (it just finished us), and we must NOT lineDestroy main (we did
+    // not create it) - only drop our own line state so the adapter's lineDestroy stays valid.
 
     if (upload_line != NULL && lineIsAlive(upload_line))
     {
@@ -326,11 +339,16 @@ void httpclientSplitUpStreamFinish(tunnel_t *t, line_t *l)
         lineUnlock(upload_line);
     }
 
-    if ((download_line == NULL || ! lineIsAlive(download_line)) && lineIsAlive(l))
+    if (download_line != NULL && lineIsAlive(download_line))
     {
-        LOGW("HttpClient: split HTTP/1.1 download transport closed before response completion");
+        lineLock(download_line);
+        httpclientSplitDestroyCreatedLine(t, download_line, true);
+        lineUnlock(download_line);
+    }
+
+    if (lineIsAlive(l))
+    {
         httpclientLinestateDestroy(ls);
-        tunnelPrevDownStreamFinish(t, l);
     }
     lineUnlock(l);
 }
@@ -355,7 +373,8 @@ void httpclientSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (! lineIsAlive(main_line))
     {
         lineReuseBuffer(l, buf);
-        httpclientSplitCloseFromTransport(t, l, false);
+        // main is gone; tear down proactively and finish this transport's still-open next side.
+        httpclientSplitCloseFromTransport(t, l, false, true);
         return;
     }
 
@@ -374,11 +393,13 @@ void httpclientSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (! ok && lineIsAlive(l))
     {
-        httpclientSplitCloseFromTransport(t, l, true);
+        // Error path: close proactively, finishing both main's prev and this transport's next.
+        httpclientSplitCloseFromTransport(t, l, true, true);
     }
     else if (done)
     {
-        httpclientSplitCloseFromTransport(t, l, true);
+        // Response fully relayed: close proactively, finishing main's prev and this next.
+        httpclientSplitCloseFromTransport(t, l, true, true);
     }
 
     lineUnlock(main_line);
@@ -406,5 +427,6 @@ void httpclientSplitDownStreamFinish(tunnel_t *t, line_t *l)
         }
     }
 
-    httpclientSplitCloseFromTransport(t, l, true);
+    // Entered because this transport's next finished us, so do not re-finish that next side.
+    httpclientSplitCloseFromTransport(t, l, true, false);
 }

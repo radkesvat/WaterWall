@@ -4,10 +4,13 @@
 
 static void failAndCloseD(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
-    if (lineIsAlive(l))
+    if (! lineIsAlive(l))
     {
-        httpserverTransportClosePrevDirection(t, l, ls);
+        httpserverLinestateDestroy(ls);
+        return;
     }
+
+    httpserverTransportClosePrevDirection(t, l, ls);
 }
 
 void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
@@ -28,6 +31,16 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     if (! httpserverTransportFlushPendingDown(t, l, ls))
     {
         failAndCloseD(t, l, ls);
+        lineUnlock(l);
+        return;
+    }
+
+    if (ls->prev_finished)
+    {
+        // prev finished us re-entrantly (e.g. its write queue overflowed) while we were
+        // flushing queued response data. It owns nothing here, but it has finished the
+        // direction back toward us: we must not send any more bytes or a Finish toward it.
+        httpserverLinestateDestroy(ls);
         lineUnlock(l);
         return;
     }
@@ -100,8 +113,16 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         }
     }
 
+    // A final-byte send above can re-enter through an upstream Finish from prev (a middle
+    // tunnel that keeps the line alive). In that case prev is already finished and must not
+    // receive a reflected Finish; we still own the single state destruction here.
+    bool prev_already_finished = ls->prev_finished;
+
     ls->prev_finished = true;
     httpserverLinestateDestroy(ls);
-    tunnelPrevDownStreamFinish(t, l);
+    if (! prev_already_finished)
+    {
+        tunnelPrevDownStreamFinish(t, l);
+    }
     lineUnlock(l);
 }

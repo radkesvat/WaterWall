@@ -1711,6 +1711,10 @@ static int httpserverOnFrameRecvCallback(nghttp2_session *session, const nghttp2
             ls->h2_request_finished = true;
             if (! ts->websocket_enabled && ! ts->full_duplex)
             {
+                // This queued Finish is delivered to next by drainUpEvents; mark the
+                // direction finished now so later pause/resume and close paths do not send a
+                // second, reflected Finish toward the already-finished next.
+                ls->next_finished = true;
                 contextqueuePush(&ls->events_up, contextCreateFin(ls->line));
             }
         }
@@ -1738,6 +1742,9 @@ static int httpserverOnStreamClosedCallback(nghttp2_session *session, int32_t st
         httpserver_tstate_t *ts = tunnelGetState(ls->tunnel);
         if (! ts->websocket_enabled && ! ts->full_duplex)
         {
+            // Same as the END_STREAM path: mark next finished before queueing the Finish so
+            // later pause/resume and close paths cannot reflect a second Finish toward next.
+            ls->next_finished = true;
             contextqueuePush(&ls->events_up, contextCreateFin(ls->line));
         }
     }

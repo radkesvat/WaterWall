@@ -11,12 +11,14 @@ void httpclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->split_role == kHttpClientSplitRoleDownload && ls->split_main_line != NULL)
+    // Mirror of DownStreamPause: the upload transport's next can accept data again, so resume
+    // the request-body source on main's prev.
+    if (ls->split_role == kHttpClientSplitRoleUpload && ls->split_main_line != NULL)
     {
         tunnelPrevDownStreamResume(t, ls->split_main_line);
         return;
     }
-    if (ls->split_role == kHttpClientSplitRoleUpload)
+    if (ls->split_role == kHttpClientSplitRoleDownload)
     {
         return;
     }

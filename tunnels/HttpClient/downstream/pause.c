@@ -11,12 +11,14 @@ void httpclientTunnelDownStreamPause(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->split_role == kHttpClientSplitRoleDownload && ls->split_main_line != NULL)
+    // A pause arriving on the upload transport means its next (the server's upload connection)
+    // cannot accept the request body fast enough, so we must slow the body source: main's prev.
+    if (ls->split_role == kHttpClientSplitRoleUpload && ls->split_main_line != NULL)
     {
         tunnelPrevDownStreamPause(t, ls->split_main_line);
         return;
     }
-    if (ls->split_role == kHttpClientSplitRoleUpload)
+    if (ls->split_role == kHttpClientSplitRoleDownload)
     {
         return;
     }
