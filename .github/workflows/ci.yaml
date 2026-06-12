@@ -102,6 +102,9 @@ jobs:
             
     name: ${{ matrix.names }}
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: cpa.sh {0}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/cache@v5
@@ -116,23 +119,22 @@ jobs:
             ${{ env.cpm-key }}-
           enableCrossOsArchive: false
          
-      - uses: cross-platform-actions/action@master
+      - name: Start BSD VM
+        uses: cross-platform-actions/action@master
         with:
           operating_system: ${{ matrix.preset }}
           architecture: ${{ matrix.arch }}
           version: ${{ matrix.version }}
-          run: |
-            ${{ matrix.install }}
-            cmake -B build -G Ninja                \
-              -DCPM_SOURCE_CACHE=${{ env.cpm-path }} \
-              -DOPENSSL_CONFIGURE_VERBOSE=ON
 
-      - uses: cross-platform-actions/action@master
-        with:
-          operating_system: ${{ matrix.preset }}
-          architecture: ${{ matrix.arch }}
-          version: ${{ matrix.version }}
-          run: cmake --build build  
+      - name: Configure CMake
+        run: |
+          ${{ matrix.install }}
+          cmake -B build -G Ninja                    \
+            -DCPM_SOURCE_CACHE=${{ env.cpm-path }}   \
+            -DOPENSSL_CONFIGURE_VERBOSE=ON
+
+      - name: Build
+        run: cmake --build build
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -146,9 +148,11 @@ jobs:
       matrix:
         include:
           - preset: ios
+            artifact: ios-arm64
           - preset: ios_sim
+            artifact: ios-sim-arm64
     name: ${{ matrix.preset }}
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
       - uses: actions/cache@v5
@@ -164,8 +168,9 @@ jobs:
           enableCrossOsArchive: false
       - name: Install dependencies on macOS
         run: |
-          brew update
-          brew install ccache
+          if ! command -v ccache >/dev/null 2>&1; then
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
+          fi
 
       - name: Reset ccache statistics
         run: ccache --zero-stats
@@ -177,12 +182,41 @@ jobs:
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
+Update GitHub Actions runtimes
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="${{ github.workspace }}/artifacts/${{ matrix.preset }}"
+          build_dir="${{ github.workspace }}/build/${{ matrix.preset }}"
+          rm -rf "$artifact_dir"
+          mkdir -p "$artifact_dir"
+
+          shopt -s nullglob
+          product_dirs=( "$build_dir"/Release-* )
+          if [ "${#product_dirs[@]}" -eq 0 ]; then
+            echo "No Xcode Release-* output directory found under $build_dir"
+            if [ -d "$build_dir" ]; then
+              find "$build_dir" -maxdepth 3 -print
+            fi
+            exit 1
+          fi
+
+          for product_dir in "${product_dirs[@]}"; do
+            cp -R "$product_dir"/. "$artifact_dir"/
+          done
+
+          if [ -z "$(find "$artifact_dir" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+            echo "No files copied into $artifact_dir"
+            exit 1
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: Waterwall_${{ matrix.preset }}
-          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
+          name: Waterwall-${{ matrix.artifact }}
+          path: ${{ github.workspace }}/artifacts/${{ matrix.preset }}/
+          if-no-files-found: error
       - name: Show ccache statistics
         run: ccache -sv
 
@@ -250,7 +284,15 @@ jobs:
 
   
   macos:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: macos
+            arch: arm64
+            runner: macos-15
+    name: macos-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/cache@v5
@@ -258,33 +300,36 @@ jobs:
           path: |
             ${{ env.cpm-path }}
             ${{ github.workspace }}/.ccache
-          key: ${{ env.cpm-key }}-macos-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake') }}
+          key: ${{ env.cpm-key }}-macos-${{ matrix.arch }}-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake') }}
           restore-keys: |
+            ${{ env.cpm-key }}-macos-${{ matrix.arch }}-
             ${{ env.cpm-key }}-macos-
             ${{ env.cpm-key }}-
           enableCrossOsArchive: false
       - name: Install dependencies on macOS
         if: runner.os == 'macOS'
         run: |
-          brew update
-          brew install ccache
+          if ! command -v ccache >/dev/null 2>&1; then
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
+          fi
 
       - name: Reset ccache statistics
         run: ccache --zero-stats
 
       - name: Configure CMake
         run: >
-          cmake --preset macos
+          cmake --preset ${{ matrix.preset }}
           -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
 
       - name: Build
-        run: cmake --build --preset macos
+        run: cmake --build --preset ${{ matrix.preset }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: Waterwall_${{ runner.os }}
-          path: ${{ github.workspace }}/build/macos/Release/
+          name: Waterwall-macos-${{ matrix.arch }}
+          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
+          if-no-files-found: error
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -307,7 +352,7 @@ jobs:
             preset: windows-mingw
             msys: UCRT64
     name: ${{ matrix.name }}
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
     defaults:
       run:
         shell: msys2 {0}
@@ -373,7 +418,7 @@ jobs:
           - preset: windows-x86
           - preset: windows-x86-64
     name: ${{ matrix.preset }}
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
     steps:
       - uses: actions/checkout@v5
       - uses: actions/cache@v5
