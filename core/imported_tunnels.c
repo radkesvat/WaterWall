@@ -48,7 +48,7 @@
 #include "PacketsToConnection/interface.h"
 #endif
 
-#ifdef INCLUDE__PACKETS_TO_STREAM
+#ifdef INCLUDE_PACKETS_TO_STREAM
 #include "PacketsToStream/interface.h"
 #endif
 
@@ -347,7 +347,7 @@ void loadImportedTunnelsIntoCore(void)
     USING(PacketsToConnection);
 #endif
 
-#ifdef INCLUDE__PACKETS_TO_STREAM
+#ifdef INCLUDE_PACKETS_TO_STREAM
     USING(PacketsToStream);
 #endif
 
