@@ -213,6 +213,15 @@ bool tlsserverEncryptAndSendApplicationData(tunnel_t *t, line_t *l, tlsserver_ls
             return false;
         }
 
+        if (n < 0)
+        {
+            // WANT_READ/WANT_WRITE can never be satisfied inside this
+            // synchronous mem-BIO loop; spinning here would hang the worker
+            LOGW("TlsServer: SSL_write made no progress while encrypting cleartext payload");
+            reuseBuffer(buf);
+            return false;
+        }
+
         if (n == 0)
         {
             if (ls->verbose)

@@ -12,7 +12,7 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     if (! tlsclientCreateEchGreaseInnerClientHello(ts, lineGetWID(l), &ech_payload))
     {
-        goto failed;
+        goto failed_before_next_init;
     }
 
     if (! tlsclientConfigureSslForConnect(
@@ -23,7 +23,7 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
             ech_payload != NULL ? (const uint8_t *) sbufGetRawPtr(ech_payload) : NULL,
             ech_payload != NULL ? sbufGetLength(ech_payload) : 0))
     {
-        goto failed;
+        goto failed_before_next_init;
     }
 
     if (ech_payload != NULL)
@@ -82,6 +82,15 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     terminateProgram(1);
 
 failed:
+    LOGW("TlsClient: upstream init failed: boringssl state is printed below");
+    tlsclientPrintSSLState(ls->ssl);
+
+    tlsclientLinestateDestroy(ls);
+    tunnelNextUpStreamFinish(t, l);
+    tunnelPrevDownStreamFinish(t, l);
+    return;
+
+failed_before_next_init:
     if (ech_payload != NULL)
     {
         lineReuseBuffer(l, ech_payload);
@@ -91,6 +100,7 @@ failed:
     tlsclientPrintSSLState(ls->ssl);
 
     tlsclientLinestateDestroy(ls);
-    tunnelNextUpStreamFinish(t, l);
+    // the next tunnel never received Init for this line, so only the
+    // downstream side may be closed here
     tunnelPrevDownStreamFinish(t, l);
 }

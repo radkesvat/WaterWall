@@ -16,7 +16,7 @@ void tlsclientPrintSSLError(void)
     size_t len = BIO_get_mem_data(bio, &buf);
     if (len > 0)
     {
-        LOGE("TlsClient: BoringSSL Error: %.*s", len, buf);
+        LOGE("TlsClient: BoringSSL Error: %.*s", (int) len, buf);
     }
     BIO_free(bio);
 }

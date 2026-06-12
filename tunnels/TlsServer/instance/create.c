@@ -393,6 +393,12 @@ static SSL_CTX *createServerSslContext(tlsserver_tstate_t *ts)
         SSL_CTX_set_options(ctx, SSL_OP_CIPHER_SERVER_PREFERENCE);
     }
 
+#ifdef SSL_OP_NO_RENEGOTIATION
+    // a mid-stream renegotiation would make SSL_write return WANT_READ, which
+    // the synchronous mem-BIO encrypt loop cannot satisfy
+    SSL_CTX_set_options(ctx, SSL_OP_NO_RENEGOTIATION);
+#endif
+
     switch (ts->session_cache_mode)
     {
     case kTlsServerSessionCacheOff:
