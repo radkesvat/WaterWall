@@ -4,7 +4,6 @@
 
 #include "objects/users.h"
 
-#include "objects/user_internal.h"
 #include "loggers/internal_logger.h"
 
 enum
@@ -12,8 +11,8 @@ enum
     kUsersBlockSize            = 64,
     kUsersInitialTableCapacity = 16,
     kKnownUserUpdateMask       = kUserUpdatePassword | kUserUpdateName | kUserUpdateEmail | kUserUpdateNotes |
-                                  kUserUpdateGid | kUserUpdateEnabled | kUserUpdateLimit | kUserUpdateTimeInfo |
-                                  kUserUpdateStats | kUserUpdateRecordStatInterval
+                                 kUserUpdateGid | kUserUpdateEnabled | kUserUpdateLimit | kUserUpdateTimeInfo |
+                                 kUserUpdateStats | kUserUpdateRecordStatInterval
 };
 
 typedef struct users_sha256_key_s
@@ -40,17 +39,17 @@ static bool usersSHA256KeyEq(const users_sha256_key_t *a, const users_sha256_key
 
 #define i_type users_hash_map_t // NOLINT
 #define i_key  hash_t           // NOLINT
-#define i_val  user_t *         // NOLINT
+#define i_val  user_t  *        // NOLINT
 #include "stc/hmap.h"
 #undef i_val
 #undef i_key
 #undef i_type
 
-#define i_type users_sha256_map_t  // NOLINT
-#define i_key  users_sha256_key_t  // NOLINT
-#define i_val  user_t *            // NOLINT
-#define i_hash usersSHA256KeyHash  // NOLINT
-#define i_eq   usersSHA256KeyEq    // NOLINT
+#define i_type users_sha256_map_t // NOLINT
+#define i_key  users_sha256_key_t // NOLINT
+#define i_val  user_t  *          // NOLINT
+#define i_hash usersSHA256KeyHash // NOLINT
+#define i_eq   usersSHA256KeyEq   // NOLINT
 #include "stc/hmap.h"
 #undef i_eq
 #undef i_hash
@@ -332,13 +331,12 @@ static user_t *usersSHA256TableLookupLocked(const users_t *users, const uint8_t 
         return NULL;
     }
 
-    users_sha256_key_t       key = usersSHA256KeyFromBytes(key_bytes);
+    users_sha256_key_t      key = usersSHA256KeyFromBytes(key_bytes);
     users_sha256_map_t_iter it  = users_sha256_map_t_find(&table->map, key);
     return it.ref != NULL ? it.ref->second : NULL;
 }
 
-static void usersDisableGenericHashLookupLocked(users_t *users, const user_t *first, const user_t *second,
-                                                hash_t hash)
+static void usersDisableGenericHashLookupLocked(users_t *users, const user_t *first, const user_t *second, hash_t hash)
 {
     if (! users->generic_hash_lookup_available)
     {
@@ -347,7 +345,9 @@ static void usersDisableGenericHashLookupLocked(users_t *users, const user_t *fi
 
     LOGW("Users: generic hash collision for hash=%" PRIu64 " between users \"%s\" and \"%s\"; "
          "generic hash lookup is now disabled",
-         (uint64_t) hash, usersUserNameForLog(first), usersUserNameForLog(second));
+         (uint64_t) hash,
+         usersUserNameForLog(first),
+         usersUserNameForLog(second));
     users->generic_hash_lookup_available = false;
     users->generic_hash_collision_seen   = true;
     usersHashTableClear(users->generic_hash_table);
@@ -407,8 +407,10 @@ static bool usersSHA256TableInsertLocked(users_t *users, user_t *user)
     {
         char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
         usersSha256ToHex(user->sha256_pass.bytes, key_hex);
-        LOGF("Users: fatal SHA-256 lookup collision for key %s between users \"%s\" and \"%s\"", key_hex,
-             usersUserNameForLog(result.ref->second), usersUserNameForLog(user));
+        LOGF("Users: fatal SHA-256 lookup collision for key %s between users \"%s\" and \"%s\"",
+             key_hex,
+             usersUserNameForLog(result.ref->second),
+             usersUserNameForLog(user));
         terminateProgram(1);
     }
 
@@ -626,7 +628,8 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot)
     {
         char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
         usersSha256ToHex(slot->sha256_pass.bytes, key_hex);
-        LOGF("Users: fatal duplicate SHA-256 lookup key %s while loading user \"%s\"", key_hex,
+        LOGF("Users: fatal duplicate SHA-256 lookup key %s while loading user \"%s\"",
+             key_hex,
              usersUserNameForLog(slot));
         terminateProgram(1);
     }
@@ -679,12 +682,21 @@ static users_add_result_t usersValidateNewUserNoFatalLocked(const users_t *users
         {
             return kUsersAddResultHashConflict;
         }
-        if (usersHashBytesConflict(existing->sha224_pass_valid, existing->sha224_pass.bytes, user->sha224_pass_valid,
-                                   user->sha224_pass.bytes, SHA224_DIGEST_SIZE) ||
-            usersHashBytesConflict(existing->sha384_pass_valid, existing->sha384_pass.bytes, user->sha384_pass_valid,
-                                   user->sha384_pass.bytes, SHA384_DIGEST_SIZE) ||
-            usersHashBytesConflict(existing->sha512_pass_valid, existing->sha512_pass.bytes, user->sha512_pass_valid,
-                                   user->sha512_pass.bytes, SHA512_DIGEST_SIZE))
+        if (usersHashBytesConflict(existing->sha224_pass_valid,
+                                   existing->sha224_pass.bytes,
+                                   user->sha224_pass_valid,
+                                   user->sha224_pass.bytes,
+                                   SHA224_DIGEST_SIZE) ||
+            usersHashBytesConflict(existing->sha384_pass_valid,
+                                   existing->sha384_pass.bytes,
+                                   user->sha384_pass_valid,
+                                   user->sha384_pass.bytes,
+                                   SHA384_DIGEST_SIZE) ||
+            usersHashBytesConflict(existing->sha512_pass_valid,
+                                   existing->sha512_pass.bytes,
+                                   user->sha512_pass_valid,
+                                   user->sha512_pass.bytes,
+                                   SHA512_DIGEST_SIZE))
         {
             return kUsersAddResultHashConflict;
         }
@@ -736,10 +748,10 @@ users_add_result_t usersAddUserChecked(users_t *users, const user_t *user)
 
 static bool usersChangePasswordLocked(users_t *users, user_t *user, const char *password)
 {
-    user_t                 *generic_collision_user = NULL;
-    user_t                 *sha_duplicate;
-    users_password_probe_t  password_probe;
-    bool                    disable_generic_after_password_update = false;
+    user_t                *generic_collision_user = NULL;
+    user_t                *sha_duplicate;
+    users_password_probe_t password_probe;
+    bool                   disable_generic_after_password_update = false;
 
     if (! usersIndexOfLocked(users, user, NULL))
     {
@@ -764,7 +776,8 @@ static bool usersChangePasswordLocked(users_t *users, user_t *user, const char *
     {
         char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
         usersSha256ToHex(password_probe.sha256_pass.bytes, key_hex);
-        LOGF("Users: fatal SHA-256 lookup collision for key %s while updating user \"%s\"", key_hex,
+        LOGF("Users: fatal SHA-256 lookup collision for key %s while updating user \"%s\"",
+             key_hex,
              usersUserNameForLog(user));
         usersPasswordProbeDestroy(&password_probe);
         terminateProgram(1);
@@ -851,8 +864,8 @@ static bool usersRemoveUserLocked(users_t *users, user_t *user)
 
     if (index + 1U < users->count)
     {
-        memoryMove(&users->items[index], &users->items[index + 1U],
-                   (users->count - index - 1U) * sizeof(*users->items));
+        memoryMove(
+            &users->items[index], &users->items[index + 1U], (users->count - index - 1U) * sizeof(*users->items));
     }
     users->count -= 1U;
     users->items[users->count] = NULL;
@@ -879,8 +892,8 @@ static void usersClearLocked(users_t *users)
     usersSHA256TableClear(users->sha256_table);
 }
 
-static void usersRollbackFeedLocked(users_t *users, size_t old_count, size_t old_slot_count,
-                                    bool old_generic_available, bool old_generic_collision_seen)
+static void usersRollbackFeedLocked(users_t *users, size_t old_count, size_t old_slot_count, bool old_generic_available,
+                                    bool old_generic_collision_seen)
 {
     for (size_t i = old_count; i < users->count; ++i)
     {
@@ -1072,8 +1085,10 @@ static bool usersValidateUserLookupKeysLocked(const users_t *users)
             {
                 char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
                 usersSha256ToHex(a->sha256_pass.bytes, key_hex);
-                LOGF("Users: fatal SHA-256 lookup collision for key %s between users \"%s\" and \"%s\"", key_hex,
-                     usersUserNameForLog(a), usersUserNameForLog(b));
+                LOGF("Users: fatal SHA-256 lookup collision for key %s between users \"%s\" and \"%s\"",
+                     key_hex,
+                     usersUserNameForLog(a),
+                     usersUserNameForLog(b));
                 terminateProgram(1);
             }
             if (users->generic_hash_lookup_available && a->hash_pass == b->hash_pass)
@@ -1557,9 +1572,7 @@ static void usersFreeUpdateStringCopies(char *name_copy, char *email_copy, char 
     memoryFree(notes_copy);
 }
 
-static users_update_result_t usersCopyUpdateStrings(const user_update_t *update,
-                                                    char **name_copy,
-                                                    char **email_copy,
+static users_update_result_t usersCopyUpdateStrings(const user_update_t *update, char **name_copy, char **email_copy,
                                                     char **notes_copy)
 {
     *name_copy  = NULL;
@@ -1586,9 +1599,7 @@ static users_update_result_t usersCopyUpdateStrings(const user_update_t *update,
     return kUsersUpdateResultOk;
 }
 
-static users_update_result_t usersPrepareUpdate(const user_update_t *update,
-                                                char **name_copy,
-                                                char **email_copy,
+static users_update_result_t usersPrepareUpdate(const user_update_t *update, char **name_copy, char **email_copy,
                                                 char **notes_copy)
 {
     users_update_result_t result = usersValidateUpdateRequest(update);
@@ -1600,12 +1611,9 @@ static users_update_result_t usersPrepareUpdate(const user_update_t *update,
     return usersCopyUpdateStrings(update, name_copy, email_copy, notes_copy);
 }
 
-static users_update_result_t usersApplyUpdateToExistingUserLocked(users_t *users,
-                                                                  user_t *user,
-                                                                  const user_update_t *update,
-                                                                  char **name_copy,
-                                                                  char **email_copy,
-                                                                  char **notes_copy)
+static users_update_result_t usersApplyUpdateToExistingUserLocked(users_t *users, user_t *user,
+                                                                  const user_update_t *update, char **name_copy,
+                                                                  char **email_copy, char **notes_copy)
 {
     user_t *duplicate_name;
 
@@ -1701,8 +1709,7 @@ bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update)
     return result == kUsersUpdateResultOk;
 }
 
-users_update_result_t usersUpdateUserBySHA256(users_t *users,
-                                              const uint8_t sha256[SHA256_DIGEST_SIZE],
+users_update_result_t usersUpdateUserBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
                                               const user_update_t *update)
 {
     char                 *name_copy  = NULL;
@@ -1736,282 +1743,6 @@ users_update_result_t usersUpdateUserBySHA256(users_t *users,
 
     usersFreeUpdateStringCopies(name_copy, email_copy, notes_copy);
     return result;
-}
-
-static uint32_t usersIncrementUserSyncIndexLocked(user_t *user)
-{
-    /*
-     * PullChangesSync holds users->lock for reading while it builds a snapshot.
-     * Sync bumps therefore happen only while callers hold users->lock for
-     * writing, so a pull cannot pair old JSON with a new sync index or miss a
-     * user that became dirty mid-snapshot.
-     */
-    return userInternalSyncIndexIncrement(user);
-}
-
-users_update_result_t usersUpdateUserBySHA256AndIncrementSync(users_t *users,
-                                                              const uint8_t sha256[SHA256_DIGEST_SIZE],
-                                                              const user_update_t *update,
-                                                              uint32_t *new_sync_index)
-{
-    char                 *name_copy  = NULL;
-    char                 *email_copy = NULL;
-    char                 *notes_copy = NULL;
-    users_update_result_t result;
-    user_t               *user;
-
-    if (users == NULL || sha256 == NULL)
-    {
-        return kUsersUpdateResultInvalidArgument;
-    }
-
-    result = usersPrepareUpdate(update, &name_copy, &email_copy, &notes_copy);
-    if (result != kUsersUpdateResultOk)
-    {
-        return result;
-    }
-
-    rwlockWriteLock(&users->lock);
-    user = usersSHA256TableLookupLocked(users, sha256);
-    if (user == NULL)
-    {
-        result = kUsersUpdateResultUserNotFound;
-    }
-    else
-    {
-        result = usersApplyUpdateToExistingUserLocked(users, user, update, &name_copy, &email_copy, &notes_copy);
-        if (result == kUsersUpdateResultOk)
-        {
-            uint32_t next_index = usersIncrementUserSyncIndexLocked(user);
-            if (new_sync_index != NULL)
-            {
-                *new_sync_index = next_index;
-            }
-        }
-    }
-    rwlockWriteUnlock(&users->lock);
-
-    usersFreeUpdateStringCopies(name_copy, email_copy, notes_copy);
-    return result;
-}
-
-users_update_result_t usersIncrementSyncIndexBySHA256(users_t *users,
-                                                      const uint8_t sha256[SHA256_DIGEST_SIZE],
-                                                      uint32_t *new_sync_index)
-{
-    user_t *user;
-
-    if (users == NULL || sha256 == NULL)
-    {
-        return kUsersUpdateResultInvalidArgument;
-    }
-
-    rwlockWriteLock(&users->lock);
-    user = usersSHA256TableLookupLocked(users, sha256);
-    if (user != NULL)
-    {
-        uint32_t next_index = usersIncrementUserSyncIndexLocked(user);
-        if (new_sync_index != NULL)
-        {
-            *new_sync_index = next_index;
-        }
-    }
-    rwlockWriteUnlock(&users->lock);
-
-    return user != NULL ? kUsersUpdateResultOk : kUsersUpdateResultUserNotFound;
-}
-
-static const char *usersJsonPasswordField(const cJSON *json)
-{
-    const cJSON *password = cJSON_GetObjectItemCaseSensitive(json, "password");
-    if (password == NULL)
-    {
-        password = cJSON_GetObjectItemCaseSensitive(json, "pass");
-    }
-    if (! cJSON_IsString(password) || password->valuestring == NULL)
-    {
-        return NULL;
-    }
-    return password->valuestring;
-}
-
-static bool usersParseSyncIndexString(const char *value, uint32_t *out)
-{
-    char *end = NULL;
-
-    if (value == NULL || value[0] == '\0' || value[0] == '-')
-    {
-        return false;
-    }
-
-    errno                     = 0;
-    unsigned long long parsed = strtoull(value, &end, 10);
-    if (errno == ERANGE || parsed > UINT32_MAX)
-    {
-        return false;
-    }
-    while (end != NULL && *end != '\0')
-    {
-        if (! isspace((unsigned char) *end))
-        {
-            return false;
-        }
-        ++end;
-    }
-
-    *out = (uint32_t) parsed;
-    return true;
-}
-
-static bool usersJsonSyncIndexField(const cJSON *json, uint32_t *out)
-{
-    const cJSON *sync_index = cJSON_GetObjectItemCaseSensitive(json, "sync_index");
-    if (sync_index == NULL)
-    {
-        sync_index = cJSON_GetObjectItemCaseSensitive(json, "sync-index");
-    }
-    if (cJSON_IsString(sync_index))
-    {
-        return usersParseSyncIndexString(sync_index->valuestring, out);
-    }
-    if (! cJSON_IsNumber(sync_index))
-    {
-        return false;
-    }
-    if (! (sync_index->valuedouble >= 0.0) || sync_index->valuedouble > (double) UINT32_MAX)
-    {
-        return false;
-    }
-
-    uint32_t parsed = (uint32_t) sync_index->valuedouble;
-    if ((double) parsed != sync_index->valuedouble)
-    {
-        return false;
-    }
-
-    *out = parsed;
-    return true;
-}
-
-static bool usersClientSyncIndexForUser(const cJSON *client_users,
-                                        user_t *user,
-                                        bool *found,
-                                        uint32_t *client_sync_index)
-{
-    const cJSON *entry = NULL;
-
-    *found             = false;
-    *client_sync_index = 0;
-
-    cJSON_ArrayForEach(entry, client_users)
-    {
-        if (! cJSON_IsObject(entry))
-        {
-            return false;
-        }
-
-        const char *password = usersJsonPasswordField(entry);
-        uint32_t sync_index  = 0;
-        if (password == NULL || ! usersJsonSyncIndexField(entry, &sync_index))
-        {
-            return false;
-        }
-
-        if (userPasswordMatches(user, password))
-        {
-            *found             = true;
-            *client_sync_index = sync_index;
-            return true;
-        }
-    }
-
-    return true;
-}
-
-static bool usersValidateClientSyncArray(const cJSON *client_users)
-{
-    const cJSON *entry = NULL;
-
-    cJSON_ArrayForEach(entry, client_users)
-    {
-        uint32_t sync_index = 0;
-        if (! cJSON_IsObject(entry) || usersJsonPasswordField(entry) == NULL ||
-            ! usersJsonSyncIndexField(entry, &sync_index))
-        {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-static cJSON *usersUserToJsonWithSyncIndex(user_t *user, uint32_t sync_index)
-{
-    cJSON *json = userToJson(user);
-    if (json == NULL)
-    {
-        return NULL;
-    }
-    if (! cJSON_AddNumberToObject(json, "sync_index", (double) sync_index))
-    {
-        cJSON_Delete(json);
-        return NULL;
-    }
-    return json;
-}
-
-cJSON *usersPullChangesJson(const users_t *users, const cJSON *client_users)
-{
-    users_t *self = (users_t *) users;
-    cJSON   *array;
-
-    if (users == NULL || ! cJSON_IsArray(client_users) || ! usersValidateClientSyncArray(client_users))
-    {
-        return NULL;
-    }
-
-    array = cJSON_CreateArray();
-    if (array == NULL)
-    {
-        return NULL;
-    }
-
-    rwlockReadLock(&self->lock);
-    for (size_t i = 0; i < self->count; ++i)
-    {
-        user_t  *user              = usersGetAtLocked(self, i);
-        uint32_t server_sync_index = userInternalSyncIndexLoad(user);
-        uint32_t client_sync_index = 0;
-        bool     found             = false;
-
-        if (! usersClientSyncIndexForUser(client_users, user, &found, &client_sync_index))
-        {
-            rwlockReadUnlock(&self->lock);
-            cJSON_Delete(array);
-            return NULL;
-        }
-
-        if (! found || client_sync_index != server_sync_index)
-        {
-            cJSON *user_json = usersUserToJsonWithSyncIndex(user, server_sync_index);
-            if (user_json == NULL)
-            {
-                rwlockReadUnlock(&self->lock);
-                cJSON_Delete(array);
-                return NULL;
-            }
-            if (! cJSON_AddItemToArray(array, user_json))
-            {
-                rwlockReadUnlock(&self->lock);
-                cJSON_Delete(user_json);
-                cJSON_Delete(array);
-                return NULL;
-            }
-        }
-    }
-    rwlockReadUnlock(&self->lock);
-
-    return array;
 }
 
 bool usersSetUserName(users_t *users, user_t *user, const char *name)
@@ -2108,10 +1839,8 @@ bool usersAddTraffic(users_t *users, user_t *user, uint64_t upload_bytes, uint64
     return result;
 }
 
-users_update_result_t usersAddTrafficBySHA256(users_t *users,
-                                              const uint8_t sha256[SHA256_DIGEST_SIZE],
-                                              uint64_t upload_bytes,
-                                              uint64_t download_bytes)
+users_update_result_t usersAddTrafficBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                              uint64_t upload_bytes, uint64_t download_bytes)
 {
     user_t *user;
 

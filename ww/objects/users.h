@@ -96,15 +96,15 @@ typedef enum users_update_result_e
 
 enum
 {
-    kUserUpdatePassword = 1U << 0U,
-    kUserUpdateName     = 1U << 1U,
-    kUserUpdateEmail    = 1U << 2U,
-    kUserUpdateNotes    = 1U << 3U,
-    kUserUpdateGid      = 1U << 4U,
-    kUserUpdateEnabled  = 1U << 5U,
-    kUserUpdateLimit    = 1U << 6U,
-    kUserUpdateTimeInfo = 1U << 7U,
-    kUserUpdateStats    = 1U << 8U,
+    kUserUpdatePassword           = 1U << 0U,
+    kUserUpdateName               = 1U << 1U,
+    kUserUpdateEmail              = 1U << 2U,
+    kUserUpdateNotes              = 1U << 3U,
+    kUserUpdateGid                = 1U << 4U,
+    kUserUpdateEnabled            = 1U << 5U,
+    kUserUpdateLimit              = 1U << 6U,
+    kUserUpdateTimeInfo           = 1U << 7U,
+    kUserUpdateStats              = 1U << 8U,
     kUserUpdateRecordStatInterval = 1U << 9U
 };
 
@@ -132,13 +132,13 @@ typedef struct users_s
 bool usersCreate(users_t *users);
 void usersDestroy(users_t *users);
 
-bool usersAddUser(users_t *users, const user_t *user);
+bool               usersAddUser(users_t *users, const user_t *user);
 users_add_result_t usersAddUserChecked(users_t *users, const user_t *user);
-bool usersAddUserFromJson(users_t *users, const cJSON *json);
+bool               usersAddUserFromJson(users_t *users, const cJSON *json);
 users_add_result_t usersAddUserFromJsonChecked(users_t *users, const cJSON *json);
-bool  usersFeedJson(users_t *users, const cJSON *json);
-cJSON *usersToJson(const users_t *users);
-bool  usersClear(users_t *users);
+bool               usersFeedJson(users_t *users, const cJSON *json);
+cJSON             *usersToJson(const users_t *users);
+bool               usersClear(users_t *users);
 
 bool usersGenericHashLookupAvailable(const users_t *users);
 
@@ -163,40 +163,23 @@ bool usersRemoveUser(users_t *users, user_t *user);
 bool usersRemoveUserBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE]);
 bool usersRemoveUserByHash(users_t *users, hash_t hash);
 
-bool usersChangePassword(users_t *users, user_t *user, const char *password);
-bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update);
-users_update_result_t usersUpdateUserBySHA256(users_t *users,
-                                              const uint8_t sha256[SHA256_DIGEST_SIZE],
+bool                  usersChangePassword(users_t *users, user_t *user, const char *password);
+bool                  usersUpdateUser(users_t *users, user_t *user, const user_update_t *update);
+users_update_result_t usersUpdateUserBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
                                               const user_update_t *update);
-/*
- * For AuthenticationServer-style sync, apply the update and bump the private
- * per-user sync index while the database write lock is held. Keeping these in
- * one critical section prevents PullChangesSync from seeing a half-updated sync
- * state.
- */
-users_update_result_t usersUpdateUserBySHA256AndIncrementSync(users_t *users,
-                                                              const uint8_t sha256[SHA256_DIGEST_SIZE],
-                                                              const user_update_t *update,
-                                                              uint32_t *new_sync_index);
-users_update_result_t usersIncrementSyncIndexBySHA256(users_t *users,
-                                                      const uint8_t sha256[SHA256_DIGEST_SIZE],
-                                                      uint32_t *new_sync_index);
-cJSON *usersPullChangesJson(const users_t *users, const cJSON *client_users);
-bool usersSetUserName(users_t *users, user_t *user, const char *name);
-bool usersSetUserEmail(users_t *users, user_t *user, const char *email);
-bool usersSetUserNotes(users_t *users, user_t *user, const char *notes);
-bool usersSetUserGid(users_t *users, user_t *user, hash_t gid);
-bool usersSetUserEnabled(users_t *users, user_t *user, bool enabled);
-bool usersSetUserLimit(users_t *users, user_t *user, const user_limit_t *limit);
-bool usersSetUserTimeInfo(users_t *users, user_t *user, const user_time_info_t *timeinfo);
-bool usersSetUserStats(users_t *users, user_t *user, const user_stat_t *stats);
-bool usersSetUserRecordStatInterval(users_t *users, user_t *user, int interval_ms);
-bool usersAddTraffic(users_t *users, user_t *user, uint64_t upload_bytes, uint64_t download_bytes);
-users_update_result_t usersAddTrafficBySHA256(users_t *users,
-                                              const uint8_t sha256[SHA256_DIGEST_SIZE],
-                                              uint64_t upload_bytes,
-                                              uint64_t download_bytes);
-bool usersAddUserUsage(users_t *users, user_t *user, uint64_t upload_bytes, uint64_t download_bytes);
+bool                  usersSetUserName(users_t *users, user_t *user, const char *name);
+bool                  usersSetUserEmail(users_t *users, user_t *user, const char *email);
+bool                  usersSetUserNotes(users_t *users, user_t *user, const char *notes);
+bool                  usersSetUserGid(users_t *users, user_t *user, hash_t gid);
+bool                  usersSetUserEnabled(users_t *users, user_t *user, bool enabled);
+bool                  usersSetUserLimit(users_t *users, user_t *user, const user_limit_t *limit);
+bool                  usersSetUserTimeInfo(users_t *users, user_t *user, const user_time_info_t *timeinfo);
+bool                  usersSetUserStats(users_t *users, user_t *user, const user_stat_t *stats);
+bool                  usersSetUserRecordStatInterval(users_t *users, user_t *user, int interval_ms);
+bool                  usersAddTraffic(users_t *users, user_t *user, uint64_t upload_bytes, uint64_t download_bytes);
+users_update_result_t usersAddTrafficBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                              uint64_t upload_bytes, uint64_t download_bytes);
+bool                  usersAddUserUsage(users_t *users, user_t *user, uint64_t upload_bytes, uint64_t download_bytes);
 bool usersAddSpeed(users_t *users, user_t *user, uint64_t upload_bytes_per_sec, uint64_t download_bytes_per_sec);
 bool usersAddConnection(users_t *users, user_t *user, bool inbound);
 bool usersRemoveConnection(users_t *users, user_t *user, bool inbound);

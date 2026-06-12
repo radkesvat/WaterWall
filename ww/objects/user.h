@@ -25,12 +25,11 @@
 
 #include "wlibc.h"
 
-#include "wcrypto.h" 
 #include "cJSON.h"
+#include "wcrypto.h"
 
-
-#define USER_NO_LIMIT 0ULL
-#define USER_NO_EXPIRY 0ULL
+#define USER_NO_LIMIT                        0ULL
+#define USER_NO_EXPIRY                       0ULL
 #define USER_DEFAULT_RECORD_STAT_INTERVAL_MS 120000
 
 typedef struct user_ud_s
@@ -78,20 +77,12 @@ typedef struct user_stat_s
 
 typedef struct user_s User;
 typedef User          user_t;
-typedef struct user_private_s user_private_t;
 
 struct user_s
 {
     wrwlock_t lock;
     wrwlock_t stats_lock;
     bool      initialized;
-
-    /*
-     * Private implementation state. The struct stays visible for historical
-     * Waterwall APIs, but sync metadata must not be readable or writable by
-     * callers and is not loaded from JSON.
-     */
-    user_private_t *private_state;
 
     char *name;
     char *password;

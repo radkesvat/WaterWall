@@ -4,8 +4,6 @@
 
 #include "objects/user.h"
 
-#include "objects/user_internal.h"
-
 static const uint64_t kUserJsonSafeIntegerMax = 9007199254740991ULL;
 
 static bool userStringIsEmpty(const char *value)
@@ -15,7 +13,7 @@ static bool userStringIsEmpty(const char *value)
 
 static bool userObjectIsInitialized(const User *user)
 {
-    return user != NULL && user->initialized && user->private_state != NULL;
+    return user != NULL && user->initialized;
 }
 
 static bool userStringDuplicate(char **dest, const char *value)
@@ -67,61 +65,6 @@ static void userDestroyStrings(User *user)
     user->notes    = NULL;
 }
 
-bool userInternalStateCreate(User *user, uint32_t sync_index)
-{
-    if (user == NULL)
-    {
-        return false;
-    }
-    if (user->private_state != NULL)
-    {
-        atomicStoreRelaxed(&user->private_state->sync_index, sync_index);
-        return true;
-    }
-
-    user_private_t *state = memoryAllocate(sizeof(*state));
-    if (state == NULL)
-    {
-        return false;
-    }
-
-    memoryZero(state, sizeof(*state));
-    atomicStoreRelaxed(&state->sync_index, sync_index);
-    user->private_state = state;
-    return true;
-}
-
-void userInternalStateDestroy(User *user)
-{
-    if (user == NULL || user->private_state == NULL)
-    {
-        return;
-    }
-
-    memoryFree(user->private_state);
-    user->private_state = NULL;
-}
-
-uint32_t userInternalSyncIndexLoad(const User *user)
-{
-    if (user == NULL || user->private_state == NULL)
-    {
-        return 0;
-    }
-
-    return (uint32_t) atomicLoadRelaxed(&user->private_state->sync_index);
-}
-
-uint32_t userInternalSyncIndexIncrement(User *user)
-{
-    if (user == NULL || user->private_state == NULL)
-    {
-        return 0;
-    }
-
-    return (uint32_t) atomicAdd(&user->private_state->sync_index, 1U) + 1U;
-}
-
 typedef struct user_snapshot_s
 {
     char *name;
@@ -137,7 +80,6 @@ typedef struct user_snapshot_s
     int              record_stat_interval_ms;
 
     user_stat_t stats;
-    uint32_t    sync_index;
 
     hash_t        hash_pass;
     sha224_hash_t sha224_pass;
@@ -183,7 +125,8 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
     rwlockReadLock(&mutable_src->lock);
     rwlockReadLock(&mutable_src->stats_lock);
 
-    if (! userStringDuplicate(&snapshot->name, src->name) || ! userStringDuplicate(&snapshot->password, src->password) ||
+    if (! userStringDuplicate(&snapshot->name, src->name) ||
+        ! userStringDuplicate(&snapshot->password, src->password) ||
         ! userStringDuplicate(&snapshot->email, src->email) || ! userStringDuplicate(&snapshot->notes, src->notes))
     {
         rwlockReadUnlock(&mutable_src->stats_lock);
@@ -198,7 +141,6 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
     snapshot->timeinfo                = src->timeinfo;
     snapshot->record_stat_interval_ms = src->record_stat_interval_ms;
     snapshot->stats                   = src->stats;
-    snapshot->sync_index              = userInternalSyncIndexLoad(src);
     snapshot->hash_pass               = src->hash_pass;
     snapshot->sha224_pass             = src->sha224_pass;
     snapshot->sha256_pass             = src->sha256_pass;
@@ -344,9 +286,9 @@ static bool userParseUint64String(const char *value, uint64_t *out)
         return false;
     }
 
-    errno                      = 0;
-    unsigned long long parsed  = strtoull(value, &end, 10);
-    const unsigned long long m = UINT64_MAX;
+    errno                           = 0;
+    unsigned long long       parsed = strtoull(value, &end, 10);
+    const unsigned long long m      = UINT64_MAX;
 
     if (errno == ERANGE || parsed > m)
     {
@@ -465,8 +407,7 @@ static bool userJsonReadLimit(const cJSON *json_obj, user_limit_t *limit)
     if (traffic != NULL && ! cJSON_IsNull(traffic) &&
         (! cJSON_IsString(traffic) || ! userStringIsEmpty(traffic->valuestring)))
     {
-        if (! cJSON_IsObject(traffic) ||
-            ! userJsonReadOptionalUint642(traffic, "u", "up", &limit->traffic.u) ||
+        if (! cJSON_IsObject(traffic) || ! userJsonReadOptionalUint642(traffic, "u", "up", &limit->traffic.u) ||
             ! userJsonReadOptionalUint642(traffic, "d", "down", &limit->traffic.d) ||
             ! userJsonReadOptionalUint64(traffic, "total", &limit->traffic.total))
         {
@@ -498,10 +439,12 @@ static bool userJsonReadTimeInfo(const cJSON *json_obj, user_time_info_t *timein
     }
 
     return userJsonReadOptionalUint642(json_obj, "created-at-ms", "created_at_ms", &timeinfo->created_at_ms) &&
-           userJsonReadOptionalUint642(json_obj, "first-usage-at-ms", "first_usage_at_ms",
-                                       &timeinfo->first_usage_at_ms) &&
+           userJsonReadOptionalUint642(
+               json_obj, "first-usage-at-ms", "first_usage_at_ms", &timeinfo->first_usage_at_ms) &&
            userJsonReadOptionalUint642(json_obj, "expire-at-ms", "expires-at-ms", &timeinfo->expire_at_ms) &&
-           userJsonReadOptionalUint642(json_obj, "expire-after-first-usage-ms", "expire-after-first-use-ms",
+           userJsonReadOptionalUint642(json_obj,
+                                       "expire-after-first-usage-ms",
+                                       "expire-after-first-use-ms",
                                        &timeinfo->expire_after_first_usage_ms);
 }
 
@@ -524,8 +467,7 @@ static bool userJsonReadStats(const cJSON *json_obj, user_stat_t *stats)
            userJsonReadOptionalUint64(json_obj, "devices", &stats->devices) &&
            userJsonReadOptionalUint642(json_obj, "cons-in", "connections-in", &stats->cons_in) &&
            userJsonReadOptionalUint642(json_obj, "cons-out", "connections-out", &stats->cons_out) &&
-           userJsonReadUd(speed, &stats->speed) &&
-           userJsonReadUd(traffic, &stats->traffic);
+           userJsonReadUd(speed, &stats->speed) && userJsonReadUd(traffic, &stats->traffic);
 }
 
 static bool userJsonAddUint64(cJSON *json_obj, const char *key, uint64_t value)
@@ -739,14 +681,6 @@ bool userCreate(User *user, const char *password)
     rwlockinit(&user->lock);
     rwlockinit(&user->stats_lock);
 
-    if (! userInternalStateCreate(user, kUserSyncIndexInitial))
-    {
-        rwlockDestroy(&user->stats_lock);
-        rwlockDestroy(&user->lock);
-        memoryZero(user, sizeof(*user));
-        return false;
-    }
-
     user->initialized = true;
 
     user->enabled                 = true;
@@ -779,15 +713,6 @@ bool userCopy(User *dest, const User *src)
     memoryZero(dest, sizeof(*dest));
     rwlockinit(&dest->lock);
     rwlockinit(&dest->stats_lock);
-
-    if (! userInternalStateCreate(dest, snapshot.sync_index))
-    {
-        rwlockDestroy(&dest->stats_lock);
-        rwlockDestroy(&dest->lock);
-        memoryZero(dest, sizeof(*dest));
-        userSnapshotDestroy(&snapshot);
-        return false;
-    }
 
     dest->initialized = true;
 
@@ -839,7 +764,6 @@ void userDestroy(User *user)
     memoryZero(&user->limit, sizeof(user->limit));
     memoryZero(&user->timeinfo, sizeof(user->timeinfo));
     memoryZero(&user->stats, sizeof(user->stats));
-    userInternalStateDestroy(user);
     user->hash_pass = 0;
     user->enabled   = false;
 
@@ -883,15 +807,15 @@ bool userChangePassword(User *user, const char *password)
     wCryptoZero(&user->sha256_pass, sizeof(user->sha256_pass));
     wCryptoZero(&user->sha384_pass, sizeof(user->sha384_pass));
     wCryptoZero(&user->sha512_pass, sizeof(user->sha512_pass));
-    user->hash_pass          = staged_hashes.hash_pass;
-    user->sha224_pass        = staged_hashes.sha224_pass;
-    user->sha256_pass        = staged_hashes.sha256_pass;
-    user->sha384_pass        = staged_hashes.sha384_pass;
-    user->sha512_pass        = staged_hashes.sha512_pass;
-    user->sha224_pass_valid  = staged_hashes.sha224_pass_valid;
-    user->sha256_pass_valid  = staged_hashes.sha256_pass_valid;
-    user->sha384_pass_valid  = staged_hashes.sha384_pass_valid;
-    user->sha512_pass_valid  = staged_hashes.sha512_pass_valid;
+    user->hash_pass         = staged_hashes.hash_pass;
+    user->sha224_pass       = staged_hashes.sha224_pass;
+    user->sha256_pass       = staged_hashes.sha256_pass;
+    user->sha384_pass       = staged_hashes.sha384_pass;
+    user->sha512_pass       = staged_hashes.sha512_pass;
+    user->sha224_pass_valid = staged_hashes.sha224_pass_valid;
+    user->sha256_pass_valid = staged_hashes.sha256_pass_valid;
+    user->sha384_pass_valid = staged_hashes.sha384_pass_valid;
+    user->sha512_pass_valid = staged_hashes.sha512_pass_valid;
 
     userFreePassword(user->password);
     user->password = copy;
@@ -910,8 +834,8 @@ bool userSetPassword(User *user, const char *password)
 
 bool userCreateFromJson(User *user, const cJSON *user_json)
 {
-    const char *password = NULL;
-    const char *value    = NULL;
+    const char  *password = NULL;
+    const char  *value    = NULL;
     const cJSON *limit    = NULL;
     const cJSON *timeinfo = NULL;
     const cJSON *stats    = NULL;
@@ -955,10 +879,12 @@ bool userCreateFromJson(User *user, const cJSON *user_json)
     }
 
     if (! userJsonReadOptionalUint642(user_json, "created-at-ms", "created_at_ms", &user->timeinfo.created_at_ms) ||
-        ! userJsonReadOptionalUint642(user_json, "first-usage-at-ms", "first_usage_at_ms",
-                                      &user->timeinfo.first_usage_at_ms) ||
+        ! userJsonReadOptionalUint642(
+            user_json, "first-usage-at-ms", "first_usage_at_ms", &user->timeinfo.first_usage_at_ms) ||
         ! userJsonReadOptionalUint642(user_json, "expire-at-ms", "expires-at-ms", &user->timeinfo.expire_at_ms) ||
-        ! userJsonReadOptionalUint642(user_json, "expire-after-first-usage-ms", "expire-after-first-use-ms",
+        ! userJsonReadOptionalUint642(user_json,
+                                      "expire-after-first-usage-ms",
+                                      "expire-after-first-use-ms",
                                       &user->timeinfo.expire_after_first_usage_ms))
     {
         userDestroy(user);
@@ -970,7 +896,7 @@ bool userCreateFromJson(User *user, const cJSON *user_json)
 
 cJSON *userToJson(User *user)
 {
-    cJSON       *json  = NULL;
+    cJSON      *json  = NULL;
     user_stat_t stats = {0};
 
     if (! userObjectIsInitialized(user))
@@ -1131,8 +1057,8 @@ bool userIsExpired(User *user, uint64_t now_ms)
     if (! expired && user->timeinfo.expire_after_first_usage_ms != USER_NO_EXPIRY &&
         user->timeinfo.first_usage_at_ms != 0)
     {
-        expired = now_ms >= userSaturatingAdd(user->timeinfo.first_usage_at_ms,
-                                             user->timeinfo.expire_after_first_usage_ms);
+        expired =
+            now_ms >= userSaturatingAdd(user->timeinfo.first_usage_at_ms, user->timeinfo.expire_after_first_usage_ms);
     }
     rwlockReadUnlock(&user->lock);
     return expired;
@@ -1170,10 +1096,10 @@ bool userHasReachedTrafficLimit(User *user)
 
     rwlockReadLock(&user->lock);
     rwlockReadLock(&user->stats_lock);
-    reached = userLimitReached(user->limit.traffic.u, user->stats.traffic.u) ||
-              userLimitReached(user->limit.traffic.d, user->stats.traffic.d) ||
-              userLimitReached(user->limit.traffic.total, userSaturatingAdd(user->stats.traffic.u,
-                                                                            user->stats.traffic.d));
+    reached =
+        userLimitReached(user->limit.traffic.u, user->stats.traffic.u) ||
+        userLimitReached(user->limit.traffic.d, user->stats.traffic.d) ||
+        userLimitReached(user->limit.traffic.total, userSaturatingAdd(user->stats.traffic.u, user->stats.traffic.d));
     rwlockReadUnlock(&user->stats_lock);
     rwlockReadUnlock(&user->lock);
     return reached;
@@ -1208,16 +1134,16 @@ bool userHasReachedLimit(User *user)
 
     rwlockReadLock(&user->lock);
     rwlockReadLock(&user->stats_lock);
-    reached = userLimitReached(user->limit.ips, user->stats.ips) ||
-              userLimitReached(user->limit.devices, user->stats.devices) ||
-              userLimitReached(user->limit.cons_in, user->stats.cons_in) ||
-              userLimitReached(user->limit.cons_out, user->stats.cons_out) ||
-              userLimitReached(user->limit.traffic.u, user->stats.traffic.u) ||
-              userLimitReached(user->limit.traffic.d, user->stats.traffic.d) ||
-              userLimitReached(user->limit.traffic.total, userSaturatingAdd(user->stats.traffic.u,
-                                                                            user->stats.traffic.d)) ||
-              userLimitReached(user->limit.bandwidth.u, user->stats.speed.u) ||
-              userLimitReached(user->limit.bandwidth.d, user->stats.speed.d);
+    reached =
+        userLimitReached(user->limit.ips, user->stats.ips) ||
+        userLimitReached(user->limit.devices, user->stats.devices) ||
+        userLimitReached(user->limit.cons_in, user->stats.cons_in) ||
+        userLimitReached(user->limit.cons_out, user->stats.cons_out) ||
+        userLimitReached(user->limit.traffic.u, user->stats.traffic.u) ||
+        userLimitReached(user->limit.traffic.d, user->stats.traffic.d) ||
+        userLimitReached(user->limit.traffic.total, userSaturatingAdd(user->stats.traffic.u, user->stats.traffic.d)) ||
+        userLimitReached(user->limit.bandwidth.u, user->stats.speed.u) ||
+        userLimitReached(user->limit.bandwidth.d, user->stats.speed.d);
     rwlockReadUnlock(&user->stats_lock);
     rwlockReadUnlock(&user->lock);
     return reached;
