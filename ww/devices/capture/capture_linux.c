@@ -58,8 +58,7 @@ static const capturedevice_sysctl_setting_t sysctl_settings[] = {
     {"net.ipv4.tcp_mtu_probing=1", "net.ipv4.tcp_mtu_probing=1"},
     {"net.ipv4.tcp_tw_reuse=1", "net.ipv4.tcp_tw_reuse=1"},
     {"net.ipv4.tcp_fin_timeout=15", "net.ipv4.tcp_fin_timeout=15"},
-    {"net.ipv4.ip_local_port_range=10000 65535", "net.ipv4.ip_local_port_range='10000 65535'"},
-    {"net.netfilter.nf_conntrack_max=1048576", "net.netfilter.nf_conntrack_max=1048576"},
+    {"net.ipv4.ip_local_port_range=10000 65535", "net.ipv4.ip_local_port_range='10000 65535'"}
 };
 
 static uint8_t capturedeviceIpv4MaskPrefixLength(const ip_addr_t *mask)
