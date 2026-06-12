@@ -97,7 +97,7 @@ Example:
 When validation drops a decoded upstream packet, `StreamToPackets` writes a warning log with the validation level and
 reason.
 
-`IpManipulator` tricks such as `bit-transport` and source/destination port ghosting append bytes by increasing the IPv4
+`IpManipulator` tricks such as `carry-original-tcp-flags` and source/destination port ghosting append bytes by increasing the IPv4
 total-length field. Chained tricks are therefore valid as long as each transformed packet's IPv4 total length matches the
 framed packet length and any requested checksum recalculation has happened before validation.
 

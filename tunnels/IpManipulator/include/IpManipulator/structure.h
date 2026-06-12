@@ -279,7 +279,7 @@ typedef struct ipmanipulator_tstate_s
     uint64_t trick_smuggle_fin : 1;
     uint64_t trick_tcp_bit_changes : 1;
     uint64_t trick_packet_duplicate : 1;
-    uint64_t trick_bit_transport : 1;
+    uint64_t trick_carry_original_tcp_flags : 1;
     uint64_t trick_source_port_ghost : 1;
     uint64_t trick_dest_port_ghost : 1;
 

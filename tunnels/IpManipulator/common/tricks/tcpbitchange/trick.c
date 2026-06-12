@@ -62,28 +62,28 @@ static bool hasTcpFlagActionsConfigured(const ipmanipulator_tstate_t *state, boo
            state->down_tcp_bit_syn_action != kDvsNoAction || state->down_tcp_bit_fin_action != kDvsNoAction;
 }
 
-static bool appendFlagsToTransportPayload(sbuf_t **buf_ptr, struct ip_hdr **ipheader_ptr, uint16_t iphdr_len,
-                                          uint16_t tcphdr_len, uint8_t flags)
+static bool appendOriginalTcpFlagsToPayload(sbuf_t **buf_ptr, struct ip_hdr **ipheader_ptr, uint16_t iphdr_len,
+                                            uint16_t tcphdr_len, uint8_t flags)
 {
     sbuf_t  *buf          = *buf_ptr;
     uint16_t ip_total_len = lwip_ntohs(IPH_LEN(*ipheader_ptr));
 
     if (ip_total_len >= UINT16_MAX)
     {
-        LOGW("tcpbitchangetrick: cannot append transported flags because IPv4 total length is already full");
+        LOGW("tcpbitchangetrick: cannot carry original TCP flags because IPv4 total length is already full");
         return false;
     }
 
     if (ip_total_len < iphdr_len + tcphdr_len)
     {
-        LOGE("tcpbitchangetrick: invalid packet lengths while appending transported flags");
+        LOGE("tcpbitchangetrick: invalid packet lengths while carrying original TCP flags");
         return false;
     }
 
     uint32_t new_len = (uint32_t) ip_total_len + 1U;
     if (sbufGetMaximumWriteableSize(buf) < new_len)
     {
-        LOGW("tcpbitchangetrick: dropping packet because bit-transport needs one extra byte but the buffer has no room");
+        LOGW("tcpbitchangetrick: dropping packet because carry-original-tcp-flags needs one extra byte but the buffer has no room");
         return false;
     }
 
@@ -97,8 +97,8 @@ static bool appendFlagsToTransportPayload(sbuf_t **buf_ptr, struct ip_hdr **iphe
     return true;
 }
 
-static bool restoreFlagsFromTransportPayload(sbuf_t *buf, struct ip_hdr *ipheader, struct tcp_hdr *tcp_header,
-                                             uint16_t iphdr_len, uint16_t tcphdr_len)
+static bool restoreOriginalTcpFlagsFromPayload(sbuf_t *buf, struct ip_hdr *ipheader, struct tcp_hdr *tcp_header,
+                                               uint16_t iphdr_len, uint16_t tcphdr_len)
 {
     uint16_t ip_total_len = lwip_ntohs(IPH_LEN(ipheader));
 
@@ -214,9 +214,9 @@ static void tcpbitchangetrickPayload(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, b
             return;
         }
 
-        if (state->trick_bit_transport && ! has_actions && opposite_has_actions)
+        if (state->trick_carry_original_tcp_flags && ! has_actions && opposite_has_actions)
         {
-            if (restoreFlagsFromTransportPayload(buf, ipheader, tcp_header, iphdr_len, tcphdr_len))
+            if (restoreOriginalTcpFlagsFromPayload(buf, ipheader, tcp_header, iphdr_len, tcphdr_len))
             {
                 l->recalculate_checksum = true;
             }
@@ -226,9 +226,9 @@ static void tcpbitchangetrickPayload(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, b
         uint8_t original_flags = TCPH_FLAGS(tcp_header);
         uint8_t new_flags      = processAllTcpFlags(original_flags, state, is_upstream);
 
-        if (state->trick_bit_transport && has_actions)
+        if (state->trick_carry_original_tcp_flags && has_actions)
         {
-            if (! appendFlagsToTransportPayload(buf_ptr, &ipheader, iphdr_len, tcphdr_len, original_flags))
+            if (! appendOriginalTcpFlagsToPayload(buf_ptr, &ipheader, iphdr_len, tcphdr_len, original_flags))
             {
                 lineReuseBuffer(l, *buf_ptr);
                 *buf_ptr = NULL;
@@ -244,7 +244,7 @@ static void tcpbitchangetrickPayload(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, b
             TCPH_FLAGS_SET(tcp_header, new_flags);
         }
 
-        if ((state->trick_bit_transport && has_actions) || new_flags != original_flags)
+        if ((state->trick_carry_original_tcp_flags && has_actions) || new_flags != original_flags)
         {
             l->recalculate_checksum = true;
         }

@@ -88,6 +88,7 @@ Typical use cases include:
     "packet-duplicate": 2,
     "source-port-ghost": true,
     "dest-port-ghost": true,
+    "carry-original-tcp-flags": true,
     "up-tcp-bit-psh": "off",
     "up-tcp-bit-ack": "toggle",
     "dw-tcp-bit-syn": "packet->ack"
@@ -458,12 +459,12 @@ Supported values are:
 
 `flip` and `switch` are accepted as aliases for `toggle`.
 
-- `bit-transport` `(boolean)`
+- `carry-original-tcp-flags` `(boolean)`
   Optional.
 
   When `true`, directions with configured TCP-bit rewrite actions append the original TCP flags byte to the end of the TCP transport payload before rewriting flags.
 
-  Directions with no TCP-bit rewrite actions treat that final payload byte as the transported original flags, restore the TCP flags from it, and shrink the packet by one byte.
+  Directions with no TCP-bit rewrite actions treat that final payload byte as the carried original flags, restore the TCP flags from it, and shrink the packet by one byte.
 
 ### Port ghost settings
 
@@ -611,7 +612,7 @@ If any flag changes:
 
 This happens independently on upstream and downstream using the `up-...` and `dw-...` setting families.
 
-If `bit-transport` is enabled:
+If `carry-original-tcp-flags` is enabled:
 
 - rewrite directions append one extra payload byte carrying the original TCP flags before applying any configured TCP-bit actions
 - restore directions copy that byte back into the TCP flags field and reduce the IPv4 packet length by one byte
