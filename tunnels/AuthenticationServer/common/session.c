@@ -4,7 +4,13 @@
 
 #if defined(OS_LINUX)
 #include <errno.h>
-#include <sys/random.h>
+#include <sys/syscall.h>
+
+#if defined(SYS_getrandom)
+#define AUTHENTICATIONSERVER_SYS_GETRANDOM SYS_getrandom
+#elif defined(__NR_getrandom)
+#define AUTHENTICATIONSERVER_SYS_GETRANDOM __NR_getrandom
+#endif
 #endif
 
 #if defined(OS_WIN)
@@ -22,13 +28,13 @@
 #include <stdlib.h>
 #endif
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) && defined(AUTHENTICATIONSERVER_SYS_GETRANDOM)
 static bool authenticationserverRandomBytesGetrandom(uint8_t *dest, size_t len)
 {
     size_t offset = 0;
     while (offset < len)
     {
-        ssize_t nread = getrandom(dest + offset, len - offset, 0);
+        ssize_t nread = (ssize_t) syscall(AUTHENTICATIONSERVER_SYS_GETRANDOM, dest + offset, len - offset, 0);
         if (nread < 0)
         {
             if (errno == EINTR)
@@ -125,7 +131,7 @@ static bool authenticationserverRandomBytesUrandom(uint8_t *dest, size_t len)
 
 static bool authenticationserverRandomBytes(uint8_t *dest, size_t len)
 {
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) && defined(AUTHENTICATIONSERVER_SYS_GETRANDOM)
     if (authenticationserverRandomBytesGetrandom(dest, len))
     {
         return true;
