@@ -2,17 +2,15 @@
 
 #include "loggers/network_logger.h"
 
-sbuf_t *authenticationserverPingHandle(
-    const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
-    tunnel_t     *t,
-    line_t       *l,
-    const uint8_t *request_data,
-    uint32_t      request_data_len)
+sbuf_t *authenticationserverPingHandle(const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
+                                       tunnel_t *t, line_t *l, authenticationserver_session_t *session,
+                                       const uint8_t *request_data, uint32_t request_data_len)
 {
     static const char ping_request[]  = "ping";
     static const char pong_response[] = "pong";
 
     discard t;
+    discard session;
 
     if (request_data_len != sizeof(ping_request) - 1U ||
         memoryCompare(request_data, ping_request, sizeof(ping_request) - 1U) != 0)
@@ -24,8 +22,8 @@ sbuf_t *authenticationserverPingHandle(
 
     LOGD("AuthenticationServer: ping module returning pong response");
     return authenticationserverCreateResponseFrame(l,
-                                                  kAuthenticationServerResponseTypePong,
-                                                  correlation_id,
-                                                  (const uint8_t *) pong_response,
-                                                  (uint32_t) (sizeof(pong_response) - 1U));
+                                                   kAuthenticationServerResponseTypePong,
+                                                   correlation_id,
+                                                   (const uint8_t *) pong_response,
+                                                   (uint32_t) (sizeof(pong_response) - 1U));
 }

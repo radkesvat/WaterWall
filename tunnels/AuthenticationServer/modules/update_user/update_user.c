@@ -44,14 +44,12 @@ static user_update_t authenticationserverUpdateFromUser(const user_t *user)
     return update;
 }
 
-sbuf_t *authenticationserverUpdateUserHandle(
-    const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
-    tunnel_t     *t,
-    line_t       *l,
-    const uint8_t *request_data,
-    uint32_t      request_data_len)
+sbuf_t *authenticationserverUpdateUserHandle(const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
+                                             tunnel_t *t, line_t *l, authenticationserver_session_t *session,
+                                             const uint8_t *request_data, uint32_t request_data_len)
 {
-    user_t user;
+    user_t  user;
+    discard session;
 
     if (request_data_len == 0)
     {
@@ -81,9 +79,9 @@ sbuf_t *authenticationserverUpdateUserHandle(
     }
     cJSON_Delete(user_json);
 
-    user_update_t update = authenticationserverUpdateFromUser(&user);
+    user_update_t         update = authenticationserverUpdateFromUser(&user);
     users_update_result_t result =
-        authenticationserverUpdateUserBySHA256AndMarkDirty(t, user.sha256_pass.bytes, &update);
+        authenticationserverUpdateUserBySHA256AndBumpConfigRevision(t, user.sha256_pass.bytes, &update);
     userDestroy(&user);
 
     if (result != kUsersUpdateResultOk)
@@ -94,9 +92,6 @@ sbuf_t *authenticationserverUpdateUserHandle(
     }
     static const char ok[] = "user-updated";
     LOGI("AuthenticationServer: UpdateUser updated a user in memory");
-    return authenticationserverCreateResponseFrame(l,
-                                                   kAuthenticationServerResponseTypeOk,
-                                                   correlation_id,
-                                                   (const uint8_t *) ok,
-                                                   (uint32_t) (sizeof(ok) - 1U));
+    return authenticationserverCreateResponseFrame(
+        l, kAuthenticationServerResponseTypeOk, correlation_id, (const uint8_t *) ok, (uint32_t) (sizeof(ok) - 1U));
 }

@@ -11,13 +11,15 @@ add_library(AuthenticationServer STATIC
                     common/database.c
                     common/line_state.c
                     common/protocol.c
+                    common/session.c
                     common/sync.c
                     modules/dispatcher.c
+                    modules/authenticate/authenticate.c
                     modules/add_new_user/add_new_user.c
                     modules/update_user/update_user.c
                     modules/update_user_trafic_stats_diff/update_user_trafic_stats_diff.c
                     modules/get_all_users/get_all_users.c
-                    modules/pull_changes_sync/pull_changes_sync.c
+                    modules/push_user_stats/push_user_stats.c
                     modules/get_user_by_password/get_user_by_password.c
                     modules/get_user_by_sha256/get_user_by_sha256.c
                     modules/get_user_by_sha256_base64/get_user_by_sha256_base64.c

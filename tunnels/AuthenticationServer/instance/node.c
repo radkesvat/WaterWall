@@ -5,7 +5,7 @@
 
 node_t nodeAuthenticationServerGet(void)
 {
-    const char *type_name = "AuthenticationServer";
+    const char *type_name                 = "AuthenticationServer";
     node_t      node_authenticationserver = {
              .name                  = NULL,
              .type                  = stringDuplicate(type_name),

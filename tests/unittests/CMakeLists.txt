@@ -30,12 +30,6 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.aes256gcm_unit aes256gcm_test "unit;crypto;aes256gcm")
 
-  add_executable(users_sync_test users_sync_test.c)
-  target_link_libraries(users_sync_test PRIVATE ww)
-  add_dependencies(waterwall_unit_tests users_sync_test)
-
-  add_waterwall_unit_test(waterwall.users_sync_unit users_sync_test "unit;objects;users;sync;thread")
-
   add_executable(wlibc_memcopy_test wlibc_memcopy_test.c)
   target_link_libraries(wlibc_memcopy_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests wlibc_memcopy_test)

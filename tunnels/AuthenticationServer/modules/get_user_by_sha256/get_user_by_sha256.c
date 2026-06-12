@@ -2,14 +2,12 @@
 
 #include "loggers/network_logger.h"
 
-sbuf_t *authenticationserverGetUserBySHA256Handle(
-    const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
-    tunnel_t     *t,
-    line_t       *l,
-    const uint8_t *request_data,
-    uint32_t      request_data_len)
+sbuf_t *authenticationserverGetUserBySHA256Handle(const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
+                                                  tunnel_t *t, line_t *l, authenticationserver_session_t *session,
+                                                  const uint8_t *request_data, uint32_t request_data_len)
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);
+    discard                        session;
 
     if (request_data_len != SHA256_DIGEST_SIZE)
     {
@@ -18,7 +16,7 @@ sbuf_t *authenticationserverGetUserBySHA256Handle(
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-sha256");
     }
 
-    cJSON *user_json = usersUserToJsonBySHA256(&ts->users, request_data);
+    cJSON *user_json = usersUserToJsonBySHA256(&ts->store.users, request_data);
     if (user_json == NULL)
     {
         LOGD("AuthenticationServer: GetUserBySHA256 did not find a matching user");

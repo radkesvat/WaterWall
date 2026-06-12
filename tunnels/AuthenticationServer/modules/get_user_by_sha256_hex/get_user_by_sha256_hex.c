@@ -19,8 +19,7 @@ static int authenticationserverHexValue(uint8_t c)
     return -1;
 }
 
-static bool authenticationserverParseSHA256Hex(const uint8_t *hex, uint32_t hex_len,
-                                               uint8_t out[SHA256_DIGEST_SIZE])
+static bool authenticationserverParseSHA256Hex(const uint8_t *hex, uint32_t hex_len, uint8_t out[SHA256_DIGEST_SIZE])
 {
     if (hex_len != SHA256_DIGEST_SIZE * 2U)
     {
@@ -42,14 +41,12 @@ static bool authenticationserverParseSHA256Hex(const uint8_t *hex, uint32_t hex_
 }
 
 sbuf_t *authenticationserverGetUserBySHA256HexHandle(
-    const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
-    tunnel_t     *t,
-    line_t       *l,
-    const uint8_t *request_data,
-    uint32_t      request_data_len)
+    const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize], tunnel_t *t, line_t *l,
+    authenticationserver_session_t *session, const uint8_t *request_data, uint32_t request_data_len)
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);
-    uint8_t                       sha256[SHA256_DIGEST_SIZE];
+    uint8_t                        sha256[SHA256_DIGEST_SIZE];
+    discard                        session;
 
     if (! authenticationserverParseSHA256Hex(request_data, request_data_len, sha256))
     {
@@ -58,7 +55,7 @@ sbuf_t *authenticationserverGetUserBySHA256HexHandle(
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-sha256-hex");
     }
 
-    cJSON *user_json = usersUserToJsonBySHA256(&ts->users, sha256);
+    cJSON *user_json = usersUserToJsonBySHA256(&ts->store.users, sha256);
     if (user_json == NULL)
     {
         LOGD("AuthenticationServer: GetUserBySHA256Hex did not find a matching user");

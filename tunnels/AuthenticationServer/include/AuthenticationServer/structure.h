@@ -2,20 +2,53 @@
 
 #include "wwapi.h"
 
+typedef struct authenticationserver_users_store_s
+{
+    users_t  users;
+    uint64_t config_revision;
+    uint64_t stats_revision;
+} authenticationserver_users_store_t;
+
+typedef struct authenticationserver_auth_client_s
+{
+    char    *name;
+    char    *secret;
+    bool     allow_stats_push;
+    bool     allow_user_pull;
+    bool     allow_user_write;
+    uint32_t session_idle_timeout_ms;
+} authenticationserver_auth_client_t;
+
+typedef struct authenticationserver_session_s
+{
+    uint8_t  token[64];
+    char    *client_name;
+    users_t  baseline_users;
+    bool     allow_stats_push;
+    bool     allow_user_pull;
+    bool     allow_user_write;
+    uint64_t baseline_config_revision;
+    uint64_t baseline_stats_revision;
+    uint32_t last_activity_ms;
+    uint32_t session_idle_timeout_ms;
+} authenticationserver_session_t;
+
 typedef struct authenticationserver_tstate_s
 {
-    char              *db_path;
-    char              *backup_path;
-    users_t            users;
-    wtimer_t          *save_timer;
-    wrwlock_t          sync_lock;
-    wrecursive_mutex_t database_mutex;
-    atomic_uint        server_index;
-    uint32_t           file_save_rate_ms;
-    bool               sync_lock_created;
-    bool               database_mutex_created;
-    bool               users_created;
-    bool               database_loaded;
+    char                               *db_path;
+    char                               *backup_path;
+    authenticationserver_users_store_t  store;
+    authenticationserver_auth_client_t *auth_clients;
+    authenticationserver_session_t    **sessions;
+    wtimer_t                           *save_timer;
+    wtimer_t                           *session_expiry_timer;
+    wrecursive_mutex_t                  database_mutex;
+    uint32_t                            auth_clients_count;
+    uint32_t                            sessions_count;
+    uint32_t                            sessions_capacity;
+    uint32_t                            file_save_rate_ms;
+    uint32_t                            session_idle_timeout_ms;
+    bool                                database_loaded;
 } authenticationserver_tstate_t;
 
 typedef struct authenticationserver_lstate_s
@@ -30,19 +63,24 @@ enum
     kTunnelStateSize = sizeof(authenticationserver_tstate_t),
     kLineStateSize   = sizeof(authenticationserver_lstate_t),
 
-    kAuthenticationServerMessageHeaderSize = 4,
-    kAuthenticationServerIndexHeaderSize   = 4,
-    kAuthenticationServerEnvelopeHeaderSize =
-        kAuthenticationServerMessageHeaderSize + kAuthenticationServerIndexHeaderSize,
-    kAuthenticationServerCorrelationIdSize  = 4,
-    kAuthenticationServerRequestHeaderSize  = 1 + kAuthenticationServerCorrelationIdSize + 4,
-    kAuthenticationServerResponseHeaderSize = 1 + kAuthenticationServerCorrelationIdSize + 4,
-    kAuthenticationServerMaxMessagePayload  = 16U * 1024U * 1024U,
-    kAuthenticationServerMaxRequestData     = 16U * 1024U * 1024U,
-    kAuthenticationServerMaxResponsePayload = 16U * 1024U * 1024U,
-    kAuthenticationServerMaxResponseQueue   = 16U * 1024U * 1024U,
-    kAuthenticationServerResponseQueueCap   = 4,
-    kAuthenticationServerMaxPasswordLength  = 1024U,
+    kAuthenticationServerMessageHeaderSize  = 4,
+    kAuthenticationServerSessionTokenSize   = 64,
+    kAuthenticationServerRevisionHeaderSize = 16,
+    kAuthenticationServerRequestEnvelopeHeaderSize =
+        kAuthenticationServerMessageHeaderSize + kAuthenticationServerSessionTokenSize,
+    kAuthenticationServerResponseEnvelopeHeaderSize =
+        kAuthenticationServerMessageHeaderSize + kAuthenticationServerRevisionHeaderSize,
+    kAuthenticationServerCorrelationIdSize           = 4,
+    kAuthenticationServerRequestHeaderSize           = 1 + kAuthenticationServerCorrelationIdSize + 4,
+    kAuthenticationServerResponseHeaderSize          = 1 + kAuthenticationServerCorrelationIdSize + 4,
+    kAuthenticationServerMaxMessagePayload           = 16U * 1024U * 1024U,
+    kAuthenticationServerMaxRequestData              = 16U * 1024U * 1024U,
+    kAuthenticationServerMaxResponsePayload          = 16U * 1024U * 1024U,
+    kAuthenticationServerMaxResponseQueue            = 16U * 1024U * 1024U,
+    kAuthenticationServerResponseQueueCap            = 4,
+    kAuthenticationServerMaxPasswordLength           = 1024U,
+    kAuthenticationServerDefaultSessionIdleTimeoutMs = 10U * 60U * 1000U,
+    kAuthenticationServerSessionExpirySweepMs        = 60U * 1000U,
 
     kAuthenticationServerRequestTypePing                      = 1,
     kAuthenticationServerRequestTypeGetUserBySHA256Hex        = 2,
@@ -53,19 +91,20 @@ enum
     kAuthenticationServerRequestTypeUpdateUser                = 7,
     kAuthenticationServerRequestTypeUpdateUserTraficStatsDiff = 8,
     kAuthenticationServerRequestTypeGetAllUsers               = 9,
-    kAuthenticationServerRequestTypePullChangesSync           = 10,
+    kAuthenticationServerRequestTypeAuthenticate              = 10,
+    kAuthenticationServerRequestTypePushUserStats             = 11,
 
-    kAuthenticationServerResponseTypeOk        = 0,
-    kAuthenticationServerResponseTypeError     = 0xFF,
-    kAuthenticationServerResponseTypePong      = 1,
-    kAuthenticationServerResponseTypeUser      = 2,
-    kAuthenticationServerResponseTypeUsers     = 3,
-    kAuthenticationServerResponseTypeSyncUsers = 4
+    kAuthenticationServerResponseTypeOk      = 0,
+    kAuthenticationServerResponseTypeError   = 0xFF,
+    kAuthenticationServerResponseTypePong    = 1,
+    kAuthenticationServerResponseTypeUser    = 2,
+    kAuthenticationServerResponseTypeUsers   = 3,
+    kAuthenticationServerResponseTypeSession = 4
 };
 
 typedef sbuf_t *(*authenticationserver_module_handler_fn)(
     const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize], tunnel_t *t, line_t *l,
-    const uint8_t *request_data, uint32_t request_data_len);
+    authenticationserver_session_t *session, const uint8_t *request_data, uint32_t request_data_len);
 
 WW_EXPORT void         authenticationserverTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *authenticationserverTunnelCreate(node_t *node);
@@ -76,6 +115,7 @@ void authenticationserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void authenticationserverTunnelOnPrepair(tunnel_t *t);
 void authenticationserverTunnelOnStart(tunnel_t *t);
 void authenticationserverTunnelOnStop(tunnel_t *t);
+void authenticationserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
 
 void authenticationserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void authenticationserverTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -94,14 +134,25 @@ void authenticationserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void authenticationserverLinestateInitialize(authenticationserver_lstate_t *ls, buffer_pool_t *pool);
 void authenticationserverLinestateDestroy(authenticationserver_lstate_t *ls);
 
-bool                  authenticationserverLoadDatabase(authenticationserver_tstate_t *ts);
-bool                  authenticationserverSaveDatabase(authenticationserver_tstate_t *ts);
-void                  authenticationserverSaveTimerCallback(wtimer_t *timer);
-uint32_t              authenticationserverGetServerIndex(tunnel_t *t);
-bool                  authenticationserverMarkUserDirtyBySHA256(tunnel_t *t, const uint8_t sha256[SHA256_DIGEST_SIZE]);
-users_update_result_t authenticationserverUpdateUserBySHA256AndMarkDirty(tunnel_t     *t,
-                                                                         const uint8_t sha256[SHA256_DIGEST_SIZE],
-                                                                         const user_update_t *update);
+bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts);
+bool authenticationserverSaveDatabase(authenticationserver_tstate_t *ts);
+void authenticationserverSaveTimerCallback(wtimer_t *timer);
+void authenticationserverSessionExpiryTimerCallback(wtimer_t *timer);
+void authenticationserverGetRevisions(tunnel_t *t, uint64_t *config_revision, uint64_t *stats_revision);
+void authenticationserverBumpConfigRevision(tunnel_t *t);
+void authenticationserverBumpStatsRevision(tunnel_t *t);
+users_update_result_t authenticationserverUpdateUserBySHA256AndBumpConfigRevision(
+    tunnel_t *t, const uint8_t sha256[SHA256_DIGEST_SIZE], const user_update_t *update);
+bool authenticationserverCopyUsersTable(users_t *dest, const users_t *src);
+bool authenticationserverSessionReplaceBaselineFromUsers(authenticationserver_session_t *session, const users_t *src,
+                                                         uint64_t config_revision, uint64_t stats_revision);
+authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, const char *name, const char *secret);
+authenticationserver_session_t *authenticationserverSessionFindByTokenLocked(
+    tunnel_t *t, const uint8_t token[kAuthenticationServerSessionTokenSize]);
+void authenticationserverSessionTouch(authenticationserver_session_t *session, uint32_t now_ms);
+void authenticationserverSessionsExpireIdle(tunnel_t *t);
+void authenticationserverSessionsDestroy(authenticationserver_tstate_t *ts);
+void authenticationserverAuthClientsDestroy(authenticationserver_tstate_t *ts);
 
 bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls);
 bool authenticationserverFlushResponses(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls);
@@ -120,7 +171,5 @@ sbuf_t *authenticationserverCreateUserJsonResponseFrame(
 
 sbuf_t *authenticationserverDispatchRequest(uint8_t       request_type,
                                             const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
-                                            tunnel_t *t, line_t *l, const uint8_t *request_data,
-                                            uint32_t request_data_len);
-bool    authenticationserverRequestTypeReturnsUserState(uint8_t request_type);
-bool    authenticationserverRequestTypeBumpsSyncIndex(uint8_t request_type);
+                                            tunnel_t *t, line_t *l, authenticationserver_session_t *session,
+                                            const uint8_t *request_data, uint32_t request_data_len);

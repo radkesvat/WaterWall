@@ -3,14 +3,12 @@
 #include "loggers/network_logger.h"
 
 sbuf_t *authenticationserverGetUserBySHA256Base64Handle(
-    const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
-    tunnel_t     *t,
-    line_t       *l,
-    const uint8_t *request_data,
-    uint32_t      request_data_len)
+    const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize], tunnel_t *t, line_t *l,
+    authenticationserver_session_t *session, const uint8_t *request_data, uint32_t request_data_len)
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);
-    uint8_t decoded[BASE64_DECODE_OUT_SIZE(BASE64_ENCODE_OUT_SIZE(SHA256_DIGEST_SIZE))];
+    uint8_t                        decoded[BASE64_DECODE_OUT_SIZE(BASE64_ENCODE_OUT_SIZE(SHA256_DIGEST_SIZE))];
+    discard                        session;
 
     if (request_data_len != BASE64_ENCODE_OUT_SIZE(SHA256_DIGEST_SIZE))
     {
@@ -26,7 +24,7 @@ sbuf_t *authenticationserverGetUserBySHA256Base64Handle(
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-sha256-base64");
     }
 
-    cJSON *user_json = usersUserToJsonBySHA256(&ts->users, decoded);
+    cJSON *user_json = usersUserToJsonBySHA256(&ts->store.users, decoded);
     if (user_json == NULL)
     {
         LOGD("AuthenticationServer: GetUserBySHA256Base64 did not find a matching user");

@@ -22,7 +22,7 @@ static char *authenticationserverCreateBackupPath(const char *db_path)
 
 static bool authenticationserverBuildUsersJson(authenticationserver_tstate_t *ts, char **out, size_t *out_len)
 {
-    cJSON *json = usersToJson(&ts->users);
+    cJSON *json = usersToJson(&ts->store.users);
     if (json == NULL)
     {
         LOGE("AuthenticationServer: failed to build users JSON from in-memory database");
@@ -70,23 +70,23 @@ static bool authenticationserverLoadUsersFromPath(authenticationserver_tstate_t 
         return false;
     }
 
-    usersClear(&ts->users);
-    bool ok = usersFeedJson(&ts->users, json);
+    usersClear(&ts->store.users);
+    bool ok = usersFeedJson(&ts->store.users, json);
     if (! ok)
     {
         LOGW("AuthenticationServer: users database \"%s\" has an invalid users layout", path);
-        usersClear(&ts->users);
+        usersClear(&ts->store.users);
     }
-    else if (! usersValidate(&ts->users))
+    else if (! usersValidate(&ts->store.users))
     {
         LOGW("AuthenticationServer: users database \"%s\" failed validation", path);
-        usersClear(&ts->users);
+        usersClear(&ts->store.users);
         ok = false;
     }
 
     if (ok)
     {
-        LOGI("AuthenticationServer: loaded %zu users from \"%s\"", usersCount(&ts->users), path);
+        LOGI("AuthenticationServer: loaded %zu users from \"%s\"", usersCount(&ts->store.users), path);
     }
 
     cJSON_Delete(json);
@@ -114,7 +114,7 @@ static bool authenticationserverSaveDatabaseUnlocked(authenticationserver_tstate
     char  *json_text = NULL;
     size_t json_len  = 0;
 
-    if (! ts->users_created || ! ts->database_loaded)
+    if (! ts->database_loaded)
     {
         return false;
     }
@@ -137,7 +137,7 @@ static bool authenticationserverSaveDatabaseUnlocked(authenticationserver_tstate
     }
 
     LOGD("AuthenticationServer: saved %zu users to \"%s\" using backup \"%s\"",
-         usersCount(&ts->users),
+         usersCount(&ts->store.users),
          ts->db_path,
          ts->backup_path);
     memoryFree(json_text);
@@ -188,6 +188,13 @@ bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts)
         return false;
     }
 
+    if (! authenticationserverRewritePrimaryFromMemory(ts))
+    {
+        LOGE("AuthenticationServer: recovery failed because recovered data could not be written to \"%s\"",
+             ts->db_path);
+        return false;
+    }
+
     LOGI("AuthenticationServer: recovered users database from backup \"%s\"", ts->backup_path);
 
     if (remove(ts->backup_path) != 0)
@@ -197,13 +204,6 @@ bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts)
     else
     {
         LOGI("AuthenticationServer: removed recovered backup \"%s\"", ts->backup_path);
-    }
-
-    if (! authenticationserverRewritePrimaryFromMemory(ts))
-    {
-        LOGE("AuthenticationServer: recovery failed because recovered data could not be written to \"%s\"",
-             ts->db_path);
-        return false;
     }
 
     LOGI("AuthenticationServer: recovery complete; rewrote primary users database \"%s\"", ts->db_path);

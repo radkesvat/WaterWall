@@ -29,14 +29,12 @@ static char *authenticationserverPasswordFromPayload(const uint8_t *request_data
 }
 
 sbuf_t *authenticationserverGetUserByPasswordHandle(
-    const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
-    tunnel_t     *t,
-    line_t       *l,
-    const uint8_t *request_data,
-    uint32_t      request_data_len)
+    const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize], tunnel_t *t, line_t *l,
+    authenticationserver_session_t *session, const uint8_t *request_data, uint32_t request_data_len)
 {
     authenticationserver_tstate_t *ts       = tunnelGetState(t);
-    char                         *password = authenticationserverPasswordFromPayload(request_data, request_data_len);
+    char                          *password = authenticationserverPasswordFromPayload(request_data, request_data_len);
+    discard                        session;
 
     if (password == NULL)
     {
@@ -45,7 +43,7 @@ sbuf_t *authenticationserverGetUserByPasswordHandle(
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-password");
     }
 
-    cJSON *user_json = usersUserToJsonByPassword(&ts->users, password);
+    cJSON *user_json = usersUserToJsonByPassword(&ts->store.users, password);
     wCryptoZero(password, request_data_len);
     memoryFree(password);
 

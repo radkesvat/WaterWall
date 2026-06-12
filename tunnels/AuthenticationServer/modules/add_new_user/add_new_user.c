@@ -29,16 +29,14 @@ static const char *authenticationserverUsersAddResultError(users_add_result_t re
     return "user-add-failed";
 }
 
-sbuf_t *authenticationserverAddNewUserHandle(
-    const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
-    tunnel_t     *t,
-    line_t       *l,
-    const uint8_t *request_data,
-    uint32_t      request_data_len)
+sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
+                                             tunnel_t *t, line_t *l, authenticationserver_session_t *session,
+                                             const uint8_t *request_data, uint32_t request_data_len)
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);
-    uint8_t added_sha256[SHA256_DIGEST_SIZE];
-    user_t  user;
+    uint8_t                        added_sha256[SHA256_DIGEST_SIZE];
+    user_t                         user;
+    discard                        session;
 
     if (request_data_len == 0)
     {
@@ -70,7 +68,7 @@ sbuf_t *authenticationserverAddNewUserHandle(
 
     memoryCopy(added_sha256, user.sha256_pass.bytes, SHA256_DIGEST_SIZE);
     recursivemutexLock(&ts->database_mutex);
-    users_add_result_t add_result = usersAddUserChecked(&ts->users, &user);
+    users_add_result_t add_result = usersAddUserChecked(&ts->store.users, &user);
     userDestroy(&user);
 
     if (add_result != kUsersAddResultOk)
@@ -84,25 +82,18 @@ sbuf_t *authenticationserverAddNewUserHandle(
     if (! authenticationserverSaveDatabase(ts))
     {
         LOGW("AuthenticationServer: AddNewUser failed to save database after adding user; rolling back in-memory add");
-        if (! usersRemoveUserBySHA256(&ts->users, added_sha256))
+        if (! usersRemoveUserBySHA256(&ts->store.users, added_sha256))
         {
             LOGW("AuthenticationServer: AddNewUser could not roll back the in-memory user after save failure");
         }
         recursivemutexUnlock(&ts->database_mutex);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "database-save-failed");
     }
-    if (! authenticationserverMarkUserDirtyBySHA256(t, added_sha256))
-    {
-        recursivemutexUnlock(&ts->database_mutex);
-        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "user-sync-mark-failed");
-    }
+    authenticationserverBumpConfigRevision(t);
     recursivemutexUnlock(&ts->database_mutex);
 
     static const char ok[] = "user-added";
     LOGI("AuthenticationServer: AddNewUser added a new user and saved the database");
-    return authenticationserverCreateResponseFrame(l,
-                                                   kAuthenticationServerResponseTypeOk,
-                                                   correlation_id,
-                                                   (const uint8_t *) ok,
-                                                   (uint32_t) (sizeof(ok) - 1U));
+    return authenticationserverCreateResponseFrame(
+        l, kAuthenticationServerResponseTypeOk, correlation_id, (const uint8_t *) ok, (uint32_t) (sizeof(ok) - 1U));
 }

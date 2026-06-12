@@ -25,14 +25,12 @@ static const char *authenticationserverTrafficDiffResultError(users_update_resul
 }
 
 sbuf_t *authenticationserverUpdateUserTraficStatsDiffHandle(
-    const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
-    tunnel_t     *t,
-    line_t       *l,
-    const uint8_t *request_data,
-    uint32_t      request_data_len)
+    const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize], tunnel_t *t, line_t *l,
+    authenticationserver_session_t *session, const uint8_t *request_data, uint32_t request_data_len)
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);
-    user_t                        user;
+    user_t                         user;
+    discard                        session;
 
     if (request_data_len == 0)
     {
@@ -63,7 +61,8 @@ sbuf_t *authenticationserverUpdateUserTraficStatsDiffHandle(
     cJSON_Delete(user_json);
 
     users_update_result_t result =
-        usersAddTrafficBySHA256(&ts->users, user.sha256_pass.bytes, user.stats.traffic.u, user.stats.traffic.d);
+        usersAddTrafficBySHA256(&ts->store.users, user.sha256_pass.bytes, user.stats.traffic.u, user.stats.traffic.d);
+    const bool traffic_changed = user.stats.traffic.u > 0 || user.stats.traffic.d > 0;
     userDestroy(&user);
 
     if (result != kUsersUpdateResultOk)
@@ -73,11 +72,13 @@ sbuf_t *authenticationserverUpdateUserTraficStatsDiffHandle(
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, error);
     }
 
+    if (traffic_changed)
+    {
+        authenticationserverBumpStatsRevision(t);
+    }
+
     static const char ok[] = "user-traffic-stats-updated";
     LOGI("AuthenticationServer: UpdateUserTraficStatsDiff added traffic stats to a user in memory");
-    return authenticationserverCreateResponseFrame(l,
-                                                   kAuthenticationServerResponseTypeOk,
-                                                   correlation_id,
-                                                   (const uint8_t *) ok,
-                                                   (uint32_t) (sizeof(ok) - 1U));
+    return authenticationserverCreateResponseFrame(
+        l, kAuthenticationServerResponseTypeOk, correlation_id, (const uint8_t *) ok, (uint32_t) (sizeof(ok) - 1U));
 }
