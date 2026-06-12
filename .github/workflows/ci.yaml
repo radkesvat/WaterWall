@@ -42,8 +42,8 @@ jobs:
     name: android-${{ matrix.arch }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v5
         with:
           path: |
             ${{ env.cpm-path }}
@@ -72,7 +72,7 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Waterwall-android-${{ matrix.arch }}
           path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
@@ -103,8 +103,8 @@ jobs:
     name: ${{ matrix.names }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v5
         with:
           path: |
             ${{ env.cpm-path }}
@@ -135,7 +135,7 @@ jobs:
           run: cmake --build build  
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Waterwall-${{ matrix.names }}
           path: ${{ github.workspace }}/build/Waterwall
@@ -150,8 +150,8 @@ jobs:
     name: ${{ matrix.preset }}
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v5
         with:
           path: |
             ${{ env.cpm-path }}
@@ -179,7 +179,7 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Waterwall_${{ matrix.preset }}
           path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
@@ -202,8 +202,8 @@ jobs:
     name: ${{ matrix.preset }}
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v5
         with:
           path: |
             ${{ env.cpm-path }}
@@ -241,7 +241,7 @@ jobs:
         if: matrix.preset == 'linux-gcc-x64'
         run: ctest --preset linux-gcc -C Release --output-on-failure -L integration
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Waterwall-${{ matrix.preset }}
           path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
@@ -252,8 +252,8 @@ jobs:
   macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v5
         with:
           path: |
             ${{ env.cpm-path }}
@@ -281,7 +281,7 @@ jobs:
         run: cmake --build --preset macos
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Waterwall_${{ runner.os }}
           path: ${{ github.workspace }}/build/macos/Release/
@@ -312,8 +312,8 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v5
         with:
           path: |
             ${{ env.cpm-path }}
@@ -331,7 +331,7 @@ jobs:
           choco install -y jom nasm ccache
           echo "PATH=$ENV:PATH;C:\Program Files\NASM" >> $ENV:GITHUB_ENV
 
-      - uses: msys2/setup-msys2@v2
+      - uses: msys2/setup-msys2@v2.31.1
         with:
           msystem: ${{ matrix.msys }}
           update: false
@@ -356,7 +356,7 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Waterwall-${{ matrix.name }}
           path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
@@ -375,8 +375,8 @@ jobs:
     name: ${{ matrix.preset }}
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v5
         with:
           path: |
             ${{ env.cpm-path }}
@@ -406,7 +406,7 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }} --parallel
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Waterwall-${{ matrix.preset }}
           path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
@@ -428,14 +428,14 @@ jobs:
 
       runs-on: ubuntu-latest
       steps:
-        - uses: actions/checkout@v4
+        - uses: actions/checkout@v5
 
         - name: Configure CMake
           run: |
             cmake -B build
 
         - name: Download artifacts
-          uses: actions/download-artifact@v4
+          uses: actions/download-artifact@v7
           with:
             path: downloaded_artifacts
 
@@ -480,7 +480,7 @@ jobs:
 
         - name: Create GitHub Release
           if: steps.check_tag.outputs.exists == 'false'
-          uses: softprops/action-gh-release@v2
+          uses: softprops/action-gh-release@v3
           with:
             tag_name: v${{ env.VERSION }}
             files: |

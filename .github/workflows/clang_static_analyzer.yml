@@ -18,7 +18,7 @@ jobs:
   clang_static_analyzer:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v3     
+      - uses: actions/checkout@v5
 
       - name: Set reusable strings
         id: strings
@@ -44,4 +44,3 @@ jobs:
         run: |
           cd ${{ steps.strings.outputs.build-output-dir }}
           scan-build-19 make -j 4
-
