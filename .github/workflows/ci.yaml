@@ -182,7 +182,7 @@ jobs:
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
-Update GitHub Actions runtimes
+
       - name: Prepare artifact
         shell: bash
         run: |
