@@ -24,6 +24,10 @@
 #include "SpeedTestServer/interface.h"
 #endif
 
+#ifdef INCLUDE_AUTHENTICATION_CLIENT
+#include "AuthenticationClient/interface.h"
+#endif
+
 #ifdef INCLUDE_AUTHENTICATION_SERVER
 #include "AuthenticationServer/interface.h"
 #endif
@@ -317,6 +321,10 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_SPEEDTEST_SERVER
     USING(SpeedTestServer);
+#endif
+
+#ifdef INCLUDE_AUTHENTICATION_CLIENT
+    USING(AuthenticationClient);
 #endif
 
 #ifdef INCLUDE_AUTHENTICATION_SERVER
