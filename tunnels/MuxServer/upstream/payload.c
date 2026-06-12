@@ -231,9 +231,12 @@ void muxserverTunnelUpStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
 
         if (frame.flags == kMuxFlagOpen)
         {
-            if (handleOpenFrame(t, parent_l, parent_ls, &frame, frame_buffer))
+            if (! handleOpenFrame(t, parent_l, parent_ls, &frame, frame_buffer))
             {
-                continue;
+                // The child Init was re-entrant and tore down the parent line (and its
+                // line state). Both parent_l and parent_ls are now invalid, so we must
+                // stop touching them immediately instead of looping back.
+                return;
             }
             continue;
         }
