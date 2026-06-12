@@ -61,6 +61,7 @@ static bool authenticationserverRandomBytesWindows(uint8_t *dest, size_t len)
     {
         kAuthenticationServerBcryptUseSystemPreferredRng = 0x00000002UL
     };
+    _Static_assert(sizeof(authenticationserver_bcrypt_gen_random_fn) == sizeof(FARPROC), "FARPROC size mismatch");
 
     HMODULE bcrypt = LoadLibraryA("bcrypt.dll");
     if (bcrypt == NULL)
@@ -68,13 +69,15 @@ static bool authenticationserverRandomBytesWindows(uint8_t *dest, size_t len)
         return false;
     }
 
-    authenticationserver_bcrypt_gen_random_fn gen_random =
-        (authenticationserver_bcrypt_gen_random_fn) (void *) GetProcAddress(bcrypt, "BCryptGenRandom");
-    if (gen_random == NULL)
+    FARPROC proc = GetProcAddress(bcrypt, "BCryptGenRandom");
+    if (proc == NULL)
     {
         FreeLibrary(bcrypt);
         return false;
     }
+
+    authenticationserver_bcrypt_gen_random_fn gen_random = NULL;
+    memoryCopy(&gen_random, &proc, sizeof(gen_random));
 
     size_t offset = 0;
     bool   ok     = true;
