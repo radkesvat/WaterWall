@@ -144,7 +144,7 @@ option(INCLUDE_AUTHENTICATION_SERVER    "link AuthenticationServer staticly to t
 option(INCLUDE_WIREGUARD_DEVICE         "link WireGuardDevice staticly to the core"          TRUE)
 option(INCLUDE_PACKET_TO_CONNECTION     "link PacketsToConnection staticly to the core"      TRUE)
 option(INCLUDE_STREAM_TO_PACKETS        "link StreamToPackets staticly to the core"          TRUE)
-option(INCLUDE_PACKETS_TO_STREAM       "link PacketsToStream staticly to the core"          TRUE)
+option(INCLUDE_PACKETS_TO_STREAM        "link PacketsToStream staticly to the core"          TRUE)
 option(INCLUDE_PACKET_SPLIT_STREAM      "link PacketSplitStream staticly to the core"        TRUE)
 option(INCLUDE_LAYER3_IP_ROUTING_TABLE  "link Layer3IpRoutingTable staticly to the core"     FALSE)
 option(INCLUDE_IP_OVERRIDER             "link IpOverrider staticly to the core"              TRUE)
