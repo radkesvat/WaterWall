@@ -44,6 +44,7 @@ It must not have a `next` node.
       "db-path": "users.json",
       "file-save-rate-ms": 10000,
       "session-idle-timeout-ms": 600000,
+      "verbose": false,
       "auth-clients": [
         {
           "name": "edge-1",
@@ -78,6 +79,11 @@ It must not have a `next` node.
 
 - `session-idle-timeout-ms` `(optional positive integer, default: 600000)`
   Default session inactivity timeout in milliseconds. `600000` is 10 minutes.
+
+- `verbose` `(optional boolean, default: false)`
+  Enables focused debug logs for authentication line lifecycle, request-message parsing, module dispatch, permission
+  decisions, session permissions, and response queue/send flow. It does not log secrets, session tokens, passwords, or
+  raw user JSON.
 
 - `auth-clients` `(non-empty array)`
   AuthenticationClient credentials and permissions. Each entry must contain non-empty `name` and `secret` strings.

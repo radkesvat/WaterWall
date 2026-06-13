@@ -10,6 +10,10 @@ void authenticationclientTunnelDownStreamPause(tunnel_t *t, line_t *l)
     if (LIKELY(ts->control_line == l))
     {
         ts->write_paused = true;
+        if (ts->verbose)
+        {
+            LOGD("AuthenticationClient: downstream paused control writes");
+        }
     }
     mutexUnlock(&ts->control_mutex);
 }

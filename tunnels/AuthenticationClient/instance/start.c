@@ -28,6 +28,11 @@ static void authenticationclientStartOnWorker0(void *worker_ptr, void *arg1, voi
     ts->stopping = false;
     mutexUnlock(&ts->control_mutex);
 
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationClient: startup control task running on worker 0");
+    }
+
     if (ts->ping_interval_ms > 0 && LIKELY(ts->ping_timer == NULL))
     {
         ts->ping_timer = wtimerAdd(worker->loop, authenticationclientPingTimerCallback, ts->ping_interval_ms, INFINITE);
@@ -38,6 +43,10 @@ static void authenticationclientStartOnWorker0(void *worker_ptr, void *arg1, voi
             return;
         }
         weventSetUserData(ts->ping_timer, t);
+        if (ts->verbose)
+        {
+            LOGD("AuthenticationClient: ping timer enabled every %u ms", (unsigned int) ts->ping_interval_ms);
+        }
     }
 
     authenticationclientStartSyncTimer(t);
@@ -47,5 +56,11 @@ static void authenticationclientStartOnWorker0(void *worker_ptr, void *arg1, voi
 
 void authenticationclientTunnelOnStart(tunnel_t *t)
 {
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationClient: queueing startup control task on worker 0");
+    }
+
     sendWorkerMessageForceQueue(0, authenticationclientStartOnWorker0, t, NULL, NULL);
 }

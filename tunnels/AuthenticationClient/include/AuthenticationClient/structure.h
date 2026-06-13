@@ -29,6 +29,7 @@ typedef struct authenticationclient_tstate_s
     bool     auth_in_flight;
     bool     pull_in_flight;
     bool     push_in_flight;
+    bool     verbose;
 
     line_t   *control_line;
     wtimer_t *ping_timer;

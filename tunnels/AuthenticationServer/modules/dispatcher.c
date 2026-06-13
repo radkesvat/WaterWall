@@ -105,11 +105,19 @@ static const authenticationserver_module_t *authenticationserverFindModule(uint8
     return NULL;
 }
 
+static uint32_t authenticationserverDispatcherCorrelationIdRead(
+    const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize])
+{
+    return ((uint32_t) correlation_id[0] << 24U) | ((uint32_t) correlation_id[1] << 16U) |
+           ((uint32_t) correlation_id[2] << 8U) | (uint32_t) correlation_id[3];
+}
+
 sbuf_t *authenticationserverDispatchRequest(uint8_t       request_type,
                                             const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
                                             tunnel_t *t, line_t *l, authenticationserver_session_t *session,
                                             const uint8_t *request_data, uint32_t request_data_len)
 {
+    authenticationserver_tstate_t        *ts     = tunnelGetState(t);
     const authenticationserver_module_t *module = authenticationserverFindModule(request_type);
     if (LIKELY(module != NULL))
     {
@@ -123,21 +131,44 @@ sbuf_t *authenticationserverDispatchRequest(uint8_t       request_type,
             }
             if (UNLIKELY(module->require_stats_push && ! session->allow_stats_push))
             {
+                if (ts->verbose)
+                {
+                    LOGD("AuthenticationServer: denied %s request for auth client \"%s\": stats push is not allowed",
+                         module->name,
+                         session->client_name != NULL ? session->client_name : "");
+                }
                 return authenticationserverCreateErrorResponseFrame(l, correlation_id, "stats-push-not-allowed");
             }
             if (UNLIKELY(module->require_user_pull && ! session->allow_user_pull))
             {
+                if (ts->verbose)
+                {
+                    LOGD("AuthenticationServer: denied %s request for auth client \"%s\": user pull is not allowed",
+                         module->name,
+                         session->client_name != NULL ? session->client_name : "");
+                }
                 return authenticationserverCreateErrorResponseFrame(l, correlation_id, "user-pull-not-allowed");
             }
             if (UNLIKELY(module->require_user_write && ! session->allow_user_write))
             {
+                if (ts->verbose)
+                {
+                    LOGD("AuthenticationServer: denied %s request for auth client \"%s\": user write is not allowed",
+                         module->name,
+                         session->client_name != NULL ? session->client_name : "");
+                }
                 return authenticationserverCreateErrorResponseFrame(l, correlation_id, "user-write-not-allowed");
             }
         }
 
-        LOGD("AuthenticationServer: dispatching %u-byte request to %s module",
-             (unsigned int) request_data_len,
-             module->name);
+        if (ts->verbose)
+        {
+            LOGD("AuthenticationServer: dispatching %s request correlation-id=%u payload=%u session=%s",
+                 module->name,
+                 (unsigned int) authenticationserverDispatcherCorrelationIdRead(correlation_id),
+                 (unsigned int) request_data_len,
+                 session != NULL && session->client_name != NULL ? session->client_name : "none");
+        }
         return module->handler(correlation_id, t, l, session, request_data, request_data_len);
     }
 

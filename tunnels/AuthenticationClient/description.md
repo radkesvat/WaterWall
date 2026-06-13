@@ -65,7 +65,8 @@ Optional settings:
   "push-interval-ms": 300000,
   "reconnect-interval-ms": 5000,
   "request-timeout-ms": 120000,
-  "max-pending-requests": 64
+  "max-pending-requests": 64,
+  "verbose": false
 }
 ```
 
@@ -87,6 +88,9 @@ immediately on worker 0.
 
 `request-timeout-ms` closes and reconnects the control line if any request stays pending longer than the configured
 time. A value of `0` disables pending request timeout checks.
+
+`verbose` enables focused debug logs for the control-line lifecycle, reconnect decisions, timer ticks, and
+request/response correlation flow. It does not log secrets, session tokens, passwords, or raw users JSON.
 
 ## Wire Protocol
 

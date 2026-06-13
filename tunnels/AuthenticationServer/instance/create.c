@@ -47,6 +47,8 @@ static bool authenticationserverParseSettings(authenticationserver_tstate_t *ts,
         return false;
     }
 
+    getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
+
     int file_save_rate_ms = 0;
     if (UNLIKELY(! getIntFromJsonObject(&file_save_rate_ms, settings, "file-save-rate-ms") || file_save_rate_ms <= 0))
     {
@@ -162,6 +164,11 @@ tunnel_t *authenticationserverTunnelCreate(node_t *node)
     {
         authenticationserverTunnelDestroy(t);
         return NULL;
+    }
+
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationServer: verbose flow logging is enabled");
     }
 
     if (UNLIKELY(! authenticationserverLoadDatabase(ts)))

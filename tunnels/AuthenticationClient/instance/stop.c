@@ -21,6 +21,11 @@ void authenticationclientTunnelOnStop(tunnel_t *t)
     mutexLock(&ts->control_mutex);
     ts->stopping = true;
     mutexUnlock(&ts->control_mutex);
+
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationClient: stop requested");
+    }
 }
 
 void authenticationclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
@@ -33,6 +38,11 @@ void authenticationclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
     }
 
     authenticationclient_tstate_t *ts = tunnelGetState(t);
+
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationClient: worker 0 stopping; deleting timers and closing control line if needed");
+    }
 
     authenticationclientDeleteTimer(&ts->ping_timer);
     authenticationclientDeleteTimer(&ts->sync_timer);

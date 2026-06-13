@@ -67,6 +67,8 @@ static bool authenticationclientParseSettings(authenticationclient_tstate_t *ts,
         return false;
     }
 
+    getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
+
     if (UNLIKELY(
             ! authenticationclientReadInterval(
                 settings, "ping-interval-ms", kAuthenticationClientDefaultPingIntervalMs, &ts->ping_interval_ms) ||
@@ -117,6 +119,11 @@ tunnel_t *authenticationclientTunnelCreate(node_t *node)
     {
         authenticationclientTunnelDestroy(t);
         return NULL;
+    }
+
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationClient: verbose flow logging is enabled");
     }
 
     users_t *users = memoryAllocate(sizeof(*users));

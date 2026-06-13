@@ -22,6 +22,58 @@ static uint64_t authenticationclientReadNetworkUI64(const uint8_t *src)
            ((uint64_t) src[6] << 8U) | (uint64_t) src[7];
 }
 
+static const char *authenticationclientRequestTypeName(uint8_t request_type)
+{
+    switch (request_type)
+    {
+    case kAuthenticationClientRequestTypePing:
+        return "Ping";
+    case kAuthenticationClientRequestTypeGetUserBySHA256Hex:
+        return "GetUserBySHA256Hex";
+    case kAuthenticationClientRequestTypeGetUserBySHA256Base64:
+        return "GetUserBySHA256Base64";
+    case kAuthenticationClientRequestTypeGetUserBySHA256:
+        return "GetUserBySHA256";
+    case kAuthenticationClientRequestTypeGetUserByPassword:
+        return "GetUserByPassword";
+    case kAuthenticationClientRequestTypeAddNewUser:
+        return "AddNewUser";
+    case kAuthenticationClientRequestTypeUpdateUser:
+        return "UpdateUser";
+    case kAuthenticationClientRequestTypeUpdateUserTraficStatsDiff:
+        return "UpdateUserTraficStatsDiff";
+    case kAuthenticationClientRequestTypeGetAllUsers:
+        return "GetAllUsers";
+    case kAuthenticationClientRequestTypeAuthenticate:
+        return "Authenticate";
+    case kAuthenticationClientRequestTypePushUserStats:
+        return "PushUserStats";
+    default:
+        return "Unknown";
+    }
+}
+
+static const char *authenticationclientResponseTypeName(uint8_t response_type)
+{
+    switch (response_type)
+    {
+    case kAuthenticationClientResponseTypeOk:
+        return "Ok";
+    case kAuthenticationClientResponseTypeError:
+        return "Error";
+    case kAuthenticationClientResponseTypePong:
+        return "Pong";
+    case kAuthenticationClientResponseTypeUser:
+        return "User";
+    case kAuthenticationClientResponseTypeUsers:
+        return "Users";
+    case kAuthenticationClientResponseTypeSession:
+        return "Session";
+    default:
+        return "Unknown";
+    }
+}
+
 static void authenticationclientCorrelationIdWrite(uint8_t dest[kAuthenticationClientCorrelationIdSize], uint32_t value)
 {
     authenticationclientWriteNetworkUI32(dest, value);
@@ -258,8 +310,9 @@ static sbuf_t *authenticationclientCreateRequestMessage(line_t *l, uint8_t reque
     const uint32_t frame_len   = kAuthenticationClientRequestHeaderSize + request_data_len;
     const uint32_t message_len = kAuthenticationClientRequestEnvelopeHeaderSize + frame_len;
 
+    // Protocol limits are intentionally far below UINT32_MAX; revisit if those limits grow.
     if (UNLIKELY(request_data_len > kAuthenticationClientMaxRequestData ||
-                 frame_len > kAuthenticationClientMaxMessagePayload || message_len < frame_len))
+                 frame_len > kAuthenticationClientMaxMessagePayload))
     {
         LOGW("AuthenticationClient: refused oversized request type %u", (unsigned int) request_type);
         return NULL;
@@ -339,6 +392,16 @@ static void authenticationclientAcknowledgePendingPushUsers(tunnel_t *t, bool re
     }
     rwlockWriteUnlock(&ts->users_lock);
 
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationClient: acknowledged PushUserStats response revisions-current=%s config-revision=%" PRIu64
+             " stats-revision=%" PRIu64 " local-generation=%" PRIu64,
+             revisions_current ? "true" : "false",
+             config_revision,
+             stats_revision,
+             revision_generation);
+    }
+
     authenticationclientDestroyUsers(old_baseline);
 }
 
@@ -355,6 +418,18 @@ static bool authenticationclientSendRequestWithSnapshot(tunnel_t *t, uint8_t req
     mutexLock(&ts->control_mutex);
     if (UNLIKELY(! authenticationclientRequestMayBeSentLocked(ts, request_type)))
     {
+        if (ts->verbose)
+        {
+            LOGD("AuthenticationClient: not sending %s request; started=%s stopping=%s connected=%s "
+                 "authenticated=%s write-paused=%s control-line=%s",
+                 authenticationclientRequestTypeName(request_type),
+                 ts->started ? "true" : "false",
+                 ts->stopping ? "true" : "false",
+                 ts->connected ? "true" : "false",
+                 ts->authenticated ? "true" : "false",
+                 ts->write_paused ? "true" : "false",
+                 ts->control_line != NULL ? "present" : "none");
+        }
         mutexUnlock(&ts->control_mutex);
         authenticationclientDestroyUsers(push_snapshot);
         return false;
@@ -394,6 +469,12 @@ static bool authenticationclientSendRequestWithSnapshot(tunnel_t *t, uint8_t req
 
     if (UNLIKELY(line == NULL))
     {
+        if (ts->verbose)
+        {
+            LOGD("AuthenticationClient: no live control line for %s request correlation-id=%u",
+                 authenticationclientRequestTypeName(request_type),
+                 (unsigned int) correlation_id);
+        }
         authenticationclientRemovePendingById(t, correlation_id);
         if (request_type == kAuthenticationClientRequestTypePushUserStats)
         {
@@ -417,8 +498,22 @@ static bool authenticationclientSendRequestWithSnapshot(tunnel_t *t, uint8_t req
         return false;
     }
 
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationClient: sending %s request correlation-id=%u payload=%u",
+             authenticationclientRequestTypeName(request_type),
+             (unsigned int) correlation_id,
+             (unsigned int) request_data_len);
+    }
+
     tunnelNextUpStreamPayload(t, line, message);
     bool alive = lineIsAlive(line);
+    if (UNLIKELY(! alive) && ts->verbose)
+    {
+        LOGD("AuthenticationClient: control line closed while sending %s request correlation-id=%u",
+             authenticationclientRequestTypeName(request_type),
+             (unsigned int) correlation_id);
+    }
     authenticationclientDestroyUsers(push_snapshot);
     lineUnlock(line);
     return alive;
@@ -792,6 +887,7 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
     users_t *old_baseline = NULL;
     rwlockWriteLock(&ts->users_lock);
     users_t *old_users = ts->users;
+    // Runtime user tables are created at tunnel creation and stay non-NULL until destroy.
     if (UNLIKELY(! authenticationclientApplyLocalTrafficDelta(new_users, old_users, ts->sync_baseline_users)))
     {
         rwlockWriteUnlock(&ts->users_lock);
@@ -811,12 +907,19 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
     ts->local_revision_generation = revision_generation;
     rwlockWriteUnlock(&ts->users_lock);
 
-    if (LIKELY(old_users != NULL))
-    {
-        usersDestroy(old_users);
-        memoryFree(old_users);
-    }
+    usersDestroy(old_users);
+    memoryFree(old_users);
     authenticationclientDestroyUsers(old_baseline);
+
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationClient: installed pulled users table users=%zu config-revision=%" PRIu64
+             " stats-revision=%" PRIu64 " local-generation=%" PRIu64,
+             usersCount(new_users),
+             config_revision,
+             stats_revision,
+             revision_generation);
+    }
 
     LOGI("AuthenticationClient: pulled %zu users from server", usersCount(new_users));
     return true;
@@ -838,11 +941,7 @@ static bool authenticationclientJsonBool(const uint8_t *data, uint32_t data_len,
 
 static bool authenticationclientApplyLocalTrafficDelta(users_t *dest, users_t *old_users, users_t *baseline_users)
 {
-    if (UNLIKELY(dest == NULL || old_users == NULL))
-    {
-        return true;
-    }
-
+    // Internal helper: current caller passes initialized user tables.
     const size_t users_count = usersCount(old_users);
     for (size_t i = 0; i < users_count; ++i)
     {
@@ -954,6 +1053,18 @@ static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint
         return;
     }
 
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationClient: received %s response for %s request correlation-id=%u payload=%u "
+             "config-revision=%" PRIu64 " stats-revision=%" PRIu64,
+             authenticationclientResponseTypeName(response_type),
+             authenticationclientRequestTypeName(request_type),
+             (unsigned int) correlation_id,
+             (unsigned int) data_len,
+             config_revision,
+             stats_revision);
+    }
+
     if (UNLIKELY(response_type == kAuthenticationClientResponseTypeError))
     {
         authenticationclientHandleError(t, request_type, data, data_len);
@@ -1003,6 +1114,10 @@ static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint
             t, ! needs_pull, config_revision, stats_revision, revision_generation);
         if (needs_pull)
         {
+            if (ts->verbose)
+            {
+                LOGD("AuthenticationClient: server requested a fresh GetAllUsers after PushUserStats");
+            }
             discard authenticationclientSendGetAllUsers(t);
         }
         break;
@@ -1072,6 +1187,8 @@ static bool authenticationclientValidateResponsePayload(sbuf_t *payload)
 
 bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authenticationclient_lstate_t *ls)
 {
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+
     while (true)
     {
         uint32_t message_body_len = 0;
@@ -1111,6 +1228,16 @@ bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authentication
             lineReuseBuffer(l, payload);
             authenticationclientCloseControlLine(t, l, true);
             return false;
+        }
+
+        if (ts->verbose)
+        {
+            LOGD("AuthenticationClient: processing response message body=%u frame-payload=%u config-revision=%" PRIu64
+                 " stats-revision=%" PRIu64,
+                 (unsigned int) message_body_len,
+                 (unsigned int) sbufGetLength(payload),
+                 config_revision,
+                 stats_revision);
         }
 
         const uint8_t *ptr       = sbufGetRawPtr(payload);
@@ -1157,6 +1284,12 @@ void authenticationclientOpenControlLine(tunnel_t *t)
     mutexLock(&ts->control_mutex);
     if (UNLIKELY(ts->stopping || ts->control_line != NULL))
     {
+        if (ts->verbose)
+        {
+            LOGD("AuthenticationClient: skipped opening control line stopping=%s existing-line=%s",
+                 ts->stopping ? "true" : "false",
+                 ts->control_line != NULL ? "true" : "false");
+        }
         mutexUnlock(&ts->control_mutex);
         return;
     }
@@ -1170,12 +1303,21 @@ void authenticationclientOpenControlLine(tunnel_t *t)
     authenticationclient_lstate_t *ls   = lineGetState(line, t);
     authenticationclientLinestateInitialize(ls, lineGetBufferPool(line));
 
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationClient: opening control line on worker %u", (unsigned int) lineGetWID(line));
+    }
+
     mutexLock(&ts->control_mutex);
     ts->control_line = line;
     mutexUnlock(&ts->control_mutex);
 
     if (UNLIKELY(! withLineLocked(line, tunnelNextUpStreamInit, t)))
     {
+        if (ts->verbose)
+        {
+            LOGD("AuthenticationClient: control line closed during upstream Init");
+        }
         return;
     }
 }
@@ -1192,6 +1334,7 @@ static void authenticationclientOpenControlLineOnWorker0(void *worker_ptr, void 
 void authenticationclientCloseControlLine(tunnel_t *t, line_t *l, bool propagate_finish)
 {
     authenticationclient_tstate_t *ts = tunnelGetState(t);
+    const bool                     verbose = ts->verbose;
 
     mutexLock(&ts->control_mutex);
     if (LIKELY(ts->control_line == l))
@@ -1204,18 +1347,22 @@ void authenticationclientCloseControlLine(tunnel_t *t, line_t *l, bool propagate
     authenticationclientClearSessionLocked(ts);
     mutexUnlock(&ts->control_mutex);
 
+    if (verbose)
+    {
+        LOGD("AuthenticationClient: closing control line propagate-finish=%s",
+             propagate_finish ? "true" : "false");
+    }
+
     authenticationclient_lstate_t *ls = lineGetState(l, t);
     authenticationclientLinestateDestroy(ls);
 
-    if (propagate_finish && LIKELY(lineIsAlive(l)))
+    // This tunnel owns the control line; upstream Finish is non-reentrant, then we destroy it locally.
+    if (propagate_finish)
     {
         tunnelNextUpStreamFinish(t, l);
     }
 
-    if (LIKELY(lineIsAlive(l)))
-    {
-        lineDestroy(l);
-    }
+    lineDestroy(l);
 }
 
 void authenticationclientScheduleReconnect(tunnel_t *t)
@@ -1225,6 +1372,10 @@ void authenticationclientScheduleReconnect(tunnel_t *t)
 
     if (getWID() != 0)
     {
+        if (ts->verbose)
+        {
+            LOGD("AuthenticationClient: queued reconnect on worker 0 from worker %u", (unsigned int) getWID());
+        }
         sendWorkerMessageForceQueue(0, authenticationclientOpenControlLineOnWorker0, t, NULL, NULL);
         return;
     }
@@ -1239,12 +1390,21 @@ void authenticationclientScheduleReconnect(tunnel_t *t)
 
     if (ts->reconnect_interval_ms == 0)
     {
+        if (ts->verbose)
+        {
+            LOGD("AuthenticationClient: reconnecting immediately");
+        }
         authenticationclientOpenControlLine(t);
         return;
     }
 
     if (UNLIKELY(ts->reconnect_timer != NULL))
     {
+        if (ts->verbose)
+        {
+            LOGD("AuthenticationClient: reconnect timer already active; resetting to %u ms",
+                 (unsigned int) ts->reconnect_interval_ms);
+        }
         wtimerReset(ts->reconnect_timer, ts->reconnect_interval_ms);
         return;
     }
@@ -1258,6 +1418,11 @@ void authenticationclientScheduleReconnect(tunnel_t *t)
         return;
     }
     weventSetUserData(ts->reconnect_timer, t);
+
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationClient: scheduled reconnect in %u ms", (unsigned int) ts->reconnect_interval_ms);
+    }
 }
 
 void authenticationclientReconnectTimerCallback(wtimer_t *timer)
@@ -1272,6 +1437,11 @@ void authenticationclientReconnectTimerCallback(wtimer_t *timer)
     if (LIKELY(ts->reconnect_timer == timer))
     {
         ts->reconnect_timer = NULL;
+    }
+
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationClient: reconnect timer fired");
     }
 
     authenticationclientOpenControlLine(t);
@@ -1298,6 +1468,13 @@ void authenticationclientPingTimerCallback(wtimer_t *timer)
     connected     = ts->connected;
     authenticated = ts->authenticated;
     mutexUnlock(&ts->control_mutex);
+
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationClient: ping timer tick connected=%s authenticated=%s",
+             connected ? "true" : "false",
+             authenticated ? "true" : "false");
+    }
 
     if (UNLIKELY(! connected))
     {
@@ -1369,6 +1546,11 @@ void authenticationclientStartSyncTimer(tunnel_t *t)
         return;
     }
     weventSetUserData(ts->sync_timer, t);
+
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationClient: sync timer enabled every %u ms", (unsigned int) sync_interval_ms);
+    }
 }
 
 void authenticationclientSyncTimerCallback(wtimer_t *timer)
@@ -1390,6 +1572,13 @@ void authenticationclientSyncTimerCallback(wtimer_t *timer)
     const bool     push_due = authenticationclientSyncJobDue(now_ms, &ts->last_push_sync_ms, ts->push_interval_ms);
     const bool     pull_due = authenticationclientSyncJobDue(now_ms, &ts->last_pull_sync_ms, ts->pull_interval_ms);
 
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationClient: sync timer tick push-due=%s pull-due=%s",
+             push_due ? "true" : "false",
+             pull_due ? "true" : "false");
+    }
+
     if (push_due)
     {
         discard authenticationclientSendPushUserStats(t);
@@ -1400,7 +1589,13 @@ void authenticationclientSyncTimerCallback(wtimer_t *timer)
         return;
     }
 
-    if (! authenticationclientShouldSendGetAllUsers(t, pull_due))
+    const bool should_pull = authenticationclientShouldSendGetAllUsers(t, pull_due);
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationClient: sync timer pull decision send=%s", should_pull ? "true" : "false");
+    }
+
+    if (! should_pull)
     {
         return;
     }

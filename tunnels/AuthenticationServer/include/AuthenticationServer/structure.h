@@ -49,6 +49,7 @@ typedef struct authenticationserver_tstate_s
     uint32_t                            file_save_rate_ms;
     uint32_t                            session_idle_timeout_ms;
     bool                                database_loaded;
+    bool                                verbose;
 } authenticationserver_tstate_t;
 
 typedef struct authenticationserver_lstate_s

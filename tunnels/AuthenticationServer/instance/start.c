@@ -6,6 +6,11 @@ void authenticationserverTunnelOnStart(tunnel_t *t)
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);
 
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationServer: starting timers on worker 0");
+    }
+
     if (LIKELY(ts->save_timer == NULL))
     {
         ts->save_timer =

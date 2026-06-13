@@ -16,7 +16,12 @@ static void authenticationserverDeleteTimer(wtimer_t **timer)
 
 void authenticationserverTunnelOnStop(tunnel_t *t)
 {
-    discard t;
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationServer: stop requested");
+    }
 }
 
 void authenticationserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
@@ -29,6 +34,11 @@ void authenticationserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
     }
 
     authenticationserver_tstate_t *ts = tunnelGetState(t);
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationServer: worker 0 stopping; deleting save and session-expiry timers");
+    }
+
     authenticationserverDeleteTimer(&ts->save_timer);
     authenticationserverDeleteTimer(&ts->session_expiry_timer);
 }

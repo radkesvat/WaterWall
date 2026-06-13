@@ -41,8 +41,9 @@ sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuth
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "response-too-large");
     }
 
-    if (LIKELY(session != NULL) && UNLIKELY(! authenticationserverSessionReplaceBaselineFromUsers(
-                                       session, &ts->store.users, ts->store.config_revision, ts->store.stats_revision)))
+    // Dispatcher reaches this non-public module only with an authenticated session.
+    if (UNLIKELY(! authenticationserverSessionReplaceBaselineFromUsers(
+            session, &ts->store.users, ts->store.config_revision, ts->store.stats_revision)))
     {
         LOGW("AuthenticationServer: GetAllUsers failed to refresh session baseline");
         cJSON_Delete(users_json);

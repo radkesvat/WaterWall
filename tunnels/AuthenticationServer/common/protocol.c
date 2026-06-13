@@ -15,6 +15,42 @@ static uint32_t authenticationserverReadNetworkUI32(const uint8_t *src)
     return ntohl(network_value);
 }
 
+static uint32_t authenticationserverCorrelationIdRead(const uint8_t src[kAuthenticationServerCorrelationIdSize])
+{
+    return authenticationserverReadNetworkUI32(src);
+}
+
+static const char *authenticationserverRequestTypeName(uint8_t request_type)
+{
+    switch (request_type)
+    {
+    case kAuthenticationServerRequestTypePing:
+        return "Ping";
+    case kAuthenticationServerRequestTypeGetUserBySHA256Hex:
+        return "GetUserBySHA256Hex";
+    case kAuthenticationServerRequestTypeGetUserBySHA256Base64:
+        return "GetUserBySHA256Base64";
+    case kAuthenticationServerRequestTypeGetUserBySHA256:
+        return "GetUserBySHA256";
+    case kAuthenticationServerRequestTypeGetUserByPassword:
+        return "GetUserByPassword";
+    case kAuthenticationServerRequestTypeAddNewUser:
+        return "AddNewUser";
+    case kAuthenticationServerRequestTypeUpdateUser:
+        return "UpdateUser";
+    case kAuthenticationServerRequestTypeUpdateUserTraficStatsDiff:
+        return "UpdateUserTraficStatsDiff";
+    case kAuthenticationServerRequestTypeGetAllUsers:
+        return "GetAllUsers";
+    case kAuthenticationServerRequestTypeAuthenticate:
+        return "Authenticate";
+    case kAuthenticationServerRequestTypePushUserStats:
+        return "PushUserStats";
+    default:
+        return "Unknown";
+    }
+}
+
 static void authenticationserverWriteNetworkUI64(uint8_t *dest, uint64_t value)
 {
     dest[0] = (uint8_t) (value >> 56U);
@@ -109,10 +145,8 @@ sbuf_t *authenticationserverCreateUserJsonResponseFrame(
 
 void authenticationserverCloseLine(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls, const char *reason)
 {
-    if (LIKELY(reason != NULL))
-    {
-        LOGW("AuthenticationServer: closing logical connection: %s", reason);
-    }
+    // Internal close paths pass literal reasons; keep that contract for new callers.
+    LOGW("AuthenticationServer: closing logical connection: %s", reason);
 
     authenticationserverLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
@@ -120,9 +154,22 @@ void authenticationserverCloseLine(tunnel_t *t, line_t *l, authenticationserver_
 
 bool authenticationserverFlushResponses(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls)
 {
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+
+    if (ts->verbose && bufferqueueGetBufCount(&ls->response_queue) > 0)
+    {
+        LOGD("AuthenticationServer: flushing %u queued response message(s)",
+             (unsigned int) bufferqueueGetBufCount(&ls->response_queue));
+    }
+
     while (! ls->response_paused && bufferqueueGetBufCount(&ls->response_queue) > 0)
     {
         sbuf_t *response = bufferqueuePopFront(&ls->response_queue);
+        if (ts->verbose)
+        {
+            LOGD("AuthenticationServer: sending queued response message bytes=%u",
+                 (unsigned int) sbufGetLength(response));
+        }
         if (UNLIKELY(! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, response)))
         {
             return false;
@@ -135,8 +182,17 @@ bool authenticationserverFlushResponses(tunnel_t *t, line_t *l, authenticationse
 static bool authenticationserverSendOrQueueResponse(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls,
                                                     sbuf_t *response)
 {
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+
     if (UNLIKELY(ls->response_paused || bufferqueueGetBufCount(&ls->response_queue) > 0))
     {
+        if (ts->verbose)
+        {
+            LOGD("AuthenticationServer: queueing response message bytes=%u paused=%s queued=%u",
+                 (unsigned int) sbufGetLength(response),
+                 ls->response_paused ? "true" : "false",
+                 (unsigned int) bufferqueueGetBufCount(&ls->response_queue));
+        }
         bufferqueuePushBack(&ls->response_queue, response);
         if (UNLIKELY(bufferqueueGetBufLen(&ls->response_queue) > kAuthenticationServerMaxResponseQueue))
         {
@@ -144,6 +200,11 @@ static bool authenticationserverSendOrQueueResponse(tunnel_t *t, line_t *l, auth
             return false;
         }
         return true;
+    }
+
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationServer: sending response message bytes=%u", (unsigned int) sbufGetLength(response));
     }
 
     return withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, response);
@@ -291,6 +352,13 @@ static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *
 
     authenticationserverSessionTouch(session, getTickMS());
 
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationServer: building response for request message payload=%u session=%s",
+             (unsigned int) sbufGetLength(payload),
+             session != NULL && session->client_name != NULL ? session->client_name : "none");
+    }
+
     for (uint32_t pass = 0; pass < 2U; ++pass)
     {
         const bool write_pass = pass == 0U;
@@ -313,6 +381,15 @@ static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *
                 offset += consumed;
                 remaining -= consumed;
                 continue;
+            }
+
+            if (ts->verbose)
+            {
+                LOGD("AuthenticationServer: handling %s request correlation-id=%u payload=%u pass=%s",
+                     authenticationserverRequestTypeName(request_type),
+                     (unsigned int) authenticationserverCorrelationIdRead(correlation_id),
+                     (unsigned int) request_data_len,
+                     write_pass ? "write" : "read");
             }
 
             if (UNLIKELY(request_type == kAuthenticationServerRequestTypeAuthenticate &&
@@ -355,7 +432,15 @@ static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *
     authenticationserverFinalizeResponseMessage(response, ts->store.config_revision, ts->store.stats_revision);
     *response_out = response;
 
-    LOGD("AuthenticationServer: processed %u request frame(s) from one message", (unsigned int) count);
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationServer: processed %u request frame(s); response bytes=%u config-revision=%" PRIu64
+             " stats-revision=%" PRIu64,
+             (unsigned int) count,
+             (unsigned int) sbufGetLength(response),
+             ts->store.config_revision,
+             ts->store.stats_revision);
+    }
     return true;
 }
 
@@ -377,6 +462,8 @@ static bool authenticationserverBuildResponseMessage(tunnel_t *t, line_t *l,
 
 bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls)
 {
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+
     while (true)
     {
         uint32_t message_body_len = 0;
@@ -409,6 +496,13 @@ bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authentications
         uint8_t token[kAuthenticationServerSessionTokenSize];
         memoryCopy(token, sbufGetRawPtr(payload), sizeof(token));
         sbufShiftRight(payload, kAuthenticationServerSessionTokenSize);
+
+        if (ts->verbose)
+        {
+            LOGD("AuthenticationServer: processing request message body=%u frame-payload=%u",
+                 (unsigned int) message_body_len,
+                 (unsigned int) sbufGetLength(payload));
+        }
 
         sbuf_t *response = NULL;
         if (UNLIKELY(! authenticationserverBuildResponseMessage(t, l, token, payload, &response)))

@@ -269,7 +269,7 @@ authenticationserver_session_t *authenticationserverSessionFindByTokenLocked(
     for (uint32_t i = 0; i < ts->sessions_count; ++i)
     {
         authenticationserver_session_t *session = ts->sessions[i];
-        if (LIKELY(session != NULL) && wCryptoEqual(session->token, token, kAuthenticationServerSessionTokenSize))
+        if (wCryptoEqual(session->token, token, kAuthenticationServerSessionTokenSize))
         {
             return session;
         }
@@ -384,6 +384,16 @@ authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, c
 
     ts->sessions[ts->sessions_count] = session;
     ts->sessions_count += 1U;
+    if (ts->verbose)
+    {
+        LOGD("AuthenticationServer: session for auth client \"%s\" permissions stats-push=%s user-pull=%s "
+             "user-write=%s idle-timeout-ms=%u",
+             client->name,
+             client->allow_stats_push ? "true" : "false",
+             client->allow_user_pull ? "true" : "false",
+             client->allow_user_write ? "true" : "false",
+             (unsigned int) client->session_idle_timeout_ms);
+    }
     LOGI("AuthenticationServer: authenticated auth client \"%s\"", client->name);
     return session;
 }
@@ -401,6 +411,7 @@ static void authenticationserverSessionRemoveAtLocked(authenticationserver_tstat
     assert(ts != NULL);
     assert(index < ts->sessions_count);
 
+    // sessions[0..sessions_count) is compact and populated; active-range loops rely on this.
     authenticationserverSessionFree(ts->sessions[index]);
 
     const uint32_t last_index = ts->sessions_count - 1U;
@@ -425,8 +436,7 @@ static void authenticationserverSessionsRemoveClientLocked(authenticationserver_
     for (uint32_t i = 0; i < ts->sessions_count;)
     {
         authenticationserver_session_t *session = ts->sessions[i];
-        if (LIKELY(session != NULL && session->client_name != NULL) &&
-            stringCompare(session->client_name, client_name) == 0)
+        if (LIKELY(session->client_name != NULL) && stringCompare(session->client_name, client_name) == 0)
         {
             authenticationserverSessionRemoveAtLocked(ts, i);
             ++removed_count;
@@ -453,12 +463,6 @@ void authenticationserverSessionsExpireIdle(tunnel_t *t)
     for (uint32_t i = 0; i < ts->sessions_count;)
     {
         authenticationserver_session_t *session = ts->sessions[i];
-        if (UNLIKELY(session == NULL))
-        {
-            authenticationserverSessionRemoveAtLocked(ts, i);
-            continue;
-        }
-
         const uint32_t idle_ms = now_ms - session->last_activity_ms;
 
         if (LIKELY(idle_ms < session->session_idle_timeout_ms))
