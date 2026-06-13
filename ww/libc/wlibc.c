@@ -167,52 +167,6 @@ char *stringCat(char *dest, const char *src, size_t n)
 
 #endif
 
-bool stringStartsWith(const char *str, const char *start)
-{
-    assert(str != NULL && start != NULL);
-    while (*str && *start && *str == *start)
-    {
-        ++str;
-        ++start;
-    }
-    return *start == '\0';
-}
-
-bool stringEndsWith(const char *str, const char *end)
-{
-    assert(str != NULL && end != NULL);
-    int len1 = 0;
-    int len2 = 0;
-    while (*str)
-    {
-        ++str;
-        ++len1;
-    }
-    while (*end)
-    {
-        ++end;
-        ++len2;
-    }
-    if (len1 < len2)
-        return false;
-    while (len2-- > 0)
-    {
-        --str;
-        --end;
-        if (*str != *end)
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool stringContains(const char *str, const char *sub)
-{
-    assert(str != NULL && sub != NULL);
-    return strstr(str, sub) != NULL;
-}
-
 bool stringWildCardMatch(const char *str, const char *pattern)
 {
     assert(str != NULL && pattern != NULL);
@@ -274,19 +228,6 @@ char *stringNewWithoutSpace(const char *str)
     result[new_len] = '\0';
 
     return result;
-}
-
-char *stringChrLen(const char *s, char c, size_t n)
-{
-    assert(s != NULL);
-    const char *p = s;
-    while (*p != '\0' && n-- > 0)
-    {
-        if (*p == c)
-            return (char *) p;
-        ++p;
-    }
-    return NULL;
 }
 
 //--------------------file-------------------------------
@@ -356,31 +297,6 @@ bool writeFile(const char *const path, const char *data, size_t len)
     }
     fclose(f);
     return true;
-}
-
-char *stringChrDir(const char *filepath)
-{
-    char *p = (char *) filepath;
-    while (*p)
-        ++p;
-    while (--p >= filepath)
-    {
-        if (filePathIsSeparator(*p))
-            return p;
-    }
-    return NULL;
-}
-
-const char *filePathBaseName(const char *filepath)
-{
-    const char *pos = stringChrDir(filepath);
-    return pos ? pos + 1 : filepath;
-}
-
-const char *filePathSuffixName(const char *filename)
-{
-    const char *pos = stringChrDot(filename);
-    return pos ? pos + 1 : "";
 }
 
 int createDirIfNotExists(const char *dir)

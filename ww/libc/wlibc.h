@@ -486,9 +486,35 @@ WW_EXPORT char *stringReverse(char *str);
 char           *stringDuplicate(const char *src);
 char           *stringConcat(const char *s1, const char *s2);
 
-WW_EXPORT bool stringStartsWith(const char *str, const char *start);
-WW_EXPORT bool stringEndsWith(const char *str, const char *end);
-WW_EXPORT bool stringContains(const char *str, const char *sub);
+static inline bool stringStartsWith(const char *str, const char *start)
+{
+    assert(str != NULL && start != NULL);
+    while (*str && *start && *str == *start)
+    {
+        ++str;
+        ++start;
+    }
+    return *start == '\0';
+}
+
+static inline bool stringEndsWith(const char *str, const char *end)
+{
+    assert(str != NULL && end != NULL);
+    size_t str_len = stringLength(str);
+    size_t end_len = stringLength(end);
+
+    if (str_len < end_len)
+    {
+        return false;
+    }
+    return memoryCompare(str + str_len - end_len, end, end_len) == 0;
+}
+
+static inline bool stringContains(const char *str, const char *sub)
+{
+    assert(str != NULL && sub != NULL);
+    return strstr(str, sub) != NULL;
+}
 WW_EXPORT bool stringWildCardMatch(const char *str, const char *pattern);
 
 WW_EXPORT char *stringNewWithoutSpace(const char *str);
@@ -519,10 +545,22 @@ WW_EXPORT char *stringCat(char *dest, const char *src, size_t n);
 
 #define stringChr strchr
 
-WW_EXPORT char *stringChrLen(const char *s, char c, size_t n);
+static inline char *stringChrLen(const char *s, char c, size_t n)
+{
+    assert(s != NULL);
+    const char *p = s;
+    while (*p != '\0' && n-- > 0)
+    {
+        if (*p == c)
+        {
+            return (char *) p;
+        }
+        ++p;
+    }
+    return NULL;
+}
 
 #define stringChrDot(str) strrchr(str, '.')
-WW_EXPORT char *stringChrDir(const char *filepath);
 
 #define stringCopy strcpy
 
@@ -546,12 +584,35 @@ static inline bool filePathIsSeparator(char ch)
 #endif
 }
 
+static inline char *stringChrDir(const char *filepath)
+{
+    const char *p = filepath + stringLength(filepath);
+    while (p > filepath)
+    {
+        --p;
+        if (filePathIsSeparator(*p))
+        {
+            return (char *) p;
+        }
+    }
+    return NULL;
+}
+
 char *readFile(const char *path);
 bool  writeFile(const char *path, const char *data, size_t len);
 
 // basename
-WW_EXPORT const char *filePathBaseName(const char *filepath);
-WW_EXPORT const char *filePathSuffixName(const char *filename);
+static inline const char *filePathBaseName(const char *filepath)
+{
+    const char *pos = stringChrDir(filepath);
+    return pos ? pos + 1 : filepath;
+}
+
+static inline const char *filePathSuffixName(const char *filename)
+{
+    const char *pos = stringChrDot(filename);
+    return pos ? pos + 1 : "";
+}
 // mkdir -p
 WW_EXPORT int createDirIfNotExists(const char *dir);
 // wwRmDir -p
