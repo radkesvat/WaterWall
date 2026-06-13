@@ -78,9 +78,11 @@ static bool decodeAndInitializeDevice(wireguard_device_t *device, const char *pr
 
     if (! wireguardDeviceInit(device, decoded_key))
     {
+        wCryptoZero(decoded_key, sizeof(decoded_key));
         return false;
     }
 
+    wCryptoZero(decoded_key, sizeof(decoded_key));
     device->status_connected = 0;
     return true;
 }

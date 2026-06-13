@@ -22,6 +22,46 @@ static void loopHandle(wtimer_t *timer)
     wireguarddeviceLoop((wireguard_device_t *) state);
 }
 
+static void wireguarddeviceQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    discard arg2;
+    discard arg3;
+
+    tunnel_t *t = arg1;
+    line_t   *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), getWID());
+
+    tunnelNextUpStreamInit(t, l);
+    if (! lineIsAlive(l))
+    {
+        LOGF("WireGuardDevice: worker packet line died during packet-side init");
+        terminateProgram(1);
+    }
+}
+
+static void wireguarddeviceEnsureInnerPacketInit(tunnel_t *t, wgd_tstate_t *state)
+{
+    tunnel_chain_t *tc = tunnelGetChain(t);
+
+    if (wireguarddeviceTransportSideIsNext(state) || tc == NULL || tc->packet_lines == NULL ||
+        tc->packet_chain_init_sent)
+    {
+        return;
+    }
+
+    if (t->next == NULL)
+    {
+        LOGF("WireGuardDevice: transport-direction=prev requires a next packet-side tunnel");
+        terminateProgram(1);
+    }
+
+    tc->packet_chain_init_sent = true;
+    for (wid_t wi = 0; wi < tc->workers_count; ++wi)
+    {
+        sendWorkerMessageForceQueue(wi, wireguarddeviceQueueWorkerPacketInit, t, NULL, NULL);
+    }
+}
+
 void wireguarddeviceTunnelOnStart(tunnel_t *t)
 {
     wgd_tstate_t *state = tunnelGetState(t);
@@ -39,6 +79,8 @@ void wireguarddeviceTunnelOnStart(tunnel_t *t)
             }
         }
     }
+
+    wireguarddeviceEnsureInnerPacketInit(t, state);
 
     state->wg_device.loop_timer = wtimerAdd(getWorkerLoop(0), loopHandle, WIREGUARDIF_TIMER_MSECS, INFINITE);
     if (state->wg_device.loop_timer == NULL)

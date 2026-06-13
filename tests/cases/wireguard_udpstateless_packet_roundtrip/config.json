@@ -25,7 +25,7 @@
         "peers": [
           {
             "publickey": "GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=",
-            "allowedips": "10.44.0.2/32",
+            "allowedips": "0.0.0.0/0",
             "endpoint": "127.0.0.1:42131",
             "persistentkeepalive": 1
           }
@@ -58,7 +58,7 @@
         "peers": [
           {
             "publickey": "dDUfRvZSDy8jZBsB4kQflTO+iwlLbR+jgb840fumqUM=",
-            "allowedips": "10.44.0.1/32",
+            "allowedips": "0.0.0.0/0",
             "endpoint": "127.0.0.1:42132",
             "persistentkeepalive": 1
           }
@@ -71,7 +71,6 @@
       "type": "TesterServer",
       "settings": {
         "packet-mode": true,
-        "packet-init-on-start": true,
         "packet-ipv4": {
           "source-ip": "10.44.0.1",
           "dest-ip": "10.44.0.2",

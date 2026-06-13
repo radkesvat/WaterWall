@@ -45,11 +45,11 @@ static void wireguard12byteTai64(uint8_t *output)
     // 64 bit seconds from 1970 = 8 bytes
     // 32 bit nano seconds from current second
 
-    uint64_t millis = getTickMS();
+    const unsigned long long now_us = getTimeOfDayUS();
 
     // Split into seconds offset + nanos
-    uint64_t seconds = 0x400000000000000aULL + (millis / 1000);
-    uint32_t nanos   = (uint32_t)((millis % 1000) * 1000);
+    uint64_t seconds = 0x400000000000000aULL + (uint64_t) (now_us / 1000000ULL);
+    uint32_t nanos   = (uint32_t) ((now_us % 1000000ULL) * 1000ULL);
     U64TO8_BIG(output + 0, seconds);
     U32TO8_BIG(output + 8, nanos);
 }

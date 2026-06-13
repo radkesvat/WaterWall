@@ -236,7 +236,7 @@ err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t 
     assert(p != NULL);
 
     err_t             result;
-    uint8_t           public_key[WIREGUARD_PUBLIC_KEY_LEN];
+    uint8_t           public_key[WIREGUARD_PUBLIC_KEY_LEN] = {0};
     size_t            public_key_len = sizeof(public_key);
     wireguard_peer_t *peer           = NULL;
 
@@ -245,7 +245,12 @@ err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t 
         return ERR_ARG;
     }
 
-    wwBase64Decode((const char *) p->public_key, (unsigned int) stringLength((const char *) p->public_key), public_key);
+    if (wwBase64Decode((const char *) p->public_key, (unsigned int) stringLength((const char *) p->public_key),
+                       public_key) != WIREGUARD_PUBLIC_KEY_LEN)
+    {
+        wCryptoZero(public_key, sizeof(public_key));
+        return ERR_ARG;
+    }
 
     // See if the peer is already registered
     peer = peerLookupByPubkey(device, public_key);
@@ -309,6 +314,7 @@ err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t 
             *peer_index = WIREGUARDIF_INVALID_INDEX;
         }
     }
+    wCryptoZero(public_key, sizeof(public_key));
     return result;
 }
 
