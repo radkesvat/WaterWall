@@ -27,7 +27,6 @@ add_library(WireGuardDevice STATIC
                     downstream/resume.c
                     downstream/est.c
                     common/wireguard.c
-                    common/tests.c
 )   
 
 target_include_directories(WireGuardDevice PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

@@ -8,6 +8,8 @@ These tests exercise small library-level behavior without launching the `Waterwa
   Verifies the `aes256gcm` wrapper through successful encryption/decryption, empty associated data, wrong-key failure,
   wrong-associated-data failure, and tampered-ciphertext failure. If the selected crypto backend or CPU does not expose
   AES256-GCM, the test exits successfully after reporting that the AES-specific cases were skipped.
+- `waterwall.crypto_primitives_unit`
+  Verifies generic `wcrypto` BLAKE2s, X25519, ChaCha20-Poly1305, and XChaCha20-Poly1305 vectors.
 - `waterwall.tcp_over_udp_fec_unit`
   Verifies the TCP-over-UDP Reed-Solomon FEC helper directly, including one missing data shard recovery, encoder reset
   after a failed parity emit callback, and malformed packet rejection.

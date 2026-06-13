@@ -72,10 +72,6 @@ static bool chacha20poly1305DecryptWrapper(unsigned char *dst, const unsigned ch
 
 void wireguardInit(void)
 {
-#ifdef DEBUG
-    testWireGuardImpl();
-#endif
-
     blake2s_ctx_t ctx = {0};
     // Pre-calculate chaining key hash
     blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0);
