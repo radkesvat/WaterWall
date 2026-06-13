@@ -6,6 +6,9 @@ void testerserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     testerserver_lstate_t *ls = lineGetState(l, t);
 
-    testerserverLinestateInitialize(ls, lineGetBufferPool(l));
+    if (ls->read_stream.pool == NULL)
+    {
+        testerserverLinestateInitialize(ls, lineGetBufferPool(l));
+    }
     tunnelPrevDownStreamEst(t, l);
 }
