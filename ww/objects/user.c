@@ -19,7 +19,7 @@ static bool userObjectIsInitialized(const User *user)
 static bool userStringDuplicate(char **dest, const char *value)
 {
     char *copy = stringDuplicate(value != NULL ? value : "");
-    if (copy == NULL)
+    if (UNLIKELY(copy == NULL))
     {
         return false;
     }
@@ -31,7 +31,7 @@ static bool userStringDuplicate(char **dest, const char *value)
 static bool userReplaceString(char **dest, const char *value)
 {
     char *copy = stringDuplicate(value != NULL ? value : "");
-    if (copy == NULL)
+    if (UNLIKELY(copy == NULL))
     {
         return false;
     }
@@ -43,7 +43,7 @@ static bool userReplaceString(char **dest, const char *value)
 
 static void userFreePassword(char *password)
 {
-    if (password == NULL)
+    if (UNLIKELY(password == NULL))
     {
         return;
     }
@@ -95,7 +95,7 @@ typedef struct user_snapshot_s
 
 static void userSnapshotDestroy(user_snapshot_t *snapshot)
 {
-    if (snapshot == NULL)
+    if (UNLIKELY(snapshot == NULL))
     {
         return;
     }
@@ -115,7 +115,7 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
 {
     User *mutable_src = (User *) src;
 
-    if (snapshot == NULL || ! userObjectIsInitialized(src))
+    if (UNLIKELY(snapshot == NULL || ! userObjectIsInitialized(src)))
     {
         return false;
     }
@@ -125,9 +125,10 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
     rwlockReadLock(&mutable_src->lock);
     rwlockReadLock(&mutable_src->stats_lock);
 
-    if (! userStringDuplicate(&snapshot->name, src->name) ||
-        ! userStringDuplicate(&snapshot->password, src->password) ||
-        ! userStringDuplicate(&snapshot->email, src->email) || ! userStringDuplicate(&snapshot->notes, src->notes))
+    if (UNLIKELY(! userStringDuplicate(&snapshot->name, src->name) ||
+                 ! userStringDuplicate(&snapshot->password, src->password) ||
+                 ! userStringDuplicate(&snapshot->email, src->email) ||
+                 ! userStringDuplicate(&snapshot->notes, src->notes)))
     {
         rwlockReadUnlock(&mutable_src->stats_lock);
         rwlockReadUnlock(&mutable_src->lock);
@@ -173,7 +174,7 @@ static bool userPasswordHashesCreate(User *user, const char *password)
     memoryZero(&user->sha512_pass, sizeof(user->sha512_pass));
 
 #if defined(WCRYPTO_BACKEND_OPENSSL)
-    if (wCryptoSHA224(&user->sha224_pass, (const unsigned char *) password, password_len) != 0)
+    if (UNLIKELY(wCryptoSHA224(&user->sha224_pass, (const unsigned char *) password, password_len) != 0))
     {
         return false;
     }
@@ -181,11 +182,11 @@ static bool userPasswordHashesCreate(User *user, const char *password)
 #endif
 
 #if defined(WCRYPTO_BACKEND_OPENSSL) || defined(WCRYPTO_BACKEND_SODIUM)
-    if (wCryptoSHA256(&user->sha256_pass, (const unsigned char *) password, password_len) != 0)
+    if (UNLIKELY(wCryptoSHA256(&user->sha256_pass, (const unsigned char *) password, password_len) != 0))
     {
         return false;
     }
-    if (wCryptoSHA512(&user->sha512_pass, (const unsigned char *) password, password_len) != 0)
+    if (UNLIKELY(wCryptoSHA512(&user->sha512_pass, (const unsigned char *) password, password_len) != 0))
     {
         return false;
     }
@@ -194,7 +195,7 @@ static bool userPasswordHashesCreate(User *user, const char *password)
 #endif
 
 #if defined(WCRYPTO_BACKEND_OPENSSL)
-    if (wCryptoSHA384(&user->sha384_pass, (const unsigned char *) password, password_len) != 0)
+    if (UNLIKELY(wCryptoSHA384(&user->sha384_pass, (const unsigned char *) password, password_len) != 0))
     {
         return false;
     }
@@ -227,7 +228,7 @@ static bool userJsonGetRequiredString2(const cJSON *json_obj, const char *primar
                                        const char **value)
 {
     const cJSON *item = userJsonGetItem2(json_obj, primary, fallback);
-    if (! cJSON_IsString(item) || userStringIsEmpty(item->valuestring))
+    if (UNLIKELY(! cJSON_IsString(item) || userStringIsEmpty(item->valuestring)))
     {
         return false;
     }
@@ -244,7 +245,7 @@ static bool userJsonReadOptionalString(const cJSON *json_obj, const char *key, c
         *value = NULL;
         return true;
     }
-    if (! cJSON_IsString(item) || item->valuestring == NULL)
+    if (UNLIKELY(! cJSON_IsString(item) || item->valuestring == NULL))
     {
         return false;
     }
@@ -264,7 +265,7 @@ static bool userJsonReadOptionalBool2(const cJSON *json_obj, const char *primary
     {
         return true;
     }
-    if (! cJSON_IsBool(item))
+    if (UNLIKELY(! cJSON_IsBool(item)))
     {
         return false;
     }
@@ -277,11 +278,11 @@ static bool userParseUint64String(const char *value, uint64_t *out)
 {
     char *end = NULL;
 
-    if (userStringIsEmpty(value))
+    if (UNLIKELY(userStringIsEmpty(value)))
     {
         return false;
     }
-    if (value[0] == '-')
+    if (UNLIKELY(value[0] == '-'))
     {
         return false;
     }
@@ -290,14 +291,14 @@ static bool userParseUint64String(const char *value, uint64_t *out)
     unsigned long long       parsed = strtoull(value, &end, 10);
     const unsigned long long m      = UINT64_MAX;
 
-    if (errno == ERANGE || parsed > m)
+    if (UNLIKELY(errno == ERANGE || parsed > m))
     {
         return false;
     }
 
     while (end != NULL && *end != '\0')
     {
-        if (! isspace((unsigned char) *end))
+        if (UNLIKELY(! isspace((unsigned char) *end)))
         {
             return false;
         }
@@ -317,7 +318,7 @@ static bool userJsonReadOptionalUint64(const cJSON *json_obj, const char *key, u
     }
     if (cJSON_IsString(item))
     {
-        if (userStringIsEmpty(item->valuestring))
+        if (UNLIKELY(userStringIsEmpty(item->valuestring)))
         {
             return true;
         }
@@ -327,13 +328,13 @@ static bool userJsonReadOptionalUint64(const cJSON *json_obj, const char *key, u
     {
         const double number = item->valuedouble;
 
-        if (! (number >= 0.0) || number > (double) kUserJsonSafeIntegerMax)
+        if (UNLIKELY(! (number >= 0.0) || number > (double) kUserJsonSafeIntegerMax))
         {
             return false;
         }
 
         const uint64_t parsed = (uint64_t) number;
-        if ((double) parsed != number)
+        if (UNLIKELY((double) parsed != number))
         {
             return false;
         }
@@ -360,11 +361,11 @@ static bool userJsonReadOptionalInt(const cJSON *json_obj, const char *key, int 
 {
     uint64_t parsed = (uint64_t) *value;
 
-    if (! userJsonReadOptionalUint64(json_obj, key, &parsed))
+    if (UNLIKELY(! userJsonReadOptionalUint64(json_obj, key, &parsed)))
     {
         return false;
     }
-    if (parsed > (uint64_t) INT_MAX)
+    if (UNLIKELY(parsed > (uint64_t) INT_MAX))
     {
         return false;
     }
@@ -380,7 +381,7 @@ static bool userJsonReadUd(const cJSON *json_obj, user_ud_t *value)
     {
         return true;
     }
-    if (! cJSON_IsObject(json_obj))
+    if (UNLIKELY(! cJSON_IsObject(json_obj)))
     {
         return false;
     }
@@ -396,7 +397,7 @@ static bool userJsonReadLimit(const cJSON *json_obj, user_limit_t *limit)
     {
         return true;
     }
-    if (! cJSON_IsObject(json_obj))
+    if (UNLIKELY(! cJSON_IsObject(json_obj)))
     {
         return false;
     }
@@ -407,15 +408,16 @@ static bool userJsonReadLimit(const cJSON *json_obj, user_limit_t *limit)
     if (traffic != NULL && ! cJSON_IsNull(traffic) &&
         (! cJSON_IsString(traffic) || ! userStringIsEmpty(traffic->valuestring)))
     {
-        if (! cJSON_IsObject(traffic) || ! userJsonReadOptionalUint642(traffic, "u", "up", &limit->traffic.u) ||
-            ! userJsonReadOptionalUint642(traffic, "d", "down", &limit->traffic.d) ||
-            ! userJsonReadOptionalUint64(traffic, "total", &limit->traffic.total))
+        if (UNLIKELY(! cJSON_IsObject(traffic) ||
+                     ! userJsonReadOptionalUint642(traffic, "u", "up", &limit->traffic.u) ||
+                     ! userJsonReadOptionalUint642(traffic, "d", "down", &limit->traffic.d) ||
+                     ! userJsonReadOptionalUint64(traffic, "total", &limit->traffic.total)))
         {
             return false;
         }
     }
 
-    if (! userJsonReadUd(bandwidth, &limit->bandwidth))
+    if (UNLIKELY(! userJsonReadUd(bandwidth, &limit->bandwidth)))
     {
         return false;
     }
@@ -433,7 +435,7 @@ static bool userJsonReadTimeInfo(const cJSON *json_obj, user_time_info_t *timein
     {
         return true;
     }
-    if (! cJSON_IsObject(json_obj))
+    if (UNLIKELY(! cJSON_IsObject(json_obj)))
     {
         return false;
     }
@@ -458,7 +460,7 @@ static bool userJsonReadStats(const cJSON *json_obj, user_stat_t *stats)
     {
         return true;
     }
-    if (! cJSON_IsObject(json_obj))
+    if (UNLIKELY(! cJSON_IsObject(json_obj)))
     {
         return false;
     }
@@ -503,19 +505,19 @@ static bool userJsonAddUdIfNotZero(cJSON *json_obj, const char *key, user_ud_t v
     }
 
     ud_json = cJSON_CreateObject();
-    if (ud_json == NULL)
+    if (UNLIKELY(ud_json == NULL))
     {
         return false;
     }
 
-    if ((value.u != 0 && ! userJsonAddUint64(ud_json, "up", value.u)) ||
-        (value.d != 0 && ! userJsonAddUint64(ud_json, "down", value.d)))
+    if (UNLIKELY((value.u != 0 && ! userJsonAddUint64(ud_json, "up", value.u)) ||
+                 (value.d != 0 && ! userJsonAddUint64(ud_json, "down", value.d))))
     {
         cJSON_Delete(ud_json);
         return false;
     }
 
-    if (! cJSON_AddItemToObject(json_obj, key, ud_json))
+    if (UNLIKELY(! cJSON_AddItemToObject(json_obj, key, ud_json)))
     {
         cJSON_Delete(ud_json);
         return false;
@@ -536,7 +538,7 @@ static bool userJsonAddLimitIfNotZero(cJSON *root, const user_limit_t *limit)
     }
 
     limit_json = cJSON_CreateObject();
-    if (limit_json == NULL)
+    if (UNLIKELY(limit_json == NULL))
     {
         return false;
     }
@@ -544,21 +546,21 @@ static bool userJsonAddLimitIfNotZero(cJSON *root, const user_limit_t *limit)
     if (limit->traffic.u != 0 || limit->traffic.d != 0 || limit->traffic.total != 0)
     {
         traffic_json = cJSON_CreateObject();
-        if (traffic_json == NULL)
+        if (UNLIKELY(traffic_json == NULL))
         {
             cJSON_Delete(limit_json);
             return false;
         }
 
-        if ((limit->traffic.u != 0 && ! userJsonAddUint64(traffic_json, "up", limit->traffic.u)) ||
-            (limit->traffic.d != 0 && ! userJsonAddUint64(traffic_json, "down", limit->traffic.d)) ||
-            (limit->traffic.total != 0 && ! userJsonAddUint64(traffic_json, "total", limit->traffic.total)))
+        if (UNLIKELY((limit->traffic.u != 0 && ! userJsonAddUint64(traffic_json, "up", limit->traffic.u)) ||
+                     (limit->traffic.d != 0 && ! userJsonAddUint64(traffic_json, "down", limit->traffic.d)) ||
+                     (limit->traffic.total != 0 && ! userJsonAddUint64(traffic_json, "total", limit->traffic.total))))
         {
             cJSON_Delete(traffic_json);
             cJSON_Delete(limit_json);
             return false;
         }
-        if (! cJSON_AddItemToObject(limit_json, "traffic", traffic_json))
+        if (UNLIKELY(! cJSON_AddItemToObject(limit_json, "traffic", traffic_json)))
         {
             cJSON_Delete(traffic_json);
             cJSON_Delete(limit_json);
@@ -566,17 +568,17 @@ static bool userJsonAddLimitIfNotZero(cJSON *root, const user_limit_t *limit)
         }
     }
 
-    if (! userJsonAddUdIfNotZero(limit_json, "bandwidth", limit->bandwidth) ||
-        (limit->ips != 0 && ! userJsonAddUint64(limit_json, "ips", limit->ips)) ||
-        (limit->devices != 0 && ! userJsonAddUint64(limit_json, "devices", limit->devices)) ||
-        (limit->cons_in != 0 && ! userJsonAddUint64(limit_json, "connections-in", limit->cons_in)) ||
-        (limit->cons_out != 0 && ! userJsonAddUint64(limit_json, "connections-out", limit->cons_out)))
+    if (UNLIKELY(! userJsonAddUdIfNotZero(limit_json, "bandwidth", limit->bandwidth) ||
+                 (limit->ips != 0 && ! userJsonAddUint64(limit_json, "ips", limit->ips)) ||
+                 (limit->devices != 0 && ! userJsonAddUint64(limit_json, "devices", limit->devices)) ||
+                 (limit->cons_in != 0 && ! userJsonAddUint64(limit_json, "connections-in", limit->cons_in)) ||
+                 (limit->cons_out != 0 && ! userJsonAddUint64(limit_json, "connections-out", limit->cons_out))))
     {
         cJSON_Delete(limit_json);
         return false;
     }
 
-    if (! cJSON_AddItemToObject(root, "limit", limit_json))
+    if (UNLIKELY(! cJSON_AddItemToObject(root, "limit", limit_json)))
     {
         cJSON_Delete(limit_json);
         return false;
@@ -587,17 +589,18 @@ static bool userJsonAddLimitIfNotZero(cJSON *root, const user_limit_t *limit)
 static bool userJsonAddTimeInfo(cJSON *root, const user_time_info_t *timeinfo)
 {
     cJSON *time_json = cJSON_CreateObject();
-    if (time_json == NULL)
+    if (UNLIKELY(time_json == NULL))
     {
         return false;
     }
 
-    if ((timeinfo->created_at_ms != 0 && ! userJsonAddUint64(time_json, "created-at-ms", timeinfo->created_at_ms)) ||
-        (timeinfo->first_usage_at_ms != 0 &&
-         ! userJsonAddUint64(time_json, "first-usage-at-ms", timeinfo->first_usage_at_ms)) ||
-        (timeinfo->expire_at_ms != 0 && ! userJsonAddUint64(time_json, "expire-at-ms", timeinfo->expire_at_ms)) ||
-        (timeinfo->expire_after_first_usage_ms != 0 &&
-         ! userJsonAddUint64(time_json, "expire-after-first-usage-ms", timeinfo->expire_after_first_usage_ms)))
+    if (UNLIKELY(
+            (timeinfo->created_at_ms != 0 && ! userJsonAddUint64(time_json, "created-at-ms", timeinfo->created_at_ms)) ||
+            (timeinfo->first_usage_at_ms != 0 &&
+             ! userJsonAddUint64(time_json, "first-usage-at-ms", timeinfo->first_usage_at_ms)) ||
+            (timeinfo->expire_at_ms != 0 && ! userJsonAddUint64(time_json, "expire-at-ms", timeinfo->expire_at_ms)) ||
+            (timeinfo->expire_after_first_usage_ms != 0 &&
+             ! userJsonAddUint64(time_json, "expire-after-first-usage-ms", timeinfo->expire_after_first_usage_ms))))
     {
         cJSON_Delete(time_json);
         return false;
@@ -609,7 +612,7 @@ static bool userJsonAddTimeInfo(cJSON *root, const user_time_info_t *timeinfo)
         return true;
     }
 
-    if (! cJSON_AddItemToObject(root, "time", time_json))
+    if (UNLIKELY(! cJSON_AddItemToObject(root, "time", time_json)))
     {
         cJSON_Delete(time_json);
         return false;
@@ -628,22 +631,22 @@ static bool userJsonAddStatsIfNotZero(cJSON *root, const user_stat_t *stats)
     }
 
     stats_json = cJSON_CreateObject();
-    if (stats_json == NULL)
+    if (UNLIKELY(stats_json == NULL))
     {
         return false;
     }
 
-    if ((stats->ips != 0 && ! userJsonAddUint64(stats_json, "ips", stats->ips)) ||
-        (stats->devices != 0 && ! userJsonAddUint64(stats_json, "devices", stats->devices)) ||
-        (stats->cons_in != 0 && ! userJsonAddUint64(stats_json, "connections-in", stats->cons_in)) ||
-        (stats->cons_out != 0 && ! userJsonAddUint64(stats_json, "connections-out", stats->cons_out)) ||
-        ! userJsonAddUdIfNotZero(stats_json, "traffic", stats->traffic))
+    if (UNLIKELY((stats->ips != 0 && ! userJsonAddUint64(stats_json, "ips", stats->ips)) ||
+                 (stats->devices != 0 && ! userJsonAddUint64(stats_json, "devices", stats->devices)) ||
+                 (stats->cons_in != 0 && ! userJsonAddUint64(stats_json, "connections-in", stats->cons_in)) ||
+                 (stats->cons_out != 0 && ! userJsonAddUint64(stats_json, "connections-out", stats->cons_out)) ||
+                 ! userJsonAddUdIfNotZero(stats_json, "traffic", stats->traffic)))
     {
         cJSON_Delete(stats_json);
         return false;
     }
 
-    if (! cJSON_AddItemToObject(root, "stats", stats_json))
+    if (UNLIKELY(! cJSON_AddItemToObject(root, "stats", stats_json)))
     {
         cJSON_Delete(stats_json);
         return false;
@@ -653,7 +656,7 @@ static bool userJsonAddStatsIfNotZero(cJSON *root, const user_stat_t *stats)
 
 static uint64_t userSaturatingAdd(uint64_t a, uint64_t b)
 {
-    if (UINT64_MAX - a < b)
+    if (UNLIKELY(UINT64_MAX - a < b))
     {
         return UINT64_MAX;
     }
@@ -672,7 +675,7 @@ static bool userLimitReached(uint64_t limit, uint64_t value)
 
 bool userCreate(User *user, const char *password)
 {
-    if (user == NULL || userStringIsEmpty(password))
+    if (UNLIKELY(user == NULL || userStringIsEmpty(password)))
     {
         return false;
     }
@@ -687,8 +690,8 @@ bool userCreate(User *user, const char *password)
     user->record_stat_interval_ms = USER_DEFAULT_RECORD_STAT_INTERVAL_MS;
     user->timeinfo.created_at_ms  = getTimeOfDayMS();
 
-    if (! userStringDuplicate(&user->name, "") || ! userStringDuplicate(&user->email, "") ||
-        ! userStringDuplicate(&user->notes, "") || ! userChangePassword(user, password))
+    if (UNLIKELY(! userStringDuplicate(&user->name, "") || ! userStringDuplicate(&user->email, "") ||
+                 ! userStringDuplicate(&user->notes, "") || ! userChangePassword(user, password)))
     {
         userDestroy(user);
         return false;
@@ -701,11 +704,11 @@ bool userCopy(User *dest, const User *src)
 {
     user_snapshot_t snapshot;
 
-    if (dest == NULL || src == NULL)
+    if (UNLIKELY(dest == NULL || src == NULL))
     {
         return false;
     }
-    if (! userSnapshotCreate(&snapshot, src))
+    if (UNLIKELY(! userSnapshotCreate(&snapshot, src)))
     {
         return false;
     }
@@ -751,7 +754,7 @@ bool userCopy(User *dest, const User *src)
 
 void userDestroy(User *user)
 {
-    if (user == NULL || ! user->initialized)
+    if (UNLIKELY(user == NULL || ! user->initialized))
     {
         return;
     }
@@ -777,12 +780,12 @@ bool userChangePassword(User *user, const char *password)
     User  staged_hashes = {0};
     char *copy          = NULL;
 
-    if (! userObjectIsInitialized(user) || userStringIsEmpty(password))
+    if (UNLIKELY(! userObjectIsInitialized(user) || userStringIsEmpty(password)))
     {
         return false;
     }
 
-    if (! userPasswordHashesCreate(&staged_hashes, password))
+    if (UNLIKELY(! userPasswordHashesCreate(&staged_hashes, password)))
     {
         wCryptoZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
         wCryptoZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
@@ -792,7 +795,7 @@ bool userChangePassword(User *user, const char *password)
     }
 
     copy = stringDuplicate(password);
-    if (copy == NULL)
+    if (UNLIKELY(copy == NULL))
     {
         wCryptoZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
         wCryptoZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
@@ -840,28 +843,28 @@ bool userCreateFromJson(User *user, const cJSON *user_json)
     const cJSON *timeinfo = NULL;
     const cJSON *stats    = NULL;
 
-    if (user == NULL || ! cJSON_IsObject(user_json))
+    if (UNLIKELY(user == NULL || ! cJSON_IsObject(user_json)))
     {
         return false;
     }
-    if (! userJsonGetRequiredString2(user_json, "password", "pass", &password))
+    if (UNLIKELY(! userJsonGetRequiredString2(user_json, "password", "pass", &password)))
     {
         return false;
     }
-    if (! userCreate(user, password))
+    if (UNLIKELY(! userCreate(user, password)))
     {
         return false;
     }
 
-    if (! userJsonReadOptionalString(user_json, "name", &value) ||
-        (value != NULL && ! userReplaceString(&user->name, value)) ||
-        ! userJsonReadOptionalString(user_json, "email", &value) ||
-        (value != NULL && ! userReplaceString(&user->email, value)) ||
-        ! userJsonReadOptionalString(user_json, "notes", &value) ||
-        (value != NULL && ! userReplaceString(&user->notes, value)) ||
-        ! userJsonReadOptionalUint642(user_json, "gid", "group-id", &user->gid) ||
-        ! userJsonReadOptionalBool2(user_json, "enabled", "enable", &user->enabled) ||
-        ! userJsonReadOptionalInt(user_json, "record-stat-interval-ms", &user->record_stat_interval_ms))
+    if (UNLIKELY(! userJsonReadOptionalString(user_json, "name", &value) ||
+                 (value != NULL && ! userReplaceString(&user->name, value)) ||
+                 ! userJsonReadOptionalString(user_json, "email", &value) ||
+                 (value != NULL && ! userReplaceString(&user->email, value)) ||
+                 ! userJsonReadOptionalString(user_json, "notes", &value) ||
+                 (value != NULL && ! userReplaceString(&user->notes, value)) ||
+                 ! userJsonReadOptionalUint642(user_json, "gid", "group-id", &user->gid) ||
+                 ! userJsonReadOptionalBool2(user_json, "enabled", "enable", &user->enabled) ||
+                 ! userJsonReadOptionalInt(user_json, "record-stat-interval-ms", &user->record_stat_interval_ms)))
     {
         userDestroy(user);
         return false;
@@ -871,21 +874,22 @@ bool userCreateFromJson(User *user, const cJSON *user_json)
     timeinfo = cJSON_GetObjectItemCaseSensitive(user_json, "time");
     stats    = cJSON_GetObjectItemCaseSensitive(user_json, "stats");
 
-    if (! userJsonReadLimit(limit, &user->limit) || ! userJsonReadTimeInfo(timeinfo, &user->timeinfo) ||
-        ! userJsonReadStats(stats, &user->stats))
+    if (UNLIKELY(! userJsonReadLimit(limit, &user->limit) || ! userJsonReadTimeInfo(timeinfo, &user->timeinfo) ||
+                 ! userJsonReadStats(stats, &user->stats)))
     {
         userDestroy(user);
         return false;
     }
 
-    if (! userJsonReadOptionalUint642(user_json, "created-at-ms", "created_at_ms", &user->timeinfo.created_at_ms) ||
-        ! userJsonReadOptionalUint642(
-            user_json, "first-usage-at-ms", "first_usage_at_ms", &user->timeinfo.first_usage_at_ms) ||
-        ! userJsonReadOptionalUint642(user_json, "expire-at-ms", "expires-at-ms", &user->timeinfo.expire_at_ms) ||
-        ! userJsonReadOptionalUint642(user_json,
-                                      "expire-after-first-usage-ms",
-                                      "expire-after-first-use-ms",
-                                      &user->timeinfo.expire_after_first_usage_ms))
+    if (UNLIKELY(! userJsonReadOptionalUint642(
+                     user_json, "created-at-ms", "created_at_ms", &user->timeinfo.created_at_ms) ||
+                 ! userJsonReadOptionalUint642(
+                     user_json, "first-usage-at-ms", "first_usage_at_ms", &user->timeinfo.first_usage_at_ms) ||
+                 ! userJsonReadOptionalUint642(user_json, "expire-at-ms", "expires-at-ms", &user->timeinfo.expire_at_ms) ||
+                 ! userJsonReadOptionalUint642(user_json,
+                                               "expire-after-first-usage-ms",
+                                               "expire-after-first-use-ms",
+                                               &user->timeinfo.expire_after_first_usage_ms)))
     {
         userDestroy(user);
         return false;
@@ -899,13 +903,13 @@ cJSON *userToJson(User *user)
     cJSON      *json  = NULL;
     user_stat_t stats = {0};
 
-    if (! userObjectIsInitialized(user))
+    if (UNLIKELY(! userObjectIsInitialized(user)))
     {
         return NULL;
     }
 
     json = cJSON_CreateObject();
-    if (json == NULL)
+    if (UNLIKELY(json == NULL))
     {
         return NULL;
     }
@@ -915,16 +919,16 @@ cJSON *userToJson(User *user)
     stats = user->stats;
     rwlockReadUnlock(&user->stats_lock);
 
-    if (! userJsonAddStringIfNotEmpty(json, "name", user->name) ||
-        ! cJSON_AddStringToObject(json, "password", user->password) ||
-        ! userJsonAddStringIfNotEmpty(json, "email", user->email) ||
-        ! userJsonAddStringIfNotEmpty(json, "notes", user->notes) ||
-        (user->gid != 0 && ! userJsonAddUint64(json, "gid", user->gid)) ||
-        (! user->enabled && cJSON_AddFalseToObject(json, "enabled") == NULL) ||
-        (user->record_stat_interval_ms != USER_DEFAULT_RECORD_STAT_INTERVAL_MS &&
-         ! userJsonAddUint64(json, "record-stat-interval-ms", (uint64_t) user->record_stat_interval_ms)) ||
-        ! userJsonAddTimeInfo(json, &user->timeinfo) || ! userJsonAddLimitIfNotZero(json, &user->limit) ||
-        ! userJsonAddStatsIfNotZero(json, &stats))
+    if (UNLIKELY(! userJsonAddStringIfNotEmpty(json, "name", user->name) ||
+                 ! cJSON_AddStringToObject(json, "password", user->password) ||
+                 ! userJsonAddStringIfNotEmpty(json, "email", user->email) ||
+                 ! userJsonAddStringIfNotEmpty(json, "notes", user->notes) ||
+                 (user->gid != 0 && ! userJsonAddUint64(json, "gid", user->gid)) ||
+                 (! user->enabled && cJSON_AddFalseToObject(json, "enabled") == NULL) ||
+                 (user->record_stat_interval_ms != USER_DEFAULT_RECORD_STAT_INTERVAL_MS &&
+                  ! userJsonAddUint64(json, "record-stat-interval-ms", (uint64_t) user->record_stat_interval_ms)) ||
+                 ! userJsonAddTimeInfo(json, &user->timeinfo) || ! userJsonAddLimitIfNotZero(json, &user->limit) ||
+                 ! userJsonAddStatsIfNotZero(json, &stats)))
     {
         rwlockReadUnlock(&user->lock);
         cJSON_Delete(json);
@@ -941,13 +945,13 @@ bool userPasswordMatches(User *user, const char *password)
     sha512_hash_t sha512 = {0};
     bool          result = false;
 
-    if (! userObjectIsInitialized(user) || userStringIsEmpty(password))
+    if (UNLIKELY(! userObjectIsInitialized(user) || userStringIsEmpty(password)))
     {
         return false;
     }
 
     rwlockReadLock(&user->lock);
-    if (userStringIsEmpty(user->password))
+    if (UNLIKELY(userStringIsEmpty(user->password)))
     {
         rwlockReadUnlock(&user->lock);
         return false;
@@ -983,7 +987,7 @@ bool userPasswordDataValid(User *user)
     sha512_hash_t sha512 = {0};
     bool          result = false;
 
-    if (! userObjectIsInitialized(user))
+    if (UNLIKELY(! userObjectIsInitialized(user)))
     {
         return false;
     }
@@ -1013,7 +1017,7 @@ bool userPasswordDataValid(User *user)
 
 void userSetEnabled(User *user, bool enabled)
 {
-    if (! userObjectIsInitialized(user))
+    if (UNLIKELY(! userObjectIsInitialized(user)))
     {
         return;
     }
@@ -1027,7 +1031,7 @@ bool userIsEnabled(User *user)
 {
     bool enabled = false;
 
-    if (! userObjectIsInitialized(user))
+    if (UNLIKELY(! userObjectIsInitialized(user)))
     {
         return false;
     }
@@ -1047,7 +1051,7 @@ bool userIsExpired(User *user, uint64_t now_ms)
 {
     bool expired = false;
 
-    if (! userObjectIsInitialized(user))
+    if (UNLIKELY(! userObjectIsInitialized(user)))
     {
         return true;
     }
@@ -1073,7 +1077,7 @@ bool userIsTrafficLimited(User *user)
 {
     bool limited = false;
 
-    if (! userObjectIsInitialized(user))
+    if (UNLIKELY(! userObjectIsInitialized(user)))
     {
         return false;
     }
@@ -1089,7 +1093,7 @@ bool userHasReachedTrafficLimit(User *user)
 {
     bool reached = false;
 
-    if (! userObjectIsInitialized(user))
+    if (UNLIKELY(! userObjectIsInitialized(user)))
     {
         return true;
     }
@@ -1109,7 +1113,7 @@ bool userHasReachedBandwidthLimit(User *user)
 {
     bool reached = false;
 
-    if (! userObjectIsInitialized(user))
+    if (UNLIKELY(! userObjectIsInitialized(user)))
     {
         return true;
     }
@@ -1127,7 +1131,7 @@ bool userHasReachedLimit(User *user)
 {
     bool reached = false;
 
-    if (! userObjectIsInitialized(user))
+    if (UNLIKELY(! userObjectIsInitialized(user)))
     {
         return true;
     }
@@ -1151,7 +1155,7 @@ bool userHasReachedLimit(User *user)
 
 void userMarkFirstUsage(User *user, uint64_t now_ms)
 {
-    if (! userObjectIsInitialized(user))
+    if (UNLIKELY(! userObjectIsInitialized(user)))
     {
         return;
     }
@@ -1166,7 +1170,7 @@ void userMarkFirstUsage(User *user, uint64_t now_ms)
 
 void userAddTraffic(User *user, uint64_t upload_bytes, uint64_t download_bytes)
 {
-    if (! userObjectIsInitialized(user))
+    if (UNLIKELY(! userObjectIsInitialized(user)))
     {
         return;
     }
@@ -1179,7 +1183,7 @@ void userAddTraffic(User *user, uint64_t upload_bytes, uint64_t download_bytes)
 
 void userAddSpeed(User *user, uint64_t upload_bytes_per_sec, uint64_t download_bytes_per_sec)
 {
-    if (! userObjectIsInitialized(user))
+    if (UNLIKELY(! userObjectIsInitialized(user)))
     {
         return;
     }
@@ -1192,7 +1196,7 @@ void userAddSpeed(User *user, uint64_t upload_bytes_per_sec, uint64_t download_b
 
 void userAddConnection(User *user, bool inbound)
 {
-    if (! userObjectIsInitialized(user))
+    if (UNLIKELY(! userObjectIsInitialized(user)))
     {
         return;
     }
@@ -1211,7 +1215,7 @@ void userAddConnection(User *user, bool inbound)
 
 void userRemoveConnection(User *user, bool inbound)
 {
-    if (! userObjectIsInitialized(user))
+    if (UNLIKELY(! userObjectIsInitialized(user)))
     {
         return;
     }
@@ -1230,7 +1234,7 @@ void userRemoveConnection(User *user, bool inbound)
 
 void userSetIpCount(User *user, uint64_t ips)
 {
-    if (! userObjectIsInitialized(user))
+    if (UNLIKELY(! userObjectIsInitialized(user)))
     {
         return;
     }
@@ -1242,7 +1246,7 @@ void userSetIpCount(User *user, uint64_t ips)
 
 void userSetDeviceCount(User *user, uint64_t devices)
 {
-    if (! userObjectIsInitialized(user))
+    if (UNLIKELY(! userObjectIsInitialized(user)))
     {
         return;
     }
@@ -1254,7 +1258,7 @@ void userSetDeviceCount(User *user, uint64_t devices)
 
 void userGetStats(User *user, user_stat_t *stats)
 {
-    if (! userObjectIsInitialized(user) || stats == NULL)
+    if (UNLIKELY(! userObjectIsInitialized(user) || stats == NULL))
     {
         return;
     }
@@ -1270,7 +1274,7 @@ user_stat_t userStatsDiff(User *base, User *current)
     user_stat_t current_stats = {0};
     user_stat_t diff          = {0};
 
-    if (! userObjectIsInitialized(base) || ! userObjectIsInitialized(current))
+    if (UNLIKELY(! userObjectIsInitialized(base) || ! userObjectIsInitialized(current)))
     {
         return diff;
     }

@@ -79,7 +79,7 @@ static user_t *usersGetAtLocked(const users_t *users, size_t index)
 
 static const char *usersUserNameForLog(const user_t *user)
 {
-    if (user == NULL || user->name == NULL || user->name[0] == '\0')
+    if (UNLIKELY(user == NULL || user->name == NULL || user->name[0] == '\0'))
     {
         return "<unnamed>";
     }
@@ -89,7 +89,7 @@ static const char *usersUserNameForLog(const user_t *user)
 static bool usersStringDuplicate(char **dest, const char *value)
 {
     char *copy = stringDuplicate(value != NULL ? value : "");
-    if (copy == NULL)
+    if (UNLIKELY(copy == NULL))
     {
         return false;
     }
@@ -134,7 +134,7 @@ static bool usersPasswordProbeCreate(users_password_probe_t *probe, const char *
 {
     const size_t password_len = password != NULL ? stringLength(password) : 0;
 
-    if (probe == NULL || password == NULL || password[0] == '\0')
+    if (UNLIKELY(probe == NULL || password == NULL || password[0] == '\0'))
     {
         return false;
     }
@@ -143,7 +143,7 @@ static bool usersPasswordProbeCreate(users_password_probe_t *probe, const char *
     probe->hash_pass = calcHashBytes(password, password_len);
 
 #if defined(WCRYPTO_BACKEND_OPENSSL) || defined(WCRYPTO_BACKEND_SODIUM)
-    if (wCryptoSHA256(&probe->sha256_pass, (const unsigned char *) password, password_len) != 0)
+    if (UNLIKELY(wCryptoSHA256(&probe->sha256_pass, (const unsigned char *) password, password_len) != 0))
     {
         wCryptoZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
         return false;
@@ -156,7 +156,7 @@ static bool usersPasswordProbeCreate(users_password_probe_t *probe, const char *
 
 static void usersPasswordProbeDestroy(users_password_probe_t *probe)
 {
-    if (probe == NULL)
+    if (UNLIKELY(probe == NULL))
     {
         return;
     }
@@ -169,12 +169,12 @@ static bool usersHashTableReserve(users_hash_table_t *table, size_t count)
 {
     size_t capacity = count < kUsersInitialTableCapacity ? kUsersInitialTableCapacity : count;
 
-    if (capacity > (size_t) PTRDIFF_MAX)
+    if (UNLIKELY(capacity > (size_t) PTRDIFF_MAX))
     {
         LOGE("Users: generic hash lookup table capacity overflow");
         return false;
     }
-    if (! users_hash_map_t_reserve(&table->map, (isize) capacity))
+    if (UNLIKELY(! users_hash_map_t_reserve(&table->map, (isize) capacity)))
     {
         LOGE("Users: failed to reserve generic hash lookup table");
         return false;
@@ -187,12 +187,12 @@ static bool usersSHA256TableReserve(users_sha256_table_t *table, size_t count)
 {
     size_t capacity = count < kUsersInitialTableCapacity ? kUsersInitialTableCapacity : count;
 
-    if (capacity > (size_t) PTRDIFF_MAX)
+    if (UNLIKELY(capacity > (size_t) PTRDIFF_MAX))
     {
         LOGE("Users: SHA-256 lookup table capacity overflow");
         return false;
     }
-    if (! users_sha256_map_t_reserve(&table->map, (isize) capacity))
+    if (UNLIKELY(! users_sha256_map_t_reserve(&table->map, (isize) capacity)))
     {
         LOGE("Users: failed to reserve SHA-256 lookup table");
         return false;
@@ -205,20 +205,20 @@ static bool usersHashTableCreateIfNeeded(users_t *users)
 {
     users_hash_table_t *table;
 
-    if (users->generic_hash_table != NULL)
+    if (LIKELY(users->generic_hash_table != NULL))
     {
         return true;
     }
 
     table = memoryAllocate(sizeof(*table));
-    if (table == NULL)
+    if (UNLIKELY(table == NULL))
     {
         LOGE("Users: failed to allocate generic hash lookup table");
         return false;
     }
     memoryZero(table, sizeof(*table));
 
-    if (! usersHashTableReserve(table, kUsersInitialTableCapacity))
+    if (UNLIKELY(! usersHashTableReserve(table, kUsersInitialTableCapacity)))
     {
         users_hash_map_t_drop(&table->map);
         memoryFree(table);
@@ -233,20 +233,20 @@ static bool usersSHA256TableCreateIfNeeded(users_t *users)
 {
     users_sha256_table_t *table;
 
-    if (users->sha256_table != NULL)
+    if (LIKELY(users->sha256_table != NULL))
     {
         return true;
     }
 
     table = memoryAllocate(sizeof(*table));
-    if (table == NULL)
+    if (UNLIKELY(table == NULL))
     {
         LOGE("Users: failed to allocate SHA-256 lookup table");
         return false;
     }
     memoryZero(table, sizeof(*table));
 
-    if (! usersSHA256TableReserve(table, kUsersInitialTableCapacity))
+    if (UNLIKELY(! usersSHA256TableReserve(table, kUsersInitialTableCapacity)))
     {
         users_sha256_map_t_drop(&table->map);
         memoryFree(table);
@@ -269,7 +269,7 @@ static bool usersSHA256TableEnsureCapacity(users_t *users, size_t count)
 
 static void usersHashTableClear(users_hash_table_t *table)
 {
-    if (table == NULL)
+    if (UNLIKELY(table == NULL))
     {
         return;
     }
@@ -279,7 +279,7 @@ static void usersHashTableClear(users_hash_table_t *table)
 
 static void usersSHA256TableClear(users_sha256_table_t *table)
 {
-    if (table == NULL)
+    if (UNLIKELY(table == NULL))
     {
         return;
     }
@@ -289,7 +289,7 @@ static void usersSHA256TableClear(users_sha256_table_t *table)
 
 static void usersHashTableDestroy(users_hash_table_t *table)
 {
-    if (table == NULL)
+    if (UNLIKELY(table == NULL))
     {
         return;
     }
@@ -300,7 +300,7 @@ static void usersHashTableDestroy(users_hash_table_t *table)
 
 static void usersSHA256TableDestroy(users_sha256_table_t *table)
 {
-    if (table == NULL)
+    if (UNLIKELY(table == NULL))
     {
         return;
     }
@@ -313,7 +313,7 @@ static user_t *usersHashTableLookupLocked(const users_t *users, hash_t key)
 {
     users_hash_table_t *table = users->generic_hash_table;
 
-    if (table == NULL)
+    if (UNLIKELY(table == NULL))
     {
         return NULL;
     }
@@ -326,7 +326,7 @@ static user_t *usersSHA256TableLookupLocked(const users_t *users, const uint8_t 
 {
     users_sha256_table_t *table = users->sha256_table;
 
-    if (table == NULL || key_bytes == NULL)
+    if (UNLIKELY(table == NULL || key_bytes == NULL))
     {
         return NULL;
     }
@@ -338,7 +338,7 @@ static user_t *usersSHA256TableLookupLocked(const users_t *users, const uint8_t 
 
 static void usersDisableGenericHashLookupLocked(users_t *users, const user_t *first, const user_t *second, hash_t hash)
 {
-    if (! users->generic_hash_lookup_available)
+    if (UNLIKELY(! users->generic_hash_lookup_available))
     {
         return;
     }
@@ -358,22 +358,22 @@ static bool usersHashTableInsertLocked(users_t *users, user_t *user)
     users_hash_map_t_result result;
     hash_t                  key = user->hash_pass;
 
-    if (! users->generic_hash_lookup_available)
+    if (UNLIKELY(! users->generic_hash_lookup_available))
     {
         return true;
     }
-    if (! usersHashTableEnsureCapacity(users, users->count + 1U))
+    if (UNLIKELY(! usersHashTableEnsureCapacity(users, users->count + 1U)))
     {
         return false;
     }
 
     result = users_hash_map_t_insert(&users->generic_hash_table->map, key, user);
-    if (result.ref == NULL)
+    if (UNLIKELY(result.ref == NULL))
     {
         LOGE("Users: failed to insert generic hash lookup entry");
         return false;
     }
-    if (! result.inserted && result.ref->second != user)
+    if (UNLIKELY(! result.inserted && result.ref->second != user))
     {
         usersDisableGenericHashLookupLocked(users, result.ref->second, user, key);
     }
@@ -386,24 +386,24 @@ static bool usersSHA256TableInsertLocked(users_t *users, user_t *user)
     users_sha256_key_t        key;
     users_sha256_map_t_result result;
 
-    if (! user->sha256_pass_valid)
+    if (UNLIKELY(! user->sha256_pass_valid))
     {
         LOGE("Users: user \"%s\" does not have a usable SHA-256 password hash", usersUserNameForLog(user));
         return false;
     }
-    if (! usersSHA256TableEnsureCapacity(users, users->count + 1U))
+    if (UNLIKELY(! usersSHA256TableEnsureCapacity(users, users->count + 1U)))
     {
         return false;
     }
 
     key    = usersSHA256KeyFromBytes(user->sha256_pass.bytes);
     result = users_sha256_map_t_insert(&users->sha256_table->map, key, user);
-    if (result.ref == NULL)
+    if (UNLIKELY(result.ref == NULL))
     {
         LOGE("Users: failed to insert SHA-256 lookup entry");
         return false;
     }
-    if (! result.inserted && result.ref->second != user)
+    if (UNLIKELY(! result.inserted && result.ref->second != user))
     {
         char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
         usersSha256ToHex(user->sha256_pass.bytes, key_hex);
@@ -419,11 +419,11 @@ static bool usersSHA256TableInsertLocked(users_t *users, user_t *user)
 
 static bool usersEnsureLookupCapacityLocked(users_t *users, size_t count)
 {
-    if (! usersSHA256TableEnsureCapacity(users, count))
+    if (UNLIKELY(! usersSHA256TableEnsureCapacity(users, count)))
     {
         return false;
     }
-    if (users->generic_hash_lookup_available && ! usersHashTableEnsureCapacity(users, count))
+    if (UNLIKELY(users->generic_hash_lookup_available && ! usersHashTableEnsureCapacity(users, count)))
     {
         return false;
     }
@@ -433,7 +433,7 @@ static bool usersEnsureLookupCapacityLocked(users_t *users, size_t count)
 
 static bool usersRebuildLookupTablesLocked(users_t *users)
 {
-    if (! usersEnsureLookupCapacityLocked(users, users->count))
+    if (UNLIKELY(! usersEnsureLookupCapacityLocked(users, users->count)))
     {
         return false;
     }
@@ -444,11 +444,11 @@ static bool usersRebuildLookupTablesLocked(users_t *users)
     for (size_t i = 0; i < users->count; ++i)
     {
         user_t *user = usersGetAtLocked(users, i);
-        if (! usersSHA256TableInsertLocked(users, user))
+        if (UNLIKELY(! usersSHA256TableInsertLocked(users, user)))
         {
             return false;
         }
-        if (! usersHashTableInsertLocked(users, user))
+        if (UNLIKELY(! usersHashTableInsertLocked(users, user)))
         {
             return false;
         }
@@ -459,7 +459,7 @@ static bool usersRebuildLookupTablesLocked(users_t *users)
 
 static bool usersReserveItemsLocked(users_t *users, size_t capacity)
 {
-    if (capacity <= users->capacity)
+    if (LIKELY(capacity <= users->capacity))
     {
         return true;
     }
@@ -467,21 +467,21 @@ static bool usersReserveItemsLocked(users_t *users, size_t capacity)
     size_t new_capacity = users->capacity == 0 ? kUsersBlockSize : users->capacity;
     while (new_capacity < capacity)
     {
-        if (new_capacity > SIZE_MAX / 2U)
+        if (UNLIKELY(new_capacity > SIZE_MAX / 2U))
         {
             LOGE("Users: active user pointer capacity overflow");
             return false;
         }
         new_capacity *= 2U;
     }
-    if (new_capacity > SIZE_MAX / sizeof(*users->items))
+    if (UNLIKELY(new_capacity > SIZE_MAX / sizeof(*users->items)))
     {
         LOGE("Users: active user pointer capacity overflow");
         return false;
     }
 
     user_t **new_items = memoryReAllocate(users->items, new_capacity * sizeof(*new_items));
-    if (new_items == NULL)
+    if (UNLIKELY(new_items == NULL))
     {
         LOGE("Users: failed to grow active user pointer array");
         return false;
@@ -495,7 +495,7 @@ static bool usersReserveItemsLocked(users_t *users, size_t capacity)
 
 static bool usersReserveStorageLocked(users_t *users, size_t slot_capacity)
 {
-    if (slot_capacity <= users->slot_capacity)
+    if (LIKELY(slot_capacity <= users->slot_capacity))
     {
         return true;
     }
@@ -504,17 +504,18 @@ static bool usersReserveStorageLocked(users_t *users, size_t slot_capacity)
     {
         user_t *block = NULL;
 
-        if (users->block_count == users->block_capacity)
+        if (UNLIKELY(users->block_count == users->block_capacity))
         {
             size_t new_block_capacity = users->block_capacity == 0 ? 4U : users->block_capacity * 2U;
-            if (new_block_capacity < users->block_capacity || new_block_capacity > SIZE_MAX / sizeof(*users->blocks))
+            if (UNLIKELY(new_block_capacity < users->block_capacity ||
+                         new_block_capacity > SIZE_MAX / sizeof(*users->blocks)))
             {
                 LOGE("Users: user block pointer capacity overflow");
                 return false;
             }
 
             user_t **new_blocks = memoryReAllocate(users->blocks, new_block_capacity * sizeof(*new_blocks));
-            if (new_blocks == NULL)
+            if (UNLIKELY(new_blocks == NULL))
             {
                 LOGE("Users: failed to grow user block pointer array");
                 return false;
@@ -525,7 +526,7 @@ static bool usersReserveStorageLocked(users_t *users, size_t slot_capacity)
         }
 
         block = memoryCalloc(kUsersBlockSize, sizeof(*block));
-        if (block == NULL)
+        if (UNLIKELY(block == NULL))
         {
             LOGE("Users: failed to allocate user storage block");
             return false;
@@ -543,13 +544,13 @@ static bool usersReserveLocked(users_t *users, size_t capacity)
 {
     size_t new_slots_needed;
 
-    if (! usersReserveItemsLocked(users, capacity))
+    if (UNLIKELY(! usersReserveItemsLocked(users, capacity)))
     {
         return false;
     }
 
     new_slots_needed = capacity > users->count ? capacity - users->count : 0;
-    if (users->slot_count > SIZE_MAX - new_slots_needed)
+    if (UNLIKELY(users->slot_count > SIZE_MAX - new_slots_needed))
     {
         LOGE("Users: user storage capacity overflow");
         return false;
@@ -560,7 +561,7 @@ static bool usersReserveLocked(users_t *users, size_t capacity)
 
 static bool usersIndexOfLocked(const users_t *users, const user_t *user, size_t *index_out)
 {
-    if (user == NULL)
+    if (UNLIKELY(user == NULL))
     {
         return false;
     }
@@ -569,7 +570,7 @@ static bool usersIndexOfLocked(const users_t *users, const user_t *user, size_t 
     {
         if (usersGetAtLocked(users, i) == user)
         {
-            if (index_out != NULL)
+                if (index_out != NULL)
             {
                 *index_out = i;
             }
@@ -582,7 +583,7 @@ static bool usersIndexOfLocked(const users_t *users, const user_t *user, size_t 
 
 static user_t *usersFindByNameLocked(const users_t *users, const char *name, const user_t *exclude)
 {
-    if (name == NULL || name[0] == '\0')
+    if (UNLIKELY(name == NULL || name[0] == '\0'))
     {
         return NULL;
     }
@@ -590,7 +591,7 @@ static user_t *usersFindByNameLocked(const users_t *users, const char *name, con
     for (size_t i = 0; i < users->count; ++i)
     {
         user_t *user = usersGetAtLocked(users, i);
-        if (user != exclude && user->name != NULL && stringCompare(user->name, name) == 0)
+        if (user != exclude && LIKELY(user->name != NULL) && stringCompare(user->name, name) == 0)
         {
             return user;
         }
@@ -603,28 +604,28 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot)
 {
     user_t *duplicate_name;
 
-    if (! slot->sha256_pass_valid)
+    if (UNLIKELY(! slot->sha256_pass_valid))
     {
         LOGE("Users: user \"%s\" does not have a usable SHA-256 password hash", usersUserNameForLog(slot));
         return false;
     }
-    if (! userPasswordDataValid(slot))
+    if (UNLIKELY(! userPasswordDataValid(slot)))
     {
         LOGE("Users: user \"%s\" has inconsistent password lookup data", usersUserNameForLog(slot));
         return false;
     }
 
     duplicate_name = usersFindByNameLocked(users, slot->name, NULL);
-    if (duplicate_name != NULL)
+    if (UNLIKELY(duplicate_name != NULL))
     {
         LOGE("Users: duplicate username \"%s\" in user database", slot->name);
         return false;
     }
-    if (! usersEnsureLookupCapacityLocked(users, users->count + 1U))
+    if (UNLIKELY(! usersEnsureLookupCapacityLocked(users, users->count + 1U)))
     {
         return false;
     }
-    if (usersSHA256TableLookupLocked(users, slot->sha256_pass.bytes) != NULL)
+    if (UNLIKELY(usersSHA256TableLookupLocked(users, slot->sha256_pass.bytes) != NULL))
     {
         char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
         usersSha256ToHex(slot->sha256_pass.bytes, key_hex);
@@ -634,13 +635,13 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot)
         terminateProgram(1);
     }
 
-    if (! usersSHA256TableInsertLocked(users, slot))
+    if (UNLIKELY(! usersSHA256TableInsertLocked(users, slot)))
     {
         return false;
     }
-    if (! usersHashTableInsertLocked(users, slot))
+    if (UNLIKELY(! usersHashTableInsertLocked(users, slot)))
     {
-        if (! usersRebuildLookupTablesLocked(users))
+        if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
         {
             LOGF("Users: failed to restore lookup tables after an insertion failure");
             terminateProgram(1);
@@ -661,11 +662,12 @@ static bool usersHashBytesConflict(bool a_valid, const void *a, bool b_valid, co
 
 static users_add_result_t usersValidateNewUserNoFatalLocked(const users_t *users, const user_t *user)
 {
-    if (user == NULL || ! user->initialized || ! user->sha256_pass_valid || ! userPasswordDataValid((user_t *) user))
+    if (UNLIKELY(user == NULL || ! user->initialized || ! user->sha256_pass_valid ||
+                 ! userPasswordDataValid((user_t *) user)))
     {
         return kUsersAddResultInvalidUser;
     }
-    if (usersFindByNameLocked(users, user->name, NULL) != NULL)
+    if (UNLIKELY(usersFindByNameLocked(users, user->name, NULL) != NULL))
     {
         return kUsersAddResultDuplicateName;
     }
@@ -674,29 +676,30 @@ static users_add_result_t usersValidateNewUserNoFatalLocked(const users_t *users
     {
         user_t *existing = usersGetAtLocked(users, i);
 
-        if (existing->sha256_pass_valid && usersSha256Equal(existing->sha256_pass.bytes, user->sha256_pass.bytes))
+        if (UNLIKELY(existing->sha256_pass_valid &&
+                     usersSha256Equal(existing->sha256_pass.bytes, user->sha256_pass.bytes)))
         {
             return kUsersAddResultDuplicateSHA256;
         }
-        if (existing->hash_pass == user->hash_pass)
+        if (UNLIKELY(existing->hash_pass == user->hash_pass))
         {
             return kUsersAddResultHashConflict;
         }
-        if (usersHashBytesConflict(existing->sha224_pass_valid,
-                                   existing->sha224_pass.bytes,
-                                   user->sha224_pass_valid,
-                                   user->sha224_pass.bytes,
-                                   SHA224_DIGEST_SIZE) ||
-            usersHashBytesConflict(existing->sha384_pass_valid,
-                                   existing->sha384_pass.bytes,
-                                   user->sha384_pass_valid,
-                                   user->sha384_pass.bytes,
-                                   SHA384_DIGEST_SIZE) ||
-            usersHashBytesConflict(existing->sha512_pass_valid,
-                                   existing->sha512_pass.bytes,
-                                   user->sha512_pass_valid,
-                                   user->sha512_pass.bytes,
-                                   SHA512_DIGEST_SIZE))
+        if (UNLIKELY(usersHashBytesConflict(existing->sha224_pass_valid,
+                                            existing->sha224_pass.bytes,
+                                            user->sha224_pass_valid,
+                                            user->sha224_pass.bytes,
+                                            SHA224_DIGEST_SIZE) ||
+                     usersHashBytesConflict(existing->sha384_pass_valid,
+                                            existing->sha384_pass.bytes,
+                                            user->sha384_pass_valid,
+                                            user->sha384_pass.bytes,
+                                            SHA384_DIGEST_SIZE) ||
+                     usersHashBytesConflict(existing->sha512_pass_valid,
+                                            existing->sha512_pass.bytes,
+                                            user->sha512_pass_valid,
+                                            user->sha512_pass.bytes,
+                                            SHA512_DIGEST_SIZE)))
         {
             return kUsersAddResultHashConflict;
         }
@@ -710,7 +713,7 @@ users_add_result_t usersAddUserChecked(users_t *users, const user_t *user)
     user_t            *slot;
     users_add_result_t result;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return kUsersAddResultInvalidArgument;
     }
@@ -718,24 +721,24 @@ users_add_result_t usersAddUserChecked(users_t *users, const user_t *user)
     rwlockWriteLock(&users->lock);
 
     result = usersValidateNewUserNoFatalLocked(users, user);
-    if (result != kUsersAddResultOk)
+    if (UNLIKELY(result != kUsersAddResultOk))
     {
         rwlockWriteUnlock(&users->lock);
         return result;
     }
-    if (! usersReserveLocked(users, users->count + 1U))
+    if (UNLIKELY(! usersReserveLocked(users, users->count + 1U)))
     {
         rwlockWriteUnlock(&users->lock);
         return kUsersAddResultAllocationFailed;
     }
 
     slot = usersStorageAtLocked(users, users->slot_count);
-    if (! userCopy(slot, user))
+    if (UNLIKELY(! userCopy(slot, user)))
     {
         rwlockWriteUnlock(&users->lock);
         return kUsersAddResultAllocationFailed;
     }
-    if (! usersCommitNewUserLocked(users, slot))
+    if (UNLIKELY(! usersCommitNewUserLocked(users, slot)))
     {
         userDestroy(slot);
         rwlockWriteUnlock(&users->lock);
@@ -753,17 +756,17 @@ static bool usersChangePasswordLocked(users_t *users, user_t *user, const char *
     users_password_probe_t password_probe;
     bool                   disable_generic_after_password_update = false;
 
-    if (! usersIndexOfLocked(users, user, NULL))
+    if (UNLIKELY(! usersIndexOfLocked(users, user, NULL)))
     {
         return false;
     }
 
     memoryZero(&password_probe, sizeof(password_probe));
-    if (! usersPasswordProbeCreate(&password_probe, password))
+    if (UNLIKELY(! usersPasswordProbeCreate(&password_probe, password)))
     {
         return false;
     }
-    if (! password_probe.sha256_pass_valid)
+    if (UNLIKELY(! password_probe.sha256_pass_valid))
     {
         LOGE("Users: updated password for user \"%s\" does not produce a usable SHA-256 hash",
              usersUserNameForLog(user));
@@ -772,7 +775,7 @@ static bool usersChangePasswordLocked(users_t *users, user_t *user, const char *
     }
 
     sha_duplicate = usersSHA256TableLookupLocked(users, password_probe.sha256_pass.bytes);
-    if (sha_duplicate != NULL && sha_duplicate != user)
+    if (UNLIKELY(sha_duplicate != NULL && sha_duplicate != user))
     {
         char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
         usersSha256ToHex(password_probe.sha256_pass.bytes, key_hex);
@@ -782,30 +785,30 @@ static bool usersChangePasswordLocked(users_t *users, user_t *user, const char *
         usersPasswordProbeDestroy(&password_probe);
         terminateProgram(1);
     }
-    if (users->generic_hash_lookup_available)
+    if (LIKELY(users->generic_hash_lookup_available))
     {
         user_t *hash_duplicate = usersHashTableLookupLocked(users, password_probe.hash_pass);
-        if (hash_duplicate != NULL && hash_duplicate != user)
+        if (UNLIKELY(hash_duplicate != NULL && hash_duplicate != user))
         {
             disable_generic_after_password_update = true;
             generic_collision_user                = hash_duplicate;
         }
     }
-    if (! usersEnsureLookupCapacityLocked(users, users->count))
+    if (UNLIKELY(! usersEnsureLookupCapacityLocked(users, users->count)))
     {
         usersPasswordProbeDestroy(&password_probe);
         return false;
     }
-    if (! userChangePassword(user, password))
+    if (UNLIKELY(! userChangePassword(user, password)))
     {
         usersPasswordProbeDestroy(&password_probe);
         return false;
     }
-    if (disable_generic_after_password_update)
+    if (UNLIKELY(disable_generic_after_password_update))
     {
         usersDisableGenericHashLookupLocked(users, generic_collision_user, user, password_probe.hash_pass);
     }
-    if (! usersRebuildLookupTablesLocked(users))
+    if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
     {
         LOGF("Users: failed to rebuild lookup tables after updating user \"%s\"", usersUserNameForLog(user));
         usersPasswordProbeDestroy(&password_probe);
@@ -821,7 +824,7 @@ static user_t *usersLookupByPasswordLocked(users_t *users, const users_password_
 {
     user_t *candidate = NULL;
 
-    if (users->generic_hash_lookup_available)
+    if (LIKELY(users->generic_hash_lookup_available))
     {
         candidate = usersHashTableLookupLocked(users, password_probe->hash_pass);
         if (candidate != NULL && userPasswordMatches(candidate, password))
@@ -829,7 +832,7 @@ static user_t *usersLookupByPasswordLocked(users_t *users, const users_password_
             return candidate;
         }
     }
-    if (password_probe->sha256_pass_valid)
+    if (LIKELY(password_probe->sha256_pass_valid))
     {
         candidate = usersSHA256TableLookupLocked(users, password_probe->sha256_pass.bytes);
         if (candidate != NULL && userPasswordMatches(candidate, password))
@@ -854,7 +857,7 @@ static bool usersRemoveUserLocked(users_t *users, user_t *user)
 {
     size_t index;
 
-    if (! usersIndexOfLocked(users, user, &index))
+    if (UNLIKELY(! usersIndexOfLocked(users, user, &index)))
     {
         return false;
     }
@@ -862,14 +865,14 @@ static bool usersRemoveUserLocked(users_t *users, user_t *user)
     user_t *victim = usersGetAtLocked(users, index);
     userDestroy(victim);
 
-    if (index + 1U < users->count)
+    if (LIKELY(index + 1U < users->count))
     {
         memoryMove(
             &users->items[index], &users->items[index + 1U], (users->count - index - 1U) * sizeof(*users->items));
     }
     users->count -= 1U;
     users->items[users->count] = NULL;
-    if (! usersRebuildLookupTablesLocked(users))
+    if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
     {
         LOGF("Users: failed to rebuild lookup tables after removing a user");
         terminateProgram(1);
@@ -906,7 +909,7 @@ static void usersRollbackFeedLocked(users_t *users, size_t old_count, size_t old
     users->generic_hash_lookup_available = old_generic_available;
     users->generic_hash_collision_seen   = old_generic_collision_seen;
 
-    if (! usersRebuildLookupTablesLocked(users))
+    if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
     {
         LOGF("Users: failed to rebuild lookup tables while rolling back a failed JSON load");
         terminateProgram(1);
@@ -921,7 +924,7 @@ static bool usersApplyNameHint(user_t *user, const char *name_hint)
     {
         return true;
     }
-    if (! usersStringDuplicate(&name, name_hint))
+    if (UNLIKELY(! usersStringDuplicate(&name, name_hint)))
     {
         LOGE("Users: failed to allocate object-key username hint");
         return false;
@@ -936,28 +939,28 @@ static bool usersAppendJsonUserLocked(users_t *users, const cJSON *user_json, co
 {
     user_t *slot;
 
-    if (! cJSON_IsObject(user_json))
+    if (UNLIKELY(! cJSON_IsObject(user_json)))
     {
         LOGE("Users: user entry must be a JSON object");
         return false;
     }
-    if (! usersReserveLocked(users, users->count + 1U))
+    if (UNLIKELY(! usersReserveLocked(users, users->count + 1U)))
     {
         return false;
     }
 
     slot = usersStorageAtLocked(users, users->slot_count);
-    if (! userCreateFromJson(slot, user_json))
+    if (UNLIKELY(! userCreateFromJson(slot, user_json)))
     {
         LOGE("Users: failed to create user from JSON entry at index %zu", users->count);
         return false;
     }
-    if (! usersApplyNameHint(slot, name_hint))
+    if (UNLIKELY(! usersApplyNameHint(slot, name_hint)))
     {
         userDestroy(slot);
         return false;
     }
-    if (usersCommitNewUserLocked(users, slot))
+    if (LIKELY(usersCommitNewUserLocked(users, slot)))
     {
         return true;
     }
@@ -972,7 +975,7 @@ static bool usersFeedJsonArrayLocked(users_t *users, const cJSON *array)
 
     cJSON_ArrayForEach(entry, array)
     {
-        if (! usersAppendJsonUserLocked(users, entry, NULL))
+        if (UNLIKELY(! usersAppendJsonUserLocked(users, entry, NULL)))
         {
             return false;
         }
@@ -987,7 +990,7 @@ static bool usersFeedJsonObjectMapLocked(users_t *users, const cJSON *object)
 
     cJSON_ArrayForEach(entry, object)
     {
-        if (! usersAppendJsonUserLocked(users, entry, entry->string))
+        if (UNLIKELY(! usersAppendJsonUserLocked(users, entry, entry->string)))
         {
             return false;
         }
@@ -1012,7 +1015,7 @@ static bool usersJsonObjectLooksLikeSingleUser(const cJSON *json)
  */
 static bool usersFeedJsonLocked(users_t *users, const cJSON *json)
 {
-    if (json == NULL || cJSON_IsNull(json))
+    if (UNLIKELY(json == NULL || cJSON_IsNull(json)))
     {
         return true;
     }
@@ -1020,7 +1023,7 @@ static bool usersFeedJsonLocked(users_t *users, const cJSON *json)
     {
         return usersFeedJsonArrayLocked(users, json);
     }
-    if (! cJSON_IsObject(json))
+    if (UNLIKELY(! cJSON_IsObject(json)))
     {
         LOGE("Users: JSON input must be an object, array, or null");
         return false;
@@ -1033,11 +1036,11 @@ static bool usersFeedJsonLocked(users_t *users, const cJSON *json)
     const cJSON *users_array = cJSON_GetObjectItemCaseSensitive(json, "users");
     if (users_array != NULL)
     {
-        if (cJSON_IsNull(users_array))
+    if (UNLIKELY(cJSON_IsNull(users_array)))
         {
             return true;
         }
-        if (! cJSON_IsArray(users_array))
+        if (UNLIKELY(! cJSON_IsArray(users_array)))
         {
             LOGE("Users: JSON field \"users\" must be an array");
             return false;
@@ -1057,22 +1060,22 @@ static bool usersValidateUserLookupKeysLocked(const users_t *users)
     for (size_t i = 0; i < users->count; ++i)
     {
         const user_t *a = usersGetAtLocked(users, i);
-        if (! a->sha256_pass_valid)
+        if (UNLIKELY(! a->sha256_pass_valid))
         {
             LOGE("Users: user \"%s\" has no SHA-256 lookup key", usersUserNameForLog(a));
             return false;
         }
-        if (! userPasswordDataValid((user_t *) a))
+        if (UNLIKELY(! userPasswordDataValid((user_t *) a)))
         {
             LOGE("Users: user \"%s\" has inconsistent password lookup data", usersUserNameForLog(a));
             return false;
         }
-        if (usersSHA256TableLookupLocked(users, a->sha256_pass.bytes) != a)
+        if (UNLIKELY(usersSHA256TableLookupLocked(users, a->sha256_pass.bytes) != a))
         {
             LOGE("Users: SHA-256 lookup table does not point back to user \"%s\"", usersUserNameForLog(a));
             return false;
         }
-        if (users->generic_hash_lookup_available && usersHashTableLookupLocked(users, a->hash_pass) != a)
+        if (UNLIKELY(users->generic_hash_lookup_available && usersHashTableLookupLocked(users, a->hash_pass) != a))
         {
             LOGE("Users: generic hash lookup table does not point back to user \"%s\"", usersUserNameForLog(a));
             return false;
@@ -1081,7 +1084,7 @@ static bool usersValidateUserLookupKeysLocked(const users_t *users)
         for (size_t j = i + 1U; j < users->count; ++j)
         {
             const user_t *b = usersGetAtLocked(users, j);
-            if (usersSha256Equal(a->sha256_pass.bytes, b->sha256_pass.bytes))
+            if (UNLIKELY(usersSha256Equal(a->sha256_pass.bytes, b->sha256_pass.bytes)))
             {
                 char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
                 usersSha256ToHex(a->sha256_pass.bytes, key_hex);
@@ -1091,12 +1094,13 @@ static bool usersValidateUserLookupKeysLocked(const users_t *users)
                      usersUserNameForLog(b));
                 terminateProgram(1);
             }
-            if (users->generic_hash_lookup_available && a->hash_pass == b->hash_pass)
+            if (UNLIKELY(users->generic_hash_lookup_available && a->hash_pass == b->hash_pass))
             {
                 LOGE("Users: generic hash collision exists while generic lookup is marked available");
                 return false;
             }
-            if (a->name != NULL && a->name[0] != '\0' && b->name != NULL && stringCompare(a->name, b->name) == 0)
+            if (UNLIKELY(a->name != NULL && a->name[0] != '\0' && b->name != NULL &&
+                         stringCompare(a->name, b->name) == 0))
             {
                 LOGE("Users: duplicate username \"%s\"", a->name);
                 return false;
@@ -1109,7 +1113,7 @@ static bool usersValidateUserLookupKeysLocked(const users_t *users)
 
 bool usersCreate(users_t *users)
 {
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return false;
     }
@@ -1117,7 +1121,7 @@ bool usersCreate(users_t *users)
     memoryZero(users, sizeof(*users));
     rwlockinit(&users->lock);
     users->generic_hash_lookup_available = true;
-    if (! usersHashTableCreateIfNeeded(users) || ! usersSHA256TableCreateIfNeeded(users))
+    if (UNLIKELY(! usersHashTableCreateIfNeeded(users) || ! usersSHA256TableCreateIfNeeded(users)))
     {
         usersHashTableDestroy(users->generic_hash_table);
         usersSHA256TableDestroy(users->sha256_table);
@@ -1131,7 +1135,7 @@ bool usersCreate(users_t *users)
 
 void usersDestroy(users_t *users)
 {
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return;
     }
@@ -1157,25 +1161,25 @@ bool usersAddUser(users_t *users, const user_t *user)
     user_t  user_copy;
     bool    result = false;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
 
     memoryZero(&user_copy, sizeof(user_copy));
-    if (! userCopy(&user_copy, user))
+    if (UNLIKELY(! userCopy(&user_copy, user)))
     {
         return false;
     }
 
     rwlockWriteLock(&users->lock);
-    if (usersReserveLocked(users, users->count + 1U))
+    if (LIKELY(usersReserveLocked(users, users->count + 1U)))
     {
         slot = usersStorageAtLocked(users, users->slot_count);
-        if (userCopy(slot, &user_copy))
+        if (LIKELY(userCopy(slot, &user_copy)))
         {
             result = usersCommitNewUserLocked(users, slot);
-            if (! result)
+            if (UNLIKELY(! result))
             {
                 userDestroy(slot);
             }
@@ -1191,13 +1195,13 @@ bool usersAddUserFromJson(users_t *users, const cJSON *json)
     user_t user;
     bool   result;
 
-    if (users == NULL || ! cJSON_IsObject(json))
+    if (UNLIKELY(users == NULL || ! cJSON_IsObject(json)))
     {
         return false;
     }
 
     memoryZero(&user, sizeof(user));
-    if (! userCreateFromJson(&user, json))
+    if (UNLIKELY(! userCreateFromJson(&user, json)))
     {
         LOGE("Users: failed to create user from JSON entry");
         return false;
@@ -1213,17 +1217,17 @@ users_add_result_t usersAddUserFromJsonChecked(users_t *users, const cJSON *json
     user_t             user;
     users_add_result_t result;
 
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return kUsersAddResultInvalidArgument;
     }
-    if (! cJSON_IsObject(json))
+    if (UNLIKELY(! cJSON_IsObject(json)))
     {
         return kUsersAddResultInvalidJson;
     }
 
     memoryZero(&user, sizeof(user));
-    if (! userCreateFromJson(&user, json))
+    if (UNLIKELY(! userCreateFromJson(&user, json)))
     {
         LOGE("Users: failed to create user from JSON entry");
         return kUsersAddResultInvalidUser;
@@ -1242,7 +1246,7 @@ bool usersFeedJson(users_t *users, const cJSON *json)
     bool   old_generic_collision_seen;
     bool   result;
 
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return false;
     }
@@ -1254,7 +1258,7 @@ bool usersFeedJson(users_t *users, const cJSON *json)
     old_generic_collision_seen = users->generic_hash_collision_seen;
 
     result = usersFeedJsonLocked(users, json);
-    if (! result)
+    if (UNLIKELY(! result))
     {
         usersRollbackFeedLocked(users, old_count, old_slot_count, old_generic_available, old_generic_collision_seen);
     }
@@ -1265,7 +1269,7 @@ bool usersFeedJson(users_t *users, const cJSON *json)
 
 bool usersClear(users_t *users)
 {
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return false;
     }
@@ -1282,23 +1286,23 @@ cJSON *usersToJson(const users_t *users)
     cJSON   *array = NULL;
     users_t *self  = (users_t *) users;
 
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return NULL;
     }
 
     root = cJSON_CreateObject();
-    if (root == NULL)
+    if (UNLIKELY(root == NULL))
     {
         return NULL;
     }
     array = cJSON_CreateArray();
-    if (array == NULL)
+    if (UNLIKELY(array == NULL))
     {
         cJSON_Delete(root);
         return NULL;
     }
-    if (! cJSON_AddItemToObject(root, "users", array))
+    if (UNLIKELY(! cJSON_AddItemToObject(root, "users", array)))
     {
         cJSON_Delete(array);
         cJSON_Delete(root);
@@ -1309,13 +1313,13 @@ cJSON *usersToJson(const users_t *users)
     for (size_t i = 0; i < users->count; ++i)
     {
         cJSON *user_json = userToJson(usersGetAtLocked(users, i));
-        if (user_json == NULL)
+        if (UNLIKELY(user_json == NULL))
         {
             rwlockReadUnlock(&self->lock);
             cJSON_Delete(root);
             return NULL;
         }
-        if (! cJSON_AddItemToArray(array, user_json))
+        if (UNLIKELY(! cJSON_AddItemToArray(array, user_json)))
         {
             rwlockReadUnlock(&self->lock);
             cJSON_Delete(user_json);
@@ -1332,7 +1336,7 @@ bool usersGenericHashLookupAvailable(const users_t *users)
 {
     bool result;
 
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return false;
     }
@@ -1347,13 +1351,13 @@ user_t *usersLookupByHash(users_t *users, hash_t hash)
 {
     user_t *result;
 
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return NULL;
     }
 
     rwlockReadLock(&users->lock);
-    if (! users->generic_hash_lookup_available)
+    if (UNLIKELY(! users->generic_hash_lookup_available))
     {
         rwlockReadUnlock(&users->lock);
         LOGF("Users: generic hash lookup is disabled because collisions were detected during user database creation");
@@ -1373,7 +1377,7 @@ user_t *usersLookupBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_S
 {
     user_t *result;
 
-    if (users == NULL || sha256 == NULL)
+    if (UNLIKELY(users == NULL || sha256 == NULL))
     {
         return NULL;
     }
@@ -1395,14 +1399,14 @@ cJSON *usersUserToJsonBySHA256(const users_t *users, const uint8_t sha256[SHA256
     user_t  *user = NULL;
     cJSON   *json = NULL;
 
-    if (users == NULL || sha256 == NULL)
+    if (UNLIKELY(users == NULL || sha256 == NULL))
     {
         return NULL;
     }
 
     rwlockReadLock(&self->lock);
     user = usersSHA256TableLookupLocked(self, sha256);
-    if (user != NULL)
+    if (LIKELY(user != NULL))
     {
         json = userToJson(user);
     }
@@ -1417,20 +1421,20 @@ cJSON *usersUserToJsonByPassword(const users_t *users, const char *password)
     user_t                *user = NULL;
     cJSON                 *json = NULL;
 
-    if (users == NULL || password == NULL)
+    if (UNLIKELY(users == NULL || password == NULL))
     {
         return NULL;
     }
 
     memoryZero(&password_probe, sizeof(password_probe));
-    if (! usersPasswordProbeCreate(&password_probe, password))
+    if (UNLIKELY(! usersPasswordProbeCreate(&password_probe, password)))
     {
         return NULL;
     }
 
     rwlockReadLock(&self->lock);
     user = usersLookupByPasswordLocked(self, &password_probe, password);
-    if (user != NULL)
+    if (LIKELY(user != NULL))
     {
         json = userToJson(user);
     }
@@ -1445,13 +1449,13 @@ user_t *usersLookupByPassword(users_t *users, const char *password)
     users_password_probe_t password_probe;
     user_t                *result;
 
-    if (users == NULL || password == NULL)
+    if (UNLIKELY(users == NULL || password == NULL))
     {
         return NULL;
     }
 
     memoryZero(&password_probe, sizeof(password_probe));
-    if (! usersPasswordProbeCreate(&password_probe, password))
+    if (UNLIKELY(! usersPasswordProbeCreate(&password_probe, password)))
     {
         return NULL;
     }
@@ -1473,7 +1477,7 @@ bool usersRemoveUser(users_t *users, user_t *user)
 {
     bool result;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
@@ -1489,14 +1493,14 @@ bool usersRemoveUserBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_
     user_t *user;
     bool    result = false;
 
-    if (users == NULL || sha256 == NULL)
+    if (UNLIKELY(users == NULL || sha256 == NULL))
     {
         return false;
     }
 
     rwlockWriteLock(&users->lock);
     user = usersSHA256TableLookupLocked(users, sha256);
-    if (user != NULL)
+    if (LIKELY(user != NULL))
     {
         result = usersRemoveUserLocked(users, user);
     }
@@ -1509,20 +1513,20 @@ bool usersRemoveUserByHash(users_t *users, hash_t hash)
     user_t *user;
     bool    result = false;
 
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return false;
     }
 
     rwlockWriteLock(&users->lock);
-    if (! users->generic_hash_lookup_available)
+    if (UNLIKELY(! users->generic_hash_lookup_available))
     {
         rwlockWriteUnlock(&users->lock);
         LOGF("Users: generic hash lookup is disabled because collisions were detected during user database creation");
         terminateProgram(1);
     }
     user = usersHashTableLookupLocked(users, hash);
-    if (user != NULL)
+    if (LIKELY(user != NULL))
     {
         result = usersRemoveUserLocked(users, user);
     }
@@ -1534,7 +1538,7 @@ bool usersChangePassword(users_t *users, user_t *user, const char *password)
 {
     bool result;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
@@ -1547,16 +1551,16 @@ bool usersChangePassword(users_t *users, user_t *user, const char *password)
 
 static users_update_result_t usersValidateUpdateRequest(const user_update_t *update)
 {
-    if (update == NULL)
+    if (UNLIKELY(update == NULL))
     {
         return kUsersUpdateResultInvalidArgument;
     }
-    if ((update->mask & ~((uint32_t) kKnownUserUpdateMask)) != 0U)
+    if (UNLIKELY((update->mask & ~((uint32_t) kKnownUserUpdateMask)) != 0U))
     {
         LOGE("Users: update request contains unknown fields");
         return kUsersUpdateResultUnknownFields;
     }
-    if ((update->mask & kUserUpdateRecordStatInterval) != 0U && update->record_stat_interval_ms < 0)
+    if (UNLIKELY((update->mask & kUserUpdateRecordStatInterval) != 0U && update->record_stat_interval_ms < 0))
     {
         LOGE("Users: record stat interval must not be negative");
         return kUsersUpdateResultInvalidRecordStatInterval;
@@ -1579,17 +1583,17 @@ static users_update_result_t usersCopyUpdateStrings(const user_update_t *update,
     *email_copy = NULL;
     *notes_copy = NULL;
 
-    if ((update->mask & kUserUpdateName) != 0U && ! usersStringDuplicate(name_copy, update->name))
+    if (UNLIKELY((update->mask & kUserUpdateName) != 0U && ! usersStringDuplicate(name_copy, update->name)))
     {
         return kUsersUpdateResultAllocationFailed;
     }
-    if ((update->mask & kUserUpdateEmail) != 0U && ! usersStringDuplicate(email_copy, update->email))
+    if (UNLIKELY((update->mask & kUserUpdateEmail) != 0U && ! usersStringDuplicate(email_copy, update->email)))
     {
         usersFreeUpdateStringCopies(*name_copy, *email_copy, *notes_copy);
         *name_copy = *email_copy = *notes_copy = NULL;
         return kUsersUpdateResultAllocationFailed;
     }
-    if ((update->mask & kUserUpdateNotes) != 0U && ! usersStringDuplicate(notes_copy, update->notes))
+    if (UNLIKELY((update->mask & kUserUpdateNotes) != 0U && ! usersStringDuplicate(notes_copy, update->notes)))
     {
         usersFreeUpdateStringCopies(*name_copy, *email_copy, *notes_copy);
         *name_copy = *email_copy = *notes_copy = NULL;
@@ -1603,7 +1607,7 @@ static users_update_result_t usersPrepareUpdate(const user_update_t *update, cha
                                                 char **notes_copy)
 {
     users_update_result_t result = usersValidateUpdateRequest(update);
-    if (result != kUsersUpdateResultOk)
+    if (UNLIKELY(result != kUsersUpdateResultOk))
     {
         return result;
     }
@@ -1620,13 +1624,14 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(users_t *users
     if ((update->mask & kUserUpdateName) != 0U)
     {
         duplicate_name = usersFindByNameLocked(users, *name_copy, user);
-        if (duplicate_name != NULL)
+        if (UNLIKELY(duplicate_name != NULL))
         {
             LOGE("Users: duplicate username \"%s\" in update", *name_copy);
             return kUsersUpdateResultDuplicateName;
         }
     }
-    if ((update->mask & kUserUpdatePassword) != 0U && ! usersChangePasswordLocked(users, user, update->password))
+    if (UNLIKELY((update->mask & kUserUpdatePassword) != 0U &&
+                 ! usersChangePasswordLocked(users, user, update->password)))
     {
         return kUsersUpdateResultPasswordUpdateFailed;
     }
@@ -1683,19 +1688,19 @@ bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update)
     char                 *notes_copy = NULL;
     users_update_result_t result;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
 
     result = usersPrepareUpdate(update, &name_copy, &email_copy, &notes_copy);
-    if (result != kUsersUpdateResultOk)
+    if (UNLIKELY(result != kUsersUpdateResultOk))
     {
         return false;
     }
 
     rwlockWriteLock(&users->lock);
-    if (! usersIndexOfLocked(users, user, NULL))
+    if (UNLIKELY(! usersIndexOfLocked(users, user, NULL)))
     {
         result = kUsersUpdateResultUserNotFound;
     }
@@ -1718,20 +1723,20 @@ users_update_result_t usersUpdateUserBySHA256(users_t *users, const uint8_t sha2
     users_update_result_t result;
     user_t               *user;
 
-    if (users == NULL || sha256 == NULL)
+    if (UNLIKELY(users == NULL || sha256 == NULL))
     {
         return kUsersUpdateResultInvalidArgument;
     }
 
     result = usersPrepareUpdate(update, &name_copy, &email_copy, &notes_copy);
-    if (result != kUsersUpdateResultOk)
+    if (UNLIKELY(result != kUsersUpdateResultOk))
     {
         return result;
     }
 
     rwlockWriteLock(&users->lock);
     user = usersSHA256TableLookupLocked(users, sha256);
-    if (user == NULL)
+    if (UNLIKELY(user == NULL))
     {
         result = kUsersUpdateResultUserNotFound;
     }
@@ -1779,7 +1784,7 @@ bool usersSetUserLimit(users_t *users, user_t *user, const user_limit_t *limit)
 {
     user_update_t update = {.mask = kUserUpdateLimit};
 
-    if (limit == NULL)
+    if (UNLIKELY(limit == NULL))
     {
         return false;
     }
@@ -1792,7 +1797,7 @@ bool usersSetUserTimeInfo(users_t *users, user_t *user, const user_time_info_t *
 {
     user_update_t update = {.mask = kUserUpdateTimeInfo};
 
-    if (timeinfo == NULL)
+    if (UNLIKELY(timeinfo == NULL))
     {
         return false;
     }
@@ -1805,7 +1810,7 @@ bool usersSetUserStats(users_t *users, user_t *user, const user_stat_t *stats)
 {
     user_update_t update = {.mask = kUserUpdateStats};
 
-    if (stats == NULL)
+    if (UNLIKELY(stats == NULL))
     {
         return false;
     }
@@ -1824,14 +1829,14 @@ bool usersAddTraffic(users_t *users, user_t *user, uint64_t upload_bytes, uint64
 {
     bool result;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
 
     rwlockReadLock(&users->lock);
     result = usersIndexOfLocked(users, user, NULL);
-    if (result)
+    if (LIKELY(result))
     {
         userAddTraffic(user, upload_bytes, download_bytes);
     }
@@ -1844,14 +1849,14 @@ users_update_result_t usersAddTrafficBySHA256(users_t *users, const uint8_t sha2
 {
     user_t *user;
 
-    if (users == NULL || sha256 == NULL)
+    if (UNLIKELY(users == NULL || sha256 == NULL))
     {
         return kUsersUpdateResultInvalidArgument;
     }
 
     rwlockReadLock(&users->lock);
     user = usersSHA256TableLookupLocked(users, sha256);
-    if (user != NULL)
+    if (LIKELY(user != NULL))
     {
         userAddTraffic(user, upload_bytes, download_bytes);
     }
@@ -1869,14 +1874,14 @@ bool usersAddSpeed(users_t *users, user_t *user, uint64_t upload_bytes_per_sec, 
 {
     bool result;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
 
     rwlockReadLock(&users->lock);
     result = usersIndexOfLocked(users, user, NULL);
-    if (result)
+    if (LIKELY(result))
     {
         userAddSpeed(user, upload_bytes_per_sec, download_bytes_per_sec);
     }
@@ -1888,14 +1893,14 @@ bool usersAddConnection(users_t *users, user_t *user, bool inbound)
 {
     bool result;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
 
     rwlockReadLock(&users->lock);
     result = usersIndexOfLocked(users, user, NULL);
-    if (result)
+    if (LIKELY(result))
     {
         userAddConnection(user, inbound);
     }
@@ -1907,14 +1912,14 @@ bool usersRemoveConnection(users_t *users, user_t *user, bool inbound)
 {
     bool result;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
 
     rwlockReadLock(&users->lock);
     result = usersIndexOfLocked(users, user, NULL);
-    if (result)
+    if (LIKELY(result))
     {
         userRemoveConnection(user, inbound);
     }
@@ -1926,14 +1931,14 @@ bool usersSetIpCount(users_t *users, user_t *user, uint64_t ips)
 {
     bool result;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
 
     rwlockReadLock(&users->lock);
     result = usersIndexOfLocked(users, user, NULL);
-    if (result)
+    if (LIKELY(result))
     {
         userSetIpCount(user, ips);
     }
@@ -1945,14 +1950,14 @@ bool usersSetDeviceCount(users_t *users, user_t *user, uint64_t devices)
 {
     bool result;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
 
     rwlockReadLock(&users->lock);
     result = usersIndexOfLocked(users, user, NULL);
-    if (result)
+    if (LIKELY(result))
     {
         userSetDeviceCount(user, devices);
     }
@@ -1964,14 +1969,14 @@ bool usersMarkFirstUsage(users_t *users, user_t *user, uint64_t now_ms)
 {
     bool result;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
 
     rwlockReadLock(&users->lock);
     result = usersIndexOfLocked(users, user, NULL);
-    if (result)
+    if (LIKELY(result))
     {
         userMarkFirstUsage(user, now_ms);
     }
@@ -1983,14 +1988,14 @@ bool usersResetUsage(users_t *users, user_t *user)
 {
     bool result;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
 
     rwlockReadLock(&users->lock);
     result = usersIndexOfLocked(users, user, NULL);
-    if (result)
+    if (LIKELY(result))
     {
         rwlockWriteLock(&user->stats_lock);
         memoryZero(&user->stats.speed, sizeof(user->stats.speed));
@@ -2010,14 +2015,14 @@ bool usersResetStats(users_t *users, user_t *user)
 {
     bool result;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
 
     rwlockReadLock(&users->lock);
     result = usersIndexOfLocked(users, user, NULL);
-    if (result)
+    if (LIKELY(result))
     {
         rwlockWriteLock(&user->stats_lock);
         memoryZero(&user->stats, sizeof(user->stats));
@@ -2031,13 +2036,13 @@ bool usersUserLimitReached(users_t *users, const user_t *user)
 {
     bool result = false;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
 
     rwlockReadLock(&users->lock);
-    if (usersIndexOfLocked(users, user, NULL))
+    if (LIKELY(usersIndexOfLocked(users, user, NULL)))
     {
         result = userHasReachedLimit((user_t *) user);
     }
@@ -2049,13 +2054,13 @@ bool usersUserEnabled(users_t *users, const user_t *user)
 {
     bool result = false;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
 
     rwlockReadLock(&users->lock);
-    if (usersIndexOfLocked(users, user, NULL))
+    if (LIKELY(usersIndexOfLocked(users, user, NULL)))
     {
         result = userIsEnabled((user_t *) user);
     }
@@ -2067,13 +2072,13 @@ bool usersUserDisabled(users_t *users, const user_t *user)
 {
     bool result = false;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
 
     rwlockReadLock(&users->lock);
-    if (usersIndexOfLocked(users, user, NULL))
+    if (LIKELY(usersIndexOfLocked(users, user, NULL)))
     {
         result = userIsDisabled((user_t *) user);
     }
@@ -2085,13 +2090,13 @@ bool usersUserExpired(users_t *users, const user_t *user, uint64_t now_ms)
 {
     bool result = false;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
 
     rwlockReadLock(&users->lock);
-    if (usersIndexOfLocked(users, user, NULL))
+    if (LIKELY(usersIndexOfLocked(users, user, NULL)))
     {
         result = userIsExpired((user_t *) user, now_ms);
     }
@@ -2103,13 +2108,13 @@ bool usersUserActive(users_t *users, const user_t *user, uint64_t now_ms)
 {
     bool result = false;
 
-    if (users == NULL || user == NULL)
+    if (UNLIKELY(users == NULL || user == NULL))
     {
         return false;
     }
 
     rwlockReadLock(&users->lock);
-    if (usersIndexOfLocked(users, user, NULL))
+    if (LIKELY(usersIndexOfLocked(users, user, NULL)))
     {
         result = userIsActive((user_t *) user, now_ms);
     }
@@ -2121,7 +2126,7 @@ size_t usersCount(const users_t *users)
 {
     size_t result;
 
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return 0;
     }
@@ -2141,7 +2146,7 @@ bool usersReserve(users_t *users, size_t capacity)
 {
     bool result;
 
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return false;
     }
@@ -2156,13 +2161,13 @@ user_t *usersGetAt(users_t *users, size_t index)
 {
     user_t *result = NULL;
 
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return NULL;
     }
 
     rwlockReadLock(&users->lock);
-    if (index < users->count)
+    if (LIKELY(index < users->count))
     {
         result = usersGetAtLocked(users, index);
     }
@@ -2179,7 +2184,7 @@ bool usersContainsUser(const users_t *users, const user_t *user)
 {
     bool result;
 
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return false;
     }
@@ -2194,7 +2199,7 @@ bool usersRebuildLookups(users_t *users)
 {
     bool result;
 
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return false;
     }
@@ -2210,7 +2215,7 @@ bool usersValidate(const users_t *users)
     bool     result;
     users_t *self = (users_t *) users;
 
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return false;
     }
@@ -2225,13 +2230,13 @@ user_stat_t usersUsageDiff(users_t *users, user_t *base, user_t *current)
 {
     user_stat_t diff = {0};
 
-    if (users == NULL || base == NULL || current == NULL)
+    if (UNLIKELY(users == NULL || base == NULL || current == NULL))
     {
         return diff;
     }
 
     rwlockReadLock(&users->lock);
-    if (usersIndexOfLocked(users, base, NULL) && usersIndexOfLocked(users, current, NULL))
+    if (LIKELY(usersIndexOfLocked(users, base, NULL) && usersIndexOfLocked(users, current, NULL)))
     {
         diff = userStatsDiff(base, current);
     }
@@ -2243,7 +2248,7 @@ user_t *usersFindFirstExpired(users_t *users, uint64_t now_ms)
 {
     user_t *result = NULL;
 
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return NULL;
     }
@@ -2271,7 +2276,7 @@ user_t *usersFindFirstDisabled(users_t *users)
 {
     user_t *result = NULL;
 
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return NULL;
     }
@@ -2299,7 +2304,7 @@ user_t *usersFindFirstLimited(users_t *users)
 {
     user_t *result = NULL;
 
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return NULL;
     }
