@@ -818,7 +818,7 @@ static inline int parseIPWithSubnetMask(const char *ip_str, ip_addr_t *ip, ip_ad
 
         subnet_mask->type = IPADDR_TYPE_V4;
         // Calculate the subnet mask for IPv4
-        u32_t subnet_mask_value = 0xFFFFFFFF << (32 - prefix_len);
+        u32_t subnet_mask_value = (prefix_len == 0) ? 0U : (0xFFFFFFFFU << (32 - prefix_len));
         IP4_ADDR(&subnet_mask->u_addr.ip4, (subnet_mask_value >> 24) & 0xFF, (subnet_mask_value >> 16) & 0xFF,
                  (subnet_mask_value >> 8) & 0xFF, subnet_mask_value & 0xFF);
 
