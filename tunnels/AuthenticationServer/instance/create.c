@@ -2,6 +2,141 @@
 
 #include "loggers/network_logger.h"
 
+static bool authenticationserverIsPathSeparator(char ch)
+{
+#ifdef OS_WIN
+    return ch == '/' || ch == '\\';
+#else
+    return ch == '/';
+#endif
+}
+
+static void authenticationserverTrimTrailingPathSeparators(char *path)
+{
+    size_t len = stringLength(path);
+
+    while (len > 1U && authenticationserverIsPathSeparator(path[len - 1U]))
+    {
+#ifdef OS_WIN
+        if (len == 3U && path[1] == ':')
+        {
+            break;
+        }
+#endif
+        path[--len] = '\0';
+    }
+}
+
+static bool authenticationserverParseNormalBackupsMode(const char                                 *mode,
+                                                       authenticationserver_normal_backups_mode_t *out)
+{
+    if (stringCompare(mode, "hourly") == 0)
+    {
+        *out = kAuthenticationServerNormalBackupsHourly;
+        return true;
+    }
+    if (stringCompare(mode, "daily") == 0)
+    {
+        *out = kAuthenticationServerNormalBackupsDaily;
+        return true;
+    }
+    if (stringCompare(mode, "weekly") == 0)
+    {
+        *out = kAuthenticationServerNormalBackupsWeekly;
+        return true;
+    }
+    return false;
+}
+
+static bool authenticationserverParseNormalBackups(authenticationserver_tstate_t *ts, const cJSON *settings)
+{
+    const cJSON *mode_json  = cJSON_GetObjectItemCaseSensitive(settings, "normal-backups");
+    const cJSON *path_json  = cJSON_GetObjectItemCaseSensitive(settings, "normal-backups-path");
+    const cJSON *limit_json = cJSON_GetObjectItemCaseSensitive(settings, "normal-backups-count-limit");
+
+    if (UNLIKELY((mode_json == NULL) != (path_json == NULL)))
+    {
+        LOGF("JSON Error: AuthenticationServer->settings->normal-backups and normal-backups-path must be specified "
+             "together");
+        return false;
+    }
+
+    if (mode_json == NULL)
+    {
+        if (UNLIKELY(limit_json != NULL))
+        {
+            LOGF("JSON Error: AuthenticationServer->settings->normal-backups-count-limit requires normal-backups and "
+                 "normal-backups-path");
+            return false;
+        }
+        ts->normal_backups_mode        = kAuthenticationServerNormalBackupsDisabled;
+        ts->normal_backups_count_limit = kAuthenticationServerDefaultNormalBackupsCountLimit;
+        return true;
+    }
+
+    if (UNLIKELY(! cJSON_IsString(mode_json) || mode_json->valuestring == NULL ||
+                 ! authenticationserverParseNormalBackupsMode(mode_json->valuestring, &ts->normal_backups_mode)))
+    {
+        LOGF("JSON Error: AuthenticationServer->settings->normal-backups (string field) : expected hourly, daily, or "
+             "weekly");
+        return false;
+    }
+
+    if (UNLIKELY(! cJSON_IsString(path_json) || path_json->valuestring == NULL || path_json->valuestring[0] == '\0'))
+    {
+        LOGF("JSON Error: AuthenticationServer->settings->normal-backups-path (string field) : The data was empty or "
+             "invalid");
+        return false;
+    }
+
+    ts->normal_backups_path = stringDuplicate(path_json->valuestring);
+    if (UNLIKELY(ts->normal_backups_path == NULL))
+    {
+        LOGE("AuthenticationServer: failed to allocate normal-backups-path");
+        return false;
+    }
+    authenticationserverTrimTrailingPathSeparators(ts->normal_backups_path);
+
+    if (UNLIKELY(ts->normal_backups_path[0] == '\0'))
+    {
+        LOGF("JSON Error: AuthenticationServer->settings->normal-backups-path (string field) : The data was empty or "
+             "invalid");
+        return false;
+    }
+    if (UNLIKELY(stringLength(ts->normal_backups_path) >= MAX_PATH))
+    {
+        LOGF("AuthenticationServer: normal-backups-path \"%s\" is too long", ts->normal_backups_path);
+        return false;
+    }
+
+    int count_limit = (int) kAuthenticationServerDefaultNormalBackupsCountLimit;
+    if (limit_json != NULL)
+    {
+        if (UNLIKELY(! cJSON_IsNumber(limit_json) || limit_json->valueint <= 0))
+        {
+            LOGF("JSON Error: AuthenticationServer->settings->normal-backups-count-limit (positive integer field) : "
+                 "The data was invalid");
+            return false;
+        }
+        count_limit = limit_json->valueint;
+    }
+    ts->normal_backups_count_limit = (uint32_t) count_limit;
+
+    int create_result = createDirIfNotExists(ts->normal_backups_path);
+    if (UNLIKELY(create_result != 0 && create_result != EEXIST))
+    {
+        LOGF("AuthenticationServer: failed to create normal-backups-path \"%s\"", ts->normal_backups_path);
+        return false;
+    }
+    if (UNLIKELY(! isDir(ts->normal_backups_path)))
+    {
+        LOGF("AuthenticationServer: normal-backups-path \"%s\" is not a directory", ts->normal_backups_path);
+        return false;
+    }
+
+    return true;
+}
+
 static void authenticationserverInitializeCallbacks(tunnel_t *t)
 {
     t->fnInitU    = &authenticationserverTunnelUpStreamInit;
@@ -71,6 +206,11 @@ static bool authenticationserverParseSettings(authenticationserver_tstate_t *ts,
         return false;
     }
     ts->session_idle_timeout_ms = (uint32_t) session_idle_timeout_ms;
+
+    if (UNLIKELY(! authenticationserverParseNormalBackups(ts, settings)))
+    {
+        return false;
+    }
 
     const cJSON *auth_clients = cJSON_GetObjectItemCaseSensitive(settings, "auth-clients");
     if (UNLIKELY(! cJSON_IsArray(auth_clients) || cJSON_GetArraySize(auth_clients) <= 0))

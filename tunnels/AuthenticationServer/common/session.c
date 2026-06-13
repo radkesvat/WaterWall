@@ -463,7 +463,7 @@ void authenticationserverSessionsExpireIdle(tunnel_t *t)
     for (uint32_t i = 0; i < ts->sessions_count;)
     {
         authenticationserver_session_t *session = ts->sessions[i];
-        const uint32_t idle_ms = now_ms - session->last_activity_ms;
+        const uint32_t                  idle_ms = now_ms - session->last_activity_ms;
 
         if (LIKELY(idle_ms < session->session_idle_timeout_ms))
         {

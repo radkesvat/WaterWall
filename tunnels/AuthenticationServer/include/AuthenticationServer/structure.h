@@ -19,6 +19,14 @@ typedef struct authenticationserver_auth_client_s
     uint32_t session_idle_timeout_ms;
 } authenticationserver_auth_client_t;
 
+typedef enum authenticationserver_normal_backups_mode_e
+{
+    kAuthenticationServerNormalBackupsDisabled = 0,
+    kAuthenticationServerNormalBackupsHourly,
+    kAuthenticationServerNormalBackupsDaily,
+    kAuthenticationServerNormalBackupsWeekly
+} authenticationserver_normal_backups_mode_t;
+
 typedef struct authenticationserver_session_s
 {
     uint8_t  token[64];
@@ -35,21 +43,25 @@ typedef struct authenticationserver_session_s
 
 typedef struct authenticationserver_tstate_s
 {
-    char                               *db_path;
-    char                               *backup_path;
-    authenticationserver_users_store_t  store;
-    authenticationserver_auth_client_t *auth_clients;
-    authenticationserver_session_t    **sessions;
-    wtimer_t                           *save_timer;
-    wtimer_t                           *session_expiry_timer;
-    wrecursive_mutex_t                  database_mutex;
-    uint32_t                            auth_clients_count;
-    uint32_t                            sessions_count;
-    uint32_t                            sessions_capacity;
-    uint32_t                            file_save_rate_ms;
-    uint32_t                            session_idle_timeout_ms;
-    bool                                database_loaded;
-    bool                                verbose;
+    char                                      *db_path;
+    char                                      *backup_path;
+    char                                      *normal_backups_path;
+    authenticationserver_users_store_t         store;
+    authenticationserver_auth_client_t        *auth_clients;
+    authenticationserver_session_t           **sessions;
+    wtimer_t                                  *save_timer;
+    wtimer_t                                  *session_expiry_timer;
+    wrecursive_mutex_t                         database_mutex;
+    uint32_t                                   auth_clients_count;
+    uint32_t                                   sessions_count;
+    uint32_t                                   sessions_capacity;
+    uint32_t                                   file_save_rate_ms;
+    uint32_t                                   session_idle_timeout_ms;
+    uint32_t                                   normal_backups_count_limit;
+    uint64_t                                   normal_backups_last_slot;
+    authenticationserver_normal_backups_mode_t normal_backups_mode;
+    bool                                       database_loaded;
+    bool                                       verbose;
 } authenticationserver_tstate_t;
 
 typedef struct authenticationserver_lstate_s
@@ -71,17 +83,18 @@ enum
         kAuthenticationServerMessageHeaderSize + kAuthenticationServerSessionTokenSize,
     kAuthenticationServerResponseEnvelopeHeaderSize =
         kAuthenticationServerMessageHeaderSize + kAuthenticationServerRevisionHeaderSize,
-    kAuthenticationServerCorrelationIdSize           = 4,
-    kAuthenticationServerRequestHeaderSize           = 1 + kAuthenticationServerCorrelationIdSize + 4,
-    kAuthenticationServerResponseHeaderSize          = 1 + kAuthenticationServerCorrelationIdSize + 4,
-    kAuthenticationServerMaxMessagePayload           = 16U * 1024U * 1024U,
-    kAuthenticationServerMaxRequestData              = 16U * 1024U * 1024U,
-    kAuthenticationServerMaxResponsePayload          = 16U * 1024U * 1024U,
-    kAuthenticationServerMaxResponseQueue            = 16U * 1024U * 1024U,
-    kAuthenticationServerResponseQueueCap            = 4,
-    kAuthenticationServerMaxPasswordLength           = 1024U,
-    kAuthenticationServerDefaultSessionIdleTimeoutMs = 10U * 60U * 1000U,
-    kAuthenticationServerSessionExpirySweepMs        = 60U * 1000U,
+    kAuthenticationServerCorrelationIdSize              = 4,
+    kAuthenticationServerRequestHeaderSize              = 1 + kAuthenticationServerCorrelationIdSize + 4,
+    kAuthenticationServerResponseHeaderSize             = 1 + kAuthenticationServerCorrelationIdSize + 4,
+    kAuthenticationServerMaxMessagePayload              = 16U * 1024U * 1024U,
+    kAuthenticationServerMaxRequestData                 = 16U * 1024U * 1024U,
+    kAuthenticationServerMaxResponsePayload             = 16U * 1024U * 1024U,
+    kAuthenticationServerMaxResponseQueue               = 16U * 1024U * 1024U,
+    kAuthenticationServerResponseQueueCap               = 4,
+    kAuthenticationServerMaxPasswordLength              = 1024U,
+    kAuthenticationServerDefaultNormalBackupsCountLimit = 10U,
+    kAuthenticationServerDefaultSessionIdleTimeoutMs    = 10U * 60U * 1000U,
+    kAuthenticationServerSessionExpirySweepMs           = 60U * 1000U,
 
     kAuthenticationServerRequestTypePing                      = 1,
     kAuthenticationServerRequestTypeGetUserBySHA256Hex        = 2,

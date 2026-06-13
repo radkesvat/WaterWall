@@ -14,6 +14,7 @@ from `AuthenticationClient`.
 - removes the backup and rewrites the primary database after successful recovery
 - periodically saves the in-memory users database
 - writes the backup file before writing the primary database on normal saves
+- can write hourly, daily, or weekly normal backup snapshots for operator use
 - buffers upstream bytes until a full outer request message is available
 - supports multiple request frames inside one outer message
 - dispatches request frames to internal modules by request type
@@ -43,6 +44,9 @@ It must not have a `next` node.
     "settings": {
       "db-path": "users.json",
       "file-save-rate-ms": 10000,
+      "normal-backups": "daily",
+      "normal-backups-path": "backups/",
+      "normal-backups-count-limit": 10,
       "session-idle-timeout-ms": 600000,
       "verbose": false,
       "auth-clients": [
@@ -84,6 +88,18 @@ It must not have a `next` node.
   Enables focused debug logs for authentication line lifecycle, request-message parsing, module dispatch, permission
   decisions, session permissions, and response queue/send flow. It does not log secrets, session tokens, passwords, or
   raw user JSON.
+
+- `normal-backups` `(optional string: "hourly", "daily", or "weekly")`
+  Enables write-only normal backup snapshots. This field must be specified together with `normal-backups-path`; specifying
+  only one of the pair is rejected.
+
+- `normal-backups-path` `(optional string)`
+  Directory used for normal backup snapshots. Relative and absolute paths are accepted. The directory is created with
+  `createDirIfNotExists()` when it does not already exist. This field must be specified together with `normal-backups`.
+
+- `normal-backups-count-limit` `(optional positive integer, default: 10)`
+  Maximum number of normal backup snapshot files to keep for the configured database and period mode. This field is only
+  accepted when normal backups are enabled.
 
 - `auth-clients` `(non-empty array)`
   AuthenticationClient credentials and permissions. Each entry must contain non-empty `name` and `secret` strings.
@@ -140,6 +156,9 @@ The recommended on-disk shape is an object with a `users` array:
 ```
 
 Saved databases are written as an object containing a `users` array.
+
+Normal backup files are not used for startup recovery. They are historical snapshots written for the program user only;
+the server still restores only from the existing `db-path.backup` recovery file.
 
 ### Accepted User Database Layouts
 

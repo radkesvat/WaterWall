@@ -117,7 +117,7 @@ sbuf_t *authenticationserverDispatchRequest(uint8_t       request_type,
                                             tunnel_t *t, line_t *l, authenticationserver_session_t *session,
                                             const uint8_t *request_data, uint32_t request_data_len)
 {
-    authenticationserver_tstate_t        *ts     = tunnelGetState(t);
+    authenticationserver_tstate_t       *ts     = tunnelGetState(t);
     const authenticationserver_module_t *module = authenticationserverFindModule(request_type);
     if (LIKELY(module != NULL))
     {
