@@ -63,6 +63,12 @@ void tcpoverudpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
         if (frame_flag == kFrameFlagData)
         {
+            if (UNLIKELY(sbufGetLength(large_buf) == 0))
+            {
+                // peers never send empty data frames, discard
+                lineReuseBuffer(l, large_buf);
+                continue;
+            }
             tunnelPrevDownStreamPayload(t, l, large_buf);
         }
         else if (frame_flag == kFrameFlagClose)

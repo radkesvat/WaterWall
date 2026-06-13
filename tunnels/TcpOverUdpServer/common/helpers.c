@@ -141,10 +141,12 @@ void tcpoverudpserverKcpLoopIntervalCallback(wtimer_t *timer)
             tunnel_t *t = ls->tunnel;
 
             lineLock(l);
-            tunnelDownStreamFin(t, l);
+            // close upstream side first, our own DownStreamFin propagates downstream
+            // and destroys the line when it reaches the creator adapter
+            tunnelNextUpStreamFinish(t, l);
             if (lineIsAlive(l))
             {
-                tunnelNextUpStreamFinish(t, l);
+                tunnelDownStreamFin(t, l);
             }
             lineUnlock(l);
             return;

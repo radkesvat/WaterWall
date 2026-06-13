@@ -18,8 +18,11 @@ void tcpoverudpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->fec_decoder != NULL)
     {
-        if (! tcpoverudpFecDecodePacket(ls->fec_decoder, (const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf),
-                                        tcpoverudpserverInputKcpPacket, ls))
+        if (! tcpoverudpFecDecodePacket(ls->fec_decoder,
+                                        (const uint8_t *) sbufGetRawPtr(buf),
+                                        sbufGetLength(buf),
+                                        tcpoverudpserverInputKcpPacket,
+                                        ls))
         {
             LOGW("TcpOverUdpServer: dropped invalid FEC packet");
         }
@@ -42,8 +45,8 @@ void tcpoverudpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         sbuf_t *large_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
 
-        int read =
-            ikcp_recv(ls->k_handle, (void *) sbufGetMutablePtr(large_buf), (int) sbufGetMaximumWriteableSize(large_buf));
+        int read = ikcp_recv(
+            ls->k_handle, (void *) sbufGetMutablePtr(large_buf), (int) sbufGetMaximumWriteableSize(large_buf));
 
         if (read <= 0)
         {
@@ -63,6 +66,12 @@ void tcpoverudpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (frame_flag == kFrameFlagData)
         {
+            if (UNLIKELY(sbufGetLength(large_buf) == 0))
+            {
+                // peers never send empty data frames, discard
+                lineReuseBuffer(l, large_buf);
+                continue;
+            }
             tunnelNextUpStreamPayload(t, l, large_buf);
         }
         else if (frame_flag == kFrameFlagClose)
