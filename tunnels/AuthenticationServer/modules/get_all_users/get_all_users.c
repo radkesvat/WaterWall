@@ -9,7 +9,7 @@ sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuth
     authenticationserver_tstate_t *ts = tunnelGetState(t);
     discard                        request_data;
 
-    if (request_data_len != 0)
+    if (UNLIKELY(request_data_len != 0))
     {
         LOGW("AuthenticationServer: GetAllUsers received unexpected %u-byte request data",
              (unsigned int) request_data_len);
@@ -17,14 +17,14 @@ sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuth
     }
 
     cJSON *users_json = usersToJson(&ts->store.users);
-    if (users_json == NULL)
+    if (UNLIKELY(users_json == NULL))
     {
         LOGW("AuthenticationServer: GetAllUsers failed to export users database");
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "users-json-export-failed");
     }
 
     char *users_json_text = cJSON_PrintUnformatted(users_json);
-    if (users_json_text == NULL)
+    if (UNLIKELY(users_json_text == NULL))
     {
         cJSON_Delete(users_json);
         LOGW("AuthenticationServer: GetAllUsers failed to serialize users database");
@@ -32,7 +32,8 @@ sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuth
     }
 
     const size_t users_json_text_len = stringLength(users_json_text);
-    if (users_json_text_len > kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize)
+    if (UNLIKELY(users_json_text_len >
+                 kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize))
     {
         cJSON_Delete(users_json);
         cJSON_free(users_json_text);
@@ -40,8 +41,8 @@ sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuth
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "response-too-large");
     }
 
-    if (session != NULL && ! authenticationserverSessionReplaceBaselineFromUsers(
-                               session, &ts->store.users, ts->store.config_revision, ts->store.stats_revision))
+    if (LIKELY(session != NULL) && UNLIKELY(! authenticationserverSessionReplaceBaselineFromUsers(
+                                       session, &ts->store.users, ts->store.config_revision, ts->store.stats_revision)))
     {
         LOGW("AuthenticationServer: GetAllUsers failed to refresh session baseline");
         cJSON_Delete(users_json);

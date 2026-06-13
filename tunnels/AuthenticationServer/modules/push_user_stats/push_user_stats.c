@@ -34,7 +34,7 @@ static bool authenticationserverPushStatsStringIsEmpty(const char *value)
 
 static const cJSON *authenticationserverPushStatsJsonGetItem(const cJSON *json_obj, const char *key)
 {
-    if (! cJSON_IsObject(json_obj))
+    if (UNLIKELY(! cJSON_IsObject(json_obj)))
     {
         return NULL;
     }
@@ -45,7 +45,7 @@ static const cJSON *authenticationserverPushStatsJsonGetItem2(const cJSON *json_
                                                               const char *fallback)
 {
     const cJSON *item = authenticationserverPushStatsJsonGetItem(json_obj, primary);
-    if (item != NULL)
+    if (LIKELY(item != NULL))
     {
         return item;
     }
@@ -56,7 +56,7 @@ static bool authenticationserverPushStatsParseUint64String(const char *value, ui
 {
     char *end = NULL;
 
-    if (authenticationserverPushStatsStringIsEmpty(value) || value[0] == '-')
+    if (UNLIKELY(authenticationserverPushStatsStringIsEmpty(value) || value[0] == '-'))
     {
         return false;
     }
@@ -65,14 +65,14 @@ static bool authenticationserverPushStatsParseUint64String(const char *value, ui
     unsigned long long       parsed     = strtoull(value, &end, 10);
     const unsigned long long max_uint64 = UINT64_MAX;
 
-    if (errno == ERANGE || parsed > max_uint64)
+    if (UNLIKELY(errno == ERANGE || parsed > max_uint64))
     {
         return false;
     }
 
     while (end != NULL && *end != '\0')
     {
-        if (! isspace((unsigned char) *end))
+        if (UNLIKELY(! isspace((unsigned char) *end)))
         {
             return false;
         }
@@ -99,17 +99,17 @@ static bool authenticationserverPushStatsReadOptionalCounter(const cJSON *json_o
     {
         return authenticationserverPushStatsParseUint64String(item->valuestring, value);
     }
-    if (cJSON_IsNumber(item))
+    if (LIKELY(cJSON_IsNumber(item)))
     {
         const double number = item->valuedouble;
 
-        if (! (number >= 0.0) || number > (double) kAuthenticationServerJsonSafeIntegerMax)
+        if (UNLIKELY(! (number >= 0.0) || number > (double) kAuthenticationServerJsonSafeIntegerMax))
         {
             return false;
         }
 
         const uint64_t parsed = (uint64_t) number;
-        if ((double) parsed != number)
+        if (UNLIKELY((double) parsed != number))
         {
             return false;
         }
@@ -125,20 +125,21 @@ static bool authenticationserverPushStatsReadHintTraffic(const cJSON            
                                                          authenticationserver_stats_hint_t *hint)
 {
     const cJSON *stats = authenticationserverPushStatsJsonGetItem(hint_json, "stats");
-    if (! cJSON_IsObject(stats))
+    if (UNLIKELY(! cJSON_IsObject(stats)))
     {
         return false;
     }
 
     const cJSON *traffic = authenticationserverPushStatsJsonGetItem(stats, "traffic");
-    if (! cJSON_IsObject(traffic))
+    if (UNLIKELY(! cJSON_IsObject(traffic)))
     {
         return false;
     }
 
-    if (! authenticationserverPushStatsReadOptionalCounter(traffic, "up", "u", &hint->upload, &hint->upload_present) ||
-        ! authenticationserverPushStatsReadOptionalCounter(
-            traffic, "down", "d", &hint->download, &hint->download_present))
+    if (UNLIKELY(! authenticationserverPushStatsReadOptionalCounter(
+                     traffic, "up", "u", &hint->upload, &hint->upload_present) ||
+                 ! authenticationserverPushStatsReadOptionalCounter(
+                     traffic, "down", "d", &hint->download, &hint->download_present)))
     {
         return false;
     }
@@ -148,7 +149,7 @@ static bool authenticationserverPushStatsReadHintTraffic(const cJSON            
 
 static bool authenticationserverPushStatsHintListReserve(authenticationserver_stats_hint_list_t *hints, size_t count)
 {
-    if (count <= hints->capacity)
+    if (LIKELY(count <= hints->capacity))
     {
         return true;
     }
@@ -156,19 +157,19 @@ static bool authenticationserverPushStatsHintListReserve(authenticationserver_st
     size_t new_capacity = hints->capacity == 0 ? 8U : hints->capacity;
     while (new_capacity < count)
     {
-        if (new_capacity > SIZE_MAX / 2U)
+        if (UNLIKELY(new_capacity > SIZE_MAX / 2U))
         {
             return false;
         }
         new_capacity *= 2U;
     }
-    if (new_capacity > SIZE_MAX / sizeof(*hints->items))
+    if (UNLIKELY(new_capacity > SIZE_MAX / sizeof(*hints->items)))
     {
         return false;
     }
 
     authenticationserver_stats_hint_t *new_items = memoryReAllocate(hints->items, sizeof(*new_items) * new_capacity);
-    if (new_items == NULL)
+    if (UNLIKELY(new_items == NULL))
     {
         return false;
     }
@@ -183,7 +184,7 @@ static bool authenticationserverPushStatsHintListContains(const authenticationse
 {
     for (size_t i = 0; i < hints->count; ++i)
     {
-        if (wCryptoEqual(hints->items[i].sha256, sha256, SHA256_DIGEST_SIZE))
+        if (UNLIKELY(wCryptoEqual(hints->items[i].sha256, sha256, SHA256_DIGEST_SIZE)))
         {
             return true;
         }
@@ -195,13 +196,13 @@ static bool authenticationserverPushStatsHintListContains(const authenticationse
 static bool authenticationserverPushStatsHintListAppend(authenticationserver_stats_hint_list_t  *hints,
                                                         const authenticationserver_stats_hint_t *hint)
 {
-    if (authenticationserverPushStatsHintListContains(hints, hint->sha256))
+    if (UNLIKELY(authenticationserverPushStatsHintListContains(hints, hint->sha256)))
     {
         LOGW("AuthenticationServer: PushUserStats rejected duplicate user stats hint");
         return false;
     }
 
-    if (! authenticationserverPushStatsHintListReserve(hints, hints->count + 1U))
+    if (UNLIKELY(! authenticationserverPushStatsHintListReserve(hints, hints->count + 1U)))
     {
         return false;
     }
@@ -213,7 +214,7 @@ static bool authenticationserverPushStatsHintListAppend(authenticationserver_sta
 
 static void authenticationserverPushStatsHintListDestroy(authenticationserver_stats_hint_list_t *hints)
 {
-    if (hints == NULL)
+    if (UNLIKELY(hints == NULL))
     {
         return;
     }
@@ -231,26 +232,27 @@ static bool authenticationserverPushStatsJsonLooksLikeHint(const cJSON *json)
 static bool authenticationserverPushStatsAddHintFromJson(authenticationserver_stats_hint_list_t *hints,
                                                          const cJSON                            *hint_json)
 {
-    if (! cJSON_IsObject(hint_json))
+    if (UNLIKELY(! cJSON_IsObject(hint_json)))
     {
         return false;
     }
 
     const cJSON *password_json = authenticationserverPushStatsJsonGetItem2(hint_json, "password", "pass");
-    if (! cJSON_IsString(password_json) || authenticationserverPushStatsStringIsEmpty(password_json->valuestring))
+    if (UNLIKELY(! cJSON_IsString(password_json) ||
+                 authenticationserverPushStatsStringIsEmpty(password_json->valuestring)))
     {
         return false;
     }
 
     const size_t password_len = stringLength(password_json->valuestring);
-    if (password_len > kAuthenticationServerMaxPasswordLength)
+    if (UNLIKELY(password_len > kAuthenticationServerMaxPasswordLength))
     {
         return false;
     }
 
     authenticationserver_stats_hint_t hint   = {0};
     sha256_hash_t                     sha256 = {0};
-    if (wCryptoSHA256(&sha256, (const unsigned char *) password_json->valuestring, password_len) != 0)
+    if (UNLIKELY(wCryptoSHA256(&sha256, (const unsigned char *) password_json->valuestring, password_len) != 0))
     {
         wCryptoZero(&sha256, sizeof(sha256));
         return false;
@@ -258,7 +260,7 @@ static bool authenticationserverPushStatsAddHintFromJson(authenticationserver_st
     memoryCopy(hint.sha256, sha256.bytes, SHA256_DIGEST_SIZE);
     wCryptoZero(&sha256, sizeof(sha256));
 
-    if (! authenticationserverPushStatsReadHintTraffic(hint_json, &hint))
+    if (UNLIKELY(! authenticationserverPushStatsReadHintTraffic(hint_json, &hint)))
     {
         return false;
     }
@@ -276,7 +278,7 @@ static bool authenticationserverPushStatsFeedArrayHints(authenticationserver_sta
 
     cJSON_ArrayForEach(entry, array)
     {
-        if (! authenticationserverPushStatsAddHintFromJson(hints, entry))
+        if (UNLIKELY(! authenticationserverPushStatsAddHintFromJson(hints, entry)))
         {
             return false;
         }
@@ -292,7 +294,7 @@ static bool authenticationserverPushStatsFeedObjectMapHints(authenticationserver
 
     cJSON_ArrayForEach(entry, object)
     {
-        if (! authenticationserverPushStatsAddHintFromJson(hints, entry))
+        if (UNLIKELY(! authenticationserverPushStatsAddHintFromJson(hints, entry)))
         {
             return false;
         }
@@ -311,7 +313,7 @@ static bool authenticationserverPushStatsFeedJsonHints(authenticationserver_stat
     {
         return authenticationserverPushStatsFeedArrayHints(hints, json);
     }
-    if (! cJSON_IsObject(json))
+    if (UNLIKELY(! cJSON_IsObject(json)))
     {
         return false;
     }
@@ -327,7 +329,7 @@ static bool authenticationserverPushStatsFeedJsonHints(authenticationserver_stat
         {
             return true;
         }
-        if (! cJSON_IsArray(users_array))
+        if (UNLIKELY(! cJSON_IsArray(users_array)))
         {
             return false;
         }
@@ -344,13 +346,13 @@ static bool authenticationserverPushStatsFeedJsonHints(authenticationserver_stat
 static bool authenticationserverPushStatsLoadHints(const uint8_t *request_data, uint32_t request_data_len,
                                                    authenticationserver_stats_hint_list_t *hints)
 {
-    if (request_data_len == 0)
+    if (UNLIKELY(request_data_len == 0))
     {
         return false;
     }
 
     cJSON *json = cJSON_ParseWithLength((const char *) request_data, request_data_len);
-    if (json == NULL)
+    if (UNLIKELY(json == NULL))
     {
         return false;
     }
@@ -372,7 +374,7 @@ static bool authenticationserverPushStatsBuildDeltas(tunnel_t *t, authentication
     if (hints->count > 0)
     {
         deltas = memoryAllocateZero(sizeof(*deltas) * hints->count);
-        if (deltas == NULL)
+        if (UNLIKELY(deltas == NULL))
         {
             return false;
         }
@@ -383,7 +385,7 @@ static bool authenticationserverPushStatsBuildDeltas(tunnel_t *t, authentication
         const authenticationserver_stats_hint_t *hint = &hints->items[i];
         user_t *baseline_user                         = usersLookupBySHA256(&session->baseline_users, hint->sha256);
         user_t *store_user                            = usersLookupBySHA256(&ts->store.users, hint->sha256);
-        if (baseline_user == NULL || store_user == NULL)
+        if (UNLIKELY(baseline_user == NULL || store_user == NULL))
         {
             LOGW("AuthenticationServer: PushUserStats received a user that is not present in the session baseline or "
                  "authoritative store");
@@ -397,7 +399,7 @@ static bool authenticationserverPushStatsBuildDeltas(tunnel_t *t, authentication
         uint64_t upload_delta = 0;
         if (hint->upload_present)
         {
-            if (hint->upload < baseline_stats.traffic.u)
+            if (UNLIKELY(hint->upload < baseline_stats.traffic.u))
             {
                 LOGW("AuthenticationServer: PushUserStats rejected backwards upload traffic counter");
                 memoryFree(deltas);
@@ -409,7 +411,7 @@ static bool authenticationserverPushStatsBuildDeltas(tunnel_t *t, authentication
         uint64_t download_delta = 0;
         if (hint->download_present)
         {
-            if (hint->download < baseline_stats.traffic.d)
+            if (UNLIKELY(hint->download < baseline_stats.traffic.d))
             {
                 LOGW("AuthenticationServer: PushUserStats rejected backwards download traffic counter");
                 memoryFree(deltas);
@@ -418,7 +420,7 @@ static bool authenticationserverPushStatsBuildDeltas(tunnel_t *t, authentication
             download_delta = hint->download - baseline_stats.traffic.d;
         }
 
-        if (upload_delta == 0 && download_delta == 0)
+        if (UNLIKELY(upload_delta == 0 && download_delta == 0))
         {
             continue;
         }
@@ -444,14 +446,14 @@ static bool authenticationserverPushStatsApplyDeltas(tunnel_t *t, authentication
     {
         users_update_result_t result =
             usersAddTrafficBySHA256(&ts->store.users, deltas[i].sha256, deltas[i].upload, deltas[i].download);
-        if (result != kUsersUpdateResultOk)
+        if (UNLIKELY(result != kUsersUpdateResultOk))
         {
             return false;
         }
 
         result =
             usersAddTrafficBySHA256(&session->baseline_users, deltas[i].sha256, deltas[i].upload, deltas[i].download);
-        if (result != kUsersUpdateResultOk)
+        if (UNLIKELY(result != kUsersUpdateResultOk))
         {
             return false;
         }
@@ -469,17 +471,17 @@ static sbuf_t *authenticationserverPushStatsStatusResponse(
                             session->baseline_stats_revision != ts->store.stats_revision;
 
     cJSON *json = cJSON_CreateObject();
-    if (json == NULL)
+    if (UNLIKELY(json == NULL))
     {
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "stats-push-response-failed");
     }
 
-    if (! cJSON_AddStringToObject(json, "status", "stats-updated") ||
-        ! cJSON_AddNumberToObject(json, "applied-deltas", (double) delta_count) ||
-        (needs_pull ? cJSON_AddTrueToObject(json, "needs-pull") == NULL
-                    : cJSON_AddFalseToObject(json, "needs-pull") == NULL) ||
-        ! cJSON_AddNumberToObject(json, "config-revision", (double) ts->store.config_revision) ||
-        ! cJSON_AddNumberToObject(json, "stats-revision", (double) ts->store.stats_revision))
+    if (UNLIKELY(! cJSON_AddStringToObject(json, "status", "stats-updated") ||
+                 ! cJSON_AddNumberToObject(json, "applied-deltas", (double) delta_count) ||
+                 (needs_pull ? cJSON_AddTrueToObject(json, "needs-pull") == NULL
+                             : cJSON_AddFalseToObject(json, "needs-pull") == NULL) ||
+                 ! cJSON_AddNumberToObject(json, "config-revision", (double) ts->store.config_revision) ||
+                 ! cJSON_AddNumberToObject(json, "stats-revision", (double) ts->store.stats_revision)))
     {
         cJSON_Delete(json);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "stats-push-response-failed");
@@ -487,7 +489,7 @@ static sbuf_t *authenticationserverPushStatsStatusResponse(
 
     char *text = cJSON_PrintUnformatted(json);
     cJSON_Delete(json);
-    if (text == NULL)
+    if (UNLIKELY(text == NULL))
     {
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "stats-push-response-failed");
     }
@@ -507,12 +509,12 @@ sbuf_t *authenticationserverPushUserStatsHandle(const uint8_t correlation_id[kAu
     authenticationserver_stats_delta_t    *deltas      = NULL;
     size_t                                 delta_count = 0;
 
-    if (session == NULL)
+    if (UNLIKELY(session == NULL))
     {
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "authentication-required");
     }
 
-    if (! authenticationserverPushStatsLoadHints(request_data, request_data_len, &hints))
+    if (UNLIKELY(! authenticationserverPushStatsLoadHints(request_data, request_data_len, &hints)))
     {
         authenticationserverPushStatsHintListDestroy(&hints);
         LOGW("AuthenticationServer: PushUserStats received invalid users stats hint JSON");
@@ -524,13 +526,13 @@ sbuf_t *authenticationserverPushUserStatsHandle(const uint8_t correlation_id[kAu
     const bool     config_was_current  = old_config_revision == ts->store.config_revision;
     const bool     stats_was_current   = old_stats_revision == ts->store.stats_revision;
 
-    if (! authenticationserverPushStatsBuildDeltas(t, session, &hints, &deltas, &delta_count))
+    if (UNLIKELY(! authenticationserverPushStatsBuildDeltas(t, session, &hints, &deltas, &delta_count)))
     {
         authenticationserverPushStatsHintListDestroy(&hints);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-stats-baseline");
     }
 
-    if (! authenticationserverPushStatsApplyDeltas(t, session, deltas, delta_count))
+    if (UNLIKELY(! authenticationserverPushStatsApplyDeltas(t, session, deltas, delta_count)))
     {
         memoryFree(deltas);
         authenticationserverPushStatsHintListDestroy(&hints);
@@ -542,11 +544,11 @@ sbuf_t *authenticationserverPushUserStatsHandle(const uint8_t correlation_id[kAu
         authenticationserverBumpStatsRevision(t);
     }
 
-    if (config_was_current)
+    if (LIKELY(config_was_current))
     {
         session->baseline_config_revision = ts->store.config_revision;
     }
-    if (stats_was_current)
+    if (LIKELY(stats_was_current))
     {
         session->baseline_stats_revision = ts->store.stats_revision;
     }

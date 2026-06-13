@@ -12,8 +12,8 @@ sbuf_t *authenticationserverPingHandle(const uint8_t correlation_id[kAuthenticat
     discard t;
     discard session;
 
-    if (request_data_len != sizeof(ping_request) - 1U ||
-        memoryCompare(request_data, ping_request, sizeof(ping_request) - 1U) != 0)
+    if (UNLIKELY(request_data_len != sizeof(ping_request) - 1U ||
+                 memoryCompare(request_data, ping_request, sizeof(ping_request) - 1U) != 0))
     {
         LOGW("AuthenticationServer: ping module received invalid %u-byte request data",
              (unsigned int) request_data_len);

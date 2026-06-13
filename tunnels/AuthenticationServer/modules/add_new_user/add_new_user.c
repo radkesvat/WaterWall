@@ -38,19 +38,19 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
     user_t                         user;
     discard                        session;
 
-    if (request_data_len == 0)
+    if (UNLIKELY(request_data_len == 0))
     {
         LOGW("AuthenticationServer: AddNewUser received an empty JSON payload");
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-user-json");
     }
 
     cJSON *user_json = cJSON_ParseWithLength((const char *) request_data, request_data_len);
-    if (user_json == NULL)
+    if (UNLIKELY(user_json == NULL))
     {
         LOGW("AuthenticationServer: AddNewUser received malformed JSON");
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-user-json");
     }
-    if (! cJSON_IsObject(user_json))
+    if (UNLIKELY(! cJSON_IsObject(user_json)))
     {
         LOGW("AuthenticationServer: AddNewUser JSON payload is not a user object");
         cJSON_Delete(user_json);
@@ -58,7 +58,7 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
     }
 
     memoryZero(&user, sizeof(user));
-    if (! userCreateFromJson(&user, user_json))
+    if (UNLIKELY(! userCreateFromJson(&user, user_json)))
     {
         LOGW("AuthenticationServer: AddNewUser JSON payload is not a valid user");
         cJSON_Delete(user_json);
@@ -71,7 +71,7 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
     users_add_result_t add_result = usersAddUserChecked(&ts->store.users, &user);
     userDestroy(&user);
 
-    if (add_result != kUsersAddResultOk)
+    if (UNLIKELY(add_result != kUsersAddResultOk))
     {
         const char *error = authenticationserverUsersAddResultError(add_result);
         LOGW("AuthenticationServer: AddNewUser rejected user JSON: %s", error);
@@ -79,10 +79,10 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, error);
     }
 
-    if (! authenticationserverSaveDatabase(ts))
+    if (UNLIKELY(! authenticationserverSaveDatabase(ts)))
     {
         LOGW("AuthenticationServer: AddNewUser failed to save database after adding user; rolling back in-memory add");
-        if (! usersRemoveUserBySHA256(&ts->store.users, added_sha256))
+        if (UNLIKELY(! usersRemoveUserBySHA256(&ts->store.users, added_sha256)))
         {
             LOGW("AuthenticationServer: AddNewUser could not roll back the in-memory user after save failure");
         }

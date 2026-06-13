@@ -8,14 +8,14 @@ sbuf_t *authenticationserverAuthenticateHandle(const uint8_t correlation_id[kAut
 {
     discard session;
 
-    if (request_data_len == 0)
+    if (UNLIKELY(request_data_len == 0))
     {
         LOGW("AuthenticationServer: Authenticate received an empty JSON payload");
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-auth-request");
     }
 
     cJSON *json = cJSON_ParseWithLength((const char *) request_data, request_data_len);
-    if (! cJSON_IsObject(json))
+    if (UNLIKELY(! cJSON_IsObject(json)))
     {
         cJSON_Delete(json);
         LOGW("AuthenticationServer: Authenticate received malformed JSON");
@@ -24,8 +24,9 @@ sbuf_t *authenticationserverAuthenticateHandle(const uint8_t correlation_id[kAut
 
     const cJSON *name_json   = cJSON_GetObjectItemCaseSensitive(json, "name");
     const cJSON *secret_json = cJSON_GetObjectItemCaseSensitive(json, "secret");
-    if (! cJSON_IsString(name_json) || name_json->valuestring == NULL || name_json->valuestring[0] == '\0' ||
-        ! cJSON_IsString(secret_json) || secret_json->valuestring == NULL || secret_json->valuestring[0] == '\0')
+    if (UNLIKELY(! cJSON_IsString(name_json) || name_json->valuestring == NULL || name_json->valuestring[0] == '\0' ||
+                 ! cJSON_IsString(secret_json) || secret_json->valuestring == NULL ||
+                 secret_json->valuestring[0] == '\0'))
     {
         cJSON_Delete(json);
         LOGW("AuthenticationServer: Authenticate request is missing name or secret");
@@ -36,7 +37,7 @@ sbuf_t *authenticationserverAuthenticateHandle(const uint8_t correlation_id[kAut
         authenticationserverSessionCreate(t, name_json->valuestring, secret_json->valuestring);
     cJSON_Delete(json);
 
-    if (new_session == NULL)
+    if (UNLIKELY(new_session == NULL))
     {
         LOGW("AuthenticationServer: Authenticate rejected client credentials");
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "authentication-failed");

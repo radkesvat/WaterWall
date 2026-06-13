@@ -4,7 +4,7 @@
 
 static void authenticationserverDeleteTimer(wtimer_t **timer)
 {
-    if (*timer == NULL)
+    if (UNLIKELY(*timer == NULL))
     {
         return;
     }
@@ -23,7 +23,7 @@ void authenticationserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
 {
     assert(wid == getWID());
 
-    if (wid != 0)
+    if (UNLIKELY(wid != 0))
     {
         return;
     }

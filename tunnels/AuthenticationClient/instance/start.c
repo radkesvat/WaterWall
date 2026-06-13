@@ -14,7 +14,7 @@ static void authenticationclientStartOnWorker0(void *worker_ptr, void *arg1, voi
     {
         return;
     }
-    if (worker->wid != 0)
+    if (UNLIKELY(worker->wid != 0))
     {
         LOGF("AuthenticationClient: startup control task ran on worker %u", (unsigned int) worker->wid);
         terminateProgram(1);
@@ -28,10 +28,10 @@ static void authenticationclientStartOnWorker0(void *worker_ptr, void *arg1, voi
     ts->stopping = false;
     mutexUnlock(&ts->control_mutex);
 
-    if (ts->ping_interval_ms > 0 && ts->ping_timer == NULL)
+    if (ts->ping_interval_ms > 0 && LIKELY(ts->ping_timer == NULL))
     {
         ts->ping_timer = wtimerAdd(worker->loop, authenticationclientPingTimerCallback, ts->ping_interval_ms, INFINITE);
-        if (ts->ping_timer == NULL)
+        if (UNLIKELY(ts->ping_timer == NULL))
         {
             LOGF("AuthenticationClient: failed to create ping timer");
             terminateProgram(1);

@@ -21,7 +21,7 @@ static int authenticationserverHexValue(uint8_t c)
 
 static bool authenticationserverParseSHA256Hex(const uint8_t *hex, uint32_t hex_len, uint8_t out[SHA256_DIGEST_SIZE])
 {
-    if (hex_len != SHA256_DIGEST_SIZE * 2U)
+    if (UNLIKELY(hex_len != SHA256_DIGEST_SIZE * 2U))
     {
         return false;
     }
@@ -30,7 +30,7 @@ static bool authenticationserverParseSHA256Hex(const uint8_t *hex, uint32_t hex_
     {
         int hi = authenticationserverHexValue(hex[i * 2U]);
         int lo = authenticationserverHexValue(hex[i * 2U + 1U]);
-        if (hi < 0 || lo < 0)
+        if (UNLIKELY(hi < 0 || lo < 0))
         {
             return false;
         }
@@ -48,7 +48,7 @@ sbuf_t *authenticationserverGetUserBySHA256HexHandle(
     uint8_t                        sha256[SHA256_DIGEST_SIZE];
     discard                        session;
 
-    if (! authenticationserverParseSHA256Hex(request_data, request_data_len, sha256))
+    if (UNLIKELY(! authenticationserverParseSHA256Hex(request_data, request_data_len, sha256)))
     {
         LOGW("AuthenticationServer: GetUserBySHA256Hex received invalid %u-byte SHA-256 hex data",
              (unsigned int) request_data_len);

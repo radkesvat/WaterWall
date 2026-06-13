@@ -4,21 +4,21 @@
 
 static char *authenticationserverPasswordFromPayload(const uint8_t *request_data, uint32_t request_data_len)
 {
-    if (request_data_len == 0 || request_data_len > kAuthenticationServerMaxPasswordLength)
+    if (UNLIKELY(request_data_len == 0 || request_data_len > kAuthenticationServerMaxPasswordLength))
     {
         return NULL;
     }
 
     for (uint32_t i = 0; i < request_data_len; ++i)
     {
-        if (request_data[i] == '\0')
+        if (UNLIKELY(request_data[i] == '\0'))
         {
             return NULL;
         }
     }
 
     char *password = memoryAllocate((size_t) request_data_len + 1U);
-    if (password == NULL)
+    if (UNLIKELY(password == NULL))
     {
         return NULL;
     }
@@ -36,7 +36,7 @@ sbuf_t *authenticationserverGetUserByPasswordHandle(
     char                          *password = authenticationserverPasswordFromPayload(request_data, request_data_len);
     discard                        session;
 
-    if (password == NULL)
+    if (UNLIKELY(password == NULL))
     {
         LOGW("AuthenticationServer: GetUserByPassword received invalid %u-byte password data",
              (unsigned int) request_data_len);

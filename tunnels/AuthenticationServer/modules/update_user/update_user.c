@@ -51,19 +51,19 @@ sbuf_t *authenticationserverUpdateUserHandle(const uint8_t correlation_id[kAuthe
     user_t  user;
     discard session;
 
-    if (request_data_len == 0)
+    if (UNLIKELY(request_data_len == 0))
     {
         LOGW("AuthenticationServer: UpdateUser received an empty JSON payload");
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-user-json");
     }
 
     cJSON *user_json = cJSON_ParseWithLength((const char *) request_data, request_data_len);
-    if (user_json == NULL)
+    if (UNLIKELY(user_json == NULL))
     {
         LOGW("AuthenticationServer: UpdateUser received malformed JSON");
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-user-json");
     }
-    if (! cJSON_IsObject(user_json))
+    if (UNLIKELY(! cJSON_IsObject(user_json)))
     {
         LOGW("AuthenticationServer: UpdateUser JSON payload is not a user object");
         cJSON_Delete(user_json);
@@ -71,7 +71,7 @@ sbuf_t *authenticationserverUpdateUserHandle(const uint8_t correlation_id[kAuthe
     }
 
     memoryZero(&user, sizeof(user));
-    if (! userCreateFromJson(&user, user_json))
+    if (UNLIKELY(! userCreateFromJson(&user, user_json)))
     {
         LOGW("AuthenticationServer: UpdateUser JSON payload is not a valid user");
         cJSON_Delete(user_json);
@@ -84,7 +84,7 @@ sbuf_t *authenticationserverUpdateUserHandle(const uint8_t correlation_id[kAuthe
         authenticationserverUpdateUserBySHA256AndBumpConfigRevision(t, user.sha256_pass.bytes, &update);
     userDestroy(&user);
 
-    if (result != kUsersUpdateResultOk)
+    if (UNLIKELY(result != kUsersUpdateResultOk))
     {
         const char *error = authenticationserverUsersUpdateResultError(result);
         LOGW("AuthenticationServer: UpdateUser rejected user JSON: %s", error);

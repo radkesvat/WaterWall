@@ -111,25 +111,25 @@ sbuf_t *authenticationserverDispatchRequest(uint8_t       request_type,
                                             const uint8_t *request_data, uint32_t request_data_len)
 {
     const authenticationserver_module_t *module = authenticationserverFindModule(request_type);
-    if (module != NULL)
+    if (LIKELY(module != NULL))
     {
-        if (! module->public_access)
+        if (LIKELY(! module->public_access))
         {
-            if (session == NULL)
+            if (UNLIKELY(session == NULL))
             {
                 LOGW("AuthenticationServer: rejected request type %u without a valid session token",
                      (unsigned int) request_type);
                 return authenticationserverCreateErrorResponseFrame(l, correlation_id, "authentication-required");
             }
-            if (module->require_stats_push && ! session->allow_stats_push)
+            if (UNLIKELY(module->require_stats_push && ! session->allow_stats_push))
             {
                 return authenticationserverCreateErrorResponseFrame(l, correlation_id, "stats-push-not-allowed");
             }
-            if (module->require_user_pull && ! session->allow_user_pull)
+            if (UNLIKELY(module->require_user_pull && ! session->allow_user_pull))
             {
                 return authenticationserverCreateErrorResponseFrame(l, correlation_id, "user-pull-not-allowed");
             }
-            if (module->require_user_write && ! session->allow_user_write)
+            if (UNLIKELY(module->require_user_write && ! session->allow_user_write))
             {
                 return authenticationserverCreateErrorResponseFrame(l, correlation_id, "user-write-not-allowed");
             }

@@ -35,15 +35,15 @@ static bool authenticationserverRandomBytesGetrandom(uint8_t *dest, size_t len)
     while (offset < len)
     {
         ssize_t nread = (ssize_t) syscall(AUTHENTICATIONSERVER_SYS_GETRANDOM, dest + offset, len - offset, 0);
-        if (nread < 0)
+        if (UNLIKELY(nread < 0))
         {
-            if (errno == EINTR)
+            if (UNLIKELY(errno == EINTR))
             {
                 continue;
             }
             break;
         }
-        if (nread == 0)
+        if (UNLIKELY(nread == 0))
         {
             break;
         }
@@ -64,13 +64,13 @@ static bool authenticationserverRandomBytesWindows(uint8_t *dest, size_t len)
     _Static_assert(sizeof(authenticationserver_bcrypt_gen_random_fn) == sizeof(FARPROC), "FARPROC size mismatch");
 
     HMODULE bcrypt = LoadLibraryA("bcrypt.dll");
-    if (bcrypt == NULL)
+    if (UNLIKELY(bcrypt == NULL))
     {
         return false;
     }
 
     FARPROC proc = GetProcAddress(bcrypt, "BCryptGenRandom");
-    if (proc == NULL)
+    if (UNLIKELY(proc == NULL))
     {
         FreeLibrary(bcrypt);
         return false;
@@ -86,7 +86,7 @@ static bool authenticationserverRandomBytesWindows(uint8_t *dest, size_t len)
         const size_t remaining = len - offset;
         const ULONG  chunk     = remaining > (size_t) ULONG_MAX ? ULONG_MAX : (ULONG) remaining;
 
-        if (gen_random(NULL, dest + offset, chunk, kAuthenticationServerBcryptUseSystemPreferredRng) < 0)
+        if (UNLIKELY(gen_random(NULL, dest + offset, chunk, kAuthenticationServerBcryptUseSystemPreferredRng) < 0))
         {
             ok = false;
             break;
@@ -103,7 +103,7 @@ static bool authenticationserverRandomBytesWindows(uint8_t *dest, size_t len)
 static bool authenticationserverRandomBytesUrandom(uint8_t *dest, size_t len)
 {
     int fd = open("/dev/urandom", O_RDONLY);
-    if (fd < 0)
+    if (UNLIKELY(fd < 0))
     {
         return false;
     }
@@ -112,15 +112,15 @@ static bool authenticationserverRandomBytesUrandom(uint8_t *dest, size_t len)
     while (offset < len)
     {
         ssize_t nread = read(fd, dest + offset, len - offset);
-        if (nread < 0)
+        if (UNLIKELY(nread < 0))
         {
-            if (errno == EINTR)
+            if (UNLIKELY(errno == EINTR))
             {
                 continue;
             }
             break;
         }
-        if (nread == 0)
+        if (UNLIKELY(nread == 0))
         {
             break;
         }
@@ -135,7 +135,7 @@ static bool authenticationserverRandomBytesUrandom(uint8_t *dest, size_t len)
 static bool authenticationserverRandomBytes(uint8_t *dest, size_t len)
 {
 #if defined(OS_LINUX) && defined(AUTHENTICATIONSERVER_SYS_GETRANDOM)
-    if (authenticationserverRandomBytesGetrandom(dest, len))
+    if (LIKELY(authenticationserverRandomBytesGetrandom(dest, len)))
     {
         return true;
     }
@@ -175,7 +175,7 @@ static bool authenticationserverTokenIsZero(const uint8_t token[kAuthenticationS
 
 static void authenticationserverSessionDestroyFields(authenticationserver_session_t *session)
 {
-    if (session == NULL)
+    if (UNLIKELY(session == NULL))
     {
         return;
     }
@@ -188,7 +188,7 @@ static void authenticationserverSessionDestroyFields(authenticationserver_sessio
 
 static void authenticationserverSessionFree(authenticationserver_session_t *session)
 {
-    if (session == NULL)
+    if (UNLIKELY(session == NULL))
     {
         return;
     }
@@ -200,7 +200,7 @@ static void authenticationserverSessionFree(authenticationserver_session_t *sess
 bool authenticationserverCopyUsersTable(users_t *dest, const users_t *src)
 {
     cJSON *json = usersToJson(src);
-    if (json == NULL)
+    if (UNLIKELY(json == NULL))
     {
         return false;
     }
@@ -213,12 +213,12 @@ bool authenticationserverCopyUsersTable(users_t *dest, const users_t *src)
 bool authenticationserverSessionReplaceBaselineFromUsers(authenticationserver_session_t *session, const users_t *src,
                                                          uint64_t config_revision, uint64_t stats_revision)
 {
-    if (session == NULL || src == NULL)
+    if (UNLIKELY(session == NULL || src == NULL))
     {
         return false;
     }
 
-    if (! authenticationserverCopyUsersTable(&session->baseline_users, src))
+    if (UNLIKELY(! authenticationserverCopyUsersTable(&session->baseline_users, src)))
     {
         return false;
     }
@@ -231,7 +231,7 @@ bool authenticationserverSessionReplaceBaselineFromUsers(authenticationserver_se
 static const authenticationserver_auth_client_t *authenticationserverFindAuthClient(
     const authenticationserver_tstate_t *ts, const char *name, const char *secret)
 {
-    if (name == NULL || secret == NULL)
+    if (UNLIKELY(name == NULL || secret == NULL))
     {
         return NULL;
     }
@@ -247,7 +247,7 @@ static const authenticationserver_auth_client_t *authenticationserverFindAuthCli
 
         size_t expected_len = stringLength(client->secret);
         size_t actual_len   = stringLength(secret);
-        if (expected_len == actual_len && wCryptoEqual(client->secret, secret, expected_len))
+        if (LIKELY(expected_len == actual_len && wCryptoEqual(client->secret, secret, expected_len)))
         {
             return client;
         }
@@ -261,7 +261,7 @@ authenticationserver_session_t *authenticationserverSessionFindByTokenLocked(
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);
 
-    if (token == NULL || authenticationserverTokenIsZero(token))
+    if (UNLIKELY(token == NULL || authenticationserverTokenIsZero(token)))
     {
         return NULL;
     }
@@ -269,7 +269,7 @@ authenticationserver_session_t *authenticationserverSessionFindByTokenLocked(
     for (uint32_t i = 0; i < ts->sessions_count; ++i)
     {
         authenticationserver_session_t *session = ts->sessions[i];
-        if (session != NULL && wCryptoEqual(session->token, token, kAuthenticationServerSessionTokenSize))
+        if (LIKELY(session != NULL) && wCryptoEqual(session->token, token, kAuthenticationServerSessionTokenSize))
         {
             return session;
         }
@@ -284,14 +284,14 @@ static bool authenticationserverGenerateUniqueToken(tunnel_t *t, uint8_t token[k
 
     for (uint32_t attempt = 0; attempt < 16U; ++attempt)
     {
-        if (! authenticationserverRandomBytes(raw, sizeof(raw)))
+        if (UNLIKELY(! authenticationserverRandomBytes(raw, sizeof(raw))))
         {
             wCryptoZero(raw, sizeof(raw));
             return false;
         }
 
         authenticationserverBytesToHex(raw, sizeof(raw), token);
-        if (authenticationserverSessionFindByTokenLocked(t, token) == NULL)
+        if (LIKELY(authenticationserverSessionFindByTokenLocked(t, token) == NULL))
         {
             wCryptoZero(raw, sizeof(raw));
             return true;
@@ -304,7 +304,7 @@ static bool authenticationserverGenerateUniqueToken(tunnel_t *t, uint8_t token[k
 
 static bool authenticationserverEnsureSessionCapacity(authenticationserver_tstate_t *ts)
 {
-    if (ts->sessions_count < ts->sessions_capacity)
+    if (LIKELY(ts->sessions_count < ts->sessions_capacity))
     {
         return true;
     }
@@ -312,7 +312,7 @@ static bool authenticationserverEnsureSessionCapacity(authenticationserver_tstat
     uint32_t                         new_capacity = ts->sessions_capacity == 0 ? 4U : ts->sessions_capacity * 2U;
     authenticationserver_session_t **new_sessions =
         memoryReAllocate(ts->sessions, sizeof(*new_sessions) * (size_t) new_capacity);
-    if (new_sessions == NULL)
+    if (UNLIKELY(new_sessions == NULL))
     {
         return false;
     }
@@ -332,38 +332,38 @@ authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, c
     authenticationserver_tstate_t            *ts     = tunnelGetState(t);
     const authenticationserver_auth_client_t *client = authenticationserverFindAuthClient(ts, name, secret);
 
-    if (client == NULL)
+    if (UNLIKELY(client == NULL))
     {
         return NULL;
     }
 
     authenticationserverSessionsRemoveClientLocked(ts, client->name);
 
-    if (! authenticationserverEnsureSessionCapacity(ts))
+    if (UNLIKELY(! authenticationserverEnsureSessionCapacity(ts)))
     {
         return NULL;
     }
 
     authenticationserver_session_t *session = memoryAllocateZero(sizeof(*session));
-    if (session == NULL)
+    if (UNLIKELY(session == NULL))
     {
         return NULL;
     }
 
-    if (! usersCreate(&session->baseline_users))
+    if (UNLIKELY(! usersCreate(&session->baseline_users)))
     {
         memoryFree(session);
         return NULL;
     }
 
-    if (! authenticationserverGenerateUniqueToken(t, session->token))
+    if (UNLIKELY(! authenticationserverGenerateUniqueToken(t, session->token)))
     {
         authenticationserverSessionFree(session);
         return NULL;
     }
 
     session->client_name = stringDuplicate(client->name);
-    if (session->client_name == NULL)
+    if (UNLIKELY(session->client_name == NULL))
     {
         authenticationserverSessionFree(session);
         return NULL;
@@ -375,8 +375,8 @@ authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, c
     session->session_idle_timeout_ms = client->session_idle_timeout_ms;
     session->last_activity_ms        = getTickMS();
 
-    if (! authenticationserverSessionReplaceBaselineFromUsers(
-            session, &ts->store.users, ts->store.config_revision, ts->store.stats_revision))
+    if (UNLIKELY(! authenticationserverSessionReplaceBaselineFromUsers(
+            session, &ts->store.users, ts->store.config_revision, ts->store.stats_revision)))
     {
         authenticationserverSessionFree(session);
         return NULL;
@@ -390,7 +390,7 @@ authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, c
 
 void authenticationserverSessionTouch(authenticationserver_session_t *session, uint32_t now_ms)
 {
-    if (session != NULL)
+    if (LIKELY(session != NULL))
     {
         session->last_activity_ms = now_ms;
     }
@@ -404,7 +404,7 @@ static void authenticationserverSessionRemoveAtLocked(authenticationserver_tstat
     authenticationserverSessionFree(ts->sessions[index]);
 
     const uint32_t last_index = ts->sessions_count - 1U;
-    if (index < last_index)
+    if (LIKELY(index < last_index))
     {
         memoryMove(
             &ts->sessions[index], &ts->sessions[index + 1U], sizeof(*ts->sessions) * (size_t) (last_index - index));
@@ -416,7 +416,7 @@ static void authenticationserverSessionRemoveAtLocked(authenticationserver_tstat
 
 static void authenticationserverSessionsRemoveClientLocked(authenticationserver_tstate_t *ts, const char *client_name)
 {
-    if (client_name == NULL)
+    if (UNLIKELY(client_name == NULL))
     {
         return;
     }
@@ -425,7 +425,8 @@ static void authenticationserverSessionsRemoveClientLocked(authenticationserver_
     for (uint32_t i = 0; i < ts->sessions_count;)
     {
         authenticationserver_session_t *session = ts->sessions[i];
-        if (session != NULL && session->client_name != NULL && stringCompare(session->client_name, client_name) == 0)
+        if (LIKELY(session != NULL && session->client_name != NULL) &&
+            stringCompare(session->client_name, client_name) == 0)
         {
             authenticationserverSessionRemoveAtLocked(ts, i);
             ++removed_count;
@@ -434,7 +435,7 @@ static void authenticationserverSessionsRemoveClientLocked(authenticationserver_
         ++i;
     }
 
-    if (removed_count > 0)
+    if (UNLIKELY(removed_count > 0))
     {
         LOGD("AuthenticationServer: removed %u previous session(s) for auth client \"%s\"",
              (unsigned int) removed_count,
@@ -452,7 +453,7 @@ void authenticationserverSessionsExpireIdle(tunnel_t *t)
     for (uint32_t i = 0; i < ts->sessions_count;)
     {
         authenticationserver_session_t *session = ts->sessions[i];
-        if (session == NULL)
+        if (UNLIKELY(session == NULL))
         {
             authenticationserverSessionRemoveAtLocked(ts, i);
             continue;
@@ -460,7 +461,7 @@ void authenticationserverSessionsExpireIdle(tunnel_t *t)
 
         const uint32_t idle_ms = now_ms - session->last_activity_ms;
 
-        if (idle_ms < session->session_idle_timeout_ms)
+        if (LIKELY(idle_ms < session->session_idle_timeout_ms))
         {
             ++i;
             continue;
@@ -474,7 +475,7 @@ void authenticationserverSessionsExpireIdle(tunnel_t *t)
     }
     recursivemutexUnlock(&ts->database_mutex);
 
-    if (expired_count > 0)
+    if (UNLIKELY(expired_count > 0))
     {
         LOGD("AuthenticationServer: expired %u inactive session(s)", (unsigned int) expired_count);
     }
@@ -483,7 +484,7 @@ void authenticationserverSessionsExpireIdle(tunnel_t *t)
 void authenticationserverSessionExpiryTimerCallback(wtimer_t *timer)
 {
     tunnel_t *t = weventGetUserdata(timer);
-    if (t == NULL || isApplicationTerminating())
+    if (UNLIKELY(t == NULL || isApplicationTerminating()))
     {
         return;
     }
@@ -493,7 +494,7 @@ void authenticationserverSessionExpiryTimerCallback(wtimer_t *timer)
 
 void authenticationserverSessionsDestroy(authenticationserver_tstate_t *ts)
 {
-    if (ts == NULL || ts->sessions == NULL)
+    if (UNLIKELY(ts == NULL || ts->sessions == NULL))
     {
         return;
     }
@@ -512,7 +513,7 @@ void authenticationserverSessionsDestroy(authenticationserver_tstate_t *ts)
 
 void authenticationserverAuthClientsDestroy(authenticationserver_tstate_t *ts)
 {
-    if (ts == NULL || ts->auth_clients == NULL)
+    if (UNLIKELY(ts == NULL || ts->auth_clients == NULL))
     {
         return;
     }
@@ -521,7 +522,7 @@ void authenticationserverAuthClientsDestroy(authenticationserver_tstate_t *ts)
     {
         authenticationserver_auth_client_t *client = &ts->auth_clients[i];
         memoryFree(client->name);
-        if (client->secret != NULL)
+        if (LIKELY(client->secret != NULL))
         {
             wCryptoZero(client->secret, stringLength(client->secret));
         }

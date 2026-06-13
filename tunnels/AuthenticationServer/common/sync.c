@@ -5,11 +5,11 @@ void authenticationserverGetRevisions(tunnel_t *t, uint64_t *config_revision, ui
     authenticationserver_tstate_t *ts = tunnelGetState(t);
 
     recursivemutexLock(&ts->database_mutex);
-    if (config_revision != NULL)
+    if (LIKELY(config_revision != NULL))
     {
         *config_revision = ts->store.config_revision;
     }
-    if (stats_revision != NULL)
+    if (LIKELY(stats_revision != NULL))
     {
         *stats_revision = ts->store.stats_revision;
     }
@@ -36,7 +36,7 @@ users_update_result_t authenticationserverUpdateUserBySHA256AndBumpConfigRevisio
     authenticationserver_tstate_t *ts     = tunnelGetState(t);
     users_update_result_t          result = usersUpdateUserBySHA256(&ts->store.users, sha256, update);
 
-    if (result == kUsersUpdateResultOk)
+    if (LIKELY(result == kUsersUpdateResultOk))
     {
         authenticationserverBumpConfigRevision(t);
     }

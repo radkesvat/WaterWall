@@ -31,7 +31,7 @@ sbuf_t *authenticationserverCreateResponseFrame(line_t *l, uint8_t response_type
                                                 const uint8_t  correlation_id[kAuthenticationServerCorrelationIdSize],
                                                 const uint8_t *response_data, uint32_t response_data_len)
 {
-    if (response_data_len > kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize)
+    if (UNLIKELY(response_data_len > kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize))
     {
         LOGW("AuthenticationServer: refused %u-byte response frame because it exceeds the response payload limit",
              (unsigned int) response_data_len);
@@ -76,7 +76,7 @@ sbuf_t *authenticationserverCreateUserJsonResponseFrame(
     line_t *l, const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize], cJSON *user_json,
     const char *module_name)
 {
-    if (user_json == NULL)
+    if (UNLIKELY(user_json == NULL))
     {
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "user-not-found");
     }
@@ -84,14 +84,14 @@ sbuf_t *authenticationserverCreateUserJsonResponseFrame(
     char *user_json_text = cJSON_PrintUnformatted(user_json);
     cJSON_Delete(user_json);
 
-    if (user_json_text == NULL)
+    if (UNLIKELY(user_json_text == NULL))
     {
         LOGW("AuthenticationServer: %s failed to serialize matching user", module_name);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "user-json-serialize-failed");
     }
 
     const size_t user_json_text_len = stringLength(user_json_text);
-    if (authenticationserverResponseDataTooLarge(user_json_text_len))
+    if (UNLIKELY(authenticationserverResponseDataTooLarge(user_json_text_len)))
     {
         LOGW("AuthenticationServer: %s response is too large", module_name);
         cJSON_free(user_json_text);
@@ -109,7 +109,7 @@ sbuf_t *authenticationserverCreateUserJsonResponseFrame(
 
 void authenticationserverCloseLine(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls, const char *reason)
 {
-    if (reason != NULL)
+    if (LIKELY(reason != NULL))
     {
         LOGW("AuthenticationServer: closing logical connection: %s", reason);
     }
@@ -123,7 +123,7 @@ bool authenticationserverFlushResponses(tunnel_t *t, line_t *l, authenticationse
     while (! ls->response_paused && bufferqueueGetBufCount(&ls->response_queue) > 0)
     {
         sbuf_t *response = bufferqueuePopFront(&ls->response_queue);
-        if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, response))
+        if (UNLIKELY(! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, response)))
         {
             return false;
         }
@@ -135,10 +135,10 @@ bool authenticationserverFlushResponses(tunnel_t *t, line_t *l, authenticationse
 static bool authenticationserverSendOrQueueResponse(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls,
                                                     sbuf_t *response)
 {
-    if (ls->response_paused || bufferqueueGetBufCount(&ls->response_queue) > 0)
+    if (UNLIKELY(ls->response_paused || bufferqueueGetBufCount(&ls->response_queue) > 0))
     {
         bufferqueuePushBack(&ls->response_queue, response);
-        if (bufferqueueGetBufLen(&ls->response_queue) > kAuthenticationServerMaxResponseQueue)
+        if (UNLIKELY(bufferqueueGetBufLen(&ls->response_queue) > kAuthenticationServerMaxResponseQueue))
         {
             authenticationserverCloseLine(t, l, ls, "response queue overflow");
             return false;
@@ -178,8 +178,8 @@ static bool authenticationserverAppendResponseFrame(line_t *l, sbuf_t **message,
     const uint32_t frame_len   = sbufGetLength(frame);
     const uint32_t payload_len = message_len - kAuthenticationServerResponseEnvelopeHeaderSize;
 
-    if (frame_len > kAuthenticationServerMaxResponsePayload ||
-        payload_len > kAuthenticationServerMaxResponsePayload - frame_len)
+    if (UNLIKELY(frame_len > kAuthenticationServerMaxResponsePayload ||
+                 payload_len > kAuthenticationServerMaxResponsePayload - frame_len))
     {
         LOGW("AuthenticationServer: response payload would exceed %u bytes",
              (unsigned int) kAuthenticationServerMaxResponsePayload);
@@ -214,7 +214,7 @@ static bool authenticationserverValidateRequestPayload(sbuf_t *payload)
     uint32_t       remaining = sbufGetLength(payload);
     uint32_t       offset    = 0;
 
-    if (remaining == 0)
+    if (UNLIKELY(remaining == 0))
     {
         LOGW("AuthenticationServer: received empty message payload; expected at least one request frame");
         return false;
@@ -222,7 +222,7 @@ static bool authenticationserverValidateRequestPayload(sbuf_t *payload)
 
     while (remaining > 0)
     {
-        if (remaining < kAuthenticationServerRequestHeaderSize)
+        if (UNLIKELY(remaining < kAuthenticationServerRequestHeaderSize))
         {
             LOGW("AuthenticationServer: malformed message at offset %u: %u trailing bytes are smaller than a request "
                  "header",
@@ -236,7 +236,7 @@ static bool authenticationserverValidateRequestPayload(sbuf_t *payload)
         const uint8_t *length_ptr       = frame + 1 + kAuthenticationServerCorrelationIdSize;
         const uint32_t request_data_len = authenticationserverReadNetworkUI32(length_ptr);
 
-        if (request_data_len > kAuthenticationServerMaxRequestData)
+        if (UNLIKELY(request_data_len > kAuthenticationServerMaxRequestData))
         {
             LOGW("AuthenticationServer: request type %u at offset %u has oversized %u-byte data",
                  (unsigned int) request_type,
@@ -245,7 +245,7 @@ static bool authenticationserverValidateRequestPayload(sbuf_t *payload)
             return false;
         }
 
-        if (request_data_len > remaining - kAuthenticationServerRequestHeaderSize)
+        if (UNLIKELY(request_data_len > remaining - kAuthenticationServerRequestHeaderSize))
         {
             LOGW("AuthenticationServer: incomplete request type %u at offset %u: declares %u data bytes, only %u "
                  "available",
@@ -315,7 +315,8 @@ static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *
                 continue;
             }
 
-            if (request_type == kAuthenticationServerRequestTypeAuthenticate && (session != NULL || authenticate_seen))
+            if (UNLIKELY(request_type == kAuthenticationServerRequestTypeAuthenticate &&
+                         (session != NULL || authenticate_seen)))
             {
                 LOGW("AuthenticationServer: rejected duplicate or already authenticated Authenticate request");
                 response_frame =
@@ -331,7 +332,7 @@ static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *
                 authenticate_seen = true;
             }
 
-            if (response_frame == NULL)
+            if (UNLIKELY(response_frame == NULL))
             {
                 LOGW("AuthenticationServer: module for request type %u did not return a response frame",
                      (unsigned int) request_type);
@@ -339,7 +340,7 @@ static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *
                 return false;
             }
 
-            if (! authenticationserverAppendResponseFrame(l, &response, response_frame))
+            if (UNLIKELY(! authenticationserverAppendResponseFrame(l, &response, response_frame)))
             {
                 lineReuseBuffer(l, response);
                 return false;
@@ -366,7 +367,7 @@ static bool authenticationserverBuildResponseMessage(tunnel_t *t, line_t *l,
     bool                           result = false;
 
     recursivemutexLock(&ts->database_mutex);
-    if (authenticationserverValidateRequestPayload(payload))
+    if (LIKELY(authenticationserverValidateRequestPayload(payload)))
     {
         result = authenticationserverBuildResponseMessageLocked(t, l, token, payload, response_out);
     }
@@ -384,13 +385,13 @@ bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authentications
             return true;
         }
 
-        if (message_body_len < kAuthenticationServerSessionTokenSize)
+        if (UNLIKELY(message_body_len < kAuthenticationServerSessionTokenSize))
         {
             authenticationserverCloseLine(t, l, ls, "message body is smaller than session token");
             return false;
         }
 
-        if (message_body_len > kAuthenticationServerMaxMessagePayload + kAuthenticationServerSessionTokenSize)
+        if (UNLIKELY(message_body_len > kAuthenticationServerMaxMessagePayload + kAuthenticationServerSessionTokenSize))
         {
             authenticationserverCloseLine(t, l, ls, "message payload size exceeds limit");
             return false;
@@ -410,7 +411,7 @@ bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authentications
         sbufShiftRight(payload, kAuthenticationServerSessionTokenSize);
 
         sbuf_t *response = NULL;
-        if (! authenticationserverBuildResponseMessage(t, l, token, payload, &response))
+        if (UNLIKELY(! authenticationserverBuildResponseMessage(t, l, token, payload, &response)))
         {
             lineReuseBuffer(l, payload);
             authenticationserverCloseLine(t, l, ls, "malformed request message");
@@ -419,7 +420,7 @@ bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authentications
 
         lineReuseBuffer(l, payload);
 
-        if (! authenticationserverSendOrQueueResponse(t, l, ls, response))
+        if (UNLIKELY(! authenticationserverSendOrQueueResponse(t, l, ls, response)))
         {
             return false;
         }

@@ -4,7 +4,7 @@
 
 static void authenticationclientDeleteTimer(wtimer_t **timer)
 {
-    if (*timer == NULL)
+    if (UNLIKELY(*timer == NULL))
     {
         return;
     }
@@ -27,7 +27,7 @@ void authenticationclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
 {
     assert(wid == getWID());
 
-    if (wid != 0)
+    if (UNLIKELY(wid != 0))
     {
         return;
     }
@@ -43,7 +43,7 @@ void authenticationclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
     line = ts->control_line;
     mutexUnlock(&ts->control_mutex);
 
-    if (line != NULL && lineIsAlive(line))
+    if (LIKELY(line != NULL && lineIsAlive(line)))
     {
         authenticationclientCloseControlLine(t, line, true);
     }

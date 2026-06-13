@@ -9,7 +9,7 @@ sbuf_t *authenticationserverGetUserBySHA256Handle(const uint8_t correlation_id[k
     authenticationserver_tstate_t *ts = tunnelGetState(t);
     discard                        session;
 
-    if (request_data_len != SHA256_DIGEST_SIZE)
+    if (UNLIKELY(request_data_len != SHA256_DIGEST_SIZE))
     {
         LOGW("AuthenticationServer: GetUserBySHA256 received invalid %u-byte SHA-256 data",
              (unsigned int) request_data_len);

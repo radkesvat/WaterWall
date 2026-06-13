@@ -4,7 +4,7 @@
 
 static void authenticationclientDestroyUsersSnapshot(users_t *users)
 {
-    if (users == NULL)
+    if (UNLIKELY(users == NULL))
     {
         return;
     }
@@ -29,7 +29,7 @@ void authenticationclientTunnelDestroy(tunnel_t *t)
     ts->pending_push_users       = NULL;
     rwlockWriteUnlock(&ts->users_lock);
 
-    if (users != NULL)
+    if (LIKELY(users != NULL))
     {
         usersDestroy(users);
         memoryFree(users);

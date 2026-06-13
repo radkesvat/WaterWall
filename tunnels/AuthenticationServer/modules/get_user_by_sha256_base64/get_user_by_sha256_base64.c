@@ -10,7 +10,7 @@ sbuf_t *authenticationserverGetUserBySHA256Base64Handle(
     uint8_t                        decoded[BASE64_DECODE_OUT_SIZE(BASE64_ENCODE_OUT_SIZE(SHA256_DIGEST_SIZE))];
     discard                        session;
 
-    if (request_data_len != BASE64_ENCODE_OUT_SIZE(SHA256_DIGEST_SIZE))
+    if (UNLIKELY(request_data_len != BASE64_ENCODE_OUT_SIZE(SHA256_DIGEST_SIZE)))
     {
         LOGW("AuthenticationServer: GetUserBySHA256Base64 received invalid %u-byte base64 SHA-256 data",
              (unsigned int) request_data_len);
@@ -18,7 +18,7 @@ sbuf_t *authenticationserverGetUserBySHA256Base64Handle(
     }
 
     int decoded_len = wwBase64Decode((const char *) request_data, request_data_len, decoded);
-    if (decoded_len != (int) SHA256_DIGEST_SIZE)
+    if (UNLIKELY(decoded_len != (int) SHA256_DIGEST_SIZE))
     {
         LOGW("AuthenticationServer: GetUserBySHA256Base64 could not decode request data as a 32-byte SHA-256 digest");
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-sha256-base64");

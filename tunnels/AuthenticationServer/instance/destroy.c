@@ -6,7 +6,7 @@ void authenticationserverTunnelDestroy(tunnel_t *t)
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);
 
-    if (ts->database_loaded && ! authenticationserverSaveDatabase(ts))
+    if (UNLIKELY(ts->database_loaded && ! authenticationserverSaveDatabase(ts)))
     {
         LOGW("AuthenticationServer: final users database save failed during destroy");
     }

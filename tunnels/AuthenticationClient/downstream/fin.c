@@ -13,7 +13,7 @@ void authenticationclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     authenticationclientCloseControlLine(t, l, false);
 
-    if (should_reconnect)
+    if (LIKELY(should_reconnect))
     {
         authenticationclientScheduleReconnect(t);
     }
