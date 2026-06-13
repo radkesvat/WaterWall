@@ -24,21 +24,26 @@ void *memoryAllocateAligned(size_t size, size_t alignment)
         return NULL;
     }
 
-    // worst-case overhead: one back-pointer slot plus (alignment - 1) padding
-    const size_t header_size = sizeof(void *);
+    // promote so the padding gap below is always at least one pointer wide
+    alignment = max(alignment, sizeof(void *));
 
-    if (size > SIZE_MAX - header_size - (alignment - 1))
+    if (size > SIZE_MAX - alignment)
     {
         return NULL;
     }
 
-    void *base = memoryAllocate(size + header_size + (alignment - 1));
+    // over-allocate by exactly `alignment` (1 + (alignment - 1)): aligning
+    // (base + 1) up lands a non-zero multiple of sizeof(void *) past base,
+    // since the allocator returns pointer-aligned memory, so the padding
+    // itself has room for the back-pointer
+    void *base = memoryAllocate(size + alignment);
     if (base == NULL)
     {
         return NULL;
     }
 
-    uintptr_t aligned = ALIGN2((uintptr_t) base + header_size, alignment);
+    uintptr_t aligned = ALIGN2((uintptr_t) base + 1, alignment);
+    assert(aligned - (uintptr_t) base >= sizeof(void *));
     ((void **) aligned)[-1] = base;
     return (void *) aligned;
 }
