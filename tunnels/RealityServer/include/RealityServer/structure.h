@@ -41,15 +41,18 @@ typedef struct realityserver_lstate_s
 
 enum realityserver_frame_e
 {
-    kRealityServerTlsHeaderSize      = 5,
-    kRealityServerTlsApplicationData = 0x17,
-    kRealityServerTlsVersionMajor    = 0x03,
-    kRealityServerTlsVersionMinor    = 0x03,
-    kRealityServerNonceSize          = 12,
-    kRealityServerTagSize            = 16,
-    kRealityServerFramePrefixSize    = kRealityServerTlsHeaderSize + kRealityServerNonceSize,
-    kRealityServerMaxTlsRecordBody   = 16384,
-    kRealityServerMaxFramePayload    = kRealityServerMaxTlsRecordBody - kRealityServerNonceSize - kRealityServerTagSize,
+    kRealityServerTlsHeaderSize       = 5,
+    kRealityServerTlsChangeCipherSpec = 0x14,
+    kRealityServerTlsAlert            = 0x15,
+    kRealityServerTlsHandshake        = 0x16,
+    kRealityServerTlsApplicationData  = 0x17,
+    kRealityServerTlsVersionMajor     = 0x03,
+    kRealityServerTlsVersionMinor     = 0x03,
+    kRealityServerNonceSize           = 12,
+    kRealityServerTagSize             = 16,
+    kRealityServerFramePrefixSize     = kRealityServerTlsHeaderSize + kRealityServerNonceSize,
+    kRealityServerMaxTlsRecordBody    = 16384,
+    kRealityServerMaxFramePayload = kRealityServerMaxTlsRecordBody - kRealityServerNonceSize - kRealityServerTagSize,
     kRealityServerDefaultKdfIterations    = 12000,
     kRealityServerDefaultSniffingAttempts = 8,
 };

@@ -84,6 +84,15 @@ static int realityserverTryReadTlsRecord(buffer_stream_t *stream, sbuf_t **recor
     uint8_t header[kRealityServerTlsHeaderSize];
     bufferstreamViewBytesAt(stream, 0, header, sizeof(header));
 
+    bool plausible_tls_type = header[0] == kRealityServerTlsChangeCipherSpec || header[0] == kRealityServerTlsAlert ||
+                              header[0] == kRealityServerTlsHandshake || header[0] == kRealityServerTlsApplicationData;
+    bool plausible_tls_version = header[1] == kRealityServerTlsVersionMajor && header[2] <= 0x04;
+
+    if (! plausible_tls_type || ! plausible_tls_version)
+    {
+        return kRealityFrameInvalid;
+    }
+
     uint32_t body_len = ((uint32_t) header[3] << 8) | (uint32_t) header[4];
     if (body_len > kRealityServerMaxTlsRecordBody)
     {

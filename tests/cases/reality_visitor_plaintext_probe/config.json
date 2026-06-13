@@ -1,0 +1,65 @@
+{
+  "name": "reality-visitor-plaintext-probe",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "chunk-count": 3
+      },
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41202,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41202,
+        "nodelay": true
+      },
+      "next": "reality-server"
+    },
+    {
+      "name": "reality-server",
+      "type": "RealityServer",
+      "settings": {
+        "destination": "visitor-server",
+        "password": "waterwall-reality-active-probe",
+        "algorithm": "chacha20-poly1305",
+        "salt": "waterwall-reality-active-probe",
+        "kdf-iterations": 12000,
+        "sniffing-attempts": 8
+      },
+      "next": "protected-invalid"
+    },
+    {
+      "name": "protected-invalid",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "visitor-server",
+      "type": "TesterServer",
+      "settings": {
+        "chunk-count": 3
+      }
+    }
+  ]
+}

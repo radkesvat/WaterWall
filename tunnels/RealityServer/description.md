@@ -19,7 +19,7 @@ Typical placement:
 
 ## Behavior
 
-The server does not terminate TLS. It forwards handshake and ordinary visitor bytes to `destination`. TLS application records that do not authenticate are also forwarded while sniffing remains active. A successful Reality record is not forwarded to the visitor target; instead the destination branch is finished, the authorized `next` chain is initialized, and decrypted payload is forwarded upstream.
+The server does not terminate TLS. It forwards handshake and ordinary visitor bytes to `destination`. Non-TLS record headers are treated as visitor traffic as soon as the header is available, so active plaintext or random probes are not held in the Reality sniff buffer. TLS application records that do not authenticate are also forwarded while sniffing remains active. A successful Reality record is not forwarded to the visitor target; instead the destination branch is finished, the authorized `next` chain is initialized, and decrypted payload is forwarded upstream.
 
 After authorization, upstream traffic must be valid Reality records and downstream payload from the protected chain is encrypted into TLS-like application records.
 
