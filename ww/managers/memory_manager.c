@@ -17,11 +17,6 @@ static bool memoryAlignmentIsValid(size_t alignment)
     return alignment != 0 && (alignment & (alignment - 1)) == 0;
 }
 
-static size_t memoryGetAlignedHeaderSize(size_t alignment)
-{
-    return max(alignment, sizeof(void *));
-}
-
 void *memoryAllocateAligned(size_t size, size_t alignment)
 {
     if (! memoryAlignmentIsValid(alignment))
@@ -29,7 +24,8 @@ void *memoryAllocateAligned(size_t size, size_t alignment)
         return NULL;
     }
 
-    const size_t header_size = memoryGetAlignedHeaderSize(alignment);
+    // worst-case overhead: one back-pointer slot plus (alignment - 1) padding
+    const size_t header_size = sizeof(void *);
 
     if (size > SIZE_MAX - header_size - (alignment - 1))
     {
