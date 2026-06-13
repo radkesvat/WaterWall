@@ -298,14 +298,15 @@ enum
 
 #define STACK_ALLOCATE_CACHE_ALIGNED(type, name) STACK_ALLOCATE_ALIGNED(type, name, kCpuLineCacheSize)
 
-#define memoryCopy          memcpy
-#define memorySet           memset
-#define memoryMove          memmove
-#define memoryCompare       memcmp
-#define memoryZero(p,s)     memorySet((p), 0, (s))
-#define stringCompare       strcmp
-#define stringLength        strlen
-#define stringNPrintf       snprintf
+#define memoryCopy                      memcpy
+#define memorySet                       memset
+#define memoryMove                      memmove
+#define memoryCompare                   memcmp
+#define memoryZero(p,s)                 memorySet((p), 0, (s))
+#define memoryEqual(a, b, size)         (memcmp(a, b, size) == 0)
+#define stringCompare                   strcmp
+#define stringLength                    strlen
+#define stringNPrintf                   snprintf
 
 #define discard  (void)
 
