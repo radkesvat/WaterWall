@@ -25,6 +25,7 @@ static void keepaliveclientStartWorkerTimer(void *worker_ptr, void *arg1, void *
     }
 
     weventSetUserData(timer, t);
+    ts->worker_timers[worker->wid] = timer;
 }
 
 void keepaliveclientTunnelOnStart(tunnel_t *t)

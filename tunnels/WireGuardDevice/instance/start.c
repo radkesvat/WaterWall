@@ -40,9 +40,12 @@ void wireguarddeviceTunnelOnStart(tunnel_t *t)
         }
     }
 
-    // Start a periodic timer for this wireguard device
-    state->wg_device.loop_timer = wtimerAdd(getWorkerLoop(0), loopHandle, WIREGUARDIF_TIMER_MSECS, INFINITE),
-
+    state->wg_device.loop_timer = wtimerAdd(getWorkerLoop(0), loopHandle, WIREGUARDIF_TIMER_MSECS, INFINITE);
+    if (state->wg_device.loop_timer == NULL)
+    {
+        LOGF("WireGuardDevice: failed to create periodic timer");
+        terminateProgram(1);
+    }
     weventSetUserData(state->wg_device.loop_timer, state);
 
     discard t;

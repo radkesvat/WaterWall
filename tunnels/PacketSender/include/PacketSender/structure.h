@@ -103,6 +103,7 @@ void packetsenderTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void packetsenderTunnelOnPrepair(tunnel_t *t);
 void packetsenderTunnelOnStart(tunnel_t *t);
 void packetsenderTunnelOnStop(tunnel_t *t);
+void packetsenderTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
 
 void packetsenderTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void packetsenderTunnelUpStreamEst(tunnel_t *t, line_t *l);

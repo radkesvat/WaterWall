@@ -328,10 +328,11 @@ tunnel_t *packetsenderTunnelCreate(node_t *node)
     t->fnPauseD   = &packetsenderTunnelDownStreamPause;
     t->fnResumeD  = &packetsenderTunnelDownStreamResume;
 
-    t->onPrepare = &packetsenderTunnelOnPrepair;
-    t->onStart   = &packetsenderTunnelOnStart;
-    t->onStop    = &packetsenderTunnelOnStop;
-    t->onDestroy = &packetsenderTunnelDestroy;
+    t->onPrepare    = &packetsenderTunnelOnPrepair;
+    t->onStart      = &packetsenderTunnelOnStart;
+    t->onStop       = &packetsenderTunnelOnStop;
+    t->onWorkerStop = &packetsenderTunnelOnWorkerStop;
+    t->onDestroy    = &packetsenderTunnelDestroy;
 
     packetsender_tstate_t *state    = tunnelGetState(t);
     const cJSON           *settings = node->node_settings_json;

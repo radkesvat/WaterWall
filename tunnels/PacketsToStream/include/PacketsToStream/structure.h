@@ -53,6 +53,7 @@ void packetstostreamTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void packetstostreamTunnelOnPrepair(tunnel_t *t);
 void packetstostreamTunnelOnStart(tunnel_t *t);
 void packetstostreamTunnelOnStop(tunnel_t *t);
+void packetstostreamTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
 
 void packetstostreamTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void packetstostreamTunnelUpStreamEst(tunnel_t *t, line_t *l);

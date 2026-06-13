@@ -6,3 +6,28 @@ void wireguarddeviceTunnelOnStop(tunnel_t *t)
 {
     discard t;
 }
+
+void wireguarddeviceTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
+{
+    assert(wid == getWID());
+
+    if (wid != 0)
+    {
+        return;
+    }
+
+    wgd_tstate_t *state = tunnelGetState(t);
+
+    wireguarddeviceStateLock(state);
+    wtimer_t *timer             = state->wg_device.loop_timer;
+    state->wg_device.loop_timer = NULL;
+    wireguarddeviceStateUnlock(state);
+
+    if (timer == NULL)
+    {
+        return;
+    }
+
+    weventSetUserData(timer, NULL);
+    wtimerDelete(timer);
+}

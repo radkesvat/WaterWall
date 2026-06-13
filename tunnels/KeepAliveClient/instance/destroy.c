@@ -23,6 +23,12 @@ void keepaliveclientTunnelDestroy(tunnel_t *t)
     }
     mutexUnlock(&ts->lines_mutex);
 
+    if (ts->worker_timers != NULL)
+    {
+        memoryFree(ts->worker_timers);
+        ts->worker_timers = NULL;
+    }
+
     mutexDestroy(&ts->lines_mutex);
     tunnelDestroy(t);
 }

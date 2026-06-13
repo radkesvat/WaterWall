@@ -41,6 +41,7 @@ void wireguarddeviceTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void wireguarddeviceTunnelOnPrepair(tunnel_t *t);
 void wireguarddeviceTunnelOnStart(tunnel_t *t);
 void wireguarddeviceTunnelOnStop(tunnel_t *t);
+void wireguarddeviceTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
 
 void wireguarddeviceTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void wireguarddeviceTunnelUpStreamEst(tunnel_t *t, line_t *l);

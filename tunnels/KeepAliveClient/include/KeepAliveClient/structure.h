@@ -8,6 +8,7 @@ typedef struct keepaliveclient_tstate_s
 {
     wmutex_t                  lines_mutex;
     keepaliveclient_lstate_t *lines_head;
+    wtimer_t                **worker_timers;
     uint32_t                  ping_interval_ms;
 } keepaliveclient_tstate_t;
 
@@ -45,6 +46,7 @@ void keepaliveclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void keepaliveclientTunnelOnPrepair(tunnel_t *t);
 void keepaliveclientTunnelOnStart(tunnel_t *t);
 void keepaliveclientTunnelOnStop(tunnel_t *t);
+void keepaliveclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
 
 void keepaliveclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelUpStreamEst(tunnel_t *t, line_t *l);

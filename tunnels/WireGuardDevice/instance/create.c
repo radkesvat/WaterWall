@@ -93,13 +93,14 @@ static tunnel_t *createBaseTunnel(node_t *node)
         return NULL;
     }
 
-    t->fnInitD    = &wireguarddeviceTunnelDownStreamInit;
-    t->fnPayloadU = &wireguarddeviceTunnelUpStreamPayload;
-    t->fnPayloadD = &wireguarddeviceTunnelDownStreamPayload;
-    t->onPrepare  = &wireguarddeviceTunnelOnPrepair;
-    t->onStart    = &wireguarddeviceTunnelOnStart;
-    t->onStop     = &wireguarddeviceTunnelOnStop;
-    t->onDestroy  = &wireguarddeviceTunnelDestroy;
+    t->fnInitD      = &wireguarddeviceTunnelDownStreamInit;
+    t->fnPayloadU   = &wireguarddeviceTunnelUpStreamPayload;
+    t->fnPayloadD   = &wireguarddeviceTunnelDownStreamPayload;
+    t->onPrepare    = &wireguarddeviceTunnelOnPrepair;
+    t->onStart      = &wireguarddeviceTunnelOnStart;
+    t->onStop       = &wireguarddeviceTunnelOnStop;
+    t->onWorkerStop = &wireguarddeviceTunnelOnWorkerStop;
+    t->onDestroy    = &wireguarddeviceTunnelDestroy;
 
     wgd_tstate_t *state = tunnelGetState(t);
     state->tunnel       = t;

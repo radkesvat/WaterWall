@@ -40,13 +40,15 @@ tunnel_t *keepaliveclientTunnelCreate(node_t *node)
     t->fnPauseD   = &keepaliveclientTunnelDownStreamPause;
     t->fnResumeD  = &keepaliveclientTunnelDownStreamResume;
 
-    t->onPrepare = &keepaliveclientTunnelOnPrepair;
-    t->onStart   = &keepaliveclientTunnelOnStart;
-    t->onStop    = &keepaliveclientTunnelOnStop;
-    t->onDestroy = &keepaliveclientTunnelDestroy;
+    t->onPrepare    = &keepaliveclientTunnelOnPrepair;
+    t->onStart      = &keepaliveclientTunnelOnStart;
+    t->onStop       = &keepaliveclientTunnelOnStop;
+    t->onWorkerStop = &keepaliveclientTunnelOnWorkerStop;
+    t->onDestroy    = &keepaliveclientTunnelDestroy;
 
     mutexInit(&ts->lines_mutex);
     ts->lines_head       = NULL;
+    ts->worker_timers    = memoryAllocateZero(sizeof(wtimer_t *) * getWorkersCount());
     ts->ping_interval_ms = kKeepAliveDefaultPingMs;
 
     if (! keepaliveclientLoadPingInterval(ts, node->node_settings_json))
