@@ -2,20 +2,11 @@
 
 #include "loggers/network_logger.h"
 
-static bool authenticationserverIsPathSeparator(char ch)
-{
-#ifdef OS_WIN
-    return ch == '/' || ch == '\\';
-#else
-    return ch == '/';
-#endif
-}
-
 static void authenticationserverTrimTrailingPathSeparators(char *path)
 {
     size_t len = stringLength(path);
 
-    while (len > 1U && authenticationserverIsPathSeparator(path[len - 1U]))
+    while (len > 1U && filePathIsSeparator(path[len - 1U]))
     {
 #ifdef OS_WIN
         if (len == 3U && path[1] == ':')

@@ -60,15 +60,6 @@ static bool authenticationserverWriteJsonFile(const char *path, const char *json
     return true;
 }
 
-static bool authenticationserverIsPathSeparator(char ch)
-{
-#ifdef OS_WIN
-    return ch == '/' || ch == '\\';
-#else
-    return ch == '/';
-#endif
-}
-
 static const char *authenticationserverNormalBackupsModeName(authenticationserver_normal_backups_mode_t mode)
 {
     switch (mode)
@@ -89,7 +80,7 @@ static bool authenticationserverJoinPath(const char *dir, const char *name, char
     size_t      dir_len   = stringLength(dir);
     const char *separator = "";
 
-    if (dir_len > 0U && ! authenticationserverIsPathSeparator(dir[dir_len - 1U]))
+    if (dir_len > 0U && ! filePathIsSeparator(dir[dir_len - 1U]))
     {
 #ifdef OS_WIN
         separator = "\\";

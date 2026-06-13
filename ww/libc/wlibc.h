@@ -537,6 +537,15 @@ static inline uint8_t asciiLower(uint8_t c)
 
 //--------------------file-------------------------------
 
+static inline bool filePathIsSeparator(char ch)
+{
+#ifdef OS_WIN
+    return ch == '/' || ch == '\\';
+#else
+    return ch == '/';
+#endif
+}
+
 char *readFile(const char *path);
 bool  writeFile(const char *path, const char *data, size_t len);
 

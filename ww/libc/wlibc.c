@@ -365,11 +365,7 @@ char *stringChrDir(const char *filepath)
         ++p;
     while (--p >= filepath)
     {
-#ifdef OS_WIN
-        if (*p == '/' || *p == '\\')
-#else
-        if (*p == '/')
-#endif
+        if (filePathIsSeparator(*p))
             return p;
     }
     return NULL;
@@ -399,13 +395,10 @@ int createDirIfNotExists(const char *dir)
     char  delim = '/';
     while (*p)
     {
+        if (filePathIsSeparator(*p))
+        {
 #ifdef OS_WIN
-        if (*p == '/' || *p == '\\')
-        {
             delim = *p;
-#else
-        if (*p == '/')
-        {
 #endif
             *p = '\0';
             wwMkdir(tmp);
@@ -437,13 +430,8 @@ int removeDirIfExists(const char *dir)
         ++p;
     while (--p >= tmp)
     {
-#ifdef OS_WIN
-        if (*p == '/' || *p == '\\')
+        if (filePathIsSeparator(*p))
         {
-#else
-        if (*p == '/')
-        {
-#endif
             *p = '\0';
             if (wwRmDir(tmp) != 0)
             {
