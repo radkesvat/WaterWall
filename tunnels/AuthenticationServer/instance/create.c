@@ -100,7 +100,7 @@ static bool authenticationserverParseNormalBackups(authenticationserver_tstate_t
         return false;
     }
 
-    int count_limit = (int) kAuthenticationServerDefaultNormalBackupsCountLimit;
+    int count_limit =  kAuthenticationServerDefaultNormalBackupsCountLimit;
     if (limit_json != NULL)
     {
         if (UNLIKELY(! cJSON_IsNumber(limit_json) || limit_json->valueint <= 0))
@@ -109,7 +109,7 @@ static bool authenticationserverParseNormalBackups(authenticationserver_tstate_t
                  "The data was invalid");
             return false;
         }
-        count_limit = limit_json->valueint;
+        count_limit = (int) limit_json->valueint;
     }
     ts->normal_backups_count_limit = (uint32_t) count_limit;
 
