@@ -66,7 +66,7 @@ static bool dnsJsonGetOptionalInt(const cJSON *json_obj, const char *key, int *d
         dnsJsonError(key, "must be an integer");
     }
 
-    *dest = item->valueint;
+    *dest = (int) item->valueint;
     return true;
 }
 
@@ -284,7 +284,7 @@ static void dnsJsonParseFlags(const cJSON *dns_obj, asyncdns_options_t *options)
         {
             dnsJsonError("flags", "must be a supported c-ares flag bitmask");
         }
-        flags = flags_json->valueint;
+        flags = (int) flags_json->valueint;
     }
     else if (cJSON_IsString(flags_json) && flags_json->valuestring != NULL && flags_json->valuestring[0] != '\0')
     {
@@ -698,7 +698,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
         const cJSON *json_ram_profile = cJSON_GetObjectItemCaseSensitive(misc_obj, "ram-profile");
         if (cJSON_IsNumber(json_ram_profile))
         {
-            int profile = json_ram_profile->valueint;
+            int profile = (int) json_ram_profile->valueint;
 
             switch (profile)
             {
