@@ -114,9 +114,17 @@ static bool authenticationserverParseNormalBackups(authenticationserver_tstate_t
     ts->normal_backups_count_limit = (uint32_t) count_limit;
 
     int create_result = createDirIfNotExists(ts->normal_backups_path);
-    if (UNLIKELY(create_result != 0 && create_result != EEXIST))
+    if (UNLIKELY(create_result != 0))
     {
-        LOGF("AuthenticationServer: failed to create normal-backups-path \"%s\"", ts->normal_backups_path);
+        if (create_result == ENOTDIR)
+        {
+            LOGF("AuthenticationServer: normal-backups-path \"%s\" exists but is not a directory",
+                 ts->normal_backups_path);
+        }
+        else
+        {
+            LOGF("AuthenticationServer: failed to create normal-backups-path \"%s\"", ts->normal_backups_path);
+        }
         return false;
     }
     if (UNLIKELY(! isDir(ts->normal_backups_path)))

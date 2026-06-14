@@ -299,12 +299,63 @@ bool writeFile(const char *const path, const char *data, size_t len)
     return true;
 }
 
-int createDirIfNotExists(const char *dir)
+static int createSingleDirComponentIfMissing(const char *dir)
 {
+    if (isDir(dir))
+    {
+        return 0;
+    }
+
     if (access(dir, 0) == 0)
     {
-        return EEXIST;
+        return ENOTDIR;
     }
+
+#ifdef OS_WIN
+    if (CreateDirectoryA(dir, NULL))
+    {
+        return 0;
+    }
+    if (isDir(dir))
+    {
+        return 0;
+    }
+    return GetLastError() == ERROR_ALREADY_EXISTS ? ENOTDIR : EPERM;
+#else
+    if (mkdir(dir, 0777) == 0)
+    {
+        return 0;
+    }
+    if (errno == EEXIST)
+    {
+        return isDir(dir) ? 0 : ENOTDIR;
+    }
+    return errno != 0 ? errno : EPERM;
+#endif
+}
+
+int createDirIfNotExists(const char *dir)
+{
+    if (dir == NULL || dir[0] == '\0')
+    {
+        return EINVAL;
+    }
+
+    if (stringLength(dir) >= MAX_PATH)
+    {
+        return ENAMETOOLONG;
+    }
+
+    if (isDir(dir))
+    {
+        return 0;
+    }
+
+    if (access(dir, 0) == 0)
+    {
+        return ENOTDIR;
+    }
+
     char tmp[MAX_PATH] = {0};
     stringCopyN(tmp, dir, sizeof(tmp));
     char *p     = tmp;
@@ -317,16 +368,23 @@ int createDirIfNotExists(const char *dir)
             delim = *p;
 #endif
             *p = '\0';
-            wwMkdir(tmp);
+            if (tmp[0] != '\0'
+#ifdef OS_WIN
+                && ! (stringLength(tmp) == 2U && tmp[1] == ':')
+#endif
+            )
+            {
+                int result = createSingleDirComponentIfMissing(tmp);
+                if (result != 0)
+                {
+                    return result;
+                }
+            }
             *p = delim;
         }
         ++p;
     }
-    if (wwMkdir(tmp) != 0)
-    {
-        return EPERM;
-    }
-    return 0;
+    return createSingleDirComponentIfMissing(tmp);
 }
 
 int removeDirIfExists(const char *dir)
