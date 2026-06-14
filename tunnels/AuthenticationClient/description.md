@@ -180,7 +180,7 @@ The internal Waterwall API is exposed through:
 This is intentionally separate from `api.c`, which is the external program API pattern used by all tunnels.
 
 Other tunnels must not receive or cache raw `user_t *` pointers from `AuthenticationClient`. Instead they use
-`authenticationclient_user_handle_t`, which contains:
+`user_handle_t` from `ww/objects/user_handle.h`, which contains:
 
 ```text
 sha256(password)

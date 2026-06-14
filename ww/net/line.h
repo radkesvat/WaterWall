@@ -36,19 +36,17 @@ typedef struct routing_context_s
     address_context_t dest_ctx;
     wio_type_e        network_type;
     uint16_t          local_listener_port;
-    const char       *user_name;
-    uint8_t           user_name_len;
 
 } routing_context_t;
 
 typedef struct line_s
 {
-    line_refc_t refc;
-    bool        alive;
-    wid_t       wid;
-    uint8_t     auth_cur;
-    uint8_t     established : 1;
-    uint8_t     recalculate_checksum : 1; // used for packet tunnels
+    line_refc_t       refc;
+    bool              alive;
+    wid_t             wid;
+    uint8_t           auth_cur;
+    uint8_t           established : 1;
+    uint8_t           recalculate_checksum : 1; // used for packet tunnels
     routing_context_t routing_context;
 
     generic_pool_t **pools;
@@ -79,12 +77,10 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
                    .recalculate_checksum = false,
                    // to set a port we need to know the AF family, default v4
                    .routing_context =
-                       (routing_context_t) {.network_type  = WIO_TYPE_UNKNOWN,
-                                            .dest_ctx      = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
-                                            .src_ctx       = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
-                                            .local_listener_port = 0,
-                                            .user_name     = NULL,
-                                            .user_name_len = 0}};
+                       (routing_context_t) {.network_type = WIO_TYPE_UNKNOWN,
+                                            .dest_ctx     = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
+                                            .src_ctx      = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
+                                            .local_listener_port = 0}};
 
     memorySet((void *) &l->tunnels_line_state[0], 0, genericpoolGetItemSize(pools[current]) - sizeof(line_t));
 
@@ -428,7 +424,6 @@ int lineResolveDomainAsync(line_t *const line, const char *domain, LineDnsResolv
 int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const char *service, int socktype,
                                   LineDnsResolveFn cb, tunnel_t *t, void *userdata);
 
-
 /**
  * @brief Run a no-buffer task while holding a temporary line reference.
  *
@@ -438,7 +433,7 @@ int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const 
  * @return true Line remains alive after callback.
  * @return false Line was destroyed during callback.
  */
-static inline bool withLineLocked(line_t *const line,LineTaskFnNoBuf task, tunnel_t *t)
+static inline bool withLineLocked(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
 {
     lineLock(line);
     task(t, line);
@@ -462,7 +457,7 @@ static inline bool withLineLocked(line_t *const line,LineTaskFnNoBuf task, tunne
  * @return true Line remains alive after callback.
  * @return false Line was destroyed during callback.
  */
-static inline bool withLineLockedWithBuf(line_t *const line,LineTaskFnWithBuf task, tunnel_t *t, sbuf_t *buf)
+static inline bool withLineLockedWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t, sbuf_t *buf)
 {
     lineLock(line);
     task(t, line, buf);

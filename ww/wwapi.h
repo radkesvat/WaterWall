@@ -36,5 +36,5 @@
 
 #include "crypto/wcrypto.h"
 
+#include "objects/user_handle.h"
 #include "objects/users.h"
-

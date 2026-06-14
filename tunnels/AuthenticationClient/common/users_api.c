@@ -2,13 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-static bool authenticationclientHandleIsStructValid(const authenticationclient_user_handle_t *handle)
-{
-    uint8_t zero[SHA256_DIGEST_SIZE] = {0};
-
-    return handle != NULL && handle->generation != 0 && ! memoryEqual(handle->sha256, zero, sizeof(zero));
-}
-
 authenticationclient_state_t authenticationclientGetState(tunnel_t *t)
 {
     if (UNLIKELY(t == NULL))
@@ -60,7 +53,7 @@ uint64_t authenticationclientUsersGeneration(tunnel_t *t)
 }
 
 bool authenticationclientGetUserBySHA256(tunnel_t *t, const uint8_t sha256[SHA256_DIGEST_SIZE],
-                                         authenticationclient_user_handle_t *handle_out)
+                                         user_handle_t *handle_out)
 {
     if (UNLIKELY(t == NULL || sha256 == NULL || handle_out == NULL))
     {
@@ -73,21 +66,19 @@ bool authenticationclientGetUserBySHA256(tunnel_t *t, const uint8_t sha256[SHA25
     rwlockReadLock(&ts->users_lock);
     if (LIKELY(ts->users != NULL) && usersLookupBySHA256(ts->users, sha256) != NULL)
     {
-        memoryCopy(handle_out->sha256, sha256, SHA256_DIGEST_SIZE);
-        handle_out->generation = ts->users_generation;
-        found                  = true;
+        userHandleSet(handle_out, sha256, ts->users_generation);
+        found = true;
     }
     rwlockReadUnlock(&ts->users_lock);
 
     if (! found)
     {
-        memoryZero(handle_out, sizeof(*handle_out));
+        userHandleClear(handle_out);
     }
     return found;
 }
 
-bool authenticationclientGetUserByPassword(tunnel_t *t, const char *password,
-                                           authenticationclient_user_handle_t *handle_out)
+bool authenticationclientGetUserByPassword(tunnel_t *t, const char *password, user_handle_t *handle_out)
 {
     if (UNLIKELY(t == NULL || password == NULL || password[0] == '\0' || handle_out == NULL))
     {
@@ -107,23 +98,22 @@ bool authenticationclientGetUserByPassword(tunnel_t *t, const char *password,
     user_t *user = ts->users != NULL ? usersLookupBySHA256(ts->users, sha256.bytes) : NULL;
     if (user != NULL && userPasswordMatches(user, password))
     {
-        memoryCopy(handle_out->sha256, sha256.bytes, SHA256_DIGEST_SIZE);
-        handle_out->generation = ts->users_generation;
-        found                  = true;
+        userHandleSet(handle_out, sha256.bytes, ts->users_generation);
+        found = true;
     }
     rwlockReadUnlock(&ts->users_lock);
 
     memoryZero(&sha256, sizeof(sha256)); // i dont want to use wCryptoZero
     if (! found)
     {
-        memoryZero(handle_out, sizeof(*handle_out));
+        userHandleClear(handle_out);
     }
     return found;
 }
 
-bool authenticationclientUserHandleIsLive(tunnel_t *t, const authenticationclient_user_handle_t *handle)
+bool authenticationclientUserHandleIsLive(tunnel_t *t, const user_handle_t *handle)
 {
-    if (UNLIKELY(t == NULL || ! authenticationclientHandleIsStructValid(handle)))
+    if (UNLIKELY(t == NULL || ! userHandleIsValid(handle)))
     {
         return false;
     }
@@ -139,9 +129,9 @@ bool authenticationclientUserHandleIsLive(tunnel_t *t, const authenticationclien
     return live;
 }
 
-cJSON *authenticationclientUserToJson(tunnel_t *t, const authenticationclient_user_handle_t *handle)
+cJSON *authenticationclientUserToJson(tunnel_t *t, const user_handle_t *handle)
 {
-    if (UNLIKELY(t == NULL || ! authenticationclientHandleIsStructValid(handle)))
+    if (UNLIKELY(t == NULL || ! userHandleIsValid(handle)))
     {
         return NULL;
     }
@@ -179,10 +169,9 @@ cJSON *authenticationclientUsersToJson(tunnel_t *t)
     return json;
 }
 
-bool authenticationclientUserGetStats(tunnel_t *t, const authenticationclient_user_handle_t *handle,
-                                      user_stat_t *stats_out)
+bool authenticationclientUserGetStats(tunnel_t *t, const user_handle_t *handle, user_stat_t *stats_out)
 {
-    if (UNLIKELY(t == NULL || stats_out == NULL || ! authenticationclientHandleIsStructValid(handle)))
+    if (UNLIKELY(t == NULL || stats_out == NULL || ! userHandleIsValid(handle)))
     {
         return false;
     }
@@ -210,10 +199,10 @@ bool authenticationclientUserGetStats(tunnel_t *t, const authenticationclient_us
     return ok;
 }
 
-bool authenticationclientUserAddTraffic(tunnel_t *t, const authenticationclient_user_handle_t *handle,
-                                        uint64_t upload_bytes, uint64_t download_bytes)
+bool authenticationclientUserAddTraffic(tunnel_t *t, const user_handle_t *handle, uint64_t upload_bytes,
+                                        uint64_t download_bytes)
 {
-    if (UNLIKELY(t == NULL || ! authenticationclientHandleIsStructValid(handle)))
+    if (UNLIKELY(t == NULL || ! userHandleIsValid(handle)))
     {
         return false;
     }
