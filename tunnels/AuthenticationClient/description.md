@@ -23,6 +23,111 @@ The connector path should reach an `AuthenticationServer`. The client sends prot
 `AuthenticationClient` owns the control line it creates. Because it is the line creator, it is also the only tunnel that
 destroys that line.
 
+## Configuration Example
+
+Minimal in-process authentication chain:
+
+```json
+{
+  "name": "auth-client",
+  "type": "AuthenticationClient",
+  "settings": {
+    "name": "edge-1",
+    "secret": "long-random-secret"
+  },
+  "next": "auth-db"
+}
+```
+
+Remote authentication server chain:
+
+```json
+{
+  "name": "auth-client",
+  "type": "AuthenticationClient",
+  "settings": {
+    "name": "edge-1",
+    "secret": "long-random-secret",
+    "ping-interval-ms": 60000,
+    "pull-interval-ms": 300000,
+    "push-interval-ms": 300000,
+    "reconnect-interval-ms": 5000,
+    "request-timeout-ms": 120000,
+    "max-pending-requests": 64,
+    "verbose": false
+  },
+  "next": "auth-server-connector"
+}
+```
+
+```json
+{
+  "name": "auth-server-connector",
+  "type": "TcpConnector",
+  "settings": {
+    "address": "127.0.0.1",
+    "port": 9000,
+    "nodelay": true
+  }
+}
+```
+
+The `settings.name` and `settings.secret` pair must match one entry in the upstream `AuthenticationServer`
+`settings.auth-clients` array:
+
+```json
+{
+  "name": "edge-1",
+  "secret": "long-random-secret",
+  "allow-user-pull": true,
+  "allow-stats-push": true,
+  "allow-user-write": false
+}
+```
+
+Traffic-serving nodes reference the client by node name. For example, `Socks5Server` uses the already configured
+`AuthenticationClient` like this:
+
+```json
+{
+  "name": "socks-server",
+  "type": "Socks5Server",
+  "settings": {
+    "auth-client-node-name": "auth-client",
+    "connect": true,
+    "udp": false
+  },
+  "next": "outbound-tcp"
+}
+```
+
+`AuthenticationClient` is not placed in the data path for `Socks5Server`. It runs its own control connection and exposes
+the pulled users table through its internal API.
+
+## Required JSON Fields
+
+### Top-level fields
+
+- `name` `(string)`
+  A user-chosen name for this node. Other nodes, such as `Socks5Server`, use this value when they reference the
+  authentication client.
+
+- `type` `(string)`
+  Must be exactly `"AuthenticationClient"`.
+
+- `next` `(string)`
+  Required. The next node must lead to an `AuthenticationServer`, either directly or through transport/client tunnels
+  such as `TcpConnector`, `TlsClient`, or other chain components.
+
+### `settings`
+
+- `name` `(string)`
+  Authentication client name sent to `AuthenticationServer`. This is a control-plane credential name and must match one
+  entry in the server's `settings.auth-clients` array.
+
+- `secret` `(string)`
+  Authentication client secret sent with `settings.name`. This is not a traffic user's password.
+
 ## Communication Model
 
 `AuthenticationClient` uses one long-lived control line, not one line per request or per job.
@@ -45,7 +150,7 @@ While disconnected or not yet authenticated, new protocol requests are not sent.
 to callers as a cache, but server synchronization resumes only after reconnect, transport `Est`, and successful
 authentication.
 
-## Settings
+## Settings Reference
 
 Required settings:
 
