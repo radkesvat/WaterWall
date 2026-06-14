@@ -487,18 +487,10 @@ if(stc_ADDED)
     endif()
 endif()
 
-# cJSON library
-CPMAddPackage(
-    NAME cjson
-    VERSION 1.7.17
-    GITHUB_REPOSITORY DaveGamble/cJSON
-    DOWNLOAD_ONLY True
-)
-if(cjson_ADDED)
-    target_include_directories(ww PUBLIC ${cjson_SOURCE_DIR})
-    target_sources(ww PRIVATE ${cjson_SOURCE_DIR}/cJSON.c)
-    target_compile_definitions(ww PUBLIC CJSON_HIDE_SYMBOLS)
-endif()
+# Vendored iperf3 cJSON fork: cJSON::valueint is int64_t, unlike upstream cJSON.
+target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/cjson)
+target_sources(ww PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor/cjson/cJSON.c)
+target_compile_definitions(ww PUBLIC CJSON_HIDE_SYMBOLS)
 target_compile_definitions(ww PUBLIC ENABLE_TARGET_EXPORT=OFF)
 
 # C-Ares library
