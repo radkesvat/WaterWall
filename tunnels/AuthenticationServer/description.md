@@ -120,7 +120,7 @@ The recommended on-disk shape is an object with a `users` array:
   "users": [
     {
       "name": "alice",
-      "password": "alice-secret",
+      "password": "alice:alice-secret",
       "email": "alice@example.com",
       "enabled": true,
       "limit": {
@@ -179,9 +179,13 @@ A user object must contain a password string. All other fields are optional:
 
 - `password` or `pass` `(required string)`
   Plaintext password used to create the user's password hash lookup keys.
+  When a traffic-serving node such as `Socks5Server` authenticates a separate username and password pair, store the
+  combined lookup string here. `Socks5Server` uses the literal form `username:password`, for example
+  `"alice:alice-secret"`.
 
 - `name` `(optional string)`
   Human-readable username. User names must be unique when non-empty.
+  It is metadata for operators and is not used by forexample `Socks5Server` when checking SOCKS username/password credentials.
 
 - `email` `(optional string)`
   User email metadata.
@@ -263,6 +267,8 @@ except `expire-after-first-usage-ms`, which is a duration after first usage.
 
 - Passwords are stored in the JSON database as plaintext because `userToJson()` exports the `password` field. Protect
   `db-path` and `db-path.backup` with filesystem permissions appropriate for secret material.
+- For `Socks5Server`, the stored password is the final authentication lookup key in `username:password` form, not just the
+  password part submitted by the SOCKS client.
 - Password-derived hashes are not stored directly in JSON. They are rebuilt from `password` while loading users.
 - The SHA-256 password hash is a lookup key. Two users must not share the same password/SHA-256 key.
 - AuthenticationClient credentials are not stored in the user database. They live only in `settings.auth-clients`.
@@ -540,8 +546,9 @@ Those changes belong to authenticated management requests guarded by explicit wr
 Other nodes should not communicate directly with AuthenticationServer. AuthenticationServer is the upstream authority,
 and AuthenticationClient is the frontend used by traffic-serving nodes such as `Socks5Server`.
 
-`AuthenticationClient` exposes handles or singleton pointers to users in its local users table. Other nodes may use
-those handles to:
+`AuthenticationClient` exposes value handles for users in its local users table. Traffic-serving nodes should keep those
+handles in their own node-owned state, such as per-line tunnel state, rather than in shared `line_t` routing metadata.
+Other nodes may use those handles to:
 
 - read user configuration needed for admission decisions, such as enabled state, limits, expiry, and usage
 - update local runtime statistics, especially traffic upload/download counters
@@ -692,8 +699,11 @@ correlation ID.
 
 ### GetUserByPassword Module
 
-The `GetUserByPassword` module expects request data containing the plaintext password bytes without a trailing NUL.
-The payload must be non-empty and must not contain embedded NUL bytes.
+The `GetUserByPassword` module expects request data containing the exact plaintext password lookup key without a trailing
+NUL. The payload must be non-empty and must not contain embedded NUL bytes.
+
+For `Socks5Server`, that lookup key is the SOCKS username, a literal `:`, and the SOCKS password. For example, SOCKS
+credentials `alice` and `alice-secret` are looked up as `alice:alice-secret`.
 
 If a user with that password exists, the module returns response type `2` and response data containing the full
 serialized user JSON object.

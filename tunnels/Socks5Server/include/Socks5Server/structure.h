@@ -1,6 +1,7 @@
 #pragma once
 
 #include "bufio/buffer_stream.h"
+#include "objects/user_handle.h"
 #include "wwapi.h"
 
 #define i_type socks5server_remote_map_t // NOLINT
@@ -27,23 +28,15 @@ typedef enum socks5server_phase_e
     kSocks5ServerPhaseUdpControl
 } socks5server_phase_t;
 
-typedef struct socks5server_user_s
-{
-    char   *username;
-    char   *password;
-    uint8_t username_len;
-    uint8_t password_len;
-} socks5server_user_t;
-
 typedef struct socks5server_tstate_s
 {
-    socks5server_user_t *users;
-    char                *udp_reply_ipv4;
-    ip_addr_t            udp_reply_ip;
-    uint32_t             user_count;
-    bool                 allow_connect;
-    bool                 allow_udp;
-    bool                 verbose;
+    node_t    *auth_client_node;
+    tunnel_t  *auth_client_tunnel;
+    char      *udp_reply_ipv4;
+    ip_addr_t  udp_reply_ip;
+    bool       allow_connect;
+    bool       allow_udp;
+    bool       verbose;
 } socks5server_tstate_t;
 
 typedef struct socks5server_lstate_s
@@ -55,7 +48,7 @@ typedef struct socks5server_lstate_s
     buffer_queue_t             pending_down;
     socks5server_remote_map_t  udp_remote_lines;
     line_t                    *client_line;
-    const socks5server_user_t *user;
+    user_handle_t              user_handle;
     hash_t                     remote_key;
     hash_t                     association_key;
     socks5server_phase_t       phase;
@@ -112,7 +105,7 @@ void    socks5serverCloseUdpClientLine(tunnel_t *t, line_t *client_l);
 void    socks5serverCloseUdpRemoteLine(tunnel_t *t, line_t *remote_l);
 bool    socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lstate_t *ls, sbuf_t *buf);
 bool    socks5serverWrapUdpPayloadForClient(line_t *l, sbuf_t **buf_io, const address_context_t *addr_ctx);
-bool    socks5serverLookupUdpAssociation(line_t *l, const socks5server_user_t **user_out, hash_t *key_out);
+bool    socks5serverLookupUdpAssociation(line_t *l, user_handle_t *user_handle_out, hash_t *key_out);
 void    socks5serverDetachRemoteFromClient(socks5server_lstate_t *remote_ls);
 void    socks5serverUnregisterUdpAssociation(socks5server_lstate_t *ls);
 sbuf_t *socks5serverCreateCommandReply(line_t *l, uint8_t rep, const address_context_t *ctx);

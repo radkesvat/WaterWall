@@ -1,13 +1,14 @@
 #include "structure.h"
 
+#include "AuthenticationClient/interface.h"
 #include "loggers/network_logger.h"
 #include "wmutex.h"
 
 typedef struct socks5server_assoc_entry_s
 {
-    line_t                    *control_line;
-    const socks5server_user_t *user;
-    hash_t                     key;
+    line_t        *control_line;
+    user_handle_t  user_handle;
+    hash_t         key;
 } socks5server_assoc_entry_t;
 
 #define i_type socks5server_assoc_map_t     // NOLINT
@@ -313,37 +314,55 @@ static void socks5serverApplyDestinationContext(line_t *l, const address_context
     route->network_type = udp ? WIO_TYPE_UDP : WIO_TYPE_TCP;
 }
 
-static void socks5serverPopulateUserContext(line_t *l, const socks5server_user_t *user)
+static bool socks5serverFieldHasNul(const uint8_t *field, size_t len)
 {
-    routing_context_t *route = lineGetRoutingContext(l);
-    route->user_name         = user != NULL ? user->username : NULL;
-    route->user_name_len     = user != NULL ? user->username_len : 0;
-}
-
-static const socks5server_user_t *socks5serverMatchUser(tunnel_t *t, const uint8_t *username, uint8_t username_len,
-                                                        const uint8_t *password, uint8_t password_len)
-{
-    socks5server_tstate_t *ts = tunnelGetState(t);
-
-    for (uint32_t i = 0; i < ts->user_count; ++i)
+    for (size_t i = 0; i < len; ++i)
     {
-        const socks5server_user_t *user = &ts->users[i];
-        if (user->username_len != username_len || user->password_len != password_len)
+        if (field[i] == '\0')
         {
-            continue;
-        }
-
-        if (memoryCompare(user->username, username, username_len) == 0 &&
-            memoryCompare(user->password, password, password_len) == 0)
-        {
-            return user;
+            return true;
         }
     }
-
-    return NULL;
+    return false;
 }
 
-static bool socks5serverRegisterUdpAssociation(line_t *l, const socks5server_user_t *user,
+static bool socks5serverAuthUserFromClient(tunnel_t *t, const uint8_t *username, uint8_t username_len,
+                                           const uint8_t *password, uint8_t password_len,
+                                           user_handle_t *user_handle_out)
+{
+    socks5server_tstate_t *ts = tunnelGetState(t);
+    size_t                 username_size = username_len;
+    size_t                 password_size = password_len;
+    if (username_len == 0 || password_len == 0 || ts->auth_client_tunnel == NULL ||
+        socks5serverFieldHasNul(username, username_size) || socks5serverFieldHasNul(password, password_size))
+    {
+        return false;
+    }
+
+    if (! authenticationclientIsReady(ts->auth_client_tunnel))
+    {
+        LOGW("Socks5Server: AuthenticationClient node \"%s\" is not ready",
+             ts->auth_client_node != NULL ? ts->auth_client_node->name : "(null)");
+        return false;
+    }
+
+    char auth_password_buf[(UINT8_MAX * 2U) + 2U] = {0};
+    memoryCopy(auth_password_buf, username, username_size);
+    auth_password_buf[username_size] = ':';
+    memoryCopy(auth_password_buf + username_size + 1U, password, password_size);
+
+    user_handle_t handle = {0};
+    bool found = authenticationclientGetUserByPassword(ts->auth_client_tunnel, auth_password_buf, &handle);
+    memoryZero(auth_password_buf, sizeof(auth_password_buf));
+
+    if (found)
+    {
+        *user_handle_out = handle;
+    }
+    return found;
+}
+
+static bool socks5serverRegisterUdpAssociation(line_t *l, const user_handle_t *user_handle,
                                                const address_context_t *udp_peer_hint, hash_t *out_key)
 {
     const address_context_t *src_ctx    = lineGetSourceAddressContext(l);
@@ -366,7 +385,7 @@ static bool socks5serverRegisterUdpAssociation(line_t *l, const socks5server_use
 
     hash_t                      key   = socks5serverCalcAssociationKey(&key_ip, key_port, local_port);
     socks5server_assoc_entry_t *entry = memoryAllocate(sizeof(*entry));
-    *entry                            = (socks5server_assoc_entry_t) {.control_line = l, .user = user, .key = key};
+    *entry = (socks5server_assoc_entry_t) {.control_line = l, .user_handle = *user_handle, .key = key};
     lineLock(l);
 
     socks5server_assoc_entry_t *old_entry = NULL;
@@ -421,11 +440,13 @@ void socks5serverUnregisterUdpAssociation(socks5server_lstate_t *ls)
     ls->association_key = 0;
 }
 
-bool socks5serverLookupUdpAssociation(line_t *l, const socks5server_user_t **user_out, hash_t *key_out)
+bool socks5serverLookupUdpAssociation(line_t *l, user_handle_t *user_handle_out, hash_t *key_out)
 {
-    const address_context_t    *src_ctx    = lineGetSourceAddressContext(l);
-    uint16_t                    local_port = socks5serverGetLocalPort(l);
-    socks5server_assoc_entry_t *entry      = NULL;
+    const address_context_t          *src_ctx      = lineGetSourceAddressContext(l);
+    uint16_t                          local_port   = socks5serverGetLocalPort(l);
+    line_t                           *control_line = NULL;
+    user_handle_t                     user_handle  = {0};
+    hash_t                            key          = 0;
 
     wonce(&g_socks5server_assoc_once, socks5serverInitAssocRegistry);
 
@@ -446,22 +467,29 @@ bool socks5serverLookupUdpAssociation(line_t *l, const socks5server_user_t **use
 
     if (it.ref != socks5server_assoc_map_t_end(&g_socks5server_assoc_map).ref)
     {
-        entry = it.ref->second;
+        socks5server_assoc_entry_t *entry = it.ref->second;
+        control_line                      = entry->control_line;
+        user_handle                       = entry->user_handle;
+        key                               = entry->key;
+        lineLock(control_line);
     }
     mutexUnlock(&g_socks5server_assoc_mutex);
 
-    if (entry == NULL)
+    if (control_line == NULL)
     {
         return false;
     }
 
-    if (! lineIsAlive(entry->control_line) || ! lineIsAuthenticated(entry->control_line))
+    bool authenticated = lineIsAlive(control_line) && lineIsAuthenticated(control_line);
+    lineUnlock(control_line);
+
+    if (! authenticated)
     {
         return false;
     }
 
-    *user_out = entry->user;
-    *key_out  = entry->key;
+    *user_handle_out = user_handle;
+    *key_out         = key;
     return true;
 }
 
@@ -491,8 +519,8 @@ void socks5serverDetachRemoteFromClient(socks5server_lstate_t *remote_ls)
 }
 
 static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l, socks5server_lstate_t *client_ls,
-                                                    const address_context_t *target, const socks5server_user_t *user,
-                                                    hash_t assoc_key)
+                                                    const address_context_t *target,
+                                                    const user_handle_t *user_handle, hash_t assoc_key)
 {
     hash_t remote_key = socks5serverCalcAddressHash(target);
 
@@ -510,11 +538,10 @@ static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_
     remote_ls->client_line_locked = true;
     remote_ls->remote_key         = remote_key;
     remote_ls->association_key    = assoc_key;
-    remote_ls->user               = user;
+    remote_ls->user_handle        = *user_handle;
 
     lineLock(client_l);
 
-    socks5serverPopulateUserContext(remote_l, user);
     lineGetRoutingContext(remote_l)->local_listener_port = socks5serverGetLocalPort(client_l);
     socks5serverApplyDestinationContext(remote_l, target, true);
 
@@ -534,21 +561,6 @@ void socks5serverTunnelstateDestroy(socks5server_tstate_t *ts)
     {
         memoryFree(ts->udp_reply_ipv4);
         ts->udp_reply_ipv4 = NULL;
-    }
-
-    for (uint32_t i = 0; i < ts->user_count; ++i)
-    {
-        memoryFree(ts->users[i].username);
-        if (ts->users[i].password != NULL)
-        {
-            memorySet(ts->users[i].password, 0, ts->users[i].password_len);
-            memoryFree(ts->users[i].password);
-        }
-    }
-
-    if (ts->users != NULL)
-    {
-        memoryFree(ts->users);
     }
 
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
@@ -683,7 +695,6 @@ void socks5serverOnControlEstablished(tunnel_t *t, line_t *l, socks5server_lstat
 
     ls->phase              = kSocks5ServerPhaseTcpEstablished;
     ls->connect_reply_sent = true;
-    socks5serverPopulateUserContext(l, ls->user);
     if (! lineIsAuthenticated(l))
     {
         lineAuthenticate(l);
@@ -761,14 +772,14 @@ bool socks5serverWrapUdpPayloadForClient(line_t *l, sbuf_t **buf_io, const addre
 
 bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lstate_t *ls, sbuf_t *buf)
 {
-    const socks5server_user_t *user      = NULL;
-    hash_t                     assoc_key = 0;
-    address_context_t          target    = {0};
-    size_t                     addr_len  = 0;
-    const uint8_t             *raw       = sbufGetRawPtr(buf);
-    size_t                     len       = sbufGetLength(buf);
+    user_handle_t     user_handle = {0};
+    hash_t            assoc_key   = 0;
+    address_context_t target      = {0};
+    size_t            addr_len    = 0;
+    const uint8_t    *raw         = sbufGetRawPtr(buf);
+    size_t            len         = sbufGetLength(buf);
 
-    if (! socks5serverLookupUdpAssociation(l, &user, &assoc_key))
+    if (! socks5serverLookupUdpAssociation(l, &user_handle, &assoc_key))
     {
         lineReuseBuffer(l, buf);
         socks5serverCloseUdpClientLine(t, l);
@@ -805,11 +816,10 @@ bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lst
         lineAuthenticate(l);
     }
 
-    socks5serverPopulateUserContext(l, user);
-    ls->user            = user;
+    ls->user_handle     = user_handle;
     ls->association_key = assoc_key;
 
-    line_t *remote_l = socks5serverGetOrCreateUdpRemoteLine(t, l, ls, &target, user, assoc_key);
+    line_t *remote_l = socks5serverGetOrCreateUdpRemoteLine(t, l, ls, &target, &ls->user_handle, assoc_key);
     addresscontextReset(&target);
     if (remote_l == NULL)
     {
@@ -873,25 +883,15 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
 
             sbuf_t        *method_buf      = bufferstreamReadExact(&ls->in_stream, total);
             const uint8_t *methods         = sbufGetRawPtr(method_buf);
-            bool           offers_noauth   = false;
             bool           offers_userpass = false;
 
             for (uint8_t i = 0; i < head[1]; ++i)
             {
-                offers_noauth |= methods[2 + i] == kSocks5NoAuthMethod;
                 offers_userpass |= methods[2 + i] == kSocks5UserPassMethod;
             }
             lineReuseBuffer(l, method_buf);
 
-            uint8_t selected = kSocks5NoAcceptable;
-            if (ts->user_count == 0 && offers_noauth)
-            {
-                selected = kSocks5NoAuthMethod;
-            }
-            else if (ts->user_count > 0 && offers_userpass)
-            {
-                selected = kSocks5UserPassMethod;
-            }
+            uint8_t selected = offers_userpass ? kSocks5UserPassMethod : kSocks5NoAcceptable;
 
             sbuf_t *reply = socks5serverCreateMethodReply(l, selected);
             if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
@@ -903,16 +903,6 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
             {
                 socks5serverCloseControlLineBidirectional(t, l);
                 return false;
-            }
-
-            if (selected == kSocks5NoAuthMethod)
-            {
-                if (! lineIsAuthenticated(l))
-                {
-                    lineAuthenticate(l);
-                }
-                ls->phase = kSocks5ServerPhaseWaitRequest;
-                continue;
             }
 
             ls->phase = kSocks5ServerPhaseWaitAuth;
@@ -947,26 +937,27 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
                 return true;
             }
 
-            sbuf_t                    *auth_buf = bufferstreamReadExact(&ls->in_stream, required);
-            const uint8_t             *raw      = sbufGetRawPtr(auth_buf);
-            const socks5server_user_t *user     = socks5serverMatchUser(t, raw + 2, head[1], raw + 3 + head[1], plen);
+            sbuf_t        *auth_buf    = bufferstreamReadExact(&ls->in_stream, required);
+            const uint8_t *raw         = sbufGetRawPtr(auth_buf);
+            user_handle_t  user_handle = {0};
+            bool authenticated =
+                socks5serverAuthUserFromClient(t, raw + 2, head[1], raw + 3 + head[1], plen, &user_handle);
             lineReuseBuffer(l, auth_buf);
 
-            sbuf_t *reply = socks5serverCreateAuthReply(l, user != NULL ? 0x00 : 0x01);
+            sbuf_t *reply = socks5serverCreateAuthReply(l, authenticated ? 0x00 : 0x01);
             if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
             {
                 return false;
             }
 
-            if (user == NULL)
+            if (! authenticated)
             {
                 socks5serverCloseControlLineBidirectional(t, l);
                 return false;
             }
 
-            ls->user  = user;
-            ls->phase = kSocks5ServerPhaseWaitRequest;
-            socks5serverPopulateUserContext(l, user);
+            ls->user_handle = user_handle;
+            ls->phase       = kSocks5ServerPhaseWaitRequest;
             if (! lineIsAuthenticated(l))
             {
                 lineAuthenticate(l);
@@ -1044,7 +1035,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
                 }
 
                 addresscontextSetIpPort(&bind_ctx, &ts->udp_reply_ip, local_port);
-                if (! socks5serverRegisterUdpAssociation(l, ls->user, &target, &ls->association_key))
+                if (! socks5serverRegisterUdpAssociation(l, &ls->user_handle, &target, &ls->association_key))
                 {
                     addresscontextReset(&bind_ctx);
                     addresscontextReset(&target);
@@ -1061,7 +1052,6 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
 
                 ls->phase              = kSocks5ServerPhaseUdpControl;
                 ls->connect_reply_sent = true;
-                socks5serverPopulateUserContext(l, ls->user);
                 if (! lineIsAuthenticated(l))
                 {
                     lineAuthenticate(l);

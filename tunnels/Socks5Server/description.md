@@ -2,8 +2,8 @@
 
 `Socks5Server` is a server-side SOCKS5 middle tunnel for Waterwall.
 
-It accepts SOCKS5 control traffic from its previous node, performs method negotiation and optional username/password
-authentication, then either:
+It accepts SOCKS5 control traffic from its previous node, performs username/password authentication through an existing
+`AuthenticationClient` node, then either:
 
 - opens a normal Waterwall upstream connection for `CONNECT`, or
 - creates an authenticated UDP association for `UDP ASSOCIATE`
@@ -18,7 +18,7 @@ This tunnel is written to fit normal Waterwall chain rules:
 ## What It Does
 
 - Implements SOCKS5 method negotiation.
-- Supports optional username/password authentication.
+- Supports username/password authentication through `AuthenticationClient`.
 - Supports `CONNECT`.
 - Supports `UDP ASSOCIATE`.
 - Rejects `BIND`.
@@ -53,51 +53,18 @@ Important:
   "name": "socks-server",
   "type": "Socks5Server",
   "settings": {
+    "auth-client-node-name": "auth-client",
     "connect": true,
     "udp": true,
     "ipv4": "0.0.0.0",
-    "users": [
-      {
-        "username": "alice",
-        "password": "secret"
-      }
-    ],
     "verbose": false
   },
   "next": "next-node-name"
 }
 ```
 
-Single-account shorthand is also accepted:
-
-```json
-{
-  "name": "socks-server",
-  "type": "Socks5Server",
-  "settings": {
-    "connect": true,
-    "udp": false,
-    "username": "alice",
-    "password": "secret"
-  },
-  "next": "next-node-name"
-}
-```
-
-If you want no authentication at all, simply omit `username`, `password`, and `users`.
-
-If you want username-based authentication with an empty password, that is also accepted:
-
-```json
-{
-  "name": "socks-server",
-  "type": "Socks5Server",
-  "settings": {
-    "username": "alice"
-  },
-  "next": "next-node-name"
-}
-```
+`auth-client` must be a configured `AuthenticationClient` node in the same config file. `Socks5Server` only finds and
+uses that node instance; it does not create an authentication client.
 
 ## Required JSON Fields
 
@@ -111,7 +78,8 @@ If you want username-based authentication with an empty password, that is also a
 
 ### `settings`
 
-There are no always-required tunnel-specific settings.
+- `auth-client-node-name` `(string)`
+  Required. Name of an existing `AuthenticationClient` node in the same config file.
 
 However:
 
@@ -144,25 +112,6 @@ However:
 
   - `0.0.0.0:443`
 
-- `username` and `password` `(string)`
-  Single-account shorthand.
-
-  `username` may be provided without `password`.
-  In that case the configured password is the empty string.
-
-  `password` may not be provided by itself.
-
-- `users` `(array)`
-  Multi-account form.
-
-  Each entry must be an object with:
-
-  - `username`
-  - optional `password`
-
-- `accounts`
-  Alias for `users`.
-
 - `verbose` `(boolean)`
   Enables extra debug logging.
 
@@ -174,19 +123,20 @@ When a TCP line reaches `Socks5Server`:
 
 - line state is initialized as a TCP control line
 - the tunnel waits for the SOCKS5 greeting
-- it selects either:
-  - no-authentication, or
-  - username/password authentication
+- it requires SOCKS5 username/password authentication
+- it builds one authentication lookup key as `username:password`
+- it checks that combined string through the configured `AuthenticationClient` as the user's password
 - after successful authentication it waits for the SOCKS5 request
 
-If no users are configured:
+The old local `username`, `password`, `users`, and `accounts` settings are no longer accepted.
 
-- the tunnel advertises and accepts SOCKS5 no-authentication mode
+AuthenticationServer users for this tunnel should store the SOCKS credential pair in the user object's `password` field
+using that exact `username:password` form. The user object's `name` is not used for Socks5Server authentication and may be
+kept as operator metadata.
 
-If users are configured:
-
-- the tunnel requires SOCKS5 username/password authentication
-- configured accounts may use an empty password
+The resulting `user_handle_t` is stored only in `Socks5Server` line state. It is not written into `line_t` or
+`routing_context_t`, so multiple protocol/authentication servers can coexist in one chain without sharing one global user
+slot.
 
 For `CONNECT`:
 
@@ -259,5 +209,7 @@ The implementation follows normal Waterwall finish ordering:
 - SOCKS5 UDP fragmentation is not reassembled; packets with `FRAG != 0` are ignored.
 - UDP support currently assumes your TCP and UDP listener topology is arranged so the returned TCP listener port is the
   correct SOCKS5 UDP port for the client to use.
+- SOCKS5 usernames and passwords are converted into one AuthenticationClient password lookup key with a literal `:`
+  separator. Embedded NUL bytes are rejected because AuthenticationClient password lookup uses C strings.
 - `required_padding_left` is set for the worst-case SOCKS5 UDP header so the tunnel can prepend UDP headers without
   breaking Waterwall buffer-padding assumptions.

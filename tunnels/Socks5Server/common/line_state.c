@@ -12,7 +12,7 @@ void socks5serverLinestateInitialize(socks5server_lstate_t *ls, tunnel_t *t, lin
         .pending_down     = bufferqueueCreate(kSocks5ServerBufferQueueCap),
         .udp_remote_lines = socks5server_remote_map_t_with_capacity(kSocks5ServerRemoteMapCap),
         .client_line      = NULL,
-        .user             = NULL,
+        .user_handle      = {.sha256 = {0}, .generation = 0},
         .remote_key       = 0,
         .association_key  = 0,
         .phase = kind == kSocks5ServerLineKindControlTcp ? kSocks5ServerPhaseWaitMethod : kSocks5ServerPhaseIdle,

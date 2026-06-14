@@ -23,153 +23,66 @@ static const cJSON *getSettingsItemByKeys(const cJSON *settings, const char *key
     return NULL;
 }
 
-static void cleanupUsersArray(socks5server_user_t *users, size_t count)
+static hash_t socks5serverAuthenticationClientTypeHash(void)
 {
-    if (users == NULL)
-    {
-        return;
-    }
-
-    for (size_t i = 0; i < count; ++i)
-    {
-        memoryFree(users[i].username);
-        if (users[i].password != NULL)
-        {
-            memorySet(users[i].password, 0, users[i].password_len);
-            memoryFree(users[i].password);
-        }
-    }
-
-    memoryFree(users);
+    const char *type_name = "AuthenticationClient";
+    return calcHashBytes(type_name, stringLength(type_name));
 }
 
-static bool parseUsers(socks5server_tstate_t *ts, const cJSON *settings)
+static bool rejectLegacyAuthSettings(const cJSON *settings)
 {
-    char *single_user = NULL;
-    char *single_pass = NULL;
+    const char *legacy_keys[] = {"username", "password", "users", "accounts"};
 
-    getStringFromJsonObject(&single_user, settings, "username");
-    getStringFromJsonObject(&single_pass, settings, "password");
-
-    if (single_user == NULL && single_pass != NULL)
+    for (size_t i = 0; i < ARRAY_SIZE(legacy_keys); ++i)
     {
-        memoryFree(single_user);
-        memoryFree(single_pass);
-        LOGF("JSON Error: Socks5Server password cannot be provided without username");
+        if (cJSON_GetObjectItemCaseSensitive(settings, legacy_keys[i]) != NULL)
+        {
+            LOGF("JSON Error: Socks5Server->settings->%s is no longer supported; use auth-client-node-name",
+                 legacy_keys[i]);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool parseAuthClientNode(socks5server_tstate_t *ts, node_t *node, const cJSON *settings)
+{
+    char *auth_client_node_name = NULL;
+
+    if (! getStringFromJsonObject(&auth_client_node_name, settings, "auth-client-node-name") ||
+        auth_client_node_name[0] == '\0')
+    {
+        memoryFree(auth_client_node_name);
+        LOGF("JSON Error: Socks5Server->settings->auth-client-node-name (string field) is required");
         return false;
     }
 
-    if (single_user != NULL)
+    node_t *auth_client_node = nodemanagerGetConfigNodeByName(node->node_manager_config, auth_client_node_name);
+    if (auth_client_node == NULL)
     {
-        size_t username_len = stringLength(single_user);
-        size_t password_len = single_pass != NULL ? stringLength(single_pass) : 0;
-        if (username_len == 0 || username_len > UINT8_MAX || password_len > UINT8_MAX)
-        {
-            if (single_pass != NULL)
-            {
-                memorySet(single_pass, 0, password_len);
-            }
-            memoryFree(single_user);
-            memoryFree(single_pass);
-            LOGF("JSON Error: Socks5Server username must be non-empty and credentials must be <= %u bytes",
-                 (unsigned int) UINT8_MAX);
-            return false;
-        }
-
-        if (single_pass == NULL)
-        {
-            single_pass = stringDuplicate("");
-        }
-
-        ts->users      = memoryAllocate(sizeof(*ts->users));
-        ts->users[0]   = (socks5server_user_t) {.username     = single_user,
-                                                .password     = single_pass,
-                                                .username_len = (uint8_t) username_len,
-                                                .password_len = (uint8_t) password_len};
-        ts->user_count = 1;
-    }
-
-    const cJSON *users_json = getSettingsItemByKeys(settings, "users", "accounts");
-    if (users_json == NULL)
-    {
-        return true;
-    }
-
-    if (! cJSON_IsArray(users_json))
-    {
-        LOGF("JSON Error: Socks5Server->settings->users must be an array");
+        LOGF("Socks5Server: auth-client-node-name \"%s\" was not found", auth_client_node_name);
+        memoryFree(auth_client_node_name);
         return false;
     }
 
-    if (ts->user_count > 0)
+    if (auth_client_node == node)
     {
-        LOGF("JSON Error: Socks5Server uses either username/password or users[], not both");
+        LOGF("Socks5Server: auth-client-node-name must not point back to Socks5Server itself");
+        memoryFree(auth_client_node_name);
         return false;
     }
 
-    size_t count = (size_t) cJSON_GetArraySize(users_json);
-    if (count == 0)
+    if (auth_client_node->hash_type != socks5serverAuthenticationClientTypeHash())
     {
-        return true;
+        LOGF("Socks5Server: auth-client-node-name \"%s\" must point to an AuthenticationClient node",
+             auth_client_node_name);
+        memoryFree(auth_client_node_name);
+        return false;
     }
 
-    socks5server_user_t *users = memoryAllocate(sizeof(*users) * count);
-    memorySet(users, 0, sizeof(*users) * count);
-
-    size_t index = 0;
-    cJSON *entry = NULL;
-    cJSON_ArrayForEach(entry, users_json)
-    {
-        if (! cJSON_IsObject(entry))
-        {
-            LOGF("JSON Error: Socks5Server->settings->users[%u] must be an object", (unsigned int) index);
-            cleanupUsersArray(users, index);
-            return false;
-        }
-
-        cJSON *username_json = cJSON_GetObjectItemCaseSensitive(entry, "username");
-        cJSON *password_json = cJSON_GetObjectItemCaseSensitive(entry, "password");
-        if (! cJSON_IsString(username_json) || username_json->valuestring == NULL)
-        {
-            LOGF("JSON Error: Socks5Server->settings->users[%u] needs a string username", (unsigned int) index);
-            cleanupUsersArray(users, index);
-            return false;
-        }
-
-        size_t      username_len   = stringLength(username_json->valuestring);
-        size_t      password_len   = 0;
-        const char *password_value = "";
-        if (password_json != NULL)
-        {
-            if (! cJSON_IsString(password_json) || password_json->valuestring == NULL)
-            {
-                LOGF("JSON Error: Socks5Server->settings->users[%u].password must be a string when present",
-                     (unsigned int) index);
-                cleanupUsersArray(users, index);
-                return false;
-            }
-
-            password_value = password_json->valuestring;
-            password_len   = stringLength(password_value);
-        }
-
-        if (username_len == 0 || username_len > UINT8_MAX || password_len > UINT8_MAX)
-        {
-            LOGF("JSON Error: Socks5Server username must be non-empty and credentials must be <= %u bytes",
-                 (unsigned int) UINT8_MAX);
-            cleanupUsersArray(users, index);
-            return false;
-        }
-
-        users[index].username     = stringDuplicate(username_json->valuestring);
-        users[index].password     = stringDuplicate(password_value);
-        users[index].username_len = (uint8_t) username_len;
-        users[index].password_len = (uint8_t) password_len;
-        ++index;
-    }
-
-    ts->users      = users;
-    ts->user_count = (uint32_t) index;
+    ts->auth_client_node = auth_client_node;
+    memoryFree(auth_client_node_name);
     return true;
 }
 
@@ -237,7 +150,8 @@ tunnel_t *socks5serverTunnelCreate(node_t *node)
     getBoolFromJsonObjectOrDefault(&ts->allow_udp, settings, "udp", false);
     getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
 
-    if (! parseUsers(ts, settings) || ! parseUdpReplyAddress(ts, settings))
+    if (! rejectLegacyAuthSettings(settings) || ! parseAuthClientNode(ts, node, settings) ||
+        ! parseUdpReplyAddress(ts, settings))
     {
         socks5serverTunnelstateDestroy(ts);
         tunnelDestroy(t);

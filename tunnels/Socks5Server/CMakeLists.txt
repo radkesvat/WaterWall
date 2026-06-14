@@ -24,12 +24,19 @@ add_library(Socks5Server STATIC
                     downstream/resume.c
 )
 
-target_include_directories(Socks5Server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(NOT TARGET AuthenticationClient)
+    message(FATAL_ERROR "Socks5Server requires AuthenticationClient; enable INCLUDE_AUTHENTICATION_CLIENT")
+endif()
+
+target_include_directories(Socks5Server PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../AuthenticationClient/include
+)
 
 target_include_directories(Socks5Server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(Socks5Server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Socks5Server)
 
-target_link_libraries(Socks5Server ww)
+target_link_libraries(Socks5Server PRIVATE ww AuthenticationClient)
 if(NOT APPLE)
     target_precompile_headers(Socks5Server REUSE_FROM ww)
 endif()
