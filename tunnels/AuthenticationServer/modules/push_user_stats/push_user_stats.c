@@ -1,8 +1,7 @@
 #include "modules/push_user_stats/push_user_stats.h"
 
 #include "loggers/network_logger.h"
-
-static const uint64_t kAuthenticationServerJsonSafeIntegerMax = 9007199254740991ULL;
+#include "utils/json_helpers.h"
 
 typedef struct authenticationserver_stats_hint_s
 {
@@ -52,37 +51,6 @@ static const cJSON *authenticationserverPushStatsJsonGetItem2(const cJSON *json_
     return authenticationserverPushStatsJsonGetItem(json_obj, fallback);
 }
 
-static bool authenticationserverPushStatsParseUint64String(const char *value, uint64_t *out)
-{
-    char *end = NULL;
-
-    if (UNLIKELY(authenticationserverPushStatsStringIsEmpty(value) || value[0] == '-'))
-    {
-        return false;
-    }
-
-    errno                               = 0;
-    unsigned long long       parsed     = strtoull(value, &end, 10);
-    const unsigned long long max_uint64 = UINT64_MAX;
-
-    if (UNLIKELY(errno == ERANGE || parsed > max_uint64))
-    {
-        return false;
-    }
-
-    while (end != NULL && *end != '\0')
-    {
-        if (UNLIKELY(! isspace((unsigned char) *end)))
-        {
-            return false;
-        }
-        ++end;
-    }
-
-    *out = (uint64_t) parsed;
-    return true;
-}
-
 static bool authenticationserverPushStatsReadOptionalCounter(const cJSON *json_obj, const char *primary,
                                                              const char *fallback, uint64_t *value, bool *present)
 {
@@ -95,30 +63,7 @@ static bool authenticationserverPushStatsReadOptionalCounter(const cJSON *json_o
     }
 
     *present = true;
-    if (cJSON_IsString(item))
-    {
-        return authenticationserverPushStatsParseUint64String(item->valuestring, value);
-    }
-    if (LIKELY(cJSON_IsNumber(item)))
-    {
-        const double number = item->valuedouble;
-
-        if (UNLIKELY(! (number >= 0.0) || number > (double) kAuthenticationServerJsonSafeIntegerMax))
-        {
-            return false;
-        }
-
-        const uint64_t parsed = (uint64_t) number;
-        if (UNLIKELY((double) parsed != number))
-        {
-            return false;
-        }
-
-        *value = parsed;
-        return true;
-    }
-
-    return false;
+    return getUint64FromJson(value, item);
 }
 
 static bool authenticationserverPushStatsReadHintTraffic(const cJSON                       *hint_json,
@@ -477,11 +422,11 @@ static sbuf_t *authenticationserverPushStatsStatusResponse(
     }
 
     if (UNLIKELY(! cJSON_AddStringToObject(json, "status", "stats-updated") ||
-                 ! cJSON_AddNumberToObject(json, "applied-deltas", (double) delta_count) ||
+                 ! jsonAddUint64ToObject(json, "applied-deltas", (uint64_t) delta_count) ||
                  (needs_pull ? cJSON_AddTrueToObject(json, "needs-pull") == NULL
                              : cJSON_AddFalseToObject(json, "needs-pull") == NULL) ||
-                 ! cJSON_AddNumberToObject(json, "config-revision", (double) ts->store.config_revision) ||
-                 ! cJSON_AddNumberToObject(json, "stats-revision", (double) ts->store.stats_revision)))
+                 ! jsonAddUint64ToObject(json, "config-revision", ts->store.config_revision) ||
+                 ! jsonAddUint64ToObject(json, "stats-revision", ts->store.stats_revision)))
     {
         cJSON_Delete(json);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "stats-push-response-failed");

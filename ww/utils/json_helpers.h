@@ -4,6 +4,95 @@
 #include "objects/dynamic_value.h"
 #include "wlibc.h"
 
+#include <inttypes.h>
+
+/* Parse a base-10 unsigned 64-bit integer from a string, rejecting empty input,
+ * a negative sign, and any trailing non-space characters. */
+static inline bool jsonParseUint64String(const char *value, uint64_t *dest)
+{
+    if (value == NULL || value[0] == '\0' || value[0] == '-')
+    {
+        return false;
+    }
+
+    char *end = NULL;
+    errno     = 0;
+
+    unsigned long long parsed = strtoull(value, &end, 10);
+    if (errno == ERANGE)
+    {
+        return false;
+    }
+
+    while (*end != '\0')
+    {
+        if (! isspace((unsigned char) *end))
+        {
+            return false;
+        }
+        ++end;
+    }
+
+    *dest = (uint64_t) parsed;
+    return true;
+}
+
+/* Read an unsigned 64-bit integer from a JSON node. Accepts a JSON number (when
+ * it is a non-negative integer that fits losslessly) or a decimal string (the
+ * lossless encoding used for values above INT64_MAX). */
+static inline bool getUint64FromJson(uint64_t *dest, const cJSON *json_node)
+{
+    if (cJSON_IsString(json_node))
+    {
+        return jsonParseUint64String(json_node->valuestring, dest);
+    }
+
+    if (! cJSON_IsNumber(json_node) || json_node->valueint < 0 ||
+        json_node->valuedouble != (double) json_node->valueint)
+    {
+        return false;
+    }
+
+    *dest = (uint64_t) json_node->valueint;
+    return true;
+}
+
+/* Add an unsigned 64-bit integer to a JSON object. cJSON keeps exact integers in
+ * a signed int64_t, so 0..INT64_MAX round-trips as a real JSON number; larger
+ * values are stored as a lossless decimal string. */
+static inline bool jsonAddUint64ToObject(cJSON *json_obj, const char *key, uint64_t value)
+{
+    cJSON *item = NULL;
+
+    if (value <= (uint64_t) INT64_MAX)
+    {
+        item = cJSON_CreateNumber((double) (int64_t) value);
+        if (item != NULL)
+        {
+            item->valueint    = (int64_t) value;
+            item->valuedouble = (double) item->valueint;
+        }
+    }
+    else
+    {
+        char number_buf[32];
+        snprintf(number_buf, sizeof(number_buf), "%" PRIu64, value);
+        item = cJSON_CreateString(number_buf);
+    }
+
+    if (item == NULL)
+    {
+        return false;
+    }
+    if (! cJSON_AddItemToObject(json_obj, key, item))
+    {
+        cJSON_Delete(item);
+        return false;
+    }
+
+    return true;
+}
+
 static inline bool checkJsonIsObjectAndHasChild(const cJSON *json_obj)
 {
     return cJSON_IsObject(json_obj) && json_obj->child != NULL;
@@ -40,7 +129,7 @@ static inline bool getIntFromJsonObject(int *dest, const cJSON *json_obj, const 
     const cJSON *jnumber = cJSON_GetObjectItemCaseSensitive(json_obj, key);
     if (cJSON_IsNumber(jnumber))
     {
-        *dest = jnumber->valueint;
+        *dest = (int) jnumber->valueint;
         return true;
     }
     return false;
@@ -52,7 +141,7 @@ static inline bool getIntFromJsonObjectOrDefault(int *dest, const cJSON *json_ob
     const cJSON *jnumber = cJSON_GetObjectItemCaseSensitive(json_obj, key);
     if (cJSON_IsNumber(jnumber))
     {
-        *dest = jnumber->valueint;
+        *dest = (int) jnumber->valueint;
         return true;
     }
     *dest = def;
@@ -140,7 +229,7 @@ static inline bool getPositiveIntFromJsonObjectOrBoolDefault(int *dest, const cJ
 
     if (cJSON_IsNumber(jvalue) && jvalue->valueint > 0 && jvalue->valuedouble == (double) jvalue->valueint)
     {
-        *dest = jvalue->valueint;
+        *dest = (int) jvalue->valueint;
         return true;
     }
 
@@ -259,7 +348,7 @@ static inline dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON
     else if (cJSON_IsNumber(jstr))
     {
         result.status  = kDvsConstant;
-        result.integer = jstr->valueint;
+        result.integer = (uint32_t) jstr->valueint;
     }
     return result;
 }

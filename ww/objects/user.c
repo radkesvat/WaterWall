@@ -4,7 +4,7 @@
 
 #include "objects/user.h"
 
-static const uint64_t kUserJsonSafeIntegerMax = 9007199254740991ULL;
+#include "utils/json_helpers.h"
 
 static bool userStringIsEmpty(const char *value)
 {
@@ -214,7 +214,7 @@ static const cJSON *userJsonGetItem(const cJSON *json_obj, const char *key)
     return cJSON_GetObjectItemCaseSensitive(json_obj, key);
 }
 
-static const cJSON *userJsonGetItem2(const cJSON *json_obj, const char *primary, const char *fallback)
+static const cJSON *userJsonGetItemAliased(const cJSON *json_obj, const char *primary, const char *fallback)
 {
     const cJSON *item = userJsonGetItem(json_obj, primary);
     if (item != NULL)
@@ -224,10 +224,10 @@ static const cJSON *userJsonGetItem2(const cJSON *json_obj, const char *primary,
     return userJsonGetItem(json_obj, fallback);
 }
 
-static bool userJsonGetRequiredString2(const cJSON *json_obj, const char *primary, const char *fallback,
-                                       const char **value)
+static bool userJsonGetRequiredStringAliased(const cJSON *json_obj, const char *primary, const char *fallback,
+                                             const char **value)
 {
-    const cJSON *item = userJsonGetItem2(json_obj, primary, fallback);
+    const cJSON *item = userJsonGetItemAliased(json_obj, primary, fallback);
     if (UNLIKELY(! cJSON_IsString(item) || userStringIsEmpty(item->valuestring)))
     {
         return false;
@@ -254,9 +254,10 @@ static bool userJsonReadOptionalString(const cJSON *json_obj, const char *key, c
     return true;
 }
 
-static bool userJsonReadOptionalBool2(const cJSON *json_obj, const char *primary, const char *fallback, bool *value)
+static bool userJsonReadOptionalBoolAliased(const cJSON *json_obj, const char *primary, const char *fallback,
+                                            bool *value)
 {
-    const cJSON *item = userJsonGetItem2(json_obj, primary, fallback);
+    const cJSON *item = userJsonGetItemAliased(json_obj, primary, fallback);
     if (item == NULL || cJSON_IsNull(item))
     {
         return true;
@@ -274,87 +275,24 @@ static bool userJsonReadOptionalBool2(const cJSON *json_obj, const char *primary
     return true;
 }
 
-static bool userParseUint64String(const char *value, uint64_t *out)
-{
-    char *end = NULL;
-
-    if (UNLIKELY(userStringIsEmpty(value)))
-    {
-        return false;
-    }
-    if (UNLIKELY(value[0] == '-'))
-    {
-        return false;
-    }
-
-    errno                           = 0;
-    unsigned long long       parsed = strtoull(value, &end, 10);
-    const unsigned long long m      = UINT64_MAX;
-
-    if (UNLIKELY(errno == ERANGE || parsed > m))
-    {
-        return false;
-    }
-
-    while (end != NULL && *end != '\0')
-    {
-        if (UNLIKELY(! isspace((unsigned char) *end)))
-        {
-            return false;
-        }
-        ++end;
-    }
-
-    *out = (uint64_t) parsed;
-    return true;
-}
-
 static bool userJsonReadOptionalUint64(const cJSON *json_obj, const char *key, uint64_t *value)
 {
     const cJSON *item = userJsonGetItem(json_obj, key);
-    if (item == NULL || cJSON_IsNull(item))
+
+    /* Absent, null, or an empty-string placeholder all mean "keep the current value". */
+    if (item == NULL || cJSON_IsNull(item) || (cJSON_IsString(item) && userStringIsEmpty(item->valuestring)))
     {
         return true;
     }
-    if (cJSON_IsString(item))
-    {
-        if (UNLIKELY(userStringIsEmpty(item->valuestring)))
-        {
-            return true;
-        }
-        return userParseUint64String(item->valuestring, value);
-    }
-    if (cJSON_IsNumber(item))
-    {
-        const double number = item->valuedouble;
 
-        if (UNLIKELY(! (number >= 0.0) || number > (double) kUserJsonSafeIntegerMax))
-        {
-            return false;
-        }
-
-        const uint64_t parsed = (uint64_t) number;
-        if (UNLIKELY((double) parsed != number))
-        {
-            return false;
-        }
-
-        *value = parsed;
-        return true;
-    }
-
-    return false;
+    return getUint64FromJson(value, item);
 }
 
-static bool userJsonReadOptionalUint642(const cJSON *json_obj, const char *primary, const char *fallback,
-                                        uint64_t *value)
+static bool userJsonReadOptionalUint64Aliased(const cJSON *json_obj, const char *primary, const char *alias,
+                                              uint64_t *value)
 {
-    const cJSON *item = userJsonGetItem(json_obj, primary);
-    if (item != NULL)
-    {
-        return userJsonReadOptionalUint64(json_obj, primary, value);
-    }
-    return userJsonReadOptionalUint64(json_obj, fallback, value);
+    const char *key = userJsonGetItem(json_obj, primary) != NULL ? primary : alias;
+    return userJsonReadOptionalUint64(json_obj, key, value);
 }
 
 static bool userJsonReadOptionalInt(const cJSON *json_obj, const char *key, int *value)
@@ -386,8 +324,8 @@ static bool userJsonReadUd(const cJSON *json_obj, user_ud_t *value)
         return false;
     }
 
-    return userJsonReadOptionalUint642(json_obj, "u", "up", &value->u) &&
-           userJsonReadOptionalUint642(json_obj, "d", "down", &value->d);
+    return userJsonReadOptionalUint64Aliased(json_obj, "u", "up", &value->u) &&
+           userJsonReadOptionalUint64Aliased(json_obj, "d", "down", &value->d);
 }
 
 static bool userJsonReadLimit(const cJSON *json_obj, user_limit_t *limit)
@@ -409,8 +347,8 @@ static bool userJsonReadLimit(const cJSON *json_obj, user_limit_t *limit)
         (! cJSON_IsString(traffic) || ! userStringIsEmpty(traffic->valuestring)))
     {
         if (UNLIKELY(! cJSON_IsObject(traffic) ||
-                     ! userJsonReadOptionalUint642(traffic, "u", "up", &limit->traffic.u) ||
-                     ! userJsonReadOptionalUint642(traffic, "d", "down", &limit->traffic.d) ||
+                     ! userJsonReadOptionalUint64Aliased(traffic, "u", "up", &limit->traffic.u) ||
+                     ! userJsonReadOptionalUint64Aliased(traffic, "d", "down", &limit->traffic.d) ||
                      ! userJsonReadOptionalUint64(traffic, "total", &limit->traffic.total)))
         {
             return false;
@@ -422,10 +360,10 @@ static bool userJsonReadLimit(const cJSON *json_obj, user_limit_t *limit)
         return false;
     }
 
-    return userJsonReadOptionalUint642(json_obj, "ip", "ips", &limit->ips) &&
+    return userJsonReadOptionalUint64Aliased(json_obj, "ip", "ips", &limit->ips) &&
            userJsonReadOptionalUint64(json_obj, "devices", &limit->devices) &&
-           userJsonReadOptionalUint642(json_obj, "cons-in", "connections-in", &limit->cons_in) &&
-           userJsonReadOptionalUint642(json_obj, "cons-out", "connections-out", &limit->cons_out);
+           userJsonReadOptionalUint64Aliased(json_obj, "cons-in", "connections-in", &limit->cons_in) &&
+           userJsonReadOptionalUint64Aliased(json_obj, "cons-out", "connections-out", &limit->cons_out);
 }
 
 static bool userJsonReadTimeInfo(const cJSON *json_obj, user_time_info_t *timeinfo)
@@ -440,11 +378,11 @@ static bool userJsonReadTimeInfo(const cJSON *json_obj, user_time_info_t *timein
         return false;
     }
 
-    return userJsonReadOptionalUint642(json_obj, "created-at-ms", "created_at_ms", &timeinfo->created_at_ms) &&
-           userJsonReadOptionalUint642(
+    return userJsonReadOptionalUint64Aliased(json_obj, "created-at-ms", "created_at_ms", &timeinfo->created_at_ms) &&
+           userJsonReadOptionalUint64Aliased(
                json_obj, "first-usage-at-ms", "first_usage_at_ms", &timeinfo->first_usage_at_ms) &&
-           userJsonReadOptionalUint642(json_obj, "expire-at-ms", "expires-at-ms", &timeinfo->expire_at_ms) &&
-           userJsonReadOptionalUint642(json_obj,
+           userJsonReadOptionalUint64Aliased(json_obj, "expire-at-ms", "expires-at-ms", &timeinfo->expire_at_ms) &&
+           userJsonReadOptionalUint64Aliased(json_obj,
                                        "expire-after-first-usage-ms",
                                        "expire-after-first-use-ms",
                                        &timeinfo->expire_after_first_usage_ms);
@@ -465,24 +403,11 @@ static bool userJsonReadStats(const cJSON *json_obj, user_stat_t *stats)
         return false;
     }
 
-    return userJsonReadOptionalUint642(json_obj, "ip", "ips", &stats->ips) &&
+    return userJsonReadOptionalUint64Aliased(json_obj, "ip", "ips", &stats->ips) &&
            userJsonReadOptionalUint64(json_obj, "devices", &stats->devices) &&
-           userJsonReadOptionalUint642(json_obj, "cons-in", "connections-in", &stats->cons_in) &&
-           userJsonReadOptionalUint642(json_obj, "cons-out", "connections-out", &stats->cons_out) &&
+           userJsonReadOptionalUint64Aliased(json_obj, "cons-in", "connections-in", &stats->cons_in) &&
+           userJsonReadOptionalUint64Aliased(json_obj, "cons-out", "connections-out", &stats->cons_out) &&
            userJsonReadUd(speed, &stats->speed) && userJsonReadUd(traffic, &stats->traffic);
-}
-
-static bool userJsonAddUint64(cJSON *json_obj, const char *key, uint64_t value)
-{
-    char number_buf[32];
-
-    if (value <= kUserJsonSafeIntegerMax)
-    {
-        return cJSON_AddNumberToObject(json_obj, key, (double) value) != NULL;
-    }
-
-    snprintf(number_buf, sizeof(number_buf), "%" PRIu64, value);
-    return cJSON_AddStringToObject(json_obj, key, number_buf) != NULL;
 }
 
 static bool userJsonAddStringIfNotEmpty(cJSON *json_obj, const char *key, const char *value)
@@ -510,8 +435,8 @@ static bool userJsonAddUdIfNotZero(cJSON *json_obj, const char *key, user_ud_t v
         return false;
     }
 
-    if (UNLIKELY((value.u != 0 && ! userJsonAddUint64(ud_json, "up", value.u)) ||
-                 (value.d != 0 && ! userJsonAddUint64(ud_json, "down", value.d))))
+    if (UNLIKELY((value.u != 0 && ! jsonAddUint64ToObject(ud_json, "up", value.u)) ||
+                 (value.d != 0 && ! jsonAddUint64ToObject(ud_json, "down", value.d))))
     {
         cJSON_Delete(ud_json);
         return false;
@@ -552,9 +477,10 @@ static bool userJsonAddLimitIfNotZero(cJSON *root, const user_limit_t *limit)
             return false;
         }
 
-        if (UNLIKELY((limit->traffic.u != 0 && ! userJsonAddUint64(traffic_json, "up", limit->traffic.u)) ||
-                     (limit->traffic.d != 0 && ! userJsonAddUint64(traffic_json, "down", limit->traffic.d)) ||
-                     (limit->traffic.total != 0 && ! userJsonAddUint64(traffic_json, "total", limit->traffic.total))))
+        if (UNLIKELY((limit->traffic.u != 0 && ! jsonAddUint64ToObject(traffic_json, "up", limit->traffic.u)) ||
+                     (limit->traffic.d != 0 && ! jsonAddUint64ToObject(traffic_json, "down", limit->traffic.d)) ||
+                     (limit->traffic.total != 0 &&
+                      ! jsonAddUint64ToObject(traffic_json, "total", limit->traffic.total))))
         {
             cJSON_Delete(traffic_json);
             cJSON_Delete(limit_json);
@@ -569,10 +495,10 @@ static bool userJsonAddLimitIfNotZero(cJSON *root, const user_limit_t *limit)
     }
 
     if (UNLIKELY(! userJsonAddUdIfNotZero(limit_json, "bandwidth", limit->bandwidth) ||
-                 (limit->ips != 0 && ! userJsonAddUint64(limit_json, "ips", limit->ips)) ||
-                 (limit->devices != 0 && ! userJsonAddUint64(limit_json, "devices", limit->devices)) ||
-                 (limit->cons_in != 0 && ! userJsonAddUint64(limit_json, "connections-in", limit->cons_in)) ||
-                 (limit->cons_out != 0 && ! userJsonAddUint64(limit_json, "connections-out", limit->cons_out))))
+                 (limit->ips != 0 && ! jsonAddUint64ToObject(limit_json, "ips", limit->ips)) ||
+                 (limit->devices != 0 && ! jsonAddUint64ToObject(limit_json, "devices", limit->devices)) ||
+                 (limit->cons_in != 0 && ! jsonAddUint64ToObject(limit_json, "connections-in", limit->cons_in)) ||
+                 (limit->cons_out != 0 && ! jsonAddUint64ToObject(limit_json, "connections-out", limit->cons_out))))
     {
         cJSON_Delete(limit_json);
         return false;
@@ -595,12 +521,14 @@ static bool userJsonAddTimeInfo(cJSON *root, const user_time_info_t *timeinfo)
     }
 
     if (UNLIKELY(
-            (timeinfo->created_at_ms != 0 && ! userJsonAddUint64(time_json, "created-at-ms", timeinfo->created_at_ms)) ||
+            (timeinfo->created_at_ms != 0 &&
+             ! jsonAddUint64ToObject(time_json, "created-at-ms", timeinfo->created_at_ms)) ||
             (timeinfo->first_usage_at_ms != 0 &&
-             ! userJsonAddUint64(time_json, "first-usage-at-ms", timeinfo->first_usage_at_ms)) ||
-            (timeinfo->expire_at_ms != 0 && ! userJsonAddUint64(time_json, "expire-at-ms", timeinfo->expire_at_ms)) ||
+             ! jsonAddUint64ToObject(time_json, "first-usage-at-ms", timeinfo->first_usage_at_ms)) ||
+            (timeinfo->expire_at_ms != 0 &&
+             ! jsonAddUint64ToObject(time_json, "expire-at-ms", timeinfo->expire_at_ms)) ||
             (timeinfo->expire_after_first_usage_ms != 0 &&
-             ! userJsonAddUint64(time_json, "expire-after-first-usage-ms", timeinfo->expire_after_first_usage_ms))))
+             ! jsonAddUint64ToObject(time_json, "expire-after-first-usage-ms", timeinfo->expire_after_first_usage_ms))))
     {
         cJSON_Delete(time_json);
         return false;
@@ -636,10 +564,10 @@ static bool userJsonAddStatsIfNotZero(cJSON *root, const user_stat_t *stats)
         return false;
     }
 
-    if (UNLIKELY((stats->ips != 0 && ! userJsonAddUint64(stats_json, "ips", stats->ips)) ||
-                 (stats->devices != 0 && ! userJsonAddUint64(stats_json, "devices", stats->devices)) ||
-                 (stats->cons_in != 0 && ! userJsonAddUint64(stats_json, "connections-in", stats->cons_in)) ||
-                 (stats->cons_out != 0 && ! userJsonAddUint64(stats_json, "connections-out", stats->cons_out)) ||
+    if (UNLIKELY((stats->ips != 0 && ! jsonAddUint64ToObject(stats_json, "ips", stats->ips)) ||
+                 (stats->devices != 0 && ! jsonAddUint64ToObject(stats_json, "devices", stats->devices)) ||
+                 (stats->cons_in != 0 && ! jsonAddUint64ToObject(stats_json, "connections-in", stats->cons_in)) ||
+                 (stats->cons_out != 0 && ! jsonAddUint64ToObject(stats_json, "connections-out", stats->cons_out)) ||
                  ! userJsonAddUdIfNotZero(stats_json, "traffic", stats->traffic)))
     {
         cJSON_Delete(stats_json);
@@ -847,7 +775,7 @@ bool userCreateFromJson(User *user, const cJSON *user_json)
     {
         return false;
     }
-    if (UNLIKELY(! userJsonGetRequiredString2(user_json, "password", "pass", &password)))
+    if (UNLIKELY(! userJsonGetRequiredStringAliased(user_json, "password", "pass", &password)))
     {
         return false;
     }
@@ -862,8 +790,8 @@ bool userCreateFromJson(User *user, const cJSON *user_json)
                  (value != NULL && ! userReplaceString(&user->email, value)) ||
                  ! userJsonReadOptionalString(user_json, "notes", &value) ||
                  (value != NULL && ! userReplaceString(&user->notes, value)) ||
-                 ! userJsonReadOptionalUint642(user_json, "gid", "group-id", &user->gid) ||
-                 ! userJsonReadOptionalBool2(user_json, "enabled", "enable", &user->enabled) ||
+                 ! userJsonReadOptionalUint64Aliased(user_json, "gid", "group-id", &user->gid) ||
+                 ! userJsonReadOptionalBoolAliased(user_json, "enabled", "enable", &user->enabled) ||
                  ! userJsonReadOptionalInt(user_json, "record-stat-interval-ms", &user->record_stat_interval_ms)))
     {
         userDestroy(user);
@@ -881,15 +809,15 @@ bool userCreateFromJson(User *user, const cJSON *user_json)
         return false;
     }
 
-    if (UNLIKELY(! userJsonReadOptionalUint642(
+    if (UNLIKELY(! userJsonReadOptionalUint64Aliased(
                      user_json, "created-at-ms", "created_at_ms", &user->timeinfo.created_at_ms) ||
-                 ! userJsonReadOptionalUint642(
+                 ! userJsonReadOptionalUint64Aliased(
                      user_json, "first-usage-at-ms", "first_usage_at_ms", &user->timeinfo.first_usage_at_ms) ||
-                 ! userJsonReadOptionalUint642(user_json, "expire-at-ms", "expires-at-ms", &user->timeinfo.expire_at_ms) ||
-                 ! userJsonReadOptionalUint642(user_json,
-                                               "expire-after-first-usage-ms",
-                                               "expire-after-first-use-ms",
-                                               &user->timeinfo.expire_after_first_usage_ms)))
+                 ! userJsonReadOptionalUint64Aliased(
+                     user_json, "expire-at-ms", "expires-at-ms", &user->timeinfo.expire_at_ms) ||
+                 ! userJsonReadOptionalUint64Aliased(
+                     user_json, "expire-after-first-usage-ms", "expire-after-first-use-ms",
+                     &user->timeinfo.expire_after_first_usage_ms)))
     {
         userDestroy(user);
         return false;
@@ -923,10 +851,10 @@ cJSON *userToJson(User *user)
                  ! cJSON_AddStringToObject(json, "password", user->password) ||
                  ! userJsonAddStringIfNotEmpty(json, "email", user->email) ||
                  ! userJsonAddStringIfNotEmpty(json, "notes", user->notes) ||
-                 (user->gid != 0 && ! userJsonAddUint64(json, "gid", user->gid)) ||
+                 (user->gid != 0 && ! jsonAddUint64ToObject(json, "gid", user->gid)) ||
                  (! user->enabled && cJSON_AddFalseToObject(json, "enabled") == NULL) ||
                  (user->record_stat_interval_ms != USER_DEFAULT_RECORD_STAT_INTERVAL_MS &&
-                  ! userJsonAddUint64(json, "record-stat-interval-ms", (uint64_t) user->record_stat_interval_ms)) ||
+                  ! jsonAddUint64ToObject(json, "record-stat-interval-ms", (uint64_t) user->record_stat_interval_ms)) ||
                  ! userJsonAddTimeInfo(json, &user->timeinfo) || ! userJsonAddLimitIfNotZero(json, &user->limit) ||
                  ! userJsonAddStatsIfNotZero(json, &stats)))
     {

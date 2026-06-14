@@ -1,6 +1,7 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
+#include "utils/json_helpers.h"
 
 static void authenticationclientWriteNetworkUI32(uint8_t *dest, uint32_t value)
 {
@@ -645,20 +646,6 @@ bool authenticationclientSendGetAllUsers(tunnel_t *t)
     return authenticationclientSendRequest(t, kAuthenticationClientRequestTypeGetAllUsers, NULL, 0);
 }
 
-static bool authenticationclientJsonAddUint64(cJSON *json_obj, const char *key, uint64_t value)
-{
-    static const uint64_t json_safe_integer_max = 9007199254740991ULL;
-    char                  number_buf[32];
-
-    if (value <= json_safe_integer_max)
-    {
-        return cJSON_AddNumberToObject(json_obj, key, (double) value) != NULL;
-    }
-
-    snprintf(number_buf, sizeof(number_buf), "%" PRIu64, value);
-    return cJSON_AddStringToObject(json_obj, key, number_buf) != NULL;
-}
-
 static bool authenticationclientAppendStatsHint(cJSON *array, user_t *user, const users_t *baseline_users)
 {
     if (user == NULL || user->password == NULL || user->password[0] == '\0' || ! user->sha256_pass_valid)
@@ -706,7 +693,7 @@ static bool authenticationclientAppendStatsHint(cJSON *array, user_t *user, cons
     }
     if (upload_delta > 0)
     {
-        if (UNLIKELY(! authenticationclientJsonAddUint64(hint_traffic, "up", stats.traffic.u)))
+        if (UNLIKELY(! jsonAddUint64ToObject(hint_traffic, "up", stats.traffic.u)))
         {
             cJSON_Delete(hint);
             cJSON_Delete(hint_stats);
@@ -716,7 +703,7 @@ static bool authenticationclientAppendStatsHint(cJSON *array, user_t *user, cons
     }
     if (download_delta > 0)
     {
-        if (UNLIKELY(! authenticationclientJsonAddUint64(hint_traffic, "down", stats.traffic.d)))
+        if (UNLIKELY(! jsonAddUint64ToObject(hint_traffic, "down", stats.traffic.d)))
         {
             cJSON_Delete(hint);
             cJSON_Delete(hint_stats);
