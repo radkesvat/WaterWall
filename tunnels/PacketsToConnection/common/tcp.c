@@ -61,12 +61,16 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
             pbuf_free(p);
         }
 
+        err_t ret = ERR_OK;
         ptcDetachTcpPcbLocked(ls);
         if (tpcb != NULL)
         {
             if (tcp_close(tpcb) != ERR_OK)
             {
                 tcp_abort(tpcb);
+                // lwIP requires the recv callback to return ERR_ABRT after tcp_abort(),
+                // otherwise tcp_input() keeps dereferencing the now-freed pcb.
+                ret = ERR_ABRT;
             }
         }
 
@@ -74,7 +78,7 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
         {
             lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel);
         }
-        return ERR_OK;
+        return ret;
     }
 
     wid_t owner_wid = lineGetWID(ls->line);
@@ -83,17 +87,21 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
         LOGW("PacketsToConnection: tcp recv callback arrived on worker %u for line owned by worker %u; closing flow",
              (unsigned int) getWID(), (unsigned int) owner_wid);
         pbuf_free(p);
+        err_t ret = ERR_OK;
         ptcDetachTcpPcbLocked(ls);
         if (tcp_close(tpcb) != ERR_OK)
         {
             tcp_abort(tpcb);
+            // lwIP requires the recv callback to return ERR_ABRT after tcp_abort(),
+            // otherwise tcp_input() keeps dereferencing the now-freed pcb.
+            ret = ERR_ABRT;
         }
 
         if (lineIsAlive(ls->line))
         {
             lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel);
         }
-        return ERR_OK;
+        return ret;
     }
 
     sbuf_t *buf = ptcAllocateTcpReadBuffer(ls->line, p->tot_len);

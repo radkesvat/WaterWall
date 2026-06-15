@@ -132,32 +132,16 @@ interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t pack
     discard dest_ip;
 
     ptc_tstate_t              *state = tunnelGetState(t);
-    interface_route_context_t *prev  = &state->route_context4;
     interface_route_context_t *cur   = state->route_context4.next;
 
     while (cur != NULL)
     {
         if (cur->packet_wid == packet_wid)
         {
-            break;
+            return cur;
         }
 
-        prev = cur;
-        cur  = cur->next;
-    }
-
-    if (cur != NULL)
-    {
-        cur->last_tick = getTickMS();
-
-        if (state->route_context4.next != cur)
-        {
-            prev->next                 = cur->next;
-            cur->next                  = state->route_context4.next;
-            state->route_context4.next = cur;
-        }
-
-        return cur;
+        cur = cur->next;
     }
 
     cur             = memoryAllocateZero(sizeof(interface_route_context_t));
@@ -183,7 +167,6 @@ interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t pack
 
     netif_set_up(&cur->netif);
     netif_set_link_up(&cur->netif);
-    cur->last_tick             = getTickMS();
     cur->next                  = state->route_context4.next;
     state->route_context4.next = cur;
 
@@ -438,6 +421,9 @@ void ptcFlushWriteQueue(ptc_lstate_t *ls)
 
 err_t ptcTcpSendCompleteCallback(void *arg, struct tcp_pcb *tpcb, u16_t len)
 {
+    // No owner-worker guard is needed here: tcp_sent only fires from ACK processing in
+    // tcp_input(), which for this pcb always runs on the owning packet worker. So the
+    // owner-pool ops below (lineReuseBuffer / lineScheduleTask) never run cross-worker.
     ptc_lstate_t *ls = arg;
 
     if (ls == NULL || ls->kind != kPtcLineKindTcp || ls->tcp_pcb != tpcb)

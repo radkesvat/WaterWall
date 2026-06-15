@@ -117,8 +117,13 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
         if (! ptc_udp_flow_map_t_insert(&route_ctx->udp_flows, key, line).inserted)
         {
             LOGW("PacketsToConnection: duplicate UDP flow detected while creating a line, dropping datagram");
-            ptcLinestateDestroy(ls);
-            lineDestroy(line);
+            // We are inside the lwIP udp recv callback and still hold LOCK_TCPIP_CORE.
+            // Destroying the line inline is unsafe here because ptcLinestateDestroy()
+            // re-enters LOCK_TCPIP_CORE (non-recursive mutex) and would deadlock, and the
+            // line still owns its lwIP refs. Defer the full teardown to the owner worker;
+            // ptcCloseLineFromNetwork() detaches the lwIP state and destroys the line state
+            // outside the core lock. next_init was never sent, so no Finish is propagated.
+            lineScheduleTask(line, ptcCloseLineTask, t);
             pbuf_free(p);
             return;
         }

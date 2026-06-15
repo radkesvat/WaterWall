@@ -108,7 +108,6 @@ struct interface_route_context_s
     struct tcp_pcb            *tcp_pcb;
     struct udp_pcb            *udp_pcb;
     ptc_udp_flow_map_t         udp_flows;
-    uint32_t                   last_tick;
     wid_t                      packet_wid;
 };
 
