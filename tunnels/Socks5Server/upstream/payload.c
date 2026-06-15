@@ -46,7 +46,9 @@ void socks5serverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
 
     case kSocks5ServerLineKindUdpRemote:
-        tunnelNextUpStreamPayload(t, l, buf);
+        //In the current intended flow, that branch should not normally be hit.
+        LOGE("Socks5Server: kSocks5ServerLineKindUdpRemote is not expected to receive upstream payload; dropping");
+        lineReuseBuffer(l, buf);
         return;
 
     case kSocks5ServerLineKindNone:
