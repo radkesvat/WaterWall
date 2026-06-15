@@ -1,5 +1,12 @@
 #include "user_handle.h"
 
+user_handle_t userHandleEmpty(void)
+{
+    user_handle_t handle;
+    userHandleClear(&handle);
+    return handle;
+}
+
 void userHandleClear(user_handle_t *handle)
 {
     if (handle == NULL)

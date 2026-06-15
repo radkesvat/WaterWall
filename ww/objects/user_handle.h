@@ -18,6 +18,7 @@ typedef struct user_handle_s
     uint64_t generation;
 } user_handle_t;
 
-void userHandleClear(user_handle_t *handle);
-void userHandleSet(user_handle_t *handle, const uint8_t sha256[SHA256_DIGEST_SIZE], uint64_t generation);
-bool userHandleIsValid(const user_handle_t *handle);
+user_handle_t userHandleEmpty(void);
+void          userHandleClear(user_handle_t *handle);
+void          userHandleSet(user_handle_t *handle, const uint8_t sha256[SHA256_DIGEST_SIZE], uint64_t generation);
+bool          userHandleIsValid(const user_handle_t *handle);
