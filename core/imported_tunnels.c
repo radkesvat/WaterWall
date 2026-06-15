@@ -112,8 +112,8 @@
 #include "UdpListener/interface.h"
 #endif
 
-#ifdef INCLUDE_LISTENER
-#include "tunnels/adapters/listener/listener.h"
+#ifdef INCLUDE_TCP_UDP_LISTENER
+#include "TcpUdpListener/interface.h"
 #endif
 
 #ifdef INCLUDE_OPENSSL_SERVER
@@ -140,16 +140,16 @@
 #include "tunnels/server/trojan/socks/trojan_socks_server.h"
 #endif
 
-#ifdef INCLUDE_CONNECTOR
-#include "tunnels/adapters/connector/connector.h"
-#endif
-
 #ifdef INCLUDE_TCPCONNECTOR
 #include "TcpConnector/interface.h"
 #endif
 
 #ifdef INCLUDE_UDP_CONNECTOR
 #include "UdpConnector/interface.h"
+#endif
+
+#ifdef INCLUDE_TCP_UDP_CONNECTOR
+#include "TcpUdpConnector/interface.h"
 #endif
 
 #ifdef INCLUDE_UDP_OVER_TCP_CLIENT
@@ -411,8 +411,8 @@ void loadImportedTunnelsIntoCore(void)
     USING(UdpListener);
 #endif
 
-#ifdef INCLUDE_LISTENER
-    USING(Listener);
+#ifdef INCLUDE_TCP_UDP_LISTENER
+    USING(TcpUdpListener);
 #endif
 
 #ifdef INCLUDE_OPENSSL_SERVER
@@ -439,16 +439,16 @@ void loadImportedTunnelsIntoCore(void)
     USING(TrojanSocksServer);
 #endif
 
-#ifdef INCLUDE_CONNECTOR
-    USING(Connector);
-#endif
-
 #ifdef INCLUDE_TCPCONNECTOR
     USING(TcpConnector);
 #endif
 
 #ifdef INCLUDE_UDP_CONNECTOR
     USING(UdpConnector);
+#endif
+
+#ifdef INCLUDE_TCP_UDP_CONNECTOR
+    USING(TcpUdpConnector);
 #endif
 
 #ifdef INCLUDE_UDP_OVER_TCP_CLIENT
