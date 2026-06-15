@@ -1,0 +1,76 @@
+{
+  "name": "socks5-noauth-tcp-loopback",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "socks5-client"
+    },
+    {
+      "name": "socks5-client",
+      "type": "Socks5Client",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41204,
+        "protocol": "tcp"
+      },
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41203,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41203,
+        "nodelay": true
+      },
+      "next": "socks5-server"
+    },
+    {
+      "name": "socks5-server",
+      "type": "Socks5Server",
+      "settings": {
+        "no-auth": true,
+        "connect": true,
+        "udp": false
+      },
+      "next": "target-connector"
+    },
+    {
+      "name": "target-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "target-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41204,
+        "nodelay": true
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}

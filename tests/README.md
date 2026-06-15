@@ -94,6 +94,10 @@ Practical rule:
   Verifies that `SniffRouter` parses an HTTP/1.1 Host header, matches a wildcard domain from a multi-domain route, and
   forwards to that route's target while the top-level fallback `next` points at an invalid connector. The route enables
   both HTTP and TLS detection to exercise the combined detection setting while matching HTTP.
+- `socks5_noauth_tcp_loopback`
+  Verifies `Socks5Client` without credentials against `Socks5Server(no-auth=true)` across a real TCP proxy hop. The
+  SOCKS request target is a separate tester TCP listener, and `Socks5Server` reaches it through a `TcpConnector` using
+  `dest_context`, so the case covers method `0x00` negotiation and CONNECT target forwarding.
 - `udp_over_tcp_roundtrip`
   Verifies that `UdpOverTcpClient` and `UdpOverTcpServer` preserve end-to-end byte stream integrity through their
   length-prefixed framing.
