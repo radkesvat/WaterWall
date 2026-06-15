@@ -179,8 +179,6 @@ static bool realityserverSwitchToAuthorized(tunnel_t *t, line_t *l, realityserve
     }
 
     ls->mode = kRealityServerModeAuthorized;
-    lineAuthenticate(l);
-
     if (ls->destination_init_sent && ! ls->destination_up_finished)
     {
         ls->destination_up_finished            = true;
