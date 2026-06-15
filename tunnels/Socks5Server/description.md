@@ -79,10 +79,15 @@ uses that node instance; it does not create an authentication client.
 ### `settings`
 
 - `auth-client-node-name` `(string)`
-  Required. Name of an existing `AuthenticationClient` node in the same config file.
+  Name of an existing `AuthenticationClient` node in the same config file. Required unless `no-auth` is explicitly `true`.
+
+- `no-auth` `(boolean)`
+  Enables SOCKS5 no-authentication mode when `auth-client-node-name` is not set.
+  Default: `false`
 
 However:
 
+- exactly one authentication mode must be selected: either `auth-client-node-name` or `no-auth: true`
 - at least one of `connect` or `udp` must be enabled
 - when `udp` is enabled, `ipv4` is required
 
@@ -123,20 +128,21 @@ When a TCP line reaches `Socks5Server`:
 
 - line state is initialized as a TCP control line
 - the tunnel waits for the SOCKS5 greeting
-- it requires SOCKS5 username/password authentication
-- it builds one authentication lookup key as `username:password`
-- it checks that combined string through the configured `AuthenticationClient` as the user's password
-- after successful authentication it waits for the SOCKS5 request
+- when `auth-client-node-name` is configured, it requires SOCKS5 username/password authentication
+- in username/password mode, it builds one authentication lookup key as `username:password`
+- in username/password mode, it checks that combined string through the configured `AuthenticationClient` as the user's password
+- when `no-auth` is explicitly `true`, it selects SOCKS5 no-authentication if the client offered it
+- after successful authentication or accepted no-auth negotiation, it waits for the SOCKS5 request
 
 The old local `username`, `password`, `users`, and `accounts` settings are no longer accepted.
 
-AuthenticationServer users for this tunnel should store the SOCKS credential pair in the user object's `password` field
-using that exact `username:password` form. The user object's `name` is not used for Socks5Server authentication and may be
-kept as operator metadata.
+In username/password mode, AuthenticationServer users for this tunnel should store the SOCKS credential pair in the user
+object's `password` field using that exact `username:password` form. The user object's `name` is not used for
+Socks5Server authentication and may be kept as operator metadata.
 
-The resulting `user_handle_t` is stored only in `Socks5Server` line state. It is not written into `line_t` or
-`routing_context_t`, so multiple protocol/authentication servers can coexist in one chain without sharing one global user
-slot.
+The resulting `user_handle_t` is stored only in `Socks5Server` line state. In no-auth mode this handle stays empty. It is
+not written into `line_t` or `routing_context_t`, so multiple protocol/authentication servers can coexist in one chain
+without sharing one global user slot.
 
 For `CONNECT`:
 
@@ -160,13 +166,27 @@ This tunnel does not allow the UDP port to behave like an open proxy.
 Current checks:
 
 - the sender must match a registered UDP association
-- that association must belong to a live TCP control line
-- that TCP control line must still be authenticated
+- that association was created by an accepted TCP control line
+- the association registry entry must still be present
 
 When the TCP control line closes:
 
 - the UDP association is removed immediately
 - later UDP packets from that sender are rejected
+
+Associations are stored in a sharded registry in `socks5server_tstate_t`. The registry is shared by
+all workers for that Socks5Server tunnel instance. Each shard has its own mutex and map, so UDP
+datagrams can be accepted on any worker without touching the TCP control line from that worker.
+
+Registry entries store copied metadata only:
+
+- a generation token
+- the owner worker id for diagnostics
+- the authenticated `user_handle_t`, or an empty handle in no-auth mode
+
+They do not store a usable `line_t *`, and UDP lookup never calls `lineLock()` or `lineUnlock()` on
+the TCP control line. The generation token prevents an older closing control line from deleting a
+newer association that reused the same association key.
 
 ### UDP payload behavior
 
@@ -198,7 +218,8 @@ This is important for composability:
 
 The implementation follows normal Waterwall finish ordering:
 
-- local state is destroyed before propagating the real close
+- control-line teardown marks the line closing before final SOCKS5 bytes, then destroys local state
+  before propagating real `Finish` callbacks
 - UDP associations are unregistered before the control line is allowed to die
 - internal UDP remote lines detach from their client line before being finished
 - re-entrant callbacks are protected so the tunnel does not read line state after shutdown paths

@@ -16,27 +16,9 @@ void socks5serverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     if (ls->kind == kSocks5ServerLineKindControlTcp)
     {
-        lineLock(l);
-
-        bool send_connect_failure = ls->phase == kSocks5ServerPhaseConnectWaitEst && ! ls->connect_reply_sent;
-        socks5serverUnregisterUdpAssociation(ls);
-
-        if (send_connect_failure)
-        {
-            sbuf_t *reply = socks5serverCreateCommandReply(l, 0x01, NULL);
-            if (reply != NULL)
-            {
-                tunnelPrevDownStreamPayload(t, l, reply);
-            }
-        }
-
-        socks5serverLinestateDestroy(ls);
-
-        if (lineIsAlive(l))
-        {
-            tunnelPrevDownStreamFinish(t, l);
-        }
-        lineUnlock(l);
+        // next/upstream side finished us. The unified close sends a SOCKS5 failure reply (only if
+        // the request was still pending), closes prev, and safely handles the re-entrant write.
+        socks5serverCloseControlLineFromDownstream(t, l);
         return;
     }
 

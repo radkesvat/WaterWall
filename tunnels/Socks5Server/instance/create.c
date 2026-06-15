@@ -46,30 +46,18 @@ static bool rejectLegacyAuthSettings(const cJSON *settings)
     return true;
 }
 
-static bool parseAuthClientNode(socks5server_tstate_t *ts, node_t *node, const cJSON *settings)
+static bool parseAuthClientNode(socks5server_tstate_t *ts, node_t *node, const char *auth_client_node_name)
 {
-    char *auth_client_node_name = NULL;
-
-    if (! getStringFromJsonObject(&auth_client_node_name, settings, "auth-client-node-name") ||
-        auth_client_node_name[0] == '\0')
-    {
-        memoryFree(auth_client_node_name);
-        LOGF("JSON Error: Socks5Server->settings->auth-client-node-name (string field) is required");
-        return false;
-    }
-
     node_t *auth_client_node = nodemanagerGetConfigNodeByName(node->node_manager_config, auth_client_node_name);
     if (auth_client_node == NULL)
     {
         LOGF("Socks5Server: auth-client-node-name \"%s\" was not found", auth_client_node_name);
-        memoryFree(auth_client_node_name);
         return false;
     }
 
     if (auth_client_node == node)
     {
         LOGF("Socks5Server: auth-client-node-name must not point back to Socks5Server itself");
-        memoryFree(auth_client_node_name);
         return false;
     }
 
@@ -77,12 +65,55 @@ static bool parseAuthClientNode(socks5server_tstate_t *ts, node_t *node, const c
     {
         LOGF("Socks5Server: auth-client-node-name \"%s\" must point to an AuthenticationClient node",
              auth_client_node_name);
-        memoryFree(auth_client_node_name);
         return false;
     }
 
     ts->auth_client_node = auth_client_node;
-    memoryFree(auth_client_node_name);
+    return true;
+}
+
+static bool parseAuthenticationMode(socks5server_tstate_t *ts, node_t *node, const cJSON *settings)
+{
+    const cJSON *auth_node_json = cJSON_GetObjectItemCaseSensitive(settings, "auth-client-node-name");
+    const cJSON *no_auth_json   = cJSON_GetObjectItemCaseSensitive(settings, "no-auth");
+    bool         no_auth        = false;
+
+    if (no_auth_json != NULL)
+    {
+        if (! cJSON_IsBool(no_auth_json))
+        {
+            LOGF("JSON Error: Socks5Server->settings->no-auth (boolean field) : expected true or false");
+            return false;
+        }
+        no_auth = cJSON_IsTrue(no_auth_json);
+    }
+
+    if (auth_node_json != NULL)
+    {
+        if (! cJSON_IsString(auth_node_json) || auth_node_json->valuestring == NULL ||
+            auth_node_json->valuestring[0] == '\0')
+        {
+            LOGF("JSON Error: Socks5Server->settings->auth-client-node-name (string field) must be a non-empty string");
+            return false;
+        }
+
+        if (no_auth)
+        {
+            LOGF("JSON Error: Socks5Server->settings cannot set both auth-client-node-name and no-auth=true");
+            return false;
+        }
+
+        ts->no_auth = false;
+        return parseAuthClientNode(ts, node, auth_node_json->valuestring);
+    }
+
+    if (! no_auth)
+    {
+        LOGF("JSON Error: Socks5Server->settings requires auth-client-node-name unless no-auth is explicitly true");
+        return false;
+    }
+
+    ts->no_auth = true;
     return true;
 }
 
@@ -146,11 +177,18 @@ tunnel_t *socks5serverTunnelCreate(node_t *node)
 
     ts->allow_connect = true;
     ts->allow_udp     = false;
+    ts->no_auth       = false;
+    for (uint32_t i = 0; i < kSocks5ServerAssocShardCount; ++i)
+    {
+        mutexInit(&ts->assoc_shards[i].mutex);
+        ts->assoc_shards[i].map = socks5server_assoc_map_t_with_capacity(kSocks5ServerAssocShardInitialCap);
+    }
+
     getBoolFromJsonObjectOrDefault(&ts->allow_connect, settings, "connect", true);
     getBoolFromJsonObjectOrDefault(&ts->allow_udp, settings, "udp", false);
     getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
 
-    if (! rejectLegacyAuthSettings(settings) || ! parseAuthClientNode(ts, node, settings) ||
+    if (! rejectLegacyAuthSettings(settings) || ! parseAuthenticationMode(ts, node, settings) ||
         ! parseUdpReplyAddress(ts, settings))
     {
         socks5serverTunnelstateDestroy(ts);
