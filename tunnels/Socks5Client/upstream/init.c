@@ -27,10 +27,19 @@ void socks5clientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     if (ts->protocol == kSocks5ClientProtocolUdp)
     {
-        if (! socks5clientStartUdpAssociation(t, l, ls))
+        bool line_alive = true;
+        if (! socks5clientStartUdpAssociation(t, l, ls, &line_alive))
         {
+            if (! line_alive)
+            {
+                return;
+            }
             socks5clientLinestateDestroy(ls);
             tunnelPrevDownStreamFinish(t, l);
+        }
+        if (! line_alive)
+        {
+            return;
         }
         return;
     }

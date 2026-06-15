@@ -557,19 +557,24 @@ static bool tryEstablishUdpApp(tunnel_t *t, line_t *app_l, socks5client_lstate_t
 }
 
 static bool startUdpRelayLine(tunnel_t *t, line_t *control_l, socks5client_lstate_t *control_ls,
-                              const address_context_t *relay_addr)
+                              const address_context_t *relay_addr, bool *control_alive_out)
 {
+    *control_alive_out = true;
+    lineLock(control_l);
+
     line_t *app_l = control_ls->app_line;
     if (app_l == NULL || ! lineIsAlive(app_l))
     {
+        *control_alive_out = lineIsAlive(control_l);
+        lineUnlock(control_l);
         return false;
     }
 
+    lineLock(app_l);
+
     socks5client_lstate_t *app_ls = lineGetState(app_l, t);
     line_t                *udp_l  = createInternalLine(t, app_l, kSocks5ClientLineKindUdpRelay);
-    socks5client_lstate_t *udp_ls = lineGetState(udp_l, t);
 
-    udp_ls->app_line = app_l;
     addresscontextAddrCopy(lineGetDestinationAddressContext(udp_l), relay_addr);
     addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(udp_l), IP_PROTO_UDP);
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(udp_l), IP_PROTO_UDP);
@@ -579,21 +584,38 @@ static bool startUdpRelayLine(tunnel_t *t, line_t *control_l, socks5client_lstat
 
     if (! withLineLocked(udp_l, tunnelNextUpStreamInit, t))
     {
-        app_ls->udp_line = NULL;
-        if (lineIsAlive(udp_l))
+        if (lineIsAlive(app_l))
         {
-            socks5clientLinestateDestroy(udp_ls);
-            lineDestroy(udp_l);
+            app_ls->udp_line = NULL;
         }
+        *control_alive_out = lineIsAlive(control_l);
+        lineUnlock(app_l);
+        lineUnlock(control_l);
         return false;
     }
 
-    discard control_l;
+    bool app_alive = lineIsAlive(app_l);
+    *control_alive_out = lineIsAlive(control_l);
+    if (! app_alive || ! *control_alive_out)
+    {
+        socks5clientCloseOwnedLine(t, udp_l);
+    }
+    lineUnlock(app_l);
+    lineUnlock(control_l);
+
+    if (! app_alive || ! *control_alive_out)
+    {
+        return false;
+    }
+
     return true;
 }
 
-bool socks5clientStartUdpAssociation(tunnel_t *t, line_t *l, socks5client_lstate_t *ls)
+bool socks5clientStartUdpAssociation(tunnel_t *t, line_t *l, socks5client_lstate_t *ls, bool *line_alive_out)
 {
+    *line_alive_out = true;
+    lineLock(l);
+
     line_t                *control_l  = createInternalLine(t, l, kSocks5ClientLineKindUdpControl);
     socks5client_lstate_t *control_ls = lineGetState(control_l, t);
 
@@ -604,14 +626,21 @@ bool socks5clientStartUdpAssociation(tunnel_t *t, line_t *l, socks5client_lstate
 
     if (! withLineLocked(control_l, tunnelNextUpStreamInit, t))
     {
-        ls->control_line = NULL;
-        if (lineIsAlive(control_l))
+        if (lineIsAlive(l))
         {
-            socks5clientLinestateDestroy(control_ls);
-            lineDestroy(control_l);
+            ls->control_line = NULL;
         }
+        *line_alive_out = lineIsAlive(l);
+        lineUnlock(l);
         return false;
     }
+
+    *line_alive_out = lineIsAlive(l);
+    if (! *line_alive_out)
+    {
+        socks5clientCloseOwnedLine(t, control_l);
+    }
+    lineUnlock(l);
 
     return true;
 }
@@ -698,7 +727,7 @@ void socks5clientOnUdpRelayEstablished(tunnel_t *t, line_t *l, socks5client_lsta
     discard tryEstablishUdpApp(t, app_l, app_ls);
 }
 
-static void closeOwnedLine(tunnel_t *t, line_t *owned_l)
+void socks5clientCloseOwnedLine(tunnel_t *t, line_t *owned_l)
 {
     if (owned_l == NULL || ! lineIsAlive(owned_l))
     {
@@ -725,8 +754,8 @@ void socks5clientCloseLineBidirectional(tunnel_t *t, line_t *l)
         ls->control_line = NULL;
         ls->udp_line     = NULL;
 
-        closeOwnedLine(t, udp_l);
-        closeOwnedLine(t, control_l);
+        socks5clientCloseOwnedLine(t, udp_l);
+        socks5clientCloseOwnedLine(t, control_l);
         socks5clientLinestateDestroy(ls);
         tunnelPrevDownStreamFinish(t, l);
         return;
@@ -764,8 +793,8 @@ void socks5clientCloseLineBidirectional(tunnel_t *t, line_t *l)
             lineDestroy(l);
         }
 
-        closeOwnedLine(t, udp_l);
-        closeOwnedLine(t, control_l);
+        socks5clientCloseOwnedLine(t, udp_l);
+        socks5clientCloseOwnedLine(t, control_l);
 
         if (app_l != NULL && lineIsAlive(app_l))
         {
@@ -926,9 +955,14 @@ bool socks5clientDrainHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate
                 addresscontextAddrCopy(&ls->relay_addr, &relay_addr);
                 ls->phase = kSocks5ClientPhaseEstablished;
 
-                if (! startUdpRelayLine(t, l, ls, &relay_addr))
+                bool control_alive = true;
+                if (! startUdpRelayLine(t, l, ls, &relay_addr, &control_alive))
                 {
                     addresscontextReset(&relay_addr);
+                    if (! control_alive)
+                    {
+                        return false;
+                    }
                     socks5clientCloseLineBidirectional(t, l);
                     return false;
                 }
