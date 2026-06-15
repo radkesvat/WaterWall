@@ -14,6 +14,7 @@ void socks5clientLinestateInitialize(socks5client_lstate_t *ls, tunnel_t *t, lin
 void socks5clientLinestateDestroy(socks5client_lstate_t *ls)
 {
     addresscontextReset(&ls->target_addr);
+    addresscontextReset(&ls->relay_addr);
     bufferstreamDestroy(&ls->in_stream);
     bufferqueueDestroy(&ls->pending_up);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(socks5client_lstate_t)));

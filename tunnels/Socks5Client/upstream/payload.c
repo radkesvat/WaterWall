@@ -6,6 +6,18 @@ void socks5clientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     socks5client_lstate_t *ls = lineGetState(l, t);
 
+    if (ls->kind == kSocks5ClientLineKindUdpApp)
+    {
+        discard socks5clientForwardUdpAppPayload(t, l, ls, buf);
+        return;
+    }
+
+    if (ls->kind == kSocks5ClientLineKindUdpControl || ls->kind == kSocks5ClientLineKindUdpRelay)
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
+
     if (ls->phase == kSocks5ClientPhaseEstablished)
     {
         tunnelNextUpStreamPayload(t, l, buf);

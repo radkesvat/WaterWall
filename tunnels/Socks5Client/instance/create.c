@@ -141,12 +141,12 @@ static bool parseProtocol(socks5client_tstate_t *ts, const cJSON *settings)
 
     if (stringCompare(protocol, "udp") == 0 || stringCompare(protocol, "udp-associate") == 0)
     {
-        LOGF("Socks5Client: UDP ASSOCIATE is not supported by this stream tunnel");
+        ts->protocol = kSocks5ClientProtocolUdp;
         memoryFree(protocol);
-        return false;
+        return true;
     }
 
-    LOGF("JSON Error: Socks5Client->settings->protocol supports only \"tcp\" right now");
+    LOGF("JSON Error: Socks5Client->settings->protocol supports only \"tcp\" or \"udp\"");
     memoryFree(protocol);
     return false;
 }

@@ -99,9 +99,147 @@ static int getCommandReplyLength(buffer_stream_t *stream)
     }
 }
 
+static bool writeAddress(uint8_t *ptr, const address_context_t *ctx, size_t *offset)
+{
+    if (addresscontextIsIpType(ctx))
+    {
+        if (addresscontextIsIpv4(ctx))
+        {
+            ptr[(*offset)++] = kSocks5AddrTypeIpv4;
+            memoryCopy(ptr + *offset, &ctx->ip_address.u_addr.ip4.addr, 4);
+            *offset += 4;
+        }
+        else if (addresscontextIsIpv6(ctx))
+        {
+            ptr[(*offset)++] = kSocks5AddrTypeIpv6;
+            memoryCopy(ptr + *offset, &ctx->ip_address.u_addr.ip6, 16);
+            *offset += 16;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    else if (addresscontextIsDomain(ctx))
+    {
+        ptr[(*offset)++] = kSocks5AddrTypeDomain;
+        ptr[(*offset)++] = ctx->domain_len;
+        memoryCopy(ptr + *offset, ctx->domain, ctx->domain_len);
+        *offset += ctx->domain_len;
+    }
+    else
+    {
+        return false;
+    }
+
+    uint16_t port_be = htobe16(ctx->port);
+    memoryCopy(ptr + *offset, &port_be, sizeof(port_be));
+    *offset += sizeof(port_be);
+    return true;
+}
+
+static int parseAddressBytes(const uint8_t *buf, size_t len, address_context_t *out, size_t *consumed)
+{
+    if (len < 1)
+    {
+        return 0;
+    }
+
+    uint8_t atyp = buf[0];
+    size_t  need = 0;
+
+    switch (atyp)
+    {
+    case kSocks5AddrTypeIpv4:
+        need = 1 + 4 + 2;
+        if (len < need)
+        {
+            return 0;
+        }
+
+        {
+            ip_addr_t ip = {0};
+            ip.type      = IPADDR_TYPE_V4;
+            memoryCopy(&ip.u_addr.ip4.addr, buf + 1, 4);
+            uint16_t port_be;
+            memoryCopy(&port_be, buf + 1 + 4, sizeof(port_be));
+            addresscontextSetIpPort(out, &ip, be16toh(port_be));
+        }
+        *consumed = need;
+        return 1;
+
+    case kSocks5AddrTypeIpv6:
+        need = 1 + 16 + 2;
+        if (len < need)
+        {
+            return 0;
+        }
+
+        {
+            ip_addr_t ip = {0};
+            ip.type      = IPADDR_TYPE_V6;
+            memoryCopy(&ip.u_addr.ip6, buf + 1, 16);
+            uint16_t port_be;
+            memoryCopy(&port_be, buf + 1 + 16, sizeof(port_be));
+            addresscontextSetIpPort(out, &ip, be16toh(port_be));
+        }
+        *consumed = need;
+        return 1;
+
+    case kSocks5AddrTypeDomain:
+        if (len < 2)
+        {
+            return 0;
+        }
+
+        need = 1 + 1 + buf[1] + 2;
+        if (len < need)
+        {
+            return 0;
+        }
+
+        {
+            uint16_t port_be;
+            memoryCopy(&port_be, buf + 2 + buf[1], sizeof(port_be));
+            addresscontextDomainSet(out, (const char *) (buf + 2), buf[1]);
+            addresscontextSetPort(out, be16toh(port_be));
+        }
+        *consumed = need;
+        return 1;
+
+    default:
+        return -1;
+    }
+}
+
 static uint8_t protocolToCommand(socks5client_protocol_t protocol)
 {
     return protocol == kSocks5ClientProtocolUdp ? kSocks5CommandUdpAssoc : kSocks5CommandConnect;
+}
+
+static void fillUdpAssociateRequestTarget(address_context_t *target)
+{
+    discard addresscontextSetIpAddressPort(target, "0.0.0.0", 0);
+    addresscontextSetOnlyProtocol(target, IP_PROTO_UDP);
+}
+
+static void setLineProtocol(line_t *l, uint8_t protocol)
+{
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), protocol);
+    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(l), protocol);
+    lineGetRoutingContext(l)->network_type = protocol == IP_PROTO_UDP ? WIO_TYPE_UDP : WIO_TYPE_TCP;
+}
+
+static line_t *createInternalLine(tunnel_t *t, line_t *app_l, socks5client_line_kind_t kind)
+{
+    line_t *inner_l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(app_l));
+
+    socks5client_lstate_t *inner_ls = lineGetState(inner_l, t);
+    socks5clientLinestateInitialize(inner_ls, t, inner_l);
+    inner_ls->kind     = kind;
+    inner_ls->app_line = app_l;
+
+    return inner_l;
 }
 
 void socks5clientTunnelstateDestroy(socks5client_tstate_t *ts)
@@ -248,22 +386,26 @@ bool socks5clientSendAuthRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *
 bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *ls)
 {
     socks5client_tstate_t *ts       = tunnelGetState(t);
+    address_context_t      assoc_target = {0};
     address_context_t     *target   = &ls->target_addr;
     uint8_t                cmd      = protocolToCommand(ts->protocol);
-    uint8_t                atyp     = 0;
     uint32_t               addr_len = 0;
 
-    if (addresscontextIsIp(target))
+    if (ts->protocol == kSocks5ClientProtocolUdp)
+    {
+        fillUdpAssociateRequestTarget(&assoc_target);
+        target = &assoc_target;
+    }
+
+    if (addresscontextIsIpType(target))
     {
         if (target->ip_address.type == IPADDR_TYPE_V4)
         {
-            atyp     = kSocks5AddrTypeIpv4;
-            addr_len = 4;
+            addr_len = 1 + 4 + 2;
         }
         else if (target->ip_address.type == IPADDR_TYPE_V6)
         {
-            atyp     = kSocks5AddrTypeIpv6;
-            addr_len = 16;
+            addr_len = 1 + 16 + 2;
         }
         else
         {
@@ -273,44 +415,30 @@ bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_
     }
     else if (addresscontextIsDomain(target))
     {
-        atyp     = kSocks5AddrTypeDomain;
-        addr_len = (uint32_t) target->domain_len + 1U;
+        addr_len = 1U + 1U + (uint32_t) target->domain_len + 2U;
     }
     else
     {
         LOGE("Socks5Client: target settings are not populated");
+        addresscontextReset(&assoc_target);
         return false;
     }
 
-    uint32_t len = 4U + addr_len + 2U;
+    uint32_t len = 3U + addr_len;
     sbuf_t  *buf = allocHandshakeBuffer(l, len);
     uint8_t *ptr = sbufGetMutablePtr(buf);
 
     ptr[0] = kSocks5Version;
     ptr[1] = cmd;
     ptr[2] = 0;
-    ptr[3] = atyp;
 
-    size_t offset = 4;
-    if (atyp == kSocks5AddrTypeIpv4)
+    size_t offset = 3;
+    if (! writeAddress(ptr, target, &offset))
     {
-        memoryCopy(ptr + offset, &target->ip_address.u_addr.ip4.addr, 4);
-        offset += 4;
+        lineReuseBuffer(l, buf);
+        addresscontextReset(&assoc_target);
+        return false;
     }
-    else if (atyp == kSocks5AddrTypeIpv6)
-    {
-        memoryCopy(ptr + offset, &target->ip_address.u_addr.ip6, 16);
-        offset += 16;
-    }
-    else
-    {
-        ptr[offset++] = target->domain_len;
-        memoryCopy(ptr + offset, target->domain, target->domain_len);
-        offset += target->domain_len;
-    }
-
-    uint16_t port_be = htobe16(target->port);
-    memoryCopy(ptr + offset, &port_be, sizeof(port_be));
 
     ls->phase = kSocks5ClientPhaseWaitCommand;
 
@@ -321,12 +449,334 @@ bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_
              (unsigned int) target->port);
     }
 
+    addresscontextReset(&assoc_target);
     return sendBufferUpstream(t, l, buf);
+}
+
+static bool wrapUdpPayload(line_t *l, sbuf_t **buf_io, const address_context_t *target)
+{
+    sbuf_t  *buf     = *buf_io;
+    uint32_t payload = sbufGetLength(buf);
+    size_t   header_len;
+
+    if (addresscontextIsIpType(target))
+    {
+        header_len = addresscontextIsIpv6(target) ? (size_t) 4 + 16 + 2 : (size_t) 4 + 4 + 2;
+    }
+    else if (addresscontextIsDomain(target))
+    {
+        header_len = (size_t) 4 + 1 + target->domain_len + 2;
+    }
+    else
+    {
+        return false;
+    }
+
+    if (sbufGetLeftCapacity(buf) < header_len)
+    {
+        sbuf_t  *wrapped = allocHandshakeBuffer(l, (uint32_t) (payload + header_len));
+        uint8_t *dst     = sbufGetMutablePtr(wrapped);
+        memoryCopy(dst + header_len, sbufGetRawPtr(buf), payload);
+        lineReuseBuffer(l, buf);
+        buf = wrapped;
+    }
+    else
+    {
+        sbufShiftLeft(buf, (uint32_t) header_len);
+    }
+
+    uint8_t *ptr = sbufGetMutablePtr(buf);
+    size_t   off = 0;
+
+    ptr[off++] = 0;
+    ptr[off++] = 0;
+    ptr[off++] = 0;
+    if (! writeAddress(ptr, target, &off))
+    {
+        return false;
+    }
+
+    *buf_io = buf;
+    return true;
+}
+
+static bool forwardUdpPayloadToRelay(tunnel_t *t, line_t *app_l, socks5client_lstate_t *app_ls, sbuf_t *buf)
+{
+    if (app_ls->udp_line == NULL || ! lineIsAlive(app_ls->udp_line))
+    {
+        lineReuseBuffer(app_l, buf);
+        return false;
+    }
+
+    if (! wrapUdpPayload(app_l, &buf, &app_ls->target_addr))
+    {
+        lineReuseBuffer(app_l, buf);
+        return false;
+    }
+
+    return withLineLockedWithBuf(app_ls->udp_line, tunnelNextUpStreamPayload, t, buf);
+}
+
+static bool tryEstablishUdpApp(tunnel_t *t, line_t *app_l, socks5client_lstate_t *app_ls)
+{
+    if (app_ls->phase == kSocks5ClientPhaseEstablished)
+    {
+        return true;
+    }
+
+    if (! app_ls->udp_control_ready || ! app_ls->udp_relay_ready)
+    {
+        return true;
+    }
+
+    buffer_queue_t pending_local = bufferqueueCreate(kSocks5ClientPendingQueueCap);
+    while (bufferqueueGetBufCount(&app_ls->pending_up) > 0)
+    {
+        bufferqueuePushBack(&pending_local, bufferqueuePopFront(&app_ls->pending_up));
+    }
+
+    app_ls->phase = kSocks5ClientPhaseEstablished;
+
+    if (! withLineLocked(app_l, tunnelPrevDownStreamEst, t))
+    {
+        bufferqueueDestroy(&pending_local);
+        return false;
+    }
+
+    while (bufferqueueGetBufCount(&pending_local) > 0)
+    {
+        if (! forwardUdpPayloadToRelay(t, app_l, app_ls, bufferqueuePopFront(&pending_local)))
+        {
+            bufferqueueDestroy(&pending_local);
+            return false;
+        }
+    }
+
+    bufferqueueDestroy(&pending_local);
+    return true;
+}
+
+static bool startUdpRelayLine(tunnel_t *t, line_t *control_l, socks5client_lstate_t *control_ls,
+                              const address_context_t *relay_addr)
+{
+    line_t *app_l = control_ls->app_line;
+    if (app_l == NULL || ! lineIsAlive(app_l))
+    {
+        return false;
+    }
+
+    socks5client_lstate_t *app_ls = lineGetState(app_l, t);
+    line_t                *udp_l  = createInternalLine(t, app_l, kSocks5ClientLineKindUdpRelay);
+    socks5client_lstate_t *udp_ls = lineGetState(udp_l, t);
+
+    udp_ls->app_line = app_l;
+    addresscontextAddrCopy(lineGetDestinationAddressContext(udp_l), relay_addr);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(udp_l), IP_PROTO_UDP);
+    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(udp_l), IP_PROTO_UDP);
+    lineGetRoutingContext(udp_l)->network_type = WIO_TYPE_UDP;
+
+    app_ls->udp_line = udp_l;
+
+    if (! withLineLocked(udp_l, tunnelNextUpStreamInit, t))
+    {
+        app_ls->udp_line = NULL;
+        if (lineIsAlive(udp_l))
+        {
+            socks5clientLinestateDestroy(udp_ls);
+            lineDestroy(udp_l);
+        }
+        return false;
+    }
+
+    discard control_l;
+    return true;
+}
+
+bool socks5clientStartUdpAssociation(tunnel_t *t, line_t *l, socks5client_lstate_t *ls)
+{
+    line_t                *control_l  = createInternalLine(t, l, kSocks5ClientLineKindUdpControl);
+    socks5client_lstate_t *control_ls = lineGetState(control_l, t);
+
+    addresscontextAddrCopy(&control_ls->target_addr, &ls->target_addr);
+    setLineProtocol(control_l, IP_PROTO_TCP);
+
+    ls->control_line = control_l;
+
+    if (! withLineLocked(control_l, tunnelNextUpStreamInit, t))
+    {
+        ls->control_line = NULL;
+        if (lineIsAlive(control_l))
+        {
+            socks5clientLinestateDestroy(control_ls);
+            lineDestroy(control_l);
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool socks5clientForwardUdpAppPayload(tunnel_t *t, line_t *l, socks5client_lstate_t *ls, sbuf_t *buf)
+{
+    if (ls->phase == kSocks5ClientPhaseEstablished)
+    {
+        return forwardUdpPayloadToRelay(t, l, ls, buf);
+    }
+
+    bufferqueuePushBack(&ls->pending_up, buf);
+
+    if (bufferqueueGetBufLen(&ls->pending_up) > kSocks5ClientMaxPendingUpBytes)
+    {
+        LOGE("Socks5Client: UDP association queue overflow, size=%zu limit=%u",
+             bufferqueueGetBufLen(&ls->pending_up),
+             (unsigned int) kSocks5ClientMaxPendingUpBytes);
+        socks5clientCloseLineBidirectional(t, l);
+        return false;
+    }
+
+    return true;
+}
+
+bool socks5clientHandleUdpRelayPayload(tunnel_t *t, line_t *l, socks5client_lstate_t *ls, sbuf_t *buf)
+{
+    line_t *app_l = ls->app_line;
+    if (app_l == NULL || ! lineIsAlive(app_l))
+    {
+        lineReuseBuffer(l, buf);
+        return false;
+    }
+
+    const uint8_t *raw = sbufGetRawPtr(buf);
+    size_t         len = sbufGetLength(buf);
+
+    if (len < 4 || raw[0] != 0 || raw[1] != 0)
+    {
+        lineReuseBuffer(l, buf);
+        socks5clientCloseLineBidirectional(t, l);
+        return false;
+    }
+
+    if (raw[2] != 0)
+    {
+        lineReuseBuffer(l, buf);
+        return true;
+    }
+
+    address_context_t source  = {0};
+    size_t            addr_len = 0;
+    int               parsed  = parseAddressBytes(raw + 3, len - 3, &source, &addr_len);
+
+    if (parsed <= 0 || len < (size_t) (3 + addr_len))
+    {
+        addresscontextReset(&source);
+        lineReuseBuffer(l, buf);
+        if (parsed < 0)
+        {
+            socks5clientCloseLineBidirectional(t, l);
+            return false;
+        }
+        return true;
+    }
+
+    addresscontextReset(&source);
+    sbufShiftRight(buf, (uint32_t) (3 + addr_len));
+    return withLineLockedWithBuf(app_l, tunnelPrevDownStreamPayload, t, buf);
+}
+
+void socks5clientOnUdpRelayEstablished(tunnel_t *t, line_t *l, socks5client_lstate_t *ls)
+{
+    discard l;
+
+    line_t *app_l = ls->app_line;
+    if (app_l == NULL || ! lineIsAlive(app_l))
+    {
+        return;
+    }
+
+    socks5client_lstate_t *app_ls = lineGetState(app_l, t);
+    app_ls->udp_relay_ready       = true;
+    discard tryEstablishUdpApp(t, app_l, app_ls);
+}
+
+static void closeOwnedLine(tunnel_t *t, line_t *owned_l)
+{
+    if (owned_l == NULL || ! lineIsAlive(owned_l))
+    {
+        return;
+    }
+
+    socks5clientLinestateDestroy(lineGetState(owned_l, t));
+    tunnelNextUpStreamFinish(t, owned_l);
+    if (lineIsAlive(owned_l))
+    {
+        lineDestroy(owned_l);
+    }
 }
 
 void socks5clientCloseLineBidirectional(tunnel_t *t, line_t *l)
 {
-    socks5clientLinestateDestroy(lineGetState(l, t));
+    socks5client_lstate_t *ls = lineGetState(l, t);
+
+    if (ls->kind == kSocks5ClientLineKindUdpApp)
+    {
+        line_t *control_l = ls->control_line;
+        line_t *udp_l     = ls->udp_line;
+
+        ls->control_line = NULL;
+        ls->udp_line     = NULL;
+
+        closeOwnedLine(t, udp_l);
+        closeOwnedLine(t, control_l);
+        socks5clientLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
+
+    if (ls->kind == kSocks5ClientLineKindUdpControl || ls->kind == kSocks5ClientLineKindUdpRelay)
+    {
+        line_t *app_l = ls->app_line;
+        line_t *control_l = NULL;
+        line_t *udp_l     = NULL;
+
+        if (app_l != NULL && lineIsAlive(app_l))
+        {
+            socks5client_lstate_t *app_ls = lineGetState(app_l, t);
+
+            control_l = app_ls->control_line;
+            udp_l     = app_ls->udp_line;
+            if (control_l == l)
+            {
+                control_l = NULL;
+            }
+            if (udp_l == l)
+            {
+                udp_l = NULL;
+            }
+
+            app_ls->control_line = NULL;
+            app_ls->udp_line     = NULL;
+        }
+
+        socks5clientLinestateDestroy(ls);
+        tunnelNextUpStreamFinish(t, l);
+        if (lineIsAlive(l))
+        {
+            lineDestroy(l);
+        }
+
+        closeOwnedLine(t, udp_l);
+        closeOwnedLine(t, control_l);
+
+        if (app_l != NULL && lineIsAlive(app_l))
+        {
+            socks5client_lstate_t *app_ls = lineGetState(app_l, t);
+            socks5clientLinestateDestroy(app_ls);
+            tunnelPrevDownStreamFinish(t, app_l);
+        }
+        return;
+    }
+
+    socks5clientLinestateDestroy(ls);
     tunnelNextUpStreamFinish(t, l);
     tunnelPrevDownStreamFinish(t, l);
 }
@@ -438,22 +888,67 @@ bool socks5clientDrainHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate
                 return false;
             }
 
-            uint8_t header[5];
-            bufferstreamViewBytesAt(&ls->in_stream, 0, header, sizeof(header));
-            lineReuseBuffer(l, bufferstreamReadExact(&ls->in_stream, (size_t) reply_len));
+            sbuf_t        *reply_buf = bufferstreamReadExact(&ls->in_stream, (size_t) reply_len);
+            const uint8_t *reply     = sbufGetRawPtr(reply_buf);
 
-            if (header[0] != kSocks5Version)
+            if (reply[0] != kSocks5Version)
             {
-                LOGE("Socks5Client: invalid command reply version 0x%02x", header[0]);
+                LOGE("Socks5Client: invalid command reply version 0x%02x", reply[0]);
+                lineReuseBuffer(l, reply_buf);
                 socks5clientCloseLineBidirectional(t, l);
                 return false;
             }
 
-            if (header[1] != 0x00)
+            if (reply[1] != 0x00)
             {
-                LOGE("Socks5Client: proxy command failed with reply code 0x%02x", header[1]);
+                LOGE("Socks5Client: proxy command failed with reply code 0x%02x", reply[1]);
+                lineReuseBuffer(l, reply_buf);
                 socks5clientCloseLineBidirectional(t, l);
                 return false;
+            }
+
+            if (ts->protocol == kSocks5ClientProtocolUdp)
+            {
+                address_context_t relay_addr = {0};
+                size_t            consumed   = 0;
+                int parsed = parseAddressBytes(reply + 3, (size_t) reply_len - 3, &relay_addr, &consumed);
+                lineReuseBuffer(l, reply_buf);
+
+                if (parsed <= 0)
+                {
+                    addresscontextReset(&relay_addr);
+                    LOGE("Socks5Client: proxy sent an invalid UDP relay address");
+                    socks5clientCloseLineBidirectional(t, l);
+                    return false;
+                }
+
+                addresscontextSetOnlyProtocol(&relay_addr, IP_PROTO_UDP);
+                addresscontextAddrCopy(&ls->relay_addr, &relay_addr);
+                ls->phase = kSocks5ClientPhaseEstablished;
+
+                if (! startUdpRelayLine(t, l, ls, &relay_addr))
+                {
+                    addresscontextReset(&relay_addr);
+                    socks5clientCloseLineBidirectional(t, l);
+                    return false;
+                }
+
+                line_t *app_l = ls->app_line;
+                addresscontextReset(&relay_addr);
+                if (app_l == NULL || ! lineIsAlive(app_l))
+                {
+                    return false;
+                }
+
+                socks5client_lstate_t *app_ls = lineGetState(app_l, t);
+                app_ls->udp_control_ready     = true;
+
+                if (ts->verbose)
+                {
+                    LOGD("Socks5Client: SOCKS5 UDP association completed");
+                }
+
+                return tryEstablishUdpApp(t, app_l, app_ls);
             }
 
             buffer_queue_t pending_local = bufferqueueCreate(kSocks5ClientPendingQueueCap);
@@ -469,6 +964,7 @@ bool socks5clientDrainHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate
                 bufferqueuePushBack(&down_local, bufferstreamIdealRead(&ls->in_stream));
             }
 
+            lineReuseBuffer(l, reply_buf);
             ls->phase = kSocks5ClientPhaseEstablished;
 
             if (ts->verbose)
