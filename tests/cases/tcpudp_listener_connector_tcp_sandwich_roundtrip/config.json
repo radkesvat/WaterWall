@@ -1,0 +1,56 @@
+{
+  "name": "tcpudp-listener-connector-tcp-sandwich-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "outer-tcp-connector"
+    },
+    {
+      "name": "outer-tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42510,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcpudp-listener",
+      "type": "TcpUdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42510,
+        "nodelay": true
+      },
+      "next": "tcpudp-connector"
+    },
+    {
+      "name": "tcpudp-connector",
+      "type": "TcpUdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42511,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "outer-tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42511,
+        "nodelay": true
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}

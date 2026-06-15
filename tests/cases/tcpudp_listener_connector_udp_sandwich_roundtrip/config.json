@@ -1,0 +1,56 @@
+{
+  "name": "tcpudp-listener-connector-udp-sandwich-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "max-payload-size": 1200
+      },
+      "next": "outer-udp-connector"
+    },
+    {
+      "name": "outer-udp-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42512,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcpudp-listener",
+      "type": "TcpUdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42512
+      },
+      "next": "tcpudp-connector"
+    },
+    {
+      "name": "tcpudp-connector",
+      "type": "TcpUdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42513,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "outer-udp-listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42513
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "max-payload-size": 1200
+      }
+    }
+  ]
+}
