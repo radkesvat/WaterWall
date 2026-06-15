@@ -10,6 +10,7 @@
 #include "address_context.h"
 #include "generic_pool.h"
 #include "global_state.h"
+#include "objects/user_handle.h"
 #include "tunnel.h"
 #include "worker.h"
 
@@ -44,6 +45,7 @@ typedef struct line_s
     line_refc_t       refc;
     bool              alive;
     wid_t             wid;
+    uint64_t          last_user_identifier;
     uint8_t           auth_cur;
     uint8_t           established : 1;
     uint8_t           recalculate_checksum : 1; // used for packet tunnels
@@ -71,6 +73,7 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
     *l = (line_t) {.refc                 = 1,
                    .auth_cur             = 0,
                    .wid                  = wid,
+                   .last_user_identifier = 0,
                    .alive                = true,
                    .pools                = pools,
                    .established          = false,
@@ -180,15 +183,16 @@ static inline void lineDestroy(line_t *const l)
 /**
  * @brief Authenticates the line.
  *
+ * Empty or NULL user handles mark the line authenticated without assigning a user identifier.
+ * Valid user handles assign a stable non-zero identifier keyed by the handle SHA-256.
+ *
  * @param line Pointer to the line.
+ * @param user_handle Optional authenticated user handle.
  */
-static inline void lineAuthenticate(line_t *const line)
-{
-    // basic overflow protection
-    assert(line->auth_cur < (((0x1ULL << ((sizeof(line->auth_cur) * 8ULL) - 1ULL)) - 1ULL) |
-                             (0xFULL << ((sizeof(line->auth_cur) * 8ULL) - 4ULL))));
-    line->auth_cur += 1;
-}
+void lineAuthenticate(line_t *const line, const user_handle_t *user_handle);
+
+line_user_identifier_registry_t *lineUserIdentifierRegistryCreate(void);
+void lineUserIdentifierRegistryDestroy(line_user_identifier_registry_t *registry);
 
 /**
  * @brief Checks if the line is authenticated.
