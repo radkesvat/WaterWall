@@ -16,7 +16,8 @@ void socks5clientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (bufferstreamGetBufLen(&ls->in_stream) > kSocks5ClientMaxHandshakeBytes)
     {
-        LOGE("Socks5Client: proxy handshake buffer overflow, size=%zu limit=%u", bufferstreamGetBufLen(&ls->in_stream),
+        LOGE("Socks5Client: proxy handshake buffer overflow, size=%zu limit=%u",
+             bufferstreamGetBufLen(&ls->in_stream),
              (unsigned int) kSocks5ClientMaxHandshakeBytes);
         socks5clientCloseLineBidirectional(t, l);
         return;

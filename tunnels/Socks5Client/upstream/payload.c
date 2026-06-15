@@ -17,7 +17,8 @@ void socks5clientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (bufferqueueGetBufLen(&ls->pending_up) > kSocks5ClientMaxPendingUpBytes)
     {
         LOGE("Socks5Client: upstream handshake queue overflow, size=%zu limit=%u",
-             bufferqueueGetBufLen(&ls->pending_up), (unsigned int) kSocks5ClientMaxPendingUpBytes);
+             bufferqueueGetBufLen(&ls->pending_up),
+             (unsigned int) kSocks5ClientMaxPendingUpBytes);
         socks5clientCloseLineBidirectional(t, l);
     }
 }

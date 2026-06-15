@@ -5,7 +5,7 @@
 
 node_t nodeSocks5ClientGet(void)
 {
-    const char *type_name     = "Socks5Client";
+    const char *type_name         = "Socks5Client";
     node_t      node_socks5client = {
              .name                  = NULL,
              .type                  = stringDuplicate(type_name),

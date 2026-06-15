@@ -6,4 +6,3 @@ void socks5clientTunnelOnStart(tunnel_t *t)
 {
     discard t;
 }
-

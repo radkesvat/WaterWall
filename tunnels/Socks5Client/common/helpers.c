@@ -44,6 +44,7 @@ static bool flushQueueToNext(tunnel_t *t, line_t *l, buffer_queue_t *queue)
         }
     }
 
+    bufferqueueDestroy(queue);
     return true;
 }
 
@@ -59,6 +60,7 @@ static bool flushQueueToPrev(tunnel_t *t, line_t *l, buffer_queue_t *queue)
         }
     }
 
+    bufferqueueDestroy(queue);
     return true;
 }
 
