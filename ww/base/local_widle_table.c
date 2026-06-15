@@ -34,7 +34,6 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct local_idle_table_s
     local_heapq_idles_t  hqueue;
     local_hmap_idles_t   hmap;
     wid_t                wid;
-    uintptr_t            memptr;
 
 } GNU_ATTR_ALIGNED_LINE_CACHE local_idle_table_t;
 
@@ -138,8 +137,7 @@ local_idle_table_t *localIdleTableCreate(wloop_t *loop)
         terminateProgram(1);
     }
 
-    *newtable = (local_idle_table_t) {.memptr = (uintptr_t) newtable,
-                                      .loop   = loop,
+    *newtable = (local_idle_table_t) {.loop   = loop,
                                       .hqueue = local_heapq_idles_t_with_capacity(kLocalIdleTableCap),
                                       .hmap   = local_hmap_idles_t_with_capacity(kLocalIdleTableCap),
                                       .wid    = getWID()};
@@ -149,7 +147,7 @@ local_idle_table_t *localIdleTableCreate(wloop_t *loop)
     {
         local_heapq_idles_t_drop(&(newtable->hqueue));
         local_hmap_idles_t_drop(&(newtable->hmap));
-        memoryFreeAligned((void *) (newtable->memptr)); // NOLINT
+        memoryFreeAligned(newtable);
         printError("LocalIdleTable: failed to create idle timer");
         terminateProgram(1);
     }
@@ -343,5 +341,5 @@ void localidletableDestroy(local_idle_table_t *self)
 
     local_heapq_idles_t_drop(&self->hqueue);
     local_hmap_idles_t_drop(&self->hmap);
-    memoryFreeAligned((void *) (self->memptr)); // NOLINT
+    memoryFreeAligned(self);
 }

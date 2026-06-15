@@ -65,8 +65,7 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
     memorySet(pool_ptr, 0xEB, required_size);
 #endif
 
-    master_pool_t pool = {.memptr              = pool_ptr,
-                          .cap                 = pool_width,
+    master_pool_t pool = {.cap                 = pool_width,
                           .len                 = 0,
                           .create_item_handle  = defaultCreateHandle,
                           .destroy_item_handle = defaultDestroyHandle};
@@ -112,5 +111,5 @@ void masterpoolDestroy(master_pool_t *pool)
     mutexUnlock(&(pool->mutex));
 
     mutexDestroy(&pool->mutex);
-    memoryFreeAligned(pool->memptr);
+    memoryFreeAligned(pool);
 }

@@ -25,7 +25,7 @@ void sbufDestroy(sbuf_t *b)
         return;
     }
 
-    memoryFree(b->original_ptr);
+    memoryFreeAligned(b);
 }
 
 sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
@@ -46,12 +46,13 @@ sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
 
     uint32_t real_cap = minimum_capacity + pad_left;
 
-    size_t total_size = real_cap + sizeof(sbuf_t) + 31;
-    void  *raw_ptr    = memoryAllocate(total_size);
-
-    sbuf_t *b = (sbuf_t *) ALIGN2(raw_ptr, 32);
-
-    b->original_ptr = raw_ptr;
+    size_t  total_size = sizeof(sbuf_t) + (size_t) real_cap;
+    sbuf_t *b          = memoryAllocateAligned(total_size, 32);
+    if (b == NULL)
+    {
+        printError("sbuf: allocation failed");
+        exit(1);
+    }
 
 #ifdef DEBUG
     memorySet(b->buf, 0x55, real_cap);

@@ -24,9 +24,6 @@ struct sbuf_s
     
     uint8_t  _padding1;    // padding to align to 8 bytes
 
-    void    *original_ptr; // store original malloc pointer for proper freeing
-    uint64_t _padding2;    // padding to make struct exactly 32 bytes
-
     MSVC_ATTR_ALIGNED_32 uint8_t buf[] GNU_ATTR_ALIGNED_32;
 };
 

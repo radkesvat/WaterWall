@@ -53,7 +53,6 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct idle_table_s
     heapq_idles_t hqueue;
     hmap_idles_t  hmap;
     wmutex_t      mutex;
-    uintptr_t     memptr;
 
 } GNU_ATTR_ALIGNED_LINE_CACHE idle_table_t;
 
@@ -147,8 +146,7 @@ idle_table_t *idleTableCreate(wloop_t *loop)
         terminateProgram(1);
     }
 
-    *newtable = (idle_table_t) {.memptr = (uintptr_t) newtable,
-                                .loop   = loop,
+    *newtable = (idle_table_t) {.loop   = loop,
                                 .hqueue = heapq_idles_t_with_capacity(kIdleTableCap),
                                 .hmap   = hmap_idles_t_with_capacity(kIdleTableCap)};
     mutexInit(&(newtable->mutex));
@@ -159,7 +157,7 @@ idle_table_t *idleTableCreate(wloop_t *loop)
         mutexDestroy(&(newtable->mutex));
         heapq_idles_t_drop(&(newtable->hqueue));
         hmap_idles_t_drop(&(newtable->hmap));
-        memoryFreeAligned((void *) (newtable->memptr)); // NOLINT
+        memoryFreeAligned(newtable);
         printError("IdleTable: failed to create idle timer");
         terminateProgram(1);
     }
@@ -557,5 +555,5 @@ void idletableDestroy(idle_table_t *self)
     heapq_idles_t_drop(&self->hqueue);
     hmap_idles_t_drop(&self->hmap);
     mutexDestroy(&self->mutex);
-    memoryFreeAligned((void *) (self->memptr)); // NOLINT
+    memoryFreeAligned(self);
 }

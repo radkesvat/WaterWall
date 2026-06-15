@@ -245,7 +245,6 @@ inline static void atomicStoreVoidPtr(_Atomic(void *) *p, void *v, memory_order 
 typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct wchan_s
 {
     // These fields don't change after wchan_Open
-    uintptr_t memptr;   // memory allocation pointer
     size_t    elemsize; // size in bytes of elements sent on the channel
     uint32_t  qcap;     // size of the circular queue buf (immutable)
 
@@ -696,7 +695,6 @@ wchan_t *chanOpen(size_t elemsize, uint32_t cap)
     }
     memorySet(c, 0, required_size);
 
-    c->memptr   = (uintptr_t) c;
     c->elemsize = elemsize;
     c->qcap     = cap;
     chan_lock_init(&c->lock);
@@ -751,7 +749,7 @@ void chanFree(wchan_t *c)
 {
     assert(atomicLoadExplicit(&c->closed, memory_order_acquire)); // must close channel before freeing its memory
     chan_lock_destroy(&c->lock);
-    memoryFreeAligned((void *) c->memptr);
+    memoryFreeAligned(c);
 }
 
 uint32_t chanCap(const wchan_t *c)

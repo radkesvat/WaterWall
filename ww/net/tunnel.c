@@ -216,8 +216,7 @@ tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
 
     memorySet(tunnel_ptr, 0, sizeof(tunnel_t) + tstate_size);
 
-    *tunnel_ptr = (tunnel_t) {.memptr      = (uintptr_t) tunnel_ptr,
-                              .fnInitU     = &tunnelDefaultUpStreamInit,
+    *tunnel_ptr = (tunnel_t) {.fnInitU     = &tunnelDefaultUpStreamInit,
                               .fnInitD     = &tunnelDefaultDownStreamInit,
                               .fnPayloadU  = &tunnelDefaultUpStreamPayload,
                               .fnPayloadD  = &tunnelDefaultDownStreamPayload,
@@ -246,5 +245,5 @@ tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
 // Destroys a tunnel instance
 void tunnelDestroy(tunnel_t *self)
 {
-    memoryFreeAligned((void *) self->memptr);
+    memoryFreeAligned(self);
 }

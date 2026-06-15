@@ -96,7 +96,6 @@ struct tunnel_s
 
     node_t         *node;
     tunnel_chain_t *chain;
-    uintptr_t       memptr;
 
     // tunnel itself will be aligned to cache line when allocating memory
     MSVC_ATTR_ALIGNED_LINE_CACHE uint8_t state[] GNU_ATTR_ALIGNED_LINE_CACHE;

@@ -75,7 +75,6 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t capacity)
     }
 
     // Initialize the pool structure
-    pool->memptr              = pool;
     pool->cap                 = capacity;
     pool->create_item_handle  = defaultCreateHandle;
     pool->destroy_item_handle = defaultDestroyHandle;
@@ -153,5 +152,5 @@ void masterpoolDestroy(master_pool_t *pool)
     }
 
     // Free the pool memory
-    memoryFreeAligned(pool->memptr);
+    memoryFreeAligned(pool);
 }

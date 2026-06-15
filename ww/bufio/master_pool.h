@@ -66,7 +66,6 @@ typedef void (*MasterPoolItemDestroyHandle)(master_pool_item_t *item);
 
 typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct master_pool_s
 {
-    void                       *memptr;
     wmutex_t                    mutex;
     MasterPoolItemCreateHandle  create_item_handle;
     MasterPoolItemDestroyHandle destroy_item_handle;

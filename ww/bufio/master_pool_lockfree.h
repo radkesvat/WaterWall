@@ -76,7 +76,6 @@ typedef void (*MasterPoolItemDestroyHandle)(master_pool_item_t *item);
  */
 typedef struct master_pool_s
 {
-    void                       *memptr;
     MasterPoolItemCreateHandle  create_item_handle;
     MasterPoolItemDestroyHandle destroy_item_handle;
 
