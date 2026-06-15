@@ -159,12 +159,20 @@ static void validateTunnelChains(tunnel_t **t_array, int tunnels_count)
     }
 }
 
+typedef void (*TunnelLifecycleFn)(tunnel_t *t);
+
+static void runTunnelOnPrepare(tunnel_t *t)
+{
+    t->onPrepare(t);
+}
+
 /**
- * @brief Invoke preparation callback for every tunnel in every finalized chain.
+ * @brief Invoke one lifecycle callback for every tunnel in every finalized chain.
  *
  * @param cfg Node manager config.
+ * @param callback Lifecycle callback to run.
  */
-static void prepareTunnels(node_manager_config_t *cfg)
+static void runTunnelLifecycleOnChains(node_manager_config_t *cfg, TunnelLifecycleFn callback)
 {
     c_foreach(chain, vec_chains_t, cfg->chains)
     {
@@ -175,25 +183,41 @@ static void prepareTunnels(node_manager_config_t *cfg)
         {
             tunnel_t *tunnel = tunnel_chain->tunnels.tuns[i];
             assert(tunnel != NULL);
-            tunnel->onPrepare(tunnel);
+            callback(tunnel);
         }
     }
 }
 
 /**
+ * @brief Invoke preparation callback for every tunnel in every finalized chain.
+ *
+ * @param cfg Node manager config.
+ */
+static void prepareTunnels(node_manager_config_t *cfg)
+{
+    runTunnelLifecycleOnChains(cfg, runTunnelOnPrepare);
+}
+
+/**
  * @brief Start all tunnels after preparation and chain finalization.
  *
- * @param t_array Tunnel instance array.
- * @param tunnels_count Number of tunnel instances.
+ * @param cfg Node manager config.
  */
-static void startTunnels(tunnel_t **t_array, int tunnels_count)
+static void startTunnels(node_manager_config_t *cfg)
 {
-    for (int i = 0; i < tunnels_count; i++)
+    c_foreach(chain, vec_chains_t, cfg->chains)
     {
-        assert(t_array[i] != NULL);
-        tunnel_t *tunnel                = t_array[i];
-        tunnelGetChain(tunnel)->started = true;
-        tunnel->onStart(tunnel);
+        tunnel_chain_t *tunnel_chain = *chain.ref;
+        assert(tunnel_chain != NULL);
+
+        tunnel_chain->started = true;
+
+        for (uint16_t i = 0; i < tunnel_chain->tunnels.len; i++)
+        {
+            tunnel_t *tunnel = tunnel_chain->tunnels.tuns[i];
+            assert(tunnel != NULL);
+            tunnel->onStart(tunnel);
+        }
     }
 }
 
@@ -273,7 +297,7 @@ static void runNodes(node_manager_config_t *cfg)
     initializePacketTunnels(t_array, tunnels_count);
 
     prepareTunnels(cfg);
-    startTunnels(t_array, tunnels_count);
+    startTunnels(cfg);
 }
 
 /**
@@ -614,9 +638,17 @@ void nodemanagerStopConfig(node_manager_config_t *cfg)
         return;
     }
 
-    c_foreach(node_key_pair, map_node_t, cfg->node_map)
+    c_foreach(chain, vec_chains_t, cfg->chains)
     {
-        nodemanagerStopNode((node_key_pair.ref)->second);
+        tunnel_chain_t *tunnel_chain = *chain.ref;
+        assert(tunnel_chain != NULL);
+
+        for (uint16_t i = 0; i < tunnel_chain->tunnels.len; i++)
+        {
+            tunnel_t *tunnel = tunnel_chain->tunnels.tuns[i];
+            assert(tunnel != NULL);
+            tunnel->onStop(tunnel);
+        }
     }
 }
 
@@ -650,12 +682,19 @@ void nodemanagerStopWorkerResources(wid_t wid)
             continue;
         }
 
-        c_foreach(node_key_pair, map_node_t, cfg->node_map)
+        c_foreach(chain, vec_chains_t, cfg->chains)
         {
-            node_t *node = (node_key_pair.ref)->second;
-            if (node != NULL && node->instance != NULL && node->instance->onWorkerStop != NULL)
+            tunnel_chain_t *tunnel_chain = *chain.ref;
+            assert(tunnel_chain != NULL);
+
+            for (uint16_t i = 0; i < tunnel_chain->tunnels.len; i++)
             {
-                node->instance->onWorkerStop(node->instance, wid);
+                tunnel_t *tunnel = tunnel_chain->tunnels.tuns[i];
+                assert(tunnel != NULL);
+                if (tunnel->onWorkerStop != NULL)
+                {
+                    tunnel->onWorkerStop(tunnel, wid);
+                }
             }
         }
     }

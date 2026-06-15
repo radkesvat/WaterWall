@@ -14,6 +14,5 @@ void packetsplitstreamTunnelOnStart(tunnel_t *t)
         return;
     }
 
-    ts->up_tunnel->onStart(ts->up_tunnel);
-    ts->down_tunnel->onStart(ts->down_tunnel);
+    discard ts;
 }

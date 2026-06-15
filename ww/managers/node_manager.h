@@ -87,14 +87,14 @@ void nodemanagerRunConfigFile(config_file_t *config_file);
 void nodemanagerStopNode(node_t *node);
 
 /**
- * @brief Stop all node runtime instances in one config.
+ * @brief Stop all chained tunnel runtime instances in one config.
  *
  * @param cfg Config object.
  */
 void nodemanagerStopConfig(node_manager_config_t *cfg);
 
 /**
- * @brief Stop all loaded node runtime instances.
+ * @brief Stop all loaded chained tunnel runtime instances.
  */
 void nodemanagerStop(void);
 

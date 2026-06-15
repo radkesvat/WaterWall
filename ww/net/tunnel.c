@@ -177,10 +177,7 @@ void tunnelDefaultOnPrepare(tunnel_t *t)
 // Default function to start the tunnel
 void tunnelDefaultOnStart(tunnel_t *t)
 {
-    if (t->next)
-    {
-        t->next->onStart(t->next);
-    }
+    discard t;
 }
 
 void tunnelDefaultOnStop(tunnel_t *t)

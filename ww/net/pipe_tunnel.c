@@ -598,8 +598,7 @@ static void pipetunnelDefaultOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_
  */
 static void pipetunnelDefaultOnPrepair(tunnel_t *t)
 {
-    tunnel_t *child = *(tunnel_t **) tunnelGetState(t);
-    child->onPrepare(child);
+    discard t;
 }
 
 /**
@@ -609,8 +608,7 @@ static void pipetunnelDefaultOnPrepair(tunnel_t *t)
  */
 static void pipetunnelDefaultOnStart(tunnel_t *t)
 {
-    tunnel_t *child = *(tunnel_t **) tunnelGetState(t);
-    child->onStart(child);
+    discard t;
 }
 
 /**
@@ -620,8 +618,7 @@ static void pipetunnelDefaultOnStart(tunnel_t *t)
  */
 static void pipetunnelDefaultOnStop(tunnel_t *t)
 {
-    tunnel_t *child = *(tunnel_t **) tunnelGetState(t);
-    child->onStop(child);
+    discard t;
 }
 
 /**

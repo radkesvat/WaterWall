@@ -13,7 +13,5 @@ void packetsplitstreamTunnelOnPrepair(tunnel_t *t)
         return;
     }
 
-    ts->up_tunnel->onPrepare(ts->up_tunnel);
-    ts->down_tunnel->onPrepare(ts->down_tunnel);
+    discard ts;
 }
-
