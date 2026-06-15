@@ -72,6 +72,8 @@ Accepted credential keys:
 ## Behavior
 
 - `Init` initializes per-line state and mirrors the configured target into the line destination context.
+- the resolved SOCKS target is also kept in `Socks5Client` line state so the proxy transport connector can rewrite
+  `line->dest_ctx` without changing the later SOCKS `CONNECT` request.
 - if `address` and/or `port` use `dest_context`, the incoming line destination is used as the SOCKS target source
 - `DownStreamEst` starts the SOCKS5 method negotiation.
 - `DownStreamPayload` consumes method, auth, and command replies from the proxy.

@@ -35,6 +35,7 @@ typedef struct socks5client_lstate_s
 {
     tunnel_t            *tunnel;
     line_t              *line;
+    address_context_t    target_addr;
     buffer_stream_t      in_stream;
     buffer_queue_t       pending_up;
     socks5client_phase_t phase;

@@ -132,6 +132,7 @@ void socks5clientTunnelstateDestroy(socks5client_tstate_t *ts)
 bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l)
 {
     socks5client_tstate_t *ts       = tunnelGetState(t);
+    socks5client_lstate_t *ls       = lineGetState(l, t);
     address_context_t     *dest_ctx = lineGetDestinationAddressContext(l);
     routing_context_t     *route    = lineGetRoutingContext(l);
     address_context_t      current  = {0};
@@ -190,6 +191,8 @@ bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l)
         addresscontextReset(&current);
     }
 
+    addresscontextAddrCopy(&ls->target_addr, dest_ctx);
+
     return true;
 }
 
@@ -245,7 +248,7 @@ bool socks5clientSendAuthRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *
 bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *ls)
 {
     socks5client_tstate_t *ts       = tunnelGetState(t);
-    address_context_t     *target   = lineGetDestinationAddressContext(l);
+    address_context_t     *target   = &ls->target_addr;
     uint8_t                cmd      = protocolToCommand(ts->protocol);
     uint8_t                atyp     = 0;
     uint32_t               addr_len = 0;
