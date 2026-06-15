@@ -60,7 +60,7 @@ enum
 
 typedef struct socks5server_assoc_shard_s
 {
-    wmutex_t                 mutex;
+    wrwlock_t                lock;
     socks5server_assoc_map_t map;
 } socks5server_assoc_shard_t;
 

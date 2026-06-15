@@ -180,7 +180,7 @@ tunnel_t *socks5serverTunnelCreate(node_t *node)
     ts->no_auth       = false;
     for (uint32_t i = 0; i < kSocks5ServerAssocShardCount; ++i)
     {
-        mutexInit(&ts->assoc_shards[i].mutex);
+        rwlockinit(&ts->assoc_shards[i].lock);
         ts->assoc_shards[i].map = socks5server_assoc_map_t_with_capacity(kSocks5ServerAssocShardInitialCap);
     }
 

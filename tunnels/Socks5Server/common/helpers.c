@@ -384,9 +384,9 @@ static bool socks5serverRegisterUdpAssociation(tunnel_t *t, line_t *l, const use
     socks5server_assoc_shard_t *shard = socks5serverGetAssocShard(t, key);
     socks5server_assoc_entry_t  entry = {.token = token, .owner_wid = lineGetWID(l), .user_handle = *user_handle};
 
-    mutexLock(&shard->mutex);
+    rwlockWriteLock(&shard->lock);
     bool inserted = socks5server_assoc_map_t_insert_or_assign(&shard->map, key, entry).ref != NULL;
-    mutexUnlock(&shard->mutex);
+    rwlockWriteUnlock(&shard->lock);
 
     if (! inserted)
     {
@@ -406,7 +406,7 @@ void socks5serverUnregisterUdpAssociation(tunnel_t *t, socks5server_lstate_t *ls
     }
 
     socks5server_assoc_shard_t *shard = socks5serverGetAssocShard(t, ls->association_key);
-    mutexLock(&shard->mutex);
+    rwlockWriteLock(&shard->lock);
 
     socks5server_assoc_map_t_iter it = socks5server_assoc_map_t_find(&shard->map, ls->association_key);
 
@@ -416,7 +416,7 @@ void socks5serverUnregisterUdpAssociation(tunnel_t *t, socks5server_lstate_t *ls
     {
         socks5server_assoc_map_t_erase_at(&shard->map, it);
     }
-    mutexUnlock(&shard->mutex);
+    rwlockWriteUnlock(&shard->lock);
 
     ls->association_key   = 0;
     ls->association_token = 0;
@@ -427,7 +427,7 @@ static bool socks5serverLookupUdpAssociationByKey(tunnel_t *t, hash_t key, user_
     socks5server_assoc_shard_t *shard = socks5serverGetAssocShard(t, key);
     bool                        found = false;
 
-    mutexLock(&shard->mutex);
+    rwlockReadLock(&shard->lock);
     socks5server_assoc_map_t_iter it = socks5server_assoc_map_t_find(&shard->map, key);
     if (it.ref != socks5server_assoc_map_t_end(&shard->map).ref)
     {
@@ -437,7 +437,7 @@ static bool socks5serverLookupUdpAssociationByKey(tunnel_t *t, hash_t key, user_
         *user_handle_out = it.ref->second.user_handle;
         found            = true;
     }
-    mutexUnlock(&shard->mutex);
+    rwlockReadUnlock(&shard->lock);
 
     return found;
 }
@@ -541,7 +541,7 @@ void socks5serverTunnelstateDestroy(socks5server_tstate_t *ts)
     for (uint32_t i = 0; i < kSocks5ServerAssocShardCount; ++i)
     {
         socks5server_assoc_map_t_drop(&ts->assoc_shards[i].map);
-        mutexDestroy(&ts->assoc_shards[i].mutex);
+        rwlockDestroy(&ts->assoc_shards[i].lock);
     }
 
     if (ts->udp_reply_ipv4 != NULL)
@@ -749,7 +749,7 @@ void socks5serverOnControlEstablished(tunnel_t *t, line_t *l, socks5server_lstat
     ls->connect_reply_sent = true;
     if (! lineIsAuthenticated(l))
     {
-        lineAuthenticate(l, &ls->user_handle);
+        lineAddUser(l, &ls->user_handle);
     }
 
     if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
@@ -865,7 +865,7 @@ bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lst
 
     if (! lineIsAuthenticated(l))
     {
-        lineAuthenticate(l, &user_handle);
+        lineAddUser(l, &user_handle);
     }
 
     // Bookkeeping only: the UDP client line caches the looked-up key/handle, but it never owns the
@@ -967,7 +967,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
                 ls->phase       = kSocks5ServerPhaseWaitRequest;
                 if (! lineIsAuthenticated(l))
                 {
-                    lineAuthenticate(l, &ls->user_handle);
+                    lineAddUser(l, &ls->user_handle);
                 }
                 continue;
             }
@@ -1027,7 +1027,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
             ls->phase       = kSocks5ServerPhaseWaitRequest;
             if (! lineIsAuthenticated(l))
             {
-                lineAuthenticate(l, &ls->user_handle);
+                lineAddUser(l, &ls->user_handle);
             }
             continue;
         }
@@ -1122,7 +1122,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
                 ls->connect_reply_sent = true;
                 if (! lineIsAuthenticated(l))
                 {
-                    lineAuthenticate(l, &ls->user_handle);
+                    lineAddUser(l, &ls->user_handle);
                 }
                 return true;
             }

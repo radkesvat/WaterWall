@@ -140,9 +140,9 @@ In username/password mode, AuthenticationServer users for this tunnel should sto
 object's `password` field using that exact `username:password` form. The user object's `name` is not used for
 Socks5Server authentication and may be kept as operator metadata.
 
-The resulting `user_handle_t` is stored only in `Socks5Server` line state. In no-auth mode this handle stays empty. It is
-not written into `line_t` or `routing_context_t`, so multiple protocol/authentication servers can coexist in one chain
-without sharing one global user slot.
+The resulting `user_handle_t` is stored in `Socks5Server` line state and copied into `line_t` through `lineAddUser()`.
+In no-auth mode the handle stays empty and `lineAddUser()` stores an empty anonymous handle. Multiple
+protocol/authentication servers can add separate user handles to one line without sharing one mutable global user slot.
 
 For `CONNECT`:
 
