@@ -290,10 +290,12 @@ Other tunnels must not receive or cache raw `user_t *` pointers from `Authentica
 ```text
 sha256(password)
 users_generation
+local_global_identifier
 ```
 
-The handle is a value identifier, not an owned object. A full users-table replacement increments the generation, so old
-handles become stale. Callers can either look up a fresh handle or check with `authenticationclientUserHandleIsLive()`.
+The handle is a value identifier, not an owned object. The local-global identifier is assigned by libww from the
+SHA-256 value and is process-local. A full users-table replacement increments the generation, so old handles become
+stale. Callers can either look up a fresh handle or check with `authenticationclientUserHandleIsLive()`.
 
 Available internal operations:
 

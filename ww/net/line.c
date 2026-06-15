@@ -6,143 +6,43 @@
 
 #include "loggers/internal_logger.h"
 
-enum
+void lineAddUser(line_t *const line, const user_handle_t *user_handle)
 {
-    kLineUserIdentifierInitialCap = 64
-};
+    assert(line != NULL);
 
-typedef struct line_user_identifier_key_s
-{
-    uint8_t sha256[SHA256_DIGEST_SIZE];
-} line_user_identifier_key_t;
-
-static uint64_t lineUserIdentifierKeyHash(const line_user_identifier_key_t *key)
-{
-    return calcHashBytes(key->sha256, SHA256_DIGEST_SIZE);
-}
-
-static bool lineUserIdentifierKeyEq(const line_user_identifier_key_t *a, const line_user_identifier_key_t *b)
-{
-    return memoryCompare(a->sha256, b->sha256, SHA256_DIGEST_SIZE) == 0;
-}
-
-#define i_type line_user_identifier_map_t      // NOLINT
-#define i_key  line_user_identifier_key_t      // NOLINT
-#define i_val  uint64_t                        // NOLINT
-#define i_hash lineUserIdentifierKeyHash       // NOLINT
-#define i_eq   lineUserIdentifierKeyEq         // NOLINT
-#include "stc/hmap.h"
-#undef i_eq
-#undef i_hash
-#undef i_val
-#undef i_key
-#undef i_type
-
-struct line_user_identifier_registry_s
-{
-    wmutex_t                   mutex;
-    line_user_identifier_map_t map;
-};
-
-static line_user_identifier_key_t lineUserIdentifierKeyFromHandle(const user_handle_t *user_handle)
-{
-    line_user_identifier_key_t key = {0};
-
-    memoryCopy(key.sha256, user_handle->sha256, SHA256_DIGEST_SIZE);
-    return key;
-}
-
-line_user_identifier_registry_t *lineUserIdentifierRegistryCreate(void)
-{
-    line_user_identifier_registry_t *registry = memoryAllocate(sizeof(*registry));
-    if (UNLIKELY(registry == NULL))
+    if (UNLIKELY(line->user_count >= kLineMaxUsers))
     {
-        LOGF("Line: failed to allocate user identifier registry");
+        LOGF("Line: too many users added to line; maximum is %u", (unsigned int) kLineMaxUsers);
         terminateProgram(1);
-        return NULL;
-    }
-
-    memoryZero(registry, sizeof(*registry));
-    mutexInit(&registry->mutex);
-    registry->map = line_user_identifier_map_t_with_capacity(kLineUserIdentifierInitialCap);
-
-    return registry;
-}
-
-void lineUserIdentifierRegistryDestroy(line_user_identifier_registry_t *registry)
-{
-    if (registry == NULL)
-    {
         return;
     }
 
-    line_user_identifier_map_t_drop(&registry->map);
-    mutexDestroy(&registry->mutex);
-    memoryFree(registry);
+    user_handle_t stored_user = userHandleEmpty();
+    if (userHandleIsValid(user_handle))
+    {
+        if (UNLIKELY(user_handle->local_global_identifier == 0))
+        {
+            LOGF("Line: valid user handle does not have an identifier");
+            terminateProgram(1);
+            return;
+        }
+        stored_user = *user_handle;
+    }
+
+    line->user_handles[line->user_count] = stored_user;
+    line->user_count += 1;
 }
 
-static uint64_t lineGetUserIdentifierForHandle(const user_handle_t *user_handle)
+const user_handle_t *lineGetCurrentUser(const line_t *const line)
 {
-    if (! userHandleIsValid(user_handle))
+    assert(line != NULL);
+
+    if (line->user_count == 0)
     {
-        return 0;
+        return NULL;
     }
 
-    line_user_identifier_registry_t *registry = GSTATE.line_user_identifier_registry;
-    if (UNLIKELY(registry == NULL))
-    {
-        LOGF("Line: user identifier registry is not initialized");
-        terminateProgram(1);
-        return 0;
-    }
-
-    line_user_identifier_key_t key = lineUserIdentifierKeyFromHandle(user_handle);
-
-    mutexLock(&registry->mutex);
-
-    line_user_identifier_map_t_iter it = line_user_identifier_map_t_find(&registry->map, key);
-    if (it.ref != line_user_identifier_map_t_end(&registry->map).ref)
-    {
-        uint64_t id = it.ref->second;
-        mutexUnlock(&registry->mutex);
-        return id;
-    }
-
-    uint64_t id = (uint64_t) atomicAddExplicit(&GSTATE.next_user_identifier, 1, memory_order_relaxed);
-    if (UNLIKELY(id == 0 || id == UINT64_MAX))
-    {
-        mutexUnlock(&registry->mutex);
-        LOGF("Line: user identifier counter overflow");
-        terminateProgram(1);
-        return 0;
-    }
-
-    line_user_identifier_map_t_result result = line_user_identifier_map_t_insert(&registry->map, key, id);
-    if (UNLIKELY(! result.inserted))
-    {
-        mutexUnlock(&registry->mutex);
-        LOGF("Line: failed to register user identifier");
-        terminateProgram(1);
-        return 0;
-    }
-
-    mutexUnlock(&registry->mutex);
-    return id;
-}
-
-void lineAuthenticate(line_t *const line, const user_handle_t *user_handle)
-{
-    // basic overflow protection
-    assert(line->auth_cur < (((0x1ULL << ((sizeof(line->auth_cur) * 8ULL) - 1ULL)) - 1ULL) |
-                             (0xFULL << ((sizeof(line->auth_cur) * 8ULL) - 4ULL))));
-
-    uint64_t user_identifier = lineGetUserIdentifierForHandle(user_handle);
-    if (user_identifier != 0)
-    {
-        line->last_user_identifier = user_identifier;
-    }
-
-    line->auth_cur += 1;
+    return &line->user_handles[line->user_count - 1];
 }
 
 typedef union line_task_callback_u {

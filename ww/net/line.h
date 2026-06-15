@@ -17,6 +17,11 @@
 typedef atomic_uint line_refc_t;
 #define LINE_REFC_MAX 0xFFFFFFFFU
 
+enum
+{
+    kLineMaxUsers = 4
+};
+
 /*
     The line struct represents a connection, it has two ends ( Down-end < --------- > Up-end)
 
@@ -45,8 +50,8 @@ typedef struct line_s
     line_refc_t       refc;
     bool              alive;
     wid_t             wid;
-    uint64_t          last_user_identifier;
-    uint8_t           auth_cur;
+    user_handle_t     user_handles[kLineMaxUsers];
+    uint8_t           user_count;
     uint8_t           established : 1;
     uint8_t           recalculate_checksum : 1; // used for packet tunnels
     routing_context_t routing_context;
@@ -71,9 +76,9 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
     line_t *l = genericpoolGetItem(pools[current]);
 
     *l = (line_t) {.refc                 = 1,
-                   .auth_cur             = 0,
+                   .user_handles         = {0},
+                   .user_count           = 0,
                    .wid                  = wid,
-                   .last_user_identifier = 0,
                    .alive                = true,
                    .pools                = pools,
                    .established          = false,
@@ -181,18 +186,23 @@ static inline void lineDestroy(line_t *const l)
 }
 
 /**
- * @brief Authenticates the line.
+ * @brief Adds a user marker to the line.
  *
- * Empty or NULL user handles mark the line authenticated without assigning a user identifier.
- * Valid user handles assign a stable non-zero identifier keyed by the handle SHA-256.
+ * Empty or NULL user handles add an anonymous empty handle.
+ * Valid user handles are copied into the line.
  *
  * @param line Pointer to the line.
- * @param user_handle Optional authenticated user handle.
+ * @param user_handle Optional user handle.
  */
-void lineAuthenticate(line_t *const line, const user_handle_t *user_handle);
+void lineAddUser(line_t *const line, const user_handle_t *user_handle);
 
-line_user_identifier_registry_t *lineUserIdentifierRegistryCreate(void);
-void lineUserIdentifierRegistryDestroy(line_user_identifier_registry_t *registry);
+/**
+ * @brief Returns the latest user handle added to the line.
+ *
+ * @param line Pointer to the line.
+ * @return const user_handle_t* Latest stored user handle, or NULL if no user was added.
+ */
+const user_handle_t *lineGetCurrentUser(const line_t *const line);
 
 /**
  * @brief Checks if the line is authenticated.
@@ -203,7 +213,7 @@ void lineUserIdentifierRegistryDestroy(line_user_identifier_registry_t *registry
  */
 static inline bool lineIsAuthenticated(line_t *const line)
 {
-    return line->auth_cur > 0;
+    return line->user_count > 0;
 }
 
 /**

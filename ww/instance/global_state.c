@@ -5,11 +5,11 @@
 #include "loggers/core_logger.h"
 #include "loggers/dns_logger.h"
 #include "loggers/internal_logger.h"
-#include "net/line.h"
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
 #include "managers/signal_manager.h"
 #include "managers/socket_manager.h"
+#include "objects/user_handle.h"
 
 #include <ares.h>
 
@@ -227,8 +227,8 @@ void createGlobalState(const ww_construction_data_t init_data)
         setDnsLoggerLevelByStr(init_data.dns_logger_data.log_level);
     }
 
-    atomicStoreRelaxed(&GSTATE.next_user_identifier, 1);
-    GSTATE.line_user_identifier_registry = lineUserIdentifierRegistryCreate();
+    atomicStoreRelaxed(&GSTATE.next_user_handle_identifier, 1);
+    GSTATE.user_handle_identifier_registry = userHandleIdentifierRegistryCreate();
 
     // workers and pools creation
     {
@@ -377,9 +377,9 @@ WW_EXPORT void destroyGlobalState(void)
 #endif
     signalmanagerDestroy();
 
-    lineUserIdentifierRegistryDestroy(GSTATE.line_user_identifier_registry);
-    GSTATE.line_user_identifier_registry = NULL;
-    atomicStoreRelaxed(&GSTATE.next_user_identifier, 0);
+    userHandleIdentifierRegistryDestroy(GSTATE.user_handle_identifier_registry);
+    GSTATE.user_handle_identifier_registry = NULL;
+    atomicStoreRelaxed(&GSTATE.next_user_handle_identifier, 0);
 
     coreloggerDestroy();
     networkloggerDestroy();
