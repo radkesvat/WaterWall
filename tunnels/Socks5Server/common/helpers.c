@@ -359,6 +359,17 @@ static uint64_t socks5serverNextAssociationToken(tunnel_t *t)
     return token;
 }
 
+static void socks5serverRecordLineUser(line_t *l, socks5server_lstate_t *ls, const user_handle_t *user_handle)
+{
+    if (ls->user_handle_recorded)
+    {
+        return;
+    }
+
+    lineAddUser(l, user_handle);
+    ls->user_handle_recorded = true;
+}
+
 static bool socks5serverRegisterUdpAssociation(tunnel_t *t, line_t *l, const user_handle_t *user_handle,
                                                const address_context_t *udp_peer_hint, hash_t *out_key,
                                                uint64_t *out_token)
@@ -445,6 +456,7 @@ static bool socks5serverLookupUdpAssociationByKey(tunnel_t *t, hash_t key, user_
 bool socks5serverLookupUdpAssociation(tunnel_t *t, line_t *l, user_handle_t *user_handle_out, hash_t *key_out)
 {
     const address_context_t *src_ctx    = lineGetSourceAddressContext(l);
+    const routing_context_t *route      = lineGetRoutingContext(l);
     uint16_t                 local_port = socks5serverGetLocalPort(l);
 
     if (! addresscontextIsIp(src_ctx) || local_port == 0)
@@ -452,7 +464,7 @@ bool socks5serverLookupUdpAssociation(tunnel_t *t, line_t *l, user_handle_t *use
         return false;
     }
 
-    hash_t exact_key    = socks5serverCalcAssociationKey(&src_ctx->ip_address, src_ctx->port, local_port);
+    hash_t exact_key    = socks5serverCalcAssociationKey(&src_ctx->ip_address, route->peer_source_port, local_port);
     hash_t fallback_key = socks5serverCalcAssociationKey(&src_ctx->ip_address, 0, local_port);
 
     if (socks5serverLookupUdpAssociationByKey(t, exact_key, user_handle_out))
@@ -524,6 +536,7 @@ static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_
 
     lineGetRoutingContext(remote_l)->local_listener_port = socks5serverGetLocalPort(client_l);
     socks5serverApplyDestinationContext(remote_l, target, true);
+    socks5serverRecordLineUser(remote_l, remote_ls, user_handle);
 
     socks5server_remote_map_t_insert(&client_ls->udp_remote_lines, remote_key, remote_l);
 
@@ -747,10 +760,6 @@ void socks5serverOnControlEstablished(tunnel_t *t, line_t *l, socks5server_lstat
 
     ls->phase              = kSocks5ServerPhaseTcpEstablished;
     ls->connect_reply_sent = true;
-    if (! lineIsAuthenticated(l))
-    {
-        lineAddUser(l, &ls->user_handle);
-    }
 
     if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
     {
@@ -863,16 +872,12 @@ bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lst
         return true;
     }
 
-    if (! lineIsAuthenticated(l))
-    {
-        lineAddUser(l, &user_handle);
-    }
-
     // Bookkeeping only: the UDP client line caches the looked-up key/handle, but it never owns the
     // registry entry. Only the TCP control line registers and unregisters an association (via its
     // association_token); this line leaves association_token == 0 and never touches the registry.
     ls->user_handle     = user_handle;
     ls->association_key = assoc_key;
+    socks5serverRecordLineUser(l, ls, &ls->user_handle);
 
     line_t *remote_l = socks5serverGetOrCreateUdpRemoteLine(t, l, ls, &target, &ls->user_handle, assoc_key);
     addresscontextReset(&target);
@@ -965,10 +970,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
             {
                 ls->user_handle = userHandleEmpty();
                 ls->phase       = kSocks5ServerPhaseWaitRequest;
-                if (! lineIsAuthenticated(l))
-                {
-                    lineAddUser(l, &ls->user_handle);
-                }
+                socks5serverRecordLineUser(l, ls, &ls->user_handle);
                 continue;
             }
 
@@ -1025,10 +1027,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
 
             ls->user_handle = user_handle;
             ls->phase       = kSocks5ServerPhaseWaitRequest;
-            if (! lineIsAuthenticated(l))
-            {
-                lineAddUser(l, &ls->user_handle);
-            }
+            socks5serverRecordLineUser(l, ls, &ls->user_handle);
             continue;
         }
 
@@ -1120,10 +1119,6 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
 
                 ls->phase              = kSocks5ServerPhaseUdpControl;
                 ls->connect_reply_sent = true;
-                if (! lineIsAuthenticated(l))
-                {
-                    lineAddUser(l, &ls->user_handle);
-                }
                 return true;
             }
 

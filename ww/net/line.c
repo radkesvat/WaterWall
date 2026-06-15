@@ -33,6 +33,32 @@ void lineAddUser(line_t *const line, const user_handle_t *user_handle)
     line->user_count += 1;
 }
 
+void lineCopyUsers(line_t *const dest, const line_t *const src)
+{
+    assert(dest != NULL);
+    assert(src != NULL);
+
+    if (dest == src)
+    {
+        return;
+    }
+
+    if (UNLIKELY(dest->user_count != 0))
+    {
+        LOGF("Line: attempted to copy users into a line that already has user markers");
+        terminateProgram(1);
+        return;
+    }
+
+    if (src->user_count == 0)
+    {
+        return;
+    }
+
+    memoryCopy(dest->user_handles, src->user_handles, sizeof(src->user_handles));
+    dest->user_count = src->user_count;
+}
+
 const user_handle_t *lineGetCurrentUser(const line_t *const line)
 {
     assert(line != NULL);

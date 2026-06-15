@@ -717,6 +717,7 @@ bool pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
     }
     assert(ls->pair_line == NULL);
     ls->pair_line = lineCreateForWorker(wid, tunnelchainGetLinePools(tunnelGetChain(t)), wid_to);
+    lineCopyUsers(ls->pair_line, l);
 
     pipetunnel_line_state_t *ls_lineto = lineGetState(ls->pair_line, parent_tunnel);
     ls_lineto->pair_line               = l;

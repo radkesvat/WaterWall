@@ -119,6 +119,27 @@ static void testLineUserRecording(void)
     testLineDestroy(line);
 }
 
+static void testLineUserCopy(void)
+{
+    user_handle_t first  = testUserHandle(0x21, 7);
+    user_handle_t second = testUserHandle(0x71, 11);
+
+    line_t *src  = testLineCreate();
+    line_t *dest = testLineCreate();
+
+    lineAddUser(src, &first);
+    lineAddUser(src, &second);
+
+    lineCopyUsers(dest, src);
+    require(dest->user_count == src->user_count, "line user copy did not preserve user count");
+    requireUserHandleEquals(&dest->user_handles[0], &src->user_handles[0], "line user copy lost first user");
+    requireUserHandleEquals(&dest->user_handles[1], &src->user_handles[1], "line user copy lost second user");
+    require(lineGetCurrentUser(dest) == &dest->user_handles[1], "line user copy did not preserve current user");
+
+    testLineDestroy(dest);
+    testLineDestroy(src);
+}
+
 int main(void)
 {
     GSTATE = (ww_global_state_t) {0};
@@ -128,6 +149,7 @@ int main(void)
     testAnonymousAuthentication();
     testUserHandleIdentifierMapping();
     testLineUserRecording();
+    testLineUserCopy();
 
     userHandleIdentifierRegistryDestroy(GSTATE.user_handle_identifier_registry);
     GSTATE = (ww_global_state_t) {0};

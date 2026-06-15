@@ -95,6 +95,7 @@ typedef struct socks5server_lstate_s
     socks5server_line_kind_t  kind;
     bool                      connect_reply_sent;
     bool                      client_line_locked;
+    bool                      user_handle_recorded;
     bool                      prev_finished; // prev/downstream side already finished this control line
     bool                      next_finished; // next/upstream side already finished this control line
 } socks5server_lstate_t;

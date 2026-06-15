@@ -20,6 +20,7 @@ void socks5serverLinestateInitialize(socks5server_lstate_t *ls, tunnel_t *t, lin
         .kind  = kind,
         .connect_reply_sent = false,
         .client_line_locked = false,
+        .user_handle_recorded = false,
         .prev_finished      = false,
         .next_finished      = false};
 }

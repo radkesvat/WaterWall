@@ -8,6 +8,7 @@ void udplistenerLinestateInitialize(udplistener_lstate_t *ls, line_t *l, tunnel_
     assert(peer_addr != NULL);
 
     addresscontextFromSockAddrWithProtocol(&(l->routing_context.src_ctx), peer_addr, IP_PROTO_UDP);
+    l->routing_context.peer_source_port = sockaddrPort((sockaddr_u *) peer_addr);
     addresscontextSetPort(&(l->routing_context.src_ctx), real_localport);
 
     sockaddr_u local_addr = *wioGetLocaladdrU(uio->io);

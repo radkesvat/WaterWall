@@ -62,9 +62,11 @@ bool authenticationclientGetUserBySHA256(tunnel_t *t, const uint8_t sha256[SHA25
 
     authenticationclient_tstate_t *ts    = tunnelGetState(t);
     bool                           found = false;
+    uint64_t                       now_ms = getTimeOfDayMS();
 
     rwlockReadLock(&ts->users_lock);
-    if (LIKELY(ts->users != NULL) && usersLookupBySHA256(ts->users, sha256) != NULL)
+    user_t *user = ts->users != NULL ? usersLookupBySHA256(ts->users, sha256) : NULL;
+    if (user != NULL && userIsActive(user, now_ms))
     {
         userHandleSet(handle_out, sha256, ts->users_generation);
         found = true;
@@ -93,10 +95,11 @@ bool authenticationclientGetUserByPassword(tunnel_t *t, const char *password, us
 
     authenticationclient_tstate_t *ts    = tunnelGetState(t);
     bool                           found = false;
+    uint64_t                       now_ms = getTimeOfDayMS();
 
     rwlockReadLock(&ts->users_lock);
     user_t *user = ts->users != NULL ? usersLookupBySHA256(ts->users, sha256.bytes) : NULL;
-    if (user != NULL && userPasswordMatches(user, password))
+    if (user != NULL && userPasswordMatches(user, password) && userIsActive(user, now_ms))
     {
         userHandleSet(handle_out, sha256.bytes, ts->users_generation);
         found = true;
@@ -120,10 +123,15 @@ bool authenticationclientUserHandleIsLive(tunnel_t *t, const user_handle_t *hand
 
     authenticationclient_tstate_t *ts   = tunnelGetState(t);
     bool                           live = false;
+    uint64_t                       now_ms = getTimeOfDayMS();
 
     rwlockReadLock(&ts->users_lock);
-    live = LIKELY(ts->users != NULL) && handle->generation == ts->users_generation &&
-           usersLookupBySHA256(ts->users, handle->sha256) != NULL;
+    user_t *user = NULL;
+    if (LIKELY(ts->users != NULL) && handle->generation == ts->users_generation)
+    {
+        user = usersLookupBySHA256(ts->users, handle->sha256);
+    }
+    live = user != NULL && userIsActive(user, now_ms);
     rwlockReadUnlock(&ts->users_lock);
 
     return live;

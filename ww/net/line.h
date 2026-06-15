@@ -42,6 +42,7 @@ typedef struct routing_context_s
     address_context_t dest_ctx;
     wio_type_e        network_type;
     uint16_t          local_listener_port;
+    uint16_t          peer_source_port;
 
 } routing_context_t;
 
@@ -195,6 +196,16 @@ static inline void lineDestroy(line_t *const l)
  * @param user_handle Optional user handle.
  */
 void lineAddUser(line_t *const line, const user_handle_t *user_handle);
+
+/**
+ * @brief Copies all user markers from one line to a newly created companion line.
+ *
+ * The destination line must not already have user markers.
+ *
+ * @param dest Destination line.
+ * @param src Source line.
+ */
+void lineCopyUsers(line_t *const dest, const line_t *const src);
 
 /**
  * @brief Returns the latest user handle added to the line.
