@@ -749,7 +749,7 @@ void socks5serverOnControlEstablished(tunnel_t *t, line_t *l, socks5server_lstat
     ls->connect_reply_sent = true;
     if (! lineIsAuthenticated(l))
     {
-        lineAuthenticate(l);
+        lineAuthenticate(l, &ls->user_handle);
     }
 
     if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, reply))
@@ -865,7 +865,7 @@ bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lst
 
     if (! lineIsAuthenticated(l))
     {
-        lineAuthenticate(l);
+        lineAuthenticate(l, &user_handle);
     }
 
     // Bookkeeping only: the UDP client line caches the looked-up key/handle, but it never owns the
@@ -967,7 +967,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
                 ls->phase       = kSocks5ServerPhaseWaitRequest;
                 if (! lineIsAuthenticated(l))
                 {
-                    lineAuthenticate(l);
+                    lineAuthenticate(l, &ls->user_handle);
                 }
                 continue;
             }
@@ -1027,7 +1027,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
             ls->phase       = kSocks5ServerPhaseWaitRequest;
             if (! lineIsAuthenticated(l))
             {
-                lineAuthenticate(l);
+                lineAuthenticate(l, &ls->user_handle);
             }
             continue;
         }
@@ -1122,7 +1122,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
                 ls->connect_reply_sent = true;
                 if (! lineIsAuthenticated(l))
                 {
-                    lineAuthenticate(l);
+                    lineAuthenticate(l, &ls->user_handle);
                 }
                 return true;
             }
