@@ -98,6 +98,10 @@ Practical rule:
   Verifies `Socks5Client` without credentials against `Socks5Server(no-auth=true)` across a real TCP proxy hop. The
   SOCKS request target is a separate tester TCP listener, and `Socks5Server` reaches it through a `TcpConnector` using
   `dest_context`, so the case covers method `0x00` negotiation and CONNECT target forwarding.
+- `socks5_noauth_udp_loopback`
+  Verifies `Socks5Client(protocol=udp)` without credentials against `Socks5Server(no-auth=true, udp=true)`. The proxy
+  endpoint is a shared `TcpUdpListener`/`TcpUdpConnector` port, so the client negotiates UDP ASSOCIATE over TCP and then
+  sends tester payloads as SOCKS UDP datagrams to a separate UDP tester listener selected from the SOCKS target setting.
 - `udp_over_tcp_roundtrip`
   Verifies that `UdpOverTcpClient` and `UdpOverTcpServer` preserve end-to-end byte stream integrity through their
   length-prefixed framing.

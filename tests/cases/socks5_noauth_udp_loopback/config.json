@@ -1,0 +1,80 @@
+{
+  "name": "socks5-noauth-udp-loopback",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "max-payload-size": 1200
+      },
+      "next": "socks5-client"
+    },
+    {
+      "name": "socks5-client",
+      "type": "Socks5Client",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42621,
+        "protocol": "udp"
+      },
+      "next": "proxy-connector"
+    },
+    {
+      "name": "proxy-connector",
+      "type": "TcpUdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42620,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "proxy-listener",
+      "type": "TcpUdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42620,
+        "nodelay": true
+      },
+      "next": "socks5-server"
+    },
+    {
+      "name": "socks5-server",
+      "type": "Socks5Server",
+      "settings": {
+        "no-auth": true,
+        "connect": false,
+        "udp": true,
+        "ipv4": "127.0.0.1"
+      },
+      "next": "target-connector"
+    },
+    {
+      "name": "target-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "target-listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42621
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "max-payload-size": 1200
+      }
+    }
+  ]
+}
