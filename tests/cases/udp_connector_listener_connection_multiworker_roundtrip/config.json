@@ -6,7 +6,7 @@
       "type": "TesterClient",
       "settings": {
         "max-payload-size": 1200,
-        "split-payload-burst": 16
+        "split-payload-burst": 8
       },
       "next": "udp-connector"
     },
