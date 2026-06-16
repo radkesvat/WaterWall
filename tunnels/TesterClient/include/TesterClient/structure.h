@@ -11,7 +11,7 @@ enum
     kTesterClientMaxWorkers                = 254,
     kTesterClientStartDelayMs              = 100,
     kTesterClientWatchdogMs                = 30000,
-    kTesterClientSplitPayloadDelayMs       = 2,
+    kTesterClientSplitPayloadDelayMs       = 1,
     kTesterClientSplitPayloadBurst         = 1,
     kTesterClientPacketIpv4ProtocolDefault = 253,
     kTesterClientPacketIpv4TtlDefault      = 64
