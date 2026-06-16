@@ -204,6 +204,7 @@ option(INCLUDE_RAWSOCKET                "link RawSocket staticly to the core"   
 option(INCLUDE_DISTURBER                "link Disturber staticly to the core"                TRUE)
 option(INCLUDE_BLACKHOLE                "link BlackHole staticly to the core"                TRUE)
 option(INCLUDE_SPEEDLIMIT               "link SpeedLimit staticly to the core"               TRUE)
+option(INCLUDE_USER_CONTROLLER          "link UserController staticly to the core"           TRUE)
 
 # Determine if OpenSSL is required based on included tunnels
 if(INCLUDE_TLS_SERVER)
@@ -864,6 +865,15 @@ if(INCLUDE_SPEEDLIMIT)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/SpeedLimit)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/SpeedLimit)
   target_link_libraries(Waterwall SpeedLimit)
+endif()
+
+if(INCLUDE_USER_CONTROLLER AND INCLUDE_AUTHENTICATION_CLIENT)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_USER_CONTROLLER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/UserController)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/UserController)
+  target_link_libraries(Waterwall UserController)
+elseif(INCLUDE_USER_CONTROLLER)
+  message(STATUS "Skipping UserController because INCLUDE_AUTHENTICATION_CLIENT is OFF")
 endif()
 
 

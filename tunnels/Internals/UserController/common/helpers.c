@@ -1,0 +1,308 @@
+#include "structure.h"
+
+#include "loggers/network_logger.h"
+
+void usercontrollerTunnelstateDestroy(usercontroller_tstate_t *ts)
+{
+    // auth_client_node / auth_client_tunnel are borrowed references owned by the node manager.
+    if (ts->worker_states != NULL)
+    {
+        for (wid_t wid = 0; wid < ts->worker_count; ++wid)
+        {
+            memoryFree(ts->worker_states[wid].lines);
+        }
+        memoryFree(ts->worker_states);
+    }
+    memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
+}
+
+const char *usercontrollerAdmissionReason(user_admission_result_t result)
+{
+    switch (result)
+    {
+    case kUserAdmissionOk:
+        return "ok";
+    case kUserAdmissionDisabled:
+        return "user disabled";
+    case kUserAdmissionExpired:
+        return "user expired";
+    case kUserAdmissionTrafficLimited:
+        return "traffic quota reached";
+    case kUserAdmissionConnectionLimited:
+        return "connection limit reached";
+    case kUserAdmissionIpLimited:
+        return "ip limit reached";
+    case kUserAdmissionInvalid:
+    default:
+        return "user unavailable";
+    }
+}
+
+uint64_t usercontrollerLocalTimeMS(void)
+{
+    return getHRTimeUs() / 1000ULL;
+}
+
+// Convert the connecting peer's IP into the lwIP-independent key the user object uses for IP-count
+// limits. Returns false (and leaves *out as a "no IP" key) when the line has no usable source IP.
+bool usercontrollerBuildIpKey(line_t *l, user_ip_key_t *out)
+{
+    memoryZero(out, sizeof(*out));
+
+    const address_context_t *src = lineGetSourceAddressContext(l);
+    if (! addresscontextIsIp(src))
+    {
+        return false;
+    }
+
+    const ip_addr_t *ip = &src->ip_address;
+    if (ip->type == IPADDR_TYPE_V4)
+    {
+        out->type = 4;
+        memoryCopy(out->bytes, &ip->u_addr.ip4.addr, sizeof(ip->u_addr.ip4.addr));
+    }
+    else
+    {
+        out->type = 6;
+        memoryCopy(out->bytes, ip->u_addr.ip6.addr, sizeof(ip->u_addr.ip6.addr));
+    }
+    return true;
+}
+
+static usercontroller_worker_state_t *usercontrollerGetWorkerState(tunnel_t *t, wid_t wid)
+{
+    usercontroller_tstate_t *ts = tunnelGetState(t);
+    if (UNLIKELY(ts->worker_states == NULL || wid >= ts->worker_count))
+    {
+        return NULL;
+    }
+
+    return &ts->worker_states[wid];
+}
+
+static bool usercontrollerWorkerReserveLine(usercontroller_worker_state_t *ws)
+{
+    if (ws->line_count < ws->line_capacity)
+    {
+        return true;
+    }
+
+    size_t new_capacity = ws->line_capacity == 0 ? 16 : ws->line_capacity * 2U;
+    if (UNLIKELY(new_capacity < ws->line_capacity || new_capacity > SIZE_MAX / sizeof(*ws->lines)))
+    {
+        return false;
+    }
+
+    line_t **new_lines = memoryReAllocate(ws->lines, new_capacity * sizeof(*new_lines));
+    if (UNLIKELY(new_lines == NULL))
+    {
+        return false;
+    }
+
+    memoryZero(new_lines + ws->line_capacity, (new_capacity - ws->line_capacity) * sizeof(*new_lines));
+    ws->lines         = new_lines;
+    ws->line_capacity = new_capacity;
+    return true;
+}
+
+bool usercontrollerRegisterLine(tunnel_t *t, line_t *l, usercontroller_lstate_t *ls)
+{
+    if (ls->registered)
+    {
+        return true;
+    }
+
+    usercontroller_worker_state_t *ws = usercontrollerGetWorkerState(t, lineGetWID(l));
+    if (UNLIKELY(ws == NULL || ! usercontrollerWorkerReserveLine(ws)))
+    {
+        return false;
+    }
+
+    lineLock(l);
+    ws->lines[ws->line_count] = l;
+    ws->line_count += 1U;
+    ls->registered = true;
+    return true;
+}
+
+static bool usercontrollerWorkerRemoveLine(usercontroller_worker_state_t *ws, line_t *l)
+{
+    for (size_t i = 0; i < ws->line_count; ++i)
+    {
+        if (ws->lines[i] == l)
+        {
+            ws->line_count -= 1U;
+            ws->lines[i] = ws->lines[ws->line_count];
+            ws->lines[ws->line_count] = NULL;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void usercontrollerUnregisterLine(tunnel_t *t, line_t *l, usercontroller_lstate_t *ls)
+{
+    if (! ls->registered)
+    {
+        return;
+    }
+
+    usercontroller_worker_state_t *ws = usercontrollerGetWorkerState(t, lineGetWID(l));
+    if (UNLIKELY(ws == NULL || ! usercontrollerWorkerRemoveLine(ws, l)))
+    {
+        LOGW("UserController: sweep registry lost a tracked line reference");
+    }
+
+    ls->registered = false;
+    lineUnlock(l);
+}
+
+void usercontrollerWorkerClearRegistry(tunnel_t *t, wid_t wid)
+{
+    usercontroller_worker_state_t *ws = usercontrollerGetWorkerState(t, wid);
+    if (ws == NULL)
+    {
+        return;
+    }
+
+    while (ws->line_count > 0)
+    {
+        ws->line_count -= 1U;
+        line_t *line = ws->lines[ws->line_count];
+        ws->lines[ws->line_count] = NULL;
+
+        if (lineIsAlive(line))
+        {
+            usercontroller_lstate_t *ls = lineGetState(line, t);
+            ls->registered = false;
+        }
+
+        lineUnlock(line);
+    }
+}
+
+void usercontrollerSweepTimerCallback(wtimer_t *timer)
+{
+    tunnel_t *t = weventGetUserdata(timer);
+    if (t == NULL || isApplicationTerminating())
+    {
+        return;
+    }
+
+    usercontroller_tstate_t      *ts  = tunnelGetState(t);
+    usercontroller_worker_state_t *ws = usercontrollerGetWorkerState(t, getWID());
+    if (ws == NULL)
+    {
+        return;
+    }
+
+    size_t i = 0;
+    while (i < ws->line_count)
+    {
+        line_t *line = ws->lines[i];
+        if (UNLIKELY(! lineIsAlive(line)))
+        {
+            ws->line_count -= 1U;
+            ws->lines[i] = ws->lines[ws->line_count];
+            ws->lines[ws->line_count] = NULL;
+            lineUnlock(line);
+            continue;
+        }
+
+        usercontroller_lstate_t *ls = lineGetState(line, t);
+        if (! ls->managed || ls->closing)
+        {
+            i += 1U;
+            continue;
+        }
+
+        if (authenticationclientUserShouldClose(ts->auth_client_tunnel, &ls->handle, usercontrollerLocalTimeMS()))
+        {
+            LOGW("UserController: closing active connection (disabled, expired, traffic quota reached, or user "
+                 "removed)");
+            usercontrollerCloseLine(t, line, kUserControllerCloseInternal);
+            continue;
+        }
+
+        i += 1U;
+    }
+}
+
+static void usercontrollerReleaseAccounting(tunnel_t *t, line_t *l, usercontroller_lstate_t *ls)
+{
+    if (! ls->managed)
+    {
+        return;
+    }
+
+    usercontroller_tstate_t *ts = tunnelGetState(t);
+    if (ls->registered)
+    {
+        usercontrollerUnregisterLine(t, l, ls);
+    }
+    ls->managed = false;
+    authenticationclientUserReleaseConnection(ts->auth_client_tunnel, &ls->handle, &ls->ip_key);
+}
+
+// Single teardown path. Releases this user's reserved connection slot, destroys local line state,
+// then propagates the real Waterwall finish in the correct directions:
+//
+//   kUserControllerCloseFromPrev : prev finished us -> close next only, never touch prev
+//   kUserControllerCloseFromNext : next finished us -> close prev only, never touch next
+//   kUserControllerCloseInternal : our decision     -> close upstream first, then downstream
+//
+// We never send protocol bytes here, so the only re-entrancy boundary is the finish propagation
+// itself, which Waterwall guarantees is non re-entrant. lineLock keeps the line memory valid until
+// we return; the closing/finished flags collapse any re-entrant teardown into a no-op.
+void usercontrollerCloseLine(tunnel_t *t, line_t *l, usercontroller_close_origin_t origin)
+{
+    usercontroller_lstate_t *ls = lineGetState(l, t);
+
+    if (ls->closing)
+    {
+        if (origin == kUserControllerCloseFromPrev)
+        {
+            ls->prev_finished = true;
+        }
+        else if (origin == kUserControllerCloseFromNext)
+        {
+            ls->next_finished = true;
+        }
+        return;
+    }
+
+    bool close_next = origin != kUserControllerCloseFromNext;
+    bool close_prev = origin != kUserControllerCloseFromPrev;
+
+    if (origin == kUserControllerCloseFromPrev)
+    {
+        ls->prev_finished = true;
+    }
+    else if (origin == kUserControllerCloseFromNext)
+    {
+        ls->next_finished = true;
+    }
+
+    ls->closing = true;
+    lineLock(l);
+
+    usercontrollerReleaseAccounting(t, l, ls);
+
+    bool send_next_finish = close_next && ! ls->next_finished;
+    bool send_prev_finish = close_prev && ! ls->prev_finished;
+
+    usercontrollerLinestateDestroy(ls);
+
+    if (send_next_finish && lineIsAlive(l))
+    {
+        tunnelNextUpStreamFinish(t, l);
+    }
+
+    if (send_prev_finish && lineIsAlive(l))
+    {
+        tunnelPrevDownStreamFinish(t, l);
+    }
+
+    lineUnlock(l);
+}

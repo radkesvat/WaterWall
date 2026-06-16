@@ -300,6 +300,10 @@
 #include "SpeedLimit/interface.h"
 #endif
 
+#ifdef INCLUDE_USER_CONTROLLER
+#include "UserController/interface.h"
+#endif
+
 void loadImportedTunnelsIntoCore(void)
 {
 
@@ -597,5 +601,9 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_SPEEDLIMIT
     USING(SpeedLimit);
+#endif
+
+#ifdef INCLUDE_USER_CONTROLLER
+    USING(UserController);
 #endif
 }
