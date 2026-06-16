@@ -213,8 +213,10 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
 
     testerserver_tstate_t *ts               = tunnelGetState(t);
     const cJSON           *settings         = node->node_settings_json;
-    int                    chunk_count      = kTesterServerChunkCount;
-    int                    max_payload_size = 0;
+    int                    chunk_count            = kTesterServerChunkCount;
+    int                    max_payload_size       = 0;
+    int                    split_payload_delay_ms = kTesterServerSplitPayloadDelayMs;
+    int                    split_payload_burst    = kTesterServerSplitPayloadBurst;
 
     getBoolFromJsonObjectOrDefault(&ts->packet_mode, settings, "packet-mode", false);
     getBoolFromJsonObjectOrDefault(&ts->packet_stateless, settings, "packet-stateless", false);
@@ -222,6 +224,10 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
     getBoolFromJsonObjectOrDefault(&ts->streaming_response, settings, "streaming-response", false);
     getIntFromJsonObjectOrDefault(&chunk_count, settings, "chunk-count", kTesterServerChunkCount);
     getIntFromJsonObjectOrDefault(&max_payload_size, settings, "max-payload-size", 0);
+    getIntFromJsonObjectOrDefault(
+        &split_payload_delay_ms, settings, "split-payload-delay-ms", kTesterServerSplitPayloadDelayMs);
+    getIntFromJsonObjectOrDefault(&split_payload_burst, settings, "split-payload-burst",
+                                  kTesterServerSplitPayloadBurst);
 
     if (nodeHasNext(node) && ! ts->packet_mode)
     {
@@ -248,6 +254,24 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
     }
 
     ts->max_payload_size = (uint32_t) max_payload_size;
+
+    if (split_payload_delay_ms < 0)
+    {
+        LOGF("JSON Error: TesterServer->settings->split-payload-delay-ms (int field) : expected a non-negative value");
+        testerserverTunnelDestroy(t);
+        return NULL;
+    }
+
+    ts->split_payload_delay_ms = (uint32_t) split_payload_delay_ms;
+
+    if (split_payload_burst < 1)
+    {
+        LOGF("JSON Error: TesterServer->settings->split-payload-burst (int field) : expected a positive value");
+        testerserverTunnelDestroy(t);
+        return NULL;
+    }
+
+    ts->split_payload_burst = (uint32_t) split_payload_burst;
 
     if (ts->packet_init_on_start && ! ts->packet_mode)
     {

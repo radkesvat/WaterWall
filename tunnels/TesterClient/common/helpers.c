@@ -607,7 +607,8 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
 
     ls->request_send_scheduled = false;
 
-    const uint8_t chunk_count = testerclientGetChunkCount(t);
+    const uint8_t chunk_count         = testerclientGetChunkCount(t);
+    uint32_t      split_payloads_sent = 0;
 
     while (! ls->request_paused && ls->request_tx_index < chunk_count)
     {
@@ -649,9 +650,21 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
 
         if (! ts->packet_mode && ts->max_payload_size > 0 && ! ls->request_paused && ls->request_tx_index < chunk_count)
         {
-            ls->request_send_scheduled = true;
-            lineScheduleDelayedTask(l, testerclientRequestSendTask, kTesterClientSplitPayloadDelayMs, t);
-            return;
+            split_payloads_sent += 1;
+
+            if (split_payloads_sent >= ts->split_payload_burst)
+            {
+                ls->request_send_scheduled = true;
+                if (ts->split_payload_delay_ms == 0)
+                {
+                    lineScheduleTask(l, testerclientRequestSendTask, t);
+                }
+                else
+                {
+                    lineScheduleDelayedTask(l, testerclientRequestSendTask, ts->split_payload_delay_ms, t);
+                }
+                return;
+            }
         }
     }
 

@@ -779,8 +779,9 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
         return;
     }
 
-    const uint8_t chunk_count = testerserverGetChunkCount(t);
-    uint8_t       response_limit = ts->streaming_response ? ls->request_rx_index : (ls->response_ready ? chunk_count : 0);
+    const uint8_t chunk_count         = testerserverGetChunkCount(t);
+    uint8_t       response_limit      = ts->streaming_response ? ls->request_rx_index : (ls->response_ready ? chunk_count : 0);
+    uint32_t      split_payloads_sent = 0;
 
     while (! ls->response_paused && ls->response_tx_index < response_limit)
     {
@@ -822,9 +823,21 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
 
         if (ts->max_payload_size > 0 && ! ls->response_paused && ls->response_tx_index < response_limit)
         {
-            ls->response_send_scheduled = true;
-            lineScheduleDelayedTask(l, testerserverResponseSendTask, kTesterServerSplitPayloadDelayMs, t);
-            return;
+            split_payloads_sent += 1;
+
+            if (split_payloads_sent >= ts->split_payload_burst)
+            {
+                ls->response_send_scheduled = true;
+                if (ts->split_payload_delay_ms == 0)
+                {
+                    lineScheduleTask(l, testerserverResponseSendTask, t);
+                }
+                else
+                {
+                    lineScheduleDelayedTask(l, testerserverResponseSendTask, ts->split_payload_delay_ms, t);
+                }
+                return;
+            }
         }
     }
 

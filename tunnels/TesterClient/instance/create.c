@@ -215,7 +215,9 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     const cJSON           *settings              = node->node_settings_json;
     int                    packet_start_delay_ms = 0;
     int                    chunk_count           = kTesterClientChunkCount;
-    int                    max_payload_size      = 0;
+    int                    max_payload_size       = 0;
+    int                    split_payload_delay_ms = kTesterClientSplitPayloadDelayMs;
+    int                    split_payload_burst    = kTesterClientSplitPayloadBurst;
 
     getBoolFromJsonObjectOrDefault(&ts->allow_early_response, settings, "allow-early-response", false);
     getBoolFromJsonObjectOrDefault(&ts->packet_mode, settings, "packet-mode", false);
@@ -224,6 +226,10 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     getIntFromJsonObjectOrDefault(&packet_start_delay_ms, settings, "packet-start-delay-ms", 0);
     getIntFromJsonObjectOrDefault(&chunk_count, settings, "chunk-count", kTesterClientChunkCount);
     getIntFromJsonObjectOrDefault(&max_payload_size, settings, "max-payload-size", 0);
+    getIntFromJsonObjectOrDefault(
+        &split_payload_delay_ms, settings, "split-payload-delay-ms", kTesterClientSplitPayloadDelayMs);
+    getIntFromJsonObjectOrDefault(&split_payload_burst, settings, "split-payload-burst",
+                                  kTesterClientSplitPayloadBurst);
 
     if (packet_start_delay_ms < 0)
     {
@@ -252,6 +258,24 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     }
 
     ts->max_payload_size = (uint32_t) max_payload_size;
+
+    if (split_payload_delay_ms < 0)
+    {
+        LOGF("JSON Error: TesterClient->settings->split-payload-delay-ms (int field) : expected a non-negative value");
+        testerclientTunnelDestroy(t);
+        return NULL;
+    }
+
+    ts->split_payload_delay_ms = (uint32_t) split_payload_delay_ms;
+
+    if (split_payload_burst < 1)
+    {
+        LOGF("JSON Error: TesterClient->settings->split-payload-burst (int field) : expected a positive value");
+        testerclientTunnelDestroy(t);
+        return NULL;
+    }
+
+    ts->split_payload_burst = (uint32_t) split_payload_burst;
 
     if ((ts->packet_start_immediately || ts->packet_start_delay_ms > 0) && ! ts->packet_mode)
     {

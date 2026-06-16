@@ -215,6 +215,15 @@ Packet mode with synthetic IPv4 packets:
   verification identifies chunks by packet size.
   Default: `0` (use the large buffer size)
 
+- `split-payload-delay-ms` `(integer)`
+  Non-negative delay between stream-mode split payload buffers when `max-payload-size` is active.
+  Use `0` for immediate queued scheduling only with transports that can tolerate the resulting burst.
+  Default: `1`
+
+- `split-payload-burst` `(integer)`
+  Number of stream-mode split payload buffers to send before applying `split-payload-delay-ms`.
+  Default: `1`
+
 - `packet-ipv4` `(object)`
   Optional synthetic IPv4 envelope mode for `packet-mode`.
   When present, each packet-mode request and response chunk is sent as a complete IPv4 packet instead of opaque packet

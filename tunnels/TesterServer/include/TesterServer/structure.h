@@ -9,6 +9,7 @@ enum
 {
     kTesterServerChunkCount                = 11,
     kTesterServerSplitPayloadDelayMs       = 1,
+    kTesterServerSplitPayloadBurst         = 1,
     kTesterServerPacketIpv4ProtocolDefault = 253,
     kTesterServerPacketIpv4TtlDefault      = 64
 };
@@ -37,6 +38,8 @@ typedef struct testerserver_tstate_s
     uint32_t                             packet_ipv4_source_addr;
     uint32_t                             packet_ipv4_dest_addr;
     uint32_t                             max_payload_size;
+    uint32_t                             split_payload_delay_ms;
+    uint32_t                             split_payload_burst;
     uint8_t                              chunk_count;
     uint8_t                              packet_ipv4_protocol;
     uint8_t                              packet_ipv4_ttl;
