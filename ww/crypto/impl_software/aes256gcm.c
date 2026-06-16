@@ -1,12 +1,13 @@
-#include "wcrypto.h"
+#include "private/crypto_backends.h"
 
-int aes256gcmIsAvailable(void)
+int wCryptoSoftwareAES256GCMIsAvailable(void)
 {
     return 0;
 }
 
-int aes256gcmEncrypt(unsigned char *dst, const unsigned char *src, size_t src_len, const unsigned char *ad,
-                     size_t ad_len, const unsigned char *nonce, const unsigned char *key)
+int wCryptoSoftwareAES256GCMEncrypt(unsigned char *dst, const unsigned char *src, size_t src_len,
+                                    const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
+                                    const unsigned char *key)
 {
     discard dst;
     discard src;
@@ -18,8 +19,9 @@ int aes256gcmEncrypt(unsigned char *dst, const unsigned char *src, size_t src_le
     return -1;
 }
 
-int aes256gcmDecrypt(unsigned char *dst, const unsigned char *src, size_t src_len, const unsigned char *ad,
-                     size_t ad_len, const unsigned char *nonce, const unsigned char *key)
+int wCryptoSoftwareAES256GCMDecrypt(unsigned char *dst, const unsigned char *src, size_t src_len,
+                                    const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
+                                    const unsigned char *key)
 {
     discard dst;
     discard src;

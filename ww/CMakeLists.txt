@@ -345,6 +345,12 @@ if(WCRYPTO_BACKEND_SODIUM)
     
     target_sources(ww PRIVATE 
         crypto/sodium_instance.c
+        crypto/aes256gcm.c
+        crypto/blake2s.c
+        crypto/chacha20poly1305.c
+        crypto/hash.c
+        crypto/x25519.c
+        crypto/xchacha20poly1305.c
         crypto/impl_sodium/aes256gcm.c
         crypto/impl_sodium/chacha20poly1305.c
         crypto/impl_sodium/hash.c
@@ -352,8 +358,19 @@ if(WCRYPTO_BACKEND_SODIUM)
         crypto/impl_sodium/x25519.c
         crypto/impl_software/blake2s.c
         crypto/impl_software/hash_md5_sha1.c
+        crypto/impl_software/hash_sha2.c
+        crypto/impl_software/sha2.c
     )
-    target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_SODIUM=1)
+    target_compile_definitions(ww PUBLIC
+        WCRYPTO_BACKEND_SODIUM=1
+        WCRYPTO_HAS_SODIUM_AES256GCM=1
+        WCRYPTO_HAS_SODIUM_CHACHA20POLY1305=1
+        WCRYPTO_HAS_SODIUM_HASH=1
+        WCRYPTO_HAS_SODIUM_X25519=1
+        WCRYPTO_HAS_SODIUM_XCHACHA20POLY1305=1
+        WCRYPTO_HAS_SOFTWARE_BLAKE2S=1
+        WCRYPTO_HAS_SOFTWARE_HASH=1
+    )
     
 elseif(WCRYPTO_BACKEND_OPENSSL)
     set(WCRYPTO_BACKEND_SODIUM OFF CACHE BOOL "Enable Sodium backend" FORCE)
@@ -363,6 +380,12 @@ elseif(WCRYPTO_BACKEND_OPENSSL)
 
 
     target_sources(ww PRIVATE 
+        crypto/aes256gcm.c
+        crypto/blake2s.c
+        crypto/chacha20poly1305.c
+        crypto/hash.c
+        crypto/x25519.c
+        crypto/xchacha20poly1305.c
         crypto/imp_openssl/aes256gcm.c
         crypto/imp_openssl/blake2s.c
         crypto/imp_openssl/chacha20poly1305.c
@@ -371,24 +394,47 @@ elseif(WCRYPTO_BACKEND_OPENSSL)
         crypto/imp_openssl/x25519.c
         crypto/impl_software/chacha20.c
     )
-    target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_OPENSSL=1)
+    target_compile_definitions(ww PUBLIC
+        WCRYPTO_BACKEND_OPENSSL=1
+        WCRYPTO_HAS_OPENSSL_AES256GCM=1
+        WCRYPTO_HAS_OPENSSL_BLAKE2S=1
+        WCRYPTO_HAS_OPENSSL_CHACHA20POLY1305=1
+        WCRYPTO_HAS_OPENSSL_HASH=1
+        WCRYPTO_HAS_OPENSSL_X25519=1
+        WCRYPTO_HAS_OPENSSL_XCHACHA20POLY1305=1
+    )
     
 elseif(WCRYPTO_BACKEND_SOFTWARE)
     set(WCRYPTO_BACKEND_SODIUM OFF CACHE BOOL "Enable Sodium backend" FORCE)
     set(WCRYPTO_BACKEND_OPENSSL OFF CACHE BOOL "Enable OpenSSL backend" FORCE)
     
     target_sources(ww PRIVATE 
+        crypto/aes256gcm.c
+        crypto/blake2s.c
+        crypto/chacha20poly1305.c
+        crypto/hash.c
+        crypto/x25519.c
+        crypto/xchacha20poly1305.c
         crypto/impl_software/aes256gcm.c
         crypto/impl_software/blake2s.c
         crypto/impl_software/chacha20.c
         crypto/impl_software/chacha20poly1305.c
         crypto/impl_software/hash_md5_sha1.c
-        crypto/impl_software/hash_unsupported.c
+        crypto/impl_software/hash_sha2.c
         crypto/impl_software/poly1305.c
         crypto/impl_software/poly1305-donna.c
+        crypto/impl_software/sha2.c
         crypto/impl_software/x25519.c
     )
-    target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_SOFTWARE=1)
+    target_compile_definitions(ww PUBLIC
+        WCRYPTO_BACKEND_SOFTWARE=1
+        WCRYPTO_HAS_SOFTWARE_AES256GCM=1
+        WCRYPTO_HAS_SOFTWARE_BLAKE2S=1
+        WCRYPTO_HAS_SOFTWARE_CHACHA20POLY1305=1
+        WCRYPTO_HAS_SOFTWARE_HASH=1
+        WCRYPTO_HAS_SOFTWARE_X25519=1
+        WCRYPTO_HAS_SOFTWARE_XCHACHA20POLY1305=1
+    )
 endif()
 
 ################################################################################

@@ -6,9 +6,9 @@
  * X25519 Diffie-Hellman key exchange, and AEAD encryption/decryption using
  * ChaCha20-Poly1305 and XChaCha20-Poly1305.
  *
- * The API supports multiple backends:
- *   - WCRYPTO_BACKEND_SODIUM / WCRYPTO_BACKEND_SOFTWARE using libsodium.
- *   - WCRYPTO_BACKEND_OPENSSL using OpenSSL.
+ * The WCRYPTO_BACKEND_* macro selects the preferred backend. Individual hash
+ * functions may use another compiled backend or a software fallback when the
+ * preferred backend does not provide that algorithm.
  *
  * @note The inline functions use constant-time comparisons and secure memory zeroing
  *       to mitigate side-channel attacks.

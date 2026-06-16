@@ -1,4 +1,4 @@
-#include "wcrypto.h"
+#include "private/crypto_backends.h"
 #include "wlibc.h"
 #include <openssl/core_names.h>
 #include <openssl/err.h>
@@ -23,7 +23,7 @@ static void blake2sCleanup(blake2s_ctx_t *ctx)
     ctx->outlen  = 0;
 }
 
-int blake2sInit(blake2s_ctx_t *ctx, size_t outlen, const unsigned char *key, size_t keylen)
+int wCryptoOpenSSLBlake2sInit(blake2s_ctx_t *ctx, size_t outlen, const unsigned char *key, size_t keylen)
 {
     if (!ctx || outlen == 0 || outlen > 32 || keylen > 32)
     {
@@ -100,7 +100,7 @@ int blake2sInit(blake2s_ctx_t *ctx, size_t outlen, const unsigned char *key, siz
     return 0;
 }
 
-int blake2sUpdate(blake2s_ctx_t *ctx, const unsigned char *in, size_t inlen)
+int wCryptoOpenSSLBlake2sUpdate(blake2s_ctx_t *ctx, const unsigned char *in, size_t inlen)
 {
     if (!ctx)
     {
@@ -145,7 +145,7 @@ int blake2sUpdate(blake2s_ctx_t *ctx, const unsigned char *in, size_t inlen)
     return -1;
 }
 
-int blake2sFinal(blake2s_ctx_t *ctx, unsigned char *out)
+int wCryptoOpenSSLBlake2sFinal(blake2s_ctx_t *ctx, unsigned char *out)
 {
     int result = -1;
 
@@ -195,23 +195,23 @@ cleanup:
     return result;
 }
 
-int blake2s(unsigned char *out, size_t outlen, const unsigned char *key, size_t keylen, const unsigned char *in,
+int wCryptoOpenSSLBlake2s(unsigned char *out, size_t outlen, const unsigned char *key, size_t keylen, const unsigned char *in,
             size_t inlen)
 {
     blake2s_ctx_t ctx = {0};
 
-    if (blake2sInit(&ctx, outlen, key, keylen) != 0)
+    if (wCryptoOpenSSLBlake2sInit(&ctx, outlen, key, keylen) != 0)
     {
         return -1;
     }
 
-    if (blake2sUpdate(&ctx, in, inlen) != 0)
+    if (wCryptoOpenSSLBlake2sUpdate(&ctx, in, inlen) != 0)
     {
         blake2sCleanup(&ctx);
         return -1;
     }
 
-    if (blake2sFinal(&ctx, out) != 0)
+    if (wCryptoOpenSSLBlake2sFinal(&ctx, out) != 0)
     {
         return -1;
     }

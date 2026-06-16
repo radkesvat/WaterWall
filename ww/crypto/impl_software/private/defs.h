@@ -197,9 +197,9 @@ typedef struct poly1305_context {
 	unsigned char opaque[136];
 } poly1305_context;
 
-void poly1305_init(poly1305_context *ctx, const unsigned char key[32]);
-void poly1305_update(poly1305_context *ctx, const unsigned char *m, size_t bytes);
-void poly1305_finish(poly1305_context *ctx, unsigned char mac[16]);
+void wCryptoSoftwarePoly1305Init(poly1305_context *ctx, const unsigned char key[32]);
+void wCryptoSoftwarePoly1305Update(poly1305_context *ctx, const unsigned char *m, size_t bytes);
+void wCryptoSoftwarePoly1305Finish(poly1305_context *ctx, unsigned char mac[16]);
 
 
 // Taken from https://github.com/floodyberry/poly1305-donna - public domain or MIT
@@ -318,7 +318,6 @@ struct chacha20_ctx {
 void chacha20_init(struct chacha20_ctx *ctx, const uint8_t *key, const uint64_t nonce);
 void chacha20(struct chacha20_ctx *ctx, uint8_t *out, const uint8_t *in, uint32_t len);
 void hchacha20(uint8_t *out, const uint8_t *nonce, const uint8_t *key);
-
 
 
 

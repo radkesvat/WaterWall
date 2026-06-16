@@ -1,6 +1,6 @@
 // Taken from RFC7693 - https://tools.ietf.org/html/rfc7693
 
-#include "wcrypto.h"
+#include "private/crypto_backends.h"
 
 // Cyclic right rotation.
 
@@ -80,7 +80,7 @@ static void blake2s_compress(blake2s_ctx_t *ctx, int last)
 // Initialize the hashing context "ctx" with optional key "key".
 //      1 <= outlen <= 32 gives the digest size in bytes.
 //      Secret key (also <= 32 bytes) is optional (keylen = 0).
-int blake2sInit(blake2s_ctx_t *ctx, size_t outlen, const unsigned char *key, size_t keylen)
+int wCryptoSoftwareBlake2sInit(blake2s_ctx_t *ctx, size_t outlen, const unsigned char *key, size_t keylen)
 {
 	size_t i;
 
@@ -99,7 +99,7 @@ int blake2sInit(blake2s_ctx_t *ctx, size_t outlen, const unsigned char *key, siz
 	for (i = keylen; i < 64; i++)       // zero input block
 		ctx->b[i] = 0;
 	if (keylen > 0) {
-		blake2sUpdate(ctx, key, keylen);
+		wCryptoSoftwareBlake2sUpdate(ctx, key, keylen);
 		ctx->c = 64;                    // at the end
 	}
 
@@ -107,7 +107,7 @@ int blake2sInit(blake2s_ctx_t *ctx, size_t outlen, const unsigned char *key, siz
 }
 
 // Add "inlen" bytes from "in" into the hash.
-int blake2sUpdate(blake2s_ctx_t *ctx, const unsigned char *in, size_t inlen)
+int wCryptoSoftwareBlake2sUpdate(blake2s_ctx_t *ctx, const unsigned char *in, size_t inlen)
 {
 	size_t i;
 
@@ -126,7 +126,7 @@ int blake2sUpdate(blake2s_ctx_t *ctx, const unsigned char *in, size_t inlen)
 
 // Generate the message digest (size given in init).
 //      Result placed in "out".
-int blake2sFinal(blake2s_ctx_t *ctx, unsigned char *out)
+int wCryptoSoftwareBlake2sFinal(blake2s_ctx_t *ctx, unsigned char *out)
 {
 	size_t i;
 
@@ -147,14 +147,14 @@ int blake2sFinal(blake2s_ctx_t *ctx, unsigned char *out)
 }
 
 // Convenience function for all-in-one computation.
-int blake2s(unsigned char *out, size_t outlen, const unsigned char *key, size_t keylen, const unsigned char *in,
+int wCryptoSoftwareBlake2s(unsigned char *out, size_t outlen, const unsigned char *key, size_t keylen, const unsigned char *in,
 	size_t inlen)
 {
 	blake2s_ctx_t ctx;
-	if (blake2sInit(&ctx, outlen, key, keylen))
+	if (wCryptoSoftwareBlake2sInit(&ctx, outlen, key, keylen))
 		return -1;
-	blake2sUpdate(&ctx, in, inlen);
-	blake2sFinal(&ctx, out);
+	wCryptoSoftwareBlake2sUpdate(&ctx, in, inlen);
+	wCryptoSoftwareBlake2sFinal(&ctx, out);
 
 	return 0;
 }

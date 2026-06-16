@@ -1,16 +1,17 @@
-#include "wcrypto.h"
+#include "private/crypto_backends.h"
 #include "wlibc.h"
 
 #include "sodium.h"
 
-int aes256gcmIsAvailable(void)
+int wCryptoSodiumAES256GCMIsAvailable(void)
 {
     assert(sodium_init() != -1 && "libsodium must be initialized before calling this function");
     return crypto_aead_aes256gcm_is_available();
 }
 
-int aes256gcmEncrypt(unsigned char *dst, const unsigned char *src, size_t src_len, const unsigned char *ad,
-                     size_t ad_len, const unsigned char *nonce, const unsigned char *key)
+int wCryptoSodiumAES256GCMEncrypt(unsigned char *dst, const unsigned char *src, size_t src_len,
+                                  const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
+                                  const unsigned char *key)
 {
     assert(sodium_init() != -1 && "libsodium must be initialized before calling this function");
 
@@ -30,8 +31,9 @@ int aes256gcmEncrypt(unsigned char *dst, const unsigned char *src, size_t src_le
     return 0;
 }
 
-int aes256gcmDecrypt(unsigned char *dst, const unsigned char *src, size_t src_len, const unsigned char *ad,
-                     size_t ad_len, const unsigned char *nonce, const unsigned char *key)
+int wCryptoSodiumAES256GCMDecrypt(unsigned char *dst, const unsigned char *src, size_t src_len,
+                                  const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
+                                  const unsigned char *key)
 {
     assert(sodium_init() != -1 && "libsodium must be initialized before calling this function");
 

@@ -8,6 +8,7 @@
  * @author Mike Hamburg
  * @brief Key exchange and signatures based on X25519.
  */
+#include "private/crypto_backends.h"
 #include "private/defs.h"
 // #include "strobe.h"
 // #include "strobe_config.h"
@@ -305,7 +306,7 @@ static void x25519_core(fe xs[5], const uint8_t scalar[X25519_BYTES], const uint
     condswap(x2, x3, swap);
 }
 
-int performX25519(uint8_t out[X25519_BYTES], const uint8_t scalar[X25519_BYTES], const uint8_t x1[X25519_BYTES])
+int wCryptoSoftwareX25519(uint8_t out[X25519_BYTES], const uint8_t scalar[X25519_BYTES], const uint8_t x1[X25519_BYTES])
 {
     int clamp = 1;
     fe  xs[5];

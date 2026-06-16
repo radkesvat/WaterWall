@@ -2,7 +2,7 @@
 
 
 void
-poly1305_init(poly1305_context *ctx, const unsigned char key[32]) {
+wCryptoSoftwarePoly1305Init(poly1305_context *ctx, const unsigned char key[32]) {
 	poly1305_state_internal_t *st = (poly1305_state_internal_t *)ctx;
 
 	/* r &= 0xffffffc0ffffffc0ffffffc0fffffff */
@@ -31,7 +31,7 @@ poly1305_init(poly1305_context *ctx, const unsigned char key[32]) {
 
 
 POLY1305_NOINLINE void
-poly1305_finish(poly1305_context *ctx, unsigned char mac[16]) {
+wCryptoSoftwarePoly1305Finish(poly1305_context *ctx, unsigned char mac[16]) {
 	poly1305_state_internal_t *st = (poly1305_state_internal_t *)ctx;
 	unsigned long h0,h1,h2,h3,h4,c;
 	unsigned long g0,g1,g2,g3,g4;

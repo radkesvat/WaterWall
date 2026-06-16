@@ -1,10 +1,10 @@
-#include "wcrypto.h"
+#include "private/crypto_backends.h"
 #include "wlibc.h"
 #include <openssl/ec.h>
 #include <openssl/evp.h>
 
 // Function to perform X25519 scalar multiplication
-int performX25519(unsigned char out[32], const unsigned char scalar[32], const unsigned char point[32])
+int wCryptoOpenSSLX25519(unsigned char out[32], const unsigned char scalar[32], const unsigned char point[32])
 {
     // Validate inputs
     if (!out || !scalar || !point)

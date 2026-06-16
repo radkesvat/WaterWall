@@ -1,10 +1,10 @@
-#include "wcrypto.h"
+#include "private/crypto_backends.h"
 #include "wlibc.h"
 
 #include "sodium.h"
 
 // Function to perform X25519 scalar multiplication
-int performX25519(unsigned char out[32], const unsigned char scalar[32], const unsigned char point[32])
+int wCryptoSodiumX25519(unsigned char out[32], const unsigned char scalar[32], const unsigned char point[32])
 {
     assert(sodium_init() != -1 && "libsodium must be initialized before calling this function");
 

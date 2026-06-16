@@ -1,11 +1,12 @@
-#include "wcrypto.h"
+#include "private/crypto_backends.h"
 #include "wlibc.h"
 
 #include "sodium.h"
 
 // Encrypt function
-int xchacha20poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t srclen, const unsigned char *ad,
-                             size_t adlen, const unsigned char *nonce, const unsigned char *key)
+int wCryptoSodiumXChacha20Poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t srclen,
+                                          const unsigned char *ad, size_t adlen, const unsigned char *nonce,
+                                          const unsigned char *key)
 {
     // Destination buffer must have space for ciphertext + authentication tag
     unsigned long long ciphertext_len = srclen + crypto_aead_xchacha20poly1305_ietf_ABYTES;
@@ -24,8 +25,9 @@ int xchacha20poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_
 }
 
 // Decrypt function
-int xchacha20poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t srclen, const unsigned char *ad,
-                             size_t adlen, const unsigned char *nonce, const unsigned char *key)
+int wCryptoSodiumXChacha20Poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t srclen,
+                                          const unsigned char *ad, size_t adlen, const unsigned char *nonce,
+                                          const unsigned char *key)
 {
 
     // Destination buffer must have space for plaintext

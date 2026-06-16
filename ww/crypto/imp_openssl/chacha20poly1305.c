@@ -1,11 +1,12 @@
-#include "wcrypto.h"
+#include "private/crypto_backends.h"
 #include "wlibc.h"
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 
 // Helper function for encryption using EVP API
-int chacha20poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t srclen, const unsigned char *ad,
-                             size_t adlen, const unsigned char *nonce, const unsigned char *key)
+int wCryptoOpenSSLChacha20Poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t srclen,
+                                          const unsigned char *ad, size_t adlen, const unsigned char *nonce,
+                                          const unsigned char *key)
 {
     EVP_CIPHER_CTX *ctx = NULL;
     int len = 0;
@@ -54,8 +55,9 @@ cleanup:
 }
 
 // Helper function for decryption using EVP API
-int chacha20poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t srclen, const unsigned char *ad,
-                             size_t adlen, const unsigned char *nonce, const unsigned char *key)
+int wCryptoOpenSSLChacha20Poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t srclen,
+                                          const unsigned char *ad, size_t adlen, const unsigned char *nonce,
+                                          const unsigned char *key)
 {
     EVP_CIPHER_CTX *ctx = NULL;
     int len = 0;

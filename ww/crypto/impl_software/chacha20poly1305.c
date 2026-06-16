@@ -30,6 +30,8 @@
  * Author: Daniel Hope <daniel.hope@smartalock.com>
  */
 
+#include "private/crypto_backends.h"
+
 // AEAD_CHACHA20_POLY1305 as described in https://tools.ietf.org/html/rfc7539
 // AEAD_XChaCha20_Poly1305 as described in https://tools.ietf.org/id/draft-arciszewski-xchacha-02.html
 #include "private/defs.h"
@@ -53,13 +55,13 @@ static void generate_poly1305_key(struct poly1305_context *poly1305_state, struc
 	// We take the first 256 bits or the serialized state, and use those as the one-time Poly1305 key
 	chacha20(chacha20_state, block, block, sizeof(block));
 
-	poly1305_init(poly1305_state, block);
+	wCryptoSoftwarePoly1305Init(poly1305_state, block);
 
 	wCryptoZero(&block, sizeof(block));
 }
 
 // 2.8.  AEAD Construction (Encryption)
-int chacha20poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t src_len, const unsigned char *ad,
+int wCryptoSoftwareChacha20Poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t src_len, const unsigned char *ad,
 	size_t ad_len, const unsigned char *p_nonce, const unsigned char *key) {
 	struct poly1305_context poly1305_state;
 	struct chacha20_ctx chacha20_state;
@@ -78,26 +80,26 @@ int chacha20poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t
 
 	// Finally, the Poly1305 function is called with the Poly1305 key calculated above, and a message constructed as a concatenation of the following:
 	// - The AAD
-	poly1305_update(&poly1305_state, ad, ad_len);
+	wCryptoSoftwarePoly1305Update(&poly1305_state, ad, ad_len);
 	// - padding1 -- the padding is up to 15 zero bytes, and it brings the total length so far to an integral multiple of 16
 	padded_len = (ad_len + 15) & 0xFFFFFFF0; // Round up to next 16 bytes
-	poly1305_update(&poly1305_state, zero, padded_len - ad_len);
+	wCryptoSoftwarePoly1305Update(&poly1305_state, zero, padded_len - ad_len);
 	// - The ciphertext
-	poly1305_update(&poly1305_state, dst, src_len);
+	wCryptoSoftwarePoly1305Update(&poly1305_state, dst, src_len);
 	// - padding2 -- the padding is up to 15 zero bytes, and it brings the total length so far to an integral multiple of 16.
 	padded_len = (src_len + 15) & 0xFFFFFFF0; // Round up to next 16 bytes
-	poly1305_update(&poly1305_state, zero, padded_len - src_len);
+	wCryptoSoftwarePoly1305Update(&poly1305_state, zero, padded_len - src_len);
 	// - The length of the additional data in octets (as a 64-bit little-endian integer)
 	U64TO8_LITTLE(block, (uint64_t)ad_len);
-	poly1305_update(&poly1305_state, block, sizeof(block));
+	wCryptoSoftwarePoly1305Update(&poly1305_state, block, sizeof(block));
 	// - The length of the ciphertext in octets (as a 64-bit little-endian integer).
 	U64TO8_LITTLE(block, (uint64_t)src_len);
-	poly1305_update(&poly1305_state, block, sizeof(block));
+	wCryptoSoftwarePoly1305Update(&poly1305_state, block, sizeof(block));
 
 	// The output from the AEAD is twofold:
 	// - A ciphertext of the same length as the plaintext. (above, output of chacha20 into dst)
 	// - A 128-bit tag, which is the output of the Poly1305 function. (append to dst)
-	poly1305_finish(&poly1305_state, dst + src_len);
+	wCryptoSoftwarePoly1305Finish(&poly1305_state, dst + src_len);
 
 	// Make sure we leave nothing sensitive on the stack
 	wCryptoZero(&chacha20_state, sizeof(chacha20_state));
@@ -107,7 +109,7 @@ int chacha20poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t
 }
 
 // 2.8.  AEAD Construction (Decryption)
-int chacha20poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t src_len, const unsigned char *ad,
+int wCryptoSoftwareChacha20Poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t src_len, const unsigned char *ad,
 	size_t ad_len, const unsigned char *p_nonce, const unsigned char *key) {
 	struct poly1305_context poly1305_state;
 	struct chacha20_ctx chacha20_state;
@@ -133,26 +135,26 @@ int chacha20poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t
 
 		// the Poly1305 function is called with the Poly1305 key calculated above, and a message constructed as a concatenation of the following:
 		// - The AAD
-		poly1305_update(&poly1305_state, ad, ad_len);
+		wCryptoSoftwarePoly1305Update(&poly1305_state, ad, ad_len);
 		// - padding1 -- the padding is up to 15 zero bytes, and it brings the total length so far to an integral multiple of 16
 		padded_len = (ad_len + 15) & 0xFFFFFFF0; // Round up to next 16 bytes
-		poly1305_update(&poly1305_state, zero, padded_len - ad_len);
+		wCryptoSoftwarePoly1305Update(&poly1305_state, zero, padded_len - ad_len);
 		// - The ciphertext (note the Poly1305 function is still run on the AAD and the ciphertext, not the plaintext)
-		poly1305_update(&poly1305_state, src, dst_len);
+		wCryptoSoftwarePoly1305Update(&poly1305_state, src, dst_len);
 		// - padding2 -- the padding is up to 15 zero bytes, and it brings the total length so far to an integral multiple of 16.
 		padded_len = (dst_len + 15) & 0xFFFFFFF0; // Round up to next 16 bytes
-		poly1305_update(&poly1305_state, zero, padded_len - dst_len);
+		wCryptoSoftwarePoly1305Update(&poly1305_state, zero, padded_len - dst_len);
 		// - The length of the additional data in octets (as a 64-bit little-endian integer)
 		U64TO8_LITTLE(block, (uint64_t)ad_len);
-		poly1305_update(&poly1305_state, block, sizeof(block));
+		wCryptoSoftwarePoly1305Update(&poly1305_state, block, sizeof(block));
 		// - The length of the ciphertext in octets (as a 64-bit little-endian integer).
 		U64TO8_LITTLE(block, (uint64_t)dst_len);
-		poly1305_update(&poly1305_state, block, sizeof(block));
+		wCryptoSoftwarePoly1305Update(&poly1305_state, block, sizeof(block));
 
 		// The output from the AEAD is twofold:
 		// - A plaintext of the same length as the ciphertext. (below, output of chacha20 into dst)
 		// - A 128-bit tag, which is the output of the Poly1305 function. (into mac for checking against passed mac)
-		poly1305_finish(&poly1305_state, mac);
+		wCryptoSoftwarePoly1305Finish(&poly1305_state, mac);
 
 
 		if (wCryptoEqual(mac, src + dst_len, POLY1305_MAC_SIZE)) {
@@ -170,7 +172,7 @@ int chacha20poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t
 // The algorithm for XChaCha20-Poly1305 is as follows:
 // 1. Calculate a subkey from the first 16 bytes of the nonce and the key, using HChaCha20 (Section 2.2).
 // 2. Use the subkey and remaining 8 bytes of the nonce (prefixed with 4 NUL bytes) with AEAD_CHACHA20_POLY1305 from [RFC7539] as normal. The definition for XChaCha20 is given in Section 2.3.
-int xchacha20poly1305Encrypt(uint8_t *dst, const uint8_t *src, size_t src_len, const uint8_t *ad, size_t ad_len, const uint8_t *nonce, const uint8_t *key) {
+int wCryptoSoftwareXChacha20Poly1305Encrypt(uint8_t *dst, const uint8_t *src, size_t src_len, const uint8_t *ad, size_t ad_len, const uint8_t *nonce, const uint8_t *key) {
 	uint8_t subkey[CHACHA20_KEY_SIZE];
 	uint64_t new_nonce;
 
@@ -178,13 +180,13 @@ int xchacha20poly1305Encrypt(uint8_t *dst, const uint8_t *src, size_t src_len, c
     uint32_t wireguard_way_of_nonce[3] = {0, new_nonce & 0xFFFFFFFF,new_nonce >> 32 };
 	
 	hchacha20(subkey, nonce, key);
-	chacha20poly1305Encrypt(dst, src, src_len, ad, ad_len, (unsigned char *) &wireguard_way_of_nonce, subkey);
+	wCryptoSoftwareChacha20Poly1305Encrypt(dst, src, src_len, ad, ad_len, (unsigned char *) &wireguard_way_of_nonce, subkey);
 
 	wCryptoZero(subkey, sizeof(subkey));
 	return 0;
 }
 
-int xchacha20poly1305Decrypt(uint8_t *dst, const uint8_t *src, size_t src_len, const uint8_t *ad, size_t ad_len, const uint8_t *nonce, const uint8_t *key) {
+int wCryptoSoftwareXChacha20Poly1305Decrypt(uint8_t *dst, const uint8_t *src, size_t src_len, const uint8_t *ad, size_t ad_len, const uint8_t *nonce, const uint8_t *key) {
 	uint8_t subkey[CHACHA20_KEY_SIZE];
 	uint64_t new_nonce;
 	int result;
@@ -193,7 +195,7 @@ int xchacha20poly1305Decrypt(uint8_t *dst, const uint8_t *src, size_t src_len, c
     uint32_t wireguard_way_of_nonce[3] = {0, new_nonce & 0xFFFFFFFF,new_nonce >> 32 };
 
 	hchacha20(subkey, nonce, key);
-	result = chacha20poly1305Decrypt(dst, src, src_len, ad, ad_len, (unsigned char *) &wireguard_way_of_nonce, subkey);
+	result = wCryptoSoftwareChacha20Poly1305Decrypt(dst, src, src_len, ad, ad_len, (unsigned char *) &wireguard_way_of_nonce, subkey);
 
 	wCryptoZero(subkey, sizeof(subkey));
 	return result;

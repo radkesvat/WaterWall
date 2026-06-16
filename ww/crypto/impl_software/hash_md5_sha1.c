@@ -1,9 +1,9 @@
-#include "wcrypto.h"
+#include "private/crypto_backends.h"
 #include "wlibc.h"
 #include "utils/md5.h"
 #include "utils/sha1.h"
 
-static int softwareHashValidateInput(const void *out, const unsigned char *in, size_t inlen)
+static int softwareMD5SHA1HashValidateInput(const void *out, const unsigned char *in, size_t inlen)
 {
     if (!out || (!in && inlen > 0))
     {
@@ -14,15 +14,15 @@ static int softwareHashValidateInput(const void *out, const unsigned char *in, s
     return 0;
 }
 
-static const unsigned char *softwareHashNormalizeInput(const unsigned char *in)
+static const unsigned char *softwareMD5SHA1HashNormalizeInput(const unsigned char *in)
 {
     static const unsigned char empty_input = 0;
     return in ? in : &empty_input;
 }
 
-int wCryptoMD5(md5_hash_t *out, const unsigned char *in, size_t inlen)
+int wCryptoSoftwareMD5(md5_hash_t *out, const unsigned char *in, size_t inlen)
 {
-    if (softwareHashValidateInput(out, in, inlen) != 0)
+    if (softwareMD5SHA1HashValidateInput(out, in, inlen) != 0)
     {
         return -1;
     }
@@ -32,13 +32,13 @@ int wCryptoMD5(md5_hash_t *out, const unsigned char *in, size_t inlen)
         return -1;
     }
 
-    wwMD5((unsigned char *) softwareHashNormalizeInput(in), (unsigned int) inlen, out->bytes);
+    wwMD5((unsigned char *) softwareMD5SHA1HashNormalizeInput(in), (unsigned int) inlen, out->bytes);
     return 0;
 }
 
-int wCryptoSHA1(sha1_hash_t *out, const unsigned char *in, size_t inlen)
+int wCryptoSoftwareSHA1(sha1_hash_t *out, const unsigned char *in, size_t inlen)
 {
-    if (softwareHashValidateInput(out, in, inlen) != 0)
+    if (softwareMD5SHA1HashValidateInput(out, in, inlen) != 0)
     {
         return -1;
     }
@@ -48,6 +48,6 @@ int wCryptoSHA1(sha1_hash_t *out, const unsigned char *in, size_t inlen)
         return -1;
     }
 
-    wwSHA1((unsigned char *) softwareHashNormalizeInput(in), (uint32_t) inlen, out->bytes);
+    wwSHA1((unsigned char *) softwareMD5SHA1HashNormalizeInput(in), (uint32_t) inlen, out->bytes);
     return 0;
 }

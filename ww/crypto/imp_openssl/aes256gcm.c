@@ -1,15 +1,16 @@
-#include "wcrypto.h"
+#include "private/crypto_backends.h"
 #include "wlibc.h"
 
 #include <openssl/evp.h>
 
-int aes256gcmIsAvailable(void)
+int wCryptoOpenSSLAES256GCMIsAvailable(void)
 {
     return EVP_aes_256_gcm() != NULL;
 }
 
-int aes256gcmEncrypt(unsigned char *dst, const unsigned char *src, size_t src_len, const unsigned char *ad,
-                     size_t ad_len, const unsigned char *nonce, const unsigned char *key)
+int wCryptoOpenSSLAES256GCMEncrypt(unsigned char *dst, const unsigned char *src, size_t src_len,
+                                   const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
+                                   const unsigned char *key)
 {
     EVP_CIPHER_CTX *ctx = NULL;
     int             len = 0;
@@ -70,8 +71,9 @@ cleanup:
     return ret;
 }
 
-int aes256gcmDecrypt(unsigned char *dst, const unsigned char *src, size_t src_len, const unsigned char *ad,
-                     size_t ad_len, const unsigned char *nonce, const unsigned char *key)
+int wCryptoOpenSSLAES256GCMDecrypt(unsigned char *dst, const unsigned char *src, size_t src_len,
+                                   const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
+                                   const unsigned char *key)
 {
     EVP_CIPHER_CTX *ctx = NULL;
     int             len = 0;
