@@ -8,9 +8,14 @@ it admits or rejects new connections, accounts traffic, and closes connections t
 
 ## Typical Placement
 
+`Socks5Server` creates and inserts an internal `UserController` automatically in authenticated mode, so a SOCKS5 chain
+should normally be configured without a visible `UserController` node:
+
 ```text
-TcpListener <--> Socks5Server <--> UserController <--> TcpConnector
+TcpListener <--> Socks5Server <--> TcpConnector
 ```
+
+Manual placement is still useful for other tunnels that call `lineAddUser()` themselves.
 
 `UserController` must be placed upstream (next) of a node that records the authenticated `user_handle_t` on the line with
 `lineAddUser()`. It reads the current handle with `lineGetCurrentUser()` and resolves it through the configured

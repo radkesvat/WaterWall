@@ -14,6 +14,8 @@ This tunnel is written to fit normal Waterwall chain rules:
 - the next node still performs the real outbound transport work
 - line state is created during `Init`
 - finishes destroy local state before propagating the real Waterwall close
+- in authenticated mode, `Socks5Server` creates and inserts its own internal `UserController` between itself and the
+  configured next node
 
 ## What It Does
 
@@ -42,6 +44,7 @@ The same `Socks5Server` implementation handles both paths.
 
 Important:
 
+- Do not manually place a `UserController` directly after an authenticated `Socks5Server`; it is inserted internally.
 - `CONNECT` uses the TCP control line and forwards upstream through the normal next tunnel.
 - `UDP ASSOCIATE` does not create a downstream TCP stream.
 - UDP payload is only accepted when the sender matches an authenticated live TCP control association.
@@ -64,7 +67,8 @@ Important:
 ```
 
 `auth-client` must be a configured `AuthenticationClient` node in the same config file. `Socks5Server` only finds and
-uses that node instance; it does not create an authentication client.
+uses that node instance; it does not create an authentication client. When authentication is enabled, it creates an
+internal `UserController` from the same settings object and places that controller before `next-node-name`.
 
 ## Required JSON Fields
 
@@ -120,6 +124,10 @@ However:
 - `verbose` `(boolean)`
   Enables extra debug logging.
 
+- `sweep-interval-ms` `(integer)`
+  Optional setting forwarded to the internal `UserController` in authenticated mode.
+  Default: `1000`
+
 ## Detailed Behavior
 
 ### Control-line behavior
@@ -143,6 +151,8 @@ Socks5Server authentication and may be kept as operator metadata.
 The resulting `user_handle_t` is stored in `Socks5Server` line state and copied into `line_t` through `lineAddUser()`.
 In no-auth mode the handle stays empty and `lineAddUser()` stores an empty anonymous handle. Multiple
 protocol/authentication servers can add separate user handles to one line without sharing one mutable global user slot.
+The internal `UserController` reads this handle on upstream `Init` and enforces the user's live connection, IP, traffic,
+expiry, and enabled-state limits before the line reaches the configured next tunnel.
 
 For `CONNECT`:
 

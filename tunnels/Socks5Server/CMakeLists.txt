@@ -28,15 +28,20 @@ if(NOT TARGET AuthenticationClient)
     message(FATAL_ERROR "Socks5Server requires AuthenticationClient; enable INCLUDE_AUTHENTICATION_CLIENT")
 endif()
 
+if(NOT TARGET UserController)
+    message(FATAL_ERROR "Socks5Server requires UserController; enable INCLUDE_USER_CONTROLLER")
+endif()
+
 target_include_directories(Socks5Server PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../AuthenticationClient/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Internals/UserController/include
 )
 
 target_include_directories(Socks5Server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(Socks5Server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Socks5Server)
 
-target_link_libraries(Socks5Server PRIVATE ww AuthenticationClient)
+target_link_libraries(Socks5Server PRIVATE ww AuthenticationClient UserController)
 if(NOT APPLE)
     target_precompile_headers(Socks5Server REUSE_FROM ww)
 endif()

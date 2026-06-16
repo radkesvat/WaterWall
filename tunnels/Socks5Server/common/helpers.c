@@ -482,6 +482,25 @@ bool socks5serverLookupUdpAssociation(tunnel_t *t, line_t *l, user_handle_t *use
     return false;
 }
 
+static void socks5serverDestroyInternalUserController(socks5server_tstate_t *ts)
+{
+    if (ts->user_controller_tunnel != NULL)
+    {
+        ts->user_controller_tunnel->onDestroy(ts->user_controller_tunnel);
+        ts->user_controller_tunnel = NULL;
+    }
+
+    ts->user_controller_node.instance = NULL;
+}
+
+static void socks5serverClearInternalNode(node_t *node)
+{
+    memoryFree(node->name);
+    memoryFree(node->type);
+    memoryFree(node->next);
+    memorySet(node, 0, sizeof(*node));
+}
+
 void socks5serverDetachRemoteFromClient(socks5server_lstate_t *remote_ls)
 {
     line_t *client_line = remote_ls->client_line;
@@ -550,6 +569,9 @@ static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_
 
 void socks5serverTunnelstateDestroy(socks5server_tstate_t *ts)
 {
+    socks5serverDestroyInternalUserController(ts);
+    socks5serverClearInternalNode(&ts->user_controller_node);
+
     // Registry entries hold no owned resources, only copied auth metadata.
     for (uint32_t i = 0; i < kSocks5ServerAssocShardCount; ++i)
     {

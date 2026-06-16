@@ -331,6 +331,16 @@ if(INCLUDE_AUTHENTICATION_SERVER)
   target_link_libraries(Waterwall AuthenticationServer)
 endif()
 
+#user controller
+if(INCLUDE_USER_CONTROLLER AND INCLUDE_AUTHENTICATION_CLIENT)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_USER_CONTROLLER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/UserController)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/UserController)
+  target_link_libraries(Waterwall UserController)
+elseif(INCLUDE_USER_CONTROLLER)
+  message(STATUS "Skipping UserController because INCLUDE_AUTHENTICATION_CLIENT is OFF")
+endif()
+
 #tun device
 if(INCLUDE_TUN_DEVICE)
   target_compile_definitions(Waterwall PUBLIC INCLUDE_TUN_DEVICE=1)
@@ -771,6 +781,9 @@ endif()
 
 #socks5 server
 if(INCLUDE_SOCKS_5_SERVER)
+  if(NOT INCLUDE_USER_CONTROLLER)
+    message(FATAL_ERROR "Socks5Server requires INCLUDE_USER_CONTROLLER because it creates an internal UserController")
+  endif()
   target_compile_definitions(Waterwall PUBLIC INCLUDE_SOCKS_5_SERVER=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Socks5Server)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Socks5Server)
@@ -866,16 +879,6 @@ if(INCLUDE_SPEEDLIMIT)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/SpeedLimit)
   target_link_libraries(Waterwall SpeedLimit)
 endif()
-
-if(INCLUDE_USER_CONTROLLER AND INCLUDE_AUTHENTICATION_CLIENT)
-  target_compile_definitions(Waterwall PUBLIC INCLUDE_USER_CONTROLLER=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/UserController)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/UserController)
-  target_link_libraries(Waterwall UserController)
-elseif(INCLUDE_USER_CONTROLLER)
-  message(STATUS "Skipping UserController because INCLUDE_AUTHENTICATION_CLIENT is OFF")
-endif()
-
 
 #--------------------------------------------------------------------------------
 # Platform-Specific Linker and Compiler Flags

@@ -68,6 +68,8 @@ typedef struct socks5server_tstate_s
 {
     node_t                    *auth_client_node;
     tunnel_t                  *auth_client_tunnel;
+    node_t                     user_controller_node;
+    tunnel_t                  *user_controller_tunnel;
     char                      *udp_reply_ipv4;
     ip_addr_t                  udp_reply_ip;
     atomic_ullong              next_association_token;

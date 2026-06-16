@@ -1,5 +1,7 @@
 #include "structure.h"
 
+#include "UserController/interface.h"
+
 #include "loggers/network_logger.h"
 
 static const cJSON *getSettingsItemByKeys(const cJSON *settings, const char *key1, const char *key2)
@@ -143,6 +145,45 @@ static bool parseUdpReplyAddress(socks5server_tstate_t *ts, const cJSON *setting
     return true;
 }
 
+static char *socks5serverMakeChildName(const node_t *node, const char *suffix)
+{
+    const char *base = node->name != NULL ? node->name : "Socks5Server";
+    return stringConcat(base, suffix);
+}
+
+static void socks5serverConfigureUserControllerNode(node_t *child, node_t template_node, const node_t *owner)
+{
+    *child = template_node;
+
+    child->name      = socks5serverMakeChildName(owner, ".user-controller");
+    child->hash_name = calcHashBytes(child->name, stringLength(child->name));
+    child->next      = owner->next != NULL ? stringDuplicate(owner->next) : NULL;
+    child->hash_next = owner->hash_next;
+    child->version   = owner->version;
+
+    child->node_json           = owner->node_json;
+    child->node_settings_json  = owner->node_settings_json;
+    child->node_manager_config = owner->node_manager_config;
+    child->instance            = NULL;
+}
+
+static bool socks5serverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
+{
+    socks5server_tstate_t *ts = tunnelGetState(t);
+
+    socks5serverConfigureUserControllerNode(&ts->user_controller_node, nodeUserControllerGet(), node);
+
+    ts->user_controller_tunnel = ts->user_controller_node.createHandle(&ts->user_controller_node);
+    if (ts->user_controller_tunnel == NULL)
+    {
+        LOGF("Socks5Server: failed to create internal UserController");
+        return false;
+    }
+
+    ts->user_controller_node.instance = ts->user_controller_tunnel;
+    return true;
+}
+
 tunnel_t *socks5serverTunnelCreate(node_t *node)
 {
     tunnel_t              *t        = tunnelCreate(node, sizeof(socks5server_tstate_t), sizeof(socks5server_lstate_t));
@@ -164,9 +205,17 @@ tunnel_t *socks5serverTunnelCreate(node_t *node)
     t->fnResumeD  = &socks5serverTunnelDownStreamResume;
 
     t->onPrepare = &socks5serverTunnelOnPrepair;
+    t->onChain   = &socks5serverTunnelOnChain;
     t->onStart   = &socks5serverTunnelOnStart;
     t->onStop    = &socks5serverTunnelOnStop;
     t->onDestroy = &socks5serverTunnelDestroy;
+
+    if (! nodeHasNext(node))
+    {
+        LOGF("Socks5Server: a next node is required");
+        tunnelDestroy(t);
+        return NULL;
+    }
 
     if (! checkJsonIsObjectAndHasChild(settings))
     {
@@ -199,6 +248,13 @@ tunnel_t *socks5serverTunnelCreate(node_t *node)
     if (! ts->allow_connect && ! ts->allow_udp)
     {
         LOGF("JSON Error: Socks5Server must enable at least one of connect/udp");
+        socks5serverTunnelstateDestroy(ts);
+        tunnelDestroy(t);
+        return NULL;
+    }
+
+    if (! ts->no_auth && ! socks5serverCreateUserControllerTunnel(t, node))
+    {
         socks5serverTunnelstateDestroy(ts);
         tunnelDestroy(t);
         return NULL;
