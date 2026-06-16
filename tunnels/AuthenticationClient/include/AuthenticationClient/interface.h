@@ -1,5 +1,6 @@
 #pragma once
 
+#include "objects/user.h"
 #include "objects/user_handle.h"
 #include "wwapi.h"
 
@@ -38,3 +39,22 @@ WW_EXPORT bool   authenticationclientUserAddTraffic(tunnel_t *t, const user_hand
 
 WW_EXPORT void authenticationclientRequestPull(tunnel_t *t);
 WW_EXPORT void authenticationclientRequestPush(tunnel_t *t);
+
+/*
+ * Live connection-admission and enforcement helpers for traffic-serving nodes
+ * such as UserController. They resolve the handle against the current local
+ * users table by its stable SHA-256 key and run the matching runtime helper.
+ * They touch only process-local runtime state and cumulative traffic counters, never synced
+ * configuration. now_ms is in the AuthenticationClient/UserController local-clock domain; pulled
+ * server expiry fields are projected into that domain when GetAllUsers is installed.
+ */
+WW_EXPORT user_admission_result_t authenticationclientUserTryAdmitConnection(tunnel_t *t, const user_handle_t *handle,
+                                                                            const user_ip_key_t *ip_key,
+                                                                            uint64_t now_ms);
+WW_EXPORT void authenticationclientUserReleaseConnection(tunnel_t *t, const user_handle_t *handle,
+                                                         const user_ip_key_t *ip_key);
+/* Adds traffic to the user and returns whether the connection must now be closed. */
+WW_EXPORT bool authenticationclientUserAccountTraffic(tunnel_t *t, const user_handle_t *handle, uint64_t upload_bytes,
+                                                      uint64_t download_bytes, uint64_t now_ms);
+/* True when an already-open connection for this user must be closed (disabled, expired, over quota). */
+WW_EXPORT bool authenticationclientUserShouldClose(tunnel_t *t, const user_handle_t *handle, uint64_t now_ms);

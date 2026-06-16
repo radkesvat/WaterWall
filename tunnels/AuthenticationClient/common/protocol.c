@@ -133,6 +133,113 @@ static uint64_t authenticationclientCounterDelta(uint64_t current, uint64_t base
     return current > baseline ? current - baseline : 0;
 }
 
+static uint64_t authenticationclientLocalTimeMS(void)
+{
+    return getHRTimeUs() / 1000ULL;
+}
+
+static uint64_t authenticationclientSaturatingAdd(uint64_t a, uint64_t b)
+{
+    if (UNLIKELY(UINT64_MAX - a < b))
+    {
+        return UINT64_MAX;
+    }
+    return a + b;
+}
+
+static uint64_t authenticationclientSmallestNonZero64(uint64_t a, uint64_t b)
+{
+    if (a == 0)
+    {
+        return b;
+    }
+    if (b == 0 || a < b)
+    {
+        return a;
+    }
+    return b;
+}
+
+static uint64_t authenticationclientServerExpireAt(const user_time_info_t *timeinfo)
+{
+    uint64_t expire_at_ms = 0;
+
+    if (timeinfo->expire_at_ms != USER_NO_EXPIRY)
+    {
+        expire_at_ms = timeinfo->expire_at_ms;
+    }
+    if (timeinfo->expire_after_first_usage_ms != USER_NO_EXPIRY && timeinfo->first_usage_at_ms != 0)
+    {
+        expire_at_ms = authenticationclientSmallestNonZero64(
+            expire_at_ms, authenticationclientSaturatingAdd(timeinfo->first_usage_at_ms,
+                                                            timeinfo->expire_after_first_usage_ms));
+    }
+
+    return expire_at_ms;
+}
+
+static uint64_t authenticationclientClientViewExpireAt(const user_time_info_t *timeinfo, uint64_t server_now_ms,
+                                                       uint64_t client_now_ms)
+{
+    const uint64_t server_expire_at_ms = authenticationclientServerExpireAt(timeinfo);
+    if (server_expire_at_ms == 0)
+    {
+        return 0;
+    }
+    if (server_expire_at_ms <= server_now_ms)
+    {
+        return client_now_ms != 0 ? client_now_ms : 1U;
+    }
+    return authenticationclientSaturatingAdd(client_now_ms, server_expire_at_ms - server_now_ms);
+}
+
+static bool authenticationclientReadServerTimeMS(const cJSON *json, uint64_t *server_time_ms)
+{
+    if (UNLIKELY(server_time_ms == NULL))
+    {
+        return false;
+    }
+
+    *server_time_ms = getTimeOfDayMS();
+    if (! cJSON_IsObject(json))
+    {
+        return true;
+    }
+
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(json, "server-time-ms");
+    if (item == NULL)
+    {
+        item = cJSON_GetObjectItemCaseSensitive(json, "server_time_ms");
+    }
+    if (item == NULL || cJSON_IsNull(item))
+    {
+        return true;
+    }
+
+    return getUint64FromJson(server_time_ms, item);
+}
+
+static void authenticationclientInstallClientViewExpiry(users_t *users, uint64_t server_time_ms)
+{
+    const uint64_t client_now_ms = authenticationclientLocalTimeMS();
+    const size_t   users_count   = usersCount(users);
+
+    for (size_t i = 0; i < users_count; ++i)
+    {
+        user_t *user = usersGetAt(users, i);
+        if (UNLIKELY(user == NULL))
+        {
+            continue;
+        }
+
+        user_time_info_t timeinfo = {0};
+        userGetTimeInfo(user, &timeinfo);
+        userSetClientViewExpiry(user,
+                                authenticationclientClientViewExpireAt(&timeinfo, server_time_ms, client_now_ms),
+                                true);
+    }
+}
+
 static void authenticationclientClearSessionLocked(authenticationclient_tstate_t *ts)
 {
     users_t *pending_push_users = NULL;
@@ -146,8 +253,22 @@ static void authenticationclientClearSessionLocked(authenticationclient_tstate_t
     ts->auth_in_flight = false;
     ts->pull_in_flight = false;
     ts->push_in_flight = false;
+    ts->first_usage_push_requested = false;
+    ts->first_usage_push_deferred  = false;
 
     authenticationclientDestroyUsers(pending_push_users);
+}
+
+static void authenticationclientResetFirstUsagePushRuntime(tunnel_t *t)
+{
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+
+    rwlockReadLock(&ts->users_lock);
+    if (ts->users != NULL)
+    {
+        usersResetFirstUsagePushRequests(ts->users);
+    }
+    rwlockReadUnlock(&ts->users_lock);
 }
 
 static bool authenticationclientPendingReserve(authenticationclient_tstate_t *ts, uint32_t count)
@@ -673,59 +794,66 @@ static bool authenticationclientAppendStatsHint(cJSON *array, user_t *user, cons
         return true;
     }
 
-    cJSON *hint         = cJSON_CreateObject();
-    cJSON *hint_stats   = cJSON_CreateObject();
-    cJSON *hint_traffic = cJSON_CreateObject();
-    if (UNLIKELY(hint == NULL || hint_stats == NULL || hint_traffic == NULL))
+    cJSON *hint = cJSON_CreateObject();
+    if (UNLIKELY(hint == NULL))
     {
-        cJSON_Delete(hint);
-        cJSON_Delete(hint_stats);
-        cJSON_Delete(hint_traffic);
         return false;
     }
 
     if (UNLIKELY(! cJSON_AddStringToObject(hint, "password", user->password)))
     {
         cJSON_Delete(hint);
-        cJSON_Delete(hint_stats);
-        cJSON_Delete(hint_traffic);
         return false;
     }
-    if (upload_delta > 0)
+
     {
-        if (UNLIKELY(! jsonAddUint64ToObject(hint_traffic, "up", stats.traffic.u)))
+        cJSON *hint_stats   = cJSON_CreateObject();
+        cJSON *hint_traffic = cJSON_CreateObject();
+        if (UNLIKELY(hint_stats == NULL || hint_traffic == NULL))
         {
             cJSON_Delete(hint);
             cJSON_Delete(hint_stats);
             cJSON_Delete(hint_traffic);
             return false;
         }
-    }
-    if (download_delta > 0)
-    {
-        if (UNLIKELY(! jsonAddUint64ToObject(hint_traffic, "down", stats.traffic.d)))
+
+        if (upload_delta > 0)
+        {
+            if (UNLIKELY(! jsonAddUint64ToObject(hint_traffic, "up", stats.traffic.u)))
+            {
+                cJSON_Delete(hint);
+                cJSON_Delete(hint_stats);
+                cJSON_Delete(hint_traffic);
+                return false;
+            }
+        }
+        if (download_delta > 0)
+        {
+            if (UNLIKELY(! jsonAddUint64ToObject(hint_traffic, "down", stats.traffic.d)))
+            {
+                cJSON_Delete(hint);
+                cJSON_Delete(hint_stats);
+                cJSON_Delete(hint_traffic);
+                return false;
+            }
+        }
+        if (UNLIKELY(! cJSON_AddItemToObject(hint_stats, "traffic", hint_traffic)))
         {
             cJSON_Delete(hint);
             cJSON_Delete(hint_stats);
             cJSON_Delete(hint_traffic);
             return false;
         }
+        hint_traffic = NULL;
+        if (UNLIKELY(! cJSON_AddItemToObject(hint, "stats", hint_stats)))
+        {
+            cJSON_Delete(hint);
+            cJSON_Delete(hint_stats);
+            return false;
+        }
+        hint_stats = NULL;
     }
-    if (UNLIKELY(! cJSON_AddItemToObject(hint_stats, "traffic", hint_traffic)))
-    {
-        cJSON_Delete(hint);
-        cJSON_Delete(hint_stats);
-        cJSON_Delete(hint_traffic);
-        return false;
-    }
-    hint_traffic = NULL;
-    if (UNLIKELY(! cJSON_AddItemToObject(hint, "stats", hint_stats)))
-    {
-        cJSON_Delete(hint);
-        cJSON_Delete(hint_stats);
-        return false;
-    }
-    hint_stats = NULL;
+
     if (UNLIKELY(! cJSON_AddItemToArray(array, hint)))
     {
         cJSON_Delete(hint);
@@ -839,9 +967,16 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
 {
     authenticationclient_tstate_t *ts   = tunnelGetState(t);
     cJSON                         *json = cJSON_ParseWithLength((const char *) data, data_len);
+    uint64_t                       server_time_ms = 0;
     if (UNLIKELY(json == NULL))
     {
         LOGW("AuthenticationClient: GetAllUsers returned invalid JSON");
+        return false;
+    }
+    if (UNLIKELY(! authenticationclientReadServerTimeMS(json, &server_time_ms)))
+    {
+        cJSON_Delete(json);
+        LOGW("AuthenticationClient: GetAllUsers returned invalid server time metadata");
         return false;
     }
 
@@ -884,6 +1019,17 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
         LOGW("AuthenticationClient: failed to preserve local traffic deltas during GetAllUsers replacement");
         return false;
     }
+    if (UNLIKELY(! usersMigrateRuntimeStateBySHA256(new_users, old_users)))
+    {
+        rwlockWriteUnlock(&ts->users_lock);
+        authenticationclientDestroyUsers(new_baseline);
+        usersDestroy(new_users);
+        memoryFree(new_users);
+        LOGW("AuthenticationClient: failed to preserve local runtime state during GetAllUsers replacement");
+        return false;
+    }
+    authenticationclientInstallClientViewExpiry(new_users, server_time_ms);
+    usersResetFirstUsagePushRequests(new_users);
 
     ts->users               = new_users;
     old_baseline            = ts->sync_baseline_users;
@@ -893,6 +1039,11 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
     ts->local_stats_revision      = stats_revision;
     ts->local_revision_generation = revision_generation;
     rwlockWriteUnlock(&ts->users_lock);
+
+    mutexLock(&ts->control_mutex);
+    ts->first_usage_push_requested = false;
+    ts->first_usage_push_deferred  = false;
+    mutexUnlock(&ts->control_mutex);
 
     usersDestroy(old_users);
     memoryFree(old_users);
@@ -995,6 +1146,11 @@ static void authenticationclientHandleError(tunnel_t *t, uint8_t request_type, c
     if (request_type == kAuthenticationClientRequestTypePushUserStats)
     {
         authenticationclientClearPendingPushUsers(t);
+        mutexLock(&ts->control_mutex);
+        ts->first_usage_push_requested = false;
+        ts->first_usage_push_deferred  = false;
+        mutexUnlock(&ts->control_mutex);
+        authenticationclientResetFirstUsagePushRuntime(t);
     }
 
     if (data_len == sizeof("authentication-required") - 1U &&
@@ -1094,6 +1250,11 @@ static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint
             LOGW("AuthenticationClient: PushUserStats returned unexpected response type %u",
                  (unsigned int) response_type);
             authenticationclientClearPendingPushUsers(t);
+            mutexLock(&ts->control_mutex);
+            ts->first_usage_push_requested = false;
+            ts->first_usage_push_deferred  = false;
+            mutexUnlock(&ts->control_mutex);
+            authenticationclientResetFirstUsagePushRuntime(t);
             return;
         }
         const bool needs_pull = authenticationclientJsonBool(data, data_len, "needs-pull", false);
@@ -1101,11 +1262,50 @@ static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint
             t, ! needs_pull, config_revision, stats_revision, revision_generation);
         if (needs_pull)
         {
+            mutexLock(&ts->control_mutex);
+            ts->first_usage_push_requested = false;
+            ts->first_usage_push_deferred  = false;
+            mutexUnlock(&ts->control_mutex);
+            authenticationclientResetFirstUsagePushRuntime(t);
             if (ts->verbose)
             {
                 LOGD("AuthenticationClient: server requested a fresh GetAllUsers after PushUserStats");
             }
             discard authenticationclientSendGetAllUsers(t);
+            break;
+        }
+
+        bool retry_first_usage_push = false;
+        mutexLock(&ts->control_mutex);
+        retry_first_usage_push          = ts->first_usage_push_deferred;
+        ts->first_usage_push_deferred  = false;
+        ts->first_usage_push_requested = retry_first_usage_push;
+        mutexUnlock(&ts->control_mutex);
+
+        if (retry_first_usage_push)
+        {
+            if (UNLIKELY(! authenticationclientSendPushUserStats(t)))
+            {
+                mutexLock(&ts->control_mutex);
+                const bool push_in_flight = ts->push_in_flight;
+                if (push_in_flight)
+                {
+                    ts->first_usage_push_deferred = true;
+                }
+                mutexUnlock(&ts->control_mutex);
+                if (! push_in_flight)
+                {
+                    mutexLock(&ts->control_mutex);
+                    ts->first_usage_push_requested = false;
+                    ts->first_usage_push_deferred  = false;
+                    mutexUnlock(&ts->control_mutex);
+                    authenticationclientResetFirstUsagePushRuntime(t);
+                }
+            }
+        }
+        else
+        {
+            authenticationclientResetFirstUsagePushRuntime(t);
         }
         break;
     }
@@ -1285,6 +1485,7 @@ void authenticationclientOpenControlLine(tunnel_t *t)
     ts->write_paused  = false;
     ts->pending_count = 0;
     mutexUnlock(&ts->control_mutex);
+    authenticationclientResetFirstUsagePushRuntime(t);
 
     line_t                        *line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), 0);
     authenticationclient_lstate_t *ls   = lineGetState(line, t);
@@ -1333,6 +1534,7 @@ void authenticationclientCloseControlLine(tunnel_t *t, line_t *l, bool propagate
     ts->pending_count = 0;
     authenticationclientClearSessionLocked(ts);
     mutexUnlock(&ts->control_mutex);
+    authenticationclientResetFirstUsagePushRuntime(t);
 
     if (verbose)
     {

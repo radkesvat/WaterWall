@@ -330,8 +330,8 @@ together with two server metadata revision counters:
 - `config_revision`
   Bumped when user configuration or metadata changes, for example `AddNewUser` or `UpdateUser`.
 - `stats_revision`
-  Bumped when user traffic statistics change, for example `UpdateUserTraficStatsDiff` or `PushUserStats` with a
-  non-zero accepted delta.
+  Bumped when usage-owned state changes, for example `UpdateUserTraficStatsDiff`, `PushUserStats` with a non-zero
+  accepted traffic delta, or the server stamping `first-usage-at-ms` for the first observed usage.
 
 `ts->store.users` is authoritative because it is the only table loaded from disk, periodically saved to disk, and used
 as the merge target for client updates. All mutations that read or write this table run while holding the server
@@ -428,17 +428,19 @@ The `AuthenticationClient` synchronization flow is:
 7. Pull the full users table again when the server reports that the client baseline is stale.
 
 The client-side table is intentionally writable by local traffic-serving code for runtime statistics. For example, a
-`Socks5Server` node can increment `stats.traffic.up` and `stats.traffic.down` on the user object it received from
-`AuthenticationClient`. It must not change passwords, password hashes, identity fields, limits, enabled state, expiry
-fields, notes, or other user metadata through that pointer. Server-side stats sync accepts only traffic-stat deltas; it
-does not accept arbitrary client-side user metadata changes.
+`UserController` node can increment `stats.traffic.up` and `stats.traffic.down` through the `AuthenticationClient`
+internal API. It must not change passwords, password hashes, identity fields, limits, enabled state, expiry fields, notes,
+or other user metadata. Server-side stats sync accepts only traffic-stat deltas; it does not accept arbitrary client-side
+user metadata changes. `first-usage-at-ms` is server-owned: the client does not send it, and the server stamps it with the
+server clock when the first meaningful usage delta is accepted for a user that does not already have it.
 
 The practical sync interval is expected to be around every 5 minutes, but that timing belongs in AuthenticationClient.
 AuthenticationServer simply accepts valid `PushUserStats` requests whenever they arrive.
 
-`GetAllUsers` is the full-table refresh operation. On success, it returns the authoritative users table and replaces
-`session->baseline_users` with that returned table. It also updates the session's baseline revisions to the current
-server revisions. This is the only normal sync path that replaces a session baseline with a full table copy.
+`GetAllUsers` is the full-table refresh operation. On success, it returns the authoritative users table plus
+`server-time-ms` response metadata, and replaces `session->baseline_users` with that returned table. It also updates the
+session's baseline revisions to the current server revisions. This is the only normal sync path that replaces a session
+baseline with a full table copy.
 
 `PushUserStats` is the partial traffic-stat merge operation. When it arrives, the server treats the request body as a
 list of traffic-stat hints, not as a replacement users table. Each hint is a user-shaped JSON object, but the server
@@ -469,8 +471,10 @@ hints in one request are rejected so one message cannot advance the same baselin
 `AuthenticationClient` may report usage, but it may not rewrite users through the stats sync path.
 
 After the deltas are calculated, the server applies them to `ts->store.users` using saturating counter behavior and
-advances only the matching traffic counters in this session's baseline. It does not replace the session baseline with
-the pushed payload. If any non-zero delta was applied, the server increments `stats_revision`.
+advances only the matching traffic counters in this session's baseline. If the authoritative user has no
+`first-usage-at-ms` and a non-zero traffic delta was accepted, the server stamps `first-usage-at-ms` with its current time
+in both the store and this session baseline. It does not replace the session baseline with the pushed payload. If any
+non-zero delta or first-usage stamp was applied, the server increments `stats_revision`.
 
 If the session baseline was already current before the push, the session's baseline revisions are advanced to the
 latest server revisions. If another client or management request changed the authoritative table first, the push can
@@ -749,7 +753,8 @@ used only to find the existing user by its SHA-256 password hash.
 
 If the user exists, the module reads `stats.traffic.up` and `stats.traffic.down` from the supplied JSON and adds those
 values to the existing user's traffic counters. No other user fields are updated. The add operation uses the same
-saturating counter behavior as `userAddTraffic()`.
+saturating counter behavior as `userAddTraffic()`. If a non-zero traffic delta is accepted and the authoritative user has
+no `first-usage-at-ms` yet, the server stamps it with the current server time.
 
 This operation does not trigger an immediate database file save; the normal periodic save timer is still responsible
 for persisting in-memory state later.
@@ -763,11 +768,14 @@ If the JSON is malformed or the user does not exist, it returns an error respons
 The `GetAllUsers` module expects an empty request payload.
 
 On success it returns response type `3` and response data containing the normalized users database JSON from
-`usersToJson()`. This is the same shape written to disk by normal saves:
+`usersToJson()`, plus response-only server-time metadata:
 
 ```json
-{"users":[...]}
+{"users":[...],"server-time-ms":1767225600000}
 ```
+
+`server-time-ms` is not written to the database. `AuthenticationClient` uses it to project server-owned expiry fields onto
+the client's local clock.
 
 On success the session baseline is replaced with the returned table and the current server revisions.
 
@@ -792,11 +800,12 @@ The pushed hints must reference only users that exist in both the session baseli
 present traffic counter is lower than the session baseline counter, the request is rejected to avoid subtracting usage.
 Duplicate hints for the same password/SHA-256 key in one request are rejected.
 
-After a successful merge, only the pushed traffic counters are advanced in the session baseline. Omitted users and
-omitted upload/download counters remain unchanged in that session baseline. If the session was already current before
-the push, its baseline revisions are advanced to the latest server revisions. If another client changed the
-authoritative table first, the response still succeeds but reports `needs-pull: true`, so `AuthenticationClient` can call
-`GetAllUsers` and refresh its local copy.
+After a successful merge, only the pushed traffic counters and any server-created first-usage stamp are advanced in the
+session baseline. Omitted users and omitted upload/download counters remain unchanged in that session baseline. If the
+session was already current before the push, its baseline revisions are advanced to the latest server revisions. If another
+client changed the authoritative table first, or if this push created a new first-usage stamp that the client needs for
+expiry math, the response still succeeds but reports `needs-pull: true`, so `AuthenticationClient` can call `GetAllUsers`
+and refresh its local copy.
 
 On success it returns response type `0` and response data containing a compact JSON status object:
 

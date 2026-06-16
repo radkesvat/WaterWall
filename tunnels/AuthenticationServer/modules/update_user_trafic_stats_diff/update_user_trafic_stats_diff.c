@@ -63,6 +63,11 @@ sbuf_t *authenticationserverUpdateUserTraficStatsDiffHandle(
     users_update_result_t result =
         usersAddTrafficBySHA256(&ts->store.users, user.sha256_pass.bytes, user.stats.traffic.u, user.stats.traffic.d);
     const bool traffic_changed = user.stats.traffic.u > 0 || user.stats.traffic.d > 0;
+    if (LIKELY(result == kUsersUpdateResultOk && traffic_changed))
+    {
+        result =
+            usersSetFirstUsageIfMissingBySHA256(&ts->store.users, user.sha256_pass.bytes, getTimeOfDayMS(), NULL);
+    }
     userDestroy(&user);
 
     if (UNLIKELY(result != kUsersUpdateResultOk))

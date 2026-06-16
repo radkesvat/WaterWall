@@ -601,6 +601,76 @@ static bool userLimitReached(uint64_t limit, uint64_t value)
     return limit != USER_NO_LIMIT && value >= limit;
 }
 
+/* Expiry computation. Caller must hold at least a read lock on user->lock. */
+static bool userExpiredLocked(const User *user, uint64_t now_ms)
+{
+    if (user->client_view_expiry_valid)
+    {
+        return user->client_view_expires_at_ms != 0 && now_ms >= user->client_view_expires_at_ms;
+    }
+
+    bool expired = userLimitReached(user->timeinfo.expire_at_ms, now_ms);
+    if (! expired && user->timeinfo.expire_after_first_usage_ms != USER_NO_EXPIRY &&
+        user->timeinfo.first_usage_at_ms != 0)
+    {
+        expired =
+            now_ms >= userSaturatingAdd(user->timeinfo.first_usage_at_ms, user->timeinfo.expire_after_first_usage_ms);
+    }
+    return expired;
+}
+
+/* Traffic-quota computation. Caller must hold read locks on user->lock and user->stats_lock. */
+static bool userTrafficReachedLocked(const User *user)
+{
+    return userLimitReached(user->limit.traffic.u, user->stats.traffic.u) ||
+           userLimitReached(user->limit.traffic.d, user->stats.traffic.d) ||
+           userLimitReached(user->limit.traffic.total,
+                            userSaturatingAdd(user->stats.traffic.u, user->stats.traffic.d));
+}
+
+static bool userIpKeyValid(const user_ip_key_t *ip_key)
+{
+    return ip_key != NULL && ip_key->type != 0;
+}
+
+static bool userIpKeyEqual(const user_ip_key_t *a, const user_ip_key_t *b)
+{
+    return a->type == b->type && memoryCompare(a->bytes, b->bytes, sizeof(a->bytes)) == 0;
+}
+
+/* Returns the index of ip_key in the runtime tracker, or runtime->ip_usage_count when absent. */
+static size_t userRuntimeFindIpLocked(const user_runtime_stat_t *runtime, const user_ip_key_t *ip_key)
+{
+    for (size_t i = 0; i < runtime->ip_usage_count; ++i)
+    {
+        if (userIpKeyEqual(&runtime->ip_usages[i].key, ip_key))
+        {
+            return i;
+        }
+    }
+    return runtime->ip_usage_count;
+}
+
+/* Ensures room for at least one more IP usage entry. Caller holds user->stats_lock. */
+static bool userRuntimeReserveIpLocked(user_runtime_stat_t *runtime)
+{
+    if (runtime->ip_usage_count < runtime->ip_usage_capacity)
+    {
+        return true;
+    }
+
+    size_t           new_capacity = runtime->ip_usage_capacity == 0 ? 4 : runtime->ip_usage_capacity * 2;
+    user_ip_usage_t *grown        = memoryReAllocate(runtime->ip_usages, new_capacity * sizeof(*grown));
+    if (UNLIKELY(grown == NULL))
+    {
+        return false;
+    }
+
+    runtime->ip_usages         = grown;
+    runtime->ip_usage_capacity = new_capacity;
+    return true;
+}
+
 bool userCreate(User *user, const char *password)
 {
     if (UNLIKELY(user == NULL || userStringIsEmpty(password)))
@@ -688,6 +758,11 @@ void userDestroy(User *user)
     }
 
     userDestroyStrings(user);
+    if (user->runtime.ip_usages != NULL)
+    {
+        memoryFree(user->runtime.ip_usages);
+    }
+    memoryZero(&user->runtime, sizeof(user->runtime));
     wCryptoZero(&user->sha224_pass, sizeof(user->sha224_pass));
     wCryptoZero(&user->sha256_pass, sizeof(user->sha256_pass));
     wCryptoZero(&user->sha384_pass, sizeof(user->sha384_pass));
@@ -985,13 +1060,7 @@ bool userIsExpired(User *user, uint64_t now_ms)
     }
 
     rwlockReadLock(&user->lock);
-    expired = userLimitReached(user->timeinfo.expire_at_ms, now_ms);
-    if (! expired && user->timeinfo.expire_after_first_usage_ms != USER_NO_EXPIRY &&
-        user->timeinfo.first_usage_at_ms != 0)
-    {
-        expired =
-            now_ms >= userSaturatingAdd(user->timeinfo.first_usage_at_ms, user->timeinfo.expire_after_first_usage_ms);
-    }
+    expired = userExpiredLocked(user, now_ms);
     rwlockReadUnlock(&user->lock);
     return expired;
 }
@@ -1028,10 +1097,7 @@ bool userHasReachedTrafficLimit(User *user)
 
     rwlockReadLock(&user->lock);
     rwlockReadLock(&user->stats_lock);
-    reached =
-        userLimitReached(user->limit.traffic.u, user->stats.traffic.u) ||
-        userLimitReached(user->limit.traffic.d, user->stats.traffic.d) ||
-        userLimitReached(user->limit.traffic.total, userSaturatingAdd(user->stats.traffic.u, user->stats.traffic.d));
+    reached = userTrafficReachedLocked(user);
     rwlockReadUnlock(&user->stats_lock);
     rwlockReadUnlock(&user->lock);
     return reached;
@@ -1160,6 +1226,161 @@ void userRemoveConnection(User *user, bool inbound)
     rwlockWriteUnlock(&user->stats_lock);
 }
 
+user_admission_result_t userTryAdmitConnection(User *user, const user_ip_key_t *ip_key, uint64_t now_ms)
+{
+    user_admission_result_t result = kUserAdmissionOk;
+
+    if (UNLIKELY(! userObjectIsInitialized(user)))
+    {
+        return kUserAdmissionInvalid;
+    }
+
+    /* Lock order matches userSnapshotCreate(): user->lock then user->stats_lock. */
+    rwlockWriteLock(&user->lock);
+    rwlockWriteLock(&user->stats_lock);
+
+    if (! user->enabled)
+    {
+        result = kUserAdmissionDisabled;
+    }
+    else if (userExpiredLocked(user, now_ms))
+    {
+        result = kUserAdmissionExpired;
+    }
+    else if (userTrafficReachedLocked(user))
+    {
+        result = kUserAdmissionTrafficLimited;
+    }
+    else if (userLimitReached(user->limit.cons_out, user->runtime.active_cons_out))
+    {
+        result = kUserAdmissionConnectionLimited;
+    }
+    else
+    {
+        user_runtime_stat_t *runtime  = &user->runtime;
+        bool                 track_ip = userIpKeyValid(ip_key);
+        size_t               ip_index = runtime->ip_usage_count;
+
+        if (track_ip)
+        {
+            ip_index = userRuntimeFindIpLocked(runtime, ip_key);
+
+            // A previously unseen IP would push the distinct-IP set past the configured limit.
+            if (ip_index == runtime->ip_usage_count && userLimitReached(user->limit.ips, runtime->ip_usage_count))
+            {
+                result = kUserAdmissionIpLimited;
+            }
+        }
+
+        if (result == kUserAdmissionOk && track_ip)
+        {
+            if (ip_index < runtime->ip_usage_count)
+            {
+                runtime->ip_usages[ip_index].refs = userSaturatingAdd(runtime->ip_usages[ip_index].refs, 1);
+            }
+            else if (userRuntimeReserveIpLocked(runtime))
+            {
+                runtime->ip_usages[runtime->ip_usage_count].key  = *ip_key;
+                runtime->ip_usages[runtime->ip_usage_count].refs = 1;
+                runtime->ip_usage_count += 1;
+            }
+            else
+            {
+                // Refuse rather than admit a connection we could not account for.
+                result = kUserAdmissionInvalid;
+            }
+        }
+
+        if (result == kUserAdmissionOk)
+        {
+            runtime->active_cons_out = userSaturatingAdd(runtime->active_cons_out, 1);
+        }
+    }
+
+    rwlockWriteUnlock(&user->stats_lock);
+    rwlockWriteUnlock(&user->lock);
+    return result;
+}
+
+void userReleaseConnection(User *user, const user_ip_key_t *ip_key)
+{
+    if (UNLIKELY(! userObjectIsInitialized(user)))
+    {
+        return;
+    }
+
+    rwlockWriteLock(&user->stats_lock);
+    user->runtime.active_cons_out = userSaturatingSub(user->runtime.active_cons_out, 1);
+
+    if (userIpKeyValid(ip_key))
+    {
+        user_runtime_stat_t *runtime  = &user->runtime;
+        size_t               ip_index = userRuntimeFindIpLocked(runtime, ip_key);
+        if (ip_index < runtime->ip_usage_count)
+        {
+            if (runtime->ip_usages[ip_index].refs > 1)
+            {
+                runtime->ip_usages[ip_index].refs -= 1;
+            }
+            else
+            {
+                // Last connection from this IP: drop the slot (swap-with-last keeps the array dense).
+                runtime->ip_usages[ip_index] = runtime->ip_usages[runtime->ip_usage_count - 1];
+                runtime->ip_usage_count -= 1;
+            }
+        }
+    }
+    rwlockWriteUnlock(&user->stats_lock);
+}
+
+bool userAccountTraffic(User *user, uint64_t upload_bytes, uint64_t download_bytes, uint64_t now_ms,
+                        bool *first_usage_push_needed)
+{
+    bool should_close = false;
+
+    if (first_usage_push_needed != NULL)
+    {
+        *first_usage_push_needed = false;
+    }
+
+    if (UNLIKELY(! userObjectIsInitialized(user)))
+    {
+        return true;
+    }
+
+    rwlockReadLock(&user->lock);
+    rwlockWriteLock(&user->stats_lock);
+    user->stats.traffic.u = userSaturatingAdd(user->stats.traffic.u, upload_bytes);
+    user->stats.traffic.d = userSaturatingAdd(user->stats.traffic.d, download_bytes);
+    if (first_usage_push_needed != NULL && (upload_bytes != 0 || download_bytes != 0) &&
+        user->timeinfo.first_usage_at_ms == 0 && ! user->runtime.first_usage_push_requested)
+    {
+        user->runtime.first_usage_push_requested = true;
+        *first_usage_push_needed                 = true;
+    }
+    should_close = (! user->enabled) || userExpiredLocked(user, now_ms) || userTrafficReachedLocked(user);
+    rwlockWriteUnlock(&user->stats_lock);
+    rwlockReadUnlock(&user->lock);
+    return should_close;
+}
+
+bool userRuntimeShouldClose(User *user, uint64_t now_ms)
+{
+    bool should_close = false;
+
+    if (UNLIKELY(! userObjectIsInitialized(user)))
+    {
+        return true;
+    }
+
+    rwlockReadLock(&user->lock);
+    rwlockReadLock(&user->stats_lock);
+    should_close = (! user->enabled) || userExpiredLocked(user, now_ms) || userTrafficReachedLocked(user);
+    rwlockReadUnlock(&user->stats_lock);
+    rwlockReadUnlock(&user->lock);
+    return should_close;
+}
+
 void userSetIpCount(User *user, uint64_t ips)
 {
     if (UNLIKELY(! userObjectIsInitialized(user)))
@@ -1182,6 +1403,31 @@ void userSetDeviceCount(User *user, uint64_t devices)
     rwlockWriteLock(&user->stats_lock);
     user->stats.devices = devices;
     rwlockWriteUnlock(&user->stats_lock);
+}
+
+void userSetClientViewExpiry(User *user, uint64_t expires_at_ms, bool valid)
+{
+    if (UNLIKELY(! userObjectIsInitialized(user)))
+    {
+        return;
+    }
+
+    rwlockWriteLock(&user->lock);
+    user->client_view_expires_at_ms = valid ? expires_at_ms : 0;
+    user->client_view_expiry_valid  = valid;
+    rwlockWriteUnlock(&user->lock);
+}
+
+void userGetTimeInfo(User *user, user_time_info_t *timeinfo)
+{
+    if (UNLIKELY(! userObjectIsInitialized(user) || timeinfo == NULL))
+    {
+        return;
+    }
+
+    rwlockReadLock(&user->lock);
+    *timeinfo = user->timeinfo;
+    rwlockReadUnlock(&user->lock);
 }
 
 void userGetStats(User *user, user_stat_t *stats)

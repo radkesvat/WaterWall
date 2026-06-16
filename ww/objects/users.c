@@ -1865,6 +1865,236 @@ users_update_result_t usersAddTrafficBySHA256(users_t *users, const uint8_t sha2
     return user != NULL ? kUsersUpdateResultOk : kUsersUpdateResultUserNotFound;
 }
 
+static void usersClearRuntimeStateLocked(user_t *user)
+{
+    if (user->runtime.ip_usages != NULL)
+    {
+        memoryFree(user->runtime.ip_usages);
+    }
+    memoryZero(&user->runtime, sizeof(user->runtime));
+}
+
+static void usersMoveRuntimeStateLocked(user_t *dest, user_t *src)
+{
+    usersClearRuntimeStateLocked(dest);
+    dest->runtime = src->runtime;
+    memoryZero(&src->runtime, sizeof(src->runtime));
+}
+
+bool usersMigrateRuntimeStateBySHA256(users_t *dest, users_t *src)
+{
+    if (UNLIKELY(dest == NULL || src == NULL))
+    {
+        return false;
+    }
+    if (dest == src)
+    {
+        return true;
+    }
+
+    users_t *first  = (uintptr_t) dest < (uintptr_t) src ? dest : src;
+    users_t *second = first == dest ? src : dest;
+
+    rwlockWriteLock(&first->lock);
+    rwlockWriteLock(&second->lock);
+
+    for (size_t i = 0; i < src->count; ++i)
+    {
+        user_t *old_user = usersGetAtLocked(src, i);
+        if (UNLIKELY(old_user == NULL || ! old_user->sha256_pass_valid))
+        {
+            continue;
+        }
+
+        user_t *new_user = usersSHA256TableLookupLocked(dest, old_user->sha256_pass.bytes);
+        if (new_user == NULL)
+        {
+            continue;
+        }
+
+        usersMoveRuntimeStateLocked(new_user, old_user);
+    }
+
+    rwlockWriteUnlock(&second->lock);
+    rwlockWriteUnlock(&first->lock);
+    return true;
+}
+
+users_update_result_t usersSetFirstUsageIfMissingBySHA256(users_t *users,
+                                                          const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                                          uint64_t first_usage_at_ms,
+                                                          bool    *changed)
+{
+    user_t *user;
+    bool    local_changed = false;
+
+    if (changed != NULL)
+    {
+        *changed = false;
+    }
+
+    if (UNLIKELY(users == NULL || sha256 == NULL || first_usage_at_ms == 0))
+    {
+        return kUsersUpdateResultInvalidArgument;
+    }
+
+    rwlockReadLock(&users->lock);
+    user = usersSHA256TableLookupLocked(users, sha256);
+    if (LIKELY(user != NULL))
+    {
+        rwlockWriteLock(&user->lock);
+        if (user->timeinfo.first_usage_at_ms == 0)
+        {
+            user->timeinfo.first_usage_at_ms = first_usage_at_ms;
+            local_changed                    = true;
+        }
+        rwlockWriteUnlock(&user->lock);
+    }
+    rwlockReadUnlock(&users->lock);
+
+    if (changed != NULL)
+    {
+        *changed = local_changed;
+    }
+    return user != NULL ? kUsersUpdateResultOk : kUsersUpdateResultUserNotFound;
+}
+
+user_admission_result_t usersTryAdmitConnectionBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                                        const user_ip_key_t *ip_key, uint64_t now_ms)
+{
+    user_t                 *user;
+    user_admission_result_t result;
+
+    if (UNLIKELY(users == NULL || sha256 == NULL))
+    {
+        return kUserAdmissionInvalid;
+    }
+
+    rwlockReadLock(&users->lock);
+    user   = usersSHA256TableLookupLocked(users, sha256);
+    result = user != NULL ? userTryAdmitConnection(user, ip_key, now_ms) : kUserAdmissionInvalid;
+    rwlockReadUnlock(&users->lock);
+
+    return result;
+}
+
+void usersReleaseConnectionBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                    const user_ip_key_t *ip_key)
+{
+    user_t *user;
+
+    if (UNLIKELY(users == NULL || sha256 == NULL))
+    {
+        return;
+    }
+
+    rwlockReadLock(&users->lock);
+    user = usersSHA256TableLookupLocked(users, sha256);
+    if (LIKELY(user != NULL))
+    {
+        userReleaseConnection(user, ip_key);
+    }
+    rwlockReadUnlock(&users->lock);
+}
+
+bool usersAccountTrafficBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE], uint64_t upload_bytes,
+                                 uint64_t download_bytes, uint64_t now_ms, bool *found,
+                                 bool *first_usage_push_needed)
+{
+    user_t *user;
+    bool    should_close = true;
+
+    if (first_usage_push_needed != NULL)
+    {
+        *first_usage_push_needed = false;
+    }
+
+    if (UNLIKELY(users == NULL || sha256 == NULL))
+    {
+        if (found != NULL)
+        {
+            *found = false;
+        }
+        return true;
+    }
+
+    rwlockReadLock(&users->lock);
+    user = usersSHA256TableLookupLocked(users, sha256);
+    if (LIKELY(user != NULL))
+    {
+        should_close = userAccountTraffic(user, upload_bytes, download_bytes, now_ms, first_usage_push_needed);
+    }
+    rwlockReadUnlock(&users->lock);
+
+    if (found != NULL)
+    {
+        *found = user != NULL;
+    }
+    return should_close;
+}
+
+void usersResetFirstUsagePushRequests(users_t *users)
+{
+    if (UNLIKELY(users == NULL))
+    {
+        return;
+    }
+
+    rwlockReadLock(&users->lock);
+    for (size_t i = 0; i < users->count; ++i)
+    {
+        user_t *user = usersGetAtLocked(users, i);
+        if (UNLIKELY(user == NULL))
+        {
+            continue;
+        }
+
+        rwlockWriteLock(&user->stats_lock);
+        user->runtime.first_usage_push_requested = false;
+        rwlockWriteUnlock(&user->stats_lock);
+    }
+    rwlockReadUnlock(&users->lock);
+}
+
+void usersResetFirstUsagePushRequestBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE])
+{
+    if (UNLIKELY(users == NULL || sha256 == NULL))
+    {
+        return;
+    }
+
+    rwlockReadLock(&users->lock);
+    user_t *user = usersSHA256TableLookupLocked(users, sha256);
+    if (LIKELY(user != NULL))
+    {
+        rwlockWriteLock(&user->stats_lock);
+        user->runtime.first_usage_push_requested = false;
+        rwlockWriteUnlock(&user->stats_lock);
+    }
+    rwlockReadUnlock(&users->lock);
+}
+
+bool usersRuntimeShouldCloseBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE], uint64_t now_ms)
+{
+    user_t *user;
+    bool    should_close = true;
+
+    if (UNLIKELY(users == NULL || sha256 == NULL))
+    {
+        return true;
+    }
+
+    rwlockReadLock(&users->lock);
+    user = usersSHA256TableLookupLocked(users, sha256);
+    if (LIKELY(user != NULL))
+    {
+        should_close = userRuntimeShouldClose(user, now_ms);
+    }
+    rwlockReadUnlock(&users->lock);
+
+    return should_close;
+}
+
 bool usersAddUserUsage(users_t *users, user_t *user, uint64_t upload_bytes, uint64_t download_bytes)
 {
     return usersAddTraffic(users, user, upload_bytes, download_bytes);

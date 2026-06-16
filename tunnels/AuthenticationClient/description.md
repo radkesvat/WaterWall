@@ -265,14 +265,18 @@ The client keeps one active local users table. It is protected by a tunnel-level
 
 1. The response JSON is parsed into a fresh `users_t`.
 2. The fresh table is validated.
-3. The active table pointer is swapped under the write side of the rwlock.
-4. The generation counter is incremented.
-5. The old table is destroyed after the swap.
+3. Local unsynced traffic deltas and process-local runtime counters are carried forward by SHA-256 key.
+4. Each user's local expiry deadline is projected from the server-owned time fields and response server-time metadata.
+5. The active table pointer is swapped under the write side of the rwlock.
+6. The generation counter is incremented.
+7. The old table is destroyed after the swap.
 
 Readers hold the read side of the same rwlock while copying JSON, copying stats, or updating traffic by SHA-256. This
 prevents a user pointer returned by `users_t` from becoming invalid during the operation.
 
-The table is local cache plus local counter accumulation. The server remains the source of truth for full user config.
+The table is local cache plus local counter accumulation. The server remains the source of truth for full user config and
+for `first-usage-at-ms`. The client never invents or pushes that timestamp; it only converts server expiry state into a
+process-local deadline used by admission and close checks.
 
 ## Internal API
 
@@ -310,6 +314,10 @@ authenticationclientUserToJson(t, &handle)
 authenticationclientUsersToJson(t)
 authenticationclientUserGetStats(t, &handle, &stats)
 authenticationclientUserAddTraffic(t, &handle, upload, download)
+authenticationclientUserTryAdmitConnection(t, &handle, &ip_key, now_ms)
+authenticationclientUserReleaseConnection(t, &handle, &ip_key)
+authenticationclientUserAccountTraffic(t, &handle, upload, download, now_ms)
+authenticationclientUserShouldClose(t, &handle, now_ms)
 authenticationclientRequestPull(t)
 authenticationclientRequestPush(t)
 ```
@@ -317,6 +325,11 @@ authenticationclientRequestPush(t)
 `authenticationclientUserToJson()` and `authenticationclientUsersToJson()` return new `cJSON` objects owned by the
 caller. Stats are copied into caller storage. Traffic updates are applied by SHA-256 through `usersAddTrafficBySHA256()`;
 the caller never mutates a `user_t` directly.
+
+The live enforcement helpers resolve handles by SHA-256 instead of rejecting them solely because a `GetAllUsers` refresh
+bumped the local users generation. A SHA-256 miss means the user disappeared from the refreshed table. The `now_ms`
+argument for these helpers is in the client's local monotonic clock domain, because expiry has already been projected onto
+that clock when the users table was installed.
 
 `authenticationclientRequestPull()` and `authenticationclientRequestPush()` do not create their own lines. If called from
 another worker, they queue a worker-0 task that tries to send the request on the current control line. If the client is
@@ -345,7 +358,13 @@ not sent.
 
 Users without traffic counters in the local JSON snapshot are skipped for that push. This keeps push messages focused on
 password plus traffic stats. The server compares these counters against the session baseline created by `GetAllUsers` and
-applies only deltas.
+applies only deltas. The client does not send `time.first-usage-at-ms`; when the first non-zero traffic delta arrives for a
+user whose authoritative `first-usage-at-ms` is still zero, the server stamps that field using its own clock.
+
+`authenticationclientUserAccountTraffic()` also marks a runtime-only per-user flag on the first non-zero local traffic
+accounting while `first-usage-at-ms` is still missing. AuthClient then queues one worker-0 `PushUserStats` attempt, or
+defers one follow-up push if a stats push is already in flight, and coalesces later payload calls until the pushed usage
+is followed by a fresh `GetAllUsers` view or the send attempt fails.
 
 If the server says `needs-pull: true`, the client requests `GetAllUsers` again to refresh the local cache and server-side
 session baseline.

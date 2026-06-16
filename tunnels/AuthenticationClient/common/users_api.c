@@ -2,6 +2,18 @@
 
 #include "loggers/network_logger.h"
 
+static uint64_t authenticationclientLocalTimeMS(void)
+{
+    return getHRTimeUs() / 1000ULL;
+}
+
+typedef enum authenticationclient_first_usage_push_result_e
+{
+    kAuthenticationClientFirstUsagePushQueued = 0,
+    kAuthenticationClientFirstUsagePushPending,
+    kAuthenticationClientFirstUsagePushNotReady
+} authenticationclient_first_usage_push_result_t;
+
 authenticationclient_state_t authenticationclientGetState(tunnel_t *t)
 {
     if (UNLIKELY(t == NULL))
@@ -62,7 +74,7 @@ bool authenticationclientGetUserBySHA256(tunnel_t *t, const uint8_t sha256[SHA25
 
     authenticationclient_tstate_t *ts    = tunnelGetState(t);
     bool                           found = false;
-    uint64_t                       now_ms = getTimeOfDayMS();
+    uint64_t                       now_ms = authenticationclientLocalTimeMS();
 
     rwlockReadLock(&ts->users_lock);
     user_t *user = ts->users != NULL ? usersLookupBySHA256(ts->users, sha256) : NULL;
@@ -95,7 +107,7 @@ bool authenticationclientGetUserByPassword(tunnel_t *t, const char *password, us
 
     authenticationclient_tstate_t *ts    = tunnelGetState(t);
     bool                           found = false;
-    uint64_t                       now_ms = getTimeOfDayMS();
+    uint64_t                       now_ms = authenticationclientLocalTimeMS();
 
     rwlockReadLock(&ts->users_lock);
     user_t *user = ts->users != NULL ? usersLookupBySHA256(ts->users, sha256.bytes) : NULL;
@@ -123,7 +135,7 @@ bool authenticationclientUserHandleIsLive(tunnel_t *t, const user_handle_t *hand
 
     authenticationclient_tstate_t *ts   = tunnelGetState(t);
     bool                           live = false;
-    uint64_t                       now_ms = getTimeOfDayMS();
+    uint64_t                       now_ms = authenticationclientLocalTimeMS();
 
     rwlockReadLock(&ts->users_lock);
     user_t *user = NULL;
@@ -226,6 +238,200 @@ bool authenticationclientUserAddTraffic(tunnel_t *t, const user_handle_t *handle
     rwlockReadUnlock(&ts->users_lock);
 
     return result == kUsersUpdateResultOk;
+}
+
+/*
+ * These enforcement helpers identify the user by its SHA-256 password digest, which is the stable
+ * lookup key across users_generation changes. They deliberately do NOT gate on handle->generation:
+ * a GetAllUsers refresh bumps the generation but the same logical user keeps the same SHA-256 key,
+ * so enforcement (admission, accounting, closing) must keep working against the refreshed user
+ * object. A SHA-256 miss means the user was actually removed from the table (revoked).
+ */
+user_admission_result_t authenticationclientUserTryAdmitConnection(tunnel_t *t, const user_handle_t *handle,
+                                                                   const user_ip_key_t *ip_key, uint64_t now_ms)
+{
+    if (UNLIKELY(t == NULL || ! userHandleIsValid(handle)))
+    {
+        return kUserAdmissionInvalid;
+    }
+
+    authenticationclient_tstate_t *ts     = tunnelGetState(t);
+    user_admission_result_t        result = kUserAdmissionInvalid;
+
+    rwlockReadLock(&ts->users_lock);
+    if (LIKELY(ts->users != NULL))
+    {
+        result = usersTryAdmitConnectionBySHA256(ts->users, handle->sha256, ip_key, now_ms);
+    }
+    rwlockReadUnlock(&ts->users_lock);
+
+    return result;
+}
+
+void authenticationclientUserReleaseConnection(tunnel_t *t, const user_handle_t *handle, const user_ip_key_t *ip_key)
+{
+    if (UNLIKELY(t == NULL || ! userHandleIsValid(handle)))
+    {
+        return;
+    }
+
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+
+    rwlockReadLock(&ts->users_lock);
+    // Releasing by SHA-256 hits the user even after a refresh; live counters are migrated across the
+    // refresh so the release lands on the object that counted this connection. A miss (revoked user)
+    // is a harmless no-op.
+    if (LIKELY(ts->users != NULL))
+    {
+        usersReleaseConnectionBySHA256(ts->users, handle->sha256, ip_key);
+    }
+    rwlockReadUnlock(&ts->users_lock);
+}
+
+static void authenticationclientResetFirstUsagePushState(tunnel_t *t)
+{
+    if (UNLIKELY(t == NULL))
+    {
+        return;
+    }
+
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+
+    mutexLock(&ts->control_mutex);
+    ts->first_usage_push_requested = false;
+    ts->first_usage_push_deferred  = false;
+    mutexUnlock(&ts->control_mutex);
+
+    rwlockReadLock(&ts->users_lock);
+    if (ts->users != NULL)
+    {
+        usersResetFirstUsagePushRequests(ts->users);
+    }
+    rwlockReadUnlock(&ts->users_lock);
+}
+
+static void authenticationclientFirstUsagePushOnWorker0(void *worker_ptr, void *arg1, void *arg2, void *arg3)
+{
+    discard worker_ptr;
+    discard arg2;
+    discard arg3;
+
+    tunnel_t *t = arg1;
+    if (UNLIKELY(t == NULL))
+    {
+        return;
+    }
+
+    if (UNLIKELY(! authenticationclientSendPushUserStats(t)))
+    {
+        authenticationclient_tstate_t *ts = tunnelGetState(t);
+        mutexLock(&ts->control_mutex);
+        const bool push_in_flight = ts->push_in_flight;
+        if (push_in_flight)
+        {
+            ts->first_usage_push_deferred = true;
+        }
+        mutexUnlock(&ts->control_mutex);
+        if (! push_in_flight)
+        {
+            authenticationclientResetFirstUsagePushState(t);
+        }
+    }
+}
+
+static authenticationclient_first_usage_push_result_t authenticationclientRequestFirstUsagePush(tunnel_t *t)
+{
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    authenticationclient_first_usage_push_result_t result = kAuthenticationClientFirstUsagePushNotReady;
+
+    mutexLock(&ts->control_mutex);
+    if (ts->push_in_flight)
+    {
+        ts->first_usage_push_deferred = true;
+        result                        = kAuthenticationClientFirstUsagePushPending;
+    }
+    else if (ts->first_usage_push_requested)
+    {
+        result = kAuthenticationClientFirstUsagePushPending;
+    }
+    else if (LIKELY(ts->authenticated && ts->connected && ! ts->stopping && ! ts->write_paused &&
+                    ts->control_line != NULL))
+    {
+        ts->first_usage_push_requested = true;
+        result                         = kAuthenticationClientFirstUsagePushQueued;
+    }
+    mutexUnlock(&ts->control_mutex);
+
+    if (result == kAuthenticationClientFirstUsagePushQueued)
+    {
+        sendWorkerMessageForceQueue(0, authenticationclientFirstUsagePushOnWorker0, t, NULL, NULL);
+    }
+    return result;
+}
+
+bool authenticationclientUserAccountTraffic(tunnel_t *t, const user_handle_t *handle, uint64_t upload_bytes,
+                                            uint64_t download_bytes, uint64_t now_ms)
+{
+    if (UNLIKELY(t == NULL || ! userHandleIsValid(handle)))
+    {
+        return false;
+    }
+
+    authenticationclient_tstate_t *ts                      = tunnelGetState(t);
+    bool                           should_close            = false;
+    bool                           first_usage_push_needed = false;
+
+    rwlockReadLock(&ts->users_lock);
+    if (LIKELY(ts->users != NULL))
+    {
+        // usersAccountTrafficBySHA256() returns close=true when the user is gone (revoked), so a
+        // removed user's traffic is rejected and the connection is torn down.
+        should_close = usersAccountTrafficBySHA256(ts->users,
+                                                   handle->sha256,
+                                                   upload_bytes,
+                                                   download_bytes,
+                                                   now_ms,
+                                                   NULL,
+                                                   &first_usage_push_needed);
+    }
+    rwlockReadUnlock(&ts->users_lock);
+
+    if (first_usage_push_needed)
+    {
+        authenticationclient_first_usage_push_result_t result = authenticationclientRequestFirstUsagePush(t);
+        if (result == kAuthenticationClientFirstUsagePushNotReady)
+        {
+            rwlockReadLock(&ts->users_lock);
+            if (ts->users != NULL)
+            {
+                usersResetFirstUsagePushRequestBySHA256(ts->users, handle->sha256);
+            }
+            rwlockReadUnlock(&ts->users_lock);
+        }
+    }
+
+    return should_close;
+}
+
+bool authenticationclientUserShouldClose(tunnel_t *t, const user_handle_t *handle, uint64_t now_ms)
+{
+    if (UNLIKELY(t == NULL || ! userHandleIsValid(handle)))
+    {
+        return false;
+    }
+
+    authenticationclient_tstate_t *ts          = tunnelGetState(t);
+    bool                           should_close = false;
+
+    rwlockReadLock(&ts->users_lock);
+    if (LIKELY(ts->users != NULL))
+    {
+        // Returns true when the user is disabled, expired, over quota, or removed from the table.
+        should_close = usersRuntimeShouldCloseBySHA256(ts->users, handle->sha256, now_ms);
+    }
+    rwlockReadUnlock(&ts->users_lock);
+
+    return should_close;
 }
 
 static void authenticationclientRequestPullOnWorker0(void *worker_ptr, void *arg1, void *arg2, void *arg3)

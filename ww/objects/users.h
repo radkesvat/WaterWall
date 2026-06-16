@@ -1,4 +1,6 @@
 #pragma once
+#ifndef WW_OBJECTS_USERS_H
+#define WW_OBJECTS_USERS_H
 
 /*
  * User database manager.
@@ -179,7 +181,34 @@ bool                  usersSetUserRecordStatInterval(users_t *users, user_t *use
 bool                  usersAddTraffic(users_t *users, user_t *user, uint64_t upload_bytes, uint64_t download_bytes);
 users_update_result_t usersAddTrafficBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
                                               uint64_t upload_bytes, uint64_t download_bytes);
+/*
+ * Moves process-local runtime enforcement state from matching users in src to
+ * dest, keyed by SHA-256.
+ */
+bool                  usersMigrateRuntimeStateBySHA256(users_t *dest, users_t *src);
+users_update_result_t usersSetFirstUsageIfMissingBySHA256(users_t *users,
+                                                          const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                                          uint64_t first_usage_at_ms,
+                                                          bool    *changed);
 bool                  usersAddUserUsage(users_t *users, user_t *user, uint64_t upload_bytes, uint64_t download_bytes);
+
+/*
+ * Live connection-admission helpers keyed by SHA-256 password digest. They take
+ * the database read lock, locate the user, and run the matching user_t runtime
+ * helper. They operate on the process-local runtime state, not the synced stats.
+ */
+user_admission_result_t usersTryAdmitConnectionBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                                        const user_ip_key_t *ip_key, uint64_t now_ms);
+void usersReleaseConnectionBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                    const user_ip_key_t *ip_key);
+/* Adds traffic and returns whether the user must now be cut off; *found reports if the user existed. */
+bool usersAccountTrafficBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE], uint64_t upload_bytes,
+                                 uint64_t download_bytes, uint64_t now_ms, bool *found,
+                                 bool *first_usage_push_needed);
+void usersResetFirstUsagePushRequests(users_t *users);
+void usersResetFirstUsagePushRequestBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE]);
+/* True when the user no longer exists or may no longer carry traffic. */
+bool usersRuntimeShouldCloseBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE], uint64_t now_ms);
 bool usersAddSpeed(users_t *users, user_t *user, uint64_t upload_bytes_per_sec, uint64_t download_bytes_per_sec);
 bool usersAddConnection(users_t *users, user_t *user, bool inbound);
 bool usersRemoveConnection(users_t *users, user_t *user, bool inbound);
@@ -205,11 +234,13 @@ bool          usersContainsUser(const users_t *users, const user_t *user);
 bool usersRebuildLookups(users_t *users);
 bool usersValidate(const users_t *users);
 
-user_stat_t usersUsageDiff(users_t *users, user_t *base, user_t *current);
-
 user_t       *usersFindFirstExpired(users_t *users, uint64_t now_ms);
 const user_t *usersFindFirstExpiredConst(const users_t *users, uint64_t now_ms);
 user_t       *usersFindFirstDisabled(users_t *users);
 const user_t *usersFindFirstDisabledConst(const users_t *users);
 user_t       *usersFindFirstLimited(users_t *users);
 const user_t *usersFindFirstLimitedConst(const users_t *users);
+
+user_stat_t usersUsageDiff(users_t *users, user_t *base, user_t *current);
+
+#endif // WW_OBJECTS_USERS_H

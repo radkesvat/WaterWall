@@ -47,6 +47,12 @@ if(TARGET ww)
   add_dependencies(waterwall_unit_tests line_user_identifier_test)
 
   add_waterwall_unit_test(waterwall.line_user_identifier_unit line_user_identifier_test "unit;net;line")
+
+  add_executable(users_runtime_migration_test users_runtime_migration_test.c)
+  target_link_libraries(users_runtime_migration_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests users_runtime_migration_test)
+
+  add_waterwall_unit_test(waterwall.users_runtime_migration_unit users_runtime_migration_test "unit;objects;users")
 endif()
 
 if(TARGET tcp_over_udp_fec)

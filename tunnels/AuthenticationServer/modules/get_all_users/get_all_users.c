@@ -1,6 +1,7 @@
 #include "modules/get_all_users/get_all_users.h"
 
 #include "loggers/network_logger.h"
+#include "utils/json_helpers.h"
 
 sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
                                               tunnel_t *t, line_t *l, authenticationserver_session_t *session,
@@ -20,6 +21,12 @@ sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuth
     if (UNLIKELY(users_json == NULL))
     {
         LOGW("AuthenticationServer: GetAllUsers failed to export users database");
+        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "users-json-export-failed");
+    }
+    if (UNLIKELY(! jsonAddUint64ToObject(users_json, "server-time-ms", getTimeOfDayMS())))
+    {
+        cJSON_Delete(users_json);
+        LOGW("AuthenticationServer: GetAllUsers failed to add server time metadata");
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "users-json-export-failed");
     }
 

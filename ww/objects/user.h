@@ -1,4 +1,6 @@
 #pragma once
+#ifndef WW_OBJECTS_USER_H
+#define WW_OBJECTS_USER_H
 
 /*
  * User model, lifecycle, JSON persistence, and usage helpers.
@@ -75,6 +77,61 @@ typedef struct user_stat_s
     user_ud_t traffic;
 } user_stat_t;
 
+/*
+ * Compact, lwIP-independent representation of a peer IP address.
+ *
+ * Enforcement nodes (for example UserController) convert the connecting peer's
+ * ip_addr_t into this value before handing it to the runtime helpers, so the
+ * core user object does not need to depend on the socket/lwIP headers.
+ * type == 0 means "no IP" and disables per-user IP-count tracking for that
+ * connection.
+ */
+typedef struct user_ip_key_s
+{
+    uint8_t type;     // address family discriminator (0 == none)
+    uint8_t bytes[16]; // raw address bytes in network order (IPv4 uses the first 4)
+} user_ip_key_t;
+
+/*
+ * Result of an admission decision. Only kUserAdmissionOk reserves a connection
+ * slot; every other value is a rejection reason for logging.
+ */
+typedef enum user_admission_result_e
+{
+    kUserAdmissionOk = 0,
+    kUserAdmissionDisabled,
+    kUserAdmissionExpired,
+    kUserAdmissionTrafficLimited,
+    kUserAdmissionConnectionLimited,
+    kUserAdmissionIpLimited,
+    kUserAdmissionInvalid
+} user_admission_result_t;
+
+/*
+ * Per-IP usage entry for the live runtime tracker. refs counts how many active
+ * connections currently originate from that exact IP.
+ */
+typedef struct user_ip_usage_s
+{
+    user_ip_key_t key;
+    uint64_t      refs;
+} user_ip_usage_t;
+
+/*
+ * Live, process-local enforcement state. Unlike user_stat_t this is never
+ * serialized, copied, or synced to AuthenticationServer; it is recreated empty
+ * whenever the user object is (re)created and tracks only currently-open
+ * connections for limit enforcement. Guarded by user_s.stats_lock.
+ */
+typedef struct user_runtime_stat_s
+{
+    uint64_t         active_cons_out;
+    user_ip_usage_t *ip_usages;
+    size_t           ip_usage_count;
+    size_t           ip_usage_capacity;
+    bool             first_usage_push_requested;
+} user_runtime_stat_t;
+
 typedef struct user_s User;
 typedef User          user_t;
 
@@ -94,9 +151,18 @@ struct user_s
 
     user_limit_t     limit;
     user_time_info_t timeinfo;
+    /*
+     * Runtime-only client projection of server-owned expiry time. When valid,
+     * expiry checks compare against this local-clock deadline instead of the
+     * persisted server-clock timeinfo fields. Never serialized or copied.
+     */
+    uint64_t client_view_expires_at_ms;
+    bool     client_view_expiry_valid;
     int              record_stat_interval_ms;
 
     user_stat_t stats;
+
+    user_runtime_stat_t runtime;
 
     hash_t        hash_pass;
     sha224_hash_t sha224_pass;
@@ -134,6 +200,24 @@ bool userHasReachedTrafficLimit(User *user);
 bool userHasReachedBandwidthLimit(User *user);
 bool userHasReachedLimit(User *user);
 
+/*
+ * Live connection-admission and accounting helpers used by enforcement nodes.
+ *
+ * These operate on the process-local user_s.runtime state and are independent
+ * from the serialized user_s.stats counters.
+ */
+user_admission_result_t userTryAdmitConnection(User *user, const user_ip_key_t *ip_key, uint64_t now_ms);
+void                    userReleaseConnection(User *user, const user_ip_key_t *ip_key);
+/*
+ * Adds traffic to the cumulative stats and reports whether the connection must now be closed.
+ * first_usage_push_needed is set once, at the first non-zero traffic accounting while first_usage_at_ms
+ * is still missing, so AuthenticationClient can ask the server to stamp first usage promptly.
+ */
+bool userAccountTraffic(User *user, uint64_t upload_bytes, uint64_t download_bytes, uint64_t now_ms,
+                        bool *first_usage_push_needed);
+/* True if the user may no longer carry traffic (disabled, expired, or over its traffic quota). */
+bool                    userRuntimeShouldClose(User *user, uint64_t now_ms);
+
 void userMarkFirstUsage(User *user, uint64_t now_ms);
 void userAddTraffic(User *user, uint64_t upload_bytes, uint64_t download_bytes);
 void userAddSpeed(User *user, uint64_t upload_bytes_per_sec, uint64_t download_bytes_per_sec);
@@ -141,6 +225,10 @@ void userAddConnection(User *user, bool inbound);
 void userRemoveConnection(User *user, bool inbound);
 void userSetIpCount(User *user, uint64_t ips);
 void userSetDeviceCount(User *user, uint64_t devices);
+void userSetClientViewExpiry(User *user, uint64_t expires_at_ms, bool valid);
+void userGetTimeInfo(User *user, user_time_info_t *timeinfo);
 void userGetStats(User *user, user_stat_t *stats);
 
 user_stat_t userStatsDiff(User *base, User *current);
+
+#endif // WW_OBJECTS_USER_H

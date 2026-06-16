@@ -24,6 +24,8 @@ typedef struct authenticationserver_stats_delta_s
     uint8_t  sha256[SHA256_DIGEST_SIZE];
     uint64_t upload;
     uint64_t download;
+    uint64_t first_usage_at_ms;
+    bool     first_usage_present;
 } authenticationserver_stats_delta_t;
 
 static bool authenticationserverPushStatsStringIsEmpty(const char *value)
@@ -70,12 +72,20 @@ static bool authenticationserverPushStatsReadHintTraffic(const cJSON            
                                                          authenticationserver_stats_hint_t *hint)
 {
     const cJSON *stats = authenticationserverPushStatsJsonGetItem(hint_json, "stats");
+    if (stats == NULL || cJSON_IsNull(stats))
+    {
+        return true;
+    }
     if (UNLIKELY(! cJSON_IsObject(stats)))
     {
         return false;
     }
 
     const cJSON *traffic = authenticationserverPushStatsJsonGetItem(stats, "traffic");
+    if (traffic == NULL || cJSON_IsNull(traffic))
+    {
+        return true;
+    }
     if (UNLIKELY(! cJSON_IsObject(traffic)))
     {
         return false;
@@ -89,7 +99,7 @@ static bool authenticationserverPushStatsReadHintTraffic(const cJSON            
         return false;
     }
 
-    return hint->upload_present || hint->download_present;
+    return true;
 }
 
 static bool authenticationserverPushStatsHintListReserve(authenticationserver_stats_hint_list_t *hints, size_t count)
@@ -210,6 +220,11 @@ static bool authenticationserverPushStatsAddHintFromJson(authenticationserver_st
         return false;
     }
 
+    if (UNLIKELY(! hint.upload_present && ! hint.download_present))
+    {
+        return false;
+    }
+
     return authenticationserverPushStatsHintListAppend(hints, &hint);
 }
 
@@ -309,6 +324,7 @@ static bool authenticationserverPushStatsLoadHints(const uint8_t *request_data, 
 
 static bool authenticationserverPushStatsBuildDeltas(tunnel_t *t, authenticationserver_session_t *session,
                                                      const authenticationserver_stats_hint_list_t *hints,
+                                                     uint64_t server_now_ms,
                                                      authenticationserver_stats_delta_t          **deltas_out,
                                                      size_t                                       *delta_count_out)
 {
@@ -365,14 +381,25 @@ static bool authenticationserverPushStatsBuildDeltas(tunnel_t *t, authentication
             download_delta = hint->download - baseline_stats.traffic.d;
         }
 
-        if (UNLIKELY(upload_delta == 0 && download_delta == 0))
+        user_time_info_t store_timeinfo = {0};
+        userGetTimeInfo(store_user, &store_timeinfo);
+
+        uint64_t first_usage_at_ms = 0;
+        if ((upload_delta != 0 || download_delta != 0) && store_timeinfo.first_usage_at_ms == 0)
+        {
+            first_usage_at_ms = server_now_ms;
+        }
+
+        if (UNLIKELY(upload_delta == 0 && download_delta == 0 && first_usage_at_ms == 0))
         {
             continue;
         }
 
         memoryCopy(deltas[delta_count].sha256, hint->sha256, SHA256_DIGEST_SIZE);
-        deltas[delta_count].upload   = upload_delta;
-        deltas[delta_count].download = download_delta;
+        deltas[delta_count].upload              = upload_delta;
+        deltas[delta_count].download            = download_delta;
+        deltas[delta_count].first_usage_at_ms   = first_usage_at_ms;
+        deltas[delta_count].first_usage_present = first_usage_at_ms != 0;
         ++delta_count;
     }
 
@@ -389,30 +416,65 @@ static bool authenticationserverPushStatsApplyDeltas(tunnel_t *t, authentication
 
     for (size_t i = 0; i < delta_count; ++i)
     {
-        users_update_result_t result =
-            usersAddTrafficBySHA256(&ts->store.users, deltas[i].sha256, deltas[i].upload, deltas[i].download);
-        if (UNLIKELY(result != kUsersUpdateResultOk))
+        if (deltas[i].upload != 0 || deltas[i].download != 0)
         {
-            return false;
+            users_update_result_t result =
+                usersAddTrafficBySHA256(&ts->store.users, deltas[i].sha256, deltas[i].upload, deltas[i].download);
+            if (UNLIKELY(result != kUsersUpdateResultOk))
+            {
+                return false;
+            }
+
+            result = usersAddTrafficBySHA256(
+                &session->baseline_users, deltas[i].sha256, deltas[i].upload, deltas[i].download);
+            if (UNLIKELY(result != kUsersUpdateResultOk))
+            {
+                return false;
+            }
         }
 
-        result =
-            usersAddTrafficBySHA256(&session->baseline_users, deltas[i].sha256, deltas[i].upload, deltas[i].download);
-        if (UNLIKELY(result != kUsersUpdateResultOk))
+        if (deltas[i].first_usage_present)
         {
-            return false;
+            users_update_result_t result = usersSetFirstUsageIfMissingBySHA256(
+                &ts->store.users, deltas[i].sha256, deltas[i].first_usage_at_ms, NULL);
+            if (UNLIKELY(result != kUsersUpdateResultOk))
+            {
+                return false;
+            }
+
+            result = usersSetFirstUsageIfMissingBySHA256(
+                &session->baseline_users, deltas[i].sha256, deltas[i].first_usage_at_ms, NULL);
+            if (UNLIKELY(result != kUsersUpdateResultOk))
+            {
+                return false;
+            }
         }
     }
 
     return true;
 }
 
+static bool authenticationserverPushStatsDeltasRequirePull(const authenticationserver_stats_delta_t *deltas,
+                                                           size_t delta_count)
+{
+    for (size_t i = 0; i < delta_count; ++i)
+    {
+        if (deltas[i].first_usage_present)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static sbuf_t *authenticationserverPushStatsStatusResponse(
     tunnel_t *t, line_t *l, const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
-    authenticationserver_session_t *session, size_t delta_count)
+    authenticationserver_session_t *session, size_t delta_count, bool force_needs_pull)
 {
     authenticationserver_tstate_t *ts         = tunnelGetState(t);
-    const bool                     needs_pull = session->baseline_config_revision != ts->store.config_revision ||
+    const bool                     needs_pull = force_needs_pull ||
+                            session->baseline_config_revision != ts->store.config_revision ||
                             session->baseline_stats_revision != ts->store.stats_revision;
 
     cJSON *json = cJSON_CreateObject();
@@ -453,6 +515,7 @@ sbuf_t *authenticationserverPushUserStatsHandle(const uint8_t correlation_id[kAu
     authenticationserver_stats_hint_list_t hints       = {0};
     authenticationserver_stats_delta_t    *deltas      = NULL;
     size_t                                 delta_count = 0;
+    bool                                   force_pull  = false;
 
     if (UNLIKELY(session == NULL))
     {
@@ -471,7 +534,8 @@ sbuf_t *authenticationserverPushUserStatsHandle(const uint8_t correlation_id[kAu
     const bool     config_was_current  = old_config_revision == ts->store.config_revision;
     const bool     stats_was_current   = old_stats_revision == ts->store.stats_revision;
 
-    if (UNLIKELY(! authenticationserverPushStatsBuildDeltas(t, session, &hints, &deltas, &delta_count)))
+    if (UNLIKELY(! authenticationserverPushStatsBuildDeltas(
+            t, session, &hints, getTimeOfDayMS(), &deltas, &delta_count)))
     {
         authenticationserverPushStatsHintListDestroy(&hints);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-stats-baseline");
@@ -488,6 +552,7 @@ sbuf_t *authenticationserverPushUserStatsHandle(const uint8_t correlation_id[kAu
     {
         authenticationserverBumpStatsRevision(t);
     }
+    force_pull = authenticationserverPushStatsDeltasRequirePull(deltas, delta_count);
 
     if (LIKELY(config_was_current))
     {
@@ -498,7 +563,8 @@ sbuf_t *authenticationserverPushUserStatsHandle(const uint8_t correlation_id[kAu
         session->baseline_stats_revision = ts->store.stats_revision;
     }
 
-    sbuf_t *response = authenticationserverPushStatsStatusResponse(t, l, correlation_id, session, delta_count);
+    sbuf_t *response =
+        authenticationserverPushStatsStatusResponse(t, l, correlation_id, session, delta_count, force_pull);
 
     memoryFree(deltas);
     authenticationserverPushStatsHintListDestroy(&hints);
