@@ -28,6 +28,7 @@
 #include "wlibc.h"
 
 #include "cJSON.h"
+#include "wmutex.h"
 #include "wcrypto.h"
 
 #define USER_NO_LIMIT                        0ULL
