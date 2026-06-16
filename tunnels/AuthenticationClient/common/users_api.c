@@ -2,10 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-static uint64_t authenticationclientLocalTimeMS(void)
-{
-    return getHRTimeUs() / 1000ULL;
-}
 
 typedef enum authenticationclient_first_usage_push_result_e
 {

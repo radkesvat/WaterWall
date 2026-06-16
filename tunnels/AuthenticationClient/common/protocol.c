@@ -133,10 +133,7 @@ static uint64_t authenticationclientCounterDelta(uint64_t current, uint64_t base
     return current > baseline ? current - baseline : 0;
 }
 
-static uint64_t authenticationclientLocalTimeMS(void)
-{
-    return getHRTimeUs() / 1000ULL;
-}
+
 
 static uint64_t authenticationclientSaturatingAdd(uint64_t a, uint64_t b)
 {
