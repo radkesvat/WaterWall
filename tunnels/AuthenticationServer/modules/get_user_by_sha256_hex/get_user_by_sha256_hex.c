@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-static int authenticationserverHexValue(uint8_t c)
+static int authenticationserverSHA256HexValue(uint8_t c)
 {
     if (c >= '0' && c <= '9')
     {
@@ -28,8 +28,8 @@ static bool authenticationserverParseSHA256Hex(const uint8_t *hex, uint32_t hex_
 
     for (uint32_t i = 0; i < SHA256_DIGEST_SIZE; ++i)
     {
-        int hi = authenticationserverHexValue(hex[i * 2U]);
-        int lo = authenticationserverHexValue(hex[i * 2U + 1U]);
+        int hi = authenticationserverSHA256HexValue(hex[i * 2U]);
+        int lo = authenticationserverSHA256HexValue(hex[i * 2U + 1U]);
         if (UNLIKELY(hi < 0 || lo < 0))
         {
             return false;

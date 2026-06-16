@@ -21,7 +21,8 @@ from `AuthenticationClient`.
 - sends one downstream response message containing all response frames for the processed request message
 
 Available modules are `Authenticate`, `ping`, `GetUserBySHA256Hex`, `GetUserBySHA256Base64`, `GetUserBySHA256`,
-`GetUserByPassword`, `AddNewUser`, `UpdateUser`, `UpdateUserTraficStatsDiff`, `GetAllUsers`, and `PushUserStats`.
+`GetUserBySHA224Hex`, `GetUserBySHA224Base64`, `GetUserBySHA224`, `GetUserByPassword`, `AddNewUser`, `UpdateUser`,
+`UpdateUserTraficStatsDiff`, `GetAllUsers`, and `PushUserStats`.
 
 ## Typical Placement
 
@@ -270,12 +271,16 @@ except `expire-after-first-usage-ms`, which is a duration after first usage.
 - For `Socks5Server`, the stored password is the final authentication lookup key in `username:password` form, not just the
   password part submitted by the SOCKS client.
 - Password-derived hashes are not stored directly in JSON. They are rebuilt from `password` while loading users.
-- The SHA-256 password hash is a lookup key. Two users must not share the same password/SHA-256 key.
+- The SHA-256 password hash is the canonical password lookup key. SHA-224 is also indexed for explicit SHA-224 lookups.
+  Two users must not share the same password/SHA-224 or SHA-256 key.
+- `id` is the durable logical user identity when present. Keep each non-zero id unique and stable for that logical user's
+  lifetime; reusing an existing id for a different user can intentionally transfer client-side runtime state on the next
+  `GetAllUsers` refresh.
 - AuthenticationClient credentials are not stored in the user database. They live only in `settings.auth-clients`.
 - The authoritative in-memory table tracks separate configuration and statistics revisions. These revisions are server
   metadata, not fields inside individual user objects.
-- `AddNewUser` rejects duplicate usernames and password-hash conflicts, then saves the file immediately and bumps the
-  configuration revision.
+- `AddNewUser` rejects duplicate usernames, duplicate durable user ids, and duplicate SHA-224 or SHA-256 password lookup
+  keys, then saves the file immediately and bumps the configuration revision.
 - `UpdateUser` uses the supplied password only to find the existing user and deliberately does not change password or
   password hashes. It updates in-memory metadata only, bumps the configuration revision, and does not force an immediate
   file save.
@@ -632,6 +637,9 @@ Request types:
 - `9`: `GetAllUsers`
 - `10`: `Authenticate`
 - `11`: `PushUserStats`
+- `12`: `GetUserBySHA224Hex`
+- `13`: `GetUserBySHA224Base64`
+- `14`: `GetUserBySHA224`
 
 Response types:
 
@@ -696,6 +704,38 @@ correlation ID.
 The `GetUserBySHA256` module expects request data containing exactly the raw 32 bytes of a SHA-256 digest.
 
 If a user with that SHA-256 password digest exists, the module returns response type `2` and response data containing
+the full serialized user JSON object.
+
+If the raw digest size is wrong or no user matches the digest, it returns an error response frame with the same
+correlation ID.
+
+### GetUserBySHA224Hex Module
+
+The `GetUserBySHA224Hex` module expects request data containing exactly 56 hexadecimal characters, representing a
+SHA-224 digest. Uppercase and lowercase hex are accepted.
+
+If a user with that SHA-224 password digest exists, the module returns response type `2` and response data containing
+the full serialized user JSON object.
+
+If the hex input is malformed or no user matches the digest, it returns an error response frame with the same
+correlation ID.
+
+### GetUserBySHA224Base64 Module
+
+The `GetUserBySHA224Base64` module expects request data containing a standard padded base64 string that decodes to a
+28-byte SHA-224 digest. For a SHA-224 digest this is normally 40 base64 characters.
+
+If a user with that SHA-224 password digest exists, the module returns response type `2` and response data containing
+the full serialized user JSON object.
+
+If the base64 input is malformed or no user matches the digest, it returns an error response frame with the same
+correlation ID.
+
+### GetUserBySHA224 Module
+
+The `GetUserBySHA224` module expects request data containing exactly the raw 28 bytes of a SHA-224 digest.
+
+If a user with that SHA-224 password digest exists, the module returns response type `2` and response data containing
 the full serialized user JSON object.
 
 If the raw digest size is wrong or no user matches the digest, it returns an error response frame with the same

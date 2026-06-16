@@ -21,6 +21,9 @@ add_library(AuthenticationServer STATIC
                     modules/get_all_users/get_all_users.c
                     modules/push_user_stats/push_user_stats.c
                     modules/get_user_by_password/get_user_by_password.c
+                    modules/get_user_by_sha224/get_user_by_sha224.c
+                    modules/get_user_by_sha224_base64/get_user_by_sha224_base64.c
+                    modules/get_user_by_sha224_hex/get_user_by_sha224_hex.c
                     modules/get_user_by_sha256/get_user_by_sha256.c
                     modules/get_user_by_sha256_base64/get_user_by_sha256_base64.c
                     modules/get_user_by_sha256_hex/get_user_by_sha256_hex.c

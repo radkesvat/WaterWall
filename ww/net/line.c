@@ -20,12 +20,6 @@ void lineAddUser(line_t *const line, const user_handle_t *user_handle)
     user_handle_t stored_user = userHandleEmpty();
     if (userHandleIsValid(user_handle))
     {
-        if (UNLIKELY(user_handle->local_global_identifier == 0))
-        {
-            LOGF("Line: valid user handle does not have an identifier");
-            terminateProgram(1);
-            return;
-        }
         stored_user = *user_handle;
     }
 

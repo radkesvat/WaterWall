@@ -126,7 +126,8 @@ tunnel_t *authenticationclientTunnelCreate(node_t *node)
         LOGD("AuthenticationClient: verbose flow logging is enabled");
     }
 
-    users_t *users = memoryAllocate(sizeof(*users));
+    /* Paired with memoryFreeAligned() in authenticationclientTunnelDestroy(). */
+    users_t *users = memoryAllocateAligned(sizeof(*users), 32);
     if (UNLIKELY(users == NULL))
     {
         LOGE("AuthenticationClient: failed to create local users table");
@@ -137,7 +138,7 @@ tunnel_t *authenticationclientTunnelCreate(node_t *node)
     if (UNLIKELY(! usersCreate(users)))
     {
         LOGE("AuthenticationClient: failed to create local users table");
-        memoryFree(users);
+        memoryFreeAligned(users);
         authenticationclientTunnelDestroy(t);
         return NULL;
     }

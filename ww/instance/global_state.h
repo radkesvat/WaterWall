@@ -5,7 +5,6 @@
 #include "buffer_pool.h"
 #include "generic_pool.h"
 #include "net/address_context.h"
-#include "objects/user_handle.h"
 #include "threadsafe_generic_pool.h"
 #include "wloop.h"
 #include "worker.h"
@@ -49,7 +48,6 @@ typedef struct ww_global_state_s
     struct logger_s            *dns_logger;
     struct logger_s            *internal_logger;
     struct dedicated_memory_s  *openssl_dedicated_memory;
-    user_handle_identifier_registry_t *user_handle_identifier_registry;
     LwipV4Hook                  lwip_process_v4_hook;
     void                       *wintun_dll_handle;
     void                       *windivert_dll_handle;
@@ -60,7 +58,6 @@ typedef struct ww_global_state_s
     uint64_t                    main_thread_id;
     wid_t                       lwip_wid;
     atomic_wid_t                distribute_wid;
-    atomic_ullong               next_user_handle_identifier;
     uint16_t                    buffer_allocation_padding;
     uint16_t                    capturedevice_queue_start_number;
     uint16_t                    mtu_size;

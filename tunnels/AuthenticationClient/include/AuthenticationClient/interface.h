@@ -19,14 +19,17 @@ WW_EXPORT node_t nodeAuthenticationClientGet(void);
  *
  * Other tunnels should include this header and use handles plus copy-out helpers.
  * The AuthenticationClient never exposes user_t pointers from its private users_t
- * table; returned handles are value identifiers and become stale after a full
- * GetAllUsers replacement.
+ * table; returned handles are value identifiers. Generation-gated read helpers
+ * may reject handles after a full GetAllUsers replacement, while enforcement
+ * helpers resolve by durable user id with SHA-256 fallback.
  */
 WW_EXPORT authenticationclient_state_t authenticationclientGetState(tunnel_t *t);
 WW_EXPORT bool                         authenticationclientIsReady(tunnel_t *t);
 WW_EXPORT uint64_t                     authenticationclientUsersGeneration(tunnel_t *t);
 
 WW_EXPORT bool authenticationclientGetUserByPassword(tunnel_t *t, const char *password, user_handle_t *handle_out);
+WW_EXPORT bool authenticationclientGetUserBySHA224(tunnel_t *t, const uint8_t sha224[SHA224_DIGEST_SIZE],
+                                                   user_handle_t *handle_out);
 WW_EXPORT bool authenticationclientGetUserBySHA256(tunnel_t *t, const uint8_t sha256[SHA256_DIGEST_SIZE],
                                                    user_handle_t *handle_out);
 WW_EXPORT bool authenticationclientUserHandleIsLive(tunnel_t *t, const user_handle_t *handle);
@@ -43,7 +46,8 @@ WW_EXPORT void authenticationclientRequestPush(tunnel_t *t);
 /*
  * Live connection-admission and enforcement helpers for traffic-serving nodes
  * such as UserController. They resolve the handle against the current local
- * users table by its stable SHA-256 key and run the matching runtime helper.
+ * users table by durable user id when present, or by SHA-256 key for legacy users,
+ * and run the matching runtime helper.
  * They touch only process-local runtime state and cumulative traffic counters, never synced
  * configuration. now_ms is in the AuthenticationClient/UserController local-clock domain; pulled
  * server expiry fields are projected into that domain when GetAllUsers is installed.

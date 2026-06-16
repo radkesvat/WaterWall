@@ -35,6 +35,12 @@ static const char *authenticationclientRequestTypeName(uint8_t request_type)
         return "GetUserBySHA256Base64";
     case kAuthenticationClientRequestTypeGetUserBySHA256:
         return "GetUserBySHA256";
+    case kAuthenticationClientRequestTypeGetUserBySHA224Hex:
+        return "GetUserBySHA224Hex";
+    case kAuthenticationClientRequestTypeGetUserBySHA224Base64:
+        return "GetUserBySHA224Base64";
+    case kAuthenticationClientRequestTypeGetUserBySHA224:
+        return "GetUserBySHA224";
     case kAuthenticationClientRequestTypeGetUserByPassword:
         return "GetUserByPassword";
     case kAuthenticationClientRequestTypeAddNewUser:
@@ -93,7 +99,7 @@ static void authenticationclientDestroyUsers(users_t *users)
     }
 
     usersDestroy(users);
-    memoryFree(users);
+    memoryFreeAligned(users);
 }
 
 static users_t *authenticationclientCreateUsersCopy(const users_t *src)
@@ -109,11 +115,12 @@ static users_t *authenticationclientCreateUsersCopy(const users_t *src)
         return NULL;
     }
 
-    users_t *copy = memoryAllocate(sizeof(*copy));
+    /* users_t snapshots are aligned-allocated; always release them with authenticationclientDestroyUsers(). */
+    users_t *copy = memoryAllocateAligned(sizeof(*copy), 32);
     if (UNLIKELY(copy == NULL || ! usersCreate(copy)))
     {
         cJSON_Delete(json);
-        memoryFree(copy);
+        memoryFreeAligned(copy);
         return NULL;
     }
 
@@ -133,7 +140,37 @@ static uint64_t authenticationclientCounterDelta(uint64_t current, uint64_t base
     return current > baseline ? current - baseline : 0;
 }
 
+static user_t *authenticationclientLookupUserByStableKey(users_t *users, const user_t *reference)
+{
+    if (users == NULL || reference == NULL)
+    {
+        return NULL;
+    }
+    if (reference->id != 0)
+    {
+        return usersLookupByIdentifier(users, reference->id);
+    }
+    if (! reference->sha256_pass_valid)
+    {
+        return NULL;
+    }
+    return usersLookupBySHA256(users, reference->sha256_pass.bytes);
+}
 
+static users_update_result_t authenticationclientAddTrafficByStableKey(users_t *users, const user_t *reference,
+                                                                       uint64_t upload_delta,
+                                                                       uint64_t download_delta)
+{
+    if (reference->id != 0)
+    {
+        return usersAddTrafficByIdentifier(users, reference->id, upload_delta, download_delta);
+    }
+    if (! reference->sha256_pass_valid)
+    {
+        return kUsersUpdateResultInvalidArgument;
+    }
+    return usersAddTrafficBySHA256(users, reference->sha256_pass.bytes, upload_delta, download_delta);
+}
 
 static uint64_t authenticationclientSaturatingAdd(uint64_t a, uint64_t b)
 {
@@ -777,7 +814,7 @@ static bool authenticationclientAppendStatsHint(cJSON *array, user_t *user, cons
     user_stat_t baseline_stats = {0};
     if (baseline_users != NULL)
     {
-        user_t *baseline_user = usersLookupBySHA256((users_t *) baseline_users, user->sha256_pass.bytes);
+        user_t *baseline_user = authenticationclientLookupUserByStableKey((users_t *) baseline_users, user);
         if (baseline_user != NULL)
         {
             userGetStats(baseline_user, &baseline_stats);
@@ -977,11 +1014,12 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
         return false;
     }
 
-    users_t *new_users = memoryAllocate(sizeof(*new_users));
+    /* Keep heap users_t allocations paired with memoryFreeAligned() on every cleanup path. */
+    users_t *new_users = memoryAllocateAligned(sizeof(*new_users), 32);
     if (UNLIKELY(new_users == NULL || ! usersCreate(new_users)))
     {
         cJSON_Delete(json);
-        memoryFree(new_users);
+        memoryFreeAligned(new_users);
         return false;
     }
 
@@ -990,7 +1028,7 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
     if (UNLIKELY(! ok))
     {
         usersDestroy(new_users);
-        memoryFree(new_users);
+        memoryFreeAligned(new_users);
         LOGW("AuthenticationClient: rejected invalid users table from server");
         return false;
     }
@@ -999,7 +1037,7 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
     if (UNLIKELY(new_baseline == NULL))
     {
         usersDestroy(new_users);
-        memoryFree(new_users);
+        memoryFreeAligned(new_users);
         return false;
     }
 
@@ -1012,16 +1050,16 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
         rwlockWriteUnlock(&ts->users_lock);
         authenticationclientDestroyUsers(new_baseline);
         usersDestroy(new_users);
-        memoryFree(new_users);
+        memoryFreeAligned(new_users);
         LOGW("AuthenticationClient: failed to preserve local traffic deltas during GetAllUsers replacement");
         return false;
     }
-    if (UNLIKELY(! usersMigrateRuntimeStateBySHA256(new_users, old_users)))
+    if (UNLIKELY(! usersMigrateRuntimeStateByIdentifier(new_users, old_users)))
     {
         rwlockWriteUnlock(&ts->users_lock);
         authenticationclientDestroyUsers(new_baseline);
         usersDestroy(new_users);
-        memoryFree(new_users);
+        memoryFreeAligned(new_users);
         LOGW("AuthenticationClient: failed to preserve local runtime state during GetAllUsers replacement");
         return false;
     }
@@ -1043,7 +1081,7 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
     mutexUnlock(&ts->control_mutex);
 
     usersDestroy(old_users);
-    memoryFree(old_users);
+    memoryFreeAligned(old_users);
     authenticationclientDestroyUsers(old_baseline);
 
     if (ts->verbose)
@@ -1092,7 +1130,7 @@ static bool authenticationclientApplyLocalTrafficDelta(users_t *dest, users_t *o
         user_stat_t baseline_stats = {0};
         if (baseline_users != NULL)
         {
-            user_t *baseline_user = usersLookupBySHA256(baseline_users, old_user->sha256_pass.bytes);
+            user_t *baseline_user = authenticationclientLookupUserByStableKey(baseline_users, old_user);
             if (baseline_user != NULL)
             {
                 userGetStats(baseline_user, &baseline_stats);
@@ -1107,7 +1145,7 @@ static bool authenticationclientApplyLocalTrafficDelta(users_t *dest, users_t *o
         }
 
         users_update_result_t result =
-            usersAddTrafficBySHA256(dest, old_user->sha256_pass.bytes, upload_delta, download_delta);
+            authenticationclientAddTrafficByStableKey(dest, old_user, upload_delta, download_delta);
         if (UNLIKELY(result != kUsersUpdateResultOk && result != kUsersUpdateResultUserNotFound))
         {
             return false;

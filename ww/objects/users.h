@@ -1,7 +1,4 @@
 #pragma once
-#ifndef WW_OBJECTS_USERS_H
-#define WW_OBJECTS_USERS_H
-
 /*
  * User database manager.
  *
@@ -30,11 +27,10 @@
  *
  * Fatal behavior:
  * - The legacy usersAddUser()/usersFeedJson() insertion path terminates on a
- *   duplicate SHA-256 lookup key, which protects startup database consistency.
+ *   duplicate durable id, SHA-224 lookup key, or SHA-256 lookup key, which protects startup
+ *   database consistency.
  * - usersAddUserChecked()/usersAddUserFromJsonChecked() report duplicate keys
  *   to the caller instead, for runtime request handling.
- * - Calling generic-hash lookup after collision disabled that lookup terminates
- *   the program.
  *
  * API safety:
  * - The struct is visible so users_t can live on the stack or inside other
@@ -42,16 +38,17 @@
  *   blocks, count, capacity, lookup tables, flags, or locks directly. Use the
  *   helper functions below so locking and lookup-table consistency are kept.
  * - If a user is owned by users_t, change its password with
- *   usersChangePassword(), not userChangePassword(), because password hashes are
- *   lookup keys in this database.
+ *   usersChangePassword(), not userChangePassword(), because the SHA-224 and
+ *   SHA-256 password hashes are lookup keys in this database.
  */
 
 #include "wlibc.h"
 
 #include "objects/user.h"
 
-typedef struct users_hash_table_s   users_hash_table_t;
+typedef struct users_sha224_table_s users_sha224_table_t;
 typedef struct users_sha256_table_s users_sha256_table_t;
+typedef struct users_id_table_s     users_id_table_t;
 
 typedef struct user_update_s
 {
@@ -78,8 +75,9 @@ typedef enum users_add_result_e
     kUsersAddResultInvalidJson,
     kUsersAddResultInvalidUser,
     kUsersAddResultDuplicateName,
+    kUsersAddResultDuplicateId,
+    kUsersAddResultDuplicateSHA224,
     kUsersAddResultDuplicateSHA256,
-    kUsersAddResultHashConflict,
     kUsersAddResultAllocationFailed,
     kUsersAddResultCommitFailed
 } users_add_result_t;
@@ -124,11 +122,9 @@ typedef struct users_s
     size_t   block_count;
     size_t   block_capacity;
 
-    users_hash_table_t   *generic_hash_table;
+    users_sha224_table_t *sha224_table;
     users_sha256_table_t *sha256_table;
-
-    bool generic_hash_lookup_available;
-    bool generic_hash_collision_seen;
+    users_id_table_t     *id_table;
 } users_t;
 
 bool usersCreate(users_t *users);
@@ -142,28 +138,26 @@ bool               usersFeedJson(users_t *users, const cJSON *json);
 cJSON             *usersToJson(const users_t *users);
 bool               usersClear(users_t *users);
 
-bool usersGenericHashLookupAvailable(const users_t *users);
-
-user_t       *usersLookupByHash(users_t *users, hash_t hash);
-const user_t *usersLookupByHashConst(const users_t *users, hash_t hash);
-
+user_t       *usersLookupBySHA224(users_t *users, const uint8_t sha224[SHA224_DIGEST_SIZE]);
+const user_t *usersLookupBySHA224Const(const users_t *users, const uint8_t sha224[SHA224_DIGEST_SIZE]);
 user_t       *usersLookupBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE]);
 const user_t *usersLookupBySHA256Const(const users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE]);
+user_t       *usersLookupByIdentifier(users_t *users, uint64_t id);
+const user_t *usersLookupByIdentifierConst(const users_t *users, uint64_t id);
+cJSON        *usersUserToJsonBySHA224(const users_t *users, const uint8_t sha224[SHA224_DIGEST_SIZE]);
 cJSON        *usersUserToJsonBySHA256(const users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE]);
 cJSON        *usersUserToJsonByPassword(const users_t *users, const char *password);
 
 /*
- * Looks up by plaintext password. The helper tries generic hash lookup when it
- * is available, falls back to SHA-256 lookup, and verifies candidates with
- * userPasswordMatches(). It does not terminate merely because generic lookup
- * was disabled by a collision.
+ * Looks up by plaintext password through the SHA-256 lookup table and verifies
+ * candidates with userPasswordMatches().
  */
 user_t       *usersLookupByPassword(users_t *users, const char *password);
 const user_t *usersLookupByPasswordConst(const users_t *users, const char *password);
 
 bool usersRemoveUser(users_t *users, user_t *user);
 bool usersRemoveUserBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE]);
-bool usersRemoveUserByHash(users_t *users, hash_t hash);
+bool usersRemoveUserByIdentifier(users_t *users, uint64_t id);
 
 bool                  usersChangePassword(users_t *users, user_t *user, const char *password);
 bool                  usersUpdateUser(users_t *users, user_t *user, const user_update_t *update);
@@ -181,15 +175,22 @@ bool                  usersSetUserRecordStatInterval(users_t *users, user_t *use
 bool                  usersAddTraffic(users_t *users, user_t *user, uint64_t upload_bytes, uint64_t download_bytes);
 users_update_result_t usersAddTrafficBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
                                               uint64_t upload_bytes, uint64_t download_bytes);
+users_update_result_t usersAddTrafficByIdentifier(users_t *users, uint64_t id, uint64_t upload_bytes,
+                                                  uint64_t download_bytes);
 /*
  * Moves process-local runtime enforcement state from matching users in src to
- * dest, keyed by SHA-256.
+ * dest, keyed by durable id when present and SHA-256 otherwise.
  */
+bool                  usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src);
 bool                  usersMigrateRuntimeStateBySHA256(users_t *dest, users_t *src);
 users_update_result_t usersSetFirstUsageIfMissingBySHA256(users_t *users,
                                                           const uint8_t sha256[SHA256_DIGEST_SIZE],
                                                           uint64_t first_usage_at_ms,
                                                           bool    *changed);
+users_update_result_t usersSetFirstUsageIfMissingByIdentifier(users_t *users,
+                                                              uint64_t id,
+                                                              uint64_t first_usage_at_ms,
+                                                              bool    *changed);
 bool                  usersAddUserUsage(users_t *users, user_t *user, uint64_t upload_bytes, uint64_t download_bytes);
 
 /*
@@ -199,16 +200,23 @@ bool                  usersAddUserUsage(users_t *users, user_t *user, uint64_t u
  */
 user_admission_result_t usersTryAdmitConnectionBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
                                                         const user_ip_key_t *ip_key, uint64_t now_ms);
+user_admission_result_t usersTryAdmitConnectionByIdentifier(users_t *users, uint64_t id,
+                                                            const user_ip_key_t *ip_key, uint64_t now_ms);
 void usersReleaseConnectionBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
                                     const user_ip_key_t *ip_key);
+void usersReleaseConnectionByIdentifier(users_t *users, uint64_t id, const user_ip_key_t *ip_key);
 /* Adds traffic and returns whether the user must now be cut off; *found reports if the user existed. */
 bool usersAccountTrafficBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE], uint64_t upload_bytes,
                                  uint64_t download_bytes, uint64_t now_ms, bool *found,
                                  bool *first_usage_push_needed);
+bool usersAccountTrafficByIdentifier(users_t *users, uint64_t id, uint64_t upload_bytes, uint64_t download_bytes,
+                                     uint64_t now_ms, bool *found, bool *first_usage_push_needed);
 void usersResetFirstUsagePushRequests(users_t *users);
 void usersResetFirstUsagePushRequestBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE]);
+void usersResetFirstUsagePushRequestByIdentifier(users_t *users, uint64_t id);
 /* True when the user no longer exists or may no longer carry traffic. */
 bool usersRuntimeShouldCloseBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE], uint64_t now_ms);
+bool usersRuntimeShouldCloseByIdentifier(users_t *users, uint64_t id, uint64_t now_ms);
 bool usersAddSpeed(users_t *users, user_t *user, uint64_t upload_bytes_per_sec, uint64_t download_bytes_per_sec);
 bool usersAddConnection(users_t *users, user_t *user, bool inbound);
 bool usersRemoveConnection(users_t *users, user_t *user, bool inbound);
@@ -242,5 +250,3 @@ user_t       *usersFindFirstLimited(users_t *users);
 const user_t *usersFindFirstLimitedConst(const users_t *users);
 
 user_stat_t usersUsageDiff(users_t *users, user_t *base, user_t *current);
-
-#endif // WW_OBJECTS_USERS_H

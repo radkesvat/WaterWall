@@ -6,6 +6,13 @@
 
 #include "utils/json_helpers.h"
 
+#include <stddef.h>
+
+_Static_assert(offsetof(user_t, sha224_pass) % 32U == 0, "user_t.sha224_pass must be 32-byte aligned");
+_Static_assert(offsetof(user_t, sha256_pass) % 32U == 0, "user_t.sha256_pass must be 32-byte aligned");
+_Static_assert(_Alignof(user_t) >= 32U, "user_t storage must be at least 32-byte aligned");
+_Static_assert(sizeof(user_t) % 32U == 0, "user_t storage size must be a 32-byte multiple");
+
 static bool userStringIsEmpty(const char *value)
 {
     return value == NULL || value[0] == '\0';
@@ -72,6 +79,7 @@ typedef struct user_snapshot_s
     char *email;
     char *notes;
 
+    uint64_t id;
     hash_t gid;
     bool   enabled;
 
@@ -82,16 +90,21 @@ typedef struct user_snapshot_s
     user_stat_t stats;
 
     hash_t        hash_pass;
-    sha224_hash_t sha224_pass;
-    sha256_hash_t sha256_pass;
-    sha384_hash_t sha384_pass;
-    sha512_hash_t sha512_pass;
+    uint8_t       sha_alignment_padding[8];
+    MSVC_ATTR_ALIGNED_32 sha224_hash_t sha224_pass GNU_ATTR_ALIGNED_32;
+    uint8_t       sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
+    MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;
 
     bool sha224_pass_valid;
     bool sha256_pass_valid;
-    bool sha384_pass_valid;
-    bool sha512_pass_valid;
 } user_snapshot_t;
+
+_Static_assert(offsetof(user_snapshot_t, sha224_pass) % 32U == 0,
+               "user_snapshot_t.sha224_pass must be 32-byte aligned");
+_Static_assert(offsetof(user_snapshot_t, sha256_pass) % 32U == 0,
+               "user_snapshot_t.sha256_pass must be 32-byte aligned");
+_Static_assert(_Alignof(user_snapshot_t) >= 32U, "user_snapshot_t storage must be at least 32-byte aligned");
+_Static_assert(sizeof(user_snapshot_t) % 32U == 0, "user_snapshot_t storage size must be a 32-byte multiple");
 
 static void userSnapshotDestroy(user_snapshot_t *snapshot)
 {
@@ -106,8 +119,6 @@ static void userSnapshotDestroy(user_snapshot_t *snapshot)
     memoryFree(snapshot->notes);
     wCryptoZero(&snapshot->sha224_pass, sizeof(snapshot->sha224_pass));
     wCryptoZero(&snapshot->sha256_pass, sizeof(snapshot->sha256_pass));
-    wCryptoZero(&snapshot->sha384_pass, sizeof(snapshot->sha384_pass));
-    wCryptoZero(&snapshot->sha512_pass, sizeof(snapshot->sha512_pass));
     memoryZero(snapshot, sizeof(*snapshot));
 }
 
@@ -136,6 +147,7 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
         return false;
     }
 
+    snapshot->id                      = src->id;
     snapshot->gid                     = src->gid;
     snapshot->enabled                 = src->enabled;
     snapshot->limit                   = src->limit;
@@ -145,12 +157,8 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
     snapshot->hash_pass               = src->hash_pass;
     snapshot->sha224_pass             = src->sha224_pass;
     snapshot->sha256_pass             = src->sha256_pass;
-    snapshot->sha384_pass             = src->sha384_pass;
-    snapshot->sha512_pass             = src->sha512_pass;
     snapshot->sha224_pass_valid       = src->sha224_pass_valid;
     snapshot->sha256_pass_valid       = src->sha256_pass_valid;
-    snapshot->sha384_pass_valid       = src->sha384_pass_valid;
-    snapshot->sha512_pass_valid       = src->sha512_pass_valid;
 
     rwlockReadUnlock(&mutable_src->stats_lock);
     rwlockReadUnlock(&mutable_src->lock);
@@ -165,42 +173,21 @@ static bool userPasswordHashesCreate(User *user, const char *password)
 
     user->sha224_pass_valid = false;
     user->sha256_pass_valid = false;
-    user->sha384_pass_valid = false;
-    user->sha512_pass_valid = false;
 
     memoryZero(&user->sha224_pass, sizeof(user->sha224_pass));
     memoryZero(&user->sha256_pass, sizeof(user->sha256_pass));
-    memoryZero(&user->sha384_pass, sizeof(user->sha384_pass));
-    memoryZero(&user->sha512_pass, sizeof(user->sha512_pass));
 
-#if defined(WCRYPTO_BACKEND_OPENSSL)
     if (UNLIKELY(wCryptoSHA224(&user->sha224_pass, (const unsigned char *) password, password_len) != 0))
     {
         return false;
     }
     user->sha224_pass_valid = true;
-#endif
 
-#if defined(WCRYPTO_BACKEND_OPENSSL) || defined(WCRYPTO_BACKEND_SODIUM)
     if (UNLIKELY(wCryptoSHA256(&user->sha256_pass, (const unsigned char *) password, password_len) != 0))
     {
         return false;
     }
-    if (UNLIKELY(wCryptoSHA512(&user->sha512_pass, (const unsigned char *) password, password_len) != 0))
-    {
-        return false;
-    }
     user->sha256_pass_valid = true;
-    user->sha512_pass_valid = true;
-#endif
-
-#if defined(WCRYPTO_BACKEND_OPENSSL)
-    if (UNLIKELY(wCryptoSHA384(&user->sha384_pass, (const unsigned char *) password, password_len) != 0))
-    {
-        return false;
-    }
-    user->sha384_pass_valid = true;
-#endif
 
     return true;
 }
@@ -722,6 +709,7 @@ bool userCopy(User *dest, const User *src)
     dest->email    = snapshot.email;
     dest->notes    = snapshot.notes;
 
+    dest->id                      = snapshot.id;
     dest->gid                     = snapshot.gid;
     dest->enabled                 = snapshot.enabled;
     dest->limit                   = snapshot.limit;
@@ -731,12 +719,8 @@ bool userCopy(User *dest, const User *src)
     dest->hash_pass               = snapshot.hash_pass;
     dest->sha224_pass             = snapshot.sha224_pass;
     dest->sha256_pass             = snapshot.sha256_pass;
-    dest->sha384_pass             = snapshot.sha384_pass;
-    dest->sha512_pass             = snapshot.sha512_pass;
     dest->sha224_pass_valid       = snapshot.sha224_pass_valid;
     dest->sha256_pass_valid       = snapshot.sha256_pass_valid;
-    dest->sha384_pass_valid       = snapshot.sha384_pass_valid;
-    dest->sha512_pass_valid       = snapshot.sha512_pass_valid;
 
     snapshot.name     = NULL;
     snapshot.password = NULL;
@@ -744,8 +728,6 @@ bool userCopy(User *dest, const User *src)
     snapshot.notes    = NULL;
     memoryZero(&snapshot.sha224_pass, sizeof(snapshot.sha224_pass));
     memoryZero(&snapshot.sha256_pass, sizeof(snapshot.sha256_pass));
-    memoryZero(&snapshot.sha384_pass, sizeof(snapshot.sha384_pass));
-    memoryZero(&snapshot.sha512_pass, sizeof(snapshot.sha512_pass));
     userSnapshotDestroy(&snapshot);
     return true;
 }
@@ -765,11 +747,10 @@ void userDestroy(User *user)
     memoryZero(&user->runtime, sizeof(user->runtime));
     wCryptoZero(&user->sha224_pass, sizeof(user->sha224_pass));
     wCryptoZero(&user->sha256_pass, sizeof(user->sha256_pass));
-    wCryptoZero(&user->sha384_pass, sizeof(user->sha384_pass));
-    wCryptoZero(&user->sha512_pass, sizeof(user->sha512_pass));
     memoryZero(&user->limit, sizeof(user->limit));
     memoryZero(&user->timeinfo, sizeof(user->timeinfo));
     memoryZero(&user->stats, sizeof(user->stats));
+    user->id        = 0;
     user->hash_pass = 0;
     user->enabled   = false;
 
@@ -792,8 +773,6 @@ bool userChangePassword(User *user, const char *password)
     {
         wCryptoZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
         wCryptoZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
-        wCryptoZero(&staged_hashes.sha384_pass, sizeof(staged_hashes.sha384_pass));
-        wCryptoZero(&staged_hashes.sha512_pass, sizeof(staged_hashes.sha512_pass));
         return false;
     }
 
@@ -802,8 +781,6 @@ bool userChangePassword(User *user, const char *password)
     {
         wCryptoZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
         wCryptoZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
-        wCryptoZero(&staged_hashes.sha384_pass, sizeof(staged_hashes.sha384_pass));
-        wCryptoZero(&staged_hashes.sha512_pass, sizeof(staged_hashes.sha512_pass));
         return false;
     }
 
@@ -811,25 +788,17 @@ bool userChangePassword(User *user, const char *password)
 
     wCryptoZero(&user->sha224_pass, sizeof(user->sha224_pass));
     wCryptoZero(&user->sha256_pass, sizeof(user->sha256_pass));
-    wCryptoZero(&user->sha384_pass, sizeof(user->sha384_pass));
-    wCryptoZero(&user->sha512_pass, sizeof(user->sha512_pass));
     user->hash_pass         = staged_hashes.hash_pass;
     user->sha224_pass       = staged_hashes.sha224_pass;
     user->sha256_pass       = staged_hashes.sha256_pass;
-    user->sha384_pass       = staged_hashes.sha384_pass;
-    user->sha512_pass       = staged_hashes.sha512_pass;
     user->sha224_pass_valid = staged_hashes.sha224_pass_valid;
     user->sha256_pass_valid = staged_hashes.sha256_pass_valid;
-    user->sha384_pass_valid = staged_hashes.sha384_pass_valid;
-    user->sha512_pass_valid = staged_hashes.sha512_pass_valid;
 
     userFreePassword(user->password);
     user->password = copy;
     rwlockWriteUnlock(&user->lock);
     wCryptoZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
     wCryptoZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
-    wCryptoZero(&staged_hashes.sha384_pass, sizeof(staged_hashes.sha384_pass));
-    wCryptoZero(&staged_hashes.sha512_pass, sizeof(staged_hashes.sha512_pass));
     return true;
 }
 
@@ -865,6 +834,7 @@ bool userCreateFromJson(User *user, const cJSON *user_json)
                  (value != NULL && ! userReplaceString(&user->email, value)) ||
                  ! userJsonReadOptionalString(user_json, "notes", &value) ||
                  (value != NULL && ! userReplaceString(&user->notes, value)) ||
+                 ! userJsonReadOptionalUint64Aliased(user_json, "id", "user-id", &user->id) ||
                  ! userJsonReadOptionalUint64Aliased(user_json, "gid", "group-id", &user->gid) ||
                  ! userJsonReadOptionalBoolAliased(user_json, "enabled", "enable", &user->enabled) ||
                  ! userJsonReadOptionalInt(user_json, "record-stat-interval-ms", &user->record_stat_interval_ms)))
@@ -926,6 +896,7 @@ cJSON *userToJson(User *user)
                  ! cJSON_AddStringToObject(json, "password", user->password) ||
                  ! userJsonAddStringIfNotEmpty(json, "email", user->email) ||
                  ! userJsonAddStringIfNotEmpty(json, "notes", user->notes) ||
+                 (user->id != 0 && ! jsonAddUint64ToObject(json, "id", user->id)) ||
                  (user->gid != 0 && ! jsonAddUint64ToObject(json, "gid", user->gid)) ||
                  (! user->enabled && cJSON_AddFalseToObject(json, "enabled") == NULL) ||
                  (user->record_stat_interval_ms != USER_DEFAULT_RECORD_STAT_INTERVAL_MS &&
@@ -944,8 +915,8 @@ cJSON *userToJson(User *user)
 
 bool userPasswordMatches(User *user, const char *password)
 {
+    sha224_hash_t sha224 = {0};
     sha256_hash_t sha256 = {0};
-    sha512_hash_t sha512 = {0};
     bool          result = false;
 
     if (UNLIKELY(! userObjectIsInitialized(user) || userStringIsEmpty(password)))
@@ -968,26 +939,24 @@ bool userPasswordMatches(User *user, const char *password)
     result = stringLength(user->password) == stringLength(password) &&
              wCryptoEqual(user->password, password, stringLength(password));
 
-#if defined(WCRYPTO_BACKEND_OPENSSL) || defined(WCRYPTO_BACKEND_SODIUM)
-    if (user->sha256_pass_valid && user->sha512_pass_valid &&
-        wCryptoSHA256(&sha256, (const unsigned char *) password, stringLength(password)) == 0 &&
-        wCryptoSHA512(&sha512, (const unsigned char *) password, stringLength(password)) == 0)
+    if (user->sha224_pass_valid && user->sha256_pass_valid &&
+        wCryptoSHA224(&sha224, (const unsigned char *) password, stringLength(password)) == 0 &&
+        wCryptoSHA256(&sha256, (const unsigned char *) password, stringLength(password)) == 0)
     {
         result = wCryptoEqual(&sha256, &user->sha256_pass, sizeof(sha256)) &&
-                 wCryptoEqual(&sha512, &user->sha512_pass, sizeof(sha512));
+                 wCryptoEqual(&sha224, &user->sha224_pass, sizeof(sha224));
     }
-#endif
 
     rwlockReadUnlock(&user->lock);
+    wCryptoZero(&sha224, sizeof(sha224));
     wCryptoZero(&sha256, sizeof(sha256));
-    wCryptoZero(&sha512, sizeof(sha512));
     return result;
 }
 
 bool userPasswordDataValid(User *user)
 {
+    sha224_hash_t sha224 = {0};
     sha256_hash_t sha256 = {0};
-    sha512_hash_t sha512 = {0};
     bool          result = false;
 
     if (UNLIKELY(! userObjectIsInitialized(user)))
@@ -1001,20 +970,18 @@ bool userPasswordDataValid(User *user)
     {
         result = true;
 
-#if defined(WCRYPTO_BACKEND_OPENSSL) || defined(WCRYPTO_BACKEND_SODIUM)
-        if (user->sha256_pass_valid && user->sha512_pass_valid &&
-            wCryptoSHA256(&sha256, (const unsigned char *) user->password, stringLength(user->password)) == 0 &&
-            wCryptoSHA512(&sha512, (const unsigned char *) user->password, stringLength(user->password)) == 0)
+        if (user->sha224_pass_valid && user->sha256_pass_valid &&
+            wCryptoSHA224(&sha224, (const unsigned char *) user->password, stringLength(user->password)) == 0 &&
+            wCryptoSHA256(&sha256, (const unsigned char *) user->password, stringLength(user->password)) == 0)
         {
             result = wCryptoEqual(&sha256, &user->sha256_pass, sizeof(sha256)) &&
-                     wCryptoEqual(&sha512, &user->sha512_pass, sizeof(sha512));
+                     wCryptoEqual(&sha224, &user->sha224_pass, sizeof(sha224));
         }
-#endif
     }
     rwlockReadUnlock(&user->lock);
 
+    wCryptoZero(&sha224, sizeof(sha224));
     wCryptoZero(&sha256, sizeof(sha256));
-    wCryptoZero(&sha512, sizeof(sha512));
     return result;
 }
 
@@ -1043,6 +1010,33 @@ bool userIsEnabled(User *user)
     enabled = user->enabled;
     rwlockReadUnlock(&user->lock);
     return enabled;
+}
+
+uint64_t userGetId(User *user)
+{
+    uint64_t id = 0;
+
+    if (UNLIKELY(! userObjectIsInitialized(user)))
+    {
+        return 0;
+    }
+
+    rwlockReadLock(&user->lock);
+    id = user->id;
+    rwlockReadUnlock(&user->lock);
+    return id;
+}
+
+void userSetId(User *user, uint64_t id)
+{
+    if (UNLIKELY(! userObjectIsInitialized(user)))
+    {
+        return;
+    }
+
+    rwlockWriteLock(&user->lock);
+    user->id = id;
+    rwlockWriteUnlock(&user->lock);
 }
 
 bool userIsDisabled(User *user)

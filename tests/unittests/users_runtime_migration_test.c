@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -34,6 +35,117 @@ static user_ip_key_t testIp(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
     ip.bytes[2] = c;
     ip.bytes[3] = d;
     return ip;
+}
+
+static void testIdentifierLookupAndJsonRoundTrip(void)
+{
+    users_t users;
+    user_t  first;
+    user_t  second;
+    user_t  duplicate;
+    user_t  legacy;
+    uint8_t legacy_sha224[SHA224_DIGEST_SIZE] = {0};
+    uint8_t legacy_sha256[SHA256_DIGEST_SIZE] = {0};
+
+    memoryZero(&users, sizeof(users));
+    memoryZero(&first, sizeof(first));
+    memoryZero(&second, sizeof(second));
+    memoryZero(&duplicate, sizeof(duplicate));
+    memoryZero(&legacy, sizeof(legacy));
+
+    require(usersCreate(&users), "failed to create identifier users table");
+
+    require(userCreate(&first, "identifier-first-password"), "failed to create first identifier user");
+    require(userCreate(&second, "identifier-second-password"), "failed to create second identifier user");
+    require(userCreate(&duplicate, "identifier-duplicate-password"), "failed to create duplicate identifier user");
+    require(userCreate(&legacy, "identifier-legacy-password"), "failed to create legacy identifier user");
+
+    userSetId(&first, 101);
+    userSetId(&second, 202);
+    userSetId(&duplicate, 101);
+    memoryCopy(legacy_sha224, legacy.sha224_pass.bytes, sizeof(legacy_sha224));
+    memoryCopy(legacy_sha256, legacy.sha256_pass.bytes, sizeof(legacy_sha256));
+
+    require(usersAddUser(&users, &first), "failed to add first id user");
+    require(usersAddUser(&users, &second), "failed to add second id user");
+    require(usersAddUser(&users, &legacy), "failed to add legacy id user");
+    require(usersAddUserChecked(&users, &duplicate) == kUsersAddResultDuplicateId,
+            "duplicate id was not rejected by checked insert");
+
+    user_t *first_lookup = usersLookupByIdentifier(&users, 101);
+    user_t *second_lookup = usersLookupByIdentifier(&users, 202);
+    require(first_lookup != NULL && userGetId(first_lookup) == 101, "failed to look first user up by id");
+    require(second_lookup != NULL && userGetId(second_lookup) == 202, "failed to look second user up by id");
+    require(usersLookupByIdentifier(&users, 0) == NULL, "id 0 unexpectedly resolved through id table");
+    require(usersLookupBySHA224(&users, legacy_sha224) != NULL, "legacy user did not resolve by SHA-224");
+    require(usersLookupBySHA256(&users, legacy_sha256) != NULL, "legacy user did not resolve by SHA-256");
+
+    cJSON *json = userToJson(first_lookup);
+    require(json != NULL, "failed to serialize id user");
+    require(cJSON_GetObjectItemCaseSensitive(json, "id") != NULL, "serialized id user omitted id");
+
+    user_t parsed;
+    memoryZero(&parsed, sizeof(parsed));
+    require(userCreateFromJson(&parsed, json), "failed to parse serialized id user");
+    require(userGetId(&parsed) == 101, "parsed id user did not preserve id");
+    userDestroy(&parsed);
+    cJSON_Delete(json);
+
+    userDestroy(&legacy);
+    userDestroy(&duplicate);
+    userDestroy(&second);
+    userDestroy(&first);
+    usersDestroy(&users);
+}
+
+static void testSHA224LookupAndHashAlignment(void)
+{
+    users_t users;
+    user_t  source_user;
+    user_t  duplicate_user;
+    uint8_t old_sha224[SHA224_DIGEST_SIZE] = {0};
+    uint8_t new_sha224[SHA224_DIGEST_SIZE] = {0};
+
+    require(offsetof(user_t, sha224_pass) % 32U == 0, "user_t SHA-224 field is not 32-byte aligned by layout");
+    require(offsetof(user_t, sha256_pass) % 32U == 0, "user_t SHA-256 field is not 32-byte aligned by layout");
+
+    memoryZero(&users, sizeof(users));
+    memoryZero(&source_user, sizeof(source_user));
+    memoryZero(&duplicate_user, sizeof(duplicate_user));
+
+    require(usersCreate(&users), "failed to create SHA-224 lookup users table");
+    require(userCreate(&source_user, "sha224-lookup-password"), "failed to create SHA-224 lookup user");
+    require(userCreate(&duplicate_user, "sha224-lookup-password"), "failed to create duplicate SHA-224 lookup user");
+
+    require(((uintptr_t) &source_user.sha224_pass % 32U) == 0, "stack user SHA-224 field is not 32-byte aligned");
+    require(((uintptr_t) &source_user.sha256_pass % 32U) == 0, "stack user SHA-256 field is not 32-byte aligned");
+
+    memoryCopy(old_sha224, source_user.sha224_pass.bytes, sizeof(old_sha224));
+    require(usersAddUser(&users, &source_user), "failed to add SHA-224 lookup user");
+    require(usersAddUserChecked(&users, &duplicate_user) == kUsersAddResultDuplicateSHA224,
+            "duplicate SHA-224 lookup key was not rejected by checked insert");
+
+    user_t *lookup = usersLookupBySHA224(&users, old_sha224);
+    require(lookup != NULL, "failed to look user up by SHA-224");
+    require(lookup == usersLookupBySHA256(&users, source_user.sha256_pass.bytes),
+            "SHA-224 and SHA-256 lookup did not resolve the same user");
+    require(((uintptr_t) &lookup->sha224_pass % 32U) == 0, "stored user SHA-224 field is not 32-byte aligned");
+    require(((uintptr_t) &lookup->sha256_pass % 32U) == 0, "stored user SHA-256 field is not 32-byte aligned");
+
+    cJSON *json = usersUserToJsonBySHA224(&users, old_sha224);
+    require(json != NULL, "failed to export user by SHA-224");
+    cJSON_Delete(json);
+
+    require(usersChangePassword(&users, lookup, "sha224-lookup-new-password"), "failed to change SHA-224 user password");
+    memoryCopy(new_sha224, lookup->sha224_pass.bytes, sizeof(new_sha224));
+    require(! memoryEqual(old_sha224, new_sha224, sizeof(old_sha224)),
+            "password change did not change SHA-224");
+    require(usersLookupBySHA224(&users, old_sha224) == NULL, "old SHA-224 still resolved after password change");
+    require(usersLookupBySHA224(&users, new_sha224) == lookup, "new SHA-224 did not resolve after password change");
+
+    userDestroy(&duplicate_user);
+    userDestroy(&source_user);
+    usersDestroy(&users);
 }
 
 static void testRuntimeMigrationPreservesActiveIpOnly(void)
@@ -90,6 +202,111 @@ static void testRuntimeMigrationPreservesActiveIpOnly(void)
 
     usersDestroy(&new_users);
     usersDestroy(&old_users);
+}
+
+static void testRuntimeMigrationPrefersIdentifierAcrossPasswordChange(void)
+{
+    users_t old_users;
+    users_t new_users;
+    user_t  old_source;
+    user_t  new_source;
+    uint8_t old_sha256[SHA256_DIGEST_SIZE] = {0};
+    uint8_t new_sha256[SHA256_DIGEST_SIZE] = {0};
+    const uint64_t user_id                 = 9001;
+
+    memoryZero(&old_users, sizeof(old_users));
+    memoryZero(&new_users, sizeof(new_users));
+    memoryZero(&old_source, sizeof(old_source));
+    memoryZero(&new_source, sizeof(new_source));
+
+    require(usersCreate(&old_users), "failed to create old id migration users table");
+    require(usersCreate(&new_users), "failed to create new id migration users table");
+
+    require(userCreate(&old_source, "id-migration-old-password"), "failed to create old id migration user");
+    require(userCreate(&new_source, "id-migration-new-password"), "failed to create new id migration user");
+    userSetId(&old_source, user_id);
+    userSetId(&new_source, user_id);
+    old_source.limit.ips      = 1;
+    old_source.limit.cons_out = 2;
+    new_source.limit.ips      = 1;
+    new_source.limit.cons_out = 2;
+    memoryCopy(old_sha256, old_source.sha256_pass.bytes, sizeof(old_sha256));
+    memoryCopy(new_sha256, new_source.sha256_pass.bytes, sizeof(new_sha256));
+
+    require(usersAddUser(&old_users, &old_source), "failed to add old id migration user");
+    require(usersAddUser(&new_users, &new_source), "failed to add new id migration user");
+    userDestroy(&new_source);
+    userDestroy(&old_source);
+
+    user_ip_key_t ip1 = testIp(10, 1, 0, 1);
+    user_ip_key_t ip2 = testIp(10, 1, 0, 2);
+
+    require(usersTryAdmitConnectionByIdentifier(&old_users, user_id, &ip1, 1234) == kUserAdmissionOk,
+            "old id users table did not admit first connection");
+
+    require(usersLookupBySHA256(&new_users, old_sha256) == NULL, "new users table unexpectedly had old SHA-256");
+    require(usersLookupBySHA256(&new_users, new_sha256) != NULL, "new users table did not have new SHA-256");
+
+    require(usersMigrateRuntimeStateByIdentifier(&new_users, &old_users),
+            "id-preferring runtime migration failed");
+
+    user_t *old_user = usersLookupByIdentifier(&old_users, user_id);
+    user_t *new_user = usersLookupByIdentifier(&new_users, user_id);
+    require(old_user != NULL && new_user != NULL, "id migration users disappeared after migration");
+    require(old_user->runtime.active_cons_out == 0, "old id user kept migrated active connection count");
+    require(new_user->runtime.active_cons_out == 1, "new id user did not receive active connection count");
+
+    require(usersTryAdmitConnectionByIdentifier(&new_users, user_id, &ip2, 2000) == kUserAdmissionIpLimited,
+            "new id users table did not enforce migrated active IP usage");
+
+    usersReleaseConnectionByIdentifier(&new_users, user_id, &ip1);
+    require(usersTryAdmitConnectionByIdentifier(&new_users, user_id, &ip2, 2000) == kUserAdmissionOk,
+            "new id users table did not release migrated active IP usage");
+    usersReleaseConnectionByIdentifier(&new_users, user_id, &ip2);
+
+    usersDestroy(&new_users);
+    usersDestroy(&old_users);
+}
+
+static void testIdentifierLookupSurvivesPasswordChange(void)
+{
+    users_t users;
+    user_t  source_user;
+    uint8_t old_sha256[SHA256_DIGEST_SIZE] = {0};
+    uint8_t new_sha256[SHA256_DIGEST_SIZE] = {0};
+    const uint64_t user_id                 = 777;
+
+    memoryZero(&users, sizeof(users));
+    memoryZero(&source_user, sizeof(source_user));
+
+    require(usersCreate(&users), "failed to create password-change users table");
+    require(userCreate(&source_user, "id-password-change-old"), "failed to create password-change user");
+    userSetId(&source_user, user_id);
+    memoryCopy(old_sha256, source_user.sha256_pass.bytes, sizeof(old_sha256));
+    require(usersAddUser(&users, &source_user), "failed to add password-change user");
+    userDestroy(&source_user);
+
+    user_ip_key_t ip = testIp(10, 2, 0, 1);
+    require(usersTryAdmitConnectionByIdentifier(&users, user_id, &ip, 1000) == kUserAdmissionOk,
+            "id user was not admitted before password change");
+
+    user_t *user = usersLookupByIdentifier(&users, user_id);
+    require(user != NULL, "failed to look id user up before password change");
+    require(usersChangePassword(&users, user, "id-password-change-new"), "failed to change id user password");
+
+    user = usersLookupByIdentifier(&users, user_id);
+    require(user != NULL, "failed to look id user up after password change");
+    memoryCopy(new_sha256, user->sha256_pass.bytes, sizeof(new_sha256));
+    require(! memoryEqual(old_sha256, new_sha256, sizeof(old_sha256)), "password change did not change SHA-256");
+    require(usersLookupBySHA256(&users, old_sha256) == NULL, "old SHA-256 still resolved after password change");
+    require(usersLookupBySHA256(&users, new_sha256) == user, "new SHA-256 did not resolve after password change");
+    require(user->runtime.active_cons_out == 1, "id user lost runtime state after password change");
+
+    usersReleaseConnectionByIdentifier(&users, user_id, &ip);
+    require(usersRuntimeShouldCloseByIdentifier(&users, user_id, 2000) == false,
+            "id user unexpectedly needed close after password change");
+
+    usersDestroy(&users);
 }
 
 static void testFirstUsageSetIfMissingKeepsServerValue(void)
@@ -210,7 +427,11 @@ static void testFirstUsagePushRequestFlagIsOneShot(void)
 int main(void)
 {
     initializeCryptoBackend();
+    testIdentifierLookupAndJsonRoundTrip();
+    testSHA224LookupAndHashAlignment();
     testRuntimeMigrationPreservesActiveIpOnly();
+    testRuntimeMigrationPrefersIdentifierAcrossPasswordChange();
+    testIdentifierLookupSurvivesPasswordChange();
     testFirstUsageSetIfMissingKeepsServerValue();
     testClientViewExpiryOverridesServerTimeFields();
     testFirstUsagePushRequestFlagIsOneShot();

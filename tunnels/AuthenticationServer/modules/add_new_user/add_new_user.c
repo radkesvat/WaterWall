@@ -16,10 +16,12 @@ static const char *authenticationserverUsersAddResultError(users_add_result_t re
         return "invalid-user";
     case kUsersAddResultDuplicateName:
         return "user-name-exists";
+    case kUsersAddResultDuplicateId:
+        return "user-id-exists";
+    case kUsersAddResultDuplicateSHA224:
+        return "user-sha224-exists";
     case kUsersAddResultDuplicateSHA256:
         return "user-sha256-exists";
-    case kUsersAddResultHashConflict:
-        return "user-hash-conflict";
     case kUsersAddResultAllocationFailed:
         return "allocation-failed";
     case kUsersAddResultCommitFailed:

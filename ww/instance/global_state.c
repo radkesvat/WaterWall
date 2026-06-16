@@ -227,9 +227,6 @@ void createGlobalState(const ww_construction_data_t init_data)
         setDnsLoggerLevelByStr(init_data.dns_logger_data.log_level);
     }
 
-    atomicStoreRelaxed(&GSTATE.next_user_handle_identifier, 1);
-    GSTATE.user_handle_identifier_registry = userHandleIdentifierRegistryCreate();
-
     // workers and pools creation
     {
         WORKERS_COUNT         = init_data.workers_count;
@@ -376,10 +373,6 @@ WW_EXPORT void destroyGlobalState(void)
     opensslGlobalCleanup();
 #endif
     signalmanagerDestroy();
-
-    userHandleIdentifierRegistryDestroy(GSTATE.user_handle_identifier_registry);
-    GSTATE.user_handle_identifier_registry = NULL;
-    atomicStoreRelaxed(&GSTATE.next_user_handle_identifier, 0);
 
     coreloggerDestroy();
     networkloggerDestroy();

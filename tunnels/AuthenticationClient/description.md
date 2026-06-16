@@ -265,7 +265,8 @@ The client keeps one active local users table. It is protected by a tunnel-level
 
 1. The response JSON is parsed into a fresh `users_t`.
 2. The fresh table is validated.
-3. Local unsynced traffic deltas and process-local runtime counters are carried forward by SHA-256 key.
+3. Local unsynced traffic deltas and process-local runtime counters are carried forward by durable user id when present,
+   with SHA-256 as the legacy fallback.
 4. Each user's local expiry deadline is projected from the server-owned time fields and response server-time metadata.
 5. The active table pointer is swapped under the write side of the rwlock.
 6. The generation counter is incremented.
@@ -294,12 +295,14 @@ Other tunnels must not receive or cache raw `user_t *` pointers from `Authentica
 ```text
 sha256(password)
 users_generation
-local_global_identifier
+user_id
 ```
 
-The handle is a value identifier, not an owned object. The local-global identifier is assigned by libww from the
-SHA-256 value and is process-local. A full users-table replacement increments the generation, so old handles become
-stale. Callers can either look up a fresh handle or check with `authenticationclientUserHandleIsLive()`.
+The handle is a value identifier, not an owned object. `user_id` is copied from the synced user record and may be 0 for
+legacy users, in which case enforcement falls back to the SHA-256 key. A full users-table replacement increments the
+generation, so generation-gated read helpers may reject old handles. Callers can either look up a fresh handle or check
+with `authenticationclientUserHandleIsLive()`. `authenticationclientGetUserBySHA224()` is an explicit alternate lookup
+entry point; successful lookups still return the normal id/SHA-256-backed handle.
 
 Available internal operations:
 
@@ -308,6 +311,7 @@ authenticationclientGetState(t)
 authenticationclientIsReady(t)
 authenticationclientUsersGeneration(t)
 authenticationclientGetUserByPassword(t, password, &handle)
+authenticationclientGetUserBySHA224(t, sha224, &handle)
 authenticationclientGetUserBySHA256(t, sha256, &handle)
 authenticationclientUserHandleIsLive(t, &handle)
 authenticationclientUserToJson(t, &handle)
@@ -323,13 +327,13 @@ authenticationclientRequestPush(t)
 ```
 
 `authenticationclientUserToJson()` and `authenticationclientUsersToJson()` return new `cJSON` objects owned by the
-caller. Stats are copied into caller storage. Traffic updates are applied by SHA-256 through `usersAddTrafficBySHA256()`;
-the caller never mutates a `user_t` directly.
+caller. Stats are copied into caller storage. Traffic updates are applied through the handle's durable id when present,
+or SHA-256 for legacy users; the caller never mutates a `user_t` directly.
 
-The live enforcement helpers resolve handles by SHA-256 instead of rejecting them solely because a `GetAllUsers` refresh
-bumped the local users generation. A SHA-256 miss means the user disappeared from the refreshed table. The `now_ms`
-argument for these helpers is in the client's local monotonic clock domain, because expiry has already been projected onto
-that clock when the users table was installed.
+The live enforcement helpers resolve handles by durable id when present, with SHA-256 fallback, instead of rejecting them
+solely because a `GetAllUsers` refresh bumped the local users generation. A miss means the user disappeared from the
+refreshed table. The `now_ms` argument for these helpers is in the client's local monotonic clock domain, because expiry
+has already been projected onto that clock when the users table was installed.
 
 `authenticationclientRequestPull()` and `authenticationclientRequestPush()` do not create their own lines. If called from
 another worker, they queue a worker-0 task that tries to send the request on the current control line. If the client is

@@ -97,6 +97,9 @@ enum
     kAuthenticationClientRequestTypeGetAllUsers               = 9,
     kAuthenticationClientRequestTypeAuthenticate              = 10,
     kAuthenticationClientRequestTypePushUserStats             = 11,
+    kAuthenticationClientRequestTypeGetUserBySHA224Hex        = 12,
+    kAuthenticationClientRequestTypeGetUserBySHA224Base64     = 13,
+    kAuthenticationClientRequestTypeGetUserBySHA224           = 14,
 
     kAuthenticationClientResponseTypeOk      = 0,
     kAuthenticationClientResponseTypeError   = 0xFF,

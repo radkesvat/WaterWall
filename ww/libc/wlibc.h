@@ -469,6 +469,24 @@ static inline void memoryZeroAligned32(void *ptr, size_t n)
 
 #endif
 
+// n is in bytes
+static inline int memoryCompareAligned32(const void *a, const void *b, size_t n)
+{
+    assert(a != NULL);
+    assert(b != NULL);
+    assert((((uintptr_t) a) & 31U) == 0);
+    assert((((uintptr_t) b) & 31U) == 0);
+    assert((n & 31U) == 0);
+
+    return memoryCompare(a, b, n);
+}
+
+// n is in bytes
+static inline bool memoryEqualAligned32(const void *a, const void *b, size_t n)
+{
+    return memoryCompareAligned32(a, b, n) == 0;
+}
+
 // same as memoryCopyLarge, but defines the symbol for the linker, used for extranl libraries that dont want to include
 // this file, use the 'memoryCopyLarge' above for your use
 void wwMemoryCopyLarge(void *dest, const void *src, intmax_t n);

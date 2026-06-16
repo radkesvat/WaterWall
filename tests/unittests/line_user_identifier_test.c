@@ -32,10 +32,10 @@ static void requireUserHandleEquals(const user_handle_t *actual, const user_hand
     require(actual != NULL, message);
     require(memoryEqual(actual->sha256, expected->sha256, SHA256_DIGEST_SIZE), message);
     require(actual->generation == expected->generation, message);
-    require(actual->local_global_identifier == expected->local_global_identifier, message);
+    require(actual->user_id == expected->user_id, message);
 }
 
-static user_handle_t testUserHandle(uint8_t seed, uint64_t generation)
+static user_handle_t testUserHandle(uint8_t seed, uint64_t generation, uint64_t user_id)
 {
     uint8_t sha256[SHA256_DIGEST_SIZE] = {0};
 
@@ -45,7 +45,7 @@ static user_handle_t testUserHandle(uint8_t seed, uint64_t generation)
     }
 
     user_handle_t handle = userHandleEmpty();
-    userHandleSet(&handle, sha256, generation);
+    userHandleSet(&handle, sha256, generation, user_id);
     return handle;
 }
 
@@ -58,39 +58,36 @@ static void testAnonymousAuthentication(void)
     require(lineIsAuthenticated(line), "NULL handle did not authenticate line");
     require(line->user_count == 1, "NULL handle did not increment line user count");
     require(! userHandleIsValid(&line->user_handles[0]), "NULL handle stored a valid user handle");
-    require(line->user_handles[0].local_global_identifier == 0, "NULL handle assigned a user identifier");
+    require(line->user_handles[0].user_id == 0, "NULL handle assigned a user id");
     require(lineGetCurrentUser(line) == &line->user_handles[0], "current user did not point to first anonymous user");
 
     lineAddUser(line, &empty);
     require(line->user_count == 2, "empty handle did not increment line user count");
     require(! userHandleIsValid(&line->user_handles[1]), "empty handle stored a valid user handle");
-    require(line->user_handles[1].local_global_identifier == 0, "empty handle assigned a user identifier");
+    require(line->user_handles[1].user_id == 0, "empty handle assigned a user id");
     require(lineGetCurrentUser(line) == &line->user_handles[1], "current user did not point to latest anonymous user");
 
     testLineDestroy(line);
 }
 
-static void testUserHandleIdentifierMapping(void)
+static void testUserHandleStoresPassedIdentifier(void)
 {
-    user_handle_t first     = testUserHandle(0x11, 1);
-    user_handle_t same_user = testUserHandle(0x11, 99);
-    user_handle_t second    = testUserHandle(0x41, 1);
+    user_handle_t legacy = testUserHandle(0x11, 1, 0);
+    user_handle_t first  = testUserHandle(0x11, 99, 42);
+    user_handle_t second = testUserHandle(0x41, 1, 77);
 
-    uint64_t first_id = first.local_global_identifier;
-    require(first_id != 0, "valid user handle did not assign an identifier");
-    require(same_user.local_global_identifier == first_id, "same SHA-256 did not reuse the same identifier");
-
-    uint64_t second_id = second.local_global_identifier;
-    require(second_id != 0, "second valid user handle did not assign an identifier");
-    require(second_id != first_id, "different SHA-256 reused an existing identifier");
+    require(userHandleIsValid(&legacy), "legacy user handle with id 0 was not valid");
+    require(legacy.user_id == 0, "legacy user handle did not keep id 0");
+    require(first.user_id == 42, "first user handle did not keep the passed id");
+    require(second.user_id == 77, "second user handle did not keep the passed id");
 }
 
 static void testLineUserRecording(void)
 {
-    user_handle_t first     = testUserHandle(0x11, 1);
-    user_handle_t same_user = testUserHandle(0x11, 99);
-    user_handle_t second    = testUserHandle(0x41, 1);
-    user_handle_t empty     = userHandleEmpty();
+    user_handle_t first  = testUserHandle(0x11, 1, 42);
+    user_handle_t legacy = testUserHandle(0x21, 2, 0);
+    user_handle_t second = testUserHandle(0x41, 1, 77);
+    user_handle_t empty  = userHandleEmpty();
 
     line_t *line = testLineCreate();
     require(lineGetCurrentUser(line) == NULL, "empty line returned a current user");
@@ -100,10 +97,10 @@ static void testLineUserRecording(void)
     requireUserHandleEquals(&line->user_handles[0], &first, "line did not record first user handle");
     require(lineGetCurrentUser(line) == &line->user_handles[0], "current user did not point to first user");
 
-    lineAddUser(line, &same_user);
-    require(line->user_count == 2, "line user count did not increment for same user");
-    requireUserHandleEquals(&line->user_handles[1], &same_user, "line did not record reused user handle");
-    require(lineGetCurrentUser(line) == &line->user_handles[1], "current user did not point to reused user");
+    lineAddUser(line, &legacy);
+    require(line->user_count == 2, "line user count did not increment for legacy user");
+    requireUserHandleEquals(&line->user_handles[1], &legacy, "line did not record legacy user handle");
+    require(lineGetCurrentUser(line) == &line->user_handles[1], "current user did not point to legacy user");
 
     lineAddUser(line, &second);
     require(line->user_count == 3, "line user count did not increment for second user");
@@ -113,7 +110,7 @@ static void testLineUserRecording(void)
     lineAddUser(line, &empty);
     require(line->user_count == kLineMaxUsers, "line did not allow exactly four user entries");
     require(! userHandleIsValid(&line->user_handles[3]), "line did not record anonymous user handle");
-    require(line->user_handles[3].local_global_identifier == 0, "line did not record anonymous user marker");
+    require(line->user_handles[3].user_id == 0, "line did not record anonymous user marker");
     require(lineGetCurrentUser(line) == &line->user_handles[3], "current user did not point to anonymous user");
 
     testLineDestroy(line);
@@ -121,8 +118,8 @@ static void testLineUserRecording(void)
 
 static void testLineUserCopy(void)
 {
-    user_handle_t first  = testUserHandle(0x21, 7);
-    user_handle_t second = testUserHandle(0x71, 11);
+    user_handle_t first  = testUserHandle(0x21, 7, 42);
+    user_handle_t second = testUserHandle(0x71, 11, 0);
 
     line_t *src  = testLineCreate();
     line_t *dest = testLineCreate();
@@ -142,17 +139,10 @@ static void testLineUserCopy(void)
 
 int main(void)
 {
-    GSTATE = (ww_global_state_t) {0};
-    atomicStoreRelaxed(&GSTATE.next_user_handle_identifier, 1);
-    GSTATE.user_handle_identifier_registry = userHandleIdentifierRegistryCreate();
-
     testAnonymousAuthentication();
-    testUserHandleIdentifierMapping();
+    testUserHandleStoresPassedIdentifier();
     testLineUserRecording();
     testLineUserCopy();
-
-    userHandleIdentifierRegistryDestroy(GSTATE.user_handle_identifier_registry);
-    GSTATE = (ww_global_state_t) {0};
 
     return 0;
 }

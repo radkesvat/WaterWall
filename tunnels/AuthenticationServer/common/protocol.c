@@ -32,6 +32,12 @@ static const char *authenticationserverRequestTypeName(uint8_t request_type)
         return "GetUserBySHA256Base64";
     case kAuthenticationServerRequestTypeGetUserBySHA256:
         return "GetUserBySHA256";
+    case kAuthenticationServerRequestTypeGetUserBySHA224Hex:
+        return "GetUserBySHA224Hex";
+    case kAuthenticationServerRequestTypeGetUserBySHA224Base64:
+        return "GetUserBySHA224Base64";
+    case kAuthenticationServerRequestTypeGetUserBySHA224:
+        return "GetUserBySHA224";
     case kAuthenticationServerRequestTypeGetUserByPassword:
         return "GetUserByPassword";
     case kAuthenticationServerRequestTypeAddNewUser:

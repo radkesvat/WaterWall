@@ -1,6 +1,4 @@
 #pragma once
-#ifndef WW_OBJECTS_USER_H
-#define WW_OBJECTS_USER_H
 
 /*
  * User model, lifecycle, JSON persistence, and usage helpers.
@@ -147,6 +145,7 @@ struct user_s
     char *email;
     char *notes;
 
+    uint64_t id;
     hash_t gid;
     bool   enabled;
 
@@ -165,16 +164,21 @@ struct user_s
 
     user_runtime_stat_t runtime;
 
+    /*
+     * These hashes are laid out for 32-byte operations, but the field attributes
+     * only help if the containing user_t object itself is 32-byte aligned.
+     * users_t-owned users satisfy that through aligned block allocation; callers
+     * with standalone/stack users must not use strict aligned helpers unless
+     * they also provide aligned storage.
+     */
     hash_t        hash_pass;
-    sha224_hash_t sha224_pass;
-    sha256_hash_t sha256_pass;
-    sha384_hash_t sha384_pass;
-    sha512_hash_t sha512_pass;
+    uint8_t       sha_alignment_padding[8];
+    MSVC_ATTR_ALIGNED_32 sha224_hash_t sha224_pass GNU_ATTR_ALIGNED_32;
+    uint8_t       sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
+    MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;
 
     bool sha224_pass_valid;
     bool sha256_pass_valid;
-    bool sha384_pass_valid;
-    bool sha512_pass_valid;
 };
 
 bool userCreate(User *user, const char *password);
@@ -193,6 +197,8 @@ bool userPasswordDataValid(User *user);
 
 void userSetEnabled(User *user, bool enabled);
 bool userIsEnabled(User *user);
+uint64_t userGetId(User *user);
+void     userSetId(User *user, uint64_t id);
 bool userIsDisabled(User *user);
 bool userIsExpired(User *user, uint64_t now_ms);
 bool userIsActive(User *user, uint64_t now_ms);
@@ -231,5 +237,3 @@ void userGetTimeInfo(User *user, user_time_info_t *timeinfo);
 void userGetStats(User *user, user_stat_t *stats);
 
 user_stat_t userStatsDiff(User *base, User *current);
-
-#endif // WW_OBJECTS_USER_H

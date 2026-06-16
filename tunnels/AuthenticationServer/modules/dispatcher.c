@@ -5,6 +5,9 @@
 #include "modules/authenticate/authenticate.h"
 #include "modules/get_all_users/get_all_users.h"
 #include "modules/get_user_by_password/get_user_by_password.h"
+#include "modules/get_user_by_sha224/get_user_by_sha224.h"
+#include "modules/get_user_by_sha224_base64/get_user_by_sha224_base64.h"
+#include "modules/get_user_by_sha224_hex/get_user_by_sha224_hex.h"
 #include "modules/get_user_by_sha256/get_user_by_sha256.h"
 #include "modules/get_user_by_sha256_base64/get_user_by_sha256_base64.h"
 #include "modules/get_user_by_sha256_hex/get_user_by_sha256_hex.h"
@@ -52,6 +55,24 @@ static const authenticationserver_module_t kAuthenticationServerModules[] = {
         .request_type      = kAuthenticationServerRequestTypeGetUserBySHA256,
         .name              = "GetUserBySHA256",
         .handler           = authenticationserverGetUserBySHA256Handle,
+        .require_user_pull = true,
+    },
+    {
+        .request_type      = kAuthenticationServerRequestTypeGetUserBySHA224Hex,
+        .name              = "GetUserBySHA224Hex",
+        .handler           = authenticationserverGetUserBySHA224HexHandle,
+        .require_user_pull = true,
+    },
+    {
+        .request_type      = kAuthenticationServerRequestTypeGetUserBySHA224Base64,
+        .name              = "GetUserBySHA224Base64",
+        .handler           = authenticationserverGetUserBySHA224Base64Handle,
+        .require_user_pull = true,
+    },
+    {
+        .request_type      = kAuthenticationServerRequestTypeGetUserBySHA224,
+        .name              = "GetUserBySHA224",
+        .handler           = authenticationserverGetUserBySHA224Handle,
         .require_user_pull = true,
     },
     {

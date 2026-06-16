@@ -10,7 +10,7 @@ static void authenticationclientDestroyUsersSnapshot(users_t *users)
     }
 
     usersDestroy(users);
-    memoryFree(users);
+    memoryFreeAligned(users);
 }
 
 void authenticationclientTunnelDestroy(tunnel_t *t)
@@ -32,7 +32,7 @@ void authenticationclientTunnelDestroy(tunnel_t *t)
     if (LIKELY(users != NULL))
     {
         usersDestroy(users);
-        memoryFree(users);
+        memoryFreeAligned(users);
     }
     authenticationclientDestroyUsersSnapshot(sync_baseline_users);
     authenticationclientDestroyUsersSnapshot(pending_push_users);
