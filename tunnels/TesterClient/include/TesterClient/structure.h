@@ -9,7 +9,7 @@ enum
 {
     kTesterClientChunkCount                = 11,
     kTesterClientMaxWorkers                = 254,
-    kTesterClientStartDelayMs              = 50,
+    kTesterClientStartDelayMs              = 100,
     kTesterClientWatchdogMs                = 30000,
     kTesterClientSplitPayloadDelayMs       = 1,
     kTesterClientSplitPayloadBurst         = 1,
