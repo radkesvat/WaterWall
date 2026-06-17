@@ -264,9 +264,9 @@
             "name": "old-cpu-x64",
             "hidden": true,
             "cacheVariables": {
-                "WW_ADVANCED_CPU_BASELINE": "x86-64",
-                "WW_ADVANCED_CPU_EXTRA_FLAGS": "-mtune=generic -mavx",
-                "WW_DISABLE_AVX2": "ON"
+                "WW_ADVANCED_CPU_BASELINE": "nehalem",
+                "WW_ADVANCED_CPU_EXTRA_FLAGS": "-mtune=generic",
+                "WW_DISABLE_AVX": "ON"
             }
         },
         {

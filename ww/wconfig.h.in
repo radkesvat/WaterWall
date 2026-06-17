@@ -113,6 +113,10 @@
 #define HAVE_SSE3 @WW_HAVE_SSE3@
 #endif
 
+#ifndef HAVE_AVX
+#define HAVE_AVX @WW_HAVE_AVX@
+#endif
+
 #ifndef HAVE_AVX2
 #define HAVE_AVX2 @WW_HAVE_AVX2@
 #endif

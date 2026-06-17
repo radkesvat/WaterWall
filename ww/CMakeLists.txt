@@ -225,6 +225,7 @@ check_function("setproctitle" "unistd.h")
 # Advanced CPU Instructions Configuration
 ################################################################################
 option(WW_DISABLE_ADVANCED_CPU_INSTRUCTIONS "Disable all architecture-specific CPU instruction paths" OFF)
+option(WW_DISABLE_AVX "Disable all AVX instruction paths (AVX/AVX2/AVX512) while keeping SSE3 available" OFF)
 option(WW_DISABLE_AVX2 "Disable AVX2-specific instruction paths while keeping lower x86 features available" OFF)
 option(DEV_DISABLE_AVX2 "Developer switch: disable AVX2-specific instruction paths" OFF)
 option(WW_ENABLE_AVX_512 "Enable AVX512F instruction paths" OFF)
@@ -233,9 +234,10 @@ set(WW_ADVANCED_CPU_BASELINE "haswell" CACHE STRING "Non-MSVC -march value used 
 set(WW_ADVANCED_CPU_EXTRA_FLAGS "" CACHE STRING "Additional non-MSVC CPU flags for advanced x86_64 builds")
 
 set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS 0)
+set(WW_HAVE_SSE3 0)
+set(WW_HAVE_AVX 0)
 set(WW_HAVE_AVX2 0)
 set(WW_HAVE_AVX512F 0)
-set(WW_HAVE_SSE3 0)
 set(WW_SUPPORTED_MEMCOPY_AVX2 0)
 set(WW_SUPPORTED_MEMCOPY_AVX512F 0)
 set(WW_CHECKSUM_AVX2 0)
@@ -251,13 +253,19 @@ if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H)
     set(WW_HAS_X86_INTRINSICS TRUE)
 endif()
 
+set(WW_AVX_DISABLED FALSE)
+if(WW_DISABLE_AVX)
+    set(WW_AVX_DISABLED TRUE)
+endif()
+
+# AVX2 (and AVX512) build on top of AVX, so disabling AVX cascades into disabling them.
 set(WW_AVX2_DISABLED FALSE)
-if(WW_DISABLE_AVX2 OR DEV_DISABLE_AVX2)
+if(WW_DISABLE_AVX2 OR DEV_DISABLE_AVX2 OR WW_AVX_DISABLED)
     set(WW_AVX2_DISABLED TRUE)
 endif()
 
 if(WW_ENABLE_AVX_512 AND WW_AVX2_DISABLED)
-    message(FATAL_ERROR "WW_ENABLE_AVX_512 requires AVX2 to remain enabled")
+    message(FATAL_ERROR "WW_ENABLE_AVX_512 requires AVX2 (and therefore AVX) to remain enabled")
 endif()
 
 function(ww_add_cpu_compile_option target msvc_option non_msvc_option)
@@ -287,6 +295,9 @@ if(WW_TARGET_X86_64 AND WW_HAS_X86_INTRINSICS AND NOT WW_DISABLE_ADVANCED_CPU_IN
             separate_arguments(WW_ADVANCED_CPU_EXTRA_FLAGS_LIST NATIVE_COMMAND "${WW_ADVANCED_CPU_EXTRA_FLAGS}")
             target_compile_options(ww PUBLIC ${WW_ADVANCED_CPU_EXTRA_FLAGS_LIST})
         endif()
+        if(WW_AVX_DISABLED)
+            target_compile_options(ww PUBLIC -mno-avx)
+        endif()
         if(WW_AVX2_DISABLED)
             target_compile_options(ww PUBLIC -mno-avx2)
         endif()
@@ -296,10 +307,12 @@ if(WW_TARGET_X86_64 AND WW_HAS_X86_INTRINSICS AND NOT WW_DISABLE_ADVANCED_CPU_IN
         # For MSVC x64: SSE/SSE2/SSE3 are enabled by default, no /arch flag needed
         # x64 build - SSE3 is always available
         set(COMPILER_SUPPORTS_SSE3 TRUE)
+        check_c_compiler_flag("/arch:AVX" COMPILER_SUPPORTS_AVX)
         check_c_compiler_flag("/arch:AVX2" COMPILER_SUPPORTS_AVX2)
         check_c_compiler_flag("/arch:AVX512" COMPILER_SUPPORTS_AVX512F)
     else()
         check_c_compiler_flag("-msse3" COMPILER_SUPPORTS_SSE3)
+        check_c_compiler_flag("-mavx" COMPILER_SUPPORTS_AVX)
         check_c_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2)
         check_c_compiler_flag("-mavx512f" COMPILER_SUPPORTS_AVX512F)
     endif()
@@ -316,6 +329,22 @@ if(WW_TARGET_X86_64 AND WW_HAS_X86_INTRINSICS AND NOT WW_DISABLE_ADVANCED_CPU_IN
         message(FATAL_ERROR "SSE3 not supported by compiler")
     endif()
 
+    # AVX Configuration
+    # Plain AVX is enabled for the default (haswell) baseline. The x64 old-cpu build disables it
+    # (and therefore AVX2/AVX512) via WW_DISABLE_AVX while still keeping SSE3 available.
+    if(COMPILER_SUPPORTS_AVX)
+        if(NOT WW_AVX_DISABLED)
+            message(STATUS "Using AVX")
+            ww_add_cpu_compile_option(ww "/arch:AVX" "-mavx")
+            set(WW_HAVE_AVX 1)
+        else()
+            message(STATUS "AVX is disabled by configuration")
+            # For MSVC, avoiding /arch:AVX is the available AVX codegen disable.
+        endif()
+    else()
+        message(STATUS "AVX not supported by compiler")
+    endif()
+
     # AVX2 Configuration
     if(COMPILER_SUPPORTS_AVX2)
         if(NOT WW_AVX2_DISABLED)
@@ -325,6 +354,8 @@ if(WW_TARGET_X86_64 AND WW_HAS_X86_INTRINSICS AND NOT WW_DISABLE_ADVANCED_CPU_IN
             set(WW_SUPPORTED_MEMCOPY_AVX2 1)
             set(WW_CHECKSUM_AVX2 1)
             target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/net/wchecksum_avx2.c")
+        elseif(WW_AVX_DISABLED)
+            message(STATUS "AVX2 is disabled because AVX is disabled")
         elseif(WW_DISABLE_AVX2)
             message(STATUS "AVX2 is disabled by configuration")
         else()
@@ -356,6 +387,7 @@ endif()
 
 # Update cache variables
 set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS ${WW_HAVE_ADVANCED_CPU_INSTRUCTIONS} CACHE INTERNAL "Using advanced CPU instructions" FORCE)
+set(WW_HAVE_AVX ${WW_HAVE_AVX} CACHE INTERNAL "AVX available" FORCE)
 set(WW_HAVE_AVX2 ${WW_HAVE_AVX2} CACHE INTERNAL "AVX2 available" FORCE)
 set(WW_HAVE_AVX512F ${WW_HAVE_AVX512F} CACHE INTERNAL "AVX512F available" FORCE)
 set(WW_HAVE_SSE3 ${WW_HAVE_SSE3} CACHE INTERNAL "SSE3 available" FORCE)

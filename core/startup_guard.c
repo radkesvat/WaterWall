@@ -127,10 +127,14 @@ static bool startupCpuSupportsConfiguredBuild(void)
         return false;
     }
 
+#if HAVE_AVX
+    /* Only AVX (and the AVX2/AVX512 paths layered on it) require OS XSAVE/YMM support. An
+     * SSE3-only build (e.g. the x64 old-cpu build) must not demand AVX from a pre-AVX CPU. */
     if (! startupCpuHasAvxOsSupport(&leaf1))
     {
         return false;
     }
+#endif
 
 #if HAVE_SSE3
     if ((leaf1.ecx & kCpuSse3Bit) == 0)
@@ -197,8 +201,8 @@ static void startupPrintUnsupportedCpu(void)
     fprintf(stderr,
             "Waterwall version %s\n"
             "This Waterwall binary was built for a newer x86-64 CPU than this machine/OS exposes.\n"
-            "Please use the x64 old-cpu build for AVX2-only incompatibility, or rebuild with advanced CPU "
-            "instructions disabled for pre-AVX CPUs.\n",
+            "Use the x64 old-cpu build (SSE3 baseline, no AVX/AVX2) for CPUs without AVX2 support, or\n"
+            "rebuild with advanced CPU instructions disabled for CPUs without SSE3.\n",
             WATERWALL_STRINGIFY(WATERWALL_VERSION));
 }
 
