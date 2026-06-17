@@ -3,18 +3,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <string.h>
 
 #define WATERWALL_STRINGIFY_INNER(x) #x
 #define WATERWALL_STRINGIFY(x)       WATERWALL_STRINGIFY_INNER(x)
 
 int waterwallInnerMain(int argc, char **argv);
-
-static bool startupIsVersionArgument(const char *arg)
-{
-    return strcmp(arg, "-v") == 0 || strcmp(arg, "-version") == 0 || strcmp(arg, "--version") == 0 ||
-           strcmp(arg, "--v") == 0 || strcmp(arg, "version") == 0;
-}
 
 #if defined(__x86_64__) || defined(__amd64__) || defined(_M_X64)
     #define WATERWALL_STARTUP_X86_64 1
@@ -211,12 +204,6 @@ static void startupPrintUnsupportedCpu(void)
 
 int main(int argc, char **argv)
 {
-    if (argc > 1 && startupIsVersionArgument(argv[1]))
-    {
-        printf("Waterwall version %s\n", WATERWALL_STRINGIFY(WATERWALL_VERSION));
-        return 0;
-    }
-
     if (! startupCpuSupportsConfiguredBuild())
     {
         startupPrintUnsupportedCpu();

@@ -80,7 +80,15 @@ include(CTest)
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT ipo_output)
 
-if(ipo_supported)
+if(ipo_supported AND MINGW AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
+  # MinGW GCC + GAS can fail the final LTO link with
+  #   "value of N too large for field of 1 byte"
+  # when link-time inlining grows a function past the limits of a 1-byte
+  # field in the generated SEH unwind / dispatch assembly. Disable LTO for
+  # the MinGW build; MSVC and the *nix toolchains keep it.
+  message(STATUS "IPO is supported but disabled for MinGW GCC (GAS LTO assembly bug)")
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE FALSE)
+elseif(ipo_supported)
   message(STATUS "IPO is supported")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 else()
@@ -220,25 +228,38 @@ endif()
 set(WATERWALL_STARTUP_GUARD_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/core/startup_guard.c")
 set(WATERWALL_INNER_MAIN_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/core/main.c")
 
-add_library(WaterwallStartupGuard OBJECT
-  ${WATERWALL_STARTUP_GUARD_SOURCE}
-)
+# The CPU startup guard owns the process entry point and verifies required CPU
+# instruction sets before any optimized code runs. It is disabled on MinGW GCC
+# (mingw64/ucrt64): there it is not built at all and core/main.c provides main()
+# directly, accepting that the process may crash on an unsupported CPU.
+set(WW_USE_STARTUP_GUARD TRUE)
+if(MINGW AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
+  set(WW_USE_STARTUP_GUARD FALSE)
+endif()
 
-target_include_directories(WaterwallStartupGuard PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}
-  ${CMAKE_CURRENT_SOURCE_DIR}/ww
-)
-target_compile_definitions(WaterwallStartupGuard PRIVATE WATERWALL_VERSION=${Waterwall_VERSION})
-set_target_properties(WaterwallStartupGuard PROPERTIES
-  UNITY_BUILD OFF
-  INTERPROCEDURAL_OPTIMIZATION OFF
-  INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
-  INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF
-  INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF
-)
+set(WATERWALL_STARTUP_GUARD_OBJECTS "")
+if(WW_USE_STARTUP_GUARD)
+  add_library(WaterwallStartupGuard OBJECT
+    ${WATERWALL_STARTUP_GUARD_SOURCE}
+  )
+
+  target_include_directories(WaterwallStartupGuard PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/ww
+  )
+  target_compile_definitions(WaterwallStartupGuard PRIVATE WATERWALL_VERSION=${Waterwall_VERSION})
+  set_target_properties(WaterwallStartupGuard PROPERTIES
+    UNITY_BUILD OFF
+    INTERPROCEDURAL_OPTIMIZATION OFF
+    INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
+    INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF
+    INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF
+  )
+  set(WATERWALL_STARTUP_GUARD_OBJECTS $<TARGET_OBJECTS:WaterwallStartupGuard>)
+endif()
 
 add_executable(Waterwall
-  $<TARGET_OBJECTS:WaterwallStartupGuard>
+  ${WATERWALL_STARTUP_GUARD_OBJECTS}
   ${WATERWALL_INNER_MAIN_SOURCE}
   core/core_settings.c
   core/imported_tunnels.c
@@ -246,45 +267,39 @@ add_executable(Waterwall
   # core/tests/bench_memcpy.c
 )
 
-set_source_files_properties(${WATERWALL_STARTUP_GUARD_SOURCE}
-  PROPERTIES
-    SKIP_UNITY_BUILD_INCLUSION ON
-    SKIP_PRECOMPILE_HEADERS ON
-)
+if(WW_USE_STARTUP_GUARD)
+  # main.c suppresses its own main(); startup_guard.c provides the entry point.
+  target_compile_definitions(Waterwall PRIVATE WATERWALL_HAS_STARTUP_GUARD=1)
 
-if((CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "AppleClang")
-    AND CMAKE_SIZEOF_VOID_P EQUAL 8
-    AND (CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
-  set_property(SOURCE ${WATERWALL_STARTUP_GUARD_SOURCE} APPEND PROPERTY COMPILE_OPTIONS
-    -march=x86-64
-    -mtune=generic
-    -mno-ssse3
-    -mno-sse3
-    -mno-sse4.1
-    -mno-sse4.2
-    -mno-avx
-    -mno-avx2
-    -mno-avx512f
-    -mno-fma
-    -mno-f16c
-    -mno-bmi
-    -mno-bmi2
-    -mno-lzcnt
-    -mno-popcnt
-    -mno-movbe
-    -fno-lto
-  )
-endif()
-
-if(MINGW AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
-  # MinGW GCC can emit invalid SEH unwind assembly for this renamed entry path
-  # during final executable LTO. Keep the rest of the build optimized.
-  set_source_files_properties(${WATERWALL_INNER_MAIN_SOURCE}
+  set_source_files_properties(${WATERWALL_STARTUP_GUARD_SOURCE}
     PROPERTIES
       SKIP_UNITY_BUILD_INCLUSION ON
       SKIP_PRECOMPILE_HEADERS ON
   )
-  set_property(SOURCE ${WATERWALL_INNER_MAIN_SOURCE} APPEND PROPERTY COMPILE_OPTIONS -fno-lto)
+
+  if((CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "AppleClang")
+      AND CMAKE_SIZEOF_VOID_P EQUAL 8
+      AND (CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
+    set_property(SOURCE ${WATERWALL_STARTUP_GUARD_SOURCE} APPEND PROPERTY COMPILE_OPTIONS
+      -march=x86-64
+      -mtune=generic
+      -mno-ssse3
+      -mno-sse3
+      -mno-sse4.1
+      -mno-sse4.2
+      -mno-avx
+      -mno-avx2
+      -mno-avx512f
+      -mno-fma
+      -mno-f16c
+      -mno-bmi
+      -mno-bmi2
+      -mno-lzcnt
+      -mno-popcnt
+      -mno-movbe
+      -fno-lto
+    )
+  endif()
 endif()
 
 #--------------------------------------------------------------------------------

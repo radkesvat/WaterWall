@@ -18,16 +18,27 @@ static void exitHandle(void *userdata, int signum)
     destroyCoreSettings();
 }
 
+static bool isVersionArgument(const char *arg)
+{
+    return stringCompare(arg, "-v") == 0 || stringCompare(arg, "-version") == 0 || stringCompare(arg, "--version") == 0 ||
+           stringCompare(arg, "--v") == 0 || stringCompare(arg, "version") == 0;
+}
+
 int waterwallInnerMain(int argc, char **argv);
 
 /*
- * The process entry point lives in startup_guard.c so it can run with a
- * conservative CPU baseline before entering Waterwall's optimized runtime.
+ * Real program logic. On platforms that build the CPU startup guard, the
+ * process entry point lives in startup_guard.c (which runs a conservative CPU
+ * feature check first) and then calls into here. On platforms where the guard
+ * is disabled, the main() at the bottom of this file enters here directly.
  */
 int waterwallInnerMain(int argc, char **argv)
 {
-    discard argc;
-    discard argv;
+    if (argc > 1 && isVersionArgument(argv[1]))
+    {
+        printDebug("Waterwall version %s\n", TOSTRING(WATERWALL_VERSION));
+        return 0;
+    }
 
     // #ifdef COMPILER_MSVC
     //     _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
@@ -114,3 +125,16 @@ int waterwallInnerMain(int argc, char **argv)
     runMainThread();
     return 0;
 }
+
+#ifndef WATERWALL_HAS_STARTUP_GUARD
+/*
+ * The CPU startup guard is disabled on this platform (e.g. MinGW), so the
+ * guard's main() in startup_guard.c is never built. Enter the runtime
+ * directly; the process will simply crash if the CPU lacks a required
+ * instruction set, which is acceptable for these platforms.
+ */
+int main(int argc, char **argv)
+{
+    return waterwallInnerMain(argc, argv);
+}
+#endif
