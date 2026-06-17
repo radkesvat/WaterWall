@@ -15,8 +15,7 @@ void usercontrollerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                                                                 usercontrollerLocalTimeMS());
         if (close)
         {
-            LOGW("UserController: closing active connection (disabled, expired, traffic quota reached, or user "
-                 "removed)");
+            usercontrollerLogActiveClose(t, l, ls, "disabled, expired, traffic quota reached, or user removed");
             lineReuseBuffer(l, buf);
             usercontrollerCloseLine(t, l, kUserControllerCloseInternal);
             return;

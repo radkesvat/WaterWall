@@ -118,36 +118,104 @@ bool authenticationclientGetUserBySHA224(tunnel_t *t, const uint8_t sha224[SHA22
 
 bool authenticationclientGetUserByPassword(tunnel_t *t, const char *password, user_handle_t *handle_out)
 {
+    return authenticationclientGetUserByPasswordWithResult(t, password, handle_out) ==
+           kAuthenticationClientUserLookupOk;
+}
+
+const char *authenticationclientUserLookupResultString(authenticationclient_user_lookup_result_t result)
+{
+    switch (result)
+    {
+    case kAuthenticationClientUserLookupOk:
+        return "ok";
+    case kAuthenticationClientUserLookupInvalidArgument:
+        return "invalid password lookup";
+    case kAuthenticationClientUserLookupHashFailed:
+        return "password hash failed";
+    case kAuthenticationClientUserLookupUsersUnavailable:
+        return "users table unavailable";
+    case kAuthenticationClientUserLookupUserNotFound:
+        return "user not found";
+    case kAuthenticationClientUserLookupPasswordMismatch:
+        return "password mismatch";
+    case kAuthenticationClientUserLookupUserDisabled:
+        return "user disabled";
+    case kAuthenticationClientUserLookupUserExpired:
+        return "user expired";
+    case kAuthenticationClientUserLookupUserLimitReached:
+        return "user limit reached";
+    default:
+        return "unknown";
+    }
+}
+
+authenticationclient_user_lookup_result_t authenticationclientGetUserByPasswordWithResult(tunnel_t *t,
+                                                                                          const char *password,
+                                                                                          user_handle_t *handle_out)
+{
     if (UNLIKELY(t == NULL || password == NULL || password[0] == '\0' || handle_out == NULL))
     {
-        return false;
+        if (handle_out != NULL)
+        {
+            userHandleClear(handle_out);
+        }
+        return kAuthenticationClientUserLookupInvalidArgument;
     }
 
     sha256_hash_t sha256 = {0};
     if (UNLIKELY(wCryptoSHA256(&sha256, (const unsigned char *) password, stringLength(password)) != 0))
     {
-        return false;
+        userHandleClear(handle_out);
+        return kAuthenticationClientUserLookupHashFailed;
     }
 
-    authenticationclient_tstate_t *ts    = tunnelGetState(t);
-    bool                           found = false;
-    uint64_t                       now_ms = authenticationclientLocalTimeMS();
+    authenticationclient_tstate_t            *ts     = tunnelGetState(t);
+    uint64_t                                  now_ms = authenticationclientLocalTimeMS();
+    authenticationclient_user_lookup_result_t result = kAuthenticationClientUserLookupUserNotFound;
 
     rwlockReadLock(&ts->users_lock);
-    user_t *user = ts->users != NULL ? usersLookupBySHA256(ts->users, sha256.bytes) : NULL;
-    if (user != NULL && userPasswordMatches(user, password) && userIsActive(user, now_ms))
+    user_t *user = NULL;
+    if (UNLIKELY(ts->users == NULL))
     {
-        userHandleSet(handle_out, sha256.bytes, ts->users_generation, userGetId(user));
-        found = true;
+        result = kAuthenticationClientUserLookupUsersUnavailable;
+    }
+    else
+    {
+        user = usersLookupBySHA256(ts->users, sha256.bytes);
+    }
+
+    if (user != NULL)
+    {
+        if (! userPasswordMatches(user, password))
+        {
+            result = kAuthenticationClientUserLookupPasswordMismatch;
+        }
+        else if (! userIsEnabled(user))
+        {
+            result = kAuthenticationClientUserLookupUserDisabled;
+        }
+        else if (userIsExpired(user, now_ms))
+        {
+            result = kAuthenticationClientUserLookupUserExpired;
+        }
+        else if (userHasReachedLimit(user))
+        {
+            result = kAuthenticationClientUserLookupUserLimitReached;
+        }
+        else
+        {
+            userHandleSet(handle_out, sha256.bytes, ts->users_generation, userGetId(user));
+            result = kAuthenticationClientUserLookupOk;
+        }
     }
     rwlockReadUnlock(&ts->users_lock);
 
     memoryZero(&sha256, sizeof(sha256)); // i dont want to use wCryptoZero
-    if (! found)
+    if (result != kAuthenticationClientUserLookupOk)
     {
         userHandleClear(handle_out);
     }
-    return found;
+    return result;
 }
 
 bool authenticationclientUserHandleIsLive(tunnel_t *t, const user_handle_t *handle)

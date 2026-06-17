@@ -23,7 +23,7 @@ void usercontrollerTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
         if (result != kUserAdmissionOk)
         {
-            LOGW("UserController: rejected new connection: %s", usercontrollerAdmissionReason(result));
+            usercontrollerLogAdmissionRejected(t, l, ls, result);
 
             // The upstream side was never opened, so we only finish the prev/downstream side that
             // initiated us. This is the natural "upstream is unavailable" close (close prev only).

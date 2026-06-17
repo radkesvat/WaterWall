@@ -305,23 +305,100 @@ static bool socks5serverFieldHasNul(const uint8_t *field, size_t len)
     return false;
 }
 
-static bool socks5serverAuthUserFromClient(tunnel_t *t, const uint8_t *username, uint8_t username_len,
+static const char *socks5serverAuthClientStateName(authenticationclient_state_t state)
+{
+    switch (state)
+    {
+    case kAuthenticationClientStateStopped:
+        return "authentication client stopped";
+    case kAuthenticationClientStateConnecting:
+        return "authentication client connecting";
+    case kAuthenticationClientStateAuthenticating:
+        return "authentication client not authenticated";
+    case kAuthenticationClientStateReady:
+        return "authentication client ready";
+    default:
+        return "authentication client state unknown";
+    }
+}
+
+static void socks5serverSanitizeUsername(const uint8_t *username, uint8_t username_len, char out[UINT8_MAX + 1U])
+{
+    if (username == NULL || username_len == 0)
+    {
+        out[0] = '\0';
+        return;
+    }
+
+    for (uint8_t i = 0; i < username_len; ++i)
+    {
+        uint8_t ch = username[i];
+        out[i] = (ch >= 0x20U && ch <= 0x7EU && ch != '"') ? (char) ch : '?';
+    }
+    out[username_len] = '\0';
+}
+
+static void socks5serverLogAuthRejected(tunnel_t *t, line_t *l, const uint8_t *username, uint8_t username_len,
+                                         const char *reason)
+{
+    socks5server_tstate_t *ts = tunnelGetState(t);
+
+    if (ts->verbose && username != NULL && username_len > 0)
+    {
+        char username_text[UINT8_MAX + 1U];
+        socks5serverSanitizeUsername(username, username_len, username_text);
+        LOGW("Socks5Server: rejected SOCKS5 authentication for user \"%s\" on worker %u: %s",
+             username_text,
+             l != NULL ? (unsigned int) lineGetWID(l) : (unsigned int) getWID(),
+             reason != NULL ? reason : "unknown");
+        return;
+    }
+
+    LOGW("Socks5Server: rejected SOCKS5 authentication: %s", reason != NULL ? reason : "unknown");
+}
+
+static bool socks5serverAuthUserFromClient(tunnel_t *t, line_t *l, const uint8_t *username, uint8_t username_len,
                                            const uint8_t *password, uint8_t password_len,
                                            user_handle_t *user_handle_out)
 {
     socks5server_tstate_t *ts            = tunnelGetState(t);
     size_t                 username_size = username_len;
     size_t                 password_size = password_len;
-    if (username_len == 0 || password_len == 0 || ts->auth_client_tunnel == NULL ||
-        socks5serverFieldHasNul(username, username_size) || socks5serverFieldHasNul(password, password_size))
+    if (UNLIKELY(user_handle_out == NULL))
     {
+        socks5serverLogAuthRejected(t, l, username, username_len, "internal auth handle unavailable");
+        return false;
+    }
+    if (username_len == 0)
+    {
+        socks5serverLogAuthRejected(t, l, NULL, 0, "empty username");
+        return false;
+    }
+    if (password_len == 0)
+    {
+        socks5serverLogAuthRejected(t, l, username, username_len, "empty password");
+        return false;
+    }
+    if (ts->auth_client_tunnel == NULL)
+    {
+        socks5serverLogAuthRejected(t, l, username, username_len, "authentication client unavailable");
+        return false;
+    }
+    if (socks5serverFieldHasNul(username, username_size))
+    {
+        socks5serverLogAuthRejected(t, l, username, username_len, "username contains NUL byte");
+        return false;
+    }
+    if (socks5serverFieldHasNul(password, password_size))
+    {
+        socks5serverLogAuthRejected(t, l, username, username_len, "password contains NUL byte");
         return false;
     }
 
-    if (! authenticationclientIsReady(ts->auth_client_tunnel))
+    authenticationclient_state_t auth_state = authenticationclientGetState(ts->auth_client_tunnel);
+    if (auth_state != kAuthenticationClientStateReady)
     {
-        LOGW("Socks5Server: AuthenticationClient node \"%s\" is not ready",
-             ts->auth_client_node != NULL ? ts->auth_client_node->name : "(null)");
+        socks5serverLogAuthRejected(t, l, username, username_len, socks5serverAuthClientStateName(auth_state));
         return false;
     }
 
@@ -331,14 +408,18 @@ static bool socks5serverAuthUserFromClient(tunnel_t *t, const uint8_t *username,
     memoryCopy(auth_password_buf + username_size + 1U, password, password_size);
 
     user_handle_t handle = userHandleEmpty();
-    bool found = authenticationclientGetUserByPassword(ts->auth_client_tunnel, auth_password_buf, &handle);
+    authenticationclient_user_lookup_result_t result =
+        authenticationclientGetUserByPasswordWithResult(ts->auth_client_tunnel, auth_password_buf, &handle);
     memoryZero(auth_password_buf, sizeof(auth_password_buf));
 
-    if (found)
+    if (result == kAuthenticationClientUserLookupOk)
     {
         *user_handle_out = handle;
+        return true;
     }
-    return found;
+
+    socks5serverLogAuthRejected(t, l, username, username_len, authenticationclientUserLookupResultString(result));
+    return false;
 }
 
 static socks5server_assoc_shard_t *socks5serverGetAssocShard(tunnel_t *t, hash_t key)
@@ -984,6 +1065,8 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
 
             if (selected == kSocks5NoAcceptable)
             {
+                const char *reason = ts->no_auth ? "no-auth method not offered" : "username-password method not offered";
+                socks5serverLogAuthRejected(t, l, NULL, 0, reason);
                 socks5serverCloseControlLineBidirectional(t, l);
                 return false;
             }
@@ -1011,6 +1094,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
             bufferstreamViewBytesAt(&ls->in_stream, 0, head, sizeof(head));
             if (head[0] != kSocks5AuthVersion)
             {
+                socks5serverLogAuthRejected(t, l, NULL, 0, "invalid username-password auth version");
                 socks5serverCloseControlLineBidirectional(t, l);
                 return false;
             }
@@ -1032,7 +1116,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
             const uint8_t *raw      = sbufGetRawPtr(auth_buf);
             user_handle_t  user_handle = userHandleEmpty();
             bool authenticated =
-                socks5serverAuthUserFromClient(t, raw + 2, head[1], raw + 3 + head[1], plen, &user_handle);
+                socks5serverAuthUserFromClient(t, l, raw + 2, head[1], raw + 3 + head[1], plen, &user_handle);
             lineReuseBuffer(l, auth_buf);
 
             sbuf_t *reply = socks5serverCreateAuthReply(l, authenticated ? 0x00 : 0x01);

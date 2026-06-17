@@ -38,6 +38,49 @@ const char *usercontrollerAdmissionReason(user_admission_result_t result)
     }
 }
 
+static void usercontrollerLogUserContext(tunnel_t *t, line_t *l, const usercontroller_lstate_t *ls,
+                                         const char *action, const char *reason)
+{
+    usercontroller_tstate_t *ts = tunnelGetState(t);
+
+    if (! ts->verbose || ls == NULL || ! userHandleIsValid(&ls->handle))
+    {
+        LOGW("UserController: %s: %s", action, reason != NULL ? reason : "unknown");
+        return;
+    }
+
+    if (ls->handle.user_id != 0)
+    {
+        LOGW("UserController: %s on worker %u: %s (user-id=%" PRIu64 ", generation=%" PRIu64
+             ", ip-key-type=%u)",
+             action,
+             l != NULL ? (unsigned int) lineGetWID(l) : (unsigned int) getWID(),
+             reason != NULL ? reason : "unknown",
+             ls->handle.user_id,
+             ls->handle.generation,
+             (unsigned int) ls->ip_key.type);
+        return;
+    }
+
+    LOGW("UserController: %s on worker %u: %s (legacy-handle-generation=%" PRIu64 ", ip-key-type=%u)",
+         action,
+         l != NULL ? (unsigned int) lineGetWID(l) : (unsigned int) getWID(),
+         reason != NULL ? reason : "unknown",
+         ls->handle.generation,
+         (unsigned int) ls->ip_key.type);
+}
+
+void usercontrollerLogAdmissionRejected(tunnel_t *t, line_t *l, const usercontroller_lstate_t *ls,
+                                        user_admission_result_t result)
+{
+    usercontrollerLogUserContext(t, l, ls, "rejected new connection", usercontrollerAdmissionReason(result));
+}
+
+void usercontrollerLogActiveClose(tunnel_t *t, line_t *l, const usercontroller_lstate_t *ls, const char *reason)
+{
+    usercontrollerLogUserContext(t, l, ls, "closing active connection", reason);
+}
+
 uint64_t usercontrollerLocalTimeMS(void)
 {
     return getHRTimeUs() / 1000ULL;
@@ -219,8 +262,7 @@ void usercontrollerSweepTimerCallback(wtimer_t *timer)
 
         if (authenticationclientUserShouldClose(ts->auth_client_tunnel, &ls->handle, usercontrollerLocalTimeMS()))
         {
-            LOGW("UserController: closing active connection (disabled, expired, traffic quota reached, or user "
-                 "removed)");
+            usercontrollerLogActiveClose(t, line, ls, "disabled, expired, traffic quota reached, or user removed");
             usercontrollerCloseLine(t, line, kUserControllerCloseInternal);
             continue;
         }

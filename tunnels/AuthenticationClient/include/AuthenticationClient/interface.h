@@ -12,6 +12,19 @@ typedef enum authenticationclient_state_e
     kAuthenticationClientStateReady
 } authenticationclient_state_t;
 
+typedef enum authenticationclient_user_lookup_result_e
+{
+    kAuthenticationClientUserLookupOk = 0,
+    kAuthenticationClientUserLookupInvalidArgument,
+    kAuthenticationClientUserLookupHashFailed,
+    kAuthenticationClientUserLookupUsersUnavailable,
+    kAuthenticationClientUserLookupUserNotFound,
+    kAuthenticationClientUserLookupPasswordMismatch,
+    kAuthenticationClientUserLookupUserDisabled,
+    kAuthenticationClientUserLookupUserExpired,
+    kAuthenticationClientUserLookupUserLimitReached
+} authenticationclient_user_lookup_result_t;
+
 WW_EXPORT node_t nodeAuthenticationClientGet(void);
 
 /*
@@ -28,6 +41,9 @@ WW_EXPORT bool                         authenticationclientIsReady(tunnel_t *t);
 WW_EXPORT uint64_t                     authenticationclientUsersGeneration(tunnel_t *t);
 
 WW_EXPORT bool authenticationclientGetUserByPassword(tunnel_t *t, const char *password, user_handle_t *handle_out);
+WW_EXPORT authenticationclient_user_lookup_result_t
+authenticationclientGetUserByPasswordWithResult(tunnel_t *t, const char *password, user_handle_t *handle_out);
+WW_EXPORT const char *authenticationclientUserLookupResultString(authenticationclient_user_lookup_result_t result);
 WW_EXPORT bool authenticationclientGetUserBySHA224(tunnel_t *t, const uint8_t sha224[SHA224_DIGEST_SIZE],
                                                    user_handle_t *handle_out);
 WW_EXPORT bool authenticationclientGetUserBySHA256(tunnel_t *t, const uint8_t sha256[SHA256_DIGEST_SIZE],

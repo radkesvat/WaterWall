@@ -86,3 +86,7 @@ void        usercontrollerSweepTimerCallback(wtimer_t *timer);
 void        usercontrollerCloseLine(tunnel_t *t, line_t *l, usercontroller_close_origin_t origin);
 uint64_t    usercontrollerLocalTimeMS(void);
 const char *usercontrollerAdmissionReason(user_admission_result_t result);
+void        usercontrollerLogAdmissionRejected(tunnel_t *t, line_t *l, const usercontroller_lstate_t *ls,
+                                               user_admission_result_t result);
+void        usercontrollerLogActiveClose(tunnel_t *t, line_t *l, const usercontroller_lstate_t *ls,
+                                         const char *reason);
