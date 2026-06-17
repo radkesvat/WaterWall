@@ -217,13 +217,63 @@ endif()
 #--------------------------------------------------------------------------------
 # Main Executable and Sources
 #--------------------------------------------------------------------------------
+set(WATERWALL_STARTUP_GUARD_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/core/startup_guard.c")
+
+add_library(WaterwallStartupGuard OBJECT
+  ${WATERWALL_STARTUP_GUARD_SOURCE}
+)
+
+target_include_directories(WaterwallStartupGuard PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/ww
+)
+target_compile_definitions(WaterwallStartupGuard PRIVATE WATERWALL_VERSION=${Waterwall_VERSION})
+set_target_properties(WaterwallStartupGuard PROPERTIES
+  UNITY_BUILD OFF
+  INTERPROCEDURAL_OPTIMIZATION OFF
+  INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
+  INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF
+  INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF
+)
+
 add_executable(Waterwall
+  $<TARGET_OBJECTS:WaterwallStartupGuard>
   core/main.c
   core/core_settings.c
   core/imported_tunnels.c
   core/os_helpers.c
   # core/tests/bench_memcpy.c
 )
+
+set_source_files_properties(${WATERWALL_STARTUP_GUARD_SOURCE}
+  PROPERTIES
+    SKIP_UNITY_BUILD_INCLUSION ON
+    SKIP_PRECOMPILE_HEADERS ON
+)
+
+if((CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "AppleClang")
+    AND CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND (CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
+  set_property(SOURCE ${WATERWALL_STARTUP_GUARD_SOURCE} APPEND PROPERTY COMPILE_OPTIONS
+    -march=x86-64
+    -mtune=generic
+    -mno-ssse3
+    -mno-sse3
+    -mno-sse4.1
+    -mno-sse4.2
+    -mno-avx
+    -mno-avx2
+    -mno-avx512f
+    -mno-fma
+    -mno-f16c
+    -mno-bmi
+    -mno-bmi2
+    -mno-lzcnt
+    -mno-popcnt
+    -mno-movbe
+    -fno-lto
+  )
+endif()
 
 #--------------------------------------------------------------------------------
 # Windows and iOS Specific Settings

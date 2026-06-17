@@ -18,8 +18,16 @@ static void exitHandle(void *userdata, int signum)
     destroyCoreSettings();
 }
 
-int main(void)
+int waterwallInnerMain(int argc, char **argv);
+
+/*
+ * The process entry point lives in startup_guard.c so it can run with a
+ * conservative CPU baseline before entering Waterwall's optimized runtime.
+ */
+int waterwallInnerMain(int argc, char **argv)
 {
+    discard argc;
+    discard argv;
 
     // #ifdef COMPILER_MSVC
     //     _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
@@ -104,4 +112,5 @@ int main(void)
     LOGD("Core: starting workers ...");
     socketmanagerStart();
     runMainThread();
+    return 0;
 }
