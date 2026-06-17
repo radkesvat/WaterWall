@@ -23,7 +23,13 @@ authenticationclient_state_t authenticationclientGetState(tunnel_t *t)
     mutexLock(&ts->control_mutex);
     if (LIKELY(ts->authenticated))
     {
-        state = kAuthenticationClientStateReady;
+        bool users_loaded = false;
+
+        rwlockReadLock(&ts->users_lock);
+        users_loaded = ts->users_loaded;
+        rwlockReadUnlock(&ts->users_lock);
+
+        state = users_loaded ? kAuthenticationClientStateReady : kAuthenticationClientStateAuthenticating;
     }
     else if (ts->connected)
     {
@@ -175,7 +181,7 @@ authenticationclient_user_lookup_result_t authenticationclientGetUserByPasswordW
 
     rwlockReadLock(&ts->users_lock);
     user_t *user = NULL;
-    if (UNLIKELY(ts->users == NULL))
+    if (UNLIKELY(ts->users == NULL || ! ts->users_loaded))
     {
         result = kAuthenticationClientUserLookupUsersUnavailable;
     }

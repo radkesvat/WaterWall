@@ -730,13 +730,19 @@ static bool authenticationclientShouldSendGetAllUsers(tunnel_t *t, bool pull_due
     uint64_t local_config_revision     = 0;
     uint64_t local_stats_revision      = 0;
     uint64_t local_revision_generation = 0;
+    bool     users_loaded              = false;
 
     rwlockReadLock(&ts->users_lock);
     local_config_revision     = ts->local_config_revision;
     local_stats_revision      = ts->local_stats_revision;
     local_revision_generation = ts->local_revision_generation;
+    users_loaded              = ts->users_loaded;
     rwlockReadUnlock(&ts->users_lock);
 
+    if (! users_loaded)
+    {
+        return true;
+    }
     if (remote_revision_generation == 0)
     {
         return pull_due;
@@ -904,7 +910,7 @@ static bool authenticationclientTakeUsersSnapshots(tunnel_t *t, users_t **snapsh
     users_t                       *baseline = NULL;
 
     rwlockReadLock(&ts->users_lock);
-    if (LIKELY(ts->users != NULL))
+    if (LIKELY(ts->users != NULL && ts->users_loaded))
     {
         snapshot = authenticationclientCreateUsersCopy(ts->users);
     }
@@ -1073,6 +1079,7 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
     ts->local_config_revision     = config_revision;
     ts->local_stats_revision      = stats_revision;
     ts->local_revision_generation = revision_generation;
+    ts->users_loaded              = true;
     rwlockWriteUnlock(&ts->users_lock);
 
     mutexLock(&ts->control_mutex);
@@ -1748,6 +1755,18 @@ static bool authenticationclientSyncJobDue(uint32_t now_ms, uint32_t *last_attem
     return true;
 }
 
+static bool authenticationclientUsersLoaded(tunnel_t *t)
+{
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    bool                           users_loaded = false;
+
+    rwlockReadLock(&ts->users_lock);
+    users_loaded = ts->users_loaded;
+    rwlockReadUnlock(&ts->users_lock);
+
+    return users_loaded;
+}
+
 void authenticationclientStartSyncTimer(tunnel_t *t)
 {
     authenticationclient_tstate_t *ts               = tunnelGetState(t);
@@ -1808,7 +1827,7 @@ void authenticationclientSyncTimerCallback(wtimer_t *timer)
         discard authenticationclientSendPushUserStats(t);
     }
 
-    if (ts->pull_interval_ms == 0)
+    if (ts->pull_interval_ms == 0 && authenticationclientUsersLoaded(t))
     {
         return;
     }

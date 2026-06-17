@@ -1,4 +1,5 @@
 #include "objects/users.h"
+#include "utils/json_helpers.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -512,6 +513,45 @@ static void testFirstUsagePushRequestFlagIsOneShot(void)
     usersDestroy(&users);
 }
 
+static void testTrafficStatsJsonUsesExactBytes(void)
+{
+    const uint64_t upload_bytes   = 1024ULL * 1024ULL + 123ULL;
+    const uint64_t download_bytes = 2ULL * 1024ULL * 1024ULL + 456ULL;
+    user_t         user;
+
+    memoryZero(&user, sizeof(user));
+    require(userCreate(&user, "traffic-json-bytes-password"), "failed to create byte stats user");
+
+    require(! userAccountTraffic(&user, upload_bytes, download_bytes, 0, NULL),
+            "byte stats accounting unexpectedly closed user");
+
+    user_stat_t stats = {0};
+    userGetStats(&user, &stats);
+    require(stats.traffic.u == upload_bytes, "upload traffic counter was not stored as exact bytes");
+    require(stats.traffic.d == download_bytes, "download traffic counter was not stored as exact bytes");
+
+    cJSON *json = userToJson(&user);
+    require(json != NULL, "failed to serialize byte stats user");
+
+    const cJSON *stats_json = cJSON_GetObjectItemCaseSensitive(json, "stats");
+    require(cJSON_IsObject(stats_json), "serialized byte stats omitted stats object");
+
+    const cJSON *traffic_json = cJSON_GetObjectItemCaseSensitive(stats_json, "traffic");
+    require(cJSON_IsObject(traffic_json), "serialized byte stats omitted traffic object");
+
+    uint64_t serialized_upload   = 0;
+    uint64_t serialized_download = 0;
+    require(getUint64FromJson(&serialized_upload, cJSON_GetObjectItemCaseSensitive(traffic_json, "up")),
+            "serialized upload traffic was not a valid uint64");
+    require(getUint64FromJson(&serialized_download, cJSON_GetObjectItemCaseSensitive(traffic_json, "down")),
+            "serialized download traffic was not a valid uint64");
+    require(serialized_upload == upload_bytes, "serialized upload traffic was scaled instead of byte-exact");
+    require(serialized_download == download_bytes, "serialized download traffic was scaled instead of byte-exact");
+
+    cJSON_Delete(json);
+    userDestroy(&user);
+}
+
 int main(void)
 {
     initializeCryptoBackend();
@@ -525,5 +565,6 @@ int main(void)
     testZeroUserLimitsAreUnlimited();
     testTotalTrafficLimitCountsUploadAndDownload();
     testFirstUsagePushRequestFlagIsOneShot();
+    testTrafficStatsJsonUsesExactBytes();
     return 0;
 }

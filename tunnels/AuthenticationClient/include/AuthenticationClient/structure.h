@@ -31,6 +31,7 @@ typedef struct authenticationclient_tstate_s
     bool     push_in_flight;
     bool     first_usage_push_requested;
     bool     first_usage_push_deferred;
+    bool     users_loaded;
     bool     verbose;
 
     line_t   *control_line;
