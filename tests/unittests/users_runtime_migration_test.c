@@ -374,6 +374,94 @@ static void testClientViewExpiryOverridesServerTimeFields(void)
     userDestroy(&user);
 }
 
+static void testZeroUserLimitsAreUnlimited(void)
+{
+    static const char json_text[] =
+        "{"
+        "\"password\":\"zero-limit-password\","
+        "\"limit\":{"
+        "\"traffic\":{\"up\":0,\"down\":0,\"total\":0},"
+        "\"bandwidth\":{\"up\":0,\"down\":0},"
+        "\"ips\":0,"
+        "\"devices\":0,"
+        "\"connections-in\":0,"
+        "\"connections-out\":0"
+        "},"
+        "\"stats\":{"
+        "\"traffic\":{\"up\":\"18446744073709551615\",\"down\":\"18446744073709551615\"},"
+        "\"speed\":{\"up\":\"18446744073709551615\",\"down\":\"18446744073709551615\"},"
+        "\"ips\":\"18446744073709551615\","
+        "\"devices\":\"18446744073709551615\","
+        "\"connections-in\":\"18446744073709551615\","
+        "\"connections-out\":\"18446744073709551615\""
+        "}"
+        "}";
+
+    cJSON *json = cJSON_Parse(json_text);
+    require(json != NULL, "failed to parse zero-limit user JSON");
+
+    user_t user;
+    memoryZero(&user, sizeof(user));
+    require(userCreateFromJson(&user, json), "failed to create zero-limit user from JSON");
+    cJSON_Delete(json);
+
+    require(! userHasReachedTrafficLimit(&user), "zero traffic limits were treated as reached");
+    require(! userHasReachedBandwidthLimit(&user), "zero bandwidth limits were treated as reached");
+    require(! userHasReachedLimit(&user), "zero aggregate limits were treated as reached");
+    require(userIsActive(&user, UINT64_MAX), "zero-limit user was not active");
+
+    user_ip_key_t ip1 = testIp(192, 0, 2, 1);
+    user_ip_key_t ip2 = testIp(192, 0, 2, 2);
+
+    require(userTryAdmitConnection(&user, &ip1, UINT64_MAX) == kUserAdmissionOk,
+            "zero connection/ip limits rejected first connection");
+    require(userTryAdmitConnection(&user, &ip2, UINT64_MAX) == kUserAdmissionOk,
+            "zero connection/ip limits rejected second distinct IP");
+    require(! userAccountTraffic(&user, UINT64_MAX, UINT64_MAX, UINT64_MAX, NULL),
+            "zero traffic limits closed after additional traffic");
+    require(! userRuntimeShouldClose(&user, UINT64_MAX), "zero traffic limits required runtime close");
+
+    userReleaseConnection(&user, &ip2);
+    userReleaseConnection(&user, &ip1);
+    userDestroy(&user);
+}
+
+static void testTotalTrafficLimitCountsUploadAndDownload(void)
+{
+    user_t user;
+
+    memoryZero(&user, sizeof(user));
+    require(userCreate(&user, "total-traffic-limit-password"), "failed to create total traffic limit user");
+    user.limit.traffic.u     = USER_NO_LIMIT;
+    user.limit.traffic.d     = USER_NO_LIMIT;
+    user.limit.traffic.total = 100;
+
+    require(! userHasReachedTrafficLimit(&user), "fresh total-limit user unexpectedly reached traffic limit");
+    require(! userAccountTraffic(&user, 99, 0, 0, NULL), "upload below total limit closed user");
+    require(! userHasReachedTrafficLimit(&user), "upload below total limit reached traffic limit");
+    require(userAccountTraffic(&user, 1, 0, 0, NULL), "upload reaching total limit did not close user");
+    require(userHasReachedTrafficLimit(&user), "upload reaching total limit did not mark limit reached");
+    userDestroy(&user);
+
+    memoryZero(&user, sizeof(user));
+    require(userCreate(&user, "total-traffic-download-limit-password"),
+            "failed to create download total traffic limit user");
+    user.limit.traffic.total = 100;
+
+    require(! userAccountTraffic(&user, 0, 99, 0, NULL), "download below total limit closed user");
+    require(userAccountTraffic(&user, 0, 1, 0, NULL), "download reaching total limit did not close user");
+    userDestroy(&user);
+
+    memoryZero(&user, sizeof(user));
+    require(userCreate(&user, "total-traffic-mixed-limit-password"),
+            "failed to create mixed total traffic limit user");
+    user.limit.traffic.total = 100;
+
+    require(! userAccountTraffic(&user, 40, 59, 0, NULL), "mixed traffic below total limit closed user");
+    require(userAccountTraffic(&user, 0, 1, 0, NULL), "mixed traffic reaching total limit did not close user");
+    userDestroy(&user);
+}
+
 static void testFirstUsagePushRequestFlagIsOneShot(void)
 {
     users_t users;
@@ -434,6 +522,8 @@ int main(void)
     testIdentifierLookupSurvivesPasswordChange();
     testFirstUsageSetIfMissingKeepsServerValue();
     testClientViewExpiryOverridesServerTimeFields();
+    testZeroUserLimitsAreUnlimited();
+    testTotalTrafficLimitCountsUploadAndDownload();
     testFirstUsagePushRequestFlagIsOneShot();
     return 0;
 }
