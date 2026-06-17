@@ -158,6 +158,16 @@ if(TARGET bssl AND WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
     target_compile_options(bssl PRIVATE -Wno-format)
 endif()
 
+# GCC (notably 15.x on MinGW/UCRT64) emits false-positive -Warray-bounds /
+# -Wstringop-overflow when it inlines the AVX2 _mm256_store path of
+# memoryZeroAligned32 (ww/libc/wlibc.h) over small fixed-size line-state buffers
+# in helpers.c / line_state.c. The stores are in-bounds; keep the warnings
+# visible but don't let ww's inherited -Werror fail the build. -Wno-error=
+# overrides a later blanket -Werror regardless of command-line order.
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(TlsClient PRIVATE -Wno-error=array-bounds -Wno-error=stringop-overflow)
+endif()
+
 if(WIN32)
     # BoringSSL on Windows points to some functions in assembly that their assembly files are only compiled on Linux
     # Adding this to switch to C version on Windows

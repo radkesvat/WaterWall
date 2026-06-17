@@ -1203,7 +1203,7 @@ if(NOT MSVC)
         -Wstrict-prototypes
         # disable warnings for unused functions and unkown pragmas
         -Wno-unused-function
-        -Wno-unknown-pragmas 
+        -Wno-unknown-pragmas
         -Wno-error=pragmas
         -Wno-unknown-warning-option
         -Wno-pragmas
