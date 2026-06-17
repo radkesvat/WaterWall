@@ -218,6 +218,7 @@ endif()
 # Main Executable and Sources
 #--------------------------------------------------------------------------------
 set(WATERWALL_STARTUP_GUARD_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/core/startup_guard.c")
+set(WATERWALL_INNER_MAIN_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/core/main.c")
 
 add_library(WaterwallStartupGuard OBJECT
   ${WATERWALL_STARTUP_GUARD_SOURCE}
@@ -238,7 +239,7 @@ set_target_properties(WaterwallStartupGuard PROPERTIES
 
 add_executable(Waterwall
   $<TARGET_OBJECTS:WaterwallStartupGuard>
-  core/main.c
+  ${WATERWALL_INNER_MAIN_SOURCE}
   core/core_settings.c
   core/imported_tunnels.c
   core/os_helpers.c
@@ -273,6 +274,17 @@ if((CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID STREQUAL "Clang" O
     -mno-movbe
     -fno-lto
   )
+endif()
+
+if(MINGW AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
+  # MinGW GCC can emit invalid SEH unwind assembly for this renamed entry path
+  # during final executable LTO. Keep the rest of the build optimized.
+  set_source_files_properties(${WATERWALL_INNER_MAIN_SOURCE}
+    PROPERTIES
+      SKIP_UNITY_BUILD_INCLUSION ON
+      SKIP_PRECOMPILE_HEADERS ON
+  )
+  set_property(SOURCE ${WATERWALL_INNER_MAIN_SOURCE} APPEND PROPERTY COMPILE_OPTIONS -fno-lto)
 endif()
 
 #--------------------------------------------------------------------------------
