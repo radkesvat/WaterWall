@@ -20,7 +20,7 @@ node_t nodeSocks5ClientGet(void)
              .node_manager_config   = NULL,
              .instance              = NULL,
              .flags                 = kNodeFlagChainHead,
-             .required_padding_left = 0,
+             .required_padding_left = kSocks5ClientUdpHeaderMaxLen,
              .layer_group           = kNodeLayerAnything,
              .layer_group_next_node = kNodeLayerAnything,
              .layer_group_prev_node = kNodeLayerAnything,

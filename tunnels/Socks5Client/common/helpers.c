@@ -214,7 +214,48 @@ static int parseAddressBytes(const uint8_t *buf, size_t len, address_context_t *
 
 static uint8_t protocolToCommand(socks5client_protocol_t protocol)
 {
+    assert(protocol == kSocks5ClientProtocolTcp || protocol == kSocks5ClientProtocolUdp);
     return protocol == kSocks5ClientProtocolUdp ? kSocks5CommandUdpAssoc : kSocks5CommandConnect;
+}
+
+static bool getProtocolFromContext(const address_context_t *ctx, socks5client_protocol_t *protocol_out)
+{
+    if (ctx->proto_tcp && ! ctx->proto_udp && ! ctx->proto_icmp && ! ctx->proto_packet)
+    {
+        *protocol_out = kSocks5ClientProtocolTcp;
+        return true;
+    }
+
+    if (ctx->proto_udp && ! ctx->proto_tcp && ! ctx->proto_icmp && ! ctx->proto_packet)
+    {
+        *protocol_out = kSocks5ClientProtocolUdp;
+        return true;
+    }
+
+    return false;
+}
+
+static socks5client_protocol_t resolveConfiguredProtocol(const socks5client_tstate_t *ts,
+                                                         const address_context_t     *current_dest_ctx)
+{
+    if (ts->protocol != kSocks5ClientProtocolDestContext)
+    {
+        return ts->protocol;
+    }
+
+    socks5client_protocol_t protocol = kSocks5ClientProtocolTcp;
+    if (getProtocolFromContext(current_dest_ctx, &protocol))
+    {
+        return protocol;
+    }
+
+    LOGW("Socks5Client: configured protocol is dest_context->protocol, but the destination context protocol was "
+         "missing or invalid (tcp=%u, udp=%u, icmp=%u, packet=%u); falling back to TCP",
+         (unsigned int) current_dest_ctx->proto_tcp,
+         (unsigned int) current_dest_ctx->proto_udp,
+         (unsigned int) current_dest_ctx->proto_icmp,
+         (unsigned int) current_dest_ctx->proto_packet);
+    return kSocks5ClientProtocolTcp;
 }
 
 static void fillUdpAssociateRequestTarget(address_context_t *target)
@@ -274,12 +315,16 @@ bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l)
     address_context_t     *dest_ctx = lineGetDestinationAddressContext(l);
     routing_context_t     *route    = lineGetRoutingContext(l);
     address_context_t      current  = {0};
-    bool uses_current_dest = (ts->target_addr_source != kDvsConstant) || (ts->target_port_source != kDvsConstant);
+    bool uses_current_dest = (ts->target_addr_source != kDvsConstant) ||
+                             (ts->target_port_source != kDvsConstant) ||
+                             (ts->protocol == kSocks5ClientProtocolDestContext);
 
     if (uses_current_dest)
     {
         addresscontextAddrCopy(&current, dest_ctx);
     }
+
+    socks5client_protocol_t resolved_protocol = resolveConfiguredProtocol(ts, &current);
 
     if (ts->target_addr_source == kDvsConstant)
     {
@@ -313,7 +358,7 @@ bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l)
         addresscontextSetPort(dest_ctx, current.port);
     }
 
-    if (ts->protocol == kSocks5ClientProtocolTcp)
+    if (resolved_protocol == kSocks5ClientProtocolTcp)
     {
         addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_TCP);
         route->network_type = WIO_TYPE_TCP;
@@ -323,6 +368,8 @@ bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l)
         addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_UDP);
         route->network_type = WIO_TYPE_UDP;
     }
+
+    ls->protocol = resolved_protocol;
 
     if (uses_current_dest)
     {
@@ -388,10 +435,10 @@ bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_
     socks5client_tstate_t *ts       = tunnelGetState(t);
     address_context_t      assoc_target = {0};
     address_context_t     *target   = &ls->target_addr;
-    uint8_t                cmd      = protocolToCommand(ts->protocol);
+    uint8_t                cmd      = protocolToCommand(ls->protocol);
     uint32_t               addr_len = 0;
 
-    if (ts->protocol == kSocks5ClientProtocolUdp)
+    if (ls->protocol == kSocks5ClientProtocolUdp)
     {
         fillUdpAssociateRequestTarget(&assoc_target);
         target = &assoc_target;
@@ -485,6 +532,8 @@ static bool wrapUdpPayload(line_t *l, sbuf_t **buf_io, const address_context_t *
         sbufShiftLeft(buf, (uint32_t) header_len);
     }
 
+    *buf_io = buf;
+
     uint8_t *ptr = sbufGetMutablePtr(buf);
     size_t   off = 0;
 
@@ -496,7 +545,6 @@ static bool wrapUdpPayload(line_t *l, sbuf_t **buf_io, const address_context_t *
         return false;
     }
 
-    *buf_io = buf;
     return true;
 }
 
@@ -620,6 +668,7 @@ bool socks5clientStartUdpAssociation(tunnel_t *t, line_t *l, socks5client_lstate
     socks5client_lstate_t *control_ls = lineGetState(control_l, t);
 
     addresscontextAddrCopy(&control_ls->target_addr, &ls->target_addr);
+    control_ls->protocol = ls->protocol;
     setLineProtocol(control_l, IP_PROTO_TCP);
 
     ls->control_line = control_l;
@@ -936,7 +985,7 @@ bool socks5clientDrainHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate
                 return false;
             }
 
-            if (ts->protocol == kSocks5ClientProtocolUdp)
+            if (ls->protocol == kSocks5ClientProtocolUdp)
             {
                 address_context_t relay_addr = {0};
                 size_t            consumed   = 0;

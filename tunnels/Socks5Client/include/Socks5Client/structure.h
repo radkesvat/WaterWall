@@ -5,6 +5,7 @@
 
 typedef enum socks5client_protocol_e
 {
+    kSocks5ClientProtocolDestContext = 0,
     kSocks5ClientProtocolTcp = 1,
     kSocks5ClientProtocolUdp = 3
 } socks5client_protocol_t;
@@ -50,6 +51,7 @@ typedef struct socks5client_lstate_s
     address_context_t    relay_addr;
     buffer_stream_t      in_stream;
     buffer_queue_t       pending_up;
+    socks5client_protocol_t protocol;
     socks5client_phase_t phase;
     socks5client_line_kind_t kind;
     bool                 udp_control_ready;
@@ -62,7 +64,8 @@ enum
     kLineStateSize                 = sizeof(socks5client_lstate_t),
     kSocks5ClientPendingQueueCap   = 8,
     kSocks5ClientMaxPendingUpBytes = 1024 * 1024,
-    kSocks5ClientMaxHandshakeBytes = 4096
+    kSocks5ClientMaxHandshakeBytes = 4096,
+    kSocks5ClientUdpHeaderMaxLen   = 4 + 1 + UINT8_MAX + 2
 };
 
 WW_EXPORT void         socks5clientTunnelDestroy(tunnel_t *t);

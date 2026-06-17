@@ -146,7 +146,16 @@ static bool parseProtocol(socks5client_tstate_t *ts, const cJSON *settings)
         return true;
     }
 
-    LOGF("JSON Error: Socks5Client->settings->protocol supports only \"tcp\" or \"udp\"");
+    if (stringCompare(protocol, "dest_context->protocol") == 0 ||
+        stringCompare(protocol, "line->dest_ctx->protocol") == 0)
+    {
+        ts->protocol = kSocks5ClientProtocolDestContext;
+        memoryFree(protocol);
+        return true;
+    }
+
+    LOGF("JSON Error: Socks5Client->settings->protocol supports only \"tcp\", \"udp\", or "
+         "\"dest_context->protocol\"");
     memoryFree(protocol);
     return false;
 }

@@ -8,6 +8,7 @@ void socks5clientLinestateInitialize(socks5client_lstate_t *ls, tunnel_t *t, lin
                                    .line       = l,
                                    .in_stream  = bufferstreamCreate(lineGetBufferPool(l), 0),
                                    .pending_up = bufferqueueCreate(kSocks5ClientPendingQueueCap),
+                                   .protocol   = kSocks5ClientProtocolTcp,
                                    .phase      = kSocks5ClientPhaseIdle};
 }
 
