@@ -136,6 +136,10 @@
 #include "TrojanServer/interface.h"
 #endif
 
+#ifdef INCLUDE_VLESS_SERVER
+#include "VlessServer/interface.h"
+#endif
+
 #ifdef INCLUDE_LOGGER_TUNNEL
 #include "LoggerTunnel/interface.h"
 #endif
@@ -445,6 +449,10 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_TROJAN_SERVER
     USING(TrojanServer);
+#endif
+
+#ifdef INCLUDE_VLESS_SERVER
+    USING(VlessServer);
 #endif
 
 #ifdef INCLUDE_LOGGER_TUNNEL

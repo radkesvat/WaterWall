@@ -181,6 +181,7 @@ option(INCLUDE_TLS_CLIENT               "link TLSClient staticly to the core"   
 option(INCLUDE_TLS_SERVER               "link TLSServer staticly to the core"                TRUE)
 option(INCLUDE_TROJAN_CLIENT            "link TrojanClient staticly to the core"             TRUE)
 option(INCLUDE_TROJAN_SERVER            "link TrojanServer staticly to the core"             TRUE)
+option(INCLUDE_VLESS_SERVER             "link VlessServer staticly to the core"              TRUE)
 option(INCLUDE_TROJAN_AUTH_SERVER       "link TrojanAuthServer staticly to the core"         FALSE)
 option(INCLUDE_TROJAN_SOCKS_SERVER      "link TrojanSocksServer staticly to the core"        FALSE)
 option(INCLUDE_HTTP_SERVER              "link HttpServer staticly to the core"               TRUE)
@@ -778,6 +779,14 @@ if(INCLUDE_TROJAN_SERVER)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TrojanServer)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TrojanServer)
   target_link_libraries(Waterwall TrojanServer)
+endif()
+
+#vless server
+if(INCLUDE_VLESS_SERVER)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_VLESS_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/VlessServer)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/VlessServer)
+  target_link_libraries(Waterwall VlessServer)
 endif()
 
 #trojan auth server
