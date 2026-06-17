@@ -224,31 +224,74 @@ check_function("setproctitle" "unistd.h")
 ################################################################################
 # Advanced CPU Instructions Configuration
 ################################################################################
-set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS 0 CACHE INTERNAL "Using advanced CPU instructions" FORCE)
-set(WW_HAVE_AVX2 0 CACHE INTERNAL "AVX2 available" FORCE)
-set(WW_HAVE_SSE3 0 CACHE INTERNAL "SSE3 available" FORCE)
-set(WW_SUPPORTED_MEMCOPY_AVX2 0 CACHE INTERNAL "Enable MemoryCopyLarge() to use AVX2" FORCE)
-set(WW_SUPPORTED_MEMCOPY_AVX512F 0 CACHE INTERNAL "Enable MemoryCopyLarge() to use AVX512F" FORCE)
-set(WW_CHECKSUM_AVX2 0 CACHE INTERNAL "Enable Checksum() to use AVX2" FORCE)
-set(WW_CHECKSUM_SSE3 0 CACHE INTERNAL "Enable Checksum() to use SSE3" FORCE)
+option(WW_DISABLE_ADVANCED_CPU_INSTRUCTIONS "Disable all architecture-specific CPU instruction paths" OFF)
+option(WW_DISABLE_AVX2 "Disable AVX2-specific instruction paths while keeping lower x86 features available" OFF)
+option(DEV_DISABLE_AVX2 "Developer switch: disable AVX2-specific instruction paths" OFF)
+option(WW_ENABLE_AVX_512 "Enable AVX512F instruction paths" OFF)
 
-if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT WW_DISABLE_ADVANCED_CPU_INSTRUCTIONS
-    AND CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+set(WW_ADVANCED_CPU_BASELINE "haswell" CACHE STRING "Non-MSVC -march value used for advanced x86_64 builds")
+set(WW_ADVANCED_CPU_EXTRA_FLAGS "" CACHE STRING "Additional non-MSVC CPU flags for advanced x86_64 builds")
+
+set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS 0)
+set(WW_HAVE_AVX2 0)
+set(WW_HAVE_AVX512F 0)
+set(WW_HAVE_SSE3 0)
+set(WW_SUPPORTED_MEMCOPY_AVX2 0)
+set(WW_SUPPORTED_MEMCOPY_AVX512F 0)
+set(WW_CHECKSUM_AVX2 0)
+set(WW_CHECKSUM_SSE3 0)
+
+set(WW_TARGET_X86_64 FALSE)
+if(CMAKE_SIZEOF_VOID_P EQUAL 8 AND (CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
+    set(WW_TARGET_X86_64 TRUE)
+endif()
+
+set(WW_HAS_X86_INTRINSICS FALSE)
+if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H)
+    set(WW_HAS_X86_INTRINSICS TRUE)
+endif()
+
+set(WW_AVX2_DISABLED FALSE)
+if(WW_DISABLE_AVX2 OR DEV_DISABLE_AVX2)
+    set(WW_AVX2_DISABLED TRUE)
+endif()
+
+if(WW_ENABLE_AVX_512 AND WW_AVX2_DISABLED)
+    message(FATAL_ERROR "WW_ENABLE_AVX_512 requires AVX2 to remain enabled")
+endif()
+
+function(ww_add_cpu_compile_option target msvc_option non_msvc_option)
+    if(MSVC)
+        if(NOT "${msvc_option}" STREQUAL "")
+            target_compile_options(${target} PUBLIC "${msvc_option}")
+        endif()
+    elseif(NOT "${non_msvc_option}" STREQUAL "")
+        target_compile_options(${target} PUBLIC "${non_msvc_option}")
+    endif()
+endfunction()
+
+if(WW_TARGET_X86_64 AND WW_HAS_X86_INTRINSICS AND NOT WW_DISABLE_ADVANCED_CPU_INSTRUCTIONS)
 
     message(STATUS "Using advanced CPU instructions")
     set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS 1)
 
-    if (MSVC)
+    if(MSVC)
         # MSVC dosent have a specific flag for haswell, but we can enable AVX2 which includes all the instructions we need,
         # and MSVC will automatically enable the necessary instruction sets for AVX2
         # target_compile_options(ww PUBLIC /arch:AVX2)
     else()
-        # GCC/Clang: target Haswell microarchitecture
-        target_compile_options(ww PUBLIC -march=haswell)
+        if(NOT WW_ADVANCED_CPU_BASELINE STREQUAL "")
+            target_compile_options(ww PUBLIC "-march=${WW_ADVANCED_CPU_BASELINE}")
+        endif()
+        if(NOT WW_ADVANCED_CPU_EXTRA_FLAGS STREQUAL "")
+            separate_arguments(WW_ADVANCED_CPU_EXTRA_FLAGS_LIST NATIVE_COMMAND "${WW_ADVANCED_CPU_EXTRA_FLAGS}")
+            target_compile_options(ww PUBLIC ${WW_ADVANCED_CPU_EXTRA_FLAGS_LIST})
+        endif()
+        if(WW_AVX2_DISABLED)
+            target_compile_options(ww PUBLIC -mno-avx2)
+        endif()
     endif()
-    # with "haswell" target, we already have AVX
     
-
     if(MSVC)
         # For MSVC x64: SSE/SSE2/SSE3 are enabled by default, no /arch flag needed
         # x64 build - SSE3 is always available
@@ -265,11 +308,7 @@ if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT 
     # SSE3 Configuration
     if(COMPILER_SUPPORTS_SSE3)
         message(STATUS "Using SSE3")
-        if(MSVC)
-            target_compile_options(ww PUBLIC /arch:SSE2)   # SSE3 is included in SSE2 support on MSVC
-        else()
-            target_compile_options(ww PUBLIC -msse3)
-        endif()
+        ww_add_cpu_compile_option(ww "/arch:SSE2" "-msse3")
         set(WW_HAVE_SSE3 1)
         set(WW_CHECKSUM_SSE3 1)
         target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/net/wchecksum_sse3.c")
@@ -279,25 +318,18 @@ if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT 
 
     # AVX2 Configuration
     if(COMPILER_SUPPORTS_AVX2)
-        if(NOT DEV_DISABLE_AVX)
+        if(NOT WW_AVX2_DISABLED)
             message(STATUS "Using AVX2")
-            if(MSVC)
-                #/arch:AVX2    # enables AVX2 (+ AVX)
-                target_compile_options(ww PUBLIC /arch:AVX2)
-            else()
-                target_compile_options(ww PUBLIC -mavx2)
-            endif()
+            ww_add_cpu_compile_option(ww "/arch:AVX2" "-mavx2")
             set(WW_HAVE_AVX2 1)
             set(WW_SUPPORTED_MEMCOPY_AVX2 1)
             set(WW_CHECKSUM_AVX2 1)
             target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/net/wchecksum_avx2.c")
+        elseif(WW_DISABLE_AVX2)
+            message(STATUS "AVX2 is disabled by configuration")
         else()
-            message(STATUS "AVX is disabled by a dev flag")
-            if(NOT MSVC)
-                target_compile_options(ww PUBLIC -mno-avx2 -mno-avx -mno-fma)
-            endif()
-            # for MSVC, there's no specific flag to disable AVX2, when we dont specify /arch:AVX2,
-            # it will not use AVX2 and AVX instructions, so we can just avoid adding that flag
+            message(STATUS "AVX2 is disabled by a dev flag")
+            # For MSVC, avoiding /arch:AVX2 is the available AVX2 codegen disable.
         endif()
 
     else()
@@ -308,11 +340,7 @@ if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT 
     if(COMPILER_SUPPORTS_AVX512F)
         if(WW_ENABLE_AVX_512)
             message(STATUS "Using AVX512F")
-            if(MSVC)
-                target_compile_options(ww PUBLIC /arch:AVX512)
-            else()
-                target_compile_options(ww PUBLIC -mavx512f)
-            endif()
+            ww_add_cpu_compile_option(ww "/arch:AVX512" "-mavx512f")
             set(WW_HAVE_AVX512F 1)
             set(WW_SUPPORTED_MEMCOPY_AVX512F 1)
         else()
@@ -329,6 +357,7 @@ endif()
 # Update cache variables
 set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS ${WW_HAVE_ADVANCED_CPU_INSTRUCTIONS} CACHE INTERNAL "Using advanced CPU instructions" FORCE)
 set(WW_HAVE_AVX2 ${WW_HAVE_AVX2} CACHE INTERNAL "AVX2 available" FORCE)
+set(WW_HAVE_AVX512F ${WW_HAVE_AVX512F} CACHE INTERNAL "AVX512F available" FORCE)
 set(WW_HAVE_SSE3 ${WW_HAVE_SSE3} CACHE INTERNAL "SSE3 available" FORCE)
 set(WW_SUPPORTED_MEMCOPY_AVX2 ${WW_SUPPORTED_MEMCOPY_AVX2} CACHE INTERNAL "Enable MemoryCopyLarge() to use AVX2" FORCE)
 set(WW_SUPPORTED_MEMCOPY_AVX512F ${WW_SUPPORTED_MEMCOPY_AVX512F} CACHE INTERNAL "Enable MemoryCopyLarge() to use AVX512F" FORCE)

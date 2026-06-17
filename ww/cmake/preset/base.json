@@ -12,7 +12,7 @@
                 "CMAKE_C_VISIBILITY_PRESET": "hidden",
                 "CMAKE_CXX_VISIBILITY_PRESET": "hidden",
                 "CMAKE_VISIBILITY_INLINES_HIDDEN": "1",
-                "DEV_DISABLE_AVX": "0"
+                "DEV_DISABLE_AVX2": "0"
 
             }
         },
@@ -264,9 +264,9 @@
             "name": "old-cpu-x64",
             "hidden": true,
             "cacheVariables": {
-                "WW_DISABLE_ADVANCED_CPU_INSTRUCTIONS": "ON",
-                "CMAKE_C_FLAGS": "-march=x86-64 -mtune=generic  -mno-avx",
-                "CMAKE_CXX_FLAGS": "-march=x86-64 -mtune=generic  -mno-avx"
+                "WW_ADVANCED_CPU_BASELINE": "x86-64",
+                "WW_ADVANCED_CPU_EXTRA_FLAGS": "-mtune=generic -mavx",
+                "WW_DISABLE_AVX2": "ON"
             }
         },
         {
