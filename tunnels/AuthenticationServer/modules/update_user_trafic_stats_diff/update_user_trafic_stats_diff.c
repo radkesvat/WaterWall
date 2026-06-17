@@ -60,6 +60,15 @@ sbuf_t *authenticationserverUpdateUserTraficStatsDiffHandle(
     }
     cJSON_Delete(user_json);
 
+    const char *identity_error =
+        authenticationserverValidateUserIdentityBySHA256(t, user.sha256_pass.bytes, userGetId(&user));
+    if (UNLIKELY(identity_error != NULL))
+    {
+        LOGW("AuthenticationServer: UpdateUserTraficStatsDiff rejected user JSON: %s", identity_error);
+        userDestroy(&user);
+        return authenticationserverCreateErrorResponseFrame(l, correlation_id, identity_error);
+    }
+
     users_update_result_t result =
         usersAddTrafficBySHA256(&ts->store.users, user.sha256_pass.bytes, user.stats.traffic.u, user.stats.traffic.d);
     const bool traffic_changed = user.stats.traffic.u > 0 || user.stats.traffic.d > 0;

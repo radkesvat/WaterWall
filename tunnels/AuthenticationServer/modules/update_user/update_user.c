@@ -79,6 +79,15 @@ sbuf_t *authenticationserverUpdateUserHandle(const uint8_t correlation_id[kAuthe
     }
     cJSON_Delete(user_json);
 
+    const char *identity_error =
+        authenticationserverValidateUserIdentityBySHA256(t, user.sha256_pass.bytes, userGetId(&user));
+    if (UNLIKELY(identity_error != NULL))
+    {
+        LOGW("AuthenticationServer: UpdateUser rejected user JSON: %s", identity_error);
+        userDestroy(&user);
+        return authenticationserverCreateErrorResponseFrame(l, correlation_id, identity_error);
+    }
+
     user_update_t         update = authenticationserverUpdateFromUser(&user);
     users_update_result_t result =
         authenticationserverUpdateUserBySHA256AndBumpConfigRevision(t, user.sha256_pass.bytes, &update);

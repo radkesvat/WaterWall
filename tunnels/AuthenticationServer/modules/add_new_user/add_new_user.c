@@ -68,6 +68,13 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
     }
     cJSON_Delete(user_json);
 
+    if (UNLIKELY(! authenticationserverUserHasRequiredId(&user)))
+    {
+        LOGW("AuthenticationServer: AddNewUser rejected user JSON: user-id-required");
+        userDestroy(&user);
+        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "user-id-required");
+    }
+
     memoryCopy(added_sha256, user.sha256_pass.bytes, SHA256_DIGEST_SIZE);
     recursivemutexLock(&ts->database_mutex);
     users_add_result_t add_result = usersAddUserChecked(&ts->store.users, &user);

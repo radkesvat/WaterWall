@@ -120,6 +120,7 @@ The recommended on-disk shape is an object with a `users` array:
 {
   "users": [
     {
+      "id": 1001,
       "name": "alice",
       "password": "alice:alice-secret",
       "email": "alice@example.com",
@@ -169,14 +170,23 @@ the server still restores only from the existing `db-path.backup` recovery file.
 - an array of user objects: `[user, ...]`
 - an object with a `users` array: `{"users": [user, ...]}`
 - an object map: `{"alice": user, "bob": user}`
-- one standalone user object containing `password` or `pass`
+- one standalone user object containing `id` or `user-id`, plus `password` or `pass`
 
 For object maps, the object key is used as a username hint only when the user object itself has no non-empty `name`.
 The saver always rewrites the database in the normalized `{"users": [...]}` form.
 
+In this example, `password` is still the authentication lookup key. The `id` is a separate durable user identity: keep it
+unique and stable for that user so Waterwall can do safe, fast lookups and carry local runtime state across user-table
+refreshes.
+
 ### User JSON Structure
 
-A user object must contain a password string. All other fields are optional:
+A user object must contain a unique non-zero `id` and a password string. All other fields are optional:
+
+- `id` or `user-id` `(required unsigned integer)`
+  Durable logical user identity. Keep it unique across the users database and stable for the lifetime of that logical
+  user. The password is still the authentication lookup key; `id` exists so Waterwall can resolve users safely and
+  quickly across table refreshes, usage accounting, and runtime limit checks.
 
 - `password` or `pass` `(required string)`
   Plaintext password used to create the user's password hash lookup keys.
@@ -273,8 +283,8 @@ except `expire-after-first-usage-ms`, which is a duration after first usage.
 - Password-derived hashes are not stored directly in JSON. They are rebuilt from `password` while loading users.
 - The SHA-256 password hash is the canonical password lookup key. SHA-224 is also indexed for explicit SHA-224 lookups.
   Two users must not share the same password/SHA-224 or SHA-256 key.
-- `id` is the durable logical user identity when present. Keep each non-zero id unique and stable for that logical user's
-  lifetime; reusing an existing id for a different user can intentionally transfer client-side runtime state on the next
+- `id` is the durable logical user identity. Keep each non-zero id unique and stable for that logical user's lifetime;
+  reusing an existing id for a different user can intentionally transfer client-side runtime state on the next
   `GetAllUsers` refresh.
 - AuthenticationClient credentials are not stored in the user database. They live only in `settings.auth-clients`.
 - The authoritative in-memory table tracks separate configuration and statistics revisions. These revisions are server
@@ -757,12 +767,12 @@ correlation ID.
 
 ### AddNewUser Module
 
-The `AddNewUser` module expects request data containing a JSON object for one user, using the same user format accepted
-by `userCreateFromJson()`.
+The `AddNewUser` module expects request data containing a JSON object for one user, using the AuthenticationServer user
+format described above. The submitted user must contain a non-zero unique `id`/`user-id`.
 
 The module validates that the payload is parseable JSON, that it is a user object, that the user can be created, and
-that the new user's name and password hashes do not conflict with existing users. If validation passes, the user is
-added to the in-memory database and the users file is saved immediately with the normal backup-first save behavior.
+that the new user's id, name, and password hashes do not conflict with existing users. If validation passes, the user
+is added to the in-memory database and the users file is saved immediately with the normal backup-first save behavior.
 If that immediate save fails, the module attempts to roll back the in-memory add and returns a save error.
 
 On success it returns response type `0` and response data equal to `user-added`.
@@ -775,7 +785,8 @@ after the in-memory add succeeds, the module attempts to remove that user from m
 
 The `UpdateUser` module expects request data containing a full user JSON object in the same format exported by
 `userToJson()`. The password field is used only to find the existing user by its SHA-256 password hash; password and
-password-hash values are not updated by this module because they are database lookup keys.
+password-hash values are not updated by this module because they are database lookup keys. The submitted `id`/`user-id`
+must be present, non-zero, and match the existing user found by that password hash.
 
 If the user exists, the module updates the mutable user fields in memory, including name, email, notes, group ID,
 enabled state, limits, time information, stats, and record-stat interval. It does not trigger an immediate database
@@ -783,13 +794,14 @@ file save; the normal periodic save timer is still responsible for persisting in
 
 On success it returns response type `0` and response data equal to `user-updated`.
 
-If the JSON is malformed, the user does not exist, or the update would create a conflicting user name, it returns an
-error response frame with the same correlation ID.
+If the JSON is malformed, the user does not exist, the submitted id is missing or mismatched, or the update would create
+a conflicting user name, it returns an error response frame with the same correlation ID.
 
 ### UpdateUserTraficStatsDiff Module
 
 The `UpdateUserTraficStatsDiff` module expects request data containing a full user JSON object. The password field is
-used only to find the existing user by its SHA-256 password hash.
+used only to find the existing user by its SHA-256 password hash. The submitted `id`/`user-id` must be present,
+non-zero, and match the existing user found by that password hash.
 
 If the user exists, the module reads `stats.traffic.up` and `stats.traffic.down` from the supplied JSON and adds those
 values to the existing user's traffic counters. No other user fields are updated. The add operation uses the same
@@ -801,7 +813,8 @@ for persisting in-memory state later.
 
 On success it returns response type `0` and response data equal to `user-traffic-stats-updated`.
 
-If the JSON is malformed or the user does not exist, it returns an error response frame with the same correlation ID.
+If the JSON is malformed, the user does not exist, or the submitted id is missing or mismatched, it returns an error
+response frame with the same correlation ID.
 
 ### GetAllUsers Module
 
