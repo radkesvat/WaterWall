@@ -1,6 +1,5 @@
 #pragma once
 
-#include "bufio/buffer_stream.h"
 #include "wwapi.h"
 
 typedef enum socks5client_protocol_e

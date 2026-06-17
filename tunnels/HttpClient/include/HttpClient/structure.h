@@ -2,7 +2,6 @@
 
 #include "wwapi.h"
 
-#include "bufio/buffer_stream.h"
 #include "http2_def.h"
 #include "http_def.h"
 #include "nghttp2/nghttp2.h"

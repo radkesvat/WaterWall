@@ -1,7 +1,5 @@
 #pragma once
 
-#include "bufio/buffer_stream.h"
-#include "objects/user_handle.h"
 #include "wwapi.h"
 
 #define i_type socks5server_remote_map_t // NOLINT
