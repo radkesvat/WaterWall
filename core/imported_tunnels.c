@@ -128,6 +128,10 @@
 #include "TlsServer/interface.h"
 #endif
 
+#ifdef INCLUDE_TROJAN_SERVER
+#include "TrojanServer/interface.h"
+#endif
+
 #ifdef INCLUDE_LOGGER_TUNNEL
 #include "LoggerTunnel/interface.h"
 #endif
@@ -429,6 +433,10 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_TLS_SERVER
     USING(TlsServer);
+#endif
+
+#ifdef INCLUDE_TROJAN_SERVER
+    USING(TrojanServer);
 #endif
 
 #ifdef INCLUDE_LOGGER_TUNNEL
