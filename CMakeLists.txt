@@ -309,7 +309,23 @@ if(WIN32)
   if(MSVC)
     set_target_properties(Waterwall PROPERTIES LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
   else()
-    target_sources(Waterwall PRIVATE core/rc/app.rc)
+    # Keep the resource compiler isolated from Waterwall's many tunnel-specific
+    # include directories and definitions.
+    add_library(waterwall_resources OBJECT core/rc/app.rc)
+
+    target_compile_definitions(waterwall_resources PRIVATE
+      FINAL_EXECUTABLE_NAME="${FINAL_EXECUTABLE_NAME}.exe"
+      WATERWALL_VERSION=${Waterwall_VERSION}
+      WW_VERSION=1.1.0
+    )
+
+    target_include_directories(waterwall_resources PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${CMAKE_CURRENT_SOURCE_DIR}/core
+      ${CMAKE_CURRENT_SOURCE_DIR}/core/rc
+    )
+
+    target_sources(Waterwall PRIVATE $<TARGET_OBJECTS:waterwall_resources>)
   endif()
 endif()
 
@@ -508,6 +524,9 @@ endif()
 
 #ip manipulator
 if(INCLUDE_IP_MANIPULATOR)
+  if(NOT INCLUDE_TLS_CLIENT)
+    message(FATAL_ERROR "IpManipulator requires INCLUDE_TLS_CLIENT=ON")
+  endif()
   target_compile_definitions(Waterwall PUBLIC INCLUDE_IP_MANIPULATOR=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/IpManipulator)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/IpManipulator)
