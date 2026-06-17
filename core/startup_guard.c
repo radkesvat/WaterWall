@@ -201,8 +201,7 @@ static void startupPrintUnsupportedCpu(void)
     fprintf(stderr,
             "Waterwall version %s\n"
             "This Waterwall binary was built for a newer x86-64 CPU than this machine/OS exposes.\n"
-            "Use the x64 old-cpu build (SSE3 baseline, no AVX/AVX2) for CPUs without AVX2 support, or\n"
-            "rebuild with advanced CPU instructions disabled for CPUs without SSE3.\n",
+            "Download the x64 old-cpu build from github.com/radkesvat/Waterwall/releases, or rebuild from source with advanced CPU instructions disabled.\n",
             WATERWALL_STRINGIFY(WATERWALL_VERSION));
 }
 
