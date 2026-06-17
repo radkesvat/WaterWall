@@ -111,6 +111,19 @@ Practical rule:
 - `socks5_noauth_dest_protocol_fallback_tcp_loopback`
   Verifies `Socks5Client(protocol=dest_context->protocol)` falls back to TCP when the incoming destination context has
   no valid protocol flags.
+- `trojan_password_tcp_loopback`
+  Verifies `TrojanClient(password=...) -> TlsClient -> TcpConnector` against
+  `TcpListener -> TlsServer -> TrojanServer` using the real `AuthenticationClient -> AuthenticationServer` user database
+  path. The Trojan TCP `CONNECT` target is a separate tester TCP listener reached through `dest_context`.
+- `trojan_sha224_dest_protocol_tcp_loopback`
+  Verifies `TrojanClient(sha224=..., protocol=dest_context->protocol)` sends the precomputed SHA-224 password digest,
+  preserves an incoming TCP destination context, and completes a Trojan TCP `CONNECT` through TLS.
+- `trojan_password_udp_loopback`
+  Verifies `TrojanClient(protocol=udp)` authenticates with a raw password, sends Trojan `UDP ASSOCIATE` over the TLS/TCP
+  carrier, wraps UDP datagrams as Trojan UDP packets, and reaches a separate UDP tester listener.
+- `trojan_dest_protocol_udp_loopback`
+  Verifies `TrojanClient(protocol=dest_context->protocol)` preserves an incoming UDP destination context and completes
+  Trojan UDP packet wrapping/unwrapping through `TrojanServer`.
 - `udp_over_tcp_roundtrip`
   Verifies that `UdpOverTcpClient` and `UdpOverTcpServer` preserve end-to-end byte stream integrity through their
   length-prefixed framing.

@@ -1,0 +1,136 @@
+{
+  "name": "trojan-sha224-dest-protocol-tcp-loopback",
+  "nodes": [
+    {
+      "name": "auth-client",
+      "type": "AuthenticationClient",
+      "settings": {
+        "name": "edge-1",
+        "secret": "trojan-auth-secret",
+        "ping-interval-ms": 0,
+        "pull-interval-ms": 0,
+        "push-interval-ms": 0,
+        "reconnect-interval-ms": 1000,
+        "request-timeout-ms": 5000,
+        "max-pending-requests": 16
+      },
+      "next": "auth-db"
+    },
+    {
+      "name": "auth-db",
+      "type": "AuthenticationServer",
+      "settings": {
+        "db-path": "users.json",
+        "file-save-rate-ms": 60000,
+        "session-idle-timeout-ms": 600000,
+        "auth-clients": [
+          {
+            "name": "edge-1",
+            "secret": "trojan-auth-secret",
+            "allow-user-pull": true,
+            "allow-stats-push": true,
+            "allow-user-write": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "dest-context": {
+          "address": "127.0.0.1",
+          "port": 42711,
+          "protocol": "tcp"
+        }
+      },
+      "next": "trojan-client"
+    },
+    {
+      "name": "trojan-client",
+      "type": "TrojanClient",
+      "settings": {
+        "sha224": "f1d1bbbcd40453cb585a2b136031c94f8b65ce015e62fc798ec6ea53",
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "protocol": "dest_context->protocol"
+      },
+      "next": "tls-client"
+    },
+    {
+      "name": "tls-client",
+      "type": "TlsClient",
+      "settings": {
+        "sni": "trojan.integration.test",
+        "verify": false
+      },
+      "next": "proxy-connector"
+    },
+    {
+      "name": "proxy-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42710,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "proxy-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42710,
+        "nodelay": true
+      },
+      "next": "tls-server"
+    },
+    {
+      "name": "tls-server",
+      "type": "TlsServer",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "sni": "trojan.integration.test"
+      },
+      "next": "trojan-server"
+    },
+    {
+      "name": "trojan-server",
+      "type": "TrojanServer",
+      "settings": {
+        "auth-client-node-name": "auth-client",
+        "connect": true,
+        "udp": true
+      },
+      "next": "target-connector"
+    },
+    {
+      "name": "target-connector",
+      "type": "TcpUdpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "target-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42711,
+        "nodelay": true
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}

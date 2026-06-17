@@ -179,6 +179,7 @@ option(INCLUDE_BRIDGE                   "link Bridge staticly to the core"      
 option(INCLUDE_SNIFF_ROUTER             "link SniffRouter staticly to the core"              TRUE)
 option(INCLUDE_TLS_CLIENT               "link TLSClient staticly to the core"                TRUE)
 option(INCLUDE_TLS_SERVER               "link TLSServer staticly to the core"                TRUE)
+option(INCLUDE_TROJAN_CLIENT            "link TrojanClient staticly to the core"             TRUE)
 option(INCLUDE_TROJAN_SERVER            "link TrojanServer staticly to the core"             TRUE)
 option(INCLUDE_TROJAN_AUTH_SERVER       "link TrojanAuthServer staticly to the core"         FALSE)
 option(INCLUDE_TROJAN_SOCKS_SERVER      "link TrojanSocksServer staticly to the core"        FALSE)
@@ -758,6 +759,14 @@ if(INCLUDE_TLS_SERVER)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TlsServer)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TlsServer)
   target_link_libraries(Waterwall TlsServer)
+endif()
+
+#trojan client
+if(INCLUDE_TROJAN_CLIENT)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_TROJAN_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TrojanClient)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TrojanClient)
+  target_link_libraries(Waterwall TrojanClient)
 endif()
 
 #trojan server

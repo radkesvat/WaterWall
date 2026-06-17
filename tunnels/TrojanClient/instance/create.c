@@ -1,0 +1,309 @@
+#include "structure.h"
+
+#include "loggers/network_logger.h"
+
+static bool getOptionalStringFromKeys(char **dest, const cJSON *settings, const char *key1, const char *key2,
+                                      const char *key3)
+{
+    const char *keys[3] = {key1, key2, key3};
+
+    for (size_t i = 0; i < ARRAY_SIZE(keys); i++)
+    {
+        if (keys[i] == NULL)
+        {
+            continue;
+        }
+
+        const cJSON *node = cJSON_GetObjectItemCaseSensitive(settings, keys[i]);
+        if (cJSON_IsString(node) && node->valuestring != NULL)
+        {
+            *dest = memoryAllocate(stringLength(node->valuestring) + 1U);
+            stringCopy(*dest, node->valuestring);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static const cJSON *getSettingsItemByKeys(const cJSON *settings, const char *key1, const char *key2, const char *key3)
+{
+    const char *keys[3] = {key1, key2, key3};
+
+    for (size_t i = 0; i < ARRAY_SIZE(keys); i++)
+    {
+        if (keys[i] == NULL)
+        {
+            continue;
+        }
+
+        const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, keys[i]);
+        if (item != NULL)
+        {
+            return item;
+        }
+    }
+
+    return NULL;
+}
+
+static int hexValue(uint8_t c)
+{
+    if (c >= '0' && c <= '9')
+    {
+        return (int) (c - '0');
+    }
+
+    if (c >= 'a' && c <= 'f')
+    {
+        return (int) (c - 'a' + 10);
+    }
+
+    if (c >= 'A' && c <= 'F')
+    {
+        return (int) (c - 'A' + 10);
+    }
+
+    return -1;
+}
+
+static void sha224ToHex(const uint8_t sha224[SHA224_DIGEST_SIZE], uint8_t out[kTrojanClientPasswordHexLen])
+{
+    static const uint8_t hex[] = "0123456789abcdef";
+
+    for (size_t i = 0; i < SHA224_DIGEST_SIZE; ++i)
+    {
+        out[i * 2U]      = hex[(sha224[i] >> 4U) & 0x0FU];
+        out[i * 2U + 1U] = hex[sha224[i] & 0x0FU];
+    }
+}
+
+static bool normalizeSha224Hex(const char *hex, uint8_t out[kTrojanClientPasswordHexLen])
+{
+    if (stringLength(hex) != kTrojanClientPasswordHexLen)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < kTrojanClientPasswordHexLen; ++i)
+    {
+        int value = hexValue((uint8_t) hex[i]);
+        if (value < 0)
+        {
+            return false;
+        }
+
+        out[i] = (uint8_t) (value < 10 ? '0' + value : 'a' + value - 10);
+    }
+
+    return true;
+}
+
+static bool parsePassword(trojanclient_tstate_t *ts, const cJSON *settings)
+{
+    const cJSON *password_json = getSettingsItemByKeys(settings, "password", "pass", NULL);
+    const cJSON *sha224_json   = getSettingsItemByKeys(settings, "sha224", "password-sha224", "password_sha224");
+
+    if (password_json != NULL && sha224_json != NULL)
+    {
+        LOGF("JSON Error: TrojanClient->settings must use either password or sha224, not both");
+        return false;
+    }
+
+    if (sha224_json != NULL)
+    {
+        if (! cJSON_IsString(sha224_json) || sha224_json->valuestring == NULL ||
+            ! normalizeSha224Hex(sha224_json->valuestring, ts->password_hex))
+        {
+            LOGF("JSON Error: TrojanClient->settings->sha224 must be a 56-character hexadecimal SHA224 digest");
+            return false;
+        }
+
+        return true;
+    }
+
+    if (password_json == NULL || ! cJSON_IsString(password_json) || password_json->valuestring == NULL)
+    {
+        LOGF("JSON Error: TrojanClient->settings->password (string field) is required unless sha224 is provided");
+        return false;
+    }
+
+    size_t password_len = stringLength(password_json->valuestring);
+    if (password_len == 0)
+    {
+        LOGF("JSON Error: TrojanClient->settings->password must not be empty");
+        return false;
+    }
+
+    sha224_hash_t digest = {0};
+    if (wCryptoSHA224(&digest, (const unsigned char *) password_json->valuestring, password_len) != 0)
+    {
+        wCryptoZero(&digest, sizeof(digest));
+        LOGF("TrojanClient: failed to calculate SHA224 password digest");
+        return false;
+    }
+
+    sha224ToHex(digest.bytes, ts->password_hex);
+    wCryptoZero(&digest, sizeof(digest));
+    return true;
+}
+
+static bool parseTargetAddress(trojanclient_tstate_t *ts, const cJSON *settings)
+{
+    const cJSON *address_json = getSettingsItemByKeys(settings, "target-address", "address", "target");
+    if (address_json == NULL)
+    {
+        LOGF("JSON Error: TrojanClient->settings->target-address (string field) is required");
+        return false;
+    }
+
+    if (! cJSON_IsString(address_json) || address_json->valuestring == NULL)
+    {
+        LOGF("JSON Error: TrojanClient->settings->target-address must be a string");
+        return false;
+    }
+
+    const char *address = address_json->valuestring;
+    size_t      len     = stringLength(address);
+
+    if (len == 0 || len > UINT8_MAX)
+    {
+        LOGF("JSON Error: TrojanClient->settings->target-address must be 1..%u bytes",
+             (unsigned int) UINT8_MAX);
+        return false;
+    }
+
+    if (stringCompare(address, "dest_context->address") == 0 || stringCompare(address, "line->dest_ctx->address") == 0)
+    {
+        ts->target_addr_source = kDvsFirstOption;
+        return true;
+    }
+
+    ts->target_addr_source = kDvsConstant;
+
+    if (! addresscontextSetIpAddress(&ts->target_addr, address))
+    {
+        addresscontextDomainSet(&ts->target_addr, address, (uint8_t) len);
+    }
+
+    return true;
+}
+
+static bool parseTargetPort(trojanclient_tstate_t *ts, const cJSON *settings)
+{
+    const cJSON *port_json = cJSON_GetObjectItemCaseSensitive(settings, "port");
+    if (port_json == NULL)
+    {
+        LOGF("JSON Error: TrojanClient->settings->port is required");
+        return false;
+    }
+
+    if (cJSON_IsString(port_json) && port_json->valuestring != NULL)
+    {
+        if (stringCompare(port_json->valuestring, "dest_context->port") == 0 ||
+            stringCompare(port_json->valuestring, "line->dest_ctx->port") == 0)
+        {
+            ts->target_port_source = kDvsFirstOption;
+            return true;
+        }
+
+        LOGF("JSON Error: TrojanClient->settings->port string supports only \"dest_context->port\"");
+        return false;
+    }
+
+    if (! cJSON_IsNumber(port_json) || port_json->valueint <= 0 || port_json->valueint > UINT16_MAX)
+    {
+        LOGF("JSON Error: TrojanClient->settings->port must be a valid number in range [1, %u] or "
+             "\"dest_context->port\"",
+             (unsigned int) UINT16_MAX);
+        return false;
+    }
+
+    ts->target_port_source = kDvsConstant;
+    addresscontextSetPort(&ts->target_addr, (uint16_t) port_json->valueint);
+    return true;
+}
+
+static bool parseProtocol(trojanclient_tstate_t *ts, const cJSON *settings)
+{
+    char *protocol = NULL;
+    if (! getOptionalStringFromKeys(&protocol, settings, "protocol", "proto", NULL))
+    {
+        ts->protocol = kTrojanClientProtocolTcp;
+        return true;
+    }
+
+    stringLowerCase(protocol);
+
+    if (stringCompare(protocol, "tcp") == 0 || stringCompare(protocol, "connect") == 0)
+    {
+        ts->protocol = kTrojanClientProtocolTcp;
+        memoryFree(protocol);
+        return true;
+    }
+
+    if (stringCompare(protocol, "udp") == 0 || stringCompare(protocol, "udp-associate") == 0)
+    {
+        ts->protocol = kTrojanClientProtocolUdp;
+        memoryFree(protocol);
+        return true;
+    }
+
+    if (stringCompare(protocol, "dest_context->protocol") == 0 ||
+        stringCompare(protocol, "line->dest_ctx->protocol") == 0)
+    {
+        ts->protocol = kTrojanClientProtocolDestContext;
+        memoryFree(protocol);
+        return true;
+    }
+
+    LOGF("JSON Error: TrojanClient->settings->protocol supports only \"tcp\", \"udp\", or "
+         "\"dest_context->protocol\"");
+    memoryFree(protocol);
+    return false;
+}
+
+tunnel_t *trojanclientTunnelCreate(node_t *node)
+{
+    tunnel_t               *t        = tunnelCreate(node, sizeof(trojanclient_tstate_t), sizeof(trojanclient_lstate_t));
+    trojanclient_tstate_t  *ts       = tunnelGetState(t);
+    const cJSON            *settings = node->node_settings_json;
+
+    t->fnInitU    = &trojanclientTunnelUpStreamInit;
+    t->fnEstU     = &trojanclientTunnelUpStreamEst;
+    t->fnFinU     = &trojanclientTunnelUpStreamFinish;
+    t->fnPayloadU = &trojanclientTunnelUpStreamPayload;
+    t->fnPauseU   = &trojanclientTunnelUpStreamPause;
+    t->fnResumeU  = &trojanclientTunnelUpStreamResume;
+
+    t->fnInitD    = &trojanclientTunnelDownStreamInit;
+    t->fnEstD     = &trojanclientTunnelDownStreamEst;
+    t->fnFinD     = &trojanclientTunnelDownStreamFinish;
+    t->fnPayloadD = &trojanclientTunnelDownStreamPayload;
+    t->fnPauseD   = &trojanclientTunnelDownStreamPause;
+    t->fnResumeD  = &trojanclientTunnelDownStreamResume;
+
+    t->onPrepare = &trojanclientTunnelOnPrepair;
+    t->onStart   = &trojanclientTunnelOnStart;
+    t->onStop    = &trojanclientTunnelOnStop;
+    t->onDestroy = &trojanclientTunnelDestroy;
+
+    if (! checkJsonIsObjectAndHasChild(settings))
+    {
+        LOGF("JSON Error: TrojanClient->settings (object field) : The object was empty or invalid");
+        tunnelDestroy(t);
+        return NULL;
+    }
+
+    getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
+
+    if (! parsePassword(ts, settings) || ! parseTargetAddress(ts, settings) || ! parseTargetPort(ts, settings) ||
+        ! parseProtocol(ts, settings))
+    {
+        trojanclientTunnelstateDestroy(ts);
+        tunnelDestroy(t);
+        return NULL;
+    }
+
+    return t;
+}

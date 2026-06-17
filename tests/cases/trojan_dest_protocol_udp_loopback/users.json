@@ -1,0 +1,10 @@
+{
+  "users": [
+    {
+      "id": 1001,
+      "name": "trojan-user",
+      "password": "trojan-test-password",
+      "enabled": true
+    }
+  ]
+}
