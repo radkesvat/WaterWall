@@ -23,6 +23,11 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
     slot->close_scheduled = false;
     slot->closed          = false;
 
+    if (ts->initial_dest_context_enabled)
+    {
+        addresscontextAddrCopy(lineGetDestinationAddressContext(l), &ts->initial_dest_context);
+    }
+
     if (! withLineLocked(l, tunnelNextUpStreamInit, t))
     {
         if (ts->packet_mode)

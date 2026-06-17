@@ -102,6 +102,15 @@ Practical rule:
   Verifies `Socks5Client(protocol=udp)` without credentials against `Socks5Server(no-auth=true, udp=true)`. The proxy
   endpoint is a shared `TcpUdpListener`/`TcpUdpConnector` port, so the client negotiates UDP ASSOCIATE over TCP and then
   sends tester payloads as SOCKS UDP datagrams to a separate UDP tester listener selected from the SOCKS target setting.
+- `socks5_noauth_dest_protocol_tcp_loopback`
+  Verifies `Socks5Client(protocol=dest_context->protocol)` preserves an incoming TCP destination protocol and performs
+  a SOCKS5 `CONNECT` through shared `TcpUdpListener`/`TcpUdpConnector` proxy endpoints.
+- `socks5_noauth_dest_protocol_udp_loopback`
+  Verifies `Socks5Client(protocol=dest_context->protocol)` preserves an incoming UDP destination protocol and performs
+  a SOCKS5 `UDP ASSOCIATE`, including UDP relay payload wrapping and unwrapping.
+- `socks5_noauth_dest_protocol_fallback_tcp_loopback`
+  Verifies `Socks5Client(protocol=dest_context->protocol)` falls back to TCP when the incoming destination context has
+  no valid protocol flags.
 - `udp_over_tcp_roundtrip`
   Verifies that `UdpOverTcpClient` and `UdpOverTcpServer` preserve end-to-end byte stream integrity through their
   length-prefixed framing.

@@ -188,6 +188,106 @@ static bool testerclientLoadPacketIpv4Settings(testerclient_tstate_t *ts, const 
     return true;
 }
 
+static bool testerclientLoadInitialDestContextProtocol(address_context_t *dest, const cJSON *protocol_json)
+{
+    char *protocol = NULL;
+    if (! getStringFromJson(&protocol, protocol_json))
+    {
+        LOGF("JSON Error: TesterClient->settings->dest-context->protocol (string field) : expected tcp or udp");
+        return false;
+    }
+
+    stringLowerCase(protocol);
+
+    if (stringCompare(protocol, "tcp") == 0)
+    {
+        addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);
+        memoryFree(protocol);
+        return true;
+    }
+
+    if (stringCompare(protocol, "udp") == 0)
+    {
+        addresscontextSetOnlyProtocol(dest, IP_PROTO_UDP);
+        memoryFree(protocol);
+        return true;
+    }
+
+    LOGF("JSON Error: TesterClient->settings->dest-context->protocol (string field) : expected tcp or udp");
+    memoryFree(protocol);
+    return false;
+}
+
+static bool testerclientLoadInitialDestContext(testerclient_tstate_t *ts, const cJSON *settings)
+{
+    const cJSON *dest_context = cJSON_GetObjectItemCaseSensitive(settings, "dest-context");
+    if (dest_context == NULL)
+    {
+        ts->initial_dest_context_enabled = false;
+        return true;
+    }
+
+    if (! checkJsonIsObjectAndHasChild(dest_context))
+    {
+        LOGF("JSON Error: TesterClient->settings->dest-context (object field) : The object was empty or invalid");
+        return false;
+    }
+
+    address_context_t loaded = {0};
+
+    const cJSON *address_json = cJSON_GetObjectItemCaseSensitive(dest_context, "address");
+    if (address_json != NULL)
+    {
+        if (! cJSON_IsString(address_json) || address_json->valuestring == NULL ||
+            stringLength(address_json->valuestring) == 0)
+        {
+            LOGF("JSON Error: TesterClient->settings->dest-context->address (string field) : expected a non-empty "
+                 "IP address or domain");
+            return false;
+        }
+
+        const char *address = address_json->valuestring;
+        if (! addresscontextSetIpAddress(&loaded, address))
+        {
+            size_t len = stringLength(address);
+            if (len > UINT8_MAX)
+            {
+                LOGF("JSON Error: TesterClient->settings->dest-context->address (string field) : domain length must "
+                     "be at most %u",
+                     (unsigned int) UINT8_MAX);
+                return false;
+            }
+            addresscontextDomainSet(&loaded, address, (uint8_t) len);
+        }
+    }
+
+    const cJSON *port_json = cJSON_GetObjectItemCaseSensitive(dest_context, "port");
+    if (port_json != NULL)
+    {
+        if (! cJSON_IsNumber(port_json) || port_json->valueint <= 0 || port_json->valueint > UINT16_MAX)
+        {
+            LOGF("JSON Error: TesterClient->settings->dest-context->port (number field) : expected a valid port in "
+                 "range [1, %u]",
+                 (unsigned int) UINT16_MAX);
+            addresscontextReset(&loaded);
+            return false;
+        }
+        addresscontextSetPort(&loaded, (uint16_t) port_json->valueint);
+    }
+
+    const cJSON *protocol_json = cJSON_GetObjectItemCaseSensitive(dest_context, "protocol");
+    if (protocol_json != NULL && ! testerclientLoadInitialDestContextProtocol(&loaded, protocol_json))
+    {
+        addresscontextReset(&loaded);
+        return false;
+    }
+
+    addresscontextAddrCopy(&ts->initial_dest_context, &loaded);
+    addresscontextReset(&loaded);
+    ts->initial_dest_context_enabled = true;
+    return true;
+}
+
 tunnel_t *testerclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(testerclient_tstate_t), sizeof(testerclient_lstate_t));
@@ -298,7 +398,7 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (! testerclientLoadPacketIpv4Settings(ts, settings))
+    if (! testerclientLoadPacketIpv4Settings(ts, settings) || ! testerclientLoadInitialDestContext(ts, settings))
     {
         testerclientTunnelDestroy(t);
         return NULL;

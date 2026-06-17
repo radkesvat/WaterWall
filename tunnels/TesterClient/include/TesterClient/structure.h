@@ -59,7 +59,9 @@ typedef struct testerclient_tstate_s
     uint8_t                              packet_ipv4_ttl;
     atomic_uint                          packet_ipv4_identification;
     testerclient_packet_ipv4_transport_e packet_ipv4_transport;
+    address_context_t                    initial_dest_context;
     testerclient_worker_state_t          workers[kTesterClientMaxWorkers];
+    bool                                 initial_dest_context_enabled;
 } testerclient_tstate_t;
 
 typedef struct testerclient_lstate_s

@@ -21,5 +21,6 @@ void testerclientTunnelDestroy(tunnel_t *t)
         }
     }
 
+    addresscontextReset(&ts->initial_dest_context);
     tunnelDestroy(t);
 }
