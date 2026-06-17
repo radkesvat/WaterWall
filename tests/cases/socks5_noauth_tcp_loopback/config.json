@@ -10,9 +10,10 @@
       "name": "socks5-client",
       "type": "Socks5Client",
       "settings": {
-        "address": "127.0.0.1",
+        "address": "localhost",
         "port": 41204,
-        "protocol": "tcp"
+        "protocol": "tcp",
+        "domain-strategy": "resolve-domains-and-use-only-ipv4"
       },
       "next": "tcp-connector"
     },

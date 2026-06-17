@@ -19,7 +19,7 @@ UDP-capable proxy chain:
 Important:
 
 - `Socks5Client` can use either fixed JSON target values or the incoming `line->dest_ctx`
-- it resolves the final SOCKS target during `Init` and mirrors that result into `line->routing_context.dest_ctx`
+- it prepares the final SOCKS target during `Init` and mirrors that result into `line->routing_context.dest_ctx`
 - the actual connection to the SOCKS proxy itself is still made by the next adapter, usually a connector with a constant
   proxy address/port
 - UDP mode creates a TCP control line for `UDP ASSOCIATE` and a UDP relay line for SOCKS UDP datagrams, so the next
@@ -38,6 +38,7 @@ Important:
     "protocol": "tcp",
     "user": "alice",
     "pass": "secret",
+    "domain-strategy": "do-not-resolve-domains",
     "verbose": false
   }
 }
@@ -53,6 +54,26 @@ Accepted credential keys:
 
 - `user` or `username`
 - `pass` or `password`
+
+## Domain Resolution Example
+
+```json
+{
+  "name": "socks-client",
+  "type": "Socks5Client",
+  "next": "proxy-connector",
+  "settings": {
+    "address": "example.com",
+    "port": 443,
+    "protocol": "tcp",
+    "domain-strategy": "resolve-domains-and-prefer-ipv4"
+  }
+}
+```
+
+With this setting, `Socks5Client` resolves `example.com` before sending the SOCKS5 command. If an IPv4 answer is
+available, the SOCKS5 request encodes that IPv4 address instead of the domain name. If no IPv4 answer is available, it
+falls back to IPv6.
 
 ## Required JSON Fields
 
@@ -91,11 +112,40 @@ Accepted credential keys:
 - `settings.verbose`
   Enables extra tunnel logging.
 
+- `settings.domain-strategy`
+  Controls whether `Socks5Client` resolves domain targets before encoding the SOCKS5 command or UDP packet destination.
+
+  Default: `"do-not-resolve-domains"`.
+
+  Supported values:
+
+  - `"do-not-resolve-domains"`
+    Keep domain targets as domains in the SOCKS5 request. This preserves the previous behavior and lets the SOCKS5
+    server side resolve the target domain.
+  - `"resolve-domains-and-accept-dns-returned-order"`
+    Resolve domain targets and use the first usable DNS result.
+  - `"resolve-domains-and-prefer-ipv4"`
+    Resolve domain targets, prefer IPv4, and fall back to IPv6.
+  - `"resolve-domains-and-prefer-ipv6"`
+    Resolve domain targets, prefer IPv6, and fall back to IPv4.
+  - `"resolve-domains-and-use-only-ipv4"`
+    Resolve domain targets and use only IPv4 answers. If DNS returns no IPv4 answer, the line is closed.
+  - `"resolve-domains-and-use-only-ipv6"`
+    Resolve domain targets and use only IPv6 answers. If DNS returns no IPv6 answer, the line is closed.
+  - `"resolve-domains-with-core-settings"`
+    Resolve domain targets using the DNS settings and result preference configured in `core.json` under `dns`.
+
+  Resolution is applied when the final SOCKS target address is a domain. This includes both fixed JSON addresses and
+  `"dest_context->address"`. Literal IP addresses are left unchanged. While DNS is pending, upstream payloads are queued
+  using the normal pre-handshake queue.
+
 ## Behavior
 
 - `Init` initializes per-line state and mirrors the configured target into the line destination context.
 - the resolved SOCKS target is also kept in `Socks5Client` line state so the proxy transport connector can rewrite
   `line->dest_ctx` without changing the later SOCKS request.
+- if `domain-strategy` enables resolution and the target is a domain, DNS resolution happens before the SOCKS5 greeting
+  is sent.
 - if `address` and/or `port` use `dest_context`, the incoming line destination is used as the SOCKS target source
 - if `protocol` uses `dest_context->protocol`, the incoming destination protocol is read before any configured
   address/port rewrite

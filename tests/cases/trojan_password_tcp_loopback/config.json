@@ -44,9 +44,10 @@
       "type": "TrojanClient",
       "settings": {
         "password": "trojan-test-password",
-        "address": "127.0.0.1",
+        "address": "localhost",
         "port": 42701,
-        "protocol": "tcp"
+        "protocol": "tcp",
+        "domain-strategy": "resolve-domains-and-use-only-ipv4"
       },
       "next": "tls-client"
     },

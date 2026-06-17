@@ -96,8 +96,10 @@ Practical rule:
   both HTTP and TLS detection to exercise the combined detection setting while matching HTTP.
 - `socks5_noauth_tcp_loopback`
   Verifies `Socks5Client` without credentials against `Socks5Server(no-auth=true)` across a real TCP proxy hop. The
-  SOCKS request target is a separate tester TCP listener, and `Socks5Server` reaches it through a `TcpConnector` using
-  `dest_context`, so the case covers method `0x00` negotiation and CONNECT target forwarding.
+  SOCKS request target is configured as `localhost` and resolved by
+  `domain-strategy=resolve-domains-and-use-only-ipv4` before `Socks5Server` reaches the separate tester TCP listener
+  through a `TcpConnector` using `dest_context`, so the case covers method `0x00` negotiation, client-side target
+  resolution, and CONNECT target forwarding.
 - `socks5_noauth_udp_loopback`
   Verifies `Socks5Client(protocol=udp)` without credentials against `Socks5Server(no-auth=true, udp=true)`. The proxy
   endpoint is a shared `TcpUdpListener`/`TcpUdpConnector` port, so the client negotiates UDP ASSOCIATE over TCP and then
@@ -114,7 +116,9 @@ Practical rule:
 - `trojan_password_tcp_loopback`
   Verifies `TrojanClient(password=...) -> TlsClient -> TcpConnector` against
   `TcpListener -> TlsServer -> TrojanServer` using the real `AuthenticationClient -> AuthenticationServer` user database
-  path. The Trojan TCP `CONNECT` target is a separate tester TCP listener reached through `dest_context`.
+  path. The Trojan TCP `CONNECT` target is configured as `localhost` and resolved by
+  `domain-strategy=resolve-domains-and-use-only-ipv4` before the server reaches the separate tester TCP listener through
+  `dest_context`.
 - `trojan_sha224_dest_protocol_tcp_loopback`
   Verifies `TrojanClient(sha224=..., protocol=dest_context->protocol)` sends the precomputed SHA-224 password digest,
   preserves an incoming TCP destination context, and completes a Trojan TCP `CONNECT` through TLS.

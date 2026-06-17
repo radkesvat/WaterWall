@@ -18,6 +18,19 @@ void trojanclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     ls->kind = ls->protocol == kTrojanClientProtocolUdp ? kTrojanClientLineKindUdpApp
                                                         : kTrojanClientLineKindDirect;
 
+    bool resolving = false;
+    if (UNLIKELY(! trojanclientStartDomainResolveIfNeeded(t, l, ls, &resolving)))
+    {
+        trojanclientLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
+
+    if (resolving)
+    {
+        return;
+    }
+
     if (ts->verbose)
     {
         address_context_t *target = lineGetDestinationAddressContext(l);

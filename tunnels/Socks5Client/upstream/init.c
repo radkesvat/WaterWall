@@ -17,6 +17,19 @@ void socks5clientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     ls->kind = ls->protocol == kSocks5ClientProtocolUdp ? kSocks5ClientLineKindUdpApp : kSocks5ClientLineKindDirect;
 
+    bool resolving = false;
+    if (UNLIKELY(! socks5clientStartDomainResolveIfNeeded(t, l, ls, &resolving)))
+    {
+        socks5clientLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
+
+    if (resolving)
+    {
+        return;
+    }
+
     if (ts->verbose)
     {
         address_context_t *target = lineGetDestinationAddressContext(l);

@@ -40,6 +40,7 @@ Important:
     "address": "example.com",
     "port": 443,
     "protocol": "tcp",
+    "domain-strategy": "do-not-resolve-domains",
     "verbose": false
   }
 }
@@ -92,6 +93,27 @@ raw password.
 }
 ```
 
+## Domain Resolution Example
+
+```json
+{
+  "name": "trojan-client",
+  "type": "TrojanClient",
+  "next": "tls-client",
+  "settings": {
+    "password": "secret-password",
+    "address": "example.com",
+    "port": 443,
+    "protocol": "tcp",
+    "domain-strategy": "resolve-domains-and-prefer-ipv4"
+  }
+}
+```
+
+With this setting, `TrojanClient` resolves `example.com` before sending the Trojan request. If an IPv4 answer is
+available, the request encodes that IPv4 address instead of the domain name. If no IPv4 answer is available, it falls
+back to IPv6.
+
 In UDP mode:
 
 - the application line remains UDP-facing toward the previous node
@@ -138,9 +160,38 @@ In UDP mode:
 - `settings.verbose`
   Enables extra tunnel logging.
 
+- `settings.domain-strategy`
+  Controls whether `TrojanClient` resolves domain targets before encoding the Trojan request or UDP packet destination.
+
+  Default: `"do-not-resolve-domains"`.
+
+  Supported values:
+
+  - `"do-not-resolve-domains"`
+    Keep domain targets as domains in the Trojan request. This preserves the previous behavior and lets the Trojan
+    server side resolve the target domain.
+  - `"resolve-domains-and-accept-dns-returned-order"`
+    Resolve domain targets and use the first usable DNS result.
+  - `"resolve-domains-and-prefer-ipv4"`
+    Resolve domain targets, prefer IPv4, and fall back to IPv6.
+  - `"resolve-domains-and-prefer-ipv6"`
+    Resolve domain targets, prefer IPv6, and fall back to IPv4.
+  - `"resolve-domains-and-use-only-ipv4"`
+    Resolve domain targets and use only IPv4 answers. If DNS returns no IPv4 answer, the line is closed.
+  - `"resolve-domains-and-use-only-ipv6"`
+    Resolve domain targets and use only IPv6 answers. If DNS returns no IPv6 answer, the line is closed.
+  - `"resolve-domains-with-core-settings"`
+    Resolve domain targets using the DNS settings and result preference configured in `core.json` under `dns`.
+
+  Resolution is applied when the final Trojan target address is a domain. This includes both fixed JSON addresses and
+  `"dest_context->address"`. Literal IP addresses are left unchanged. While DNS is pending, upstream payloads are queued
+  using the normal pre-handshake queue.
+
 ## Behavior
 
-- `Init` initializes per-line state and resolves the final Trojan target.
+- `Init` initializes per-line state and prepares the final Trojan target.
+- if `domain-strategy` enables resolution and the target is a domain, DNS resolution happens before the Trojan request
+  is sent.
 - for TCP, `Init` forwards the same line to the next node.
 - for UDP, `Init` creates an internal TCP carrier line and forwards that carrier to the next node.
 - `DownStreamEst` on the transport sends the Trojan request header.

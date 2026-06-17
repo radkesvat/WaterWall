@@ -12,6 +12,7 @@ typedef enum trojanclient_protocol_e
 typedef enum trojanclient_phase_e
 {
     kTrojanClientPhaseIdle = 0,
+    kTrojanClientPhaseResolving,
     kTrojanClientPhaseEstablished,
     kTrojanClientPhaseClosing
 } trojanclient_phase_t;
@@ -45,24 +46,36 @@ typedef struct trojanclient_tstate_s
 {
     address_context_t       target_addr;
     uint8_t                 password_hex[kTrojanClientPasswordHexLen];
+    int                     domain_strategy;
     uint32_t                target_addr_source;
     uint32_t                target_port_source;
     trojanclient_protocol_t protocol;
     bool                    verbose;
+    bool                    resolve_domains;
 } trojanclient_tstate_t;
+
+typedef struct trojanclient_dns_request_s
+{
+    tunnel_t *tunnel;
+    line_t   *line;
+    char     *domain;
+    int       strategy;
+    bool      cancelled;
+} trojanclient_dns_request_t;
 
 typedef struct trojanclient_lstate_s
 {
-    tunnel_t                *tunnel;
-    line_t                  *line;
-    line_t                  *app_line;
-    line_t                  *carrier_line;
-    address_context_t        target_addr;
-    buffer_stream_t          in_stream;
-    buffer_queue_t           pending_up;
-    trojanclient_protocol_t  protocol;
-    trojanclient_phase_t     phase;
-    trojanclient_line_kind_t kind;
+    tunnel_t                   *tunnel;
+    line_t                     *line;
+    line_t                     *app_line;
+    line_t                     *carrier_line;
+    trojanclient_dns_request_t *dns_request;
+    address_context_t           target_addr;
+    buffer_stream_t             in_stream;
+    buffer_queue_t              pending_up;
+    trojanclient_protocol_t     protocol;
+    trojanclient_phase_t        phase;
+    trojanclient_line_kind_t    kind;
 } trojanclient_lstate_t;
 
 enum
@@ -95,9 +108,11 @@ void trojanclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void trojanclientLinestateInitialize(trojanclient_lstate_t *ls, tunnel_t *t, line_t *l);
 void trojanclientLinestateDestroy(trojanclient_lstate_t *ls);
+void trojanclientCancelDnsRequest(trojanclient_lstate_t *ls);
 
 void trojanclientTunnelstateDestroy(trojanclient_tstate_t *ts);
 bool trojanclientApplyTargetContext(tunnel_t *t, line_t *l);
+bool trojanclientStartDomainResolveIfNeeded(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls, bool *started_out);
 bool trojanclientStartUdpCarrier(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls, bool *line_alive_out);
 bool trojanclientForwardUdpAppPayload(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls, sbuf_t *buf);
 bool trojanclientHandleUdpCarrierPayload(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls, sbuf_t *buf);

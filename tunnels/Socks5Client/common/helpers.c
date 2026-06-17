@@ -283,6 +283,111 @@ static line_t *createInternalLine(tunnel_t *t, line_t *app_l, socks5client_line_
     return inner_l;
 }
 
+static void dnsRequestDestroy(socks5client_dns_request_t *request)
+{
+    if (request == NULL)
+    {
+        return;
+    }
+
+    memoryFree(request->domain);
+    memoryFree(request);
+}
+
+static void closeBeforeTransportInit(tunnel_t *t, line_t *l, socks5client_lstate_t *ls)
+{
+    socks5clientLinestateDestroy(ls);
+    tunnelPrevDownStreamFinish(t, l);
+}
+
+static void continueAfterTargetReady(tunnel_t *t, line_t *l, socks5client_lstate_t *ls)
+{
+    ls->phase = kSocks5ClientPhaseIdle;
+
+    if (ls->protocol == kSocks5ClientProtocolUdp)
+    {
+        bool line_alive = true;
+        if (UNLIKELY(! socks5clientStartUdpAssociation(t, l, ls, &line_alive)))
+        {
+            if (! line_alive)
+            {
+                return;
+            }
+            closeBeforeTransportInit(t, l, ls);
+        }
+        return;
+    }
+
+    tunnelNextUpStreamInit(t, l);
+}
+
+static void onDnsResolved(void *userdata, int status, const char *error, const dns_resolved_addr_t *addrs,
+                          size_t naddrs)
+{
+    socks5client_dns_request_t *request = userdata;
+    tunnel_t                   *t       = request->tunnel;
+    line_t                     *l       = request->line;
+
+    if (request->cancelled || ! lineIsAlive(l))
+    {
+        dnsRequestDestroy(request);
+        lineUnlock(l);
+        return;
+    }
+
+    socks5client_lstate_t *ls = lineGetState(l, t);
+    if (ls->dns_request != request || ls->phase != kSocks5ClientPhaseResolving)
+    {
+        dnsRequestDestroy(request);
+        lineUnlock(l);
+        return;
+    }
+
+    ls->dns_request = NULL;
+    ls->phase       = kSocks5ClientPhaseIdle;
+
+    if (asyncdnsStatusIsShutdown(status))
+    {
+        dnsRequestDestroy(request);
+        lineUnlock(l);
+        return;
+    }
+
+    if (status != ARES_SUCCESS || naddrs == 0)
+    {
+        LOGE("Socks5Client: async dns resolve failed for %s: %s",
+             request->domain,
+             error != NULL ? error : ares_strerror(status));
+        dnsRequestDestroy(request);
+        closeBeforeTransportInit(t, l, ls);
+        lineUnlock(l);
+        return;
+    }
+
+    const dns_resolved_addr_t *selected =
+        dnsstrategySelectResolvedAddress(addrs, naddrs, (enum domain_strategy) request->strategy);
+    if (UNLIKELY(! dnsstrategyApplyResolvedAddress(lineGetDestinationAddressContext(l), selected) ||
+                 ! dnsstrategyApplyResolvedAddress(&ls->target_addr, selected)))
+    {
+        LOGE("Socks5Client: async dns resolve returned no usable address for %s", request->domain);
+        dnsRequestDestroy(request);
+        closeBeforeTransportInit(t, l, ls);
+        lineUnlock(l);
+        return;
+    }
+
+    if (loggerCheckWriteLevel(getNetworkLogger(), (log_level_e) LOG_LEVEL_DEBUG))
+    {
+        sockaddr_u resolved_addr = addresscontextToSockAddr(&ls->target_addr);
+        char       ip[SOCKADDR_STRLEN];
+        LOGD("Socks5Client: %s resolved to %s", request->domain, SOCKADDR_STR(&resolved_addr, ip));
+    }
+
+    dnsRequestDestroy(request);
+    continueAfterTargetReady(t, l, ls);
+    lineUnlock(l);
+}
+
 void socks5clientTunnelstateDestroy(socks5client_tstate_t *ts)
 {
     if (ts == NULL)
@@ -322,6 +427,7 @@ bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l)
     if (uses_current_dest)
     {
         addresscontextAddrCopy(&current, dest_ctx);
+        addresscontextSetPort(&current, dest_ctx->port);
     }
 
     socks5client_protocol_t resolved_protocol = resolveConfiguredProtocol(ts, &current);
@@ -377,7 +483,73 @@ bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l)
     }
 
     addresscontextAddrCopy(&ls->target_addr, dest_ctx);
+    addresscontextSetPort(&ls->target_addr, dest_ctx->port);
+    if (ts->resolve_domains)
+    {
+        addresscontextSetDomainStrategy(dest_ctx, (enum domain_strategy) ts->domain_strategy);
+        addresscontextSetDomainStrategy(&ls->target_addr, (enum domain_strategy) ts->domain_strategy);
+    }
 
+    return true;
+}
+
+bool socks5clientStartDomainResolveIfNeeded(tunnel_t *t, line_t *l, socks5client_lstate_t *ls, bool *started_out)
+{
+    socks5client_tstate_t *ts = tunnelGetState(t);
+
+    *started_out = false;
+
+    if (! ts->resolve_domains || ! addresscontextIsDomain(&ls->target_addr))
+    {
+        return true;
+    }
+
+    socks5client_dns_request_t *request = memoryAllocate(sizeof(*request));
+    if (UNLIKELY(request == NULL))
+    {
+        LOGE("Socks5Client: failed to allocate async dns request");
+        return false;
+    }
+
+    char *domain = stringDuplicate(ls->target_addr.domain);
+    if (UNLIKELY(domain == NULL))
+    {
+        memoryFree(request);
+        LOGE("Socks5Client: failed to copy async dns domain");
+        return false;
+    }
+
+    *request = (socks5client_dns_request_t) {
+        .tunnel    = t,
+        .line      = l,
+        .domain    = domain,
+        .strategy  = ts->domain_strategy,
+        .cancelled = false,
+    };
+
+    lineLock(l);
+    ls->dns_request = request;
+    ls->phase       = kSocks5ClientPhaseResolving;
+
+    int socktype = ls->protocol == kSocks5ClientProtocolUdp ? SOCK_DGRAM : SOCK_STREAM;
+    int rc       = workerResolveDomainServiceAsync(lineGetWID(l), request->domain, NULL, socktype, onDnsResolved,
+                                                   request);
+    if (UNLIKELY(rc != ARES_SUCCESS))
+    {
+        ls->dns_request = NULL;
+        ls->phase       = kSocks5ClientPhaseIdle;
+        lineUnlock(l);
+        LOGE("Socks5Client: failed to start async dns resolve for %s: %s", request->domain, ares_strerror(rc));
+        dnsRequestDestroy(request);
+        return false;
+    }
+
+    if (ts->verbose)
+    {
+        LOGD("Socks5Client: resolving target domain %s", request->domain);
+    }
+
+    *started_out = true;
     return true;
 }
 
@@ -854,8 +1026,12 @@ void socks5clientCloseLineBidirectional(tunnel_t *t, line_t *l)
         return;
     }
 
+    bool transport_started = ls->phase != kSocks5ClientPhaseResolving;
     socks5clientLinestateDestroy(ls);
-    tunnelNextUpStreamFinish(t, l);
+    if (transport_started)
+    {
+        tunnelNextUpStreamFinish(t, l);
+    }
     tunnelPrevDownStreamFinish(t, l);
 }
 
