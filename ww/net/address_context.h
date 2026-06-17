@@ -504,7 +504,10 @@ static inline void addresscontextFromSockAddrWithProtocol(address_context_t *des
  */
 static inline sockaddr_u addresscontextToSockAddr(const address_context_t *context)
 {
-    sockaddr_u addr;
+    // Zero the whole union first: each branch below only fills a subset of the sockaddr fields
+    // (IPv4 leaves sin_zero; IPv6 leaves sin6_flowinfo and sin6_scope_id). Those bytes are read
+    // verbatim by connect()/sendto(), so leaving them uninitialized feeds garbage to the kernel.
+    sockaddr_u addr = {0};
     assert(addresscontextCanConvertToSockAddr(context));
     if (addresscontextIsIpv4(context))
     {
