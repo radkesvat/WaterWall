@@ -1184,6 +1184,15 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
                     addresscontextReset(&target);
                     return socks5serverSendReplyAndClose(t, l, kSocks5ReplyCmdNotSupported);
                 }
+                if (! addresscontextHasPort(&target))
+                {
+                    if (ts->verbose)
+                    {
+                        LOGW("Socks5Server: rejected CONNECT request with zero destination port");
+                    }
+                    addresscontextReset(&target);
+                    return socks5serverSendReplyAndClose(t, l, kSocks5ReplyAddrNotSupported);
+                }
 
                 socks5serverApplyDestinationContext(l, &target, false);
                 addresscontextReset(&target);
