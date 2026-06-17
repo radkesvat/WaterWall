@@ -186,80 +186,15 @@ void udpconnectorSetupDestinationPort(const dynamic_value_t *dest_port_selected,
     }
 }
 
-static bool udpconnectorDnsFamilyAllowedByStrategy(int family, int strategy)
-{
-    switch ((enum domain_strategy) strategy)
-    {
-    case kDsOnlyIpV4:
-        return family == AF_INET;
-    case kDsOnlyIpV6:
-        return family == AF_INET6;
-    default:
-        return family == AF_INET || family == AF_INET6;
-    }
-}
-
-static bool udpconnectorDnsFamilyPreferredByStrategy(int family, int strategy)
-{
-    switch ((enum domain_strategy) strategy)
-    {
-    case kDsPreferIpV4:
-    case kDsOnlyIpV4:
-        return family == AF_INET;
-    case kDsPreferIpV6:
-    case kDsOnlyIpV6:
-        return family == AF_INET6;
-    default:
-        return true;
-    }
-}
-
 const dns_resolved_addr_t *udpconnectorSelectResolvedAddress(const dns_resolved_addr_t *addrs, size_t naddrs,
                                                             int strategy)
 {
-    const dns_resolved_addr_t *fallback = NULL;
-
-    for (size_t i = 0; i < naddrs; ++i)
-    {
-        if (! udpconnectorDnsFamilyAllowedByStrategy(addrs[i].family, strategy))
-        {
-            continue;
-        }
-
-        if (fallback == NULL)
-        {
-            fallback = &addrs[i];
-        }
-
-        if (udpconnectorDnsFamilyPreferredByStrategy(addrs[i].family, strategy))
-        {
-            return &addrs[i];
-        }
-    }
-
-    return fallback;
+    return dnsstrategySelectResolvedAddress(addrs, naddrs, (enum domain_strategy) strategy);
 }
 
 bool udpconnectorApplyResolvedAddress(address_context_t *dest_ctx, const dns_resolved_addr_t *resolved)
 {
-    if (resolved == NULL || (resolved->family != AF_INET && resolved->family != AF_INET6) ||
-        (uintmax_t) resolved->addrlen > (uintmax_t) sizeof(sockaddr_u))
-    {
-        return false;
-    }
-
-    sockaddr_u resolved_addr;
-    memoryZero(&resolved_addr, sizeof(resolved_addr));
-    memoryCopy(&resolved_addr, &resolved->addr, (size_t) resolved->addrlen);
-
-    if (! sockaddrToIpAddr(&resolved_addr, &dest_ctx->ip_address))
-    {
-        return false;
-    }
-
-    dest_ctx->type_ip         = kCCTypeIp;
-    dest_ctx->domain_resolved = true;
-    return true;
+    return dnsstrategyApplyResolvedAddress(dest_ctx, resolved);
 }
 
 static void udpconnectorSeedPacketDestinationCache(udpconnector_tstate_t *ts, udpconnector_lstate_t *ls,

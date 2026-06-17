@@ -95,6 +95,7 @@ add_library(ww STATIC
     net/pipe_tunnel.c
     net/sync_dns.c
     net/async_dns.c
+    net/dns_strategy.c
     net/adapter.c
     net/tunnel.c
     net/line.c

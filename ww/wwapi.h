@@ -15,6 +15,7 @@
 
 #include "net/adapter.h"
 #include "net/async_dns.h"
+#include "net/dns_strategy.h"
 #include "net/packet_tunnel.h"
 #include "net/pipe_tunnel.h"
 #include "net/sync_dns.h"

@@ -158,82 +158,6 @@ static bool bindSourceIpIfNeeded(int sockfd, int addr_type, const tcpconnector_s
     return true;
 }
 
-static bool tcpconnectorDnsFamilyAllowedByStrategy(int family, int strategy)
-{
-    switch ((enum domain_strategy) strategy)
-    {
-    case kDsOnlyIpV4:
-        return family == AF_INET;
-    case kDsOnlyIpV6:
-        return family == AF_INET6;
-    default:
-        return family == AF_INET || family == AF_INET6;
-    }
-}
-
-static bool tcpconnectorDnsFamilyPreferredByStrategy(int family, int strategy)
-{
-    switch ((enum domain_strategy) strategy)
-    {
-    case kDsPreferIpV4:
-    case kDsOnlyIpV4:
-        return family == AF_INET;
-    case kDsPreferIpV6:
-    case kDsOnlyIpV6:
-        return family == AF_INET6;
-    default:
-        return true;
-    }
-}
-
-static const dns_resolved_addr_t *tcpconnectorSelectResolvedAddress(const dns_resolved_addr_t *addrs, size_t naddrs,
-                                                                    int strategy)
-{
-    const dns_resolved_addr_t *fallback = NULL;
-
-    for (size_t i = 0; i < naddrs; ++i)
-    {
-        if (! tcpconnectorDnsFamilyAllowedByStrategy(addrs[i].family, strategy))
-        {
-            continue;
-        }
-
-        if (fallback == NULL)
-        {
-            fallback = &addrs[i];
-        }
-
-        if (tcpconnectorDnsFamilyPreferredByStrategy(addrs[i].family, strategy))
-        {
-            return &addrs[i];
-        }
-    }
-
-    return fallback;
-}
-
-static bool tcpconnectorApplyResolvedAddress(address_context_t *dest_ctx, const dns_resolved_addr_t *resolved)
-{
-    if (resolved == NULL || (resolved->family != AF_INET && resolved->family != AF_INET6) ||
-        (uintmax_t) resolved->addrlen > (uintmax_t) sizeof(sockaddr_u))
-    {
-        return false;
-    }
-
-    sockaddr_u resolved_addr;
-    memoryZero(&resolved_addr, sizeof(resolved_addr));
-    memoryCopy(&resolved_addr, &resolved->addr, (size_t) resolved->addrlen);
-
-    if (! sockaddrToIpAddr(&resolved_addr, &dest_ctx->ip_address))
-    {
-        return false;
-    }
-
-    dest_ctx->type_ip         = kCCTypeIp;
-    dest_ctx->domain_resolved = true;
-    return true;
-}
-
 static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate_t *ls, uint64_t outbound_ip_range,
                                      const tcpconnector_socket_options_t *socket_options)
 {
@@ -410,9 +334,9 @@ static void tcpconnectorOnDnsResolved(void *userdata, int status, const char *er
         return;
     }
 
-    const dns_resolved_addr_t *selected =
-        tcpconnectorSelectResolvedAddress(addrs, naddrs, request->socket_options.domain_strategy);
-    if (! tcpconnectorApplyResolvedAddress(dest_ctx, selected))
+    const dns_resolved_addr_t *selected = dnsstrategySelectResolvedAddress(
+        addrs, naddrs, (enum domain_strategy) request->socket_options.domain_strategy);
+    if (! dnsstrategyApplyResolvedAddress(dest_ctx, selected))
     {
         LOGE("TcpConnector: async dns resolve returned no usable address for %s", domain);
         tcpconnectorLinestateDestroy(ls);

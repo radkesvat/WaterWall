@@ -258,60 +258,6 @@ void udpstatelesssocketLocalThreadSocketUpStream(void *worker, void *arg1, void 
     memoryFree(request);
 }
 
-static bool udpstatelesssocketDnsFamilyAllowedByStrategy(int family, int strategy)
-{
-    switch ((enum domain_strategy) strategy)
-    {
-    case kDsOnlyIpV4:
-        return family == AF_INET;
-    case kDsOnlyIpV6:
-        return family == AF_INET6;
-    default:
-        return family == AF_INET || family == AF_INET6;
-    }
-}
-
-static bool udpstatelesssocketDnsFamilyPreferredByStrategy(int family, int strategy)
-{
-    switch ((enum domain_strategy) strategy)
-    {
-    case kDsPreferIpV4:
-    case kDsOnlyIpV4:
-        return family == AF_INET;
-    case kDsPreferIpV6:
-    case kDsOnlyIpV6:
-        return family == AF_INET6;
-    default:
-        return true;
-    }
-}
-
-static const dns_resolved_addr_t *udpstatelesssocketSelectResolvedAddress(const dns_resolved_addr_t *addrs,
-                                                                          size_t naddrs, int strategy)
-{
-    const dns_resolved_addr_t *fallback = NULL;
-
-    for (size_t i = 0; i < naddrs; ++i)
-    {
-        if (! udpstatelesssocketDnsFamilyAllowedByStrategy(addrs[i].family, strategy))
-        {
-            continue;
-        }
-
-        if (fallback == NULL)
-        {
-            fallback = &addrs[i];
-        }
-
-        if (udpstatelesssocketDnsFamilyPreferredByStrategy(addrs[i].family, strategy))
-        {
-            return &addrs[i];
-        }
-    }
-
-    return fallback;
-}
-
 static bool udpstatelesssocketSockAddrFromResolved(const dns_resolved_addr_t *resolved, uint16_t port,
                                                    sockaddr_u *addr_out)
 {
@@ -466,7 +412,8 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
         return;
     }
 
-    const dns_resolved_addr_t *selected = udpstatelesssocketSelectResolvedAddress(addrs, naddrs, request->strategy);
+    const dns_resolved_addr_t *selected =
+        dnsstrategySelectResolvedAddress(addrs, naddrs, (enum domain_strategy) request->strategy);
 
     sockaddr_u peer_addr;
     if (! udpstatelesssocketSockAddrFromResolved(selected, request->port, &peer_addr))
