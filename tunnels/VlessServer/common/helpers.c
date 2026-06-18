@@ -1,15 +1,17 @@
 #include "structure.h"
 
+#include "AuthenticationClient/interface.h"
+
 #include "loggers/network_logger.h"
 
 enum
 {
-    kVlessVersion      = 0x00,
-    kVlessCmdTcp       = 0x01,
-    kVlessCmdUdp       = 0x02,
-    kVlessAtypIpv4     = 0x01,
-    kVlessAtypDomain   = 0x02,
-    kVlessAtypIpv6     = 0x03
+    kVlessVersion    = 0x00,
+    kVlessCmdTcp     = 0x01,
+    kVlessCmdUdp     = 0x02,
+    kVlessAtypIpv4   = 0x01,
+    kVlessAtypDomain = 0x02,
+    kVlessAtypIpv6   = 0x03
 };
 
 static sbuf_t *vlessserverAllocBuffer(line_t *l, uint32_t len)
@@ -23,10 +25,47 @@ static sbuf_t *vlessserverAllocBuffer(line_t *l, uint32_t len)
     return buf;
 }
 
-static bool vlessserverUuidAllowed(tunnel_t *t, line_t *l, const uint8_t uuid[kVlessServerUuidLen])
+static const char *vlessserverAuthClientStateName(authenticationclient_state_t state)
+{
+    switch (state)
+    {
+    case kAuthenticationClientStateStopped:
+        return "authentication client stopped";
+    case kAuthenticationClientStateConnecting:
+        return "authentication client connecting";
+    case kAuthenticationClientStateAuthenticating:
+        return "authentication client not authenticated";
+    case kAuthenticationClientStateReady:
+        return "authentication client ready";
+    default:
+        return "authentication client state unknown";
+    }
+}
+
+static void vlessserverUuidToCanonicalString(const uint8_t uuid[kVlessServerUuidLen],
+                                             char          out[kVlessServerCanonicalUuidStringLen + 1U])
+{
+    static const char hex[] = "0123456789abcdef";
+    size_t            off   = 0;
+
+    for (size_t i = 0; i < kVlessServerUuidLen; ++i)
+    {
+        if (i == 4 || i == 6 || i == 8 || i == 10)
+        {
+            out[off++] = '-';
+        }
+
+        out[off++] = hex[(uuid[i] >> 4U) & 0x0FU];
+        out[off++] = hex[uuid[i] & 0x0FU];
+    }
+
+    out[off] = '\0';
+}
+
+static bool vlessserverUuidAllowedByLocalList(tunnel_t *t, line_t *l, const uint8_t uuid[kVlessServerUuidLen])
 {
     vlessserver_tstate_t *ts      = tunnelGetState(t);
-    bool                 matched = false;
+    bool                  matched = false;
 
     for (uint32_t i = 0; i < ts->user_count; ++i)
     {
@@ -39,6 +78,68 @@ static bool vlessserverUuidAllowed(tunnel_t *t, line_t *l, const uint8_t uuid[kV
     }
 
     return matched;
+}
+
+static bool vlessserverAuthenticateUuid(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls,
+                                        const uint8_t uuid[kVlessServerUuidLen])
+{
+    vlessserver_tstate_t *ts = tunnelGetState(t);
+
+    if (ts->auth_client_tunnel == NULL)
+    {
+        return vlessserverUuidAllowedByLocalList(t, l, uuid);
+    }
+
+    if (userHandleIsValid(&ls->user_handle))
+    {
+        return true;
+    }
+
+    authenticationclient_state_t auth_state = authenticationclientGetState(ts->auth_client_tunnel);
+    if (UNLIKELY(auth_state != kAuthenticationClientStateReady))
+    {
+        if (ts->verbose)
+        {
+            LOGW("VlessServer: authentication unavailable on worker %u: %s",
+                 (unsigned int) lineGetWID(l),
+                 vlessserverAuthClientStateName(auth_state));
+        }
+        return false;
+    }
+
+    char uuid_password[kVlessServerCanonicalUuidStringLen + 1U] = {0};
+    vlessserverUuidToCanonicalString(uuid, uuid_password);
+
+    user_handle_t                             handle = userHandleEmpty();
+    authenticationclient_user_lookup_result_t result =
+        authenticationclientGetUserByPasswordWithResult(ts->auth_client_tunnel, uuid_password, &handle);
+
+    wCryptoZero(uuid_password, sizeof(uuid_password));
+
+    if (UNLIKELY(result != kAuthenticationClientUserLookupOk))
+    {
+        if (ts->verbose)
+        {
+            LOGW("VlessServer: rejected UUID authentication on worker %u: %s",
+                 (unsigned int) lineGetWID(l),
+                 authenticationclientUserLookupResultString(result));
+        }
+        return false;
+    }
+
+    ls->user_handle = handle;
+    return true;
+}
+
+static void vlessserverRecordLineUser(line_t *l, vlessserver_lstate_t *ls)
+{
+    if (UNLIKELY(ls->user_handle_recorded || ! userHandleIsValid(&ls->user_handle)))
+    {
+        return;
+    }
+
+    lineAddUser(l, &ls->user_handle);
+    ls->user_handle_recorded = true;
 }
 
 static int vlessserverParseDestination(const uint8_t *buf, size_t len, address_context_t *out, size_t *consumed)
@@ -200,12 +301,13 @@ static line_t *vlessserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_l
         return NULL;
     }
 
-    line_t                *remote_l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(client_l));
+    line_t               *remote_l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(client_l));
     vlessserver_lstate_t *remote_ls = lineGetState(remote_l, t);
 
     vlessserverLinestateInitialize(remote_ls, t, remote_l, kVlessServerLineKindUdpRemote);
     remote_ls->client_line        = client_l;
     remote_ls->client_line_locked = true;
+    remote_ls->user_handle        = client_ls->user_handle;
     remote_ls->phase              = kVlessServerPhaseUdpConnecting;
 
     lineLock(client_l);
@@ -240,8 +342,7 @@ static bool vlessserverInitialCommandIsAllowed(tunnel_t *t, uint8_t cmd)
     return false;
 }
 
-static bool vlessserverStartTcpBranch(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls,
-                                      const address_context_t *target)
+static bool vlessserverStartTcpBranch(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, const address_context_t *target)
 {
     vlessserverApplyDestinationContext(l, target, false);
     ls->phase = kVlessServerPhaseTcpConnecting;
@@ -254,8 +355,7 @@ static bool vlessserverStartTcpBranch(tunnel_t *t, line_t *l, vlessserver_lstate
     return vlessserverForwardBufferedTcpPayload(t, l, ls);
 }
 
-static bool vlessserverStartUdpBranch(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls,
-                                      const address_context_t *target)
+static bool vlessserverStartUdpBranch(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, const address_context_t *target)
 {
     addresscontextAddrCopy(&ls->udp_target, target);
     ls->phase = kVlessServerPhaseUdpConnecting;
@@ -301,7 +401,7 @@ static bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_
 
     uint8_t user_id[kVlessServerUuidLen] = {0};
     bufferstreamViewBytesAt(&ls->in_stream, 1, user_id, sizeof(user_id));
-    if (UNLIKELY(! vlessserverUuidAllowed(t, l, user_id)))
+    if (UNLIKELY(! vlessserverAuthenticateUuid(t, l, ls, user_id)))
     {
         vlessserverCloseLineBidirectional(t, l);
         return false;
@@ -336,7 +436,7 @@ static bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_
     }
 
     uint8_t request_buf[kVlessServerInitialMaxReqLen] = {0};
-    size_t  copy_len = min(sizeof(request_buf), available);
+    size_t  copy_len                                  = min(sizeof(request_buf), available);
     bufferstreamViewBytesAt(&ls->in_stream, 0, request_buf, copy_len);
 
     uint8_t cmd = request_buf[command_at];
@@ -346,13 +446,12 @@ static bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_
         return false;
     }
 
-    address_context_t target   = {0};
-    size_t            dest_len = 0;
-    int parse_res =
-        vlessserverParseDestination(request_buf + command_at + 1U,
-                                    copy_len > command_at + 1U ? copy_len - command_at - 1U : 0U,
-                                    &target,
-                                    &dest_len);
+    address_context_t target    = {0};
+    size_t            dest_len  = 0;
+    int               parse_res = vlessserverParseDestination(request_buf + command_at + 1U,
+                                                copy_len > command_at + 1U ? copy_len - command_at - 1U : 0U,
+                                                &target,
+                                                &dest_len);
 
     if (UNLIKELY(parse_res == 0))
     {
@@ -374,6 +473,8 @@ static bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_
 
     size_t request_len = command_at + 1U + dest_len;
     lineReuseBuffer(l, bufferstreamReadExact(&ls->in_stream, request_len));
+
+    vlessserverRecordLineUser(l, ls);
 
     bool ok = cmd == kVlessCmdTcp ? vlessserverStartTcpBranch(t, l, ls, &target)
                                   : vlessserverStartUdpBranch(t, l, ls, &target);
@@ -608,8 +709,7 @@ void vlessserverOnSelectedEstablished(tunnel_t *t, line_t *l, vlessserver_lstate
 
         lineLock(l);
         vlessserver_lstate_t *client_ls = lineGetState(client_l, t);
-        if (client_ls->phase == kVlessServerPhaseUdpWaitPacket ||
-            client_ls->phase == kVlessServerPhaseUdpConnecting)
+        if (client_ls->phase == kVlessServerPhaseUdpWaitPacket || client_ls->phase == kVlessServerPhaseUdpConnecting)
         {
             client_ls->phase = kVlessServerPhaseUdpEstablished;
         }
@@ -690,14 +790,26 @@ bool vlessserverWrapUdpPayload(line_t *l, sbuf_t **buf_io)
 
     *buf_io = buf;
 
-    uint8_t *ptr     = sbufGetMutablePtr(buf);
-    uint16_t len_be  = htobe16((uint16_t) payload);
+    uint8_t *ptr    = sbufGetMutablePtr(buf);
+    uint16_t len_be = htobe16((uint16_t) payload);
     memoryCopy(ptr, &len_be, sizeof(len_be));
     return true;
 }
 
 void vlessserverTunnelstateDestroy(vlessserver_tstate_t *ts)
 {
+    if (ts->user_controller_tunnel != NULL)
+    {
+        ts->user_controller_tunnel->onDestroy(ts->user_controller_tunnel);
+        ts->user_controller_tunnel = NULL;
+    }
+
+    ts->user_controller_node.instance = NULL;
+    memoryFree(ts->user_controller_node.name);
+    memoryFree(ts->user_controller_node.type);
+    memoryFree(ts->user_controller_node.next);
+    memorySet(&ts->user_controller_node, 0, sizeof(ts->user_controller_node));
+
     memoryFree(ts->users);
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }

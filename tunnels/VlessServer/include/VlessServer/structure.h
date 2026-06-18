@@ -1,5 +1,6 @@
 #pragma once
 
+#include "objects/user_handle.h"
 #include "wwapi.h"
 
 typedef enum vlessserver_line_kind_e
@@ -35,6 +36,12 @@ typedef struct vlessserver_user_s
 
 typedef struct vlessserver_tstate_s
 {
+    node_t   *auth_client_node;
+    tunnel_t *auth_client_tunnel;
+
+    node_t    user_controller_node;
+    tunnel_t *user_controller_tunnel;
+
     vlessserver_user_t *users;
     uint32_t            user_count;
     bool                allow_connect;
@@ -44,17 +51,19 @@ typedef struct vlessserver_tstate_s
 
 typedef struct vlessserver_lstate_s
 {
-    tunnel_t                *tunnel;
-    line_t                  *line;
-    line_t                  *client_line;
-    line_t                  *udp_remote_line;
-    address_context_t        udp_target;
-    buffer_stream_t          in_stream;
-    buffer_queue_t           pending_down;
-    vlessserver_phase_t      phase;
-    vlessserver_line_kind_t  line_kind;
-    bool                     client_line_locked;
-    bool                     response_sent;
+    tunnel_t               *tunnel;
+    line_t                 *line;
+    line_t                 *client_line;
+    line_t                 *udp_remote_line;
+    address_context_t       udp_target;
+    buffer_stream_t         in_stream;
+    buffer_queue_t          pending_down;
+    user_handle_t           user_handle;
+    vlessserver_phase_t     phase;
+    vlessserver_line_kind_t line_kind;
+    bool                    client_line_locked;
+    bool                    response_sent;
+    bool                    user_handle_recorded;
 } vlessserver_lstate_t;
 
 enum
@@ -62,15 +71,16 @@ enum
     kTunnelStateSize = sizeof(vlessserver_tstate_t),
     kLineStateSize   = sizeof(vlessserver_lstate_t),
 
-    kVlessServerUuidLen          = 16,
-    kVlessServerResponseLen      = 2,
-    kVlessServerUdpHeaderLen     = 2,
-    kVlessServerUdpMaxPacket     = UINT16_MAX,
-    kVlessServerBufferQueueCap   = 8,
-    kVlessServerMaxInitialBytes  = 4096,
-    kVlessServerMaxBufferedBytes = 1024 * 1024,
-    kVlessServerMaxPendingBytes  = 1024 * 1024,
-    kVlessServerInitialMaxReqLen = 1 + kVlessServerUuidLen + 1 + UINT8_MAX + 1 + 2 + 1 + 1 + UINT8_MAX
+    kVlessServerUuidLen                = 16,
+    kVlessServerCanonicalUuidStringLen = 36,
+    kVlessServerResponseLen            = 2,
+    kVlessServerUdpHeaderLen           = 2,
+    kVlessServerUdpMaxPacket           = UINT16_MAX,
+    kVlessServerBufferQueueCap         = 8,
+    kVlessServerMaxInitialBytes        = 4096,
+    kVlessServerMaxBufferedBytes       = 1024 * 1024,
+    kVlessServerMaxPendingBytes        = 1024 * 1024,
+    kVlessServerInitialMaxReqLen       = 1 + kVlessServerUuidLen + 1 + UINT8_MAX + 1 + 2 + 1 + 1 + UINT8_MAX
 };
 
 WW_EXPORT void         vlessserverTunnelDestroy(tunnel_t *t);
@@ -78,6 +88,7 @@ WW_EXPORT tunnel_t    *vlessserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t vlessserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void vlessserverTunnelOnPrepair(tunnel_t *t);
+void vlessserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void vlessserverTunnelOnStart(tunnel_t *t);
 void vlessserverTunnelOnStop(tunnel_t *t);
 
@@ -95,8 +106,7 @@ void vlessserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void vlessserverTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void vlessserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void vlessserverLinestateInitialize(vlessserver_lstate_t *ls, tunnel_t *t, line_t *l,
-                                    vlessserver_line_kind_t kind);
+void vlessserverLinestateInitialize(vlessserver_lstate_t *ls, tunnel_t *t, line_t *l, vlessserver_line_kind_t kind);
 void vlessserverLinestateDestroy(vlessserver_lstate_t *ls);
 void vlessserverTunnelstateDestroy(vlessserver_tstate_t *ts);
 

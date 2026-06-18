@@ -3,6 +3,7 @@ add_library(VlessServer STATIC
     instance/destroy.c
     instance/api.c
     instance/node.c
+    instance/chain.c
     instance/prepair.c
     instance/start.c
     instance/stop.c
@@ -22,11 +23,23 @@ add_library(VlessServer STATIC
     downstream/resume.c
 )
 
-target_include_directories(VlessServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(NOT TARGET AuthenticationClient)
+    message(FATAL_ERROR "VlessServer requires AuthenticationClient; enable INCLUDE_AUTHENTICATION_CLIENT")
+endif()
+
+if(NOT TARGET UserController)
+    message(FATAL_ERROR "VlessServer requires UserController; enable INCLUDE_USER_CONTROLLER")
+endif()
+
+target_include_directories(VlessServer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../AuthenticationClient/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Internals/UserController/include
+)
 target_include_directories(VlessServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(VlessServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/VlessServer)
 
-target_link_libraries(VlessServer ww)
+target_link_libraries(VlessServer PRIVATE ww AuthenticationClient UserController)
 if(NOT APPLE)
     target_precompile_headers(VlessServer REUSE_FROM ww)
 endif()

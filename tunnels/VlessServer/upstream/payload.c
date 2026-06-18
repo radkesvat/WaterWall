@@ -26,8 +26,7 @@ void vlessserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     bufferstreamPush(&ls->in_stream, buf);
 
-    if (UNLIKELY((ls->phase == kVlessServerPhaseUdpWaitPacket ||
-                  ls->phase == kVlessServerPhaseUdpConnecting ||
+    if (UNLIKELY((ls->phase == kVlessServerPhaseUdpWaitPacket || ls->phase == kVlessServerPhaseUdpConnecting ||
                   ls->phase == kVlessServerPhaseUdpEstablished) &&
                  bufferstreamGetBufLen(&ls->in_stream) > kVlessServerMaxBufferedBytes))
     {

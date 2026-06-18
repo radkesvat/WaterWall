@@ -1,6 +1,80 @@
 #include "structure.h"
 
+#include "UserController/interface.h"
+
 #include "loggers/network_logger.h"
+#include "managers/node_manager.h"
+
+static hash_t vlessserverAuthenticationClientTypeHash(void)
+{
+    const char *type_name = "AuthenticationClient";
+    return calcHashBytes(type_name, stringLength(type_name));
+}
+
+static bool vlessserverParseAuthClientNode(vlessserver_tstate_t *ts, node_t *node, const char *auth_client_node_name)
+{
+    node_t *auth_client_node = nodemanagerGetConfigNodeByName(node->node_manager_config, auth_client_node_name);
+    if (auth_client_node == NULL)
+    {
+        LOGF("VlessServer: auth-client-node-name \"%s\" was not found", auth_client_node_name);
+        return false;
+    }
+
+    if (auth_client_node == node)
+    {
+        LOGF("VlessServer: auth-client-node-name must not point back to VlessServer itself");
+        return false;
+    }
+
+    if (auth_client_node->hash_type != vlessserverAuthenticationClientTypeHash())
+    {
+        LOGF("VlessServer: auth-client-node-name \"%s\" must point to an AuthenticationClient node",
+             auth_client_node_name);
+        return false;
+    }
+
+    ts->auth_client_node = auth_client_node;
+    return true;
+}
+
+static char *vlessserverMakeChildName(const node_t *node, const char *suffix)
+{
+    const char *base = node->name != NULL ? node->name : "VlessServer";
+    return stringConcat(base, suffix);
+}
+
+static void vlessserverConfigureUserControllerNode(node_t *child, node_t template_node, const node_t *owner)
+{
+    *child = template_node;
+
+    child->name      = vlessserverMakeChildName(owner, ".user-controller");
+    child->hash_name = calcHashBytes(child->name, stringLength(child->name));
+    child->next      = owner->next != NULL ? stringDuplicate(owner->next) : NULL;
+    child->hash_next = owner->hash_next;
+    child->version   = owner->version;
+
+    child->node_json           = owner->node_json;
+    child->node_settings_json  = owner->node_settings_json;
+    child->node_manager_config = owner->node_manager_config;
+    child->instance            = NULL;
+}
+
+static bool vlessserverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
+{
+    vlessserver_tstate_t *ts = tunnelGetState(t);
+
+    vlessserverConfigureUserControllerNode(&ts->user_controller_node, nodeUserControllerGet(), node);
+
+    ts->user_controller_tunnel = ts->user_controller_node.createHandle(&ts->user_controller_node);
+    if (ts->user_controller_tunnel == NULL)
+    {
+        LOGF("VlessServer: failed to create internal UserController");
+        return false;
+    }
+
+    ts->user_controller_node.instance = ts->user_controller_tunnel;
+    return true;
+}
 
 static int vlessserverHexValue(uint8_t c)
 {
@@ -159,8 +233,8 @@ static bool vlessserverParseUuidArray(vlessserver_tstate_t *ts, const cJSON *arr
         return false;
     }
 
-    int index = 0;
-    cJSON *item = NULL;
+    int    index = 0;
+    cJSON *item  = NULL;
     cJSON_ArrayForEach(item, array)
     {
         char item_path[64] = {0};
@@ -215,9 +289,49 @@ static bool vlessserverParseUsers(vlessserver_tstate_t *ts, const cJSON *setting
     return true;
 }
 
+static bool vlessserverHasLocalUserSettings(const cJSON *settings)
+{
+    return cJSON_GetObjectItemCaseSensitive(settings, "uuid") != NULL ||
+           cJSON_GetObjectItemCaseSensitive(settings, "id") != NULL ||
+           cJSON_GetObjectItemCaseSensitive(settings, "uuids") != NULL ||
+           cJSON_GetObjectItemCaseSensitive(settings, "users") != NULL ||
+           cJSON_GetObjectItemCaseSensitive(settings, "clients") != NULL;
+}
+
+static bool vlessserverParseAuthMode(vlessserver_tstate_t *ts, tunnel_t *t, node_t *node, const cJSON *settings)
+{
+    const cJSON *auth_node_json = cJSON_GetObjectItemCaseSensitive(settings, "auth-client-node-name");
+
+    if (auth_node_json == NULL)
+    {
+        return vlessserverParseUsers(ts, settings);
+    }
+
+    if (! cJSON_IsString(auth_node_json) || auth_node_json->valuestring == NULL ||
+        auth_node_json->valuestring[0] == '\0')
+    {
+        LOGF("JSON Error: VlessServer->settings->auth-client-node-name (string field) must be a non-empty string");
+        return false;
+    }
+
+    if (vlessserverHasLocalUserSettings(settings))
+    {
+        LOGF("JSON Error: VlessServer auth-client mode uses the AuthenticationClient users database; remove local "
+             "uuid/uuids/users/clients settings");
+        return false;
+    }
+
+    if (! vlessserverParseAuthClientNode(ts, node, auth_node_json->valuestring))
+    {
+        return false;
+    }
+
+    return vlessserverCreateUserControllerTunnel(t, node);
+}
+
 tunnel_t *vlessserverTunnelCreate(node_t *node)
 {
-    tunnel_t              *t        = tunnelCreate(node, sizeof(vlessserver_tstate_t), sizeof(vlessserver_lstate_t));
+    tunnel_t             *t        = tunnelCreate(node, sizeof(vlessserver_tstate_t), sizeof(vlessserver_lstate_t));
     vlessserver_tstate_t *ts       = tunnelGetState(t);
     const cJSON          *settings = node->node_settings_json;
 
@@ -267,10 +381,15 @@ tunnel_t *vlessserverTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (! vlessserverParseUsers(ts, settings))
+    if (! vlessserverParseAuthMode(ts, t, node, settings))
     {
         vlessserverTunnelDestroy(t);
         return NULL;
+    }
+
+    if (ts->auth_client_node != NULL)
+    {
+        t->onChain = &vlessserverTunnelOnChain;
     }
 
     return t;

@@ -3,7 +3,7 @@
 
 node_t nodeVlessServerGet(void)
 {
-    const char *type_name      = "VlessServer";
+    const char *type_name        = "VlessServer";
     node_t      node_vlessserver = {
              .name                  = NULL,
              .type                  = stringDuplicate(type_name),

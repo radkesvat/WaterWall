@@ -2,9 +2,14 @@
 
 `VlessServer` is a server-side VLESS v0 protocol middle tunnel for Waterwall.
 
-It accepts a base VLESS byte stream from the previous node, authenticates the 16-byte raw UUID in the request header
-against a configured UUID allowlist, parses the requested TCP or UDP destination, and forwards accepted traffic to the
-configured `next` node.
+It accepts a base VLESS byte stream from the previous node, authenticates the 16-byte raw UUID in the request header,
+parses the requested TCP or UDP destination, and forwards accepted traffic to the configured `next` node.
+
+Authentication can run in either local allowlist mode or user-database mode:
+
+- Without `auth-client-node-name`, `VlessServer` uses the configured local UUID allowlist.
+- With `auth-client-node-name`, `VlessServer` authenticates through `AuthenticationClient`, records the resulting
+  `user_handle_t` on the line, and internally inserts a `UserController` before the configured outbound node.
 
 This node implements plain VLESS protocol handling only. It does not create TLS, REALITY, XTLS Vision, mux, reverse, or
 transport-specific wrapping.
@@ -12,7 +17,7 @@ transport-specific wrapping.
 ## What It Does
 
 - Parses VLESS v0 request headers.
-- Authenticates users by UUID allowlist.
+- Authenticates users by local UUID allowlist or by `AuthenticationClient`.
 - Supports VLESS TCP command `0x01`.
 - Supports VLESS UDP command `0x02`.
 - Rejects non-empty addons, including Vision flow addons.
@@ -42,7 +47,7 @@ Important:
 - Operators should place `TlsServer` before `VlessServer` for normal VLESS deployments.
 - Without TLS, the UUID and destination metadata are visible on the wire.
 - The UUID is a bearer credential. Anyone who knows it can authenticate.
-- This node uses a local UUID allowlist; it does not currently use `AuthenticationClient` or `UserController`.
+- In user-database mode, put the canonical lowercase dashed UUID string in the user's `password` field.
 
 ## Configuration Example
 
@@ -62,7 +67,7 @@ Minimal server with one UUID:
 }
 ```
 
-Multiple users:
+Multiple local allowlist users:
 
 ```json
 {
@@ -79,6 +84,32 @@ Multiple users:
     "udp": true
   },
   "next": "outbound"
+}
+```
+
+Database-backed authentication:
+
+```json
+{
+  "name": "vless-server",
+  "type": "VlessServer",
+  "settings": {
+    "auth-client-node-name": "auth-client",
+    "connect": true,
+    "udp": true
+  },
+  "next": "outbound"
+}
+```
+
+The matching user database entry should use the canonical UUID string as the password:
+
+```json
+{
+  "id": 2001,
+  "name": "vless-user",
+  "password": "5783a3e7-e373-51cd-8642-c83782b807c5",
+  "enabled": true
 }
 ```
 
@@ -110,7 +141,9 @@ Typical outbound connector:
 
 ### `settings`
 
-At least one UUID must be configured using one or more of:
+Choose exactly one authentication mode.
+
+For local allowlist mode, omit `auth-client-node-name` and configure at least one UUID using one or more of:
 
 - `uuid` `(string)`
   A single RFC4122 UUID string.
@@ -129,6 +162,20 @@ At least one UUID must be configured using one or more of:
 
 UUID strings may be dashed RFC4122 form or compact 32-character hex form. The wire comparison uses RFC4122 byte order:
 hex bytes left-to-right, not Windows GUID memory order.
+
+For user-database mode, configure:
+
+- `auth-client-node-name` `(string)`
+  Name of an existing `AuthenticationClient` node in the same config file.
+
+In this mode, local UUID settings (`uuid`, `id`, `uuids`, `users`, `clients`) are rejected so the user database remains
+the only authority. The wire UUID is converted to canonical lowercase dashed form before lookup, for example:
+
+```text
+5783a3e7-e373-51cd-8642-c83782b807c5
+```
+
+That string is authenticated as the user's `password` through `AuthenticationClient`.
 
 At least one of `connect` or `udp` must be enabled.
 
