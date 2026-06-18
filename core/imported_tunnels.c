@@ -200,6 +200,10 @@
 #include "SniffRouter/interface.h"
 #endif
 
+#ifdef INCLUDE_ROUTER
+#include "Router/interface.h"
+#endif
+
 #ifdef INCLUDE_WOLFSSL_SERVER
 #include "tunnels/server/wolfssl/wolfssl_server.h"
 #endif
@@ -517,6 +521,10 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_SNIFF_ROUTER
     USING(SniffRouter);
+#endif
+
+#ifdef INCLUDE_ROUTER
+    USING(Router);
 #endif
 
 #ifdef INCLUDE_WOLFSSL_SERVER
