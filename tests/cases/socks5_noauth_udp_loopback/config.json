@@ -6,7 +6,7 @@
       "type": "TesterClient",
       "settings": {
         "max-payload-size": 1200,
-        "split-payload-burst": 4
+        "split-payload-burst": 1
       },
       "next": "socks5-client"
     },
@@ -75,7 +75,7 @@
       "type": "TesterServer",
       "settings": {
         "max-payload-size": 1200,
-        "split-payload-burst": 4
+        "split-payload-burst": 1
       }
     }
   ]

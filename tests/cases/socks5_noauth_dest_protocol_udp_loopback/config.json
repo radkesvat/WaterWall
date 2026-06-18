@@ -6,7 +6,7 @@
       "type": "TesterClient",
       "settings": {
         "max-payload-size": 1200,
-        "split-payload-burst": 4,
+        "split-payload-burst": 1,
         "dest-context": {
           "address": "127.0.0.1",
           "port": 42641,
@@ -80,7 +80,7 @@
       "type": "TesterServer",
       "settings": {
         "max-payload-size": 1200,
-        "split-payload-burst": 4
+        "split-payload-burst": 1
       }
     }
   ]
