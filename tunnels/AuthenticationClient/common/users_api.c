@@ -2,7 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-
 typedef enum authenticationclient_first_usage_push_result_e
 {
     kAuthenticationClientFirstUsagePushQueued = 0,
@@ -74,8 +73,8 @@ bool authenticationclientGetUserBySHA256(tunnel_t *t, const uint8_t sha256[SHA25
         return false;
     }
 
-    authenticationclient_tstate_t *ts    = tunnelGetState(t);
-    bool                           found = false;
+    authenticationclient_tstate_t *ts     = tunnelGetState(t);
+    bool                           found  = false;
     uint64_t                       now_ms = authenticationclientLocalTimeMS();
 
     rwlockReadLock(&ts->users_lock);
@@ -94,9 +93,63 @@ bool authenticationclientGetUserBySHA256(tunnel_t *t, const uint8_t sha256[SHA25
     return found;
 }
 
+void authenticationclientUserProfileClear(authenticationclient_user_profile_t *profile)
+{
+    if (profile == NULL)
+    {
+        return;
+    }
+    if (profile->name != NULL)
+    {
+        memoryFree(profile->name);
+        profile->name = NULL;
+    }
+    if (profile->password != NULL)
+    {
+        memoryFree(profile->password);
+        profile->password = NULL;
+    }
+}
+
+static void authenticationclientAssertProfileEmpty(authenticationclient_user_profile_t *profile, const char *fn_name)
+{
+    if (profile == NULL)
+    {
+        return;
+    }
+
+    assert(profile->name == NULL);
+    assert(profile->password == NULL);
+    if (UNLIKELY(profile->name != NULL || profile->password != NULL))
+    {
+        LOGF("AuthenticationClient: %s received a non-empty user profile output; clear it before reuse", fn_name);
+        terminateProgram(1);
+    }
+}
+
+// Duplicate the user's name/password into the profile. The caller must hold
+// ts->users_lock (read); user->lock guards the name/password strings, matching
+// the users_lock -> user->lock ordering used by usersToJson.
+static void authenticationclientFillUserProfileLocked(authenticationclient_user_profile_t *profile, user_t *user)
+{
+    rwlockReadLock(&user->lock);
+    profile->name     = (user->name != NULL && user->name[0] != '\0') ? stringDuplicate(user->name) : NULL;
+    profile->password = (user->password != NULL && user->password[0] != '\0') ? stringDuplicate(user->password) : NULL;
+    rwlockReadUnlock(&user->lock);
+}
+
 bool authenticationclientGetUserBySHA224(tunnel_t *t, const uint8_t sha224[SHA224_DIGEST_SIZE],
                                          user_handle_t *handle_out)
 {
+    return authenticationclientGetUserBySHA224WithProfile(t, sha224, handle_out, NULL);
+}
+
+bool authenticationclientGetUserBySHA224WithProfile(tunnel_t *t, const uint8_t sha224[SHA224_DIGEST_SIZE],
+                                                    user_handle_t                       *handle_out,
+                                                    authenticationclient_user_profile_t *profile_out)
+{
+    authenticationclientAssertProfileEmpty(profile_out, "authenticationclientGetUserBySHA224WithProfile");
+
     if (UNLIKELY(t == NULL || sha224 == NULL || handle_out == NULL))
     {
         return false;
@@ -111,6 +164,10 @@ bool authenticationclientGetUserBySHA224(tunnel_t *t, const uint8_t sha224[SHA22
     if (user != NULL && user->sha256_pass_valid && userIsActive(user, now_ms))
     {
         userHandleSet(handle_out, user->sha256_pass.bytes, ts->users_generation, userGetId(user));
+        if (profile_out != NULL)
+        {
+            authenticationclientFillUserProfileLocked(profile_out, user);
+        }
         found = true;
     }
     rwlockReadUnlock(&ts->users_lock);
@@ -155,10 +212,18 @@ const char *authenticationclientUserLookupResultString(authenticationclient_user
     }
 }
 
-authenticationclient_user_lookup_result_t authenticationclientGetUserByPasswordWithResult(tunnel_t *t,
-                                                                                          const char *password,
+authenticationclient_user_lookup_result_t authenticationclientGetUserByPasswordWithResult(tunnel_t      *t,
+                                                                                          const char    *password,
                                                                                           user_handle_t *handle_out)
 {
+    return authenticationclientGetUserByPasswordWithProfile(t, password, handle_out, NULL);
+}
+
+authenticationclient_user_lookup_result_t authenticationclientGetUserByPasswordWithProfile(
+    tunnel_t *t, const char *password, user_handle_t *handle_out, authenticationclient_user_profile_t *profile_out)
+{
+    authenticationclientAssertProfileEmpty(profile_out, "authenticationclientGetUserByPasswordWithProfile");
+
     if (UNLIKELY(t == NULL || password == NULL || password[0] == '\0' || handle_out == NULL))
     {
         if (handle_out != NULL)
@@ -211,6 +276,10 @@ authenticationclient_user_lookup_result_t authenticationclientGetUserByPasswordW
         else
         {
             userHandleSet(handle_out, sha256.bytes, ts->users_generation, userGetId(user));
+            if (profile_out != NULL)
+            {
+                authenticationclientFillUserProfileLocked(profile_out, user);
+            }
             result = kAuthenticationClientUserLookupOk;
         }
     }
@@ -231,8 +300,8 @@ bool authenticationclientUserHandleIsLive(tunnel_t *t, const user_handle_t *hand
         return false;
     }
 
-    authenticationclient_tstate_t *ts   = tunnelGetState(t);
-    bool                           live = false;
+    authenticationclient_tstate_t *ts     = tunnelGetState(t);
+    bool                           live   = false;
     uint64_t                       now_ms = authenticationclientLocalTimeMS();
 
     rwlockReadLock(&ts->users_lock);
@@ -318,8 +387,7 @@ bool authenticationclientUserGetStats(tunnel_t *t, const user_handle_t *handle, 
 }
 
 static users_update_result_t authenticationclientUsersAddTrafficByHandle(users_t *users, const user_handle_t *handle,
-                                                                         uint64_t upload_bytes,
-                                                                         uint64_t download_bytes)
+                                                                         uint64_t upload_bytes, uint64_t download_bytes)
 {
     if (handle->user_id != 0)
     {
@@ -328,10 +396,10 @@ static users_update_result_t authenticationclientUsersAddTrafficByHandle(users_t
     return usersAddTrafficBySHA256(users, handle->sha256, upload_bytes, download_bytes);
 }
 
-static user_admission_result_t authenticationclientUsersTryAdmitConnectionByHandle(users_t *users,
+static user_admission_result_t authenticationclientUsersTryAdmitConnectionByHandle(users_t             *users,
                                                                                    const user_handle_t *handle,
                                                                                    const user_ip_key_t *ip_key,
-                                                                                   uint64_t now_ms)
+                                                                                   uint64_t             now_ms)
 {
     if (handle->user_id != 0)
     {
@@ -353,8 +421,7 @@ static void authenticationclientUsersReleaseConnectionByHandle(users_t *users, c
 
 static bool authenticationclientUsersAccountTrafficByHandle(users_t *users, const user_handle_t *handle,
                                                             uint64_t upload_bytes, uint64_t download_bytes,
-                                                            uint64_t now_ms, bool *found,
-                                                            bool *first_usage_push_needed)
+                                                            uint64_t now_ms, bool *found, bool *first_usage_push_needed)
 {
     if (handle->user_id != 0)
     {
@@ -507,7 +574,7 @@ static void authenticationclientFirstUsagePushOnWorker0(void *worker_ptr, void *
 
 static authenticationclient_first_usage_push_result_t authenticationclientRequestFirstUsagePush(tunnel_t *t)
 {
-    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    authenticationclient_tstate_t                 *ts     = tunnelGetState(t);
     authenticationclient_first_usage_push_result_t result = kAuthenticationClientFirstUsagePushNotReady;
 
     mutexLock(&ts->control_mutex);
@@ -552,13 +619,8 @@ bool authenticationclientUserAccountTraffic(tunnel_t *t, const user_handle_t *ha
     {
         // AccountTraffic returns close=true when the user is gone (revoked), so a removed user's
         // traffic is rejected and the connection is torn down.
-        should_close = authenticationclientUsersAccountTrafficByHandle(ts->users,
-                                                                       handle,
-                                                                       upload_bytes,
-                                                                       download_bytes,
-                                                                       now_ms,
-                                                                       NULL,
-                                                                       &first_usage_push_needed);
+        should_close = authenticationclientUsersAccountTrafficByHandle(
+            ts->users, handle, upload_bytes, download_bytes, now_ms, NULL, &first_usage_push_needed);
     }
     rwlockReadUnlock(&ts->users_lock);
 
@@ -586,7 +648,7 @@ bool authenticationclientUserShouldClose(tunnel_t *t, const user_handle_t *handl
         return false;
     }
 
-    authenticationclient_tstate_t *ts          = tunnelGetState(t);
+    authenticationclient_tstate_t *ts           = tunnelGetState(t);
     bool                           should_close = false;
 
     rwlockReadLock(&ts->users_lock);
