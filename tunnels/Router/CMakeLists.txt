@@ -3,6 +3,7 @@ add_library(Router STATIC
     common/line_state.c
     common/match_helpers.c
     common/rules.c
+    common/sniffing.c
     modules/matchers.c
     modules/source_ips/source_ips.c
     modules/source_port/source_port.c
@@ -45,7 +46,23 @@ target_include_directories(Router PRIVATE
 target_include_directories(Router PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(Router PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Router)
 
-target_link_libraries(Router ww)
+target_link_libraries(Router PUBLIC ww)
+if(TARGET maxminddb::maxminddb)
+    get_target_property(ROUTER_MAXMIND_REAL_TARGET maxminddb::maxminddb ALIASED_TARGET)
+    if(ROUTER_MAXMIND_REAL_TARGET)
+        set_property(TARGET ${ROUTER_MAXMIND_REAL_TARGET} PROPERTY SYSTEM TRUE)
+    else()
+        set_property(TARGET maxminddb::maxminddb PROPERTY SYSTEM TRUE)
+    endif()
+    set(ROUTER_MAXMIND_TARGET maxminddb::maxminddb)
+elseif(TARGET maxminddb)
+    set_property(TARGET maxminddb PROPERTY SYSTEM TRUE)
+    set(ROUTER_MAXMIND_TARGET maxminddb)
+else()
+    message(FATAL_ERROR "Router requires libmaxminddb, but no maxminddb CMake target was found")
+endif()
+target_link_libraries(Router PUBLIC ${ROUTER_MAXMIND_TARGET})
+
 if(NOT APPLE)
     target_precompile_headers(Router REUSE_FROM ww)
 endif()

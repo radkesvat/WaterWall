@@ -13,6 +13,17 @@ router_match_t routerClassify(router_tstate_t *ts, const router_match_ctx_t *mct
         .target = NULL,
     };
 
+    if (routerSniffBeforeClassify(ts, mctx) == kRouterSniffNeedMore)
+    {
+        match.result = kRouterClassifyNeedMore;
+        return match;
+    }
+
+    if (ts->rules_count == 0)
+    {
+        return match;
+    }
+
     for (uint32_t ri = 0; ri < ts->rules_count; ++ri)
     {
         router_rule_t *rule = &ts->rules[ri];

@@ -25,6 +25,14 @@ router_field_parse_t routerDestinationIpParse(router_rule_t *rule, const cJSON *
         return kRouterFieldError;
     }
 
+    if (! routerGeoipCodesParse(&rule->destination_ip.patterns,
+                                &rule->destination_ip.geoip_codes,
+                                &rule->destination_ip.geoip_codes_count,
+                                "Router->settings->rules[]->destination-ip"))
+    {
+        return kRouterFieldError;
+    }
+
     rule->destination_ip.present = true;
     return kRouterFieldPresent;
 }
@@ -37,7 +45,11 @@ bool routerDestinationIpMatch(const router_rule_t *rule, const router_match_ctx_
     }
 
     const address_context_t *dest = lineGetDestinationAddressContext(mctx->line);
-    return routerIpRangesMatch(dest, rule->destination_ip.ranges, rule->destination_ip.ranges_count);
+    return routerIpRangesMatch(dest, rule->destination_ip.ranges, rule->destination_ip.ranges_count) ||
+           routerGeoipCodesMatch(mctx->router_state,
+                                 dest,
+                                 rule->destination_ip.geoip_codes,
+                                 rule->destination_ip.geoip_codes_count);
 }
 
 void routerDestinationIpDestroy(router_rule_t *rule)
@@ -49,5 +61,6 @@ void routerDestinationIpDestroy(router_rule_t *rule)
         rule->destination_ip.ranges = NULL;
     }
     rule->destination_ip.ranges_count = 0;
+    routerGeoipCodesDestroy(&rule->destination_ip.geoip_codes, &rule->destination_ip.geoip_codes_count);
     rule->destination_ip.present      = false;
 }

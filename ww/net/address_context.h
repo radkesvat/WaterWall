@@ -309,6 +309,8 @@ static inline void addresscontextDomainSetConstMem(address_context_t *ctx, const
  * @brief Check if the address context is a valid IP.
  *
  * Validates that the context is of type IP and has a non-empty address.
+ * Use this when the caller needs a concrete endpoint address. This excludes
+ * wildcard/any addresses such as 0.0.0.0 and ::.
  */
 static inline bool addresscontextIsIp(const address_context_t *context)
 {
@@ -317,10 +319,48 @@ static inline bool addresscontextIsIp(const address_context_t *context)
 
 /**
  * @brief Check if the context is IP-typed, even if the IP is an any/wildcard address.
+ *
+ * This is a shape/type check, not a resolved-endpoint check. It returns true
+ * for wildcard/any addresses such as 0.0.0.0 and ::. Use addresscontextIsIp()
+ * instead when marking a domain as resolved or when a real destination IP is
+ * required.
  */
 static inline bool addresscontextIsIpType(const address_context_t *context)
 {
     return context->type_ip == kCCTypeIp;
+}
+
+/**
+ * @brief Store an observed domain name without replacing the address endpoint.
+ *
+ * Sniffed metadata such as HTTP Host or TLS SNI should not clear an already
+ * known destination IP/port/protocol. For concrete IP-backed contexts, mark the
+ * domain as resolved so downstream connectors keep using the preserved IP
+ * address. For domain-only or wildcard-IP contexts, leave it unresolved because
+ * there is no concrete IP address represented by the observed domain.
+ */
+static inline bool addresscontextSetObservedDomain(address_context_t *ctx, const uint8_t *domain, uint32_t len)
+{
+    if (domain == NULL || len == 0 || len > UINT8_MAX)
+    {
+        return false;
+    }
+
+    char *copy = memoryAllocate((size_t) len + 1U);
+    memoryCopy(copy, domain, len);
+    copy[len] = '\0';
+
+    if (ctx->domain != NULL && ! ctx->domain_constant)
+    {
+        memoryFree(ctx->domain);
+    }
+
+    ctx->domain          = copy;
+    ctx->domain_len      = (uint8_t) len;
+    ctx->domain_constant = false;
+    ctx->domain_resolved = addresscontextIsIp(ctx);
+
+    return true;
 }
 
 /**

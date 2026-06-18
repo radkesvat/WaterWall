@@ -84,6 +84,42 @@ if(TARGET SniffRouter)
   add_waterwall_unit_test(waterwall.sniffrouter_classifier_unit sniffrouter_classifier_test "unit;tunnels;sniffrouter")
 endif()
 
+set(ROUTER_GEOIP_TEST_DB "")
+if(DEFINED maxminddb_SOURCE_DIR)
+  set(ROUTER_GEOIP_TEST_DB "${maxminddb_SOURCE_DIR}/t/maxmind-db/test-data/GeoLite2-Country-Test.mmdb")
+elseif(DEFINED CPM_PACKAGE_maxminddb_SOURCE_DIR)
+  set(ROUTER_GEOIP_TEST_DB "${CPM_PACKAGE_maxminddb_SOURCE_DIR}/t/maxmind-db/test-data/GeoLite2-Country-Test.mmdb")
+endif()
+
+if(TARGET Router AND EXISTS "${ROUTER_GEOIP_TEST_DB}")
+  add_executable(router_geoip_test router_geoip_test.c)
+  target_include_directories(router_geoip_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/Router/include
+    ${CMAKE_SOURCE_DIR}/tunnels/Router
+    ${CMAKE_SOURCE_DIR}/tunnels/Router/include/Router
+  )
+  target_compile_definitions(router_geoip_test PRIVATE
+    ROUTER_GEOIP_TEST_DB="${ROUTER_GEOIP_TEST_DB}"
+  )
+  target_link_libraries(router_geoip_test PRIVATE Router ww)
+  add_dependencies(waterwall_unit_tests router_geoip_test)
+
+  add_waterwall_unit_test(waterwall.router_geoip_unit router_geoip_test "unit;tunnels;router;geoip")
+endif()
+
+if(TARGET Router)
+  add_executable(router_sniffing_test router_sniffing_test.c)
+  target_include_directories(router_sniffing_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/Router/include
+    ${CMAKE_SOURCE_DIR}/tunnels/Router
+    ${CMAKE_SOURCE_DIR}/tunnels/Router/include/Router
+  )
+  target_link_libraries(router_sniffing_test PRIVATE Router ww)
+  add_dependencies(waterwall_unit_tests router_sniffing_test)
+
+  add_waterwall_unit_test(waterwall.router_sniffing_unit router_sniffing_test "unit;tunnels;router;sniffing")
+endif()
+
 add_custom_target(check_waterwall_unit_tests
   COMMAND
     "${CMAKE_CTEST_COMMAND}"

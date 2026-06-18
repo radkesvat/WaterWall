@@ -43,7 +43,19 @@ tunnel_t *routerTunnelCreate(node_t *node)
     }
 
     router_tstate_t *ts = tunnelGetState(t);
+    if (! routerLoadSniffing(ts, settings))
+    {
+        routerTunnelDestroy(t);
+        return NULL;
+    }
+
     if (settings != NULL && ! routerLoadRules(ts, node, settings))
+    {
+        routerTunnelDestroy(t);
+        return NULL;
+    }
+
+    if (! routerGeoipOpenIfNeeded(ts, settings))
     {
         routerTunnelDestroy(t);
         return NULL;

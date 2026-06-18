@@ -2,6 +2,8 @@
 
 #include "wwapi.h"
 
+#include <maxminddb.h>
+
 /*
  * Router
  * ------
@@ -22,9 +24,7 @@
  *
  * Each supported rule field has its own matcher/parser module under modules/.
  * Each module owns its config struct (stored inside router_rule_t) and exposes a
- * uniform parse/match/destroy interface. The match logic is currently a stub
- * that returns true; only the architecture, parsing, and evaluation flow are
- * implemented so far.
+ * uniform parse/match/destroy interface.
  */
 
 enum router_route_e
@@ -41,6 +41,18 @@ enum router_classify_result_e
     kRouterClassifyTarget   = 2
 };
 
+typedef enum router_sniff_result_e
+{
+    kRouterSniffDone     = 0,
+    kRouterSniffNeedMore = 1
+} router_sniff_result_t;
+
+enum
+{
+    kRouterSniffHttp = 1U << 0U,
+    kRouterSniffTls  = 1U << 1U
+};
+
 // Result of parsing a single rule field from the rule JSON object.
 typedef enum router_field_parse_e
 {
@@ -49,8 +61,8 @@ typedef enum router_field_parse_e
     kRouterFieldError   = 2  // the field key was present but its value was invalid
 } router_field_parse_t;
 
-// Shared "string or array of strings" value, used by most matcher configs to
-// hold the raw configured patterns until real matching logic is implemented.
+// Shared "string or array of strings" value used by most matcher configs to
+// hold the raw configured patterns.
 typedef struct router_string_list_s
 {
     char   **items;
@@ -65,6 +77,12 @@ typedef struct router_ip_range_s
     ip_addr_t mask;   // subnet mask
     uint8_t   family; // 4 or 6
 } router_ip_range_t;
+
+// Parsed ISO-3166 alpha-2 country code from a geoip:<cc> token.
+typedef struct router_geoip_code_s
+{
+    char code[3]; // uppercase two-letter code plus NUL
+} router_geoip_code_t;
 
 // Parsed single port or inclusive port range used by the port matchers.
 typedef struct router_port_range_s
@@ -87,9 +105,11 @@ enum
 typedef struct router_match_source_ips_s
 {
     bool                 present;
-    router_string_list_t patterns; // raw patterns, including geoip rules (ignored)
+    router_string_list_t patterns; // raw IP/CIDR and geoip:<cc> patterns
     router_ip_range_t   *ranges;   // parsed CIDR / single-IP ranges (geoip excluded)
     uint32_t             ranges_count;
+    router_geoip_code_t *geoip_codes; // parsed geoip:<cc> country codes
+    uint32_t             geoip_codes_count;
 } router_match_source_ips_t;
 
 typedef struct router_match_source_port_s
@@ -121,9 +141,11 @@ typedef struct router_match_attributes_s
 typedef struct router_match_destination_ip_s
 {
     bool                 present;
-    router_string_list_t patterns; // raw patterns, including geoip rules (ignored)
+    router_string_list_t patterns; // raw IP/CIDR and geoip:<cc> patterns
     router_ip_range_t   *ranges;   // parsed CIDR / single-IP ranges (geoip excluded)
     uint32_t             ranges_count;
+    router_geoip_code_t *geoip_codes; // parsed geoip:<cc> country codes
+    uint32_t             geoip_codes_count;
 } router_match_destination_ip_t;
 
 typedef struct router_match_destination_domain_s
@@ -173,6 +195,11 @@ typedef struct router_tstate_s
 {
     router_rule_t *rules;
     uint32_t       rules_count;
+    char          *geoip_db_path;
+    MMDB_s         geoip_db;
+    bool           geoip_db_opened;
+    uint8_t        sniffing_modes;
+    bool           sniff_even_if_domain_is_already_provided;
 } router_tstate_t;
 
 typedef struct router_lstate_s
@@ -189,9 +216,10 @@ typedef struct router_lstate_s
 // and the buffered first-payload window (for content-based matchers).
 typedef struct router_match_ctx_s
 {
-    line_t        *line;
-    const uint8_t *payload;
-    uint32_t       payload_len;
+    router_tstate_t *router_state;
+    line_t         *line;
+    const uint8_t  *payload;
+    uint32_t        payload_len;
 } router_match_ctx_t;
 
 typedef struct router_match_s
@@ -206,8 +234,10 @@ WW_EXPORT api_result_t routerTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 // --- config parsing / evaluation (common) ---
 bool           routerLoadRules(router_tstate_t *ts, node_t *node, const cJSON *settings);
+bool           routerLoadSniffing(router_tstate_t *ts, const cJSON *settings);
 void           routerRuleTableDestroy(router_tstate_t *ts);
 router_match_t routerClassify(router_tstate_t *ts, const router_match_ctx_t *mctx);
+router_sniff_result_t routerSniffBeforeClassify(router_tstate_t *ts, const router_match_ctx_t *mctx);
 
 // Shared "string or array of strings" parser used by matcher modules.
 bool routerStringListParse(router_string_list_t *list, const cJSON *value_json, const char *json_path);
@@ -216,11 +246,19 @@ void routerStringListDestroy(router_string_list_t *list);
 // --- shared match helpers (common/match_helpers.c) ---
 
 // Parse a list of IP / CIDR patterns into numeric ranges. "geoip:" entries are
-// accepted but skipped (left for future implementation). A single IP without a
-// prefix is treated as a host route (/32 for IPv4, /128 for IPv6).
+// skipped here and parsed separately by routerGeoipCodesParse(). A single IP
+// without a prefix is treated as a host route (/32 for IPv4, /128 for IPv6).
 bool routerIpRangesParse(const router_string_list_t *patterns, router_ip_range_t **out_ranges, uint32_t *out_count,
                          const char *json_path);
 bool routerIpRangesMatch(const address_context_t *ctx, const router_ip_range_t *ranges, uint32_t count);
+bool routerGeoipCodesParse(const router_string_list_t *patterns, router_geoip_code_t **out_codes,
+                           uint32_t *out_count, const char *json_path);
+void routerGeoipCodesDestroy(router_geoip_code_t **codes, uint32_t *count);
+bool routerGeoipCodesMatch(router_tstate_t *ts, const address_context_t *ctx, const router_geoip_code_t *codes,
+                           uint32_t count);
+bool routerRuleTableNeedsGeoip(const router_tstate_t *ts);
+bool routerGeoipOpenIfNeeded(router_tstate_t *ts, const cJSON *settings);
+void routerGeoipClose(router_tstate_t *ts);
 
 // Parse a JSON number/string/array of ports and ranges into numeric ranges.
 bool routerPortRangesParse(const cJSON *value_json, router_port_range_t **out_ranges, uint32_t *out_count,

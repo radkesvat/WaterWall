@@ -25,6 +25,14 @@ router_field_parse_t routerSourceIpsParse(router_rule_t *rule, const cJSON *rule
         return kRouterFieldError;
     }
 
+    if (! routerGeoipCodesParse(&rule->source_ips.patterns,
+                                &rule->source_ips.geoip_codes,
+                                &rule->source_ips.geoip_codes_count,
+                                "Router->settings->rules[]->source-ips"))
+    {
+        return kRouterFieldError;
+    }
+
     rule->source_ips.present = true;
     return kRouterFieldPresent;
 }
@@ -38,7 +46,11 @@ bool routerSourceIpsMatch(const router_rule_t *rule, const router_match_ctx_t *m
     }
 
     const address_context_t *src = lineGetSourceAddressContext(mctx->line);
-    return routerIpRangesMatch(src, rule->source_ips.ranges, rule->source_ips.ranges_count);
+    return routerIpRangesMatch(src, rule->source_ips.ranges, rule->source_ips.ranges_count) ||
+           routerGeoipCodesMatch(mctx->router_state,
+                                 src,
+                                 rule->source_ips.geoip_codes,
+                                 rule->source_ips.geoip_codes_count);
 }
 
 void routerSourceIpsDestroy(router_rule_t *rule)
@@ -50,5 +62,6 @@ void routerSourceIpsDestroy(router_rule_t *rule)
         rule->source_ips.ranges = NULL;
     }
     rule->source_ips.ranges_count = 0;
+    routerGeoipCodesDestroy(&rule->source_ips.geoip_codes, &rule->source_ips.geoip_codes_count);
     rule->source_ips.present      = false;
 }
