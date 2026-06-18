@@ -84,14 +84,6 @@ enum
     kTunnelStateSize = sizeof(sniffrouter_tstate_t),
     kLineStateSize   = sizeof(sniffrouter_lstate_t),
 
-    // Longest HTTP method token we test ("CONNECT "/"OPTIONS ") is 8 bytes.
-    kSniffMethodDecideBytes = 8,
-
-    // Keep the sniff window bounded. Normal Host headers and ClientHello SNI
-    // extensions arrive well before this; if they do not, traffic falls back
-    // to "next".
-    kSniffMaxHeaderBytes = 8192,
-
     // Reverse-link handshake defaults use ReverseClient's exported handshake
     // bytes and length so SniffRouter, ReverseClient, and ReverseServer cannot
     // drift apart when the default reverse-link handshake changes.
