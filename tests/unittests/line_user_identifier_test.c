@@ -24,7 +24,23 @@ static line_t *testLineCreate(void)
 
 static void testLineDestroy(line_t *line)
 {
+    if (line->last_authenticated_user_username != NULL)
+    {
+        memoryFree((void *) line->last_authenticated_user_username);
+    }
+    if (line->last_authenticated_user_password != NULL)
+    {
+        memoryFree((void *) line->last_authenticated_user_password);
+    }
     memoryFree(line);
+}
+
+static void requireStringEquals(const char *actual, const char *expected, const char *message)
+{
+    require(actual != NULL, message);
+    require(expected != NULL, message);
+    require(stringLength(actual) == stringLength(expected), message);
+    require(memoryEqual(actual, expected, stringLength(expected) + 1U), message);
 }
 
 static void requireUserHandleEquals(const user_handle_t *actual, const user_handle_t *expected, const char *message)
@@ -51,7 +67,7 @@ static user_handle_t testUserHandle(uint8_t seed, uint64_t generation, uint64_t 
 
 static void testAnonymousAuthentication(void)
 {
-    line_t        *line  = testLineCreate();
+    line_t       *line  = testLineCreate();
     user_handle_t empty = userHandleEmpty();
 
     lineAddUser(line, NULL, NULL, NULL);
@@ -124,14 +140,43 @@ static void testLineUserCopy(void)
     line_t *src  = testLineCreate();
     line_t *dest = testLineCreate();
 
-    lineAddUser(src, &first, NULL, NULL);
-    lineAddUser(src, &second, NULL, NULL);
+    lineAddUser(src, &first, "first-user", "first-password");
+    lineAddUser(src, &second, "second-user", "second-password");
 
     lineCopyUsers(dest, src);
     require(dest->user_count == src->user_count, "line user copy did not preserve user count");
     requireUserHandleEquals(&dest->user_handles[0], &src->user_handles[0], "line user copy lost first user");
     requireUserHandleEquals(&dest->user_handles[1], &src->user_handles[1], "line user copy lost second user");
     require(lineGetCurrentUser(dest) == &dest->user_handles[1], "line user copy did not preserve current user");
+    requireStringEquals(lineGetAuthenticatedUsername(dest), "second-user", "line user copy lost username");
+    requireStringEquals(lineGetAuthenticatedPassword(dest), "second-password", "line user copy lost password");
+    require(lineGetAuthenticatedUsername(dest) != lineGetAuthenticatedUsername(src),
+            "line user copy did not duplicate username");
+    require(lineGetAuthenticatedPassword(dest) != lineGetAuthenticatedPassword(src),
+            "line user copy did not duplicate password");
+
+    testLineDestroy(dest);
+    testLineDestroy(src);
+}
+
+static void testLineCredentialOnlyRecordingAndCopy(void)
+{
+    line_t *src  = testLineCreate();
+    line_t *dest = testLineCreate();
+
+    lineSetAuthenticatedCredentials(src, NULL, "uuid-password");
+    require(src->user_count == 0, "credential-only line unexpectedly added a user marker");
+    require(lineGetCurrentUser(src) == NULL, "credential-only line unexpectedly exposed a current user");
+    require(lineGetAuthenticatedUsername(src) == NULL, "credential-only line unexpectedly stored a username");
+    requireStringEquals(lineGetAuthenticatedPassword(src), "uuid-password", "credential-only line lost password");
+
+    lineCopyUsers(dest, src);
+    require(dest->user_count == 0, "credential-only copy unexpectedly added a user marker");
+    require(lineGetCurrentUser(dest) == NULL, "credential-only copy unexpectedly exposed a current user");
+    require(lineGetAuthenticatedUsername(dest) == NULL, "credential-only copy unexpectedly stored a username");
+    requireStringEquals(lineGetAuthenticatedPassword(dest), "uuid-password", "credential-only copy lost password");
+    require(lineGetAuthenticatedPassword(dest) != lineGetAuthenticatedPassword(src),
+            "credential-only copy did not duplicate password");
 
     testLineDestroy(dest);
     testLineDestroy(src);
@@ -143,6 +188,7 @@ int main(void)
     testUserHandleStoresPassedIdentifier();
     testLineUserRecording();
     testLineUserCopy();
+    testLineCredentialOnlyRecordingAndCopy();
 
     return 0;
 }

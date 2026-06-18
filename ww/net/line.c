@@ -6,6 +6,31 @@
 
 #include "loggers/internal_logger.h"
 
+static void lineReplaceAuthenticatedCredentials(line_t *const line, const char *username, const char *password)
+{
+    assert(line != NULL);
+
+    if (line->last_authenticated_user_username != NULL)
+    {
+        memoryFree((void *) line->last_authenticated_user_username);
+        line->last_authenticated_user_username = NULL;
+    }
+    if (username != NULL)
+    {
+        line->last_authenticated_user_username = stringDuplicate(username);
+    }
+
+    if (line->last_authenticated_user_password != NULL)
+    {
+        memoryFree((void *) line->last_authenticated_user_password);
+        line->last_authenticated_user_password = NULL;
+    }
+    if (password != NULL)
+    {
+        line->last_authenticated_user_password = stringDuplicate(password);
+    }
+}
+
 void lineAddUser(line_t *const line, const user_handle_t *user_handle, const char *username, const char *password)
 {
     assert(line != NULL);
@@ -28,25 +53,12 @@ void lineAddUser(line_t *const line, const user_handle_t *user_handle, const cha
 
     // Store the raw credentials so routers can match by username/password without
     // a users-table lookup. Replace any previously stored values.
-    if (line->last_authenticated_user_username != NULL)
-    {
-        memoryFree((void *) line->last_authenticated_user_username);
-        line->last_authenticated_user_username = NULL;
-    }
-    if (username != NULL)
-    {
-        line->last_authenticated_user_username = stringDuplicate(username);
-    }
+    lineReplaceAuthenticatedCredentials(line, username, password);
+}
 
-    if (line->last_authenticated_user_password != NULL)
-    {
-        memoryFree((void *) line->last_authenticated_user_password);
-        line->last_authenticated_user_password = NULL;
-    }
-    if (password != NULL)
-    {
-        line->last_authenticated_user_password = stringDuplicate(password);
-    }
+void lineSetAuthenticatedCredentials(line_t *const line, const char *username, const char *password)
+{
+    lineReplaceAuthenticatedCredentials(line, username, password);
 }
 
 void lineCopyUsers(line_t *const dest, const line_t *const src)
@@ -59,20 +71,19 @@ void lineCopyUsers(line_t *const dest, const line_t *const src)
         return;
     }
 
-    if (UNLIKELY(dest->user_count != 0))
+    if (UNLIKELY(dest->user_count != 0 || dest->last_authenticated_user_username != NULL ||
+                 dest->last_authenticated_user_password != NULL))
     {
-        LOGF("Line: attempted to copy users into a line that already has user markers");
+        LOGF("Line: attempted to copy users into a line that already has user markers or credentials");
         terminateProgram(1);
         return;
     }
 
-    if (src->user_count == 0)
+    if (src->user_count != 0)
     {
-        return;
+        memoryCopy(dest->user_handles, src->user_handles, sizeof(src->user_handles));
+        dest->user_count = src->user_count;
     }
-
-    memoryCopy(dest->user_handles, src->user_handles, sizeof(src->user_handles));
-    dest->user_count = src->user_count;
 
     // Carry the raw credentials onto the companion line as owned duplicates.
     if (src->last_authenticated_user_username != NULL)

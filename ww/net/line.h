@@ -216,9 +216,21 @@ static inline void lineDestroy(line_t *const l)
 void lineAddUser(line_t *const line, const user_handle_t *user_handle, const char *username, const char *password);
 
 /**
+ * @brief Store raw authenticated credentials without adding a user marker.
+ *
+ * This is for protocols that authenticated a peer but do not have a
+ * user_handle_t from AuthenticationClient. Existing credentials are replaced.
+ *
+ * @param line Pointer to the line.
+ * @param username Optional raw/resolved username; duplicated when non-NULL.
+ * @param password Optional raw/resolved password; duplicated when non-NULL.
+ */
+void lineSetAuthenticatedCredentials(line_t *const line, const char *username, const char *password);
+
+/**
  * @brief Copies all user markers from one line to a newly created companion line.
  *
- * The destination line must not already have user markers.
+ * The destination line must not already have user markers or credentials.
  *
  * @param dest Destination line.
  * @param src Source line.
