@@ -119,12 +119,6 @@ add_library(ww STATIC
     managers/node_manager.c
     managers/memory_manager.c
 
-    # Data of SocketManager
-    managers/data/iprange_mci.c
-    managers/data/iprange_irancell.c
-    managers/data/iprange_mokhaberat.c
-    managers/data/iprange_rightel.c
-    managers/data/iprange_iran.c
     
     # Loggers
     loggers/core_logger.c
