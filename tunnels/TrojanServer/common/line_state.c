@@ -10,6 +10,8 @@ void trojanserverLinestateInitialize(trojanserver_lstate_t *ls, tunnel_t *t, lin
         .pending_down         = bufferqueueCreate(kTrojanServerBufferQueueCap),
         .udp_remote_lines     = trojanserver_remote_map_t_with_capacity(kTrojanServerRemoteMapCap),
         .user_handle          = userHandleEmpty(),
+        .auth_username        = NULL,
+        .auth_password        = NULL,
         .remote_key           = 0,
         .phase                = kTrojanServerPhaseWaitInitial,
         .line_kind            = kind,
@@ -24,5 +26,13 @@ void trojanserverLinestateDestroy(trojanserver_lstate_t *ls)
     bufferstreamDestroy(&ls->in_stream);
     bufferqueueDestroy(&ls->pending_down);
     trojanserver_remote_map_t_drop(&ls->udp_remote_lines);
+    if (ls->auth_username != NULL)
+    {
+        memoryFree(ls->auth_username);
+    }
+    if (ls->auth_password != NULL)
+    {
+        memoryFree(ls->auth_password);
+    }
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }

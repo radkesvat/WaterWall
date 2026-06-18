@@ -284,8 +284,9 @@ static bool trojanserverAuthenticateHash(tunnel_t *t, line_t *l, const uint8_t s
         return false;
     }
 
-    user_handle_t handle = userHandleEmpty();
-    if (UNLIKELY(! authenticationclientGetUserBySHA224(ts->auth_client_tunnel, sha224, &handle)))
+    user_handle_t                       handle  = userHandleEmpty();
+    authenticationclient_user_profile_t profile = {0};
+    if (UNLIKELY(! authenticationclientGetUserBySHA224WithProfile(ts->auth_client_tunnel, sha224, &handle, &profile)))
     {
         if (ts->verbose)
         {
@@ -293,6 +294,22 @@ static bool trojanserverAuthenticateHash(tunnel_t *t, line_t *l, const uint8_t s
         }
         return false;
     }
+
+    // Resolve the account name/password in the same locked lookup that produced
+    // the handle and keep them on the line state so a downstream Router can match
+    // by username/password without re-querying the auth client. Ownership of the
+    // duplicated strings is transferred from the profile to the line state.
+    trojanserver_lstate_t *ls = lineGetState(l, t);
+    if (ls->auth_username != NULL)
+    {
+        memoryFree(ls->auth_username);
+    }
+    ls->auth_username = profile.name;
+    if (ls->auth_password != NULL)
+    {
+        memoryFree(ls->auth_password);
+    }
+    ls->auth_password = profile.password;
 
     *user_handle_out = handle;
     return true;
@@ -305,9 +322,7 @@ static void trojanserverRecordLineUser(line_t *l, trojanserver_lstate_t *ls, con
         return;
     }
 
-    // Trojan authenticates by a hashed password (SHA-224); the raw username and
-    // password are not available on the server side.
-    lineAddUser(l, user_handle, NULL, NULL);
+    lineAddUser(l, user_handle, ls->auth_username, ls->auth_password);
     ls->user_handle_recorded = true;
 }
 
@@ -378,6 +393,17 @@ static line_t *trojanserverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_
 
     lineGetRoutingContext(remote_l)->local_listener_port = lineGetRoutingContext(client_l)->local_listener_port;
     trojanserverApplyDestinationContext(remote_l, target, true);
+
+    // Carry the resolved credentials from the client line so the backend UDP line
+    // also surfaces them for downstream username/password routing.
+    if (client_ls->auth_username != NULL)
+    {
+        remote_ls->auth_username = stringDuplicate(client_ls->auth_username);
+    }
+    if (client_ls->auth_password != NULL)
+    {
+        remote_ls->auth_password = stringDuplicate(client_ls->auth_password);
+    }
     trojanserverRecordLineUser(remote_l, remote_ls, &remote_ls->user_handle);
 
     trojanserver_remote_map_t_insert(&client_ls->udp_remote_lines, remote_key, remote_l);

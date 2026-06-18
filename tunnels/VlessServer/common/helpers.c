@@ -87,7 +87,21 @@ static bool vlessserverAuthenticateUuid(tunnel_t *t, line_t *l, vlessserver_lsta
 
     if (ts->auth_client_tunnel == NULL)
     {
-        return vlessserverUuidAllowedByLocalList(t, l, uuid);
+        if (! vlessserverUuidAllowedByLocalList(t, l, uuid))
+        {
+            return false;
+        }
+
+        // No users database in local-list mode, so there is no account name; keep
+        // the canonical UUID as the raw password so a Router can still match by it.
+        if (ls->auth_password == NULL)
+        {
+            char uuid_password[kVlessServerCanonicalUuidStringLen + 1U] = {0};
+            vlessserverUuidToCanonicalString(uuid, uuid_password);
+            ls->auth_password = stringDuplicate(uuid_password);
+            wCryptoZero(uuid_password, sizeof(uuid_password));
+        }
+        return true;
     }
 
     if (userHandleIsValid(&ls->user_handle))
@@ -110,9 +124,10 @@ static bool vlessserverAuthenticateUuid(tunnel_t *t, line_t *l, vlessserver_lsta
     char uuid_password[kVlessServerCanonicalUuidStringLen + 1U] = {0};
     vlessserverUuidToCanonicalString(uuid, uuid_password);
 
-    user_handle_t                             handle = userHandleEmpty();
+    user_handle_t                             handle  = userHandleEmpty();
+    authenticationclient_user_profile_t       profile = {0};
     authenticationclient_user_lookup_result_t result =
-        authenticationclientGetUserByPasswordWithResult(ts->auth_client_tunnel, uuid_password, &handle);
+        authenticationclientGetUserByPasswordWithProfile(ts->auth_client_tunnel, uuid_password, &handle, &profile);
 
     wCryptoZero(uuid_password, sizeof(uuid_password));
 
@@ -127,19 +142,44 @@ static bool vlessserverAuthenticateUuid(tunnel_t *t, line_t *l, vlessserver_lsta
         return false;
     }
 
+    // Keep the resolved account name/password (from the same locked lookup) on the
+    // line state so a downstream Router can match by username/password. Ownership
+    // of the duplicated strings is transferred from the profile to the line state.
+    if (ls->auth_username != NULL)
+    {
+        memoryFree(ls->auth_username);
+    }
+    ls->auth_username = profile.name;
+    if (ls->auth_password != NULL)
+    {
+        memoryFree(ls->auth_password);
+    }
+    ls->auth_password = profile.password;
+
     ls->user_handle = handle;
     return true;
 }
 
 static void vlessserverRecordLineUser(line_t *l, vlessserver_lstate_t *ls)
 {
-    if (UNLIKELY(ls->user_handle_recorded || ! userHandleIsValid(&ls->user_handle)))
+    if (UNLIKELY(ls->user_handle_recorded))
     {
         return;
     }
 
-    // Vless authenticates by UUID; it carries no raw username/password.
-    lineAddUser(l, &ls->user_handle, NULL, NULL);
+    if (userHandleIsValid(&ls->user_handle))
+    {
+        lineAddUser(l, &ls->user_handle, ls->auth_username, ls->auth_password);
+    }
+    else if (ls->auth_username != NULL || ls->auth_password != NULL)
+    {
+        lineSetAuthenticatedCredentials(l, ls->auth_username, ls->auth_password);
+    }
+    else
+    {
+        return;
+    }
+
     ls->user_handle_recorded = true;
 }
 

@@ -59,6 +59,8 @@ typedef struct vlessserver_lstate_s
     buffer_stream_t         in_stream;
     buffer_queue_t          pending_down;
     user_handle_t           user_handle;
+    char                   *auth_username; // resolved account name, owned (NULL if none)
+    char                   *auth_password; // resolved raw password / UUID, owned (NULL if none)
     vlessserver_phase_t     phase;
     vlessserver_line_kind_t line_kind;
     bool                    client_line_locked;

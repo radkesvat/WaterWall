@@ -66,6 +66,8 @@ typedef struct trojanserver_lstate_s
     buffer_queue_t            pending_down;
     trojanserver_remote_map_t udp_remote_lines;
     user_handle_t             user_handle;
+    char                     *auth_username; // resolved account name, owned (NULL if none)
+    char                     *auth_password; // resolved raw password, owned (NULL if none)
     hash_t                    remote_key;
     trojanserver_phase_t      phase;
     trojanserver_line_kind_t  line_kind;
