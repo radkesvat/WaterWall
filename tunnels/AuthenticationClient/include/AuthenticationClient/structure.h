@@ -159,7 +159,6 @@ bool authenticationclientSendGetAllUsers(tunnel_t *t);
 bool authenticationclientSendPushUserStats(tunnel_t *t);
 bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authenticationclient_lstate_t *ls);
 
-
 static inline uint64_t authenticationclientLocalTimeMS(void)
 {
     return getHRTimeUs() / 1000ULL;

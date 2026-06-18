@@ -35,8 +35,7 @@ bool authenticationserverUserHasRequiredId(const user_t *user)
     return user != NULL && userGetId((user_t *) user) != 0;
 }
 
-const char *authenticationserverValidateUserIdentityBySHA256(tunnel_t *t,
-                                                             const uint8_t sha256[SHA256_DIGEST_SIZE],
+const char *authenticationserverValidateUserIdentityBySHA256(tunnel_t *t, const uint8_t sha256[SHA256_DIGEST_SIZE],
                                                              uint64_t expected_id)
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);

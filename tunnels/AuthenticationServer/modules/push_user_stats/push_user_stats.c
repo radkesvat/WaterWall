@@ -324,7 +324,7 @@ static bool authenticationserverPushStatsLoadHints(const uint8_t *request_data, 
 
 static bool authenticationserverPushStatsBuildDeltas(tunnel_t *t, authenticationserver_session_t *session,
                                                      const authenticationserver_stats_hint_list_t *hints,
-                                                     uint64_t server_now_ms,
+                                                     uint64_t                                      server_now_ms,
                                                      authenticationserver_stats_delta_t          **deltas_out,
                                                      size_t                                       *delta_count_out)
 {
@@ -455,7 +455,7 @@ static bool authenticationserverPushStatsApplyDeltas(tunnel_t *t, authentication
 }
 
 static bool authenticationserverPushStatsDeltasRequirePull(const authenticationserver_stats_delta_t *deltas,
-                                                           size_t delta_count)
+                                                           size_t                                    delta_count)
 {
     for (size_t i = 0; i < delta_count; ++i)
     {
@@ -472,9 +472,8 @@ static sbuf_t *authenticationserverPushStatsStatusResponse(
     tunnel_t *t, line_t *l, const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
     authenticationserver_session_t *session, size_t delta_count, bool force_needs_pull)
 {
-    authenticationserver_tstate_t *ts         = tunnelGetState(t);
-    const bool                     needs_pull = force_needs_pull ||
-                            session->baseline_config_revision != ts->store.config_revision ||
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    const bool needs_pull = force_needs_pull || session->baseline_config_revision != ts->store.config_revision ||
                             session->baseline_stats_revision != ts->store.stats_revision;
 
     cJSON *json = cJSON_CreateObject();
@@ -534,8 +533,8 @@ sbuf_t *authenticationserverPushUserStatsHandle(const uint8_t correlation_id[kAu
     const bool     config_was_current  = old_config_revision == ts->store.config_revision;
     const bool     stats_was_current   = old_stats_revision == ts->store.stats_revision;
 
-    if (UNLIKELY(! authenticationserverPushStatsBuildDeltas(
-            t, session, &hints, getTimeOfDayMS(), &deltas, &delta_count)))
+    if (UNLIKELY(
+            ! authenticationserverPushStatsBuildDeltas(t, session, &hints, getTimeOfDayMS(), &deltas, &delta_count)))
     {
         authenticationserverPushStatsHintListDestroy(&hints);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-stats-baseline");

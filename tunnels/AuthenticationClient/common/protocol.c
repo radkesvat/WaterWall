@@ -158,8 +158,7 @@ static user_t *authenticationclientLookupUserByStableKey(users_t *users, const u
 }
 
 static users_update_result_t authenticationclientAddTrafficByStableKey(users_t *users, const user_t *reference,
-                                                                       uint64_t upload_delta,
-                                                                       uint64_t download_delta)
+                                                                       uint64_t upload_delta, uint64_t download_delta)
 {
     if (reference->id != 0)
     {
@@ -205,8 +204,8 @@ static uint64_t authenticationclientServerExpireAt(const user_time_info_t *timei
     if (timeinfo->expire_after_first_usage_ms != USER_NO_EXPIRY && timeinfo->first_usage_at_ms != 0)
     {
         expire_at_ms = authenticationclientSmallestNonZero64(
-            expire_at_ms, authenticationclientSaturatingAdd(timeinfo->first_usage_at_ms,
-                                                            timeinfo->expire_after_first_usage_ms));
+            expire_at_ms,
+            authenticationclientSaturatingAdd(timeinfo->first_usage_at_ms, timeinfo->expire_after_first_usage_ms));
     }
 
     return expire_at_ms;
@@ -268,9 +267,8 @@ static void authenticationclientInstallClientViewExpiry(users_t *users, uint64_t
 
         user_time_info_t timeinfo = {0};
         userGetTimeInfo(user, &timeinfo);
-        userSetClientViewExpiry(user,
-                                authenticationclientClientViewExpireAt(&timeinfo, server_time_ms, client_now_ms),
-                                true);
+        userSetClientViewExpiry(
+            user, authenticationclientClientViewExpireAt(&timeinfo, server_time_ms, client_now_ms), true);
     }
 }
 
@@ -283,10 +281,10 @@ static void authenticationclientClearSessionLocked(authenticationclient_tstate_t
     rwlockWriteUnlock(&ts->users_lock);
 
     wCryptoZero(ts->token, sizeof(ts->token));
-    ts->authenticated  = false;
-    ts->auth_in_flight = false;
-    ts->pull_in_flight = false;
-    ts->push_in_flight = false;
+    ts->authenticated              = false;
+    ts->auth_in_flight             = false;
+    ts->pull_in_flight             = false;
+    ts->push_in_flight             = false;
     ts->first_usage_push_requested = false;
     ts->first_usage_push_deferred  = false;
 
@@ -1005,8 +1003,8 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
                                                      uint64_t config_revision, uint64_t stats_revision,
                                                      uint64_t revision_generation)
 {
-    authenticationclient_tstate_t *ts   = tunnelGetState(t);
-    cJSON                         *json = cJSON_ParseWithLength((const char *) data, data_len);
+    authenticationclient_tstate_t *ts             = tunnelGetState(t);
+    cJSON                         *json           = cJSON_ParseWithLength((const char *) data, data_len);
     uint64_t                       server_time_ms = 0;
     if (UNLIKELY(json == NULL))
     {
@@ -1319,7 +1317,7 @@ static void authenticationclientHandleResponseFrame(tunnel_t *t, line_t *l, uint
 
         bool retry_first_usage_push = false;
         mutexLock(&ts->control_mutex);
-        retry_first_usage_push          = ts->first_usage_push_deferred;
+        retry_first_usage_push         = ts->first_usage_push_deferred;
         ts->first_usage_push_deferred  = false;
         ts->first_usage_push_requested = retry_first_usage_push;
         mutexUnlock(&ts->control_mutex);
@@ -1563,7 +1561,7 @@ static void authenticationclientOpenControlLineOnWorker0(void *worker_ptr, void 
 
 void authenticationclientCloseControlLine(tunnel_t *t, line_t *l, bool propagate_finish)
 {
-    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    authenticationclient_tstate_t *ts      = tunnelGetState(t);
     const bool                     verbose = ts->verbose;
 
     mutexLock(&ts->control_mutex);
@@ -1580,8 +1578,7 @@ void authenticationclientCloseControlLine(tunnel_t *t, line_t *l, bool propagate
 
     if (verbose)
     {
-        LOGD("AuthenticationClient: closing control line propagate-finish=%s",
-             propagate_finish ? "true" : "false");
+        LOGD("AuthenticationClient: closing control line propagate-finish=%s", propagate_finish ? "true" : "false");
     }
 
     authenticationclient_lstate_t *ls = lineGetState(l, t);
@@ -1757,7 +1754,7 @@ static bool authenticationclientSyncJobDue(uint32_t now_ms, uint32_t *last_attem
 
 static bool authenticationclientUsersLoaded(tunnel_t *t)
 {
-    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    authenticationclient_tstate_t *ts           = tunnelGetState(t);
     bool                           users_loaded = false;
 
     rwlockReadLock(&ts->users_lock);

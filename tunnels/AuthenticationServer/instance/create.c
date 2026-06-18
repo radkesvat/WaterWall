@@ -100,7 +100,7 @@ static bool authenticationserverParseNormalBackups(authenticationserver_tstate_t
         return false;
     }
 
-    int count_limit =  kAuthenticationServerDefaultNormalBackupsCountLimit;
+    int count_limit = kAuthenticationServerDefaultNormalBackupsCountLimit;
     if (limit_json != NULL)
     {
         if (UNLIKELY(! cJSON_IsNumber(limit_json) || limit_json->valueint <= 0))

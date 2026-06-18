@@ -164,8 +164,7 @@ bool authenticationserverCopyUsersTable(users_t *dest, const users_t *src);
 bool authenticationserverSessionReplaceBaselineFromUsers(authenticationserver_session_t *session, const users_t *src,
                                                          uint64_t config_revision, uint64_t stats_revision);
 bool authenticationserverUserHasRequiredId(const user_t *user);
-const char *authenticationserverValidateUserIdentityBySHA256(tunnel_t *t,
-                                                             const uint8_t sha256[SHA256_DIGEST_SIZE],
+const char *authenticationserverValidateUserIdentityBySHA256(tunnel_t *t, const uint8_t sha256[SHA256_DIGEST_SIZE],
                                                              uint64_t expected_id);
 authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, const char *name, const char *secret);
 authenticationserver_session_t *authenticationserverSessionFindByTokenLocked(

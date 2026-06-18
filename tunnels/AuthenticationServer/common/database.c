@@ -300,8 +300,7 @@ static bool authenticationserverReadRequiredUserJsonId(const cJSON *user_json, u
 }
 
 static bool authenticationserverValidateUserJsonRequiredId(authenticationserver_user_id_list_t *ids,
-                                                           const cJSON                         *user_json,
-                                                           const char                          *path)
+                                                           const cJSON *user_json, const char *path)
 {
     const size_t index = ids->count;
     uint64_t     id    = 0;
@@ -323,12 +322,10 @@ static bool authenticationserverValidateUserJsonRequiredId(authenticationserver_
 }
 
 static bool authenticationserverValidateUsersJsonRequiredIds(authenticationserver_user_id_list_t *ids,
-                                                            const cJSON                         *json,
-                                                            const char                          *path);
+                                                             const cJSON *json, const char *path);
 
 static bool authenticationserverValidateUsersJsonArrayRequiredIds(authenticationserver_user_id_list_t *ids,
-                                                                 const cJSON                         *array,
-                                                                 const char                          *path)
+                                                                  const cJSON *array, const char *path)
 {
     const cJSON *entry = NULL;
 
@@ -344,8 +341,7 @@ static bool authenticationserverValidateUsersJsonArrayRequiredIds(authentication
 }
 
 static bool authenticationserverValidateUsersJsonObjectMapRequiredIds(authenticationserver_user_id_list_t *ids,
-                                                                     const cJSON                         *object,
-                                                                     const char                          *path)
+                                                                      const cJSON *object, const char *path)
 {
     const cJSON *entry = NULL;
 
@@ -361,8 +357,7 @@ static bool authenticationserverValidateUsersJsonObjectMapRequiredIds(authentica
 }
 
 static bool authenticationserverValidateUsersJsonRequiredIds(authenticationserver_user_id_list_t *ids,
-                                                            const cJSON                         *json,
-                                                            const char                          *path)
+                                                             const cJSON *json, const char *path)
 {
     if (UNLIKELY(json == NULL || cJSON_IsNull(json)))
     {
@@ -407,7 +402,7 @@ static bool authenticationserverValidateUsersJsonRequiredIds(authenticationserve
 static bool authenticationserverValidateDatabaseJsonRequiredIds(const cJSON *json, const char *path)
 {
     authenticationserver_user_id_list_t ids = {0};
-    bool                               ok  = authenticationserverValidateUsersJsonRequiredIds(&ids, json, path);
+    bool                                ok  = authenticationserverValidateUsersJsonRequiredIds(&ids, json, path);
 
     authenticationserverUserIdListDestroy(&ids);
     return ok;
