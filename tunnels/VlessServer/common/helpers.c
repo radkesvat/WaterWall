@@ -138,7 +138,8 @@ static void vlessserverRecordLineUser(line_t *l, vlessserver_lstate_t *ls)
         return;
     }
 
-    lineAddUser(l, &ls->user_handle);
+    // Vless authenticates by UUID; it carries no raw username/password.
+    lineAddUser(l, &ls->user_handle, NULL, NULL);
     ls->user_handle_recorded = true;
 }
 

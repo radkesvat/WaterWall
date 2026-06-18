@@ -39,7 +39,7 @@ void socks5serverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
-        if (! socks5serverLookupUdpAssociation(t, client_l, &ls->user_handle, &ls->association_key))
+        if (! socks5serverLookupUdpAssociation(t, client_l, &ls->user_handle, &ls->association_key, NULL, NULL))
         {
             lineReuseBuffer(l, buf);
             socks5serverCloseUdpRemoteLine(t, l);

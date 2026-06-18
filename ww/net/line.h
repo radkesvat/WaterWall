@@ -57,6 +57,13 @@ typedef struct line_s
     uint8_t           recalculate_checksum : 1; // used for packet tunnels
     routing_context_t routing_context;
 
+    // Raw credentials of the last authenticated user on this line, owned by the
+    // line. NULL means unknown / not authenticated. They are filled (duplicated)
+    // by lineAddUser() and freed on line teardown, letting routers match by
+    // username/password without a users-table lookup.
+    const char *last_authenticated_user_username;
+    const char *last_authenticated_user_password;
+
     generic_pool_t **pools;
 
     MSVC_ATTR_ALIGNED_LINE_CACHE uintptr_t *tunnels_line_state[] GNU_ATTR_ALIGNED_LINE_CACHE;
@@ -145,6 +152,15 @@ static inline void lineUnRefInternal(line_t *const l)
     {
         memoryFree(l->routing_context.dest_ctx.domain);
     }
+
+    if (l->last_authenticated_user_username != NULL)
+    {
+        memoryFree((void *) l->last_authenticated_user_username);
+    }
+    if (l->last_authenticated_user_password != NULL)
+    {
+        memoryFree((void *) l->last_authenticated_user_password);
+    }
     genericpoolReuseItem(l->pools[wid], l);
 }
 
@@ -194,8 +210,10 @@ static inline void lineDestroy(line_t *const l)
  *
  * @param line Pointer to the line.
  * @param user_handle Optional user handle.
+ * @param username Optional raw username; duplicated and stored when non-NULL.
+ * @param password Optional raw password; duplicated and stored when non-NULL.
  */
-void lineAddUser(line_t *const line, const user_handle_t *user_handle);
+void lineAddUser(line_t *const line, const user_handle_t *user_handle, const char *username, const char *password);
 
 /**
  * @brief Copies all user markers from one line to a newly created companion line.
@@ -225,6 +243,28 @@ const user_handle_t *lineGetCurrentUser(const line_t *const line);
 static inline bool lineIsAuthenticated(line_t *const line)
 {
     return line->user_count > 0;
+}
+
+/**
+ * @brief Get the raw username of the last authenticated user on the line.
+ *
+ * @param line Pointer to the line.
+ * @return const char* Username, or NULL if unknown / not authenticated.
+ */
+static inline const char *lineGetAuthenticatedUsername(const line_t *const line)
+{
+    return line->last_authenticated_user_username;
+}
+
+/**
+ * @brief Get the raw password of the last authenticated user on the line.
+ *
+ * @param line Pointer to the line.
+ * @return const char* Password, or NULL if unknown / not authenticated.
+ */
+static inline const char *lineGetAuthenticatedPassword(const line_t *const line)
+{
+    return line->last_authenticated_user_password;
 }
 
 /**

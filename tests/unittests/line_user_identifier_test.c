@@ -54,14 +54,14 @@ static void testAnonymousAuthentication(void)
     line_t        *line  = testLineCreate();
     user_handle_t empty = userHandleEmpty();
 
-    lineAddUser(line, NULL);
+    lineAddUser(line, NULL, NULL, NULL);
     require(lineIsAuthenticated(line), "NULL handle did not authenticate line");
     require(line->user_count == 1, "NULL handle did not increment line user count");
     require(! userHandleIsValid(&line->user_handles[0]), "NULL handle stored a valid user handle");
     require(line->user_handles[0].user_id == 0, "NULL handle assigned a user id");
     require(lineGetCurrentUser(line) == &line->user_handles[0], "current user did not point to first anonymous user");
 
-    lineAddUser(line, &empty);
+    lineAddUser(line, &empty, NULL, NULL);
     require(line->user_count == 2, "empty handle did not increment line user count");
     require(! userHandleIsValid(&line->user_handles[1]), "empty handle stored a valid user handle");
     require(line->user_handles[1].user_id == 0, "empty handle assigned a user id");
@@ -92,22 +92,22 @@ static void testLineUserRecording(void)
     line_t *line = testLineCreate();
     require(lineGetCurrentUser(line) == NULL, "empty line returned a current user");
 
-    lineAddUser(line, &first);
+    lineAddUser(line, &first, NULL, NULL);
     require(line->user_count == 1, "line user count did not increment for first user");
     requireUserHandleEquals(&line->user_handles[0], &first, "line did not record first user handle");
     require(lineGetCurrentUser(line) == &line->user_handles[0], "current user did not point to first user");
 
-    lineAddUser(line, &legacy);
+    lineAddUser(line, &legacy, NULL, NULL);
     require(line->user_count == 2, "line user count did not increment for legacy user");
     requireUserHandleEquals(&line->user_handles[1], &legacy, "line did not record legacy user handle");
     require(lineGetCurrentUser(line) == &line->user_handles[1], "current user did not point to legacy user");
 
-    lineAddUser(line, &second);
+    lineAddUser(line, &second, NULL, NULL);
     require(line->user_count == 3, "line user count did not increment for second user");
     requireUserHandleEquals(&line->user_handles[2], &second, "line did not record second user handle");
     require(lineGetCurrentUser(line) == &line->user_handles[2], "current user did not point to second user");
 
-    lineAddUser(line, &empty);
+    lineAddUser(line, &empty, NULL, NULL);
     require(line->user_count == kLineMaxUsers, "line did not allow exactly four user entries");
     require(! userHandleIsValid(&line->user_handles[3]), "line did not record anonymous user handle");
     require(line->user_handles[3].user_id == 0, "line did not record anonymous user marker");
@@ -124,8 +124,8 @@ static void testLineUserCopy(void)
     line_t *src  = testLineCreate();
     line_t *dest = testLineCreate();
 
-    lineAddUser(src, &first);
-    lineAddUser(src, &second);
+    lineAddUser(src, &first, NULL, NULL);
+    lineAddUser(src, &second, NULL, NULL);
 
     lineCopyUsers(dest, src);
     require(dest->user_count == src->user_count, "line user copy did not preserve user count");

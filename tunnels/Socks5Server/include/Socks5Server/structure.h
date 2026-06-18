@@ -14,6 +14,8 @@ typedef struct socks5server_assoc_entry_s
     uint64_t      token;
     wid_t         owner_wid;
     user_handle_t user_handle;
+    char         *auth_username; // raw SOCKS5 username, owned by the entry (NULL if none)
+    char         *auth_password; // raw SOCKS5 password, owned by the entry (NULL if none)
 } socks5server_assoc_entry_t;
 
 #define i_type socks5server_assoc_map_t   // NOLINT
@@ -88,6 +90,8 @@ typedef struct socks5server_lstate_s
     socks5server_remote_map_t udp_remote_lines;
     line_t                   *client_line;
     user_handle_t             user_handle;
+    char                     *auth_username; // raw SOCKS5 username, owned (NULL if none)
+    char                     *auth_password; // raw SOCKS5 password, owned (NULL if none)
     hash_t                    remote_key;
     hash_t                    association_key;
     uint64_t                  association_token;
@@ -149,7 +153,8 @@ void    socks5serverCloseUdpClientLine(tunnel_t *t, line_t *client_l);
 void    socks5serverCloseUdpRemoteLine(tunnel_t *t, line_t *remote_l);
 bool    socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lstate_t *ls, sbuf_t *buf);
 bool    socks5serverWrapUdpPayloadForClient(line_t *l, sbuf_t **buf_io, const address_context_t *addr_ctx);
-bool    socks5serverLookupUdpAssociation(tunnel_t *t, line_t *l, user_handle_t *user_handle_out, hash_t *key_out);
+bool    socks5serverLookupUdpAssociation(tunnel_t *t, line_t *l, user_handle_t *user_handle_out, hash_t *key_out,
+                                         char **username_out, char **password_out);
 void    socks5serverDetachRemoteFromClient(socks5server_lstate_t *remote_ls);
 void    socks5serverUnregisterUdpAssociation(tunnel_t *t, socks5server_lstate_t *ls);
 sbuf_t *socks5serverCreateCommandReply(line_t *l, uint8_t rep, const address_context_t *ctx);

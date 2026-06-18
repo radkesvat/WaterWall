@@ -305,7 +305,9 @@ static void trojanserverRecordLineUser(line_t *l, trojanserver_lstate_t *ls, con
         return;
     }
 
-    lineAddUser(l, user_handle);
+    // Trojan authenticates by a hashed password (SHA-224); the raw username and
+    // password are not available on the server side.
+    lineAddUser(l, user_handle, NULL, NULL);
     ls->user_handle_recorded = true;
 }
 

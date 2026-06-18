@@ -440,6 +440,35 @@ static uint64_t socks5serverNextAssociationToken(tunnel_t *t)
     return token;
 }
 
+// Store null-terminated copies of the raw SOCKS5 credentials on the line state,
+// replacing any previous values. The wire fields are length-prefixed and are not
+// null-terminated, so they are copied out into owned strings here.
+static void socks5serverStoreAuthCredentials(socks5server_lstate_t *ls, const uint8_t *username, uint8_t username_len,
+                                             const uint8_t *password, uint8_t password_len)
+{
+    if (ls->auth_username != NULL)
+    {
+        memoryFree(ls->auth_username);
+    }
+    ls->auth_username = memoryAllocate((size_t) username_len + 1U);
+    if (username_len > 0)
+    {
+        memoryCopy(ls->auth_username, username, username_len);
+    }
+    ls->auth_username[username_len] = '\0';
+
+    if (ls->auth_password != NULL)
+    {
+        memoryFree(ls->auth_password);
+    }
+    ls->auth_password = memoryAllocate((size_t) password_len + 1U);
+    if (password_len > 0)
+    {
+        memoryCopy(ls->auth_password, password, password_len);
+    }
+    ls->auth_password[password_len] = '\0';
+}
+
 static void socks5serverRecordLineUser(line_t *l, socks5server_lstate_t *ls, const user_handle_t *user_handle)
 {
     if (ls->user_handle_recorded)
@@ -447,8 +476,23 @@ static void socks5serverRecordLineUser(line_t *l, socks5server_lstate_t *ls, con
         return;
     }
 
-    lineAddUser(l, user_handle);
+    lineAddUser(l, user_handle, ls->auth_username, ls->auth_password);
     ls->user_handle_recorded = true;
+}
+
+// Free the owned credential strings carried by an association entry.
+static void socks5serverAssocEntryFreeCreds(socks5server_assoc_entry_t *entry)
+{
+    if (entry->auth_username != NULL)
+    {
+        memoryFree(entry->auth_username);
+        entry->auth_username = NULL;
+    }
+    if (entry->auth_password != NULL)
+    {
+        memoryFree(entry->auth_password);
+        entry->auth_password = NULL;
+    }
 }
 
 static bool socks5serverRegisterUdpAssociation(tunnel_t *t, line_t *l, const user_handle_t *user_handle,
@@ -474,14 +518,35 @@ static bool socks5serverRegisterUdpAssociation(tunnel_t *t, line_t *l, const use
     hash_t                      key   = socks5serverCalcAssociationKey(&key_ip, key_port, local_port);
     uint64_t                    token = socks5serverNextAssociationToken(t);
     socks5server_assoc_shard_t *shard = socks5serverGetAssocShard(t, key);
-    socks5server_assoc_entry_t  entry = {.token = token, .owner_wid = lineGetWID(l), .user_handle = *user_handle};
+
+    // Carry the authenticated user's raw credentials so UDP client/remote lines
+    // (which only learn the user_handle through this registry) can also surface
+    // them on their lines for downstream username/password routing.
+    const char *src_username = lineGetAuthenticatedUsername(l);
+    const char *src_password = lineGetAuthenticatedPassword(l);
+
+    socks5server_assoc_entry_t entry = {
+        .token         = token,
+        .owner_wid     = lineGetWID(l),
+        .user_handle   = *user_handle,
+        .auth_username = src_username != NULL ? stringDuplicate(src_username) : NULL,
+        .auth_password = src_password != NULL ? stringDuplicate(src_password) : NULL,
+    };
 
     rwlockWriteLock(&shard->lock);
+    // insert_or_assign overwrites any existing entry for this key in place; free
+    // the displaced entry's owned credentials first to avoid leaking them.
+    socks5server_assoc_map_t_iter existing = socks5server_assoc_map_t_find(&shard->map, key);
+    if (existing.ref != socks5server_assoc_map_t_end(&shard->map).ref)
+    {
+        socks5serverAssocEntryFreeCreds(&existing.ref->second);
+    }
     bool inserted = socks5server_assoc_map_t_insert_or_assign(&shard->map, key, entry).ref != NULL;
     rwlockWriteUnlock(&shard->lock);
 
     if (! inserted)
     {
+        socks5serverAssocEntryFreeCreds(&entry);
         return false;
     }
 
@@ -506,6 +571,7 @@ void socks5serverUnregisterUdpAssociation(tunnel_t *t, socks5server_lstate_t *ls
     // the same key, in which case its newer token owns the registry slot.
     if (it.ref != socks5server_assoc_map_t_end(&shard->map).ref && it.ref->second.token == ls->association_token)
     {
+        socks5serverAssocEntryFreeCreds(&it.ref->second);
         socks5server_assoc_map_t_erase_at(&shard->map, it);
     }
     rwlockWriteUnlock(&shard->lock);
@@ -514,7 +580,11 @@ void socks5serverUnregisterUdpAssociation(tunnel_t *t, socks5server_lstate_t *ls
     ls->association_token = 0;
 }
 
-static bool socks5serverLookupUdpAssociationByKey(tunnel_t *t, hash_t key, user_handle_t *user_handle_out)
+// Look up an association by key. When username_out/password_out are non-NULL,
+// duplicates of the entry's owned credentials are written there (NULL when the
+// entry has none); the caller owns the duplicates.
+static bool socks5serverLookupUdpAssociationByKey(tunnel_t *t, hash_t key, user_handle_t *user_handle_out,
+                                                  char **username_out, char **password_out)
 {
     socks5server_assoc_shard_t *shard = socks5serverGetAssocShard(t, key);
     bool                        found = false;
@@ -527,18 +597,38 @@ static bool socks5serverLookupUdpAssociationByKey(tunnel_t *t, hash_t key, user_
         // never returns 0); a zero here would mean a corrupted/uninitialized entry.
         assert(it.ref->second.token != 0);
         *user_handle_out = it.ref->second.user_handle;
-        found            = true;
+        if (username_out != NULL)
+        {
+            *username_out =
+                it.ref->second.auth_username != NULL ? stringDuplicate(it.ref->second.auth_username) : NULL;
+        }
+        if (password_out != NULL)
+        {
+            *password_out =
+                it.ref->second.auth_password != NULL ? stringDuplicate(it.ref->second.auth_password) : NULL;
+        }
+        found = true;
     }
     rwlockReadUnlock(&shard->lock);
 
     return found;
 }
 
-bool socks5serverLookupUdpAssociation(tunnel_t *t, line_t *l, user_handle_t *user_handle_out, hash_t *key_out)
+bool socks5serverLookupUdpAssociation(tunnel_t *t, line_t *l, user_handle_t *user_handle_out, hash_t *key_out,
+                                      char **username_out, char **password_out)
 {
     const address_context_t *src_ctx    = lineGetSourceAddressContext(l);
     const routing_context_t *route      = lineGetRoutingContext(l);
     uint16_t                 local_port = socks5serverGetLocalPort(l);
+
+    if (username_out != NULL)
+    {
+        *username_out = NULL;
+    }
+    if (password_out != NULL)
+    {
+        *password_out = NULL;
+    }
 
     if (! addresscontextIsIp(src_ctx) || local_port == 0)
     {
@@ -548,13 +638,14 @@ bool socks5serverLookupUdpAssociation(tunnel_t *t, line_t *l, user_handle_t *use
     hash_t exact_key    = socks5serverCalcAssociationKey(&src_ctx->ip_address, route->peer_source_port, local_port);
     hash_t fallback_key = socks5serverCalcAssociationKey(&src_ctx->ip_address, 0, local_port);
 
-    if (socks5serverLookupUdpAssociationByKey(t, exact_key, user_handle_out))
+    if (socks5serverLookupUdpAssociationByKey(t, exact_key, user_handle_out, username_out, password_out))
     {
         *key_out = exact_key;
         return true;
     }
 
-    if (fallback_key != exact_key && socks5serverLookupUdpAssociationByKey(t, fallback_key, user_handle_out))
+    if (fallback_key != exact_key &&
+        socks5serverLookupUdpAssociationByKey(t, fallback_key, user_handle_out, username_out, password_out))
     {
         *key_out = fallback_key;
         return true;
@@ -636,6 +727,17 @@ static line_t *socks5serverGetOrCreateUdpRemoteLine(tunnel_t *t, line_t *client_
 
     lineGetRoutingContext(remote_l)->local_listener_port = socks5serverGetLocalPort(client_l);
     socks5serverApplyDestinationContext(remote_l, target, true);
+
+    // Carry the authenticated credentials from the client line so the backend UDP
+    // line also surfaces them for downstream username/password routing.
+    if (client_ls->auth_username != NULL)
+    {
+        remote_ls->auth_username = stringDuplicate(client_ls->auth_username);
+    }
+    if (client_ls->auth_password != NULL)
+    {
+        remote_ls->auth_password = stringDuplicate(client_ls->auth_password);
+    }
     socks5serverRecordLineUser(remote_l, remote_ls, user_handle);
 
     socks5server_remote_map_t_insert(&client_ls->udp_remote_lines, remote_key, remote_l);
@@ -653,9 +755,13 @@ void socks5serverTunnelstateDestroy(socks5server_tstate_t *ts)
     socks5serverDestroyInternalUserController(ts);
     socks5serverClearInternalNode(&ts->user_controller_node);
 
-    // Registry entries hold no owned resources, only copied auth metadata.
+    // Free the per-entry owned credentials before dropping each shard's map.
     for (uint32_t i = 0; i < kSocks5ServerAssocShardCount; ++i)
     {
+        c_foreach(it, socks5server_assoc_map_t, ts->assoc_shards[i].map)
+        {
+            socks5serverAssocEntryFreeCreds(&it.ref->second);
+        }
         socks5server_assoc_map_t_drop(&ts->assoc_shards[i].map);
         rwlockDestroy(&ts->assoc_shards[i].lock);
     }
@@ -943,11 +1049,34 @@ bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lst
     const uint8_t    *raw       = sbufGetRawPtr(buf);
     size_t            len       = sbufGetLength(buf);
 
-    if (! socks5serverLookupUdpAssociation(t, l, &user_handle, &assoc_key))
+    // Only fetch the (duplicated) credentials the first time we record a user on
+    // this line; afterwards they already live on the line state.
+    bool  need_creds = ! ls->user_handle_recorded;
+    char *assoc_user = NULL;
+    char *assoc_pass = NULL;
+    if (! socks5serverLookupUdpAssociation(t, l, &user_handle, &assoc_key, need_creds ? &assoc_user : NULL,
+                                           need_creds ? &assoc_pass : NULL))
     {
         lineReuseBuffer(l, buf);
         socks5serverCloseUdpClientLine(t, l);
         return false;
+    }
+
+    if (need_creds)
+    {
+        // Transfer ownership of the looked-up credentials onto this UDP client line
+        // state so they surface on the line for downstream username/password
+        // routing; freed by the line-state destroy.
+        if (ls->auth_username != NULL)
+        {
+            memoryFree(ls->auth_username);
+        }
+        ls->auth_username = assoc_user;
+        if (ls->auth_password != NULL)
+        {
+            memoryFree(ls->auth_password);
+        }
+        ls->auth_password = assoc_pass;
     }
 
     if (len < 4 || raw[0] != 0 || raw[1] != 0)
@@ -1117,6 +1246,12 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
             user_handle_t  user_handle = userHandleEmpty();
             bool authenticated =
                 socks5serverAuthUserFromClient(t, l, raw + 2, head[1], raw + 3 + head[1], plen, &user_handle);
+            if (authenticated)
+            {
+                // Capture the raw credentials while the auth buffer is still valid
+                // (raw points into auth_buf, which is reused right below).
+                socks5serverStoreAuthCredentials(ls, raw + 2, head[1], raw + 3 + head[1], plen);
+            }
             lineReuseBuffer(l, auth_buf);
 
             sbuf_t *reply = socks5serverCreateAuthReply(l, authenticated ? 0x00 : 0x01);

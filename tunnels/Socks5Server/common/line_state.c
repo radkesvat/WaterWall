@@ -13,6 +13,8 @@ void socks5serverLinestateInitialize(socks5server_lstate_t *ls, tunnel_t *t, lin
         .udp_remote_lines  = socks5server_remote_map_t_with_capacity(kSocks5ServerRemoteMapCap),
         .client_line       = NULL,
         .user_handle       = userHandleEmpty(),
+        .auth_username     = NULL,
+        .auth_password     = NULL,
         .remote_key        = 0,
         .association_key   = 0,
         .association_token = 0,
@@ -31,5 +33,13 @@ void socks5serverLinestateDestroy(socks5server_lstate_t *ls)
     bufferqueueDestroy(&ls->pending_up);
     bufferqueueDestroy(&ls->pending_down);
     socks5server_remote_map_t_drop(&ls->udp_remote_lines);
+    if (ls->auth_username != NULL)
+    {
+        memoryFree(ls->auth_username);
+    }
+    if (ls->auth_password != NULL)
+    {
+        memoryFree(ls->auth_password);
+    }
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }

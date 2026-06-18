@@ -6,7 +6,7 @@
 
 #include "loggers/internal_logger.h"
 
-void lineAddUser(line_t *const line, const user_handle_t *user_handle)
+void lineAddUser(line_t *const line, const user_handle_t *user_handle, const char *username, const char *password)
 {
     assert(line != NULL);
 
@@ -25,6 +25,28 @@ void lineAddUser(line_t *const line, const user_handle_t *user_handle)
 
     line->user_handles[line->user_count] = stored_user;
     line->user_count += 1;
+
+    // Store the raw credentials so routers can match by username/password without
+    // a users-table lookup. Replace any previously stored values.
+    if (line->last_authenticated_user_username != NULL)
+    {
+        memoryFree((void *) line->last_authenticated_user_username);
+        line->last_authenticated_user_username = NULL;
+    }
+    if (username != NULL)
+    {
+        line->last_authenticated_user_username = stringDuplicate(username);
+    }
+
+    if (line->last_authenticated_user_password != NULL)
+    {
+        memoryFree((void *) line->last_authenticated_user_password);
+        line->last_authenticated_user_password = NULL;
+    }
+    if (password != NULL)
+    {
+        line->last_authenticated_user_password = stringDuplicate(password);
+    }
 }
 
 void lineCopyUsers(line_t *const dest, const line_t *const src)
@@ -51,6 +73,16 @@ void lineCopyUsers(line_t *const dest, const line_t *const src)
 
     memoryCopy(dest->user_handles, src->user_handles, sizeof(src->user_handles));
     dest->user_count = src->user_count;
+
+    // Carry the raw credentials onto the companion line as owned duplicates.
+    if (src->last_authenticated_user_username != NULL)
+    {
+        dest->last_authenticated_user_username = stringDuplicate(src->last_authenticated_user_username);
+    }
+    if (src->last_authenticated_user_password != NULL)
+    {
+        dest->last_authenticated_user_password = stringDuplicate(src->last_authenticated_user_password);
+    }
 }
 
 const user_handle_t *lineGetCurrentUser(const line_t *const line)
