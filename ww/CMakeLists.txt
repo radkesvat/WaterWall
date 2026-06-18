@@ -642,6 +642,27 @@ else()
 endif()
 
 
+# libmaxminddb library
+CPMAddPackage(
+    NAME maxminddb
+    GITHUB_REPOSITORY maxmind/libmaxminddb
+    GIT_TAG 1.13.3
+    OPTIONS
+        "BUILD_SHARED_LIBS OFF"
+        "BUILD_TESTING OFF"
+        "MAXMINDDB_BUILD_BINARIES OFF"
+        "MAXMINDDB_INSTALL OFF"
+)
+
+if(TARGET maxminddb::maxminddb)
+    list(APPEND LIBS maxminddb::maxminddb)
+elseif(TARGET maxminddb)
+    list(APPEND LIBS maxminddb)
+else()
+    message(FATAL_ERROR "libmaxminddb was added by CPM, but no maxminddb CMake target was created")
+endif()
+
+
 # LibSodium library
 CPMAddPackage(
     NAME libsodium
