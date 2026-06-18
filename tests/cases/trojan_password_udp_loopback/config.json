@@ -39,7 +39,7 @@
       "type": "TesterClient",
       "settings": {
         "max-payload-size": 1200,
-        "split-payload-burst": 1
+        "split-payload-burst": 4
       },
       "next": "trojan-client"
     },
@@ -127,7 +127,7 @@
       "type": "TesterServer",
       "settings": {
         "max-payload-size": 1200,
-        "split-payload-burst": 1
+        "split-payload-burst": 4
       }
     }
   ]
