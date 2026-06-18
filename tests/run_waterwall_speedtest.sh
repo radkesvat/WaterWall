@@ -54,9 +54,8 @@ show_stdout_on_success() {
 }
 
 finish_success() {
-  if show_stdout_on_success && [[ -f "$run_dir/stdout.log" ]]; then
-    echo "===== stdout.log ====="
-    cat "$run_dir/stdout.log"
+  if show_stdout_on_success; then
+    dump_logs
   fi
 
   exit 0

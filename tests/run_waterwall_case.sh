@@ -129,7 +129,7 @@ pid=$!
 deadline=$((SECONDS + timeout_seconds))
 
 while true; do
-  if grep -Eq "$TESTER_SUCCESS_REGEX" "$run_dir"/log/network*.log 2>/dev/null; then
+  if grep -Eq "$TESTER_SUCCESS_REGEX" "$run_dir"/log/network*.log /dev/null 2>/dev/null; then
     success_seen=1
     break
   fi
@@ -140,7 +140,7 @@ while true; do
     status=$?
     set -e
 
-    if grep -Eq "$TESTER_SUCCESS_REGEX" "$run_dir"/log/network*.log 2>/dev/null; then
+    if grep -Eq "$TESTER_SUCCESS_REGEX" "$run_dir"/log/network*.log /dev/null 2>/dev/null; then
       success_seen=1
     fi
 
