@@ -181,6 +181,7 @@ option(INCLUDE_TLS_CLIENT               "link TLSClient staticly to the core"   
 option(INCLUDE_TLS_SERVER               "link TLSServer staticly to the core"                TRUE)
 option(INCLUDE_TROJAN_CLIENT            "link TrojanClient staticly to the core"             TRUE)
 option(INCLUDE_TROJAN_SERVER            "link TrojanServer staticly to the core"             TRUE)
+option(INCLUDE_VLESS_CLIENT             "link VlessClient staticly to the core"              TRUE)
 option(INCLUDE_VLESS_SERVER             "link VlessServer staticly to the core"              TRUE)
 option(INCLUDE_TROJAN_AUTH_SERVER       "link TrojanAuthServer staticly to the core"         FALSE)
 option(INCLUDE_TROJAN_SOCKS_SERVER      "link TrojanSocksServer staticly to the core"        FALSE)
@@ -770,6 +771,14 @@ if(INCLUDE_TROJAN_CLIENT)
   target_link_libraries(Waterwall TrojanClient)
 endif()
 
+#vless client
+if(INCLUDE_VLESS_CLIENT)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_VLESS_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/VlessClient)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/VlessClient)
+  target_link_libraries(Waterwall VlessClient)
+endif()
+
 #trojan server
 if(INCLUDE_TROJAN_SERVER)
   if(NOT INCLUDE_USER_CONTROLLER)
@@ -783,6 +792,9 @@ endif()
 
 #vless server
 if(INCLUDE_VLESS_SERVER)
+  if(NOT INCLUDE_USER_CONTROLLER)
+    message(FATAL_ERROR "VlessServer requires INCLUDE_USER_CONTROLLER because auth mode creates an internal UserController")
+  endif()
   target_compile_definitions(Waterwall PUBLIC INCLUDE_VLESS_SERVER=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/VlessServer)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/VlessServer)

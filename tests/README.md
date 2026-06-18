@@ -128,6 +128,21 @@ Practical rule:
 - `trojan_dest_protocol_udp_loopback`
   Verifies `TrojanClient(protocol=dest_context->protocol)` preserves an incoming UDP destination context and completes
   Trojan UDP packet wrapping/unwrapping through `TrojanServer`.
+- `vless_uuid_tcp_loopback`
+  Verifies `VlessClient(uuid=...)` sends a plain VLESS v0 TCP request to `VlessServer`, validates the `00 00` response
+  header, preserves an incoming TCP destination context, and reaches a separate tester TCP listener through the local
+  UUID allowlist mode.
+- `vless_uuid_udp_loopback`
+  Verifies `VlessClient(protocol=dest_context->protocol)` sends a plain VLESS v0 UDP request to `VlessServer`, validates
+  the response header, wraps datagrams as `uint16_be length + payload`, and reaches a separate UDP tester listener
+  through the local UUID allowlist mode.
+- `vless_auth_tcp_loopback`
+  Verifies `VlessServer(auth-client-node-name=...)` converts the wire UUID to the canonical UUID password string,
+  authenticates through `AuthenticationClient -> AuthenticationServer`, inserts its internal `UserController`, and
+  completes a VLESS TCP request.
+- `vless_auth_udp_loopback`
+  Verifies the same database-backed VLESS authentication path for UDP, including the internal TCP carrier and backend
+  UDP line carrying the authenticated user marker into `UserController`.
 - `udp_over_tcp_roundtrip`
   Verifies that `UdpOverTcpClient` and `UdpOverTcpServer` preserve end-to-end byte stream integrity through their
   length-prefixed framing.

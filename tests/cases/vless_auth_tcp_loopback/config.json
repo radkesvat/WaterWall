@@ -1,0 +1,111 @@
+{
+  "name": "vless-auth-tcp-loopback",
+  "nodes": [
+    {
+      "name": "auth-client",
+      "type": "AuthenticationClient",
+      "settings": {
+        "name": "edge-1",
+        "secret": "vless-auth-secret",
+        "ping-interval-ms": 0,
+        "pull-interval-ms": 0,
+        "push-interval-ms": 0,
+        "reconnect-interval-ms": 1000,
+        "request-timeout-ms": 5000,
+        "max-pending-requests": 16
+      },
+      "next": "auth-db"
+    },
+    {
+      "name": "auth-db",
+      "type": "AuthenticationServer",
+      "settings": {
+        "db-path": "users.json",
+        "file-save-rate-ms": 60000,
+        "session-idle-timeout-ms": 600000,
+        "auth-clients": [
+          {
+            "name": "edge-1",
+            "secret": "vless-auth-secret",
+            "allow-user-pull": true,
+            "allow-stats-push": true,
+            "allow-user-write": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "vless-client"
+    },
+    {
+      "name": "vless-client",
+      "type": "VlessClient",
+      "settings": {
+        "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+        "address": "localhost",
+        "port": 42841,
+        "protocol": "tcp",
+        "domain-strategy": "resolve-domains-and-use-only-ipv4"
+      },
+      "next": "proxy-connector"
+    },
+    {
+      "name": "proxy-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42840,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "proxy-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42840,
+        "nodelay": true
+      },
+      "next": "vless-server"
+    },
+    {
+      "name": "vless-server",
+      "type": "VlessServer",
+      "settings": {
+        "auth-client-node-name": "auth-client",
+        "connect": true,
+        "udp": false
+      },
+      "next": "target-connector"
+    },
+    {
+      "name": "target-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "target-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42841,
+        "nodelay": true
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}
