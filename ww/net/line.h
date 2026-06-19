@@ -445,6 +445,11 @@ void lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_
 /**
  * @brief Schedule a delayed no-buffer task on the line's worker thread.
  *
+ * Delayed tasks are independent timer submissions; ordering is not guaranteed
+ * between multiple delayed tasks, even when they use the same delay. If ordered
+ * delivery matters, schedule one drain task and keep the ordered items in a
+ * buffer_queue_t or another explicit FIFO owned by the tunnel line state.
+ *
  * @param line Target line.
  * @param task Task callback.
  * @param delay_ms Minimum delay before execution.
@@ -454,6 +459,11 @@ void lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t 
 
 /**
  * @brief Schedule a delayed task with a buffer on the line's worker thread.
+ *
+ * Delayed tasks are independent timer submissions; ordering is not guaranteed
+ * between multiple delayed tasks, even when they use the same delay. If ordered
+ * delivery matters, schedule one drain task and keep the ordered items in a
+ * buffer_queue_t or another explicit FIFO owned by the tunnel line state.
  *
  * @param line Target line.
  * @param task Task callback.
