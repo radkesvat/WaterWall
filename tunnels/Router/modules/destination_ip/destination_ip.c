@@ -46,10 +46,8 @@ bool routerDestinationIpMatch(const router_rule_t *rule, const router_match_ctx_
 
     const address_context_t *dest = lineGetDestinationAddressContext(mctx->line);
     return routerIpRangesMatch(dest, rule->destination_ip.ranges, rule->destination_ip.ranges_count) ||
-           routerGeoipCodesMatch(mctx->router_state,
-                                 dest,
-                                 rule->destination_ip.geoip_codes,
-                                 rule->destination_ip.geoip_codes_count);
+           routerGeoipCodesMatch(
+               mctx->router_state, dest, rule->destination_ip.geoip_codes, rule->destination_ip.geoip_codes_count);
 }
 
 void routerDestinationIpDestroy(router_rule_t *rule)
@@ -62,5 +60,5 @@ void routerDestinationIpDestroy(router_rule_t *rule)
     }
     rule->destination_ip.ranges_count = 0;
     routerGeoipCodesDestroy(&rule->destination_ip.geoip_codes, &rule->destination_ip.geoip_codes_count);
-    rule->destination_ip.present      = false;
+    rule->destination_ip.present = false;
 }
