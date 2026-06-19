@@ -168,8 +168,8 @@ static bool routerGeoipCodeParse(const char *pattern, router_geoip_code_t *out, 
     return true;
 }
 
-bool routerGeoipCodesParse(const router_string_list_t *patterns, router_geoip_code_t **out_codes,
-                           uint32_t *out_count, const char *json_path)
+bool routerGeoipCodesParse(const router_string_list_t *patterns, router_geoip_code_t **out_codes, uint32_t *out_count,
+                           const char *json_path)
 {
     *out_codes = NULL;
     *out_count = 0;
@@ -223,6 +223,28 @@ bool routerRuleTableNeedsGeoip(const router_tstate_t *ts)
             return true;
         }
     }
+    return false;
+}
+
+bool routerRuleTableNeedsGeosite(const router_tstate_t *ts)
+{
+    for (uint32_t i = 0; i < ts->rules_count; ++i)
+    {
+        const router_rule_t *rule = &ts->rules[i];
+        if (! rule->destination_domain.present)
+        {
+            continue;
+        }
+
+        for (uint32_t j = 0; j < rule->destination_domain.patterns.count; ++j)
+        {
+            if (routerHasPrefix(rule->destination_domain.patterns.items[j], "geosite:"))
+            {
+                return true;
+            }
+        }
+    }
+
     return false;
 }
 
@@ -709,7 +731,7 @@ static bool routerHostEquals(const uint8_t *host, uint32_t host_len, const char 
 
 bool routerDomainMatches(const char *pattern, const uint8_t *host, uint32_t host_len)
 {
-    // geosite rules are accepted but not implemented yet: they never match.
+    // Geosite tokens are resolved into compiled list handles during Router creation.
     if (routerHasPrefix(pattern, "geosite:"))
     {
         return false;

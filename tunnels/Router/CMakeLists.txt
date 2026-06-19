@@ -1,5 +1,6 @@
 add_library(Router STATIC
     common/classifier.c
+    common/geosite_db.c
     common/line_state.c
     common/match_helpers.c
     common/rules.c

@@ -48,11 +48,38 @@ bool routerDestinationDomainMatch(const router_rule_t *rule, const router_match_
         }
     }
 
+    if (rule->destination_domain.geosite_lists_count == 0)
+    {
+        return false;
+    }
+
+    router_geosite_host_cache_t        local_geosite_host = {0};
+    const router_geosite_host_cache_t *geosite_host       = &mctx->geosite_host;
+    if (! geosite_host->ready)
+    {
+        routerGeositeHostCachePrepare(&local_geosite_host, host, host_len);
+        geosite_host = &local_geosite_host;
+    }
+
+    for (uint32_t i = 0; i < rule->destination_domain.geosite_lists_count; ++i)
+    {
+        if (routerGeositeCompiledListMatchesPrepared(rule->destination_domain.geosite_lists[i], geosite_host))
+        {
+            return true;
+        }
+    }
+
     return false;
 }
 
 void routerDestinationDomainDestroy(router_rule_t *rule)
 {
     routerStringListDestroy(&rule->destination_domain.patterns);
-    rule->destination_domain.present = false;
+    if (rule->destination_domain.geosite_lists != NULL)
+    {
+        memoryFree(rule->destination_domain.geosite_lists);
+        rule->destination_domain.geosite_lists = NULL;
+    }
+    rule->destination_domain.geosite_lists_count = 0;
+    rule->destination_domain.present             = false;
 }

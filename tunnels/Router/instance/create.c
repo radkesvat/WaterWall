@@ -55,6 +55,12 @@ tunnel_t *routerTunnelCreate(node_t *node)
         return NULL;
     }
 
+    if (! routerGeositeOpenIfNeeded(ts, settings))
+    {
+        routerTunnelDestroy(t);
+        return NULL;
+    }
+
     if (! routerGeoipOpenIfNeeded(ts, settings))
     {
         routerTunnelDestroy(t);
