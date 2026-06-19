@@ -75,8 +75,6 @@ typedef struct sniffrouter_lstate_s
     sbuf_t   *pending;       // bytes buffered before a routing decision is made
     tunnel_t *target;        // selected route tunnel; NULL means normal next branch
     uint8_t   decided;       // enum sniffrouter_route_e
-    bool      next_finished; // finish already propagated to the chosen upstream branch
-    bool      prev_finished; // finish already propagated downstream to prev (TlsServer)
 } sniffrouter_lstate_t;
 
 enum

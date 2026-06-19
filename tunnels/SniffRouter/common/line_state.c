@@ -3,11 +3,9 @@
 void sniffrouterLinestateInitialize(sniffrouter_lstate_t *ls)
 {
     *ls = (sniffrouter_lstate_t) {
-        .pending       = NULL,
-        .target        = NULL,
-        .decided       = kSniffRouteUndecided,
-        .next_finished = false,
-        .prev_finished = false,
+        .pending = NULL,
+        .target  = NULL,
+        .decided = kSniffRouteUndecided,
     };
 }
 

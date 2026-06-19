@@ -51,12 +51,6 @@ void routerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     router_tstate_t *ts = tunnelGetState(t);
     router_lstate_t *ls = lineGetState(l, t);
 
-    if (ls->prev_finished || ls->next_finished)
-    {
-        lineReuseBuffer(l, buf);
-        return;
-    }
-
     if (ls->decided != kRouterRouteUndecided)
     {
         forwardSelectedPayload(t, l, ls, buf);

@@ -51,12 +51,6 @@ void sniffrouterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     sniffrouter_tstate_t *ts = tunnelGetState(t);
     sniffrouter_lstate_t *ls = lineGetState(l, t);
 
-    if (ls->prev_finished || ls->next_finished)
-    {
-        lineReuseBuffer(l, buf);
-        return;
-    }
-
     if (ls->decided != kSniffRouteUndecided)
     {
         forwardSelectedPayload(t, l, ls, buf);

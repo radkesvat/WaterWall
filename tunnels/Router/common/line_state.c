@@ -3,11 +3,9 @@
 void routerLinestateInitialize(router_lstate_t *ls)
 {
     *ls = (router_lstate_t) {
-        .pending       = NULL,
-        .target        = NULL,
-        .decided       = kRouterRouteUndecided,
-        .next_finished = false,
-        .prev_finished = false,
+        .pending = NULL,
+        .target  = NULL,
+        .decided = kRouterRouteUndecided,
     };
 }
 
