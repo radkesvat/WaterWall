@@ -95,12 +95,13 @@ connection to `next` (a warning is logged at startup), but if `sniffing` is
 enabled it may first inspect the initial payload to fill `dest_ctx.domain`.
 
 `geosite-db-path` is validated and loaded only when at least one parsed rule uses
-a `geosite:` token. Missing, empty, unreadable, invalid JSON database paths, or
-references to unknown list names fail Router creation. Router resolves referenced
-list names once at startup, compiles only those lists into exact-domain and
-suffix-domain hash sets, then releases the raw JSON-loaded database. `full`,
-`domain`, and `plain` GeoSite entries are supported. `regex` entries are skipped
-with a warning because Router does not ship a regex engine for GeoSite matching.
+a `geosite:` token. Missing, empty, unreadable, invalid JSON database paths,
+invalid GeoSite regex patterns, or references to unknown list names fail Router
+creation. Router resolves referenced list names once at startup, compiles only
+those lists into exact-domain and suffix-domain hash sets, plain substring
+patterns, and STC `cregex` regex programs, then releases the raw JSON-loaded
+database. `full`, `domain`, `plain`, and `regex` GeoSite entries are supported.
+Regex matching is case-insensitive and uses STC `cregex` syntax.
 
 ### Sniffing
 
@@ -186,7 +187,7 @@ rule are ignored with a warning.
 | `protocol` | stub (matches all) | string or array | detected/known protocol, e.g. `http`, `tls`, `quic`, `bittorrent` |
 | `attributes` | stub (matches all) | array | reserved for future metadata-based matching (parsed but unused) |
 | `destination-ip` | functional | string or array | matches the line destination IP (`dest_ctx`) against single IPs, CIDR ranges, or MaxMind country tokens such as `geoip:us`. Numeric and GeoIP entries are OR-combined inside this field. A domain destination has no IP and does not match |
-| `destination-domain` | functional | string or array | matches the line destination domain (`dest_ctx.domain`), case-insensitive: exact (`google.com`), wildcard (`*.google.com`, subdomains only), `*` (any), or compiled GeoSite lists such as `geosite:cn`. GeoSite `domain` rules match the root and subdomains; `full` rules match exactly; `plain` rules match by substring; `regex` rules are skipped |
+| `destination-domain` | functional | string or array | matches the line destination domain (`dest_ctx.domain`), case-insensitive: exact (`google.com`), wildcard (`*.google.com`, subdomains only), `*` (any), or compiled GeoSite lists such as `geosite:cn`. GeoSite `domain` rules match the root and subdomains; `full` rules match exactly; `plain` rules match by substring; `regex` rules use STC `cregex` syntax |
 | `username` | functional | string or array | exact, case-sensitive match of the authenticated user's raw username stored on the line. No authenticated username → no match |
 | `password` | functional | string or array | exact, case-sensitive match of the authenticated user's raw password stored on the line. No authenticated password → no match |
 | `destination-port` | functional | number/string or array | matches the line destination port (`dest_ctx.port`) against single ports and ranges, e.g. `53`, `443`, `1000-2000` |

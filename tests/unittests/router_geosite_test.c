@@ -201,6 +201,8 @@ static void *geositeThreadSafetyReader(void *userdata)
                                      probe->list, "asset-cdn.example", stringLength("asset-cdn.example"));
         probe->ok =
             probe->ok && ! routerGeositeCompiledListMatches(probe->list, "badazure.com", stringLength("badazure.com"));
+        probe->ok = probe->ok && routerGeositeCompiledListMatches(
+                                     probe->list, "ignored.example", stringLength("ignored.example"));
     }
 
     return NULL;
@@ -214,7 +216,9 @@ static const char *validGeositeJson(void)
            "\"value\":true}]},"
            "{\"type\":\"full\",\"value\":\"login.azure.com\",\"attributes\":[]},"
            "{\"type\":\"plain\",\"value\":\"cdn\",\"attributes\":[]},"
-           "{\"type\":\"regex\",\"value\":\"^ignored\\\\.example$\",\"attributes\":[]}"
+           "{\"type\":\"regex\",\"value\":\"^ignored\\\\.example$\",\"attributes\":[]},"
+           "{\"type\":\"regex\",\"value\":\"^speed\\\\.[a-z]{2,6}\\\\.example$\",\"attributes\":[]},"
+           "{\"type\":\"regex\",\"value\":\"^lazy[0-9]{2}?\\\\.example$\",\"attributes\":[]}"
            "]},"
            "{\"name\":\"cn\",\"code\":null,\"file_path\":null,\"resource_hash\":null,\"domains\":["
            "{\"type\":\"domain\",\"value\":\"example.cn\",\"attributes\":[]}"
@@ -291,8 +295,15 @@ static void testCompiledGeositeMatchesSupportedRuleTypes(void)
     require(ruleMatchesDomain(&ts, &rule, "www.azure.com"), "domain geosite rule did not match subdomain");
     require(ruleMatchesDomain(&ts, &rule, "AZURE.COM."), "geosite host normalization did not match root domain");
     require(ruleMatchesDomain(&ts, &rule, "asset-cdn.example"), "plain geosite rule did not match substring");
+    require(ruleMatchesDomain(&ts, &rule, "ignored.example"), "regex geosite rule did not match exact host");
+    require(ruleMatchesDomain(&ts, &rule, "IGNORED.EXAMPLE"), "regex geosite rule was not case-insensitive");
+    require(ruleMatchesDomain(&ts, &rule, "speed.abcde.example"), "regex geosite bounded repetition did not match");
+    require(ruleMatchesDomain(&ts, &rule, "lazy12.example"), "regex geosite lazy bounded repetition did not match");
     require(! ruleMatchesDomain(&ts, &rule, "badazure.com"), "domain geosite rule matched a partial suffix");
-    require(! ruleMatchesDomain(&ts, &rule, "ignored.example"), "skipped regex geosite rule matched unexpectedly");
+    require(! ruleMatchesDomain(&ts, &rule, "speed.abcdefg.example"),
+            "regex geosite bounded repetition matched too many characters");
+    require(! ruleMatchesDomain(&ts, &rule, "lazy1.example"),
+            "regex geosite lazy bounded repetition matched too few characters");
 
     routerDestinationDomainDestroy(&rule);
     routerGeositeClose(&ts);
@@ -470,6 +481,29 @@ static void testInvalidJsonFailsAndCleansState(void)
     remove(path);
 }
 
+static void testInvalidRegexFailsAndCleansState(void)
+{
+    char path[256];
+    makeTestPath(path, sizeof(path), "invalid_regex");
+
+    const char *json =
+        "{\"format\":\"waterwall-router-geosite-v1\",\"lists\":[{\"name\":\"broken\",\"domains\":[{\"type\":"
+        "\"regex\",\"value\":\"(\",\"attributes\":[]}]}]}";
+    writeTestFile(path, json);
+
+    router_rule_t   rule     = parseDestinationDomainRule("{\"destination-domain\":\"geosite:broken\"}");
+    router_tstate_t ts       = geositeStateWithRule(&rule);
+    cJSON          *settings = settingsWithPath(path);
+
+    require(! routerGeositeOpenIfNeeded(&ts, settings), "invalid geosite regex was accepted");
+    require(ts.geosite_lists == NULL, "compiled geosite lists leaked after invalid regex");
+    require(ts.geosite_db_path == NULL, "geosite DB path leaked after invalid regex");
+
+    routerDestinationDomainDestroy(&rule);
+    cJSON_Delete(settings);
+    remove(path);
+}
+
 static void testEmptyGeositeTokenFails(void)
 {
     char path[256];
@@ -498,6 +532,7 @@ int main(void)
     testCompiledGeositeStcReadLookupsDoNotMutateSets();
     testDomainlessDestinationDoesNotMatch();
     testInvalidJsonFailsAndCleansState();
+    testInvalidRegexFailsAndCleansState();
     testEmptyGeositeTokenFails();
 
     return 0;
