@@ -711,6 +711,427 @@ static bool geositeCompiledListAddPlainRule(router_geosite_compiled_list_t *comp
     return true;
 }
 
+typedef struct geosite_regex_builder_s
+{
+    char    *data;
+    uint32_t len;
+    uint32_t cap;
+} geosite_regex_builder_t;
+
+enum
+{
+    kGeositeRegexMaxExpandedRepeat = UINT8_MAX
+};
+
+static void geositeRegexBuilderDestroy(geosite_regex_builder_t *builder)
+{
+    if (builder->data != NULL)
+    {
+        memoryFree(builder->data);
+        builder->data = NULL;
+    }
+    builder->len = 0;
+    builder->cap = 0;
+}
+
+static bool geositeRegexBuilderReserve(geosite_regex_builder_t *builder, uint32_t extra)
+{
+    if (extra > UINT32_MAX - builder->len - 1U)
+    {
+        LOGF("Router: normalized GeoSite regex is too large");
+        return false;
+    }
+
+    uint32_t need = builder->len + extra + 1U;
+    if (need <= builder->cap)
+    {
+        return true;
+    }
+
+    uint32_t cap = builder->cap == 0 ? 64U : builder->cap;
+    while (cap < need)
+    {
+        if (cap > UINT32_MAX / 2U)
+        {
+            cap = need;
+            break;
+        }
+        cap *= 2U;
+    }
+
+    char *data = builder->data == NULL ? memoryAllocate(cap) : memoryReAllocate(builder->data, cap);
+    if (UNLIKELY(data == NULL))
+    {
+        LOGF("Router: failed to allocate normalized GeoSite regex");
+        return false;
+    }
+
+    builder->data = data;
+    builder->cap  = cap;
+    return true;
+}
+
+static bool geositeRegexBuilderAppend(geosite_regex_builder_t *builder, const char *data, uint32_t len)
+{
+    if (! geositeRegexBuilderReserve(builder, len))
+    {
+        return false;
+    }
+
+    if (len > 0)
+    {
+        memoryCopy(builder->data + builder->len, data, len);
+        builder->len += len;
+    }
+    builder->data[builder->len] = '\0';
+    return true;
+}
+
+static bool geositeRegexBuilderAppendChar(geosite_regex_builder_t *builder, char c)
+{
+    return geositeRegexBuilderAppend(builder, &c, 1U);
+}
+
+static bool geositeRegexParseNumber(const char *pattern, uint32_t len, uint32_t *index, uint32_t *out)
+{
+    uint32_t i = *index;
+    if (i >= len || pattern[i] < '0' || pattern[i] > '9')
+    {
+        return false;
+    }
+
+    uint32_t value = 0;
+    while (i < len && pattern[i] >= '0' && pattern[i] <= '9')
+    {
+        uint32_t digit = (uint32_t) (pattern[i] - '0');
+        if (value > (UINT32_MAX - digit) / 10U)
+        {
+            return false;
+        }
+        value = (value * 10U) + digit;
+        ++i;
+    }
+
+    *index = i;
+    *out   = value;
+    return true;
+}
+
+static bool geositeRegexParseBoundedRepeat(const char *pattern, uint32_t len, uint32_t open_index,
+                                           bool *out_is_repeat, uint32_t *out_end, uint32_t *out_min,
+                                           uint32_t *out_max, bool *out_unbounded)
+{
+    *out_is_repeat = false;
+    *out_unbounded = false;
+    *out_min       = 0;
+    *out_max       = 0;
+    *out_end       = open_index + 1U;
+
+    uint32_t i   = open_index + 1U;
+    uint32_t min = 0;
+    if (! geositeRegexParseNumber(pattern, len, &i, &min))
+    {
+        return true;
+    }
+
+    uint32_t max       = min;
+    bool     unbounded = false;
+    if (i < len && pattern[i] == ',')
+    {
+        ++i;
+        if (i < len && pattern[i] == '}')
+        {
+            unbounded = true;
+        }
+        else if (! geositeRegexParseNumber(pattern, len, &i, &max))
+        {
+            return true;
+        }
+    }
+
+    if (i >= len || pattern[i] != '}')
+    {
+        return true;
+    }
+
+    if (! unbounded && max < min)
+    {
+        LOGF("Router: GeoSite regex \"%s\" has a bounded repeat with max smaller than min", pattern);
+        return false;
+    }
+
+    if (min > kGeositeRegexMaxExpandedRepeat || (! unbounded && max > kGeositeRegexMaxExpandedRepeat))
+    {
+        LOGF("Router: GeoSite regex \"%s\" has a bounded repeat larger than %u",
+             pattern,
+             (unsigned int) kGeositeRegexMaxExpandedRepeat);
+        return false;
+    }
+
+    *out_is_repeat = true;
+    *out_unbounded = unbounded;
+    *out_min       = min;
+    *out_max       = max;
+    *out_end       = i + 1U;
+    return true;
+}
+
+static bool geositeRegexAppendExpandedRepeat(geosite_regex_builder_t *builder, uint32_t atom_start, uint32_t min,
+                                             uint32_t max, bool unbounded)
+{
+    if (atom_start >= builder->len)
+    {
+        LOGF("Router: GeoSite regex has a bounded repeat without a preceding atom");
+        return false;
+    }
+
+    uint32_t atom_len = builder->len - atom_start;
+    char    *atom     = memoryAllocate((size_t) atom_len + 1U);
+    if (UNLIKELY(atom == NULL))
+    {
+        LOGF("Router: failed to allocate GeoSite regex repeat atom");
+        return false;
+    }
+
+    memoryCopy(atom, builder->data + atom_start, atom_len);
+    atom[atom_len]           = '\0';
+    builder->len             = atom_start;
+    builder->data[atom_start] = '\0';
+
+    bool ok = true;
+    for (uint32_t i = 0; ok && i < min; ++i)
+    {
+        ok = geositeRegexBuilderAppend(builder, atom, atom_len);
+    }
+
+    if (ok && unbounded)
+    {
+        ok = geositeRegexBuilderAppend(builder, atom, atom_len) && geositeRegexBuilderAppendChar(builder, '*');
+    }
+    else if (ok)
+    {
+        for (uint32_t i = min; ok && i < max; ++i)
+        {
+            ok = geositeRegexBuilderAppend(builder, atom, atom_len) && geositeRegexBuilderAppendChar(builder, '?');
+        }
+    }
+
+    memoryFree(atom);
+    return ok;
+}
+
+static bool geositeRegexCopyEscape(geosite_regex_builder_t *builder, const char *pattern, uint32_t len,
+                                   uint32_t *index)
+{
+    uint32_t start = *index;
+    uint32_t end   = start + 1U;
+    if (end < len)
+    {
+        ++end;
+        if ((pattern[start + 1U] == 'x' || pattern[start + 1U] == 'p' || pattern[start + 1U] == 'P') && end < len &&
+            pattern[end] == '{')
+        {
+            ++end;
+            while (end < len)
+            {
+                char c = pattern[end++];
+                if (c == '}')
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    if (! geositeRegexBuilderAppend(builder, pattern + start, end - start))
+    {
+        return false;
+    }
+
+    *index = end;
+    return true;
+}
+
+static bool geositeRegexCopyCharClass(geosite_regex_builder_t *builder, const char *pattern, uint32_t len,
+                                      uint32_t *index)
+{
+    uint32_t start = *index;
+    uint32_t end   = start + 1U;
+    while (end < len)
+    {
+        if (pattern[end] == '\\' && end + 1U < len)
+        {
+            end += 2U;
+            continue;
+        }
+
+        char c = pattern[end++];
+        if (c == ']')
+        {
+            break;
+        }
+    }
+
+    if (! geositeRegexBuilderAppend(builder, pattern + start, end - start))
+    {
+        return false;
+    }
+
+    *index = end;
+    return true;
+}
+
+static bool geositeRegexNormalizeForStc(const char *pattern, char **out)
+{
+    *out = NULL;
+
+    geosite_regex_builder_t builder = {0};
+    uint32_t                len     = (uint32_t) stringLength(pattern);
+    uint32_t                groups[CREG_MAX_CAPTURES] = {0};
+    uint32_t                groups_count              = 0;
+    uint32_t                atom_start                = 0;
+    bool                    atom_ready                = false;
+
+    for (uint32_t i = 0; i < len;)
+    {
+        char c = pattern[i];
+        if (c == '\\')
+        {
+            atom_start = builder.len;
+            atom_ready = true;
+            if (! geositeRegexCopyEscape(&builder, pattern, len, &i))
+            {
+                geositeRegexBuilderDestroy(&builder);
+                return false;
+            }
+            continue;
+        }
+
+        if (c == '[')
+        {
+            atom_start = builder.len;
+            atom_ready = true;
+            if (! geositeRegexCopyCharClass(&builder, pattern, len, &i))
+            {
+                geositeRegexBuilderDestroy(&builder);
+                return false;
+            }
+            continue;
+        }
+
+        if (c == '(')
+        {
+            if (groups_count >= CREG_MAX_CAPTURES)
+            {
+                LOGF("Router: GeoSite regex \"%s\" has too many nested groups", pattern);
+                geositeRegexBuilderDestroy(&builder);
+                return false;
+            }
+            groups[groups_count++] = builder.len;
+            atom_ready             = false;
+            if (! geositeRegexBuilderAppendChar(&builder, c))
+            {
+                geositeRegexBuilderDestroy(&builder);
+                return false;
+            }
+            ++i;
+            continue;
+        }
+
+        if (c == ')')
+        {
+            atom_start = groups_count > 0 ? groups[--groups_count] : builder.len;
+            atom_ready = true;
+            if (! geositeRegexBuilderAppendChar(&builder, c))
+            {
+                geositeRegexBuilderDestroy(&builder);
+                return false;
+            }
+            ++i;
+            continue;
+        }
+
+        if (c == '{')
+        {
+            bool     is_repeat = false;
+            bool     unbounded = false;
+            uint32_t end       = 0;
+            uint32_t min       = 0;
+            uint32_t max       = 0;
+            if (! geositeRegexParseBoundedRepeat(pattern, len, i, &is_repeat, &end, &min, &max, &unbounded))
+            {
+                geositeRegexBuilderDestroy(&builder);
+                return false;
+            }
+
+            if (is_repeat)
+            {
+                if (! atom_ready || ! geositeRegexAppendExpandedRepeat(&builder, atom_start, min, max, unbounded))
+                {
+                    geositeRegexBuilderDestroy(&builder);
+                    return false;
+                }
+
+                i          = end < len && pattern[end] == '?' ? end + 1U : end;
+                atom_ready = false;
+                continue;
+            }
+        }
+
+        if (c == '|' || c == '^' || c == '$')
+        {
+            atom_ready = false;
+        }
+        else if (c != '*' && c != '+' && c != '?')
+        {
+            atom_start = builder.len;
+            atom_ready = true;
+        }
+
+        if (! geositeRegexBuilderAppendChar(&builder, c))
+        {
+            geositeRegexBuilderDestroy(&builder);
+            return false;
+        }
+        ++i;
+    }
+
+    if (builder.data == NULL && ! geositeRegexBuilderAppendChar(&builder, '\0'))
+    {
+        geositeRegexBuilderDestroy(&builder);
+        return false;
+    }
+
+    *out = builder.data;
+    return true;
+}
+
+static bool geositeCompiledListAddRegexRule(router_geosite_compiled_list_t *compiled,
+                                            const geosite_domain_rule_t     *rule)
+{
+    char *pattern = NULL;
+    if (! geositeRegexNormalizeForStc(rule->value, &pattern))
+    {
+        return false;
+    }
+
+    cregex *regex = &compiled->regex_patterns[compiled->regex_patterns_count];
+    int     rc    = cregex_compile_pro(regex, pattern, CREG_ICASE);
+    if (UNLIKELY(rc != CREG_OK))
+    {
+        LOGF("Router: GeoSite list \"%s\" has invalid regex \"%s\" (STC cregex error %d)",
+             compiled->name,
+             rule->value,
+             rc);
+        memoryFree(pattern);
+        return false;
+    }
+    memoryFree(pattern);
+
+    compiled->regex_patterns_count += 1U;
+    return true;
+}
+
 static void geositeCompiledListDestroy(router_geosite_compiled_list_t *compiled)
 {
     if (compiled->name != NULL)
@@ -736,7 +1157,20 @@ static void geositeCompiledListDestroy(router_geosite_compiled_list_t *compiled)
 
     compiled->plain_patterns       = NULL;
     compiled->plain_patterns_count = 0;
-    compiled->skipped_regex_count  = 0;
+
+    if (compiled->regex_patterns != NULL)
+    {
+        for (uint32_t i = 0; i < compiled->regex_patterns_count; ++i)
+        {
+            if (compiled->regex_patterns[i].prog != NULL)
+            {
+                cregex_drop(&compiled->regex_patterns[i]);
+            }
+        }
+        memoryFree(compiled->regex_patterns);
+    }
+    compiled->regex_patterns       = NULL;
+    compiled->regex_patterns_count = 0;
 }
 
 static bool geositeCompiledListCompile(router_geosite_compiled_list_t *compiled, const geosite_list_t *list)
@@ -748,8 +1182,9 @@ static bool geositeCompiledListCompile(router_geosite_compiled_list_t *compiled,
         return false;
     }
 
-    uint32_t full_count = 0;
-    uint32_t root_count = 0;
+    uint32_t full_count  = 0;
+    uint32_t root_count  = 0;
+    uint32_t regex_count = 0;
     for (uint32_t i = 0; i < list->domains_count; ++i)
     {
         if (list->domains[i].type == kGeositeDomainFull)
@@ -759,6 +1194,10 @@ static bool geositeCompiledListCompile(router_geosite_compiled_list_t *compiled,
         else if (list->domains[i].type == kGeositeDomainRootDomain)
         {
             ++root_count;
+        }
+        else if (list->domains[i].type == kGeositeDomainRegex)
+        {
+            ++regex_count;
         }
     }
 
@@ -772,6 +1211,16 @@ static bool geositeCompiledListCompile(router_geosite_compiled_list_t *compiled,
     {
         LOGF("Router: failed to reserve GeoSite root-domain hash set");
         return false;
+    }
+
+    if (regex_count > 0)
+    {
+        compiled->regex_patterns = memoryAllocateZero(sizeof(*compiled->regex_patterns) * (size_t) regex_count);
+        if (UNLIKELY(compiled->regex_patterns == NULL))
+        {
+            LOGF("Router: failed to allocate GeoSite regex matchers");
+            return false;
+        }
     }
 
     for (uint32_t i = 0; i < list->domains_count; ++i)
@@ -798,19 +1247,15 @@ static bool geositeCompiledListCompile(router_geosite_compiled_list_t *compiled,
             }
             break;
         case kGeositeDomainRegex:
-            ++compiled->skipped_regex_count;
+            if (! geositeCompiledListAddRegexRule(compiled, rule))
+            {
+                return false;
+            }
             break;
         default:
             LOGF("Router: unsupported GeoSite domain type while compiling list \"%s\"", list->name);
             return false;
         }
-    }
-
-    if (compiled->skipped_regex_count > 0)
-    {
-        LOGW("Router: GeoSite list \"%s\" skipped %u regex rule(s); regex GeoSite matching is not supported yet",
-             list->name,
-             (unsigned int) compiled->skipped_regex_count);
     }
 
     return true;
@@ -967,6 +1412,34 @@ static bool geositeDomainSetContains(const router_geosite_domain_set_t *set, con
     return router_geosite_domain_set_t_contains(set, key);
 }
 
+static bool geositeRegexPatternsMatch(const router_geosite_compiled_list_t *list,
+                                      const router_geosite_host_cache_t    *host)
+{
+    csview host_view = {
+        .buf  = host->host,
+        .size = (ptrdiff_t) host->host_len,
+    };
+
+    for (uint32_t i = 0; i < list->regex_patterns_count; ++i)
+    {
+        int rc = cregex_match_sv(&list->regex_patterns[i], host_view, NULL, CREG_DEFAULT);
+        if (rc == CREG_OK)
+        {
+            return true;
+        }
+        if (UNLIKELY(rc != CREG_NOMATCH))
+        {
+            LOGF("Router: GeoSite regex matcher failed at runtime for list \"%s\" (STC cregex error %d)",
+                 list->name,
+                 rc);
+            terminateProgram(1);
+            return false;
+        }
+    }
+
+    return false;
+}
+
 bool routerGeositeCompiledListMatchesPrepared(const router_geosite_compiled_list_t *list,
                                               const router_geosite_host_cache_t    *host)
 {
@@ -1000,6 +1473,11 @@ bool routerGeositeCompiledListMatchesPrepared(const router_geosite_compiled_list
         {
             return true;
         }
+    }
+
+    if (geositeRegexPatternsMatch(list, host))
+    {
+        return true;
     }
 
     return false;

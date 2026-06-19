@@ -134,6 +134,8 @@ static inline void routerGeositeDomainKeyDrop(router_geosite_domain_key_t *key)
 #undef i_key
 #undef i_type
 
+#include "stc/cregex.h"
+
 typedef struct router_geosite_compiled_list_s
 {
     char *name;
@@ -150,7 +152,9 @@ typedef struct router_geosite_compiled_list_s
 
     char   **plain_patterns;
     uint32_t plain_patterns_count;
-    uint32_t skipped_regex_count;
+
+    cregex *regex_patterns;
+    uint32_t regex_patterns_count;
 } router_geosite_compiled_list_t;
 
 typedef struct router_geosite_host_cache_s

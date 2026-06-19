@@ -5,6 +5,7 @@ add_library(Router STATIC
     common/match_helpers.c
     common/rules.c
     common/sniffing.c
+    common/stc_regex.c
     modules/matchers.c
     modules/source_ips/source_ips.c
     modules/source_port/source_port.c
@@ -63,6 +64,10 @@ else()
     message(FATAL_ERROR "Router requires libmaxminddb, but no maxminddb CMake target was found")
 endif()
 target_link_libraries(Router PUBLIC ${ROUTER_MAXMIND_TARGET})
+
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    set_source_files_properties(common/stc_regex.c PROPERTIES COMPILE_OPTIONS "-Wno-nested-externs")
+endif()
 
 if(NOT APPLE)
     target_precompile_headers(Router REUSE_FROM ww)
