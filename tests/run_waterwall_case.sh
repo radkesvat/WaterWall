@@ -122,7 +122,7 @@ EOF
 
 (
   cd "$run_dir"
-  "$binary_path" >"$run_dir/stdout.log" 2>&1
+  exec "$binary_path" >stdout.log 2>&1
 ) &
 pid=$!
 
