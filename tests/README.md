@@ -119,6 +119,16 @@ Practical rule:
   path. The Trojan TCP `CONNECT` target is configured as `localhost` and resolved by
   `domain-strategy=resolve-domains-and-use-only-ipv4` before the server reaches the separate tester TCP listener through
   `dest_context`.
+- `trojan_local_password_router_tcp_loopback`
+  Verifies `TrojanServer` local password allowlist mode accepts `settings.users`, records the matched local username and
+  raw password on the line without a users database, and lets `Router` match both before forwarding to the tester TCP
+  listener.
+- `trojan_local_password_router_rejects_wrong_password`
+  Negative case: verifies `Router` does not take a Trojan local-user route when the authenticated username matches but
+  the configured password condition is wrong.
+- `trojan_fallback_invalid_probe_tcp_loopback`
+  Verifies an unauthenticated plaintext probe that is not a complete Trojan password in the first payload is forwarded
+  to the configured fallback branch with its bytes preserved instead of being hard-closed by `TrojanServer`.
 - `trojan_sha224_dest_protocol_tcp_loopback`
   Verifies `TrojanClient(sha224=..., protocol=dest_context->protocol)` sends the precomputed SHA-224 password digest,
   preserves an incoming TCP destination context, and completes a Trojan TCP `CONNECT` through TLS.
@@ -132,6 +142,15 @@ Practical rule:
   Verifies `VlessClient(uuid=...)` sends a plain VLESS v0 TCP request to `VlessServer`, validates the `00 00` response
   header, preserves an incoming TCP destination context, and reaches a separate tester TCP listener through the local
   UUID allowlist mode.
+- `vless_local_username_router_tcp_loopback`
+  Verifies `VlessServer` local UUID allowlist mode accepts an object entry with `username`, records both username and
+  canonical UUID password on the line, and lets `Router` match both before forwarding to the tester TCP listener.
+- `vless_local_username_router_rejects_wrong_password`
+  Negative case: verifies `Router` does not take a VLESS local-user route when the authenticated username matches but
+  the UUID password condition is wrong.
+- `vless_fallback_invalid_probe_tcp_loopback`
+  Verifies an unauthenticated plaintext probe that does not provide the complete VLESS UUID in the first payload is
+  forwarded to the configured fallback branch with its bytes preserved instead of being hard-closed by `VlessServer`.
 - `vless_uuid_udp_loopback`
   Verifies `VlessClient(protocol=dest_context->protocol)` sends a plain VLESS v0 UDP request to `VlessServer`, validates
   the response header, wraps datagrams as `uint16_be length + payload`, and reaches a separate UDP tester listener

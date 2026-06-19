@@ -1,0 +1,63 @@
+{
+  "name": "vless-fallback-invalid-probe-tcp-loopback",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "chunk-count": 3
+      },
+      "next": "proxy-connector"
+    },
+    {
+      "name": "proxy-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42970,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "proxy-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42970,
+        "nodelay": true
+      },
+      "next": "vless-server"
+    },
+    {
+      "name": "vless-server",
+      "type": "VlessServer",
+      "settings": {
+        "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+        "fallback-node-name": "fallback-server",
+        "connect": true,
+        "udp": false
+      },
+      "next": "accepted-invalid"
+    },
+    {
+      "name": "accepted-invalid",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "fallback-server",
+      "type": "TesterServer",
+      "settings": {
+        "chunk-count": 3
+      }
+    }
+  ]
+}
