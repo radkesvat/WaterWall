@@ -2,6 +2,14 @@
 
 #include "loggers/network_logger.h"
 
+enum tlsserver_handshake_result_e
+{
+    kTlsServerHandshakeFatal    = -1,
+    kTlsServerHandshakeWantMore = 0,
+    kTlsServerHandshakeProgress = 1,
+    kTlsServerHandshakeFallback = 2,
+};
+
 static void tlsserverLogHandshakeComplete(line_t *l, tlsserver_lstate_t *ls)
 {
     const SSL           *ssl    = ls->ssl;
@@ -24,11 +32,41 @@ static void tlsserverLogHandshakeComplete(line_t *l, tlsserver_lstate_t *ls)
          sni != NULL ? sni : "<none>");
 }
 
+static bool tlsserverPendingOutputStartsServerHello(tlsserver_lstate_t *ls)
+{
+    BIO *wbio = SSL_get_wbio(ls->ssl);
+    if (wbio == NULL)
+    {
+        return false;
+    }
+
+    char *data = NULL;
+    long  len  = BIO_get_mem_data(wbio, &data);
+    if (data == NULL || len < 6)
+    {
+        return false;
+    }
+
+    const uint8_t *record = (const uint8_t *) data;
+
+    return record[0] == 0x16 && record[1] == 0x03 && record[2] <= 0x04 && record[5] == 0x02;
+}
+
+static bool tlsserverFallbackProbeWouldExceedCap(tlsserver_lstate_t *ls, sbuf_t *buf)
+{
+    const size_t cap      = (size_t) kTlsServerMaxFallbackProbeBytes;
+    const size_t buffered = bufferstreamGetBufLen(&ls->fallback_probe);
+    const size_t incoming = sbufGetLength(buf);
+
+    return buffered >= cap || incoming > cap - buffered;
+}
+
 static int tlsserverPerformHandshake(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
-    int            n      = SSL_accept(ls->ssl);
-    enum sslstatus status = getSslStatus(ls->ssl, n);
-    int            sslerr = SSL_get_error(ls->ssl, n);
+    tlsserver_tstate_t *ts     = tunnelGetState(t);
+    int                 n      = SSL_accept(ls->ssl);
+    enum sslstatus      status = getSslStatus(ls->ssl, n);
+    int                 sslerr = SSL_get_error(ls->ssl, n);
 
     if (ls->verbose)
     {
@@ -36,10 +74,30 @@ static int tlsserverPerformHandshake(tunnel_t *t, line_t *l, tlsserver_lstate_t 
              (unsigned int) lineGetWID(l), n, sslerr, SSL_state_string_long(ls->ssl));
     }
 
+    if (! ls->tls_committed && tlsserverPendingOutputStartsServerHello(ls))
+    {
+        ls->tls_committed = true;
+        bufferstreamEmpty(&ls->fallback_probe);
+
+        if (! tlsserverStartProtectedBranch(t, l, ls))
+        {
+            return kTlsServerHandshakeFatal;
+        }
+    }
+
+    if (status == kSslstatusFail && ! ls->tls_committed && ts->fallback_tunnel != NULL)
+    {
+        if (ls->verbose)
+        {
+            LOGD("TlsServer: OpenSSL rejected first bytes before ServerHello; switching to fallback");
+        }
+        return kTlsServerHandshakeFallback;
+    }
+
     if (! tlsserverFlushSslOutput(t, l, ls))
     {
         LOGW("TlsServer: TLS handshake failed while flushing handshake output");
-        return -1;
+        return kTlsServerHandshakeFatal;
     }
 
     if (SSL_is_init_finished(ls->ssl))
@@ -49,7 +107,7 @@ static int tlsserverPerformHandshake(tunnel_t *t, line_t *l, tlsserver_lstate_t 
 
         if (! tlsserverFlushPendingDownQueue(t, l, ls))
         {
-            return -1;
+            return kTlsServerHandshakeFatal;
         }
     }
 
@@ -57,7 +115,7 @@ static int tlsserverPerformHandshake(tunnel_t *t, line_t *l, tlsserver_lstate_t 
     {
         LOGW("TlsServer: SSL_accept failed (ssl_error=%d, state=\"%s\")", sslerr, SSL_state_string_long(ls->ssl));
         tlsserverPrintSSLError();
-        return -1;
+        return kTlsServerHandshakeFatal;
     }
 
     if (! ls->handshake_completed && status == kSslstatusWantIo && sslerr == SSL_ERROR_WANT_READ)
@@ -66,10 +124,10 @@ static int tlsserverPerformHandshake(tunnel_t *t, line_t *l, tlsserver_lstate_t 
         {
             LOGD("TlsServer: worker %u TLS handshake wants more upstream bytes", (unsigned int) lineGetWID(l));
         }
-        return 0;
+        return kTlsServerHandshakeWantMore;
     }
 
-    return 1;
+    return kTlsServerHandshakeProgress;
 }
 
 static bool tlsserverReadDecryptedData(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
@@ -141,7 +199,20 @@ static bool tlsserverReadDecryptedData(tunnel_t *t, line_t *l, tlsserver_lstate_
 
 void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    tlsserver_tstate_t *ts = tunnelGetState(t);
     tlsserver_lstate_t *ls = lineGetState(l, t);
+
+    if (ls->fallback_mode)
+    {
+        tunnel_t *fallback = ts->fallback_tunnel;
+        if (UNLIKELY(fallback == NULL || ls->fallback_up_finished || ls->fallback_up_finish_pending))
+        {
+            lineReuseBuffer(l, buf);
+            return;
+        }
+        discard tlsserverSendFallbackPayload(t, l, ls, buf);
+        return;
+    }
 
     lineLock(l);
 
@@ -149,6 +220,31 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         LOGD("TlsServer: worker %u received %u upstream TLS bytes", (unsigned int) lineGetWID(l),
              (unsigned int) sbufGetLength(buf));
+    }
+
+    if (! ls->tls_committed && ts->fallback_tunnel != NULL && sbufGetLength(buf) > 0)
+    {
+        if (UNLIKELY(tlsserverFallbackProbeWouldExceedCap(ls, buf)))
+        {
+            LOGW("TlsServer: fallback probe exceeded %u bytes before ServerHello; switching to fallback",
+                 (unsigned int) kTlsServerMaxFallbackProbeBytes);
+
+            bool alive = tlsserverStartFallback(t, l, ls);
+            if (! alive)
+            {
+                lineReuseBuffer(l, buf);
+                lineUnlock(l);
+                return;
+            }
+
+            ls = lineGetState(l, t);
+            discard tlsserverSendFallbackPayload(t, l, ls, buf);
+            lineUnlock(l);
+            return;
+        }
+
+        sbuf_t *probe = sbufDuplicateByPool(lineGetBufferPool(l), buf);
+        bufferstreamPush(&ls->fallback_probe, probe);
     }
 
     while (sbufGetLength(buf) > 0)
@@ -181,7 +277,16 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         {
             int handshake_result = tlsserverPerformHandshake(t, l, ls);
 
-            if (handshake_result < 0)
+            if (handshake_result == kTlsServerHandshakeFallback)
+            {
+                lineReuseBuffer(l, buf);
+                bool alive = tlsserverStartFallback(t, l, ls);
+                discard alive;
+                lineUnlock(l);
+                return;
+            }
+
+            if (handshake_result == kTlsServerHandshakeFatal)
             {
                 reuseBuffer(buf);
                 if (lineIsAlive(l))
@@ -195,7 +300,7 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 return;
             }
 
-            if (handshake_result == 0)
+            if (handshake_result == kTlsServerHandshakeWantMore)
             {
                 break;
             }

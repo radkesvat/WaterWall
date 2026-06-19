@@ -2,9 +2,14 @@
 
 #include "loggers/network_logger.h"
 
-bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, bool verbose)
+bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, buffer_pool_t *pool, bool verbose)
 {
-    *ls = (tlsserver_lstate_t) {.pending_down = bufferqueueCreate(2), .verbose = verbose};
+    *ls = (tlsserver_lstate_t) {
+        .pending_down        = bufferqueueCreate(2),
+        .fallback_pending_up = NULL,
+        .fallback_probe      = bufferstreamCreate(pool, 0),
+        .verbose             = verbose,
+    };
 
     ls->rbio = BIO_new(BIO_s_mem());
     ls->wbio = BIO_new(BIO_s_mem());
@@ -73,6 +78,7 @@ void tlsserverLinestateRelease(tlsserver_lstate_t *ls)
     }
 
     bufferqueueDestroy(&ls->pending_down);
+    bufferstreamDestroy(&ls->fallback_probe);
 
     ls->handshake_completed = false;
 }
@@ -80,5 +86,11 @@ void tlsserverLinestateRelease(tlsserver_lstate_t *ls)
 void tlsserverLinestateDestroy(tlsserver_lstate_t *ls)
 {
     tlsserverLinestateRelease(ls);
+    if (ls->fallback_pending_up != NULL)
+    {
+        bufferqueueDestroy(ls->fallback_pending_up);
+        memoryFree(ls->fallback_pending_up);
+        ls->fallback_pending_up = NULL;
+    }
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tlsserver_lstate_t)));
 }

@@ -7,6 +7,8 @@
 typedef struct tlsserver_tstate_s
 {
     SSL_CTX **threadlocal_ssl_contexts;
+    node_t   *fallback_node;
+    tunnel_t *fallback_tunnel;
 
     struct tlsserver_alpn_item_s
     {
@@ -28,6 +30,8 @@ typedef struct tlsserver_tstate_s
     int  session_timeout;
     int  session_cache_mode;
     int  session_cache_size;
+    uint32_t fallback_intentional_delay_ms;
+    uint32_t fallback_intentional_delay_jitter_ms;
     bool prefer_server_ciphers;
     bool session_tickets;
     bool verbose;
@@ -39,8 +43,18 @@ typedef struct tlsserver_lstate_s
     BIO           *rbio;
     BIO           *wbio;
     buffer_queue_t pending_down;
+    buffer_queue_t *fallback_pending_up;
+    buffer_stream_t fallback_probe;
 
     bool handshake_completed;
+    bool tls_committed;
+    bool protected_init_sent;
+    bool fallback_mode;
+    bool fallback_init_sent;
+    bool fallback_up_finished;
+    bool fallback_up_finish_pending;
+    bool prev_est_sent;
+    bool fallback_delay_scheduled;
     bool upstream_finished;
     bool downstream_finishing;
     bool resources_released;
@@ -65,6 +79,11 @@ enum
     kTlsServerSessionCacheNone,
     kTlsServerSessionCacheOff,
     kTlsServerSessionCacheBuiltin
+};
+
+enum
+{
+    kTlsServerMaxFallbackProbeBytes = 16U * 1024U
 };
 
 static inline enum sslstatus getSslStatus(SSL *ssl, int n)
@@ -107,7 +126,7 @@ void tlsserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void tlsserverTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void tlsserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, bool verbose);
+bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, buffer_pool_t *pool, bool verbose);
 void tlsserverLinestateDestroy(tlsserver_lstate_t *ls);
 void tlsserverLinestateRelease(tlsserver_lstate_t *ls);
 
@@ -122,4 +141,7 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool tlsserverEncryptAndSendApplicationData(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls, sbuf_t *buf);
 bool tlsserverFlushPendingDownQueue(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool tlsserverSendCloseNotify(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
+bool tlsserverStartProtectedBranch(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
+bool tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
+bool tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls, sbuf_t *buf);
 void tlsserverCloseLineFatal(tunnel_t *t, line_t *l);

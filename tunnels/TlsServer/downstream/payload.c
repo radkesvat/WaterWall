@@ -6,6 +6,12 @@ void tlsserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     tlsserver_lstate_t *ls = lineGetState(l, t);
 
+    if (ls->fallback_mode)
+    {
+        tunnelPrevDownStreamPayload(t, l, buf);
+        return;
+    }
+
     lineLock(l);
 
     if (ls->verbose)

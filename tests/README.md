@@ -78,6 +78,9 @@ Practical rule:
 - `tls_roundtrip`
   Verifies `TlsClient` and `TlsServer` chained directly with a self-signed test certificate, peer verification disabled
   on the client, SNI checked by the server, and streaming responses enabled so TLS traffic flows in both directions.
+- `tls_fallback_plaintext_probe_tcp_loopback`
+  Verifies that plaintext first bytes reaching `TlsServer` over a real TCP loopback hop are forwarded to the configured
+  fallback branch with the original bytes preserved, while the protected TLS branch points at an invalid connector.
 - `reality_google_roundtrip`
   Verifies `TesterClient -> RealityClient -> TcpConnector` and `TcpListener -> RealityServer -> TesterServer` across a
   real TCP loopback hop while the Reality visitor branch handshakes with `google.com:443`.

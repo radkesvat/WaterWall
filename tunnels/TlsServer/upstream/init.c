@@ -12,7 +12,8 @@ void tlsserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
         LOGD("TlsServer: worker %u initializing TLS server line", (unsigned int) lineGetWID(l));
     }
 
-    if (! tlsserverLinestateInitialize(ls, ts->threadlocal_ssl_contexts[lineGetWID(l)], ts->verbose))
+    if (! tlsserverLinestateInitialize(ls, ts->threadlocal_ssl_contexts[lineGetWID(l)], lineGetBufferPool(l),
+                                       ts->verbose))
     {
         LOGE("TlsServer: failed to initialize per-line OpenSSL state");
         tunnelPrevDownStreamFinish(t, l);
@@ -21,8 +22,12 @@ void tlsserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     if (ts->verbose)
     {
-        LOGD("TlsServer: worker %u TLS server line initialized; forwarding upstream Init",
-             (unsigned int) lineGetWID(l));
+        LOGD("TlsServer: worker %u TLS server line initialized%s",
+             (unsigned int) lineGetWID(l),
+             ts->fallback_tunnel == NULL ? "; forwarding upstream Init" : "; waiting for TLS classification");
     }
-    tunnelNextUpStreamInit(t, l);
+    if (ts->fallback_tunnel == NULL)
+    {
+        discard tlsserverStartProtectedBranch(t, l, ls);
+    }
 }
