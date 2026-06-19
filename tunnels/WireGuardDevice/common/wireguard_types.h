@@ -95,8 +95,8 @@ typedef struct wireguard_peer_init_data_s
 
     // End-point details (may be blank)
     ip_addr_t endpoint_ip;
-    uint16    endpoint_port;
-    uint16    keep_alive;
+    uint16_t  endpoint_port;
+    uint16_t  keep_alive;
 } wireguard_peer_init_data_t;
 
 struct wireguard_keypair_s
@@ -226,4 +226,3 @@ struct wireguard_device_s
     bool valid;
 };
 typedef struct wireguard_device_s wireguard_device_t;
-

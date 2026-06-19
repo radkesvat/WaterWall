@@ -68,7 +68,7 @@ bool tcpoverudpserverUpdateKcp(tcpoverudpserver_lstate_t *ls, bool flush)
 
     line_t   *l            = ls->line;
     tunnel_t *t            = ls->tunnel;
-    uint64    current_time = wloopNowMS(getWorkerLoop(lineGetWID(l)));
+    uint64_t  current_time = wloopNowMS(getWorkerLoop(lineGetWID(l)));
 
     bool ret = true;
 
@@ -102,7 +102,7 @@ bool tcpoverudpserverUpdateKcp(tcpoverudpserver_lstate_t *ls, bool flush)
     return ret;
 }
 
-static uint32_t tcpoverudpserverGetNextKcpDelay(tcpoverudpserver_lstate_t *ls, uint64 current_time)
+static uint32_t tcpoverudpserverGetNextKcpDelay(tcpoverudpserver_lstate_t *ls, uint64_t current_time)
 {
     IUINT32 current32        = (IUINT32) current_time;
     IUINT32 next_update_time = ikcp_check(ls->k_handle, current32);
@@ -120,7 +120,7 @@ void tcpoverudpserverKcpLoopIntervalCallback(wtimer_t *timer)
     {
         return;
     }
-    uint64                    current_time = wloopNowMS(getWorkerLoop(lineGetWID(ls->line)));
+    uint64_t                  current_time = wloopNowMS(getWorkerLoop(lineGetWID(ls->line)));
     tcpoverudpserver_tstate_t *ts           = tunnelGetState(ls->tunnel);
 
     if ((current_time - ls->last_recv) > ts->ping_interval_ms)
