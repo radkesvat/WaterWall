@@ -49,6 +49,8 @@ typedef struct vlessserver_tstate_s
 
     vlessserver_user_t *users;
     uint32_t            user_count;
+    uint32_t            fallback_intentional_delay_ms;
+    uint32_t            fallback_intentional_delay_jitter_ms;
     bool                allow_connect;
     bool                allow_udp;
     bool                verbose;
@@ -63,6 +65,7 @@ typedef struct vlessserver_lstate_s
     address_context_t       udp_target;
     buffer_stream_t         in_stream;
     buffer_queue_t          pending_down;
+    buffer_queue_t         *fallback_pending_up;
     user_handle_t           user_handle;
     char                   *auth_username; // resolved account name, owned (NULL if none)
     char                   *auth_password; // resolved raw password / UUID, owned (NULL if none)
@@ -71,6 +74,9 @@ typedef struct vlessserver_lstate_s
     bool                    client_line_locked;
     bool                    response_sent;
     bool                    user_handle_recorded;
+    bool                    fallback_up_finish_pending;
+    bool                    fallback_up_finished;
+    bool                    fallback_delay_scheduled;
 } vlessserver_lstate_t;
 
 enum
@@ -123,3 +129,4 @@ void vlessserverCloseLineFromDownstream(tunnel_t *t, line_t *l);
 void vlessserverCloseLineBidirectional(tunnel_t *t, line_t *l);
 void vlessserverOnSelectedEstablished(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls);
 bool vlessserverWrapUdpPayload(line_t *l, sbuf_t **buf_io);
+bool vlessserverSendFallbackPayload(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, sbuf_t *buf);

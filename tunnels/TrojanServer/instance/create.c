@@ -5,6 +5,12 @@
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
 
+enum
+{
+    kTrojanServerDefaultFallbackIntentionalDelayMs       = 7,
+    kTrojanServerDefaultFallbackIntentionalDelayJitterMs = 1
+};
+
 static hash_t trojanserverAuthenticationClientTypeHash(void)
 {
     const char *type_name = "AuthenticationClient";
@@ -402,15 +408,48 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
 
     ts->allow_connect = true;
     ts->allow_udp     = true;
+    int fallback_intentional_delay_ms        = kTrojanServerDefaultFallbackIntentionalDelayMs;
+    int fallback_intentional_delay_jitter_ms = kTrojanServerDefaultFallbackIntentionalDelayJitterMs;
     getBoolFromJsonObjectOrDefault(&ts->allow_connect, settings, "connect", true);
     getBoolFromJsonObjectOrDefault(&ts->allow_udp, settings, "udp", true);
     getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
+    getIntFromJsonObjectOrDefault(&fallback_intentional_delay_ms,
+                                  settings,
+                                  "fallback-intentional-delay-ms",
+                                  kTrojanServerDefaultFallbackIntentionalDelayMs);
+    getIntFromJsonObjectOrDefault(&fallback_intentional_delay_jitter_ms,
+                                  settings,
+                                  "fallback-intentional-delay-jitter-ms",
+                                  kTrojanServerDefaultFallbackIntentionalDelayJitterMs);
 
     if (! ts->allow_connect && ! ts->allow_udp)
     {
         LOGF("JSON Error: TrojanServer must enable at least one of connect/udp");
         trojanserverTunnelDestroy(t);
         return NULL;
+    }
+
+    if (fallback_intentional_delay_ms < 0)
+    {
+        LOGF(
+            "JSON Error: TrojanServer->settings->fallback-intentional-delay-ms (number field) : The value was invalid");
+        trojanserverTunnelDestroy(t);
+        return NULL;
+    }
+    ts->fallback_intentional_delay_ms = (uint32_t) fallback_intentional_delay_ms;
+
+    if (fallback_intentional_delay_jitter_ms < 0)
+    {
+        LOGF(
+            "JSON Error: TrojanServer->settings->fallback-intentional-delay-jitter-ms (number field) : The value was invalid");
+        trojanserverTunnelDestroy(t);
+        return NULL;
+    }
+    ts->fallback_intentional_delay_jitter_ms = (uint32_t) fallback_intentional_delay_jitter_ms;
+
+    if (ts->fallback_intentional_delay_ms == 0 && ts->fallback_intentional_delay_jitter_ms > 0)
+    {
+        LOGD("TrojanServer: fallback-intentional-delay-jitter-ms is ignored because fallback-intentional-delay-ms is 0");
     }
 
     if (! trojanserverParseAuthMode(ts, t, node, settings) || ! parseFallbackNode(ts, node, settings))

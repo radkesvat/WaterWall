@@ -114,6 +114,8 @@ Example with fallback:
   "settings": {
     "auth-client-node-name": "auth-client",
     "fallback-node-name": "fallback-service",
+    "fallback-intentional-delay-ms": 7,
+    "fallback-intentional-delay-jitter-ms": 1,
     "connect": true,
     "udp": true,
     "sweep-interval-ms": 1000,
@@ -156,6 +158,8 @@ Example chain sketch:
   "settings": {
     "auth-client-node-name": "auth-client",
     "fallback-node-name": "fallback-service",
+    "fallback-intentional-delay-ms": 7,
+    "fallback-intentional-delay-jitter-ms": 1,
     "connect": true,
     "udp": true
   },
@@ -236,6 +240,22 @@ At least one of `connect` or `udp` must be enabled.
   - `fallback-node`
   - `fallback`
 
+- `fallback-intentional-delay-ms` `(number, milliseconds)`
+  Delay applied to upstream payloads sent to the fallback branch.
+  Default: `7`
+
+  The fallback branch still receives `Init` immediately. Only payload is delayed. This small delay exists to reduce
+  timing-based active-probe fingerprints where a detector compares how quickly an invalid probe is handed to fallback.
+  Set to `0` to disable the intentional delay.
+
+- `fallback-intentional-delay-jitter-ms` `(number, milliseconds)`
+  Random jitter applied to delayed fallback payload scheduling.
+  Default: `1`
+
+  When `fallback-intentional-delay-ms` is non-zero, each delayed FIFO drain is scheduled in the range
+  `max(0, delay - jitter)` through `delay + jitter` milliseconds. If `fallback-intentional-delay-ms` is `0`, jitter is
+  ignored because fallback payloads are forwarded immediately.
+
 - `connect` `(boolean)`
   Enables Trojan TCP `CONNECT`.
   Default: `true`
@@ -295,6 +315,10 @@ Fallback is intended for active-probing resistance.
 When fallback is configured, unauthenticated traffic that does not look like a valid Trojan request is forwarded to the
 fallback branch with the original buffered bytes preserved. `TrojanServer` does not send a Trojan-specific error before
 doing this.
+
+Saved fallback bytes and later upstream payloads are sent to fallback after the configured fallback delay and jitter, while
+the fallback branch receives `Init` immediately. If upstream `Finish` arrives while fallback payloads are delayed,
+`TrojanServer` forwards that `Finish` only after the delayed payloads have been delivered.
 
 Fallback may be selected for:
 

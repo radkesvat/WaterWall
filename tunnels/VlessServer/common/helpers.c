@@ -323,6 +323,135 @@ static bool vlessserverForwardBufferedTcpPayload(tunnel_t *t, line_t *l, vlessse
     return true;
 }
 
+static size_t vlessserverFallbackPendingCount(const vlessserver_lstate_t *ls)
+{
+    return ls->fallback_pending_up != NULL ? bufferqueueGetBufCount(ls->fallback_pending_up) : 0;
+}
+
+static buffer_queue_t *vlessserverEnsureFallbackPendingQueue(vlessserver_lstate_t *ls)
+{
+    if (ls->fallback_pending_up == NULL)
+    {
+        ls->fallback_pending_up  = memoryAllocate(sizeof(*ls->fallback_pending_up));
+        *ls->fallback_pending_up = bufferqueueCreate(kVlessServerBufferQueueCap);
+    }
+
+    return ls->fallback_pending_up;
+}
+
+static uint32_t vlessserverFallbackDelayWithJitter(const vlessserver_tstate_t *ts)
+{
+    uint32_t delay_ms  = ts->fallback_intentional_delay_ms;
+    uint32_t jitter_ms = ts->fallback_intentional_delay_jitter_ms;
+
+    if (delay_ms == 0 || jitter_ms == 0)
+    {
+        return delay_ms;
+    }
+
+    uint32_t lower = jitter_ms >= delay_ms ? 0 : delay_ms - jitter_ms;
+    uint32_t upper = UINT32_MAX - delay_ms < jitter_ms ? UINT32_MAX : delay_ms + jitter_ms;
+    uint64_t span  = (uint64_t) upper - (uint64_t) lower + 1ULL;
+
+    return lower + (uint32_t) (fastRand64() % span);
+}
+
+static void vlessserverForwardPendingFallbackFinish(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls)
+{
+    vlessserver_tstate_t *ts       = tunnelGetState(t);
+    tunnel_t             *fallback = ts->fallback_tunnel;
+
+    if (! ls->fallback_up_finish_pending || vlessserverFallbackPendingCount(ls) > 0 || fallback == NULL ||
+        ls->fallback_up_finished)
+    {
+        return;
+    }
+
+    ls->fallback_up_finished = true;
+    ls->phase                = kVlessServerPhaseClosing;
+    vlessserverLinestateDestroy(ls);
+    tunnelUpStreamFin(fallback, l);
+}
+
+static void vlessserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
+{
+    vlessserver_tstate_t *ts = tunnelGetState(t);
+    vlessserver_lstate_t *ls = lineGetState(l, t);
+
+    ls->fallback_delay_scheduled = false;
+
+    size_t queued = vlessserverFallbackPendingCount(ls);
+    while (queued > 0)
+    {
+        queued -= 1;
+
+        sbuf_t   *buf      = bufferqueuePopFront(ls->fallback_pending_up);
+        tunnel_t *fallback = ts->fallback_tunnel;
+        if (fallback == NULL || ls->phase != kVlessServerPhaseFallback || ls->fallback_up_finished)
+        {
+            lineReuseBuffer(l, buf);
+        }
+        else
+        {
+            tunnelUpStreamPayload(fallback, l, buf);
+        }
+
+        if (! lineIsAlive(l))
+        {
+            return;
+        }
+
+        ls = lineGetState(l, t);
+    }
+
+    if (vlessserverFallbackPendingCount(ls) > 0 && ! ls->fallback_delay_scheduled)
+    {
+        ls->fallback_delay_scheduled = true;
+        lineScheduleDelayedTask(l, vlessserverDelayedFallbackPayloadTask, vlessserverFallbackDelayWithJitter(ts), t);
+        return;
+    }
+
+    vlessserverForwardPendingFallbackFinish(t, l, ls);
+}
+
+bool vlessserverSendFallbackPayload(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, sbuf_t *buf)
+{
+    vlessserver_tstate_t *ts       = tunnelGetState(t);
+    tunnel_t             *fallback = ts->fallback_tunnel;
+
+    if (fallback == NULL || ls->phase != kVlessServerPhaseFallback || ls->fallback_up_finished ||
+        ls->fallback_up_finish_pending)
+    {
+        lineReuseBuffer(l, buf);
+        return false;
+    }
+
+    if (ts->fallback_intentional_delay_ms == 0)
+    {
+        tunnelUpStreamPayload(fallback, l, buf);
+        return lineIsAlive(l);
+    }
+
+    buffer_queue_t *pending = vlessserverEnsureFallbackPendingQueue(ls);
+    bufferqueuePushBack(pending, buf);
+    if (UNLIKELY(bufferqueueGetBufLen(pending) > kVlessServerMaxPendingBytes))
+    {
+        LOGE("VlessServer: fallback payload queue overflow, size=%zu limit=%u",
+             bufferqueueGetBufLen(pending),
+             (unsigned int) kVlessServerMaxPendingBytes);
+        vlessserverCloseLineBidirectional(t, l);
+        return false;
+    }
+
+    if (! ls->fallback_delay_scheduled)
+    {
+        ls->fallback_delay_scheduled = true;
+        lineScheduleDelayedTask(l, vlessserverDelayedFallbackPayloadTask, vlessserverFallbackDelayWithJitter(ts), t);
+    }
+
+    return true;
+}
+
 static bool vlessserverStartFallback(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls)
 {
     vlessserver_tstate_t *ts = tunnelGetState(t);
@@ -342,7 +471,7 @@ static bool vlessserverStartFallback(tunnel_t *t, line_t *l, vlessserver_lstate_
 
     if (lineIsAlive(l) && first != NULL)
     {
-        tunnelUpStreamPayload(ts->fallback_tunnel, l, first);
+        discard vlessserverSendFallbackPayload(t, l, ls, first);
         first = NULL;
     }
 
@@ -761,6 +890,13 @@ static void vlessserverCloseLine(tunnel_t *t, line_t *l, vlessserver_close_origi
     bool      close_prev = origin != kVlessServerCloseFromPrev;
     bool      use_target = ls->phase == kVlessServerPhaseFallback;
     tunnel_t *target     = use_target ? ((vlessserver_tstate_t *) tunnelGetState(t))->fallback_tunnel : NULL;
+
+    if (origin == kVlessServerCloseFromPrev && use_target && target != NULL &&
+        vlessserverFallbackPendingCount(ls) > 0)
+    {
+        ls->fallback_up_finish_pending = true;
+        return;
+    }
 
     ls->phase = kVlessServerPhaseClosing;
     lineLock(l);

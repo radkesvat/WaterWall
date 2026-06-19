@@ -5,6 +5,12 @@
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
 
+enum
+{
+    kVlessServerDefaultFallbackIntentionalDelayMs       = 7,
+    kVlessServerDefaultFallbackIntentionalDelayJitterMs = 1
+};
+
 static hash_t vlessserverAuthenticationClientTypeHash(void)
 {
     const char *type_name = "AuthenticationClient";
@@ -477,15 +483,47 @@ tunnel_t *vlessserverTunnelCreate(node_t *node)
 
     ts->allow_connect = true;
     ts->allow_udp     = true;
+    int fallback_intentional_delay_ms        = kVlessServerDefaultFallbackIntentionalDelayMs;
+    int fallback_intentional_delay_jitter_ms = kVlessServerDefaultFallbackIntentionalDelayJitterMs;
     getBoolFromJsonObjectOrDefault(&ts->allow_connect, settings, "connect", true);
     getBoolFromJsonObjectOrDefault(&ts->allow_udp, settings, "udp", true);
     getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
+    getIntFromJsonObjectOrDefault(&fallback_intentional_delay_ms,
+                                  settings,
+                                  "fallback-intentional-delay-ms",
+                                  kVlessServerDefaultFallbackIntentionalDelayMs);
+    getIntFromJsonObjectOrDefault(&fallback_intentional_delay_jitter_ms,
+                                  settings,
+                                  "fallback-intentional-delay-jitter-ms",
+                                  kVlessServerDefaultFallbackIntentionalDelayJitterMs);
 
     if (! ts->allow_connect && ! ts->allow_udp)
     {
         LOGF("JSON Error: VlessServer must enable at least one of connect/udp");
         vlessserverTunnelDestroy(t);
         return NULL;
+    }
+
+    if (fallback_intentional_delay_ms < 0)
+    {
+        LOGF("JSON Error: VlessServer->settings->fallback-intentional-delay-ms (number field) : The value was invalid");
+        vlessserverTunnelDestroy(t);
+        return NULL;
+    }
+    ts->fallback_intentional_delay_ms = (uint32_t) fallback_intentional_delay_ms;
+
+    if (fallback_intentional_delay_jitter_ms < 0)
+    {
+        LOGF(
+            "JSON Error: VlessServer->settings->fallback-intentional-delay-jitter-ms (number field) : The value was invalid");
+        vlessserverTunnelDestroy(t);
+        return NULL;
+    }
+    ts->fallback_intentional_delay_jitter_ms = (uint32_t) fallback_intentional_delay_jitter_ms;
+
+    if (ts->fallback_intentional_delay_ms == 0 && ts->fallback_intentional_delay_jitter_ms > 0)
+    {
+        LOGD("VlessServer: fallback-intentional-delay-jitter-ms is ignored because fallback-intentional-delay-ms is 0");
     }
 
     if (! vlessserverParseAuthMode(ts, t, node, settings) || ! vlessserverParseFallbackNode(ts, node, settings))

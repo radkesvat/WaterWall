@@ -27,7 +27,7 @@ void vlessserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             vlessserverCloseLineBidirectional(t, l);
             return;
         }
-        tunnelUpStreamPayload(fallback, l, buf);
+        discard vlessserverSendFallbackPayload(t, l, ls, buf);
         return;
     }
 

@@ -19,7 +19,7 @@ void trojanserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             trojanserverCloseLineBidirectional(t, l);
             return;
         }
-        tunnelUpStreamPayload(fallback, l, buf);
+        discard trojanserverSendFallbackPayload(t, l, ls, buf);
         return;
     }
 
