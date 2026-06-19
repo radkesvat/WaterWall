@@ -248,6 +248,13 @@ At least one of `connect` or `udp` must be enabled.
   timing-based active-probe fingerprints where a detector compares how quickly an invalid probe is handed to fallback.
   Set to `0` to disable the intentional delay.
 
+  This value must be calibrated against the public behavior the fallback should resemble. The important question is
+  whether the fallback branch would answer faster or slower than that behavior, not whether it is co-located or remote.
+  A co-located fallback can still be too fast when the protected path normally includes an upstream round trip, such as
+  proxy-like traffic fetching remote content, so a positive delay may be appropriate. A remote fallback may already carry
+  enough latency, and a local-service imitation may be closer with `0`. Measure the target behavior; delay and jitter are
+  mitigations, not proof of timing indistinguishability.
+
 - `fallback-intentional-delay-jitter-ms` `(number, milliseconds)`
   Random jitter applied to delayed fallback payload scheduling.
   Default: `1`
@@ -320,6 +327,11 @@ Saved fallback bytes and later upstream payloads are sent to fallback after the 
 the fallback branch receives `Init` immediately. If upstream `Finish` arrives while fallback payloads are delayed,
 `TrojanServer` forwards that `Finish` only after the delayed payloads have been delivered.
 
+The fallback delay is applied only to upstream payloads. Downstream responses from fallback are not intentionally delayed,
+and an upstream `Finish` waits behind queued delayed fallback payloads. That is internally consistent with request
+handoff, but it still creates a measurable request-side offset. Delay and jitter are only mitigations; they do not prove
+timing indistinguishability. Measure the deployment path and choose values that match the service being impersonated.
+
 Fallback may be selected for:
 
 - invalid password prefix bytes
@@ -340,6 +352,8 @@ Operational notes:
 - It must not be `TrojanServer` itself.
 - It must not be the internal `UserController`.
 - It should be something that plausibly speaks the public-facing protocol exposed by the same TLS endpoint.
+- Fallback health is part of the public fingerprint. A down fallback, immediate close, generic proxy error, mismatched
+  response content or headers, or mismatched timeout/timing behavior can identify the deployment.
 - If no fallback is configured, unauthenticated invalid probes are closed.
 
 ## TCP CONNECT Behavior
