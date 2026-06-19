@@ -44,7 +44,7 @@ static void onRecv(wio_t *io, sbuf_t *buf)
 
     localidletableKeepIdleItemForAtleast(tcplistenerGetLineIdleTable(ts, l),
                                          ls->idle_handle,
-                                         kEstablishedKeepAliveTimeOutMs);
+                                         ts->active_idle_timeout_ms);
 
     tunnelNextUpStreamPayload(t, l, buf);
 }
@@ -132,7 +132,7 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
                                                tcplistenerIdleKey(io),
                                                ls,
                                                tcplistenerOnIdleConnectionExpire,
-                                               kDefaultKeepAliveTimeOutMs);
+                                               ts->initial_idle_timeout_ms);
     if (UNLIKELY(ls->idle_handle == NULL))
     {
         LOGE("TcpListener: failed to register idle item for io id:%u FD:%x", wioGetID(io), wioGetFD(io));

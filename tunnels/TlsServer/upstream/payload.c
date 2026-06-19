@@ -10,6 +10,13 @@ enum tlsserver_handshake_result_e
     kTlsServerHandshakeFallback = 2,
 };
 
+enum tlsserver_probe_classification_e
+{
+    kTlsServerProbeNeedMore,
+    kTlsServerProbePlaintext,
+    kTlsServerProbeTlsLike
+};
+
 static void tlsserverLogHandshakeComplete(line_t *l, tlsserver_lstate_t *ls)
 {
     const SSL           *ssl    = ls->ssl;
@@ -52,13 +59,53 @@ static bool tlsserverPendingOutputStartsServerHello(tlsserver_lstate_t *ls)
     return record[0] == 0x16 && record[1] == 0x03 && record[2] <= 0x04 && record[5] == 0x02;
 }
 
-static bool tlsserverFallbackProbeWouldExceedCap(tlsserver_lstate_t *ls, sbuf_t *buf)
+static enum tlsserver_probe_classification_e tlsserverClassifyFallbackProbe(tlsserver_lstate_t *ls, sbuf_t *buf)
 {
-    const size_t cap      = (size_t) kTlsServerMaxFallbackProbeBytes;
-    const size_t buffered = bufferstreamGetBufLen(&ls->fallback_probe);
-    const size_t incoming = sbufGetLength(buf);
+    if (ls->fallback_probe_tls_like)
+    {
+        return kTlsServerProbeTlsLike;
+    }
 
-    return buffered >= cap || incoming > cap - buffered;
+    const size_t saved_len = bufferstreamGetBufLen(&ls->fallback_probe);
+    const size_t buf_len   = sbufGetLength(buf);
+
+    if (saved_len >= 2)
+    {
+        return bufferstreamViewByteAt(&ls->fallback_probe, 0) == 0x16 &&
+                       bufferstreamViewByteAt(&ls->fallback_probe, 1) == 0x03
+                   ? kTlsServerProbeTlsLike
+                   : kTlsServerProbePlaintext;
+    }
+
+    if (saved_len == 1)
+    {
+        if (bufferstreamViewByteAt(&ls->fallback_probe, 0) != 0x16)
+        {
+            return kTlsServerProbePlaintext;
+        }
+        if (buf_len == 0)
+        {
+            return kTlsServerProbeNeedMore;
+        }
+        const uint8_t *data = sbufGetRawPtr(buf);
+        return data[0] == 0x03 ? kTlsServerProbeTlsLike : kTlsServerProbePlaintext;
+    }
+
+    if (buf_len == 0)
+    {
+        return kTlsServerProbeNeedMore;
+    }
+
+    const uint8_t *data = sbufGetRawPtr(buf);
+    if (data[0] != 0x16)
+    {
+        return kTlsServerProbePlaintext;
+    }
+    if (buf_len < 2)
+    {
+        return kTlsServerProbeNeedMore;
+    }
+    return data[1] == 0x03 ? kTlsServerProbeTlsLike : kTlsServerProbePlaintext;
 }
 
 static int tlsserverPerformHandshake(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
@@ -87,11 +134,18 @@ static int tlsserverPerformHandshake(tunnel_t *t, line_t *l, tlsserver_lstate_t 
 
     if (status == kSslstatusFail && ! ls->tls_committed && ts->fallback_tunnel != NULL)
     {
-        if (ls->verbose)
+        if (! ls->fallback_probe_tls_like && bufferstreamIsEmpty(&ls->fallback_probe))
         {
-            LOGD("TlsServer: OpenSSL rejected first bytes before ServerHello; switching to fallback");
+            if (ls->verbose)
+            {
+                LOGD("TlsServer: OpenSSL rejected non-TLS bytes before ServerHello; switching to fallback");
+            }
+            return kTlsServerHandshakeFallback;
         }
-        return kTlsServerHandshakeFallback;
+
+        LOGW("TlsServer: OpenSSL rejected TLS-looking bytes before ServerHello; closing connection");
+        discard tlsserverFlushSslOutput(t, l, ls);
+        return kTlsServerHandshakeFatal;
     }
 
     if (! tlsserverFlushSslOutput(t, l, ls))
@@ -103,6 +157,7 @@ static int tlsserverPerformHandshake(tunnel_t *t, line_t *l, tlsserver_lstate_t 
     if (SSL_is_init_finished(ls->ssl))
     {
         ls->handshake_completed = true;
+        tlsserverDisarmHandshakeDeadline(ls);
         tlsserverLogHandshakeComplete(l, ls);
 
         if (! tlsserverFlushPendingDownQueue(t, l, ls))
@@ -224,11 +279,10 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (! ls->tls_committed && ts->fallback_tunnel != NULL && sbufGetLength(buf) > 0)
     {
-        if (UNLIKELY(tlsserverFallbackProbeWouldExceedCap(ls, buf)))
-        {
-            LOGW("TlsServer: fallback probe exceeded %u bytes before ServerHello; switching to fallback",
-                 (unsigned int) kTlsServerMaxFallbackProbeBytes);
+        enum tlsserver_probe_classification_e probe_result = tlsserverClassifyFallbackProbe(ls, buf);
 
+        if (probe_result == kTlsServerProbePlaintext)
+        {
             bool alive = tlsserverStartFallback(t, l, ls);
             if (! alive)
             {
@@ -243,8 +297,16 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
-        sbuf_t *probe = sbufDuplicateByPool(lineGetBufferPool(l), buf);
-        bufferstreamPush(&ls->fallback_probe, probe);
+        if (probe_result == kTlsServerProbeTlsLike)
+        {
+            ls->fallback_probe_tls_like = true;
+            bufferstreamEmpty(&ls->fallback_probe);
+        }
+        else
+        {
+            sbuf_t *probe = sbufDuplicateByPool(lineGetBufferPool(l), buf);
+            bufferstreamPush(&ls->fallback_probe, probe);
+        }
     }
 
     while (sbufGetLength(buf) > 0)

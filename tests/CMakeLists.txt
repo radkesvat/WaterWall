@@ -1,4 +1,5 @@
 find_program(BASH_EXECUTABLE bash REQUIRED)
+find_program(PYTHON3_EXECUTABLE python3 REQUIRED)
 
 add_subdirectory(unittests)
 
@@ -56,6 +57,28 @@ function(add_waterwall_negative_integration_test test_name case_name)
   )
 endfunction()
 
+function(add_waterwall_probe_integration_test test_name case_name timeout_seconds)
+  set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
+
+  add_test(
+    NAME ${test_name}
+    COMMAND
+      "${BASH_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_probe_case.sh"
+      "$<TARGET_FILE:Waterwall>"
+      "${case_dir}"
+      "${timeout_seconds}"
+      "${PYTHON3_EXECUTABLE}"
+  )
+
+  set_tests_properties(
+    ${test_name}
+    PROPERTIES
+      TIMEOUT 120
+      LABELS "integration;tunnels;probe"
+  )
+endfunction()
+
 function(add_waterwall_packet_analysis_test test_name case_name)
   set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
 
@@ -107,6 +130,11 @@ add_waterwall_integration_test(waterwall.bgp4_roundtrip bgp4_roundtrip)
 add_waterwall_integration_test(waterwall.keepalive_roundtrip keepalive_roundtrip)
 add_waterwall_integration_test(waterwall.tls_roundtrip tls_roundtrip)
 add_waterwall_integration_test(waterwall.tls_fallback_plaintext_probe_tcp_loopback tls_fallback_plaintext_probe_tcp_loopback)
+add_waterwall_probe_integration_test(waterwall.tls_handshake_timeout_slow_drip tls_handshake_timeout_slow_drip 10)
+add_waterwall_probe_integration_test(waterwall.tls_tlslike_invalid_probe_does_not_fallback tls_tlslike_invalid_probe_does_not_fallback 10)
+add_waterwall_probe_integration_test(waterwall.tls_tlslike_oversized_probe_does_not_fallback tls_tlslike_oversized_probe_does_not_fallback 10)
+add_waterwall_negative_integration_test(waterwall.tls_fallback_rejects_sni_gate tls_fallback_rejects_sni_gate)
+add_waterwall_negative_integration_test(waterwall.tls_fallback_rejects_alpn_gate tls_fallback_rejects_alpn_gate)
 add_waterwall_integration_test(waterwall.reality_google_roundtrip reality_google_roundtrip)
 add_waterwall_integration_test(waterwall.reality_visitor_plaintext_probe reality_visitor_plaintext_probe)
 add_waterwall_integration_test(waterwall.connection_fisher_roundtrip connection_fisher_roundtrip)

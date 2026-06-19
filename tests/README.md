@@ -81,6 +81,18 @@ Practical rule:
 - `tls_fallback_plaintext_probe_tcp_loopback`
   Verifies that plaintext first bytes reaching `TlsServer` over a real TCP loopback hop are forwarded to the configured
   fallback branch with the original bytes preserved, while the protected TLS branch points at an invalid connector.
+- `tls_handshake_timeout_slow_drip`
+  Uses a raw TCP probe to verify a TLS-looking slow-drip handshake is closed by `TlsServer`'s hard handshake deadline even
+  though each byte arrives before the listener active-idle timeout.
+- `tls_tlslike_invalid_probe_does_not_fallback`
+  Uses a raw TCP probe and fallback sentinel to verify malformed TLS-looking first bytes close on the TLS path instead of
+  being routed to fallback.
+- `tls_tlslike_oversized_probe_does_not_fallback`
+  Uses a raw TCP probe and fallback sentinel to verify oversized TLS-looking first bytes do not cross the fallback branch.
+- `tls_fallback_rejects_sni_gate`
+  Negative case: verifies `TlsServer` rejects a config that combines fallback with an exact SNI gate.
+- `tls_fallback_rejects_alpn_gate`
+  Negative case: verifies `TlsServer` rejects a config that combines fallback with strict ALPN selection.
 - `reality_google_roundtrip`
   Verifies `TesterClient -> RealityClient -> TcpConnector` and `TcpListener -> RealityServer -> TesterServer` across a
   real TCP loopback hop while the Reality visitor branch handshakes with `google.com:443`.

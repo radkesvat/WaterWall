@@ -1,0 +1,49 @@
+{
+  "name": "tls-tlslike-oversized-probe-does-not-fallback",
+  "nodes": [
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43030,
+        "nodelay": true
+      },
+      "next": "tls-server"
+    },
+    {
+      "name": "tls-server",
+      "type": "TlsServer",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "handshake-timeout-ms": 800,
+        "fallback-node-name": "fallback-connector",
+        "fallback-intentional-delay-ms": 0
+      },
+      "next": "protected-invalid"
+    },
+    {
+      "name": "protected-invalid",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "fallback-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43031,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    }
+  ]
+}

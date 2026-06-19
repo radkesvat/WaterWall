@@ -390,6 +390,65 @@ bool tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls
     return true;
 }
 
+static void tlsserverHandshakeDeadlineTimerCallback(wtimer_t *timer)
+{
+    tlsserver_lstate_t *ls = weventGetUserdata(timer);
+    if (ls == NULL)
+    {
+        return;
+    }
+
+    ls->handshake_deadline_timer = NULL;
+
+    if (! ls->handshake_deadline_armed || ls->handshake_completed || ls->fallback_mode ||
+        ls->ssl == NULL || ls->line == NULL || ls->tunnel == NULL || ! lineIsAlive(ls->line))
+    {
+        return;
+    }
+
+    LOGW("TlsServer: TLS handshake timed out before completion");
+    tlsserverCloseLineFatal(ls->tunnel, ls->line);
+}
+
+void tlsserverDisarmHandshakeDeadline(tlsserver_lstate_t *ls)
+{
+    ls->handshake_deadline_armed = false;
+    if (ls->handshake_deadline_timer == NULL)
+    {
+        return;
+    }
+
+    weventSetUserData(ls->handshake_deadline_timer, NULL);
+    wtimerDelete(ls->handshake_deadline_timer);
+    ls->handshake_deadline_timer = NULL;
+}
+
+void tlsserverArmHandshakeDeadline(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
+{
+    tlsserver_tstate_t *ts = tunnelGetState(t);
+
+    if (ts->handshake_timeout_ms == 0)
+    {
+        return;
+    }
+
+    tlsserverDisarmHandshakeDeadline(ls);
+
+    ls->tunnel                    = t;
+    ls->line                      = l;
+    ls->handshake_deadline_armed  = true;
+    ls->handshake_deadline_timer =
+        wtimerAdd(getWorkerLoop(lineGetWID(l)), tlsserverHandshakeDeadlineTimerCallback, ts->handshake_timeout_ms, 1);
+
+    if (ls->handshake_deadline_timer == NULL)
+    {
+        LOGF("TlsServer: failed to create TLS handshake deadline timer");
+        terminateProgram(1);
+    }
+
+    weventSetUserData(ls->handshake_deadline_timer, ls);
+}
+
 bool tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
     tlsserver_tstate_t *ts = tunnelGetState(t);
@@ -404,6 +463,7 @@ bool tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
     lineLock(l);
 
     ls->fallback_mode = true;
+    tlsserverDisarmHandshakeDeadline(ls);
     tlsserverLinestateRelease(ls);
 
     if (! ls->fallback_init_sent)

@@ -46,6 +46,8 @@ void tlsserverLinestateRelease(tlsserver_lstate_t *ls)
     }
     ls->resources_released = true;
 
+    tlsserverDisarmHandshakeDeadline(ls);
+
     if (ls->ssl != NULL)
     {
         if (ls->verbose)

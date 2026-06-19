@@ -200,6 +200,39 @@ static bool parseBasicSettings(tcplistener_tstate_t *state, const cJSON *setting
     return true;
 }
 
+static bool parseIdleTimeoutMs(uint64_t *dest, const cJSON *settings, const char *key, uint64_t def)
+{
+    const cJSON *value = cJSON_GetObjectItemCaseSensitive(settings, key);
+    if (value == NULL)
+    {
+        *dest = def;
+        return true;
+    }
+
+    if (! cJSON_IsNumber(value) || value->valuedouble != (double) value->valueint || value->valueint <= 0)
+    {
+        LOGF("JSON Error: TcpListener->settings->%s (positive-integer milliseconds field) : The data was empty or "
+             "invalid",
+             key);
+        return false;
+    }
+
+    *dest = (uint64_t) value->valueint;
+    return true;
+}
+
+static bool parseIdleTimeoutSettings(tcplistener_tstate_t *state, const cJSON *settings)
+{
+    return parseIdleTimeoutMs(&state->initial_idle_timeout_ms,
+                              settings,
+                              "initial-idle-timeout-ms",
+                              kDefaultKeepAliveTimeOutMs) &&
+           parseIdleTimeoutMs(&state->active_idle_timeout_ms,
+                              settings,
+                              "active-idle-timeout-ms",
+                              kEstablishedKeepAliveTimeOutMs);
+}
+
 static void configureMultiportBackend(socket_filter_option_t *filter_opt, tcplistener_tstate_t *state,
                                       const cJSON *settings)
 {
@@ -311,7 +344,7 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
     tcplistener_tstate_t *state    = tunnelGetState(t);
     const cJSON          *settings = node->node_settings_json;
 
-    if (! parseBasicSettings(state, settings))
+    if (! parseBasicSettings(state, settings) || ! parseIdleTimeoutSettings(state, settings))
     {
         return NULL;
     }

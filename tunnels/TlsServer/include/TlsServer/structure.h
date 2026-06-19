@@ -30,6 +30,7 @@ typedef struct tlsserver_tstate_s
     int  session_timeout;
     int  session_cache_mode;
     int  session_cache_size;
+    uint32_t handshake_timeout_ms;
     uint32_t fallback_intentional_delay_ms;
     uint32_t fallback_intentional_delay_jitter_ms;
     bool prefer_server_ciphers;
@@ -39,15 +40,20 @@ typedef struct tlsserver_tstate_s
 
 typedef struct tlsserver_lstate_s
 {
+    tunnel_t       *tunnel;
+    line_t         *line;
     SSL           *ssl;
     BIO           *rbio;
     BIO           *wbio;
+    wtimer_t      *handshake_deadline_timer;
     buffer_queue_t pending_down;
     buffer_queue_t *fallback_pending_up;
     buffer_stream_t fallback_probe;
 
     bool handshake_completed;
+    bool handshake_deadline_armed;
     bool tls_committed;
+    bool fallback_probe_tls_like;
     bool protected_init_sent;
     bool fallback_mode;
     bool fallback_init_sent;
@@ -79,11 +85,6 @@ enum
     kTlsServerSessionCacheNone,
     kTlsServerSessionCacheOff,
     kTlsServerSessionCacheBuiltin
-};
-
-enum
-{
-    kTlsServerMaxFallbackProbeBytes = 16U * 1024U
 };
 
 static inline enum sslstatus getSslStatus(SSL *ssl, int n)
@@ -144,4 +145,6 @@ bool tlsserverSendCloseNotify(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool tlsserverStartProtectedBranch(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls, sbuf_t *buf);
+void tlsserverArmHandshakeDeadline(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
+void tlsserverDisarmHandshakeDeadline(tlsserver_lstate_t *ls);
 void tlsserverCloseLineFatal(tunnel_t *t, line_t *l);

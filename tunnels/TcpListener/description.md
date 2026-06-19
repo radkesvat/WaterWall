@@ -31,6 +31,8 @@ This node is a chain head. Its upstream entry callbacks are disabled because con
     "fwmark": 10,
     "balance-group": "public-443",
     "balance-interval": 30000,
+    "initial-idle-timeout-ms": 5000,
+    "active-idle-timeout-ms": 300000,
     "multiport-backend": "socket",
     "whitelist": [
       "192.168.1.0/24",
@@ -112,6 +114,19 @@ One of `port` or `port-range` is required.
   Sticky duration for a client entry inside a balance group.
   After this interval expires, the next connection from that client can be routed to a different listener in the same group.
 
+- `initial-idle-timeout-ms` `(positive integer, milliseconds)`
+  Idle timeout for a newly accepted TCP connection before any listener-side payload activity is seen.
+  Default: `5000`
+
+- `active-idle-timeout-ms` `(positive integer, milliseconds)`
+  Idle timeout after the listener sees activity on the connection.
+  Default: `300000`
+
+  For chains such as `TcpListener -> TlsServer`, this is still listener-side activity, not proof that TLS has completed.
+  A client that sends a partial TLS record can move to this timeout while `TlsServer` is still waiting for more handshake
+  bytes. When using `TlsServer` fallback for probe resistance, tune this value together with the public TLS service you
+  are trying to resemble.
+
 - `multiport-backend` `(string)`
   Backend used when `port-range` is configured.
   Supported values:
@@ -175,9 +190,14 @@ This protects the process from unbounded buffering when the client is slow or st
 
 Each accepted connection is tracked in an idle table.
 
-- a newly accepted connection starts with a `5 second` timeout
-- active connections are refreshed to about `300 seconds`
+- a newly accepted connection starts with the configured initial timeout, `5 seconds` by default
+- active connections are refreshed to the configured active timeout, `300 seconds` by default
 - if the connection expires, the socket and line are closed
+
+The initial and active timeout values are configurable with `initial-idle-timeout-ms` and `active-idle-timeout-ms`.
+These are stack-level timing signals. If the listener feeds a probe-resistant TLS chain and fallback points to a public
+TLS service, keep Waterwall and that service synchronized enough that stalled-client close timing is not itself a
+fingerprint.
 
 ### Balance groups
 

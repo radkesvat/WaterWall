@@ -20,6 +20,8 @@ void tlsserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
+    tlsserverArmHandshakeDeadline(t, l, ls);
+
     if (ts->verbose)
     {
         LOGD("TlsServer: worker %u TLS server line initialized%s",

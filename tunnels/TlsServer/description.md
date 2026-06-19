@@ -49,7 +49,7 @@ That arrangement lets:
     "ciphers": "HIGH:!aNULL:!MD5",
     "session-cache": "none",
     "session-tickets": true,
-    "fallback-node-name": "plain-http-fallback",
+    "fallback-node-name": "nginx-tls-fallback",
     "fallback-intentional-delay-ms": 7,
     "fallback-intentional-delay-jitter-ms": 1,
     "verbose": false
@@ -87,13 +87,15 @@ Both fields are required. If either one is missing or invalid, tunnel creation f
   Optional exact-match SNI gate.
 
   If set, clients that do not send this exact SNI are rejected during handshake. This is only a filter; it does not change certificates dynamically.
-  When fallback is configured, this rejection is handled by the fallback path if it happens before ServerHello.
+  This setting is incompatible with `fallback-node-name` because SNI mismatch can reject an otherwise valid ClientHello
+  before ServerHello.
 
 - `alpns` `(array of strings)`
   Optional ALPN allow-list and server preference order.
 
   If omitted, `TlsServer` does not constrain ALPN. If set, only listed protocols may be negotiated.
-  When fallback is configured, fatal ALPN rejection before ServerHello is handled by the fallback path.
+  This setting is incompatible with `fallback-node-name` because ALPN mismatch can reject an otherwise valid ClientHello
+  before ServerHello.
 
 - `min-version` `(string)`
   Minimum TLS version.
@@ -125,6 +127,13 @@ Both fields are required. If either one is missing or invalid, tunnel creation f
   TLS session lifetime.
   Default: `300`
 
+- `handshake-timeout-ms` `(number, milliseconds)`
+  Hard deadline for the TLS handshake to complete after upstream `Init`.
+  Default: `60000`
+
+  Set to `0` to disable the hard handshake deadline. This is not refreshed by received bytes. It is separate from
+  listener idle settings such as `TcpListener`'s `initial-idle-timeout-ms` and `active-idle-timeout-ms`.
+
 - `session-cache` `(string)`
   Session cache mode.
   Default: `none`
@@ -148,13 +157,16 @@ Both fields are required. If either one is missing or invalid, tunnel creation f
   Default: `true`
 
 - `fallback-node-name` `(string)`
-  Optional node name that receives the connection when the first upstream bytes are rejected by OpenSSL before
-  `TlsServer` has committed to TLS.
+  Optional node name that receives the connection when the first upstream bytes are clearly not TLS before `TlsServer`
+  has committed to TLS.
 
   Aliases: `fallback-node`, `fallback`
 
-  This is useful when the same public port should behave plausibly for plaintext probes, for example by forwarding a
-  plain HTTP request to a normal public HTTP service instead of exposing TLS alert/close behavior.
+  This is useful when the same public port should behave plausibly for malformed or plaintext probes. The recommended
+  fallback is usually another real TLS server, ideally nginx configured with TLS settings that closely match this
+  `TlsServer`.
+
+  Do not combine fallback with `sni` or `alpns`; tunnel creation rejects that configuration.
 
 - `fallback-intentional-delay-ms` `(number, milliseconds)`
   Delay applied to upstream payloads sent to the fallback branch.
@@ -165,6 +177,13 @@ Both fields are required. If either one is missing or invalid, tunnel creation f
   Set to `0` to disable the intentional delay.
   Delayed fallback payloads are delivered in FIFO order. If upstream `Finish` arrives while fallback payloads are
   delayed, `TlsServer` forwards that `Finish` only after the delayed payloads have been delivered.
+
+  This value must be calibrated against the public behavior the fallback should resemble. The important question is
+  whether the fallback branch would answer faster or slower than that behavior, not whether it is co-located or remote.
+  A co-located fallback can still be too fast when the protected path normally includes an upstream round trip, such as
+  proxy-like traffic fetching remote content, so a positive delay may be appropriate. A remote fallback may already carry
+  enough latency, and a local-service imitation may be closer with `0`. Measure the target behavior; delay and jitter are
+  mitigations, not proof of timing indistinguishability.
 
 - `fallback-intentional-delay-jitter-ms` `(number, milliseconds)`
   Random jitter applied to delayed fallback payload scheduling.
@@ -184,7 +203,9 @@ Both fields are required. If either one is missing or invalid, tunnel creation f
 
 ### Handshake and data flow
 
-On upstream `Init`, `TlsServer` creates per-line OpenSSL state and forwards upstream `Init` to the next node.
+On upstream `Init`, `TlsServer` creates per-line OpenSSL state. Without fallback it forwards upstream `Init` to the next
+node immediately. With fallback configured, it waits until the first bytes show whether the line belongs to the protected
+TLS branch or the fallback branch.
 
 After that:
 
@@ -205,34 +226,52 @@ If the next node sends payload before the handshake is finished, `TlsServer` que
 
 ### Fallback behavior
 
-When `fallback-node-name` is set, `TlsServer` keeps a copy of the initial upstream bytes while feeding the original bytes
-to OpenSSL.
+When `fallback-node-name` is set, `TlsServer` keeps only the tiny initial prefix needed to classify the connection before
+TLS commit.
 
 If OpenSSL produces a ServerHello, `TlsServer` treats the connection as real TLS, discards the saved copy, starts the
 protected `next` branch, and continues the normal TLS handshake.
 
-If OpenSSL rejects the bytes before any ServerHello is produced, `TlsServer` releases its TLS state and initializes the
-fallback node. It then sends the saved bytes to fallback unchanged after the configured fallback delay and jitter. From
-that point onward, payloads in both directions are passed through the fallback branch without TLS encryption or decryption;
-upstream payloads keep using the same intentional fallback delay so byte ordering is preserved.
+If the first bytes are clearly not TLS, `TlsServer` releases its TLS state and initializes the fallback node. It then
+sends the saved bytes to fallback unchanged after the configured fallback delay and jitter. From that point onward,
+payloads in both directions are passed through the fallback branch without TLS encryption or decryption; upstream payloads
+keep using the same intentional fallback delay so byte ordering is preserved.
 
-This includes TLS-looking ClientHellos that fail pre-ServerHello checks such as SNI mismatch or fatal ALPN mismatch.
-With fallback configured, `TlsServer` does not send the TLS alert for those cases; the raw ClientHello is handed to
-fallback instead. A misconfigured TLS client may therefore report a generic TLS decode/protocol error caused by fallback
-plaintext, not the original SNI or ALPN alert. If `sni` or `alpns` are used as an access-control boundary, treat the
-fallback branch as the rejection surface and make sure it is safe to expose.
+If the first bytes look like a TLS handshake record, for example they start with `16 03`, the connection stays on the
+OpenSSL path. Malformed, oversized, incomplete, or slow TLS-looking handshakes are closed by OpenSSL failure or by
+`handshake-timeout-ms`; they are not routed to fallback.
 
-The saved fallback probe is capped at 16 KiB. If that cap is exceeded before `TlsServer` has produced a ServerHello, the
-connection is switched to fallback immediately. This bounds memory use for slow TLS-looking probes that keep OpenSSL in
-`WANT_READ` without committing the connection to the protected TLS branch. A legitimate ClientHello larger than 16 KiB
-is therefore also sent to fallback instead of completing TLS.
+The fallback delay is applied only to upstream payloads. Downstream responses from fallback are not intentionally delayed,
+and an upstream `Finish` waits behind queued delayed fallback payloads. That is internally consistent with request
+handoff, but it still creates a measurable request-side offset. Delay and jitter are only mitigations; they do not prove
+timing indistinguishability. Measure the deployment path and choose values that match the service being impersonated.
+
+Fallback is intentionally incompatible with `sni` and `alpns`. If those gates reject an otherwise valid TLS ClientHello
+before ServerHello, forwarding the raw ClientHello to fallback as plaintext can produce a non-TLS response to a valid TLS
+probe. That is highly fingerprintable. When fallback is used for probe resistance, enforce access in an inner protocol
+layer such as Trojan or VLESS authentication instead of using `TlsServer` SNI/ALPN gates.
+
+Fallback only controls what happens after bytes arrive and can be classified. Idle timing before classification is still
+governed by the listener in front of `TlsServer`, usually `TcpListener`. Handshake timing after `TlsServer` initializes is
+controlled by `handshake-timeout-ms`, and listener idle timeouts are not a replacement for that hard handshake deadline.
+If you are matching a public fallback TLS server, also match listener idle timing: either tune that server to Waterwall's
+listener values or set `TcpListener`'s `initial-idle-timeout-ms` and `active-idle-timeout-ms` to values that fit the
+service you are imitating.
 
 Fallback `Est` is forwarded only if the line has not already been established. This prevents duplicate `Est` callbacks
 while still allowing fallback to provide the first `Est` in chains where the protected branch would not establish until
 after application data is routed.
 
-Good fallback targets are real cleartext services or tunnels that make sense for the public port, such as an HTTP server
-or a connector to an existing nginx/plain HTTP endpoint.
+The best fallback target is generally not a plain HTTP service. For the strongest camouflage, route fallback to a real
+nginx TLS server with certificate, SNI, ALPN, cipher, session-ticket, and protocol-version behavior close to this
+`TlsServer`. This lets nginx handle invalid traffic with its own public-facing behavior. In particular, when a client
+sends plaintext HTTP to an nginx TLS port, nginx usually returns its recognizable HTML "plain HTTP request was sent to
+HTTPS port" error page instead of only closing the connection. Forwarding pre-ServerHello probes to that kind of fallback
+helps avoid a fingerprint where Waterwall closes or alerts differently from nginx.
+
+Fallback health is also part of the public fingerprint. A down fallback, immediate connection close, generic proxy error,
+mismatched headers or body, mismatched certificate behavior, or mismatched timing can all identify the deployment even if
+the handoff logic is correct.
 
 ### Finish behavior
 

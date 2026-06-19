@@ -1,0 +1,51 @@
+{
+  "name": "tls-handshake-timeout-slow-drip",
+  "nodes": [
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43010,
+        "nodelay": true,
+        "initial-idle-timeout-ms": 5000,
+        "active-idle-timeout-ms": 5000
+      },
+      "next": "tls-server"
+    },
+    {
+      "name": "tls-server",
+      "type": "TlsServer",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "handshake-timeout-ms": 700,
+        "fallback-node-name": "fallback-connector",
+        "fallback-intentional-delay-ms": 0
+      },
+      "next": "protected-invalid"
+    },
+    {
+      "name": "protected-invalid",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "fallback-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43011,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    }
+  ]
+}

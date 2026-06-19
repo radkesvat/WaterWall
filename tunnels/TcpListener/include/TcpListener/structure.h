@@ -19,6 +19,8 @@ typedef struct tcplistener_tstate_s
     int      recv_buffer_size;         // optional socket SO_RCVBUF size
     bool     send_buffer_size_set;     // whether large-send-buffer was explicitly configured
     bool     recv_buffer_size_set;     // whether large-recv-buffer was explicitly configured
+    uint64_t initial_idle_timeout_ms;  // idle timeout before first listener-side activity
+    uint64_t active_idle_timeout_ms;   // idle timeout after listener-side activity
 
 } tcplistener_tstate_t;
 
@@ -42,8 +44,8 @@ enum
     kLineStateSize                 = sizeof(tcplistener_lstate_t),
     kMaxPauseQueueSize             = (1U << 24), // 16MB
     kMinPauseQueueSize             = (1U << 10), // 1KB
-    kDefaultKeepAliveTimeOutMs     = 5 * 1000,   // same as NGINX
-    kEstablishedKeepAliveTimeOutMs = 300 * 1000, // since the connection is established,
+    kDefaultKeepAliveTimeOutMs     = 5 * 1000,
+    kEstablishedKeepAliveTimeOutMs = 300 * 1000,
 
     kPauseQueueCapacity = 2
 };

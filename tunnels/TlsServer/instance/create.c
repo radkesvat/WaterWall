@@ -8,6 +8,7 @@
 enum
 {
     kTlsServerDefaultSessionTimeout            = 300,
+    kTlsServerDefaultHandshakeTimeoutMs        = 60000,
     kTlsServerDefaultFallbackIntentionalDelayMs = 7,
     kTlsServerDefaultFallbackIntentionalDelayJitterMs = 1
 };
@@ -140,6 +141,34 @@ static bool parseFallbackNode(tlsserver_tstate_t *ts, tunnel_t *t, node_t *node,
     }
 
     ts->fallback_node = fallback_node;
+    return true;
+}
+
+static bool validateFallbackCompatibility(tlsserver_tstate_t *ts, tunnel_t *t)
+{
+    if (ts->fallback_node == NULL)
+    {
+        return true;
+    }
+
+    if (ts->expected_sni != NULL)
+    {
+        LOGF(
+            "TlsServer: fallback-node-name/fallback-node/fallback cannot be combined with sni because mismatched valid "
+            "ClientHellos would be routed to fallback as plaintext");
+        tlsserverTunnelDestroy(t);
+        return false;
+    }
+
+    if (ts->alpns_length > 0)
+    {
+        LOGF(
+            "TlsServer: fallback-node-name/fallback-node/fallback cannot be combined with alpns because "
+            "ALPN-mismatched valid ClientHellos would be routed to fallback as plaintext");
+        tlsserverTunnelDestroy(t);
+        return false;
+    }
+
     return true;
 }
 
@@ -380,12 +409,17 @@ static bool parseAlpns(tlsserver_tstate_t *ts, const cJSON *settings, tunnel_t *
 
 static bool parseTlsDefaults(tlsserver_tstate_t *ts, const cJSON *settings, tunnel_t *t)
 {
+    int handshake_timeout_ms                  = kTlsServerDefaultHandshakeTimeoutMs;
     int fallback_intentional_delay_ms        = kTlsServerDefaultFallbackIntentionalDelayMs;
     int fallback_intentional_delay_jitter_ms = kTlsServerDefaultFallbackIntentionalDelayJitterMs;
 
     getBoolFromJsonObjectOrDefault(&ts->prefer_server_ciphers, settings, "prefer-server-ciphers", false);
     getBoolFromJsonObjectOrDefault(&ts->session_tickets, settings, "session-tickets", true);
     getIntFromJsonObjectOrDefault(&ts->session_timeout, settings, "session-timeout", kTlsServerDefaultSessionTimeout);
+    getIntFromJsonObjectOrDefault(&handshake_timeout_ms,
+                                  settings,
+                                  "handshake-timeout-ms",
+                                  kTlsServerDefaultHandshakeTimeoutMs);
     getIntFromJsonObjectOrDefault(&fallback_intentional_delay_ms,
                                   settings,
                                   "fallback-intentional-delay-ms",
@@ -402,6 +436,14 @@ static bool parseTlsDefaults(tlsserver_tstate_t *ts, const cJSON *settings, tunn
         tlsserverTunnelDestroy(t);
         return false;
     }
+
+    if (handshake_timeout_ms < 0)
+    {
+        LOGF("JSON Error: TlsServer->settings->handshake-timeout-ms (number field) : The value was invalid");
+        tlsserverTunnelDestroy(t);
+        return false;
+    }
+    ts->handshake_timeout_ms = (uint32_t) handshake_timeout_ms;
 
     if (fallback_intentional_delay_ms < 0)
     {
@@ -568,7 +610,8 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
     if (! parseRequiredString(&ts->cert_file, settings, "cert-file", t) ||
         ! parseRequiredString(&ts->key_file, settings, "key-file", t) ||
         ! parseOptionalString(&ts->expected_sni, settings, "sni", t) || ! parseTlsDefaults(ts, settings, t) ||
-        ! parseAlpns(ts, settings, t) || ! parseFallbackNode(ts, t, node, settings))
+        ! parseAlpns(ts, settings, t) || ! parseFallbackNode(ts, t, node, settings) ||
+        ! validateFallbackCompatibility(ts, t))
     {
         return NULL;
     }
@@ -586,7 +629,8 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
         LOGD(
             "TlsServer: creating node \"%s\" cert-file=\"%s\" key-file=\"%s\" sni=\"%s\" min-version=%d max-version=%d "
             "ciphers=\"%s\" session-cache=%s session-cache-size=%d session-tickets=%d "
-            "fallback-intentional-delay-ms=%u fallback-intentional-delay-jitter-ms=%u alpns=%u workers=%d",
+            "handshake-timeout-ms=%u fallback-intentional-delay-ms=%u fallback-intentional-delay-jitter-ms=%u "
+            "alpns=%u workers=%d",
             node->name,
             ts->cert_file,
             ts->key_file,
@@ -597,6 +641,7 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
             tlsserverSessionCacheName(ts->session_cache_mode),
             ts->session_cache_size,
             (int) ts->session_tickets,
+            (unsigned int) ts->handshake_timeout_ms,
             (unsigned int) ts->fallback_intentional_delay_ms,
             (unsigned int) ts->fallback_intentional_delay_jitter_ms,
             ts->alpns_length,

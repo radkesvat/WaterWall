@@ -44,7 +44,7 @@ static void handleNormalWrite(tunnel_t *t, line_t *l, tcplistener_tstate_t *ts, 
 
     localidletableKeepIdleItemForAtleast(tcplistenerGetLineIdleTable(ts, l),
                                          ls->idle_handle,
-                                         kEstablishedKeepAliveTimeOutMs);
+                                         ts->active_idle_timeout_ms);
 
     if (nwrite >= 0 && nwrite < bytes)
     {
