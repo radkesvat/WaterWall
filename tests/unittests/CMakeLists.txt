@@ -108,6 +108,17 @@ if(TARGET Router AND EXISTS "${ROUTER_GEOIP_TEST_DB}")
 endif()
 
 if(TARGET Router)
+  add_executable(router_geosite_test router_geosite_test.c)
+  target_include_directories(router_geosite_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/Router/include
+    ${CMAKE_SOURCE_DIR}/tunnels/Router
+    ${CMAKE_SOURCE_DIR}/tunnels/Router/include/Router
+  )
+  target_link_libraries(router_geosite_test PRIVATE Router ww)
+  add_dependencies(waterwall_unit_tests router_geosite_test)
+
+  add_waterwall_unit_test(waterwall.router_geosite_unit router_geosite_test "unit;tunnels;router;geosite")
+
   add_executable(router_sniffing_test router_sniffing_test.c)
   target_include_directories(router_sniffing_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/Router/include
