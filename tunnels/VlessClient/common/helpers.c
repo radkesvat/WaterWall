@@ -449,12 +449,14 @@ bool vlessclientStartDomainResolveIfNeeded(tunnel_t *t, line_t *l, vlessclient_l
     return true;
 }
 
-static bool sendInitialRequest(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls)
+static bool sendInitialRequest(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, bool *line_alive_out)
 {
     vlessclient_tstate_t    *ts       = tunnelGetState(t);
     const address_context_t *target   = &ls->target_addr;
     uint8_t                  cmd      = protocolToCommand(ls->protocol);
     uint32_t                 addr_len = 0;
+
+    *line_alive_out = true;
 
     if (UNLIKELY(! vlessclientAddressLength(target, &addr_len)))
     {
@@ -485,7 +487,13 @@ static bool sendInitialRequest(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls)
     }
 
     ls->phase = kVlessClientPhaseWaitResponse;
-    return sendBufferUpstream(t, l, buf);
+    if (UNLIKELY(! sendBufferUpstream(t, l, buf)))
+    {
+        *line_alive_out = false;
+        return false;
+    }
+
+    return true;
 }
 
 static bool wrapUdpPayload(line_t *l, sbuf_t **buf_io)
@@ -737,12 +745,6 @@ static bool establishDirectAfterResponse(tunnel_t *t, line_t *l, vlessclient_lst
         bufferqueuePushBack(&pending_local, bufferqueuePopFront(&ls->pending_up));
     }
 
-    if (UNLIKELY(! withLineLocked(l, tunnelPrevDownStreamEst, t)))
-    {
-        bufferqueueDestroy(&pending_local);
-        return false;
-    }
-
     if (UNLIKELY(! flushQueueToNext(t, l, &pending_local)))
     {
         return false;
@@ -767,26 +769,7 @@ static bool establishUdpAppAfterResponse(tunnel_t *t, line_t *carrier_l, vlesscl
         bufferqueuePushBack(&pending_local, bufferqueuePopFront(&app_ls->pending_up));
     }
 
-    // Mark the app line established and flush the datagrams that were queued before the VLESS
-    // response arrived *before* signalling establish to the app. Forwarding the queued datagrams
-    // first guarantees they reach the carrier ahead of any datagram the app might emit re-entrantly
-    // from the establish callback below; otherwise such a re-entrant datagram (forwarded directly
-    // because the phase is already Established) could overtake the queued ones and reorder the
-    // upstream UDP stream. Downstream delivery to the app still happens after establish, since
-    // drainUdpFrames runs last.
-    app_ls->phase = kVlessClientPhaseEstablished;
-
     if (UNLIKELY(! drainQueuedUdpPayloads(t, app_l, app_ls, &pending_local)))
-    {
-        return false;
-    }
-
-    lineLock(carrier_l);
-    bool app_alive     = withLineLocked(app_l, tunnelPrevDownStreamEst, t);
-    bool carrier_alive = lineIsAlive(carrier_l);
-    lineUnlock(carrier_l);
-
-    if (UNLIKELY(! app_alive || ! carrier_alive))
     {
         return false;
     }
@@ -878,11 +861,6 @@ bool vlessclientOnTransportEstablished(tunnel_t *t, line_t *l, vlessclient_lstat
         return true;
     }
 
-    if (UNLIKELY(! sendInitialRequest(t, l, ls)))
-    {
-        return false;
-    }
-
     if (ls->kind == kVlessClientLineKindUdpCarrier)
     {
         line_t *app_l = ls->app_line;
@@ -895,15 +873,44 @@ bool vlessclientOnTransportEstablished(tunnel_t *t, line_t *l, vlessclient_lstat
         vlessclient_lstate_t *app_ls        = lineGetState(app_l, t);
         buffer_queue_t        pending_local = bufferqueueCreate(kVlessClientPendingQueueCap);
 
-        while (bufferqueueGetBufCount(&app_ls->pending_up) > 0)
+        // Forward Est before sending the VLESS request so re-entrant app payload queues locally;
+        // the queued bytes are flushed only after the protocol header is on the wire.
+        lineLock(l);
+        bool app_alive     = withLineLocked(app_l, tunnelPrevDownStreamEst, t);
+        bool carrier_alive = lineIsAlive(l);
+        lineUnlock(l);
+
+        if (UNLIKELY(! app_alive || ! carrier_alive))
         {
-            bufferqueuePushBack(&pending_local, bufferqueuePopFront(&app_ls->pending_up));
+            bufferqueueDestroy(&pending_local);
+            return false;
+        }
+
+        ls     = lineGetState(l, t);
+        app_ls = lineGetState(app_l, t);
+
+        bool line_alive = true;
+        if (UNLIKELY(! sendInitialRequest(t, l, ls, &line_alive)))
+        {
+            bufferqueueDestroy(&pending_local);
+            if (line_alive)
+            {
+                vlessclientCloseLine(t, l, kVlessClientCloseInternal);
+            }
+            return false;
         }
 
         if (ts->verbose)
         {
             LOGD("VlessClient: UDP request sent");
         }
+
+        while (bufferqueueGetBufCount(&app_ls->pending_up) > 0)
+        {
+            bufferqueuePushBack(&pending_local, bufferqueuePopFront(&app_ls->pending_up));
+        }
+
+        app_ls->phase = kVlessClientPhaseEstablished;
 
         if (UNLIKELY(! drainQueuedUdpPayloads(t, app_l, app_ls, &pending_local)))
         {
@@ -914,14 +921,35 @@ bool vlessclientOnTransportEstablished(tunnel_t *t, line_t *l, vlessclient_lstat
     }
 
     buffer_queue_t pending_local = bufferqueueCreate(kVlessClientPendingQueueCap);
-    while (bufferqueueGetBufCount(&ls->pending_up) > 0)
+
+    // Forward Est before sending the VLESS request so re-entrant app payload queues locally;
+    // the queued bytes are flushed only after the protocol header is on the wire.
+    if (UNLIKELY(! withLineLocked(l, tunnelPrevDownStreamEst, t)))
     {
-        bufferqueuePushBack(&pending_local, bufferqueuePopFront(&ls->pending_up));
+        bufferqueueDestroy(&pending_local);
+        return false;
+    }
+
+    ls = lineGetState(l, t);
+    bool line_alive = true;
+    if (UNLIKELY(! sendInitialRequest(t, l, ls, &line_alive)))
+    {
+        bufferqueueDestroy(&pending_local);
+        if (line_alive)
+        {
+            vlessclientCloseLine(t, l, kVlessClientCloseInternal);
+        }
+        return false;
     }
 
     if (ts->verbose)
     {
         LOGD("VlessClient: TCP request sent");
+    }
+
+    while (bufferqueueGetBufCount(&ls->pending_up) > 0)
+    {
+        bufferqueuePushBack(&pending_local, bufferqueuePopFront(&ls->pending_up));
     }
 
     return flushQueueToNext(t, l, &pending_local);

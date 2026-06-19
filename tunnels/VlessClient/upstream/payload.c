@@ -24,7 +24,7 @@ void vlessclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (ls->phase == kVlessClientPhaseEstablished)
+    if (ls->phase == kVlessClientPhaseWaitResponse || ls->phase == kVlessClientPhaseEstablished)
     {
         tunnelNextUpStreamPayload(t, l, buf);
         return;

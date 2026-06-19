@@ -2,9 +2,9 @@
 
 `VlessClient` is a client-side plain VLESS v0 middle tunnel for Waterwall.
 
-It sends a VLESS request header with a configured UUID and final target destination, validates the VLESS response header,
-and then forwards application payload. It supports TCP command `0x01` and UDP command `0x02` with the base VLESS UDP
-length framing.
+It sends a VLESS request header with a configured UUID and final target destination, forwards upstream application payload
+without waiting for the VLESS response header, and validates the response header before delivering downstream body bytes.
+It supports TCP command `0x01` and UDP command `0x02` with the base VLESS UDP length framing.
 
 This node implements plain VLESS only. It does not create TLS, REALITY, XTLS Vision, flow addons, mux, XUDP, WebSocket,
 gRPC, or other transport wrappers.
@@ -205,9 +205,9 @@ Response format:
 00 00
 ```
 
-`VlessClient` sends the request header after the downstream transport establishes. It may flush queued upstream payload
-before receiving the response header, but it does not forward downstream body bytes until the response header is parsed
-and validated.
+`VlessClient` forwards downstream `Est` when the downstream transport establishes. Upstream payload emitted by that `Est`
+callback is queued until the VLESS request header is sent, then flushed immediately after the header without waiting for
+the VLESS response header. Downstream body bytes are still held until the response header is parsed and validated.
 
 ## Notes And Caveats
 
