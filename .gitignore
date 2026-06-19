@@ -25,6 +25,9 @@ wconfig.h
 package-lock.json
 main_linkerArgs.txt
 
+# Generated Router GeoSite database
+/tunnels/Router/geosite_ww_style_generator/geosite_generated.json
+
 # Log files
 npm-debug.log*
 yarn-debug.log*

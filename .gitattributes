@@ -8,5 +8,8 @@ tunnels/TcpOverUdpClient/fec/** linguist-vendored
 tunnels/TcpOverUdpClient/kcp/** linguist-vendored
 tunnels/TcpOverUdpServer/fec/** linguist-vendored
 tunnels/TcpOverUdpServer/kcp/** linguist-vendored
+tunnels/Router/geosite_ww_style_generator/*.py linguist-generated=true
+tunnels/Router/geosite_ww_style_generator/geosite_generated.json linguist-generated=true
+tunnels/Router/geosite_ww_style_generator/domain-list-community/** linguist-vendored
 *.asm linguist-vendored
 *.s linguist-vendored
