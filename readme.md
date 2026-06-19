@@ -45,9 +45,9 @@ This will install all required dependencies, fetch the project, and compile it u
 > **Note:** The first command ensures a modern version of CMake via `snap`, which is required for the preset-based build system.
 
 
-## Questions & Suggestions
+<!-- ## Questions & Suggestions
 
-Feel free to reach out in my small [Telegram group](https://t.me/radkesvat_group) if you have any questions about this project, networking, or programming in general. I’m also happy to hear your suggestions and feedback!
+Feel free to reach out in my small [Telegram group](https://t.me/radkesvat_group) if you have any questions about this project, networking, or programming in general. I’m also happy to hear your suggestions and feedback! -->
 
 <!-- # Plan
 
