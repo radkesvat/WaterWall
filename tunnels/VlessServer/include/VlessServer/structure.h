@@ -14,6 +14,7 @@ typedef enum vlessserver_phase_e
 {
     kVlessServerPhaseIdle = 0,
     kVlessServerPhaseWaitInitial,
+    kVlessServerPhaseFallback,
     kVlessServerPhaseTcpConnecting,
     kVlessServerPhaseTcpEstablished,
     kVlessServerPhaseUdpWaitPacket,
@@ -32,6 +33,7 @@ typedef enum vlessserver_close_origin_e
 typedef struct vlessserver_user_s
 {
     uint8_t uuid[16];
+    char   *username;
 } vlessserver_user_t;
 
 typedef struct vlessserver_tstate_s
@@ -41,6 +43,9 @@ typedef struct vlessserver_tstate_s
 
     node_t    user_controller_node;
     tunnel_t *user_controller_tunnel;
+
+    node_t   *fallback_node;
+    tunnel_t *fallback_tunnel;
 
     vlessserver_user_t *users;
     uint32_t            user_count;
@@ -112,7 +117,7 @@ void vlessserverLinestateInitialize(vlessserver_lstate_t *ls, tunnel_t *t, line_
 void vlessserverLinestateDestroy(vlessserver_lstate_t *ls);
 void vlessserverTunnelstateDestroy(vlessserver_tstate_t *ts);
 
-bool vlessserverDrainInput(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls);
+bool vlessserverDrainInput(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, bool reject_short_password);
 void vlessserverCloseLineFromUpstream(tunnel_t *t, line_t *l);
 void vlessserverCloseLineFromDownstream(tunnel_t *t, line_t *l);
 void vlessserverCloseLineBidirectional(tunnel_t *t, line_t *l);

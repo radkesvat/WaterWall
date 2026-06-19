@@ -130,6 +130,237 @@ static bool trojanserverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
     return true;
 }
 
+static bool trojanserverAppendPassword(trojanserver_tstate_t *ts, const char *username, const char *password,
+                                       const char *path)
+{
+    sha224_hash_t digest = {0};
+    if (UNLIKELY(wCryptoSHA224(&digest, (const unsigned char *) password, stringLength(password)) != 0))
+    {
+        wCryptoZero(&digest, sizeof(digest));
+        LOGF("TrojanServer: failed to calculate SHA224 password digest");
+        return false;
+    }
+
+    for (uint32_t i = 0; i < ts->user_count; ++i)
+    {
+        if (wCryptoEqual(ts->users[i].sha224, digest.bytes, SHA224_DIGEST_SIZE))
+        {
+            wCryptoZero(&digest, sizeof(digest));
+            LOGF("JSON Error: TrojanServer->settings->%s duplicates a configured local password", path);
+            return false;
+        }
+    }
+
+    size_t new_count = (size_t) ts->user_count + 1U;
+    if (UNLIKELY(new_count > UINT32_MAX))
+    {
+        wCryptoZero(&digest, sizeof(digest));
+        LOGF("TrojanServer: too many configured users");
+        return false;
+    }
+
+    trojanserver_user_t *users = memoryReAllocate(ts->users, sizeof(*users) * new_count);
+    if (UNLIKELY(users == NULL))
+    {
+        wCryptoZero(&digest, sizeof(digest));
+        LOGF("TrojanServer: failed to allocate password allowlist");
+        return false;
+    }
+
+    ts->users = users;
+    memoryCopy(ts->users[ts->user_count].sha224, digest.bytes, SHA224_DIGEST_SIZE);
+    ts->users[ts->user_count].username = username != NULL ? stringDuplicate(username) : NULL;
+    ts->users[ts->user_count].password = stringDuplicate(password);
+    ts->user_count                     = (uint32_t) new_count;
+
+    wCryptoZero(&digest, sizeof(digest));
+    return true;
+}
+
+static bool trojanserverParsePasswordValue(trojanserver_tstate_t *ts, const cJSON *item, const char *path,
+                                           const char *username)
+{
+    if (! cJSON_IsString(item) || item->valuestring == NULL || item->valuestring[0] == '\0')
+    {
+        LOGF("JSON Error: TrojanServer->settings->%s must be a non-empty password string", path);
+        return false;
+    }
+
+    return trojanserverAppendPassword(ts, username, item->valuestring, path);
+}
+
+static const cJSON *trojanserverGetObjectPasswordField(const cJSON *item, const char *path, bool *invalid)
+{
+    *invalid             = false;
+    const cJSON *password = cJSON_GetObjectItemCaseSensitive(item, "password");
+    const cJSON *pass     = cJSON_GetObjectItemCaseSensitive(item, "pass");
+    if (password != NULL && pass != NULL)
+    {
+        LOGF("JSON Error: TrojanServer->settings->%s object must use either password or pass, not both", path);
+        *invalid = true;
+        return NULL;
+    }
+
+    if (password != NULL)
+    {
+        return password;
+    }
+
+    return pass;
+}
+
+static bool trojanserverParseUserEntry(trojanserver_tstate_t *ts, const cJSON *item, const char *path)
+{
+    if (cJSON_IsString(item))
+    {
+        return trojanserverParsePasswordValue(ts, item, path, NULL);
+    }
+
+    if (! cJSON_IsObject(item))
+    {
+        LOGF("JSON Error: TrojanServer->settings->%s must be a password string or object", path);
+        return false;
+    }
+
+    bool         password_invalid = false;
+    const cJSON *password         = trojanserverGetObjectPasswordField(item, path, &password_invalid);
+    if (password_invalid)
+    {
+        return false;
+    }
+    if (password == NULL)
+    {
+        LOGF("JSON Error: TrojanServer->settings->%s object must contain password or pass", path);
+        return false;
+    }
+
+    const cJSON *username      = cJSON_GetObjectItemCaseSensitive(item, "username");
+    const char  *username_text = NULL;
+    if (username != NULL)
+    {
+        if (! cJSON_IsString(username) || username->valuestring == NULL || username->valuestring[0] == '\0')
+        {
+            LOGF("JSON Error: TrojanServer->settings->%s->username must be a non-empty string when provided", path);
+            return false;
+        }
+        username_text = username->valuestring;
+    }
+
+    return trojanserverParsePasswordValue(ts, password, path, username_text);
+}
+
+static bool trojanserverParsePasswordArray(trojanserver_tstate_t *ts, const cJSON *array, const char *path)
+{
+    if (! cJSON_IsArray(array) || cJSON_GetArraySize(array) <= 0)
+    {
+        LOGF("JSON Error: TrojanServer->settings->%s must be a non-empty array", path);
+        return false;
+    }
+
+    int    index = 0;
+    cJSON *item  = NULL;
+    cJSON_ArrayForEach(item, array)
+    {
+        char item_path[64] = {0};
+        snprintf(item_path, sizeof(item_path), "%s[%d]", path, index);
+        if (! trojanserverParseUserEntry(ts, item, item_path))
+        {
+            return false;
+        }
+        ++index;
+    }
+
+    return true;
+}
+
+static bool trojanserverParseUsers(trojanserver_tstate_t *ts, const cJSON *settings)
+{
+    const cJSON *password = cJSON_GetObjectItemCaseSensitive(settings, "password");
+    const cJSON *pass     = cJSON_GetObjectItemCaseSensitive(settings, "pass");
+    if (password != NULL && pass != NULL)
+    {
+        LOGF("JSON Error: TrojanServer->settings must use either password or pass, not both");
+        return false;
+    }
+    if (password == NULL)
+    {
+        password = pass;
+    }
+
+    if (password != NULL && ! trojanserverParsePasswordValue(
+                                ts, password, password->string != NULL ? password->string : "password", NULL))
+    {
+        return false;
+    }
+
+    const cJSON *passwords = cJSON_GetObjectItemCaseSensitive(settings, "passwords");
+    if (passwords != NULL && ! trojanserverParsePasswordArray(ts, passwords, "passwords"))
+    {
+        return false;
+    }
+
+    const cJSON *users   = cJSON_GetObjectItemCaseSensitive(settings, "users");
+    const cJSON *clients = cJSON_GetObjectItemCaseSensitive(settings, "clients");
+    if (users != NULL && clients != NULL)
+    {
+        LOGF("JSON Error: TrojanServer->settings must use either users or clients, not both");
+        return false;
+    }
+
+    if (users != NULL && ! trojanserverParsePasswordArray(ts, users, "users"))
+    {
+        return false;
+    }
+
+    if (clients != NULL && ! trojanserverParsePasswordArray(ts, clients, "clients"))
+    {
+        return false;
+    }
+
+    if (ts->user_count == 0)
+    {
+        LOGF("JSON Error: TrojanServer->settings requires at least one password, passwords, users, or clients entry");
+        return false;
+    }
+
+    return true;
+}
+
+static bool trojanserverHasLocalUserSettings(const cJSON *settings)
+{
+    return cJSON_GetObjectItemCaseSensitive(settings, "password") != NULL ||
+           cJSON_GetObjectItemCaseSensitive(settings, "pass") != NULL ||
+           cJSON_GetObjectItemCaseSensitive(settings, "passwords") != NULL ||
+           cJSON_GetObjectItemCaseSensitive(settings, "users") != NULL ||
+           cJSON_GetObjectItemCaseSensitive(settings, "clients") != NULL;
+}
+
+static bool trojanserverParseAuthMode(trojanserver_tstate_t *ts, tunnel_t *t, node_t *node, const cJSON *settings)
+{
+    const cJSON *auth_node_json = cJSON_GetObjectItemCaseSensitive(settings, "auth-client-node-name");
+
+    if (auth_node_json == NULL)
+    {
+        return trojanserverParseUsers(ts, settings);
+    }
+
+    if (! cJSON_IsString(auth_node_json) || auth_node_json->valuestring == NULL ||
+        auth_node_json->valuestring[0] == '\0')
+    {
+        LOGF("JSON Error: TrojanServer->settings->auth-client-node-name (string field) must be a non-empty string");
+        return false;
+    }
+
+    if (trojanserverHasLocalUserSettings(settings))
+    {
+        LOGF("JSON Error: TrojanServer auth-client mode uses the AuthenticationClient users database; remove local "
+             "password/passwords/users/clients settings");
+        return false;
+    }
+
+    return parseAuthClientNode(ts, node, auth_node_json->valuestring) && trojanserverCreateUserControllerTunnel(t, node);
+}
+
 tunnel_t *trojanserverTunnelCreate(node_t *node)
 {
     tunnel_t              *t        = tunnelCreate(node, sizeof(trojanserver_tstate_t), sizeof(trojanserver_lstate_t));
@@ -151,7 +382,6 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
     t->fnResumeD  = &trojanserverTunnelDownStreamResume;
 
     t->onPrepare = &trojanserverTunnelOnPrepair;
-    t->onChain   = &trojanserverTunnelOnChain;
     t->onStart   = &trojanserverTunnelOnStart;
     t->onStop    = &trojanserverTunnelOnStop;
     t->onDestroy = &trojanserverTunnelDestroy;
@@ -170,15 +400,6 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
         return NULL;
     }
 
-    const cJSON *auth_node_json = cJSON_GetObjectItemCaseSensitive(settings, "auth-client-node-name");
-    if (! cJSON_IsString(auth_node_json) || auth_node_json->valuestring == NULL ||
-        auth_node_json->valuestring[0] == '\0')
-    {
-        LOGF("JSON Error: TrojanServer->settings->auth-client-node-name (string field) must be a non-empty string");
-        trojanserverTunnelDestroy(t);
-        return NULL;
-    }
-
     ts->allow_connect = true;
     ts->allow_udp     = true;
     getBoolFromJsonObjectOrDefault(&ts->allow_connect, settings, "connect", true);
@@ -192,11 +413,15 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (! parseAuthClientNode(ts, node, auth_node_json->valuestring) || ! parseFallbackNode(ts, node, settings) ||
-        ! trojanserverCreateUserControllerTunnel(t, node))
+    if (! trojanserverParseAuthMode(ts, t, node, settings) || ! parseFallbackNode(ts, node, settings))
     {
         trojanserverTunnelDestroy(t);
         return NULL;
+    }
+
+    if (ts->auth_client_node != NULL || ts->fallback_node != NULL)
+    {
+        t->onChain = &trojanserverTunnelOnChain;
     }
 
     return t;

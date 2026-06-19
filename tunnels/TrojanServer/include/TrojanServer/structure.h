@@ -41,6 +41,13 @@ typedef enum trojanserver_close_origin_e
     kTrojanServerCloseFromNext
 } trojanserver_close_origin_t;
 
+typedef struct trojanserver_user_s
+{
+    uint8_t sha224[SHA224_DIGEST_SIZE];
+    char   *username;
+    char   *password;
+} trojanserver_user_t;
+
 typedef struct trojanserver_tstate_s
 {
     node_t   *auth_client_node;
@@ -52,9 +59,11 @@ typedef struct trojanserver_tstate_s
     node_t   *fallback_node;
     tunnel_t *fallback_tunnel;
 
-    bool allow_connect;
-    bool allow_udp;
-    bool verbose;
+    trojanserver_user_t *users;
+    uint32_t             user_count;
+    bool                 allow_connect;
+    bool                 allow_udp;
+    bool                 verbose;
 } trojanserver_tstate_t;
 
 typedef struct trojanserver_lstate_s
@@ -119,7 +128,7 @@ void trojanserverLinestateInitialize(trojanserver_lstate_t *ls, tunnel_t *t, lin
 void trojanserverLinestateDestroy(trojanserver_lstate_t *ls);
 void trojanserverTunnelstateDestroy(trojanserver_tstate_t *ts);
 
-bool trojanserverDrainInput(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls);
+bool trojanserverDrainInput(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls, bool reject_short_password);
 void trojanserverCloseLineFromUpstream(tunnel_t *t, line_t *l);
 void trojanserverCloseLineFromDownstream(tunnel_t *t, line_t *l);
 void trojanserverCloseLineBidirectional(tunnel_t *t, line_t *l);

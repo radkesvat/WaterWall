@@ -37,6 +37,62 @@ static bool vlessserverParseAuthClientNode(vlessserver_tstate_t *ts, node_t *nod
     return true;
 }
 
+static const cJSON *vlessserverGetSettingsItemByKeys(const cJSON *settings, const char *key1, const char *key2,
+                                                     const char *key3)
+{
+    const char *keys[3] = {key1, key2, key3};
+
+    for (size_t i = 0; i < ARRAY_SIZE(keys); ++i)
+    {
+        if (keys[i] == NULL)
+        {
+            continue;
+        }
+
+        const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, keys[i]);
+        if (item != NULL)
+        {
+            return item;
+        }
+    }
+
+    return NULL;
+}
+
+static bool vlessserverParseFallbackNode(vlessserver_tstate_t *ts, node_t *node, const cJSON *settings)
+{
+    const cJSON *fallback_json =
+        vlessserverGetSettingsItemByKeys(settings, "fallback-node-name", "fallback-node", "fallback");
+
+    if (fallback_json == NULL)
+    {
+        ts->fallback_node = NULL;
+        return true;
+    }
+
+    if (! cJSON_IsString(fallback_json) || fallback_json->valuestring == NULL || fallback_json->valuestring[0] == '\0')
+    {
+        LOGF("JSON Error: VlessServer->settings->fallback-node-name (string field) must be a non-empty string");
+        return false;
+    }
+
+    node_t *fallback_node = nodemanagerGetConfigNodeByName(node->node_manager_config, fallback_json->valuestring);
+    if (fallback_node == NULL)
+    {
+        LOGF("VlessServer: fallback node \"%s\" was not found", fallback_json->valuestring);
+        return false;
+    }
+
+    if (fallback_node == node)
+    {
+        LOGF("VlessServer: fallback node must not point back to VlessServer itself");
+        return false;
+    }
+
+    ts->fallback_node = fallback_node;
+    return true;
+}
+
 static char *vlessserverMakeChildName(const node_t *node, const char *suffix)
 {
     const char *base = node->name != NULL ? node->name : "VlessServer";
@@ -145,8 +201,18 @@ static bool vlessserverParseUuidString(const char *text, uint8_t out[kVlessServe
     return hex_index == 32;
 }
 
-static bool vlessserverAppendUuid(vlessserver_tstate_t *ts, const uint8_t uuid[kVlessServerUuidLen])
+static bool vlessserverAppendUuid(vlessserver_tstate_t *ts, const uint8_t uuid[kVlessServerUuidLen],
+                                  const char *username, const char *path)
 {
+    for (uint32_t i = 0; i < ts->user_count; ++i)
+    {
+        if (wCryptoEqual(ts->users[i].uuid, uuid, kVlessServerUuidLen))
+        {
+            LOGF("JSON Error: VlessServer->settings->%s duplicates a configured local UUID", path);
+            return false;
+        }
+    }
+
     size_t new_count = (size_t) ts->user_count + 1U;
     if (UNLIKELY(new_count > UINT32_MAX))
     {
@@ -163,11 +229,13 @@ static bool vlessserverAppendUuid(vlessserver_tstate_t *ts, const uint8_t uuid[k
 
     ts->users = users;
     memoryCopy(ts->users[ts->user_count].uuid, uuid, kVlessServerUuidLen);
+    ts->users[ts->user_count].username = username != NULL ? stringDuplicate(username) : NULL;
     ts->user_count = (uint32_t) new_count;
     return true;
 }
 
-static bool vlessserverParseUuidValue(vlessserver_tstate_t *ts, const cJSON *item, const char *path)
+static bool vlessserverParseUuidValue(vlessserver_tstate_t *ts, const cJSON *item, const char *path,
+                                      const char *username)
 {
     if (! cJSON_IsString(item) || item->valuestring == NULL || item->valuestring[0] == '\0')
     {
@@ -182,31 +250,41 @@ static bool vlessserverParseUuidValue(vlessserver_tstate_t *ts, const cJSON *ite
         return false;
     }
 
-    return vlessserverAppendUuid(ts, uuid);
+    return vlessserverAppendUuid(ts, uuid, username, path);
 }
 
-static const cJSON *vlessserverGetObjectUuidField(const cJSON *item)
+static const cJSON *vlessserverGetObjectUuidField(const cJSON *item, const char *path, bool *invalid)
 {
-    const cJSON *uuid = cJSON_GetObjectItemCaseSensitive(item, "uuid");
+    *invalid             = false;
+    const cJSON *uuid    = cJSON_GetObjectItemCaseSensitive(item, "uuid");
+    const cJSON *id      = cJSON_GetObjectItemCaseSensitive(item, "id");
+    const cJSON *user_id = cJSON_GetObjectItemCaseSensitive(item, "user-id");
+    uint32_t field_count = (uuid != NULL ? 1U : 0U) + (id != NULL ? 1U : 0U) + (user_id != NULL ? 1U : 0U);
+    if (field_count > 1U)
+    {
+        LOGF("JSON Error: VlessServer->settings->%s object must use only one of uuid, id, or user-id", path);
+        *invalid = true;
+        return NULL;
+    }
+
     if (uuid != NULL)
     {
         return uuid;
     }
 
-    uuid = cJSON_GetObjectItemCaseSensitive(item, "id");
-    if (uuid != NULL)
+    if (id != NULL)
     {
-        return uuid;
+        return id;
     }
 
-    return cJSON_GetObjectItemCaseSensitive(item, "user-id");
+    return user_id;
 }
 
 static bool vlessserverParseUserEntry(vlessserver_tstate_t *ts, const cJSON *item, const char *path)
 {
     if (cJSON_IsString(item))
     {
-        return vlessserverParseUuidValue(ts, item, path);
+        return vlessserverParseUuidValue(ts, item, path, NULL);
     }
 
     if (! cJSON_IsObject(item))
@@ -215,14 +293,31 @@ static bool vlessserverParseUserEntry(vlessserver_tstate_t *ts, const cJSON *ite
         return false;
     }
 
-    const cJSON *uuid = vlessserverGetObjectUuidField(item);
+    bool         uuid_invalid = false;
+    const cJSON *uuid         = vlessserverGetObjectUuidField(item, path, &uuid_invalid);
+    if (uuid_invalid)
+    {
+        return false;
+    }
     if (uuid == NULL)
     {
-        LOGF("JSON Error: VlessServer->settings->%s object must contain uuid or id", path);
+        LOGF("JSON Error: VlessServer->settings->%s object must contain uuid, id, or user-id", path);
         return false;
     }
 
-    return vlessserverParseUuidValue(ts, uuid, path);
+    const cJSON *username      = cJSON_GetObjectItemCaseSensitive(item, "username");
+    const char  *username_text = NULL;
+    if (username != NULL)
+    {
+        if (! cJSON_IsString(username) || username->valuestring == NULL || username->valuestring[0] == '\0')
+        {
+            LOGF("JSON Error: VlessServer->settings->%s->username must be a non-empty string when provided", path);
+            return false;
+        }
+        username_text = username->valuestring;
+    }
+
+    return vlessserverParseUuidValue(ts, uuid, path, username_text);
 }
 
 static bool vlessserverParseUuidArray(vlessserver_tstate_t *ts, const cJSON *array, const char *path)
@@ -252,12 +347,18 @@ static bool vlessserverParseUuidArray(vlessserver_tstate_t *ts, const cJSON *arr
 static bool vlessserverParseUsers(vlessserver_tstate_t *ts, const cJSON *settings)
 {
     const cJSON *uuid = cJSON_GetObjectItemCaseSensitive(settings, "uuid");
+    const cJSON *id   = cJSON_GetObjectItemCaseSensitive(settings, "id");
+    if (uuid != NULL && id != NULL)
+    {
+        LOGF("JSON Error: VlessServer->settings must use either uuid or id, not both");
+        return false;
+    }
     if (uuid == NULL)
     {
-        uuid = cJSON_GetObjectItemCaseSensitive(settings, "id");
+        uuid = id;
     }
 
-    if (uuid != NULL && ! vlessserverParseUuidValue(ts, uuid, uuid->string != NULL ? uuid->string : "uuid"))
+    if (uuid != NULL && ! vlessserverParseUuidValue(ts, uuid, uuid->string != NULL ? uuid->string : "uuid", NULL))
     {
         return false;
     }
@@ -268,13 +369,19 @@ static bool vlessserverParseUsers(vlessserver_tstate_t *ts, const cJSON *setting
         return false;
     }
 
-    const cJSON *users = cJSON_GetObjectItemCaseSensitive(settings, "users");
+    const cJSON *users   = cJSON_GetObjectItemCaseSensitive(settings, "users");
+    const cJSON *clients = cJSON_GetObjectItemCaseSensitive(settings, "clients");
+    if (users != NULL && clients != NULL)
+    {
+        LOGF("JSON Error: VlessServer->settings must use either users or clients, not both");
+        return false;
+    }
+
     if (users != NULL && ! vlessserverParseUuidArray(ts, users, "users"))
     {
         return false;
     }
 
-    const cJSON *clients = cJSON_GetObjectItemCaseSensitive(settings, "clients");
     if (clients != NULL && ! vlessserverParseUuidArray(ts, clients, "clients"))
     {
         return false;
@@ -381,13 +488,13 @@ tunnel_t *vlessserverTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (! vlessserverParseAuthMode(ts, t, node, settings))
+    if (! vlessserverParseAuthMode(ts, t, node, settings) || ! vlessserverParseFallbackNode(ts, node, settings))
     {
         vlessserverTunnelDestroy(t);
         return NULL;
     }
 
-    if (ts->auth_client_node != NULL)
+    if (ts->auth_client_node != NULL || ts->fallback_node != NULL)
     {
         t->onChain = &vlessserverTunnelOnChain;
     }

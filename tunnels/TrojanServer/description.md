@@ -2,18 +2,24 @@
 
 `TrojanServer` is a server-side Trojan protocol middle tunnel for Waterwall.
 
-It accepts a Trojan byte stream from the previous node, authenticates the standard Trojan SHA-224 password through an
-existing `AuthenticationClient`, records the resulting `user_handle_t` on the line, and internally inserts a
-`UserController` before the configured outbound `next` node.
+It accepts a Trojan byte stream from the previous node, authenticates the standard Trojan SHA-224 password, parses the
+requested TCP or UDP destination, and forwards accepted traffic to the configured `next` node.
 
-This node replaces the old two-node Trojan server setup. Users no longer need to place separate `TrojanAuthServer` and
-`TrojanSocksServer` nodes in the chain.
+Authentication can run in either local allowlist mode or user-database mode:
+
+- Without `auth-client-node-name`, `TrojanServer` uses configured local raw passwords. This is useful when you only need
+  basic password authentication and do not need user tracking or limits.
+- With `auth-client-node-name`, `TrojanServer` authenticates through `AuthenticationClient`, records the resulting
+  `user_handle_t` on the line, and internally inserts a `UserController` before the configured outbound `next` node.
+
+This node replaces the old two-node Trojan server setup for database-backed deployments. Users no longer need to place
+separate `TrojanAuthServer` and `TrojanSocksServer` nodes in the chain.
 
 ## What It Does
 
 - Parses the Trojan request header.
-- Authenticates Trojan passwords through `AuthenticationClient`.
-- Creates an internal `UserController` for authenticated user enforcement.
+- Authenticates Trojan passwords by local raw-password allowlist or by `AuthenticationClient`.
+- Creates an internal `UserController` for authenticated user enforcement in database mode.
 - Supports Trojan TCP `CONNECT`.
 - Supports Trojan UDP `ASSOCIATE` over the Trojan TCP stream.
 - Creates internal backend UDP lines per requested UDP destination.
@@ -39,12 +45,51 @@ Important:
 - `TrojanServer` does not create or manage TLS.
 - Operators must place `TlsServer` before `TrojanServer` for a normal Trojan deployment.
 - Without TLS, Trojan password hashes and request metadata are exposed on the wire.
-- Do not manually place a `UserController` directly after `TrojanServer`; authenticated mode creates one internally.
-- `auth-client-node-name` must point to an existing `AuthenticationClient` node in the same configuration.
+- Do not manually place a `UserController` directly after `TrojanServer` in database mode; that mode creates one
+  internally.
+- In user-database mode, `auth-client-node-name` must point to an existing `AuthenticationClient` node in the same
+  configuration.
 
 ## Configuration Example
 
-Minimal `TrojanServer` node:
+Minimal local-password `TrojanServer` node:
+
+```json
+{
+  "name": "trojan-server",
+  "type": "TrojanServer",
+  "settings": {
+    "password": "secret-password",
+    "connect": true,
+    "udp": true,
+    "verbose": false
+  },
+  "next": "outbound"
+}
+```
+
+Multiple local allowlist users:
+
+```json
+{
+  "name": "trojan-server",
+  "type": "TrojanServer",
+  "settings": {
+    "users": [
+      "secret-password",
+      {
+        "username": "alice",
+        "password": "another-secret"
+      }
+    ],
+    "connect": true,
+    "udp": true
+  },
+  "next": "outbound"
+}
+```
+
+Database-backed `TrojanServer` node:
 
 ```json
 {
@@ -147,9 +192,37 @@ The exact listener, TLS, connector, and fallback node settings depend on those n
 
 ### `settings`
 
-- `auth-client-node-name` `(string, required)`
+Choose exactly one authentication mode.
+
+For local allowlist mode, omit `auth-client-node-name` and configure at least one raw password using one or more of:
+
+- `password` `(string)`
+  A single raw Trojan password.
+
+- `pass` `(string)`
+  Alias for `password`. Use either `password` or `pass`, not both.
+
+- `passwords` `(array of strings)`
+  Multiple raw Trojan passwords.
+
+- `users` `(array)`
+  Each entry may be a raw password string or an object containing `password` or `pass`, but not both. Object entries may
+  also include an optional `username` string, which is recorded on the line if that password authenticates.
+
+- `clients` `(array)`
+  Alias for `users`. Use either `users` or `clients`, not both.
+
+Duplicate local passwords are a fatal configuration error, regardless of whether the duplicate entries use different
+`username` values.
+
+For user-database mode, configure:
+
+- `auth-client-node-name` `(string)`
   Name of an existing `AuthenticationClient` node in the same config file. It must point to `AuthenticationClient`, not
   to `TrojanServer` itself.
+
+In this mode, local password settings (`password`, `pass`, `passwords`, `users`, `clients`) are rejected so the user
+database remains the only authority.
 
 At least one of `connect` or `udp` must be enabled.
 
@@ -187,25 +260,33 @@ Trojan clients send a 56-character hex string:
 hex(SHA224(password))
 ```
 
-`TrojanServer` decodes that hash and asks the configured `AuthenticationClient` for the matching user through its
-SHA-224 lookup API.
+`TrojanServer` decodes that hash and authenticates it according to the selected mode.
 
-For user database configuration:
+In local allowlist mode, `TrojanServer` precomputes SHA-224 for each configured raw password and compares the decoded
+wire hash against that allowlist. After the full Trojan request is parsed, it stores the matched raw password on the
+`line_t` with no user marker, so `Router` can match `password` rules even though no `AuthenticationClient` user exists.
+If the matching local object has `username`, that username is also stored on the line for `Router` username rules.
+
+In user-database mode, `TrojanServer` asks the configured `AuthenticationClient` for the matching user through its
+SHA-224 lookup API. For user database configuration:
 
 - store the user's plaintext Trojan password in the user object's `password` field
 - `AuthenticationClient` computes and stores the hash locally
 - `TrojanServer` does not use the user object's `name` as the Trojan username
 
-There is no no-auth mode for `TrojanServer`.
+There is no unauthenticated mode for `TrojanServer`.
 
-After successful authentication:
+After successful database-backed authentication:
 
 - the resulting `user_handle_t` is cached in this tunnel's line state
 - the handle is added to the `line_t` with `lineAddUser()` after the full Trojan request is parsed
 - the internal `UserController` enforces live user limits before the line reaches the configured outbound `next`
 
-If the initial request arrives in multiple chunks, the password is authenticated once and then reused while the remaining
-request bytes arrive. This avoids re-checking the auth database on every partial payload.
+The complete 56-byte password hash must be present in the first upstream payload callback. If the first payload does not
+contain the full hash, `TrojanServer` sends the unauthenticated bytes to fallback when fallback is configured; otherwise
+it rejects the line. This path logs a warning even when `verbose` is disabled. Bytes after the password hash, including
+the CRLF, command, address, and any early payload, may still arrive buffered across later payload callbacks. After the
+password authenticates, the result is reused while those remaining request bytes arrive.
 
 ## Fallback Behavior
 
@@ -218,6 +299,7 @@ doing this.
 Fallback may be selected for:
 
 - invalid password prefix bytes
+- segmented password authentication in the first upstream payload
 - invalid password CRLF before authentication
 - invalid password hex before authentication
 - failed password lookup

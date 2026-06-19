@@ -33,9 +33,10 @@ type, detected protocol, username, destination domain, …) combined into rules.
 >   - `Socks5Server`: the client-supplied SOCKS username + password.
 >   - `TrojanServer` / `VlessServer`: the account name + raw password resolved
 >     from the authenticated user in a single locked lookup
->     (`authenticationclientGet...WithProfile`). For Vless these are populated
->     only when an `AuthenticationClient` is used; in local UUID-list mode there
->     is no account name, so only the password (the canonical UUID) is set.
+>     (`authenticationclientGet...WithProfile`). In local allowlist modes there
+>     is no user handle, so only configured local credentials are set
+>     (`TrojanServer`: optional local username + raw password, `VlessServer`:
+>     optional local username + canonical UUID password).
 >   Note the username differs in kind by protocol: SOCKS5 exposes the
 >   client-typed username, while Trojan/Vless expose the server-side account name.
 > - **Stubs that return `true` (do not constrain):** `protocol`, `attributes`.

@@ -62,17 +62,22 @@ static void vlessserverUuidToCanonicalString(const uint8_t uuid[kVlessServerUuid
     out[off] = '\0';
 }
 
-static bool vlessserverUuidAllowedByLocalList(tunnel_t *t, line_t *l, const uint8_t uuid[kVlessServerUuidLen])
+static const vlessserver_user_t *vlessserverFindLocalUser(tunnel_t *t, line_t *l,
+                                                          const uint8_t uuid[kVlessServerUuidLen])
 {
-    vlessserver_tstate_t *ts      = tunnelGetState(t);
-    bool                  matched = false;
+    vlessserver_tstate_t     *ts      = tunnelGetState(t);
+    const vlessserver_user_t *matched = NULL;
 
     for (uint32_t i = 0; i < ts->user_count; ++i)
     {
-        matched |= wCryptoEqual(ts->users[i].uuid, uuid, kVlessServerUuidLen);
+        if (wCryptoEqual(ts->users[i].uuid, uuid, kVlessServerUuidLen))
+        {
+            matched = &ts->users[i];
+            break;
+        }
     }
 
-    if (UNLIKELY(! matched && ts->verbose))
+    if (UNLIKELY(matched == NULL && ts->verbose))
     {
         LOGW("VlessServer: rejected unknown UUID on worker %u", (unsigned int) lineGetWID(l));
     }
@@ -87,17 +92,22 @@ static bool vlessserverAuthenticateUuid(tunnel_t *t, line_t *l, vlessserver_lsta
 
     if (ts->auth_client_tunnel == NULL)
     {
-        if (! vlessserverUuidAllowedByLocalList(t, l, uuid))
+        const vlessserver_user_t *matched = vlessserverFindLocalUser(t, l, uuid);
+        if (matched == NULL)
         {
             return false;
         }
 
-        // No users database in local-list mode, so there is no account name; keep
+        // No users database in local-list mode, so there is no user handle; keep
         // the canonical UUID as the raw password so a Router can still match by it.
         if (ls->auth_password == NULL)
         {
             char uuid_password[kVlessServerCanonicalUuidStringLen + 1U] = {0};
             vlessserverUuidToCanonicalString(uuid, uuid_password);
+            if (matched->username != NULL)
+            {
+                ls->auth_username = stringDuplicate(matched->username);
+            }
             ls->auth_password = stringDuplicate(uuid_password);
             wCryptoZero(uuid_password, sizeof(uuid_password));
         }
@@ -158,6 +168,11 @@ static bool vlessserverAuthenticateUuid(tunnel_t *t, line_t *l, vlessserver_lsta
 
     ls->user_handle = handle;
     return true;
+}
+
+static bool vlessserverLineAuthenticated(const vlessserver_lstate_t *ls)
+{
+    return userHandleIsValid(&ls->user_handle) || ls->auth_password != NULL;
 }
 
 static void vlessserverRecordLineUser(line_t *l, vlessserver_lstate_t *ls)
@@ -308,6 +323,39 @@ static bool vlessserverForwardBufferedTcpPayload(tunnel_t *t, line_t *l, vlessse
     return true;
 }
 
+static bool vlessserverStartFallback(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls)
+{
+    vlessserver_tstate_t *ts = tunnelGetState(t);
+
+    if (UNLIKELY(ts->fallback_tunnel == NULL))
+    {
+        vlessserverCloseLineBidirectional(t, l);
+        return false;
+    }
+
+    sbuf_t *first = bufferstreamFullRead(&ls->in_stream);
+
+    lineLock(l);
+
+    ls->phase = kVlessServerPhaseFallback;
+    tunnelUpStreamInit(ts->fallback_tunnel, l);
+
+    if (lineIsAlive(l) && first != NULL)
+    {
+        tunnelUpStreamPayload(ts->fallback_tunnel, l, first);
+        first = NULL;
+    }
+
+    if (first != NULL)
+    {
+        lineReuseBuffer(l, first);
+    }
+
+    bool alive = lineIsAlive(l);
+    lineUnlock(l);
+    return alive;
+}
+
 static void vlessserverDetachRemoteFromClient(vlessserver_lstate_t *remote_ls)
 {
     line_t *client_line = remote_ls->client_line;
@@ -417,35 +465,56 @@ static bool vlessserverStartUdpBranch(tunnel_t *t, line_t *l, vlessserver_lstate
         return false;
     }
 
-    return vlessserverDrainInput(t, l, ls);
+    return vlessserverDrainInput(t, l, ls, false);
 }
 
-static bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls)
+static bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls,
+                                            bool reject_short_password)
 {
     size_t available = bufferstreamGetBufLen(&ls->in_stream);
 
     if (UNLIKELY(available < 1))
     {
+        if (UNLIKELY(reject_short_password))
+        {
+            // Not verbose-gated by design: a split credential in the very first payload is a
+            // probe-resistance/hardening signal we always surface, unlike the per-attempt
+            // auth-failure logs (see description.md).
+            LOGW("VlessServer: rejected segmented UUID authentication on worker %u", (unsigned int) lineGetWID(l));
+            return vlessserverStartFallback(t, l, ls);
+        }
         return true;
     }
 
     if (UNLIKELY(bufferstreamViewByteAt(&ls->in_stream, 0) != kVlessVersion))
     {
-        vlessserverCloseLineBidirectional(t, l);
-        return false;
+        return vlessserverStartFallback(t, l, ls);
+    }
+
+    if (UNLIKELY(available < 1 + kVlessServerUuidLen))
+    {
+        if (UNLIKELY(reject_short_password))
+        {
+            // Not verbose-gated by design (see note above and description.md).
+            LOGW("VlessServer: rejected segmented UUID authentication on worker %u", (unsigned int) lineGetWID(l));
+            return vlessserverStartFallback(t, l, ls);
+        }
+        return true;
+    }
+
+    if (! vlessserverLineAuthenticated(ls))
+    {
+        uint8_t user_id[kVlessServerUuidLen] = {0};
+        bufferstreamViewBytesAt(&ls->in_stream, 1, user_id, sizeof(user_id));
+        if (UNLIKELY(! vlessserverAuthenticateUuid(t, l, ls, user_id)))
+        {
+            return vlessserverStartFallback(t, l, ls);
+        }
     }
 
     if (UNLIKELY(available < 1 + kVlessServerUuidLen + 1))
     {
         return true;
-    }
-
-    uint8_t user_id[kVlessServerUuidLen] = {0};
-    bufferstreamViewBytesAt(&ls->in_stream, 1, user_id, sizeof(user_id));
-    if (UNLIKELY(! vlessserverAuthenticateUuid(t, l, ls, user_id)))
-    {
-        vlessserverCloseLineBidirectional(t, l);
-        return false;
     }
 
     uint8_t addons_len = bufferstreamViewByteAt(&ls->in_stream, 1 + kVlessServerUuidLen);
@@ -610,11 +679,11 @@ static bool vlessserverDrainUdpPackets(tunnel_t *t, line_t *l, vlessserver_lstat
     return true;
 }
 
-bool vlessserverDrainInput(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls)
+bool vlessserverDrainInput(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, bool reject_short_password)
 {
     if (ls->phase == kVlessServerPhaseWaitInitial)
     {
-        return vlessserverHandleInitialRequest(t, l, ls);
+        return vlessserverHandleInitialRequest(t, l, ls, reject_short_password);
     }
 
     if (ls->phase == kVlessServerPhaseUdpWaitPacket || ls->phase == kVlessServerPhaseUdpConnecting ||
@@ -629,7 +698,8 @@ bool vlessserverDrainInput(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls)
 static bool vlessserverHasTcpUpstreamPeer(const vlessserver_lstate_t *ls)
 {
     return ls->line_kind == kVlessServerLineKindClient &&
-           (ls->phase == kVlessServerPhaseTcpConnecting || ls->phase == kVlessServerPhaseTcpEstablished);
+           (ls->phase == kVlessServerPhaseFallback || ls->phase == kVlessServerPhaseTcpConnecting ||
+            ls->phase == kVlessServerPhaseTcpEstablished);
 }
 
 static void vlessserverCloseUdpRemoteLineInternal(tunnel_t *t, line_t *remote_l, bool close_next)
@@ -687,8 +757,10 @@ static void vlessserverCloseLine(tunnel_t *t, line_t *l, vlessserver_close_origi
         return;
     }
 
-    bool close_next = origin != kVlessServerCloseFromNext && vlessserverHasTcpUpstreamPeer(ls);
-    bool close_prev = origin != kVlessServerCloseFromPrev;
+    bool      close_next = origin != kVlessServerCloseFromNext && vlessserverHasTcpUpstreamPeer(ls);
+    bool      close_prev = origin != kVlessServerCloseFromPrev;
+    bool      use_target = ls->phase == kVlessServerPhaseFallback;
+    tunnel_t *target     = use_target ? ((vlessserver_tstate_t *) tunnelGetState(t))->fallback_tunnel : NULL;
 
     ls->phase = kVlessServerPhaseClosing;
     lineLock(l);
@@ -698,7 +770,14 @@ static void vlessserverCloseLine(tunnel_t *t, line_t *l, vlessserver_close_origi
 
     if (close_next && LIKELY(lineIsAlive(l)))
     {
-        tunnelNextUpStreamFinish(t, l);
+        if (use_target && target != NULL)
+        {
+            tunnelUpStreamFin(target, l);
+        }
+        else
+        {
+            tunnelNextUpStreamFinish(t, l);
+        }
     }
 
     if (close_prev && LIKELY(lineIsAlive(l)))
@@ -851,6 +930,10 @@ void vlessserverTunnelstateDestroy(vlessserver_tstate_t *ts)
     memoryFree(ts->user_controller_node.next);
     memorySet(&ts->user_controller_node, 0, sizeof(ts->user_controller_node));
 
+    for (uint32_t i = 0; i < ts->user_count; ++i)
+    {
+        memoryFree(ts->users[i].username);
+    }
     memoryFree(ts->users);
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }

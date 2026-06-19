@@ -29,6 +29,9 @@ void trojanserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    bool reject_short_password =
+        ls->phase == kTrojanServerPhaseWaitInitial && bufferstreamIsEmpty(&ls->in_stream);
+
     bufferstreamPush(&ls->in_stream, buf);
-    trojanserverDrainInput(t, l, ls);
+    trojanserverDrainInput(t, l, ls, reject_short_password);
 }

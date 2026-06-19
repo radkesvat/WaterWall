@@ -14,6 +14,16 @@ void vlessserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
+    if (UNLIKELY(ls->phase == kVlessServerPhaseFallback))
+    {
+        tunnel_t *fallback = ((vlessserver_tstate_t *) tunnelGetState(t))->fallback_tunnel;
+        if (LIKELY(fallback != NULL))
+        {
+            tunnelUpStreamResume(fallback, l);
+        }
+        return;
+    }
+
     if (ls->phase == kVlessServerPhaseTcpConnecting || ls->phase == kVlessServerPhaseTcpEstablished)
     {
         tunnelNextUpStreamResume(t, l);

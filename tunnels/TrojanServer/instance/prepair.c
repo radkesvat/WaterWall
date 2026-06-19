@@ -8,8 +8,7 @@ void trojanserverTunnelOnPrepair(tunnel_t *t)
 
     if (ts->auth_client_node == NULL)
     {
-        LOGF("TrojanServer: auth-client-node-name was not resolved during create");
-        terminateProgram(1);
+        return;
     }
 
     ts->auth_client_tunnel = ts->auth_client_node->instance;

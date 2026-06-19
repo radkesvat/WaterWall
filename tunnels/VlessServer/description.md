@@ -18,6 +18,7 @@ transport-specific wrapping.
 
 - Parses VLESS v0 request headers.
 - Authenticates users by local UUID allowlist or by `AuthenticationClient`.
+- Optionally forwards unauthenticated invalid probes to a fallback branch.
 - Supports VLESS TCP command `0x01`.
 - Supports VLESS UDP command `0x02`.
 - Rejects non-empty addons, including Vision flow addons.
@@ -77,6 +78,7 @@ Multiple local allowlist users:
     "users": [
       "5783a3e7-e373-51cd-8642-c83782b807c5",
       {
+        "username": "alice",
         "id": "11111111-2222-3333-4444-555555555555"
       }
     ],
@@ -95,6 +97,22 @@ Database-backed authentication:
   "type": "VlessServer",
   "settings": {
     "auth-client-node-name": "auth-client",
+    "connect": true,
+    "udp": true
+  },
+  "next": "outbound"
+}
+```
+
+Example with fallback:
+
+```json
+{
+  "name": "vless-server",
+  "type": "VlessServer",
+  "settings": {
+    "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+    "fallback-node-name": "fallback-service",
     "connect": true,
     "udp": true
   },
@@ -149,16 +167,20 @@ For local allowlist mode, omit `auth-client-node-name` and configure at least on
   A single RFC4122 UUID string.
 
 - `id` `(string)`
-  Alias for `uuid`.
+  Alias for `uuid`. Use either `uuid` or `id`, not both.
 
 - `uuids` `(array of strings)`
   Multiple UUID strings.
 
 - `users` `(array)`
-  Each entry may be a UUID string or an object containing `uuid`, `id`, or `user-id`.
+  Each entry may be a UUID string or an object containing exactly one of `uuid`, `id`, or `user-id`. Object entries may
+  also include an optional `username` string, which is recorded on the line if that UUID authenticates.
 
 - `clients` `(array)`
-  Alias for `users`.
+  Alias for `users`. Use either `users` or `clients`, not both.
+
+Duplicate local UUIDs are a fatal configuration error, regardless of whether the duplicate entries use different
+`username` values.
 
 UUID strings may be dashed RFC4122 form or compact 32-character hex form. The wire comparison uses RFC4122 byte order:
 hex bytes left-to-right, not Windows GUID memory order.
@@ -177,6 +199,16 @@ the only authority. The wire UUID is converted to canonical lowercase dashed for
 
 That string is authenticated as the user's `password` through `AuthenticationClient`.
 
+In local allowlist mode, the canonical lowercase dashed UUID string is stored as the line's raw password after the full
+VLESS request is parsed, so `Router` can match `password` rules without a users database. If the matching local object
+has `username`, that username is also stored on the line for `Router` username rules.
+
+The complete VLESS credential, meaning the version byte plus the 16-byte raw UUID, must be present in the first upstream
+payload callback. If the first payload does not contain the full UUID, `VlessServer` sends the unauthenticated bytes to
+fallback when fallback is configured; otherwise it rejects the line. This path logs a warning even when `verbose` is
+disabled. Fields after the UUID, including addons length, command, destination, and any early payload, may still arrive
+buffered across later payload callbacks.
+
 At least one of `connect` or `udp` must be enabled.
 
 ## Optional `settings` Fields
@@ -192,6 +224,14 @@ At least one of `connect` or `udp` must be enabled.
 - `verbose` `(boolean)`
   Enables extra rejection logging.
   Default: `false`
+
+- `fallback-node-name` `(string)`
+  Name of an existing node used as fallback for unauthenticated invalid probes or failed authentication.
+
+  Accepted aliases:
+
+  - `fallback-node`
+  - `fallback`
 
 ## Protocol Behavior
 
@@ -232,6 +272,33 @@ payload: length bytes
 
 The UDP destination is fixed by the initial VLESS request. Individual UDP frames do not carry per-packet addresses.
 
+## Fallback Behavior
+
+Fallback is intended for active-probing resistance.
+
+When fallback is configured, unauthenticated traffic that does not look like a valid VLESS request is forwarded to the
+fallback branch with the original buffered bytes preserved. `VlessServer` does not send a VLESS response header before
+doing this.
+
+Fallback may be selected for:
+
+- invalid version byte
+- segmented UUID authentication in the first upstream payload
+- failed UUID lookup
+- authentication client not ready
+
+Fallback is not used after the UUID has authenticated. Once the UUID is accepted, malformed VLESS addons, command,
+destination, or UDP framing closes the VLESS line instead of replaying authenticated client bytes to the fallback
+service.
+
+Operational notes:
+
+- The fallback target must be a real configured node.
+- It must not be `VlessServer` itself.
+- It must not be the internal `UserController`.
+- It should be something that plausibly speaks the public-facing protocol exposed by the same endpoint.
+- If no fallback is configured, unauthenticated invalid probes are closed.
+
 ## Unsupported Features
 
 The current implementation intentionally rejects:
@@ -241,9 +308,8 @@ The current implementation intentionally rejects:
 - mux command `0x03`
 - reverse command `0x04`
 - unknown commands
-- fallback routing
 - VLESS over non-stream transports
 - XUDP and advanced UDP/mux behavior
 
-Invalid authentication and malformed protocol data are handled by closing the line without writing a VLESS response
-header.
+Invalid unauthenticated probes may go to fallback; bad authenticated protocol data closes without writing another VLESS
+response header.

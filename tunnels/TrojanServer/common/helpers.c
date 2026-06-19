@@ -267,9 +267,46 @@ static bool trojanserverAuthenticateHash(tunnel_t *t, line_t *l, const uint8_t s
 {
     trojanserver_tstate_t *ts = tunnelGetState(t);
 
-    if (UNLIKELY(user_handle_out == NULL || ts->auth_client_tunnel == NULL))
+    if (UNLIKELY(user_handle_out == NULL))
     {
         return false;
+    }
+
+    if (ts->auth_client_tunnel == NULL)
+    {
+        trojanserver_lstate_t      *ls      = lineGetState(l, t);
+        const trojanserver_user_t  *matched = NULL;
+
+        for (uint32_t i = 0; i < ts->user_count; ++i)
+        {
+            if (wCryptoEqual(ts->users[i].sha224, sha224, SHA224_DIGEST_SIZE))
+            {
+                matched = &ts->users[i];
+                break;
+            }
+        }
+
+        if (UNLIKELY(matched == NULL))
+        {
+            if (ts->verbose)
+            {
+                LOGW("TrojanServer: rejected local password authentication on worker %u", (unsigned int) lineGetWID(l));
+            }
+            return false;
+        }
+
+        if (ls->auth_username != NULL)
+        {
+            memoryFree(ls->auth_username);
+        }
+        ls->auth_username = matched->username != NULL ? stringDuplicate(matched->username) : NULL;
+        if (ls->auth_password != NULL)
+        {
+            memoryFree(ls->auth_password);
+        }
+        ls->auth_password = stringDuplicate(matched->password);
+        *user_handle_out  = userHandleEmpty();
+        return true;
     }
 
     authenticationclient_state_t auth_state = authenticationclientGetState(ts->auth_client_tunnel);
@@ -315,6 +352,11 @@ static bool trojanserverAuthenticateHash(tunnel_t *t, line_t *l, const uint8_t s
     return true;
 }
 
+static bool trojanserverLineAuthenticated(const trojanserver_lstate_t *ls)
+{
+    return userHandleIsValid(&ls->user_handle) || ls->auth_password != NULL;
+}
+
 static void trojanserverRecordLineUser(line_t *l, trojanserver_lstate_t *ls, const user_handle_t *user_handle)
 {
     if (UNLIKELY(ls->user_handle_recorded))
@@ -322,7 +364,19 @@ static void trojanserverRecordLineUser(line_t *l, trojanserver_lstate_t *ls, con
         return;
     }
 
-    lineAddUser(l, user_handle, ls->auth_username, ls->auth_password);
+    if (userHandleIsValid(user_handle))
+    {
+        lineAddUser(l, user_handle, ls->auth_username, ls->auth_password);
+    }
+    else if (ls->auth_username != NULL || ls->auth_password != NULL)
+    {
+        lineSetAuthenticatedCredentials(l, ls->auth_username, ls->auth_password);
+    }
+    else
+    {
+        return;
+    }
+
     ls->user_handle_recorded = true;
 }
 
@@ -696,13 +750,56 @@ static bool trojanserverDrainUdpPackets(tunnel_t *t, line_t *l, trojanserver_lst
     return true;
 }
 
-static bool trojanserverHandleInitialRequest(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
+static bool trojanserverHandleInitialRequest(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls,
+                                             bool reject_short_password)
 {
     size_t available = bufferstreamGetBufLen(&ls->in_stream);
 
     if (UNLIKELY(! trojanserverAvailablePasswordPrefixCanBeTrojan(&ls->in_stream)))
     {
+        if (trojanserverLineAuthenticated(ls))
+        {
+            trojanserverCloseLineBidirectional(t, l);
+            return false;
+        }
         return trojanserverStartFallback(t, l, ls);
+    }
+
+    if (UNLIKELY(available < kTrojanServerPasswordHexLen))
+    {
+        if (UNLIKELY(reject_short_password))
+        {
+            // Not verbose-gated by design: a split credential in the very first payload is a
+            // probe-resistance/hardening signal we always surface, unlike the per-attempt
+            // auth-failure logs (see description.md).
+            LOGW("TrojanServer: rejected segmented password authentication on worker %u",
+                 (unsigned int) lineGetWID(l));
+            return trojanserverStartFallback(t, l, ls);
+        }
+        return true;
+    }
+
+    if (! trojanserverLineAuthenticated(ls))
+    {
+        uint8_t sha224[SHA224_DIGEST_SIZE] = {0};
+        uint8_t password_hex[kTrojanServerPasswordHexLen] = {0};
+        bufferstreamViewBytesAt(&ls->in_stream, 0, password_hex, sizeof(password_hex));
+        if (UNLIKELY(! trojanserverDecodeSha224Hex(password_hex, sha224)))
+        {
+            memoryZero(password_hex, sizeof(password_hex));
+            return trojanserverStartFallback(t, l, ls);
+        }
+        memoryZero(password_hex, sizeof(password_hex));
+
+        user_handle_t user_handle = userHandleEmpty();
+        if (UNLIKELY(! trojanserverAuthenticateHash(t, l, sha224, &user_handle)))
+        {
+            memoryZero(sha224, sizeof(sha224));
+            return trojanserverStartFallback(t, l, ls);
+        }
+        memoryZero(sha224, sizeof(sha224));
+
+        ls->user_handle = user_handle;
     }
 
     if (UNLIKELY(available < kTrojanServerPasswordHexLen + kTrojanServerCrlfLen))
@@ -716,25 +813,6 @@ static bool trojanserverHandleInitialRequest(tunnel_t *t, line_t *l, trojanserve
                  password_head[kTrojanServerPasswordHexLen + 1U] != '\n'))
     {
         return trojanserverStartFallback(t, l, ls);
-    }
-
-    if (! userHandleIsValid(&ls->user_handle))
-    {
-        uint8_t sha224[SHA224_DIGEST_SIZE] = {0};
-        if (UNLIKELY(! trojanserverDecodeSha224Hex(password_head, sha224)))
-        {
-            return trojanserverStartFallback(t, l, ls);
-        }
-
-        user_handle_t user_handle = userHandleEmpty();
-        if (UNLIKELY(! trojanserverAuthenticateHash(t, l, sha224, &user_handle)))
-        {
-            memoryZero(sha224, sizeof(sha224));
-            return trojanserverStartFallback(t, l, ls);
-        }
-        memoryZero(sha224, sizeof(sha224));
-
-        ls->user_handle = user_handle;
     }
 
     if (UNLIKELY(available < kTrojanServerPasswordHexLen + kTrojanServerCrlfLen + 1U))
@@ -828,11 +906,11 @@ static bool trojanserverHandleInitialRequest(tunnel_t *t, line_t *l, trojanserve
     return trojanserverDrainUdpPackets(t, l, ls);
 }
 
-bool trojanserverDrainInput(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
+bool trojanserverDrainInput(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls, bool reject_short_password)
 {
     if (ls->phase == kTrojanServerPhaseWaitInitial)
     {
-        return trojanserverHandleInitialRequest(t, l, ls);
+        return trojanserverHandleInitialRequest(t, l, ls, reject_short_password);
     }
 
     if (ls->phase == kTrojanServerPhaseUdpWaitPacket || ls->phase == kTrojanServerPhaseUdpConnecting ||
@@ -1086,6 +1164,14 @@ void trojanserverTunnelstateDestroy(trojanserver_tstate_t *ts)
     memoryFree(ts->user_controller_node.type);
     memoryFree(ts->user_controller_node.next);
     memorySet(&ts->user_controller_node, 0, sizeof(ts->user_controller_node));
+
+    for (uint32_t i = 0; i < ts->user_count; ++i)
+    {
+        wCryptoZero(ts->users[i].sha224, sizeof(ts->users[i].sha224));
+        memoryFree(ts->users[i].username);
+        memoryFree(ts->users[i].password);
+    }
+    memoryFree(ts->users);
 
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }

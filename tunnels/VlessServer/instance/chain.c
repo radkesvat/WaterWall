@@ -9,6 +9,69 @@ static hash_t vlessserverUserControllerTypeHash(void)
     return calcHashBytes(type_name, stringLength(type_name));
 }
 
+static void vlessserverBindFallbackTarget(tunnel_t *t, tunnel_chain_t *chain)
+{
+    vlessserver_tstate_t *ts = tunnelGetState(t);
+
+    if (ts->fallback_node == NULL)
+    {
+        return;
+    }
+
+    tunnel_t *target = ts->fallback_node->instance;
+    if (target == NULL)
+    {
+        LOGF("VlessServer: fallback tunnel \"%s\" is not available", ts->fallback_node->name);
+        terminateProgram(1);
+    }
+
+    if (target == t || target == ts->user_controller_tunnel)
+    {
+        LOGF("VlessServer: fallback target must be different from VlessServer and its internal UserController");
+        terminateProgram(1);
+    }
+
+    ts->fallback_tunnel = target;
+
+    if (target == t->next)
+    {
+        return;
+    }
+
+    if (target->prev != NULL && target->prev != t)
+    {
+        LOGF("VlessServer: fallback target node \"%s\" is already bound to previous node \"%s\"",
+             target->node->name,
+             target->prev->node->name);
+        terminateProgram(1);
+    }
+
+    if (target->chain == chain)
+    {
+        if (target->prev == t)
+        {
+            return;
+        }
+
+        LOGF("VlessServer: fallback target node \"%s\" is already in the VlessServer chain", target->node->name);
+        terminateProgram(1);
+    }
+
+    if (target->prev == NULL)
+    {
+        tunnelBindDown(t, target);
+    }
+
+    if (target->chain != NULL)
+    {
+        tunnelchainCombine(chain, target->chain);
+    }
+    else
+    {
+        target->onChain(target, chain);
+    }
+}
+
 void vlessserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 {
     vlessserver_tstate_t *ts   = tunnelGetState(t);
@@ -17,8 +80,10 @@ void vlessserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     tunnel_t *controller = ts->user_controller_tunnel;
     if (controller == NULL)
     {
-        LOGF("VlessServer: internal UserController is not available");
-        terminateProgram(1);
+        tunnelDefaultOnChain(t, chain);
+        chain = tunnelGetChain(t);
+        vlessserverBindFallbackTarget(t, chain);
+        return;
     }
 
     if (node->hash_next == 0)
@@ -58,4 +123,7 @@ void vlessserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 
     tunnelchainInsert(chain, t);
     controller->onChain(controller, chain);
+    chain = tunnelGetChain(t);
+
+    vlessserverBindFallbackTarget(t, chain);
 }

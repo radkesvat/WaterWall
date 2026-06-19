@@ -80,8 +80,10 @@ void trojanserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     tunnel_t *controller = ts->user_controller_tunnel;
     if (controller == NULL)
     {
-        LOGF("TrojanServer: internal UserController is not available");
-        terminateProgram(1);
+        tunnelDefaultOnChain(t, chain);
+        chain = tunnelGetChain(t);
+        trojanserverBindFallbackTarget(t, chain);
+        return;
     }
 
     if (node->hash_next == 0)

@@ -22,5 +22,11 @@ void vlessserverTunnelDownStreamEst(tunnel_t *t, line_t *l)
         return;
     }
 
+    if (ls->phase == kVlessServerPhaseFallback)
+    {
+        tunnelPrevDownStreamEst(t, l);
+        return;
+    }
+
     vlessserverOnSelectedEstablished(t, l, ls);
 }
