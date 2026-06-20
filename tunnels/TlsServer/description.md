@@ -47,6 +47,7 @@ That arrangement lets:
     "min-version": "TLSv1.2",
     "max-version": "TLSv1.3",
     "ciphers": "HIGH:!aNULL:!MD5",
+    "select-alpns": ["http/1.1"],
     "session-cache": "none",
     "session-tickets": true,
     "fallback-node-name": "nginx-tls-fallback",
