@@ -157,6 +157,9 @@ Practical rule:
   Verifies `VlessClient(uuid=...)` sends a plain VLESS v0 TCP request to `VlessServer`, validates the `00 00` response
   header, preserves an incoming TCP destination context, and reaches a separate tester TCP listener through the local
   UUID allowlist mode.
+- `vless_uuid_domain_tcp_loopback`
+  Verifies the same VLESS TCP path when the preserved destination context is a domain name, including keeping the
+  decoded destination port intact before `TcpUdpConnector` resolves and connects.
 - `vless_local_username_router_tcp_loopback`
   Verifies `VlessServer` local UUID allowlist mode accepts an object entry with `username`, records both username and
   canonical UUID password on the line, and lets `Router` match both before forwarding to the tester TCP listener.
