@@ -1,0 +1,98 @@
+{
+    "name": "vless-uuid-tcp-loopback",
+    "variables": {
+        "fallback_with_tls": "example.com",
+        "fallback_http": "example.com",
+        "vless_uuid": "5783a3e7-e373-51cd-8642-c83782b807c5"
+    },
+    "nodes": [
+        {
+            "name": "proxy-listener",
+            "type": "TcpListener",
+            "settings": {
+                "address": "0.0.0.0",
+                "port": 443,
+                "nodelay": true
+            },
+            "next": "tls-server"
+        },
+        {
+            "name": "tls-server",
+            "type": "TlsServer",
+            "settings": {
+                "cert-file": "/root/fullchain.pem",
+                "key-file": "/root/privkey.pem",
+                "min-version": "TLSv1.2",
+                "max-version": "TLSv1.3",
+                "ciphers": "HIGH:!aNULL:!MD5",
+                "session-cache": "none",
+                "session-tickets": true,
+                "fallback-node-name": "fallback-connector-1",
+                "fallback-intentional-delay-ms": 7,
+                "fallback-intentional-delay-jitter-ms": 1,
+                "verbose": false
+            },
+            "next": "vless-server"
+        },
+        {
+            "name": "vless-server",
+            "type": "VlessServer",
+            "settings": {
+                "uuid": $vless_uuid$,
+                "connect": true,
+                "udp": true,
+                "fallback-node-name": "fallback-connector-2",
+                "fallback-intentional-delay-ms": 7,
+                "fallback-intentional-delay-jitter-ms": 1
+            },
+            "next": "target-connector"
+        },
+        {
+            "name": "target-connector",
+            "type": "TcpUdpConnector",
+            "settings": {
+                "address": "dest_context->address",
+                "port": "dest_context->port",
+                "nodelay": true,
+                "interface": "wgtest"
+            }
+        },
+        {
+            "name": "fallback-connector-1",
+            "type": "TcpUdpConnector",
+            "settings": {
+                "address": $fallback_with_tls$,
+                "port": 443,
+                "nodelay": true
+            }
+        },
+        {
+            "name": "fallback-connector-2",
+            "type": "TcpUdpConnector",
+            "settings": {
+                "address": $fallback_http$,
+                "port": 80,
+                "nodelay": true
+            }
+        },
+        {
+            "name": "http-listener",
+            "type": "TcpListener",
+            "settings": {
+                "address": "0.0.0.0",
+                "port": 80,
+                "nodelay": true
+            },
+            "next": "fallback-connector-3"
+        },
+        {
+            "name": "fallback-connector-3",
+            "type": "TcpUdpConnector",
+            "settings": {
+                "address": $fallback_http$,
+                "port": 80,
+                "nodelay": true
+            }
+        }
+    ]
+}
