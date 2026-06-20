@@ -459,19 +459,8 @@ static inline void addresscontextAddrCopy(address_context_t *dest, const address
 {
     addresscontextReset(dest);
 
-    // Copy flags
-    dest->domain_strategy = source->domain_strategy;
-    dest->domain_constant = source->domain_constant;
-    dest->type_ip         = source->type_ip;
-    dest->proto_tcp       = source->proto_tcp;
-    dest->proto_udp       = source->proto_udp;
-    dest->proto_icmp      = source->proto_icmp;
-    dest->proto_packet    = source->proto_packet;
-    dest->domain_resolved = source->domain_resolved;
-    // Copy port
-    dest->port = source->port;
     // Copy IP address or domain
-    if (dest->type_ip)
+    if (source->type_ip)
     {
         ipAddrCopy(dest->ip_address, source->ip_address);
     }
@@ -499,6 +488,17 @@ static inline void addresscontextAddrCopy(address_context_t *dest, const address
             dest->domain_len = 0;
         }
     }
+
+    // Copy metadata after domain helpers, because they reset the destination.
+    dest->domain_strategy = source->domain_strategy;
+    dest->domain_constant = source->domain_constant;
+    dest->type_ip         = source->type_ip;
+    dest->proto_tcp       = source->proto_tcp;
+    dest->proto_udp       = source->proto_udp;
+    dest->proto_icmp      = source->proto_icmp;
+    dest->proto_packet    = source->proto_packet;
+    dest->domain_resolved = source->domain_resolved;
+    dest->port            = source->port;
 }
 
 // ============================================================================

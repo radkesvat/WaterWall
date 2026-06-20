@@ -48,6 +48,12 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.line_user_identifier_unit line_user_identifier_test "unit;net;line")
 
+  add_executable(address_context_test address_context_test.c)
+  target_link_libraries(address_context_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests address_context_test)
+
+  add_waterwall_unit_test(waterwall.address_context_unit address_context_test "unit;net;address-context")
+
   add_executable(users_runtime_migration_test users_runtime_migration_test.c)
   target_link_libraries(users_runtime_migration_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests users_runtime_migration_test)
