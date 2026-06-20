@@ -91,8 +91,6 @@ Practical rule:
   Uses a raw TCP probe and fallback sentinel to verify oversized TLS-looking first bytes do not cross the fallback branch.
 - `tls_fallback_rejects_sni_gate`
   Negative case: verifies `TlsServer` rejects a config that combines fallback with an exact SNI gate.
-- `tls_fallback_rejects_alpn_gate`
-  Negative case: verifies `TlsServer` rejects a config that combines fallback with strict ALPN selection.
 - `reality_google_roundtrip`
   Verifies `TesterClient -> RealityClient -> TcpConnector` and `TcpListener -> RealityServer -> TesterServer` across a
   real TCP loopback hop while the Reality visitor branch handshakes with `google.com:443`.
