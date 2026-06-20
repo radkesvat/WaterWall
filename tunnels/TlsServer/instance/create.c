@@ -13,6 +13,8 @@ enum
     kTlsServerDefaultFallbackIntentionalDelayJitterMs = 1
 };
 
+static const char *const kTlsServerDefaultSelectAlpns[] = {"http/1.1"};
+
 static const char *tlsserverSessionCacheName(int mode)
 {
     switch (mode)
@@ -156,15 +158,6 @@ static bool validateFallbackCompatibility(tlsserver_tstate_t *ts, tunnel_t *t)
         LOGF(
             "TlsServer: fallback-node-name/fallback-node/fallback cannot be combined with sni because mismatched valid "
             "ClientHellos would be routed to fallback as plaintext");
-        tlsserverTunnelDestroy(t);
-        return false;
-    }
-
-    if (ts->alpns_length > 0)
-    {
-        LOGF(
-            "TlsServer: fallback-node-name/fallback-node/fallback cannot be combined with alpns because "
-            "ALPN-mismatched valid ClientHellos would be routed to fallback as plaintext");
         tlsserverTunnelDestroy(t);
         return false;
     }
@@ -354,12 +347,20 @@ static void tlsserverInitializeSessionIdContext(tlsserver_tstate_t *ts, node_t *
     ts->session_id_context_len = (unsigned int) sizeof(sid_ctx);
 }
 
-static bool parseAlpns(tlsserver_tstate_t *ts, const cJSON *settings, tunnel_t *t)
+static bool parseAlpnList(struct tlsserver_alpn_item_s **out, unsigned int *out_length, const cJSON *settings,
+                          const char *key, tunnel_t *t)
 {
-    const cJSON *alpns = cJSON_GetObjectItemCaseSensitive(settings, "alpns");
-    if (! cJSON_IsArray(alpns))
+    const cJSON *alpns = cJSON_GetObjectItemCaseSensitive(settings, key);
+    if (alpns == NULL)
     {
         return true;
+    }
+
+    if (! cJSON_IsArray(alpns))
+    {
+        LOGF("JSON Error: TlsServer->settings->%s (array field) : The value was invalid", key);
+        tlsserverTunnelDestroy(t);
+        return false;
     }
 
     int count = cJSON_GetArraySize(alpns);
@@ -368,8 +369,8 @@ static bool parseAlpns(tlsserver_tstate_t *ts, const cJSON *settings, tunnel_t *
         return true;
     }
 
-    ts->alpns = memoryAllocate((size_t) count * sizeof(*ts->alpns));
-    memoryZero(ts->alpns, (size_t) count * sizeof(*ts->alpns));
+    *out = memoryAllocate((size_t) count * sizeof(**out));
+    memoryZero(*out, (size_t) count * sizeof(**out));
 
     int          i    = 0;
     const cJSON *item = NULL;
@@ -390,20 +391,67 @@ static bool parseAlpns(tlsserver_tstate_t *ts, const cJSON *settings, tunnel_t *
             }
         }
 
-        if (name == NULL || stringLength(name) == 0)
+        size_t name_len = name != NULL ? stringLength(name) : 0;
+        if (name_len == 0 || name_len > UINT8_MAX)
         {
             memoryFree(name);
-            LOGF("JSON Error: TlsServer->settings->alpns[%d] : The value was empty or invalid", i);
+            *out_length = (unsigned int) i;
+            LOGF("JSON Error: TlsServer->settings->%s[%d] : The value was empty or invalid", key, i);
             tlsserverTunnelDestroy(t);
             return false;
         }
 
-        ts->alpns[i].name        = name;
-        ts->alpns[i].name_length = (unsigned int) stringLength(name);
+        (*out)[i].name        = name;
+        (*out)[i].name_length = (unsigned int) name_len;
         ++i;
+        *out_length = (unsigned int) i;
     }
 
-    ts->alpns_length = (unsigned int) i;
+    return true;
+}
+
+static void tlsserverSetDefaultSelectAlpns(tlsserver_tstate_t *ts)
+{
+    ts->select_alpns =
+        memoryAllocate(ARRAY_SIZE(kTlsServerDefaultSelectAlpns) * sizeof(*ts->select_alpns));
+    memoryZero(ts->select_alpns, ARRAY_SIZE(kTlsServerDefaultSelectAlpns) * sizeof(*ts->select_alpns));
+
+    for (unsigned int i = 0; i < ARRAY_SIZE(kTlsServerDefaultSelectAlpns); ++i)
+    {
+        const char *name     = kTlsServerDefaultSelectAlpns[i];
+        size_t      name_len = stringLength(name);
+
+        ts->select_alpns[i].name = memoryAllocate(name_len + 1);
+        stringCopy(ts->select_alpns[i].name, name);
+        ts->select_alpns[i].name_length = (unsigned int) name_len;
+    }
+
+    ts->select_alpns_length = ARRAY_SIZE(kTlsServerDefaultSelectAlpns);
+}
+
+static bool parseAlpns(tlsserver_tstate_t *ts, const cJSON *settings, tunnel_t *t)
+{
+    bool has_alpns        = cJSON_GetObjectItemCaseSensitive(settings, "alpns") != NULL;
+    bool has_select_alpns = cJSON_GetObjectItemCaseSensitive(settings, "select-alpns") != NULL;
+
+    if (! parseAlpnList(&ts->alpns, &ts->alpns_length, settings, "alpns", t) ||
+        ! parseAlpnList(&ts->select_alpns, &ts->select_alpns_length, settings, "select-alpns", t))
+    {
+        return false;
+    }
+
+    if (ts->alpns_length > 0 && ts->select_alpns_length > 0)
+    {
+        LOGF("TlsServer: alpns and select-alpns cannot be combined");
+        tlsserverTunnelDestroy(t);
+        return false;
+    }
+
+    if (! has_alpns && ! has_select_alpns)
+    {
+        tlsserverSetDefaultSelectAlpns(ts);
+    }
+
     return true;
 }
 
@@ -578,11 +626,12 @@ static SSL_CTX *createServerSslContext(tlsserver_tstate_t *ts)
         SSL_CTX_set_tlsext_servername_arg(ctx, ts);
     }
 
-    if (ts->alpns_length > 0)
+    if (ts->alpns_length > 0 || ts->select_alpns_length > 0)
     {
         if (ts->verbose)
         {
-            LOGD("TlsServer: enabling ALPN selection with %u configured protocol(s)", ts->alpns_length);
+            LOGD("TlsServer: enabling ALPN selection with %u configured protocol(s)",
+                 ts->alpns_length > 0 ? ts->alpns_length : ts->select_alpns_length);
         }
         SSL_CTX_set_alpn_select_cb(ctx, tlsserverOnAlpnSelect, ts);
     }
@@ -630,7 +679,7 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
             "TlsServer: creating node \"%s\" cert-file=\"%s\" key-file=\"%s\" sni=\"%s\" min-version=%d max-version=%d "
             "ciphers=\"%s\" session-cache=%s session-cache-size=%d session-tickets=%d "
             "handshake-timeout-ms=%u fallback-intentional-delay-ms=%u fallback-intentional-delay-jitter-ms=%u "
-            "alpns=%u workers=%d",
+            "alpns=%u select-alpns=%u workers=%d",
             node->name,
             ts->cert_file,
             ts->key_file,
@@ -645,6 +694,7 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
             (unsigned int) ts->fallback_intentional_delay_ms,
             (unsigned int) ts->fallback_intentional_delay_jitter_ms,
             ts->alpns_length,
+            ts->select_alpns_length,
             worker_count);
     }
 

@@ -13,7 +13,7 @@ This tunnel is meant to behave like a basic nginx `stream` TLS server, not like 
 - Decrypts upstream TLS records into cleartext for the next node.
 - Encrypts downstream cleartext into TLS records for the previous node.
 - Optionally rejects handshakes by exact SNI match.
-- Optionally limits ALPN negotiation to a configured allow-list.
+- Optionally selects ALPN from a configured server-preference list.
 - Optionally sends non-TLS first bytes to a fallback node instead of returning TLS failure behavior.
 - Supports nginx-like stock defaults for protocol versions, ciphers, tickets, timeout, and soft-off session cache behavior.
 
@@ -91,11 +91,41 @@ Both fields are required. If either one is missing or invalid, tunnel creation f
   before ServerHello.
 
 - `alpns` `(array of strings)`
-  Optional ALPN allow-list and server preference order.
+  Deprecated alias for an ALPN selection list and server preference order. Prefer `select-alpns`.
 
-  If omitted, `TlsServer` does not constrain ALPN. If set, only listed protocols may be negotiated.
-  This setting is incompatible with `fallback-node-name` because ALPN mismatch can reject an otherwise valid ClientHello
-  before ServerHello.
+  The array order is the server preference order. For example, `["h2", "http/1.1"]` selects `h2` when the client offers
+  both values. This setting no longer acts as a handshake gate: if there is no overlap with the client offer, the TLS
+  handshake continues without negotiated ALPN.
+
+- `select-alpns` `(array of strings)`
+  Optional ALPN selection list and server preference order.
+  Default: `["http/1.1"]` when neither `alpns` nor `select-alpns` is configured.
+
+  The array order is the server preference order. `TlsServer` selects the first configured value also offered by the
+  client. If the client sends an ALPN extension but there is no overlap, the handshake continues without negotiated
+  ALPN. If the client sends no ALPN extension, OpenSSL does not invoke the selection callback and the handshake also
+  continues with no negotiated ALPN.
+
+  `select-alpns` has three distinct modes:
+
+  | Configuration | Behavior |
+  | --- | --- |
+  | omitted | Uses the default `["http/1.1"]`; selects `http/1.1` when the client offers it. |
+  | `[]` | Disables ALPN selection completely. The handshake accepts valid TLS, and logs `alpn=<none>` even if the client offered ALPN values. |
+  | non-empty array | Selects the first configured value also offered by the client. If nothing overlaps, the handshake continues with `alpn=<none>`. |
+
+  This is useful with `fallback-node-name`, where ALPN selection should reduce fingerprint differences while still
+  avoiding ALPN as an active rejection gate. Choose values that match the traffic your protected or fallback chain can
+  plausibly answer; selecting `h2` while the selected chain behaves like HTTP/1.1 is fingerprintable. `select-alpns`
+  cannot be combined with deprecated `alpns`.
+
+  The empty-array mode intentionally preserves the old no-ALPN-selection behavior for deployments that want a generic
+  TLS server which never negotiates ALPN, even when clients offer it. That can be useful when matching a non-HTTP TLS
+  service, a weak-probe environment, or an intentionally minimal TLS endpoint.
+
+  Only configure `["h2", "http/1.1"]` when the public fallback path can answer HTTP/2 and the protected proxy protocol
+  is also shaped appropriately. In particular, use multiplexing in the proxy protocol when advertising `h2`; otherwise
+  client activity that creates many separate TLS/HTTP/2 connections instead of sharing streams can become fingerprintable.
 
 - `min-version` `(string)`
   Minimum TLS version.
@@ -166,7 +196,8 @@ Both fields are required. If either one is missing or invalid, tunnel creation f
   fallback is usually another real TLS server, ideally nginx configured with TLS settings that closely match this
   `TlsServer`.
 
-  Do not combine fallback with `sni` or `alpns`; tunnel creation rejects that configuration.
+  Do not combine fallback with `sni`; tunnel creation rejects that configuration. `select-alpns` and deprecated `alpns`
+  are allowed with fallback because ALPN mismatch no longer rejects the TLS handshake.
 
 - `fallback-intentional-delay-ms` `(number, milliseconds)`
   Delay applied to upstream payloads sent to the fallback branch.
@@ -246,10 +277,11 @@ and an upstream `Finish` waits behind queued delayed fallback payloads. That is 
 handoff, but it still creates a measurable request-side offset. Delay and jitter are only mitigations; they do not prove
 timing indistinguishability. Measure the deployment path and choose values that match the service being impersonated.
 
-Fallback is intentionally incompatible with `sni` and `alpns`. If those gates reject an otherwise valid TLS ClientHello
-before ServerHello, forwarding the raw ClientHello to fallback as plaintext can produce a non-TLS response to a valid TLS
-probe. That is highly fingerprintable. When fallback is used for probe resistance, enforce access in an inner protocol
-layer such as Trojan or VLESS authentication instead of using `TlsServer` SNI/ALPN gates.
+Fallback is intentionally incompatible with `sni`. If that gate rejects an otherwise valid TLS ClientHello before
+ServerHello, forwarding the raw ClientHello to fallback as plaintext can produce a non-TLS response to a valid TLS probe.
+That is highly fingerprintable. ALPN selection is allowed with fallback because ALPN mismatch no longer rejects the TLS
+handshake or routes the connection to fallback. When fallback is used for probe resistance, enforce access in an inner
+protocol layer such as Trojan or VLESS authentication instead of using `TlsServer` SNI gates.
 
 Fallback only controls what happens after bytes arrive and can be classified. Idle timing before classification is still
 governed by the listener in front of `TlsServer`, usually `TcpListener`. Handshake timing after `TlsServer` initializes is
@@ -286,7 +318,13 @@ Fatal TLS failures still close the line in both directions.
 - `TlsServer` is a generic TLS tunnel, not an HTTP tunnel.
 - It does not inspect or coordinate with `HttpServer`, `HttpClient`, or any other application-layer tunnel.
 - `sni` is only a reject filter in the current implementation. It does not select different certificates.
-- `alpns` is only a negotiation limit in the current implementation. It does not tell later tunnels what application protocol was chosen.
+- If neither ALPN setting is configured, `TlsServer` defaults to HTTP/1.1-only
+  `select-alpns: ["http/1.1"]`.
+- To intentionally keep the old always-`alpn=<none>` behavior, configure `select-alpns: []`.
+- ALPN is selection-only in `TlsServer`; it is not an access gate. No-overlap ALPN offers continue without negotiated
+  ALPN.
+- `alpns` is a deprecated alias. `select-alpns` is the preferred ALPN selection setting. Neither setting tells later
+  tunnels what application protocol was chosen.
 - `session-cache` defaults to nginx-like `none`, not builtin caching.
 - fallback is selected only before ServerHello. After TLS is committed, later TLS errors stay on the TLS path and do not
   switch to fallback.
@@ -304,7 +342,7 @@ Common examples:
 - enabling `prefer-server-ciphers`
 - changing `session-cache` away from `none`
 - disabling `session-tickets`
-- restricting `alpns`
+- changing ALPN selection
 - adding an `sni` filter
 
 So if your goal is wire-level similarity to default nginx, keep the defaults unless you have a specific reason to change them.

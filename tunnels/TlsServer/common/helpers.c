@@ -34,15 +34,24 @@ int tlsserverOnAlpnSelect(SSL *ssl, const unsigned char **out, unsigned char *ou
                           unsigned int inlen, void *arg)
 {
     discard ssl;
-    tlsserver_tstate_t *ts     = arg;
-    for (unsigned int i = 0; i < ts->alpns_length; ++i)
+    tlsserver_tstate_t                 *ts     = arg;
+    const struct tlsserver_alpn_item_s *alpns  = ts->alpns;
+    unsigned int                        length = ts->alpns_length;
+
+    if (length == 0)
+    {
+        alpns  = ts->select_alpns;
+        length = ts->select_alpns_length;
+    }
+
+    for (unsigned int i = 0; i < length; ++i)
     {
         unsigned int client_offset = 0;
 
         while (client_offset < inlen)
         {
             unsigned int current_len = in[client_offset];
-            if (client_offset + 1U + current_len > inlen)
+            if (current_len == 0 || client_offset + 1U + current_len > inlen)
             {
                 LOGW("TlsServer: rejected TLS connection due to malformed ALPN extension");
 #ifdef SSL_AD_DECODE_ERROR
@@ -54,8 +63,7 @@ int tlsserverOnAlpnSelect(SSL *ssl, const unsigned char **out, unsigned char *ou
 
             const unsigned char *cur        = &in[client_offset + 1];
 
-            if (ts->alpns[i].name_length == current_len &&
-                memoryCompare(cur, ts->alpns[i].name, current_len) == 0)
+            if (alpns[i].name_length == current_len && memoryCompare(cur, alpns[i].name, current_len) == 0)
             {
                 *out    = cur;
                 *outlen = (unsigned char) current_len;
@@ -70,12 +78,11 @@ int tlsserverOnAlpnSelect(SSL *ssl, const unsigned char **out, unsigned char *ou
         }
     }
 
-    LOGW("TlsServer: rejected TLS connection due to ALPN mismatch");
-#ifdef SSL_AD_NO_APPLICATION_PROTOCOL
-    return SSL_TLSEXT_ERR_ALERT_FATAL;
-#else
+    if (ts->verbose)
+    {
+        LOGD("TlsServer: no configured ALPN matched the client offer; continuing without ALPN");
+    }
     return SSL_TLSEXT_ERR_NOACK;
-#endif
 }
 
 void tlsserverPrintSSLState(const SSL *ssl)
@@ -134,6 +141,18 @@ void tlsserverTunnelstateDestroy(tlsserver_tstate_t *ts)
     }
 
     ts->alpns_length = 0;
+
+    if (ts->select_alpns != NULL)
+    {
+        for (unsigned int i = 0; i < ts->select_alpns_length; ++i)
+        {
+            memoryFree(ts->select_alpns[i].name);
+        }
+        memoryFree(ts->select_alpns);
+        ts->select_alpns = NULL;
+    }
+
+    ts->select_alpns_length = 0;
 
     memoryFree(ts->expected_sni);
     memoryFree(ts->cert_file);

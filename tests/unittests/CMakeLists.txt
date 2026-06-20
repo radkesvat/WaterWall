@@ -78,6 +78,14 @@ if(TARGET nghttp2_static)
   add_waterwall_unit_test(waterwall.nghttp2_large_recv_unit nghttp2_large_recv_test "unit;tunnels;http;nghttp2")
 endif()
 
+if(TARGET TlsServer)
+  add_executable(tlsserver_alpn_test tlsserver_alpn_test.c)
+  target_link_libraries(tlsserver_alpn_test PRIVATE TlsServer ww)
+  add_dependencies(waterwall_unit_tests tlsserver_alpn_test)
+
+  add_waterwall_unit_test(waterwall.tlsserver_alpn_unit tlsserver_alpn_test "unit;tunnels;tlsserver")
+endif()
+
 if(TARGET SniffRouter)
   add_executable(sniffrouter_classifier_test sniffrouter_classifier_test.c)
   target_include_directories(sniffrouter_classifier_test PRIVATE

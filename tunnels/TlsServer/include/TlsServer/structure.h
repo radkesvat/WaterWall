@@ -16,6 +16,8 @@ typedef struct tlsserver_tstate_s
         unsigned int name_length;
     }           *alpns;
     unsigned int alpns_length;
+    struct tlsserver_alpn_item_s *select_alpns;
+    unsigned int                  select_alpns_length;
 
     char *expected_sni;
     char *cert_file;
