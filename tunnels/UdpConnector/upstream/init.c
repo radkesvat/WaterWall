@@ -2,6 +2,8 @@
 
 #include "loggers/network_logger.h"
 
+#include "loggers/dns_logger.h"
+
 uint32_t udpconnectorSelectWeightedDestinationIndex(const udpconnector_tstate_t *ts)
 {
     if (ts->destinations_count == 0)
@@ -59,9 +61,9 @@ static const char *getSourceBindIp(const udpconnector_tstate_t *ts, char *interf
 
 static int createAndBindSocket(int family, const udpconnector_tstate_t *ts)
 {
-    sockaddr_u host_addr = {0};
-    char       interface_ip[INET_ADDRSTRLEN] = {0};
-    const char *bind_address = getSourceBindIp(ts, interface_ip, sizeof(interface_ip));
+    sockaddr_u  host_addr                     = {0};
+    char        interface_ip[INET_ADDRSTRLEN] = {0};
+    const char *bind_address                  = getSourceBindIp(ts, interface_ip, sizeof(interface_ip));
 
     if (family != AF_INET && family != AF_INET6)
     {
@@ -139,10 +141,9 @@ static int createAndBindSocket(int family, const udpconnector_tstate_t *ts)
     return sockfd;
 }
 
-void udpconnectorSetupDestinationAddress(const dynamic_value_t *dest_addr_selected,
-                                         const address_context_t *constant_dest_addr,
-                                         address_context_t *dest_ctx, const address_context_t *original_dest_ctx,
-                                         address_context_t *src_ctx)
+void udpconnectorSetupDestinationAddress(const dynamic_value_t   *dest_addr_selected,
+                                         const address_context_t *constant_dest_addr, address_context_t *dest_ctx,
+                                         const address_context_t *original_dest_ctx, address_context_t *src_ctx)
 {
     switch (dest_addr_selected->status)
     {
@@ -160,11 +161,10 @@ void udpconnectorSetupDestinationAddress(const dynamic_value_t *dest_addr_select
     }
 }
 
-void udpconnectorSetupDestinationPort(const dynamic_value_t *dest_port_selected,
-                                      const address_context_t *constant_dest_addr,
-                                      uint16_t random_dest_port_x, uint16_t random_dest_port_y,
-                                      address_context_t *dest_ctx, const address_context_t *original_dest_ctx,
-                                      address_context_t *src_ctx)
+void udpconnectorSetupDestinationPort(const dynamic_value_t   *dest_port_selected,
+                                      const address_context_t *constant_dest_addr, uint16_t random_dest_port_x,
+                                      uint16_t random_dest_port_y, address_context_t *dest_ctx,
+                                      const address_context_t *original_dest_ctx, address_context_t *src_ctx)
 {
     switch (dest_port_selected->status)
     {
@@ -175,8 +175,8 @@ void udpconnectorSetupDestinationPort(const dynamic_value_t *dest_port_selected,
         addresscontextCopyPort(dest_ctx, (address_context_t *) constant_dest_addr);
         break;
     case kDvsRandom:
-        addresscontextSetPort(dest_ctx, (fastRand() % (random_dest_port_y - random_dest_port_x + 1)) +
-                                            random_dest_port_x);
+        addresscontextSetPort(dest_ctx,
+                              (fastRand() % (random_dest_port_y - random_dest_port_x + 1)) + random_dest_port_x);
         break;
     case kDvsFromDest:
         addresscontextCopyPort(dest_ctx, (address_context_t *) original_dest_ctx);
@@ -187,7 +187,7 @@ void udpconnectorSetupDestinationPort(const dynamic_value_t *dest_port_selected,
 }
 
 const dns_resolved_addr_t *udpconnectorSelectResolvedAddress(const dns_resolved_addr_t *addrs, size_t naddrs,
-                                                            int strategy)
+                                                             int strategy)
 {
     return dnsstrategySelectResolvedAddress(addrs, naddrs, (enum domain_strategy) strategy);
 }
@@ -217,7 +217,7 @@ static void udpconnectorSeedPacketDestinationCache(udpconnector_tstate_t *ts, ud
 static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls)
 {
     udpconnector_tstate_t *ts       = tunnelGetState(t);
-    address_context_t    *dest_ctx = lineGetDestinationAddressContext(l);
+    address_context_t     *dest_ctx = lineGetDestinationAddressContext(l);
 
     if (! addresscontextCanConvertToSockAddr(dest_ctx) || ! addresscontextHasPort(dest_ctx))
     {
@@ -267,8 +267,10 @@ static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-        LOGD("UdpConnector: Communication begin FD:%x [%s] => [%s]", wioGetFD(io),
-             SOCKADDR_STR(wioGetLocaladdr(io), localaddrstr), SOCKADDR_STR(wioGetPeerAddr(io), peeraddrstr));
+        LOGD("UdpConnector: Communication begin FD:%x [%s] => [%s]",
+             wioGetFD(io),
+             SOCKADDR_STR(wioGetLocaladdr(io), localaddrstr),
+             SOCKADDR_STR(wioGetPeerAddr(io), peeraddrstr));
     }
 
     if (! ls->read_paused)
@@ -277,7 +279,7 @@ static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_
     }
 
     const bool resume_prev = ls->queue_pause_sent;
-    ls->write_paused      = false;
+    ls->write_paused       = false;
 
     lineLock(l);
     bool alive = true;
@@ -360,14 +362,17 @@ static void udpconnectorOnDnsResolved(void *userdata, int status, const char *er
     }
 
     udpconnector_tstate_t *ts       = tunnelGetState(t);
-    address_context_t    *dest_ctx = lineGetDestinationAddressContext(l);
+    address_context_t     *dest_ctx = lineGetDestinationAddressContext(l);
 
     const char *domain = dest_ctx->domain != NULL ? dest_ctx->domain : "<unknown>";
 
     if (status != ARES_SUCCESS || naddrs == 0)
     {
-        LOGE("UdpConnector: async dns resolve failed for %s: %s", domain,
-             error != NULL ? error : ares_strerror(status));
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "UdpConnector: async dns resolve failed for %s: %s",
+                    domain,
+                    error != NULL ? error : ares_strerror(status));
         udpconnectorLinestateDestroy(ls);
         tunnelPrevDownStreamFinish(t, l);
         memoryFree(request);
@@ -378,7 +383,10 @@ static void udpconnectorOnDnsResolved(void *userdata, int status, const char *er
     const dns_resolved_addr_t *selected = udpconnectorSelectResolvedAddress(addrs, naddrs, ts->domain_strategy);
     if (! udpconnectorApplyResolvedAddress(dest_ctx, selected))
     {
-        LOGE("UdpConnector: async dns resolve returned no usable address for %s", domain);
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "UdpConnector: async dns resolve returned no usable address for %s",
+                    domain);
         udpconnectorLinestateDestroy(ls);
         tunnelPrevDownStreamFinish(t, l);
         memoryFree(request);
@@ -386,11 +394,15 @@ static void udpconnectorOnDnsResolved(void *userdata, int status, const char *er
         return;
     }
 
-    if (loggerCheckWriteLevel(getNetworkLogger(), (log_level_e) LOG_LEVEL_DEBUG))
+    if (loggerCheckWriteLevel(getDnsLogger(), (log_level_e) LOG_LEVEL_DEBUG))
     {
         sockaddr_u resolved_addr = addresscontextToSockAddr(dest_ctx);
         char       ip[SOCKADDR_STRLEN];
-        LOGD("UdpConnector: %s resolved to %s", domain, SOCKADDR_STR(&resolved_addr, ip));
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_DEBUG,
+                    "UdpConnector: %s resolved to %s",
+                    domain,
+                    SOCKADDR_STR(&resolved_addr, ip));
     }
 
     memoryFree(request);
@@ -412,7 +424,7 @@ static bool udpconnectorStartDnsResolve(tunnel_t *t, line_t *l, udpconnector_lst
     udpconnector_dns_request_t *request = memoryAllocate(sizeof(*request));
     if (request == NULL)
     {
-        LOGE("UdpConnector: failed to allocate async dns request");
+        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "UdpConnector: failed to allocate async dns request");
         return false;
     }
 
@@ -427,14 +439,18 @@ static bool udpconnectorStartDnsResolve(tunnel_t *t, line_t *l, udpconnector_lst
     ls->resolving    = true;
     ls->write_paused = true;
 
-    int rc = workerResolveDomainServiceAsync(lineGetWID(l), dest_ctx->domain, NULL, SOCK_DGRAM,
-                                             udpconnectorOnDnsResolved, request);
+    int rc = workerResolveDomainServiceAsync(
+        lineGetWID(l), dest_ctx->domain, NULL, SOCK_DGRAM, udpconnectorOnDnsResolved, request);
     if (rc != ARES_SUCCESS)
     {
         udpconnectorCancelDnsRequest(ls);
         lineUnlock(l);
         memoryFree(request);
-        LOGE("UdpConnector: failed to start async dns resolve for %s: %s", dest_ctx->domain, ares_strerror(rc));
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "UdpConnector: failed to start async dns resolve for %s: %s",
+                    dest_ctx->domain,
+                    ares_strerror(rc));
         return false;
     }
 
@@ -443,16 +459,16 @@ static bool udpconnectorStartDnsResolve(tunnel_t *t, line_t *l, udpconnector_lst
 
 void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
-    udpconnector_tstate_t *ts = tunnelGetState(t);
-    udpconnector_lstate_t *ls = lineGetState(l, t);
-    address_context_t     *dest_ctx = lineGetDestinationAddressContext(l);
-    address_context_t     *src_ctx  = lineGetSourceAddressContext(l);
-    const dynamic_value_t *dest_addr_selected = &ts->dest_addr_selected;
-    const dynamic_value_t *dest_port_selected = &ts->dest_port_selected;
-    const address_context_t *constant_dest_addr = &ts->constant_dest_addr;
-    uint16_t random_dest_port_x = ts->random_dest_port_x;
-    uint16_t random_dest_port_y = ts->random_dest_port_y;
-    uint32_t selected_destination_index = udpconnectorSelectWeightedDestinationIndex(ts);
+    udpconnector_tstate_t            *ts                         = tunnelGetState(t);
+    udpconnector_lstate_t            *ls                         = lineGetState(l, t);
+    address_context_t                *dest_ctx                   = lineGetDestinationAddressContext(l);
+    address_context_t                *src_ctx                    = lineGetSourceAddressContext(l);
+    const dynamic_value_t            *dest_addr_selected         = &ts->dest_addr_selected;
+    const dynamic_value_t            *dest_port_selected         = &ts->dest_port_selected;
+    const address_context_t          *constant_dest_addr         = &ts->constant_dest_addr;
+    uint16_t                          random_dest_port_x         = ts->random_dest_port_x;
+    uint16_t                          random_dest_port_y         = ts->random_dest_port_y;
+    uint32_t                          selected_destination_index = udpconnectorSelectWeightedDestinationIndex(ts);
     const udpconnector_destination_t *selected_destination =
         ts->destinations_count > 0 ? &ts->destinations[selected_destination_index] : NULL;
 
@@ -476,8 +492,13 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     addresscontextAddrCopy(&original_dest_ctx, dest_ctx);
 
     udpconnectorSetupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, &original_dest_ctx, src_ctx);
-    udpconnectorSetupDestinationPort(dest_port_selected, constant_dest_addr, random_dest_port_x, random_dest_port_y,
-                                     dest_ctx, &original_dest_ctx, src_ctx);
+    udpconnectorSetupDestinationPort(dest_port_selected,
+                                     constant_dest_addr,
+                                     random_dest_port_x,
+                                     random_dest_port_y,
+                                     dest_ctx,
+                                     &original_dest_ctx,
+                                     src_ctx);
     addresscontextReset(&original_dest_ctx);
 
     if (! addresscontextHasPort(dest_ctx))

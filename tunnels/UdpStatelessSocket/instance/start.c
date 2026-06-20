@@ -6,4 +6,3 @@ void udpstatelesssocketTunnelOnStart(tunnel_t *t)
 {
     discard t;
 }
-

@@ -2,6 +2,8 @@
 
 #include "loggers/network_logger.h"
 
+#include "loggers/dns_logger.h"
+
 typedef struct udpstatelesssocket_send_request_s
 {
     tunnel_t  *tunnel;
@@ -360,7 +362,7 @@ static void udpstatelesssocketDnsCacheStore(udpstatelesssocket_tstate_t *state, 
     if (entry == NULL)
     {
         mutexUnlock(&state->dns_cache_mutex);
-        LOGE("UdpStatelessSocket: failed to allocate async dns cache entry");
+        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "UdpStatelessSocket: failed to allocate async dns cache entry");
         return;
     }
 
@@ -369,7 +371,7 @@ static void udpstatelesssocketDnsCacheStore(udpstatelesssocket_tstate_t *state, 
     {
         memoryFree(entry);
         mutexUnlock(&state->dns_cache_mutex);
-        LOGE("UdpStatelessSocket: failed to copy async dns cache domain");
+        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "UdpStatelessSocket: failed to copy async dns cache domain");
         return;
     }
 
@@ -403,9 +405,11 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
 
     if (status != ARES_SUCCESS || naddrs == 0)
     {
-        LOGE("UdpStatelessSocket: async dns resolve failed for %s: %s",
-             request->domain,
-             error != NULL ? error : ares_strerror(status));
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "UdpStatelessSocket: async dns resolve failed for %s: %s",
+                    request->domain,
+                    error != NULL ? error : ares_strerror(status));
         bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
         lineUnlock(line);
         udpstatelesssocketDnsRequestDestroy(request);
@@ -418,16 +422,24 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
     sockaddr_u peer_addr;
     if (! udpstatelesssocketSockAddrFromResolved(selected, request->port, &peer_addr))
     {
-        LOGE("UdpStatelessSocket: async dns resolve returned no usable address for %s", request->domain);
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "UdpStatelessSocket: async dns resolve returned no usable address for %s",
+                    request->domain);
         bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
         lineUnlock(line);
         udpstatelesssocketDnsRequestDestroy(request);
         return;
     }
 
+    if (loggerCheckWriteLevel(getDnsLogger(), (log_level_e) LOG_LEVEL_DEBUG))
     {
         char peeraddrstr[SOCKADDR_STRLEN] = {0};
-        LOGD("UdpStatelessSocket: %s resolved to [%s]", request->domain, SOCKADDR_STR(&peer_addr, peeraddrstr));
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_DEBUG,
+                    "UdpStatelessSocket: %s resolved to [%s]",
+                    request->domain,
+                    SOCKADDR_STR(&peer_addr, peeraddrstr));
     }
 
     udpstatelesssocketDnsCacheStore(
@@ -449,7 +461,7 @@ static bool udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
     udpstatelesssocket_dns_request_t *request = memoryAllocate(sizeof(*request));
     if (request == NULL)
     {
-        LOGE("UdpStatelessSocket: failed to allocate async dns request");
+        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "UdpStatelessSocket: failed to allocate async dns request");
         bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
         return false;
     }
@@ -458,7 +470,7 @@ static bool udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
     if (domain_copy == NULL)
     {
         memoryFree(request);
-        LOGE("UdpStatelessSocket: failed to copy async dns domain");
+        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "UdpStatelessSocket: failed to copy async dns domain");
         bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
         return false;
     }
@@ -478,7 +490,11 @@ static bool udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
     if (rc != ARES_SUCCESS)
     {
         lineUnlock(l);
-        LOGE("UdpStatelessSocket: failed to start async dns resolve for %s: %s", request->domain, ares_strerror(rc));
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "UdpStatelessSocket: failed to start async dns resolve for %s: %s",
+                    request->domain,
+                    ares_strerror(rc));
         udpstatelesssocketDnsRequestDestroy(request);
         bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
         return false;
@@ -500,10 +516,15 @@ void udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             if (udpstatelesssocketDnsCacheLookup(
                     state, dest_ctx->domain, dest_ctx->port, dest_ctx->domain_strategy, &cached_addr))
             {
-                char peeraddrstr[SOCKADDR_STRLEN] = {0};
-                LOGD("UdpStatelessSocket: using cached async dns result for %s => [%s]",
-                     dest_ctx->domain,
-                     SOCKADDR_STR(&cached_addr, peeraddrstr));
+                if (loggerCheckWriteLevel(getDnsLogger(), (log_level_e) LOG_LEVEL_DEBUG))
+                {
+                    char peeraddrstr[SOCKADDR_STRLEN] = {0};
+                    loggerPrint(getDnsLogger(),
+                                LOG_LEVEL_DEBUG,
+                                "UdpStatelessSocket: using cached async dns result for %s => [%s]",
+                                dest_ctx->domain,
+                                SOCKADDR_STR(&cached_addr, peeraddrstr));
+                }
                 udpstatelesssocketSendToPeer(t, buf, &cached_addr);
                 return;
             }

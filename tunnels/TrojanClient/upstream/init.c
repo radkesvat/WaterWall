@@ -15,8 +15,7 @@ void trojanclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    ls->kind = ls->protocol == kTrojanClientProtocolUdp ? kTrojanClientLineKindUdpApp
-                                                        : kTrojanClientLineKindDirect;
+    ls->kind = ls->protocol == kTrojanClientProtocolUdp ? kTrojanClientLineKindUdpApp : kTrojanClientLineKindDirect;
 
     bool resolving = false;
     if (UNLIKELY(! trojanclientStartDomainResolveIfNeeded(t, l, ls, &resolving)))

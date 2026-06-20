@@ -2,6 +2,8 @@
 
 #include "loggers/network_logger.h"
 
+#include "loggers/dns_logger.h"
+
 enum
 {
     kSocks5Version         = 0x05,
@@ -355,9 +357,11 @@ static void onDnsResolved(void *userdata, int status, const char *error, const d
 
     if (status != ARES_SUCCESS || naddrs == 0)
     {
-        LOGE("Socks5Client: async dns resolve failed for %s: %s",
-             request->domain,
-             error != NULL ? error : ares_strerror(status));
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "Socks5Client: async dns resolve failed for %s: %s",
+                    request->domain,
+                    error != NULL ? error : ares_strerror(status));
         dnsRequestDestroy(request);
         closeBeforeTransportInit(t, l, ls);
         lineUnlock(l);
@@ -369,18 +373,25 @@ static void onDnsResolved(void *userdata, int status, const char *error, const d
     if (UNLIKELY(! dnsstrategyApplyResolvedAddress(lineGetDestinationAddressContext(l), selected) ||
                  ! dnsstrategyApplyResolvedAddress(&ls->target_addr, selected)))
     {
-        LOGE("Socks5Client: async dns resolve returned no usable address for %s", request->domain);
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "Socks5Client: async dns resolve returned no usable address for %s",
+                    request->domain);
         dnsRequestDestroy(request);
         closeBeforeTransportInit(t, l, ls);
         lineUnlock(l);
         return;
     }
 
-    if (loggerCheckWriteLevel(getNetworkLogger(), (log_level_e) LOG_LEVEL_DEBUG))
+    if (loggerCheckWriteLevel(getDnsLogger(), (log_level_e) LOG_LEVEL_DEBUG))
     {
         sockaddr_u resolved_addr = addresscontextToSockAddr(&ls->target_addr);
         char       ip[SOCKADDR_STRLEN];
-        LOGD("Socks5Client: %s resolved to %s", request->domain, SOCKADDR_STR(&resolved_addr, ip));
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_DEBUG,
+                    "Socks5Client: %s resolved to %s",
+                    request->domain,
+                    SOCKADDR_STR(&resolved_addr, ip));
     }
 
     dnsRequestDestroy(request);
@@ -420,8 +431,7 @@ bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l)
     address_context_t     *dest_ctx = lineGetDestinationAddressContext(l);
     routing_context_t     *route    = lineGetRoutingContext(l);
     address_context_t      current  = {0};
-    bool uses_current_dest = (ts->target_addr_source != kDvsConstant) ||
-                             (ts->target_port_source != kDvsConstant) ||
+    bool uses_current_dest = (ts->target_addr_source != kDvsConstant) || (ts->target_port_source != kDvsConstant) ||
                              (ts->protocol == kSocks5ClientProtocolDestContext);
 
     if (uses_current_dest)
@@ -507,7 +517,7 @@ bool socks5clientStartDomainResolveIfNeeded(tunnel_t *t, line_t *l, socks5client
     socks5client_dns_request_t *request = memoryAllocate(sizeof(*request));
     if (UNLIKELY(request == NULL))
     {
-        LOGE("Socks5Client: failed to allocate async dns request");
+        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "Socks5Client: failed to allocate async dns request");
         return false;
     }
 
@@ -515,7 +525,7 @@ bool socks5clientStartDomainResolveIfNeeded(tunnel_t *t, line_t *l, socks5client
     if (UNLIKELY(domain == NULL))
     {
         memoryFree(request);
-        LOGE("Socks5Client: failed to copy async dns domain");
+        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "Socks5Client: failed to copy async dns domain");
         return false;
     }
 
@@ -532,21 +542,24 @@ bool socks5clientStartDomainResolveIfNeeded(tunnel_t *t, line_t *l, socks5client
     ls->phase       = kSocks5ClientPhaseResolving;
 
     int socktype = ls->protocol == kSocks5ClientProtocolUdp ? SOCK_DGRAM : SOCK_STREAM;
-    int rc       = workerResolveDomainServiceAsync(lineGetWID(l), request->domain, NULL, socktype, onDnsResolved,
-                                                   request);
+    int rc = workerResolveDomainServiceAsync(lineGetWID(l), request->domain, NULL, socktype, onDnsResolved, request);
     if (UNLIKELY(rc != ARES_SUCCESS))
     {
         ls->dns_request = NULL;
         ls->phase       = kSocks5ClientPhaseIdle;
         lineUnlock(l);
-        LOGE("Socks5Client: failed to start async dns resolve for %s: %s", request->domain, ares_strerror(rc));
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "Socks5Client: failed to start async dns resolve for %s: %s",
+                    request->domain,
+                    ares_strerror(rc));
         dnsRequestDestroy(request);
         return false;
     }
 
     if (ts->verbose)
     {
-        LOGD("Socks5Client: resolving target domain %s", request->domain);
+        loggerPrint(getDnsLogger(), LOG_LEVEL_DEBUG, "Socks5Client: resolving target domain %s", request->domain);
     }
 
     *started_out = true;
@@ -604,11 +617,11 @@ bool socks5clientSendAuthRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *
 
 bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *ls)
 {
-    socks5client_tstate_t *ts       = tunnelGetState(t);
+    socks5client_tstate_t *ts           = tunnelGetState(t);
     address_context_t      assoc_target = {0};
-    address_context_t     *target   = &ls->target_addr;
-    uint8_t                cmd      = protocolToCommand(ls->protocol);
-    uint32_t               addr_len = 0;
+    address_context_t     *target       = &ls->target_addr;
+    uint8_t                cmd          = protocolToCommand(ls->protocol);
+    uint32_t               addr_len     = 0;
 
     if (ls->protocol == kSocks5ClientProtocolUdp)
     {
@@ -814,7 +827,7 @@ static bool startUdpRelayLine(tunnel_t *t, line_t *control_l, socks5client_lstat
         return false;
     }
 
-    bool app_alive = lineIsAlive(app_l);
+    bool app_alive     = lineIsAlive(app_l);
     *control_alive_out = lineIsAlive(control_l);
     if (! app_alive || ! *control_alive_out)
     {
@@ -912,9 +925,9 @@ bool socks5clientHandleUdpRelayPayload(tunnel_t *t, line_t *l, socks5client_lsta
         return true;
     }
 
-    address_context_t source  = {0};
+    address_context_t source   = {0};
     size_t            addr_len = 0;
-    int               parsed  = parseAddressBytes(raw + 3, len - 3, &source, &addr_len);
+    int               parsed   = parseAddressBytes(raw + 3, len - 3, &source, &addr_len);
 
     if (parsed <= 0 || len < (size_t) (3 + addr_len))
     {
@@ -984,7 +997,7 @@ void socks5clientCloseLineBidirectional(tunnel_t *t, line_t *l)
 
     if (ls->kind == kSocks5ClientLineKindUdpControl || ls->kind == kSocks5ClientLineKindUdpRelay)
     {
-        line_t *app_l = ls->app_line;
+        line_t *app_l     = ls->app_line;
         line_t *control_l = NULL;
         line_t *udp_l     = NULL;
 
@@ -1165,7 +1178,7 @@ bool socks5clientDrainHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate
             {
                 address_context_t relay_addr = {0};
                 size_t            consumed   = 0;
-                int parsed = parseAddressBytes(reply + 3, (size_t) reply_len - 3, &relay_addr, &consumed);
+                int               parsed = parseAddressBytes(reply + 3, (size_t) reply_len - 3, &relay_addr, &consumed);
                 lineReuseBuffer(l, reply_buf);
 
                 if (parsed <= 0)

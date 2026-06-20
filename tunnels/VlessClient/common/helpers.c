@@ -2,6 +2,8 @@
 
 #include "loggers/network_logger.h"
 
+#include "loggers/dns_logger.h"
+
 enum
 {
     kVlessVersion    = 0x00,
@@ -267,9 +269,11 @@ static void onDnsResolved(void *userdata, int status, const char *error, const d
 
     if (status != ARES_SUCCESS || naddrs == 0)
     {
-        LOGE("VlessClient: async dns resolve failed for %s: %s",
-             request->domain,
-             error != NULL ? error : ares_strerror(status));
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "VlessClient: async dns resolve failed for %s: %s",
+                    request->domain,
+                    error != NULL ? error : ares_strerror(status));
         dnsRequestDestroy(request);
         closeBeforeTransportInit(t, l, ls);
         lineUnlock(l);
@@ -281,18 +285,25 @@ static void onDnsResolved(void *userdata, int status, const char *error, const d
     if (UNLIKELY(! dnsstrategyApplyResolvedAddress(lineGetDestinationAddressContext(l), selected) ||
                  ! dnsstrategyApplyResolvedAddress(&ls->target_addr, selected)))
     {
-        LOGE("VlessClient: async dns resolve returned no usable address for %s", request->domain);
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "VlessClient: async dns resolve returned no usable address for %s",
+                    request->domain);
         dnsRequestDestroy(request);
         closeBeforeTransportInit(t, l, ls);
         lineUnlock(l);
         return;
     }
 
-    if (loggerCheckWriteLevel(getNetworkLogger(), (log_level_e) LOG_LEVEL_DEBUG))
+    if (loggerCheckWriteLevel(getDnsLogger(), (log_level_e) LOG_LEVEL_DEBUG))
     {
         sockaddr_u resolved_addr = addresscontextToSockAddr(&ls->target_addr);
         char       ip[SOCKADDR_STRLEN];
-        LOGD("VlessClient: %s resolved to %s", request->domain, SOCKADDR_STR(&resolved_addr, ip));
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_DEBUG,
+                    "VlessClient: %s resolved to %s",
+                    request->domain,
+                    SOCKADDR_STR(&resolved_addr, ip));
     }
 
     dnsRequestDestroy(request);
@@ -404,7 +415,7 @@ bool vlessclientStartDomainResolveIfNeeded(tunnel_t *t, line_t *l, vlessclient_l
     vlessclient_dns_request_t *request = memoryAllocate(sizeof(*request));
     if (UNLIKELY(request == NULL))
     {
-        LOGE("VlessClient: failed to allocate async dns request");
+        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "VlessClient: failed to allocate async dns request");
         return false;
     }
 
@@ -412,7 +423,7 @@ bool vlessclientStartDomainResolveIfNeeded(tunnel_t *t, line_t *l, vlessclient_l
     if (UNLIKELY(domain == NULL))
     {
         memoryFree(request);
-        LOGE("VlessClient: failed to copy async dns domain");
+        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "VlessClient: failed to copy async dns domain");
         return false;
     }
 
@@ -435,14 +446,18 @@ bool vlessclientStartDomainResolveIfNeeded(tunnel_t *t, line_t *l, vlessclient_l
         ls->dns_request = NULL;
         ls->phase       = kVlessClientPhaseIdle;
         lineUnlock(l);
-        LOGE("VlessClient: failed to start async dns resolve for %s: %s", request->domain, ares_strerror(rc));
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "VlessClient: failed to start async dns resolve for %s: %s",
+                    request->domain,
+                    ares_strerror(rc));
         dnsRequestDestroy(request);
         return false;
     }
 
     if (ts->verbose)
     {
-        LOGD("VlessClient: resolving target domain %s", request->domain);
+        loggerPrint(getDnsLogger(), LOG_LEVEL_DEBUG, "VlessClient: resolving target domain %s", request->domain);
     }
 
     *started_out = true;
@@ -930,7 +945,7 @@ bool vlessclientOnTransportEstablished(tunnel_t *t, line_t *l, vlessclient_lstat
         return false;
     }
 
-    ls = lineGetState(l, t);
+    ls              = lineGetState(l, t);
     bool line_alive = true;
     if (UNLIKELY(! sendInitialRequest(t, l, ls, &line_alive)))
     {

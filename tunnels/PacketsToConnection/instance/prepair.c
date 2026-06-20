@@ -6,4 +6,3 @@ void ptcTunnelOnPrepair(tunnel_t *t)
 {
     discard t;
 }
-

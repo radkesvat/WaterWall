@@ -71,9 +71,7 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     line_t                *l  = lstate->line;
     tcpconnector_tstate_t *ts = tunnelGetState(t);
     tcpconnector_lstate_t *ls = lineGetState(l, t);
-    localidletableKeepIdleItemForAtleast(tcpconnectorGetLineIdleTable(ts, l),
-                                         ls->idle_handle,
-                                         kReadWriteTimeoutMs);
+    localidletableKeepIdleItemForAtleast(tcpconnectorGetLineIdleTable(ts, l), ls->idle_handle, kReadWriteTimeoutMs);
 
     tunnelPrevDownStreamPayload(t, l, buf);
 }
@@ -115,7 +113,8 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-        LOGD("TcpConnector: connection succeed FD:%x [%s] => [%s]", wioGetFD(upstream_io),
+        LOGD("TcpConnector: connection succeed FD:%x [%s] => [%s]",
+             wioGetFD(upstream_io),
              SOCKADDR_STR(wioGetLocaladdr(upstream_io), localaddrstr),
              SOCKADDR_STR(wioGetPeerAddr(upstream_io), peeraddrstr));
     }
@@ -206,7 +205,7 @@ void tcpconnectorOnIdleConnectionExpire(local_idle_item_t *idle_tcp)
     tcpconnector_lstate_t *ls = idle_tcp->userdata;
 
     assert(ls != NULL && ls->tunnel != NULL);
-    
+
     idle_tcp->userdata = NULL;
     ls->idle_handle    = NULL; // mark as removed
 

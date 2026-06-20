@@ -214,8 +214,7 @@ static bool parseDomainStrategy(socks5client_tstate_t *ts, const cJSON *settings
         return true;
     }
 
-    if (! cJSON_IsString(strategy_json) || strategy_json->valuestring == NULL ||
-        strategy_json->valuestring[0] == '\0')
+    if (! cJSON_IsString(strategy_json) || strategy_json->valuestring == NULL || strategy_json->valuestring[0] == '\0')
     {
         LOGF("JSON Error: Socks5Client->settings->domain-strategy must be a non-empty string");
         return false;

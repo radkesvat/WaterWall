@@ -12,6 +12,8 @@
 
 #include "loggers/internal_logger.h"
 
+#include "loggers/dns_logger.h"
+
 thread_local wid_t tl_wid;
 
 static void workerDestroyResources(worker_t *worker)
@@ -109,7 +111,11 @@ void workerInit(worker_t *worker, wid_t wid, bool eventloop)
         int dns_rc = asyncdnsInit(&worker->dns_resolver, worker->loop, &GSTATE.dns_options);
         if (dns_rc != ARES_SUCCESS)
         {
-            LOGF("Worker %d failed to initialize async DNS resolver: %s", wid, ares_strerror(dns_rc));
+            loggerPrint(getDnsLogger(),
+                        LOG_LEVEL_FATAL,
+                        "Worker %d failed to initialize async DNS resolver: %s",
+                        wid,
+                        ares_strerror(dns_rc));
             terminateProgram(1);
         }
     }

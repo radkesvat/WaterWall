@@ -6,4 +6,3 @@ void tcpconnectorTunnelOnPrepair(tunnel_t *t)
 {
     discard t;
 }
-

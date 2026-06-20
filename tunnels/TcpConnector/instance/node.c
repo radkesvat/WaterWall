@@ -5,7 +5,7 @@
 
 node_t nodeTcpConnectorGet(void)
 {
-    const char *type_name     = "TcpConnector";
+    const char *type_name         = "TcpConnector";
     node_t      node_tcpconnector = {
              .name                  = NULL,
              .type                  = stringDuplicate(type_name),

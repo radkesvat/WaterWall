@@ -1,6 +1,6 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
+#include "loggers/dns_logger.h"
 
 enum
 {
@@ -64,7 +64,6 @@ static void ptcDnsWrite32(uint8_t *p, uint32_t value)
     p[3] = (uint8_t) value;
 }
 
-
 static bool ptcDnsReadQuestionName(const uint8_t *packet, uint32_t packet_len, uint32_t *offset, char *domain,
                                    uint8_t *domain_len)
 {
@@ -115,7 +114,7 @@ static bool ptcDnsReadQuestionName(const uint8_t *packet, uint32_t packet_len, u
         return false;
     }
 
-    domain[out]  = '\0';
+    domain[out] = '\0';
     *domain_len = (uint8_t) out;
     *offset     = pos;
     return true;
@@ -181,7 +180,7 @@ static void ptcFakeDnsClearEntryName(ptc_fake_dns_t *dns, ptc_fake_dns_entry_t *
     }
 
     ptc_fake_dns_name_key_t key = {.name = entry->domain, .len = entry->domain_len};
-    discard ptc_fake_dns_name_map_t_erase(&dns->names, key);
+    discard                 ptc_fake_dns_name_map_t_erase(&dns->names, key);
     memoryFree(entry->domain);
     entry->domain     = NULL;
     entry->domain_len = 0;
@@ -189,7 +188,7 @@ static void ptcFakeDnsClearEntryName(ptc_fake_dns_t *dns, ptc_fake_dns_entry_t *
 
 static ptc_fake_dns_entry_t *ptcFakeDnsFindByName(ptc_fake_dns_t *dns, const char *domain, uint8_t domain_len)
 {
-    ptc_fake_dns_name_key_t  key = {.name = domain, .len = domain_len};
+    ptc_fake_dns_name_key_t      key = {.name = domain, .len = domain_len};
     ptc_fake_dns_name_map_t_iter it  = ptc_fake_dns_name_map_t_find(&dns->names, key);
 
     if (it.ref == ptc_fake_dns_name_map_t_end(&dns->names).ref)
@@ -233,14 +232,14 @@ static uint32_t ptcFakeDnsGetOrCreate(ptc_fake_dns_t *dns, const char *domain, u
     entry->domain[domain_len] = '\0';
     entry->domain_len         = domain_len;
 
-    uint32_t fake_host       = dns->network_host | entry->index;
-    entry->fake_addr_network = lwip_htonl(fake_host);
+    uint32_t fake_host         = dns->network_host | entry->index;
+    entry->fake_addr_network   = lwip_htonl(fake_host);
     dns->records[entry->index] = entry;
 
     ptcFakeDnsLruPushTail(dns, entry);
 
     ptc_fake_dns_name_key_t key = {.name = entry->domain, .len = entry->domain_len};
-    discard ptc_fake_dns_name_map_t_insert(&dns->names, key, entry);
+    discard                 ptc_fake_dns_name_map_t_insert(&dns->names, key, entry);
     return entry->fake_addr_network;
 }
 
@@ -445,12 +444,15 @@ bool ptcFakeDnsLoadSettings(ptc_tstate_t *ts, const cJSON *settings)
     int        ttl        = kPtcFakeDnsDefaultTtl;
     int        cache_size = kPtcFakeDnsDefaultRecords;
 
-    if (! ptcFakeDnsLoadIpv4Setting(&listen_addr, fake_dns_object, "address", "198.18.0.2",
+    if (! ptcFakeDnsLoadIpv4Setting(&listen_addr,
+                                    fake_dns_object,
+                                    "address",
+                                    "198.18.0.2",
                                     "PacketsToConnection->settings->fake-dns->address") ||
-        ! ptcFakeDnsLoadIpv4Setting(&network, fake_dns_object, "network", "100.64.0.0",
-                                    "PacketsToConnection->settings->fake-dns->network") ||
-        ! ptcFakeDnsLoadIpv4Setting(&netmask, fake_dns_object, "netmask", "255.192.0.0",
-                                    "PacketsToConnection->settings->fake-dns->netmask"))
+        ! ptcFakeDnsLoadIpv4Setting(
+            &network, fake_dns_object, "network", "100.64.0.0", "PacketsToConnection->settings->fake-dns->network") ||
+        ! ptcFakeDnsLoadIpv4Setting(
+            &netmask, fake_dns_object, "netmask", "255.192.0.0", "PacketsToConnection->settings->fake-dns->netmask"))
     {
         return false;
     }
@@ -535,11 +537,10 @@ void ptcFakeDnsDestroy(ptc_tstate_t *ts)
 bool ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_line, sbuf_t *buf, const struct ip_hdr *iphdr,
                                    const struct udp_hdr *udphdr)
 {
-    ptc_tstate_t *ts  = tunnelGetState(t);
+    ptc_tstate_t   *ts  = tunnelGetState(t);
     ptc_fake_dns_t *dns = &ts->fake_dns;
 
-    if (! dns->enabled || iphdr->dest.addr != dns->listen_addr.addr ||
-        lwip_ntohs(udphdr->dest) != dns->listen_port)
+    if (! dns->enabled || iphdr->dest.addr != dns->listen_addr.addr || lwip_ntohs(udphdr->dest) != dns->listen_port)
     {
         return false;
     }
@@ -564,13 +565,13 @@ bool ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_line, sbuf_t *buf
         return true;
     }
 
-    buffer_pool_t *pool       = lineGetBufferPool(packet_line);
-    uint32_t       packet_cap = IP_HLEN + UDP_HLEN + max_dns_len;
-    sbuf_t        *response   = ptcFakeDnsAllocateBuffer(pool, packet_cap);
-    uint8_t       *packet     = sbufGetMutablePtr(response);
-    struct ip_hdr *rip        = (struct ip_hdr *) packet;
-    struct udp_hdr *rudp      = (struct udp_hdr *) (packet + IP_HLEN);
-    uint8_t       *rdns       = packet + IP_HLEN + UDP_HLEN;
+    buffer_pool_t  *pool       = lineGetBufferPool(packet_line);
+    uint32_t        packet_cap = IP_HLEN + UDP_HLEN + max_dns_len;
+    sbuf_t         *response   = ptcFakeDnsAllocateBuffer(pool, packet_cap);
+    uint8_t        *packet     = sbufGetMutablePtr(response);
+    struct ip_hdr  *rip        = (struct ip_hdr *) packet;
+    struct udp_hdr *rudp       = (struct udp_hdr *) (packet + IP_HLEN);
+    uint8_t        *rdns       = packet + IP_HLEN + UDP_HLEN;
 
     int dns_response_len = ptcFakeDnsBuildResponse(ts, dns_query, dns_query_len, rdns, max_dns_len);
     if (dns_response_len < 0)
@@ -628,8 +629,8 @@ bool ptcFakeDnsApplyMappedDestination(tunnel_t *t, address_context_t *dest_ctx, 
         return false;
     }
 
-    ptc_tstate_t          *ts    = tunnelGetState(t);
-    ptc_fake_dns_entry_t  *entry = ptcFakeDnsLookupByIp(&ts->fake_dns, &ip->u_addr.ip4);
+    ptc_tstate_t         *ts    = tunnelGetState(t);
+    ptc_fake_dns_entry_t *entry = ptcFakeDnsLookupByIp(&ts->fake_dns, &ip->u_addr.ip4);
 
     if (entry == NULL)
     {

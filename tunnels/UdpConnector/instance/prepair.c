@@ -6,4 +6,3 @@ void udpconnectorTunnelOnPrepair(tunnel_t *t)
 {
     discard t;
 }
-

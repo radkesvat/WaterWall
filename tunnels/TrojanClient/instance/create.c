@@ -168,8 +168,7 @@ static bool parseTargetAddress(trojanclient_tstate_t *ts, const cJSON *settings)
 
     if (len == 0 || len > UINT8_MAX)
     {
-        LOGF("JSON Error: TrojanClient->settings->target-address must be 1..%u bytes",
-             (unsigned int) UINT8_MAX);
+        LOGF("JSON Error: TrojanClient->settings->target-address must be 1..%u bytes", (unsigned int) UINT8_MAX);
         return false;
     }
 
@@ -275,8 +274,7 @@ static bool parseDomainStrategy(trojanclient_tstate_t *ts, const cJSON *settings
         return true;
     }
 
-    if (! cJSON_IsString(strategy_json) || strategy_json->valuestring == NULL ||
-        strategy_json->valuestring[0] == '\0')
+    if (! cJSON_IsString(strategy_json) || strategy_json->valuestring == NULL || strategy_json->valuestring[0] == '\0')
     {
         LOGF("JSON Error: TrojanClient->settings->domain-strategy must be a non-empty string");
         return false;
@@ -329,9 +327,9 @@ static bool parseDomainStrategy(trojanclient_tstate_t *ts, const cJSON *settings
 
 tunnel_t *trojanclientTunnelCreate(node_t *node)
 {
-    tunnel_t               *t        = tunnelCreate(node, sizeof(trojanclient_tstate_t), sizeof(trojanclient_lstate_t));
-    trojanclient_tstate_t  *ts       = tunnelGetState(t);
-    const cJSON            *settings = node->node_settings_json;
+    tunnel_t              *t        = tunnelCreate(node, sizeof(trojanclient_tstate_t), sizeof(trojanclient_lstate_t));
+    trojanclient_tstate_t *ts       = tunnelGetState(t);
+    const cJSON           *settings = node->node_settings_json;
 
     t->fnInitU    = &trojanclientTunnelUpStreamInit;
     t->fnEstU     = &trojanclientTunnelUpStreamEst;

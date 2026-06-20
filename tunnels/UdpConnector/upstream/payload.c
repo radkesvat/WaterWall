@@ -2,6 +2,8 @@
 
 #include "loggers/network_logger.h"
 
+#include "loggers/dns_logger.h"
+
 typedef enum udpconnector_packet_peer_result_e
 {
     kUdpConnectorPacketPeerReady = 0,
@@ -32,7 +34,8 @@ static void closeLine(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconn
 static void handleQueueOverflow(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconnector_lstate_t *ls)
 {
     LOGE("UdpConnector: upstream write queue overflow, size: %d, limit: %d",
-         (int) udpconnectorQueuedWriteBytes(ls), (int) kUdpMaxPauseQueueSize);
+         (int) udpconnectorQueuedWriteBytes(ls),
+         (int) kUdpMaxPauseQueueSize);
 
     closeLine(t, l, ts, ls);
 }
@@ -114,9 +117,9 @@ static bool udpconnectorPayloadSockAddrEquals(const sockaddr_u *lhs, const socka
     case AF_INET:
         return lhs->sin.sin_port == rhs->sin.sin_port && lhs->sin.sin_addr.s_addr == rhs->sin.sin_addr.s_addr;
     case AF_INET6:
-        return lhs->sin6.sin6_port == rhs->sin6.sin6_port &&
-               memoryCompare(lhs->sin6.sin6_addr.s6_addr, rhs->sin6.sin6_addr.s6_addr,
-                             sizeof(lhs->sin6.sin6_addr.s6_addr)) == 0;
+        return lhs->sin6.sin6_port == rhs->sin6.sin6_port && memoryCompare(lhs->sin6.sin6_addr.s6_addr,
+                                                                           rhs->sin6.sin6_addr.s6_addr,
+                                                                           sizeof(lhs->sin6.sin6_addr.s6_addr)) == 0;
     default:
         return false;
     }
@@ -172,7 +175,7 @@ static void udpconnectorPacketDestinationDropPending(udpconnector_packet_destina
 static bool udpconnectorPacketDestinationFail(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls,
                                               udpconnector_packet_destination_t *cache)
 {
-    cache->resolving = false;
+    cache->resolving   = false;
     cache->has_context = false;
     addresscontextReset(&cache->dest_ctx);
     udpconnectorPacketDestinationDropPending(cache);
@@ -180,8 +183,7 @@ static bool udpconnectorPacketDestinationFail(tunnel_t *t, line_t *l, udpconnect
 }
 
 static bool udpconnectorFlushPacketDestinationQueue(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts,
-                                                    udpconnector_lstate_t *ls,
-                                                    udpconnector_packet_destination_t *cache)
+                                                    udpconnector_lstate_t *ls, udpconnector_packet_destination_t *cache)
 {
     sockaddr_u peer_addr = addresscontextToSockAddr(&cache->dest_ctx);
 
@@ -195,8 +197,8 @@ static bool udpconnectorFlushPacketDestinationQueue(tunnel_t *t, line_t *l, udpc
 }
 
 static bool udpconnectorQueuePacketForDestination(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts,
-                                                  udpconnector_lstate_t *ls,
-                                                  udpconnector_packet_destination_t *cache, sbuf_t *buf)
+                                                  udpconnector_lstate_t *ls, udpconnector_packet_destination_t *cache,
+                                                  sbuf_t *buf)
 {
     if (! ls->queue_pause_sent && udpconnectorQueuedWriteBytes(ls) > kUdpMinPauseQueueSize)
     {
@@ -233,9 +235,9 @@ static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const ch
         return;
     }
 
-    tunnel_t                 *t  = request->tunnel;
-    udpconnector_lstate_t    *ls = lineGetState(line, t);
-    udpconnector_tstate_t    *ts = tunnelGetState(t);
+    tunnel_t                  *t  = request->tunnel;
+    udpconnector_lstate_t     *ls = lineGetState(line, t);
+    udpconnector_tstate_t     *ts = tunnelGetState(t);
     const dns_resolved_addr_t *selected;
 
     udpconnectorPacketDnsRequestUnlink(ls, request);
@@ -248,7 +250,7 @@ static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const ch
     }
 
     udpconnector_packet_destination_t *cache = &ls->packet_destinations[request->destination_index];
-    cache->resolving = false;
+    cache->resolving                         = false;
 
     if (asyncdnsStatusIsShutdown(status))
     {
@@ -260,8 +262,11 @@ static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const ch
 
     if (status != ARES_SUCCESS || naddrs == 0)
     {
-        LOGE("UdpConnector: async dns resolve failed for %s: %s", request->domain,
-             error != NULL ? error : ares_strerror(status));
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "UdpConnector: async dns resolve failed for %s: %s",
+                    request->domain,
+                    error != NULL ? error : ares_strerror(status));
         if (! udpconnectorPacketDestinationFail(t, line, ls, cache))
         {
             lineUnlock(line);
@@ -276,7 +281,10 @@ static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const ch
     selected = udpconnectorSelectResolvedAddress(addrs, naddrs, request->strategy);
     if (! udpconnectorApplyResolvedAddress(&cache->dest_ctx, selected))
     {
-        LOGE("UdpConnector: async dns resolve returned no usable address for %s", request->domain);
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "UdpConnector: async dns resolve returned no usable address for %s",
+                    request->domain);
         if (! udpconnectorPacketDestinationFail(t, line, ls, cache))
         {
             lineUnlock(line);
@@ -304,7 +312,7 @@ static bool udpconnectorStartPacketDnsResolve(tunnel_t *t, line_t *l, udpconnect
                                               udpconnector_packet_destination_t *cache, uint32_t destination_index)
 {
     udpconnector_tstate_t *ts       = tunnelGetState(t);
-    address_context_t    *dest_ctx = &cache->dest_ctx;
+    address_context_t     *dest_ctx = &cache->dest_ctx;
 
     if (dest_ctx->domain == NULL || ! addresscontextHasPort(dest_ctx))
     {
@@ -315,7 +323,7 @@ static bool udpconnectorStartPacketDnsResolve(tunnel_t *t, line_t *l, udpconnect
     udpconnector_packet_dns_request_t *request = memoryAllocate(sizeof(*request));
     if (request == NULL)
     {
-        LOGE("UdpConnector: failed to allocate packet async dns request");
+        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "UdpConnector: failed to allocate packet async dns request");
         return false;
     }
 
@@ -323,7 +331,7 @@ static bool udpconnectorStartPacketDnsResolve(tunnel_t *t, line_t *l, udpconnect
     if (domain_copy == NULL)
     {
         memoryFree(request);
-        LOGE("UdpConnector: failed to copy packet async dns domain");
+        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "UdpConnector: failed to copy packet async dns domain");
         return false;
     }
 
@@ -342,14 +350,18 @@ static bool udpconnectorStartPacketDnsResolve(tunnel_t *t, line_t *l, udpconnect
     udpconnectorPacketDnsRequestLink(ls, request);
     cache->resolving = true;
 
-    int rc = workerResolveDomainServiceAsync(lineGetWID(l), request->domain, NULL, SOCK_DGRAM,
-                                             udpconnectorOnPacketDnsResolved, request);
+    int rc = workerResolveDomainServiceAsync(
+        lineGetWID(l), request->domain, NULL, SOCK_DGRAM, udpconnectorOnPacketDnsResolved, request);
     if (rc != ARES_SUCCESS)
     {
         udpconnectorPacketDnsRequestUnlink(ls, request);
         cache->resolving = false;
         lineUnlock(l);
-        LOGE("UdpConnector: failed to start packet async dns resolve for %s: %s", request->domain, ares_strerror(rc));
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "UdpConnector: failed to start packet async dns resolve for %s: %s",
+                    request->domain,
+                    ares_strerror(rc));
         udpconnectorPacketDnsRequestDestroy(request);
         return false;
     }
@@ -360,14 +372,14 @@ static bool udpconnectorStartPacketDnsResolve(tunnel_t *t, line_t *l, udpconnect
 static void udpconnectorBuildPacketDestinationContext(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls,
                                                       uint32_t destination_index, address_context_t *dest_ctx)
 {
-    udpconnector_tstate_t *ts = tunnelGetState(t);
-    address_context_t *src_ctx = lineGetSourceAddressContext(l);
-    address_context_t *line_dest_ctx = lineGetDestinationAddressContext(l);
-    const dynamic_value_t *dest_addr_selected = &ts->dest_addr_selected;
-    const dynamic_value_t *dest_port_selected = &ts->dest_port_selected;
-    const address_context_t *constant_dest_addr = &ts->constant_dest_addr;
-    uint16_t random_dest_port_x = ts->random_dest_port_x;
-    uint16_t random_dest_port_y = ts->random_dest_port_y;
+    udpconnector_tstate_t            *ts                 = tunnelGetState(t);
+    address_context_t                *src_ctx            = lineGetSourceAddressContext(l);
+    address_context_t                *line_dest_ctx      = lineGetDestinationAddressContext(l);
+    const dynamic_value_t            *dest_addr_selected = &ts->dest_addr_selected;
+    const dynamic_value_t            *dest_port_selected = &ts->dest_port_selected;
+    const address_context_t          *constant_dest_addr = &ts->constant_dest_addr;
+    uint16_t                          random_dest_port_x = ts->random_dest_port_x;
+    uint16_t                          random_dest_port_y = ts->random_dest_port_y;
     const udpconnector_destination_t *selected_destination =
         ts->destinations_count > 0 ? &ts->destinations[destination_index] : NULL;
 
@@ -386,13 +398,18 @@ static void udpconnectorBuildPacketDestinationContext(tunnel_t *t, line_t *l, ud
     addresscontextAddrCopy(&original_dest_ctx, line_dest_ctx);
 
     udpconnectorSetupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, &original_dest_ctx, src_ctx);
-    udpconnectorSetupDestinationPort(dest_port_selected, constant_dest_addr, random_dest_port_x, random_dest_port_y,
-                                     dest_ctx, &original_dest_ctx, src_ctx);
+    udpconnectorSetupDestinationPort(dest_port_selected,
+                                     constant_dest_addr,
+                                     random_dest_port_x,
+                                     random_dest_port_y,
+                                     dest_ctx,
+                                     &original_dest_ctx,
+                                     src_ctx);
     addresscontextReset(&original_dest_ctx);
 }
 
 static udpconnector_packet_destination_t *udpconnectorSelectPacketDestination(tunnel_t *t, udpconnector_lstate_t *ls,
-                                                                             uint32_t *destination_index)
+                                                                              uint32_t *destination_index)
 {
     udpconnector_tstate_t *ts = tunnelGetState(t);
 
@@ -405,12 +422,11 @@ static udpconnector_packet_destination_t *udpconnectorSelectPacketDestination(tu
     return &ls->packet_destinations[*destination_index];
 }
 
-static udpconnector_packet_peer_result_e udpconnectorSelectPacketPeer(tunnel_t *t, line_t *l,
-                                                                      udpconnector_lstate_t *ls, sbuf_t *buf,
-                                                                      sockaddr_u *peer_addr)
+static udpconnector_packet_peer_result_e udpconnectorSelectPacketPeer(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls,
+                                                                      sbuf_t *buf, sockaddr_u *peer_addr)
 {
-    udpconnector_tstate_t *ts = tunnelGetState(t);
-    uint32_t               destination_index;
+    udpconnector_tstate_t             *ts = tunnelGetState(t);
+    uint32_t                           destination_index;
     udpconnector_packet_destination_t *cache = udpconnectorSelectPacketDestination(t, ls, &destination_index);
 
     if (cache == NULL)

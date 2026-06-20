@@ -85,7 +85,8 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
     if (UNLIKELY(getWID() != owner_wid))
     {
         LOGW("PacketsToConnection: tcp recv callback arrived on worker %u for line owned by worker %u; closing flow",
-             (unsigned int) getWID(), (unsigned int) owner_wid);
+             (unsigned int) getWID(),
+             (unsigned int) owner_wid);
         pbuf_free(p);
         err_t ret = ERR_OK;
         ptcDetachTcpPcbLocked(ls);
@@ -147,25 +148,27 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
     const wid_t owner_wid = route_ctx->packet_wid;
     if (UNLIKELY(getWID() != owner_wid))
     {
-        LOGW("PacketsToConnection: tcp accept callback arrived on worker %u for route owned by worker %u; dropping flow",
-             (unsigned int) getWID(), (unsigned int) owner_wid);
+        LOGW(
+            "PacketsToConnection: tcp accept callback arrived on worker %u for route owned by worker %u; dropping flow",
+            (unsigned int) getWID(),
+            (unsigned int) owner_wid);
         tcp_abort(newpcb);
         return ERR_ABRT;
     }
 
-    tunnel_t *t = route_ctx->tunnel;
-    line_t   *l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), owner_wid);
+    tunnel_t     *t  = route_ctx->tunnel;
+    line_t       *l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), owner_wid);
     ptc_lstate_t *ls = lineGetState(l, t);
 
     ptcLinestateInitialize(ls, t, l, kPtcLineKindTcp, newpcb);
 
-    addresscontextSetIpPortProtocol(lineGetSourceAddressContext(l), &newpcb->remote_ip, newpcb->remote_port,
-                                    IP_PROTO_TCP);
-    if (! ptcFakeDnsApplyMappedDestination(t, lineGetDestinationAddressContext(l), &newpcb->local_ip,
-                                           newpcb->local_port, IP_PROTO_TCP))
+    addresscontextSetIpPortProtocol(
+        lineGetSourceAddressContext(l), &newpcb->remote_ip, newpcb->remote_port, IP_PROTO_TCP);
+    if (! ptcFakeDnsApplyMappedDestination(
+            t, lineGetDestinationAddressContext(l), &newpcb->local_ip, newpcb->local_port, IP_PROTO_TCP))
     {
-        addresscontextSetIpPortProtocol(lineGetDestinationAddressContext(l), &newpcb->local_ip, newpcb->local_port,
-                                        IP_PROTO_TCP);
+        addresscontextSetIpPortProtocol(
+            lineGetDestinationAddressContext(l), &newpcb->local_ip, newpcb->local_port, IP_PROTO_TCP);
     }
     lineGetRoutingContext(l)->local_listener_port = newpcb->local_port;
 
@@ -183,8 +186,11 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
         stringCopyN(local_ip, ipAddrNetworkToAddress(&newpcb->local_ip), 40);
         stringCopyN(remote_ip, ipAddrNetworkToAddress(&newpcb->remote_ip), 40);
 
-        LOGD("PacketsToConnection: new tcp flow accepted [%s:%u] <= [%s:%u]", local_ip,
-             (unsigned int) newpcb->local_port, remote_ip, (unsigned int) newpcb->remote_port);
+        LOGD("PacketsToConnection: new tcp flow accepted [%s:%u] <= [%s:%u]",
+             local_ip,
+             (unsigned int) newpcb->local_port,
+             remote_ip,
+             (unsigned int) newpcb->remote_port);
     }
 
     lineScheduleTask(l, ptcOpenLineTask, t);

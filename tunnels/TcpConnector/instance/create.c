@@ -11,11 +11,11 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->fnPauseU   = &tcpconnectorTunnelUpStreamPause;
     t->fnResumeU  = &tcpconnectorTunnelUpStreamResume;
 
-    t->onPrepare = &tcpconnectorTunnelOnPrepair;
-    t->onStart   = &tcpconnectorTunnelOnStart;
-    t->onStop    = &tcpconnectorTunnelOnStop;
+    t->onPrepare    = &tcpconnectorTunnelOnPrepair;
+    t->onStart      = &tcpconnectorTunnelOnStart;
+    t->onStop       = &tcpconnectorTunnelOnStop;
     t->onWorkerStop = &tcpconnectorTunnelOnWorkerStop;
-    t->onDestroy = &tcpconnectorTunnelDestroy;
+    t->onDestroy    = &tcpconnectorTunnelDestroy;
 }
 
 static bool parseBasicSettings(tcpconnector_tstate_t *state, const cJSON *settings)
@@ -109,7 +109,7 @@ static bool parseDestinationSocketOptions(tcpconnector_destination_t *destinatio
         LOGF("JSON Error: %s->domain-strategy (string or integer field) : The value was invalid", error_path);
         return false;
     }
-    destination->domain_strategy = domain_strategy;
+    destination->domain_strategy      = domain_strategy;
     destination->send_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-send-buffer") != NULL;
     destination->recv_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-recv-buffer") != NULL;
     if (! getPositiveIntFromJsonObjectOrBoolDefault(&destination->send_buffer_size,

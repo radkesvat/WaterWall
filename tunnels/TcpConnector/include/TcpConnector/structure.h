@@ -156,9 +156,9 @@ void tcpconnectorTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void tcpconnectorTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void tcpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void tcpconnectorLinestateInitialize(tcpconnector_lstate_t *ls);
-void tcpconnectorLinestateDestroy(tcpconnector_lstate_t *ls);
-void tcpconnectorCancelDnsRequest(tcpconnector_lstate_t *ls);
+void                tcpconnectorLinestateInitialize(tcpconnector_lstate_t *ls);
+void                tcpconnectorLinestateDestroy(tcpconnector_lstate_t *ls);
+void                tcpconnectorCancelDnsRequest(tcpconnector_lstate_t *ls);
 local_idle_table_t *tcpconnectorGetWorkerIdleTable(tcpconnector_tstate_t *ts);
 local_idle_table_t *tcpconnectorGetLineIdleTable(tcpconnector_tstate_t *ts, line_t *l);
 

@@ -5,7 +5,7 @@
 
 node_t nodeUdpConnectorGet(void)
 {
-    const char *type_name     = "UdpConnector";
+    const char *type_name         = "UdpConnector";
     node_t      node_udpconnector = {
              .name                  = NULL,
              .type                  = stringDuplicate(type_name),

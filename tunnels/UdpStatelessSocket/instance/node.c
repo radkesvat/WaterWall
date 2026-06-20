@@ -5,7 +5,7 @@
 
 node_t nodeUdpStatelessSocketGet(void)
 {
-    const char *type_name     = "UdpStatelessSocket";
+    const char *type_name               = "UdpStatelessSocket";
     node_t      node_udpstatelesssocket = {
              .name                  = NULL,
              .type                  = stringDuplicate(type_name),

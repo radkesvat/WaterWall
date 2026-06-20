@@ -4,9 +4,9 @@
 
 void udpstatelesssocketTunnelOnPrepair(tunnel_t *t)
 {
-    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    udpstatelesssocket_tstate_t *state                         = tunnelGetState(t);
     char                         interface_ip[INET_ADDRSTRLEN] = {0};
-    const char                  *bind_address = state->listen_address;
+    const char                  *bind_address                  = state->listen_address;
 
     if (state->interface_name != NULL && ! state->source_ip_configured && ! socketOptionBindToDeviceSupported())
     {
@@ -18,8 +18,12 @@ void udpstatelesssocketTunnelOnPrepair(tunnel_t *t)
         bind_address = interface_ip;
     }
 
-    state->io = wloopCreateUdpServerWithBufferOptions(getWorkerLoop(getWID()), bind_address, state->listen_port,
-                                                      state->interface_name, state->fwmark, state->send_buffer_size,
+    state->io = wloopCreateUdpServerWithBufferOptions(getWorkerLoop(getWID()),
+                                                      bind_address,
+                                                      state->listen_port,
+                                                      state->interface_name,
+                                                      state->fwmark,
+                                                      state->send_buffer_size,
                                                       state->recv_buffer_size);
 
     if (! state->io)

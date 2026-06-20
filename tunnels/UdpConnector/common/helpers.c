@@ -40,9 +40,9 @@ static bool udpconnectorSockAddrEquals(const sockaddr_u *lhs, const sockaddr_u *
     case AF_INET:
         return lhs->sin.sin_port == rhs->sin.sin_port && lhs->sin.sin_addr.s_addr == rhs->sin.sin_addr.s_addr;
     case AF_INET6:
-        return lhs->sin6.sin6_port == rhs->sin6.sin6_port &&
-               memoryCompare(lhs->sin6.sin6_addr.s6_addr, rhs->sin6.sin6_addr.s6_addr,
-                             sizeof(lhs->sin6.sin6_addr.s6_addr)) == 0;
+        return lhs->sin6.sin6_port == rhs->sin6.sin6_port && memoryCompare(lhs->sin6.sin6_addr.s6_addr,
+                                                                           rhs->sin6.sin6_addr.s6_addr,
+                                                                           sizeof(lhs->sin6.sin6_addr.s6_addr)) == 0;
     default:
         return false;
     }
@@ -59,10 +59,10 @@ void udpconnectorOnRecvFrom(wio_t *io, sbuf_t *buf)
     }
     // LOGD("reading %d bytes", sbufGetLength(buf));
 
-    tunnel_t *t       = ls->tunnel;
-    line_t   *l       = ls->line;
-    sbuf_t   *payload = buf;
-    udpconnector_tstate_t *ts = tunnelGetState(t);
+    tunnel_t              *t       = ls->tunnel;
+    line_t                *l       = ls->line;
+    sbuf_t                *payload = buf;
+    udpconnector_tstate_t *ts      = tunnelGetState(t);
 
     if (ts->balance_mode == kUdpConnectorBalanceModeConnection &&
         ! udpconnectorSockAddrEquals(wioGetPeerAddrU(io), &ls->peer_addr))
@@ -111,8 +111,7 @@ void udpconnectorOnClose(wio_t *io)
 
         udpconnector_tstate_t *ts = tunnelGetState(ls->tunnel);
 
-        bool removed =
-            localidletableRemoveIdleItemByHash(udpconnectorGetLineIdleTable(ts, l), udpconnectorIdleKey(io));
+        bool removed = localidletableRemoveIdleItemByHash(udpconnectorGetLineIdleTable(ts, l), udpconnectorIdleKey(io));
         if (! removed)
         {
             LOGF("UdpConnector: failed to remove idle item for FD:%x ", wioGetFD(io));

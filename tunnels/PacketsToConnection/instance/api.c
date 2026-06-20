@@ -4,8 +4,8 @@
 
 api_result_t ptcTunnelApi(tunnel_t *instance, sbuf_t *message)
 {
-    (void)instance;
+    (void) instance;
     bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), message);
     // Implement the API here
-    return (api_result_t){.result_code = kApiResultOk};
+    return (api_result_t) {.result_code = kApiResultOk};
 }

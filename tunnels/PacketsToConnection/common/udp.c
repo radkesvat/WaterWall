@@ -61,21 +61,23 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
     const wid_t owner_wid = route_ctx->packet_wid;
     if (UNLIKELY(getWID() != owner_wid))
     {
-        LOGW("PacketsToConnection: udp recv callback arrived on worker %u for route owned by worker %u; dropping datagram",
-             (unsigned int) getWID(), (unsigned int) owner_wid);
+        LOGW("PacketsToConnection: udp recv callback arrived on worker %u for route owned by worker %u; dropping "
+             "datagram",
+             (unsigned int) getWID(),
+             (unsigned int) owner_wid);
         pbuf_free(p);
         return;
     }
 
     ptc_udp_flow_key_t key = {
-        .src_addr_network = addr->u_addr.ip4.addr,
+        .src_addr_network  = addr->u_addr.ip4.addr,
         .dest_addr_network = upcb->local_ip.u_addr.ip4.addr,
-        .src_port         = port,
-        .dest_port        = upcb->local_port,
+        .src_port          = port,
+        .dest_port         = upcb->local_port,
     };
 
-    tunnel_t              *t        = route_ctx->tunnel;
-    line_t                *line     = NULL;
+    tunnel_t               *t       = route_ctx->tunnel;
+    line_t                 *line    = NULL;
     ptc_udp_flow_map_t_iter flow_it = ptc_udp_flow_map_t_find(&route_ctx->udp_flows, key);
 
     if (flow_it.ref != ptc_udp_flow_map_t_end(&route_ctx->udp_flows).ref)
@@ -97,20 +99,20 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
 
         ptcLinestateInitialize(ls, t, line, kPtcLineKindUdp, upcb);
 
-        ls->route_ctx     = route_ctx;
-        ls->udp_flow_key  = key;
+        ls->route_ctx      = route_ctx;
+        ls->udp_flow_key   = key;
         ls->udp_local_addr = upcb->local_ip;
-        ls->udp_peer_addr = *addr;
+        ls->udp_peer_addr  = *addr;
         ls->udp_local_port = upcb->local_port;
-        ls->udp_peer_port = port;
+        ls->udp_peer_port  = port;
 
         addresscontextSetIpPortProtocol(lineGetSourceAddressContext(line), addr, port, IP_PROTO_UDP);
         local_ip = upcb->local_ip;
-        if (! ptcFakeDnsApplyMappedDestination(t, lineGetDestinationAddressContext(line), &local_ip, upcb->local_port,
-                                               IP_PROTO_UDP))
+        if (! ptcFakeDnsApplyMappedDestination(
+                t, lineGetDestinationAddressContext(line), &local_ip, upcb->local_port, IP_PROTO_UDP))
         {
-            addresscontextSetIpPortProtocol(lineGetDestinationAddressContext(line), &local_ip, upcb->local_port,
-                                            IP_PROTO_UDP);
+            addresscontextSetIpPortProtocol(
+                lineGetDestinationAddressContext(line), &local_ip, upcb->local_port, IP_PROTO_UDP);
         }
         lineGetRoutingContext(line)->local_listener_port = upcb->local_port;
 
@@ -136,8 +138,11 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
             stringCopyN(src_ip, ipAddrNetworkToAddress(addr), 40);
             stringCopyN(dst_ip, ipAddrNetworkToAddress(&local_ip), 40);
 
-            LOGD("PacketsToConnection: new udp flow accepted [%s:%u] <= [%s:%u]", dst_ip,
-                 (unsigned int) upcb->local_port, src_ip, (unsigned int) port);
+            LOGD("PacketsToConnection: new udp flow accepted [%s:%u] <= [%s:%u]",
+                 dst_ip,
+                 (unsigned int) upcb->local_port,
+                 src_ip,
+                 (unsigned int) port);
         }
     }
 

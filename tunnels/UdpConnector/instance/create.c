@@ -18,11 +18,11 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->fnPauseD   = &udpconnectorTunnelDownStreamPause;
     t->fnResumeD  = &udpconnectorTunnelDownStreamResume;
 
-    t->onPrepare = &udpconnectorTunnelOnPrepair;
-    t->onStart   = &udpconnectorTunnelOnStart;
-    t->onStop    = &udpconnectorTunnelOnStop;
+    t->onPrepare    = &udpconnectorTunnelOnPrepair;
+    t->onStart      = &udpconnectorTunnelOnStart;
+    t->onStop       = &udpconnectorTunnelOnStop;
     t->onWorkerStop = &udpconnectorTunnelOnWorkerStop;
-    t->onDestroy = &udpconnectorTunnelDestroy;
+    t->onDestroy    = &udpconnectorTunnelDestroy;
 }
 
 static bool parseBalanceMode(udpconnector_tstate_t *state, const cJSON *settings)

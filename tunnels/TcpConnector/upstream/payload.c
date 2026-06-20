@@ -4,14 +4,15 @@
 
 static void handleQueueOverflow(tunnel_t *t, line_t *l, tcpconnector_tstate_t *ts, tcpconnector_lstate_t *ls)
 {
-    LOGE("TcpConnector: Upstream write queue overflow, size: %d , limit: %d", 
-         bufferqueueGetBufLen(&ls->pause_queue), kMaxPauseQueueSize);
+    LOGE("TcpConnector: Upstream write queue overflow, size: %d , limit: %d",
+         bufferqueueGetBufLen(&ls->pause_queue),
+         kMaxPauseQueueSize);
 
     if (ls->io != NULL)
     {
-        bool removed = localidletableRemoveIdleItemByHash(tcpconnectorGetLineIdleTable(ts, l),
-                                                          tcpconnectorIdleKey(ls->io));
-        if (!removed)
+        bool removed =
+            localidletableRemoveIdleItemByHash(tcpconnectorGetLineIdleTable(ts, l), tcpconnectorIdleKey(ls->io));
+        if (! removed)
         {
             LOGF("TcpConnector: failed to remove idle item for FD:%x ", wioGetFD(ls->io));
             terminateProgram(1);
@@ -48,12 +49,10 @@ static void handlePausedWrite(tunnel_t *t, line_t *l, tcpconnector_tstate_t *ts,
 
 static void handleNormalWrite(tunnel_t *t, line_t *l, tcpconnector_tstate_t *ts, tcpconnector_lstate_t *ls, sbuf_t *buf)
 {
-    int bytes = (int) sbufGetLength(buf);
+    int bytes  = (int) sbufGetLength(buf);
     int nwrite = wioWrite(ls->io, buf);
 
-    localidletableKeepIdleItemForAtleast(tcpconnectorGetLineIdleTable(ts, l),
-                                         ls->idle_handle,
-                                         kReadWriteTimeoutMs);
+    localidletableKeepIdleItemForAtleast(tcpconnectorGetLineIdleTable(ts, l), ls->idle_handle, kReadWriteTimeoutMs);
 
     if (nwrite >= 0 && nwrite < bytes)
     {
