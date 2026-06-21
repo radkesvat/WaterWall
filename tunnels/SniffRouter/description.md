@@ -58,12 +58,16 @@ Each route object:
 | key | type | required | description |
 |-----|------|----------|-------------|
 | `domains` | string or array of strings | required unless detection is reverse-only | domain patterns for this route |
-| `detection` | string or array of strings | no | `http` by default; use `tls`, `client-hello`, or `tls-client-hello` for SNI routing; use `reverse` (aliases `reverse-tls`, `reverse-handshake`) for reverse-link routing; combine in an array, e.g. `["http", "tls"]` |
+| `detection` | string or array of strings | no | `http1` by default; use `tls` for SNI routing; use `reverse` (aliases `reverse-tls`, `reverse-handshake`) for reverse-link routing; combine in an array, e.g. `["http1", "tls"]` |
 | `next` | string | yes | target node name for matching connections |
 
 `domain` may be used instead of `domains` for a single domain. `target` is
 accepted as an alias for route `next`. `domains` is ignored for a route whose
 only detection mode is `reverse`, and may be omitted there.
+
+The old `http` detection value has been removed and migrated to `http1`.
+Former TLS aliases such as `client-hello` and `tls-client-hello` have also been
+removed; use `tls`.
 
 The node itself must define top-level `next`, which is the default fallback.
 Routes are checked in order; the first matching domain wins.

@@ -83,7 +83,7 @@ static tunnel_t *findMatchingRoute(sniffrouter_tstate_t *ts, const uint8_t *http
     {
         sniffrouter_route_t *route = &ts->routes[ri];
 
-        if (http_found && (route->detection & kSniffDetectionHttp) != 0 &&
+        if (http_found && (route->detection & kSniffDetectionHttp1) != 0 &&
             routeMatchesHost(route, http_host, http_host_len))
         {
             return route->tunnel;
@@ -118,7 +118,7 @@ sniffrouter_match_t sniffrouterClassify(sniffrouter_tstate_t *ts, const uint8_t 
         return match;
     }
 
-    bool http_enabled    = anyRouteHasDetection(ts, kSniffDetectionHttp);
+    bool http_enabled    = anyRouteHasDetection(ts, kSniffDetectionHttp1);
     bool tls_enabled     = anyRouteHasDetection(ts, kSniffDetectionTlsClientHello);
     bool reverse_enabled = anyRouteHasDetection(ts, kSniffDetectionReverse);
 

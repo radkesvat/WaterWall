@@ -38,10 +38,10 @@ enum sniffrouter_classify_result_e
 
 enum sniffrouter_detection_e
 {
-    kSniffDetectionHttp           = 1U << 0U,
+    kSniffDetectionHttp1           = 1U << 0U,
     kSniffDetectionTlsClientHello = 1U << 1U,
     // Recognizes the ReverseClient/ReverseServer reverse-link handshake on the
-    // decrypted stream. Unlike http/tls detection this is a binary signature,
+    // decrypted stream. Unlike http1/tls detection this is a binary signature,
     // so a route using it matches purely on the handshake and does not consult
     // "domains".
     kSniffDetectionReverse        = 1U << 2U

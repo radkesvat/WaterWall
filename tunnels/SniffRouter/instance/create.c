@@ -75,13 +75,13 @@ static bool loadRouteDomains(sniffrouter_route_t *route, const cJSON *route_json
     // Host/SNI detection needs domain patterns to match against; signature-based
     // detection (reverse) does not. Detection is parsed before domains so the
     // requirement is known here.
-    bool domains_required = (route->detection & (kSniffDetectionHttp | kSniffDetectionTlsClientHello)) != 0;
+    bool domains_required = (route->detection & (kSniffDetectionHttp1 | kSniffDetectionTlsClientHello)) != 0;
 
     if (domains == NULL && domain == NULL)
     {
         if (domains_required)
         {
-            LOGF("SniffRouter: route %u uses http/tls detection and requires \"domains\" or \"domain\"",
+            LOGF("SniffRouter: route %u uses http1/tls detection and requires \"domains\" or \"domain\"",
                  (unsigned int) route_index);
             return false;
         }
@@ -141,7 +141,8 @@ static bool loadDetectionString(uint8_t *detection, const cJSON *detection_json,
     char *value = NULL;
     if (! getStringFromJson(&value, detection_json))
     {
-        LOGF("JSON Error: %s (string field) : expected http, tls, client-hello, tls-client-hello, or reverse", json_path);
+        LOGF("JSON Error: %s (string field) : expected http1, tls, reverse, reverse-tls, or reverse-handshake",
+             json_path);
         return false;
     }
 
@@ -149,17 +150,31 @@ static bool loadDetectionString(uint8_t *detection, const cJSON *detection_json,
 
     if (stringCompare(value, "http") == 0)
     {
-        *detection |= kSniffDetectionHttp;
+        LOGF("JSON Error: %s (string field) : detection value \"http\" was removed and migrated to \"http1\"",
+             json_path);
+        memoryFree(value);
+        return false;
+    }
+
+    if (stringCompare(value, "http1") == 0)
+    {
+        *detection |= kSniffDetectionHttp1;
         memoryFree(value);
         return true;
     }
 
-    if (stringCompare(value, "tls") == 0 || stringCompare(value, "client-hello") == 0 ||
-        stringCompare(value, "tls-client-hello") == 0)
+    if (stringCompare(value, "tls") == 0)
     {
         *detection |= kSniffDetectionTlsClientHello;
         memoryFree(value);
         return true;
+    }
+
+    if (stringCompare(value, "client-hello") == 0 || stringCompare(value, "tls-client-hello") == 0)
+    {
+        LOGF("JSON Error: %s (string field) : detection value \"%s\" was removed; use \"tls\"", json_path, value);
+        memoryFree(value);
+        return false;
     }
 
     if (stringCompare(value, "reverse") == 0 || stringCompare(value, "reverse-tls") == 0 ||
@@ -181,7 +196,7 @@ static bool loadRouteDetection(sniffrouter_route_t *route, const cJSON *route_js
 
     if (detection == NULL)
     {
-        route->detection = kSniffDetectionHttp;
+        route->detection = kSniffDetectionHttp1;
         return true;
     }
 
