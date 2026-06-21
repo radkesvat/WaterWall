@@ -560,6 +560,13 @@ static WTHREAD_ROUTINE(routineWriteToTun)
     return 0;
 }
 
+bool tundeviceGetLuid(tun_device_t *tdev, uint64_t *out)
+{
+    discard tdev;
+    *out = 0;
+    return false;
+}
+
 // Write to TUN device
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {

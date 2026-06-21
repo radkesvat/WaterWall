@@ -773,6 +773,20 @@ bool tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *rout
     return true;
 }
 
+bool tundeviceGetLuid(tun_device_t *tdev, uint64_t *out)
+{
+    *out = 0;
+    if (tdev == NULL || tdev->adapter_handle == NULL)
+    {
+        return false;
+    }
+
+    NET_LUID luid;
+    WintunGetAdapterLUID(tdev->adapter_handle, &luid);
+    *out = luid.Value;
+    return true;
+}
+
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
     // minimum length of an IP header is 20 bytes

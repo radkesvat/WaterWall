@@ -492,6 +492,13 @@ static WTHREAD_ROUTINE(routineWriteToTun)
     return 0;
 }
 
+bool tundeviceGetLuid(tun_device_t *tdev, uint64_t *out)
+{
+    discard tdev;
+    *out = 0;
+    return false;
+}
+
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
     assert(sbufGetLength(buf) > 0);

@@ -3,6 +3,7 @@
 #include "wwapi.h"
 
 #include "devices/tun/tun.h"
+#include "devices/tun/tun_loopguard.h"
 
 #define LOG_PACKET_INFO 0
 #define LOG_SSDP        0
@@ -28,6 +29,9 @@ typedef struct tundevice_tstate_s
     size_t system_routes_installed;
     char  *post_up_script;
     char  *pre_down_script;
+
+    bool             loop_protection_enabled; // exclude this process's own traffic from the TUN
+    tun_loopguard_t *loop_guard;
 
     tun_device_t *tdev;
 

@@ -117,6 +117,22 @@ Full-route example with local ranges excluded:
 
   This is useful when `route-cidrs` is global and some local, management, or upstream endpoint ranges must keep using the existing system route.
 
+- `loop-protection` `(boolean)`
+  Keeps WaterWall's own outbound traffic from being routed back into the TUN
+  (a routing loop) when the TUN is a system/full route.
+
+  Default: enabled whenever system routing is enabled (i.e. tracks
+  `system-route` / `route-table`), disabled otherwise. Set to `false` to opt out.
+
+  On Windows this is implemented with WinDivert: the process's own outbound
+  connections are observed at the socket layer and any endpoint that would
+  otherwise be steered into the TUN gets a host (`/32` or `/128`) bypass route
+  via the *original* default gateway. This protects connectors (`TcpConnector`,
+  `UdpConnector`, ...) automatically, even when they live in a different chain
+  and connect to dynamic endpoints, so manual `route-exclude-cidrs` entries for
+  your upstream server are no longer required. On other platforms this option is
+  currently a no-op.
+
 - `post-up-script` `(string)`
   Optional shell command to run after the interface is up and native routes are installed.
 
@@ -166,6 +182,37 @@ Before writing a packet, `TunDevice` checks line flags:
 - if `recalculate_checksum` is set, the packet checksum is recomputed
 - full packet checksum recalculation is attempted
 - for fragmented IPv4 packets, transport checksum recalculation is skipped automatically and only the IP header checksum is recomputed
+
+### Self-traffic loop protection (Windows)
+
+When the TUN installs itself as the system default route, every outbound packet
+of the machine is steered into the TUN -- including WaterWall's own upstream
+sockets. Without protection those packets are read back from the TUN and re-sent,
+forming a routing loop.
+
+With `loop-protection` enabled (the default in system-route mode), `TunDevice`:
+
+- snapshots the original default gateway/interface per family *before* installing
+  the TUN routes,
+- opens a WinDivert socket-layer handle (`SNIFF | RECV_ONLY`) filtered to this
+  process only, observing its own `CONNECT`/`CLOSE` events (the SOCKET layer
+  cannot inject/permit events, so the handle observes rather than blocks),
+- for each new outbound endpoint that the current routing table would send into
+  the TUN, installs a host bypass route via the original gateway, reference
+  counted per destination and tracked per socket `EndpointId` so an unrelated
+  socket sharing the same remote IP cannot tear down a live route,
+- removes any remaining bypass routes when the device is brought down.
+
+The `CONNECT` event is delivered as the connection is being established, so the
+bypass route is normally installed before traffic flows; there is a small
+inherent race where the very first packet of a brand-new endpoint could enter the
+TUN before the route lands (the connection self-heals on retransmit). This is the
+correct trade-off because the SOCKET layer cannot hold/permit events.
+
+This relies on the bundled, pre-signed WinDivert driver (no extra driver or WFP
+callout is required). If WinDivert cannot be loaded, or no original default route
+exists, protection stays inactive and the device still works -- you can then fall
+back to manual `route-exclude-cidrs`.
 
 ### Callback behavior
 

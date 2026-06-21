@@ -7,6 +7,9 @@ void tundeviceTunnelDestroy(tunnel_t *t)
     tundevice_tstate_t *state = tunnelGetState(t);
     tun_device_t       *tdev  = state->tdev;
 
+    tunLoopGuardStop(state->loop_guard);
+    state->loop_guard = NULL;
+
     if (tdev)
     {
         tundeviceDestroy(tdev);

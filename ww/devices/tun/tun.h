@@ -68,3 +68,7 @@ bool          tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentatio
 bool          tundeviceAddRoute(tun_device_t *tdev, const char *cidr, const char *route_table);
 bool          tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *route_table);
 bool          tundeviceWrite(tun_device_t *tdev, sbuf_t *buf);
+
+// Retrieves the OS interface LUID value of the device (Windows NET_LUID.Value).
+// Returns false on platforms that have no such identifier; *out is set to 0 then.
+bool          tundeviceGetLuid(tun_device_t *tdev, uint64_t *out);

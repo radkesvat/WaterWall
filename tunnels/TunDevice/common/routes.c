@@ -464,6 +464,12 @@ bool tundeviceLoadRouteSettings(tundevice_tstate_t *state, const cJSON *settings
         state->system_route_enabled = false;
     }
 
+    // Self-traffic loop protection: keep Waterwall's own outbound connections out
+    // of the TUN. Defaults to on whenever the TUN becomes a system route, and can
+    // be disabled explicitly with "loop-protection": false.
+    getBoolFromJsonObjectOrDefault(
+        &state->loop_protection_enabled, settings, "loop-protection", state->system_route_enabled);
+
     getStringFromJsonObject(&state->post_up_script, settings, "post-up-script");
     getStringFromJsonObject(&state->pre_down_script, settings, "pre-down-script");
 

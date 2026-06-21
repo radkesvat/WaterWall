@@ -499,31 +499,41 @@ endif()
 ################################################################################
 if(APPLE)
     if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-        target_sources(ww PRIVATE devices/tun/tun_darwin.c)
+        target_sources(ww PRIVATE
+            devices/tun/tun_darwin.c
+            devices/tun/tun_loopguard_stub.c
+        )
     else()
         message(STATUS "No Tun device support for this Apple platform")
     endif()
-    
+
 elseif(UNIX AND NOT ANDROID)
-    target_sources(ww PRIVATE devices/tun/tun_linux.c)
+    target_sources(ww PRIVATE
+        devices/tun/tun_linux.c
+        devices/tun/tun_loopguard_stub.c
+    )
     if(LINUX)
-        target_sources(ww PRIVATE 
+        target_sources(ww PRIVATE
             devices/capture/capture_linux.c
             devices/raw/raw_linux.c
         )
     endif()
-    
+
 elseif(WIN32)
     # WinDivert for x64 systems
     if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
         message(STATUS "Including WinDivert for amd64")
-        target_sources(ww PRIVATE 
+        target_sources(ww PRIVATE
             vendor/windivert/x64/windivert.dll.x64.bytes.c
             vendor/windivert/x64/windivert.sys.x64.bytes.c
             managers/windivert_manager.c
             devices/raw/raw_windows.c
             devices/capture/capture_windows.c
+            devices/tun/tun_loopguard_windows.c
         )
+    else()
+        # No WinDivert on this Windows arch -> TUN loop-guard is a no-op.
+        target_sources(ww PRIVATE devices/tun/tun_loopguard_stub.c)
     endif()
 
     # WinTun configuration
