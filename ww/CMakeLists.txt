@@ -520,6 +520,7 @@ elseif(WIN32)
         target_sources(ww PRIVATE 
             vendor/windivert/x64/windivert.dll.x64.bytes.c
             vendor/windivert/x64/windivert.sys.x64.bytes.c
+            managers/windivert_manager.c
             devices/raw/raw_windows.c
             devices/capture/capture_windows.c
         )
