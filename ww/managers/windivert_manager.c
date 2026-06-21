@@ -9,11 +9,11 @@
 #include "loggers/internal_logger.h"
 
 // Embedded WinDivert binaries (provided by the generated *.bytes.c sources).
-extern unsigned char windivert_dll[];
-extern unsigned int  windivert_dll_len;
+extern const unsigned char windivert_dll[];
+extern const unsigned int  windivert_dll_len;
 
-extern unsigned char windivert_sys[];
-extern unsigned int  windivert_sys_len;
+extern const unsigned char windivert_sys[];
+extern const unsigned int  windivert_sys_len;
 
 // Resolved WinDivert exports.
 static HANDLE (*pWinDivertOpen)(const char *filter, WINDIVERT_LAYER layer, INT16 priority, UINT64 flags);
@@ -31,7 +31,7 @@ static bool g_windivert_api_resolved = false;
  * Writes the WinDivert DLL bytes to a temporary file on disk.
  * @return Path to the temporary file or NULL on failure (caller frees with free()).
  */
-static TCHAR *writeDllToTempFile(const unsigned char *dllBytes, size_t dllSize)
+static TCHAR *windivertWriteDllToTempFile(const unsigned char *dllBytes, size_t dllSize)
 {
     TCHAR tempPath[MAX_PATH];
     TCHAR tempFileName[MAX_PATH];
@@ -73,7 +73,7 @@ static TCHAR *writeDllToTempFile(const unsigned char *dllBytes, size_t dllSize)
  * WinDivert requires the driver to sit next to the DLL with a fixed name.
  * @return Path to the file or NULL on failure (caller frees with free()).
  */
-static TCHAR *writeSYSToTempFile(const unsigned char *sysBytes, size_t sysSize)
+static TCHAR *windivertWriteSYSToTempFile(const unsigned char *sysBytes, size_t sysSize)
 {
     TCHAR tempPath[MAX_PATH];
 
@@ -129,14 +129,14 @@ static void windivertLoadLibrary(void)
         return;
     }
 
-    TCHAR *tempSysPath = writeSYSToTempFile(&windivert_sys[0], windivert_sys_len);
+    TCHAR *tempSysPath = windivertWriteSYSToTempFile(&windivert_sys[0], windivert_sys_len);
     if (! tempSysPath)
     {
         LOGE("WinDivertManager: Failed to write SYS file to temporary file");
         return;
     }
 
-    TCHAR *tempDllPath = writeDllToTempFile(&windivert_dll[0], windivert_dll_len);
+    TCHAR *tempDllPath = windivertWriteDllToTempFile(&windivert_dll[0], windivert_dll_len);
     if (! tempDllPath)
     {
         LOGE("WinDivertManager: Failed to write DLL to temporary file");
@@ -161,7 +161,7 @@ static void windivertLoadLibrary(void)
     free(tempSysPath);
 }
 
-static bool loadFunctionFromDLL(const char *function_name, void *target)
+static bool windivertLoadFunctionFromDLL(const char *function_name, void *target)
 {
     FARPROC proc = GetProcAddress(GSTATE.windivert_dll_handle, function_name);
     if (proc == NULL)
@@ -191,19 +191,19 @@ bool windivertManagerEnsureLoaded(void)
         return false;
     }
 
-    if (! loadFunctionFromDLL("WinDivertOpen", &pWinDivertOpen))
+    if (! windivertLoadFunctionFromDLL("WinDivertOpen", &pWinDivertOpen))
         return false;
-    if (! loadFunctionFromDLL("WinDivertRecv", &pWinDivertRecv))
+    if (! windivertLoadFunctionFromDLL("WinDivertRecv", &pWinDivertRecv))
         return false;
-    if (! loadFunctionFromDLL("WinDivertSend", &pWinDivertSend))
+    if (! windivertLoadFunctionFromDLL("WinDivertSend", &pWinDivertSend))
         return false;
-    if (! loadFunctionFromDLL("WinDivertShutdown", &pWinDivertShutdown))
+    if (! windivertLoadFunctionFromDLL("WinDivertShutdown", &pWinDivertShutdown))
         return false;
-    if (! loadFunctionFromDLL("WinDivertClose", &pWinDivertClose))
+    if (! windivertLoadFunctionFromDLL("WinDivertClose", &pWinDivertClose))
         return false;
-    if (! loadFunctionFromDLL("WinDivertHelperFormatIPv4Address", &pWinDivertHelperFormatIPv4Address))
+    if (! windivertLoadFunctionFromDLL("WinDivertHelperFormatIPv4Address", &pWinDivertHelperFormatIPv4Address))
         return false;
-    if (! loadFunctionFromDLL("WinDivertHelperFormatIPv6Address", &pWinDivertHelperFormatIPv6Address))
+    if (! windivertLoadFunctionFromDLL("WinDivertHelperFormatIPv6Address", &pWinDivertHelperFormatIPv6Address))
         return false;
 
     g_windivert_api_resolved = true;
