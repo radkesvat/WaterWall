@@ -1,0 +1,6 @@
+#include "gtpu.h"
+
+bool junkdatagramsenderGtpuGenerate(sbuf_t *buf, const junkdatagramsender_module_args_t *args)
+{
+    return junkdatagramsenderGeneratePlaceholderPacket(buf, args, 8, 1200);
+}

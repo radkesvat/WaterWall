@@ -312,6 +312,10 @@
 #include "Disturber/interface.h"
 #endif
 
+#ifdef INCLUDE_JUNK_DATAGRAM_SENDER
+#include "JunkDatagramSender/interface.h"
+#endif
+
 #ifdef INCLUDE_BLACKHOLE
 #include "BlackHole/interface.h"
 #endif
@@ -633,6 +637,10 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_DISTURBER
     USING(Disturber);
+#endif
+
+#ifdef INCLUDE_JUNK_DATAGRAM_SENDER
+    USING(JunkDatagramSender);
 #endif
 
 #ifdef INCLUDE_BLACKHOLE

@@ -215,6 +215,7 @@ option(INCLUDE_PACKET_SENDER            "link PacketSender staticly to the core"
 option(INCLUDE_PACKET_RECEIVER          "link PacketReceiver staticly to the core"           TRUE)
 option(INCLUDE_RAWSOCKET                "link RawSocket staticly to the core"                ${RAWSOCKET_SUPPORTED})
 option(INCLUDE_DISTURBER                "link Disturber staticly to the core"                TRUE)
+option(INCLUDE_JUNK_DATAGRAM_SENDER     "link JunkDatagramSender staticly to the core"       TRUE)
 option(INCLUDE_BLACKHOLE                "link BlackHole staticly to the core"                TRUE)
 option(INCLUDE_SPEEDLIMIT               "link SpeedLimit staticly to the core"               TRUE)
 option(INCLUDE_USER_CONTROLLER          "link UserController staticly to the core"           TRUE)
@@ -1010,6 +1011,14 @@ if(INCLUDE_DISTURBER)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Disturber)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Disturber)
   target_link_libraries(Waterwall Disturber)
+endif()
+
+#junk datagram sender
+if(INCLUDE_JUNK_DATAGRAM_SENDER)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_JUNK_DATAGRAM_SENDER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/JunkDatagramSender)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/JunkDatagramSender)
+  target_link_libraries(Waterwall JunkDatagramSender)
 endif()
 
 #blackhole
