@@ -111,6 +111,7 @@ static void routerWarnUnknownRuleKeys(const cJSON *rule_json, uint32_t rule_inde
 bool routerLoadRules(router_tstate_t *ts, node_t *node, const cJSON *settings)
 {
     ts->needs_http_upgrade_attribute = false;
+    ts->needed_protocols             = 0;
 
     const cJSON *rules = cJSON_GetObjectItemCaseSensitive(settings, "rules");
 
@@ -169,6 +170,7 @@ bool routerLoadRules(router_tstate_t *ts, node_t *node, const cJSON *settings)
         {
             ts->needs_http_upgrade_attribute = true;
         }
+        ts->needed_protocols |= ts->rules[index].protocol.wanted_flags;
 
         routerWarnUnknownRuleKeys(rule_json, index);
 
@@ -192,7 +194,8 @@ void routerRuleTableDestroy(router_tstate_t *ts)
     }
 
     memoryFree(ts->rules);
-    ts->rules       = NULL;
-    ts->rules_count = 0;
+    ts->rules                        = NULL;
+    ts->rules_count                  = 0;
     ts->needs_http_upgrade_attribute = false;
+    ts->needed_protocols             = 0;
 }

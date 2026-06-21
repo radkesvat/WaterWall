@@ -12,18 +12,16 @@ static bool headerNameEquals(const uint8_t *p, uint32_t n, const char *name)
     return name[n] == '\0';
 }
 
-static int classifyHttpMethod(const uint8_t *p, uint32_t n)
+static int classifyHttpMethodEx(const uint8_t *p, uint32_t n, bool include_http2_preface)
 {
-    static const char *const methods[] = {"GET ",     "POST ",  "PUT ",     "HEAD ", "DELETE ",
-                                           "OPTIONS ", "PATCH ", "TRACE ",   "CONNECT ",
-                                           "PRI ", /* HTTP/2 connection preface: "PRI * HTTP/2.0" */
-                                           NULL};
+    static const char *const http1_methods[] = {
+        "GET ", "POST ", "PUT ", "HEAD ", "DELETE ", "OPTIONS ", "PATCH ", "TRACE ", "CONNECT ", NULL};
 
     bool any_prefix = false;
 
-    for (int i = 0; methods[i] != NULL; ++i)
+    for (int i = 0; http1_methods[i] != NULL; ++i)
     {
-        const char *m    = methods[i];
+        const char *m    = http1_methods[i];
         uint32_t    mlen = (uint32_t) stringLength(m);
         uint32_t    cmp  = n < mlen ? n : mlen;
 
@@ -37,7 +35,33 @@ static int classifyHttpMethod(const uint8_t *p, uint32_t n)
         }
     }
 
+    if (include_http2_preface)
+    {
+        static const char h2_preface_method[] = "PRI ";
+        uint32_t          mlen                = (uint32_t) stringLength(h2_preface_method);
+        uint32_t          cmp                 = n < mlen ? n : mlen;
+
+        if (memoryCompare(p, h2_preface_method, cmp) == 0)
+        {
+            if (n >= mlen)
+            {
+                return 1;
+            }
+            any_prefix = true;
+        }
+    }
+
     return any_prefix ? -1 : 0;
+}
+
+static int classifyHttpMethod(const uint8_t *p, uint32_t n)
+{
+    return classifyHttpMethodEx(p, n, true);
+}
+
+static int classifyHttp1Method(const uint8_t *p, uint32_t n)
+{
+    return classifyHttpMethodEx(p, n, false);
 }
 
 static bool findLineFeed(const uint8_t *p, uint32_t start, uint32_t end, uint32_t *lf)
@@ -78,8 +102,8 @@ static bool findHeaderEnd(const uint8_t *p, uint32_t n, uint32_t *header_end)
 
 static void stripHostPortAndDot(const uint8_t **host, uint32_t *host_len)
 {
-    while (*host_len > 0 && ((*host)[*host_len - 1U] == ' ' || (*host)[*host_len - 1U] == '\t' ||
-                             (*host)[*host_len - 1U] == '\r'))
+    while (*host_len > 0 &&
+           ((*host)[*host_len - 1U] == ' ' || (*host)[*host_len - 1U] == '\t' || (*host)[*host_len - 1U] == '\r'))
     {
         *host_len -= 1U;
     }
@@ -89,7 +113,7 @@ static void stripHostPortAndDot(const uint8_t **host, uint32_t *host_len)
         return;
     }
 
-    int  colon_index    = -1;
+    int  colon_index     = -1;
     bool multiple_colons = false;
 
     for (uint32_t i = 0; i < *host_len; ++i)
@@ -148,7 +172,7 @@ static protocol_sniff_result_t findHttpHeader(const uint8_t *p, uint32_t n, cons
     while (line_start < header_end)
     {
         uint32_t line_end = header_end;
-        discard findLineFeed(p, line_start, header_end, &line_end);
+        discard  findLineFeed(p, line_start, header_end, &line_end);
 
         uint32_t content_end = line_end;
         if (content_end > line_start && p[content_end - 1U] == '\r')
@@ -190,12 +214,11 @@ static protocol_sniff_result_t findHttpHeader(const uint8_t *p, uint32_t n, cons
     return kProtocolSniffMissing;
 }
 
-static protocol_sniff_result_t findHttpHost(const uint8_t *p, uint32_t n, const uint8_t **host,
-                                            uint32_t *host_len)
+static protocol_sniff_result_t findHttpHost(const uint8_t *p, uint32_t n, const uint8_t **host, uint32_t *host_len)
 {
-    const uint8_t *value     = NULL;
-    uint32_t       value_len = 0;
-    protocol_sniff_result_t result = findHttpHeader(p, n, "host", &value, &value_len);
+    const uint8_t          *value     = NULL;
+    uint32_t                value_len = 0;
+    protocol_sniff_result_t result    = findHttpHeader(p, n, "host", &value, &value_len);
     if (result != kProtocolSniffFound)
     {
         return result;
@@ -234,6 +257,22 @@ protocol_sniff_result_t protocolsniffHttpHost(const uint8_t *payload, uint32_t p
     return findHttpHost(payload, payload_len, host, host_len);
 }
 
+protocol_sniff_result_t protocolsniffHttp1Request(const uint8_t *payload, uint32_t payload_len)
+{
+    if (payload_len == 0)
+    {
+        return kProtocolSniffNeedMore;
+    }
+
+    int http_method = classifyHttp1Method(payload, payload_len);
+    if (http_method < 0 && payload_len < (uint32_t) kProtocolSniffMethodDecideBytes)
+    {
+        return kProtocolSniffNeedMore;
+    }
+
+    return http_method > 0 ? kProtocolSniffFound : kProtocolSniffMissing;
+}
+
 protocol_sniff_result_t protocolsniffHttpUpgradeHeader(const uint8_t *payload, uint32_t payload_len)
 {
     if (payload_len == 0)
@@ -258,6 +297,54 @@ protocol_sniff_result_t protocolsniffHttpUpgradeHeader(const uint8_t *payload, u
 static bool remainingAtLeast(const uint8_t *cursor, const uint8_t *end, size_t needed)
 {
     return cursor <= end && (size_t) (end - cursor) >= needed;
+}
+
+protocol_sniff_result_t protocolsniffTlsClientHello(const uint8_t *payload, uint32_t payload_len)
+{
+    if (payload_len == 0)
+    {
+        return kProtocolSniffNeedMore;
+    }
+
+    if (payload[0] != 0x16)
+    {
+        return kProtocolSniffMissing;
+    }
+
+    if (payload_len < 5U)
+    {
+        return kProtocolSniffNeedMore;
+    }
+
+    if (payload[1] != 0x03 || payload[2] > 0x03)
+    {
+        return kProtocolSniffMissing;
+    }
+
+    uint16_t tls_record_len = GET_BE16(payload + 3);
+    if (tls_record_len < 4U)
+    {
+        return kProtocolSniffMissing;
+    }
+
+    uint32_t tls_record_total_len = (uint32_t) tls_record_len + 5U;
+    if (payload_len < tls_record_total_len)
+    {
+        return payload_len < (uint32_t) kProtocolSniffMaxWindowBytes ? kProtocolSniffNeedMore : kProtocolSniffMissing;
+    }
+
+    if (payload[5] != 0x01)
+    {
+        return kProtocolSniffMissing;
+    }
+
+    uint32_t client_hello_len = GET_BE24(payload + 6);
+    if (client_hello_len < 34U || client_hello_len + 4U > (uint32_t) tls_record_len)
+    {
+        return kProtocolSniffMissing;
+    }
+
+    return kProtocolSniffFound;
 }
 
 protocol_sniff_result_t protocolsniffTlsClientHelloSni(const uint8_t *payload, uint32_t payload_len,
@@ -292,8 +379,7 @@ protocol_sniff_result_t protocolsniffTlsClientHelloSni(const uint8_t *payload, u
     uint32_t tls_record_total_len = (uint32_t) tls_record_len + 5U;
     if (payload_len < tls_record_total_len)
     {
-        return payload_len < (uint32_t) kProtocolSniffMaxWindowBytes ? kProtocolSniffNeedMore
-                                                                     : kProtocolSniffMissing;
+        return payload_len < (uint32_t) kProtocolSniffMaxWindowBytes ? kProtocolSniffNeedMore : kProtocolSniffMissing;
     }
 
     if (payload[5] != 0x01)
@@ -412,4 +498,25 @@ protocol_sniff_result_t protocolsniffTlsClientHelloSni(const uint8_t *payload, u
     }
 
     return kProtocolSniffMissing;
+}
+
+protocol_sniff_result_t protocolsniffBittorrentHandshake(const uint8_t *payload, uint32_t payload_len)
+{
+    static const uint8_t bittorrent_prefix[20] = {
+        19, 'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l',
+    };
+
+    if (payload_len == 0)
+    {
+        return kProtocolSniffNeedMore;
+    }
+
+    uint32_t compare_len =
+        payload_len < (uint32_t) sizeof(bittorrent_prefix) ? payload_len : (uint32_t) sizeof(bittorrent_prefix);
+    if (memoryCompare(payload, bittorrent_prefix, compare_len) != 0)
+    {
+        return kProtocolSniffMissing;
+    }
+
+    return payload_len < (uint32_t) sizeof(bittorrent_prefix) ? kProtocolSniffNeedMore : kProtocolSniffFound;
 }

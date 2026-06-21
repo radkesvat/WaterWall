@@ -36,17 +36,34 @@ enum connection_context_type
 
 #define IP_PROTO_PACKET 255
 
+enum
+{
+    kAddressContextProtocolHttp1      = 1U << 0U,
+    kAddressContextProtocolTls        = 1U << 1U,
+    kAddressContextProtocolBittorrent = 1U << 2U,
+};
+
+/*
+ * Optional routing metadata. These flags are not intrinsic endpoint identity;
+ * Router sets them opportunistically from the first payload window.
+ */
+typedef struct address_context_optional_flags_s
+{
+    uint32_t detected_protocols;
+} address_context_optional_flags_t;
+
 /**
  * Connction context provieds complete information about a connection. It can be used to connecto to somewhere.
  * in a line, there is 2 of this struct, one for source and one for destination.
  */
 typedef struct address_context_s
 {
-    ip_addr_t            ip_address;      // IP address in network byte order
-    uint16_t             port;            // Port number in host byte order
-    char                *domain;          // Domain name if applicable
-    enum domain_strategy domain_strategy; // DNS resolution strategy
-    uint8_t              domain_len;      // Length of domain name
+    ip_addr_t                        ip_address;      // IP address in network byte order
+    uint16_t                         port;            // Port number in host byte order
+    char                            *domain;          // Domain name if applicable
+    enum domain_strategy             domain_strategy; // DNS resolution strategy
+    uint8_t                          domain_len;      // Length of domain name
+    address_context_optional_flags_t optional_flags;  // Router-owned optional metadata
 
     // Flags for address properties
     uint8_t type_ip : 1;         // True for IP address, false for domain
@@ -63,7 +80,6 @@ typedef struct address_context_s
 // Initialization and Reset Helpers
 // ============================================================================
 
-
 /**
  * @brief Reset an address context structure.
  *
@@ -77,6 +93,14 @@ static inline void addresscontextReset(address_context_t *ctx)
     }
     memset(ctx, 0, sizeof(*ctx));
     ctx->type_ip = kCCTypeDomain;
+}
+
+/**
+ * @brief Clear optional routing metadata.
+ */
+static inline void addresscontextClearOptionalFlags(address_context_t *ctx)
+{
+    ctx->optional_flags = (address_context_optional_flags_t) {0};
 }
 
 /**
@@ -250,7 +274,7 @@ static inline bool addresscontextHasPort(const address_context_t *ctx)
 static inline void addresscontextClearIp(address_context_t *ctx)
 {
     ipAddrSetAny(false, &ctx->ip_address); // false indicates IPv4 wildcard
-    ctx->type_ip = kCCTypeDomain;
+    ctx->type_ip         = kCCTypeDomain;
     ctx->domain_resolved = false;
 }
 
@@ -298,8 +322,6 @@ static inline void addresscontextDomainSetConstMem(address_context_t *ctx, const
     assert(ctx->domain[len] == '\0'); // Ensure null-termination
     ctx->type_ip = kCCTypeDomain;
 }
-
-
 
 // ============================================================================
 // Validation Helper
@@ -499,6 +521,7 @@ static inline void addresscontextAddrCopy(address_context_t *dest, const address
     dest->proto_packet    = source->proto_packet;
     dest->domain_resolved = source->domain_resolved;
     dest->port            = source->port;
+    dest->optional_flags  = source->optional_flags;
 }
 
 // ============================================================================
@@ -566,5 +589,5 @@ static inline sockaddr_u addresscontextToSockAddr(const address_context_t *conte
         return addr;
     }
     assert(false); // Not a valid IP type
-    return (sockaddr_u){0};
+    return (sockaddr_u) {0};
 }

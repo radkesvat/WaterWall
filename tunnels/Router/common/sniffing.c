@@ -1,6 +1,7 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
+#include "modules/protocol/protocol.h"
 #include "protocol_sniff.h"
 
 bool routerLoadSniffing(router_tstate_t *ts, const cJSON *settings)
@@ -87,8 +88,7 @@ static bool routerDestinationAlreadyHasDomain(line_t *line)
 static bool routerNeedsHttpUpgradeSniff(const router_tstate_t *ts, const router_match_ctx_t *mctx)
 {
     return (ts->sniffing_modes & kRouterSniffHttp1) != 0 && ts->needs_http_upgrade_attribute &&
-           mctx->line_state != NULL &&
-           (mctx->line_state->sniffed_attributes & kRouterAttributeHttpUpgradePresent) == 0;
+           mctx->line_state != NULL && (mctx->line_state->sniffed_attributes & kRouterAttributeHttpUpgradePresent) == 0;
 }
 
 static bool routerStoreSniffedDomain(line_t *line, const uint8_t *host, uint32_t host_len)
@@ -109,11 +109,52 @@ static bool routerStoreSniffedDomain(line_t *line, const uint8_t *host, uint32_t
     return true;
 }
 
-router_sniff_result_t routerSniffBeforeClassify(router_tstate_t *ts, const router_match_ctx_t *mctx)
+static router_sniff_result_t routerSniffProtocolsBeforeClassify(router_tstate_t *ts, const router_match_ctx_t *mctx)
 {
-    if (ts->sniffing_modes == 0)
+    uint32_t needed_protocols = ts->needed_protocols;
+    if (needed_protocols == 0)
     {
         return kRouterSniffDone;
+    }
+
+    address_context_t *dest              = lineGetDestinationAddressContext(mctx->line);
+    uint32_t           missing_protocols = needed_protocols & ~dest->optional_flags.detected_protocols;
+    bool               need_more         = false;
+
+    uint32_t                            protocol_count = 0;
+    const router_protocol_descriptor_t *protocols      = routerProtocolDescriptors(&protocol_count);
+    for (uint32_t i = 0; i < protocol_count; ++i)
+    {
+        uint32_t flag = protocols[i].flag;
+        if ((missing_protocols & flag) == 0)
+        {
+            continue;
+        }
+
+        switch (protocols[i].sniff(mctx->payload, mctx->payload_len))
+        {
+        case kProtocolSniffFound:
+            dest->optional_flags.detected_protocols |= flag;
+            break;
+        case kProtocolSniffNeedMore:
+            need_more = true;
+            break;
+        case kProtocolSniffMissing:
+        default:
+            break;
+        }
+    }
+
+    return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
+}
+
+router_sniff_result_t routerSniffBeforeClassify(router_tstate_t *ts, const router_match_ctx_t *mctx)
+{
+    bool need_more = routerSniffProtocolsBeforeClassify(ts, mctx) == kRouterSniffNeedMore;
+
+    if (ts->sniffing_modes == 0)
+    {
+        return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
     }
 
     bool sniff_domain = ts->sniff_even_if_domain_is_already_provided || ! routerDestinationAlreadyHasDomain(mctx->line);
@@ -121,12 +162,11 @@ router_sniff_result_t routerSniffBeforeClassify(router_tstate_t *ts, const route
 
     if (! sniff_domain && ! sniff_http_upgrade)
     {
-        return kRouterSniffDone;
+        return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
     }
 
     const uint8_t *http_host     = NULL;
     uint32_t       http_host_len = 0;
-    bool           need_more     = false;
 
     if ((ts->sniffing_modes & kRouterSniffHttp1) != 0)
     {
@@ -152,7 +192,7 @@ router_sniff_result_t routerSniffBeforeClassify(router_tstate_t *ts, const route
             {
             case kProtocolSniffFound:
                 discard routerStoreSniffedDomain(mctx->line, http_host, http_host_len);
-                return kRouterSniffDone;
+                return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
             case kProtocolSniffNeedMore:
                 need_more = true;
                 break;
@@ -172,7 +212,7 @@ router_sniff_result_t routerSniffBeforeClassify(router_tstate_t *ts, const route
         {
         case kProtocolSniffFound:
             discard routerStoreSniffedDomain(mctx->line, tls_sni, tls_sni_len);
-            return kRouterSniffDone;
+            return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
         case kProtocolSniffNeedMore:
             need_more = true;
             break;

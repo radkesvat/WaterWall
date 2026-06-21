@@ -21,9 +21,11 @@ type, detected protocol, username, destination domain, …) combined into rules.
 > safe. Matcher status:
 >
 > - **Functional:** `source-ips`, `destination-ip`, `network`,
->   `destination-domain`, `source-port`, `destination-port` (see notes per field
->   below). `geoip:<cc>` is functional for `source-ips` and `destination-ip`
->   when `geoip-db-path` is configured. `destination-domain` can use a
+>   `protocol`, `destination-domain`, `source-port`, `destination-port` (see
+>   notes per field below). `geoip:<cc>` is functional for `source-ips` and
+>   `destination-ip` when `geoip-db-path` is configured. `protocol` detects
+>   `http1`, `tls`, and `bittorrent` from the first upstream payload.
+>   `destination-domain` can use a
 >   configured sniffed HTTP `Host` or TLS SNI value, and supports `geosite:`
 >   domain-list tokens when `geosite-db-path` is configured.
 >   `attributes: ["http_upgrade_present"]` is functional when HTTP sniffing is
@@ -41,8 +43,6 @@ type, detected protocol, username, destination domain, …) combined into rules.
 >     optional local username + canonical UUID password).
 >   Note the username differs in kind by protocol: SOCKS5 exposes the
 >   client-typed username, while Trojan/Vless expose the server-side account name.
-> - **Stubs that return `true` (do not constrain):** `protocol`.
->   A rule whose only condition is this currently matches everything.
 
 ## Why this node is easy to misread
 
@@ -70,9 +70,12 @@ behaves like a **deferred branch selector**:
    **not** initialize any branch yet.
 2. The first upstream payload is buffered and passed to the rule evaluator
    (`routerClassify`).
-3. If `sniffing` is enabled, Router first tries to populate destination-domain
-   metadata from HTTP Host or TLS SNI. This happens even when no rules are
-   configured, because downstream tunnels may still use the routing metadata.
+3. If any rule uses `protocol`, Router first tries to detect the requested
+   protocol values and stores the result in optional destination-context flags.
+   If `sniffing` is enabled, Router also tries to populate destination-domain
+   metadata from HTTP Host or TLS SNI. Domain sniffing happens even when no
+   rules are configured, because downstream tunnels may still use the routing
+   metadata.
 4. Rules are tested **top to bottom in JSON order**. For each rule, every
    configured condition is evaluated and `AND`-combined. The first fully matching
    rule selects its `target`.
@@ -160,7 +163,8 @@ decides it is not present, or the bounded sniff window is exhausted.
 When Host/SNI is found, Router stores it in `dest_ctx.domain`, so
 `destination-domain` rules can match an originally IP-only destination. This
 does not replace the destination endpoint: the original destination IP, port,
-protocol flags and address type are preserved. If the destination is backed by a
+transport protocol flags, optional protocol-detection flags and address type are
+preserved. If the destination is backed by a
 concrete IP address, Router marks the observed domain as resolved
 (`domain_resolved = true`) so downstream connectors keep using the original IP
 instead of resolving the sniffed name again. Wildcard/any IPs such as `0.0.0.0`
@@ -186,6 +190,31 @@ rejected by the method check immediately, while partial HTTP/1 headers may delay
 classification until the headers complete or the bounded sniff window is
 exhausted.
 
+### Protocol Matching
+
+`protocol` is a rule condition that matches application-protocol facts detected
+from the first upstream payload. Supported values are:
+
+- `http1` — HTTP/1 request method prefix.
+- `tls` — TLS ClientHello.
+- `bittorrent` — BitTorrent handshake prefix
+  (`19` followed by `BitTorrent protocol`).
+
+The old `http` value has been removed; use `http1` instead. Unsupported values
+are fatal configuration errors. Multiple values are OR-combined inside the
+field, so `"protocol": ["tls", "bittorrent"]` matches either protocol.
+
+Detected protocol bits are stored in `dest_ctx.optional_flags.detected_protocols`.
+These are optional routing metadata, not endpoint identity. They are set only by
+Router's protocol sniffing and Router clears them in upstream `Init` before a
+new classification starts, so chained Router nodes do not inherit stale protocol
+bits from an earlier Router decision.
+
+Because Router makes one shared route decision per connection, any `protocol`
+rule can make the Router buffer first-payload bytes until the requested protocol
+detectors either find a match, decide the payload is not that protocol, or reach
+the bounded sniff window.
+
 ### Rule object
 
 Every rule object **must** contain:
@@ -203,7 +232,7 @@ rule are ignored with a warning.
 | `source-ips` | functional | string or array of strings | matches the line source IP against single IPs, CIDR ranges, or MaxMind country tokens such as `geoip:ir`. A bare IP is a `/32` (or `/128`) host route. Numeric and GeoIP entries are OR-combined inside this field |
 | `source-port` | functional | number/string or array | matches `src_ctx.port` — the port the peer connected to (the real local/inbound port, resolved per-connection even on multiport backends; i.e. the destination port in the peer's packets) — against single ports and ranges, e.g. `53`, `443`, `1000-2000` |
 | `network` | functional | string or array | matches the `dest_ctx` protocol bit flags; `tcp`, `udp`, `icmp`, `packet`, or combined `tcp,udp` (OR within the field) |
-| `protocol` | stub (matches all) | string or array | detected/known protocol, e.g. `http`, `tls`, `quic`, `bittorrent` |
+| `protocol` | functional | string or array | detects and matches `http1`, `tls`, or `bittorrent` from the first upstream payload. Values are OR-combined inside this field |
 | `attributes` | partial | non-empty array | metadata attributes. Currently supports `"http_upgrade_present"`, which matches only when HTTP sniffing found an `Upgrade:` header in the first upstream HTTP request. Empty arrays and unsupported attributes are fatal configuration errors |
 | `destination-ip` | functional | string or array | matches the line destination IP (`dest_ctx`) against single IPs, CIDR ranges, or MaxMind country tokens such as `geoip:us`. Numeric and GeoIP entries are OR-combined inside this field. A domain destination has no IP and does not match |
 | `destination-domain` | functional | string or array | matches the line destination domain (`dest_ctx.domain`), case-insensitive: exact (`google.com`), wildcard (`*.google.com`, subdomains only), `*` (any), or compiled GeoSite lists such as `geosite:cn`. GeoSite `domain` rules match the root and subdomains; `full` rules match exactly; `plain` rules match by substring; `regex` rules use STC `cregex` syntax |
@@ -250,10 +279,9 @@ void                  <field>Destroy(router_rule_t *rule);
 ```
 
 `router_match_ctx_t` carries the `line_t` (for routing metadata such as
-source/destination address, ports, network type and the authenticated user) and
-the buffered first-payload window (for content-based matchers such as
-`protocol`). To implement real matching, fill in the relevant `<field>Match`
-function — no lifecycle or parsing code needs to change.
+source/destination address, ports, network type, optional detected protocols and
+the authenticated user) and the buffered first-payload window used by sniffing
+before the matcher table is evaluated.
 
 `modules/matchers.c` is the single registry of matchers. Adding a new condition
 type is: create `modules/<field>/`, then add one row to the `kRouterMatchers`
@@ -280,8 +308,8 @@ Route by destination domain and port, otherwise fall back to a direct connector:
             {
                 "network": "udp",
                 "destination-port": "443",
-                "protocol": "quic",
-                "target": "quic_handler"
+                "protocol": "bittorrent",
+                "target": "bittorrent_handler"
             },
             {
                 "source-ips": ["10.0.0.0/8", "geoip:ir"],
@@ -295,7 +323,7 @@ Route by destination domain and port, otherwise fall back to a direct connector:
 
 In the second rule above, `network`, `destination-port` and `protocol` are an
 `AND`: the connection must be UDP **and** target port 443 **and** be detected as
-QUIC for it to be routed to `quic_handler`.
+BitTorrent for it to be routed to `bittorrent_handler`.
 
 Single-condition rule using a single string value:
 

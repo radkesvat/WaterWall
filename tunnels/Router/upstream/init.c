@@ -5,6 +5,7 @@ void routerTunnelUpStreamInit(tunnel_t *t, line_t *l)
     router_lstate_t *ls = lineGetState(l, t);
 
     routerLinestateInitialize(ls);
+    addresscontextClearOptionalFlags(lineGetDestinationAddressContext(l));
 
     /*
      * Init is intentionally not propagated yet. The selected branch is

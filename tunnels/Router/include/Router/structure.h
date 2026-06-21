@@ -52,7 +52,7 @@ typedef enum router_sniff_result_e
 enum
 {
     kRouterSniffHttp1 = 1U << 0U,
-    kRouterSniffTls  = 1U << 1U
+    kRouterSniffTls   = 1U << 1U
 };
 
 enum
@@ -172,7 +172,7 @@ typedef struct router_geosite_compiled_list_s
     char   **plain_patterns;
     uint32_t plain_patterns_count;
 
-    cregex *regex_patterns;
+    cregex  *regex_patterns;
     uint32_t regex_patterns_count;
 } router_geosite_compiled_list_t;
 
@@ -231,7 +231,8 @@ typedef struct router_match_network_s
 typedef struct router_match_protocol_s
 {
     bool                 present;
-    router_string_list_t values; // detected protocol such as http / tls / quic
+    router_string_list_t values;       // detected protocol such as http1 / tls / bittorrent
+    uint32_t             wanted_flags; // OR of kAddressContextProtocol* flags
 } router_match_protocol_t;
 
 typedef struct router_match_attributes_s
@@ -309,13 +310,14 @@ typedef struct router_tstate_s
     uint8_t                         sniffing_modes;
     bool                            sniff_even_if_domain_is_already_provided;
     bool                            needs_http_upgrade_attribute;
+    uint32_t                        needed_protocols;
 } router_tstate_t;
 
 typedef struct router_lstate_s
 {
-    sbuf_t   *pending;       // bytes buffered before a routing decision is made
-    tunnel_t *target;        // selected rule tunnel; NULL means the default next branch
-    uint8_t   decided;       // enum router_route_e
+    sbuf_t   *pending; // bytes buffered before a routing decision is made
+    tunnel_t *target;  // selected rule tunnel; NULL means the default next branch
+    uint8_t   decided; // enum router_route_e
     uint32_t  sniffed_attributes;
 } router_lstate_t;
 
