@@ -74,7 +74,7 @@ behaves like a **deferred branch selector**:
    protocol values and stores the result in optional destination-context flags.
    If `sniffing` is enabled, Router also tries to populate destination-domain
    metadata from HTTP Host or TLS SNI. Domain sniffing happens even when no
-   rules are configured, because downstream tunnels may still use the routing
+   rules are configured, because upstream tunnels may still use the routing
    metadata.
 4. Rules are tested **top to bottom in JSON order**. For each rule, every
    configured condition is evaluated and `AND`-combined. The first fully matching
@@ -140,7 +140,7 @@ such as a transparent proxy flow where the original destination is an IP address
 and Router wants to match `destination-domain` rules. But if the destination
 context already contains a domain, that domain is usually the endpoint chosen by
 an earlier tunnel or configuration parser. Replacing it with client-supplied
-Host/SNI can change what a downstream connector resolves and connects to. With
+Host/SNI can change what an upstream connector resolves and connects to. With
 the default `false`, Router treats Host/SNI as extra metadata only for IP-backed
 destinations and does not allow it to redirect a domain-backed destination.
 
@@ -148,7 +148,7 @@ When `sniff-even-if-domain-is-already-provided` is `true`, Router will sniff eve
 if `dest_ctx.domain` is already set. If Host/SNI is found, Router replaces
 `dest_ctx.domain` with the sniffed name before evaluating rules. For a
 domain-only destination that has no resolved IP, `domain_resolved` stays `false`,
-so a downstream connector may DNS-resolve and connect to the sniffed name
+so an upstream connector may DNS-resolve and connect to the sniffed name
 instead of the original domain. Enable this only when the chain deliberately
 trusts the application-layer Host/SNI more than the destination domain already
 stored on the line.
@@ -166,12 +166,12 @@ does not replace the destination endpoint: the original destination IP, port,
 transport protocol flags, optional protocol-detection flags and address type are
 preserved. If the destination is backed by a
 concrete IP address, Router marks the observed domain as resolved
-(`domain_resolved = true`) so downstream connectors keep using the original IP
+(`domain_resolved = true`) so upstream connectors keep using the original IP
 instead of resolving the sniffed name again. Wildcard/any IPs such as `0.0.0.0`
 or `::` are not treated as resolved destinations. If
 `sniff-even-if-domain-is-already-provided` is enabled and the destination is
 domain-only with no resolved IP, Router stores the sniffed domain but leaves
-`domain_resolved = false`; downstream connectors will resolve that new domain.
+`domain_resolved = false`; upstream connectors will resolve that new domain.
 
 When a rule contains `attributes: ["http_upgrade_present"]`, HTTP sniffing also
 checks whether the first upstream HTTP request headers contain an `Upgrade:`
