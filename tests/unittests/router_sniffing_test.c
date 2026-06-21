@@ -1,6 +1,7 @@
 #include "Router/structure.h"
 #include "modules/attributes/attributes.h"
 #include "modules/destination_domain/destination_domain.h"
+#include "modules/protocol/protocol.h"
 #include "protocol_sniff.h"
 
 #include <stdio.h>
@@ -17,9 +18,9 @@ static void require(bool condition, const char *message)
 
 static line_t *testLineCreate(void)
 {
-    line_t *line = memoryAllocate(sizeof(*line));
+    line_t *line = memoryAllocate(sizeof(*line) + sizeof(router_lstate_t));
     require(line != NULL, "failed to allocate test line");
-    memoryZero(line, sizeof(*line));
+    memoryZero(line, sizeof(*line) + sizeof(router_lstate_t));
     line->alive = true;
     return line;
 }
@@ -44,19 +45,19 @@ static uint32_t makeClientHello(uint8_t *buf, const char *sni)
     uint8_t *cursor  = buf;
     uint32_t sni_len = (uint32_t) stringLength(sni);
 
-    *cursor++ = 0x16;
-    *cursor++ = 0x03;
-    *cursor++ = 0x01;
+    *cursor++           = 0x16;
+    *cursor++           = 0x03;
+    *cursor++           = 0x01;
     uint8_t *record_len = cursor;
     cursor += 2;
 
-    *cursor++ = 0x01;
+    *cursor++          = 0x01;
     uint8_t *hello_len = cursor;
     cursor += 3;
 
     uint8_t *body = cursor;
-    *cursor++ = 0x03;
-    *cursor++ = 0x03;
+    *cursor++     = 0x03;
+    *cursor++     = 0x03;
     memorySet(cursor, 0x11, 32);
     cursor += 32;
 
@@ -120,8 +121,7 @@ static bool sniffingConfigSucceedsEx(const char *json_text, uint8_t expected_mod
     bool            ok   = routerLoadSniffing(&ts, json);
     bool            pass = ok;
     pass                 = pass && ts.sniffing_modes == expected_modes;
-    pass = pass &&
-           ts.sniff_even_if_domain_is_already_provided == expected_sniff_even_if_domain_is_already_provided;
+    pass = pass && ts.sniff_even_if_domain_is_already_provided == expected_sniff_even_if_domain_is_already_provided;
     cJSON_Delete(json);
     return pass;
 }
@@ -160,12 +160,32 @@ static router_rule_t parseAttributesRule(const char *json_text, tunnel_t *target
     return rule;
 }
 
+static router_rule_t parseProtocolRule(const char *json_text, tunnel_t *target)
+{
+    router_rule_t rule = {0};
+    cJSON        *json = parseJsonObject(json_text);
+    require(routerProtocolParse(&rule, json, 0) == kRouterFieldPresent, "protocol parse failed");
+    rule.target_tunnel = target;
+    cJSON_Delete(json);
+    return rule;
+}
+
 static bool attributesConfigFails(const char *json_text)
 {
     router_rule_t rule = {0};
     cJSON        *json = parseJsonObject(json_text);
     bool          fail = routerAttributesParse(&rule, json, 0) == kRouterFieldError;
     routerAttributesDestroy(&rule);
+    cJSON_Delete(json);
+    return fail;
+}
+
+static bool protocolConfigFails(const char *json_text)
+{
+    router_rule_t rule = {0};
+    cJSON        *json = parseJsonObject(json_text);
+    bool          fail = routerProtocolParse(&rule, json, 0) == kRouterFieldError;
+    routerProtocolDestroy(&rule);
     cJSON_Delete(json);
     return fail;
 }
@@ -240,13 +260,68 @@ static void testSniffingConfig(void)
     require(attributesConfigFails("{\"attributes\":[\"typo\"]}"), "unknown Router attribute was accepted");
 }
 
+static void testProtocolConfig(void)
+{
+    require(protocolConfigFails("{\"protocol\":\"http\"}"), "removed protocol value http was accepted");
+    require(protocolConfigFails("{\"protocol\":\"quic\"}"), "unsupported protocol value was accepted");
+    require(protocolConfigFails("{\"protocol\":[1]}"), "non-string protocol value was accepted");
+
+    router_rule_t rule =
+        parseProtocolRule("{\"protocol\":[\"HTTP1\",\"tls\",\"BitTorrent\"]}", (tunnel_t *) (uintptr_t) 0x71);
+    uint32_t expected = kAddressContextProtocolHttp1 | kAddressContextProtocolTls | kAddressContextProtocolBittorrent;
+    require(rule.protocol.wanted_flags == expected, "protocol parser did not build the expected flag mask");
+    routerProtocolDestroy(&rule);
+}
+
+static void testProtocolDescriptorTable(void)
+{
+    uint32_t                            count       = 0;
+    const router_protocol_descriptor_t *descriptors = routerProtocolDescriptors(&count);
+    uint32_t                            mask        = 0;
+
+    require(count == 3, "Router protocol descriptor count changed unexpectedly");
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        require(descriptors[i].name != NULL, "Router protocol descriptor has no name");
+        require(descriptors[i].flag != 0, "Router protocol descriptor has no flag");
+        require(descriptors[i].sniff != NULL, "Router protocol descriptor has no sniffer");
+        require((mask & descriptors[i].flag) == 0, "Router protocol descriptor flags overlap");
+        require(routerProtocolFindDescriptorByName(descriptors[i].name) == &descriptors[i],
+                "Router protocol descriptor lookup returned the wrong descriptor");
+        mask |= descriptors[i].flag;
+    }
+
+    uint32_t expected = kAddressContextProtocolHttp1 | kAddressContextProtocolTls | kAddressContextProtocolBittorrent;
+    require(mask == expected, "Router protocol descriptor table does not cover every protocol flag");
+    require(routerProtocolFindDescriptorByName("missing") == NULL, "unknown Router protocol descriptor was found");
+}
+
+static void testRouterInitClearsOptionalFlags(void)
+{
+    line_t *line = testLineCreate();
+    line->routing_context.dest_ctx.optional_flags.detected_protocols =
+        kAddressContextProtocolHttp1 | kAddressContextProtocolBittorrent;
+
+    tunnel_t tunnel      = {0};
+    tunnel.lstate_offset = 0;
+
+    routerTunnelUpStreamInit(&tunnel, line);
+
+    router_lstate_t *ls = lineGetState(line, &tunnel);
+    require(line->routing_context.dest_ctx.optional_flags.detected_protocols == 0,
+            "Router upstream init did not clear destination optional protocol flags");
+    require(ls->decided == kRouterRouteUndecided, "Router upstream init did not initialize line state");
+    require(ls->pending == NULL, "Router upstream init left pending payload state");
+
+    testLineDestroy(line);
+}
+
 static void testHttpSniffingMatchesDestinationDomain(void)
 {
     tunnel_t *target = (tunnel_t *) (uintptr_t) 0x10;
 
     line_t *line = testLineCreate();
-    require(addresscontextSetIpAddressPortProtocol(
-                &line->routing_context.dest_ctx, "203.0.113.10", 443, IP_PROTO_TCP),
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.10", 443, IP_PROTO_TCP),
             "failed to set destination IP");
     ip_addr_t original_ip = line->routing_context.dest_ctx.ip_address;
 
@@ -276,8 +351,7 @@ static void testTlsSniffingMatchesDestinationDomain(void)
     tunnel_t *target = (tunnel_t *) (uintptr_t) 0x20;
 
     line_t *line = testLineCreate();
-    require(addresscontextSetIpAddressPortProtocol(
-                &line->routing_context.dest_ctx, "198.51.100.20", 443, IP_PROTO_TCP),
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "198.51.100.20", 443, IP_PROTO_TCP),
             "failed to set destination IP");
 
     router_rule_t   rule = parseDestinationDomainRule("{\"destination-domain\":\"*.example.test\"}", target);
@@ -285,10 +359,8 @@ static void testTlsSniffingMatchesDestinationDomain(void)
 
     uint8_t  hello[256];
     uint32_t hello_len = makeClientHello(hello, "www.example.test");
-    expectMatch("tls sniffed domain route",
-                classifyOneRule(&ts, &rule, line, hello, hello_len),
-                kRouterClassifyTarget,
-                target);
+    expectMatch(
+        "tls sniffed domain route", classifyOneRule(&ts, &rule, line, hello, hello_len), kRouterClassifyTarget, target);
 
     requireDomain(&line->routing_context.dest_ctx, "www.example.test");
     require(line->routing_context.dest_ctx.domain_resolved, "IP-backed TLS sniffed domain was not marked resolved");
@@ -297,13 +369,125 @@ static void testTlsSniffingMatchesDestinationDomain(void)
     testLineDestroy(line);
 }
 
+static void testProtocolHttp1MatchesOnlyHttp1(void)
+{
+    tunnel_t *target = (tunnel_t *) (uintptr_t) 0x72;
+
+    line_t         *line = testLineCreate();
+    router_rule_t   rule = parseProtocolRule("{\"protocol\":\"http1\"}", target);
+    router_tstate_t ts   = {.needed_protocols = rule.protocol.wanted_flags};
+
+    const uint8_t request[] = "GET / HTTP/1.1\r\nHost: protocol.example.test\r\n\r\n";
+    expectMatch("http1 protocol route",
+                classifyOneRule(&ts, &rule, line, request, (uint32_t) sizeof(request) - 1U),
+                kRouterClassifyTarget,
+                target);
+    require((line->routing_context.dest_ctx.optional_flags.detected_protocols & kAddressContextProtocolHttp1) != 0,
+            "HTTP/1 protocol bit was not set");
+
+    testLineDestroy(line);
+    line = testLineCreate();
+
+    const uint8_t http2_preface[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+    expectMatch("http1 does not match HTTP/2 preface",
+                classifyOneRule(&ts, &rule, line, http2_preface, (uint32_t) sizeof(http2_preface) - 1U),
+                kRouterClassifyDefault,
+                NULL);
+    require((line->routing_context.dest_ctx.optional_flags.detected_protocols & kAddressContextProtocolHttp1) == 0,
+            "HTTP/2 preface set the HTTP/1 protocol bit");
+
+    routerProtocolDestroy(&rule);
+    testLineDestroy(line);
+}
+
+static void testProtocolBittorrentMatches(void)
+{
+    tunnel_t *target = (tunnel_t *) (uintptr_t) 0x73;
+
+    line_t         *line = testLineCreate();
+    router_rule_t   rule = parseProtocolRule("{\"protocol\":\"bittorrent\"}", target);
+    router_tstate_t ts   = {.needed_protocols = rule.protocol.wanted_flags};
+
+    const uint8_t payload[] = {
+        19, 'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l', 0x00,
+    };
+
+    expectMatch("bittorrent protocol route",
+                classifyOneRule(&ts, &rule, line, payload, (uint32_t) sizeof(payload)),
+                kRouterClassifyTarget,
+                target);
+    require((line->routing_context.dest_ctx.optional_flags.detected_protocols & kAddressContextProtocolBittorrent) != 0,
+            "BitTorrent protocol bit was not set");
+
+    routerProtocolDestroy(&rule);
+    testLineDestroy(line);
+}
+
+static void testProtocolBittorrentNeedMore(void)
+{
+    tunnel_t *target = (tunnel_t *) (uintptr_t) 0x74;
+
+    line_t         *line = testLineCreate();
+    router_rule_t   rule = parseProtocolRule("{\"protocol\":\"bittorrent\"}", target);
+    router_tstate_t ts   = {.needed_protocols = rule.protocol.wanted_flags};
+
+    const uint8_t partial[] = {19, 'B', 'i', 't'};
+    expectMatch("partial bittorrent protocol route",
+                classifyOneRule(&ts, &rule, line, partial, (uint32_t) sizeof(partial)),
+                kRouterClassifyNeedMore,
+                NULL);
+    require((line->routing_context.dest_ctx.optional_flags.detected_protocols & kAddressContextProtocolBittorrent) == 0,
+            "partial BitTorrent prefix set the protocol bit too early");
+
+    routerProtocolDestroy(&rule);
+    testLineDestroy(line);
+}
+
+static void testProtocolNonMatchFallsThrough(void)
+{
+    tunnel_t *target = (tunnel_t *) (uintptr_t) 0x75;
+
+    line_t         *line = testLineCreate();
+    router_rule_t   rule = parseProtocolRule("{\"protocol\":\"bittorrent\"}", target);
+    router_tstate_t ts   = {.needed_protocols = rule.protocol.wanted_flags};
+
+    const uint8_t payload[] = "GET / HTTP/1.1\r\nHost: other.example.test\r\n\r\n";
+    expectMatch("non-bittorrent protocol route",
+                classifyOneRule(&ts, &rule, line, payload, (uint32_t) sizeof(payload) - 1U),
+                kRouterClassifyDefault,
+                NULL);
+    require((line->routing_context.dest_ctx.optional_flags.detected_protocols & kAddressContextProtocolBittorrent) == 0,
+            "nonmatching payload set the BitTorrent protocol bit");
+
+    routerProtocolDestroy(&rule);
+    testLineDestroy(line);
+}
+
+static void testProtocolOrMatchesTls(void)
+{
+    tunnel_t *target = (tunnel_t *) (uintptr_t) 0x76;
+
+    line_t         *line = testLineCreate();
+    router_rule_t   rule = parseProtocolRule("{\"protocol\":[\"bittorrent\",\"tls\"]}", target);
+    router_tstate_t ts   = {.needed_protocols = rule.protocol.wanted_flags};
+
+    uint8_t  hello[256];
+    uint32_t hello_len = makeClientHello(hello, "protocol.example.test");
+    expectMatch(
+        "protocol OR TLS route", classifyOneRule(&ts, &rule, line, hello, hello_len), kRouterClassifyTarget, target);
+    require((line->routing_context.dest_ctx.optional_flags.detected_protocols & kAddressContextProtocolTls) != 0,
+            "TLS protocol bit was not set");
+
+    routerProtocolDestroy(&rule);
+    testLineDestroy(line);
+}
+
 static void testNeedMoreAndWindowLimit(void)
 {
     tunnel_t *target = (tunnel_t *) (uintptr_t) 0x30;
 
     line_t *line = testLineCreate();
-    require(addresscontextSetIpAddressPortProtocol(
-                &line->routing_context.dest_ctx, "203.0.113.30", 80, IP_PROTO_TCP),
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.30", 80, IP_PROTO_TCP),
             "failed to set destination IP");
 
     router_rule_t   rule = parseDestinationDomainRule("{\"destination-domain\":\"api.example.test\"}", target);
@@ -323,26 +507,19 @@ static void testNeedMoreAndWindowLimit(void)
                 target);
 
     addresscontextReset(&line->routing_context.dest_ctx);
-    require(addresscontextSetIpAddressPortProtocol(
-                &line->routing_context.dest_ctx, "203.0.113.30", 80, IP_PROTO_TCP),
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.30", 80, IP_PROTO_TCP),
             "failed to reset destination IP");
 
     uint8_t  hello[256];
     uint32_t hello_len = makeClientHello(hello, "api.example.test");
-    expectMatch("partial tls sniff",
-                classifyOneRule(&ts, &rule, line, hello, 3),
-                kRouterClassifyNeedMore,
-                NULL);
+    expectMatch("partial tls sniff", classifyOneRule(&ts, &rule, line, hello, 3), kRouterClassifyNeedMore, NULL);
     require(line->routing_context.dest_ctx.domain == NULL, "partial TLS stored a domain");
 
-    expectMatch("completed tls sniff",
-                classifyOneRule(&ts, &rule, line, hello, hello_len),
-                kRouterClassifyTarget,
-                target);
+    expectMatch(
+        "completed tls sniff", classifyOneRule(&ts, &rule, line, hello, hello_len), kRouterClassifyTarget, target);
 
     addresscontextReset(&line->routing_context.dest_ctx);
-    require(addresscontextSetIpAddressPortProtocol(
-                &line->routing_context.dest_ctx, "203.0.113.30", 80, IP_PROTO_TCP),
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.30", 80, IP_PROTO_TCP),
             "failed to reset destination IP after TLS");
 
     uint8_t too_large[kProtocolSniffMaxWindowBytes];
@@ -366,8 +543,7 @@ static void testSniffingDisabledDoesNotMatchIpOnlyDestination(void)
     tunnel_t *target = (tunnel_t *) (uintptr_t) 0x40;
 
     line_t *line = testLineCreate();
-    require(addresscontextSetIpAddressPortProtocol(
-                &line->routing_context.dest_ctx, "203.0.113.40", 80, IP_PROTO_TCP),
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.40", 80, IP_PROTO_TCP),
             "failed to set destination IP");
 
     router_rule_t   rule = parseDestinationDomainRule("{\"destination-domain\":\"api.example.test\"}", target);
@@ -421,8 +597,8 @@ static void testDomainOnlyDestinationCanOptIntoSniffing(void)
 
     router_rule_t   rule = parseDestinationDomainRule("{\"destination-domain\":\"new.example.test\"}", target);
     router_tstate_t ts   = {
-        .sniffing_modes                            = kRouterSniffHttp1,
-        .sniff_even_if_domain_is_already_provided = true,
+          .sniffing_modes                           = kRouterSniffHttp1,
+          .sniff_even_if_domain_is_already_provided = true,
     };
 
     const uint8_t request[] = "GET / HTTP/1.1\r\nHost: new.example.test\r\n\r\n";
@@ -444,8 +620,7 @@ static void testDomainOnlyDestinationCanOptIntoSniffing(void)
 static void testSniffingRunsWithoutRules(void)
 {
     line_t *line = testLineCreate();
-    require(addresscontextSetIpAddressPortProtocol(
-                &line->routing_context.dest_ctx, "203.0.113.70", 443, IP_PROTO_TCP),
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.70", 443, IP_PROTO_TCP),
             "failed to set no-rules destination IP");
 
     router_tstate_t ts = {.sniffing_modes = kRouterSniffHttp1};
@@ -485,7 +660,7 @@ static void testNoRulesSniffingRespectsExistingDomainSetting(void)
     addresscontextSetPort(&line->routing_context.dest_ctx, 443);
 
     router_tstate_t opt_in = {
-        .sniffing_modes                            = kRouterSniffHttp1,
+        .sniffing_modes                           = kRouterSniffHttp1,
         .sniff_even_if_domain_is_already_provided = true,
     };
     expectMatch("no-rules existing domain opt-in sniffing",
@@ -505,8 +680,7 @@ static void testNoRulesSniffingRespectsExistingDomainSetting(void)
 static void testWildcardIpDestinationIsNotMarkedResolved(void)
 {
     line_t *line = testLineCreate();
-    require(addresscontextSetIpAddressPortProtocol(
-                &line->routing_context.dest_ctx, "0.0.0.0", 443, IP_PROTO_TCP),
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "0.0.0.0", 443, IP_PROTO_TCP),
             "failed to set wildcard destination IP");
 
     router_tstate_t ts = {.sniffing_modes = kRouterSniffHttp1};
@@ -531,14 +705,13 @@ static void testHttpUpgradeAttributeMatches(void)
     tunnel_t *target = (tunnel_t *) (uintptr_t) 0x90;
 
     line_t *line = testLineCreate();
-    require(addresscontextSetIpAddressPortProtocol(
-                &line->routing_context.dest_ctx, "203.0.113.90", 80, IP_PROTO_TCP),
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.90", 80, IP_PROTO_TCP),
             "failed to set upgrade destination IP");
 
     router_rule_t   rule = parseAttributesRule("{\"attributes\":[\"http_upgrade_present\"]}", target);
     router_tstate_t ts   = {
-        .sniffing_modes               = kRouterSniffHttp1,
-        .needs_http_upgrade_attribute = true,
+          .sniffing_modes               = kRouterSniffHttp1,
+          .needs_http_upgrade_attribute = true,
     };
     router_lstate_t line_state;
     routerLinestateInitialize(&line_state);
@@ -549,12 +722,7 @@ static void testHttpUpgradeAttributeMatches(void)
                               "Upgrade: websocket\r\n"
                               "\r\n";
     expectMatch("http upgrade attribute route",
-                classifyOneRuleWithState(&ts,
-                                         &rule,
-                                         line,
-                                         &line_state,
-                                         request,
-                                         (uint32_t) sizeof(request) - 1U),
+                classifyOneRuleWithState(&ts, &rule, line, &line_state, request, (uint32_t) sizeof(request) - 1U),
                 kRouterClassifyTarget,
                 target);
     require((line_state.sniffed_attributes & kRouterAttributeHttpUpgradePresent) != 0,
@@ -569,14 +737,13 @@ static void testHttpUpgradeAttributeMissingDoesNotMatch(void)
     tunnel_t *target = (tunnel_t *) (uintptr_t) 0x91;
 
     line_t *line = testLineCreate();
-    require(addresscontextSetIpAddressPortProtocol(
-                &line->routing_context.dest_ctx, "203.0.113.91", 80, IP_PROTO_TCP),
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.91", 80, IP_PROTO_TCP),
             "failed to set no-upgrade destination IP");
 
     router_rule_t   rule = parseAttributesRule("{\"attributes\":[\"http_upgrade_present\"]}", target);
     router_tstate_t ts   = {
-        .sniffing_modes               = kRouterSniffHttp1,
-        .needs_http_upgrade_attribute = true,
+          .sniffing_modes               = kRouterSniffHttp1,
+          .needs_http_upgrade_attribute = true,
     };
     router_lstate_t line_state;
     routerLinestateInitialize(&line_state);
@@ -586,12 +753,7 @@ static void testHttpUpgradeAttributeMissingDoesNotMatch(void)
                               "Connection: keep-alive\r\n"
                               "\r\n";
     expectMatch("missing http upgrade attribute route",
-                classifyOneRuleWithState(&ts,
-                                         &rule,
-                                         line,
-                                         &line_state,
-                                         request,
-                                         (uint32_t) sizeof(request) - 1U),
+                classifyOneRuleWithState(&ts, &rule, line, &line_state, request, (uint32_t) sizeof(request) - 1U),
                 kRouterClassifyDefault,
                 NULL);
     require((line_state.sniffed_attributes & kRouterAttributeHttpUpgradePresent) == 0,
@@ -611,8 +773,8 @@ static void testHttpUpgradeAttributeSniffsWhenDestinationDomainExists(void)
 
     router_rule_t   rule = parseAttributesRule("{\"attributes\":[\"http_upgrade_present\"]}", target);
     router_tstate_t ts   = {
-        .sniffing_modes               = kRouterSniffHttp1,
-        .needs_http_upgrade_attribute = true,
+          .sniffing_modes               = kRouterSniffHttp1,
+          .needs_http_upgrade_attribute = true,
     };
     router_lstate_t line_state;
     routerLinestateInitialize(&line_state);
@@ -622,12 +784,7 @@ static void testHttpUpgradeAttributeSniffsWhenDestinationDomainExists(void)
                               "Upgrade: websocket\r\n"
                               "\r\n";
     expectMatch("http upgrade attribute with existing domain",
-                classifyOneRuleWithState(&ts,
-                                         &rule,
-                                         line,
-                                         &line_state,
-                                         request,
-                                         (uint32_t) sizeof(request) - 1U),
+                classifyOneRuleWithState(&ts, &rule, line, &line_state, request, (uint32_t) sizeof(request) - 1U),
                 kRouterClassifyTarget,
                 target);
     require((line_state.sniffed_attributes & kRouterAttributeHttpUpgradePresent) != 0,
@@ -648,20 +805,15 @@ static void testHttpUpgradeAttributeNeedMore(void)
 
     router_rule_t   rule = parseAttributesRule("{\"attributes\":[\"http_upgrade_present\"]}", target);
     router_tstate_t ts   = {
-        .sniffing_modes               = kRouterSniffHttp1,
-        .needs_http_upgrade_attribute = true,
+          .sniffing_modes               = kRouterSniffHttp1,
+          .needs_http_upgrade_attribute = true,
     };
     router_lstate_t line_state;
     routerLinestateInitialize(&line_state);
 
     const uint8_t partial[] = "GET /socket HTTP/1.1\r\nUpgrade";
     expectMatch("partial http upgrade attribute route",
-                classifyOneRuleWithState(&ts,
-                                         &rule,
-                                         line,
-                                         &line_state,
-                                         partial,
-                                         (uint32_t) sizeof(partial) - 1U),
+                classifyOneRuleWithState(&ts, &rule, line, &line_state, partial, (uint32_t) sizeof(partial) - 1U),
                 kRouterClassifyNeedMore,
                 NULL);
     require((line_state.sniffed_attributes & kRouterAttributeHttpUpgradePresent) == 0,
@@ -674,8 +826,16 @@ static void testHttpUpgradeAttributeNeedMore(void)
 int main(void)
 {
     testSniffingConfig();
+    testProtocolConfig();
+    testProtocolDescriptorTable();
+    testRouterInitClearsOptionalFlags();
     testHttpSniffingMatchesDestinationDomain();
     testTlsSniffingMatchesDestinationDomain();
+    testProtocolHttp1MatchesOnlyHttp1();
+    testProtocolBittorrentMatches();
+    testProtocolBittorrentNeedMore();
+    testProtocolNonMatchFallsThrough();
+    testProtocolOrMatchesTls();
     testNeedMoreAndWindowLimit();
     testSniffingDisabledDoesNotMatchIpOnlyDestination();
     testDomainOnlyDestinationIsNotSniffedByDefault();
