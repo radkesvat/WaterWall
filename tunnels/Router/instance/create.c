@@ -55,6 +55,11 @@ tunnel_t *routerTunnelCreate(node_t *node)
         return NULL;
     }
 
+    if (ts->needs_http_upgrade_attribute && (ts->sniffing_modes & kRouterSniffHttp1) == 0)
+    {
+        LOGW("Router: attribute \"http_upgrade_present\" requires root sniffing mode \"http1\" to match");
+    }
+
     if (! routerGeositeOpenIfNeeded(ts, settings))
     {
         routerTunnelDestroy(t);

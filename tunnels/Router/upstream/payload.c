@@ -72,6 +72,7 @@ void routerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     router_match_ctx_t mctx = {
         .router_state = ts,
         .line         = l,
+        .line_state   = ls,
         .payload      = (const uint8_t *) sbufGetRawPtr(ls->pending),
         .payload_len  = sbufGetLength(ls->pending),
     };

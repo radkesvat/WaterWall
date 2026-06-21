@@ -51,8 +51,13 @@ typedef enum router_sniff_result_e
 
 enum
 {
-    kRouterSniffHttp = 1U << 0U,
+    kRouterSniffHttp1 = 1U << 0U,
     kRouterSniffTls  = 1U << 1U
+};
+
+enum
+{
+    kRouterAttributeHttpUpgradePresent = 1U << 0U
 };
 
 // Result of parsing a single rule field from the rule JSON object.
@@ -107,6 +112,20 @@ static inline bool routerGeositeDomainKeyEquals(const router_geosite_domain_key_
                                                 const router_geosite_domain_key_t *right)
 {
     return left->len == right->len && memoryCompare(left->value, right->value, left->len) == 0;
+}
+
+static inline bool routerStringEqualsIgnoreCase(const char *value, const char *expected)
+{
+    uint32_t i = 0;
+    while (value[i] != '\0' && expected[i] != '\0')
+    {
+        if (asciiLower((uint8_t) value[i]) != (uint8_t) expected[i])
+        {
+            return false;
+        }
+        ++i;
+    }
+    return value[i] == '\0' && expected[i] == '\0';
 }
 
 static inline void routerGeositeDomainKeyDrop(router_geosite_domain_key_t *key)
@@ -218,7 +237,8 @@ typedef struct router_match_protocol_s
 typedef struct router_match_attributes_s
 {
     bool     present;
-    uint32_t count; // reserved for future metadata-based matching (unused for now)
+    uint32_t count;
+    uint32_t required_flags;
 } router_match_attributes_t;
 
 typedef struct router_match_destination_ip_s
@@ -288,6 +308,7 @@ typedef struct router_tstate_s
     uint32_t                        geosite_lists_count;
     uint8_t                         sniffing_modes;
     bool                            sniff_even_if_domain_is_already_provided;
+    bool                            needs_http_upgrade_attribute;
 } router_tstate_t;
 
 typedef struct router_lstate_s
@@ -295,6 +316,7 @@ typedef struct router_lstate_s
     sbuf_t   *pending;       // bytes buffered before a routing decision is made
     tunnel_t *target;        // selected rule tunnel; NULL means the default next branch
     uint8_t   decided;       // enum router_route_e
+    uint32_t  sniffed_attributes;
 } router_lstate_t;
 
 // Connection facts handed to matcher modules. Carries the line (for routing
@@ -304,6 +326,7 @@ typedef struct router_match_ctx_s
 {
     router_tstate_t            *router_state;
     line_t                     *line;
+    router_lstate_t            *line_state;
     const uint8_t              *payload;
     uint32_t                    payload_len;
     router_geosite_host_cache_t geosite_host;

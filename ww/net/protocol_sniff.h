@@ -20,5 +20,6 @@ enum
 
 protocol_sniff_result_t protocolsniffHttpHost(const uint8_t *payload, uint32_t payload_len,
                                               const uint8_t **host, uint32_t *host_len);
+protocol_sniff_result_t protocolsniffHttpUpgradeHeader(const uint8_t *payload, uint32_t payload_len);
 protocol_sniff_result_t protocolsniffTlsClientHelloSni(const uint8_t *payload, uint32_t payload_len,
                                                        const uint8_t **host, uint32_t *host_len);

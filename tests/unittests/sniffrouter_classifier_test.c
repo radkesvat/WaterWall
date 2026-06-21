@@ -90,7 +90,7 @@ int main(void)
             .tunnel        = http_target,
             .domains       = http_domains,
             .domains_count = 1,
-            .detection     = kSniffDetectionHttp,
+            .detection     = kSniffDetectionHttp1,
         },
         {
             .tunnel        = tls_target,
@@ -151,7 +151,7 @@ int main(void)
         return 1;
     }
 
-    routes[1].detection = kSniffDetectionHttp;
+    routes[1].detection = kSniffDetectionHttp1;
     if (expect_match("tls disabled for route",
                      sniffrouterClassify(&ts, hello, hello_len),
                      kSniffClassifyDefault,
@@ -160,7 +160,7 @@ int main(void)
         return 1;
     }
 
-    routes[1].detection = kSniffDetectionHttp | kSniffDetectionTlsClientHello;
+    routes[1].detection = kSniffDetectionHttp1 | kSniffDetectionTlsClientHello;
     if (expect_match("combined detection route",
                      sniffrouterClassify(&ts, hello, hello_len),
                      kSniffClassifyTarget,
@@ -180,7 +180,7 @@ int main(void)
             .tunnel        = http_target,
             .domains       = reverse_http_domains,
             .domains_count = 1,
-            .detection     = kSniffDetectionHttp,
+            .detection     = kSniffDetectionHttp1,
         },
         {
             .tunnel        = reverse_target,
@@ -247,7 +247,7 @@ int main(void)
         return 1;
     }
 
-    reverse_routes[1].detection     = kSniffDetectionHttp | kSniffDetectionReverse;
+    reverse_routes[1].detection     = kSniffDetectionHttp1 | kSniffDetectionReverse;
     reverse_routes[1].domains       = reverse_http_domains;
     reverse_routes[1].domains_count = 1;
     if (expect_match("combined http+reverse matches handshake",
@@ -258,7 +258,7 @@ int main(void)
         return 1;
     }
 
-    reverse_routes[1].detection = kSniffDetectionHttp;
+    reverse_routes[1].detection = kSniffDetectionHttp1;
     if (expect_match("reverse detection disabled falls back",
                      sniffrouterClassify(&reverse_ts, handshake, reverseclientHandshakeLength),
                      kSniffClassifyDefault,

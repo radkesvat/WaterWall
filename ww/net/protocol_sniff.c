@@ -129,8 +129,8 @@ static void stripHostPortAndDot(const uint8_t **host, uint32_t *host_len)
     }
 }
 
-static protocol_sniff_result_t findHttpHost(const uint8_t *p, uint32_t n, const uint8_t **host,
-                                            uint32_t *host_len)
+static protocol_sniff_result_t findHttpHeader(const uint8_t *p, uint32_t n, const char *name, const uint8_t **value,
+                                              uint32_t *value_len)
 {
     uint32_t header_end = 0;
     if (! findHeaderEnd(p, n, &header_end))
@@ -168,7 +168,7 @@ static protocol_sniff_result_t findHttpHost(const uint8_t *p, uint32_t n, const 
             name_end -= 1U;
         }
 
-        if (colon < content_end && headerNameEquals(p + line_start, name_end - line_start, "host"))
+        if (colon < content_end && headerNameEquals(p + line_start, name_end - line_start, name))
         {
             uint32_t value_start = colon + 1U;
             while (value_start < content_end && (p[value_start] == ' ' || p[value_start] == '\t'))
@@ -176,17 +176,11 @@ static protocol_sniff_result_t findHttpHost(const uint8_t *p, uint32_t n, const 
                 ++value_start;
             }
 
-            const uint8_t *value     = p + value_start;
-            uint32_t       value_len = content_end - value_start;
-            stripHostPortAndDot(&value, &value_len);
-
-            if (value_len == 0)
+            if (value != NULL && value_len != NULL)
             {
-                return kProtocolSniffMissing;
+                *value     = p + value_start;
+                *value_len = content_end - value_start;
             }
-
-            *host     = value;
-            *host_len = value_len;
             return kProtocolSniffFound;
         }
 
@@ -194,6 +188,28 @@ static protocol_sniff_result_t findHttpHost(const uint8_t *p, uint32_t n, const 
     }
 
     return kProtocolSniffMissing;
+}
+
+static protocol_sniff_result_t findHttpHost(const uint8_t *p, uint32_t n, const uint8_t **host,
+                                            uint32_t *host_len)
+{
+    const uint8_t *value     = NULL;
+    uint32_t       value_len = 0;
+    protocol_sniff_result_t result = findHttpHeader(p, n, "host", &value, &value_len);
+    if (result != kProtocolSniffFound)
+    {
+        return result;
+    }
+
+    stripHostPortAndDot(&value, &value_len);
+    if (value_len == 0)
+    {
+        return kProtocolSniffMissing;
+    }
+
+    *host     = value;
+    *host_len = value_len;
+    return kProtocolSniffFound;
 }
 
 protocol_sniff_result_t protocolsniffHttpHost(const uint8_t *payload, uint32_t payload_len, const uint8_t **host,
@@ -216,6 +232,27 @@ protocol_sniff_result_t protocolsniffHttpHost(const uint8_t *payload, uint32_t p
     }
 
     return findHttpHost(payload, payload_len, host, host_len);
+}
+
+protocol_sniff_result_t protocolsniffHttpUpgradeHeader(const uint8_t *payload, uint32_t payload_len)
+{
+    if (payload_len == 0)
+    {
+        return kProtocolSniffNeedMore;
+    }
+
+    int http_method = classifyHttpMethod(payload, payload_len);
+    if (http_method < 0 && payload_len < (uint32_t) kProtocolSniffMethodDecideBytes)
+    {
+        return kProtocolSniffNeedMore;
+    }
+
+    if (http_method <= 0)
+    {
+        return kProtocolSniffMissing;
+    }
+
+    return findHttpHeader(payload, payload_len, "upgrade", NULL, NULL);
 }
 
 static bool remainingAtLeast(const uint8_t *cursor, const uint8_t *end, size_t needed)
