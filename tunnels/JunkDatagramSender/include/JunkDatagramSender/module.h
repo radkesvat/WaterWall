@@ -36,8 +36,8 @@ typedef bool (*junkdatagramsender_generate_fn)(sbuf_t *buf, const junkdatagramse
 
 typedef struct junkdatagramsender_module_descriptor_s
 {
-    junkdatagramsender_protocol_t protocol;
-    const char                   *canonical_name;
+    junkdatagramsender_protocol_t  protocol;
+    const char                    *canonical_name;
     junkdatagramsender_generate_fn generate;
 } junkdatagramsender_module_descriptor_t;
 

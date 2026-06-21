@@ -4,9 +4,9 @@
 
 static uint64_t junkdatagramsenderAllProtocolsMask(void)
 {
-    size_t                                      count       = 0;
+    size_t                                        count       = 0;
     const junkdatagramsender_module_descriptor_t *descriptors = junkdatagramsenderGetModuleDescriptors(&count);
-    uint64_t                                    mask        = 0;
+    uint64_t                                      mask        = 0;
 
     for (size_t i = 0; i < count; ++i)
     {
@@ -22,16 +22,14 @@ static bool junkdatagramsenderProtocolNameMatches(const char *value, const char 
 
 static bool junkdatagramsenderProtocolIsDisabled(const char *value)
 {
-    return junkdatagramsenderProtocolNameMatches(value, "sip") ||
-           junkdatagramsenderProtocolNameMatches(value, "tftp") ||
+    return junkdatagramsenderProtocolNameMatches(value, "tftp") ||
            junkdatagramsenderProtocolNameMatches(value, "ssdp") ||
            junkdatagramsenderProtocolNameMatches(value, "radius") ||
            junkdatagramsenderProtocolNameMatches(value, "gtp-u") ||
            junkdatagramsenderProtocolNameMatches(value, "gtpu") ||
            junkdatagramsenderProtocolNameMatches(value, "game-udp-protocols") ||
            junkdatagramsenderProtocolNameMatches(value, "game-udp") ||
-           junkdatagramsenderProtocolNameMatches(value, "game") ||
-           junkdatagramsenderProtocolNameMatches(value, "coap");
+           junkdatagramsenderProtocolNameMatches(value, "game") || junkdatagramsenderProtocolNameMatches(value, "coap");
 }
 
 static bool junkdatagramsenderProtocolFromName(const char *value, junkdatagramsender_protocol_t *protocol)
@@ -57,8 +55,7 @@ static bool junkdatagramsenderProtocolFromName(const char *value, junkdatagramse
         return true;
     }
     if (junkdatagramsenderProtocolNameMatches(value, "quic-http3") ||
-        junkdatagramsenderProtocolNameMatches(value, "quic") ||
-        junkdatagramsenderProtocolNameMatches(value, "http3") ||
+        junkdatagramsenderProtocolNameMatches(value, "quic") || junkdatagramsenderProtocolNameMatches(value, "http3") ||
         junkdatagramsenderProtocolNameMatches(value, "http/3") ||
         junkdatagramsenderProtocolNameMatches(value, "quic/http3"))
     {
@@ -66,16 +63,14 @@ static bool junkdatagramsenderProtocolFromName(const char *value, junkdatagramse
         return true;
     }
     if (junkdatagramsenderProtocolNameMatches(value, "rtp-rtcp-srtp") ||
-        junkdatagramsenderProtocolNameMatches(value, "rtp") ||
-        junkdatagramsenderProtocolNameMatches(value, "rtcp") ||
+        junkdatagramsenderProtocolNameMatches(value, "rtp") || junkdatagramsenderProtocolNameMatches(value, "rtcp") ||
         junkdatagramsenderProtocolNameMatches(value, "srtp"))
     {
         *protocol = kJunkDatagramSenderProtocolRtpRtcpSrtp;
         return true;
     }
     if (junkdatagramsenderProtocolNameMatches(value, "stun-turn-ice") ||
-        junkdatagramsenderProtocolNameMatches(value, "stun") ||
-        junkdatagramsenderProtocolNameMatches(value, "turn") ||
+        junkdatagramsenderProtocolNameMatches(value, "stun") || junkdatagramsenderProtocolNameMatches(value, "turn") ||
         junkdatagramsenderProtocolNameMatches(value, "ice"))
     {
         *protocol = kJunkDatagramSenderProtocolStunTurnIce;
@@ -101,6 +96,11 @@ static bool junkdatagramsenderProtocolFromName(const char *value, junkdatagramse
         junkdatagramsenderProtocolNameMatches(value, "natt"))
     {
         *protocol = kJunkDatagramSenderProtocolIpsecNatt;
+        return true;
+    }
+    if (junkdatagramsenderProtocolNameMatches(value, "sip"))
+    {
+        *protocol = kJunkDatagramSenderProtocolSip;
         return true;
     }
     return false;
@@ -178,10 +178,7 @@ bool junkdatagramsenderLoadSettings(junkdatagramsender_tstate_t *ts, const cJSON
     int keep_ms    = 0;
 
     getIntFromJsonObjectOrDefault(&packet_min, settings, "packet-count-perline-min", packet_min);
-    if (! getIntFromJsonObjectOrDefault(&packet_max, settings, "packet-count-perline-maximum", packet_max))
-    {
-        getIntFromJsonObjectOrDefault(&packet_max, settings, "packet-count-perline-max", packet_max);
-    }
+    getIntFromJsonObjectOrDefault(&packet_max, settings, "packet-count-perline-max", packet_max);
     getIntFromJsonObjectOrDefault(&keep_ms, settings, "keep-sending-max-ms", 0);
 
     if (packet_min < 0)
@@ -191,17 +188,17 @@ bool junkdatagramsenderLoadSettings(junkdatagramsender_tstate_t *ts, const cJSON
     }
     if (packet_max < 0)
     {
-        LOGW("JunkDatagramSender: packet-count-perline-maximum was negative; clamping to 0");
+        LOGW("JunkDatagramSender: packet-count-perline-max was negative; clamping to 0");
         packet_max = 0;
     }
     if (packet_max < packet_min)
     {
-        LOGW("JunkDatagramSender: packet-count-perline-maximum is lower than min; clamping maximum to min");
+        LOGW("JunkDatagramSender: packet-count-perline-max is lower than min; clamping max to min");
         packet_max = packet_min;
     }
     if (packet_max > kJunkDatagramSenderMaxPacketsPerLine)
     {
-        LOGW("JunkDatagramSender: packet-count-perline-maximum exceeds %u; clamping",
+        LOGW("JunkDatagramSender: packet-count-perline-max exceeds %u; clamping",
              (unsigned int) kJunkDatagramSenderMaxPacketsPerLine);
         packet_max = kJunkDatagramSenderMaxPacketsPerLine;
     }

@@ -2,23 +2,23 @@
 
 enum
 {
-    kDnsHeaderSize     = 12,
-    kDnsQuestionTail   = 4,
-    kDnsMaxWireNameLen = 255,
-    kDnsClassIn        = 1,
-    kDnsTypeA          = 1,
-    kDnsTypeNs         = 2,
-    kDnsTypeCname      = 5,
-    kDnsTypeSoa        = 6,
-    kDnsTypePtr        = 12,
-    kDnsTypeMx         = 15,
-    kDnsTypeTxt        = 16,
-    kDnsTypeAaaa       = 28,
-    kDnsTypeSrv        = 33,
-    kDnsTypeSvcb       = 64,
-    kDnsTypeHttps      = 65,
-    kDnsTypeAny        = 255,
-    kDnsTypeOpt        = 41,
+    kDnsHeaderSize           = 12,
+    kDnsQuestionTail         = 4,
+    kDnsMaxWireNameLen       = 255,
+    kDnsClassIn              = 1,
+    kDnsTypeA                = 1,
+    kDnsTypeNs               = 2,
+    kDnsTypeCname            = 5,
+    kDnsTypeSoa              = 6,
+    kDnsTypePtr              = 12,
+    kDnsTypeMx               = 15,
+    kDnsTypeTxt              = 16,
+    kDnsTypeAaaa             = 28,
+    kDnsTypeSrv              = 33,
+    kDnsTypeSvcb             = 64,
+    kDnsTypeHttps            = 65,
+    kDnsTypeAny              = 255,
+    kDnsTypeOpt              = 41,
     kDnsFlagRecursionDesired = 0x0100
 };
 
@@ -147,18 +147,14 @@ static bool junkdatagramsenderDnsBuildQuery(sbuf_t *buf, uint16_t id, const char
         return false;
     }
 
-    if (! junkdatagramsenderDnsPutU16(&writer, id) ||
-        ! junkdatagramsenderDnsPutU16(&writer, flags) ||
-        ! junkdatagramsenderDnsPutU16(&writer, 1) ||
-        ! junkdatagramsenderDnsPutU16(&writer, 0) ||
-        ! junkdatagramsenderDnsPutU16(&writer, 0) ||
-        ! junkdatagramsenderDnsPutU16(&writer, arcount))
+    if (! junkdatagramsenderDnsPutU16(&writer, id) || ! junkdatagramsenderDnsPutU16(&writer, flags) ||
+        ! junkdatagramsenderDnsPutU16(&writer, 1) || ! junkdatagramsenderDnsPutU16(&writer, 0) ||
+        ! junkdatagramsenderDnsPutU16(&writer, 0) || ! junkdatagramsenderDnsPutU16(&writer, arcount))
     {
         return false;
     }
 
-    if (! junkdatagramsenderDnsPutQname(&writer, qname) ||
-        ! junkdatagramsenderDnsPutU16(&writer, qtype) ||
+    if (! junkdatagramsenderDnsPutQname(&writer, qname) || ! junkdatagramsenderDnsPutU16(&writer, qtype) ||
         ! junkdatagramsenderDnsPutU16(&writer, qclass))
     {
         return false;
@@ -171,10 +167,8 @@ static bool junkdatagramsenderDnsBuildQuery(sbuf_t *buf, uint16_t id, const char
             edns_udp_size = 512;
         }
 
-        if (! junkdatagramsenderDnsPutU8(&writer, 0) ||
-            ! junkdatagramsenderDnsPutU16(&writer, kDnsTypeOpt) ||
-            ! junkdatagramsenderDnsPutU16(&writer, edns_udp_size) ||
-            ! junkdatagramsenderDnsPutU32(&writer, 0) ||
+        if (! junkdatagramsenderDnsPutU8(&writer, 0) || ! junkdatagramsenderDnsPutU16(&writer, kDnsTypeOpt) ||
+            ! junkdatagramsenderDnsPutU16(&writer, edns_udp_size) || ! junkdatagramsenderDnsPutU32(&writer, 0) ||
             ! junkdatagramsenderDnsPutU16(&writer, 0))
         {
             return false;
@@ -188,7 +182,6 @@ static bool junkdatagramsenderDnsBuildQuery(sbuf_t *buf, uint16_t id, const char
 static const char *junkdatagramsenderDnsRandomBaseDomain(void)
 {
     static const char *domains[] = {
-        "example.com",
         "cloudflare.com",
         "google.com",
         "microsoft.com",
@@ -198,6 +191,7 @@ static const char *junkdatagramsenderDnsRandomBaseDomain(void)
         "ubuntu.com",
         "debian.org",
         "iana.org",
+        "mozilla.org",
     };
 
     return domains[fastRand32() % (sizeof(domains) / sizeof(domains[0]))];

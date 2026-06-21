@@ -8,30 +8,30 @@ enum
     kDhcpv4MsgRelease  = 7,
     kDhcpv4MsgInform   = 8,
 
-    kDhcpv4OptSubnetMask      = 1,
-    kDhcpv4OptRouter          = 3,
-    kDhcpv4OptDns             = 6,
-    kDhcpv4OptHostName        = 12,
-    kDhcpv4OptDomainName      = 15,
-    kDhcpv4OptBroadcastAddr   = 28,
-    kDhcpv4OptRequestedIp     = 50,
-    kDhcpv4OptLeaseTime       = 51,
-    kDhcpv4OptMessageType     = 53,
-    kDhcpv4OptServerId        = 54,
-    kDhcpv4OptParameterList   = 55,
-    kDhcpv4OptMaxMessageSize  = 57,
-    kDhcpv4OptRenewalTime     = 58,
-    kDhcpv4OptRebindingTime   = 59,
-    kDhcpv4OptClientId        = 61,
-    kDhcpv4OptEnd             = 255,
+    kDhcpv4OptSubnetMask     = 1,
+    kDhcpv4OptRouter         = 3,
+    kDhcpv4OptDns            = 6,
+    kDhcpv4OptHostName       = 12,
+    kDhcpv4OptDomainName     = 15,
+    kDhcpv4OptBroadcastAddr  = 28,
+    kDhcpv4OptRequestedIp    = 50,
+    kDhcpv4OptLeaseTime      = 51,
+    kDhcpv4OptMessageType    = 53,
+    kDhcpv4OptServerId       = 54,
+    kDhcpv4OptParameterList  = 55,
+    kDhcpv4OptMaxMessageSize = 57,
+    kDhcpv4OptRenewalTime    = 58,
+    kDhcpv4OptRebindingTime  = 59,
+    kDhcpv4OptClientId       = 61,
+    kDhcpv4OptEnd            = 255,
 
-    kDhcpv4HtypeEthernet = 1,
-    kDhcpv4HlenEthernet  = 6,
-    kDhcpv4BootRequest   = 1,
-    kDhcpv4MagicCookie   = 0x63825363U,
-    kDhcpv4MinPacketSize = 300,
+    kDhcpv4HtypeEthernet  = 1,
+    kDhcpv4HlenEthernet   = 6,
+    kDhcpv4BootRequest    = 1,
+    kDhcpv4MagicCookie    = 0x63825363U,
+    kDhcpv4MinPacketSize  = 300,
     kDhcpv4FixedHeaderLen = 236,
-    kDhcpv4BroadcastFlag = 0x8000
+    kDhcpv4BroadcastFlag  = 0x8000
 };
 
 typedef struct junkdatagramsender_dhcp_writer_s
@@ -88,8 +88,7 @@ static bool junkdatagramsenderDhcpPutU32(junkdatagramsender_dhcp_writer_t *write
 static bool junkdatagramsenderDhcpPutOption(junkdatagramsender_dhcp_writer_t *writer, uint8_t code, const void *data,
                                             uint8_t data_len)
 {
-    return junkdatagramsenderDhcpPutU8(writer, code) &&
-           junkdatagramsenderDhcpPutU8(writer, data_len) &&
+    return junkdatagramsenderDhcpPutU8(writer, code) && junkdatagramsenderDhcpPutU8(writer, data_len) &&
            junkdatagramsenderDhcpPutBytes(writer, data, data_len);
 }
 
@@ -242,12 +241,11 @@ static uint8_t junkdatagramsenderDhcpRandomParameterRequestList(uint8_t prl[12])
 }
 
 static bool junkdatagramsenderDhcpBuildClientMessage(sbuf_t *buf, uint8_t dhcp_message_type, uint32_t xid,
-                                                     const uint8_t client_mac[6], uint16_t secs,
-                                                     bool broadcast_flag, const uint8_t ciaddr[4],
-                                                     const uint8_t requested_ip[4],
+                                                     const uint8_t client_mac[6], uint16_t secs, bool broadcast_flag,
+                                                     const uint8_t ciaddr[4], const uint8_t requested_ip[4],
                                                      const uint8_t server_identifier[4], const char *hostname,
                                                      const uint8_t *parameter_request_list,
-                                                     uint8_t parameter_request_list_len)
+                                                     uint8_t        parameter_request_list_len)
 {
     junkdatagramsender_dhcp_writer_t writer = {
         .buf      = buf,
@@ -266,10 +264,8 @@ static bool junkdatagramsenderDhcpBuildClientMessage(sbuf_t *buf, uint8_t dhcp_m
 
     if (! junkdatagramsenderDhcpPutU8(&writer, kDhcpv4BootRequest) ||
         ! junkdatagramsenderDhcpPutU8(&writer, kDhcpv4HtypeEthernet) ||
-        ! junkdatagramsenderDhcpPutU8(&writer, kDhcpv4HlenEthernet) ||
-        ! junkdatagramsenderDhcpPutU8(&writer, 0) ||
-        ! junkdatagramsenderDhcpPutU32(&writer, xid) ||
-        ! junkdatagramsenderDhcpPutU16(&writer, secs) ||
+        ! junkdatagramsenderDhcpPutU8(&writer, kDhcpv4HlenEthernet) || ! junkdatagramsenderDhcpPutU8(&writer, 0) ||
+        ! junkdatagramsenderDhcpPutU32(&writer, xid) || ! junkdatagramsenderDhcpPutU16(&writer, secs) ||
         ! junkdatagramsenderDhcpPutU16(&writer, flags))
     {
         return false;
@@ -287,10 +283,8 @@ static bool junkdatagramsenderDhcpBuildClientMessage(sbuf_t *buf, uint8_t dhcp_m
         return false;
     }
 
-    if (! junkdatagramsenderDhcpPutU32(&writer, 0) ||
-        ! junkdatagramsenderDhcpPutU32(&writer, 0) ||
-        ! junkdatagramsenderDhcpPutU32(&writer, 0) ||
-        ! junkdatagramsenderDhcpPutBytes(&writer, client_mac, 6))
+    if (! junkdatagramsenderDhcpPutU32(&writer, 0) || ! junkdatagramsenderDhcpPutU32(&writer, 0) ||
+        ! junkdatagramsenderDhcpPutU32(&writer, 0) || ! junkdatagramsenderDhcpPutBytes(&writer, client_mac, 6))
     {
         return false;
     }
@@ -360,20 +354,19 @@ bool junkdatagramsenderDhcpGenerate(sbuf_t *buf, const junkdatagramsender_module
 {
     discard args;
 
-    uint8_t mac[6];
-    uint8_t prl[12];
-    char    hostname[32];
+    uint8_t                              mac[6];
+    uint8_t                              prl[12];
+    char                                 hostname[32];
     junkdatagramsender_dhcp_ipv4_tuple_t tuple;
 
     junkdatagramsenderDhcpRandomMac(mac);
     junkdatagramsenderDhcpRandomIpv4Tuple(&tuple);
 
-    uint8_t     msg_type = junkdatagramsenderDhcpRandomMessageType();
+    uint8_t     msg_type          = junkdatagramsenderDhcpRandomMessageType();
     const bool  selecting_request = msg_type == kDhcpv4MsgRequest && (fastRand32() % 2U) == 0;
     const bool  include_hostname  = (fastRand32() % 100U) < 85U;
-    const char *host =
-        include_hostname ? junkdatagramsenderDhcpRandomHostname(hostname, sizeof(hostname)) : NULL;
-    uint8_t prl_len = junkdatagramsenderDhcpRandomParameterRequestList(prl);
+    const char *host    = include_hostname ? junkdatagramsenderDhcpRandomHostname(hostname, sizeof(hostname)) : NULL;
+    uint8_t     prl_len = junkdatagramsenderDhcpRandomParameterRequestList(prl);
 
     const uint8_t *ciaddr            = NULL;
     const uint8_t *requested_ip      = NULL;
@@ -421,8 +414,7 @@ bool junkdatagramsenderDhcpGenerate(sbuf_t *buf, const junkdatagramsender_module
                                                     fastRand32(),
                                                     mac,
                                                     (uint16_t) (fastRand32() % 8U),
-                                                    msg_type == kDhcpv4MsgDiscover ||
-                                                        ((fastRand32() % 100U) < 30U),
+                                                    msg_type == kDhcpv4MsgDiscover || ((fastRand32() % 100U) < 30U),
                                                     ciaddr,
                                                     requested_ip,
                                                     server_identifier,

@@ -3,34 +3,34 @@
 enum
 {
     kIpsecNattNonEspMarkerLen = 4,
-    kIpsecNattIkev2HeaderLen = 28,
-    kIpsecNattEspHeaderLen = 8,
+    kIpsecNattIkev2HeaderLen  = 28,
+    kIpsecNattEspHeaderLen    = 8,
 
-    kIkev2PayloadNone = 0,
-    kIkev2PayloadSa = 33,
-    kIkev2PayloadKe = 34,
-    kIkev2PayloadNonce = 40,
-    kIkev2PayloadNotify = 41,
+    kIkev2PayloadNone     = 0,
+    kIkev2PayloadSa       = 33,
+    kIkev2PayloadKe       = 34,
+    kIkev2PayloadNonce    = 40,
+    kIkev2PayloadNotify   = 41,
     kIkev2PayloadVendorId = 43,
-    kIkev2PayloadSk = 46,
+    kIkev2PayloadSk       = 46,
 
-    kIkev2ExchangeSaInit = 34,
+    kIkev2ExchangeSaInit        = 34,
     kIkev2ExchangeInformational = 37,
-    kIkev2Version = 0x20,
-    kIkev2FlagInitiator = 0x08,
+    kIkev2Version               = 0x20,
+    kIkev2FlagInitiator         = 0x08,
 
-    kIkev2ProtocolIke = 1,
-    kIkev2TransformTypeEncr = 1,
-    kIkev2TransformTypePrf = 2,
-    kIkev2TransformTypeInteg = 3,
-    kIkev2TransformTypeDh = 4,
-    kIkev2TransformEncrAesCbc = 12,
-    kIkev2TransformPrfHmacSha2_256 = 5,
+    kIkev2ProtocolIke                    = 1,
+    kIkev2TransformTypeEncr              = 1,
+    kIkev2TransformTypePrf               = 2,
+    kIkev2TransformTypeInteg             = 3,
+    kIkev2TransformTypeDh                = 4,
+    kIkev2TransformEncrAesCbc            = 12,
+    kIkev2TransformPrfHmacSha2_256       = 5,
     kIkev2TransformIntegHmacSha2_256_128 = 12,
-    kIkev2TransformDhGroupEcp256 = 19,
-    kIkev2TransformAttrKeyLength = 14,
+    kIkev2TransformDhGroupEcp256         = 19,
+    kIkev2TransformAttrKeyLength         = 14,
 
-    kIkev2NotifyNatDetectionSourceIp = 16388,
+    kIkev2NotifyNatDetectionSourceIp      = 16388,
     kIkev2NotifyNatDetectionDestinationIp = 16389,
 };
 
@@ -65,8 +65,7 @@ static bool junkdatagramsenderIpsecCanWrite(const junkdatagramsender_ipsec_write
     return writer->pos <= writer->capacity && len <= writer->capacity - writer->pos;
 }
 
-static bool junkdatagramsenderIpsecPutBytes(junkdatagramsender_ipsec_writer_t *writer, const void *src,
-                                            uint32_t len)
+static bool junkdatagramsenderIpsecPutBytes(junkdatagramsender_ipsec_writer_t *writer, const void *src, uint32_t len)
 {
     if (! junkdatagramsenderIpsecCanWrite(writer, len) || (len > 0 && src == NULL))
     {
@@ -119,8 +118,7 @@ static bool junkdatagramsenderIpsecPutU64(junkdatagramsender_ipsec_writer_t *wri
     return junkdatagramsenderIpsecPutBytes(writer, &network_value, sizeof(network_value));
 }
 
-static bool junkdatagramsenderIpsecPatchU16(junkdatagramsender_ipsec_writer_t *writer, uint32_t offset,
-                                            uint16_t value)
+static bool junkdatagramsenderIpsecPatchU16(junkdatagramsender_ipsec_writer_t *writer, uint32_t offset, uint16_t value)
 {
     uint16_t network_value = htobe16(value);
     if (offset > writer->pos || sizeof(network_value) > writer->pos - offset)
@@ -132,8 +130,7 @@ static bool junkdatagramsenderIpsecPatchU16(junkdatagramsender_ipsec_writer_t *w
     return true;
 }
 
-static bool junkdatagramsenderIpsecPatchU32(junkdatagramsender_ipsec_writer_t *writer, uint32_t offset,
-                                            uint32_t value)
+static bool junkdatagramsenderIpsecPatchU32(junkdatagramsender_ipsec_writer_t *writer, uint32_t offset, uint32_t value)
 {
     uint32_t network_value = htobe32(value);
     if (offset > writer->pos || sizeof(network_value) > writer->pos - offset)
@@ -154,8 +151,7 @@ static uint32_t junkdatagramsenderIpsecRandomNonZeroU32(void)
 static bool junkdatagramsenderIpsecBeginPayload(junkdatagramsender_ipsec_writer_t *writer, uint8_t next_payload,
                                                 uint32_t *length_offset, uint32_t *body_offset)
 {
-    if (! junkdatagramsenderIpsecPutU8(writer, next_payload) ||
-        ! junkdatagramsenderIpsecPutU8(writer, 0))
+    if (! junkdatagramsenderIpsecPutU8(writer, next_payload) || ! junkdatagramsenderIpsecPutU8(writer, 0))
     {
         return false;
     }
@@ -170,8 +166,8 @@ static bool junkdatagramsenderIpsecBeginPayload(junkdatagramsender_ipsec_writer_
     return true;
 }
 
-static bool junkdatagramsenderIpsecEndPayload(junkdatagramsender_ipsec_writer_t *writer,
-                                              uint32_t length_offset, uint32_t payload_start)
+static bool junkdatagramsenderIpsecEndPayload(junkdatagramsender_ipsec_writer_t *writer, uint32_t length_offset,
+                                              uint32_t payload_start)
 {
     uint32_t payload_len = writer->pos - payload_start;
     if (payload_len > UINT16_MAX)
@@ -182,25 +178,21 @@ static bool junkdatagramsenderIpsecEndPayload(junkdatagramsender_ipsec_writer_t 
 }
 
 static bool junkdatagramsenderIpsecPutTransform(junkdatagramsender_ipsec_writer_t *writer, uint8_t next_transform,
-                                                uint8_t transform_type, uint16_t transform_id,
-                                                bool add_key_length)
+                                                uint8_t transform_type, uint16_t transform_id, bool add_key_length)
 {
     uint32_t transform_start = writer->pos;
-    uint16_t transform_len = add_key_length ? 12 : 8;
+    uint16_t transform_len   = add_key_length ? 12 : 8;
 
-    if (! junkdatagramsenderIpsecPutU8(writer, next_transform) ||
-        ! junkdatagramsenderIpsecPutU8(writer, 0) ||
+    if (! junkdatagramsenderIpsecPutU8(writer, next_transform) || ! junkdatagramsenderIpsecPutU8(writer, 0) ||
         ! junkdatagramsenderIpsecPutU16(writer, transform_len) ||
-        ! junkdatagramsenderIpsecPutU8(writer, transform_type) ||
-        ! junkdatagramsenderIpsecPutU8(writer, 0) ||
+        ! junkdatagramsenderIpsecPutU8(writer, transform_type) || ! junkdatagramsenderIpsecPutU8(writer, 0) ||
         ! junkdatagramsenderIpsecPutU16(writer, transform_id))
     {
         return false;
     }
 
-    if (add_key_length &&
-        (! junkdatagramsenderIpsecPutU16(writer, UINT16_C(0x8000) | kIkev2TransformAttrKeyLength) ||
-         ! junkdatagramsenderIpsecPutU16(writer, 128)))
+    if (add_key_length && (! junkdatagramsenderIpsecPutU16(writer, UINT16_C(0x8000) | kIkev2TransformAttrKeyLength) ||
+                           ! junkdatagramsenderIpsecPutU16(writer, 128)))
     {
         return false;
     }
@@ -210,47 +202,39 @@ static bool junkdatagramsenderIpsecPutTransform(junkdatagramsender_ipsec_writer_
 
 static bool junkdatagramsenderIpsecPutSaPayloadBody(junkdatagramsender_ipsec_writer_t *writer)
 {
-    uint32_t proposal_start = writer->pos;
+    uint32_t proposal_start      = writer->pos;
     uint32_t proposal_len_offset = 0;
 
-    if (! junkdatagramsenderIpsecPutU8(writer, 0) ||
-        ! junkdatagramsenderIpsecPutU8(writer, 0))
+    if (! junkdatagramsenderIpsecPutU8(writer, 0) || ! junkdatagramsenderIpsecPutU8(writer, 0))
     {
         return false;
     }
 
     proposal_len_offset = writer->pos;
-    if (! junkdatagramsenderIpsecPutU16(writer, 0) ||
-        ! junkdatagramsenderIpsecPutU8(writer, 1) ||
-        ! junkdatagramsenderIpsecPutU8(writer, kIkev2ProtocolIke) ||
-        ! junkdatagramsenderIpsecPutU8(writer, 0) ||
+    if (! junkdatagramsenderIpsecPutU16(writer, 0) || ! junkdatagramsenderIpsecPutU8(writer, 1) ||
+        ! junkdatagramsenderIpsecPutU8(writer, kIkev2ProtocolIke) || ! junkdatagramsenderIpsecPutU8(writer, 0) ||
         ! junkdatagramsenderIpsecPutU8(writer, 4))
     {
         return false;
     }
 
-    if (! junkdatagramsenderIpsecPutTransform(
-            writer, 3, kIkev2TransformTypeEncr, kIkev2TransformEncrAesCbc, true) ||
+    if (! junkdatagramsenderIpsecPutTransform(writer, 3, kIkev2TransformTypeEncr, kIkev2TransformEncrAesCbc, true) ||
         ! junkdatagramsenderIpsecPutTransform(
             writer, 3, kIkev2TransformTypePrf, kIkev2TransformPrfHmacSha2_256, false) ||
         ! junkdatagramsenderIpsecPutTransform(
             writer, 3, kIkev2TransformTypeInteg, kIkev2TransformIntegHmacSha2_256_128, false) ||
-        ! junkdatagramsenderIpsecPutTransform(
-            writer, 0, kIkev2TransformTypeDh, kIkev2TransformDhGroupEcp256, false))
+        ! junkdatagramsenderIpsecPutTransform(writer, 0, kIkev2TransformTypeDh, kIkev2TransformDhGroupEcp256, false))
     {
         return false;
     }
 
-    return junkdatagramsenderIpsecPatchU16(writer,
-                                           proposal_len_offset,
-                                           (uint16_t) (writer->pos - proposal_start));
+    return junkdatagramsenderIpsecPatchU16(writer, proposal_len_offset, (uint16_t) (writer->pos - proposal_start));
 }
 
 static bool junkdatagramsenderIpsecPutKePayloadBody(junkdatagramsender_ipsec_writer_t *writer)
 {
     return junkdatagramsenderIpsecPutU16(writer, kIkev2TransformDhGroupEcp256) &&
-           junkdatagramsenderIpsecPutU16(writer, 0) &&
-           junkdatagramsenderIpsecPutRandom(writer, 64);
+           junkdatagramsenderIpsecPutU16(writer, 0) && junkdatagramsenderIpsecPutRandom(writer, 64);
 }
 
 static bool junkdatagramsenderIpsecPutNoncePayloadBody(junkdatagramsender_ipsec_writer_t *writer)
@@ -258,13 +242,10 @@ static bool junkdatagramsenderIpsecPutNoncePayloadBody(junkdatagramsender_ipsec_
     return junkdatagramsenderIpsecPutRandom(writer, junkdatagramsenderIpsecRandomRange(20, 32));
 }
 
-static bool junkdatagramsenderIpsecPutNotifyPayloadBody(junkdatagramsender_ipsec_writer_t *writer,
-                                                        uint16_t notify_type)
+static bool junkdatagramsenderIpsecPutNotifyPayloadBody(junkdatagramsender_ipsec_writer_t *writer, uint16_t notify_type)
 {
-    return junkdatagramsenderIpsecPutU8(writer, kIkev2ProtocolIke) &&
-           junkdatagramsenderIpsecPutU8(writer, 0) &&
-           junkdatagramsenderIpsecPutU16(writer, notify_type) &&
-           junkdatagramsenderIpsecPutRandom(writer, 20);
+    return junkdatagramsenderIpsecPutU8(writer, kIkev2ProtocolIke) && junkdatagramsenderIpsecPutU8(writer, 0) &&
+           junkdatagramsenderIpsecPutU16(writer, notify_type) && junkdatagramsenderIpsecPutRandom(writer, 20);
 }
 
 static bool junkdatagramsenderIpsecPutVendorIdPayloadBody(junkdatagramsender_ipsec_writer_t *writer)
@@ -294,12 +275,11 @@ static bool junkdatagramsenderIpsecPutPayload(junkdatagramsender_ipsec_writer_t 
 {
     uint32_t payload_start = writer->pos;
     uint32_t length_offset = 0;
-    uint32_t body_offset = 0;
+    uint32_t body_offset   = 0;
 
     discard body_offset;
 
-    if (! junkdatagramsenderIpsecBeginPayload(writer, next_payload, &length_offset, &body_offset) ||
-        ! put_body(writer))
+    if (! junkdatagramsenderIpsecBeginPayload(writer, next_payload, &length_offset, &body_offset) || ! put_body(writer))
     {
         return false;
     }
@@ -317,13 +297,12 @@ static bool junkdatagramsenderIpsecPutNatDestinationNotify(junkdatagramsender_ip
     return junkdatagramsenderIpsecPutNotifyPayloadBody(writer, kIkev2NotifyNatDetectionDestinationIp);
 }
 
-static bool junkdatagramsenderIpsecBuildIkev2Header(junkdatagramsender_ipsec_writer_t *writer,
-                                                    uint8_t first_payload, uint8_t exchange_type,
-                                                    uint32_t message_id, uint32_t *length_offset,
+static bool junkdatagramsenderIpsecBuildIkev2Header(junkdatagramsender_ipsec_writer_t *writer, uint8_t first_payload,
+                                                    uint8_t exchange_type, uint32_t message_id, uint32_t *length_offset,
                                                     bool responder_spi)
 {
     uint64_t initiator_spi = (((uint64_t) fastRand32()) << 32U) | fastRand32();
-    uint64_t response_spi = responder_spi ? ((((uint64_t) fastRand32()) << 32U) | fastRand32()) : 0;
+    uint64_t response_spi  = responder_spi ? ((((uint64_t) fastRand32()) << 32U) | fastRand32()) : 0;
 
     if (initiator_spi == 0)
     {
@@ -349,8 +328,8 @@ static bool junkdatagramsenderIpsecBuildIkev2Header(junkdatagramsender_ipsec_wri
     return junkdatagramsenderIpsecPutU32(writer, 0);
 }
 
-static bool junkdatagramsenderIpsecFinishIkev2Message(junkdatagramsender_ipsec_writer_t *writer,
-                                                      uint32_t ike_start, uint32_t length_offset)
+static bool junkdatagramsenderIpsecFinishIkev2Message(junkdatagramsender_ipsec_writer_t *writer, uint32_t ike_start,
+                                                      uint32_t length_offset)
 {
     uint32_t ike_len = writer->pos - ike_start;
     if (! junkdatagramsenderIpsecPatchU32(writer, length_offset, ike_len))
@@ -364,19 +343,17 @@ static bool junkdatagramsenderIpsecFinishIkev2Message(junkdatagramsender_ipsec_w
 
 static bool junkdatagramsenderIpsecBuildIkeSaInit(sbuf_t *buf, uint32_t write_limit)
 {
-    junkdatagramsender_ipsec_writer_t writer = {.buf = buf, .pos = 0, .capacity = write_limit};
-    uint32_t ike_start = kIpsecNattNonEspMarkerLen;
-    uint32_t length_offset = 0;
+    junkdatagramsender_ipsec_writer_t writer        = {.buf = buf, .pos = 0, .capacity = write_limit};
+    uint32_t                          ike_start     = kIpsecNattNonEspMarkerLen;
+    uint32_t                          length_offset = 0;
 
     if (! junkdatagramsenderIpsecPutU32(&writer, 0) ||
         ! junkdatagramsenderIpsecBuildIkev2Header(
             &writer, kIkev2PayloadSa, kIkev2ExchangeSaInit, 0, &length_offset, false) ||
         ! junkdatagramsenderIpsecPutPayload(&writer, kIkev2PayloadKe, junkdatagramsenderIpsecPutSaPayloadBody) ||
         ! junkdatagramsenderIpsecPutPayload(&writer, kIkev2PayloadNonce, junkdatagramsenderIpsecPutKePayloadBody) ||
-        ! junkdatagramsenderIpsecPutPayload(
-            &writer, kIkev2PayloadNotify, junkdatagramsenderIpsecPutNoncePayloadBody) ||
-        ! junkdatagramsenderIpsecPutPayload(
-            &writer, kIkev2PayloadNotify, junkdatagramsenderIpsecPutNatSourceNotify) ||
+        ! junkdatagramsenderIpsecPutPayload(&writer, kIkev2PayloadNotify, junkdatagramsenderIpsecPutNoncePayloadBody) ||
+        ! junkdatagramsenderIpsecPutPayload(&writer, kIkev2PayloadNotify, junkdatagramsenderIpsecPutNatSourceNotify) ||
         ! junkdatagramsenderIpsecPutPayload(
             &writer, kIkev2PayloadVendorId, junkdatagramsenderIpsecPutNatDestinationNotify) ||
         ! junkdatagramsenderIpsecPutPayload(&writer, kIkev2PayloadNone, junkdatagramsenderIpsecPutVendorIdPayloadBody))
@@ -394,9 +371,9 @@ static bool junkdatagramsenderIpsecPutEncryptedPayloadBody(junkdatagramsender_ip
 
 static bool junkdatagramsenderIpsecBuildIkeInformational(sbuf_t *buf, uint32_t write_limit)
 {
-    junkdatagramsender_ipsec_writer_t writer = {.buf = buf, .pos = 0, .capacity = write_limit};
-    uint32_t ike_start = kIpsecNattNonEspMarkerLen;
-    uint32_t length_offset = 0;
+    junkdatagramsender_ipsec_writer_t writer        = {.buf = buf, .pos = 0, .capacity = write_limit};
+    uint32_t                          ike_start     = kIpsecNattNonEspMarkerLen;
+    uint32_t                          length_offset = 0;
 
     if (! junkdatagramsenderIpsecPutU32(&writer, 0) ||
         ! junkdatagramsenderIpsecBuildIkev2Header(&writer,
@@ -405,8 +382,7 @@ static bool junkdatagramsenderIpsecBuildIkeInformational(sbuf_t *buf, uint32_t w
                                                   junkdatagramsenderIpsecRandomRange(1, 32),
                                                   &length_offset,
                                                   true) ||
-        ! junkdatagramsenderIpsecPutPayload(
-            &writer, kIkev2PayloadNone, junkdatagramsenderIpsecPutEncryptedPayloadBody))
+        ! junkdatagramsenderIpsecPutPayload(&writer, kIkev2PayloadNone, junkdatagramsenderIpsecPutEncryptedPayloadBody))
     {
         return false;
     }
@@ -416,8 +392,8 @@ static bool junkdatagramsenderIpsecBuildIkeInformational(sbuf_t *buf, uint32_t w
 
 static bool junkdatagramsenderIpsecBuildEspInUdp(sbuf_t *buf, uint32_t write_limit)
 {
-    junkdatagramsender_ipsec_writer_t writer = {.buf = buf, .pos = 0, .capacity = write_limit};
-    uint32_t encrypted_len = junkdatagramsenderIpsecRandomRange(24, 192);
+    junkdatagramsender_ipsec_writer_t writer        = {.buf = buf, .pos = 0, .capacity = write_limit};
+    uint32_t                          encrypted_len = junkdatagramsenderIpsecRandomRange(24, 192);
 
     if (! junkdatagramsenderIpsecPutU32(&writer, junkdatagramsenderIpsecRandomNonZeroU32()) ||
         ! junkdatagramsenderIpsecPutU32(&writer, junkdatagramsenderIpsecRandomRange(1, 65535)) ||

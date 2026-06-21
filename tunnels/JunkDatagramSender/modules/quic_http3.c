@@ -2,46 +2,46 @@
 
 enum
 {
-    kQuicVersion1             = 0x00000001U,
-    kQuicLongHeaderFixedBit   = 0x40U,
-    kQuicLongHeaderBit        = 0x80U,
-    kQuicPacketTypeInitial    = 0x00U,
-    kQuicFramePadding         = 0x00U,
-    kQuicFrameCrypto          = 0x06U,
+    kQuicVersion1              = 0x00000001U,
+    kQuicLongHeaderFixedBit    = 0x40U,
+    kQuicLongHeaderBit         = 0x80U,
+    kQuicPacketTypeInitial     = 0x00U,
+    kQuicFramePadding          = 0x00U,
+    kQuicFrameCrypto           = 0x06U,
     kQuicMinClientInitialDgram = 1200U,
-    kQuicMaxConnectionIdLen   = 20U,
-    kQuicMaxTokenLen          = 32U,
+    kQuicMaxConnectionIdLen    = 20U,
+    kQuicMaxTokenLen           = 32U,
 
-    kTlsHandshakeClientHello  = 1,
-    kTlsLegacyVersionTls12    = 0x0303U,
-    kTlsVersionTls13          = 0x0304U,
-    kTlsCipherAes128GcmSha256 = 0x1301U,
-    kTlsCipherAes256GcmSha384 = 0x1302U,
-    kTlsCipherChacha20Poly1305Sha256 = 0x1303U,
-    kTlsGroupX25519           = 0x001DU,
-    kTlsGroupSecp256r1        = 0x0017U,
+    kTlsHandshakeClientHello          = 1,
+    kTlsLegacyVersionTls12            = 0x0303U,
+    kTlsVersionTls13                  = 0x0304U,
+    kTlsCipherAes128GcmSha256         = 0x1301U,
+    kTlsCipherAes256GcmSha384         = 0x1302U,
+    kTlsCipherChacha20Poly1305Sha256  = 0x1303U,
+    kTlsGroupX25519                   = 0x001DU,
+    kTlsGroupSecp256r1                = 0x0017U,
     kTlsSignatureEcdsaSecp256r1Sha256 = 0x0403U,
     kTlsSignatureRsaPssRsaeSha256     = 0x0804U,
     kTlsSignatureRsaPssRsaeSha384     = 0x0805U,
     kTlsSignatureRsaPssRsaeSha512     = 0x0806U,
 
-    kTlsExtServerName         = 0x0000U,
-    kTlsExtSupportedGroups    = 0x000AU,
-    kTlsExtSignatureAlgorithms = 0x000DU,
-    kTlsExtAlpn               = 0x0010U,
-    kTlsExtSupportedVersions  = 0x002BU,
-    kTlsExtPskKeyExchangeModes = 0x002DU,
-    kTlsExtKeyShare           = 0x0033U,
+    kTlsExtServerName              = 0x0000U,
+    kTlsExtSupportedGroups         = 0x000AU,
+    kTlsExtSignatureAlgorithms     = 0x000DU,
+    kTlsExtAlpn                    = 0x0010U,
+    kTlsExtSupportedVersions       = 0x002BU,
+    kTlsExtPskKeyExchangeModes     = 0x002DU,
+    kTlsExtKeyShare                = 0x0033U,
     kTlsExtQuicTransportParameters = 0x0039U,
 
-    kQuicTpMaxIdleTimeout     = 0x01U,
-    kQuicTpMaxUdpPayloadSize  = 0x03U,
-    kQuicTpInitialMaxData     = 0x04U,
-    kQuicTpInitialMaxStreamDataBidiLocal = 0x05U,
+    kQuicTpMaxIdleTimeout                 = 0x01U,
+    kQuicTpMaxUdpPayloadSize              = 0x03U,
+    kQuicTpInitialMaxData                 = 0x04U,
+    kQuicTpInitialMaxStreamDataBidiLocal  = 0x05U,
     kQuicTpInitialMaxStreamDataBidiRemote = 0x06U,
-    kQuicTpInitialMaxStreamsBidi = 0x08U,
-    kQuicTpInitialMaxStreamsUni  = 0x09U,
-    kQuicTpActiveConnectionIdLimit = 0x0EU,
+    kQuicTpInitialMaxStreamsBidi          = 0x08U,
+    kQuicTpInitialMaxStreamsUni           = 0x09U,
+    kQuicTpActiveConnectionIdLimit        = 0x0EU,
 };
 
 static const uint64_t kQuicVarintMax             = 4611686018427387903ULL;
@@ -133,8 +133,7 @@ static bool junkdatagramsenderQuicPutU64(junkdatagramsender_quic_writer_t *write
     return junkdatagramsenderQuicPutBytes(writer, &network_value, sizeof(network_value));
 }
 
-static bool junkdatagramsenderQuicBytesCanWrite(const junkdatagramsender_quic_bytes_writer_t *writer,
-                                                uint32_t len)
+static bool junkdatagramsenderQuicBytesCanWrite(const junkdatagramsender_quic_bytes_writer_t *writer, uint32_t len)
 {
     return writer->pos <= writer->capacity && len <= writer->capacity - writer->pos;
 }
@@ -281,8 +280,8 @@ static bool junkdatagramsenderQuicBytesPutVarint(junkdatagramsender_quic_bytes_w
     return false;
 }
 
-static bool junkdatagramsenderQuicPutPacketNumber(junkdatagramsender_quic_writer_t *writer,
-                                                  uint32_t packet_number, uint8_t packet_number_len)
+static bool junkdatagramsenderQuicPutPacketNumber(junkdatagramsender_quic_writer_t *writer, uint32_t packet_number,
+                                                  uint8_t packet_number_len)
 {
     if (packet_number_len < 1 || packet_number_len > 4)
     {
@@ -291,8 +290,7 @@ static bool junkdatagramsenderQuicPutPacketNumber(junkdatagramsender_quic_writer
 
     for (uint8_t i = packet_number_len; i > 0; --i)
     {
-        if (! junkdatagramsenderQuicPutU8(writer,
-                                          (uint8_t) ((packet_number >> (8U * (uint32_t) (i - 1U))) & 0xFFU)))
+        if (! junkdatagramsenderQuicPutU8(writer, (uint8_t) ((packet_number >> (8U * (uint32_t) (i - 1U))) & 0xFFU)))
         {
             return false;
         }
@@ -332,9 +330,9 @@ static bool junkdatagramsenderQuicTlsEndExtension(junkdatagramsender_quic_bytes_
 }
 
 static bool junkdatagramsenderQuicTlsPutServerNameExtension(junkdatagramsender_quic_bytes_writer_t *writer,
-                                                            const char *hostname)
+                                                            const char                             *hostname)
 {
-    uint32_t length_offset = 0;
+    uint32_t length_offset  = 0;
     uint32_t payload_offset = 0;
 
     size_t hostname_len = stringLength(hostname);
@@ -343,8 +341,7 @@ static bool junkdatagramsenderQuicTlsPutServerNameExtension(junkdatagramsender_q
         return false;
     }
 
-    if (! junkdatagramsenderQuicTlsBeginExtension(
-            writer, kTlsExtServerName, &length_offset, &payload_offset))
+    if (! junkdatagramsenderQuicTlsBeginExtension(writer, kTlsExtServerName, &length_offset, &payload_offset))
     {
         return false;
     }
@@ -362,11 +359,10 @@ static bool junkdatagramsenderQuicTlsPutServerNameExtension(junkdatagramsender_q
 
 static bool junkdatagramsenderQuicTlsPutSupportedGroupsExtension(junkdatagramsender_quic_bytes_writer_t *writer)
 {
-    uint32_t length_offset = 0;
+    uint32_t length_offset  = 0;
     uint32_t payload_offset = 0;
 
-    if (! junkdatagramsenderQuicTlsBeginExtension(
-            writer, kTlsExtSupportedGroups, &length_offset, &payload_offset))
+    if (! junkdatagramsenderQuicTlsBeginExtension(writer, kTlsExtSupportedGroups, &length_offset, &payload_offset))
     {
         return false;
     }
@@ -381,8 +377,7 @@ static bool junkdatagramsenderQuicTlsPutSupportedGroupsExtension(junkdatagramsen
     return junkdatagramsenderQuicTlsEndExtension(writer, length_offset, payload_offset);
 }
 
-static bool junkdatagramsenderQuicTlsPutSignatureAlgorithmsExtension(
-    junkdatagramsender_quic_bytes_writer_t *writer)
+static bool junkdatagramsenderQuicTlsPutSignatureAlgorithmsExtension(junkdatagramsender_quic_bytes_writer_t *writer)
 {
     static const uint16_t signature_algorithms[] = {
         kTlsSignatureEcdsaSecp256r1Sha256,
@@ -391,9 +386,9 @@ static bool junkdatagramsenderQuicTlsPutSignatureAlgorithmsExtension(
         kTlsSignatureRsaPssRsaeSha512,
     };
 
-    uint32_t length_offset = 0;
+    uint32_t length_offset  = 0;
     uint32_t payload_offset = 0;
-    uint16_t list_len = (uint16_t) (sizeof(signature_algorithms) / sizeof(signature_algorithms[0]) * 2U);
+    uint16_t list_len       = (uint16_t) (sizeof(signature_algorithms) / sizeof(signature_algorithms[0]) * 2U);
 
     if (! junkdatagramsenderQuicTlsBeginExtension(
             writer, kTlsExtSignatureAlgorithms, &length_offset, &payload_offset) ||
@@ -413,10 +408,9 @@ static bool junkdatagramsenderQuicTlsPutSignatureAlgorithmsExtension(
     return junkdatagramsenderQuicTlsEndExtension(writer, length_offset, payload_offset);
 }
 
-static bool junkdatagramsenderQuicTlsPutAlpnExtension(junkdatagramsender_quic_bytes_writer_t *writer,
-                                                      const char *alpn)
+static bool junkdatagramsenderQuicTlsPutAlpnExtension(junkdatagramsender_quic_bytes_writer_t *writer, const char *alpn)
 {
-    uint32_t length_offset = 0;
+    uint32_t length_offset  = 0;
     uint32_t payload_offset = 0;
 
     size_t alpn_len = stringLength(alpn);
@@ -440,20 +434,17 @@ static bool junkdatagramsenderQuicTlsPutAlpnExtension(junkdatagramsender_quic_by
     return junkdatagramsenderQuicTlsEndExtension(writer, length_offset, payload_offset);
 }
 
-static bool junkdatagramsenderQuicTlsPutSupportedVersionsExtension(
-    junkdatagramsender_quic_bytes_writer_t *writer)
+static bool junkdatagramsenderQuicTlsPutSupportedVersionsExtension(junkdatagramsender_quic_bytes_writer_t *writer)
 {
-    uint32_t length_offset = 0;
+    uint32_t length_offset  = 0;
     uint32_t payload_offset = 0;
 
-    if (! junkdatagramsenderQuicTlsBeginExtension(
-            writer, kTlsExtSupportedVersions, &length_offset, &payload_offset))
+    if (! junkdatagramsenderQuicTlsBeginExtension(writer, kTlsExtSupportedVersions, &length_offset, &payload_offset))
     {
         return false;
     }
 
-    if (! junkdatagramsenderQuicBytesPutU8(writer, 2) ||
-        ! junkdatagramsenderQuicBytesPutU16(writer, kTlsVersionTls13))
+    if (! junkdatagramsenderQuicBytesPutU8(writer, 2) || ! junkdatagramsenderQuicBytesPutU16(writer, kTlsVersionTls13))
     {
         return false;
     }
@@ -463,17 +454,15 @@ static bool junkdatagramsenderQuicTlsPutSupportedVersionsExtension(
 
 static bool junkdatagramsenderQuicTlsPutPskModesExtension(junkdatagramsender_quic_bytes_writer_t *writer)
 {
-    uint32_t length_offset = 0;
+    uint32_t length_offset  = 0;
     uint32_t payload_offset = 0;
 
-    if (! junkdatagramsenderQuicTlsBeginExtension(
-            writer, kTlsExtPskKeyExchangeModes, &length_offset, &payload_offset))
+    if (! junkdatagramsenderQuicTlsBeginExtension(writer, kTlsExtPskKeyExchangeModes, &length_offset, &payload_offset))
     {
         return false;
     }
 
-    if (! junkdatagramsenderQuicBytesPutU8(writer, 1) ||
-        ! junkdatagramsenderQuicBytesPutU8(writer, 1))
+    if (! junkdatagramsenderQuicBytesPutU8(writer, 1) || ! junkdatagramsenderQuicBytesPutU8(writer, 1))
     {
         return false;
     }
@@ -483,8 +472,8 @@ static bool junkdatagramsenderQuicTlsPutPskModesExtension(junkdatagramsender_qui
 
 static bool junkdatagramsenderQuicTlsPutKeyShareExtension(junkdatagramsender_quic_bytes_writer_t *writer)
 {
-    uint8_t key_share[32];
-    uint32_t length_offset = 0;
+    uint8_t  key_share[32];
+    uint32_t length_offset  = 0;
     uint32_t payload_offset = 0;
 
     getRandomBytes(key_share, sizeof(key_share));
@@ -505,10 +494,10 @@ static bool junkdatagramsenderQuicTlsPutKeyShareExtension(junkdatagramsender_qui
     return junkdatagramsenderQuicTlsEndExtension(writer, length_offset, payload_offset);
 }
 
-static bool junkdatagramsenderQuicBytesPutTransportParameterVarint(
-    junkdatagramsender_quic_bytes_writer_t *writer, uint64_t id, uint64_t value)
+static bool junkdatagramsenderQuicBytesPutTransportParameterVarint(junkdatagramsender_quic_bytes_writer_t *writer,
+                                                                   uint64_t id, uint64_t value)
 {
-    uint8_t value_bytes[8];
+    uint8_t                                value_bytes[8];
     junkdatagramsender_quic_bytes_writer_t value_writer = {
         .out      = value_bytes,
         .pos      = 0,
@@ -564,13 +553,12 @@ static bool junkdatagramsenderQuicBuildTransportParameters(uint8_t *out, uint32_
     return true;
 }
 
-static bool junkdatagramsenderQuicTlsPutTransportParametersExtension(
-    junkdatagramsender_quic_bytes_writer_t *writer)
+static bool junkdatagramsenderQuicTlsPutTransportParametersExtension(junkdatagramsender_quic_bytes_writer_t *writer)
 {
-    uint8_t transport_parameters[128];
+    uint8_t  transport_parameters[128];
     uint32_t transport_parameters_len = 0;
-    uint32_t length_offset = 0;
-    uint32_t payload_offset = 0;
+    uint32_t length_offset            = 0;
+    uint32_t payload_offset           = 0;
 
     if (! junkdatagramsenderQuicBuildTransportParameters(
             transport_parameters, sizeof(transport_parameters), &transport_parameters_len))
@@ -597,15 +585,15 @@ static bool junkdatagramsenderQuicBuildTlsClientHello(uint8_t *out, uint32_t out
         kTlsCipherChacha20Poly1305Sha256,
     };
 
-    uint8_t client_random[32];
-    uint32_t handshake_len_offset = 0;
-    uint32_t handshake_body_offset = 0;
-    uint32_t extensions_len_offset = 0;
-    uint32_t extensions_body_offset = 0;
-    junkdatagramsender_quic_bytes_writer_t writer = {
-        .out      = out,
-        .pos      = 0,
-        .capacity = out_len,
+    uint8_t                                client_random[32];
+    uint32_t                               handshake_len_offset   = 0;
+    uint32_t                               handshake_body_offset  = 0;
+    uint32_t                               extensions_len_offset  = 0;
+    uint32_t                               extensions_body_offset = 0;
+    junkdatagramsender_quic_bytes_writer_t writer                 = {
+                        .out      = out,
+                        .pos      = 0,
+                        .capacity = out_len,
     };
 
     getRandomBytes(client_random, sizeof(client_random));
@@ -638,8 +626,7 @@ static bool junkdatagramsenderQuicBuildTlsClientHello(uint8_t *out, uint32_t out
         }
     }
 
-    if (! junkdatagramsenderQuicBytesPutU8(&writer, 1) ||
-        ! junkdatagramsenderQuicBytesPutU8(&writer, 0))
+    if (! junkdatagramsenderQuicBytesPutU8(&writer, 1) || ! junkdatagramsenderQuicBytesPutU8(&writer, 0))
     {
         return false;
     }
@@ -664,12 +651,9 @@ static bool junkdatagramsenderQuicBuildTlsClientHello(uint8_t *out, uint32_t out
     }
 
     if (writer.pos - extensions_body_offset > UINT16_MAX ||
-        ! junkdatagramsenderQuicBytesPatchU16(&writer,
-                                              extensions_len_offset,
-                                              (uint16_t) (writer.pos - extensions_body_offset)) ||
-        ! junkdatagramsenderQuicBytesPatchU24(&writer,
-                                              handshake_len_offset,
-                                              writer.pos - handshake_body_offset))
+        ! junkdatagramsenderQuicBytesPatchU16(
+            &writer, extensions_len_offset, (uint16_t) (writer.pos - extensions_body_offset)) ||
+        ! junkdatagramsenderQuicBytesPatchU24(&writer, handshake_len_offset, writer.pos - handshake_body_offset))
     {
         return false;
     }
@@ -678,15 +662,10 @@ static bool junkdatagramsenderQuicBuildTlsClientHello(uint8_t *out, uint32_t out
     return true;
 }
 
-static bool junkdatagramsenderQuicBuildInitialLikeCryptoPacket(sbuf_t *buf, uint32_t write_limit,
-                                                               uint32_t min_datagram_size, uint32_t version,
-                                                               const uint8_t *dcid, uint8_t dcid_len,
-                                                               const uint8_t *scid, uint8_t scid_len,
-                                                               const uint8_t *token, uint32_t token_len,
-                                                               uint32_t packet_number,
-                                                               uint8_t packet_number_len,
-                                                               const uint8_t *crypto_data,
-                                                               uint32_t crypto_data_len)
+static bool junkdatagramsenderQuicBuildInitialLikeCryptoPacket(
+    sbuf_t *buf, uint32_t write_limit, uint32_t min_datagram_size, uint32_t version, const uint8_t *dcid,
+    uint8_t dcid_len, const uint8_t *scid, uint8_t scid_len, const uint8_t *token, uint32_t token_len,
+    uint32_t packet_number, uint8_t packet_number_len, const uint8_t *crypto_data, uint32_t crypto_data_len)
 {
     junkdatagramsender_quic_writer_t writer = {
         .buf      = buf,
@@ -694,10 +673,9 @@ static bool junkdatagramsenderQuicBuildInitialLikeCryptoPacket(sbuf_t *buf, uint
         .capacity = write_limit,
     };
 
-    if (dcid_len > kQuicMaxConnectionIdLen || scid_len > kQuicMaxConnectionIdLen ||
-        (dcid_len > 0 && dcid == NULL) || (scid_len > 0 && scid == NULL) ||
-        (token_len > 0 && token == NULL) || (crypto_data_len > 0 && crypto_data == NULL) ||
-        packet_number_len < 1 || packet_number_len > 4)
+    if (dcid_len > kQuicMaxConnectionIdLen || scid_len > kQuicMaxConnectionIdLen || (dcid_len > 0 && dcid == NULL) ||
+        (scid_len > 0 && scid == NULL) || (token_len > 0 && token == NULL) ||
+        (crypto_data_len > 0 && crypto_data == NULL) || packet_number_len < 1 || packet_number_len > 4)
     {
         return false;
     }
@@ -709,9 +687,8 @@ static bool junkdatagramsenderQuicBuildInitialLikeCryptoPacket(sbuf_t *buf, uint
         return false;
     }
 
-    uint32_t crypto_frame_len =
-        junkdatagramsenderQuicVarintLen(kQuicFrameCrypto) + junkdatagramsenderQuicVarintLen(0) +
-        crypto_len_varint_size + crypto_data_len;
+    uint32_t crypto_frame_len = junkdatagramsenderQuicVarintLen(kQuicFrameCrypto) + junkdatagramsenderQuicVarintLen(0) +
+                                crypto_len_varint_size + crypto_data_len;
     uint32_t payload_len        = crypto_frame_len;
     uint32_t length_field_value = packet_number_len + payload_len;
     uint32_t padding_len        = 0;
@@ -722,8 +699,8 @@ static bool junkdatagramsenderQuicBuildInitialLikeCryptoPacket(sbuf_t *buf, uint
         return false;
     }
 
-    uint32_t header_len = 1U + 4U + 1U + dcid_len + 1U + scid_len + token_varint_size + token_len +
-                          length_varint_size + packet_number_len;
+    uint32_t header_len = 1U + 4U + 1U + dcid_len + 1U + scid_len + token_varint_size + token_len + length_varint_size +
+                          packet_number_len;
     if (min_datagram_size > 0 && header_len + payload_len < min_datagram_size)
     {
         padding_len += min_datagram_size - (header_len + payload_len);
@@ -735,8 +712,8 @@ static bool junkdatagramsenderQuicBuildInitialLikeCryptoPacket(sbuf_t *buf, uint
         {
             return false;
         }
-        header_len = 1U + 4U + 1U + dcid_len + 1U + scid_len + token_varint_size + token_len +
-                     length_varint_size + packet_number_len;
+        header_len = 1U + 4U + 1U + dcid_len + 1U + scid_len + token_varint_size + token_len + length_varint_size +
+                     packet_number_len;
         if (header_len + payload_len < min_datagram_size)
         {
             uint32_t extra = min_datagram_size - (header_len + payload_len);
@@ -755,17 +732,14 @@ static bool junkdatagramsenderQuicBuildInitialLikeCryptoPacket(sbuf_t *buf, uint
                                       (uint8_t) (kQuicLongHeaderBit | kQuicLongHeaderFixedBit |
                                                  (kQuicPacketTypeInitial << 4U) |
                                                  ((packet_number_len - 1U) & 0x03U))) ||
-        ! junkdatagramsenderQuicPutU32(&writer, version) ||
-        ! junkdatagramsenderQuicPutU8(&writer, dcid_len) ||
-        ! junkdatagramsenderQuicPutBytes(&writer, dcid, dcid_len) ||
-        ! junkdatagramsenderQuicPutU8(&writer, scid_len) ||
+        ! junkdatagramsenderQuicPutU32(&writer, version) || ! junkdatagramsenderQuicPutU8(&writer, dcid_len) ||
+        ! junkdatagramsenderQuicPutBytes(&writer, dcid, dcid_len) || ! junkdatagramsenderQuicPutU8(&writer, scid_len) ||
         ! junkdatagramsenderQuicPutBytes(&writer, scid, scid_len) ||
         ! junkdatagramsenderQuicPutVarint(&writer, token_len) ||
         ! junkdatagramsenderQuicPutBytes(&writer, token, token_len) ||
         ! junkdatagramsenderQuicPutVarint(&writer, length_field_value) ||
         ! junkdatagramsenderQuicPutPacketNumber(&writer, packet_number, packet_number_len) ||
-        ! junkdatagramsenderQuicPutVarint(&writer, kQuicFrameCrypto) ||
-        ! junkdatagramsenderQuicPutVarint(&writer, 0) ||
+        ! junkdatagramsenderQuicPutVarint(&writer, kQuicFrameCrypto) || ! junkdatagramsenderQuicPutVarint(&writer, 0) ||
         ! junkdatagramsenderQuicPutVarint(&writer, crypto_data_len) ||
         ! junkdatagramsenderQuicPutBytes(&writer, crypto_data, crypto_data_len) ||
         ! junkdatagramsenderQuicPutZeros(&writer, padding_len))
@@ -788,7 +762,7 @@ static const char *junkdatagramsenderQuicRandomBaseDomain(void)
         "github.com",
         "fastly.net",
         "akamai.com",
-        "example.com",
+        "mozilla.org",
     };
 
     return domains[fastRand32() % (sizeof(domains) / sizeof(domains[0]))];
@@ -807,11 +781,8 @@ static const char *junkdatagramsenderQuicRandomHostname(char *buf, size_t buf_le
     const char *base = junkdatagramsenderQuicRandomBaseDomain();
     if ((fastRand32() % 100U) < 35U &&
         junkdatagramsenderQuicFormatFits(
-            stringNPrintf(buf,
-                          buf_len,
-                          "%s.%s",
-                          prefixes[fastRand32() % (sizeof(prefixes) / sizeof(prefixes[0]))],
-                          base),
+            stringNPrintf(
+                buf, buf_len, "%s.%s", prefixes[fastRand32() % (sizeof(prefixes) / sizeof(prefixes[0]))], base),
             buf_len))
     {
         return buf;
@@ -832,11 +803,11 @@ static uint8_t junkdatagramsenderQuicRandomPacketNumberLen(void)
 
 bool junkdatagramsenderQuicHttp3Generate(sbuf_t *buf, const junkdatagramsender_module_args_t *args)
 {
-    uint8_t dcid[kQuicMaxConnectionIdLen];
-    uint8_t scid[kQuicMaxConnectionIdLen];
-    uint8_t token[kQuicMaxTokenLen];
-    uint8_t client_hello[512];
-    char    hostname[96];
+    uint8_t  dcid[kQuicMaxConnectionIdLen];
+    uint8_t  scid[kQuicMaxConnectionIdLen];
+    uint8_t  token[kQuicMaxTokenLen];
+    uint8_t  client_hello[512];
+    char     hostname[96];
     uint32_t client_hello_len = 0;
 
     uint32_t write_limit = sbufGetMaximumWriteableSize(buf);
@@ -876,17 +847,17 @@ bool junkdatagramsenderQuicHttp3Generate(sbuf_t *buf, const junkdatagramsender_m
 
     sbufSetLength(buf, 0);
     return junkdatagramsenderQuicBuildInitialLikeCryptoPacket(buf,
-                                                             write_limit,
-                                                             min_datagram_size,
-                                                             kQuicVersion1,
-                                                             dcid,
-                                                             dcid_len,
-                                                             scid,
-                                                             scid_len,
-                                                             token_len > 0 ? token : NULL,
-                                                             token_len,
-                                                             fastRand32(),
-                                                             junkdatagramsenderQuicRandomPacketNumberLen(),
-                                                             client_hello,
-                                                             client_hello_len);
+                                                              write_limit,
+                                                              min_datagram_size,
+                                                              kQuicVersion1,
+                                                              dcid,
+                                                              dcid_len,
+                                                              scid,
+                                                              scid_len,
+                                                              token_len > 0 ? token : NULL,
+                                                              token_len,
+                                                              fastRand32(),
+                                                              junkdatagramsenderQuicRandomPacketNumberLen(),
+                                                              client_hello,
+                                                              client_hello_len);
 }

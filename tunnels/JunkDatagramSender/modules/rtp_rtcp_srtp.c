@@ -2,26 +2,26 @@
 
 enum
 {
-    kRtpVersion               = 2,
-    kRtpHeaderLen             = 12,
-    kRtpMaxCsrcCount          = 15,
-    kRtpPayloadTypeMax        = 127,
+    kRtpVersion                 = 2,
+    kRtpHeaderLen               = 12,
+    kRtpMaxCsrcCount            = 15,
+    kRtpPayloadTypeMax          = 127,
     kRtpExtensionProfileOneByte = 0xBEDE,
     kRtpExtensionProfileTwoByte = 0x1000,
 
-    kRtcpVersion              = 2,
-    kRtcpPtSenderReport       = 200,
-    kRtcpPtReceiverReport     = 201,
-    kRtcpPtSdes               = 202,
-    kRtcpPtBye                = 203,
-    kRtcpSdesEnd              = 0,
-    kRtcpSdesCname            = 1,
-    kRtcpReportBlockLen       = 24,
+    kRtcpVersion          = 2,
+    kRtcpPtSenderReport   = 200,
+    kRtcpPtReceiverReport = 201,
+    kRtcpPtSdes           = 202,
+    kRtcpPtBye            = 203,
+    kRtcpSdesEnd          = 0,
+    kRtcpSdesCname        = 1,
+    kRtcpReportBlockLen   = 24,
 
-    kSrtpAuthTagShortLen      = 4,
-    kSrtpAuthTagDefaultLen    = 10,
-    kSrtpAuthTagGcmLen        = 16,
-    kSrtpMaxMkiLen            = 4,
+    kSrtpAuthTagShortLen   = 4,
+    kSrtpAuthTagDefaultLen = 10,
+    kSrtpAuthTagGcmLen     = 16,
+    kSrtpMaxMkiLen         = 4,
 };
 
 typedef struct junkdatagramsender_rtp_writer_s
@@ -121,8 +121,8 @@ static bool junkdatagramsenderRtpPutU32(junkdatagramsender_rtp_writer_t *writer,
 static uint8_t junkdatagramsenderRtpRandomPayloadType(void)
 {
     static const uint8_t payload_types[] = {
-        0,   /* PCMU */
-        8,   /* PCMA */
+        0, /* PCMU */
+        8, /* PCMA */
         96,
         97,
         98,
@@ -137,7 +137,7 @@ static uint8_t junkdatagramsenderRtpRandomPayloadType(void)
 
 static uint8_t junkdatagramsenderRtpRandomCsrcList(uint32_t csrc_list[2])
 {
-    uint32_t roll = fastRand32() % 100U;
+    uint32_t roll  = fastRand32() % 100U;
     uint8_t  count = 0;
 
     if (roll >= 94U)
@@ -208,8 +208,8 @@ static bool junkdatagramsenderRtpBuildPacket(sbuf_t *buf, uint32_t write_limit, 
                                              uint8_t payload_type, uint16_t sequence_number, uint32_t timestamp,
                                              uint32_t ssrc, const uint32_t *csrc_list, uint8_t csrc_count,
                                              const uint8_t *extension_data, uint32_t extension_data_len,
-                                             uint16_t extension_profile, const uint8_t *payload,
-                                             uint32_t payload_len, uint8_t padding_count)
+                                             uint16_t extension_profile, const uint8_t *payload, uint32_t payload_len,
+                                             uint8_t padding_count)
 {
     junkdatagramsender_rtp_writer_t writer = {
         .buf      = buf,
@@ -218,10 +218,9 @@ static bool junkdatagramsenderRtpBuildPacket(sbuf_t *buf, uint32_t write_limit, 
     };
     bool has_extension = extension_data_len > 0;
 
-    if (payload_type > kRtpPayloadTypeMax || csrc_count > kRtpMaxCsrcCount ||
-        (csrc_count > 0 && csrc_list == NULL) || (payload_len > 0 && payload == NULL) ||
-        (has_extension && extension_data == NULL) || (extension_data_len % 4U) != 0 ||
-        (padding && padding_count == 0) || (! padding && padding_count != 0))
+    if (payload_type > kRtpPayloadTypeMax || csrc_count > kRtpMaxCsrcCount || (csrc_count > 0 && csrc_list == NULL) ||
+        (payload_len > 0 && payload == NULL) || (has_extension && extension_data == NULL) ||
+        (extension_data_len % 4U) != 0 || (padding && padding_count == 0) || (! padding && padding_count != 0))
     {
         return false;
     }
@@ -230,8 +229,7 @@ static bool junkdatagramsenderRtpBuildPacket(sbuf_t *buf, uint32_t write_limit, 
                                      (uint8_t) ((kRtpVersion << 6U) | (padding ? 0x20U : 0U) |
                                                 (has_extension ? 0x10U : 0U) | (csrc_count & 0x0FU))) ||
         ! junkdatagramsenderRtpPutU8(&writer, (uint8_t) ((marker ? 0x80U : 0U) | payload_type)) ||
-        ! junkdatagramsenderRtpPutU16(&writer, sequence_number) ||
-        ! junkdatagramsenderRtpPutU32(&writer, timestamp) ||
+        ! junkdatagramsenderRtpPutU16(&writer, sequence_number) || ! junkdatagramsenderRtpPutU32(&writer, timestamp) ||
         ! junkdatagramsenderRtpPutU32(&writer, ssrc))
     {
         return false;
@@ -247,8 +245,7 @@ static bool junkdatagramsenderRtpBuildPacket(sbuf_t *buf, uint32_t write_limit, 
 
     if (has_extension)
     {
-        if (extension_data_len / 4U > UINT16_MAX ||
-            ! junkdatagramsenderRtpPutU16(&writer, extension_profile) ||
+        if (extension_data_len / 4U > UINT16_MAX || ! junkdatagramsenderRtpPutU16(&writer, extension_profile) ||
             ! junkdatagramsenderRtpPutU16(&writer, (uint16_t) (extension_data_len / 4U)) ||
             ! junkdatagramsenderRtpPutBytes(&writer, extension_data, extension_data_len))
         {
@@ -286,13 +283,12 @@ static bool junkdatagramsenderRtcpPutHeader(junkdatagramsender_rtp_writer_t *wri
     }
 
     return junkdatagramsenderRtpPutU8(writer,
-                                      (uint8_t) ((kRtcpVersion << 6U) | (padding ? 0x20U : 0U) |
-                                                 (count & 0x1FU))) &&
+                                      (uint8_t) ((kRtcpVersion << 6U) | (padding ? 0x20U : 0U) | (count & 0x1FU))) &&
            junkdatagramsenderRtpPutU8(writer, packet_type) &&
            junkdatagramsenderRtpPutU16(writer, length_words_minus_one);
 }
 
-static bool junkdatagramsenderRtcpPutReportBlock(junkdatagramsender_rtp_writer_t *writer,
+static bool junkdatagramsenderRtcpPutReportBlock(junkdatagramsender_rtp_writer_t              *writer,
                                                  const junkdatagramsender_rtcp_report_block_t *report_block)
 {
     if (report_block == NULL || report_block->cumulative_lost_24bit > 0x00FFFFFFU)
@@ -314,13 +310,13 @@ static bool junkdatagramsenderRtcpPutReportBlock(junkdatagramsender_rtp_writer_t
 static void junkdatagramsenderRtcpRandomReportBlock(junkdatagramsender_rtcp_report_block_t *report_block)
 {
     *report_block = (junkdatagramsender_rtcp_report_block_t) {
-        .ssrc                 = fastRand32(),
-        .fraction_lost        = (uint8_t) ((fastRand32() % 100U) < 85U ? 0U : junkdatagramsenderRtpRandomRange(1, 10)),
+        .ssrc                  = fastRand32(),
+        .fraction_lost         = (uint8_t) ((fastRand32() % 100U) < 85U ? 0U : junkdatagramsenderRtpRandomRange(1, 10)),
         .cumulative_lost_24bit = (fastRand32() % 100U) < 85U ? 0U : junkdatagramsenderRtpRandomRange(1, 2000),
-        .extended_highest_seq = fastRand32(),
-        .jitter               = junkdatagramsenderRtpRandomRange(0, 4000),
-        .last_sr              = (fastRand32() % 100U) < 45U ? 0U : fastRand32(),
-        .delay_since_last_sr  = junkdatagramsenderRtpRandomRange(0, 65535),
+        .extended_highest_seq  = fastRand32(),
+        .jitter                = junkdatagramsenderRtpRandomRange(0, 4000),
+        .last_sr               = (fastRand32() % 100U) < 45U ? 0U : fastRand32(),
+        .delay_since_last_sr   = junkdatagramsenderRtpRandomRange(0, 65535),
     };
 }
 
@@ -345,7 +341,7 @@ static uint8_t junkdatagramsenderRtcpRandomReportBlockCount(uint32_t write_limit
 
 static bool junkdatagramsenderRtcpBuildReceiverReport(sbuf_t *buf, uint32_t write_limit, uint32_t sender_ssrc,
                                                       const junkdatagramsender_rtcp_report_block_t *report_blocks,
-                                                      uint8_t report_block_count)
+                                                      uint8_t                                       report_block_count)
 {
     junkdatagramsender_rtp_writer_t writer = {
         .buf      = buf,
@@ -364,11 +360,8 @@ static bool junkdatagramsenderRtcpBuildReceiverReport(sbuf_t *buf, uint32_t writ
         return false;
     }
 
-    if (! junkdatagramsenderRtcpPutHeader(&writer,
-                                          false,
-                                          report_block_count,
-                                          kRtcpPtReceiverReport,
-                                          (uint16_t) (total_len / 4U - 1U)) ||
+    if (! junkdatagramsenderRtcpPutHeader(
+            &writer, false, report_block_count, kRtcpPtReceiverReport, (uint16_t) (total_len / 4U - 1U)) ||
         ! junkdatagramsenderRtpPutU32(&writer, sender_ssrc))
     {
         return false;
@@ -389,9 +382,9 @@ static bool junkdatagramsenderRtcpBuildReceiverReport(sbuf_t *buf, uint32_t writ
 static bool junkdatagramsenderRtcpBuildSenderReport(sbuf_t *buf, uint32_t write_limit, uint32_t sender_ssrc,
                                                     uint32_t ntp_timestamp_msw, uint32_t ntp_timestamp_lsw,
                                                     uint32_t rtp_timestamp, uint32_t sender_packet_count,
-                                                    uint32_t sender_octet_count,
+                                                    uint32_t                                      sender_octet_count,
                                                     const junkdatagramsender_rtcp_report_block_t *report_blocks,
-                                                    uint8_t report_block_count)
+                                                    uint8_t                                       report_block_count)
 {
     junkdatagramsender_rtp_writer_t writer = {
         .buf      = buf,
@@ -410,11 +403,8 @@ static bool junkdatagramsenderRtcpBuildSenderReport(sbuf_t *buf, uint32_t write_
         return false;
     }
 
-    if (! junkdatagramsenderRtcpPutHeader(&writer,
-                                          false,
-                                          report_block_count,
-                                          kRtcpPtSenderReport,
-                                          (uint16_t) (total_len / 4U - 1U)) ||
+    if (! junkdatagramsenderRtcpPutHeader(
+            &writer, false, report_block_count, kRtcpPtSenderReport, (uint16_t) (total_len / 4U - 1U)) ||
         ! junkdatagramsenderRtpPutU32(&writer, sender_ssrc) ||
         ! junkdatagramsenderRtpPutU32(&writer, ntp_timestamp_msw) ||
         ! junkdatagramsenderRtpPutU32(&writer, ntp_timestamp_lsw) ||
@@ -437,8 +427,7 @@ static bool junkdatagramsenderRtcpBuildSenderReport(sbuf_t *buf, uint32_t write_
     return true;
 }
 
-static bool junkdatagramsenderRtcpBuildSdesCname(sbuf_t *buf, uint32_t write_limit, uint32_t ssrc,
-                                                 const char *cname)
+static bool junkdatagramsenderRtcpBuildSdesCname(sbuf_t *buf, uint32_t write_limit, uint32_t ssrc, const char *cname)
 {
     junkdatagramsender_rtp_writer_t writer = {
         .buf      = buf,
@@ -465,13 +454,8 @@ static bool junkdatagramsenderRtcpBuildSdesCname(sbuf_t *buf, uint32_t write_lim
         return false;
     }
 
-    if (! junkdatagramsenderRtcpPutHeader(&writer,
-                                          false,
-                                          1,
-                                          kRtcpPtSdes,
-                                          (uint16_t) (total_len / 4U - 1U)) ||
-        ! junkdatagramsenderRtpPutU32(&writer, ssrc) ||
-        ! junkdatagramsenderRtpPutU8(&writer, kRtcpSdesCname) ||
+    if (! junkdatagramsenderRtcpPutHeader(&writer, false, 1, kRtcpPtSdes, (uint16_t) (total_len / 4U - 1U)) ||
+        ! junkdatagramsenderRtpPutU32(&writer, ssrc) || ! junkdatagramsenderRtpPutU8(&writer, kRtcpSdesCname) ||
         ! junkdatagramsenderRtpPutU8(&writer, (uint8_t) cname_len) ||
         ! junkdatagramsenderRtpPutBytes(&writer, cname, (uint32_t) cname_len) ||
         ! junkdatagramsenderRtpPutU8(&writer, kRtcpSdesEnd))
@@ -523,11 +507,7 @@ static bool junkdatagramsenderRtcpBuildBye(sbuf_t *buf, uint32_t write_limit, co
         return false;
     }
 
-    if (! junkdatagramsenderRtcpPutHeader(&writer,
-                                          false,
-                                          ssrc_count,
-                                          kRtcpPtBye,
-                                          (uint16_t) (total_len / 4U - 1U)))
+    if (! junkdatagramsenderRtcpPutHeader(&writer, false, ssrc_count, kRtcpPtBye, (uint16_t) (total_len / 4U - 1U)))
     {
         return false;
     }
@@ -561,15 +541,13 @@ static bool junkdatagramsenderRtcpBuildBye(sbuf_t *buf, uint32_t write_limit, co
     return true;
 }
 
-static bool junkdatagramsenderSrtpBuildPacket(sbuf_t *buf, uint32_t write_limit, bool marker,
-                                              uint8_t payload_type, uint16_t sequence_number,
-                                              uint32_t timestamp, uint32_t ssrc, const uint32_t *csrc_list,
-                                              uint8_t csrc_count, const uint8_t *extension_data,
-                                              uint32_t extension_data_len, uint16_t extension_profile,
-                                              const uint8_t *encrypted_payload,
-                                              uint32_t encrypted_payload_len, const uint8_t *mki,
-                                              uint32_t mki_len, const uint8_t *auth_tag,
-                                              uint32_t auth_tag_len)
+static bool junkdatagramsenderSrtpBuildPacket(sbuf_t *buf, uint32_t write_limit, bool marker, uint8_t payload_type,
+                                              uint16_t sequence_number, uint32_t timestamp, uint32_t ssrc,
+                                              const uint32_t *csrc_list, uint8_t csrc_count,
+                                              const uint8_t *extension_data, uint32_t extension_data_len,
+                                              uint16_t extension_profile, const uint8_t *encrypted_payload,
+                                              uint32_t encrypted_payload_len, const uint8_t *mki, uint32_t mki_len,
+                                              const uint8_t *auth_tag, uint32_t auth_tag_len)
 {
     junkdatagramsender_rtp_writer_t writer = {
         .buf      = buf,
@@ -578,8 +556,7 @@ static bool junkdatagramsenderSrtpBuildPacket(sbuf_t *buf, uint32_t write_limit,
     };
     bool has_extension = extension_data_len > 0;
 
-    if (payload_type > kRtpPayloadTypeMax || csrc_count > kRtpMaxCsrcCount ||
-        (csrc_count > 0 && csrc_list == NULL) ||
+    if (payload_type > kRtpPayloadTypeMax || csrc_count > kRtpMaxCsrcCount || (csrc_count > 0 && csrc_list == NULL) ||
         (encrypted_payload_len > 0 && encrypted_payload == NULL) || (mki_len > 0 && mki == NULL) ||
         (auth_tag_len > 0 && auth_tag == NULL) || (has_extension && extension_data == NULL) ||
         (extension_data_len % 4U) != 0)
@@ -587,12 +564,10 @@ static bool junkdatagramsenderSrtpBuildPacket(sbuf_t *buf, uint32_t write_limit,
         return false;
     }
 
-    if (! junkdatagramsenderRtpPutU8(&writer,
-                                     (uint8_t) ((kRtpVersion << 6U) | (has_extension ? 0x10U : 0U) |
-                                                (csrc_count & 0x0FU))) ||
+    if (! junkdatagramsenderRtpPutU8(
+            &writer, (uint8_t) ((kRtpVersion << 6U) | (has_extension ? 0x10U : 0U) | (csrc_count & 0x0FU))) ||
         ! junkdatagramsenderRtpPutU8(&writer, (uint8_t) ((marker ? 0x80U : 0U) | payload_type)) ||
-        ! junkdatagramsenderRtpPutU16(&writer, sequence_number) ||
-        ! junkdatagramsenderRtpPutU32(&writer, timestamp) ||
+        ! junkdatagramsenderRtpPutU16(&writer, sequence_number) || ! junkdatagramsenderRtpPutU32(&writer, timestamp) ||
         ! junkdatagramsenderRtpPutU32(&writer, ssrc))
     {
         return false;
@@ -608,8 +583,7 @@ static bool junkdatagramsenderSrtpBuildPacket(sbuf_t *buf, uint32_t write_limit,
 
     if (has_extension)
     {
-        if (extension_data_len / 4U > UINT16_MAX ||
-            ! junkdatagramsenderRtpPutU16(&writer, extension_profile) ||
+        if (extension_data_len / 4U > UINT16_MAX || ! junkdatagramsenderRtpPutU16(&writer, extension_profile) ||
             ! junkdatagramsenderRtpPutU16(&writer, (uint16_t) (extension_data_len / 4U)) ||
             ! junkdatagramsenderRtpPutBytes(&writer, extension_data, extension_data_len))
         {
@@ -637,12 +611,11 @@ static bool junkdatagramsenderRtpGenerateRtp(sbuf_t *buf, const junkdatagramsend
     uint16_t extension_profile  = 0;
     uint32_t write_limit        = junkdatagramsenderRtpWriteLimit(buf, args);
     uint8_t  csrc_count         = junkdatagramsenderRtpRandomCsrcList(csrc_list);
-    bool     has_extension =
-        junkdatagramsenderRtpRandomExtension(extension_data, &extension_data_len, &extension_profile);
-    bool     padding       = (fastRand32() % 100U) < 10U;
+    bool has_extension = junkdatagramsenderRtpRandomExtension(extension_data, &extension_data_len, &extension_profile);
+    bool padding       = (fastRand32() % 100U) < 10U;
     uint8_t  padding_count = padding ? (uint8_t) (4U * junkdatagramsenderRtpRandomRange(1, 3)) : 0;
-    uint32_t overhead      = kRtpHeaderLen + 4U * csrc_count +
-                        (has_extension ? 4U + extension_data_len : 0U) + padding_count;
+    uint32_t overhead =
+        kRtpHeaderLen + 4U * csrc_count + (has_extension ? 4U + extension_data_len : 0U) + padding_count;
 
     if (write_limit <= overhead || (args != NULL && args->min_packet_size > write_limit))
     {
@@ -686,16 +659,15 @@ static bool junkdatagramsenderRtpGenerateSrtp(sbuf_t *buf, const junkdatagramsen
     uint16_t extension_profile  = 0;
     uint32_t write_limit        = junkdatagramsenderRtpWriteLimit(buf, args);
     uint8_t  csrc_count         = junkdatagramsenderRtpRandomCsrcList(csrc_list);
-    bool     has_extension =
-        junkdatagramsenderRtpRandomExtension(extension_data, &extension_data_len, &extension_profile);
-    uint32_t mki_len = (fastRand32() % 100U) < 12U ? kSrtpMaxMkiLen : 0;
+    bool has_extension = junkdatagramsenderRtpRandomExtension(extension_data, &extension_data_len, &extension_profile);
+    uint32_t mki_len   = (fastRand32() % 100U) < 12U ? kSrtpMaxMkiLen : 0;
 
     uint32_t auth_roll = fastRand32() % 100U;
     uint32_t auth_tag_len =
         auth_roll < 70U ? kSrtpAuthTagDefaultLen : (auth_roll < 90U ? kSrtpAuthTagGcmLen : kSrtpAuthTagShortLen);
 
-    uint32_t overhead = kRtpHeaderLen + 4U * csrc_count + (has_extension ? 4U + extension_data_len : 0U) +
-                        mki_len + auth_tag_len;
+    uint32_t overhead =
+        kRtpHeaderLen + 4U * csrc_count + (has_extension ? 4U + extension_data_len : 0U) + mki_len + auth_tag_len;
     if (write_limit <= overhead || (args != NULL && args->min_packet_size > write_limit))
     {
         return false;
@@ -735,12 +707,11 @@ static bool junkdatagramsenderRtpGenerateSrtp(sbuf_t *buf, const junkdatagramsen
                                              auth_tag_len);
 }
 
-static bool junkdatagramsenderRtpGenerateRtcpReceiverReport(sbuf_t *buf,
-                                                            const junkdatagramsender_module_args_t *args)
+static bool junkdatagramsenderRtpGenerateRtcpReceiverReport(sbuf_t *buf, const junkdatagramsender_module_args_t *args)
 {
     junkdatagramsender_rtcp_report_block_t report_blocks[2];
-    uint32_t write_limit = junkdatagramsenderRtpWriteLimit(buf, args);
-    uint8_t  report_count = junkdatagramsenderRtcpRandomReportBlockCount(write_limit, 8);
+    uint32_t                               write_limit  = junkdatagramsenderRtpWriteLimit(buf, args);
+    uint8_t                                report_count = junkdatagramsenderRtcpRandomReportBlockCount(write_limit, 8);
 
     if (write_limit < 8 || (args != NULL && args->min_packet_size > write_limit))
     {
@@ -753,20 +724,16 @@ static bool junkdatagramsenderRtpGenerateRtcpReceiverReport(sbuf_t *buf,
     }
 
     sbufSetLength(buf, 0);
-    return junkdatagramsenderRtcpBuildReceiverReport(buf,
-                                                     write_limit,
-                                                     fastRand32(),
-                                                     report_count > 0 ? report_blocks : NULL,
-                                                     report_count);
+    return junkdatagramsenderRtcpBuildReceiverReport(
+        buf, write_limit, fastRand32(), report_count > 0 ? report_blocks : NULL, report_count);
 }
 
-static bool junkdatagramsenderRtpGenerateRtcpSenderReport(sbuf_t *buf,
-                                                          const junkdatagramsender_module_args_t *args)
+static bool junkdatagramsenderRtpGenerateRtcpSenderReport(sbuf_t *buf, const junkdatagramsender_module_args_t *args)
 {
     junkdatagramsender_rtcp_report_block_t report_blocks[2];
-    struct timeval tv;
-    uint32_t write_limit = junkdatagramsenderRtpWriteLimit(buf, args);
-    uint8_t  report_count = junkdatagramsenderRtcpRandomReportBlockCount(write_limit, 28);
+    struct timeval                         tv;
+    uint32_t                               write_limit  = junkdatagramsenderRtpWriteLimit(buf, args);
+    uint8_t                                report_count = junkdatagramsenderRtcpRandomReportBlockCount(write_limit, 28);
 
     if (write_limit < 28 || (args != NULL && args->min_packet_size > write_limit))
     {
@@ -804,13 +771,12 @@ static const char *junkdatagramsenderRtpRandomCname(char *buf, size_t buf_len)
         "ww.local",
     };
 
-    if (junkdatagramsenderRtpFormatFits(
-            stringNPrintf(buf,
-                          buf_len,
-                          "u%04x@%s",
-                          (unsigned int) (fastRand32() & 0xFFFFU),
-                          hosts[fastRand32() % (sizeof(hosts) / sizeof(hosts[0]))]),
-            buf_len))
+    if (junkdatagramsenderRtpFormatFits(stringNPrintf(buf,
+                                                      buf_len,
+                                                      "u%04x@%s",
+                                                      (unsigned int) (fastRand32() & 0xFFFFU),
+                                                      hosts[fastRand32() % (sizeof(hosts) / sizeof(hosts[0]))]),
+                                        buf_len))
     {
         return buf;
     }

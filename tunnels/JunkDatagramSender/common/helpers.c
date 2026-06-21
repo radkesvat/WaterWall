@@ -68,7 +68,7 @@ static void junkdatagramsenderDelayedDownstreamPayload(tunnel_t *t, line_t *l, s
 static LineTaskFnWithBuf junkdatagramsenderDelayedPayloadFn(junkdatagramsender_direction_t direction)
 {
     return direction == kJunkDatagramSenderDirectionUpstream ? junkdatagramsenderDelayedUpstreamPayload
-                                                            : junkdatagramsenderDelayedDownstreamPayload;
+                                                             : junkdatagramsenderDelayedDownstreamPayload;
 }
 
 static bool junkdatagramsenderGeneratePayload(tunnel_t *t, line_t *l, sbuf_t *buf,
@@ -76,8 +76,7 @@ static bool junkdatagramsenderGeneratePayload(tunnel_t *t, line_t *l, sbuf_t *bu
 {
     discard t;
 
-    const junkdatagramsender_module_descriptor_t *descriptor =
-        junkdatagramsenderFindProtocolDescriptor(protocol);
+    const junkdatagramsender_module_descriptor_t *descriptor = junkdatagramsenderFindProtocolDescriptor(protocol);
     if (descriptor == NULL || descriptor->generate == NULL)
     {
         LOGW("JunkDatagramSender: selected protocol has no generator");

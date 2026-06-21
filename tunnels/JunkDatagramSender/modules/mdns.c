@@ -2,20 +2,20 @@
 
 enum
 {
-    kMdnsHeaderSize = 12,
-    kMdnsMaxWireNameLen = 255,
-    kMdnsClassIn = 1,
-    kMdnsClassInCacheFlush = 0x8001,
+    kMdnsHeaderSize             = 12,
+    kMdnsMaxWireNameLen         = 255,
+    kMdnsClassIn                = 1,
+    kMdnsClassInCacheFlush      = 0x8001,
     kMdnsClassInUnicastResponse = 0x8001,
-    kMdnsTypeA = 1,
-    kMdnsTypePtr = 12,
-    kMdnsTypeTxt = 16,
-    kMdnsTypeAaaa = 28,
-    kMdnsTypeSrv = 33,
-    kMdnsTypeAny = 255,
-    kMdnsResponseAuthoritative = 0x8400,
-    kMdnsTtlHost = 120,
-    kMdnsTtlService = 4500,
+    kMdnsTypeA                  = 1,
+    kMdnsTypePtr                = 12,
+    kMdnsTypeTxt                = 16,
+    kMdnsTypeAaaa               = 28,
+    kMdnsTypeSrv                = 33,
+    kMdnsTypeAny                = 255,
+    kMdnsResponseAuthoritative  = 0x8400,
+    kMdnsTtlHost                = 120,
+    kMdnsTtlService             = 4500,
 };
 
 typedef struct junkdatagramsender_mdns_writer_s
@@ -39,8 +39,7 @@ static bool junkdatagramsenderMdnsCanWrite(const junkdatagramsender_mdns_writer_
     return writer->pos <= writer->capacity && len <= writer->capacity - writer->pos;
 }
 
-static bool junkdatagramsenderMdnsPutBytes(junkdatagramsender_mdns_writer_t *writer, const void *src,
-                                           uint32_t len)
+static bool junkdatagramsenderMdnsPutBytes(junkdatagramsender_mdns_writer_t *writer, const void *src, uint32_t len)
 {
     if (! junkdatagramsenderMdnsCanWrite(writer, len))
     {
@@ -72,8 +71,7 @@ static bool junkdatagramsenderMdnsPutU32(junkdatagramsender_mdns_writer_t *write
     return junkdatagramsenderMdnsPutBytes(writer, &network_value, sizeof(network_value));
 }
 
-static bool junkdatagramsenderMdnsPatchU16(junkdatagramsender_mdns_writer_t *writer, uint32_t offset,
-                                           uint16_t value)
+static bool junkdatagramsenderMdnsPatchU16(junkdatagramsender_mdns_writer_t *writer, uint32_t offset, uint16_t value)
 {
     uint16_t network_value = htobe16(value);
 
@@ -102,7 +100,7 @@ static const char *junkdatagramsenderMdnsFindDot(const char *label)
 static bool junkdatagramsenderMdnsPutName(junkdatagramsender_mdns_writer_t *writer, const char *name)
 {
     const uint32_t start_pos = writer->pos;
-    const char    *label = name;
+    const char    *label     = name;
 
     if (name == NULL || name[0] == '\0')
     {
@@ -116,7 +114,7 @@ static bool junkdatagramsenderMdnsPutName(junkdatagramsender_mdns_writer_t *writ
 
     while (*label != '\0')
     {
-        const char *dot = junkdatagramsenderMdnsFindDot(label);
+        const char *dot       = junkdatagramsenderMdnsFindDot(label);
         size_t      label_len = dot != NULL ? (size_t) (dot - label) : stringLength(label);
 
         if (label_len == 0)
@@ -152,35 +150,27 @@ static bool junkdatagramsenderMdnsPutName(junkdatagramsender_mdns_writer_t *writ
     return junkdatagramsenderMdnsPutU8(writer, 0);
 }
 
-static bool junkdatagramsenderMdnsPutHeader(junkdatagramsender_mdns_writer_t *writer, uint16_t flags,
-                                            uint16_t qdcount, uint16_t ancount, uint16_t nscount,
-                                            uint16_t arcount)
+static bool junkdatagramsenderMdnsPutHeader(junkdatagramsender_mdns_writer_t *writer, uint16_t flags, uint16_t qdcount,
+                                            uint16_t ancount, uint16_t nscount, uint16_t arcount)
 {
-    return junkdatagramsenderMdnsPutU16(writer, 0) &&
-           junkdatagramsenderMdnsPutU16(writer, flags) &&
-           junkdatagramsenderMdnsPutU16(writer, qdcount) &&
-           junkdatagramsenderMdnsPutU16(writer, ancount) &&
-           junkdatagramsenderMdnsPutU16(writer, nscount) &&
-           junkdatagramsenderMdnsPutU16(writer, arcount);
+    return junkdatagramsenderMdnsPutU16(writer, 0) && junkdatagramsenderMdnsPutU16(writer, flags) &&
+           junkdatagramsenderMdnsPutU16(writer, qdcount) && junkdatagramsenderMdnsPutU16(writer, ancount) &&
+           junkdatagramsenderMdnsPutU16(writer, nscount) && junkdatagramsenderMdnsPutU16(writer, arcount);
 }
 
 static bool junkdatagramsenderMdnsPutQuestion(junkdatagramsender_mdns_writer_t *writer, const char *qname,
                                               uint16_t qtype, bool prefer_unicast_response)
 {
-    return junkdatagramsenderMdnsPutName(writer, qname) &&
-           junkdatagramsenderMdnsPutU16(writer, qtype) &&
-           junkdatagramsenderMdnsPutU16(
-               writer, prefer_unicast_response ? kMdnsClassInUnicastResponse : kMdnsClassIn);
+    return junkdatagramsenderMdnsPutName(writer, qname) && junkdatagramsenderMdnsPutU16(writer, qtype) &&
+           junkdatagramsenderMdnsPutU16(writer, prefer_unicast_response ? kMdnsClassInUnicastResponse : kMdnsClassIn);
 }
 
-static bool junkdatagramsenderMdnsBeginRecord(junkdatagramsender_mdns_writer_t *writer, const char *name,
-                                              uint16_t type, uint16_t rclass, uint32_t ttl,
-                                              uint32_t *rdlength_offset, uint32_t *rdata_offset)
+static bool junkdatagramsenderMdnsBeginRecord(junkdatagramsender_mdns_writer_t *writer, const char *name, uint16_t type,
+                                              uint16_t rclass, uint32_t ttl, uint32_t *rdlength_offset,
+                                              uint32_t *rdata_offset)
 {
-    if (! junkdatagramsenderMdnsPutName(writer, name) ||
-        ! junkdatagramsenderMdnsPutU16(writer, type) ||
-        ! junkdatagramsenderMdnsPutU16(writer, rclass) ||
-        ! junkdatagramsenderMdnsPutU32(writer, ttl))
+    if (! junkdatagramsenderMdnsPutName(writer, name) || ! junkdatagramsenderMdnsPutU16(writer, type) ||
+        ! junkdatagramsenderMdnsPutU16(writer, rclass) || ! junkdatagramsenderMdnsPutU32(writer, ttl))
     {
         return false;
     }
@@ -211,25 +201,20 @@ static bool junkdatagramsenderMdnsPutARecord(junkdatagramsender_mdns_writer_t *w
                                              const uint8_t ip[4])
 {
     uint32_t rdlength_offset = 0;
-    uint32_t rdata_offset = 0;
+    uint32_t rdata_offset    = 0;
 
     return ip != NULL &&
-           junkdatagramsenderMdnsBeginRecord(writer,
-                                             host_name,
-                                             kMdnsTypeA,
-                                             kMdnsClassInCacheFlush,
-                                             kMdnsTtlHost,
-                                             &rdlength_offset,
-                                             &rdata_offset) &&
+           junkdatagramsenderMdnsBeginRecord(
+               writer, host_name, kMdnsTypeA, kMdnsClassInCacheFlush, kMdnsTtlHost, &rdlength_offset, &rdata_offset) &&
            junkdatagramsenderMdnsPutBytes(writer, ip, 4) &&
            junkdatagramsenderMdnsEndRecord(writer, rdlength_offset, rdata_offset);
 }
 
-static bool junkdatagramsenderMdnsPutAaaaRecord(junkdatagramsender_mdns_writer_t *writer,
-                                                const char *host_name, const uint8_t ip[16])
+static bool junkdatagramsenderMdnsPutAaaaRecord(junkdatagramsender_mdns_writer_t *writer, const char *host_name,
+                                                const uint8_t ip[16])
 {
     uint32_t rdlength_offset = 0;
-    uint32_t rdata_offset = 0;
+    uint32_t rdata_offset    = 0;
 
     return ip != NULL &&
            junkdatagramsenderMdnsBeginRecord(writer,
@@ -247,25 +232,19 @@ static bool junkdatagramsenderMdnsPutPtrRecord(junkdatagramsender_mdns_writer_t 
                                                const char *instance_name)
 {
     uint32_t rdlength_offset = 0;
-    uint32_t rdata_offset = 0;
+    uint32_t rdata_offset    = 0;
 
-    return junkdatagramsenderMdnsBeginRecord(writer,
-                                             service_type,
-                                             kMdnsTypePtr,
-                                             kMdnsClassIn,
-                                             kMdnsTtlService,
-                                             &rdlength_offset,
-                                             &rdata_offset) &&
+    return junkdatagramsenderMdnsBeginRecord(
+               writer, service_type, kMdnsTypePtr, kMdnsClassIn, kMdnsTtlService, &rdlength_offset, &rdata_offset) &&
            junkdatagramsenderMdnsPutName(writer, instance_name) &&
            junkdatagramsenderMdnsEndRecord(writer, rdlength_offset, rdata_offset);
 }
 
-static bool junkdatagramsenderMdnsPutSrvRecord(junkdatagramsender_mdns_writer_t *writer,
-                                               const char *instance_name, const char *host_name,
-                                               uint16_t port)
+static bool junkdatagramsenderMdnsPutSrvRecord(junkdatagramsender_mdns_writer_t *writer, const char *instance_name,
+                                               const char *host_name, uint16_t port)
 {
     uint32_t rdlength_offset = 0;
-    uint32_t rdata_offset = 0;
+    uint32_t rdata_offset    = 0;
 
     return junkdatagramsenderMdnsBeginRecord(writer,
                                              instance_name,
@@ -274,10 +253,8 @@ static bool junkdatagramsenderMdnsPutSrvRecord(junkdatagramsender_mdns_writer_t 
                                              kMdnsTtlService,
                                              &rdlength_offset,
                                              &rdata_offset) &&
-           junkdatagramsenderMdnsPutU16(writer, 0) &&
-           junkdatagramsenderMdnsPutU16(writer, 0) &&
-           junkdatagramsenderMdnsPutU16(writer, port) &&
-           junkdatagramsenderMdnsPutName(writer, host_name) &&
+           junkdatagramsenderMdnsPutU16(writer, 0) && junkdatagramsenderMdnsPutU16(writer, 0) &&
+           junkdatagramsenderMdnsPutU16(writer, port) && junkdatagramsenderMdnsPutName(writer, host_name) &&
            junkdatagramsenderMdnsEndRecord(writer, rdlength_offset, rdata_offset);
 }
 
@@ -293,12 +270,12 @@ static bool junkdatagramsenderMdnsPutTxtItem(junkdatagramsender_mdns_writer_t *w
            junkdatagramsenderMdnsPutBytes(writer, value, (uint32_t) value_len);
 }
 
-static bool junkdatagramsenderMdnsPutTxtRecord(junkdatagramsender_mdns_writer_t *writer,
+static bool junkdatagramsenderMdnsPutTxtRecord(junkdatagramsender_mdns_writer_t        *writer,
                                                const junkdatagramsender_mdns_service_t *service,
-                                               const char *instance_name)
+                                               const char                              *instance_name)
 {
     uint32_t rdlength_offset = 0;
-    uint32_t rdata_offset = 0;
+    uint32_t rdata_offset    = 0;
 
     if (service == NULL)
     {
@@ -334,11 +311,31 @@ static const junkdatagramsender_mdns_service_t *junkdatagramsenderMdnsRandomServ
     static const junkdatagramsender_mdns_service_t services[] = {
         {.service_type = "_http._tcp.local", .instance_prefix = "web", .txt1 = "path=/", .txt2 = NULL, .port = 80},
         {.service_type = "_ssh._tcp.local", .instance_prefix = "ssh", .txt1 = NULL, .txt2 = NULL, .port = 22},
-        {.service_type = "_ipp._tcp.local", .instance_prefix = "printer", .txt1 = "rp=printers/main", .txt2 = "qtotal=1", .port = 631},
-        {.service_type = "_airplay._tcp.local", .instance_prefix = "airplay", .txt1 = "model=AppleTV", .txt2 = "srcvers=220.68", .port = 7000},
-        {.service_type = "_googlecast._tcp.local", .instance_prefix = "cast", .txt1 = "id=000000000000", .txt2 = "ve=05", .port = 8009},
-        {.service_type = "_workstation._tcp.local", .instance_prefix = "workstation", .txt1 = NULL, .txt2 = NULL, .port = 9},
-        {.service_type = "_raop._tcp.local", .instance_prefix = "raop", .txt1 = "cn=0,1", .txt2 = "et=0,3,5", .port = 5000},
+        {.service_type    = "_ipp._tcp.local",
+         .instance_prefix = "printer",
+         .txt1            = "rp=printers/main",
+         .txt2            = "qtotal=1",
+         .port            = 631},
+        {.service_type    = "_airplay._tcp.local",
+         .instance_prefix = "airplay",
+         .txt1            = "model=AppleTV",
+         .txt2            = "srcvers=220.68",
+         .port            = 7000},
+        {.service_type    = "_googlecast._tcp.local",
+         .instance_prefix = "cast",
+         .txt1            = "id=000000000000",
+         .txt2            = "ve=05",
+         .port            = 8009},
+        {.service_type    = "_workstation._tcp.local",
+         .instance_prefix = "workstation",
+         .txt1            = NULL,
+         .txt2            = NULL,
+         .port            = 9},
+        {.service_type    = "_raop._tcp.local",
+         .instance_prefix = "raop",
+         .txt1            = "cn=0,1",
+         .txt2            = "et=0,3,5",
+         .port            = 5000},
     };
 
     return &services[fastRand32() % (sizeof(services) / sizeof(services[0]))];
@@ -378,15 +375,13 @@ static const char *junkdatagramsenderMdnsRandomHostName(char *buf, size_t buf_le
 static const char *junkdatagramsenderMdnsBuildInstanceName(char *buf, size_t buf_len,
                                                            const junkdatagramsender_mdns_service_t *service)
 {
-    if (service != NULL &&
-        junkdatagramsenderMdnsFormatFits(
-            stringNPrintf(buf,
-                          buf_len,
-                          "%s-%04x.%s",
-                          service->instance_prefix,
-                          (unsigned int) (fastRand32() & 0xFFFFU),
-                          service->service_type),
-            buf_len))
+    if (service != NULL && junkdatagramsenderMdnsFormatFits(stringNPrintf(buf,
+                                                                          buf_len,
+                                                                          "%s-%04x.%s",
+                                                                          service->instance_prefix,
+                                                                          (unsigned int) (fastRand32() & 0xFFFFU),
+                                                                          service->service_type),
+                                                            buf_len))
     {
         return buf;
     }
@@ -429,7 +424,7 @@ static void junkdatagramsenderMdnsRandomIpv6LinkLocal(uint8_t ip[16])
 static bool junkdatagramsenderMdnsBuildQuery(sbuf_t *buf, uint32_t write_limit)
 {
     junkdatagramsender_mdns_writer_t writer = {.buf = buf, .pos = 0, .capacity = write_limit};
-    char host_name[64];
+    char                             host_name[64];
 
     uint16_t question_count = (uint16_t) (1U + (fastRand32() % 3U));
     if (! junkdatagramsenderMdnsPutHeader(&writer, 0, question_count, 0, 0, 0))
@@ -440,8 +435,8 @@ static bool junkdatagramsenderMdnsBuildQuery(sbuf_t *buf, uint32_t write_limit)
     for (uint16_t i = 0; i < question_count; ++i)
     {
         const junkdatagramsender_mdns_service_t *service = junkdatagramsenderMdnsRandomService();
-        const char *qname = service->service_type;
-        uint16_t qtype = kMdnsTypePtr;
+        const char                              *qname   = service->service_type;
+        uint16_t                                 qtype   = kMdnsTypePtr;
 
         switch (fastRand32() % 5U)
         {
@@ -477,10 +472,10 @@ static bool junkdatagramsenderMdnsBuildQuery(sbuf_t *buf, uint32_t write_limit)
 static bool junkdatagramsenderMdnsBuildHostAnnouncement(sbuf_t *buf, uint32_t write_limit)
 {
     junkdatagramsender_mdns_writer_t writer = {.buf = buf, .pos = 0, .capacity = write_limit};
-    char host_name[64];
-    uint8_t ipv4[4];
-    uint8_t ipv6[16];
-    bool include_aaaa = (fastRand32() % 100U) < 45U;
+    char                             host_name[64];
+    uint8_t                          ipv4[4];
+    uint8_t                          ipv6[16];
+    bool                             include_aaaa = (fastRand32() % 100U) < 45U;
 
     junkdatagramsenderMdnsRandomIpv4(ipv4);
     junkdatagramsenderMdnsRandomIpv6LinkLocal(ipv6);
@@ -503,18 +498,18 @@ static bool junkdatagramsenderMdnsBuildHostAnnouncement(sbuf_t *buf, uint32_t wr
 
 static bool junkdatagramsenderMdnsBuildServiceAnnouncement(sbuf_t *buf, uint32_t write_limit)
 {
-    junkdatagramsender_mdns_writer_t writer = {.buf = buf, .pos = 0, .capacity = write_limit};
+    junkdatagramsender_mdns_writer_t         writer  = {.buf = buf, .pos = 0, .capacity = write_limit};
     const junkdatagramsender_mdns_service_t *service = junkdatagramsenderMdnsRandomService();
-    char host_name[64];
-    char instance_name[128];
-    uint8_t ipv4[4];
-    uint8_t ipv6[16];
-    bool include_aaaa = (fastRand32() % 100U) < 35U;
-    uint16_t answer_count = include_aaaa ? 5 : 4;
+    char                                     host_name[64];
+    char                                     instance_name[128];
+    uint8_t                                  ipv4[4];
+    uint8_t                                  ipv6[16];
+    bool                                     include_aaaa = (fastRand32() % 100U) < 35U;
+    uint16_t                                 answer_count = include_aaaa ? 5 : 4;
 
     const char *selected_host = junkdatagramsenderMdnsRandomHostName(host_name, sizeof(host_name));
-    const char *selected_instance = junkdatagramsenderMdnsBuildInstanceName(
-        instance_name, sizeof(instance_name), service);
+    const char *selected_instance =
+        junkdatagramsenderMdnsBuildInstanceName(instance_name, sizeof(instance_name), service);
 
     junkdatagramsenderMdnsRandomIpv4(ipv4);
     junkdatagramsenderMdnsRandomIpv6LinkLocal(ipv6);

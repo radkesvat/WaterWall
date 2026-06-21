@@ -2,36 +2,36 @@
 
 enum
 {
-    kStunHeaderLen = 20,
-    kStunTransactionIdLen = 12,
+    kStunHeaderLen           = 20,
+    kStunTransactionIdLen    = 12,
     kStunMessageIntegrityLen = 20,
-    kStunMagicCookie = 0x2112A442U,
+    kStunMagicCookie         = 0x2112A442U,
 
-    kStunMethodBindingRequest = 0x0001,
-    kTurnMethodAllocateRequest = 0x0003,
+    kStunMethodBindingRequest          = 0x0001,
+    kTurnMethodAllocateRequest         = 0x0003,
     kTurnMethodCreatePermissionRequest = 0x0008,
-    kTurnMethodChannelBindRequest = 0x0009,
-    kTurnMethodSendIndication = 0x0016,
+    kTurnMethodChannelBindRequest      = 0x0009,
+    kTurnMethodSendIndication          = 0x0016,
 
-    kStunAttrUsername = 0x0006,
-    kStunAttrMessageIntegrity = 0x0008,
-    kStunAttrChannelNumber = 0x000C,
-    kStunAttrLifetime = 0x000D,
-    kStunAttrXorPeerAddress = 0x0012,
-    kStunAttrData = 0x0013,
-    kStunAttrRealm = 0x0014,
-    kStunAttrNonce = 0x0015,
+    kStunAttrUsername           = 0x0006,
+    kStunAttrMessageIntegrity   = 0x0008,
+    kStunAttrChannelNumber      = 0x000C,
+    kStunAttrLifetime           = 0x000D,
+    kStunAttrXorPeerAddress     = 0x0012,
+    kStunAttrData               = 0x0013,
+    kStunAttrRealm              = 0x0014,
+    kStunAttrNonce              = 0x0015,
     kStunAttrRequestedTransport = 0x0019,
-    kStunAttrPriority = 0x0024,
-    kStunAttrUseCandidate = 0x0025,
-    kStunAttrSoftware = 0x8022,
-    kStunAttrFingerprint = 0x8028,
-    kStunAttrIceControlled = 0x8029,
-    kStunAttrIceControlling = 0x802A,
+    kStunAttrPriority           = 0x0024,
+    kStunAttrUseCandidate       = 0x0025,
+    kStunAttrSoftware           = 0x8022,
+    kStunAttrFingerprint        = 0x8028,
+    kStunAttrIceControlled      = 0x8029,
+    kStunAttrIceControlling     = 0x802A,
 
     kStunTransportUdp = 17,
-    kTurnChannelMin = 0x4000,
-    kTurnChannelMax = 0x7FFF,
+    kTurnChannelMin   = 0x4000,
+    kTurnChannelMax   = 0x7FFF,
 };
 
 typedef struct junkdatagramsender_stun_writer_s
@@ -76,8 +76,7 @@ static bool junkdatagramsenderStunCanWrite(const junkdatagramsender_stun_writer_
     return writer->pos <= writer->capacity && len <= writer->capacity - writer->pos;
 }
 
-static bool junkdatagramsenderStunPutBytes(junkdatagramsender_stun_writer_t *writer, const void *src,
-                                           uint32_t len)
+static bool junkdatagramsenderStunPutBytes(junkdatagramsender_stun_writer_t *writer, const void *src, uint32_t len)
 {
     if (! junkdatagramsenderStunCanWrite(writer, len))
     {
@@ -109,8 +108,7 @@ static bool junkdatagramsenderStunPutU32(junkdatagramsender_stun_writer_t *write
     return junkdatagramsenderStunPutBytes(writer, &network_value, sizeof(network_value));
 }
 
-static bool junkdatagramsenderStunPatchU16(junkdatagramsender_stun_writer_t *writer, uint32_t offset,
-                                           uint16_t value)
+static bool junkdatagramsenderStunPatchU16(junkdatagramsender_stun_writer_t *writer, uint32_t offset, uint16_t value)
 {
     uint16_t network_value = htobe16(value);
 
@@ -147,8 +145,8 @@ static uint32_t junkdatagramsenderStunCrc32Ieee(const uint8_t *data, uint32_t le
     return crc ^ UINT32_C(0xFFFFFFFF);
 }
 
-static bool junkdatagramsenderStunBeginMessage(junkdatagramsender_stun_writer_t *writer,
-                                               uint16_t message_type, const uint8_t transaction_id[12])
+static bool junkdatagramsenderStunBeginMessage(junkdatagramsender_stun_writer_t *writer, uint16_t message_type,
+                                               const uint8_t transaction_id[12])
 {
     if (transaction_id == NULL)
     {
@@ -156,8 +154,7 @@ static bool junkdatagramsenderStunBeginMessage(junkdatagramsender_stun_writer_t 
     }
 
     writer->pos = 0;
-    return junkdatagramsenderStunPutU16(writer, message_type) &&
-           junkdatagramsenderStunPutU16(writer, 0) &&
+    return junkdatagramsenderStunPutU16(writer, message_type) && junkdatagramsenderStunPutU16(writer, 0) &&
            junkdatagramsenderStunPutU32(writer, kStunMagicCookie) &&
            junkdatagramsenderStunPutBytes(writer, transaction_id, kStunTransactionIdLen);
 }
@@ -165,7 +162,7 @@ static bool junkdatagramsenderStunBeginMessage(junkdatagramsender_stun_writer_t 
 static bool junkdatagramsenderStunPutAttrRaw(junkdatagramsender_stun_writer_t *writer, uint16_t attr_type,
                                              const void *data, uint16_t data_len)
 {
-    uint32_t padded_len = ((uint32_t) data_len + 3U) & ~UINT32_C(3);
+    uint32_t padded_len  = ((uint32_t) data_len + 3U) & ~UINT32_C(3);
     uint32_t padding_pos = data_len;
 
     if (data_len > 0 && data == NULL)
@@ -173,8 +170,7 @@ static bool junkdatagramsenderStunPutAttrRaw(junkdatagramsender_stun_writer_t *w
         return false;
     }
 
-    if (! junkdatagramsenderStunPutU16(writer, attr_type) ||
-        ! junkdatagramsenderStunPutU16(writer, data_len) ||
+    if (! junkdatagramsenderStunPutU16(writer, attr_type) || ! junkdatagramsenderStunPutU16(writer, data_len) ||
         ! junkdatagramsenderStunPutBytes(writer, data, data_len))
     {
         return false;
@@ -224,17 +220,15 @@ static bool junkdatagramsenderStunPutAttrU64(junkdatagramsender_stun_writer_t *w
 }
 
 static bool junkdatagramsenderStunPutAttrMessageIntegrity(junkdatagramsender_stun_writer_t *writer,
-                                                          const uint8_t message_integrity[20])
+                                                          const uint8_t                     message_integrity[20])
 {
     if (message_integrity == NULL)
     {
         return true;
     }
 
-    return junkdatagramsenderStunPutAttrRaw(writer,
-                                            kStunAttrMessageIntegrity,
-                                            message_integrity,
-                                            kStunMessageIntegrityLen);
+    return junkdatagramsenderStunPutAttrRaw(
+        writer, kStunAttrMessageIntegrity, message_integrity, kStunMessageIntegrityLen);
 }
 
 static bool junkdatagramsenderStunPutAttrRequestedTransportUdp(junkdatagramsender_stun_writer_t *writer)
@@ -244,35 +238,34 @@ static bool junkdatagramsenderStunPutAttrRequestedTransportUdp(junkdatagramsende
         writer, kStunAttrRequestedTransport, requested_transport, sizeof(requested_transport));
 }
 
-static bool junkdatagramsenderStunPutAttrXorIpv4Address(junkdatagramsender_stun_writer_t *writer,
-                                                        uint16_t attr_type, const uint8_t ip[4],
-                                                        uint16_t port)
+static bool junkdatagramsenderStunPutAttrXorIpv4Address(junkdatagramsender_stun_writer_t *writer, uint16_t attr_type,
+                                                        const uint8_t ip[4], uint16_t port)
 {
     if (ip == NULL)
     {
         return false;
     }
 
-    uint32_t ip_u32 = ((uint32_t) ip[0] << 24U) | ((uint32_t) ip[1] << 16U) |
-                      ((uint32_t) ip[2] << 8U) | (uint32_t) ip[3];
-    uint16_t xport = (uint16_t) (port ^ (uint16_t) (kStunMagicCookie >> 16U));
-    uint32_t xaddr = ip_u32 ^ kStunMagicCookie;
+    uint32_t ip_u32 =
+        ((uint32_t) ip[0] << 24U) | ((uint32_t) ip[1] << 16U) | ((uint32_t) ip[2] << 8U) | (uint32_t) ip[3];
+    uint16_t xport    = (uint16_t) (port ^ (uint16_t) (kStunMagicCookie >> 16U));
+    uint32_t xaddr    = ip_u32 ^ kStunMagicCookie;
     uint8_t  value[8] = {
-         0,
-         0x01,
-         (uint8_t) ((xport >> 8U) & 0xFFU),
-         (uint8_t) (xport & 0xFFU),
-         (uint8_t) ((xaddr >> 24U) & 0xFFU),
-         (uint8_t) ((xaddr >> 16U) & 0xFFU),
-         (uint8_t) ((xaddr >> 8U) & 0xFFU),
-         (uint8_t) (xaddr & 0xFFU),
+        0,
+        0x01,
+        (uint8_t) ((xport >> 8U) & 0xFFU),
+        (uint8_t) (xport & 0xFFU),
+        (uint8_t) ((xaddr >> 24U) & 0xFFU),
+        (uint8_t) ((xaddr >> 16U) & 0xFFU),
+        (uint8_t) ((xaddr >> 8U) & 0xFFU),
+        (uint8_t) (xaddr & 0xFFU),
     };
 
     return junkdatagramsenderStunPutAttrRaw(writer, attr_type, value, sizeof(value));
 }
 
 static bool junkdatagramsenderStunPutAttrChannelNumber(junkdatagramsender_stun_writer_t *writer,
-                                                       uint16_t channel_number)
+                                                       uint16_t                          channel_number)
 {
     if (channel_number < kTurnChannelMin || channel_number > kTurnChannelMax)
     {
@@ -306,8 +299,7 @@ static bool junkdatagramsenderStunFinishMessage(junkdatagramsender_stun_writer_t
         return true;
     }
 
-    if (! junkdatagramsenderStunCanWrite(writer, 8) ||
-        writer->pos - kStunHeaderLen + 8U > UINT16_MAX ||
+    if (! junkdatagramsenderStunCanWrite(writer, 8) || writer->pos - kStunHeaderLen + 8U > UINT16_MAX ||
         ! junkdatagramsenderStunPatchU16(writer, 2, (uint16_t) (writer->pos - kStunHeaderLen + 8U)))
     {
         return false;
@@ -316,8 +308,7 @@ static bool junkdatagramsenderStunFinishMessage(junkdatagramsender_stun_writer_t
     uint32_t fingerprint =
         junkdatagramsenderStunCrc32Ieee(sbufGetMutablePtr(writer->buf), writer->pos) ^ UINT32_C(0x5354554E);
 
-    if (! junkdatagramsenderStunPutU16(writer, kStunAttrFingerprint) ||
-        ! junkdatagramsenderStunPutU16(writer, 4) ||
+    if (! junkdatagramsenderStunPutU16(writer, kStunAttrFingerprint) || ! junkdatagramsenderStunPutU16(writer, 4) ||
         ! junkdatagramsenderStunPutU32(writer, fingerprint))
     {
         return false;
@@ -347,8 +338,8 @@ static const char *junkdatagramsenderStunRandomSoftware(void)
 static const char *junkdatagramsenderStunRandomRealm(void)
 {
     static const char *realms[] = {
-        "example.org",
-        "turn.example.org",
+        "voice.office.lan",
+        "turn.voice.office.lan",
         "realm",
         "local",
     };
@@ -359,7 +350,7 @@ static const char *junkdatagramsenderStunRandomRealm(void)
 static bool junkdatagramsenderStunRandomToken(char *buf, size_t buf_len, uint32_t min_len, uint32_t max_len)
 {
     static const char alphabet[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    uint32_t len = junkdatagramsenderStunRandomRange(min_len, max_len);
+    uint32_t          len        = junkdatagramsenderStunRandomRange(min_len, max_len);
 
     if (buf_len == 0 || len + 1U > buf_len)
     {
@@ -452,8 +443,8 @@ static void junkdatagramsenderStunMaybeIntegrity(uint8_t message_integrity[20], 
 }
 
 static bool junkdatagramsenderStunBuildBindingRequest(sbuf_t *buf, uint32_t write_limit,
-                                                      const uint8_t transaction_id[12],
-                                                      const char *software, bool add_fingerprint)
+                                                      const uint8_t transaction_id[12], const char *software,
+                                                      bool add_fingerprint)
 {
     junkdatagramsender_stun_writer_t writer = {.buf = buf, .pos = 0, .capacity = write_limit};
 
@@ -467,11 +458,9 @@ static bool junkdatagramsenderStunBuildBindingRequest(sbuf_t *buf, uint32_t writ
 }
 
 static bool junkdatagramsenderIceBuildConnectivityCheck(sbuf_t *buf, uint32_t write_limit,
-                                                        const uint8_t transaction_id[12],
-                                                        const char *username, uint32_t priority,
-                                                        bool controlling, uint64_t tiebreaker,
-                                                        bool use_candidate,
-                                                        const uint8_t message_integrity[20],
+                                                        const uint8_t transaction_id[12], const char *username,
+                                                        uint32_t priority, bool controlling, uint64_t tiebreaker,
+                                                        bool use_candidate, const uint8_t message_integrity[20],
                                                         const char *software, bool add_fingerprint)
 {
     junkdatagramsender_stun_writer_t writer = {.buf = buf, .pos = 0, .capacity = write_limit};
@@ -501,11 +490,11 @@ static bool junkdatagramsenderIceBuildConnectivityCheck(sbuf_t *buf, uint32_t wr
 }
 
 static bool junkdatagramsenderTurnBuildAllocateRequestUdp(sbuf_t *buf, uint32_t write_limit,
-                                                          const uint8_t transaction_id[12],
-                                                          const char *username, const char *realm,
-                                                          const char *nonce, uint32_t lifetime_seconds,
-                                                          const uint8_t message_integrity[20],
-                                                          const char *software, bool add_fingerprint)
+                                                          const uint8_t transaction_id[12], const char *username,
+                                                          const char *realm, const char *nonce,
+                                                          uint32_t      lifetime_seconds,
+                                                          const uint8_t message_integrity[20], const char *software,
+                                                          bool add_fingerprint)
 {
     junkdatagramsender_stun_writer_t writer = {.buf = buf, .pos = 0, .capacity = write_limit};
 
@@ -515,8 +504,7 @@ static bool junkdatagramsenderTurnBuildAllocateRequestUdp(sbuf_t *buf, uint32_t 
         return false;
     }
 
-    if (lifetime_seconds != 0 &&
-        ! junkdatagramsenderStunPutAttrU32(&writer, kStunAttrLifetime, lifetime_seconds))
+    if (lifetime_seconds != 0 && ! junkdatagramsenderStunPutAttrU32(&writer, kStunAttrLifetime, lifetime_seconds))
     {
         return false;
     }
@@ -533,20 +521,16 @@ static bool junkdatagramsenderTurnBuildAllocateRequestUdp(sbuf_t *buf, uint32_t 
     return junkdatagramsenderStunFinishMessage(&writer, add_fingerprint);
 }
 
-static bool junkdatagramsenderTurnBuildCreatePermissionRequestIpv4(sbuf_t *buf, uint32_t write_limit,
-                                                                   const uint8_t transaction_id[12],
-                                                                   const junkdatagramsender_stun_peer_t *peer,
-                                                                   const char *username, const char *realm,
-                                                                   const char *nonce,
-                                                                   const uint8_t message_integrity[20],
-                                                                   bool add_fingerprint)
+static bool junkdatagramsenderTurnBuildCreatePermissionRequestIpv4(
+    sbuf_t *buf, uint32_t write_limit, const uint8_t transaction_id[12], const junkdatagramsender_stun_peer_t *peer,
+    const char *username, const char *realm, const char *nonce, const uint8_t message_integrity[20],
+    bool add_fingerprint)
 {
     junkdatagramsender_stun_writer_t writer = {.buf = buf, .pos = 0, .capacity = write_limit};
 
     if (peer == NULL ||
         ! junkdatagramsenderStunBeginMessage(&writer, kTurnMethodCreatePermissionRequest, transaction_id) ||
-        ! junkdatagramsenderStunPutAttrXorIpv4Address(
-            &writer, kStunAttrXorPeerAddress, peer->ip, peer->port) ||
+        ! junkdatagramsenderStunPutAttrXorIpv4Address(&writer, kStunAttrXorPeerAddress, peer->ip, peer->port) ||
         ! junkdatagramsenderStunPutAttrString(&writer, kStunAttrUsername, username) ||
         ! junkdatagramsenderStunPutAttrString(&writer, kStunAttrRealm, realm) ||
         ! junkdatagramsenderStunPutAttrString(&writer, kStunAttrNonce, nonce) ||
@@ -559,21 +543,17 @@ static bool junkdatagramsenderTurnBuildCreatePermissionRequestIpv4(sbuf_t *buf, 
 }
 
 static bool junkdatagramsenderTurnBuildChannelBindRequestIpv4(sbuf_t *buf, uint32_t write_limit,
-                                                              const uint8_t transaction_id[12],
-                                                              uint16_t channel_number,
+                                                              const uint8_t transaction_id[12], uint16_t channel_number,
                                                               const junkdatagramsender_stun_peer_t *peer,
                                                               const char *username, const char *realm,
-                                                              const char *nonce,
-                                                              const uint8_t message_integrity[20],
+                                                              const char *nonce, const uint8_t message_integrity[20],
                                                               bool add_fingerprint)
 {
     junkdatagramsender_stun_writer_t writer = {.buf = buf, .pos = 0, .capacity = write_limit};
 
-    if (peer == NULL ||
-        ! junkdatagramsenderStunBeginMessage(&writer, kTurnMethodChannelBindRequest, transaction_id) ||
+    if (peer == NULL || ! junkdatagramsenderStunBeginMessage(&writer, kTurnMethodChannelBindRequest, transaction_id) ||
         ! junkdatagramsenderStunPutAttrChannelNumber(&writer, channel_number) ||
-        ! junkdatagramsenderStunPutAttrXorIpv4Address(
-            &writer, kStunAttrXorPeerAddress, peer->ip, peer->port) ||
+        ! junkdatagramsenderStunPutAttrXorIpv4Address(&writer, kStunAttrXorPeerAddress, peer->ip, peer->port) ||
         ! junkdatagramsenderStunPutAttrString(&writer, kStunAttrUsername, username) ||
         ! junkdatagramsenderStunPutAttrString(&writer, kStunAttrRealm, realm) ||
         ! junkdatagramsenderStunPutAttrString(&writer, kStunAttrNonce, nonce) ||
@@ -586,17 +566,15 @@ static bool junkdatagramsenderTurnBuildChannelBindRequestIpv4(sbuf_t *buf, uint3
 }
 
 static bool junkdatagramsenderTurnBuildSendIndicationIpv4(sbuf_t *buf, uint32_t write_limit,
-                                                          const uint8_t transaction_id[12],
+                                                          const uint8_t                         transaction_id[12],
                                                           const junkdatagramsender_stun_peer_t *peer,
-                                                          const uint8_t *data, uint16_t data_len,
-                                                          bool add_fingerprint)
+                                                          const uint8_t *data, uint16_t data_len, bool add_fingerprint)
 {
     junkdatagramsender_stun_writer_t writer = {.buf = buf, .pos = 0, .capacity = write_limit};
 
     if (peer == NULL || (data_len > 0 && data == NULL) ||
         ! junkdatagramsenderStunBeginMessage(&writer, kTurnMethodSendIndication, transaction_id) ||
-        ! junkdatagramsenderStunPutAttrXorIpv4Address(
-            &writer, kStunAttrXorPeerAddress, peer->ip, peer->port) ||
+        ! junkdatagramsenderStunPutAttrXorIpv4Address(&writer, kStunAttrXorPeerAddress, peer->ip, peer->port) ||
         ! junkdatagramsenderStunPutAttrRaw(&writer, kStunAttrData, data, data_len))
     {
         return false;
@@ -607,12 +585,12 @@ static bool junkdatagramsenderTurnBuildSendIndicationIpv4(sbuf_t *buf, uint32_t 
 
 bool junkdatagramsenderStunTurnIceGenerate(sbuf_t *buf, const junkdatagramsender_module_args_t *args)
 {
-    uint8_t transaction_id[kStunTransactionIdLen];
-    uint8_t message_integrity[kStunMessageIntegrityLen];
-    uint8_t send_data[128];
-    char    username[32];
-    char    nonce[40];
-    const uint8_t *selected_integrity = NULL;
+    uint8_t                        transaction_id[kStunTransactionIdLen];
+    uint8_t                        message_integrity[kStunMessageIntegrityLen];
+    uint8_t                        send_data[128];
+    char                           username[32];
+    char                           nonce[40];
+    const uint8_t                 *selected_integrity = NULL;
     junkdatagramsender_stun_peer_t peer;
 
     uint32_t write_limit = junkdatagramsenderStunWriteLimit(buf, args);
@@ -630,11 +608,8 @@ bool junkdatagramsenderStunTurnIceGenerate(sbuf_t *buf, const junkdatagramsender
     switch (fastRand32() % 6U)
     {
     case 0:
-        return junkdatagramsenderStunBuildBindingRequest(buf,
-                                                         write_limit,
-                                                         transaction_id,
-                                                         junkdatagramsenderStunRandomSoftware(),
-                                                         (fastRand32() % 100U) < 82U);
+        return junkdatagramsenderStunBuildBindingRequest(
+            buf, write_limit, transaction_id, junkdatagramsenderStunRandomSoftware(), (fastRand32() % 100U) < 82U);
 
     case 1:
         return junkdatagramsenderIceBuildConnectivityCheck(
@@ -688,8 +663,7 @@ bool junkdatagramsenderStunTurnIceGenerate(sbuf_t *buf, const junkdatagramsender
             selected_integrity,
             true);
 
-    default:
-    {
+    default: {
         uint16_t data_len = (uint16_t) junkdatagramsenderStunRandomRange(8, 96);
         if (data_len > sizeof(send_data))
         {

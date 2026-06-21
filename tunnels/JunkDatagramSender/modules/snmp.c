@@ -2,18 +2,18 @@
 
 enum
 {
-    kSnmpVersion1 = 0,
+    kSnmpVersion1  = 0,
     kSnmpVersion2c = 1,
 
-    kSnmpPduGet = 0xA0,
+    kSnmpPduGet     = 0xA0,
     kSnmpPduGetNext = 0xA1,
     kSnmpPduGetBulk = 0xA5,
 
-    kSnmpBerSequence = 0x30,
-    kSnmpBerInteger = 0x02,
+    kSnmpBerSequence    = 0x30,
+    kSnmpBerInteger     = 0x02,
     kSnmpBerOctetString = 0x04,
-    kSnmpBerNull = 0x05,
-    kSnmpBerObjectId = 0x06,
+    kSnmpBerNull        = 0x05,
+    kSnmpBerObjectId    = 0x06,
 };
 
 typedef struct junkdatagramsender_snmp_writer_s
@@ -38,8 +38,7 @@ static bool junkdatagramsenderSnmpCanWrite(const junkdatagramsender_snmp_writer_
     return writer->pos <= writer->capacity && len <= writer->capacity - writer->pos;
 }
 
-static bool junkdatagramsenderSnmpPutBytes(junkdatagramsender_snmp_writer_t *writer, const void *src,
-                                           uint32_t len)
+static bool junkdatagramsenderSnmpPutBytes(junkdatagramsender_snmp_writer_t *writer, const void *src, uint32_t len)
 {
     if (! junkdatagramsenderSnmpCanWrite(writer, len) || (len > 0 && src == NULL))
     {
@@ -92,8 +91,7 @@ static bool junkdatagramsenderSnmpPutBerLen(junkdatagramsender_snmp_writer_t *wr
     }
     if (len <= UINT8_MAX)
     {
-        return junkdatagramsenderSnmpPutU8(writer, 0x81) &&
-               junkdatagramsenderSnmpPutU8(writer, (uint8_t) len);
+        return junkdatagramsenderSnmpPutU8(writer, 0x81) && junkdatagramsenderSnmpPutU8(writer, (uint8_t) len);
     }
     if (len <= UINT16_MAX)
     {
@@ -119,11 +117,9 @@ static bool junkdatagramsenderSnmpPutBerLen(junkdatagramsender_snmp_writer_t *wr
     return false;
 }
 
-static bool junkdatagramsenderSnmpPutTlvHeader(junkdatagramsender_snmp_writer_t *writer, uint8_t tag,
-                                               size_t len)
+static bool junkdatagramsenderSnmpPutTlvHeader(junkdatagramsender_snmp_writer_t *writer, uint8_t tag, size_t len)
 {
-    return junkdatagramsenderSnmpBerLenSize(len) != 0 &&
-           junkdatagramsenderSnmpPutU8(writer, tag) &&
+    return junkdatagramsenderSnmpBerLenSize(len) != 0 && junkdatagramsenderSnmpPutU8(writer, tag) &&
            junkdatagramsenderSnmpPutBerLen(writer, len);
 }
 
@@ -174,8 +170,7 @@ static bool junkdatagramsenderSnmpPutIntegerU32(junkdatagramsender_snmp_writer_t
 
     for (size_t remaining = len; remaining > 0; --remaining)
     {
-        if (! junkdatagramsenderSnmpPutU8(
-                writer, (uint8_t) ((value >> (8U * (uint32_t) (remaining - 1U))) & 0xFFU)))
+        if (! junkdatagramsenderSnmpPutU8(writer, (uint8_t) ((value >> (8U * (uint32_t) (remaining - 1U))) & 0xFFU)))
         {
             return false;
         }
@@ -185,14 +180,14 @@ static bool junkdatagramsenderSnmpPutIntegerU32(junkdatagramsender_snmp_writer_t
 
 static bool junkdatagramsenderSnmpParseOidArc(const char **p, uint32_t *arc)
 {
-    uint64_t    value = 0;
+    uint64_t    value      = 0;
     bool        have_digit = false;
-    const char *s = *p;
+    const char *s          = *p;
 
     while (*s >= '0' && *s <= '9')
     {
         have_digit = true;
-        value = value * 10U + (uint32_t) (*s - '0');
+        value      = value * 10U + (uint32_t) (*s - '0');
         if (value > UINT32_MAX)
         {
             return false;
@@ -206,7 +201,7 @@ static bool junkdatagramsenderSnmpParseOidArc(const char **p, uint32_t *arc)
     }
 
     *arc = (uint32_t) value;
-    *p = s;
+    *p   = s;
     return true;
 }
 
@@ -247,10 +242,10 @@ static bool junkdatagramsenderSnmpPutOidSubid(junkdatagramsender_snmp_writer_t *
 
 static bool junkdatagramsenderSnmpOidValueLen(const char *oid, size_t *value_len)
 {
-    const char *p = oid;
+    const char *p    = oid;
     uint32_t    arc0 = 0;
     uint32_t    arc1 = 0;
-    size_t      len = 0;
+    size_t      len  = 0;
 
     if (oid == NULL || value_len == NULL)
     {
@@ -296,7 +291,7 @@ static bool junkdatagramsenderSnmpOidValueLen(const char *oid, size_t *value_len
 
 static bool junkdatagramsenderSnmpPutOidValue(junkdatagramsender_snmp_writer_t *writer, const char *oid)
 {
-    const char *p = oid;
+    const char *p    = oid;
     uint32_t    arc0 = 0;
     uint32_t    arc1 = 0;
 
@@ -329,8 +324,7 @@ static bool junkdatagramsenderSnmpPutOidValue(junkdatagramsender_snmp_writer_t *
             return false;
         }
         ++p;
-        if (! junkdatagramsenderSnmpParseOidArc(&p, &arc) ||
-            ! junkdatagramsenderSnmpPutOidSubid(writer, arc))
+        if (! junkdatagramsenderSnmpParseOidArc(&p, &arc) || ! junkdatagramsenderSnmpPutOidSubid(writer, arc))
         {
             return false;
         }
@@ -349,13 +343,11 @@ static bool junkdatagramsenderSnmpPutOidTlv(junkdatagramsender_snmp_writer_t *wr
 
 static bool junkdatagramsenderSnmpPutNullTlv(junkdatagramsender_snmp_writer_t *writer)
 {
-    return junkdatagramsenderSnmpPutU8(writer, kSnmpBerNull) &&
-           junkdatagramsenderSnmpPutU8(writer, 0);
+    return junkdatagramsenderSnmpPutU8(writer, kSnmpBerNull) && junkdatagramsenderSnmpPutU8(writer, 0);
 }
 
-static bool junkdatagramsenderSnmpBuildV1V2cNullRequest(sbuf_t *buf, uint32_t write_limit,
-                                                        uint8_t snmp_version, const char *community,
-                                                        uint8_t pdu_tag, uint32_t request_id,
+static bool junkdatagramsenderSnmpBuildV1V2cNullRequest(sbuf_t *buf, uint32_t write_limit, uint8_t snmp_version,
+                                                        const char *community, uint8_t pdu_tag, uint32_t request_id,
                                                         uint32_t pdu_integer_2, uint32_t pdu_integer_3,
                                                         const char *const *oid_list, size_t oid_count)
 {
@@ -373,7 +365,7 @@ static bool junkdatagramsenderSnmpBuildV1V2cNullRequest(sbuf_t *buf, uint32_t wr
         return false;
     }
 
-    size_t community_len = stringLength(community);
+    size_t community_len            = stringLength(community);
     size_t varbind_list_content_len = 0;
 
     for (size_t i = 0; i < oid_count; ++i)
@@ -384,9 +376,9 @@ static bool junkdatagramsenderSnmpBuildV1V2cNullRequest(sbuf_t *buf, uint32_t wr
             return false;
         }
 
-        size_t oid_tlv_len = junkdatagramsenderSnmpBerTlvSize(oid_value_len);
+        size_t oid_tlv_len         = junkdatagramsenderSnmpBerTlvSize(oid_value_len);
         size_t varbind_content_len = oid_tlv_len + 2U;
-        size_t varbind_tlv_len = junkdatagramsenderSnmpBerTlvSize(varbind_content_len);
+        size_t varbind_tlv_len     = junkdatagramsenderSnmpBerTlvSize(varbind_content_len);
         if (oid_tlv_len == 0 || varbind_tlv_len == 0)
         {
             return false;
@@ -400,18 +392,15 @@ static bool junkdatagramsenderSnmpBuildV1V2cNullRequest(sbuf_t *buf, uint32_t wr
         return false;
     }
 
-    size_t pdu_content_len =
-        junkdatagramsenderSnmpBerTlvSize(junkdatagramsenderSnmpU32IntValueLen(request_id)) +
-        junkdatagramsenderSnmpBerTlvSize(junkdatagramsenderSnmpU32IntValueLen(pdu_integer_2)) +
-        junkdatagramsenderSnmpBerTlvSize(junkdatagramsenderSnmpU32IntValueLen(pdu_integer_3)) +
-        varbind_list_tlv_len;
-    size_t pdu_tlv_len = junkdatagramsenderSnmpBerTlvSize(pdu_content_len);
-    size_t msg_content_len =
-        junkdatagramsenderSnmpBerTlvSize(junkdatagramsenderSnmpU32IntValueLen(snmp_version)) +
-        junkdatagramsenderSnmpBerTlvSize(community_len) + pdu_tlv_len;
+    size_t pdu_content_len = junkdatagramsenderSnmpBerTlvSize(junkdatagramsenderSnmpU32IntValueLen(request_id)) +
+                             junkdatagramsenderSnmpBerTlvSize(junkdatagramsenderSnmpU32IntValueLen(pdu_integer_2)) +
+                             junkdatagramsenderSnmpBerTlvSize(junkdatagramsenderSnmpU32IntValueLen(pdu_integer_3)) +
+                             varbind_list_tlv_len;
+    size_t pdu_tlv_len     = junkdatagramsenderSnmpBerTlvSize(pdu_content_len);
+    size_t msg_content_len = junkdatagramsenderSnmpBerTlvSize(junkdatagramsenderSnmpU32IntValueLen(snmp_version)) +
+                             junkdatagramsenderSnmpBerTlvSize(community_len) + pdu_tlv_len;
 
-    if (pdu_tlv_len == 0 ||
-        ! junkdatagramsenderSnmpPutTlvHeader(&writer, kSnmpBerSequence, msg_content_len) ||
+    if (pdu_tlv_len == 0 || ! junkdatagramsenderSnmpPutTlvHeader(&writer, kSnmpBerSequence, msg_content_len) ||
         ! junkdatagramsenderSnmpPutIntegerU32(&writer, snmp_version) ||
         ! junkdatagramsenderSnmpPutTlvHeader(&writer, kSnmpBerOctetString, community_len) ||
         ! junkdatagramsenderSnmpPutBytes(&writer, community, (uint32_t) community_len) ||
@@ -434,8 +423,7 @@ static bool junkdatagramsenderSnmpBuildV1V2cNullRequest(sbuf_t *buf, uint32_t wr
 
         size_t varbind_content_len = junkdatagramsenderSnmpBerTlvSize(oid_value_len) + 2U;
         if (! junkdatagramsenderSnmpPutTlvHeader(&writer, kSnmpBerSequence, varbind_content_len) ||
-            ! junkdatagramsenderSnmpPutOidTlv(&writer, oid_list[i]) ||
-            ! junkdatagramsenderSnmpPutNullTlv(&writer))
+            ! junkdatagramsenderSnmpPutOidTlv(&writer, oid_list[i]) || ! junkdatagramsenderSnmpPutNullTlv(&writer))
         {
             return false;
         }

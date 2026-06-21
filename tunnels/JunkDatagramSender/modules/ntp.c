@@ -3,8 +3,8 @@
 enum
 {
     kNtpPacketLen              = 48,
-    kNtpModeClient            = 3,
-    kNtpTransmitSecondsOffset = 40,
+    kNtpModeClient             = 3,
+    kNtpTransmitSecondsOffset  = 40,
     kNtpTransmitFractionOffset = 44,
 };
 
@@ -42,8 +42,7 @@ static bool junkdatagramsenderNtpBuildClientRequest(sbuf_t *buf, uint8_t version
                                                     bool set_transmit_timestamp, uint64_t unix_seconds,
                                                     uint32_t nanoseconds)
 {
-    if (version < 3 || version > 4 || nanoseconds >= 1000000000UL ||
-        sbufGetMaximumWriteableSize(buf) < kNtpPacketLen)
+    if (version < 3 || version > 4 || nanoseconds >= 1000000000UL || sbufGetMaximumWriteableSize(buf) < kNtpPacketLen)
     {
         return false;
     }

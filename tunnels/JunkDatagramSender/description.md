@@ -12,7 +12,7 @@ The node forwards `Init` first so the next tunnel has created its per-line state
   "type": "JunkDatagramSender",
   "settings": {
     "packet-count-perline-min": 2,
-    "packet-count-perline-maximum": 5,
+    "packet-count-perline-max": 5,
     "selected-protocols": ["dns", "ntp", "quic-http3", "rtp-rtcp-srtp"],
     "keep-sending-max-ms": 1500
   },
@@ -26,7 +26,7 @@ The node forwards `Init` first so the next tunnel has created its per-line state
   Minimum number of junk packets generated for each initialized line.
   Default: `1`
 
-- `packet-count-perline-maximum` `(integer, optional)`
+- `packet-count-perline-max` `(integer, optional)`
   Maximum number of junk packets generated for each initialized line.
   Default: `1`
 
@@ -50,6 +50,7 @@ Accepted canonical names are:
 - `snmp`
 - `syslog`
 - `ipsec-nat-t`
+- `sip`
 
 Some shorter aliases are accepted, such as `quic`, `http3`, `rtp`, `stun`, and `ipsec-natt`.
 
@@ -57,7 +58,6 @@ Some shorter aliases are accepted, such as `quic`, `http3`, `rtp`, `stun`, and `
 
 These protocol modules are intentionally disabled until their packet generators are implemented. If a user lists one in `selected-protocols`, configuration fails.
 
-- `sip`
 - `tftp`
 - `ssdp`
 - `radius`
@@ -78,7 +78,7 @@ bool junkdatagramsender<Protocol>Generate(sbuf_t *buf, const junkdatagramsender_
 
 The generator receives an already allocated `sbuf_t`, writes one datagram payload into it, sets the buffer length, and returns whether generation succeeded. The module owns only the bytes it writes; the node owns forwarding, scheduling, and buffer reuse.
 
-The DNS module currently builds a real DNS query UDP payload with a question and optional EDNS(0) OPT record. DHCP builds valid-looking DHCPv4 client messages, NTP builds valid-looking NTP client requests, QUIC/HTTP3 builds QUIC Initial-like datagrams with HTTP/3 ALPN, RTP/RTCP/SRTP builds RTP media, RTCP control, and SRTP-shaped payloads, STUN/TURN/ICE builds connectivity-check and relay-control messages, mDNS builds multicast DNS query and announcement payloads, SNMP builds v1/v2c manager requests, Syslog builds RFC3164/RFC5424 messages, and IPsec NAT-T builds keepalive, IKEv2, and ESP-in-UDP payloads. The disabled modules remain structural placeholders for future implementation and are not selectable by users.
+The DNS module currently builds a real DNS query UDP payload with a question and optional EDNS(0) OPT record. DHCP builds valid-looking DHCPv4 client messages, NTP builds valid-looking NTP client requests, QUIC/HTTP3 builds QUIC Initial-like datagrams with HTTP/3 ALPN, RTP/RTCP/SRTP builds RTP media, RTCP control, and SRTP-shaped payloads, STUN/TURN/ICE builds connectivity-check and relay-control messages, mDNS builds multicast DNS query and announcement payloads, SNMP builds v1/v2c manager requests, Syslog builds RFC3164/RFC5424 messages, IPsec NAT-T builds keepalive, IKEv2, and ESP-in-UDP payloads, and SIP builds valid-looking SIP requests and responses. The disabled modules remain structural placeholders for future implementation and are not selectable by users.
 
 ## Lifecycle Notes
 
