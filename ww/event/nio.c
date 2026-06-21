@@ -453,7 +453,7 @@ int wioConnect(wio_t *io)
     if (ret < 0 && socketERRNO() != EINPROGRESS)
     {
 #endif
-        printError("connect");
+        // printError("connect");
         io->error = socketERRNO();
         wioCloseAsync(io);
         return ret;
