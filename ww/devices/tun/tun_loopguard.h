@@ -14,11 +14,11 @@
  * The loop-guard prevents this without any manual endpoint configuration:
  *  - it snapshots the original default gateway/interface (before the TUN routes
  *    are installed),
- *  - it watches this process's own outbound connections (via WinDivert's SOCKET
- *    layer on Windows),
+ *  - it watches this process's own network flows (via WinDivert's FLOW layer on
+ *    Windows),
  *  - for each endpoint that would otherwise be routed into the TUN it installs a
  *    host (/32 or /128) bypass route via the original gateway, and removes it
- *    again when the connection closes.
+ *    again when the flow closes or expires.
  *
  * The interface is cross-platform; only Windows currently has an implementation.
  * On every other platform (and on Windows builds without WinDivert) the functions

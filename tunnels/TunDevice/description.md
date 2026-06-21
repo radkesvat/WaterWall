@@ -124,14 +124,16 @@ Full-route example with local ranges excluded:
   Default: enabled whenever system routing is enabled (i.e. tracks
   `system-route` / `route-table`), disabled otherwise. Set to `false` to opt out.
 
-  On Windows this is implemented with WinDivert: the process's own outbound
-  connections are observed at the socket layer and any endpoint that would
-  otherwise be steered into the TUN gets a host (`/32` or `/128`) bypass route
-  via the *original* default gateway. This protects connectors (`TcpConnector`,
-  `UdpConnector`, ...) automatically, even when they live in a different chain
-  and connect to dynamic endpoints, so manual `route-exclude-cidrs` entries for
-  your upstream server are no longer required. On other platforms this option is
-  currently a no-op.
+  On Windows this is implemented with WinDivert at the **flow** layer: the
+  process's own network flows (TCP connections and UDP flows alike) are observed
+  and any endpoint that would otherwise be steered into the TUN gets a host
+  (`/32` or `/128`) bypass route via the *original* default gateway. The flow
+  layer is required because `UdpConnector` sends with unconnected `sendto()` and
+  never calls `connect()`, so the socket-layer `CONNECT` event would never fire
+  for it. This protects connectors (`TcpConnector`, `UdpConnector`, ...)
+  automatically, even when they live in a different chain and connect to dynamic
+  endpoints, so manual `route-exclude-cidrs` entries for your upstream server are
+  no longer required. On other platforms this option is currently a no-op.
 
 - `post-up-script` `(string)`
   Optional shell command to run after the interface is up and native routes are installed.
@@ -194,20 +196,22 @@ With `loop-protection` enabled (the default in system-route mode), `TunDevice`:
 
 - snapshots the original default gateway/interface per family *before* installing
   the TUN routes,
-- opens a WinDivert socket-layer handle (`SNIFF | RECV_ONLY`) filtered to this
-  process only, observing its own `CONNECT`/`CLOSE` events (the SOCKET layer
-  cannot inject/permit events, so the handle observes rather than blocks),
-- for each new outbound endpoint that the current routing table would send into
-  the TUN, installs a host bypass route via the original gateway, reference
-  counted per destination and tracked per socket `EndpointId` so an unrelated
-  socket sharing the same remote IP cannot tear down a live route,
+- opens a WinDivert flow-layer handle (`SNIFF | RECV_ONLY`) filtered to this
+  process only, observing its own `FLOW_ESTABLISHED`/`FLOW_DELETED` events (the
+  flow layer is observe-only and, unlike the socket layer, reports UDP flows too
+  -- essential because `UdpConnector` uses unconnected `sendto()`),
+- for each new flow endpoint that the current routing table would send into the
+  TUN, installs a host bypass route via the original gateway, reference counted
+  per destination and tracked per flow `EndpointId` so an unrelated flow sharing
+  the same remote IP cannot tear down a live route,
 - removes any remaining bypass routes when the device is brought down.
 
-The `CONNECT` event is delivered as the connection is being established, so the
+The `FLOW_ESTABLISHED` event is delivered as the flow is established, so the
 bypass route is normally installed before traffic flows; there is a small
 inherent race where the very first packet of a brand-new endpoint could enter the
-TUN before the route lands (the connection self-heals on retransmit). This is the
-correct trade-off because the SOCKET layer cannot hold/permit events.
+TUN before the route lands (the connection self-heals on retransmit, e.g.
+WireGuard's handshake retry). This is the correct trade-off because the flow layer
+cannot hold/permit events.
 
 This relies on the bundled, pre-signed WinDivert driver (no extra driver or WFP
 callout is required). If WinDivert cannot be loaded, or no original default route

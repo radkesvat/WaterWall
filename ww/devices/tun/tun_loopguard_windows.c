@@ -10,28 +10,32 @@
 
 #include "loggers/internal_logger.h"
 
-#include <ws2tcpip.h>
-#include <ws2ipdef.h>
 #include <iphlpapi.h>
 #include <netioapi.h>
+#include <ws2ipdef.h>
+#include <ws2tcpip.h>
 
 /*
  * Windows implementation of the TUN loop-guard (see tun_loopguard.h).
  *
  * Mechanism:
- *  - WinDivert is opened at the SOCKET layer (SNIFF | RECV_ONLY), filtered to this
- *    process only, observing its own CONNECT/CLOSE events. The SOCKET layer cannot
- *    inject or permit events, so it is observe-only; the bypass route is installed
- *    as the connect proceeds. The CONNECT event normally arrives before traffic
- *    flows, but there is a small inherent first-packet race (self-heals on
- *    retransmit) -- unavoidable because the SOCKET layer cannot hold events.
- *  - For each new connect endpoint, GetBestRoute2() is consulted. If the endpoint
+ *  - WinDivert is opened at the FLOW layer (SNIFF | RECV_ONLY), filtered to this
+ *    process only, observing its own flow ESTABLISHED/DELETED events. The FLOW
+ *    layer is used (rather than SOCKET) because it captures *all* flows -- TCP
+ *    connections AND non-TCP flows such as UDP, including unconnected sendto()
+ *    traffic (the implicit flow created by the first datagram). This matters
+ *    because WaterWall's UdpConnector binds + sendto() and never calls connect(),
+ *    so the SOCKET layer's CONNECT event would never fire for it and its packets
+ *    to the upstream server would loop. The FLOW layer is observe-only (it cannot
+ *    block or inject), which matches how we use it; the bypass route is installed
+ *    as the flow is established (small inherent first-packet race, self-heals).
+ *  - For each new flow endpoint, GetBestRoute2() is consulted. If the endpoint
  *    would be routed *into the TUN*, a host (/32 or /128) bypass route via the
  *    original default gateway is installed so the packet exits the physical NIC
  *    instead, breaking the loop. Endpoints that are already routed elsewhere
  *    (LAN/on-link, loopback, user-excluded ranges) are left untouched.
- *  - Bypass routes are reference-counted per destination and tracked per socket
- *    EndpointId, removed on the matching SOCKET_CLOSE (leftovers removed on stop).
+ *  - Bypass routes are reference-counted per destination and tracked per flow
+ *    EndpointId, removed on the matching FLOW_DELETED (leftovers removed on stop).
  */
 
 enum
@@ -39,17 +43,17 @@ enum
     kLoopGuardFilterLen = 160
 };
 
-// One protected socket. We track the socket's WinDivert EndpointId (unique per
-// kernel socket) so that a CLOSE belonging to an *unrelated* socket that happens
-// to share the same remote IP (e.g. an inbound accepted socket) can never tear
-// down the bypass route of a live protected connector. The bypass route for a
-// given destination is reference counted as "number of protected sockets that
-// share that destination address".
-typedef struct prot_sock_s
+// One protected flow. We track the flow's WinDivert EndpointId (unique per
+// kernel flow) so that a FLOW_DELETED belonging to an *unrelated* flow that
+// happens to share the same remote IP (e.g. an inbound flow) can never tear down
+// the bypass route of a live protected connector. The bypass route for a given
+// destination is reference counted as "number of protected flows that share that
+// destination address".
+typedef struct prot_flow_s
 {
     UINT64        endpoint_id;
     SOCKADDR_INET dest; // destination the bypass route was installed for
-} prot_sock_t;
+} prot_flow_t;
 
 struct tun_loopguard_s
 {
@@ -67,9 +71,9 @@ struct tun_loopguard_s
     NET_LUID      v6_if_luid;
     SOCKADDR_INET v6_gateway;
 
-    // Set of protected sockets (keyed by EndpointId).
+    // Set of protected flows (keyed by EndpointId).
     wmutex_t     lock;
-    prot_sock_t *items;
+    prot_flow_t *items;
     size_t       count;
     size_t       capacity;
 };
@@ -109,20 +113,20 @@ static void setSockaddrInetV4(SOCKADDR_INET *out, const struct in_addr *v4)
     out->Ipv4.sin_addr   = *v4;
 }
 
-// Decode the remote endpoint of a SOCKET-layer event into a SOCKADDR_INET.
+// Decode the remote endpoint of a FLOW-layer event into a SOCKADDR_INET.
 //
-// Per the WinDivert docs, Socket.RemoteAddr is *always* stored as an IPv6 address,
+// Per the WinDivert docs, Flow.RemoteAddr is *always* stored as an IPv6 address,
 // and IPv4 endpoints are represented as IPv4-mapped IPv6 (::ffff:a.b.c.d) -- this
 // holds whether the addr->IPv6 flag is set (real IPv6 / dual-stack socket) or
-// cleared (IPv4 event). So we always decode the 4-word RemoteAddr as IPv6 and then
+// cleared (IPv4 flow). So we always decode the 4-word RemoteAddr as IPv6 and then
 // demote v4-mapped addresses to a real IPv4 SOCKADDR_INET, so the bypass route
 // matches the actual (IPv4) wire traffic instead of an unmatchable ::ffff:/128.
-static bool decodeSocketRemote(const WINDIVERT_ADDRESS *addr, SOCKADDR_INET *out)
+static bool decodeFlowRemote(const WINDIVERT_ADDRESS *addr, SOCKADDR_INET *out)
 {
     char            buf[64];
     struct in6_addr v6;
 
-    if (! windivertHelperFormatIPv6Address(addr->Socket.RemoteAddr, buf, sizeof(buf)))
+    if (! windivertHelperFormatIPv6Address(addr->Flow.RemoteAddr, buf, sizeof(buf)))
     {
         return false;
     }
@@ -219,12 +223,12 @@ static bool buildBypassRow(const tun_loopguard_t *guard, const SOCKADDR_INET *de
     }
 
     InitializeIpForwardEntry(row);
-    row->InterfaceLuid                 = luid;
-    row->DestinationPrefix.Prefix      = *dest;
+    row->InterfaceLuid                  = luid;
+    row->DestinationPrefix.Prefix       = *dest;
     row->DestinationPrefix.PrefixLength = (dest->si_family == AF_INET6) ? 128 : 32;
-    row->NextHop                       = gateway;
-    row->Protocol                      = MIB_IPPROTO_NETMGMT;
-    row->Metric                        = 0;
+    row->NextHop                        = gateway;
+    row->Protocol                       = MIB_IPPROTO_NETMGMT;
+    row->Metric                         = 0;
     return true;
 }
 
@@ -261,7 +265,7 @@ static void removeBypassRoute(const tun_loopguard_t *guard, const SOCKADDR_INET 
 }
 
 // ---------------------------------------------------------------------------
-// protected-socket set (must be called with guard->lock held)
+// protected-flow set (must be called with guard->lock held)
 // ---------------------------------------------------------------------------
 
 static bool findEndpointLocked(tun_loopguard_t *guard, UINT64 endpoint_id)
@@ -276,7 +280,7 @@ static bool findEndpointLocked(tun_loopguard_t *guard, UINT64 endpoint_id)
     return false;
 }
 
-// Number of protected sockets still using `dest` (the route refcount).
+// Number of protected flows still using `dest` (the route refcount).
 static size_t countDestLocked(tun_loopguard_t *guard, const SOCKADDR_INET *dest)
 {
     size_t n = 0;
@@ -309,10 +313,10 @@ static bool appendEndpointLocked(tun_loopguard_t *guard, UINT64 endpoint_id, con
     if (guard->count == guard->capacity)
     {
         size_t       next_capacity = guard->capacity == 0 ? 16 : guard->capacity * 2;
-        prot_sock_t *new_items     = memoryReAllocate(guard->items, next_capacity * sizeof(prot_sock_t));
+        prot_flow_t *new_items     = memoryReAllocate(guard->items, next_capacity * sizeof(prot_flow_t));
         if (new_items == NULL)
         {
-            LOGE("TunLoopGuard: failed to grow protected-socket set");
+            LOGE("TunLoopGuard: failed to grow protected-flow set");
             return false;
         }
         guard->items    = new_items;
@@ -329,11 +333,11 @@ static bool appendEndpointLocked(tun_loopguard_t *guard, UINT64 endpoint_id, con
 // event handling
 // ---------------------------------------------------------------------------
 
-static void handleConnect(tun_loopguard_t *guard, const WINDIVERT_ADDRESS *addr)
+static void handleFlowEstablished(tun_loopguard_t *guard, const WINDIVERT_ADDRESS *addr)
 {
-    UINT64        endpoint_id = addr->Socket.EndpointId;
+    UINT64        endpoint_id = addr->Flow.EndpointId;
     SOCKADDR_INET dest;
-    if (! decodeSocketRemote(addr, &dest))
+    if (! decodeFlowRemote(addr, &dest))
     {
         return;
     }
@@ -342,13 +346,13 @@ static void handleConnect(tun_loopguard_t *guard, const WINDIVERT_ADDRESS *addr)
 
     if (findEndpointLocked(guard, endpoint_id))
     {
-        // Duplicate CONNECT for a socket we already track.
+        // Duplicate FLOW_ESTABLISHED for a flow we already track.
         mutexUnlock(&guard->lock);
         return;
     }
 
     // Is the bypass route for this destination already installed (another
-    // protected socket shares it)? If so we only need to register this socket.
+    // protected flow shares it)? If so we only need to register this flow.
     bool route_present = countDestLocked(guard, &dest) > 0;
     mutexUnlock(&guard->lock);
 
@@ -367,8 +371,8 @@ static void handleConnect(tun_loopguard_t *guard, const WINDIVERT_ADDRESS *addr)
 
     mutexLock(&guard->lock);
     bool registered = appendEndpointLocked(guard, endpoint_id, &dest);
-    // If we just installed the route but failed to register the socket, and no
-    // other socket uses it, roll the route back to avoid leaking it.
+    // If we just installed the route but failed to register the flow, and no
+    // other flow uses it, roll the route back to avoid leaking it.
     bool rollback = (! registered) && (! route_present) && (countDestLocked(guard, &dest) == 0);
     mutexUnlock(&guard->lock);
 
@@ -378,9 +382,9 @@ static void handleConnect(tun_loopguard_t *guard, const WINDIVERT_ADDRESS *addr)
     }
 }
 
-static void handleClose(tun_loopguard_t *guard, const WINDIVERT_ADDRESS *addr)
+static void handleFlowDeleted(tun_loopguard_t *guard, const WINDIVERT_ADDRESS *addr)
 {
-    UINT64        endpoint_id = addr->Socket.EndpointId;
+    UINT64        endpoint_id = addr->Flow.EndpointId;
     SOCKADDR_INET dest;
     bool          remove_route = false;
 
@@ -393,11 +397,11 @@ static void handleClose(tun_loopguard_t *guard, const WINDIVERT_ADDRESS *addr)
         }
 
         dest = guard->items[i].dest;
-        // remove this protected socket entry (swap with last)
+        // remove this protected flow entry (swap with last)
         guard->items[i] = guard->items[guard->count - 1];
         guard->count--;
 
-        // Drop the route only when no other protected socket still uses it.
+        // Drop the route only when no other protected flow still uses it.
         remove_route = countDestLocked(guard, &dest) == 0;
         break;
     }
@@ -433,18 +437,18 @@ static WTHREAD_ROUTINE(routineLoopGuard) // NOLINT
             continue;
         }
 
-        if (addr.Event == WINDIVERT_EVENT_SOCKET_CONNECT)
+        if (addr.Event == WINDIVERT_EVENT_FLOW_ESTABLISHED)
         {
-            handleConnect(guard, &addr);
+            handleFlowEstablished(guard, &addr);
         }
-        else if (addr.Event == WINDIVERT_EVENT_SOCKET_CLOSE)
+        else if (addr.Event == WINDIVERT_EVENT_FLOW_DELETED)
         {
-            handleClose(guard, &addr);
+            handleFlowDeleted(guard, &addr);
         }
 
-        // The handle is opened SNIFF | RECV_ONLY: socket events are observed, not
-        // blocked, and the SOCKET layer does not support injecting/permitting
-        // events. So we never call WinDivertSend here -- the operation proceeds
+        // The handle is opened SNIFF | RECV_ONLY: flow events are observed, not
+        // blocked, and the FLOW layer does not support injecting/permitting
+        // events. So we never call WinDivertSend here -- the flow proceeds
         // normally and we just install the bypass route alongside it.
     }
 
@@ -486,20 +490,20 @@ tun_loopguard_t *tunLoopGuardStart(uint64_t tun_luid_value)
         return NULL;
     }
 
+    // Filter to this process only; the FLOW layer then yields ESTABLISHED and
+    // DELETED events for every TCP/UDP flow we open (which is exactly what we want
+    // to observe -- we dispatch on addr.Event in the thread).
     char filter[kLoopGuardFilterLen];
-    stringNPrintf(filter,
-                  sizeof(filter),
-                  "processId == %lu and (event == CONNECT or event == CLOSE)",
-                  (unsigned long) guard->pid);
+    stringNPrintf(filter, sizeof(filter), "processId == %lu", (unsigned long) guard->pid);
 
-    // SNIFF | RECV_ONLY: observe our own socket events without blocking them. The
-    // SOCKET layer cannot inject/permit events, so blocking mode is not usable
-    // here; we install the bypass route as the connect proceeds.
+    // SNIFF | RECV_ONLY: observe our own flow events without blocking them. The
+    // FLOW layer cannot inject/permit/block events anyway; we install the bypass
+    // route as the flow is established.
     guard->divert_handle =
-        windivertOpen(filter, WINDIVERT_LAYER_SOCKET, 0, WINDIVERT_FLAG_SNIFF | WINDIVERT_FLAG_RECV_ONLY);
+        windivertOpen(filter, WINDIVERT_LAYER_FLOW, 0, WINDIVERT_FLAG_SNIFF | WINDIVERT_FLAG_RECV_ONLY);
     if (guard->divert_handle == INVALID_HANDLE_VALUE)
     {
-        LOGE("TunLoopGuard: failed to open WinDivert socket layer: error %lu", GetLastError());
+        LOGE("TunLoopGuard: failed to open WinDivert flow layer: error %lu", GetLastError());
         mutexDestroy(&guard->lock);
         memoryFree(guard);
         return NULL;
