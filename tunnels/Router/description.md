@@ -1,261 +1,380 @@
 # Router
 
-A layer-4 **rule-based router**. It sits inside a chain like a middle tunnel and,
-on the **first upstream payload** of each connection, evaluates an ordered list
-of routing rules to decide where the connection should go:
+A layer-4 **rule-based router**. It sits in a chain like a middle tunnel and, on
+the **first upstream payload** of each connection, walks an ordered list of rules
+to decide where that connection should go:
 
-- the **first** rule whose match conditions **all** succeed (logical `AND`) wins,
-  and the connection is handed to that rule's `target` node;
+- the **first** rule whose conditions **all** match (logical `AND`) wins, and the
+  connection is handed to that rule's `target` node;
 - if **no** rule matches, the connection continues to the node's top-level
   `next` — the **default route**.
 
-It is closely related to [`SniffRouter`](../SniffRouter/description.md): they
-share the same target-folding and lazy-decision lifecycle. The difference is the
-decision input. `SniffRouter` decides purely by sniffing the first bytes (HTTP
-`Host` / TLS SNI / reverse handshake), while `Router` decides by matching a
-flexible set of **connection facts** (source/destination address, ports, network
-type, detected protocol, username, destination domain, …) combined into rules.
+## At a glance
 
-> **Implementation status.** Configuration parsing, rule ordering, `AND`
-> evaluation, target binding and the full connection lifecycle are complete and
-> safe. Matcher status:
->
-> - **Functional:** `source-ips`, `destination-ip`, `network`,
->   `protocol`, `destination-domain`, `source-port`, `destination-port` (see
->   notes per field below). `geoip:<cc>` is functional for `source-ips` and
->   `destination-ip` when `geoip-db-path` is configured. `protocol` detects
->   `http1`, `tls`, and `bittorrent` from the first upstream payload.
->   `destination-domain` can use a
->   configured sniffed HTTP `Host` or TLS SNI value, and supports `geosite:`
->   domain-list tokens when `geosite-db-path` is configured.
->   `attributes: ["http_upgrade_present"]` is functional when HTTP sniffing is
->   enabled and matches HTTP/1 requests carrying an `Upgrade:` header.
-> - **`username` / `password`:** functional, exact and case-sensitive. The
->   authenticating tunnel stores the raw username/password on the line
->   (`lineGetAuthenticatedUsername` / `lineGetAuthenticatedPassword`), so the
->   Router needs no users-table lookup. Population per protocol:
->   - `Socks5Server`: the client-supplied SOCKS username + password.
->   - `TrojanServer` / `VlessServer`: the account name + raw password resolved
->     from the authenticated user in a single locked lookup
->     (`authenticationclientGet...WithProfile`). In local allowlist modes there
->     is no user handle, so only configured local credentials are set
->     (`TrojanServer`: optional local username + raw password, `VlessServer`:
->     optional local username + canonical UUID password).
->   Note the username differs in kind by protocol: SOCKS5 exposes the
->   client-typed username, while Trojan/Vless expose the server-side account name.
+```text
+client ──▶ Router ──▶ evaluate rules on the first payload
+                        │
+                        ├─ first matching rule ──▶ its target node
+                        └─ no rule matches     ──▶ next (default route)
+```
 
-## Why this node is easy to misread
+A rule is `target` **plus at least one condition**. Conditions you can use:
 
-The word "router" suggests an immediate, stateless decision, but `Router`
-behaves like a **deferred branch selector**:
+| Condition | Matches on | Example value |
+|-----------|------------|---------------|
+| `source-ips` | client source IP, CIDR, or `geoip:<cc>` | `["10.0.0.0/8", "geoip:ir"]` |
+| `source-port` | local/inbound port the peer connected to | `"1000-2000"` |
+| `destination-ip` | destination IP, CIDR, or `geoip:<cc>` | `"geoip:us"` |
+| `destination-port` | destination port, single or range | `443` |
+| `destination-domain` | destination domain: exact, wildcard, `*`, or `geosite:<list>` | `["*.example.com", "geosite:cn"]` |
+| `network` | transport type: `tcp`, `udp`, `icmp`, `packet` | `"tcp,udp"` |
+| `protocol` | app protocol sniffed from first bytes: `http1`, `tls`, `bittorrent` | `"tls"` |
+| `attributes` | sniffed facts: `http_upgrade_present` | `["http_upgrade_present"]` |
+| `username` | authenticated username on the line | `"alice"` |
+| `password` | authenticated password on the line | `"s3cret"` |
 
-- It does **not** route at `Init`. It waits for the first upstream payload so
-  content-based matchers (e.g. `protocol`) have bytes to inspect. The buffered
-  bytes are then **replayed** to the chosen branch with no loss.
-- A rule's `target` is **not** a "send and forget" address. Each `target` node is
-  **folded into the same chain** during `onChain`, exactly like `SniffRouter`
-  routes. That means the target gets a per-line state slot and its **downstream**
-  traffic returns back **through** the `Router` to the previous node.
-- The top-level `next` is the **default route**, used when no rule matches or
-  when no rules are configured. It is a normal upstream continuation, not
-  "rule 0".
-- Because matching is deferred to the first upstream payload, a flow where the
-  **server speaks first** (no initial client bytes) will not be classified and
-  will sit until bytes arrive — the same limitation `SniffRouter` has. Put
-  `Router` where the client side sends first (the common case).
+**Matching semantics**, in one line each:
 
-## How it works
+- **Within one condition** → `OR` (e.g. `destination-port: ["80","443"]` matches either).
+- **Across conditions in one rule** → `AND` (every condition must match).
+- **Across rules** → first match wins, in JSON order; later rules are skipped.
+- **No match anywhere** → the default `next` route.
 
-1. Upstream `Init` only initializes the router's own per-line state; it does
-   **not** initialize any branch yet.
+## Mental model: a deferred branch selector
+
+The word "router" suggests an immediate, stateless decision. `Router` is the
+opposite — it is a **deferred branch selector**, and most surprises come from
+missing that:
+
+- **It does not route at `Init`.** It waits for the first upstream payload so
+  content-based matchers (`protocol`, `attributes`, domain sniffing) have bytes
+  to inspect. Those buffered bytes are then **replayed** to the chosen branch with
+  nothing lost.
+- **A `target` is a real branch, not a fire-and-forget address.** Each `target`
+  node is **folded into the same chain** during `onChain` (exactly like
+  [`SniffRouter`](../SniffRouter/description.md) routes), so the target gets a
+  per-line state slot and its **downstream** traffic flows back **through** the
+  `Router` to the previous node.
+- **`next` is the default route, not "rule 0".** It is a normal upstream
+  continuation used when no rule matches (or when no rules are configured).
+- **The client must speak first.** Because the decision is deferred to the first
+  upstream payload, a flow where the **server speaks first** (no initial client
+  bytes) will sit unclassified until bytes arrive — the same limitation
+  `SniffRouter` has. Place `Router` where the client side sends first (the common
+  case).
+
+## Lifecycle: how a connection is routed
+
+1. Upstream `Init` initializes only the router's own per-line state and clears any
+   stale optional routing metadata on the destination. **No branch is initialized
+   yet.**
 2. The first upstream payload is buffered and passed to the rule evaluator
    (`routerClassify`).
-3. If any rule uses `protocol`, Router first tries to detect the requested
-   protocol values and stores the result in optional destination-context flags.
-   If `sniffing` is enabled, Router also tries to populate destination-domain
-   metadata from HTTP Host or TLS SNI. Domain sniffing happens even when no
-   rules are configured, because upstream tunnels may still use the routing
-   metadata.
-4. Rules are tested **top to bottom in JSON order**. For each rule, every
-   configured condition is evaluated and `AND`-combined. The first fully matching
+3. **Sniffing runs first**, scoped to what the rules actually need:
+   - if any rule uses `protocol`, the requested protocol detectors run and store
+     their result in `dest_ctx.optional_flags`;
+   - if `sniffing` is enabled, Host/SNI detection runs to populate
+     `dest_ctx.domain`. Domain sniffing runs even with no rules configured,
+     because branches further up the chain (e.g. a connector) may still use that
+     metadata.
+   - if a detector **needs more bytes**, Router keeps buffering and re-evaluates
+     on the next payload (see [First-payload buffering](#first-payload-buffering)).
+4. **Rules are tested top to bottom in JSON order.** For each rule every
+   configured condition is evaluated and `AND`-combined; the first fully matching
    rule selects its `target`.
-5. The chosen branch (rule `target`, or the default `next`) is initialized, and
-   the buffered bytes are replayed to it. From then on payloads flow straight
-   through to the chosen branch, and downstream traffic returns through the
-   router.
+5. The chosen branch (a rule `target`, or the default `next`) is initialized and
+   the buffered bytes are **replayed** to it. From then on payloads flow straight
+   through to that branch, and downstream traffic returns through the router.
 
 ## Settings
 
+The node must define a top-level `next` (the **default route**) and a `settings`
+object:
+
 | key | type | required | description |
 |-----|------|----------|-------------|
-| `rules` | array | no | ordered list of routing rule objects (see below) |
-| `sniffing` | array | no | root-level array of sniffing methods: `http1`, `tls`; missing or empty disables sniffing |
-| `sniff-even-if-domain-is-already-provided` | boolean | no | default `false`; when `false`, Router does not sniff or overwrite destinations that already have `dest_ctx.domain` |
-| `geoip-db-path` | string | only with `geoip:` rules | path to a MaxMind country database used by `geoip:<cc>` tokens |
-| `geosite-db-path` | string | only with `geosite:` rules | path to a Router geosite JSON database generated by `tunnels/Router/geosite_ww_style_generator/do_the_job.py` |
+| `rules` | array | no | ordered list of routing rule objects (see [Rules](#rules)) |
+| `sniffing` | array | no | domain-sniffing methods: `http1`, `tls`. Missing or empty disables domain sniffing |
+| `sniff-even-if-domain-is-already-provided` | boolean | no | default `false`. When `false`, Router will not sniff or overwrite a destination that already has `dest_ctx.domain` |
+| `geoip-db-path` | string | only with `geoip:` tokens | path to a MaxMind country database used by `geoip:<cc>` |
+| `geosite-db-path` | string | only with `geosite:` tokens | path to a Router geosite JSON database (see [GeoIP & GeoSite](#geoip--geosite-databases)) |
 
-The node itself must define a top-level `next`; this is the **default route**
-used when no rule matches. A `Router` with no `rules` still sends every
-connection to `next` (a warning is logged at startup), but if `sniffing` is
-enabled it may first inspect the initial payload to fill `dest_ctx.domain`.
+A `Router` with no `rules` still sends every connection to `next` (a warning is
+logged at startup); if `sniffing` is enabled it may first inspect the initial
+payload to fill `dest_ctx.domain`.
 
-`geosite-db-path` is validated and loaded only when at least one parsed rule uses
-a `geosite:` token. Missing, empty, unreadable, invalid JSON database paths,
-invalid GeoSite regex patterns, or references to unknown list names fail Router
-creation. Router resolves referenced list names once at startup, compiles only
-those lists into exact-domain and suffix-domain hash sets, plain substring
-patterns, and STC `cregex` regex programs, then releases the raw JSON-loaded
-database. `full`, `domain`, `plain`, and `regex` GeoSite entries are supported.
-Regex matching is case-insensitive and uses STC `cregex` syntax.
-
-### Sniffing
-
-`sniffing` is a root-level setting inside the Router `settings` object, outside
-the `rules` array:
-
-```json
-{
-    "sniffing": ["http1", "tls"]
-}
-```
-
-Supported values are:
-
-- `http1` — sniff the HTTP/1 `Host` header.
-- `tls` — sniff the TLS ClientHello SNI.
-
-The value must be an array. Missing `sniffing` or an empty array disables
-sniffing. Values are parsed case-insensitively, but only `http1` and `tls` are
-accepted. The old `http` value has been removed; use `http1` instead.
-
-By default, Router only sniffs destinations that do not already have a
-destination domain. If `dest_ctx.domain` is already populated, Router leaves it
-unchanged and evaluates rules using that existing domain. Set
-`sniff-even-if-domain-is-already-provided` to `true` only when you intentionally
-want Host/SNI to replace an already-domain destination.
-
-Why this default matters: an HTTP `Host` header or TLS SNI is data sent by the
-client inside the connection. It is useful for classifying IP-only connections,
-such as a transparent proxy flow where the original destination is an IP address
-and Router wants to match `destination-domain` rules. But if the destination
-context already contains a domain, that domain is usually the endpoint chosen by
-an earlier tunnel or configuration parser. Replacing it with client-supplied
-Host/SNI can change what an upstream connector resolves and connects to. With
-the default `false`, Router treats Host/SNI as extra metadata only for IP-backed
-destinations and does not allow it to redirect a domain-backed destination.
-
-When `sniff-even-if-domain-is-already-provided` is `true`, Router will sniff even
-if `dest_ctx.domain` is already set. If Host/SNI is found, Router replaces
-`dest_ctx.domain` with the sniffed name before evaluating rules. For a
-domain-only destination that has no resolved IP, `domain_resolved` stays `false`,
-so an upstream connector may DNS-resolve and connect to the sniffed name
-instead of the original domain. Enable this only when the chain deliberately
-trusts the application-layer Host/SNI more than the destination domain already
-stored on the line.
-
-Sniffing happens on the first upstream payload before rules are evaluated. It
-also runs when the `rules` array is missing, because sniffing updates the line's
-routing metadata before the connection falls through to the default `next`
-branch. If a configured sniffer needs more bytes, Router continues using its
-existing pending first-payload buffer until the Host/SNI is found, the parser
-decides it is not present, or the bounded sniff window is exhausted.
-
-When Host/SNI is found, Router stores it in `dest_ctx.domain`, so
-`destination-domain` rules can match an originally IP-only destination. This
-does not replace the destination endpoint: the original destination IP, port,
-transport protocol flags, optional protocol-detection flags and address type are
-preserved. If the destination is backed by a
-concrete IP address, Router marks the observed domain as resolved
-(`domain_resolved = true`) so upstream connectors keep using the original IP
-instead of resolving the sniffed name again. Wildcard/any IPs such as `0.0.0.0`
-or `::` are not treated as resolved destinations. If
-`sniff-even-if-domain-is-already-provided` is enabled and the destination is
-domain-only with no resolved IP, Router stores the sniffed domain but leaves
-`domain_resolved = false`; upstream connectors will resolve that new domain.
-
-When a rule contains `attributes: ["http_upgrade_present"]`, HTTP sniffing also
-checks whether the first upstream HTTP request headers contain an `Upgrade:`
-header. That sniffed fact is stored in Router's per-line state and constrains
-only rules that explicitly request the attribute. Other rules can still match
-the same connection by their own conditions. This attribute requires root
-`sniffing` to include `"http1"`; if HTTP sniffing is disabled, the attribute bit
-is never set and such rules will not match. Unlike Host/SNI sniffing, this
-upgrade-header check can still run when the destination domain was already
-provided, and it does not overwrite `dest_ctx.domain`.
-
-Because Router makes one shared route decision per connection, enabling any
-`http_upgrade_present` rule makes Router inspect the first-payload HTTP/1 header
-window before classifying every connection on that Router. Non-HTTP payloads are
-rejected by the method check immediately, while partial HTTP/1 headers may delay
-classification until the headers complete or the bounded sniff window is
-exhausted.
-
-### Protocol Matching
-
-`protocol` is a rule condition that matches application-protocol facts detected
-from the first upstream payload. Supported values are:
-
-- `http1` — HTTP/1 request method prefix.
-- `tls` — TLS ClientHello.
-- `bittorrent` — BitTorrent handshake prefix
-  (`19` followed by `BitTorrent protocol`).
-
-The old `http` value has been removed; use `http1` instead. Unsupported values
-are fatal configuration errors. Multiple values are OR-combined inside the
-field, so `"protocol": ["tls", "bittorrent"]` matches either protocol.
-
-Detected protocol bits are stored in `dest_ctx.optional_flags.detected_protocols`.
-These are optional routing metadata, not endpoint identity. They are set only by
-Router's protocol sniffing and Router clears them in upstream `Init` before a
-new classification starts, so chained Router nodes do not inherit stale protocol
-bits from an earlier Router decision.
-
-Because Router makes one shared route decision per connection, any `protocol`
-rule can make the Router buffer first-payload bytes until the requested protocol
-detectors either find a match, decide the payload is not that protocol, or reach
-the bounded sniff window.
+## Rules
 
 ### Rule object
 
-Every rule object **must** contain:
+Every rule **must** contain a `target` and **at least one** match condition:
 
 | key | type | required | description |
 |-----|------|----------|-------------|
 | `target` | string | **yes** | name of the node to route to when this rule matches |
 
-…and **at least one** match condition from the table below. Multiple conditions
-in the same rule are combined with `AND` (all must match). Unknown keys inside a
-rule are ignored with a warning.
+Multiple conditions in the same rule are `AND`-combined. Unknown keys inside a
+rule are ignored with a warning. An empty rule (only `target`) is a configuration
+error.
 
-| condition | status | accepts | meaning |
-|-----------|--------|---------|---------|
-| `source-ips` | functional | string or array of strings | matches the line source IP against single IPs, CIDR ranges, or MaxMind country tokens such as `geoip:ir`. A bare IP is a `/32` (or `/128`) host route. Numeric and GeoIP entries are OR-combined inside this field |
-| `source-port` | functional | number/string or array | matches `src_ctx.port` — the port the peer connected to (the real local/inbound port, resolved per-connection even on multiport backends; i.e. the destination port in the peer's packets) — against single ports and ranges, e.g. `53`, `443`, `1000-2000` |
-| `network` | functional | string or array | matches the `dest_ctx` protocol bit flags; `tcp`, `udp`, `icmp`, `packet`, or combined `tcp,udp` (OR within the field) |
-| `protocol` | functional | string or array | detects and matches `http1`, `tls`, or `bittorrent` from the first upstream payload. Values are OR-combined inside this field |
-| `attributes` | partial | non-empty array | metadata attributes. Currently supports `"http_upgrade_present"`, which matches only when HTTP sniffing found an `Upgrade:` header in the first upstream HTTP request. Empty arrays and unsupported attributes are fatal configuration errors |
-| `destination-ip` | functional | string or array | matches the line destination IP (`dest_ctx`) against single IPs, CIDR ranges, or MaxMind country tokens such as `geoip:us`. Numeric and GeoIP entries are OR-combined inside this field. A domain destination has no IP and does not match |
-| `destination-domain` | functional | string or array | matches the line destination domain (`dest_ctx.domain`), case-insensitive: exact (`google.com`), wildcard (`*.google.com`, subdomains only), `*` (any), or compiled GeoSite lists such as `geosite:cn`. GeoSite `domain` rules match the root and subdomains; `full` rules match exactly; `plain` rules match by substring; `regex` rules use STC `cregex` syntax |
-| `username` | functional | string or array | exact, case-sensitive match of the authenticated user's raw username stored on the line. No authenticated username → no match |
-| `password` | functional | string or array | exact, case-sensitive match of the authenticated user's raw password stored on the line. No authenticated password → no match |
-| `destination-port` | functional | number/string or array | matches the line destination port (`dest_ctx.port`) against single ports and ranges, e.g. `53`, `443`, `1000-2000` |
+### Condition reference
 
-### Evaluation order
+| condition | accepts | meaning & notes |
+|-----------|---------|-----------------|
+| `source-ips` | string or array | Match the line **source** IP against single IPs, CIDR ranges, or `geoip:<cc>` country tokens (e.g. `geoip:ir`). A bare IP is a `/32` (or `/128`) host route. Numeric and GeoIP entries are OR-combined. |
+| `source-port` | number/string or array | Match `src_ctx.port` — the local/inbound port the peer connected to (resolved per-connection, even on multiport backends; i.e. the destination port in the peer's packets) — against single ports and ranges, e.g. `53`, `443`, `1000-2000`. |
+| `destination-ip` | string or array | Match the line **destination** IP (`dest_ctx`) against single IPs, CIDR ranges, or `geoip:<cc>`. Numeric and GeoIP entries are OR-combined. A domain-only destination has no IP and does not match. |
+| `destination-port` | number/string or array | Match `dest_ctx.port` against single ports and ranges, e.g. `53`, `443`, `1000-2000`. |
+| `destination-domain` | string or array | Match `dest_ctx.domain`, case-insensitive: exact (`google.com`), wildcard (`*.google.com`, subdomains only), `*` (any domain), or compiled GeoSite lists (`geosite:cn`). Can match a sniffed Host/SNI value (see [Sniffing](#sniffing-host--sni)). |
+| `network` | string or array | Match the destination transport flags: `tcp`, `udp`, `icmp`, `packet`, or combined in one string `"tcp,udp"`. OR within the field. |
+| `protocol` | string or array | Match an application protocol detected from the first upstream payload: `http1`, `tls`, `bittorrent`. OR within the field. See [Protocol detection](#protocol-detection). |
+| `attributes` | non-empty array | Match sniffed facts. Currently supports `"http_upgrade_present"`. See [Attributes](#attributes). |
+| `username` | string or array | Exact, **case-sensitive** match of the authenticated username on the line. No authenticated username → no match. See [Authenticated identity](#authenticated-identity-username--password). |
+| `password` | string or array | Exact, **case-sensitive** match of the authenticated password on the line. No authenticated password → no match. |
 
-- Rules are evaluated **in the order they appear** in the JSON array. JSON order
-  is significant.
-- Within a single rule, conditions are an **`AND`**: the rule matches only if
-  **every** configured condition matches.
-- The **first** matching rule wins; later rules are not consulted.
-- If no rule matches, the connection uses the top-level `next` default route.
+> **GeoSite domain semantics:** `domain` lists match the root and its subdomains,
+> `full` lists match exactly, `plain` lists match by substring, and `regex` lists
+> use STC `cregex` syntax (case-insensitive).
 
-## Module architecture
+## Sniffing (Host / SNI)
 
-Each supported condition is implemented as its **own matcher/parser module** under
-`modules/<field>/`, mirroring how `AuthenticationServer` splits each API into its
-own module:
+`sniffing` lets Router read the destination **domain** from the connection's own
+first bytes, so `destination-domain` rules can classify an originally IP-only
+destination (e.g. a transparent-proxy flow). It is a root-level setting, outside
+`rules`:
 
+```json
+{ "sniffing": ["http1", "tls"] }
 ```
+
+| value | reads |
+|-------|-------|
+| `http1` | the HTTP/1 `Host` header |
+| `tls` | the TLS ClientHello SNI |
+
+Values are an array, parsed case-insensitively. Missing or empty disables domain
+sniffing. The old `http` value was removed — use `http1`.
+
+### Why Router won't overwrite an existing domain by default
+
+A Host header or TLS SNI is data the **client** put inside the connection. It is
+great for labelling an IP-only destination, but a domain already on `dest_ctx` was
+usually chosen by an earlier tunnel or the config parser — replacing it with
+client-supplied Host/SNI could change what an upstream connector resolves and
+connects to. So by default (`sniff-even-if-domain-is-already-provided: false`)
+Router treats Host/SNI as **extra metadata for IP-backed destinations only** and
+never lets it redirect a domain-backed destination.
+
+### What sniffing stores
+
+When Host/SNI is found, Router writes it to `dest_ctx.domain` **without replacing
+the endpoint** — the original IP, port, transport flags, optional protocol flags,
+and address type are all preserved. The resolution behavior then depends on the
+destination shape:
+
+| destination shape | result |
+|-------------------|--------|
+| concrete IP | domain stored, `domain_resolved = true` → upstream connectors keep using the original IP and do **not** re-resolve the sniffed name |
+| wildcard/any IP (`0.0.0.0`, `::`) | not treated as resolved; domain stored as a hint only |
+| domain-only (no IP), with `sniff-even-if-domain-is-already-provided: true` | sniffed domain replaces `dest_ctx.domain`, `domain_resolved = false` → an upstream connector will DNS-resolve and connect to the **new** name |
+
+Enable `sniff-even-if-domain-is-already-provided` only when the chain deliberately
+trusts the application-layer Host/SNI more than the domain already on the line.
+
+## Protocol detection
+
+The `protocol` condition matches an application protocol that Router detects from
+the first upstream payload:
+
+| value | detects |
+|-------|---------|
+| `http1` | an HTTP/1 request method prefix (`GET `, `POST `, …) — note: **not** the HTTP/2 preface |
+| `tls` | a TLS ClientHello record |
+| `bittorrent` | the BitTorrent handshake prefix (`0x13` followed by `BitTorrent protocol`) |
+
+Multiple values are OR-combined: `"protocol": ["tls", "bittorrent"]` matches
+either. The old `http` value was removed; unknown values are **fatal**
+configuration errors.
+
+Detected bits live in `dest_ctx.optional_flags.detected_protocols`. They are
+**optional routing metadata, not endpoint identity**: only Router's own sniffing
+sets them, and Router **clears them in upstream `Init`** before each new
+classification — so chaining two Routers never lets the second inherit stale
+protocol bits from the first.
+
+> `http1` is a cheap method-prefix signal: any payload that begins with an HTTP
+> verb token is flagged `http1`, even if it is not really HTTP. `tls` and
+> `bittorrent` are stronger structural/signature checks.
+
+## Attributes
+
+`attributes` matches sniffed boolean facts about the connection. The only value
+today is `"http_upgrade_present"`, which matches when the first HTTP/1 request
+carries an `Upgrade:` header (e.g. a WebSocket or other protocol upgrade):
+
+```json
+{ "attributes": ["http_upgrade_present"], "target": "ws_backend" }
+```
+
+Rules and behavior:
+
+- It requires root `sniffing` to include `"http1"`. If HTTP sniffing is disabled
+  the bit is never set and such rules never match (Router logs a warning at
+  startup if the attribute is used without `http1` sniffing).
+- Unlike Host/SNI sniffing, the upgrade check **also runs when a destination
+  domain is already provided**, and it never overwrites `dest_ctx.domain`.
+- It constrains **only** rules that request it; other rules can still match the
+  same connection by their own conditions.
+- The `attributes` array must be **non-empty**, and unknown attribute names are
+  **fatal** configuration errors (so a typo can't silently turn a rule into a
+  match-all).
+
+## First-payload buffering
+
+Sniffing and protocol/attribute detection all read the buffered first payload.
+When a detector reports **"needs more bytes"**, Router keeps its pending buffer
+and re-evaluates as more data arrives, until the fact is found, the detector
+decides it is absent, or the bounded sniff window is exhausted.
+
+Two consequences worth knowing:
+
+- Because Router makes **one shared decision per connection**, enabling any
+  `protocol` or `http_upgrade_present` rule means Router inspects the first-payload
+  window before classifying **every** connection on that node — not just the
+  connection that eventually matches the rule.
+- The wait is **bounded**: non-matching payloads are rejected on their first
+  bytes (an HTTP detector bails the moment the bytes aren't a method, a TLS
+  detector the moment byte 0 isn't `0x16`, etc.), and partial-but-plausible
+  payloads only delay classification up to the sniff window.
+
+## GeoIP & GeoSite databases
+
+`geoip:<cc>` and `geosite:<list>` tokens need their databases configured, but only
+when a parsed rule actually uses them:
+
+- **`geoip-db-path`** — a MaxMind country database. Enables `geoip:<cc>` tokens in
+  `source-ips` and `destination-ip`.
+- **`geosite-db-path`** — a Router geosite JSON database generated by
+  `tunnels/Router/geosite_ww_style_generator/do_the_job.py`. Enables
+  `geosite:<list>` tokens in `destination-domain`.
+
+`geosite-db-path` is validated and loaded only when at least one parsed rule uses
+a `geosite:` token. A missing, empty, unreadable, or invalid-JSON path, an invalid
+GeoSite regex, or a reference to an unknown list name **fails Router creation**.
+Router resolves the referenced list names once at startup, compiles only those
+lists into exact-domain and suffix-domain hash sets, plain substring patterns, and
+STC `cregex` programs, then releases the raw JSON database. `full`, `domain`,
+`plain`, and `regex` GeoSite entry types are supported; regex matching is
+case-insensitive.
+
+## Authenticated identity (`username` / `password`)
+
+`username` and `password` match credentials that the **authenticating tunnel**
+stored on the line (`lineGetAuthenticatedUsername` / `lineGetAuthenticatedPassword`),
+so Router needs no users-table lookup. Both matches are exact and case-sensitive.
+
+How they get populated:
+
+| upstream tunnel | username | password |
+|-----------------|----------|----------|
+| `Socks5Server` | the client-supplied SOCKS username | the client-supplied SOCKS password |
+| `TrojanServer` / `VlessServer` (user mode) | the **account name** resolved from the authenticated user | the raw password (Trojan) / canonical UUID (Vless), resolved in one locked lookup |
+| `TrojanServer` / `VlessServer` (local allowlist mode) | optional configured local username | optional local raw password (Trojan) / canonical UUID (Vless) |
+
+> The username differs **in kind** by protocol: SOCKS5 exposes the client-typed
+> username, while Trojan/Vless expose the server-side account name. A connection
+> with no authenticated credential never matches a `username`/`password` condition.
+
+## Recipes
+
+### Share one inbound port across backends, by domain
+
+Route GeoSite-CN and a vendor wildcard one way, everything else direct. Host/SNI
+sniffing lets domain rules work even for IP-only destinations:
+
+```json
+{
+    "name": "router",
+    "type": "Router",
+    "settings": {
+        "geosite-db-path": "/var/lib/waterwall/geosite_generated.json",
+        "sniffing": ["http1", "tls"],
+        "rules": [
+            { "destination-domain": ["geosite:cn", "*.vendor.example"], "target": "cn_proxy" }
+        ]
+    },
+    "next": "default_direct"
+}
+```
+
+### Split WebSocket upgrades from plain HTTP
+
+Send upgrade requests to a WebSocket backend; plain HTTP falls through to `next`:
+
+```json
+{
+    "name": "router",
+    "type": "Router",
+    "settings": {
+        "sniffing": ["http1"],
+        "rules": [
+            { "attributes": ["http_upgrade_present"], "target": "ws_backend" }
+        ]
+    },
+    "next": "http_backend"
+}
+```
+
+### Multi-condition rule (everything is `AND`)
+
+```json
+{
+    "network": "udp",
+    "destination-port": "443",
+    "protocol": "bittorrent",
+    "target": "bittorrent_sink"
+}
+```
+
+This rule matches only a connection that is UDP **and** targets port 443 **and**
+is detected as BitTorrent. Any one failing → the rule is skipped.
+
+### Per-user and per-source routing
+
+```json
+{
+    "name": "router",
+    "type": "Router",
+    "settings": {
+        "geoip-db-path": "/var/lib/GeoLite2-Country.mmdb",
+        "rules": [
+            { "username": "alice", "target": "premium_path" },
+            { "source-ips": ["10.0.0.0/8", "geoip:ir"], "target": "lan_path" }
+        ]
+    },
+    "next": "default_path"
+}
+```
+
+## Router vs SniffRouter
+
+Both share the same lazy-decision, target-folding lifecycle; they differ in the
+**decision input**:
+
+- Use **`Router`** to route on a flexible mix of **connection facts** —
+  source/destination address, ports, network type, detected protocol,
+  authenticated identity, and (optionally sniffed) destination domain.
+- Use **[`SniffRouter`](../SniffRouter/description.md)** when you only need to
+  route on the **first decrypted/visible bytes** (HTTP `Host`, TLS SNI, or the
+  ReverseClient/ReverseServer handshake) — for example to share one TLS port
+  between several HTTP backends.
+
+## Module architecture (for contributors)
+
+Each condition is its own matcher/parser module under `modules/<field>/`,
+mirroring how `AuthenticationServer` splits each API into a module:
+
+```text
 modules/
   matchers.c            # dispatcher table tying all matchers together
   source_ips/           # one module per condition; each owns:
@@ -269,7 +388,7 @@ modules/
   destination_port/
 ```
 
-All matchers share a uniform interface that operates on its own slice of
+Every matcher implements the same interface over its own slice of
 `router_rule_t`:
 
 ```c
@@ -278,64 +397,9 @@ bool                  <field>Match  (const router_rule_t *rule, const router_mat
 void                  <field>Destroy(router_rule_t *rule);
 ```
 
-`router_match_ctx_t` carries the `line_t` (for routing metadata such as
-source/destination address, ports, network type, optional detected protocols and
-the authenticated user) and the buffered first-payload window used by sniffing
-before the matcher table is evaluated.
-
-`modules/matchers.c` is the single registry of matchers. Adding a new condition
+`router_match_ctx_t` carries the `line_t` (for routing metadata: source/destination
+address, ports, network type, optional detected protocols, and authenticated user)
+plus the buffered first-payload window used by sniffing before the matcher table
+runs. `modules/matchers.c` is the single registry of matchers; adding a condition
 type is: create `modules/<field>/`, then add one row to the `kRouterMatchers`
 table.
-
-## Examples
-
-Route by destination domain and port, otherwise fall back to a direct connector:
-
-```json
-{
-    "name": "router",
-    "type": "Router",
-    "settings": {
-        "geoip-db-path": "/var/lib/GeoLite2-Country.mmdb",
-        "geosite-db-path": "/var/lib/waterwall/geosite_generated.json",
-        "sniffing": ["http1", "tls"],
-        "sniff-even-if-domain-is-already-provided": false,
-        "rules": [
-            {
-                "destination-domain": ["geosite:cn", "*.example.com"],
-                "target": "block_or_proxy_cn"
-            },
-            {
-                "network": "udp",
-                "destination-port": "443",
-                "protocol": "bittorrent",
-                "target": "bittorrent_handler"
-            },
-            {
-                "source-ips": ["10.0.0.0/8", "geoip:ir"],
-                "target": "lan_path"
-            }
-        ]
-    },
-    "next": "default_direct"
-}
-```
-
-In the second rule above, `network`, `destination-port` and `protocol` are an
-`AND`: the connection must be UDP **and** target port 443 **and** be detected as
-BitTorrent for it to be routed to `bittorrent_handler`.
-
-Single-condition rule using a single string value:
-
-```json
-{
-    "name": "router",
-    "type": "Router",
-    "settings": {
-        "rules": [
-            { "username": "alice", "target": "premium_path" }
-        ]
-    },
-    "next": "default_path"
-}
-```
