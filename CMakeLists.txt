@@ -184,8 +184,6 @@ option(INCLUDE_TROJAN_CLIENT            "link TrojanClient staticly to the core"
 option(INCLUDE_TROJAN_SERVER            "link TrojanServer staticly to the core"             TRUE)
 option(INCLUDE_VLESS_CLIENT             "link VlessClient staticly to the core"              TRUE)
 option(INCLUDE_VLESS_SERVER             "link VlessServer staticly to the core"              TRUE)
-option(INCLUDE_TROJAN_AUTH_SERVER       "link TrojanAuthServer staticly to the core"         FALSE)
-option(INCLUDE_TROJAN_SOCKS_SERVER      "link TrojanSocksServer staticly to the core"        FALSE)
 option(INCLUDE_HTTP_SERVER              "link HttpServer staticly to the core"               TRUE)
 option(INCLUDE_HTTP_CLIENT              "link HttpClient staticly to the core"               TRUE)
 option(INCLUDE_SOCKS5_CLIENT            "link Socks5Client staticly to the core"             TRUE)
