@@ -2,6 +2,18 @@
 
 #include "loggers/network_logger.h"
 
+void junkdatagramsenderLinestateInitialize(junkdatagramsender_lstate_t *ls, const junkdatagramsender_tstate_t *ts)
+{
+    *ls = (junkdatagramsender_lstate_t) {
+        .remaining_resend_again_times = ts->resend_again_times,
+    };
+}
+
+void junkdatagramsenderLinestateDestroy(junkdatagramsender_lstate_t *ls)
+{
+    memorySet(ls, 0, tunnelGetCorrectAlignedLineStateSize(sizeof(junkdatagramsender_lstate_t)));
+}
+
 static uint32_t junkdatagramsenderRandomRange(uint32_t min_value, uint32_t max_value)
 {
     if (max_value <= min_value)
@@ -137,7 +149,7 @@ static bool junkdatagramsenderSendOne(tunnel_t *t, line_t *l, junkdatagramsender
     return lineIsAlive(l);
 }
 
-bool junkdatagramsenderSendInitialJunk(tunnel_t *t, line_t *l, junkdatagramsender_direction_t direction)
+bool junkdatagramsenderSendJunk(tunnel_t *t, line_t *l, junkdatagramsender_direction_t direction)
 {
     junkdatagramsender_tstate_t *ts = tunnelGetState(t);
 

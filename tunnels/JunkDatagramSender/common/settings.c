@@ -171,15 +171,18 @@ bool junkdatagramsenderLoadSettings(junkdatagramsender_tstate_t *ts, const cJSON
         .packet_count_min       = kJunkDatagramSenderDefaultPacketCount,
         .packet_count_max       = kJunkDatagramSenderDefaultPacketCount,
         .keep_sending_max_ms    = 0,
+        .resend_again_times     = kJunkDatagramSenderDefaultResendAgainTimes,
     };
 
-    int packet_min = (int) ts->packet_count_min;
-    int packet_max = (int) ts->packet_count_max;
-    int keep_ms    = 0;
+    int packet_min   = (int) ts->packet_count_min;
+    int packet_max   = (int) ts->packet_count_max;
+    int keep_ms      = 0;
+    int resend_again = (int) ts->resend_again_times;
 
     getIntFromJsonObjectOrDefault(&packet_min, settings, "packet-count-perline-min", packet_min);
     getIntFromJsonObjectOrDefault(&packet_max, settings, "packet-count-perline-max", packet_max);
     getIntFromJsonObjectOrDefault(&keep_ms, settings, "keep-sending-max-ms", 0);
+    getIntFromJsonObjectOrDefault(&resend_again, settings, "resend-again-times", resend_again);
 
     if (packet_min < 0)
     {
@@ -211,10 +214,22 @@ bool junkdatagramsenderLoadSettings(junkdatagramsender_tstate_t *ts, const cJSON
         LOGW("JunkDatagramSender: keep-sending-max-ms was negative; disabling delayed sends");
         keep_ms = 0;
     }
+    if (resend_again < 0)
+    {
+        LOGW("JunkDatagramSender: resend-again-times was negative; clamping to 0");
+        resend_again = 0;
+    }
+    if (resend_again > kJunkDatagramSenderMaxResendAgainTimes)
+    {
+        LOGW("JunkDatagramSender: resend-again-times exceeds %u; clamping",
+             (unsigned int) kJunkDatagramSenderMaxResendAgainTimes);
+        resend_again = kJunkDatagramSenderMaxResendAgainTimes;
+    }
 
     ts->packet_count_min    = (uint32_t) packet_min;
     ts->packet_count_max    = (uint32_t) packet_max;
     ts->keep_sending_max_ms = (uint32_t) keep_ms;
+    ts->resend_again_times  = (uint32_t) resend_again;
 
     return junkdatagramsenderLoadProtocolSelection(ts, settings);
 }

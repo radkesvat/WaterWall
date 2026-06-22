@@ -15,16 +15,24 @@ typedef struct junkdatagramsender_tstate_s
     uint32_t packet_count_min;
     uint32_t packet_count_max;
     uint32_t keep_sending_max_ms;
+    uint32_t resend_again_times;
 } junkdatagramsender_tstate_t;
+
+typedef struct junkdatagramsender_lstate_s
+{
+    uint32_t remaining_resend_again_times;
+} junkdatagramsender_lstate_t;
 
 enum
 {
-    kJunkDatagramSenderDefaultPacketCount   = 1,
-    kJunkDatagramSenderMaxPacketsPerLine    = 256,
-    kJunkDatagramSenderDefaultMinPacketSize = 12,
-    kJunkDatagramSenderDefaultMaxPacketSize = 1200,
-    kTunnelStateSize                        = sizeof(junkdatagramsender_tstate_t),
-    kLineStateSize                          = 0
+    kJunkDatagramSenderDefaultPacketCount      = 1,
+    kJunkDatagramSenderDefaultResendAgainTimes = 1,
+    kJunkDatagramSenderMaxPacketsPerLine       = 256,
+    kJunkDatagramSenderMaxResendAgainTimes     = 256,
+    kJunkDatagramSenderDefaultMinPacketSize    = 12,
+    kJunkDatagramSenderDefaultMaxPacketSize    = 1200,
+    kTunnelStateSize                           = sizeof(junkdatagramsender_tstate_t),
+    kLineStateSize                             = sizeof(junkdatagramsender_lstate_t)
 };
 
 WW_EXPORT void         junkdatagramsenderTunnelDestroy(tunnel_t *t);
@@ -51,5 +59,7 @@ void junkdatagramsenderTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 bool junkdatagramsenderLoadSettings(junkdatagramsender_tstate_t *ts, const cJSON *settings);
 
-bool junkdatagramsenderSendInitialJunk(tunnel_t *t, line_t *l, junkdatagramsender_direction_t direction);
+void junkdatagramsenderLinestateInitialize(junkdatagramsender_lstate_t *ls, const junkdatagramsender_tstate_t *ts);
+void junkdatagramsenderLinestateDestroy(junkdatagramsender_lstate_t *ls);
+bool junkdatagramsenderSendJunk(tunnel_t *t, line_t *l, junkdatagramsender_direction_t direction);
 bool junkdatagramsenderIsWorkerPacketLine(tunnel_t *t, line_t *l);

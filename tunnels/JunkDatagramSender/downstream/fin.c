@@ -9,5 +9,8 @@ void junkdatagramsenderTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         return;
     }
 
+    junkdatagramsender_lstate_t *ls = lineGetState(l, t);
+    junkdatagramsenderLinestateDestroy(ls);
+
     tunnelPrevDownStreamFinish(t, l);
 }

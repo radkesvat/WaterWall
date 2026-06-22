@@ -1,8 +1,8 @@
 # JunkDatagramSender Node
 
-`JunkDatagramSender` is a composable middle tunnel that injects generated junk datagram payloads when a line is initialized. It is intended for camouflage and protocol-noise experiments around UDP-like paths, while still preserving Waterwall's normal line lifecycle and callback directions.
+`JunkDatagramSender` is a composable middle tunnel that injects generated junk datagram payloads before the first upstream payloads of a line. It is intended for camouflage and protocol-noise experiments around UDP-like paths, while still preserving Waterwall's normal line lifecycle and callback directions.
 
-The node forwards `Init` first so the next tunnel has created its per-line state, then sends the generated junk payloads before this line's real payload callbacks are forwarded. Regular payload, `Est`, pause/resume, and finish callbacks are otherwise pass-through.
+The node forwards `Init` normally, then sends generated junk payloads when upstream payload callbacks arrive. The real upstream payload is forwarded after that junk batch has been sent. Regular payloads after the configured trigger count, downstream payloads, `Est`, pause/resume, and finish callbacks are otherwise pass-through.
 
 ## Configuration Example
 
@@ -13,6 +13,7 @@ The node forwards `Init` first so the next tunnel has created its per-line state
   "settings": {
     "packet-count-perline-min": 2,
     "packet-count-perline-max": 5,
+    "resend-again-times": 1,
     "selected-protocols": ["dns", "ntp", "quic-http3", "rtp-rtcp-srtp"],
     "keep-sending-max-ms": 1500
   },
@@ -23,12 +24,15 @@ The node forwards `Init` first so the next tunnel has created its per-line state
 ## Settings
 
 - `packet-count-perline-min` `(integer, optional)`
-  Minimum number of junk packets generated for each initialized line.
+  Minimum number of junk packets generated each time an upstream payload triggers junk sending.
   Default: `1`
 
 - `packet-count-perline-max` `(integer, optional)`
-  Maximum number of junk packets generated for each initialized line.
+  Maximum number of junk packets generated each time an upstream payload triggers junk sending.
   Default: `1`
+
+- `resend-again-times` `(integer, optional)`
+  Number of upstream payload callbacks that trigger junk sending before forwarding the real payload. For example, `2` means the first and second upstream payloads each send a junk batch first. Default `1`; `0` disables junk sending.
 
 - `selected-protocols` `(array of strings, optional)`
   Protocol module names eligible for packet generation. If omitted, all implemented modules are eligible. Use `all` to explicitly enable all implemented modules.
@@ -82,6 +86,6 @@ The DNS module currently builds a real DNS query UDP payload with a question and
 
 ## Lifecycle Notes
 
-`JunkDatagramSender` does not store per-line tunnel state. Delayed payloads are scheduled with Waterwall's `lineScheduleDelayedTaskWithBuf()`, so the core line scheduler owns the temporary line reference and releases the buffer if the line has closed before the task runs.
+`JunkDatagramSender` stores only a per-line remaining trigger count initialized from `resend-again-times`. Delayed payloads are scheduled with Waterwall's `lineScheduleDelayedTaskWithBuf()`, so the core line scheduler owns the temporary line reference and releases the buffer if the line has closed before the task runs.
 
 Packet helper lines are not destroyed by this tunnel during runtime, and junk generation is skipped on worker packet lines so a layer-3 chain bootstrap does not emit connection-style junk payloads.
