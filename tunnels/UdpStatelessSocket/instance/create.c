@@ -65,6 +65,7 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
 
     getStringFromJsonObject(&(state->interface_name), settings, "interface");
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", -1);
+    getBoolFromJsonObjectOrDefault(&(state->verbose), settings, "verbose", false);
     if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->send_buffer_size,
                                                     settings,
                                                     "large-send-buffer",

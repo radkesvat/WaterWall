@@ -217,13 +217,16 @@ void udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf)
 
     line_t *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), state->io_wid);
 
-    char localaddrstr[SOCKADDR_STRLEN] = {0};
-    char peeraddrstr[SOCKADDR_STRLEN]  = {0};
+    if (state->verbose)
+    {
+        char localaddrstr[SOCKADDR_STRLEN] = {0};
+        char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-    LOGD("UdpStatelessSocket: received %u bytes from [%s] <= [%s]",
-         sbufGetLength(buf),
-         SOCKADDR_STR(&local_addr, localaddrstr),
-         SOCKADDR_STR(&peer_addr, peeraddrstr));
+        LOGD("UdpStatelessSocket: received %u bytes from [%s] <= [%s]",
+             sbufGetLength(buf),
+             SOCKADDR_STR(&local_addr, localaddrstr),
+             SOCKADDR_STR(&peer_addr, peeraddrstr));
+    }
 
     addresscontextFromSockAddrWithProtocol(&l->routing_context.src_ctx, &peer_addr, IP_PROTO_UDP);
     l->routing_context.local_listener_port = sockaddrPort((sockaddr_u *) &local_addr);
@@ -511,14 +514,14 @@ static bool udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
 
 void udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
+    udpstatelesssocket_tstate_t *state    = tunnelGetState(t);
+    address_context_t           *dest_ctx = lineGetDestinationAddressContext(l);
 
     if (addresscontextIsDomain(dest_ctx) && ! addresscontextIsDomainResolved(dest_ctx))
     {
         if (addresscontextHasPort(dest_ctx))
         {
-            sockaddr_u                   cached_addr;
-            udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+            sockaddr_u cached_addr;
             if (udpstatelesssocketDnsCacheLookup(
                     state, dest_ctx->domain, dest_ctx->port, dest_ctx->domain_strategy, &cached_addr))
             {
@@ -548,6 +551,7 @@ void udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    if (state->verbose)
     {
         char peeraddrstr[SOCKADDR_STRLEN] = {0};
         LOGD("UdpStatelessSocket: %u bytes Packet to => [%s]", sbufGetLength(buf), SOCKADDR_STR(&addr, peeraddrstr));

@@ -39,7 +39,8 @@ or the reverse, depending on chain wiring.
     "fwmark": 10,
     "large-send-buffer": true,
     "large-recv-buffer": true,
-    "source-ip": "192.0.2.10"
+    "source-ip": "192.0.2.10",
+    "verbose": false
   }
 }
 ```
@@ -90,6 +91,10 @@ or the reverse, depending on chain wiring.
   Sets `SO_RCVBUF` on the UDP socket.
   `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
   Default: `true`
+
+- `verbose` `(boolean)`
+  Enables per-packet debug logs for UDP datagrams received from and sent to peers.
+  Default: `false`
 
 ## Detailed Behavior
 

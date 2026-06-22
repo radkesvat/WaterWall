@@ -31,6 +31,7 @@ typedef struct udpstatelesssocket_tstate_s
     int      fwmark;         // fwmark to set on the socket
     int      send_buffer_size;
     int      recv_buffer_size;
+    bool     verbose;
 
     wio_t *io;     // socket file descriptor
     wid_t  io_wid; // the worker id that created the io
