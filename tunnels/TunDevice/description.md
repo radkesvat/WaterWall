@@ -34,6 +34,7 @@ Payload coming from either side and reaching `TunDevice` is written into the TUN
     "device-name": "tun0",
     "device-ip": "10.10.0.1/24",
     "device-mtu": 1500,
+    "dns": ["1.1.1.1", "8.8.8.8"],
     "route-table": "off"
   },
   "next": "next-node-name"
@@ -116,6 +117,23 @@ Full-route example with local ranges excluded:
   CIDRs to leave out of the routes installed by `route-cidrs`.
 
   This is useful when `route-cidrs` is global and some local, management, or upstream endpoint ranges must keep using the existing system route.
+
+- `dns` `(array of IPv4 strings)`
+  DNS servers to associate with the TUN interface.
+
+  The array must contain one or two valid IPv4 addresses. Hostnames, IPv6
+  addresses, empty strings, and more than two entries are rejected during node
+  creation.
+
+  `null` is treated the same as leaving the field unset.
+
+  On Linux this requires `systemd-resolved` / `resolvectl`; it sets DNS servers
+  with `resolvectl dns` and installs the `~.` routing domain so the configured
+  servers are used as the default resolver path while the device is active. On
+  Windows this configures static IPv4 DNS servers on the Wintun adapter with
+  `netsh`; DNS precedence still follows Windows interface metrics. macOS TUN DNS
+  configuration is rejected during node creation; use `post-up-script` /
+  `pre-down-script` for platform-specific resolver setup there.
 
 - `loop-protection` `(boolean)`
   Keeps WaterWall's own outbound traffic from being routed back into the TUN
@@ -229,5 +247,6 @@ Most connection-style callbacks such as `init`, `est`, `finish`, `pause`, and `r
 - On Windows, the implementation requires administrative privileges to load and manage the tunnel driver.
 - On macOS, the requested name should be an `utunN` name; if no concrete `utun` unit is requested, macOS assigns the actual interface name.
 - Native system route setup is disabled by default. If enabled, routes are removed during destroy in reverse install order.
+- DNS setup is optional. If configured, invalid IPv4 values are rejected during node creation and failed platform DNS application stops startup.
 - On Windows and macOS, `route-table` values other than `"main"` or `"auto"` are rejected.
 - Platform support depends on build and operating system support for TUN devices.

@@ -94,6 +94,84 @@ static bool routeTableIsMain(const char *route_table)
     return route_table == NULL || stringCompare(route_table, "main") == 0 || stringCompare(route_table, "auto") == 0;
 }
 
+static bool tunWindowsDnsNameIsSafe(const char *arg)
+{
+    if (arg == NULL || arg[0] == '\0')
+    {
+        return false;
+    }
+
+    for (const char *p = arg; *p != '\0'; ++p)
+    {
+        if (! (isalnum((unsigned char) *p) || *p == ' ' || *p == '_' || *p == '-' || *p == '.'))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool tunWindowsDnsServerIsSafe(const char *arg)
+{
+    if (arg == NULL || arg[0] == '\0')
+    {
+        return false;
+    }
+
+    for (const char *p = arg; *p != '\0'; ++p)
+    {
+        if (! (isdigit((unsigned char) *p) || *p == '.'))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static int tunWindowsRunCommand(const char *command_line)
+{
+    STARTUPINFOA        si;
+    PROCESS_INFORMATION pi;
+
+    memorySet(&si, 0, sizeof(si));
+    memorySet(&pi, 0, sizeof(pi));
+    si.cb = sizeof(si);
+
+    char *command = stringDuplicate(command_line);
+    if (command == NULL)
+    {
+        LOGE("TunDevice: failed to allocate command line");
+        return -1;
+    }
+
+    BOOL created = CreateProcessA(NULL, command, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    if (! created)
+    {
+        DWORD last_error = GetLastError();
+        LOGE("TunDevice: failed to run command, code: %lu", last_error);
+        memoryFree(command);
+        return -1;
+    }
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+
+    DWORD exit_code = 1;
+    if (! GetExitCodeProcess(pi.hProcess, &exit_code))
+    {
+        DWORD last_error = GetLastError();
+        LOGE("TunDevice: failed to get command exit code, code: %lu", last_error);
+        exit_code = 1;
+    }
+
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    memoryFree(command);
+
+    return (int) exit_code;
+}
+
 static bool tunWindowsParseRouteCidr(const char *cidr, SOCKADDR_INET *addr, UINT8 *prefix)
 {
     if (cidr == NULL || cidr[0] == '\0')
@@ -770,6 +848,89 @@ bool tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *rout
     }
 
     LOGI("TunDevice: removed system route %s on %s", cidr, tdev->name);
+    return true;
+}
+
+bool tundeviceSetDnsServers(tun_device_t *tdev, const char *const *servers, size_t count)
+{
+    if (count == 0)
+    {
+        return true;
+    }
+
+    if (count > kTunDeviceMaxDnsServers)
+    {
+        LOGE("TunDevice: at most %d DNS servers are supported", kTunDeviceMaxDnsServers);
+        return false;
+    }
+
+    if (! tunWindowsDnsNameIsSafe(tdev->name))
+    {
+        LOGE("TunDevice: invalid DNS interface argument");
+        return false;
+    }
+
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (! tunWindowsDnsServerIsSafe(servers[i]))
+        {
+            LOGE("TunDevice: invalid DNS server argument");
+            return false;
+        }
+    }
+
+    char command[512];
+    stringNPrintf(command,
+                  sizeof(command),
+                  "netsh interface ipv4 set dnsservers name=\"%s\" source=static address=%s register=none "
+                  "validate=no",
+                  tdev->name,
+                  servers[0]);
+    if (tunWindowsRunCommand(command) != 0)
+    {
+        LOGE("TunDevice: failed to set primary DNS server on %s", tdev->name);
+        return false;
+    }
+
+    if (count > 1)
+    {
+        stringNPrintf(command,
+                      sizeof(command),
+                      "netsh interface ipv4 add dnsservers name=\"%s\" address=%s index=2 validate=no",
+                      tdev->name,
+                      servers[1]);
+        if (tunWindowsRunCommand(command) != 0)
+        {
+            LOGE("TunDevice: failed to set secondary DNS server on %s", tdev->name);
+            discard tundeviceClearDnsServers(tdev);
+            return false;
+        }
+    }
+
+    LOGI("TunDevice: configured %zu DNS server(s) on %s", count, tdev->name);
+    return true;
+}
+
+bool tundeviceClearDnsServers(tun_device_t *tdev)
+{
+    if (! tunWindowsDnsNameIsSafe(tdev->name))
+    {
+        LOGE("TunDevice: invalid DNS interface argument");
+        return false;
+    }
+
+    char command[512];
+    stringNPrintf(command,
+                  sizeof(command),
+                  "netsh interface ipv4 delete dnsservers name=\"%s\" all validate=no",
+                  tdev->name);
+    if (tunWindowsRunCommand(command) != 0)
+    {
+        LOGE("TunDevice: failed to clear DNS servers on %s", tdev->name);
+        return false;
+    }
+
+    LOGI("TunDevice: cleared DNS servers on %s", tdev->name);
     return true;
 }
 

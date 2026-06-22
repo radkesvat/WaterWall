@@ -723,6 +723,33 @@ bool tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *rout
     return true;
 }
 
+bool tundeviceSetDnsServers(tun_device_t *tdev, const char *const *servers, size_t count)
+{
+    if (count == 0)
+    {
+        return true;
+    }
+
+    if (count > kTunDeviceMaxDnsServers)
+    {
+        LOGE("TunDevice: at most %d DNS servers are supported", kTunDeviceMaxDnsServers);
+        return false;
+    }
+
+    LOGE("TunDevice: DNS configuration is not supported on macOS TUN devices");
+    discard tdev;
+    discard servers;
+    return false;
+}
+
+bool tundeviceClearDnsServers(tun_device_t *tdev)
+{
+    discard tdev;
+
+    LOGE("TunDevice: DNS configuration is not supported on macOS TUN devices");
+    return false;
+}
+
 bool tundeviceBringUp(tun_device_t *tdev)
 {
     if (tdev->up)

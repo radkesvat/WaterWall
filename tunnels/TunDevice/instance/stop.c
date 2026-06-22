@@ -14,6 +14,7 @@ static void tundeviceTunnelStopDevice(tundevice_tstate_t *state)
         }
         tunLoopGuardStop(state->loop_guard);
         state->loop_guard = NULL;
+        tundeviceCleanupDnsSettings(state);
         tundeviceCleanupSystemRoutes(state);
         if (! tundeviceBringDown(tdev))
         {

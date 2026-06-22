@@ -82,6 +82,11 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
         return tundeviceTunnelCreateFail(t);
     }
 
+    if (! tundeviceLoadDnsSettings(state, settings))
+    {
+        return tundeviceTunnelCreateFail(t);
+    }
+
     // tun creation must be done in prepair or start padding, in create method paddings are not calculated yout
 
     // on windows we need admin to load win tun driver

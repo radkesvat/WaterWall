@@ -60,8 +60,20 @@ void tundeviceTunnelOnStart(tunnel_t *t)
         terminateProgram(1);
     }
 
+    if (! tundeviceApplyDnsSettings(state))
+    {
+        tundeviceCleanupSystemRoutes(state);
+        tunLoopGuardStop(state->loop_guard);
+        state->loop_guard = NULL;
+        tundeviceDestroy(state->tdev);
+        state->tdev = NULL;
+        LOGF("TunDevice: could not configure DNS servers");
+        terminateProgram(1);
+    }
+
     if (state->post_up_script != NULL && execCmd(state->post_up_script).exit_code != 0)
     {
+        tundeviceCleanupDnsSettings(state);
         tundeviceCleanupSystemRoutes(state);
         tunLoopGuardStop(state->loop_guard);
         state->loop_guard = NULL;

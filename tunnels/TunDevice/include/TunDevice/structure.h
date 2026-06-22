@@ -30,6 +30,10 @@ typedef struct tundevice_tstate_s
     char  *post_up_script;
     char  *pre_down_script;
 
+    char  *dns_servers[kTunDeviceMaxDnsServers];
+    size_t dns_server_count;
+    bool   dns_servers_installed;
+
     bool             loop_protection_enabled; // exclude this process's own traffic from the TUN
     tun_loopguard_t *loop_guard;
 
@@ -79,6 +83,11 @@ bool tundeviceLoadRouteSettings(tundevice_tstate_t *state, const cJSON *settings
 bool tundeviceApplySystemRoutes(tundevice_tstate_t *state);
 void tundeviceCleanupSystemRoutes(tundevice_tstate_t *state);
 void tundeviceFreeRouteSettings(tundevice_tstate_t *state);
+
+bool tundeviceLoadDnsSettings(tundevice_tstate_t *state, const cJSON *settings);
+bool tundeviceApplyDnsSettings(tundevice_tstate_t *state);
+void tundeviceCleanupDnsSettings(tundevice_tstate_t *state);
+void tundeviceFreeDnsSettings(tundevice_tstate_t *state);
 
 void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, wid_t wid);
 void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf);

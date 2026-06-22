@@ -16,6 +16,11 @@
 
 #define TUN_LOG_EVERYTHING false
 
+enum
+{
+    kTunDeviceMaxDnsServers = 2
+};
+
 struct tun_device_s;
 
 typedef void (*TunReadEventHandle)(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, wid_t tid);
@@ -65,6 +70,8 @@ bool          tundeviceBringUp(tun_device_t *tdev);
 bool          tundeviceBringDown(tun_device_t *tdev);
 bool          tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
 bool          tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
+bool          tundeviceSetDnsServers(tun_device_t *tdev, const char *const *servers, size_t count);
+bool          tundeviceClearDnsServers(tun_device_t *tdev);
 bool          tundeviceAddRoute(tun_device_t *tdev, const char *cidr, const char *route_table);
 bool          tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *route_table);
 bool          tundeviceWrite(tun_device_t *tdev, sbuf_t *buf);

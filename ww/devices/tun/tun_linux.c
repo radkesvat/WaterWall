@@ -909,6 +909,92 @@ bool tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *rout
 #endif
 }
 
+bool tundeviceSetDnsServers(tun_device_t *tdev, const char *const *servers, size_t count)
+{
+    if (count == 0)
+    {
+        return true;
+    }
+
+    if (count > kTunDeviceMaxDnsServers)
+    {
+        LOGE("TunDevice: at most %d DNS servers are supported", kTunDeviceMaxDnsServers);
+        return false;
+    }
+
+    if (! routeCommandArgIsSafe(tdev->name))
+    {
+        LOGE("TunDevice: invalid DNS interface argument");
+        return false;
+    }
+
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (! routeCommandArgIsSafe(servers[i]))
+        {
+            LOGE("TunDevice: invalid DNS server argument");
+            return false;
+        }
+    }
+
+#ifdef OS_LINUX
+    const char *argv_dns[3 + kTunDeviceMaxDnsServers + 1] = {"resolvectl", "dns", tdev->name, NULL};
+    for (size_t i = 0; i < count; ++i)
+    {
+        argv_dns[3 + i] = servers[i];
+    }
+
+    if (tunRunCommand("resolvectl", argv_dns) != 0)
+    {
+        LOGE("TunDevice: failed to set DNS servers on %s with resolvectl; Linux DNS setup requires systemd-resolved",
+             tdev->name);
+        return false;
+    }
+
+    const char *const argv_domain[] = {"resolvectl", "domain", tdev->name, "~.", NULL};
+    if (tunRunCommand("resolvectl", argv_domain) != 0)
+    {
+        LOGE("TunDevice: failed to set DNS routing domain on %s with resolvectl; reverting DNS settings", tdev->name);
+        discard tundeviceClearDnsServers(tdev);
+        return false;
+    }
+
+    LOGI("TunDevice: configured %zu DNS server(s) on %s", count, tdev->name);
+    return true;
+#elif defined(OS_BSD)
+    LOGE("TunDevice: DNS configuration is not supported on this platform");
+    return false;
+#else
+#error "Unsupported OS"
+#endif
+}
+
+bool tundeviceClearDnsServers(tun_device_t *tdev)
+{
+    if (! routeCommandArgIsSafe(tdev->name))
+    {
+        LOGE("TunDevice: invalid DNS interface argument");
+        return false;
+    }
+
+#ifdef OS_LINUX
+    const char *const argv[] = {"resolvectl", "revert", tdev->name, NULL};
+    if (tunRunCommand("resolvectl", argv) != 0)
+    {
+        LOGE("TunDevice: failed to clear DNS servers on %s with resolvectl", tdev->name);
+        return false;
+    }
+
+    LOGI("TunDevice: cleared DNS servers on %s", tdev->name);
+    return true;
+#elif defined(OS_BSD)
+    LOGE("TunDevice: DNS configuration is not supported on this platform");
+    return false;
+#else
+#error "Unsupported OS"
+#endif
+}
+
 // Bring TUN device up
 bool tundeviceBringUp(tun_device_t *tdev)
 {

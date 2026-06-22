@@ -10,6 +10,9 @@ void tundeviceTunnelDestroy(tunnel_t *t)
     tunLoopGuardStop(state->loop_guard);
     state->loop_guard = NULL;
 
+    tundeviceFreeDnsSettings(state);
+    tundeviceFreeRouteSettings(state);
+
     if (tdev)
     {
         tundeviceDestroy(tdev);
@@ -28,6 +31,5 @@ void tundeviceTunnelDestroy(tunnel_t *t)
     {
         memoryFree(state->ip_present);
     }
-    tundeviceFreeRouteSettings(state);
     tunnelDestroy(t);
 }
