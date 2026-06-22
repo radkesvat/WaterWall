@@ -8,6 +8,26 @@ static tunnel_t *tundeviceTunnelCreateFail(tunnel_t *t)
     return NULL;
 }
 
+static void tundevicePublishEgressPinIfNeeded(tundevice_tstate_t *state)
+{
+    if (! state->loop_protection_enabled || state->egress_pin_published)
+    {
+        return;
+    }
+
+    tun_default_route_t route;
+    if (tundeviceDetectDefaultInterface(&route))
+    {
+        egressPinSet(route.ifname, route.have_v4 ? route.ifindex_v4 : 0, route.have_v6 ? route.ifindex_v6 : 0);
+        state->egress_pin_published = true;
+    }
+    else
+    {
+        LOGW("TunDevice: could not detect default interface; self-loop protection inactive "
+             "(configure connector interface_name or route-exclude-cidrs manually)");
+    }
+}
+
 tunnel_t *tundeviceTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(tundevice_tstate_t), sizeof(tundevice_lstate_t));
@@ -107,6 +127,10 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
 #else
     discard fail_msg;
 #endif
+
+    // Publish before any tunnel OnPrepare creates sockets. Route installation
+    // still happens in OnStart, so this snapshots the pre-TUN default interface.
+    tundevicePublishEgressPinIfNeeded(state);
 
     return t;
 }

@@ -102,6 +102,7 @@ add_library(ww STATIC
     net/chain.c
     net/context.c
     net/protocol_sniff.c
+    net/egress_pin.c
     net/socket_filter_option.c
     net/wchecksum.c
     net/wchecksum_default.c

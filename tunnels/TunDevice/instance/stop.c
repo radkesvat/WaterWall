@@ -12,8 +12,7 @@ static void tundeviceTunnelStopDevice(tundevice_tstate_t *state)
         {
             LOGW("TunDevice: pre-down-script failed");
         }
-        tunLoopGuardStop(state->loop_guard);
-        state->loop_guard = NULL;
+        tundeviceClearEgressPinIfPublished(state);
         tundeviceCleanupDnsSettings(state);
         tundeviceCleanupSystemRoutes(state);
         if (! tundeviceBringDown(tdev))

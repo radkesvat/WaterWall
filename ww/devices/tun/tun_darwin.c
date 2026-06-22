@@ -499,6 +499,12 @@ bool tundeviceGetLuid(tun_device_t *tdev, uint64_t *out)
     return false;
 }
 
+bool tundeviceDetectDefaultInterface(tun_default_route_t *out)
+{
+    memorySet(out, 0, sizeof(*out));
+    return false;
+}
+
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
     assert(sbufGetLength(buf) > 0);

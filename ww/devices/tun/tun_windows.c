@@ -89,6 +89,71 @@ static bool tunWindowsSetMtu(tun_device_t *tdev)
     return true;
 }
 
+static bool tunWindowsDetectDefaultRouteForFamily(int family, uint32_t *out_index, char *out_name, size_t out_name_len)
+{
+    SOCKADDR_INET dest;
+    memorySet(&dest, 0, sizeof(dest));
+
+    if (family == AF_INET)
+    {
+        dest.Ipv4.sin_family = AF_INET;
+        inet_pton(AF_INET, "8.8.8.8", &dest.Ipv4.sin_addr);
+    }
+    else
+    {
+        dest.Ipv6.sin6_family = AF_INET6;
+        inet_pton(AF_INET6, "2001:4860:4860::8888", &dest.Ipv6.sin6_addr);
+    }
+
+    MIB_IPFORWARD_ROW2 row;
+    SOCKADDR_INET      best_src;
+    NETIO_STATUS       status = GetBestRoute2(NULL, 0, NULL, &dest, 0, &row, &best_src);
+    if (status != NO_ERROR)
+    {
+        return false;
+    }
+
+    NET_IFINDEX ifindex = 0;
+    status              = ConvertInterfaceLuidToIndex(&row.InterfaceLuid, &ifindex);
+    if (status != NO_ERROR || ifindex == 0)
+    {
+        return false;
+    }
+
+    *out_index = (uint32_t) ifindex;
+
+    char ifname[256];
+    memorySet(ifname, 0, sizeof(ifname));
+    if (ConvertInterfaceLuidToNameA(&row.InterfaceLuid, ifname, sizeof(ifname)) == NO_ERROR && ifname[0] != '\0')
+    {
+        stringCopyN(out_name, ifname, out_name_len);
+    }
+
+    return true;
+}
+
+bool tundeviceDetectDefaultInterface(tun_default_route_t *out)
+{
+    memorySet(out, 0, sizeof(*out));
+
+    char ifname_v4[64] = {0};
+    char ifname_v6[64] = {0};
+
+    out->have_v4 = tunWindowsDetectDefaultRouteForFamily(AF_INET, &out->ifindex_v4, ifname_v4, sizeof(ifname_v4));
+    out->have_v6 = tunWindowsDetectDefaultRouteForFamily(AF_INET6, &out->ifindex_v6, ifname_v6, sizeof(ifname_v6));
+
+    if (ifname_v4[0] != '\0')
+    {
+        stringCopyN(out->ifname, ifname_v4, sizeof(out->ifname));
+    }
+    else if (ifname_v6[0] != '\0')
+    {
+        stringCopyN(out->ifname, ifname_v6, sizeof(out->ifname));
+    }
+
+    return out->have_v4 || out->have_v6;
+}
+
 static bool routeTableIsMain(const char *route_table)
 {
     return route_table == NULL || stringCompare(route_table, "main") == 0 || stringCompare(route_table, "auto") == 0;

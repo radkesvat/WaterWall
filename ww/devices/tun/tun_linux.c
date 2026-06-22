@@ -34,7 +34,9 @@
 enum
 {
     kTunWriteChannelQueueMax    = 128 * 1024,
-    kMaxReadDistributeQueueSize = 512
+    kMaxReadDistributeQueueSize = 512,
+    kLinuxRouteFlagUp           = 0x1,
+    kLinuxRouteFlagGateway      = 0x2
 };
 
 static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "TUN read batch count must fit in msg_event.count");
@@ -141,6 +143,204 @@ done:
     close(sock_fd);
     return ok;
 }
+
+#ifdef OS_LINUX
+static bool tunDefaultRouteHexIsZero(const char *hex)
+{
+    for (const char *p = hex; *p != '\0'; ++p)
+    {
+        if (*p != '0')
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool tunGetIfIndexByName(const char *name, uint32_t *out_index)
+{
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0)
+    {
+        return false;
+    }
+
+    struct ifreq ifr;
+    memorySet(&ifr, 0, sizeof(ifr));
+    stringCopyN(ifr.ifr_name, name, IFNAMSIZ);
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+    bool ok = ioctl(fd, SIOCGIFINDEX, &ifr) == 0 && ifr.ifr_ifindex > 0;
+    if (ok)
+    {
+        *out_index = (uint32_t) ifr.ifr_ifindex;
+    }
+
+    close(fd);
+    return ok;
+}
+
+static bool tunDetectDefaultRouteV4(char *ifname, size_t ifname_len)
+{
+    FILE *fp = fopen("/proc/net/route", "r");
+    if (fp == NULL)
+    {
+        return false;
+    }
+
+    char line[512];
+    if (fgets(line, sizeof(line), fp) == NULL)
+    {
+        fclose(fp);
+        return false;
+    }
+
+    char         best_iface[64] = {0};
+    unsigned int best_metric    = UINT32_MAX;
+    bool         found          = false;
+    while (fgets(line, sizeof(line), fp) != NULL)
+    {
+        char          iface[64];
+        unsigned long destination = 0;
+        unsigned long gateway     = 0;
+        unsigned int  flags       = 0;
+        unsigned int  refcnt      = 0;
+        unsigned int  use         = 0;
+        unsigned int  metric      = 0;
+        unsigned long mask        = 0;
+
+        int fields = sscanf(line,
+                            "%63s %lx %lx %x %u %u %u %lx",
+                            iface,
+                            &destination,
+                            &gateway,
+                            &flags,
+                            &refcnt,
+                            &use,
+                            &metric,
+                            &mask);
+        discard gateway;
+        discard refcnt;
+        discard use;
+
+        if (fields == 8 && destination == 0 && mask == 0 &&
+            (flags & (kLinuxRouteFlagUp | kLinuxRouteFlagGateway)) ==
+                (kLinuxRouteFlagUp | kLinuxRouteFlagGateway) &&
+            metric < best_metric)
+        {
+            stringCopyN(best_iface, iface, sizeof(best_iface));
+            best_metric = metric;
+            found       = true;
+        }
+    }
+
+    if (found)
+    {
+        stringCopyN(ifname, best_iface, ifname_len);
+    }
+
+    fclose(fp);
+    return found;
+}
+
+static bool tunDetectDefaultRouteV6(char *ifname, size_t ifname_len)
+{
+    FILE *fp = fopen("/proc/net/ipv6_route", "r");
+    if (fp == NULL)
+    {
+        return false;
+    }
+
+    char line[512];
+    char         best_iface[64] = {0};
+    unsigned int best_metric    = UINT32_MAX;
+    bool         found          = false;
+    while (fgets(line, sizeof(line), fp) != NULL)
+    {
+        char         destination[33];
+        unsigned int destination_prefix = 0;
+        char         source[33];
+        unsigned int source_prefix = 0;
+        char         next_hop[33];
+        unsigned int metric = 0;
+        unsigned int refcnt = 0;
+        unsigned int use    = 0;
+        unsigned int flags  = 0;
+        char         iface[64];
+
+        int fields = sscanf(line,
+                            "%32s %x %32s %x %32s %x %x %x %x %63s",
+                            destination,
+                            &destination_prefix,
+                            source,
+                            &source_prefix,
+                            next_hop,
+                            &metric,
+                            &refcnt,
+                            &use,
+                            &flags,
+                            iface);
+        discard source;
+        discard source_prefix;
+        discard next_hop;
+        discard refcnt;
+        discard use;
+
+        if (fields == 10 && destination_prefix == 0 && tunDefaultRouteHexIsZero(destination) &&
+            (flags & (kLinuxRouteFlagUp | kLinuxRouteFlagGateway)) ==
+                (kLinuxRouteFlagUp | kLinuxRouteFlagGateway) &&
+            metric < best_metric)
+        {
+            stringCopyN(best_iface, iface, sizeof(best_iface));
+            best_metric = metric;
+            found       = true;
+        }
+    }
+
+    if (found)
+    {
+        stringCopyN(ifname, best_iface, ifname_len);
+    }
+
+    fclose(fp);
+    return found;
+}
+
+bool tundeviceDetectDefaultInterface(tun_default_route_t *out)
+{
+    memorySet(out, 0, sizeof(*out));
+
+    char ifname_v4[64] = {0};
+    char ifname_v6[64] = {0};
+
+    if (tunDetectDefaultRouteV4(ifname_v4, sizeof(ifname_v4)))
+    {
+        out->have_v4 = tunGetIfIndexByName(ifname_v4, &out->ifindex_v4);
+    }
+
+    if (tunDetectDefaultRouteV6(ifname_v6, sizeof(ifname_v6)))
+    {
+        out->have_v6 = tunGetIfIndexByName(ifname_v6, &out->ifindex_v6);
+    }
+
+    if (out->have_v4)
+    {
+        stringCopyN(out->ifname, ifname_v4, sizeof(out->ifname));
+    }
+    else if (out->have_v6)
+    {
+        stringCopyN(out->ifname, ifname_v6, sizeof(out->ifname));
+    }
+
+    return out->have_v4 || out->have_v6;
+}
+#else
+bool tundeviceDetectDefaultInterface(tun_default_route_t *out)
+{
+    memorySet(out, 0, sizeof(*out));
+    return false;
+}
+#endif
 
 static bool routeCommandArgIsSafe(const char *arg)
 {

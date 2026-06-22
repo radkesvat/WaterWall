@@ -3,7 +3,7 @@
 #include "wwapi.h"
 
 #include "devices/tun/tun.h"
-#include "devices/tun/tun_loopguard.h"
+#include "net/egress_pin.h"
 
 #define LOG_PACKET_INFO 0
 #define LOG_SSDP        0
@@ -34,8 +34,8 @@ typedef struct tundevice_tstate_s
     size_t dns_server_count;
     bool   dns_servers_installed;
 
-    bool             loop_protection_enabled; // exclude this process's own traffic from the TUN
-    tun_loopguard_t *loop_guard;
+    bool loop_protection_enabled; // exclude this process's own traffic from the TUN
+    bool egress_pin_published;    // this instance contributed a reference to the global egress pin
 
     tun_device_t *tdev;
 
@@ -91,3 +91,12 @@ void tundeviceFreeDnsSettings(tundevice_tstate_t *state);
 
 void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, wid_t wid);
 void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+
+static inline void tundeviceClearEgressPinIfPublished(tundevice_tstate_t *state)
+{
+    if (state->egress_pin_published)
+    {
+        egressPinClear();
+        state->egress_pin_published = false;
+    }
+}

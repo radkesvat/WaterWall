@@ -70,6 +70,15 @@ typedef struct ww_global_state_s
     atomic_bool                 application_stopping_flag; // prevent threads sending messages to each other
     atomic_bool                 workers_run_flag;          // main thread sets this to true when it started its loop
 
+    // Published by a TunDevice in system-route mode before worker traffic runs.
+    // Outbound connector sockets use this to pin WaterWall's own egress to the
+    // physical default interface and avoid routing back into the TUN.
+    atomic_bool tun_egress_pin_active;
+    char        tun_egress_ifname[64];
+    uint32_t    tun_egress_ifindex_v4;
+    uint32_t    tun_egress_ifindex_v6;
+    uint32_t    tun_egress_pin_refs;
+
 } ww_global_state_t;
 
 typedef struct
