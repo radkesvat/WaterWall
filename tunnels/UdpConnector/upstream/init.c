@@ -3,6 +3,7 @@
 #include "loggers/network_logger.h"
 
 #include "loggers/dns_logger.h"
+#include "net/egress_pin.h"
 
 uint32_t udpconnectorSelectWeightedDestinationIndex(const udpconnector_tstate_t *ts)
 {
@@ -113,6 +114,13 @@ static int createAndBindSocket(int family, const udpconnector_tstate_t *ts)
     if (socketOptionBindToDevice(sockfd, ts->interface_name) != 0)
     {
         LOGE("UdpConnector: setsockopt SO_BINDTODEVICE error");
+        closesocket(sockfd);
+        return -1;
+    }
+
+    if (egressPinApply(sockfd, family, ts->interface_name) != 0)
+    {
+        LOGE("UdpConnector: egress pin failed");
         closesocket(sockfd);
         return -1;
     }

@@ -1,6 +1,89 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
+#include "net/egress_pin.h"
+
+static wio_t *udpstatelesssocketCreateUdpServer(udpstatelesssocket_tstate_t *state, const char *bind_address)
+{
+    sockaddr_u addr = {0};
+    if (sockaddrSetIpAddressPort(&addr, bind_address, state->listen_port) != 0)
+    {
+        LOGE("UdpStatelessSocket: could not prepare bind address %s", bind_address);
+        return NULL;
+    }
+
+    int sockfd = socket(addr.sa.sa_family, SOCK_DGRAM, 0);
+    if (sockfd < 0)
+    {
+        LOGE("UdpStatelessSocket: socket fd < 0");
+        return NULL;
+    }
+
+    if (socketOptionBindToDevice(sockfd, state->interface_name) != 0)
+    {
+        LOGE("UdpStatelessSocket: setsockopt SO_BINDTODEVICE error");
+        closesocket(sockfd);
+        return NULL;
+    }
+
+    if (egressPinApply(sockfd, addr.sa.sa_family, state->interface_name) != 0)
+    {
+        LOGE("UdpStatelessSocket: egress pin failed");
+        closesocket(sockfd);
+        return NULL;
+    }
+
+    if (state->fwmark >= 0 && socketOptionSetFwMark(sockfd, state->fwmark) != 0)
+    {
+        LOGE("UdpStatelessSocket: setsockopt SO_MARK error");
+        closesocket(sockfd);
+        return NULL;
+    }
+
+#ifdef OS_UNIX
+    socketOptionReuseAddr(sockfd, 1);
+#endif
+
+    if (addr.sa.sa_family == AF_INET6)
+    {
+        ipV6Only(sockfd, 0);
+    }
+
+    if (bind(sockfd, &addr.sa, sockaddrLen(&addr)) < 0)
+    {
+        LOGE("UdpStatelessSocket: UDP bind failed");
+        closesocket(sockfd);
+        return NULL;
+    }
+
+    if (! socketOptionApplySendBuffer(sockfd, state->send_buffer_size))
+    {
+        LOGE("UdpStatelessSocket: set socket send buffer failed");
+        closesocket(sockfd);
+        return NULL;
+    }
+
+    if (! socketOptionApplyRecvBuffer(sockfd, state->recv_buffer_size))
+    {
+        LOGE("UdpStatelessSocket: set socket recv buffer failed");
+        closesocket(sockfd);
+        return NULL;
+    }
+
+    wio_t *io = wioGet(getWorkerLoop(getWID()), sockfd);
+    if (io == NULL)
+    {
+        LOGE("UdpStatelessSocket: could not create event io");
+        closesocket(sockfd);
+        return NULL;
+    }
+
+    wioSetType(io, WIO_TYPE_UDP);
+    wioSetLocaladdr(io, &addr.sa, (int) sockaddrLen(&addr));
+    weventSetPriority(io, WEVENT_HIGH_PRIORITY);
+
+    return io;
+}
 
 static void udpstatelesssocketRefreshLocalAddress(wio_t *io)
 {
@@ -29,13 +112,7 @@ void udpstatelesssocketTunnelOnPrepair(tunnel_t *t)
         bind_address = interface_ip;
     }
 
-    state->io = wloopCreateUdpServerWithBufferOptions(getWorkerLoop(getWID()),
-                                                      bind_address,
-                                                      state->listen_port,
-                                                      state->interface_name,
-                                                      state->fwmark,
-                                                      state->send_buffer_size,
-                                                      state->recv_buffer_size);
+    state->io = udpstatelesssocketCreateUdpServer(state, bind_address);
 
     if (! state->io)
     {

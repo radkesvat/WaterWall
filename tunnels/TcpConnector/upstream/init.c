@@ -3,6 +3,7 @@
 #include "loggers/network_logger.h"
 
 #include "loggers/dns_logger.h"
+#include "net/egress_pin.h"
 
 static const tcpconnector_destination_t *selectWeightedDestination(const tcpconnector_tstate_t *ts)
 {
@@ -211,6 +212,12 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
     if (socketOptionBindToDevice(sockfd, socket_options->interface_name) != 0)
     {
         LOGE("TcpConnector: setsockopt SO_BINDTODEVICE error");
+        goto fail;
+    }
+
+    if (egressPinApply(sockfd, addr_type, socket_options->interface_name) != 0)
+    {
+        LOGE("TcpConnector: egress pin failed");
         goto fail;
     }
 
