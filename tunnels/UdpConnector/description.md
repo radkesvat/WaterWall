@@ -159,6 +159,7 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
 - `source-ip` `(string)`
   Binds the UDP socket to a specific local source IP with an ephemeral source port.
   This is useful when the host has multiple local addresses and the default route would choose the wrong source address.
+  If `TunDevice` loop protection has published an automatic egress pin, `source-ip` alone does not override that pin. Make sure the source IP belongs to the pinned/default interface, or set `interface` explicitly.
 
 - `domain-strategy` `(string or integer)`
   Selects how domain DNS results are chosen.
@@ -187,6 +188,7 @@ During upstream `init`, `UdpConnector`:
 - creates a UDP socket
 - applies the configured send and receive socket buffer sizes
 - applies optional `interface`, `fwmark`, and `reuseaddr` socket options
+- applies the automatic `TunDevice` egress pin when loop protection is active and `interface` is omitted
 - binds the socket to `source-ip:0` when `source-ip` is configured, otherwise to the wildcard address for the selected address family
 - starts reading immediately
 - stores line state and idle tracking for the new socket

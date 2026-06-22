@@ -142,16 +142,11 @@ Full-route example with local ranges excluded:
   Default: enabled whenever system routing is enabled (i.e. tracks
   `system-route` / `route-table`), disabled otherwise. Set to `false` to opt out.
 
-  On Windows this is implemented with WinDivert at the **flow** layer: the
-  process's own network flows (TCP connections and UDP flows alike) are observed
-  and any endpoint that would otherwise be steered into the TUN gets a host
-  (`/32` or `/128`) bypass route via the *original* default gateway. The flow
-  layer is required because `UdpConnector` sends with unconnected `sendto()` and
-  never calls `connect()`, so the socket-layer `CONNECT` event would never fire
-  for it. This protects connectors (`TcpConnector`, `UdpConnector`, ...)
-  automatically, even when they live in a different chain and connect to dynamic
-  endpoints, so manual `route-exclude-cidrs` entries for your upstream server are
-  no longer required. On other platforms this option is currently a no-op.
+  When active, `TunDevice` snapshots the current physical default interface
+  before installing TUN routes and publishes it as a process-wide egress pin.
+  Outbound adapter sockets such as `TcpConnector`, `UdpConnector`, and
+  `UdpStatelessSocket` apply that pin unless their own `interface` setting is
+  explicitly configured.
 
 - `post-up-script` `(string)`
   Optional shell command to run after the interface is up and native routes are installed.
@@ -163,7 +158,13 @@ Full-route example with local ranges excluded:
 
 ### Device setup
 
-During `onPrepare`, `TunDevice`:
+During tunnel creation, `TunDevice`:
+
+- parses route/DNS settings
+- if loop protection is enabled, snapshots the current physical default
+  interface and publishes it for outbound adapter sockets
+
+During `onStart`, `TunDevice`:
 
 - decides which adjacent tunnel should receive packets read from the device
 - creates the TUN device
@@ -172,7 +173,7 @@ During `onPrepare`, `TunDevice`:
 - optionally installs native system routes
 - optionally runs `post-up-script`
 
-The actual device creation is deferred until prepare time because the tunnel needs chain context to know which side should receive packets.
+The actual device creation is deferred until start time because the tunnel needs chain context to know which side should receive packets.
 
 ### Packet input path
 
@@ -203,7 +204,7 @@ Before writing a packet, `TunDevice` checks line flags:
 - full packet checksum recalculation is attempted
 - for fragmented IPv4 packets, transport checksum recalculation is skipped automatically and only the IP header checksum is recomputed
 
-### Self-traffic loop protection (Windows)
+### Self-traffic loop protection
 
 When the TUN installs itself as the system default route, every outbound packet
 of the machine is steered into the TUN -- including WaterWall's own upstream
@@ -212,29 +213,25 @@ forming a routing loop.
 
 With `loop-protection` enabled (the default in system-route mode), `TunDevice`:
 
-- snapshots the original default gateway/interface per family *before* installing
-  the TUN routes,
-- opens a WinDivert flow-layer handle (`SNIFF | RECV_ONLY`) filtered to this
-  process only, observing its own `FLOW_ESTABLISHED`/`FLOW_DELETED` events (the
-  flow layer is observe-only and, unlike the socket layer, reports UDP flows too
-  -- essential because `UdpConnector` uses unconnected `sendto()`),
-- for each new flow endpoint that the current routing table would send into the
-  TUN, installs a host bypass route via the original gateway, reference counted
-  per destination and tracked per flow `EndpointId` so an unrelated flow sharing
-  the same remote IP cannot tear down a live route,
-- removes any remaining bypass routes when the device is brought down.
+- snapshots the original default interface per family *before* installing the
+  TUN routes,
+- publishes that interface as a process-wide egress pin,
+- lets outbound adapter sockets apply the pin before `connect()`, `bind()`, or
+  `sendto()` traffic can follow the new TUN default route,
+- releases the pin when the owning `TunDevice` stops or is destroyed.
 
-The `FLOW_ESTABLISHED` event is delivered as the flow is established, so the
-bypass route is normally installed before traffic flows; there is a small
-inherent race where the very first packet of a brand-new endpoint could enter the
-TUN before the route lands (the connection self-heals on retransmit, e.g.
-WireGuard's handshake retry). This is the correct trade-off because the flow layer
-cannot hold/permit events.
+On Linux the pin is applied with `SO_BINDTODEVICE`. On Windows it is applied with
+`IP_UNICAST_IF` / `IPV6_UNICAST_IF`. macOS currently has no automatic egress pin,
+so use an explicit connector `interface` or `route-exclude-cidrs` there.
 
-This relies on the bundled, pre-signed WinDivert driver (no extra driver or WFP
-callout is required). If WinDivert cannot be loaded, or no original default route
-exists, protection stays inactive and the device still works -- you can then fall
-back to manual `route-exclude-cidrs`.
+An explicit adapter `interface` setting overrides the automatic pin. A
+`source-ip` setting alone does not override it; if the source IP belongs to a
+different NIC than the detected default interface, especially on Windows
+strong-host configurations, set `interface` explicitly instead.
+
+c-ares DNS resolver sockets are not pinned by this feature. The default
+interface is detected once at startup; if the physical default route changes,
+restart WaterWall or configure explicit interfaces/routes.
 
 ### Callback behavior
 

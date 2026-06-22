@@ -81,6 +81,7 @@ or the reverse, depending on chain wiring.
 - `source-ip` `(string)`
   Uses a specific local source IP for the UDP socket.
   For this stateless socket, `source-ip` is treated as an override for `listen-address`, because the same bound UDP socket is used for both receiving and sending.
+  If `TunDevice` loop protection has published an automatic egress pin, `source-ip` alone does not override that pin. Make sure the source IP belongs to the pinned/default interface, or set `interface` explicitly.
 
 - `large-send-buffer` `(boolean or positive integer)`
   Sets `SO_SNDBUF` on the UDP socket.

@@ -186,6 +186,7 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
 - `source-ip` `(string)`
   Binds the outbound socket to a specific local source IP with an ephemeral source port before connect.
   This is useful when the host has multiple local addresses and the default route would choose the wrong source address.
+  If `TunDevice` loop protection has published an automatic egress pin, `source-ip` alone does not override that pin. Make sure the source IP belongs to the pinned/default interface, or set `interface` explicitly.
 
 - `domain-strategy` `(string or integer)`
   Selects how domain DNS results are chosen.
@@ -273,6 +274,7 @@ After the destination is ready, `TcpConnector` creates a TCP socket and may appl
 - `SO_RCVBUF` when `large-recv-buffer` is enabled or set to a byte size
 - `SO_MARK` when `fwmark` is set and the platform supports it
 - `SO_BINDTODEVICE` when `interface` is set and the platform supports it
+- the automatic `TunDevice` egress pin when loop protection is active and `interface` is omitted
 - `bind(source-ip, 0)` when `source-ip` is set
 
 For weighted `addresses`, these options are taken from the selected address object after applying top-level defaults.
