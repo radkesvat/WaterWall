@@ -48,7 +48,8 @@ if(NOT TARGET tcp_over_udp_fec)
     )
     target_compile_features(tcp_over_udp_fec PRIVATE cxx_std_17)
     target_include_directories(tcp_over_udp_fec PUBLIC ${TCP_OVER_UDP_FEC_DIR})
-    set_property(TARGET tcp_over_udp_fec PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+    # Release IPO is controlled by CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE.
+    # set_property(TARGET tcp_over_udp_fec PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
 endif()
 
 

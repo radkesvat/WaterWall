@@ -80,15 +80,7 @@ include(CTest)
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT ipo_output)
 
-if(ipo_supported AND MINGW AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
-  # MinGW GCC + GAS can fail the final LTO link with
-  #   "value of N too large for field of 1 byte"
-  # when link-time inlining grows a function past the limits of a 1-byte
-  # field in the generated SEH unwind / dispatch assembly. Disable LTO for
-  # the MinGW build; MSVC and the *nix toolchains keep it.
-  message(STATUS "IPO is supported but disabled for MinGW GCC (GAS LTO assembly bug)")
-  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE FALSE)
-elseif(ipo_supported)
+if(ipo_supported)
   message(STATUS "IPO is supported")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 else()
