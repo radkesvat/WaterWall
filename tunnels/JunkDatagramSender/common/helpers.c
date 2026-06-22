@@ -59,14 +59,6 @@ static junkdatagramsender_protocol_t junkdatagramsenderPickProtocol(uint64_t mas
     return kJunkDatagramSenderProtocolDns;
 }
 
-bool junkdatagramsenderIsWorkerPacketLine(tunnel_t *t, line_t *l)
-{
-    tunnel_chain_t *chain = tunnelGetChain(t);
-
-    return chain != NULL && chain->packet_lines != NULL && lineGetWID(l) < chain->workers_count &&
-           tunnelchainGetWorkerPacketLine(chain, lineGetWID(l)) == l;
-}
-
 static void junkdatagramsenderDelayedUpstreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     tunnelNextUpStreamPayload(t, l, buf);
@@ -153,7 +145,7 @@ bool junkdatagramsenderSendJunk(tunnel_t *t, line_t *l, junkdatagramsender_direc
 {
     junkdatagramsender_tstate_t *ts = tunnelGetState(t);
 
-    if (junkdatagramsenderIsWorkerPacketLine(t, l) || ts->packet_count_max == 0 || ts->selected_protocol_mask == 0)
+    if (ts->packet_count_max == 0 || ts->selected_protocol_mask == 0)
     {
         return true;
     }

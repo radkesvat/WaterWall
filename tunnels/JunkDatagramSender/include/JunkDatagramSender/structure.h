@@ -62,4 +62,3 @@ bool junkdatagramsenderLoadSettings(junkdatagramsender_tstate_t *ts, const cJSON
 void junkdatagramsenderLinestateInitialize(junkdatagramsender_lstate_t *ls, const junkdatagramsender_tstate_t *ts);
 void junkdatagramsenderLinestateDestroy(junkdatagramsender_lstate_t *ls);
 bool junkdatagramsenderSendJunk(tunnel_t *t, line_t *l, junkdatagramsender_direction_t direction);
-bool junkdatagramsenderIsWorkerPacketLine(tunnel_t *t, line_t *l);
