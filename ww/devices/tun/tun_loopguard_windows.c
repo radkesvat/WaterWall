@@ -93,6 +93,17 @@ static const void *sockaddrInetAddrPtr(const SOCKADDR_INET *a, int *out_len)
     return &a->Ipv4.sin_addr;
 }
 
+// Best-effort presentation string for logs (returns "?" on failure).
+static const char *formatInet(const SOCKADDR_INET *a, char *buf, size_t buflen)
+{
+    const void *p = (a->si_family == AF_INET6) ? (const void *) &a->Ipv6.sin6_addr : (const void *) &a->Ipv4.sin_addr;
+    if (inet_ntop(a->si_family, (void *) p, buf, buflen) == NULL)
+    {
+        stringNPrintf(buf, buflen, "?");
+    }
+    return buf;
+}
+
 static bool sockaddrInetSameAddr(const SOCKADDR_INET *a, const SOCKADDR_INET *b)
 {
     if (a->si_family != b->si_family)
@@ -243,9 +254,19 @@ static bool installBypassRoute(const tun_loopguard_t *guard, const SOCKADDR_INET
     NETIO_STATUS status = CreateIpForwardEntry2(&row);
     if (status != NO_ERROR && status != ERROR_OBJECT_ALREADY_EXISTS)
     {
-        LOGE("TunLoopGuard: failed to install bypass route, code: %lu", status);
+        char dbuf[64];
+        LOGE("TunLoopGuard: failed to install bypass route for %s, code: %lu",
+             formatInet(dest, dbuf, sizeof(dbuf)),
+             status);
         return false;
     }
+
+    char dbuf[64];
+    char gbuf[64];
+    LOGI("TunLoopGuard: installed bypass route %s via %s (status %lu)",
+         formatInet(dest, dbuf, sizeof(dbuf)),
+         formatInet(dest->si_family == AF_INET6 ? &guard->v6_gateway : &guard->v4_gateway, gbuf, sizeof(gbuf)),
+         status);
     return true;
 }
 
@@ -358,11 +379,16 @@ static void handleFlowEstablished(tun_loopguard_t *guard, const WINDIVERT_ADDRES
 
     if (! route_present)
     {
+        char dbuf[64];
         // Only protect endpoints that would actually be routed into the TUN.
         if (! destinationRoutesToTun(guard, &dest))
         {
+            LOGI("TunLoopGuard: flow to %s is NOT routed via the TUN -> no bypass installed",
+                 formatInet(&dest, dbuf, sizeof(dbuf)));
             return;
         }
+        LOGI("TunLoopGuard: flow to %s routes into the TUN -> installing bypass",
+             formatInet(&dest, dbuf, sizeof(dbuf)));
         if (! installBypassRoute(guard, &dest))
         {
             return;
@@ -512,9 +538,21 @@ tun_loopguard_t *tunLoopGuardStart(uint64_t tun_luid_value)
     atomicStoreRelaxed(&guard->running, true);
     guard->thread = threadCreate(routineLoopGuard, guard);
 
-    LOGI("TunLoopGuard: self-traffic loop protection active (v4:%s v6:%s)",
-         guard->have_v4 ? "yes" : "no",
-         guard->have_v6 ? "yes" : "no");
+    char gw4[64] = "none";
+    char gw6[64] = "none";
+    if (guard->have_v4)
+    {
+        formatInet(&guard->v4_gateway, gw4, sizeof(gw4));
+    }
+    if (guard->have_v6)
+    {
+        formatInet(&guard->v6_gateway, gw6, sizeof(gw6));
+    }
+    LOGI("TunLoopGuard: active (pid=%lu, original gateway v4=%s v6=%s, tun_luid=%llu)",
+         (unsigned long) guard->pid,
+         gw4,
+         gw6,
+         (unsigned long long) guard->tun_luid);
     return guard;
 }
 
