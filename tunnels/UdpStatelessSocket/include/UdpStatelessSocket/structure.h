@@ -35,9 +35,7 @@ typedef struct udpstatelesssocket_tstate_s
     wio_t *io;     // socket file descriptor
     wid_t  io_wid; // the worker id that created the io
 
-    sockaddr_u cached_peer_addr; // last owner-worker peer selected for outbound sends
-    bool       cached_peer_valid;
-    bool       source_ip_configured;
+    bool source_ip_configured;
 
     wmutex_t                              dns_cache_mutex;
     udpstatelesssocket_dns_cache_entry_t *dns_cache;

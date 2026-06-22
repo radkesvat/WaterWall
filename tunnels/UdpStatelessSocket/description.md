@@ -110,8 +110,7 @@ When payload is sent through `UdpStatelessSocket`:
 - the tunnel reads the destination address from `l->routing_context.dest_ctx`
 - resolves the destination asynchronously if it is an unresolved domain
 - converts the resolved/IP address context into a socket address
-- sets the UDP socket's current peer address
-- writes the datagram through the bound socket
+- sends the datagram with that socket address through the bound socket
 
 So outbound routing is fully driven by the line's destination context rather than by any connection object owned by the tunnel.
 

@@ -23,26 +23,6 @@ typedef struct udpstatelesssocket_dns_request_s
 
 static void udpstatelesssocketCleanupSendRequest(void *arg1, void *arg2, void *arg3);
 
-static bool udpstatelesssocketSockAddrEquals(const sockaddr_u *lhs, const sockaddr_u *rhs)
-{
-    if (lhs == NULL || rhs == NULL || lhs->sa.sa_family != rhs->sa.sa_family)
-    {
-        return false;
-    }
-
-    switch (lhs->sa.sa_family)
-    {
-    case AF_INET:
-        return lhs->sin.sin_port == rhs->sin.sin_port && lhs->sin.sin_addr.s_addr == rhs->sin.sin_addr.s_addr;
-    case AF_INET6:
-        return lhs->sin6.sin6_port == rhs->sin6.sin6_port && memoryCompare(lhs->sin6.sin6_addr.s6_addr,
-                                                                           rhs->sin6.sin6_addr.s6_addr,
-                                                                           sizeof(lhs->sin6.sin6_addr.s6_addr)) == 0;
-    default:
-        return false;
-    }
-}
-
 static sockaddr_u udpstatelesssocketSockAddrFromContext(const address_context_t *context)
 {
     sockaddr_u addr = {0};
@@ -83,7 +63,7 @@ static bool udpstatelesssocketGetLinePeerAddr(line_t *l, sockaddr_u *addr_out)
     return true;
 }
 
-static void udpstatelesssocketWriteOwnerPeer(tunnel_t *t, sbuf_t *buf)
+static void udpstatelesssocketWriteOwnerPeer(tunnel_t *t, sbuf_t *buf, const sockaddr_u *peer_addr)
 {
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
 
@@ -95,21 +75,49 @@ static void udpstatelesssocketWriteOwnerPeer(tunnel_t *t, sbuf_t *buf)
         return;
     }
 
-    if (state->cached_peer_valid)
+    ssize_t nwrite;
+    do
     {
-        if (! udpstatelesssocketSockAddrEquals(wioGetPeerAddrU(state->io), &state->cached_peer_addr))
+        nwrite = sendto(wioGetFD(state->io),
+                        sbufGetRawPtr(buf),
+                        (size_t) sbufGetLength(buf),
+                        0,
+                        &peer_addr->sa,
+                        sockaddrLen((sockaddr_u *) peer_addr));
+    } while (nwrite < 0 && socketERRNO() == EINTR);
+
+    if (UNLIKELY(nwrite < 0))
+    {
+        const int err = socketERRNO();
+        // EAGAIN/EWOULDBLOCK is a benign send-buffer-full drop for a stateless UDP socket; log it quietly.
+        if (err == EAGAIN || err == EWOULDBLOCK)
         {
-            wioSetPeerAddr(state->io, &state->cached_peer_addr.sa, (int) sockaddrLen(&state->cached_peer_addr));
+            if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
+            {
+                char peeraddrstr[SOCKADDR_STRLEN] = {0};
+                LOGD("UdpStatelessSocket: dropped datagram to [%s]: %s",
+                     SOCKADDR_STR(peer_addr, peeraddrstr),
+                     socketStrError(err));
+            }
+        }
+        else if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_ERROR))
+        {
+            char peeraddrstr[SOCKADDR_STRLEN] = {0};
+            LOGE("UdpStatelessSocket: sendto failed for [%s]: %s",
+                 SOCKADDR_STR(peer_addr, peeraddrstr),
+                 socketStrError(err));
         }
     }
-    else if (wioGetPeerAddrU(state->io)->sa.sa_family == 0)
+    else if (UNLIKELY((uint32_t) nwrite != sbufGetLength(buf)))
     {
-        LOGE("UdpStatelessSocket: no owner-worker peer is available for this UDP send");
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
-        return;
+        char peeraddrstr[SOCKADDR_STRLEN] = {0};
+        LOGE("UdpStatelessSocket: short UDP datagram write to [%s]: %zd/%u bytes",
+             SOCKADDR_STR(peer_addr, peeraddrstr),
+             nwrite,
+             sbufGetLength(buf));
     }
 
-    wioWrite(state->io, buf);
+    bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
 }
 
 static void udpstatelesssocketSendToPeer(tunnel_t *t, sbuf_t *buf, const sockaddr_u *peer_addr)
@@ -124,9 +132,7 @@ static void udpstatelesssocketSendToPeer(tunnel_t *t, sbuf_t *buf, const sockadd
 
     if (getWID() == state->io_wid)
     {
-        state->cached_peer_addr  = *peer_addr;
-        state->cached_peer_valid = true;
-        udpstatelesssocketWriteOwnerPeer(t, buf);
+        udpstatelesssocketWriteOwnerPeer(t, buf, peer_addr);
         return;
     }
 
@@ -190,7 +196,10 @@ void udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf)
         return;
     }
 
-    if (wioGetPeerAddrU(io)->sa.sa_family == 0)
+    const sockaddr_u peer_addr  = *wioGetPeerAddrU(io);
+    const sockaddr_u local_addr = *wioGetLocaladdrU(io);
+
+    if (peer_addr.sa.sa_family == 0)
     {
         assert(false);
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
@@ -213,11 +222,11 @@ void udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf)
 
     LOGD("UdpStatelessSocket: received %u bytes from [%s] <= [%s]",
          sbufGetLength(buf),
-         SOCKADDR_STR(wioGetLocaladdrU(io), localaddrstr),
-         SOCKADDR_STR(wioGetPeerAddrU(io), peeraddrstr));
+         SOCKADDR_STR(&local_addr, localaddrstr),
+         SOCKADDR_STR(&peer_addr, peeraddrstr));
 
-    addresscontextFromSockAddrWithProtocol(&l->routing_context.src_ctx, wioGetPeerAddrU(io), IP_PROTO_UDP);
-    l->routing_context.local_listener_port = sockaddrPort(wioGetLocaladdrU(io));
+    addresscontextFromSockAddrWithProtocol(&l->routing_context.src_ctx, &peer_addr, IP_PROTO_UDP);
+    l->routing_context.local_listener_port = sockaddrPort((sockaddr_u *) &local_addr);
 
 #ifdef DEBUG
     lineLock(l);
@@ -253,10 +262,7 @@ void udpstatelesssocketLocalThreadSocketUpStream(void *worker, void *arg1, void 
         return;
     }
 
-    state->cached_peer_addr  = request->peer_addr;
-    state->cached_peer_valid = true;
-
-    udpstatelesssocketWriteOwnerPeer(t, buf);
+    udpstatelesssocketWriteOwnerPeer(t, buf, &request->peer_addr);
     memoryFree(request);
 }
 

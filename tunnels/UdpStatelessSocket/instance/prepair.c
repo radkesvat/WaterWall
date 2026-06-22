@@ -2,6 +2,17 @@
 
 #include "loggers/network_logger.h"
 
+static void udpstatelesssocketRefreshLocalAddress(wio_t *io)
+{
+    sockaddr_u local_addr = {0};
+    socklen_t  addr_len   = sizeof(local_addr);
+
+    if (getsockname(wioGetFD(io), &local_addr.sa, &addr_len) == 0)
+    {
+        wioSetLocaladdr(io, &local_addr.sa, (int) addr_len);
+    }
+}
+
 void udpstatelesssocketTunnelOnPrepair(tunnel_t *t)
 {
     udpstatelesssocket_tstate_t *state                         = tunnelGetState(t);
@@ -32,6 +43,7 @@ void udpstatelesssocketTunnelOnPrepair(tunnel_t *t)
         terminateProgram(1);
     }
 
+    udpstatelesssocketRefreshLocalAddress(state->io);
     state->io_wid = wloopGetWid(weventGetLoop(state->io));
 
     weventSetUserData(state->io, t);
