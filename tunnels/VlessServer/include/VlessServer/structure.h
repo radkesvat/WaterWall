@@ -1,6 +1,5 @@
 #pragma once
 
-#include "objects/user_handle.h"
 #include "wwapi.h"
 
 typedef enum vlessserver_line_kind_e

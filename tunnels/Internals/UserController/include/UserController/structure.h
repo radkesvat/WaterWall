@@ -1,8 +1,6 @@
 #pragma once
 
 #include "AuthenticationClient/interface.h"
-#include "objects/user.h"
-#include "objects/user_handle.h"
 #include "wwapi.h"
 
 // Origin of a line teardown, so the close path never sends a callback back toward the side that

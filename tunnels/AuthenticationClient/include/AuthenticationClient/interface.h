@@ -1,7 +1,5 @@
 #pragma once
 
-#include "objects/user.h"
-#include "objects/user_handle.h"
 #include "wwapi.h"
 
 typedef enum authenticationclient_state_e

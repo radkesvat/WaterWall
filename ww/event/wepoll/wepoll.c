@@ -33,7 +33,10 @@
 #define WEPOLL_EXPORT
 #endif
 
-#include "wlibc.h"
+#include <stdint.h>
+#include <string.h>
+
+#include "wmem.h"
 
 enum EPOLL_EVENTS {
   EPOLLIN      = (int) (1U <<  0),
@@ -970,7 +973,7 @@ static poll_group_t* poll_group__new(port_state_t* port_state) {
   if (poll_group == NULL)
     return_set_error(NULL, ERROR_NOT_ENOUGH_MEMORY);
 
-  memorySet(poll_group, 0, sizeof *poll_group);
+  memset(poll_group, 0, sizeof *poll_group);
 
   queue_node_init(&poll_group->queue_node);
   poll_group->port_state = port_state;
@@ -1105,7 +1108,7 @@ port_state_t* port_new(HANDLE* iocp_handle_out) {
   if (iocp_handle == NULL)
     goto err2;
 
-  memorySet(port_state, 0, sizeof *port_state);
+  memset(port_state, 0, sizeof *port_state);
 
   port_state->iocp_handle = iocp_handle;
   tree_init(&port_state->sock_tree);
@@ -1662,7 +1665,7 @@ sock_state_t* sock_new(port_state_t* port_state, SOCKET socket) {
   if (sock_state == NULL)
     goto err1;
 
-  memorySet(sock_state, 0, sizeof *sock_state);
+  memset(sock_state, 0, sizeof *sock_state);
 
   sock_state->base_socket = base_socket;
   sock_state->poll_group = poll_group;
@@ -1980,11 +1983,11 @@ void ts_tree_node_unref_and_destroy(ts_tree_node_t* node) {
 }
 
 void tree_init(tree_t* tree) {
-  memorySet(tree, 0, sizeof *tree);
+  memset(tree, 0, sizeof *tree);
 }
 
 void tree_node_init(tree_node_t* node) {
-  memorySet(node, 0, sizeof *node);
+  memset(node, 0, sizeof *node);
 }
 
 #define TREE__ROTATE(cis, trans)   \

@@ -562,10 +562,19 @@ elseif(WIN32)
     set(WITH_WEPOLL 1)
     if(WITH_WEPOLL)
         target_include_directories(ww PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/event/wepoll)
-        target_sources(ww PRIVATE event/wepoll/wepoll.c)
+
+        add_library(ww_wepoll OBJECT event/wepoll/wepoll.c)
+        target_compile_features(ww_wepoll PRIVATE c_std_11)
+        target_include_directories(ww_wepoll PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/libc
+        )
+        set_target_properties(ww_wepoll PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
+        target_sources(ww PRIVATE $<TARGET_OBJECTS:ww_wepoll>)
         set_source_files_properties(
             event/wepoll/wepoll.c
-            PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
+            PROPERTIES
+                SKIP_PRECOMPILE_HEADERS ON
+                SKIP_UNITY_BUILD_INCLUSION ON
         )
     endif()
 endif()

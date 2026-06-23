@@ -13,6 +13,9 @@
 #include "bufio/buffer_queue.h"
 #include "bufio/context_queue.h"
 
+#include "instance/global_state.h"
+#include "instance/worker.h"
+
 #include "net/adapter.h"
 #include "net/async_dns.h"
 #include "net/dns_strategy.h"
@@ -23,8 +26,7 @@
 #include "net/wchecksum.h"
 #include "net/egress_pin.h"
 
-#include "instance/worker.h"
-#include "instance/global_state.h"
+#include "devices/tun/tun.h"
 
 #include "managers/node_manager.h"
 #include "managers/socket_manager.h"
@@ -40,4 +42,3 @@
 
 #include "objects/user_handle.h"
 #include "objects/users.h"
-

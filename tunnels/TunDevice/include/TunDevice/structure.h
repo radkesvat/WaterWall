@@ -2,7 +2,6 @@
 
 #include "wwapi.h"
 
-
 #define LOG_PACKET_INFO 0
 #define LOG_SSDP        0
 #define LOG_MDNS        0
