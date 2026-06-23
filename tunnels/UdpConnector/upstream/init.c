@@ -3,7 +3,6 @@
 #include "loggers/network_logger.h"
 
 #include "loggers/dns_logger.h"
-#include "net/egress_pin.h"
 
 uint32_t udpconnectorSelectWeightedDestinationIndex(const udpconnector_tstate_t *ts)
 {

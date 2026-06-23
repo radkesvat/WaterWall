@@ -2,8 +2,6 @@
 
 #include "wwapi.h"
 
-#include "devices/tun/tun.h"
-#include "net/egress_pin.h"
 
 #define LOG_PACKET_INFO 0
 #define LOG_SSDP        0

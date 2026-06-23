@@ -21,6 +21,7 @@
 #include "net/sync_dns.h"
 #include "net/tunnel.h"
 #include "net/wchecksum.h"
+#include "net/egress_pin.h"
 
 #include "instance/worker.h"
 #include "instance/global_state.h"
@@ -39,3 +40,4 @@
 
 #include "objects/user_handle.h"
 #include "objects/users.h"
+

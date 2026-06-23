@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "net/egress_pin.h"
 
 static wio_t *udpstatelesssocketCreateUdpServer(udpstatelesssocket_tstate_t *state, const char *bind_address)
 {

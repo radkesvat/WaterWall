@@ -3,7 +3,6 @@
 #include "loggers/network_logger.h"
 
 #include "loggers/dns_logger.h"
-#include "net/egress_pin.h"
 
 static const tcpconnector_destination_t *selectWeightedDestination(const tcpconnector_tstate_t *ts)
 {
