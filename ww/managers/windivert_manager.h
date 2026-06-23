@@ -171,15 +171,15 @@ bool windivertManagerEnsureLoaded(void);
 /* Thin wrappers over the dynamically resolved WinDivert exports. They must only
  * be used after windivertManagerEnsureLoaded() has returned true. */
 HANDLE windivertOpen(const char *filter, WINDIVERT_LAYER layer, INT16 priority, UINT64 flags);
-BOOL   windivertRecv(HANDLE handle, void *packet, UINT packet_len, UINT *recv_len, WINDIVERT_ADDRESS *addr);
-BOOL   windivertSend(HANDLE handle, const void *packet, UINT packet_len, UINT *send_len, const WINDIVERT_ADDRESS *addr);
-BOOL   windivertShutdown(HANDLE handle, WINDIVERT_SHUTDOWN how);
-BOOL   windivertClose(HANDLE handle);
+bool   windivertRecv(HANDLE handle, void *packet, UINT packet_len, UINT *recv_len, WINDIVERT_ADDRESS *addr);
+bool   windivertSend(HANDLE handle, const void *packet, UINT packet_len, UINT *send_len, const WINDIVERT_ADDRESS *addr);
+bool   windivertShutdown(HANDLE handle, WINDIVERT_SHUTDOWN how);
+bool   windivertClose(HANDLE handle);
 
 /* Address-format helpers (host byte order input for the IPv4 variant, UINT[4]
  * array for the IPv6 variant), used to safely decode SOCKET/FLOW layer
  * addresses without hand-rolling WinDivert's internal byte layout. */
-BOOL windivertHelperFormatIPv4Address(UINT32 addr, char *buffer, UINT buffer_len);
-BOOL windivertHelperFormatIPv6Address(const UINT32 *addr, char *buffer, UINT buffer_len);
+bool windivertHelperFormatIPv4Address(UINT32 addr, char *buffer, UINT buffer_len);
+bool windivertHelperFormatIPv6Address(const UINT32 *addr, char *buffer, UINT buffer_len);
 
 #endif // OS_WIN

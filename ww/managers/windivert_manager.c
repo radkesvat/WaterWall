@@ -216,34 +216,34 @@ HANDLE windivertOpen(const char *filter, WINDIVERT_LAYER layer, INT16 priority, 
     return pWinDivertOpen(filter, layer, priority, flags);
 }
 
-BOOL windivertRecv(HANDLE handle, void *packet, UINT packet_len, UINT *recv_len, WINDIVERT_ADDRESS *addr)
+bool windivertRecv(HANDLE handle, void *packet, UINT packet_len, UINT *recv_len, WINDIVERT_ADDRESS *addr)
 {
-    return pWinDivertRecv(handle, packet, packet_len, recv_len, addr);
+    return pWinDivertRecv(handle, packet, packet_len, recv_len, addr) != FALSE;
 }
 
-BOOL windivertSend(HANDLE handle, const void *packet, UINT packet_len, UINT *send_len, const WINDIVERT_ADDRESS *addr)
+bool windivertSend(HANDLE handle, const void *packet, UINT packet_len, UINT *send_len, const WINDIVERT_ADDRESS *addr)
 {
-    return pWinDivertSend(handle, packet, packet_len, send_len, addr);
+    return pWinDivertSend(handle, packet, packet_len, send_len, addr) != FALSE;
 }
 
-BOOL windivertShutdown(HANDLE handle, WINDIVERT_SHUTDOWN how)
+bool windivertShutdown(HANDLE handle, WINDIVERT_SHUTDOWN how)
 {
-    return pWinDivertShutdown(handle, how);
+    return pWinDivertShutdown(handle, how) != FALSE;
 }
 
-BOOL windivertClose(HANDLE handle)
+bool windivertClose(HANDLE handle)
 {
-    return pWinDivertClose(handle);
+    return pWinDivertClose(handle) != FALSE;
 }
 
-BOOL windivertHelperFormatIPv4Address(UINT32 addr, char *buffer, UINT buffer_len)
+bool windivertHelperFormatIPv4Address(UINT32 addr, char *buffer, UINT buffer_len)
 {
-    return pWinDivertHelperFormatIPv4Address(addr, buffer, buffer_len);
+    return pWinDivertHelperFormatIPv4Address(addr, buffer, buffer_len) != FALSE;
 }
 
-BOOL windivertHelperFormatIPv6Address(const UINT32 *addr, char *buffer, UINT buffer_len)
+bool windivertHelperFormatIPv6Address(const UINT32 *addr, char *buffer, UINT buffer_len)
 {
-    return pWinDivertHelperFormatIPv6Address(addr, buffer, buffer_len);
+    return pWinDivertHelperFormatIPv6Address(addr, buffer, buffer_len) != FALSE;
 }
 
 #endif // OS_WIN
