@@ -1,18 +1,8 @@
 #pragma once
 
-#include "wlibc.h"
-
-#include "buffer_pool.h"
-#include "master_pool.h"
-#include "worker.h"
-#include "wthread.h"
-
-#ifdef OS_WIN
-#include <iphlpapi.h>
-#include <mstcpip.h>
-#include <winternl.h>
-#include <ws2ipdef.h>
-#endif
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #define TUN_LOG_EVERYTHING false
 
@@ -21,47 +11,10 @@ enum
     kTunDeviceMaxDnsServers = 2
 };
 
-struct tun_device_s;
+typedef struct sbuf_s       sbuf_t;
+typedef struct tun_device_s tun_device_t;
 
-typedef void (*TunReadEventHandle)(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, wid_t tid);
-
-
-
-typedef struct tun_device_s
-{
-#ifdef OS_WIN
-    char                    *name;
-    wchar_t                 *name_w;
-    HANDLE                   adapter_handle;
-    HANDLE                   session_handle;
-    MIB_UNICASTIPADDRESS_ROW address_row;
-#else
-    char *name;
-    int   handle;
-    int   linux_pipe_fds[2]; // used for signaling read thread to stop
-#endif
-
-    void     *userdata;
-    wthread_t read_thread;
-    wthread_t write_thread;
-
-    wthread_routine routine_reader;
-    wthread_routine routine_writer;
-
-    master_pool_t *reader_message_pool;
-    buffer_pool_t *reader_buffer_pool;
-    buffer_pool_t *writer_buffer_pool;
-
-    TunReadEventHandle read_event_callback;
-
-    struct wchan_s *writer_buffer_channel;
-    uint16_t        mtu;
-    atomic_int      packets_queued;
-
-    atomic_bool running;
-    bool        up;
-
-} tun_device_t;
+typedef void (*TunReadEventHandle)(tun_device_t *tdev, void *userdata, sbuf_t *buf, uint8_t wid);
 
 typedef struct tun_default_route_s
 {
@@ -72,11 +25,11 @@ typedef struct tun_default_route_s
     char     ifname[64];
 } tun_default_route_t;
 
-// Function prototypes
 tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb);
 void          tundeviceDestroy(tun_device_t *tdev);
 bool          tundeviceBringUp(tun_device_t *tdev);
 bool          tundeviceBringDown(tun_device_t *tdev);
+bool          tundeviceIsUp(const tun_device_t *tdev);
 bool          tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
 bool          tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
 bool          tundeviceSetDnsServers(tun_device_t *tdev, const char *const *servers, size_t count);
@@ -88,4 +41,4 @@ bool          tundeviceDetectDefaultInterface(tun_default_route_t *out);
 
 // Retrieves the OS interface LUID value of the device (Windows NET_LUID.Value).
 // Returns false on platforms that have no such identifier; *out is set to 0 then.
-bool          tundeviceGetLuid(tun_device_t *tdev, uint64_t *out);
+bool tundeviceGetLuid(tun_device_t *tdev, uint64_t *out);

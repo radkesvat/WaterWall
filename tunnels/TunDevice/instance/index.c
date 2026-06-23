@@ -9,5 +9,4 @@ void tundeviceTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset)
 
     discard index;
     discard mem_offset;
-    
 }

@@ -89,7 +89,7 @@ void tundeviceCleanupDnsSettings(tundevice_tstate_t *state)
 
     if (! tundeviceClearDnsServers(state->tdev))
     {
-        LOGW("TunDevice: failed to clear DNS servers from %s", state->tdev->name);
+        LOGW("TunDevice: failed to clear DNS servers");
     }
 
     state->dns_servers_installed = false;

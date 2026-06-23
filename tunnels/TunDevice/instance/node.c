@@ -5,7 +5,7 @@
 
 node_t nodeTunDeviceGet(void)
 {
-    const char *type_name     = "TunDevice";
+    const char *type_name      = "TunDevice";
     node_t      node_tundevice = {
              .name                  = NULL,
              .type                  = stringDuplicate(type_name),

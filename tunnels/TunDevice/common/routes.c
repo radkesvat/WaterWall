@@ -452,7 +452,8 @@ bool tundeviceLoadRouteSettings(tundevice_tstate_t *state, const cJSON *settings
 
     if (! routeTableIsValid(route_table))
     {
-        LOGF("JSON Error: TunDevice->settings->route-table must be \"off\", \"main\", \"auto\", or a platform table name");
+        LOGF("JSON Error: TunDevice->settings->route-table must be \"off\", \"main\", \"auto\", or a platform table "
+             "name");
         memoryFree(route_table);
         return false;
     }
@@ -588,11 +589,11 @@ void tundeviceFreeRouteSettings(tundevice_tstate_t *state)
     memoryFree(state->post_up_script);
     memoryFree(state->pre_down_script);
 
-    state->system_routes            = NULL;
-    state->system_route_count       = 0;
-    state->system_routes_installed  = 0;
-    state->route_table              = NULL;
-    state->post_up_script           = NULL;
-    state->pre_down_script          = NULL;
-    state->system_route_enabled     = false;
+    state->system_routes           = NULL;
+    state->system_route_count      = 0;
+    state->system_routes_installed = 0;
+    state->route_table             = NULL;
+    state->post_up_script          = NULL;
+    state->pre_down_script         = NULL;
+    state->system_route_enabled    = false;
 }

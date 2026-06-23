@@ -5,9 +5,11 @@
 #include "managers/signal_manager.h"
 #include "master_pool.h"
 #include "wchan.h"
+#include "watomic.h"
 #include "wintun.h"
 #include "wplatform.h"
 #include "wproc.h"
+#include "wthread.h"
 #include <ctype.h>
 #include <errno.h>
 #include <iphlpapi.h>
@@ -21,6 +23,35 @@ enum
 {
     kTunWriteChannelQueueMax    = 4096,
     kMaxReadDistributeQueueSize = 128
+};
+
+struct tun_device_s
+{
+    char                    *name;
+    wchar_t                 *name_w;
+    HANDLE                   adapter_handle;
+    HANDLE                   session_handle;
+    MIB_UNICASTIPADDRESS_ROW address_row;
+
+    void     *userdata;
+    wthread_t read_thread;
+    wthread_t write_thread;
+
+    wthread_routine routine_reader;
+    wthread_routine routine_writer;
+
+    master_pool_t *reader_message_pool;
+    buffer_pool_t *reader_buffer_pool;
+    buffer_pool_t *writer_buffer_pool;
+
+    TunReadEventHandle read_event_callback;
+
+    struct wchan_s *writer_buffer_channel;
+    uint16_t        mtu;
+    atomic_int      packets_queued;
+
+    atomic_bool running;
+    bool        up;
 };
 
 // External variables
@@ -46,6 +77,11 @@ static WINTUN_SEND_PACKET_FUNC                *WintunSendPacket;
 static inline uint16_t tunDeviceMtu(const tun_device_t *tdev)
 {
     return tdev->mtu;
+}
+
+bool tundeviceIsUp(const tun_device_t *tdev)
+{
+    return tdev != NULL && tdev->up;
 }
 
 static bool tunWindowsSetMtu(tun_device_t *tdev)
@@ -985,10 +1021,8 @@ bool tundeviceClearDnsServers(tun_device_t *tdev)
     }
 
     char command[512];
-    stringNPrintf(command,
-                  sizeof(command),
-                  "netsh interface ipv4 delete dnsservers name=\"%s\" all validate=no",
-                  tdev->name);
+    stringNPrintf(
+        command, sizeof(command), "netsh interface ipv4 delete dnsservers name=\"%s\" all validate=no", tdev->name);
     if (tunWindowsRunCommand(command) != 0)
     {
         LOGE("TunDevice: failed to clear DNS servers on %s", tdev->name);

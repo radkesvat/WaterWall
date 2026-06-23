@@ -3,7 +3,9 @@
 #include "loggers/internal_logger.h"
 #include "tun.h"
 #include "wchan.h"
+#include "watomic.h"
 #include "wproc.h"
+#include "wthread.h"
 
 #include <arpa/inet.h>
 #include <ctype.h>
@@ -41,9 +43,41 @@ enum
 
 static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "TUN read batch count must fit in msg_event.count");
 
+struct tun_device_s
+{
+    char *name;
+    int   handle;
+    int   linux_pipe_fds[2]; // used for signaling read thread to stop
+
+    void     *userdata;
+    wthread_t read_thread;
+    wthread_t write_thread;
+
+    wthread_routine routine_reader;
+    wthread_routine routine_writer;
+
+    master_pool_t *reader_message_pool;
+    buffer_pool_t *reader_buffer_pool;
+    buffer_pool_t *writer_buffer_pool;
+
+    TunReadEventHandle read_event_callback;
+
+    struct wchan_s *writer_buffer_channel;
+    uint16_t        mtu;
+    atomic_int      packets_queued;
+
+    atomic_bool running;
+    bool        up;
+};
+
 static inline uint16_t tunDeviceMtu(const tun_device_t *tdev)
 {
     return tdev->mtu;
+}
+
+bool tundeviceIsUp(const tun_device_t *tdev)
+{
+    return tdev != NULL && tdev->up;
 }
 
 static uint32_t ipv4PrefixToMask(unsigned int prefix)
@@ -209,23 +243,14 @@ static bool tunDetectDefaultRouteV4(char *ifname, size_t ifname_len)
         unsigned int  metric      = 0;
         unsigned long mask        = 0;
 
-        int fields = sscanf(line,
-                            "%63s %lx %lx %x %u %u %u %lx",
-                            iface,
-                            &destination,
-                            &gateway,
-                            &flags,
-                            &refcnt,
-                            &use,
-                            &metric,
-                            &mask);
+        int fields = sscanf(
+            line, "%63s %lx %lx %x %u %u %u %lx", iface, &destination, &gateway, &flags, &refcnt, &use, &metric, &mask);
         discard gateway;
         discard refcnt;
         discard use;
 
         if (fields == 8 && destination == 0 && mask == 0 &&
-            (flags & (kLinuxRouteFlagUp | kLinuxRouteFlagGateway)) ==
-                (kLinuxRouteFlagUp | kLinuxRouteFlagGateway) &&
+            (flags & (kLinuxRouteFlagUp | kLinuxRouteFlagGateway)) == (kLinuxRouteFlagUp | kLinuxRouteFlagGateway) &&
             metric < best_metric)
         {
             stringCopyN(best_iface, iface, sizeof(best_iface));
@@ -251,7 +276,7 @@ static bool tunDetectDefaultRouteV6(char *ifname, size_t ifname_len)
         return false;
     }
 
-    char line[512];
+    char         line[512];
     char         best_iface[64] = {0};
     unsigned int best_metric    = UINT32_MAX;
     bool         found          = false;
@@ -268,18 +293,18 @@ static bool tunDetectDefaultRouteV6(char *ifname, size_t ifname_len)
         unsigned int flags  = 0;
         char         iface[64];
 
-        int fields = sscanf(line,
-                            "%32s %x %32s %x %32s %x %x %x %x %63s",
-                            destination,
-                            &destination_prefix,
-                            source,
-                            &source_prefix,
-                            next_hop,
-                            &metric,
-                            &refcnt,
-                            &use,
-                            &flags,
-                            iface);
+        int     fields = sscanf(line,
+                                "%32s %x %32s %x %32s %x %x %x %x %63s",
+                                destination,
+                                &destination_prefix,
+                                source,
+                                &source_prefix,
+                                next_hop,
+                                &metric,
+                                &refcnt,
+                                &use,
+                                &flags,
+                                iface);
         discard source;
         discard source_prefix;
         discard next_hop;
@@ -287,8 +312,7 @@ static bool tunDetectDefaultRouteV6(char *ifname, size_t ifname_len)
         discard use;
 
         if (fields == 10 && destination_prefix == 0 && tunDefaultRouteHexIsZero(destination) &&
-            (flags & (kLinuxRouteFlagUp | kLinuxRouteFlagGateway)) ==
-                (kLinuxRouteFlagUp | kLinuxRouteFlagGateway) &&
+            (flags & (kLinuxRouteFlagUp | kLinuxRouteFlagGateway)) == (kLinuxRouteFlagUp | kLinuxRouteFlagGateway) &&
             metric < best_metric)
         {
             stringCopyN(best_iface, iface, sizeof(best_iface));

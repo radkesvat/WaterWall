@@ -86,7 +86,7 @@ bool tundeviceApplyDnsSettings(tundevice_tstate_t *state);
 void tundeviceCleanupDnsSettings(tundevice_tstate_t *state);
 void tundeviceFreeDnsSettings(tundevice_tstate_t *state);
 
-void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, wid_t wid);
+void tundeviceOnIPPacketReceived(tun_device_t *tdev, void *userdata, sbuf_t *buf, wid_t wid);
 void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
 static inline void tundeviceClearEgressPinIfPublished(tundevice_tstate_t *state)

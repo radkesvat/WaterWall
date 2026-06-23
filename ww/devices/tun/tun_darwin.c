@@ -3,7 +3,9 @@
 #include "loggers/internal_logger.h"
 #include "tun.h"
 #include "wchan.h"
+#include "watomic.h"
 #include "wproc.h"
+#include "wthread.h"
 
 #include <arpa/inet.h>
 #include <ctype.h>
@@ -30,6 +32,33 @@ enum
     kMaxReadDistributeQueueSize = 128
 };
 
+struct tun_device_s
+{
+    char *name;
+    int   handle;
+    int   linux_pipe_fds[2]; // used for signaling read thread to stop
+
+    void     *userdata;
+    wthread_t read_thread;
+    wthread_t write_thread;
+
+    wthread_routine routine_reader;
+    wthread_routine routine_writer;
+
+    master_pool_t *reader_message_pool;
+    buffer_pool_t *reader_buffer_pool;
+    buffer_pool_t *writer_buffer_pool;
+
+    TunReadEventHandle read_event_callback;
+
+    struct wchan_s *writer_buffer_channel;
+    uint16_t        mtu;
+    atomic_int      packets_queued;
+
+    atomic_bool running;
+    bool        up;
+};
+
 struct msg_event
 {
     tun_device_t *tdev;
@@ -41,6 +70,11 @@ static inline uint16_t tunDeviceMtu(const tun_device_t *tdev)
 {
     assert(tdev->mtu > 0);
     return tdev->mtu;
+}
+
+bool tundeviceIsUp(const tun_device_t *tdev)
+{
+    return tdev != NULL && tdev->up;
 }
 
 static uint32_t ipv4PrefixToMask(unsigned int prefix)

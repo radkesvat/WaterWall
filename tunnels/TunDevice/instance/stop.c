@@ -6,7 +6,7 @@ static void tundeviceTunnelStopDevice(tundevice_tstate_t *state)
 {
     tun_device_t *tdev = state->tdev;
 
-    if (tdev && tdev->up)
+    if (tundeviceIsUp(tdev))
     {
         if (state->pre_down_script != NULL && execCmd(state->pre_down_script).exit_code != 0)
         {

@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-static void logPacket(struct tun_device_s *tdev, tunnel_t *t, sbuf_t *buf, wid_t wid)
+static void logPacket(tun_device_t *tdev, tunnel_t *t, sbuf_t *buf, wid_t wid)
 {
 
     discard tdev;
@@ -50,12 +50,12 @@ afterlog:;
 #endif
 }
 
-void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, wid_t wid)
+void tundeviceOnIPPacketReceived(tun_device_t *tdev, void *userdata, sbuf_t *buf, wid_t wid)
 {
 
     tunnel_t *t = userdata;
 
-    if (UNLIKELY(isApplicationTerminating() || tdev->up == false))
+    if (UNLIKELY(isApplicationTerminating() || ! tundeviceIsUp(tdev)))
     {
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
         return;
@@ -117,7 +117,7 @@ void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         l->recalculate_checksum = false;
     }
 
-    if (UNLIKELY(state->tdev->up == false))
+    if (UNLIKELY(! tundeviceIsUp(state->tdev)))
     {
         lineReuseBuffer(l, buf);
         LOGW("TunDevice: device is down, cannot write packet");
