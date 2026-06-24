@@ -31,3 +31,19 @@ void tcpconnectorTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     tcpconnectorLinestateDestroy(ls);
 }
+
+void tcpconnectorDomainSetupTunnelUpStreamFinish(tunnel_t *t, line_t *l)
+{
+    tcpconnector_domain_setup_lstate_t *ls = lineGetState(l, t);
+
+    tcpconnectorDomainSetupLinestateDestroy(ls);
+    tunnelNextUpStreamFinish(t, l);
+}
+
+void tcpconnectorDomainSetupTunnelDownStreamFinish(tunnel_t *t, line_t *l)
+{
+    tcpconnector_domain_setup_lstate_t *ls = lineGetState(l, t);
+
+    tcpconnectorDomainSetupLinestateDestroy(ls);
+    tunnelPrevDownStreamFinish(t, l);
+}

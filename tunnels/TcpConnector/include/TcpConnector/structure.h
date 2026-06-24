@@ -15,9 +15,26 @@ typedef struct tcpconnector_socket_options_s
     const char *source_ip;
 } tcpconnector_socket_options_t;
 
+typedef struct tcpconnector_domain_setup_tstate_s
+{
+    tunnel_t *connector_tunnel;
+} tcpconnector_domain_setup_tstate_t;
+
+typedef struct tcpconnector_domain_setup_lstate_s
+{
+    uint64_t                      outbound_ip_range;
+    tcpconnector_socket_options_t socket_options;
+} tcpconnector_domain_setup_lstate_t;
+
 typedef struct tcpconnector_tstate_s
 {
     local_idle_table_t **idle_tables; // worker-local idle tables for closing dead connections
+
+    node_t        domain_setup_node;
+    tunnel_t     *domain_setup_tunnel;
+    node_t        domain_resolver_node;
+    tunnel_t     *domain_resolver_tunnel;
+    struct cJSON *domain_resolver_settings;
 
     // These options are read form the json configuration
     dynamic_value_t dest_addr_selected;   // dynamic value for destination address
@@ -64,28 +81,19 @@ typedef struct tcpconnector_destination_s
     char             *source_ip;
 } tcpconnector_destination_t;
 
-typedef struct tcpconnector_dns_request_s
-{
-    tunnel_t                     *tunnel;
-    line_t                       *line;
-    uint64_t                      outbound_ip_range;
-    tcpconnector_socket_options_t socket_options;
-    bool                          cancelled;
-} tcpconnector_dns_request_t;
-
 typedef struct tcpconnector_lstate_s
 {
-    tunnel_t                   *tunnel;      // reference to the tunnel (TcpConnector)
-    line_t                     *line;        // reference to the line
-    wio_t                      *io;          // IO handle for the connection (socket)
-    local_idle_item_t          *idle_handle; // reference to the idle item for this connection
-    tcpconnector_dns_request_t *dns_request;
+    tunnel_t                      *tunnel;      // reference to the tunnel (TcpConnector)
+    line_t                        *line;        // reference to the line
+    wio_t                         *io;          // IO handle for the connection (socket)
+    local_idle_item_t             *idle_handle; // reference to the idle item for this connection
+    uint64_t                       outbound_ip_range;
+    tcpconnector_socket_options_t  socket_options;
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t pause_queue;
     buffer_pool_t *buffer_pool;
     bool           write_paused : 1;
     bool           read_paused : 1;
-    bool           resolving : 1;
 
 } tcpconnector_lstate_t;
 
@@ -155,10 +163,14 @@ void tcpconnectorTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void tcpconnectorTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void tcpconnectorTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void tcpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
+void tcpconnectorDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l);
+void tcpconnectorDomainSetupTunnelUpStreamFinish(tunnel_t *t, line_t *l);
+void tcpconnectorDomainSetupTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 
 void                tcpconnectorLinestateInitialize(tcpconnector_lstate_t *ls);
 void                tcpconnectorLinestateDestroy(tcpconnector_lstate_t *ls);
-void                tcpconnectorCancelDnsRequest(tcpconnector_lstate_t *ls);
+void                tcpconnectorDomainSetupLinestateInitialize(tcpconnector_domain_setup_lstate_t *ls);
+void                tcpconnectorDomainSetupLinestateDestroy(tcpconnector_domain_setup_lstate_t *ls);
 local_idle_table_t *tcpconnectorGetWorkerIdleTable(tcpconnector_tstate_t *ts);
 local_idle_table_t *tcpconnectorGetLineIdleTable(tcpconnector_tstate_t *ts, line_t *l);
 

@@ -7,7 +7,7 @@ In practice, this node is used at the end of a chain.
 ## What It Does
 
 - Chooses a destination address and port.
-- Resolves a domain name if needed.
+- Resolves a domain name if needed through an internal `DomainResolver`.
 - Opens an outbound TCP socket.
 - Forwards upstream payloads from the previous node to the remote socket.
 - Forwards remote socket payloads back downstream to the previous node.
@@ -213,13 +213,13 @@ For `large-send-buffer` and `large-recv-buffer`, an omitted top-level value beco
 
 ### Chain behavior
 
-`TcpConnector` receives line creation from upstream. During upstream `init`, it decides where to connect and immediately starts the outbound TCP connection attempt.
+`TcpConnector` receives line creation from upstream. During upstream `init`, it chooses the destination and stores the selected connector options, then passes the line through its internal `DomainResolver`. The connector core starts the outbound TCP connection only after the selected destination is already an IP address.
 
 The normal flow is:
 
 - previous node creates or passes a line
 - `TcpConnector` selects destination address and port
-- optional DNS resolution happens
+- internal `DomainResolver` resolves the selected domain when needed
 - outbound socket is created
 - asynchronous connect begins
 - after connect succeeds, the previous node receives downstream `est`
@@ -243,7 +243,7 @@ This makes `TcpConnector` useful in chains where earlier nodes decode or rewrite
 
 ### Domain resolution
 
-If the selected destination is a domain name, the connector resolves it asynchronously after upstream `init`. Payloads that arrive while DNS or connect is pending are kept in the normal pre-connect write queue. If resolution fails, the line is finished and no outbound connection is created.
+If the selected destination is a domain name, `TcpConnector` maps its `domain-strategy` setting onto the line destination context and its internal `DomainResolver` resolves it asynchronously before socket creation. Payloads that arrive while DNS is pending are held by the resolver; payloads that arrive while the TCP connect is pending are kept in the normal pre-connect write queue. If resolution fails, the line is finished and no outbound connection is created.
 
 ### Subnet randomization on constant IP addresses
 
@@ -306,4 +306,4 @@ Each outbound connection is tracked in an idle table with a timeout of about `30
 
 - This node is meant to be used as an outbound chain end.
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
-- DNS resolution in this path is asynchronous.
+- DNS resolution in this path is asynchronous and handled by an internal `DomainResolver`; `TcpConnector` keeps its own public `domain-strategy` vocabulary.

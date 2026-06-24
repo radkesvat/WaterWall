@@ -35,6 +35,6 @@ void tcpudpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     tunnelBindDown(t, ts->udp_connector);
 
     tunnelchainInsert(chain, t);
-    tunnelchainInsert(chain, ts->tcp_connector);
-    tunnelchainInsert(chain, ts->udp_connector);
+    ts->tcp_connector->onChain(ts->tcp_connector, chain);
+    ts->udp_connector->onChain(ts->udp_connector, chain);
 }

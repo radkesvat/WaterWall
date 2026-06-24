@@ -2,8 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include "loggers/dns_logger.h"
-
 uint32_t udpconnectorSelectWeightedDestinationIndex(const udpconnector_tstate_t *ts)
 {
     if (ts->destinations_count == 0)
@@ -309,7 +307,7 @@ static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_
         udpconnectorFlushWriteQueue(ls);
     }
 
-    if (alive && resume_prev && udpconnectorQueuedWriteBytes(ls) == 0 && ! ls->write_paused && ! ls->resolving)
+    if (alive && resume_prev && udpconnectorQueuedWriteBytes(ls) == 0 && ! ls->write_paused)
     {
         ls->queue_pause_sent = false;
         tunnelPrevDownStreamResume(t, l);
@@ -330,156 +328,24 @@ fail:
     return false;
 }
 
-static void udpconnectorOnDnsResolved(void *userdata, int status, const char *error, const dns_resolved_addr_t *addrs,
-                                      size_t naddrs)
+void udpconnectorDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
-    udpconnector_dns_request_t *request = userdata;
-    tunnel_t                   *t       = request->tunnel;
-    line_t                     *l       = request->line;
-
-    if (request->cancelled || ! lineIsAlive(l))
-    {
-        memoryFree(request);
-        lineUnlock(l);
-        return;
-    }
-
-    udpconnector_lstate_t *ls = lineGetState(l, t);
-
-    if (ls->dns_request != request || ! ls->resolving)
-    {
-        memoryFree(request);
-        lineUnlock(l);
-        return;
-    }
-
-    ls->dns_request = NULL;
-    ls->resolving   = false;
-
-    if (asyncdnsStatusIsShutdown(status))
-    {
-        /*
-         * Resolver shutdown is not a tunnel close path, but live line state was
-         * still pointing at this request. Detach before freeing it so a later
-         * line-state destroy will not cancel through stale userdata.
-         */
-        memoryFree(request);
-        lineUnlock(l);
-        return;
-    }
-
-    udpconnector_tstate_t *ts       = tunnelGetState(t);
-    address_context_t     *dest_ctx = lineGetDestinationAddressContext(l);
-
-    const char *domain = dest_ctx->domain != NULL ? dest_ctx->domain : "<unknown>";
-
-    if (status != ARES_SUCCESS || naddrs == 0)
-    {
-        loggerPrint(getDnsLogger(),
-                    LOG_LEVEL_ERROR,
-                    "UdpConnector: async dns resolve failed for %s: %s",
-                    domain,
-                    error != NULL ? error : ares_strerror(status));
-        udpconnectorLinestateDestroy(ls);
-        tunnelPrevDownStreamFinish(t, l);
-        memoryFree(request);
-        lineUnlock(l);
-        return;
-    }
-
-    const dns_resolved_addr_t *selected = udpconnectorSelectResolvedAddress(addrs, naddrs, ts->domain_strategy);
-    if (! udpconnectorApplyResolvedAddress(dest_ctx, selected))
-    {
-        loggerPrint(getDnsLogger(),
-                    LOG_LEVEL_ERROR,
-                    "UdpConnector: async dns resolve returned no usable address for %s",
-                    domain);
-        udpconnectorLinestateDestroy(ls);
-        tunnelPrevDownStreamFinish(t, l);
-        memoryFree(request);
-        lineUnlock(l);
-        return;
-    }
-
-    if (loggerCheckWriteLevel(getDnsLogger(), (log_level_e) LOG_LEVEL_DEBUG))
-    {
-        sockaddr_u resolved_addr = addresscontextToSockAddr(dest_ctx);
-        char       ip[SOCKADDR_STRLEN];
-        loggerPrint(getDnsLogger(),
-                    LOG_LEVEL_DEBUG,
-                    "UdpConnector: %s resolved to %s",
-                    domain,
-                    SOCKADDR_STR(&resolved_addr, ip));
-    }
-
-    memoryFree(request);
-
-    discard udpconnectorBeginSocket(t, l, ls);
-    lineUnlock(l);
-}
-
-static bool udpconnectorStartDnsResolve(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls)
-{
-    address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
-
-    if (dest_ctx->domain == NULL)
-    {
-        LOGF("UdpConnector: destination address is not set");
-        return false;
-    }
-
-    udpconnector_dns_request_t *request = memoryAllocate(sizeof(*request));
-    if (request == NULL)
-    {
-        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "UdpConnector: failed to allocate async dns request");
-        return false;
-    }
-
-    *request = (udpconnector_dns_request_t) {
-        .tunnel    = t,
-        .line      = l,
-        .cancelled = false,
-    };
-
-    lineLock(l);
-    ls->dns_request  = request;
-    ls->resolving    = true;
-    ls->write_paused = true;
-
-    int rc = workerResolveDomainServiceAsync(
-        lineGetWID(l), dest_ctx->domain, NULL, SOCK_DGRAM, udpconnectorOnDnsResolved, request);
-    if (rc != ARES_SUCCESS)
-    {
-        udpconnectorCancelDnsRequest(ls);
-        lineUnlock(l);
-        memoryFree(request);
-        loggerPrint(getDnsLogger(),
-                    LOG_LEVEL_ERROR,
-                    "UdpConnector: failed to start async dns resolve for %s: %s",
-                    dest_ctx->domain,
-                    ares_strerror(rc));
-        return false;
-    }
-
-    return true;
-}
-
-void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
-{
-    udpconnector_tstate_t            *ts                         = tunnelGetState(t);
-    udpconnector_lstate_t            *ls                         = lineGetState(l, t);
-    address_context_t                *dest_ctx                   = lineGetDestinationAddressContext(l);
-    address_context_t                *src_ctx                    = lineGetSourceAddressContext(l);
-    const dynamic_value_t            *dest_addr_selected         = &ts->dest_addr_selected;
-    const dynamic_value_t            *dest_port_selected         = &ts->dest_port_selected;
-    const address_context_t          *constant_dest_addr         = &ts->constant_dest_addr;
-    uint16_t                          random_dest_port_x         = ts->random_dest_port_x;
-    uint16_t                          random_dest_port_y         = ts->random_dest_port_y;
-    uint32_t                          selected_destination_index = udpconnectorSelectWeightedDestinationIndex(ts);
+    udpconnector_domain_setup_tstate_t *setup_ts                  = tunnelGetState(t);
+    tunnel_t                           *connector                 = setup_ts->connector_tunnel;
+    udpconnector_tstate_t              *ts                        = tunnelGetState(connector);
+    udpconnector_domain_setup_lstate_t *ls                        = lineGetState(l, t);
+    address_context_t                  *dest_ctx                  = lineGetDestinationAddressContext(l);
+    address_context_t                  *src_ctx                   = lineGetSourceAddressContext(l);
+    const dynamic_value_t              *dest_addr_selected        = &ts->dest_addr_selected;
+    const dynamic_value_t              *dest_port_selected        = &ts->dest_port_selected;
+    const address_context_t            *constant_dest_addr        = &ts->constant_dest_addr;
+    uint16_t                            random_dest_port_x        = ts->random_dest_port_x;
+    uint16_t                            random_dest_port_y        = ts->random_dest_port_y;
+    uint32_t selected_destination_index = udpconnectorSelectWeightedDestinationIndex(ts);
     const udpconnector_destination_t *selected_destination =
         ts->destinations_count > 0 ? &ts->destinations[selected_destination_index] : NULL;
 
-    udpconnectorLinestateInitialize(ls, t, l, NULL);
+    udpconnectorDomainSetupLinestateInitialize(ls);
     if (ts->balance_mode == kUdpConnectorBalanceModePacket)
     {
         addresscontextAddrCopy(&ls->packet_base_dest_ctx, dest_ctx);
@@ -514,13 +380,34 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         goto fail;
     }
 
-    if (addresscontextIsDomain(dest_ctx) && ! addresscontextIsDomainResolved(dest_ctx))
+    addresscontextSetDomainStrategy(dest_ctx, (enum domain_strategy) ts->domain_strategy);
+
+    tunnelNextUpStreamInit(t, l);
+    return;
+
+fail:
+    udpconnectorDomainSetupLinestateDestroy(ls);
+    tunnelPrevDownStreamFinish(t, l);
+}
+
+void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
+{
+    udpconnector_tstate_t              *ts       = tunnelGetState(t);
+    udpconnector_lstate_t              *ls       = lineGetState(l, t);
+    udpconnector_domain_setup_lstate_t *setup_ls = lineGetState(l, ts->domain_setup_tunnel);
+    address_context_t                  *dest_ctx = lineGetDestinationAddressContext(l);
+
+    udpconnectorLinestateInitialize(ls, t, l, NULL);
+    if (ts->balance_mode == kUdpConnectorBalanceModePacket)
     {
-        if (! udpconnectorStartDnsResolve(t, l, ls))
-        {
-            goto fail;
-        }
-        return;
+        addresscontextAddrCopy(&ls->packet_base_dest_ctx, &setup_ls->packet_base_dest_ctx);
+        ls->packet_initial_destination_index = setup_ls->packet_initial_destination_index;
+    }
+
+    if (! addresscontextCanConvertToSockAddr(dest_ctx) || ! addresscontextHasPort(dest_ctx))
+    {
+        LOGE("UdpConnector: destination address or port is not initialized");
+        goto fail;
     }
 
     if (! udpconnectorBeginSocket(t, l, ls))

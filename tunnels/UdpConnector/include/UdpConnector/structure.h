@@ -16,12 +16,29 @@ typedef enum udpconnector_balance_mode_e
     kUdpConnectorBalanceModePacket
 } udpconnector_balance_mode_e;
 
+typedef struct udpconnector_domain_setup_tstate_s
+{
+    tunnel_t *connector_tunnel;
+} udpconnector_domain_setup_tstate_t;
+
+typedef struct udpconnector_domain_setup_lstate_s
+{
+    address_context_t packet_base_dest_ctx;
+    uint32_t          packet_initial_destination_index;
+} udpconnector_domain_setup_lstate_t;
+
 typedef struct udpconnector_packet_dns_request_s udpconnector_packet_dns_request_t;
 typedef struct udpconnector_packet_destination_s udpconnector_packet_destination_t;
 
 typedef struct udpconnector_tstate_s
 {
     local_idle_table_t **idle_tables; // worker-local idle tables for closing dead connections
+
+    node_t        domain_setup_node;
+    tunnel_t     *domain_setup_tunnel;
+    node_t        domain_resolver_node;
+    tunnel_t     *domain_resolver_tunnel;
+    struct cJSON *domain_resolver_settings;
 
     dynamic_value_t   dest_addr_selected; // selected destination address
     dynamic_value_t   dest_port_selected; // selected destination port
@@ -54,13 +71,6 @@ typedef struct udpconnector_destination_s
     uint32_t          weight;
 } udpconnector_destination_t;
 
-typedef struct udpconnector_dns_request_s
-{
-    tunnel_t *tunnel;
-    line_t   *line;
-    bool      cancelled;
-} udpconnector_dns_request_t;
-
 struct udpconnector_packet_dns_request_s
 {
     tunnel_t *tunnel;
@@ -88,7 +98,6 @@ typedef struct udpconnector_lstate_s
     line_t                            *line;        // reference to the line
     wio_t                             *io;          // IO handle for the connection (socket)
     local_idle_item_t                 *idle_handle; // reference to the idle item for this connection
-    udpconnector_dns_request_t        *dns_request;
     udpconnector_packet_dns_request_t *packet_dns_requests;
     udpconnector_packet_destination_t *packet_destinations;
     uint32_t                           packet_destinations_count;
@@ -98,7 +107,6 @@ typedef struct udpconnector_lstate_s
     buffer_queue_t                     pause_queue;
     bool                               read_paused : 1;      // whether the read is paused
     bool                               established : 1;      // whether downstream est was sent
-    bool                               resolving : 1;        // whether async DNS is pending
     bool                               write_paused : 1;     // whether upstream writes are queued
     bool                               queue_pause_sent : 1; // whether downstream pause was sent for the queue
 
@@ -162,10 +170,14 @@ void udpconnectorTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void udpconnectorTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void udpconnectorTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void udpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
+void udpconnectorDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l);
+void udpconnectorDomainSetupTunnelUpStreamFinish(tunnel_t *t, line_t *l);
+void udpconnectorDomainSetupTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 
 void   udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, line_t *l, wio_t *io);
 void   udpconnectorLinestateDestroy(udpconnector_lstate_t *ls);
-void   udpconnectorCancelDnsRequest(udpconnector_lstate_t *ls);
+void   udpconnectorDomainSetupLinestateInitialize(udpconnector_domain_setup_lstate_t *ls);
+void   udpconnectorDomainSetupLinestateDestroy(udpconnector_domain_setup_lstate_t *ls);
 void   udpconnectorCancelPacketDnsRequests(udpconnector_lstate_t *ls);
 void   udpconnectorOnRecvFrom(wio_t *io, sbuf_t *buf);
 void   udpconnectorOnClose(wio_t *io);

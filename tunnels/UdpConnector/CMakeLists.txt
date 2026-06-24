@@ -33,7 +33,7 @@ target_include_directories(UdpConnector PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/incl
 target_include_directories(UdpConnector PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(UdpConnector PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/UdpConnector)
 
-target_link_libraries(UdpConnector ww)
+target_link_libraries(UdpConnector ww DomainResolver)
 if(NOT APPLE)
     target_precompile_headers(UdpConnector REUSE_FROM ww)
 endif()

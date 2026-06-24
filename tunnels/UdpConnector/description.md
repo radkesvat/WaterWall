@@ -8,7 +8,7 @@ In practice, this node is used at the end of a chain.
 
 - Creates a UDP socket bound to an ephemeral local port.
 - Chooses a destination address and destination port.
-- Resolves a domain name if needed.
+- Resolves a domain name if needed through an internal `DomainResolver`.
 - Forwards upstream payload from the previous node to the remote UDP peer.
 - Forwards datagrams received from the remote UDP peer back downstream.
 - Drops datagrams that arrive from a peer other than the selected remote endpoint.
@@ -185,15 +185,16 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
 
 During upstream `init`, `UdpConnector`:
 
-- creates a UDP socket
+- computes the destination address and port for this line
+- maps `domain-strategy` onto the line destination context
+- resolves the domain if needed through its internal `DomainResolver`
+- creates a UDP socket after the destination is an IP address
 - applies the configured send and receive socket buffer sizes
 - applies optional `interface`, `fwmark`, and `reuseaddr` socket options
 - applies the automatic `TunDevice` egress pin when loop protection is active and `interface` is omitted
 - binds the socket to `source-ip:0` when `source-ip` is configured, otherwise to the wildcard address for the selected address family
 - starts reading immediately
 - stores line state and idle tracking for the new socket
-- computes the destination address and port for this line
-- resolves the domain if needed
 - stores the destination as the socket peer address
 
 Unlike TCP, this tunnel does not perform a connection handshake.
@@ -224,7 +225,7 @@ In `"packet"` balance mode, the weighted choice happens for every upstream paylo
 
 ### Domain resolution
 
-If the selected address is a domain name, resolution is submitted asynchronously on the line's worker during upstream `init`. Payloads that arrive before resolution completes are kept in a bounded pre-connect queue. If resolution fails, the line is finished immediately.
+If the selected address is a domain name, the internal `DomainResolver` submits asynchronous DNS on the line's worker during upstream `init`. Payloads that arrive before resolution completes are kept in the resolver's bounded pending queue. If resolution fails, the line is finished immediately.
 
 In `"packet"` balance mode, domain names inside packet-balanced destination objects are resolved lazily per destination object on each WaterWall line. The first packet that selects an unresolved domain starts one async DNS request for that destination and packets for that destination wait in a bounded queue. After the destination is resolved, that resolved address context is reused for later packets on the same line; there is no time-based DNS cache and no per-packet DNS request.
 
@@ -278,6 +279,7 @@ With `"packet"` balance mode, a `random(x,y)` port is selected when that destina
 
 - Domain resolution in this path is asynchronous and keeps pre-resolution datagrams queued up to the connector queue limit.
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
+- Connection-init DNS resolution is handled by an internal `DomainResolver`; `UdpConnector` keeps its own public `domain-strategy` vocabulary.
 - Paused reads drop inbound datagrams instead of buffering them.
 - Downstream `est` is triggered after the local UDP socket is created and ready.
 - Inbound datagrams from unexpected peers are ignored in `"connection"` mode. In `"packet"` mode, datagrams received on the connector socket are accepted so replies from any packet-balanced target can return.

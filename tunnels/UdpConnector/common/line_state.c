@@ -8,7 +8,6 @@ void udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, lin
         .tunnel                           = t,
         .line                             = l,
         .io                               = io,
-        .dns_request                      = NULL,
         .packet_dns_requests              = NULL,
         .packet_destinations              = NULL,
         .packet_destinations_count        = 0,
@@ -16,7 +15,6 @@ void udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, lin
         .pause_queue                      = bufferqueueCreate(kUdpPauseQueueCapacity),
         .established                      = false,
         .read_paused                      = false,
-        .resolving                        = false,
         .write_paused                     = false,
         .queue_pause_sent                 = false,
     };
@@ -38,16 +36,6 @@ void udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, lin
     {
         weventSetUserData(io, ls);
     }
-}
-
-void udpconnectorCancelDnsRequest(udpconnector_lstate_t *ls)
-{
-    if (ls->dns_request != NULL)
-    {
-        ls->dns_request->cancelled = true;
-        ls->dns_request            = NULL;
-    }
-    ls->resolving = false;
 }
 
 void udpconnectorCancelPacketDnsRequests(udpconnector_lstate_t *ls)
@@ -86,7 +74,6 @@ static void udpconnectorPacketDestinationCachesDestroy(udpconnector_lstate_t *ls
 
 void udpconnectorLinestateDestroy(udpconnector_lstate_t *ls)
 {
-    udpconnectorCancelDnsRequest(ls);
     udpconnectorCancelPacketDnsRequests(ls);
     udpconnectorPacketDestinationCachesDestroy(ls);
     bufferqueueDestroy(&ls->pause_queue);
@@ -96,4 +83,15 @@ void udpconnectorLinestateDestroy(udpconnector_lstate_t *ls)
         terminateProgram(1);
     }
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(udpconnector_lstate_t)));
+}
+
+void udpconnectorDomainSetupLinestateInitialize(udpconnector_domain_setup_lstate_t *ls)
+{
+    *ls = (udpconnector_domain_setup_lstate_t) {0};
+}
+
+void udpconnectorDomainSetupLinestateDestroy(udpconnector_domain_setup_lstate_t *ls)
+{
+    addresscontextReset(&ls->packet_base_dest_ctx);
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(udpconnector_domain_setup_lstate_t)));
 }

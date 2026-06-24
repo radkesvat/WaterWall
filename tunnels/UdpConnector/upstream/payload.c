@@ -157,7 +157,7 @@ static void udpconnectorWriteToPeer(tunnel_t *t, line_t *l, udpconnector_tstate_
 
 static bool udpconnectorMaybeResumeQueuedSender(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls)
 {
-    if (! ls->queue_pause_sent || ls->write_paused || ls->resolving || udpconnectorQueuedWriteBytes(ls) > 0)
+    if (! ls->queue_pause_sent || ls->write_paused || udpconnectorQueuedWriteBytes(ls) > 0)
     {
         return true;
     }
@@ -497,7 +497,7 @@ void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     udpconnector_lstate_t *ls = lineGetState(l, t);
 
     wio_t *io = ls->io;
-    if (ls->write_paused || ls->resolving || io == NULL)
+    if (ls->write_paused || io == NULL)
     {
         handleQueuedWrite(t, l, ts, ls, buf);
         return;

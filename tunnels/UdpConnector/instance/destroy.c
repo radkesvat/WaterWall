@@ -2,9 +2,43 @@
 
 #include "loggers/network_logger.h"
 
+static void udpconnectorClearInternalNode(node_t *node)
+{
+    memoryFree(node->name);
+    memoryFree(node->type);
+    memoryFree(node->next);
+    memorySet(node, 0, sizeof(*node));
+}
+
+static void udpconnectorDestroyInternalDomainResolverChain(udpconnector_tstate_t *ts)
+{
+    if (ts->domain_setup_tunnel != NULL)
+    {
+        ts->domain_setup_tunnel->onDestroy(ts->domain_setup_tunnel);
+        ts->domain_setup_tunnel = NULL;
+    }
+
+    if (ts->domain_resolver_tunnel != NULL)
+    {
+        ts->domain_resolver_tunnel->onDestroy(ts->domain_resolver_tunnel);
+        ts->domain_resolver_tunnel = NULL;
+    }
+
+    if (ts->domain_resolver_settings != NULL)
+    {
+        cJSON_Delete(ts->domain_resolver_settings);
+        ts->domain_resolver_settings = NULL;
+    }
+
+    udpconnectorClearInternalNode(&ts->domain_setup_node);
+    udpconnectorClearInternalNode(&ts->domain_resolver_node);
+}
+
 void udpconnectorTunnelDestroy(tunnel_t *t)
 {
     udpconnector_tstate_t *ts = tunnelGetState(t);
+
+    udpconnectorDestroyInternalDomainResolverChain(ts);
 
     if (ts->idle_tables != NULL)
     {

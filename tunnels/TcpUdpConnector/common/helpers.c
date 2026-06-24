@@ -11,12 +11,12 @@ static tunnel_t *tcpudpconnectorSelectFromContext(tcpudpconnector_tstate_t *ts, 
 {
     if (ctx->proto_tcp && ! ctx->proto_udp && ! ctx->proto_icmp && ! ctx->proto_packet)
     {
-        return ts->tcp_connector;
+        return tcpconnectorTunnelGetEntryTunnel(ts->tcp_connector);
     }
 
     if (ctx->proto_udp && ! ctx->proto_tcp && ! ctx->proto_icmp && ! ctx->proto_packet)
     {
-        return ts->udp_connector;
+        return udpconnectorTunnelGetEntryTunnel(ts->udp_connector);
     }
 
     return NULL;
