@@ -107,19 +107,25 @@ static void finalizeTunnelChains(node_manager_config_t *cfg, tunnel_t **t_array,
     for (int i = 0; i < tunnels_count; i++)
     {
         tunnel_t *tunnel = t_array[i];
-        if (tunnelchainIsFinalized(tunnelGetChain(tunnel)) == false)
+        tunnel_chain_t *chain = tunnelGetChain(tunnel);
+        if (chain == NULL)
         {
-            tunnelchainFinalize(tunnelGetChain(tunnel));
-            vec_chains_t_push(&cfg->chains, tunnelGetChain(tunnel));
+            continue;
+        }
+
+        if (tunnelchainIsFinalized(chain) == false)
+        {
+            tunnelchainFinalize(chain);
+            vec_chains_t_push(&cfg->chains, chain);
 
             uint16_t index      = 0;
             uint16_t mem_offset = 0;
-            for (int tci = 0; tci < tunnelGetChain(tunnel)->tunnels.len; tci++)
+            for (int tci = 0; tci < chain->tunnels.len; tci++)
             {
-                tunnel_t *tunnel_in_chain = tunnelGetChain(tunnel)->tunnels.tuns[tci];
+                tunnel_t *tunnel_in_chain = chain->tunnels.tuns[tci];
                 tunnel_in_chain->onIndex(tunnel_in_chain, index++, &mem_offset);
             }
-            assert(mem_offset == tunnelGetChain(tunnel)->sum_line_state_size);
+            assert(mem_offset == chain->sum_line_state_size);
         }
     }
 }
