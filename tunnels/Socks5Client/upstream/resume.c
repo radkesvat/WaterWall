@@ -6,11 +6,6 @@ void socks5clientTunnelUpStreamResume(tunnel_t *t, line_t *l)
 {
     socks5client_lstate_t *ls = lineGetState(l, t);
 
-    if (ls->phase == kSocks5ClientPhaseResolving)
-    {
-        return;
-    }
-
     if (ls->kind == kSocks5ClientLineKindUdpApp)
     {
         line_t *udp_l = ls->udp_line;

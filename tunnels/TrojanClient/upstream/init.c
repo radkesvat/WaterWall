@@ -6,33 +6,17 @@ void trojanclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     trojanclient_tstate_t *ts = tunnelGetState(t);
     trojanclient_lstate_t *ls = lineGetState(l, t);
+    trojanclient_domain_setup_lstate_t *setup_ls = lineGetState(l, ts->domain_setup_tunnel);
+    address_context_t *target = lineGetDestinationAddressContext(l);
 
     trojanclientLinestateInitialize(ls, t, l);
-    if (UNLIKELY(! trojanclientApplyTargetContext(t, l)))
-    {
-        trojanclientLinestateDestroy(ls);
-        tunnelPrevDownStreamFinish(t, l);
-        return;
-    }
-
-    ls->kind = ls->protocol == kTrojanClientProtocolUdp ? kTrojanClientLineKindUdpApp : kTrojanClientLineKindDirect;
-
-    bool resolving = false;
-    if (UNLIKELY(! trojanclientStartDomainResolveIfNeeded(t, l, ls, &resolving)))
-    {
-        trojanclientLinestateDestroy(ls);
-        tunnelPrevDownStreamFinish(t, l);
-        return;
-    }
-
-    if (resolving)
-    {
-        return;
-    }
+    ls->protocol = setup_ls->protocol;
+    ls->kind     = ls->protocol == kTrojanClientProtocolUdp ? kTrojanClientLineKindUdpApp : kTrojanClientLineKindDirect;
+    addresscontextAddrCopy(&ls->target_addr, target);
+    addresscontextSetPort(&ls->target_addr, target->port);
 
     if (ts->verbose)
     {
-        address_context_t *target = lineGetDestinationAddressContext(l);
         LOGD("TrojanClient: line init protocol=%s port=%u",
              ls->protocol == kTrojanClientProtocolTcp ? "tcp" : "udp",
              (unsigned int) target->port);
@@ -50,6 +34,24 @@ void trojanclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
             trojanclientLinestateDestroy(ls);
             tunnelPrevDownStreamFinish(t, l);
         }
+        return;
+    }
+
+    tunnelNextUpStreamInit(t, l);
+}
+
+void trojanclientDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l)
+{
+    trojanclient_domain_setup_tstate_t *setup_ts = tunnelGetState(t);
+    tunnel_t                           *client   = setup_ts->client_tunnel;
+    trojanclient_domain_setup_lstate_t *ls       = lineGetState(l, t);
+
+    trojanclientDomainSetupLinestateInitialize(ls);
+
+    if (UNLIKELY(! trojanclientApplyTargetContext(client, l)))
+    {
+        trojanclientDomainSetupLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
         return;
     }
 

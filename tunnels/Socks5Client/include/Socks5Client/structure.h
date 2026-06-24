@@ -12,7 +12,6 @@ typedef enum socks5client_protocol_e
 typedef enum socks5client_phase_e
 {
     kSocks5ClientPhaseIdle = 0,
-    kSocks5ClientPhaseResolving,
     kSocks5ClientPhaseWaitMethod,
     kSocks5ClientPhaseWaitAuth,
     kSocks5ClientPhaseWaitCommand,
@@ -29,6 +28,12 @@ typedef enum socks5client_line_kind_e
 
 typedef struct socks5client_tstate_s
 {
+    node_t        domain_setup_node;
+    tunnel_t     *domain_setup_tunnel;
+    node_t        domain_resolver_node;
+    tunnel_t     *domain_resolver_tunnel;
+    struct cJSON *domain_resolver_settings;
+
     address_context_t       target_addr;
     char                   *username;
     char                   *password;
@@ -42,32 +47,32 @@ typedef struct socks5client_tstate_s
     bool                    resolve_domains;
 } socks5client_tstate_t;
 
-typedef struct socks5client_dns_request_s
+typedef struct socks5client_domain_setup_tstate_s
 {
-    tunnel_t *tunnel;
-    line_t   *line;
-    char     *domain;
-    int       strategy;
-    bool      cancelled;
-} socks5client_dns_request_t;
+    tunnel_t *client_tunnel;
+} socks5client_domain_setup_tstate_t;
+
+typedef struct socks5client_domain_setup_lstate_s
+{
+    socks5client_protocol_t protocol;
+} socks5client_domain_setup_lstate_t;
 
 typedef struct socks5client_lstate_s
 {
-    tunnel_t                   *tunnel;
-    line_t                     *line;
-    line_t                     *app_line;
-    line_t                     *control_line;
-    line_t                     *udp_line;
-    socks5client_dns_request_t *dns_request;
-    address_context_t           target_addr;
-    address_context_t           relay_addr;
-    buffer_stream_t             in_stream;
-    buffer_queue_t              pending_up;
-    socks5client_protocol_t     protocol;
-    socks5client_phase_t        phase;
-    socks5client_line_kind_t    kind;
-    bool                        udp_control_ready;
-    bool                        udp_relay_ready;
+    tunnel_t                *tunnel;
+    line_t                  *line;
+    line_t                  *app_line;
+    line_t                  *control_line;
+    line_t                  *udp_line;
+    address_context_t        target_addr;
+    address_context_t        relay_addr;
+    buffer_stream_t          in_stream;
+    buffer_queue_t           pending_up;
+    socks5client_protocol_t  protocol;
+    socks5client_phase_t     phase;
+    socks5client_line_kind_t kind;
+    bool                     udp_control_ready;
+    bool                     udp_relay_ready;
 } socks5client_lstate_t;
 
 enum
@@ -103,14 +108,17 @@ void socks5clientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void socks5clientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void socks5clientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void socks5clientTunnelDownStreamResume(tunnel_t *t, line_t *l);
+void socks5clientDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l);
+void socks5clientDomainSetupTunnelUpStreamFinish(tunnel_t *t, line_t *l);
+void socks5clientDomainSetupTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 
 void socks5clientLinestateInitialize(socks5client_lstate_t *ls, tunnel_t *t, line_t *l);
 void socks5clientLinestateDestroy(socks5client_lstate_t *ls);
-void socks5clientCancelDnsRequest(socks5client_lstate_t *ls);
+void socks5clientDomainSetupLinestateInitialize(socks5client_domain_setup_lstate_t *ls);
+void socks5clientDomainSetupLinestateDestroy(socks5client_domain_setup_lstate_t *ls);
 
 void socks5clientTunnelstateDestroy(socks5client_tstate_t *ts);
 bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l);
-bool socks5clientStartDomainResolveIfNeeded(tunnel_t *t, line_t *l, socks5client_lstate_t *ls, bool *started_out);
 bool socks5clientSendGreeting(tunnel_t *t, line_t *l, socks5client_lstate_t *ls);
 bool socks5clientSendAuthRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *ls);
 bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *ls);

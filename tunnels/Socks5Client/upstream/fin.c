@@ -41,10 +41,22 @@ void socks5clientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         return;
     }
 
-    bool transport_started = ls->phase != kSocks5ClientPhaseResolving;
     socks5clientLinestateDestroy(ls);
-    if (transport_started)
-    {
-        tunnelNextUpStreamFinish(t, l);
-    }
+    tunnelNextUpStreamFinish(t, l);
+}
+
+void socks5clientDomainSetupTunnelUpStreamFinish(tunnel_t *t, line_t *l)
+{
+    socks5client_domain_setup_lstate_t *ls = lineGetState(l, t);
+
+    socks5clientDomainSetupLinestateDestroy(ls);
+    tunnelNextUpStreamFinish(t, l);
+}
+
+void socks5clientDomainSetupTunnelDownStreamFinish(tunnel_t *t, line_t *l)
+{
+    socks5client_domain_setup_lstate_t *ls = lineGetState(l, t);
+
+    socks5clientDomainSetupLinestateDestroy(ls);
+    tunnelPrevDownStreamFinish(t, l);
 }

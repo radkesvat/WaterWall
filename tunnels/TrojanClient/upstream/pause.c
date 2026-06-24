@@ -11,11 +11,6 @@ void trojanclientTunnelUpStreamPause(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->phase == kTrojanClientPhaseResolving)
-    {
-        return;
-    }
-
     if (ls->kind == kTrojanClientLineKindUdpApp)
     {
         line_t *carrier_l = ls->carrier_line;

@@ -3,16 +3,16 @@
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
 
-void socks5clientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
+void trojanclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 {
-    socks5client_tstate_t *ts   = tunnelGetState(t);
+    trojanclient_tstate_t *ts   = tunnelGetState(t);
     node_t                *node = tunnelGetNode(t);
 
     if (t->prev == NULL)
     {
         if (chain->tunnels.len != 0)
         {
-            LOGF("Socks5Client: cannot defer chaining without a previous tunnel on a non-empty chain");
+            LOGF("TrojanClient: cannot defer chaining without a previous tunnel on a non-empty chain");
             terminateProgram(1);
         }
         tunnelchainDestroy(chain);
@@ -21,7 +21,7 @@ void socks5clientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 
     if (node->hash_next == 0)
     {
-        LOGF("Socks5Client: a next node is required");
+        LOGF("TrojanClient: a next node is required");
         terminateProgram(1);
     }
 
@@ -39,22 +39,22 @@ void socks5clientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 
     if (setup == NULL)
     {
-        LOGF("Socks5Client: internal domain setup tunnel was not created");
+        LOGF("TrojanClient: internal domain setup tunnel was not created");
         terminateProgram(1);
     }
     if (next_tunnel == NULL)
     {
-        LOGF("Socks5Client: next node \"%s\" has no tunnel instance", next_node->name);
+        LOGF("TrojanClient: next node \"%s\" has no tunnel instance", next_node->name);
         terminateProgram(1);
     }
     if ((setup->prev != NULL && setup->prev != prev) || setup->next != NULL)
     {
-        LOGF("Socks5Client: internal domain setup tunnel is already bound");
+        LOGF("TrojanClient: internal domain setup tunnel is already bound");
         terminateProgram(1);
     }
     if (resolver != NULL && (resolver->prev != NULL || resolver->next != NULL))
     {
-        LOGF("Socks5Client: internal DomainResolver tunnel is already bound");
+        LOGF("TrojanClient: internal DomainResolver tunnel is already bound");
         terminateProgram(1);
     }
     if (next_tunnel->prev != NULL && next_tunnel->prev != t)

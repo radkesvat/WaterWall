@@ -12,7 +12,6 @@ typedef enum vlessclient_protocol_e
 typedef enum vlessclient_phase_e
 {
     kVlessClientPhaseIdle = 0,
-    kVlessClientPhaseResolving,
     kVlessClientPhaseWaitResponse,
     kVlessClientPhaseEstablished,
     kVlessClientPhaseClosing
@@ -45,6 +44,12 @@ enum
 
 typedef struct vlessclient_tstate_s
 {
+    node_t        domain_setup_node;
+    tunnel_t     *domain_setup_tunnel;
+    node_t        domain_resolver_node;
+    tunnel_t     *domain_resolver_tunnel;
+    struct cJSON *domain_resolver_settings;
+
     address_context_t      target_addr;
     uint8_t                uuid[kVlessClientUuidLen];
     int                    domain_strategy;
@@ -55,28 +60,28 @@ typedef struct vlessclient_tstate_s
     bool                   resolve_domains;
 } vlessclient_tstate_t;
 
-typedef struct vlessclient_dns_request_s
+typedef struct vlessclient_domain_setup_tstate_s
 {
-    tunnel_t *tunnel;
-    line_t   *line;
-    char     *domain;
-    int       strategy;
-    bool      cancelled;
-} vlessclient_dns_request_t;
+    tunnel_t *client_tunnel;
+} vlessclient_domain_setup_tstate_t;
+
+typedef struct vlessclient_domain_setup_lstate_s
+{
+    vlessclient_protocol_t protocol;
+} vlessclient_domain_setup_lstate_t;
 
 typedef struct vlessclient_lstate_s
 {
-    tunnel_t                  *tunnel;
-    line_t                    *line;
-    line_t                    *app_line;
-    line_t                    *carrier_line;
-    vlessclient_dns_request_t *dns_request;
-    address_context_t          target_addr;
-    buffer_stream_t            in_stream;
-    buffer_queue_t             pending_up;
-    vlessclient_protocol_t     protocol;
-    vlessclient_phase_t        phase;
-    vlessclient_line_kind_t    kind;
+    tunnel_t                 *tunnel;
+    line_t                   *line;
+    line_t                   *app_line;
+    line_t                   *carrier_line;
+    address_context_t         target_addr;
+    buffer_stream_t           in_stream;
+    buffer_queue_t            pending_up;
+    vlessclient_protocol_t    protocol;
+    vlessclient_phase_t       phase;
+    vlessclient_line_kind_t   kind;
 } vlessclient_lstate_t;
 
 enum
@@ -89,6 +94,7 @@ WW_EXPORT void         vlessclientTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *vlessclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t vlessclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
+void vlessclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void vlessclientTunnelOnPrepair(tunnel_t *t);
 void vlessclientTunnelOnStart(tunnel_t *t);
 void vlessclientTunnelOnStop(tunnel_t *t);
@@ -106,14 +112,17 @@ void vlessclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void vlessclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void vlessclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
+void vlessclientDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l);
+void vlessclientDomainSetupTunnelUpStreamFinish(tunnel_t *t, line_t *l);
+void vlessclientDomainSetupTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 
 void vlessclientLinestateInitialize(vlessclient_lstate_t *ls, tunnel_t *t, line_t *l);
 void vlessclientLinestateDestroy(vlessclient_lstate_t *ls);
-void vlessclientCancelDnsRequest(vlessclient_lstate_t *ls);
+void vlessclientDomainSetupLinestateInitialize(vlessclient_domain_setup_lstate_t *ls);
+void vlessclientDomainSetupLinestateDestroy(vlessclient_domain_setup_lstate_t *ls);
 
 void vlessclientTunnelstateDestroy(vlessclient_tstate_t *ts);
 bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l);
-bool vlessclientStartDomainResolveIfNeeded(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, bool *started_out);
 bool vlessclientStartUdpCarrier(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, bool *line_alive_out);
 bool vlessclientForwardUdpAppPayload(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, sbuf_t *buf);
 bool vlessclientHandleUdpCarrierPayload(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, sbuf_t *buf);

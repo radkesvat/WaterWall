@@ -2,8 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include "loggers/dns_logger.h"
-
 enum
 {
     kTrojanCommandConnect      = 0x01,
@@ -276,120 +274,6 @@ static line_t *createInternalLine(tunnel_t *t, line_t *app_l, trojanclient_line_
     return inner_l;
 }
 
-static void dnsRequestDestroy(trojanclient_dns_request_t *request)
-{
-    if (request == NULL)
-    {
-        return;
-    }
-
-    memoryFree(request->domain);
-    memoryFree(request);
-}
-
-static void closeBeforeTransportInit(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls)
-{
-    trojanclientLinestateDestroy(ls);
-    tunnelPrevDownStreamFinish(t, l);
-}
-
-static void continueAfterTargetReady(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls)
-{
-    ls->phase = kTrojanClientPhaseIdle;
-
-    if (ls->protocol == kTrojanClientProtocolUdp)
-    {
-        bool line_alive = true;
-        if (UNLIKELY(! trojanclientStartUdpCarrier(t, l, ls, &line_alive)))
-        {
-            if (! line_alive)
-            {
-                return;
-            }
-            closeBeforeTransportInit(t, l, ls);
-        }
-        return;
-    }
-
-    tunnelNextUpStreamInit(t, l);
-}
-
-static void onDnsResolved(void *userdata, int status, const char *error, const dns_resolved_addr_t *addrs,
-                          size_t naddrs)
-{
-    trojanclient_dns_request_t *request = userdata;
-    tunnel_t                   *t       = request->tunnel;
-    line_t                     *l       = request->line;
-
-    if (request->cancelled || ! lineIsAlive(l))
-    {
-        dnsRequestDestroy(request);
-        lineUnlock(l);
-        return;
-    }
-
-    trojanclient_lstate_t *ls = lineGetState(l, t);
-    if (ls->dns_request != request || ls->phase != kTrojanClientPhaseResolving)
-    {
-        dnsRequestDestroy(request);
-        lineUnlock(l);
-        return;
-    }
-
-    ls->dns_request = NULL;
-    ls->phase       = kTrojanClientPhaseIdle;
-
-    if (asyncdnsStatusIsShutdown(status))
-    {
-        dnsRequestDestroy(request);
-        lineUnlock(l);
-        return;
-    }
-
-    if (status != ARES_SUCCESS || naddrs == 0)
-    {
-        loggerPrint(getDnsLogger(),
-                    LOG_LEVEL_ERROR,
-                    "TrojanClient: async dns resolve failed for %s: %s",
-                    request->domain,
-                    error != NULL ? error : ares_strerror(status));
-        dnsRequestDestroy(request);
-        closeBeforeTransportInit(t, l, ls);
-        lineUnlock(l);
-        return;
-    }
-
-    const dns_resolved_addr_t *selected =
-        dnsstrategySelectResolvedAddress(addrs, naddrs, (enum domain_strategy) request->strategy);
-    if (UNLIKELY(! dnsstrategyApplyResolvedAddress(lineGetDestinationAddressContext(l), selected) ||
-                 ! dnsstrategyApplyResolvedAddress(&ls->target_addr, selected)))
-    {
-        loggerPrint(getDnsLogger(),
-                    LOG_LEVEL_ERROR,
-                    "TrojanClient: async dns resolve returned no usable address for %s",
-                    request->domain);
-        dnsRequestDestroy(request);
-        closeBeforeTransportInit(t, l, ls);
-        lineUnlock(l);
-        return;
-    }
-
-    if (loggerCheckWriteLevel(getDnsLogger(), (log_level_e) LOG_LEVEL_DEBUG))
-    {
-        sockaddr_u resolved_addr = addresscontextToSockAddr(&ls->target_addr);
-        char       ip[SOCKADDR_STRLEN];
-        loggerPrint(getDnsLogger(),
-                    LOG_LEVEL_DEBUG,
-                    "TrojanClient: %s resolved to %s",
-                    request->domain,
-                    SOCKADDR_STR(&resolved_addr, ip));
-    }
-
-    dnsRequestDestroy(request);
-    continueAfterTargetReady(t, l, ls);
-    lineUnlock(l);
-}
-
 void trojanclientTunnelstateDestroy(trojanclient_tstate_t *ts)
 {
     if (ts == NULL)
@@ -404,11 +288,11 @@ void trojanclientTunnelstateDestroy(trojanclient_tstate_t *ts)
 
 bool trojanclientApplyTargetContext(tunnel_t *t, line_t *l)
 {
-    trojanclient_tstate_t *ts       = tunnelGetState(t);
-    trojanclient_lstate_t *ls       = lineGetState(l, t);
-    address_context_t     *dest_ctx = lineGetDestinationAddressContext(l);
-    routing_context_t     *route    = lineGetRoutingContext(l);
-    address_context_t      current  = {0};
+    trojanclient_tstate_t              *ts       = tunnelGetState(t);
+    trojanclient_domain_setup_lstate_t *setup_ls = lineGetState(l, ts->domain_setup_tunnel);
+    address_context_t                  *dest_ctx = lineGetDestinationAddressContext(l);
+    routing_context_t                  *route    = lineGetRoutingContext(l);
+    address_context_t                   current  = {0};
     bool uses_current_dest = (ts->target_addr_source != kDvsConstant) || (ts->target_port_source != kDvsConstant) ||
                              (ts->protocol == kTrojanClientProtocolDestContext);
 
@@ -463,83 +347,17 @@ bool trojanclientApplyTargetContext(tunnel_t *t, line_t *l)
         route->network_type = WIO_TYPE_UDP;
     }
 
-    ls->protocol = resolved_protocol;
+    setup_ls->protocol = resolved_protocol;
 
     if (uses_current_dest)
     {
         addresscontextReset(&current);
     }
 
-    addresscontextAddrCopy(&ls->target_addr, dest_ctx);
-    addresscontextSetPort(&ls->target_addr, dest_ctx->port);
     if (ts->resolve_domains)
     {
         addresscontextSetDomainStrategy(dest_ctx, (enum domain_strategy) ts->domain_strategy);
-        addresscontextSetDomainStrategy(&ls->target_addr, (enum domain_strategy) ts->domain_strategy);
     }
-    return true;
-}
-
-bool trojanclientStartDomainResolveIfNeeded(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls, bool *started_out)
-{
-    trojanclient_tstate_t *ts = tunnelGetState(t);
-
-    *started_out = false;
-
-    if (! ts->resolve_domains || ! addresscontextIsDomain(&ls->target_addr))
-    {
-        return true;
-    }
-
-    trojanclient_dns_request_t *request = memoryAllocate(sizeof(*request));
-    if (UNLIKELY(request == NULL))
-    {
-        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "TrojanClient: failed to allocate async dns request");
-        return false;
-    }
-
-    char *domain = stringDuplicate(ls->target_addr.domain);
-    if (UNLIKELY(domain == NULL))
-    {
-        memoryFree(request);
-        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "TrojanClient: failed to copy async dns domain");
-        return false;
-    }
-
-    *request = (trojanclient_dns_request_t) {
-        .tunnel    = t,
-        .line      = l,
-        .domain    = domain,
-        .strategy  = ts->domain_strategy,
-        .cancelled = false,
-    };
-
-    lineLock(l);
-    ls->dns_request = request;
-    ls->phase       = kTrojanClientPhaseResolving;
-
-    int socktype = ls->protocol == kTrojanClientProtocolUdp ? SOCK_DGRAM : SOCK_STREAM;
-    int rc = workerResolveDomainServiceAsync(lineGetWID(l), request->domain, NULL, socktype, onDnsResolved, request);
-    if (UNLIKELY(rc != ARES_SUCCESS))
-    {
-        ls->dns_request = NULL;
-        ls->phase       = kTrojanClientPhaseIdle;
-        lineUnlock(l);
-        loggerPrint(getDnsLogger(),
-                    LOG_LEVEL_ERROR,
-                    "TrojanClient: failed to start async dns resolve for %s: %s",
-                    request->domain,
-                    ares_strerror(rc));
-        dnsRequestDestroy(request);
-        return false;
-    }
-
-    if (ts->verbose)
-    {
-        loggerPrint(getDnsLogger(), LOG_LEVEL_DEBUG, "TrojanClient: resolving target domain %s", request->domain);
-    }
-
-    *started_out = true;
     return true;
 }
 
@@ -1099,11 +917,10 @@ void trojanclientCloseLine(tunnel_t *t, line_t *l, trojanclient_close_origin_t o
         return;
     }
 
-    bool transport_started = ls->phase != kTrojanClientPhaseResolving;
-    ls->phase              = kTrojanClientPhaseClosing;
+    ls->phase = kTrojanClientPhaseClosing;
     trojanclientLinestateDestroy(ls);
 
-    if (transport_started && origin != kTrojanClientCloseFromNext)
+    if (origin != kTrojanClientCloseFromNext)
     {
         tunnelNextUpStreamFinish(t, l);
     }

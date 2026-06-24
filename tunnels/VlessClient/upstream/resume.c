@@ -11,11 +11,6 @@ void vlessclientTunnelUpStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->phase == kVlessClientPhaseResolving)
-    {
-        return;
-    }
-
     if (ls->kind == kVlessClientLineKindUdpApp)
     {
         line_t *carrier_l = ls->carrier_line;

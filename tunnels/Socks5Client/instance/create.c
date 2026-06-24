@@ -1,6 +1,163 @@
 #include "structure.h"
 
+#include "DomainResolver/interface.h"
+
 #include "loggers/network_logger.h"
+
+static char *socks5clientMakeChildName(const node_t *node, const char *suffix)
+{
+    const char *base = node->name != NULL ? node->name : "Socks5Client";
+    return stringConcat(base, suffix);
+}
+
+static bool socks5clientAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
+{
+    cJSON *strategy_json = cJSON_AddNumberToObject(settings, "strategy", (double) strategy);
+    if (strategy_json == NULL)
+    {
+        return false;
+    }
+
+    strategy_json->valueint    = (int) strategy;
+    strategy_json->valuedouble = (double) strategy_json->valueint;
+    return true;
+}
+
+static cJSON *socks5clientCreateDomainResolverSettings(enum domain_strategy strategy)
+{
+    cJSON *settings = cJSON_CreateObject();
+    if (settings == NULL)
+    {
+        return NULL;
+    }
+
+    if (! socks5clientAddDomainStrategySetting(settings, strategy))
+    {
+        cJSON_Delete(settings);
+        return NULL;
+    }
+
+    return settings;
+}
+
+static bool socks5clientConfigureDomainSetupNode(node_t *child, const node_t *owner)
+{
+    memorySet(child, 0, sizeof(*child));
+
+    const char *type_name = "Socks5ClientDomainSetup";
+    child->name           = socks5clientMakeChildName(owner, ".domain-setup");
+    child->type           = stringDuplicate(type_name);
+    if (child->name == NULL || child->type == NULL)
+    {
+        return false;
+    }
+
+    child->hash_name             = calcHashBytes(child->name, stringLength(child->name));
+    child->hash_type             = calcHashBytes(type_name, stringLength(type_name));
+    child->version               = owner->version;
+    child->flags                 = kNodeFlagNone;
+    child->required_padding_left = 0;
+    child->node_json             = owner->node_json;
+    child->node_settings_json    = owner->node_settings_json;
+    child->node_manager_config   = owner->node_manager_config;
+    child->layer_group           = owner->layer_group;
+    child->layer_group_next_node = kNodeLayerAnything;
+    child->layer_group_prev_node = kNodeLayerAnything;
+    child->can_have_next         = true;
+    child->can_have_prev         = true;
+    return true;
+}
+
+static bool socks5clientConfigureDomainResolverNode(node_t *child, node_t template_node, const node_t *owner,
+                                                    cJSON *settings)
+{
+    *child = template_node;
+
+    child->name = socks5clientMakeChildName(owner, ".domain-resolver");
+    if (child->name == NULL)
+    {
+        return false;
+    }
+
+    child->hash_name           = calcHashBytes(child->name, stringLength(child->name));
+    child->next                = NULL;
+    child->hash_next           = 0;
+    child->version             = owner->version;
+    child->node_json           = owner->node_json;
+    child->node_settings_json  = settings;
+    child->node_manager_config = owner->node_manager_config;
+    child->instance            = NULL;
+    return true;
+}
+
+static bool socks5clientCreateInternalDomainSetup(tunnel_t *t, node_t *node)
+{
+    socks5client_tstate_t *ts = tunnelGetState(t);
+
+    if (! socks5clientConfigureDomainSetupNode(&ts->domain_setup_node, node))
+    {
+        LOGF("Socks5Client: failed to configure internal domain setup node");
+        return false;
+    }
+
+    ts->domain_setup_tunnel = tunnelCreate(&ts->domain_setup_node,
+                                           sizeof(socks5client_domain_setup_tstate_t),
+                                           sizeof(socks5client_domain_setup_lstate_t));
+    if (ts->domain_setup_tunnel == NULL)
+    {
+        LOGF("Socks5Client: failed to create internal domain setup tunnel");
+        return false;
+    }
+
+    socks5client_domain_setup_tstate_t *setup_ts = tunnelGetState(ts->domain_setup_tunnel);
+    setup_ts->client_tunnel                       = t;
+    ts->domain_setup_tunnel->fnInitU              = &socks5clientDomainSetupTunnelUpStreamInit;
+    ts->domain_setup_tunnel->fnFinU               = &socks5clientDomainSetupTunnelUpStreamFinish;
+    ts->domain_setup_tunnel->fnFinD               = &socks5clientDomainSetupTunnelDownStreamFinish;
+    ts->domain_setup_node.instance                = ts->domain_setup_tunnel;
+    return true;
+}
+
+static bool socks5clientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
+{
+    socks5client_tstate_t *ts = tunnelGetState(t);
+
+    if (! ts->resolve_domains)
+    {
+        return true;
+    }
+
+    ts->domain_resolver_settings =
+        socks5clientCreateDomainResolverSettings((enum domain_strategy) ts->domain_strategy);
+    if (ts->domain_resolver_settings == NULL)
+    {
+        LOGF("Socks5Client: failed to create internal DomainResolver settings");
+        return false;
+    }
+
+    if (! socks5clientConfigureDomainResolverNode(
+            &ts->domain_resolver_node, nodeDomainResolverGet(), node, ts->domain_resolver_settings))
+    {
+        LOGF("Socks5Client: failed to configure internal DomainResolver node");
+        return false;
+    }
+
+    ts->domain_resolver_tunnel = ts->domain_resolver_node.createHandle(&ts->domain_resolver_node);
+    if (ts->domain_resolver_tunnel == NULL)
+    {
+        LOGF("Socks5Client: failed to create internal DomainResolver");
+        return false;
+    }
+
+    domainresolverTunnelUseLineStrategy(ts->domain_resolver_tunnel, true);
+    ts->domain_resolver_node.instance = ts->domain_resolver_tunnel;
+    return true;
+}
+
+static bool socks5clientCreateInternalDomainResolverChain(tunnel_t *t, node_t *node)
+{
+    return socks5clientCreateInternalDomainSetup(t, node) && socks5clientCreateInternalDomainResolver(t, node);
+}
 
 static bool getOptionalStringFromKeys(char **dest, const cJSON *settings, const char *key1, const char *key2,
                                       const char *key3)
@@ -286,6 +443,7 @@ tunnel_t *socks5clientTunnelCreate(node_t *node)
     t->fnResumeD  = &socks5clientTunnelDownStreamResume;
 
     t->onPrepare = &socks5clientTunnelOnPrepair;
+    t->onChain   = &socks5clientTunnelOnChain;
     t->onStart   = &socks5clientTunnelOnStart;
     t->onStop    = &socks5clientTunnelOnStop;
     t->onDestroy = &socks5clientTunnelDestroy;
@@ -304,6 +462,12 @@ tunnel_t *socks5clientTunnelCreate(node_t *node)
     {
         socks5clientTunnelstateDestroy(ts);
         tunnelDestroy(t);
+        return NULL;
+    }
+
+    if (! socks5clientCreateInternalDomainResolverChain(t, node))
+    {
+        socks5clientTunnelDestroy(t);
         return NULL;
     }
 

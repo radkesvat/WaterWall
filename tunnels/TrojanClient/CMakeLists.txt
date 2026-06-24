@@ -6,6 +6,7 @@ add_library(TrojanClient STATIC
                     instance/prepair.c
                     instance/start.c
                     instance/stop.c
+                    instance/chain.c
                     common/helpers.c
                     common/line_state.c
                     upstream/init.c
@@ -28,7 +29,7 @@ target_include_directories(TrojanClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/incl
 target_include_directories(TrojanClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(TrojanClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/TrojanClient)
 
-target_link_libraries(TrojanClient ww)
+target_link_libraries(TrojanClient ww DomainResolver)
 if(NOT APPLE)
     target_precompile_headers(TrojanClient REUSE_FROM ww)
 endif()
