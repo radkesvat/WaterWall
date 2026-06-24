@@ -324,6 +324,10 @@
 #include "SpeedLimit/interface.h"
 #endif
 
+#ifdef INCLUDE_DOMAIN_RESOLVER
+#include "DomainResolver/interface.h"
+#endif
+
 #ifdef INCLUDE_USER_CONTROLLER
 #include "UserController/interface.h"
 #endif
@@ -649,6 +653,10 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_SPEEDLIMIT
     USING(SpeedLimit);
+#endif
+
+#ifdef INCLUDE_DOMAIN_RESOLVER
+    USING(DomainResolver);
 #endif
 
 #ifdef INCLUDE_USER_CONTROLLER

@@ -208,7 +208,13 @@ option(INCLUDE_DISTURBER                "link Disturber staticly to the core"   
 option(INCLUDE_JUNK_DATAGRAM_SENDER     "link JunkDatagramSender staticly to the core"       TRUE)
 option(INCLUDE_BLACKHOLE                "link BlackHole staticly to the core"                TRUE)
 option(INCLUDE_SPEEDLIMIT               "link SpeedLimit staticly to the core"               TRUE)
+option(INCLUDE_DOMAIN_RESOLVER          "link DomainResolver staticly to the core"           TRUE)
 option(INCLUDE_USER_CONTROLLER          "link UserController staticly to the core"           TRUE)
+
+if((INCLUDE_TCPCONNECTOR OR INCLUDE_UDP_CONNECTOR OR INCLUDE_SOCKS5_CLIENT OR INCLUDE_VLESS_CLIENT OR INCLUDE_TROJAN_CLIENT OR INCLUDE_ROUTER) AND NOT INCLUDE_DOMAIN_RESOLVER)
+  message(STATUS "Forcing DomainResolver because connector/client/router tunnels use it internally")
+  set(INCLUDE_DOMAIN_RESOLVER TRUE CACHE BOOL "link DomainResolver staticly to the core" FORCE)
+endif()
 
 # Determine if OpenSSL is required based on included tunnels
 if(INCLUDE_TLS_SERVER)
@@ -428,6 +434,14 @@ if(INCLUDE_USER_CONTROLLER AND INCLUDE_AUTHENTICATION_CLIENT)
   target_link_libraries(Waterwall UserController)
 elseif(INCLUDE_USER_CONTROLLER)
   message(STATUS "Skipping UserController because INCLUDE_AUTHENTICATION_CLIENT is OFF")
+endif()
+
+#domain resolver
+if(INCLUDE_DOMAIN_RESOLVER)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_DOMAIN_RESOLVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/DomainResolver)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/DomainResolver)
+  target_link_libraries(Waterwall DomainResolver)
 endif()
 
 #tun device
