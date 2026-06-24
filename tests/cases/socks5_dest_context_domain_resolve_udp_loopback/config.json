@@ -1,0 +1,110 @@
+{
+  "name": "socks5-dest-context-domain-resolve-udp-loopback",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "max-payload-size": 1200,
+        "split-payload-burst": 1,
+        "dest-context": {
+          "address": "localhost",
+          "port": 43125,
+          "protocol": "udp"
+        }
+      },
+      "next": "socks5-client"
+    },
+    {
+      "name": "socks5-client",
+      "type": "Socks5Client",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "protocol": "dest_context->protocol",
+        "domain-strategy": "resolve-domains-and-prefer-ipv4"
+      },
+      "next": "proxy-connector"
+    },
+    {
+      "name": "proxy-connector",
+      "type": "TcpUdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43124,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "proxy-listener",
+      "type": "TcpUdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43124,
+        "nodelay": true
+      },
+      "next": "socks5-server"
+    },
+    {
+      "name": "socks5-server",
+      "type": "Socks5Server",
+      "settings": {
+        "no-auth": true,
+        "connect": false,
+        "udp": true,
+        "ipv4": "127.0.0.1"
+      },
+      "next": "ip-router"
+    },
+    {
+      "name": "ip-router",
+      "type": "Router",
+      "settings": {
+        "rules": [
+          {
+            "destination-ip": "127.0.0.1",
+            "target": "target-connector"
+          }
+        ]
+      },
+      "next": "reject-connector"
+    },
+    {
+      "name": "target-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "reject-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "target-listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43125
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "max-payload-size": 1200,
+        "split-payload-burst": 1
+      }
+    }
+  ]
+}

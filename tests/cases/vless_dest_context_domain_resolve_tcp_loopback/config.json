@@ -1,0 +1,109 @@
+{
+  "name": "vless-dest-context-domain-resolve-tcp-loopback",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "dest-context": {
+          "address": "localhost",
+          "port": 43121,
+          "protocol": "tcp"
+        }
+      },
+      "next": "vless-client"
+    },
+    {
+      "name": "vless-client",
+      "type": "VlessClient",
+      "settings": {
+        "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "protocol": "dest_context->protocol",
+        "domain-strategy": "resolve-domains-and-prefer-ipv4"
+      },
+      "next": "proxy-connector"
+    },
+    {
+      "name": "proxy-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43120,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "proxy-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43120,
+        "nodelay": true
+      },
+      "next": "vless-server"
+    },
+    {
+      "name": "vless-server",
+      "type": "VlessServer",
+      "settings": {
+        "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+        "connect": true,
+        "udp": false
+      },
+      "next": "ip-router"
+    },
+    {
+      "name": "ip-router",
+      "type": "Router",
+      "settings": {
+        "rules": [
+          {
+            "destination-ip": "127.0.0.1",
+            "target": "target-connector"
+          }
+        ]
+      },
+      "next": "reject-connector"
+    },
+    {
+      "name": "target-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "reject-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "target-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43121,
+        "nodelay": true
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}

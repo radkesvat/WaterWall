@@ -1,0 +1,109 @@
+{
+  "name": "trojan-dest-context-domain-resolve-tcp-loopback",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "dest-context": {
+          "address": "localhost",
+          "port": 43123,
+          "protocol": "tcp"
+        }
+      },
+      "next": "trojan-client"
+    },
+    {
+      "name": "trojan-client",
+      "type": "TrojanClient",
+      "settings": {
+        "password": "trojan-test-password",
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "protocol": "dest_context->protocol",
+        "domain-strategy": "resolve-domains-and-prefer-ipv4"
+      },
+      "next": "proxy-connector"
+    },
+    {
+      "name": "proxy-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43122,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "proxy-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43122,
+        "nodelay": true
+      },
+      "next": "trojan-server"
+    },
+    {
+      "name": "trojan-server",
+      "type": "TrojanServer",
+      "settings": {
+        "password": "trojan-test-password",
+        "connect": true,
+        "udp": false
+      },
+      "next": "ip-router"
+    },
+    {
+      "name": "ip-router",
+      "type": "Router",
+      "settings": {
+        "rules": [
+          {
+            "destination-ip": "127.0.0.1",
+            "target": "target-connector"
+          }
+        ]
+      },
+      "next": "reject-connector"
+    },
+    {
+      "name": "target-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "reject-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "target-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43123,
+        "nodelay": true
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}
