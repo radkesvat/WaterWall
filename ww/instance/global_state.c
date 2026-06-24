@@ -82,10 +82,15 @@ static void exitHandle(void *userdata, int signum)
 
     nodemanagerStop();
 
+    // notify all worker threads that were spawned via workerSpawn() before joining any of them
+    for (unsigned int wid = 1; wid < WORKERS_COUNT - WORKER_ADDITIONS; ++wid)
+    {
+        workerFinish(getWorker(wid));
+    }
     // join only worker threads that were spawned via workerSpawn()
     for (unsigned int wid = 1; wid < WORKERS_COUNT - WORKER_ADDITIONS; ++wid)
     {
-        workerExitJoin(getWorker(wid));
+        workerJoin(getWorker(wid));
     }
     // lwip pseudo-worker has no spawned OS thread, but it still owns pools
     workerFinish(getWorker(getTotalWorkersCount() - 1));
@@ -99,7 +104,8 @@ static void exitHandle(void *userdata, int signum)
     else
     {
         // when main thread finishes it will tear down the global state
-        workerExitJoin(getWorker(0));
+        workerFinish(getWorker(0));
+        workerJoin(getWorker(0));
     }
 }
 

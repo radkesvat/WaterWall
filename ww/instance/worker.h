@@ -91,6 +91,16 @@ static inline wid_t getWID(void)
 void workerFinish(worker_t *worker);
 
 /**
+ * @brief Waits for a worker's spawned OS thread to exit.
+ *
+ * Does not signal the worker to stop. Use after workerFinish() when multiple workers
+ * should be notified before joining.
+ *
+ * @param worker Pointer to the worker structure.
+ */
+void workerJoin(worker_t *worker);
+
+/**
  * @brief Cleanly exits a worker.
  *
  * Signals the worker's event loop to run once, waits for the worker thread to finish,
