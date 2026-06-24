@@ -238,10 +238,7 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
         {
             main_ls->main_est_forwarded = true;
 
-            if (! lineIsEstablished(main_l))
-            {
-                lineMarkEstablished(main_l);
-            }
+ 
 
             if (! withLineLocked(main_l, tunnelPrevDownStreamEst, t))
             {

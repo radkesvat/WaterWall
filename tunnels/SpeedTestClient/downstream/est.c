@@ -8,10 +8,7 @@ void speedtestclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     speedtestclient_lstate_t *ls = lineGetState(l, t);
     char                      target_buf[64];
 
-    if (! lineIsEstablished(l))
-    {
-        lineMarkEstablished(l);
-    }
+    lineMarkEstablished(l);
 
     ls->est_received = true;
     if (state->target_bandwidth_bps == 0)

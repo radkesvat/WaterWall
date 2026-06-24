@@ -11,10 +11,5 @@ void headerserverTunnelDownStreamEst(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (! lineIsEstablished(l))
-    {
-        lineMarkEstablished(l);
-    }
-
     tunnelPrevDownStreamEst(t, l);
 }

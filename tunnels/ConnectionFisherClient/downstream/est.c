@@ -28,10 +28,7 @@ void connectionfisherclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     }
 
     main_ls->main_est_forwarded = true;
-    if (! lineIsEstablished(ls->main_line))
-    {
-        lineMarkEstablished(ls->main_line);
-    }
+    lineMarkEstablished(ls->main_line);
 
     discard withLineLocked(ls->main_line, tunnelPrevDownStreamEst, t);
 }
