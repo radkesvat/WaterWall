@@ -98,6 +98,17 @@ if(TARGET SniffRouter)
   add_waterwall_unit_test(waterwall.sniffrouter_classifier_unit sniffrouter_classifier_test "unit;tunnels;sniffrouter")
 endif()
 
+if(TARGET PacketsToStream)
+  add_executable(packetstostream_parser_test packetstostream_parser_test.c)
+  target_include_directories(packetstostream_parser_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/PacketsToStream/include
+  )
+  target_link_libraries(packetstostream_parser_test PRIVATE PacketsToStream ww)
+  add_dependencies(waterwall_unit_tests packetstostream_parser_test)
+
+  add_waterwall_unit_test(waterwall.packetstostream_parser_unit packetstostream_parser_test "unit;tunnels;packetstostream")
+endif()
+
 set(ROUTER_GEOIP_TEST_DB "")
 if(DEFINED maxminddb_SOURCE_DIR)
   set(ROUTER_GEOIP_TEST_DB "${maxminddb_SOURCE_DIR}/t/maxmind-db/test-data/GeoLite2-Country-Test.mmdb")

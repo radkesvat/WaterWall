@@ -20,7 +20,7 @@ node_t nodePacketsToStreamGet(void)
              .node_manager_config   = NULL,
              .instance              = NULL,
              .flags                 = kNodeFlagNone,
-             .required_padding_left = kHeaderSize,
+             .required_padding_left = 0,
              .layer_group           = kNodeLayer3 | kNodeLayer4,
              .layer_group_next_node = kNodeLayerAnything,
              .layer_group_prev_node = kNodeLayerAnything,

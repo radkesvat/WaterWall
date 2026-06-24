@@ -7,7 +7,13 @@
       "settings": {
         "packet-mode": true,
         "packet-start-immediately": true,
-        "packet-start-delay-ms": 100
+        "packet-start-delay-ms": 100,
+        "packet-ipv4": {
+          "source-ip": "10.91.0.1",
+          "dest-ip": "10.91.0.2",
+          "transport": "udp",
+          "ttl": 64
+        }
       },
       "next": "packets-to-stream"
     },
@@ -43,7 +49,13 @@
       "name": "tester-server",
       "type": "TesterServer",
       "settings": {
-        "packet-mode": true
+        "packet-mode": true,
+        "packet-ipv4": {
+          "source-ip": "10.91.0.1",
+          "dest-ip": "10.91.0.2",
+          "transport": "udp",
+          "ttl": 64
+        }
       }
     }
   ]

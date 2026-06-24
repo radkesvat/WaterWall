@@ -2,22 +2,35 @@
 
 #include "loggers/network_logger.h"
 
-static sbuf_t *packetstostreamCreateSensitiveFrame(line_t *packet_line, uint8_t fill_byte)
+// Builds a self-contained, fully valid IPv4 heartbeat packet. Because the on-wire format is
+// now a raw concatenation of IPv4 packets (no length prefix), control frames must themselves be
+// valid IPv4 packets so the size-based extractor on the peer keeps its framing. The heartbeat is
+// tagged with a reserved experimentation protocol number and a constant payload fill byte.
+static sbuf_t *packetstostreamCreateHeartbeatPacket(line_t *packet_line, uint8_t fill_byte)
 {
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(packet_line));
 
-    if (sbufGetLeftCapacity(buf) < kHeaderSize)
+    if (UNLIKELY(sbufGetMaximumWriteableSize(buf) < kHeartbeatPacketSize))
     {
-        LOGW("PacketsToStream: dropping sensitive-mode control frame because left padding is smaller than header size");
+        LOGW("PacketsToStream: dropping sensitive-mode control frame because the buffer is too small");
         lineReuseBuffer(packet_line, buf);
         return NULL;
     }
 
-    sbufSetLength(buf, kSensitivePayloadSize);
-    memorySet(sbufGetMutablePtr(buf), fill_byte, kSensitivePayloadSize);
+    sbufSetLength(buf, kHeartbeatPacketSize);
 
-    sbufShiftLeft(buf, kHeaderSize);
-    sbufWriteUnAlignedUI16(buf, htons((uint16_t) kSensitivePayloadSize));
+    uint8_t *raw = sbufGetMutablePtr(buf);
+    memorySet(raw, 0, IP_HLEN);
+
+    struct ip_hdr *iphdr = (struct ip_hdr *) raw;
+    IPH_VHL_SET(iphdr, 4, IP_HLEN / 4);
+    IPH_LEN_SET(iphdr, lwip_htons((uint16_t) kHeartbeatPacketSize));
+    IPH_TTL_SET(iphdr, 64);
+    IPH_PROTO_SET(iphdr, kHeartbeatProtocol);
+    IPH_CHKSUM_SET(iphdr, 0);
+    IPH_CHKSUM_SET(iphdr, inet_chksum(iphdr, IP_HLEN));
+
+    memorySet(raw + IP_HLEN, fill_byte, kSensitivePayloadSize);
 
     return buf;
 }
@@ -70,7 +83,7 @@ static bool packetstostreamSendSensitivePing(tunnel_t *t, line_t *packet_line, p
 {
     packetstostream_tstate_t *ts  = tunnelGetState(t);
     const uint64_t            now = wloopNowMS(getWorkerLoop(lineGetWID(packet_line)));
-    sbuf_t                   *buf = packetstostreamCreateSensitiveFrame(packet_line, kSensitivePingByte);
+    sbuf_t                   *buf = packetstostreamCreateHeartbeatPacket(packet_line, kSensitivePingByte);
     if (buf == NULL)
     {
         return true;
@@ -95,18 +108,27 @@ static bool packetstostreamSendSensitivePing(tunnel_t *t, line_t *packet_line, p
     return false;
 }
 
+// Detects a heartbeat packet produced by packetstostreamCreateHeartbeatPacket / the peer's
+// equivalent: a minimal IPv4 packet tagged with kHeartbeatProtocol whose payload is filled with
+// fill_byte. Real traffic is extremely unlikely to collide with this signature.
 bool packetstostreamFrameMatchesFillByte(const sbuf_t *packet, uint8_t fill_byte)
 {
-    if (sbufGetLength(packet) != kSensitivePayloadSize)
+    if (sbufGetLength(packet) != kHeartbeatPacketSize)
     {
         return false;
     }
 
     const uint8_t *data = sbufGetRawPtr(packet);
 
+    if ((data[0] >> 4) != 4 || (data[0] & 0x0FU) != (IP_HLEN / 4) || data[9] != kHeartbeatProtocol)
+    {
+        return false;
+    }
+
+    const uint8_t *payload = data + IP_HLEN;
     for (uint32_t i = 0; i < kSensitivePayloadSize; ++i)
     {
-        if (data[i] != fill_byte)
+        if (payload[i] != fill_byte)
         {
             return false;
         }
@@ -402,34 +424,112 @@ void packetstostreamRecalculateChecksumIfRequested(line_t *l, sbuf_t *buf)
     lineSetRecalculateChecksum(l, false);
 }
 
+// Light, never-trusting structural check on a candidate IPv4 header (at least IP_HLEN bytes).
+// This intentionally stays cheaper than the "loose" validation level: it only proves the head
+// could be an IPv4 packet whose declared size is internally consistent and within the pipeline
+// packet bound, so we know how many bytes a single packet would consume.
+static inline bool packetstostreamIpv4HeaderLooksValid(const uint8_t *header, uint16_t *total_len_out)
+{
+    const uint8_t  version    = (uint8_t) (header[0] >> 4);
+    const uint8_t  header_len  = (uint8_t) ((header[0] & 0x0FU) * 4U);
+    const uint16_t total_len   = (uint16_t) (((uint16_t) header[2] << 8) | (uint16_t) header[3]);
+
+    *total_len_out = total_len;
+
+    return version == 4 && header_len >= IP_HLEN && total_len >= header_len &&
+           total_len <= (uint16_t) kMaxAllowedPacketLength;
+}
+
+// Drops leading bytes that cannot begin a valid IPv4 packet so the parser re-synchronizes on a
+// garbage stream. It scans a bounded window for the next structurally-plausible IPv4 start and
+// discards everything before it in one shot; if none is found it drops the inspected region while
+// keeping the trailing bytes that might still be an incomplete header. Forward progress (>= 1
+// byte) is always guaranteed, so no data pattern can stall the parser.
+static void packetstostreamDropResyncBytes(buffer_stream_t *stream)
+{
+    const size_t buffered = bufferstreamGetBufLen(stream);
+    const size_t window   = buffered < (size_t) kResyncScanWindow ? buffered : (size_t) kResyncScanWindow;
+
+    uint8_t scan[kResyncScanWindow];
+    bufferstreamViewBytesAt(stream, 0, scan, window);
+
+    size_t found = 0; // offset 0 is the head we already rejected
+    for (size_t i = 1; i + (size_t) IP_HLEN <= window; ++i)
+    {
+        uint16_t total_len;
+        if (packetstostreamIpv4HeaderLooksValid(scan + i, &total_len))
+        {
+            found = i;
+            break;
+        }
+    }
+
+    const size_t drop = (found > 0) ? found : (window - ((size_t) IP_HLEN - 1));
+
+    sbuf_t *dropped = bufferstreamReadExact(stream, drop);
+    bufferpoolReuseBuffer(stream->pool, dropped);
+}
+
+// Validates an outgoing packet on the framing path. These adapters are IPv4-only, so non-IPv4
+// (including IPv6) payloads are dropped. The IPv4 total length must also match the buffer length,
+// otherwise forwarding it would desynchronize the size-based extractor on the peer.
+bool packetstostreamIsForwardableIpv4Packet(const sbuf_t *packet)
+{
+    const uint32_t len = sbufGetLength(packet);
+
+    if (UNLIKELY(len < IP_HLEN || len > (uint32_t) kMaxAllowedPacketLength))
+    {
+        return false;
+    }
+
+    const struct ip_hdr *iphdr = (const struct ip_hdr *) sbufGetRawPtr(packet);
+
+    if (UNLIKELY(IPH_V(iphdr) != 4))
+    {
+        return false;
+    }
+
+    return LIKELY(lwip_ntohs(IPH_LEN(iphdr)) == (uint16_t) len);
+}
+
+// Extracts exactly one IPv4 packet from the stream using the IPv4 total-length field as the frame
+// size. Garbage is tolerated: a structurally-invalid head triggers re-synchronization, and a head
+// that merely looks valid is trusted (worst case forwards a garbage-sized packet until the stream
+// happens to realign). The stream is never trusted enough to read out of bounds or stall.
 bool packetstostreamTryReadIPv4Packet(buffer_stream_t *stream, sbuf_t **packet_out)
 {
     assert(packet_out != NULL);
     *packet_out = NULL;
 
-    if (bufferstreamGetBufLen(stream) < kHeaderSize + 1)
+    while (true)
     {
-        return false;
+        const size_t buffered = bufferstreamGetBufLen(stream);
+
+        // Need a full minimum IPv4 header before any size field can be trusted.
+        if (buffered < (size_t) IP_HLEN)
+        {
+            return false;
+        }
+
+        uint8_t header[IP_HLEN];
+        bufferstreamViewBytesAt(stream, 0, header, IP_HLEN);
+
+        uint16_t total_len;
+        if (LIKELY(packetstostreamIpv4HeaderLooksValid(header, &total_len)))
+        {
+            if (buffered < (size_t) total_len)
+            {
+                // Valid head, but the rest of the packet has not arrived yet.
+                return false;
+            }
+
+            *packet_out = bufferstreamReadExact(stream, total_len);
+            return true;
+        }
+
+        // IPv6 / garbage / inconsistent head: re-synchronize and retry.
+        packetstostreamDropResyncBytes(stream);
     }
-
-    uint8_t packet_first_bytes[kHeaderSize];
-    bufferstreamViewBytesAt(stream, 0, packet_first_bytes, kHeaderSize);
-
-    uint16_t total_packet_size_network;
-    sbufByteCopy(&total_packet_size_network, packet_first_bytes, (uint32_t) sizeof(total_packet_size_network));
-    uint16_t total_packet_size = ntohs(total_packet_size_network);
-
-    if (total_packet_size < 1 ||
-        ((uint32_t) (total_packet_size + kHeaderSize)) > (uint32_t) bufferstreamGetBufLen(stream))
-    {
-        return false;
-    }
-
-    // Read the complete packet (header + payload)
-    *packet_out = bufferstreamReadExact(stream, kHeaderSize + total_packet_size);
-    sbufShiftRight(*packet_out, kHeaderSize);
-
-    return true;
 }
 
 void packetstostreamScheduleRecreateOutputLine(tunnel_t *t, line_t *packet_line, packetstostream_lstate_t *ls)

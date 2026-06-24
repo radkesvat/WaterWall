@@ -2,20 +2,22 @@
 
 `PacketsToStream` adapts a packet-oriented side of the chain to a stream-oriented side.
 
-The current implementation frames each packet by adding a **2-byte length prefix** (network byte order / big-endian), then sends that framed data over a normal stream line.
+The current implementation is **IPv4-only**. It does not add any framing header: each outgoing IPv4 packet
+is written to the stream as-is, and the on-wire format is a raw concatenation of IPv4 packets. Packet
+boundaries are recovered from each packet's **IPv4 total-length field**, so no length prefix is needed.
 
-On the reverse path, it reads the same 2-byte length prefix and reconstructs packet boundaries.
+Non-IPv4 payloads (including IPv6) are dropped in both directions.
 
 ## What It Does
 
 - Accepts packet payload from the previous side.
 - Creates and maintains one stream-facing line per worker toward the next node.
-- For each outgoing packet, prepends a 2-byte packet size field.
-- Buffers return stream data and extracts complete framed packets.
+- For each outgoing packet, validates it is a self-consistent IPv4 packet and forwards it raw (IPv6 is dropped).
+- Buffers return stream data and extracts complete IPv4 packets using the IPv4 total-length field.
 - Sends each reconstructed packet back to the previous side.
 - Recreates the stream-facing line if that line is closed.
 
-This tunnel is a packet-to-stream adapter based on explicit length framing, not IPv4 header parsing.
+This tunnel is a packet-to-stream adapter based on IPv4 header parsing, not explicit length framing.
 
 ## Typical Placement
 
@@ -30,7 +32,7 @@ A common layout is:
 - `server1`: `TunDevice` -> `PacketsToStream` -> `TcpConnector`
 - `server2`: `TcpListener` -> `StreamToPackets` -> `TunDevice`
 
-This works because `PacketsToStream` and `StreamToPackets` use the same 2-byte framing format.
+This works because `PacketsToStream` and `StreamToPackets` use the same IPv4-header-based, headerless format.
 
 ## Configuration Example
 
@@ -85,7 +87,12 @@ that `PacketsToStream` receives from the packet side are not validated before fr
 
 Supported values:
 
-- `"none"`: default. No packet validation is performed.
+- `"none"`: default. No *configurable* validation is performed, but the size-based extractor still applies
+  unconditional, lighter-than-`loose` structural checks before treating bytes as a packet: the head must be IPv4
+  (version `4`), the IPv4 header length must be at least the minimum, and the IPv4 total length must be
+  self-consistent (`>= header length`) and within the pipeline packet bound. These checks only decide how many
+  bytes a packet consumes; they never reject a packet that passes them, so garbage that happens to look like a
+  valid IPv4 header is still forwarded (see Garbage Resilience).
 - `"loose"`: drops non-IPv4 packets and malformed IPv4 packets. Checks include minimum IPv4 header size, version,
   IPv4 header length, and IPv4 total length matching the received frame payload length.
 - `"hard"`: applies `loose` checks, verifies the IPv4 header checksum, and verifies TCP, UDP, and ICMP checksums for
@@ -104,7 +111,7 @@ reason.
 
 `IpManipulator` tricks such as `carry-original-tcp-flags` and source/destination port ghosting append bytes by increasing the IPv4
 total-length field. Chained tricks are therefore valid as long as each transformed packet's IPv4 total length matches the
-framed packet length and any requested checksum recalculation has happened before validation.
+actual packet length on the wire and any requested checksum recalculation has happened before validation.
 
 For fragmented IPv4 packets in `"hard"` mode, the IPv4 header checksum is verified. TCP/UDP/ICMP checksums are skipped
 for fragments because transport checksums can only be fully verified after reassembly.
@@ -133,12 +140,11 @@ From the packet side, this tunnel behaves like a packet-preserving adapter.
 
 From the next side, it behaves like a normal line carrying framed bytes.
 
-### Framing format
+### Wire format
 
-Each packet is encoded as:
+There is no framing header. Each packet is written to the stream as a raw IPv4 packet:
 
-- 2 bytes: packet length (`uint16`, network byte order)
-- N bytes: raw packet payload
+- N bytes: the IPv4 packet, whose own total-length field is `N`
 
 Maximum packet size accepted by this node is limited by `kMaxAllowedPacketLength`.
 
@@ -148,20 +154,31 @@ Before sending packet payload to the stream side:
 
 - if `line->recalculate_checksum` is enabled and payload is IPv4,
 - full packet checksum is recalculated,
-- then normal framing is applied.
+- then the packet is forwarded raw if it is a self-consistent IPv4 packet (IPv6/malformed is dropped).
 
-### Frame decoding on return path
+### Packet decoding on return path
 
 Return traffic from the next side is buffered in a read stream.
 
 The tunnel then:
 
-- waits for at least 2 bytes
-- reads framed packet length
-- waits until the whole frame (`2 + length`) is available
+- waits for at least a full minimum IPv4 header
+- reads the IPv4 total-length field
+- waits until the whole packet (`total length`) is available
 - emits one packet back to the previous side
 
-Packet boundary recovery is based on this 2-byte prefix.
+Packet boundary recovery is based on the IPv4 total-length field.
+
+### Garbage Resilience
+
+The decoder never trusts the stream. The worst a hostile or corrupted stream can do is make the decoder read
+mis-sized "packets" and forward garbage until the byte stream happens to realign on a real IPv4 header; from that
+point correct packets are read again. No input pattern can crash the node, read out of bounds, or stall it:
+
+- a head that is not a structurally-valid IPv4 header causes the decoder to resynchronize, discarding bytes until
+  the next plausible IPv4 start
+- a head that looks like a valid IPv4 header is trusted for its declared size only
+- forward progress of at least one byte is guaranteed on every step
 
 ### Pause and resume behavior
 
@@ -192,9 +209,11 @@ This keeps the packet-facing role stable while allowing automatic recreation of 
 
 When `sensitive-mode` is enabled:
 
-- every `interval-ms`, `PacketsToStream` sends a framed 5-byte `0xFF` heartbeat upstream on the current stream-facing line
+- every `interval-ms`, `PacketsToStream` sends a heartbeat upstream on the current stream-facing line. Because the
+  wire format is a raw concatenation of IPv4 packets, the heartbeat is itself a small, fully valid IPv4 packet
+  tagged with a reserved experimentation protocol number and a `0xFF` payload
 - it does not send another heartbeat while the previous one is still waiting for a reply
-- if a framed 5-byte `0xDD` reply comes back on that same active line, the heartbeat is considered successful and is not emitted to the packet side
+- if the matching `0xDD`-payload heartbeat reply comes back on that same active line, the heartbeat is considered successful and is not emitted to the packet side
 - if no reply arrives within `tolerance-ms`, the current stream-facing line is finished locally, discarded, and recreated using the same worker-local bridge state
 
 This heartbeat lives entirely on the stream side and does not close the shared worker packet line.
@@ -211,6 +230,7 @@ If buffered return data grows beyond that limit, the read stream is emptied.
 
 ## Notes And Caveats
 
-- This node is framing-based (`2-byte length + payload`), not IPv4-length based.
+- This node is IPv4-length based (no framing header), not `2-byte length + payload` based.
+- It is IPv4-only; IPv6 and non-IPv4 payloads are dropped in both directions.
 - Pair it with `StreamToPackets` on the other side to restore packet boundaries.
 - Upstream `est`, `pause`, `resume`, and `finish`, plus downstream `init`, are not part of the intended normal callback path for this tunnel.

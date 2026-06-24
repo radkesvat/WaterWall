@@ -5,7 +5,7 @@
 void streamtopacketsLinestateInitialize(streamtopackets_lstate_t *ls, buffer_pool_t *pool)
 {
     *ls = (streamtopackets_lstate_t) {
-        .line = NULL, .read_stream = bufferstreamCreate(pool, kHeaderSize), .paused = false};
+        .line = NULL, .read_stream = bufferstreamCreate(pool, 0), .paused = false};
 }
 
 void streamtopacketsLinestateReset(streamtopackets_lstate_t *ls)

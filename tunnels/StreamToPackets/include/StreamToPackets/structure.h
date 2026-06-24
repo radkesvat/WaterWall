@@ -28,8 +28,10 @@ enum
     kTunnelStateSize      = sizeof(streamtopackets_tstate_t),
     kLineStateSize        = sizeof(streamtopackets_lstate_t),
     kMaxBufferSize        = 65536 * 2, // Maximum buffer size for reading data packets
-    kHeaderSize           = 2,         // add 2 bytes to packet to store real size
     kSensitivePayloadSize = 5,
+    kHeartbeatPacketSize  = IP_HLEN + kSensitivePayloadSize, // synthetic IPv4 heartbeat packet length
+    kHeartbeatProtocol    = 0xFD, // RFC 3692 experimentation protocol used to tag heartbeat packets
+    kResyncScanWindow     = 256,  // bytes inspected while re-synchronizing after garbage
     kSensitivePingByte    = 0xFF,
     kSensitivePongByte    = 0xDD
 };
@@ -64,6 +66,7 @@ void streamtopacketsLinestateReset(streamtopackets_lstate_t *ls);
 
 bool streamtopacketsReadStreamIsOverflowed(buffer_stream_t *read_stream);
 bool streamtopacketsTryReadIPv4Packet(buffer_stream_t *stream, sbuf_t **packet_out);
+bool streamtopacketsIsForwardableIpv4Packet(const sbuf_t *packet);
 bool streamtopacketsFrameMatchesFillByte(const sbuf_t *packet, uint8_t fill_byte);
 bool streamtopacketsValidatePacket(streamtopackets_packet_validation_level_t level, sbuf_t *packet,
                                    const char *direction);

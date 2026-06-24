@@ -17,14 +17,14 @@ void packetstostreamTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     packetstostreamRecalculateChecksumIfRequested(l, buf);
 
-    uint32_t packet_length = sbufGetLength(buf);
-
-    // safely cast to uint16_t, since kMaxAllowedPacketLength is lower than 65536
-    uint16_t packet_length_network = htons(packet_length);
-
-    sbufShiftLeft(buf, sizeof(uint16_t));
-    // cant gurantee the alignment of the buffer, so we use unaligned write
-    sbufWriteUnAlignedUI16(buf, packet_length_network);
+    // The wire format is now a raw concatenation of IPv4 packets; the peer recovers boundaries
+    // from each packet's IPv4 total-length field. Drop anything that is not a self-consistent
+    // IPv4 packet (this also drops IPv6) so we never feed the peer unframable bytes.
+    if (UNLIKELY(! packetstostreamIsForwardableIpv4Packet(buf)))
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
 
     tunnelNextUpStreamPayload(t, stream_line, buf);
 }

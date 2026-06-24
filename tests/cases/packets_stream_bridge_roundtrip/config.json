@@ -5,7 +5,13 @@
       "name": "tester-client",
       "type": "TesterClient",
       "settings": {
-        "packet-mode": true
+        "packet-mode": true,
+        "packet-ipv4": {
+          "source-ip": "10.90.0.1",
+          "dest-ip": "10.90.0.2",
+          "transport": "tcp",
+          "ttl": 64
+        }
       },
       "next": "packets-to-stream"
     },
@@ -23,7 +29,13 @@
       "name": "tester-server",
       "type": "TesterServer",
       "settings": {
-        "packet-mode": true
+        "packet-mode": true,
+        "packet-ipv4": {
+          "source-ip": "10.90.0.1",
+          "dest-ip": "10.90.0.2",
+          "transport": "tcp",
+          "ttl": 64
+        }
       }
     }
   ]
