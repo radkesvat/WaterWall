@@ -70,6 +70,16 @@ static void vlessserverBindFallbackTarget(tunnel_t *t, tunnel_chain_t *chain)
     {
         target->onChain(target, chain);
     }
+
+    // The fallback target may insert internal tunnels in front of itself while
+    // chaining (e.g. a connector's domain setup + DomainResolver); call the branch
+    // entry bound directly below us, not the raw instance.
+    ts->fallback_tunnel = tunnelGetBranchEntry(t, target);
+    if (ts->fallback_tunnel == NULL)
+    {
+        LOGF("VlessServer: fallback target node \"%s\" is not reachable from VlessServer", target->node->name);
+        terminateProgram(1);
+    }
 }
 
 void vlessserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)

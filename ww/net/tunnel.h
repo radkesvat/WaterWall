@@ -154,6 +154,30 @@ void tunnelBindDown(tunnel_t *from, tunnel_t *to);
 void tunnelBindUp(tunnel_t *from, tunnel_t *to);
 
 /**
+ * @brief Resolves the callable upstream entry of a branch bound below @p owner.
+ *
+ * When a tunnel binds another node below itself (a fallback, route target,
+ * destination, or helper branch) and later drives it directly through
+ * tunnelUpStream*() / tunnelDownStream*(), it must call the branch *entry*, not
+ * the raw node instance it was given. A target may insert internal tunnels in
+ * front of itself while chaining (for example a connector's domain-setup +
+ * DomainResolver pair), in which case the real entry is the head that ends up
+ * bound directly below @p owner.
+ *
+ * This walks @p target's prev-links until it reaches the tunnel whose prev is
+ * @p owner. For a target that inserts nothing, @p target itself is returned.
+ *
+ * Must be called only after @p target has been chained (so any internal tunnels
+ * are already inserted and prev-linked back toward @p owner).
+ *
+ * @param owner  The tunnel that bound @p target below itself.
+ * @param target The raw bound node instance.
+ * @return The branch entry tunnel, or NULL if @p target is not reachable from
+ *         @p owner.
+ */
+tunnel_t *tunnelGetBranchEntry(tunnel_t *owner, tunnel_t *target);
+
+/**
  * @brief Default upstream initialization function.
  *
  * @param self Pointer to the tunnel.

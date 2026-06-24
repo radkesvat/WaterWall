@@ -30,8 +30,6 @@ void realityserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         terminateProgram(1);
     }
 
-    ts->destination_tunnel = destination;
-
     if (destination->prev == NULL)
     {
         tunnelBindDown(t, destination);
@@ -48,4 +46,17 @@ void realityserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     {
         destination->onChain(destination, chain);
     }
+
+    // Resolve the callable upstream entry after the destination has been chained:
+    // it is the branch head bound directly below us, which differs from the raw
+    // destination instance when that adapter inserts internal tunnels in front of
+    // itself.
+    tunnel_t *entry = tunnelGetBranchEntry(t, destination);
+    if (entry == NULL)
+    {
+        LOGF("RealityServer: destination node \"%s\" is not reachable from RealityServer", destination->node->name);
+        terminateProgram(1);
+    }
+
+    ts->destination_tunnel = entry;
 }

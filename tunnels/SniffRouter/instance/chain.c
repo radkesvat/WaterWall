@@ -56,6 +56,16 @@ static void sniffrouterBindRouteTarget(tunnel_t *t, tunnel_chain_t *chain, sniff
     {
         target->onChain(target, chain);
     }
+
+    // The route target may insert internal tunnels in front of itself while
+    // chaining (e.g. a connector's domain setup + DomainResolver); route to the
+    // branch entry bound directly below us, not the raw instance.
+    route->tunnel = tunnelGetBranchEntry(t, target);
+    if (route->tunnel == NULL)
+    {
+        LOGF("SniffRouter: route target node \"%s\" is not reachable from the router", target->node->name);
+        terminateProgram(1);
+    }
 }
 
 void sniffrouterTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)

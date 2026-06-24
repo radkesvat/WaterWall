@@ -49,25 +49,9 @@ static void routerInsertDomainResolverBeforeSelf(tunnel_t *t, tunnel_chain_t *ch
     tunnelchainInsert(chain, resolver);
 }
 
-static tunnel_t *routerFindRouteEntry(tunnel_t *router, tunnel_t *target)
-{
-    tunnel_t *entry = target;
-    for (uint16_t i = 0; i < kMaxChainLen && entry != NULL; ++i)
-    {
-        if (entry->prev == router)
-        {
-            return entry;
-        }
-
-        entry = entry->prev;
-    }
-
-    return NULL;
-}
-
 static void routerSetRuleTargetEntry(tunnel_t *t, router_rule_t *rule, tunnel_t *target)
 {
-    tunnel_t *entry = routerFindRouteEntry(t, target);
+    tunnel_t *entry = tunnelGetBranchEntry(t, target);
     if (entry == NULL)
     {
         LOGF("Router: rule target node \"%s\" is not reachable from the router", target->node->name);

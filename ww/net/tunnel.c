@@ -29,6 +29,27 @@ void tunnelBind(tunnel_t *from, tunnel_t *to)
     tunnelBindDown(from, to);
 }
 
+// Resolves the callable upstream entry of a branch bound below `owner`.
+// A target may insert internal tunnels in front of itself while chaining, so the
+// real entry is the head bound directly below `owner`. Walk target's prev-links
+// until the tunnel whose prev is `owner` is found; a target that inserts nothing
+// returns itself. Returns NULL if target is not reachable from owner.
+tunnel_t *tunnelGetBranchEntry(tunnel_t *owner, tunnel_t *target)
+{
+    tunnel_t *entry = target;
+    for (uint16_t i = 0; i < kMaxChainLen && entry != NULL; ++i)
+    {
+        if (entry->prev == owner)
+        {
+            return entry;
+        }
+
+        entry = entry->prev;
+    }
+
+    return NULL;
+}
+
 // Default upstream initialization function
 void tunnelDefaultUpStreamInit(tunnel_t *self, line_t *line)
 {

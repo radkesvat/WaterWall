@@ -191,4 +191,36 @@ void ipmanipulatorOnChain(tunnel_t *t, tunnel_chain_t *chain)
             real_fin_upstream_tunnel->onChain(real_fin_upstream_tunnel, chain);
         }
     }
+
+    // Each helper upstream may insert internal tunnels in front of itself while
+    // chaining (e.g. a connector's domain setup + DomainResolver); drive the branch
+    // entry bound directly below us, not the raw instance.
+    if (real_sni_upstream_tunnel != NULL)
+    {
+        state->trick_real_sni_upstream_tunnel = tunnelGetBranchEntry(t, real_sni_upstream_tunnel);
+        if (state->trick_real_sni_upstream_tunnel == NULL)
+        {
+            LOGF("IpManipulator: real-sni-upstream node is not reachable from IpManipulator");
+            terminateProgram(1);
+        }
+    }
+    if (overlap_sni_server_hello_upstream_tunnel != NULL)
+    {
+        state->trick_overlap_sni_server_hello_upstream_tunnel =
+            tunnelGetBranchEntry(t, overlap_sni_server_hello_upstream_tunnel);
+        if (state->trick_overlap_sni_server_hello_upstream_tunnel == NULL)
+        {
+            LOGF("IpManipulator: crafted-server-hello-upstream node is not reachable from IpManipulator");
+            terminateProgram(1);
+        }
+    }
+    if (real_fin_upstream_tunnel != NULL)
+    {
+        state->trick_real_fin_upstream_tunnel = tunnelGetBranchEntry(t, real_fin_upstream_tunnel);
+        if (state->trick_real_fin_upstream_tunnel == NULL)
+        {
+            LOGF("IpManipulator: real-fin-upstream node is not reachable from IpManipulator");
+            terminateProgram(1);
+        }
+    }
 }
