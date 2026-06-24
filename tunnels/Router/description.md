@@ -65,6 +65,10 @@ missing that:
 
 ## Lifecycle: how a connection is routed
 
+If `resolve-domains` is enabled, an internal `DomainResolver` runs before step 1
+and forwards `Init` to Router only after the original destination is either
+already usable or DNS resolution has succeeded.
+
 1. Upstream `Init` initializes only the router's own per-line state and clears any
    stale optional routing metadata on the destination. **No branch is initialized
    yet.**
@@ -94,6 +98,7 @@ object:
 | key | type | required | description |
 |-----|------|----------|-------------|
 | `rules` | array | no | ordered list of routing rule objects (see [Rules](#rules)) |
+| `resolve-domains` | boolean | no | default `false`. Resolve an unresolved domain destination before Router classifies the first payload |
 | `sniffing` | array | no | domain-sniffing methods: `http1`, `tls`. Missing or empty disables domain sniffing |
 | `sniff-even-if-domain-is-already-provided` | boolean | no | default `false`. When `false`, Router will not sniff or overwrite a destination that already has `dest_ctx.domain` |
 | `geoip-db-path` | string | only with `geoip:` tokens | path to a MaxMind country database used by `geoip:<cc>` |
@@ -102,6 +107,21 @@ object:
 A `Router` with no `rules` still sends every connection to `next` (a warning is
 logged at startup); if `sniffing` is enabled it may first inspect the initial
 payload to fill `dest_ctx.domain`.
+
+## Optional DNS resolution before routing
+
+When `resolve-domains` is `true`, Router creates an internal `DomainResolver`
+before itself in the chain. That resolver receives upstream `Init` first and
+uses the core DNS strategy to resolve `dest_ctx` only when the destination is an
+unresolved domain. Router's own `Init`, first-payload buffering, sniffing, and
+rule classification run only after that resolution succeeds.
+
+The resolver deliberately does nothing for destinations that are already
+IP-typed or already marked domain-resolved. Because it runs before Router's
+Host/SNI sniffing, it also does not re-resolve sniffed domains. If a line already
+has an IP destination, Router may still store a sniffed Host/SNI domain as
+metadata for `destination-domain` matching, but the original IP remains the
+connection endpoint.
 
 ## Rules
 

@@ -48,7 +48,7 @@ target_include_directories(Router PRIVATE
 target_include_directories(Router PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(Router PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Router)
 
-target_link_libraries(Router PUBLIC ww)
+target_link_libraries(Router PUBLIC ww DomainResolver)
 if(TARGET maxminddb::maxminddb)
     get_target_property(ROUTER_MAXMIND_REAL_TARGET maxminddb::maxminddb ALIASED_TARGET)
     if(ROUTER_MAXMIND_REAL_TARGET)

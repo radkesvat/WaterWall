@@ -1,6 +1,88 @@
 #include "structure.h"
 
+#include "DomainResolver/interface.h"
+
 #include "loggers/network_logger.h"
+
+static char *routerMakeChildName(const node_t *node, const char *suffix)
+{
+    const char *base = node->name != NULL ? node->name : "Router";
+    return stringConcat(base, suffix);
+}
+
+static bool routerConfigureDomainResolverNode(node_t *child, node_t template_node, const node_t *owner)
+{
+    *child = template_node;
+
+    child->name = routerMakeChildName(owner, ".domain-resolver");
+    if (child->name == NULL)
+    {
+        return false;
+    }
+
+    child->hash_name           = calcHashBytes(child->name, stringLength(child->name));
+    child->next                = NULL;
+    child->hash_next           = 0;
+    child->version             = owner->version;
+    child->flags               = kNodeFlagNone;
+    child->node_json           = owner->node_json;
+    child->node_settings_json  = NULL;
+    child->node_manager_config = owner->node_manager_config;
+    child->instance            = NULL;
+    return true;
+}
+
+static bool routerLoadResolveDomains(router_tstate_t *ts, const cJSON *settings)
+{
+    ts->resolve_domains = false;
+
+    if (settings == NULL)
+    {
+        return true;
+    }
+
+    const cJSON *resolve_domains = cJSON_GetObjectItemCaseSensitive(settings, "resolve-domains");
+    if (resolve_domains == NULL)
+    {
+        return true;
+    }
+
+    if (! cJSON_IsBool(resolve_domains))
+    {
+        LOGF("JSON Error: Router->settings->resolve-domains (boolean field) : expected a boolean");
+        return false;
+    }
+
+    ts->resolve_domains = cJSON_IsTrue(resolve_domains);
+    return true;
+}
+
+static bool routerCreateInternalDomainResolver(tunnel_t *t, node_t *node)
+{
+    router_tstate_t *ts = tunnelGetState(t);
+
+    if (! ts->resolve_domains)
+    {
+        return true;
+    }
+
+    if (! routerConfigureDomainResolverNode(&ts->domain_resolver_node, nodeDomainResolverGet(), node))
+    {
+        LOGF("Router: failed to configure internal DomainResolver node");
+        return false;
+    }
+
+    ts->domain_resolver_tunnel = ts->domain_resolver_node.createHandle(&ts->domain_resolver_node);
+    if (ts->domain_resolver_tunnel == NULL)
+    {
+        LOGF("Router: failed to create internal DomainResolver");
+        return false;
+    }
+
+    domainresolverTunnelAllowMissingDestination(ts->domain_resolver_tunnel, true);
+    ts->domain_resolver_node.instance = ts->domain_resolver_tunnel;
+    return true;
+}
 
 tunnel_t *routerTunnelCreate(node_t *node)
 {
@@ -43,6 +125,18 @@ tunnel_t *routerTunnelCreate(node_t *node)
     }
 
     router_tstate_t *ts = tunnelGetState(t);
+    if (! routerLoadResolveDomains(ts, settings))
+    {
+        routerTunnelDestroy(t);
+        return NULL;
+    }
+
+    if (! routerCreateInternalDomainResolver(t, node))
+    {
+        routerTunnelDestroy(t);
+        return NULL;
+    }
+
     if (! routerLoadSniffing(ts, settings))
     {
         routerTunnelDestroy(t);

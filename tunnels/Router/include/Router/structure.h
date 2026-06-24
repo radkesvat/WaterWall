@@ -299,6 +299,8 @@ typedef struct router_rule_s
 
 typedef struct router_tstate_s
 {
+    node_t                         domain_resolver_node;
+    tunnel_t                      *domain_resolver_tunnel;
     router_rule_t                  *rules;
     uint32_t                        rules_count;
     char                           *geoip_db_path;
@@ -309,6 +311,7 @@ typedef struct router_tstate_s
     uint32_t                        geosite_lists_count;
     uint8_t                         sniffing_modes;
     bool                            sniff_even_if_domain_is_already_provided;
+    bool                            resolve_domains;
     bool                            needs_http_upgrade_attribute;
     uint32_t                        needed_protocols;
 } router_tstate_t;

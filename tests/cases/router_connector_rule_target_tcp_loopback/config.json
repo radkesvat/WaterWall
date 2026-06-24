@@ -1,0 +1,87 @@
+{
+  "name": "router-connector-rule-target-tcp-loopback",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "chunk-count": 3
+      },
+      "next": "ingress-connector"
+    },
+    {
+      "name": "router",
+      "type": "Router",
+      "settings": {
+        "resolve-domains": false,
+        "rules": [
+          {
+            "source-port": 43100,
+            "target": "target-connector"
+          }
+        ]
+      },
+      "next": "default-connector"
+    },
+    {
+      "name": "ingress-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43100,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "ingress-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43100,
+        "nodelay": true
+      },
+      "next": "router"
+    },
+    {
+      "name": "target-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43101,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "default-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "target-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43101,
+        "nodelay": true
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "chunk-count": 3
+      }
+    }
+  ]
+}
