@@ -462,11 +462,32 @@ static void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip
 void wireguarddeviceHandleTransportPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     wgd_tstate_t *state = tunnelGetState(t);
+    line_t       *line  = wireguarddeviceEnsureTransportLine(state, getWID());
+
+    if (line == NULL)
+    {
+        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        return;
+    }
+
+    address_context_t *src_ctx = lineGetSourceAddressContext(l);
+    if (! addresscontextIsIpType(src_ctx))
+    {
+        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        return;
+    }
+
+    if (line != l)
+    {
+        addresscontextSetIpPortProtocol(lineGetSourceAddressContext(line), &src_ctx->ip_address, src_ctx->port,
+                                        IP_PROTO_UDP);
+        lineGetRoutingContext(line)->local_listener_port = lineGetRoutingContext(l)->local_listener_port;
+    }
 
     wireguarddeviceStateLock(state);
 
-    wireguardifNetworkRx((wireguard_device_t *) tunnelGetState(t), buf, &l->routing_context.src_ctx.ip_address,
-                         l->routing_context.src_ctx.port);
+    wireguardifNetworkRx((wireguard_device_t *) tunnelGetState(t), buf, &line->routing_context.src_ctx.ip_address,
+                         line->routing_context.src_ctx.port);
 
     wireguarddeviceStateUnlock(state);
 }

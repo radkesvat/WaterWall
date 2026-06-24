@@ -13,6 +13,7 @@ void wireguarddeviceTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
 
     if (wid != 0)
     {
+        wireguarddeviceCloseTransportLine(t, wid);
         return;
     }
 
@@ -25,9 +26,11 @@ void wireguarddeviceTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
 
     if (timer == NULL)
     {
+        wireguarddeviceCloseTransportLine(t, wid);
         return;
     }
 
     weventSetUserData(timer, NULL);
     wtimerDelete(timer);
+    wireguarddeviceCloseTransportLine(t, wid);
 }

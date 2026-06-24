@@ -83,17 +83,141 @@ bool wireguarddeviceTransportSideIsNext(const wgd_tstate_t *state)
     return state->transport_side_is_next;
 }
 
-void wireguarddeviceForwardTransportPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf)
+static void wireguarddeviceTransportLineInit(tunnel_t *t, line_t *line)
 {
-    tunnel_t *tunnel = state->tunnel;
+    wgd_tstate_t *state = tunnelGetState(t);
 
     if (wireguarddeviceTransportSideIsNext(state))
     {
-        tunnelNextUpStreamPayload(tunnel, line, buf);
+        tunnelNextUpStreamInit(t, line);
         return;
     }
 
-    tunnelPrevDownStreamPayload(tunnel, line, buf);
+    tunnelPrevDownStreamInit(t, line);
+}
+
+line_t *wireguarddeviceEnsureTransportLine(wgd_tstate_t *state, wid_t wid)
+{
+    assert(state != NULL);
+    assert(wid == getWID());
+
+    tunnel_t       *tunnel = state->tunnel;
+    tunnel_chain_t *chain  = tunnelGetChain(tunnel);
+
+    if (state->transport_lines == NULL || chain == NULL || wid >= chain->workers_count)
+    {
+        return NULL;
+    }
+
+    line_t *line = state->transport_lines[wid];
+    if (line != NULL && lineIsAlive(line))
+    {
+        return line;
+    }
+
+    line = lineCreate(tunnelchainGetLinePools(chain), wid);
+    state->transport_lines[wid] = line;
+
+    lineLock(line);
+    wireguarddeviceTransportLineInit(tunnel, line);
+    if (! lineIsAlive(line))
+    {
+        state->transport_lines[wid] = NULL;
+        lineUnlock(line);
+        return NULL;
+    }
+    lineUnlock(line);
+
+    return line;
+}
+
+void wireguarddeviceCloseTransportLine(tunnel_t *t, wid_t wid)
+{
+    assert(wid == getWID());
+
+    wgd_tstate_t *state = tunnelGetState(t);
+
+    if (state->transport_lines == NULL)
+    {
+        return;
+    }
+
+    line_t *line = state->transport_lines[wid];
+    state->transport_lines[wid] = NULL;
+
+    if (line == NULL || ! lineIsAlive(line))
+    {
+        return;
+    }
+
+    lineLock(line);
+    if (wireguarddeviceTransportSideIsNext(state))
+    {
+        tunnelNextUpStreamFinish(t, line);
+    }
+    else
+    {
+        tunnelPrevDownStreamFinish(t, line);
+    }
+
+    if (lineIsAlive(line))
+    {
+        lineDestroy(line);
+    }
+    lineUnlock(line);
+}
+
+void wireguarddeviceHandleTransportLineFinish(tunnel_t *t, line_t *line)
+{
+    wgd_tstate_t   *state = tunnelGetState(t);
+    tunnel_chain_t *chain = tunnelGetChain(t);
+    wid_t           wid;
+
+    if (line == NULL || chain == NULL || state->transport_lines == NULL)
+    {
+        return;
+    }
+
+    wid = lineGetWID(line);
+    if (wid >= chain->workers_count || state->transport_lines[wid] != line)
+    {
+        return;
+    }
+
+    state->transport_lines[wid] = NULL;
+    if (lineIsAlive(line))
+    {
+        lineDestroy(line);
+    }
+}
+
+bool wireguarddeviceForwardTransportPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf)
+{
+    tunnel_t *tunnel = state->tunnel;
+    wid_t     wid    = lineGetWID(line);
+
+    lineLock(line);
+    if (wireguarddeviceTransportSideIsNext(state))
+    {
+        tunnelNextUpStreamPayload(tunnel, line, buf);
+    }
+    else
+    {
+        tunnelPrevDownStreamPayload(tunnel, line, buf);
+    }
+
+    if (! lineIsAlive(line))
+    {
+        if (state->transport_lines != NULL)
+        {
+            state->transport_lines[wid] = NULL;
+        }
+        lineUnlock(line);
+        return false;
+    }
+
+    lineUnlock(line);
+    return true;
 }
 
 void wireguarddeviceForwardInnerPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf)
@@ -170,28 +294,44 @@ err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_pee
     wgd_tstate_t *ts            = (wgd_tstate_t *) device;
     ip_addr_t     endpoint_ip   = peer->ip;
     uint16_t      endpoint_port = peer->port;
-    tunnel_t     *tunnel        = ts->tunnel;
-    line_t       *line          = tunnelchainGetWorkerPacketLine(tunnel->chain, getWID());
+    line_t       *line;
+    bool          sent;
 
-    addresscontextSetIpPort(&(line->routing_context.dest_ctx), &endpoint_ip, endpoint_port);
     wireguarddeviceStateUnlock(ts);
-    wireguarddeviceForwardTransportPacket(ts, line, q);
+    line = wireguarddeviceEnsureTransportLine(ts, getWID());
+    if (line == NULL)
+    {
+        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), q);
+        wireguarddeviceStateLock(ts);
+        return ERR_CONN;
+    }
+
+    addresscontextSetIpPortProtocol(lineGetDestinationAddressContext(line), &endpoint_ip, endpoint_port, IP_PROTO_UDP);
+    sent = wireguarddeviceForwardTransportPacket(ts, line, q);
     wireguarddeviceStateLock(ts);
-    return ERR_OK;
+    return sent ? ERR_OK : ERR_CONN;
     // return udpSendTo(device->udp_pcb, q, &peer->ip, peer->port);
 }
 
 err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, uint16_t port)
 {
-    wgd_tstate_t *ts     = (wgd_tstate_t *) device;
-    tunnel_t     *tunnel = ts->tunnel;
-    line_t       *line   = tunnelchainGetWorkerPacketLine(tunnel->chain, getWID());
+    wgd_tstate_t *ts = (wgd_tstate_t *) device;
+    line_t       *line;
+    bool          sent;
 
-    addresscontextSetIpPort(&(line->routing_context.dest_ctx), ipaddr, port);
     wireguarddeviceStateUnlock(ts);
-    wireguarddeviceForwardTransportPacket(ts, line, q);
+    line = wireguarddeviceEnsureTransportLine(ts, getWID());
+    if (line == NULL)
+    {
+        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), q);
+        wireguarddeviceStateLock(ts);
+        return ERR_CONN;
+    }
+
+    addresscontextSetIpPortProtocol(lineGetDestinationAddressContext(line), ipaddr, port, IP_PROTO_UDP);
+    sent = wireguarddeviceForwardTransportPacket(ts, line, q);
     wireguarddeviceStateLock(ts);
-    return ERR_OK;
+    return sent ? ERR_OK : ERR_CONN;
     // return udpSendTo(device->udp_pcb, q, ipaddr, port);
 }
 

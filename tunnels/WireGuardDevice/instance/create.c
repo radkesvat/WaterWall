@@ -95,9 +95,19 @@ static tunnel_t *createBaseTunnel(node_t *node)
         return NULL;
     }
 
-    t->fnInitD      = &wireguarddeviceTunnelDownStreamInit;
+    t->fnInitU      = &wireguarddeviceTunnelUpStreamInit;
+    t->fnEstU       = &wireguarddeviceTunnelUpStreamEst;
+    t->fnFinU       = &wireguarddeviceTunnelUpStreamFinish;
     t->fnPayloadU   = &wireguarddeviceTunnelUpStreamPayload;
+    t->fnPauseU     = &wireguarddeviceTunnelUpStreamPause;
+    t->fnResumeU    = &wireguarddeviceTunnelUpStreamResume;
+
+    t->fnInitD      = &wireguarddeviceTunnelDownStreamInit;
+    t->fnEstD       = &wireguarddeviceTunnelDownStreamEst;
+    t->fnFinD       = &wireguarddeviceTunnelDownStreamFinish;
     t->fnPayloadD   = &wireguarddeviceTunnelDownStreamPayload;
+    t->fnPauseD     = &wireguarddeviceTunnelDownStreamPause;
+    t->fnResumeD    = &wireguarddeviceTunnelDownStreamResume;
     t->onPrepare    = &wireguarddeviceTunnelOnPrepair;
     t->onStart      = &wireguarddeviceTunnelOnStart;
     t->onStop       = &wireguarddeviceTunnelOnStop;

@@ -39,6 +39,52 @@ static void wireguarddeviceQueueWorkerPacketInit(void *worker, void *arg1, void 
     }
 }
 
+static void wireguarddeviceQueueWorkerTransportLineInit(void *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    discard arg2;
+    discard arg3;
+
+    tunnel_t     *t     = arg1;
+    wgd_tstate_t *state = tunnelGetState(t);
+
+    if (wireguarddeviceEnsureTransportLine(state, getWID()) == NULL)
+    {
+        LOGF("WireGuardDevice: failed to initialize worker transport line");
+        terminateProgram(1);
+    }
+}
+
+static void wireguarddeviceEnsureTransportLineStorage(tunnel_t *t, wgd_tstate_t *state)
+{
+    tunnel_chain_t *tc = tunnelGetChain(t);
+
+    if (state->transport_lines != NULL)
+    {
+        return;
+    }
+
+    if (tc == NULL || tc->workers_count == 0)
+    {
+        LOGF("WireGuardDevice: transport line storage requires a finalized tunnel chain");
+        terminateProgram(1);
+    }
+
+    state->transport_lines = memoryAllocate(sizeof(*state->transport_lines) * tc->workers_count);
+    memorySet(state->transport_lines, 0, sizeof(*state->transport_lines) * tc->workers_count);
+}
+
+static void wireguarddeviceEnsureTransportLineInit(tunnel_t *t, wgd_tstate_t *state)
+{
+    tunnel_chain_t *tc = tunnelGetChain(t);
+
+    wireguarddeviceEnsureTransportLineStorage(t, state);
+    for (wid_t wi = 0; wi < tc->workers_count; ++wi)
+    {
+        sendWorkerMessageForceQueue(wi, wireguarddeviceQueueWorkerTransportLineInit, t, NULL, NULL);
+    }
+}
+
 static void wireguarddeviceEnsureInnerPacketInit(tunnel_t *t, wgd_tstate_t *state)
 {
     tunnel_chain_t *tc = tunnelGetChain(t);
@@ -65,6 +111,8 @@ static void wireguarddeviceEnsureInnerPacketInit(tunnel_t *t, wgd_tstate_t *stat
 void wireguarddeviceTunnelOnStart(tunnel_t *t)
 {
     wgd_tstate_t *state = tunnelGetState(t);
+
+    wireguarddeviceEnsureTransportLineInit(t, state);
 
     wireguard_device_t *device = (wireguard_device_t *) state;
     for (uint8_t i = 0; i < WIREGUARD_MAX_PEERS; i++)

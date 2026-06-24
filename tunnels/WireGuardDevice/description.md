@@ -2,7 +2,7 @@
 
 `WireGuardDevice` is Waterwall's in-chain WireGuard implementation.
 
-It is a pure packet tunnel created with `packettunnelCreate()`, so it does not create normal per-connection line state. Instead, it runs on the chain's worker packet lines and transforms packet payload between:
+It is a pure packet tunnel created with `packettunnelCreate()`, so it does not add per-line tunnel state of its own. Its inner packet side runs on the chain's worker packet lines, while its outer transport side uses one normal companion line per worker so transport-side nodes do not mistake WireGuard UDP messages for inner packet-line traffic. It transforms packet payload between:
 
 - inner IP packets on one side
 - raw WireGuard handshake / transport messages on the other side
@@ -190,7 +190,7 @@ When payload arrives from that side:
 - the destination IP is extracted from the inner packet
 - the peer is selected by longest-prefix `AllowedIPs` match
 - the packet is encrypted into a WireGuard transport message
-- the peer's current endpoint is written into the packet line destination routing context
+- the peer's current endpoint is written into the worker's transport companion line destination routing context
 - the resulting WireGuard message is forwarded toward `UdpStatelessSocket`
 
 If no peer matches the destination IP, the packet is dropped.
@@ -374,7 +374,8 @@ That layout is useful as a minimal reference when you want WireGuard transport o
 ## Notes And Caveats
 
 - This is a packet tunnel, not a connection tunnel.
-- It uses worker packet lines supplied by the chain and should not be treated like a closable per-connection adapter.
+- The inner side uses worker packet lines supplied by the chain and should not be treated like a closable per-connection adapter.
+- The outer WireGuard transport side uses normal worker-local companion lines owned by `WireGuardDevice`; those lines are not packet lines and are torn down by `WireGuardDevice`.
 - The tunnel itself does not add a UDP header; that belongs to `UdpStatelessSocket`.
 - Hostname endpoints are resolved once during startup, not continuously re-resolved later.
 - Keep the chain shape unambiguous by placing `UdpStatelessSocket` on only one side, or set `transport-direction` explicitly.
