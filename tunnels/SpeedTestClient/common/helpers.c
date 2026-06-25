@@ -769,6 +769,7 @@ static void speedtestclientHandleReport(tunnel_t *t, line_t *l, const speedtestc
 
 static void speedtestclientHandleFrame(tunnel_t *t, line_t *l, const speedtestclient_frame_t *frame)
 {
+    speedtestclient_tstate_t *state = tunnelGetState(t);
     speedtestclient_lstate_t *ls = lineGetState(l, t);
 
     if (frame->stream_id != ls->stream_id)
@@ -794,6 +795,10 @@ static void speedtestclientHandleFrame(tunnel_t *t, line_t *l, const speedtestcl
         speedtestclientHandleData(t, l, frame);
         return;
     case kSpeedTestClientFrameEnd:
+        if (state->mode == kSpeedTestClientModeUdp && ls->receiver_finished)
+        {
+            return;
+        }
         speedtestclientFinalizeReceiver(ls, frame);
         speedtestclientLogInterval(t, l, ls, true);
         speedtestclientMaybeComplete(t, l);

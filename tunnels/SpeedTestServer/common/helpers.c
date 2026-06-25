@@ -172,6 +172,19 @@ static bool speedtestserverFramePayloadLengthValid(tunnel_t *t, line_t *l, const
     }
 }
 
+static bool speedtestserverShouldIgnoreDuplicateUdpEnd(tunnel_t *t, line_t *l, const speedtestserver_frame_t *frame)
+{
+    speedtestserver_lstate_t *ls = lineGetState(l, t);
+
+    if (frame->type != kSpeedTestServerFrameEnd || frame->payload_len != 0 ||
+        (frame->flags & kSpeedTestServerFlagUdp) == 0)
+    {
+        return false;
+    }
+
+    return ! ls->hello_received || (ls->mode == kSpeedTestServerModeUdp && ls->receiver_finished);
+}
+
 static sbuf_t *speedtestserverAllocBuffer(line_t *l, uint32_t len)
 {
     buffer_pool_t *pool = lineGetBufferPool(l);
@@ -652,6 +665,11 @@ static void speedtestserverHandleEnd(tunnel_t *t, line_t *l, const speedtestserv
 {
     speedtestserver_lstate_t *ls = lineGetState(l, t);
 
+    if (ls->mode == kSpeedTestServerModeUdp && ls->receiver_finished)
+    {
+        return;
+    }
+
     if (frame->sequence > ls->expected_recv_sequence)
     {
         ls->receiver.lost_packets += frame->sequence - ls->expected_recv_sequence;
@@ -762,10 +780,18 @@ static bool speedtestserverProcessFrameBuffer(tunnel_t *t, line_t *l, sbuf_t *fr
 
     lineLock(l);
 
-    if (! speedtestserverReadHeader(sbufGetRawPtr(frame_buf), sbufGetLength(frame_buf), &frame) ||
-        ! speedtestserverFramePayloadLengthValid(t, l, &frame) ||
+    bool header_valid = speedtestserverReadHeader(sbufGetRawPtr(frame_buf), sbufGetLength(frame_buf), &frame);
+    if (! header_valid || ! speedtestserverFramePayloadLengthValid(t, l, &frame) ||
         sbufGetLength(frame_buf) < (size_t) kSpeedTestServerFrameHeaderSize + frame.payload_len)
     {
+        if (header_valid && speedtestserverShouldIgnoreDuplicateUdpEnd(t, l, &frame))
+        {
+            lineReuseBuffer(l, frame_buf);
+            bool alive = lineIsAlive(l);
+            lineUnlock(l);
+            return alive;
+        }
+
         lineReuseBuffer(l, frame_buf);
         speedtestserverFailLine(t, l, "received an invalid speed-test frame");
         bool alive = lineIsAlive(l);
