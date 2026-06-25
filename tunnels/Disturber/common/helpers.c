@@ -23,10 +23,10 @@ static LineTaskFnWithBuf disturberGetForwardPayloadFn(disturber_payload_directio
     return direction == kDisturberPayloadDirectionUpstream ? tunnelNextUpStreamPayload : tunnelPrevDownStreamPayload;
 }
 
-static LineTaskFnWithBuf disturberGetDelayedPayloadFn(disturber_payload_direction_e direction)
+static void disturberScheduleForwardPayload(tunnel_t *t, line_t *l, sbuf_t *buf,
+                                            disturber_payload_direction_e direction)
 {
-    return direction == kDisturberPayloadDirectionUpstream ? disturberTunnelUpStreamPayload
-                                                           : disturberTunnelDownStreamPayload;
+    lineScheduleTaskWithBuf(l, disturberGetForwardPayloadFn(direction), t, buf);
 }
 
 bool disturberIsWorkerPacketLine(tunnel_t *t, line_t *l)
@@ -87,17 +87,11 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
         return;
     }
 
+    sbuf_t *dup_buf = NULL;
     if (roll100(ts->chance_payload_duplication))
     {
         LOGD("Disturber: Duplicating %s payload (chance: %d%%)", dir_name, ts->chance_payload_duplication);
-        sbuf_t *dup_buf = sbufDuplicate(buf);
-
-        if (! withLineLockedWithBuf(l, forward, t, dup_buf))
-        {
-            // Line may already be destroyed here, so avoid line-bound reuse API.
-            reuseBuffer(buf);
-            return;
-        }
+        dup_buf = sbufDuplicate(buf);
     }
 
     if (roll100(ts->chance_payload_corruption))
@@ -126,20 +120,23 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
         sbuf_t *held_buf = dir_ls->held_payload;
         dir_ls->held_payload = NULL;
 
-        if (! withLineLockedWithBuf(l, forward, t, held_buf))
+        if (dup_buf != NULL)
         {
-            // Line may already be destroyed here, so avoid line-bound reuse API.
-            reuseBuffer(buf);
-            return;
+            disturberScheduleForwardPayload(t, l, dup_buf, direction);
         }
+        disturberScheduleForwardPayload(t, l, buf, direction);
 
-        forward(t, l, buf);
+        discard withLineLockedWithBuf(l, forward, t, held_buf);
         return;
     }
 
     if (roll100(ts->chance_payload_out_of_order))
     {
         dir_ls->held_payload = buf;
+        if (dup_buf != NULL)
+        {
+            disturberScheduleForwardPayload(t, l, dup_buf, direction);
+        }
         return;
     }
 
@@ -153,9 +150,11 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
         }
         int delay_ms = ts->delay_min_ms + ((int) fastRand() % delay_range);
         LOGD("Disturber: Delaying %s payload by %d ms (chance: %d%%)", dir_name, delay_ms, ts->chance_payload_delay);
-        lineLock(l);
-        lineScheduleDelayedTaskWithBuf(l, disturberGetDelayedPayloadFn(direction), delay_ms, t, buf);
-        lineUnlock(l);
+        lineScheduleDelayedTaskWithBuf(l, forward, delay_ms, t, buf);
+        if (dup_buf != NULL)
+        {
+            disturberScheduleForwardPayload(t, l, dup_buf, direction);
+        }
         return;
     }
 
@@ -165,7 +164,16 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
              ts->chance_connection_deadhang);
         dir_ls->is_deadhang = true;
         lineReuseBuffer(l, buf);
+        if (dup_buf != NULL)
+        {
+            disturberScheduleForwardPayload(t, l, dup_buf, direction);
+        }
         return;
+    }
+
+    if (dup_buf != NULL)
+    {
+        disturberScheduleForwardPayload(t, l, dup_buf, direction);
     }
 
     forward(t, l, buf);
