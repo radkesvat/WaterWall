@@ -27,7 +27,6 @@ struct logger_s
 {
     logger_handler handler;
     unsigned int   bufsize;
-    char          *buf;
 
     int  level;
     int  enable_color;
@@ -43,8 +42,9 @@ struct logger_s
     time_t             last_logfile_ts;
     int                can_write_cnt;
 
-    wmutex_t mutex_;       // protects format buffer/settings
-    wmutex_t write_mutex_; // protects file state
+    wmutex_t mutex_;         // protects logger settings (level/format/color/handler/bufsize)
+    wmutex_t handler_mutex_; // serializes sink/handler calls without blocking config or formatting
+    wmutex_t write_mutex_;   // protects file state
 };
 
 static bool loggerFilePathDisablesFile(const char *filepath)
@@ -77,7 +77,6 @@ static void initLogger(logger_t *logger)
 {
     logger->handler = NULL;
     logger->bufsize = DEFAULT_LOG_MAX_BUFSIZE;
-    logger->buf     = (char *) memoryAllocate(logger->bufsize);
 
     logger->level        = DEFAULT_LOG_LEVEL;
     logger->enable_color = 0;
@@ -94,6 +93,7 @@ static void initLogger(logger_t *logger)
     logger->last_logfile_ts = 0;
     logger->can_write_cnt   = -1;
     mutexInit(&logger->mutex_);
+    mutexInit(&logger->handler_mutex_);
     mutexInit(&logger->write_mutex_);
     loggerSetFile(logger, DEFAULT_LOG_FILE);
 }
@@ -136,11 +136,6 @@ void loggerDestroy(logger_t *logger)
     {
         mutexLock(&logger->mutex_);
         mutexLock(&logger->write_mutex_);
-        if (logger->buf)
-        {
-            memoryFree(logger->buf);
-            logger->buf = NULL;
-        }
         if (logger->fp_)
         {
             fclose(logger->fp_);
@@ -149,6 +144,7 @@ void loggerDestroy(logger_t *logger)
         mutexUnlock(&logger->write_mutex_);
         mutexUnlock(&logger->mutex_);
         mutexDestroy(&logger->write_mutex_);
+        mutexDestroy(&logger->handler_mutex_);
         mutexDestroy(&logger->mutex_);
         memoryFree(logger);
     }
@@ -286,19 +282,10 @@ void loggerSetMaxBufSIze(logger_t *logger, unsigned int bufsize)
         return;
     }
 
+    // loggerPrintVA() now renders into a per-call stack/heap buffer, so there is
+    // no shared render buffer to reallocate here; just record the new maximum.
     mutexLock(&logger->mutex_);
-    mutexLock(&logger->write_mutex_);
-    char *new_buf = (char *) memoryReAllocate(logger->buf, bufsize);
-    if (new_buf == NULL)
-    {
-        mutexUnlock(&logger->write_mutex_);
-        mutexUnlock(&logger->mutex_);
-        return;
-    }
-
     logger->bufsize = bufsize;
-    logger->buf     = new_buf;
-    mutexUnlock(&logger->write_mutex_);
     mutexUnlock(&logger->mutex_);
 }
 
@@ -726,6 +713,36 @@ static inline void loggerAppendMessageFormat(char *buf, int bufsize, int *len, c
     va_end(ap_copy);
 }
 
+/**
+ * @brief Pick a render buffer for one log line.
+ *
+ * Returns @p stack_buf (capacity DEFAULT_LOG_MAX_BUFSIZE) for the common case;
+ * heap-allocates only when a larger maximum line length is configured. On a
+ * failed heap allocation the size is clamped back to the stack capacity so the
+ * line is truncated rather than dropped.
+ *
+ * @param stack_buf Caller-owned stack buffer of DEFAULT_LOG_MAX_BUFSIZE bytes.
+ * @param bufsize In: configured max size. Out: effective buffer capacity.
+ * @param heap_out Out: heap pointer the caller must free, or NULL.
+ * @return Buffer to render into.
+ */
+static char *loggerAcquireRenderBuffer(char *stack_buf, int *bufsize, char **heap_out)
+{
+    *heap_out = NULL;
+    if (*bufsize > DEFAULT_LOG_MAX_BUFSIZE)
+    {
+        char *heap_buf = (char *) memoryAllocate((size_t) *bufsize);
+        if (heap_buf != NULL)
+        {
+            *heap_out = heap_buf;
+            return heap_buf;
+        }
+        // allocation failed: emit a truncated line from the stack buffer
+        *bufsize = DEFAULT_LOG_MAX_BUFSIZE;
+    }
+    return stack_buf;
+}
+
 int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
 {
     if (logger == NULL || fmt == NULL)
@@ -733,7 +750,8 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
         return -1;
     }
 
-    // lock logger->buf
+    // Snapshot logger settings under mutex_, then render and emit the line
+    // outside of it so stdout/stderr/file writes never hold mutex_.
     mutexLock(&logger->mutex_);
 
     if (level < logger->level)
@@ -741,6 +759,22 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
         mutexUnlock(&logger->mutex_);
         return -10;
     }
+
+    logger_handler handler      = logger->handler;
+    int            bufsize      = (int) logger->bufsize;
+    int            enable_color = logger->enable_color;
+    char           format[64];
+    stringCopyN(format, logger->format, sizeof(format));
+    mutexUnlock(&logger->mutex_);
+
+    if (bufsize < 2)
+    {
+        return -1;
+    }
+
+    char  stack_buf[DEFAULT_LOG_MAX_BUFSIZE];
+    char *heap_buf = NULL;
+    char *buf      = loggerAcquireRenderBuffer(stack_buf, &bufsize, &heap_buf);
 
     int year, month, day, hour, min, sec, us;
 #ifdef _WIN32
@@ -790,21 +824,14 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
     }
 #undef XXX
 
-    char *buf     = logger->buf;
-    int   bufsize = (int)logger->bufsize;
-    int   len     = 0;
-    if (buf == NULL || bufsize < 2)
-    {
-        mutexUnlock(&logger->mutex_);
-        return -1;
-    }
+    int len = 0;
 
-    if (logger->enable_color)
+    if (enable_color)
     {
         loggerAppendFormat(buf, bufsize, &len, "%s", pcolor);
     }
 
-    const char *p = logger->format;
+    const char *p = format;
     if (*p)
     {
         while (*p)
@@ -880,23 +907,26 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
         loggerAppendMessageFormat(buf, bufsize, &len, fmt, ap);
     }
 
-    if (logger->enable_color && len < bufsize)
+    if (enable_color && len < bufsize)
     {
         loggerAppendFormat(buf, bufsize, &len, "%s", CLR_CLR);
     }
 
     loggerAppendChar(buf, bufsize, &len, '\n');
 
-    if (logger->handler)
+    if (handler)
     {
-        logger->handler(level, buf, len);
+        // serialize sink calls so concurrent log lines are not interleaved,
+        // without blocking logger configuration or formatting on mutex_.
+        mutexLock(&logger->handler_mutex_);
+        handler(level, buf, len);
+        mutexUnlock(&logger->handler_mutex_);
     }
-    // else
-    // {
-    //     loggerWrite(logger, buf, len);
-    // }
 
-    mutexUnlock(&logger->mutex_);
+    if (heap_buf != NULL)
+    {
+        memoryFree(heap_buf);
+    }
     return len;
 }
 

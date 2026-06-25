@@ -1,11 +1,40 @@
 /*
  * Signal handling runtime and process termination dispatch.
+ *
+ * The real shutdown work (running registered exit handlers, joining worker
+ * threads and tearing down the global state) always runs on Waterwall's main
+ * worker thread (worker 0). Signal handlers and the Windows console handler
+ * only *request* shutdown; they never touch locks owned by the rest of the
+ * program:
+ *   - POSIX: the async signal handler writes the signal number to a self-pipe
+ *     whose read end is watched at high priority by worker 0's event loop.
+ *   - Windows: the console control handler posts a custom event to worker 0's
+ *     loop and (for close/logoff/shutdown) waits on a bounded event while the
+ *     main thread performs cleanup.
+ * This removes the shutdown deadlocks that happened when cleanup ran directly
+ * inside an async signal/console handler.
  */
 
 #include "signal_manager.h"
 #include "global_state.h"
 
+#include <errno.h>
+
 static signal_manager_t *signalmanager_gstate = NULL;
+
+#define SHUTDOWN_PIPE_READ  0
+#define SHUTDOWN_PIPE_WRITE 1
+
+#if defined(OS_WIN)
+enum
+{
+    // Bounded time a console close/logoff/shutdown handler waits for the main
+    // thread to finish teardown before returning (and letting the OS kill us).
+    kShutdownWaitTimeoutMs = 10000
+};
+
+static atomic_int windows_ctrl_handlers_active;
+#endif
 
 static const char *signalName(int signum)
 {
@@ -71,27 +100,6 @@ static const char *signalName(int signum)
         return "UNKNOWN_SIGNAL";
     }
 }
-
-#if defined(OS_WIN)
-static const char *windowsCtrlEventName(DWORD ctrl_type)
-{
-    switch (ctrl_type)
-    {
-    case CTRL_C_EVENT:
-        return "CTRL_C_EVENT";
-    case CTRL_BREAK_EVENT:
-        return "CTRL_BREAK_EVENT";
-    case CTRL_CLOSE_EVENT:
-        return "CTRL_CLOSE_EVENT";
-    case CTRL_LOGOFF_EVENT:
-        return "CTRL_LOGOFF_EVENT";
-    case CTRL_SHUTDOWN_EVENT:
-        return "CTRL_SHUTDOWN_EVENT";
-    default:
-        return "UNKNOWN_WINDOWS_EVENT";
-    }
-}
-#endif
 
 /**
  * @brief Register one at-exit callback in reverse-priority slots.
@@ -182,6 +190,9 @@ int signalmanagerGetExitCode(void)
 
 /**
  * @brief Execute all registered shutdown callbacks once.
+ *
+ * Must run on worker 0 / the main thread. Sets application_stopping_flag the
+ * first time it runs the real exit path; a second entry exits immediately.
  */
 static void exitHandler(void)
 {
@@ -194,6 +205,8 @@ static void exitHandler(void)
         return;
     }
 
+    atomicStoreExplicit(&signalmanager_gstate->shutdown_requested, true, memory_order_release);
+
     int     written = write(STDOUT_FILENO, "SignalManager: Exiting... \n", 27);
     discard written;
 
@@ -202,108 +215,432 @@ static void exitHandler(void)
     proceedWithNextExitHandler();
 }
 
+// --------------------------------------------------------------------------
+// Main-thread shutdown handoff
+// --------------------------------------------------------------------------
+
+#if defined(OS_WIN)
+/**
+ * @brief Atomically mark that shutdown has been requested.
+ *
+ * @return Previous value: true means someone already requested shutdown and the
+ *         caller should escalate to an immediate exit.
+ */
+static bool markShutdownRequested(void)
+{
+    return atomicExchangeExplicit(&signalmanager_gstate->shutdown_requested, true, memory_order_acq_rel);
+}
+#endif
+
+static bool onMainThread(void)
+{
+    return (uint64_t) getTID() == GSTATE.main_thread_id;
+}
+
+/**
+ * @brief Perform the real shutdown. Must be called on worker 0 / main thread.
+ */
+static void runMainThreadExit(void)
+{
+    exitHandler();
+}
+
+#if defined(OS_WIN)
+static void worker0ShutdownEventCB(wevent_t *ev)
+{
+    discard ev;
+    runMainThreadExit();
+}
+#else
+static void worker0ShutdownPipeReadCB(wio_t *io, sbuf_t *buf)
+{
+    discard io;
+    // Runs on worker 0 / main thread: reclaim the read buffer, then run the real
+    // exit path (which tears down global state and exits the process).
+    reuseBuffer(buf);
+    runMainThreadExit();
+}
+#endif
+
+#if defined(OS_WIN)
+/**
+ * @brief Wake worker 0 so it begins Windows console-requested shutdown.
+ *
+ * @return false when no handoff is possible.
+ */
+static bool wakeWorker0Shutdown(void)
+{
+    wloop_t *loop = getWorkerLoop(0);
+    if (loop == NULL)
+    {
+        return false;
+    }
+    wevent_t ev;
+    memorySet(&ev, 0, sizeof(ev));
+    ev.loop = loop;
+    ev.cb   = worker0ShutdownEventCB;
+    weventSetPriority(&ev, WEVENT_HIGH_PRIORITY);
+    return wloopPostEvent(loop, &ev);
+}
+#endif
+
+/**
+ * @brief Crash-signal handler: no Waterwall cleanup.
+ *
+ * Restores the default disposition and re-raises so the process still produces a
+ * proper crash / core dump.
+ */
+static void fatalSignalHandler(int signum)
+{
+    signal(signum, SIG_DFL);
+    raise(signum);
+    _Exit(128 + signum);
+}
+
 #if defined(OS_WIN)
 
 /**
- * @brief Windows console control dispatcher mapped to exit handler.
+ * @brief Windows console control dispatcher.
+ *
+ * Non-destructive: it does not log, run exit handlers, join workers or tear
+ * down global state. It only hands shutdown to worker 0 and (for close/logoff/
+ * shutdown events) waits a bounded time for the main thread to finish cleanup.
  *
  * @param CtrlType Windows control event code.
- * @return TRUE when handled, otherwise FALSE.
+ * @return TRUE when handled.
  */
 static BOOL WINAPI CtrlHandler(_In_ DWORD CtrlType)
 {
-    // return TRUE;
-    printError(
-        "SignalManager: Received windows event %s (%lu)\n", windowsCtrlEventName(CtrlType), (unsigned long) CtrlType);
+    atomicIncExplicit(&windows_ctrl_handlers_active, memory_order_acq_rel);
+
+    int  exit_code;
+    bool wait_for_cleanup = false;
+    BOOL handled          = TRUE;
 
     switch (CtrlType)
     {
     case CTRL_C_EVENT:
     case CTRL_BREAK_EVENT:
-        signalmanagerSetExitCode(130);
-        exitHandler();
-        _Exit(130);
+        exit_code = 130;
         break;
 
     case CTRL_CLOSE_EVENT:
     case CTRL_LOGOFF_EVENT:
     case CTRL_SHUTDOWN_EVENT:
-        exitHandler();
-        // operating system will automatically terminate the process after the handler completes.
-        return TRUE;
-    }
-    return FALSE;
-}
-#endif
+        // Keep the exit code already chosen by the application, default 0.
+        exit_code        = signalmanagerGetExitCode();
+        wait_for_cleanup = true;
+        break;
 
-/**
- * @brief Multiplexed POSIX signal entry that routes to exit callbacks.
- *
- * @param signum Received signal number.
- */
-static void multiplexedSignalHandler(int signum)
-{
-    static const char prefix[] = "SignalManager: Received signal ";
-    static const char suffix[] = "\n";
-
-    const char *name = signalName(signum);
-    int         written;
-    const int   exit_code      = 128 + signum;
-    bool        raise_defaults = true;
-
-    written = write(STDOUT_FILENO, prefix, sizeof(prefix) - 1);
-    discard written;
-    written = write(STDOUT_FILENO, name, stringLength(name));
-    discard written;
-    written = write(STDOUT_FILENO, suffix, sizeof(suffix) - 1);
-    discard written;
-
-    if (signalmanager_gstate != NULL)
-    {
-        raise_defaults = signalmanager_gstate->raise_defaults;
-        signalmanagerSetExitCode(exit_code);
+    default:
+        handled = FALSE;
+        goto done;
     }
 
-    if (raise_defaults)
+    signal_manager_t *sm = signalmanager_gstate;
+    if (sm == NULL)
     {
-        signal(signum, SIG_DFL);
+        ExitProcess((UINT) exit_code);
     }
 
-    if (signalmanager_gstate == NULL)
+    // A second console event after shutdown began forces an immediate exit.
+    if (markShutdownRequested())
     {
-        if (raise_defaults)
+        ExitProcess((UINT) signalmanagerGetExitCode());
+    }
+
+    signalmanagerSetExitCode(exit_code);
+
+    if (! wakeWorker0Shutdown())
+    {
+        // Nothing to hand off to; exit now rather than run teardown here.
+        ExitProcess((UINT) exit_code);
+    }
+
+    if (wait_for_cleanup)
+    {
+        // The OS terminates the process once we return from a close/logoff/
+        // shutdown event, so block (bounded) until the main thread signals that
+        // teardown finished.
+        HANDLE ev = (HANDLE) sm->shutdown_complete_event;
+        if (ev != NULL)
         {
-            raise(signum);
+            WaitForSingleObject(ev, kShutdownWaitTimeoutMs);
         }
-        _Exit(exit_code);
     }
+done:
+    atomicDecExplicit(&windows_ctrl_handlers_active, memory_order_acq_rel);
+    return handled;
+}
 
-    // if (signum == SIGABRT)
-    // {
-    //     // assert fails in the handler, so we need to exit here
-    //     signal(signum, SIG_DFL);
-    //     raise(signum);
-
-    // }
-
-    exitHandler();
-
-    // allowing normal exit
-    if (raise_defaults)
+static void installWindowsFatalHandlers(void)
+{
+    if (signalmanager_gstate->handle_sigill)
     {
-        raise(signum);
+        signal(SIGILL, fatalSignalHandler);
     }
-
-    int final_exit_code = signalmanagerGetExitCode();
-    if (final_exit_code == 0)
+    if (signalmanager_gstate->handle_sigfpe)
     {
-        final_exit_code = exit_code;
+        signal(SIGFPE, fatalSignalHandler);
     }
-    _Exit(final_exit_code);
+    if (signalmanager_gstate->handle_sigabrt)
+    {
+        signal(SIGABRT, fatalSignalHandler);
+    }
+    if (signalmanager_gstate->handle_sigsegv)
+    {
+        signal(SIGSEGV, fatalSignalHandler);
+    }
+}
+
+#else // POSIX
+
+/**
+ * @brief Build the set of graceful signals routed through main-thread shutdown.
+ */
+static void buildGracefulSignalSet(sigset_t *set)
+{
+    sigemptyset(set);
+    signal_manager_t *sm = signalmanager_gstate;
+    if (sm == NULL)
+    {
+        return;
+    }
+    if (sm->handle_sigint)
+    {
+        sigaddset(set, SIGINT);
+    }
+    if (sm->handle_sigterm)
+    {
+        sigaddset(set, SIGTERM);
+    }
+    if (sm->handle_sigquit)
+    {
+        sigaddset(set, SIGQUIT);
+    }
+    if (sm->handle_sighup)
+    {
+        sigaddset(set, SIGHUP);
+    }
+    if (sm->handle_sigalrm)
+    {
+        sigaddset(set, SIGALRM);
+    }
+}
+
+static int createShutdownPipe(int fds[2])
+{
+    if (pipe(fds) != 0)
+    {
+        return -1;
+    }
+    for (int i = 0; i < 2; ++i)
+    {
+        int fl = fcntl(fds[i], F_GETFL, 0);
+        if (fl != -1)
+        {
+            fcntl(fds[i], F_SETFL, fl | O_NONBLOCK);
+        }
+        int fd_fl = fcntl(fds[i], F_GETFD, 0);
+        if (fd_fl != -1)
+        {
+            fcntl(fds[i], F_SETFD, fd_fl | FD_CLOEXEC);
+        }
+    }
+    return 0;
 }
 
 /**
- * @brief Install configured OS signal handlers.
+ * @brief Async-signal handler for graceful signals.
+ *
+ * Only async-signal-safe operations are used: atomics and a single write() to
+ * the self-pipe. The first signal records the exit code and wakes worker 0; a
+ * second one forces an immediate exit so a stuck teardown cannot trap the user.
+ */
+static void posixGracefulSignalHandler(int signum)
+{
+    int saved_errno = errno;
+
+    signal_manager_t *sm = signalmanager_gstate;
+    if (sm == NULL)
+    {
+        // Manager already gone (very late during teardown): default + re-raise.
+        signal(signum, SIG_DFL);
+        raise(signum);
+        errno = saved_errno;
+        return;
+    }
+
+    if (atomicExchangeExplicit(&sm->shutdown_requested, true, memory_order_acq_rel))
+    {
+        _Exit(128 + signum);
+    }
+
+    atomicStoreExplicit(&sm->exit_code, 128 + signum, memory_order_release);
+
+    unsigned char byte = (unsigned char) signum;
+    ssize_t       w;
+    do
+    {
+        w = write(sm->shutdown_pipe[SHUTDOWN_PIPE_WRITE], &byte, 1);
+    } while (w < 0 && errno == EINTR);
+    discard w;
+
+    errno = saved_errno;
+}
+
+static void restoreOneSignalDefault(int signum)
+{
+    struct sigaction sa;
+    memorySet(&sa, 0, sizeof(sa));
+    sa.sa_handler = SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    discard sigaction(signum, &sa, NULL);
+}
+
+static void restorePosixSignalHandlers(void)
+{
+    signal_manager_t *sm = signalmanager_gstate;
+    if (sm == NULL)
+    {
+        return;
+    }
+
+    sigset_t graceful;
+    buildGracefulSignalSet(&graceful);
+    pthread_sigmask(SIG_BLOCK, &graceful, NULL);
+
+    if (sm->handle_sigint)
+    {
+        restoreOneSignalDefault(SIGINT);
+    }
+    if (sm->handle_sigterm)
+    {
+        restoreOneSignalDefault(SIGTERM);
+    }
+    if (sm->handle_sigquit)
+    {
+        restoreOneSignalDefault(SIGQUIT);
+    }
+    if (sm->handle_sighup)
+    {
+        restoreOneSignalDefault(SIGHUP);
+    }
+    if (sm->handle_sigalrm)
+    {
+        restoreOneSignalDefault(SIGALRM);
+    }
+    if (sm->handle_sigill)
+    {
+        restoreOneSignalDefault(SIGILL);
+    }
+    if (sm->handle_sigfpe)
+    {
+        restoreOneSignalDefault(SIGFPE);
+    }
+    if (sm->handle_sigabrt)
+    {
+        restoreOneSignalDefault(SIGABRT);
+    }
+    if (sm->handle_sigsegv)
+    {
+        restoreOneSignalDefault(SIGSEGV);
+    }
+}
+
+static void installOneSigaction(int signum, void (*handler)(int), const sigset_t *mask)
+{
+    struct sigaction sa;
+    memorySet(&sa, 0, sizeof(sa));
+    sa.sa_handler = handler;
+    if (mask != NULL)
+    {
+        sa.sa_mask = *mask;
+    }
+    else
+    {
+        sigemptyset(&sa.sa_mask);
+    }
+    sa.sa_flags = 0;
+    if (sigaction(signum, &sa, NULL) != 0)
+    {
+        printError("Error setting %s signal handler", signalName(signum));
+        _Exit(1);
+    }
+}
+
+static void installPosixSignalHandlers(void)
+{
+    signal_manager_t *sm = signalmanager_gstate;
+
+    // While a graceful handler runs, block all graceful signals so its tiny body
+    // is not re-entered.
+    sigset_t graceful_mask;
+    buildGracefulSignalSet(&graceful_mask);
+
+    if (sm->handle_sigint)
+    {
+        installOneSigaction(SIGINT, posixGracefulSignalHandler, &graceful_mask);
+    }
+    if (sm->handle_sigterm)
+    {
+        installOneSigaction(SIGTERM, posixGracefulSignalHandler, &graceful_mask);
+    }
+    if (sm->handle_sigquit)
+    {
+        installOneSigaction(SIGQUIT, posixGracefulSignalHandler, &graceful_mask);
+    }
+    if (sm->handle_sighup)
+    {
+        installOneSigaction(SIGHUP, posixGracefulSignalHandler, &graceful_mask);
+    }
+    if (sm->handle_sigalrm)
+    {
+        installOneSigaction(SIGALRM, posixGracefulSignalHandler, &graceful_mask);
+    }
+
+    // Crash signals reset to default and re-raise; they never run cleanup.
+    if (sm->handle_sigill)
+    {
+        installOneSigaction(SIGILL, fatalSignalHandler, NULL);
+    }
+    if (sm->handle_sigfpe)
+    {
+        installOneSigaction(SIGFPE, fatalSignalHandler, NULL);
+    }
+    if (sm->handle_sigabrt)
+    {
+        installOneSigaction(SIGABRT, fatalSignalHandler, NULL);
+    }
+    if (sm->handle_sigsegv)
+    {
+        installOneSigaction(SIGSEGV, fatalSignalHandler, NULL);
+    }
+
+    // Keep SIGPIPE ignored instead of routing it through shutdown.
+    if (sm->handle_sigpipe)
+    {
+        signal(SIGPIPE, SIG_IGN);
+    }
+}
+
+#endif // OS_WIN
+
+void signalmanagerBlockHandledSignalsForCurrentThread(void)
+{
+#if defined(OS_WIN)
+    // Windows uses the console control handler; there is nothing to block here.
+#else
+    assert(signalmanager_gstate != NULL);
+    sigset_t set;
+    buildGracefulSignalSet(&set);
+    pthread_sigmask(SIG_BLOCK, &set, NULL);
+#endif
+}
+
+/**
+ * @brief Install configured OS signal handlers and wire the worker-0 handoff.
  */
 void signalmanagerStart(void)
 {
@@ -317,123 +654,47 @@ void signalmanagerStart(void)
 
     signalmanager_gstate->started = true;
 
-#ifdef OS_WIN
-    // Register the console control handler
+#if defined(OS_WIN)
+    signalmanager_gstate->shutdown_complete_event = (void *) CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (signalmanager_gstate->shutdown_complete_event == NULL)
+    {
+        printError("Failed to create shutdown completion event!");
+        _Exit(1);
+    }
+
     if (! SetConsoleCtrlHandler(CtrlHandler, TRUE))
     {
         printError("Failed to set console control handler!");
         _Exit(1);
     }
+
+    installWindowsFatalHandlers();
+#else
+    wloop_t *loop = getWorkerLoop(0);
+    assert(loop != NULL);
+
+    if (createShutdownPipe(signalmanager_gstate->shutdown_pipe) != 0)
+    {
+        printError("Failed to create shutdown self-pipe!");
+        _Exit(1);
+    }
+
+    // Worker 0 watches the read end at high priority and runs the real shutdown.
+    wio_t *io = wRead(loop, signalmanager_gstate->shutdown_pipe[SHUTDOWN_PIPE_READ], worker0ShutdownPipeReadCB);
+    assert(io != NULL);
+    weventSetPriority(io, WEVENT_HIGH_PRIORITY);
+
+    installPosixSignalHandlers();
+
+    // Handlers and the self-pipe are ready, so deliver graceful signals to the
+    // main thread now (worker threads inherited the blocked mask that was set in
+    // createGlobalState() before they were spawned).
+    sigset_t graceful;
+    buildGracefulSignalSet(&graceful);
+    pthread_sigmask(SIG_UNBLOCK, &graceful, NULL);
 #endif
-
-    if (signalmanager_gstate->handle_sigint)
-    {
-        if (signal(SIGINT, multiplexedSignalHandler) == SIG_ERR)
-        {
-            printError("Error setting SIGINT signal handler");
-            _Exit(1);
-        }
-    }
-
-#ifndef OS_WIN
-
-    if (signalmanager_gstate->handle_sigquit)
-    {
-        if (signal(SIGQUIT, multiplexedSignalHandler) == SIG_ERR)
-        {
-            printError("Error setting SIGQUIT signal handler");
-            _Exit(1);
-        }
-    }
-    if (signalmanager_gstate->handle_sighup)
-    {
-        if (signal(SIGHUP, multiplexedSignalHandler) == SIG_ERR)
-        {
-            printError("Error setting SIGHUP signal handler");
-            _Exit(1);
-        }
-    }
-
-#endif
-
-    if (signalmanager_gstate->handle_sigill)
-    {
-        if (signal(SIGILL, multiplexedSignalHandler) == SIG_ERR)
-        {
-            printError("Error setting SIGILL signal handler");
-            _Exit(1);
-        }
-    }
-    if (signalmanager_gstate->handle_sigfpe)
-    {
-        if (signal(SIGFPE, multiplexedSignalHandler) == SIG_ERR)
-        {
-            printError("Error setting SIGFPE signal handler");
-            _Exit(1);
-        }
-    }
-    if (signalmanager_gstate->handle_sigabrt)
-    {
-        if (signal(SIGABRT, multiplexedSignalHandler) == SIG_ERR)
-        {
-            printError("Error setting SIGABRT signal handler");
-            _Exit(1);
-        }
-    }
-    if (signalmanager_gstate->handle_sigsegv)
-    {
-        if (signal(SIGSEGV, multiplexedSignalHandler) == SIG_ERR)
-        {
-            printError("Error setting SIGSEGV signal handler");
-            _Exit(1);
-        }
-    }
-    if (signalmanager_gstate->handle_sigterm)
-    {
-        if (signal(SIGTERM, multiplexedSignalHandler) == SIG_ERR)
-        {
-            printError("Error setting SIGTERM signal handler");
-            _Exit(1);
-        }
-    }
-
-#ifndef OS_WIN
-
-    if (signalmanager_gstate->handle_sigpipe)
-    {
-        if (signal(SIGPIPE, multiplexedSignalHandler) == SIG_ERR)
-        {
-            printError("Error setting SIGPIPE signal handler");
-            _Exit(1);
-        }
-    }
-
-    if (signalmanager_gstate->handle_sigalrm)
-    {
-        if (signal(SIGALRM, multiplexedSignalHandler) == SIG_ERR)
-        {
-            printError("Error setting SIGALRM signal handler");
-            _Exit(1);
-        }
-    }
-
-#endif
-
-    // wtimerAdd(getWorkerLoop(0), testCloseProgram, 3500, 0);
-    // atexit(exitHandler);
 }
 
-// static WTHREAD_ROUTINE(TestThreadExit)
-// {
-//     discard userdata;
-//     exitHandler();
-//     return 0;
-// }
-// static void createCloseThread(wtimer_t *ev)
-// {
-//     discard ev;
-//     threadCreate(TestThreadExit, NULL);
-// }
 signal_manager_t *signalmanagerCreate(void)
 {
     assert(signalmanager_gstate == NULL);
@@ -455,6 +716,13 @@ signal_manager_t *signalmanagerCreate(void)
                                                 .handle_sigpipe = true,
                                                 .handle_sigalrm = true};
 
+#if defined(OS_WIN)
+    signalmanager_gstate->shutdown_complete_event = NULL;
+#else
+    signalmanager_gstate->shutdown_pipe[SHUTDOWN_PIPE_READ]  = -1;
+    signalmanager_gstate->shutdown_pipe[SHUTDOWN_PIPE_WRITE] = -1;
+#endif
+
     mutexInit(&(signalmanager_gstate->mutex));
     return signalmanager_gstate;
 }
@@ -470,49 +738,76 @@ void signalmanagerSet(signal_manager_t *sm)
     assert(signalmanager_gstate == NULL);
     signalmanager_gstate = sm;
 }
+
 void signalmanagerDestroy(void)
 {
     assert(signalmanager_gstate != NULL);
+
+#if defined(OS_WIN)
+    SetConsoleCtrlHandler(CtrlHandler, FALSE);
+
+    // Release any console handler waiting for the main thread to finish cleanup.
+    // The event is intentionally left open until process exit: closing a HANDLE
+    // while a console-handler thread may still be returning from a wait on it is
+    // unsafe, and the OS will reclaim it when the process exits.
+    if (signalmanager_gstate->shutdown_complete_event != NULL)
+    {
+        SetEvent((HANDLE) signalmanager_gstate->shutdown_complete_event);
+    }
+
+    while (atomicLoadExplicit(&windows_ctrl_handlers_active, memory_order_acquire) > 0)
+    {
+        wwSleepMS(1);
+    }
+#else
+    restorePosixSignalHandlers();
+
+    // The read end is owned by worker 0's loop (added via wRead) and is closed
+    // when that loop is destroyed, so only close the write end here.
+    if (signalmanager_gstate->shutdown_pipe[SHUTDOWN_PIPE_WRITE] >= 0)
+    {
+        close(signalmanager_gstate->shutdown_pipe[SHUTDOWN_PIPE_WRITE]);
+        signalmanager_gstate->shutdown_pipe[SHUTDOWN_PIPE_WRITE] = -1;
+    }
+#endif
+
     mutexDestroy(&(signalmanager_gstate->mutex));
     memoryFree(signalmanager_gstate);
     signalmanager_gstate = NULL;
 }
 
 /**
- * @brief Terminate process after running registered exit handlers.
+ * @brief Terminate the process, running registered exit handlers on worker 0.
  *
  * @param exit_code Process exit code.
  */
 _Noreturn void terminateProgram(int exit_code)
 {
-
-    if (signalmanager_gstate)
+    if (signalmanager_gstate == NULL)
     {
-        signalmanagerSetExitCode(exit_code);
+        // Signal manager not initialized yet (very early startup): just exit.
+        // Avoids messy output when the program exits because, e.g., a file does
+        // not exist.
+        exit(exit_code);
+    }
 
-        if (exit_code == 0)
-        {
-            printError("SignalManager: Terminating program with exit-code 0 after successful completion\n");
-        }
-        else
-        {
-            printError(
-                "SignalManager: Terminating program with exit-code %d, please read above logs to understand why\n",
-                exit_code);
-        }
+    signalmanagerSetExitCode(exit_code);
 
-        // if (signalmanager_gstate->double_terminated)
-        // {
-        //     assert(false);
-        //     const char msg[]   = "double terminated.\n";
-        //     int        written = write(STDOUT_FILENO, msg, stringLength(msg));
-        //     discard    written;
-        //     exit(exit_code);
-        // }
-        // signalmanager_gstate->double_terminated = true;
+    if (exit_code == 0)
+    {
+        printError("SignalManager: Terminating program with exit-code 0 after successful completion\n");
+    }
+    else
+    {
+        printError("SignalManager: Terminating program with exit-code %d, please read above logs to understand why\n",
+                   exit_code);
+    }
 
-        // termiateprogram is called when porccesing exit handlers, so we should not call exit handlers again to avoid
-        // infinite loop
+    if (onMainThread())
+    {
+        // Already on the main worker thread: run the shutdown path directly.
+        // termiateProgram is also called while processing exit handlers, so do
+        // not restart them in that case to avoid an infinite loop.
         if (atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_relaxed))
         {
             proceedWithNextExitHandler();
@@ -521,28 +816,16 @@ _Noreturn void terminateProgram(int exit_code)
         {
             exitHandler();
         }
-
-        // terminateCurrentThread();
-    }
-    else
-    {
-        // i dont like messy output when the program just exits because a file does not exists
+        // The shutdown path tears down global state and exits; this is a safety
+        // net for the case where it returned without exiting.
         exit(exit_code);
-
-        if (exit_code == 0)
-        {
-            printError("SignalManager: Terminating program with exit-code 0 after successful completion\n"
-                       "Since signal manager is not initialized, we cannot run exit handlers, so just exiting now\n");
-        }
-        else
-        {
-            printError(
-                "SignalManager: Terminating program with exit-code %d, please read above logs to understand why\n"
-                "Since signal manager is not initialized, we cannot run exit handlers, so just exiting now\n",
-                exit_code);
-        }
     }
-    exit(exit_code);
+
+    // On another thread, fail fast. Calling pthread_exit()/ExitThread() here can
+    // strand locks held by the fatal path and deadlock worker-0 cleanup while it
+    // joins this thread. Running full teardown off-main is the original signal
+    // bug in another shape, so immediate process exit is the least unsafe option.
+    _Exit(exit_code);
 }
 
 bool signalmanagerIsTerminating(void)

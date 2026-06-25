@@ -26,6 +26,18 @@ typedef struct signal_manager_s
     unsigned int     handlers_len;
     unsigned int     current_handler_index;
     atomic_int       exit_code;
+    // Set by the first shutdown requester (signal / console / terminateProgram).
+    // A duplicate request escalates to an immediate process exit.
+    atomic_bool      shutdown_requested;
+#ifdef OS_WIN
+    // Signaled near the end of teardown so a console close/logoff/shutdown
+    // handler can return only after the main thread finished cleanup.
+    void            *shutdown_complete_event; // HANDLE
+#else
+    // self-pipe: signal handler writes the signal byte to [1]; worker 0's loop
+    // reads [0] from a high-priority callback and runs the real shutdown.
+    int              shutdown_pipe[2];
+#endif
     wmutex_t         mutex;
     uint32_t         started : 1;
     uint32_t         raise_defaults : 1;
@@ -73,6 +85,16 @@ void signalmanagerSet(signal_manager_t *sm);
  * @brief Install configured signal handlers for current process.
  */
 void signalmanagerStart(void);
+
+/**
+ * @brief Block the graceful (shutdown-routed) signals on the calling thread.
+ *
+ * Called on the main thread before workers are spawned so worker threads
+ * inherit the blocked mask; graceful signals are then unblocked on the main
+ * thread inside signalmanagerStart(). This keeps signal delivery on the main
+ * thread and out of the worker event loops. No-op on Windows.
+ */
+void signalmanagerBlockHandledSignalsForCurrentThread(void);
 
 /**
  * @brief Register callback invoked during exit/signal shutdown sequence.

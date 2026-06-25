@@ -192,7 +192,11 @@ void createGlobalState(const ww_construction_data_t init_data)
     GSTATE = (ww_global_state_t) {0};
 
     GSTATE.flag_initialized = true;
-    GSTATE.dns_options      = init_data.dns_options;
+    // Capture the main thread id early so terminateProgram()/the shutdown handoff
+    // can reliably tell whether it runs on the main worker thread, even during
+    // startup before workers are spawned.
+    GSTATE.main_thread_id = (uint64_t) getTID();
+    GSTATE.dns_options    = init_data.dns_options;
     GSTATE.domain_strategy  = init_data.domain_strategy;
     if (! GSTATE.dns_options.defaults_initialized)
     {
@@ -298,14 +302,19 @@ void createGlobalState(const ww_construction_data_t init_data)
 
     // Spawn all workers except main worker which is current thread
     {
-        worker_t *worker      = getWorker(0);
-        GSTATE.main_thread_id = (uint64_t) getTID();
+        worker_t *worker = getWorker(0);
 #ifdef OS_WIN
         worker->thread = (wthread_t) GetCurrentThread();
 #else
         worker->thread = pthread_self();
 #endif
         worker->tid = getTID();
+
+        // Block graceful (shutdown-routed) signals on the main thread before
+        // spawning workers, so the workers inherit the blocked mask; the main
+        // thread re-enables them in signalmanagerStart(). This keeps graceful
+        // signal delivery on the main thread and out of the worker event loops.
+        signalmanagerBlockHandledSignalsForCurrentThread();
 
         // lwip worker dose not need spawn, it runs its own eventloop
         for (unsigned int i = 1; i < WORKERS_COUNT - WORKER_ADDITIONS; ++i)
@@ -378,7 +387,6 @@ WW_EXPORT void destroyGlobalState(void)
 #if defined(WCRYPTO_USING_OPENSSL)
     opensslGlobalCleanup();
 #endif
-    signalmanagerDestroy();
 
     coreloggerDestroy();
     networkloggerDestroy();
@@ -410,6 +418,8 @@ WW_EXPORT void destroyGlobalState(void)
     nodelibraryCleanup();
 
     ares_library_cleanup();
+
+    signalmanagerDestroy();
 
 #ifdef WW_CALL_GNU_FREES
     call_freeres();

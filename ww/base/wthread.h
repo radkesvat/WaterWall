@@ -168,7 +168,10 @@ static bool safeThreadJoin(wthread_t th)
     return true;
 }
 
-#define terminateCurrentThread() pthread_exit()
+// NOTE: was previously `pthread_exit()` (missing the required void* argument),
+// which would not compile if ever used; the main-thread shutdown handoff is the
+// first caller, so it is corrected to pass NULL here.
+#define terminateCurrentThread() pthread_exit(NULL)
 #endif
 
 #endif // WW_THREAD_H_
