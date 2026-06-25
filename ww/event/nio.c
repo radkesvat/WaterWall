@@ -44,7 +44,7 @@ static void __close_pending_cb(wevent_t *ev)
 
         if (ev->loop->ios.ptr[fd] && ev->loop->ios.ptr[fd]->pending)
         {
-            printError("__close_pending_cb: pending io fd=%d !\n", fd);
+            LOGE("__close_pending_cb: pending io fd=%d !\n", fd);
             terminateProgram(1);
         }
     }
@@ -108,7 +108,7 @@ static void nio_accept(wio_t *io)
             }
             else
             {
-                printError("accept");
+                LOGE("listenfd=%d accept error: %s:%d", io->fd, socketStrError(err), err);
                 io->error = err;
                 goto accept_error;
             }
@@ -285,6 +285,7 @@ static void nio_read(wio_t *io)
         else
         {
             // printError("read");
+            LOGE("read fd=%d error: %s:%d", io->fd, socketStrError(err), err);
             bufferpoolReuseBuffer(io->loop->bufpool, buf);
             io->error = err;
             goto read_error;
