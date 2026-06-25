@@ -65,6 +65,11 @@ static void getVerifySetting(tlsclient_tstate_t *ts, const cJSON *settings)
     getBoolFromJsonObjectOrDefault(&ts->verify, settings, "verify", true);
 }
 
+static void getVerboseSetting(tlsclient_tstate_t *ts, const cJSON *settings)
+{
+    getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
+}
+
 static bool getAndValidateEchGreaseSniOverrideSetting(tlsclient_tstate_t *ts, const cJSON *settings, tunnel_t *t)
 {
     if (! getStringFromJsonObject(&(ts->ech_grease_sni_override), settings, "ech-sni-trick"))
@@ -254,6 +259,7 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
 
     getX25519MLKEM768Setting(ts, settings);
     getVerifySetting(ts, settings);
+    getVerboseSetting(ts, settings);
     if (! getAndValidateEchGreaseSniOverrideSetting(ts, settings, t))
     {
         return NULL;

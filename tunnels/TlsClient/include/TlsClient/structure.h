@@ -13,6 +13,7 @@ typedef struct tlsclient_tstate_s
     char *sni;
     char *ech_grease_sni_override;
     bool  verify;
+    bool  verbose;
     bool  x25519mlkem768_enabled;
     bool  handshake_takeover_enabled;
 

@@ -37,11 +37,17 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    tlsclientPrintSSLState(ls->ssl);
+    if (ts->verbose)
+    {
+        tlsclientPrintSSLState(ls->ssl);
+    }
 
     int n = SSL_connect(ls->ssl);
 
-    tlsclientPrintSSLState(ls->ssl);
+    if (ts->verbose)
+    {
+        tlsclientPrintSSLState(ls->ssl);
+    }
 
     enum sslstatus status = getSslStatus(ls->ssl, n);
 

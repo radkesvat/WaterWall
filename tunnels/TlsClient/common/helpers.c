@@ -258,6 +258,7 @@ void tlsclientTunnelstateDestroy(tlsclient_tstate_t *ts)
     ts->sni                             = NULL;
     ts->ech_grease_sni_override         = NULL;
     ts->verify                          = false;
+    ts->verbose                         = false;
     ts->x25519mlkem768_enabled          = false;
     ts->threadlocal_ech_grease_inner_ssl_contexts = NULL;
 }
