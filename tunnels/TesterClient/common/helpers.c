@@ -752,6 +752,7 @@ void testerclientCloseCompletedStreamTask(tunnel_t *t, line_t *l)
     if (closed == (unsigned int) tc->workers_count)
     {
         LOGI("TesterClient: all %u worker lines closed successfully", (unsigned int) tc->workers_count);
+        LOGI("TesterClient: all %u worker lines completed successfully", (unsigned int) tc->workers_count);
         terminateProgram(0);
     }
 }
@@ -780,13 +781,13 @@ void testerclientMarkWorkerComplete(tunnel_t *t, line_t *l)
 
     if (done == (unsigned int) tc->workers_count)
     {
-        LOGI("TesterClient: all %u worker lines completed successfully", (unsigned int) tc->workers_count);
-        if (ts->packet_mode || ! testerclientShouldCloseCompletedStreams(t))
+        if (! ts->packet_mode && testerclientShouldCloseCompletedStreams(t))
         {
-            terminateProgram(0);
+            testerclientScheduleCompletedStreamClose(t);
             return;
         }
 
-        testerclientScheduleCompletedStreamClose(t);
+        LOGI("TesterClient: all %u worker lines completed successfully", (unsigned int) tc->workers_count);
+        terminateProgram(0);
     }
 }
