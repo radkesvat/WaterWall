@@ -1,0 +1,98 @@
+{
+  "name": "speedtest-udp-over-tcp-udp-sandwich",
+  "nodes": [
+    {
+      "name": "speedtest-client",
+      "type": "SpeedTestClient",
+      "settings": {
+        "mode": "udp",
+        "direction": "bidirectional",
+        "duration-ms": 2000,
+        "warmup-ms": 250,
+        "report-interval-ms": 1000,
+        "connection-count": 1,
+        "payload-size": 3800,
+        "target-megabits-per-sec": 300,
+        "json-summary": true,
+        "terminate-on-complete": true
+      },
+      "next": "client-udp-connector"
+    },
+    {
+      "name": "client-udp-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42480,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "uot-client-udp-listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42480
+      },
+      "next": "uot-client"
+    },
+    {
+      "name": "uot-client",
+      "type": "UdpOverTcpClient",
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42481,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "uot-server-tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42481,
+        "nodelay": true
+      },
+      "next": "uot-server"
+    },
+    {
+      "name": "uot-server",
+      "type": "UdpOverTcpServer",
+      "next": "server-udp-connector"
+    },
+    {
+      "name": "server-udp-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42482,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "speedtest-server-udp-listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42482
+      },
+      "next": "speedtest-server"
+    },
+    {
+      "name": "speedtest-server",
+      "type": "SpeedTestServer",
+      "settings": {
+        "report-interval-ms": 1000,
+        "json-summary": true,
+        "quiet": false
+      }
+    }
+  ]
+}

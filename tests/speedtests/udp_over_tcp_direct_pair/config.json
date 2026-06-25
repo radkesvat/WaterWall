@@ -1,0 +1,41 @@
+{
+  "name": "speedtest-udp-over-tcp-direct-pair",
+  "nodes": [
+    {
+      "name": "speedtest-client",
+      "type": "SpeedTestClient",
+      "settings": {
+        "mode": "udp",
+        "direction": "bidirectional",
+        "duration-ms": 2000,
+        "warmup-ms": 250,
+        "report-interval-ms": 1000,
+        "connection-count": 1,
+        "payload-size": 3800,
+        "target-megabits-per-sec": 300,
+        "json-summary": true,
+        "terminate-on-complete": true
+      },
+      "next": "uot-client"
+    },
+    {
+      "name": "uot-client",
+      "type": "UdpOverTcpClient",
+      "next": "uot-server"
+    },
+    {
+      "name": "uot-server",
+      "type": "UdpOverTcpServer",
+      "next": "speedtest-server"
+    },
+    {
+      "name": "speedtest-server",
+      "type": "SpeedTestServer",
+      "settings": {
+        "report-interval-ms": 1000,
+        "json-summary": true,
+        "quiet": false
+      }
+    }
+  ]
+}

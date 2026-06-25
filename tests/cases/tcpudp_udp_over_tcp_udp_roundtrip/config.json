@@ -1,0 +1,89 @@
+{
+  "name": "tcpudp-udp-over-tcp-udp-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "max-payload-size": 3800,
+        "split-payload-burst": 1
+      },
+      "next": "outer-udp-connector"
+    },
+    {
+      "name": "outer-udp-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42573,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcpudp-listener",
+      "type": "TcpUdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42573
+      },
+      "next": "uot-client"
+    },
+    {
+      "name": "uot-client",
+      "type": "UdpOverTcpClient",
+      "next": "carrier-tcp-connector"
+    },
+    {
+      "name": "carrier-tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42574,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "carrier-tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42574,
+        "nodelay": true
+      },
+      "next": "uot-server"
+    },
+    {
+      "name": "uot-server",
+      "type": "UdpOverTcpServer",
+      "next": "tcpudp-connector"
+    },
+    {
+      "name": "tcpudp-connector",
+      "type": "TcpUdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42575,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "outer-udp-listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42575
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "max-payload-size": 3800,
+        "split-payload-burst": 1
+      }
+    }
+  ]
+}

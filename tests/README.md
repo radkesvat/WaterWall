@@ -187,6 +187,14 @@ Practical rule:
 - `udp_over_tcp_roundtrip`
   Verifies that `UdpOverTcpClient` and `UdpOverTcpServer` preserve end-to-end byte stream integrity through their
   length-prefixed framing.
+- `tcpudp_udp_over_tcp_tcp_roundtrip`
+  Verifies that a TCP-origin line through `TcpUdpListener -> UdpOverTcpClient -> TcpConnector` re-enters
+  `UdpOverTcpServer -> TcpUdpConnector` as TCP.
+- `tcpudp_udp_over_tcp_udp_roundtrip`
+  Verifies that a UDP-origin line through the same UdpOverTcp carrier re-enters `TcpUdpConnector` as UDP.
+- `tcpudp_udp_over_tcp_large_udp_roundtrip`
+  Verifies that the same UDP-origin sandwich preserves iperf-sized UDP datagrams larger than the 1500-byte small-buffer
+  path.
 - `tcp_over_udp_roundtrip`
   Verifies that `TcpOverUdpClient` and `TcpOverUdpServer` preserve stream integrity through their KCP datagram path.
 - `tcp_over_udp_fec_roundtrip`
@@ -312,6 +320,14 @@ Practical rule:
   Runs `SpeedTestClient -> SpeedTestServer` with no tunnel between them as the in-process baseline.
 - `tcp_loopback`
   Runs `SpeedTestClient -> TcpConnector` and `TcpListener -> SpeedTestServer` across one loopback TCP hop.
+- `udp_over_tcp_direct_pair`
+  Runs `SpeedTestClient(mode=udp) -> UdpOverTcpClient -> UdpOverTcpServer -> SpeedTestServer`, paced at
+  `300 Mbits/sec` to stress UDP datagram framing without socket adapter effects.
+- `udp_over_tcp_udp_sandwich`
+  Runs `SpeedTestClient(mode=udp) -> UdpConnector`,
+  `UdpListener -> UdpOverTcpClient -> TcpConnector`,
+  `TcpListener -> UdpOverTcpServer -> UdpConnector`, and
+  `UdpListener -> SpeedTestServer`, paced at `300 Mbits/sec` to exercise pure UDP-facing traffic over a TCP carrier.
 - `tcp_over_udp_direct_pair`
   Runs an unpaced `SpeedTestClient -> TcpOverUdpClient -> TcpOverUdpServer -> SpeedTestServer` path with FEC disabled.
 - `tcp_over_udp_udp_sandwich`
