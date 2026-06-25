@@ -703,7 +703,7 @@ static bool authenticationserverRewritePrimaryFromMemory(authenticationserver_ts
     }
 
     bool ok = authenticationserverWriteJsonFile(ts->db_path, json_text, json_len);
-    memoryFree(json_text);
+    cJSON_free(json_text);
     return ok;
 }
 
@@ -724,13 +724,13 @@ static bool authenticationserverSaveDatabaseUnlocked(authenticationserver_tstate
 
     if (UNLIKELY(! authenticationserverWriteJsonFile(ts->backup_path, json_text, json_len)))
     {
-        memoryFree(json_text);
+        cJSON_free(json_text);
         return false;
     }
 
     if (UNLIKELY(! authenticationserverWriteJsonFile(ts->db_path, json_text, json_len)))
     {
-        memoryFree(json_text);
+        cJSON_free(json_text);
         return false;
     }
 
@@ -743,7 +743,7 @@ static bool authenticationserverSaveDatabaseUnlocked(authenticationserver_tstate
          usersCount(&ts->store.users),
          ts->db_path,
          ts->backup_path);
-    memoryFree(json_text);
+    cJSON_free(json_text);
     return true;
 }
 

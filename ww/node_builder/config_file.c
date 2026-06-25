@@ -507,13 +507,13 @@ void unsafeCommitChanges(config_file_t *state)
         if (writeFile(state->file_path, string, len))
         {
             state->file_prebuffer_size = len;
-            memoryFree(string);
+            cJSON_free(string);
             return;
         }
         LOGE("WriteFile Error: could not write to \"%s\". retry...", state->file_path);
     }
     LOGE("WriteFile Error: giving up writing to config file \"%s\"", state->file_path);
-    memoryFree(string);
+    cJSON_free(string);
 }
 
 void commitChangesHard(config_file_t *state)
