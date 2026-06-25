@@ -34,3 +34,24 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .vscode/
+
+# Generated test runner artifacts
+/tests/cases/*/core.json
+/tests/cases/*/stdout.log
+/tests/cases/*/log/
+/tests/cases/*/packet-receiver-report.txt
+/tests/cases/*/users.json.backup
+/tests/cases/tls_handshake_timeout_slow_drip/server.crt
+/tests/cases/tls_handshake_timeout_slow_drip/server.key
+/tests/cases/tls_tlslike_invalid_probe_does_not_fallback/server.crt
+/tests/cases/tls_tlslike_invalid_probe_does_not_fallback/server.key
+/tests/cases/tls_tlslike_oversized_probe_does_not_fallback/server.crt
+/tests/cases/tls_tlslike_oversized_probe_does_not_fallback/server.key
+/tests/speedtests/*/core.json
+/tests/speedtests/*/stdout.log
+/tests/speedtests/*/log/
+/tests/speedtests/*/server.crt
+/tests/speedtests/*/server.key
+!/tests/speedtests/_shared/server.crt
+!/tests/speedtests/_shared/server.key
+/tests/unittests/log/

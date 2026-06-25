@@ -21,7 +21,10 @@ binary_path=$(realpath "$1")
 speedtest_dir=$(realpath "$2")
 timeout_seconds=$3
 
-run_dir=$(mktemp -d)
+run_dir=$speedtest_dir
+generated_core_json="$run_dir/core.json"
+core_created=0
+generated_shared_paths=()
 pid=""
 
 dump_logs() {
@@ -67,17 +70,49 @@ cleanup() {
     wait "$pid" 2>/dev/null || true
   fi
 
-  rm -rf "$run_dir"
+  if [[ $core_created -eq 1 ]]; then
+    rm -f "$generated_core_json"
+  fi
+
+  if [[ ${#generated_shared_paths[@]} -gt 0 ]]; then
+    rm -rf -- "${generated_shared_paths[@]}"
+  fi
 }
 
 trap cleanup EXIT
 
-shared_dir="$speedtest_dir/../_shared"
-if [[ -d "$shared_dir" ]]; then
-  cp -R "$shared_dir"/. "$run_dir"/
+if [[ -e "$generated_core_json" ]]; then
+  echo "Refusing to overwrite existing generated core.json in speedtest directory: $generated_core_json" >&2
+  exit 2
 fi
 
-cp -R "$speedtest_dir"/. "$run_dir"/
+# Keep generated logs in the speedtest directory, but start each run clean.
+rm -rf "$run_dir/stdout.log" "$run_dir/log"
+
+copy_generated_shared_path() {
+  local source_path=$1
+  local dest_path=$2
+
+  if [[ -e "$dest_path" ]]; then
+    if [[ -f "$source_path" && -f "$dest_path" ]] && cmp -s "$source_path" "$dest_path"; then
+      return 0
+    fi
+
+    echo "Refusing to overwrite existing speedtest fixture: $dest_path" >&2
+    exit 2
+  fi
+
+  cp -R "$source_path" "$dest_path"
+  generated_shared_paths+=("$dest_path")
+}
+
+shared_dir="$speedtest_dir/../_shared"
+if [[ -d "$shared_dir" ]]; then
+  for shared_path in "$shared_dir"/*; do
+    [[ -e "$shared_path" ]] || continue
+    copy_generated_shared_path "$shared_path" "$run_dir/$(basename "$shared_path")"
+  done
+fi
 
 test_workers=$DEFAULT_TEST_WORKERS
 if [[ -f "$run_dir/workers.txt" ]]; then
@@ -88,7 +123,8 @@ if [[ -f "$run_dir/workers.txt" ]]; then
   fi
 fi
 
-cat >"$run_dir/core.json" <<EOF
+core_created=1
+cat >"$generated_core_json" <<EOF
 {
   "log": {
     "path": "log/",
@@ -110,7 +146,7 @@ EOF
 
 (
   cd "$run_dir"
-  "$binary_path" >"$run_dir/stdout.log" 2>&1
+  "$binary_path" >stdout.log 2>&1
 ) &
 pid=$!
 

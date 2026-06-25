@@ -31,11 +31,35 @@ if(NOT EXISTS "${UNIT_TEST_EXECUTABLE}")
   message(FATAL_ERROR "Unit-test executable is still missing after build: ${UNIT_TEST_EXECUTABLE}")
 endif()
 
+set(unit_log_dir "${CMAKE_CURRENT_LIST_DIR}/log")
+set(unit_stdout_log "${unit_log_dir}/${UNIT_TEST_TARGET}.stdout.log")
+set(unit_stderr_log "${unit_log_dir}/${UNIT_TEST_TARGET}.stderr.log")
+
+file(MAKE_DIRECTORY "${unit_log_dir}")
+file(REMOVE "${unit_stdout_log}" "${unit_stderr_log}")
+
 execute_process(
   COMMAND "${UNIT_TEST_EXECUTABLE}"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
+  OUTPUT_FILE "${unit_stdout_log}"
+  ERROR_FILE "${unit_stderr_log}"
   RESULT_VARIABLE test_result
 )
 
 if(NOT test_result EQUAL 0)
+  if(EXISTS "${unit_stdout_log}")
+    file(READ "${unit_stdout_log}" unit_stdout)
+    if(NOT unit_stdout STREQUAL "")
+      message(STATUS "===== ${UNIT_TEST_TARGET}.stdout.log =====\n${unit_stdout}")
+    endif()
+  endif()
+
+  if(EXISTS "${unit_stderr_log}")
+    file(READ "${unit_stderr_log}" unit_stderr)
+    if(NOT unit_stderr STREQUAL "")
+      message(STATUS "===== ${UNIT_TEST_TARGET}.stderr.log =====\n${unit_stderr}")
+    endif()
+  endif()
+
   message(FATAL_ERROR "${UNIT_TEST_TARGET} failed with exit code ${test_result}")
 endif()
