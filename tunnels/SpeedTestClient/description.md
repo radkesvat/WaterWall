@@ -107,7 +107,7 @@ Client side:
       "duration-ms": 10000,
       "warmup-ms": 1000,
       "report-interval-ms": 1000,
-      "payload-size": 1200,
+      "payload-size": 3800,
       "udp-target-bits-per-sec": 10000000,
       "terminate-on-complete": true
     },
@@ -202,7 +202,7 @@ Server side:
   Data bytes inside each speed-test `DATA` frame, excluding the `48` byte protocol header.
   Defaults:
   - TCP: `131072`
-  - UDP: `1200`
+  - UDP: `3800`
 
   Maximum:
   - TCP: `16777216`

@@ -13,7 +13,7 @@ enum
     kSpeedTestClientDefaultIntervalMs      = 1000,
     kSpeedTestClientDefaultStartDelayMs    = 50,
     kSpeedTestClientDefaultTcpPayloadSize  = 128U * 1024U,
-    kSpeedTestClientDefaultUdpPayloadSize  = 1200U,
+    kSpeedTestClientDefaultUdpPayloadSize  = 3800U,
     kSpeedTestClientDefaultUdpBandwidthBps = 10U * 1000U * 1000U,
     kSpeedTestClientMaxPayloadSize         = 16U * 1024U * 1024U,
     kSpeedTestClientMaxUdpPayloadSize      = 65000U - kSpeedTestClientFrameHeaderSize,

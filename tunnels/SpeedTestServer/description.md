@@ -128,7 +128,7 @@ Matching client side:
       "direction": "upload",
       "duration-ms": 10000,
       "warmup-ms": 1000,
-      "payload-size": 1200,
+      "payload-size": 3800,
       "udp-target-bits-per-sec": 10000000
     },
     "next": "speedtest-udp-out"
