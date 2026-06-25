@@ -46,16 +46,22 @@ Practical rule:
   One Waterwall config file for a SpeedTestClient/SpeedTestServer case.
 - `run_waterwall_case.sh`
   The low-level single-case runner.
-  It creates a temporary `core.json`, launches `Waterwall`, watches the tester log, and fails on crash or timeout.
-  After the tester success marker, it terminates Waterwall and still treats unexpected shutdown statuses as failures.
+  It runs `Waterwall` from the selected case directory, writes a generated `core.json`, watches the tester log, and fails
+  on crash or timeout. Generated `stdout.log` and `log/` output remain in the case directory after the run.
+  After the tester success marker, it waits briefly for Waterwall to exit naturally before terminating it, and still
+  treats unexpected shutdown statuses as failures.
   The generated `core.json` uses `4` workers by default, unless the case directory provides `workers.txt`.
   The generated `core.json` uses the `client` RAM profile so stream cases are not bottlenecked by the minimal 4 KB
   large-buffer size.
 - `run_waterwall_speedtest.sh`
-  The low-level speedtest runner. It uses the same temporary `core.json` pattern but treats Waterwall exit status `0` as
-  success, because `SpeedTestClient` terminates the process when all streams complete.
+  The low-level speedtest runner. It uses the same generated `core.json` pattern but treats Waterwall exit status `0` as
+  success, because `SpeedTestClient` terminates the process when all streams complete. Generated logs remain in the
+  selected speedtest directory after the run.
   If `speedtests/_shared/` exists next to the selected speedtest directory, the runner copies those shared fixtures into
-  the temporary run directory before copying the selected case.
+  the selected speedtest directory for the run and removes only those generated fixture copies afterward.
+- `cleanup_generated_outputs.sh`
+  Optional manual cleanup helper for generated test logs, reports, transient `core.json` files, copied cert/key fixtures,
+  and unit-test logs. CTest does not call it.
 - `CMakeLists.txt`
   Registers integration cases with CTest and delegates unit-test registration to `unittests/CMakeLists.txt`.
 
@@ -412,11 +418,11 @@ cmake --build --preset linux-gcc-x64 --target check_waterwall_integration_tests
 
 When you run the helper script directly, it:
 
-1. copies the selected case directory into a temporary run directory
-2. writes a temporary `core.json`
+1. uses the selected case directory as the run directory
+2. writes a generated `core.json`
 3. launches the real `Waterwall` binary
 4. waits for the built-in tester success log line
-5. sends `SIGTERM` after success and checks that Waterwall exits cleanly
+5. waits briefly for natural exit, then sends `SIGTERM` if Waterwall is still running
 6. fails if `Waterwall` crashes, exits early, exits with an unexpected status after success, or times out
 7. prints logs on failure to help debugging
 8. optionally prints the captured `stdout.log` on success when `WATERWALL_TEST_SHOW_STDOUT_ON_SUCCESS=1` is set
@@ -434,11 +440,19 @@ Success and failure are decided inside Waterwall:
 `run_waterwall_speedtest.sh` is similar, but speedtests do not use `TesterClient`.
 They pass when `SpeedTestClient` completes and Waterwall exits with status `0`.
 
+After a normal integration case logs the tester success marker, `run_waterwall_case.sh` waits up to `0.5` seconds for
+Waterwall to exit naturally before sending `SIGTERM`. Override this when debugging shutdown paths:
+
+```sh
+WATERWALL_TEST_SUCCESS_EXIT_GRACE_SECONDS=5 \
+  ctest --preset linux-gcc --output-on-failure -R '^waterwall\.tls_fallback_connector_target_tcp_loopback$'
+```
+
 ## Showing stdout for passing tests
 
 CTest only shows passing test output when the test writes to stdout/stderr and CTest is run in verbose mode.
 The Waterwall integration runners normally keep successful runs quiet because they capture the process output in a
-temporary `stdout.log`.
+case-local `stdout.log`.
 
 To print that captured log for successful runs:
 
@@ -455,6 +469,20 @@ For VS Code CMake Tools, add this to `.vscode/settings.json`:
     "WATERWALL_TEST_SHOW_STDOUT_ON_SUCCESS": "1"
   }
 }
+```
+
+## Cleaning Generated Test Outputs
+
+Generated test outputs are ignored by git and kept for debugging. To remove them manually:
+
+```sh
+tests/cleanup_generated_outputs.sh
+```
+
+Preview what would be deleted:
+
+```sh
+tests/cleanup_generated_outputs.sh --dry-run
 ```
 
 ## Listing available cases
