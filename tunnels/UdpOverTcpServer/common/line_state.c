@@ -4,7 +4,10 @@
 
 void udpovertcpserverLinestateInitialize(udpovertcpserver_lstate_t *ls, buffer_pool_t *pool)
 {
-    ls->read_stream = bufferstreamCreate(pool, kHeaderSize);
+    *ls = (udpovertcpserver_lstate_t) {
+        .read_stream          = bufferstreamCreate(pool, kHeaderSize),
+        .upstream_initialized = false,
+    };
 }
 
 void udpovertcpserverLinestateDestroy(udpovertcpserver_lstate_t *ls)

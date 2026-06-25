@@ -45,12 +45,6 @@ void udpovertcpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
     bufferstreamPush(&(ls->read_stream), buf);
 
-    if (isOverFlow(&(ls->read_stream)))
-    {
-        bufferstreamEmpty(&(ls->read_stream));
-        return;
-    }
-
     while (true)
     {
         sbuf_t *packet_buffer = tryReadCompletePacket(&(ls->read_stream));
@@ -62,7 +56,12 @@ void udpovertcpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
         if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, packet_buffer))
         {
-            break; // Exit if the line is no longer alive
+            return; // Exit if the line is no longer alive
         }
+    }
+
+    if (isOverFlow(&(ls->read_stream)))
+    {
+        bufferstreamEmpty(&(ls->read_stream));
     }
 }

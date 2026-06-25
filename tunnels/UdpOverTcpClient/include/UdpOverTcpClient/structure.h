@@ -17,6 +17,7 @@ enum
     kTunnelStateSize = sizeof(udpovertcpclient_tstate_t),
     kLineStateSize   = sizeof(udpovertcpclient_lstate_t),
     kHeaderSize      = 2, // 2 bytes for the length of the packet
+    kProtocolMarkerSize = kHeaderSize + 1,
     kMaxAllowedUDPPacketLength =
         65535 - 20 - 8 - kHeaderSize, // Maximum UDP packet size (shared with udp_over_tcp_server)
 };
