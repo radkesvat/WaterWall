@@ -17,14 +17,14 @@ void increaseFileLimit(void)
     if ((unsigned long) rlim.rlim_max < 8192)
     {
         LOGW(
-            "Core: Maximum allowed open files limit is %lu which is below 8192 !\n if you are running as a server then \
-        you might experince time-outs if this limits gets reached, depends on how many clients are connected to the server simultaneously\
-        ",
+            "Core: Maximum open file limit is %lu, which is below 8192. If you are running as a server, "
+            "you might experience timeouts if this limit is reached, depending on how many clients are "
+            "connected simultaneously",
             (unsigned long) rlim.rlim_max);
     }
     else
     {
-        LOGD("Core: File limit  %lu -> %lu", (unsigned long) rlim.rlim_cur, (unsigned long) rlim.rlim_max);
+        LOGD("Core: File limit %lu -> %lu", (unsigned long) rlim.rlim_cur, (unsigned long) rlim.rlim_max);
     }
     // Set the soft limit to the maximum allowed value
     rlim.rlim_cur = rlim.rlim_max;
@@ -45,4 +45,3 @@ void increaseFileLimit(void)
 }
 
 #endif
-
