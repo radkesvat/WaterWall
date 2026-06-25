@@ -51,7 +51,9 @@ int post_recv(wio_t* io, hoverlapped_t* hovlp) {
         bufferpoolReuseBuffer(io->loop->bufpool, hovlp->sbuf);
         hovlp->sbuf = NULL;
     }
-    if (io->io_type == WIO_TYPE_UDP || io->io_type == WIO_TYPE_IP) {
+    if (io->io_type == WIO_TYPE_UDP) {
+        hovlp->sbuf = bufferpoolGetLargeBuffer(io->loop->bufpool);
+    } else if (io->io_type == WIO_TYPE_IP) {
         hovlp->sbuf = bufferpoolGetSmallBuffer(io->loop->bufpool);
     } else {
         hovlp->sbuf = bufferpoolGetLargeBuffer(io->loop->bufpool);

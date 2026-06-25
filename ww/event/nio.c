@@ -7,6 +7,11 @@
 #include "wsocket.h"
 #include "wthread.h"
 
+enum
+{
+    kNioReadDropped = -2
+};
+
 static void __connect_timeout_cb(wtimer_t *timer)
 {
     wio_t *io = (wio_t *) timer->privdata;
@@ -175,6 +180,40 @@ static int nio_connect_async(wio_t *io)
     return 0;
 }
 
+static int __nio_read_udp(wio_t *io, void *buf, unsigned int len)
+{
+#if defined(OS_LINUX) && defined(MSG_TRUNC)
+    struct iovec iov = {.iov_base = buf, .iov_len = (size_t) len};
+    struct msghdr msg = {.msg_name = io->peeraddr,
+                         .msg_namelen = sizeof(sockaddr_u),
+                         .msg_iov = &iov,
+                         .msg_iovlen = 1};
+
+    ssize_t nread = recvmsg(io->fd, &msg, MSG_TRUNC);
+    if (nread < 0)
+    {
+        return -1;
+    }
+
+    if ((msg.msg_flags & MSG_TRUNC) != 0 || nread > (ssize_t) len)
+    {
+        char localaddrstr[SOCKADDR_STRLEN] = {0};
+        char peeraddrstr[SOCKADDR_STRLEN]  = {0};
+        LOGW("UDP datagram too large for read buffer, dropped: packet_size=%lld buffer_size=%u [%s] <= [%s]",
+             LLD(nread),
+             len,
+             SOCKADDR_STR(io->localaddr, localaddrstr),
+             SOCKADDR_STR(io->peeraddr, peeraddrstr));
+        return kNioReadDropped;
+    }
+
+    return (int) nread;
+#else
+    socklen_t addrlen = sizeof(sockaddr_u);
+    return recvfrom(io->fd, buf, (size_t) len, 0, io->peeraddr, &addrlen);
+#endif
+}
+
 static int __nio_read(wio_t *io, void *buf, unsigned int len)
 {
     int nread = 0;
@@ -191,6 +230,8 @@ static int __nio_read(wio_t *io, void *buf, unsigned int len)
         nread = recv(io->fd, buf, (size_t) len, 0);
         break;
     case WIO_TYPE_UDP: // udp can also be more than 1472 bytes
+        nread = __nio_read_udp(io, buf, len);
+        break;
     case WIO_TYPE_IP: {
         socklen_t addrlen = sizeof(sockaddr_u);
         nread             = recvfrom(io->fd, buf, (size_t) len, 0, io->peeraddr, &addrlen);
@@ -253,9 +294,9 @@ static void nio_read(wio_t *io)
     {
     default:
     case WIO_TYPE_TCP:
+    case WIO_TYPE_UDP:
         buf = bufferpoolGetLargeBuffer(io->loop->bufpool);
         break;
-    case WIO_TYPE_UDP:
     case WIO_TYPE_IP:
         buf = bufferpoolGetSmallBuffer(io->loop->bufpool);
         break;
@@ -265,6 +306,12 @@ static void nio_read(wio_t *io)
     assert(available >= 1024);
 
     nread = __nio_read(io, sbufGetMutablePtr(buf), available);
+
+    if (nread == kNioReadDropped)
+    {
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        return;
+    }
 
     // printd("read retval=%d\n", nread);
     if (nread < 0)
