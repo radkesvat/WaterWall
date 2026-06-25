@@ -23,9 +23,11 @@ A rule is `target` **plus at least one condition**. Conditions you can use:
 | Condition | Matches on | Example value |
 |-----------|------------|---------------|
 | `source-ips` | client source IP, CIDR, or `geoip:<cc>` | `["10.0.0.0/8", "geoip:ir"]` |
-| `source-port` | local/inbound port the peer connected to | `"1000-2000"` |
+| `source-port` | local/inbound port the peer connected to | `[80, 443]` |
+| `source-port-range` | inclusive local/inbound port range | `[1000, 2000]` |
 | `destination-ip` | destination IP, CIDR, or `geoip:<cc>` | `"geoip:us"` |
-| `destination-port` | destination port, single or range | `443` |
+| `destination-port` | destination port, single or list | `443` |
+| `destination-port-range` | inclusive destination port range | `[1000, 2000]` |
 | `destination-domain` | destination domain: exact, wildcard, `*`, or `geosite:<list>` | `["*.example.com", "geosite:cn"]` |
 | `network` | transport type: `tcp`, `udp`, `icmp`, `packet` | `"tcp,udp"` |
 | `protocol` | app protocol sniffed from first bytes: `http1`, `tls`, `bittorrent` | `"tls"` |
@@ -35,7 +37,7 @@ A rule is `target` **plus at least one condition**. Conditions you can use:
 
 **Matching semantics**, in one line each:
 
-- **Within one condition** → `OR` (e.g. `destination-port: ["80","443"]` matches either).
+- **Within one condition** → `OR` (e.g. `destination-port: [80,443]` matches either).
 - **Across conditions in one rule** → `AND` (every condition must match).
 - **Across rules** → first match wins, in JSON order; later rules are skipped.
 - **No match anywhere** → the default `next` route.
@@ -142,9 +144,11 @@ error.
 | condition | accepts | meaning & notes |
 |-----------|---------|-----------------|
 | `source-ips` | string or array | Match the line **source** IP against single IPs, CIDR ranges, or `geoip:<cc>` country tokens (e.g. `geoip:ir`). A bare IP is a `/32` (or `/128`) host route. Numeric and GeoIP entries are OR-combined. |
-| `source-port` | number/string or array | Match `src_ctx.port` — the local/inbound port the peer connected to (resolved per-connection, even on multiport backends; i.e. the destination port in the peer's packets) — against single ports and ranges, e.g. `53`, `443`, `1000-2000`. |
+| `source-port` | integer or array of integers | Match `src_ctx.port` — the local/inbound port the peer connected to (resolved per-connection, even on multiport backends; i.e. the destination port in the peer's packets) — against exact ports, e.g. `53` or `[80, 443]`. |
+| `source-port-range` | two-integer array | Match `src_ctx.port` against an inclusive range, e.g. `[1000, 2000]`. If combined with `source-port`, the exact ports and range are OR-combined. |
 | `destination-ip` | string or array | Match the line **destination** IP (`dest_ctx`) against single IPs, CIDR ranges, or `geoip:<cc>`. Numeric and GeoIP entries are OR-combined. A domain-only destination has no IP and does not match. |
-| `destination-port` | number/string or array | Match `dest_ctx.port` against single ports and ranges, e.g. `53`, `443`, `1000-2000`. |
+| `destination-port` | integer or array of integers | Match `dest_ctx.port` against exact ports, e.g. `53` or `[80, 443]`. |
+| `destination-port-range` | two-integer array | Match `dest_ctx.port` against an inclusive range, e.g. `[1000, 2000]`. If combined with `destination-port`, the exact ports and range are OR-combined. |
 | `destination-domain` | string or array | Match `dest_ctx.domain`, case-insensitive: exact (`google.com`), wildcard (`*.google.com`, subdomains only), `*` (any domain), or compiled GeoSite lists (`geosite:cn`). Can match a sniffed Host/SNI value (see [Sniffing](#sniffing-host--sni)). |
 | `network` | string or array | Match the destination transport flags: `tcp`, `udp`, `icmp`, `packet`, or combined in one string `"tcp,udp"`. OR within the field. |
 | `protocol` | string or array | Match an application protocol detected from the first upstream payload: `http1`, `tls`, `bittorrent`. OR within the field. See [Protocol detection](#protocol-detection). |
@@ -350,7 +354,7 @@ Send upgrade requests to a WebSocket backend; plain HTTP falls through to `next`
 ```json
 {
     "network": "udp",
-    "destination-port": "443",
+    "destination-port": 443,
     "protocol": "bittorrent",
     "target": "bittorrent_sink"
 }

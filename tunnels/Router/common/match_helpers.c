@@ -431,156 +431,184 @@ void routerGeoipClose(router_tstate_t *ts)
 }
 
 // ============================================================================
-// Port ranges (source-port)
+// Port lists and inclusive ranges
 // ============================================================================
 
-static bool routerParseU16(const char *s, uint32_t len, uint16_t *out)
+static bool routerParsePortNumber(const cJSON *item, uint16_t *out, const char *json_path)
 {
-    // trim surrounding spaces
-    while (len > 0 && (s[0] == ' ' || s[0] == '\t'))
+    if (! cJSON_IsNumber(item) || item->valueint < 0 || item->valueint > UINT16_MAX ||
+        item->valuedouble != (double) item->valueint)
     {
-        ++s;
-        --len;
-    }
-    while (len > 0 && (s[len - 1U] == ' ' || s[len - 1U] == '\t'))
-    {
-        --len;
-    }
-
-    if (len == 0)
-    {
+        LOGF("JSON Error: %s : expected a port integer in range 0-65535", json_path);
         return false;
     }
 
-    uint32_t value = 0;
-    for (uint32_t i = 0; i < len; ++i)
-    {
-        if (s[i] < '0' || s[i] > '9')
-        {
-            return false;
-        }
-        value = (value * 10U) + (uint32_t) (s[i] - '0');
-        if (value > UINT16_MAX)
-        {
-            return false;
-        }
-    }
-
-    *out = (uint16_t) value;
+    *out = (uint16_t) item->valueint;
     return true;
 }
 
-static bool routerParsePortToken(const char *token, router_port_range_t *out, const char *json_path)
+static bool routerParseSinglePortItem(const cJSON *item, router_port_range_t *out, const char *json_path)
 {
-    uint32_t len  = (uint32_t) stringLength(token);
-    int      dash = -1;
-    for (uint32_t i = 0; i < len; ++i)
+    uint16_t port = 0;
+    if (! routerParsePortNumber(item, &port, json_path))
     {
-        if (token[i] == '-')
-        {
-            dash = (int) i;
-            break;
-        }
-    }
-
-    if (dash < 0)
-    {
-        if (! routerParseU16(token, len, &out->low))
-        {
-            LOGF("JSON Error: %s : \"%s\" is not a valid port", json_path, token);
-            return false;
-        }
-        out->high = out->low;
-        return true;
-    }
-
-    if (! routerParseU16(token, (uint32_t) dash, &out->low) ||
-        ! routerParseU16(token + dash + 1, len - (uint32_t) dash - 1U, &out->high))
-    {
-        LOGF("JSON Error: %s : \"%s\" is not a valid port range", json_path, token);
         return false;
     }
 
-    if (out->low > out->high)
-    {
-        LOGF("JSON Error: %s : port range \"%s\" has start greater than end", json_path, token);
-        return false;
-    }
-
+    out->low  = port;
+    out->high = port;
     return true;
 }
 
-static bool routerParsePortItem(const cJSON *item, router_port_range_t *out, const char *json_path)
-{
-    if (cJSON_IsNumber(item))
-    {
-        if (item->valueint < 0 || item->valueint > UINT16_MAX || item->valuedouble != (double) item->valueint)
-        {
-            LOGF("JSON Error: %s : port number out of range", json_path);
-            return false;
-        }
-        out->low  = (uint16_t) item->valueint;
-        out->high = out->low;
-        return true;
-    }
-
-    if (cJSON_IsString(item) && item->valuestring != NULL)
-    {
-        return routerParsePortToken(item->valuestring, out, json_path);
-    }
-
-    LOGF("JSON Error: %s : expected a port number or string", json_path);
-    return false;
-}
-
-bool routerPortRangesParse(const cJSON *value_json, router_port_range_t **out_ranges, uint32_t *out_count,
-                           const char *json_path)
+static bool routerExactPortsParse(const cJSON *value_json, router_port_range_t **out_ranges, uint32_t *out_count,
+                                  const char *json_path)
 {
     *out_ranges = NULL;
     *out_count  = 0;
 
-    if (cJSON_IsArray(value_json))
-    {
-        int n = cJSON_GetArraySize(value_json);
-        if (n <= 0)
-        {
-            LOGF("JSON Error: %s (array field) : expected one or more ports", json_path);
-            return false;
-        }
-
-        router_port_range_t *ranges = memoryAllocateZero(sizeof(*ranges) * (size_t) n);
-        uint32_t             index  = 0;
-        const cJSON         *item   = NULL;
-        cJSON_ArrayForEach(item, value_json)
-        {
-            if (! routerParsePortItem(item, &ranges[index], json_path))
-            {
-                memoryFree(ranges);
-                return false;
-            }
-            ++index;
-        }
-
-        *out_ranges = ranges;
-        *out_count  = (uint32_t) n;
-        return true;
-    }
-
-    if (cJSON_IsNumber(value_json) || cJSON_IsString(value_json))
+    if (cJSON_IsNumber(value_json))
     {
         router_port_range_t *ranges = memoryAllocateZero(sizeof(*ranges));
-        if (! routerParsePortItem(value_json, &ranges[0], json_path))
+        if (! routerParseSinglePortItem(value_json, &ranges[0], json_path))
         {
             memoryFree(ranges);
             return false;
         }
+
         *out_ranges = ranges;
         *out_count  = 1;
         return true;
     }
 
-    LOGF("JSON Error: %s : expected a port number, string, or array", json_path);
-    return false;
+    if (! cJSON_IsArray(value_json))
+    {
+        LOGF("JSON Error: %s : expected a port integer or array of port integers", json_path);
+        return false;
+    }
+
+    int n = cJSON_GetArraySize(value_json);
+    if (n <= 0)
+    {
+        LOGF("JSON Error: %s (array field) : expected one or more port integers", json_path);
+        return false;
+    }
+
+    router_port_range_t *ranges = memoryAllocateZero(sizeof(*ranges) * (size_t) n);
+    uint32_t             index  = 0;
+    const cJSON         *item   = NULL;
+    cJSON_ArrayForEach(item, value_json)
+    {
+        if (! routerParseSinglePortItem(item, &ranges[index], json_path))
+        {
+            memoryFree(ranges);
+            return false;
+        }
+        ++index;
+    }
+
+    *out_ranges = ranges;
+    *out_count  = (uint32_t) n;
+    return true;
+}
+
+static bool routerInclusivePortRangeParse(const cJSON *value_json, router_port_range_t **out_ranges,
+                                          uint32_t *out_count, const char *json_path)
+{
+    *out_ranges = NULL;
+    *out_count  = 0;
+
+    if (! cJSON_IsArray(value_json))
+    {
+        LOGF("JSON Error: %s : expected an array with exactly two port integers", json_path);
+        return false;
+    }
+
+    if (cJSON_GetArraySize(value_json) != 2)
+    {
+        LOGF("JSON Error: %s (array field) : expected exactly two port integers", json_path);
+        return false;
+    }
+
+    uint16_t     low   = 0;
+    uint16_t     high  = 0;
+    const cJSON *first = cJSON_GetArrayItem(value_json, 0);
+    const cJSON *last  = cJSON_GetArrayItem(value_json, 1);
+    if (! routerParsePortNumber(first, &low, json_path) || ! routerParsePortNumber(last, &high, json_path))
+    {
+        return false;
+    }
+
+    if (low > high)
+    {
+        LOGF("JSON Error: %s : port range start is greater than end", json_path);
+        return false;
+    }
+
+    router_port_range_t *ranges = memoryAllocateZero(sizeof(*ranges));
+    ranges[0].low               = low;
+    ranges[0].high              = high;
+
+    *out_ranges = ranges;
+    *out_count  = 1;
+    return true;
+}
+
+bool routerPortRangesParse(const cJSON *ports_json, const cJSON *range_json, router_port_range_t **out_ranges,
+                           uint32_t *out_count, const char *ports_json_path, const char *range_json_path)
+{
+    *out_ranges = NULL;
+    *out_count  = 0;
+
+    router_port_range_t *ports      = NULL;
+    uint32_t             ports_count = 0;
+    if (ports_json != NULL &&
+        ! routerExactPortsParse(ports_json, &ports, &ports_count, ports_json_path))
+    {
+        return false;
+    }
+
+    router_port_range_t *range      = NULL;
+    uint32_t             range_count = 0;
+    if (range_json != NULL &&
+        ! routerInclusivePortRangeParse(range_json, &range, &range_count, range_json_path))
+    {
+        if (ports != NULL)
+        {
+            memoryFree(ports);
+        }
+        return false;
+    }
+
+    uint32_t total_count = ports_count + range_count;
+    if (total_count == 0)
+    {
+        return true;
+    }
+
+    if (ports_count == 0)
+    {
+        *out_ranges = range;
+        *out_count  = range_count;
+        return true;
+    }
+
+    if (range_count == 0)
+    {
+        *out_ranges = ports;
+        *out_count  = ports_count;
+        return true;
+    }
+
+    router_port_range_t *ranges = memoryAllocateZero(sizeof(*ranges) * (size_t) total_count);
+    memoryCopy(ranges, ports, sizeof(*ranges) * (size_t) ports_count);
+    memoryCopy(ranges + ports_count, range, sizeof(*ranges) * (size_t) range_count);
+
+    memoryFree(ports);
+    memoryFree(range);
+
+    *out_ranges = ranges;
+    *out_count  = total_count;
+    return true;
 }
 
 bool routerPortRangesMatch(uint16_t port, const router_port_range_t *ranges, uint32_t count)

@@ -1,7 +1,9 @@
 #include "Router/structure.h"
 #include "modules/attributes/attributes.h"
 #include "modules/destination_domain/destination_domain.h"
+#include "modules/destination_port/destination_port.h"
 #include "modules/protocol/protocol.h"
+#include "modules/source_port/source_port.h"
 #include "protocol_sniff.h"
 
 #include <stdio.h>
@@ -170,6 +172,26 @@ static router_rule_t parseProtocolRule(const char *json_text, tunnel_t *target)
     return rule;
 }
 
+static router_rule_t parseSourcePortRule(const char *json_text, tunnel_t *target)
+{
+    router_rule_t rule = {0};
+    cJSON        *json = parseJsonObject(json_text);
+    require(routerSourcePortParse(&rule, json, 0) == kRouterFieldPresent, "source-port parse failed");
+    rule.target_tunnel = target;
+    cJSON_Delete(json);
+    return rule;
+}
+
+static router_rule_t parseDestinationPortRule(const char *json_text, tunnel_t *target)
+{
+    router_rule_t rule = {0};
+    cJSON        *json = parseJsonObject(json_text);
+    require(routerDestinationPortParse(&rule, json, 0) == kRouterFieldPresent, "destination-port parse failed");
+    rule.target_tunnel = target;
+    cJSON_Delete(json);
+    return rule;
+}
+
 static bool attributesConfigFails(const char *json_text)
 {
     router_rule_t rule = {0};
@@ -186,6 +208,26 @@ static bool protocolConfigFails(const char *json_text)
     cJSON        *json = parseJsonObject(json_text);
     bool          fail = routerProtocolParse(&rule, json, 0) == kRouterFieldError;
     routerProtocolDestroy(&rule);
+    cJSON_Delete(json);
+    return fail;
+}
+
+static bool sourcePortConfigFails(const char *json_text)
+{
+    router_rule_t rule = {0};
+    cJSON        *json = parseJsonObject(json_text);
+    bool          fail = routerSourcePortParse(&rule, json, 0) == kRouterFieldError;
+    routerSourcePortDestroy(&rule);
+    cJSON_Delete(json);
+    return fail;
+}
+
+static bool destinationPortConfigFails(const char *json_text)
+{
+    router_rule_t rule = {0};
+    cJSON        *json = parseJsonObject(json_text);
+    bool          fail = routerDestinationPortParse(&rule, json, 0) == kRouterFieldError;
+    routerDestinationPortDestroy(&rule);
     cJSON_Delete(json);
     return fail;
 }
@@ -294,6 +336,81 @@ static void testProtocolDescriptorTable(void)
     uint32_t expected = kAddressContextProtocolHttp1 | kAddressContextProtocolTls | kAddressContextProtocolBittorrent;
     require(mask == expected, "Router protocol descriptor table does not cover every protocol flag");
     require(routerProtocolFindDescriptorByName("missing") == NULL, "unknown Router protocol descriptor was found");
+}
+
+static void testPortMatchers(void)
+{
+    require(sourcePortConfigFails("{\"source-port\":\"443\"}"), "string source-port was accepted");
+    require(sourcePortConfigFails("{\"source-port\":[80,\"443\"]}"), "non-integer source-port array item was accepted");
+    require(sourcePortConfigFails("{\"source-port\":[]}"), "empty source-port array was accepted");
+    require(sourcePortConfigFails("{\"source-port\":70000}"), "out-of-range source-port was accepted");
+    require(sourcePortConfigFails("{\"source-port-range\":443}"), "non-array source-port-range was accepted");
+    require(sourcePortConfigFails("{\"source-port-range\":[1000]}"),
+            "single-element source-port-range was accepted");
+    require(sourcePortConfigFails("{\"source-port-range\":[2000,1000]}"),
+            "descending source-port-range was accepted");
+    require(destinationPortConfigFails("{\"destination-port\":\"443\"}"), "string destination-port was accepted");
+    require(destinationPortConfigFails("{\"destination-port\":-1}"), "negative destination-port was accepted");
+    require(destinationPortConfigFails("{\"destination-port-range\":[80,443,8443]}"),
+            "three-element destination-port-range was accepted");
+    require(destinationPortConfigFails("{\"destination-port-range\":[80,443.5]}"),
+            "fractional destination-port-range element was accepted");
+
+    tunnel_t *source_target = (tunnel_t *) (uintptr_t) 0x81;
+    line_t   *line         = testLineCreate();
+
+    router_rule_t   source_rule =
+        parseSourcePortRule("{\"source-port\":[80,443],\"source-port-range\":[1000,1002]}", source_target);
+    router_tstate_t ts = {0};
+
+    addresscontextSetPort(&line->routing_context.src_ctx, 80);
+    expectMatch("source exact port route",
+                classifyOneRule(&ts, &source_rule, line, NULL, 0),
+                kRouterClassifyTarget,
+                source_target);
+
+    addresscontextSetPort(&line->routing_context.src_ctx, 1002);
+    expectMatch("source inclusive high port route",
+                classifyOneRule(&ts, &source_rule, line, NULL, 0),
+                kRouterClassifyTarget,
+                source_target);
+
+    addresscontextSetPort(&line->routing_context.src_ctx, 999);
+    expectMatch("source port nonmatch route",
+                classifyOneRule(&ts, &source_rule, line, NULL, 0),
+                kRouterClassifyDefault,
+                NULL);
+
+    routerSourcePortDestroy(&source_rule);
+    testLineDestroy(line);
+
+    tunnel_t *destination_target = (tunnel_t *) (uintptr_t) 0x82;
+    line                       = testLineCreate();
+
+    router_rule_t destination_rule =
+        parseDestinationPortRule("{\"destination-port\":[53,443],\"destination-port-range\":[8000,8002]}",
+                                 destination_target);
+
+    addresscontextSetPort(&line->routing_context.dest_ctx, 53);
+    expectMatch("destination exact port route",
+                classifyOneRule(&ts, &destination_rule, line, NULL, 0),
+                kRouterClassifyTarget,
+                destination_target);
+
+    addresscontextSetPort(&line->routing_context.dest_ctx, 8001);
+    expectMatch("destination range middle port route",
+                classifyOneRule(&ts, &destination_rule, line, NULL, 0),
+                kRouterClassifyTarget,
+                destination_target);
+
+    addresscontextSetPort(&line->routing_context.dest_ctx, 1500);
+    expectMatch("destination exact list is not a range",
+                classifyOneRule(&ts, &destination_rule, line, NULL, 0),
+                kRouterClassifyDefault,
+                NULL);
+
+    routerDestinationPortDestroy(&destination_rule);
+    testLineDestroy(line);
 }
 
 static void testRouterInitClearsOptionalFlags(void)
@@ -828,6 +945,7 @@ int main(void)
     testSniffingConfig();
     testProtocolConfig();
     testProtocolDescriptorTable();
+    testPortMatchers();
     testRouterInitClearsOptionalFlags();
     testHttpSniffingMatchesDestinationDomain();
     testTlsSniffingMatchesDestinationDomain();

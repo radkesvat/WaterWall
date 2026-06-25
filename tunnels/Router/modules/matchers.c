@@ -46,9 +46,16 @@ static const router_matcher_t kRouterMatchers[] = {
     {"destination-port", routerDestinationPortParse, routerDestinationPortMatch, routerDestinationPortDestroy},
 };
 
+static const char *const kRouterKnownConditionAliases[] = {
+    "source-port-range",
+    "destination-port-range",
+};
+
 enum
 {
-    kRouterMatchersCount = (int) (sizeof(kRouterMatchers) / sizeof(kRouterMatchers[0]))
+    kRouterMatchersCount              = (int) (sizeof(kRouterMatchers) / sizeof(kRouterMatchers[0])),
+    kRouterKnownConditionAliasesCount =
+        (int) (sizeof(kRouterKnownConditionAliases) / sizeof(kRouterKnownConditionAliases[0]))
 };
 
 bool routerRuleParseConditions(router_rule_t *rule, const cJSON *rule_json, uint32_t rule_index,
@@ -107,5 +114,14 @@ bool routerIsKnownConditionKey(const char *key)
             return true;
         }
     }
+
+    for (int i = 0; i < kRouterKnownConditionAliasesCount; ++i)
+    {
+        if (stringCompare(kRouterKnownConditionAliases[i], key) == 0)
+        {
+            return true;
+        }
+    }
+
     return false;
 }

@@ -4,19 +4,22 @@
 
 router_field_parse_t routerDestinationPortParse(router_rule_t *rule, const cJSON *rule_json, uint32_t rule_index)
 {
-    const cJSON *value = cJSON_GetObjectItemCaseSensitive(rule_json, "destination-port");
-    if (value == NULL)
+    const cJSON *ports = cJSON_GetObjectItemCaseSensitive(rule_json, "destination-port");
+    const cJSON *range = cJSON_GetObjectItemCaseSensitive(rule_json, "destination-port-range");
+    if (ports == NULL && range == NULL)
     {
         rule->destination_port.present = false;
         return kRouterFieldAbsent;
     }
 
-    if (! routerPortRangesParse(value,
+    if (! routerPortRangesParse(ports,
+                                range,
                                 &rule->destination_port.ranges,
                                 &rule->destination_port.ranges_count,
-                                "Router->settings->rules[]->destination-port"))
+                                "Router->settings->rules[]->destination-port",
+                                "Router->settings->rules[]->destination-port-range"))
     {
-        LOGW("Router: rule %u has an invalid \"destination-port\" condition", (unsigned int) rule_index);
+        LOGW("Router: rule %u has an invalid destination port condition", (unsigned int) rule_index);
         return kRouterFieldError;
     }
 

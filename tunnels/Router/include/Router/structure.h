@@ -217,7 +217,7 @@ typedef struct router_match_source_ips_s
 typedef struct router_match_source_port_s
 {
     bool                 present;
-    router_port_range_t *ranges; // parsed single ports and ranges such as "1000-2000"
+    router_port_range_t *ranges; // exact ports plus optional source-port-range
     uint32_t             ranges_count;
 } router_match_source_port_t;
 
@@ -275,7 +275,7 @@ typedef struct router_match_password_s
 typedef struct router_match_destination_port_s
 {
     bool                 present;
-    router_port_range_t *ranges; // parsed single ports and ranges such as "1000-2000"
+    router_port_range_t *ranges; // exact ports plus optional destination-port-range
     uint32_t             ranges_count;
 } router_match_destination_port_t;
 
@@ -385,9 +385,9 @@ bool routerGeositeCompiledListMatches(const router_geosite_compiled_list_t *list
 bool routerGeositeCompiledListMatchesPrepared(const router_geosite_compiled_list_t *list,
                                               const router_geosite_host_cache_t    *host);
 
-// Parse a JSON number/string/array of ports and ranges into numeric ranges.
-bool routerPortRangesParse(const cJSON *value_json, router_port_range_t **out_ranges, uint32_t *out_count,
-                           const char *json_path);
+// Parse JSON exact-port and inclusive-range fields into numeric ranges.
+bool routerPortRangesParse(const cJSON *ports_json, const cJSON *range_json, router_port_range_t **out_ranges,
+                           uint32_t *out_count, const char *ports_json_path, const char *range_json_path);
 bool routerPortRangesMatch(uint16_t port, const router_port_range_t *ranges, uint32_t count);
 
 // Parse network tokens (tcp/udp/icmp/packet, comma-combinable) into a bit mask.

@@ -4,19 +4,22 @@
 
 router_field_parse_t routerSourcePortParse(router_rule_t *rule, const cJSON *rule_json, uint32_t rule_index)
 {
-    const cJSON *value = cJSON_GetObjectItemCaseSensitive(rule_json, "source-port");
-    if (value == NULL)
+    const cJSON *ports = cJSON_GetObjectItemCaseSensitive(rule_json, "source-port");
+    const cJSON *range = cJSON_GetObjectItemCaseSensitive(rule_json, "source-port-range");
+    if (ports == NULL && range == NULL)
     {
         rule->source_port.present = false;
         return kRouterFieldAbsent;
     }
 
-    if (! routerPortRangesParse(value,
+    if (! routerPortRangesParse(ports,
+                                range,
                                 &rule->source_port.ranges,
                                 &rule->source_port.ranges_count,
-                                "Router->settings->rules[]->source-port"))
+                                "Router->settings->rules[]->source-port",
+                                "Router->settings->rules[]->source-port-range"))
     {
-        LOGW("Router: rule %u has an invalid \"source-port\" condition", (unsigned int) rule_index);
+        LOGW("Router: rule %u has an invalid source port condition", (unsigned int) rule_index);
         return kRouterFieldError;
     }
 
