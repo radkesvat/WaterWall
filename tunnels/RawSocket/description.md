@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/raw-device.mdx, and both files must keep the same documentation version.
+-->
+
 # RawSocket Node
 
 `RawSocket` connects WaterWall to raw IPv4 packet capture and raw packet injection. It captures matching IP packets from the host networking stack and forwards them into the chain, and it can also inject raw IP packets coming from the chain back into the system.

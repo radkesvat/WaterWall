@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/disturber.mdx, and both files must keep the same documentation version.
+-->
+
 # Disturber Node
 
 `Disturber` is a test tunnel used to simulate unreliable network behavior inside a WaterWall chain. It is designed to help validate other tunnels by injecting drops, corruption, duplication, reordering, delays, hangs, and abrupt closes.

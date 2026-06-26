@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/udp-stateless-socket.mdx, and both files must keep the same documentation version.
+-->
+
 # UdpStatelessSocket Node
 
 `UdpStatelessSocket` is a stateless UDP endpoint adapter. It binds one UDP socket, receives datagrams from any peer, and sends datagrams to the address currently stored in the line's routing context.

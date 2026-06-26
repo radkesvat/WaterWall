@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/encryption-client.mdx, and both files must keep the same documentation version.
+-->
+
 # EncryptionClient
 
 `EncryptionClient` applies AEAD encryption on upstream traffic and decrypts downstream traffic carried in TLS-like application-data records.

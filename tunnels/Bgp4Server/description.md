@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/bgp4-server.mdx, and both files must keep the same documentation version.
+-->
+
 # Bgp4Server
 
 `Bgp4Server` is the peer for `Bgp4Client`. It unwraps upstream BGP-like frames and wraps downstream stream payloads in the reverse direction.

@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/domain-resolver.mdx, and both files must keep the same documentation version.
+-->
+
 # DomainResolver Node
 
 `DomainResolver` is a middle node that resolves a line's destination domain before forwarding that line's `Init`.

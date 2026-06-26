@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/authentication-client.mdx, and both files must keep the same documentation version.
+-->
+
 # AuthenticationClient
 
 `AuthenticationClient` is the frontend side of the Waterwall authentication database protocol. It is a chain-head control

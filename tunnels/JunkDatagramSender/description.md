@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/junk-datagram-sender.mdx, and both files must keep the same documentation version.
+-->
+
 # JunkDatagramSender Node
 
 `JunkDatagramSender` is a composable middle tunnel that injects generated junk datagram payloads before the first upstream payloads of a line. It is intended for camouflage and protocol-noise experiments around UDP-like paths, while still preserving Waterwall's normal line lifecycle and callback directions.

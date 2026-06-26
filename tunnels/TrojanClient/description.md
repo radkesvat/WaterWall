@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/trojan-client.mdx, and both files must keep the same documentation version.
+-->
+
 # TrojanClient Node
 
 `TrojanClient` is a client-side Trojan protocol middle tunnel for Waterwall.

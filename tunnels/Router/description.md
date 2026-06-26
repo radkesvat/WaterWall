@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/router.mdx, and both files must keep the same documentation version.
+-->
+
 # Router
 
 A layer-4 **rule-based router**. It sits in a chain like a middle tunnel and, on

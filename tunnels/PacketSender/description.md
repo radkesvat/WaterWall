@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/packet-sender.mdx, and both files must keep the same documentation version.
+-->
+
 # PacketSender Node
 
 `PacketSender` is a layer-3 IPv4 packet generator. It pre-builds packets at startup and sends them across the worker

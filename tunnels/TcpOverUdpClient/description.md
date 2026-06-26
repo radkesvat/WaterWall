@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/tcp-over-udp-client.mdx, and both files must keep the same documentation version.
+-->
+
 # TcpOverUdpClient Node
 
 `TcpOverUdpClient` carries a TCP-like byte stream over a UDP path by running KCP internally. It accepts stream data from the previous node, feeds it into KCP, and sends the resulting packets through the next node.

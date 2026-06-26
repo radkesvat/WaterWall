@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ip-overrider.mdx, and both files must keep the same documentation version.
+-->
+
 # IpOverrider Node
 
 `IpOverrider` rewrites packet IP addresses as traffic passes through the chain. A single instance can now apply independent overrides for upstream and downstream traffic, and for source and destination IP fields within each direction.

@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ping-client.mdx, and both files must keep the same documentation version.
+-->
+
 # PingClient Node
 
 `PingClient` is a layer-3 packet tunnel. On the upstream path it transforms IPv4 packets according to a configured ICMP-related strategy, and on the downstream path it applies the inverse logic for the matching peer traffic.

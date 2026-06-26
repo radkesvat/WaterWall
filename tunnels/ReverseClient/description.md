@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/reverse-client.mdx, and both files must keep the same documentation version.
+-->
+
 # ReverseClient Node
 
 `ReverseClient` keeps a pool of pre-opened reverse connections toward a remote `ReverseServer`. When one of those waiting reverse connections starts carrying real traffic, `ReverseClient` creates a local-facing line for the previous node and forwards traffic through that reverse channel.

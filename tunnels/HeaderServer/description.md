@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/header-server.mdx, and both files must keep the same documentation version.
+-->
+
 # HeaderServer
 
 `HeaderServer` consumes the one-time 2-byte port header produced by `HeaderClient` and applies it to `line->routing_context.dest_ctx.port` before initializing the next upstream tunnel.

@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/bridge.mdx, and both files must keep the same documentation version.
+-->
+
 # Bridge Node
 
 `Bridge` links two separate places in the same WaterWall configuration. A pair of `Bridge` nodes forwards line events and payload between each other, effectively stitching two otherwise separate chain segments together.

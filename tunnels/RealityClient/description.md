@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/reality-client.mdx, and both files must keep the same documentation version.
+-->
+
 # RealityClient
 
 `RealityClient` performs a real client TLS handshake through an internal `TlsClient`, then takes over the raw connection and sends Reality-authenticated payload inside TLS-like application records.

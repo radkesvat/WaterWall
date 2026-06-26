@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/udp-over-tcp-server.mdx, and both files must keep the same documentation version.
+-->
+
 # UdpOverTcpServer Node
 
 `UdpOverTcpServer` is the server-side peer of `UdpOverTcpClient`. It accepts a framed byte stream from the previous node, reconstructs discrete packets, and forwards those packets to the next node.

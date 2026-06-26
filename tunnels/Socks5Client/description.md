@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/socks5-client.mdx, and both files must keep the same documentation version.
+-->
+
 # Socks5Client Node
 
 `Socks5Client` is a stream middle-tunnel that speaks the client side of the SOCKS5 protocol.

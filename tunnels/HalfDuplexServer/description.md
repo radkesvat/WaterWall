@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/halfduplex-server.mdx, and both files must keep the same documentation version.
+-->
+
 # HalfDuplexServer Node
 
 `HalfDuplexServer` is the server-side peer of `HalfDuplexClient`. It receives two separate inbound half-connections, matches them by an internal identifier, and reconstructs one normal logical line toward the next node.

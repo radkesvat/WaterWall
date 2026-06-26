@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/packet-receiver.mdx, and both files must keep the same documentation version.
+-->
+
 # PacketReceiver Node
 
 `PacketReceiver` is an endpoint IPv4 packet counter. It groups packets by source IP, compares them against an expected

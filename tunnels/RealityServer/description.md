@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/reality-server.mdx, and both files must keep the same documentation version.
+-->
+
 # RealityServer
 
 `RealityServer` starts each connection as a visitor TCP bridge to a configured destination and sniffs client-to-server TLS application records. If a record authenticates as Reality traffic, it closes the visitor branch and switches the same Waterwall line to the normal `next` chain.

@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/udp-connector.mdx, and both files must keep the same documentation version.
+-->
+
 # UdpConnector Node
 
 `UdpConnector` is an outbound UDP client node. It creates a local UDP socket, chooses a destination address and port, and forwards datagrams between the previous node and the selected remote peer.

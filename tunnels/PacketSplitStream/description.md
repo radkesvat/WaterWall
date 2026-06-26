@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/packet-split-stream.mdx, and both files must keep the same documentation version.
+-->
+
 # PacketSplitStream Node
 
 `PacketSplitStream` takes one worker packet line from the left side and splits it into two persistent stream-facing lines:

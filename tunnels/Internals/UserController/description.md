@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/user-controller.mdx, and both files must keep the same documentation version.
+-->
+
 # UserController Node
 
 `UserController` is a middle (stream) node that enforces per-user limits for traffic-serving chains.

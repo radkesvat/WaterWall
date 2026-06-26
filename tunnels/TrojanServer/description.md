@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/trojan-server.mdx, and both files must keep the same documentation version.
+-->
+
 # TrojanServer Node
 
 `TrojanServer` is a server-side Trojan protocol middle tunnel for Waterwall.

@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/reverse-server.mdx, and both files must keep the same documentation version.
+-->
+
 # ReverseServer Node
 
 `ReverseServer` is the server-side peer for `ReverseClient`. It receives pre-opened reverse connections from one side, receives real traffic from the other side, and pairs those two halves together so data can flow through the reverse tunnel.

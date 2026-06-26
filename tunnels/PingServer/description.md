@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ping-server.mdx, and both files must keep the same documentation version.
+-->
+
 # PingServer Node
 
 `PingServer` is the server-side peer for `PingClient`. On the upstream path it applies the configured packet disguise logic toward the client side, and on the downstream path it reverses matching peer traffic back to plain packets.

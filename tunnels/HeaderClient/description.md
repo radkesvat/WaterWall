@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/header-client.mdx, and both files must keep the same documentation version.
+-->
+
 # HeaderClient
 
 `HeaderClient` prepends a one-time 2-byte port header to the first upstream payload on each normal layer-4 line.

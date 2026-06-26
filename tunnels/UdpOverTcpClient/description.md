@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/udp-over-tcp-client.mdx, and both files must keep the same documentation version.
+-->
+
 # UdpOverTcpClient Node
 
 `UdpOverTcpClient` carries discrete UDP-style packets over a TCP-style byte stream. It adds a 2-byte length prefix to each outbound packet and reconstructs packet boundaries again when data comes back from the stream side.

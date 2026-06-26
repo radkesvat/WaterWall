@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/obfs-server.mdx, and both files must keep the same documentation version.
+-->
+
 # ObfuscatorServer Node
 
 `ObfuscatorServer` is the server-side peer of `ObfuscatorClient`. It applies the same reversible payload transform in the same WaterWall callback directions as the client side: upstream payload is transformed before forwarding to the next node, and downstream payload is restored before forwarding to the previous node.

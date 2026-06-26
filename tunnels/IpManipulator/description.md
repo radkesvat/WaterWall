@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ip-manipulator.mdx, and both files must keep the same documentation version.
+-->
+
 # IpManipulator Node
 
 `IpManipulator` is a packet tunnel that mutates IPv4 packets in place.

@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/tcp-over-udp-server.mdx, and both files must keep the same documentation version.
+-->
+
 # TcpOverUdpServer Node
 
 `TcpOverUdpServer` is the server-side peer of `TcpOverUdpClient`. It receives UDP-style packet traffic carrying KCP data, reconstructs the original byte stream, and forwards that stream to the next node.

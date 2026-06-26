@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/halfduplex-client.mdx, and both files must keep the same documentation version.
+-->
+
 # HalfDuplexClient Node
 
 `HalfDuplexClient` takes one normal full-duplex line from the previous node and splits it into two separate outbound connections toward the next node:

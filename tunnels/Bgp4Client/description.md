@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/bgp4-client.mdx, and both files must keep the same documentation version.
+-->
+
 # Bgp4Client
 
 `Bgp4Client` wraps upstream stream payloads in BGP-like frames and unwraps downstream frames from `Bgp4Server`.

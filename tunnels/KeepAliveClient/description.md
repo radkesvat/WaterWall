@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/keep-alive-client.mdx, and both files must keep the same documentation version.
+-->
+
 # KeepAliveClient Node
 
 `KeepAliveClient` is a small framing tunnel that wraps upstream payloads with a `3`-byte keepalive header and

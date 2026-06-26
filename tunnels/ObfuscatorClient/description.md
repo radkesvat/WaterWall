@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/obfs-client.mdx, and both files must keep the same documentation version.
+-->
+
 # ObfuscatorClient Node
 
 `ObfuscatorClient` applies a reversible payload transform to traffic passing through it. In the current implementation, the only supported method is XOR obfuscation.

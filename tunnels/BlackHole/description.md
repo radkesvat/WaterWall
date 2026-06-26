@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/black-hole.mdx, and both files must keep the same documentation version.
+-->
+
 # BlackHole Node
 
 `BlackHole` is a sink tunnel that keeps normal Waterwall line flow but suppresses payload.

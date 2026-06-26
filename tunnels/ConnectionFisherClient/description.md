@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/connection-fisher-client.mdx, and both files must keep the same documentation version.
+-->
+
 # ConnectionFisherClient Node
 
 `ConnectionFisherClient` is a client-side bridge tunnel that fans one incoming Waterwall line out into several simultaneous outbound candidate lines, sends a fixed `5`-byte probe on each candidate, and keeps the first candidate that proves it reached `ConnectionFisherServer`.

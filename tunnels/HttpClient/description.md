@@ -1,3 +1,8 @@
+<!--
+Documentation version: 106
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/http-client.mdx, and both files must keep the same documentation version.
+-->
+
 # HttpClient Node
 
 `HttpClient` is a stream tunnel that wraps Waterwall payload into an HTTP request on the upstream side and unwraps the HTTP response body on the downstream side.
