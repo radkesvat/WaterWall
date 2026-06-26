@@ -1,6 +1,6 @@
 <!--
 Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/halfduplex-client.mdx, and both files must keep the same documentation version.
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HalfDuplexClient.mdx, and both files must keep the same documentation version.
 -->
 
 # HalfDuplexClient Node

@@ -1,6 +1,6 @@
 <!--
 Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/tcp-over-udp-server.mdx, and both files must keep the same documentation version.
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpOverUdpServer.mdx, and both files must keep the same documentation version.
 -->
 
 # TcpOverUdpServer Node

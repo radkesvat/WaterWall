@@ -1,6 +1,6 @@
 <!--
 Documentation version: 106
-Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/reverse-client.mdx, and both files must keep the same documentation version.
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ReverseClient.mdx, and both files must keep the same documentation version.
 -->
 
 # ReverseClient Node
