@@ -26,11 +26,11 @@ static int s_gmtoff = 28800; // 8*3600
 struct logger_s
 {
     logger_handler handler;
-    unsigned int   bufsize;
+    atomic_uint    bufsize;
 
-    int  level;
-    int  enable_color;
-    char format[64];
+    atomic_int level;
+    atomic_int enable_color;
+    char       format[64];
 
     // for file logger
     char               filepath[256];
@@ -42,7 +42,7 @@ struct logger_s
     time_t             last_logfile_ts;
     int                can_write_cnt;
 
-    wmutex_t mutex_;         // protects logger settings (level/format/color/handler/bufsize)
+    wmutex_t mutex_;         // protects handler + format (level/color/bufsize are lock-free atomics)
     wmutex_t handler_mutex_; // serializes sink/handler calls without blocking config or formatting
     wmutex_t write_mutex_;   // protects file state
 };
@@ -84,12 +84,12 @@ static void initLogger(logger_t *logger)
     // logger->format[0] = '\0';
     stringCopyN(logger->format, DEFAULT_LOG_FORMAT, sizeof(logger->format));
 
-    logger->fp_          = NULL;
-    logger->max_filesize = DEFAULT_LOG_MAX_FILESIZE;
-    logger->remain_days  = DEFAULT_LOG_REMAIN_DAYS;
-    logger->enable_fsync = 1;
-    logger->filepath[0]  = '\0';
-    logger->cur_logfile[0] = '\0';
+    logger->fp_             = NULL;
+    logger->max_filesize    = DEFAULT_LOG_MAX_FILESIZE;
+    logger->remain_days     = DEFAULT_LOG_REMAIN_DAYS;
+    logger->enable_fsync    = 1;
+    logger->filepath[0]     = '\0';
+    logger->cur_logfile[0]  = '\0';
     logger->last_logfile_ts = 0;
     logger->can_write_cnt   = -1;
     mutexInit(&logger->mutex_);
@@ -167,9 +167,8 @@ void loggerSetLevel(logger_t *logger, int level)
     {
         return;
     }
-    mutexLock(&logger->mutex_);
-    logger->level = level;
-    mutexUnlock(&logger->mutex_);
+    // level is a lock-free atomic; a relaxed store keeps the gate path mutex-free
+    atomicStoreRelaxed(&logger->level, level);
 }
 
 void loggerSetLevelByString(logger_t *logger, const char *szLoglevel)
@@ -216,9 +215,7 @@ void loggerSetLevelByString(logger_t *logger, const char *szLoglevel)
     {
         loglevel = DEFAULT_LOG_LEVEL;
     }
-    mutexLock(&logger->mutex_);
-    logger->level = loglevel;
-    mutexUnlock(&logger->mutex_);
+    atomicStoreRelaxed(&logger->level, loglevel);
 }
 
 int loggerCheckWriteLevel(logger_t *logger, log_level_e level)
@@ -227,10 +224,8 @@ int loggerCheckWriteLevel(logger_t *logger, log_level_e level)
     {
         return 0;
     }
-    mutexLock(&logger->mutex_);
-    int can_write = (logger->level) <= (int) level;
-    mutexUnlock(&logger->mutex_);
-    return can_write;
+    // gate check is a single relaxed atomic load; no mutex required
+    return atomicLoadRelaxed(&logger->level) <= (int) level;
 }
 
 logger_handler loggerGetHandle(logger_t *logger)
@@ -284,9 +279,7 @@ void loggerSetMaxBufSIze(logger_t *logger, unsigned int bufsize)
 
     // loggerPrintVA() now renders into a per-call stack/heap buffer, so there is
     // no shared render buffer to reallocate here; just record the new maximum.
-    mutexLock(&logger->mutex_);
-    logger->bufsize = bufsize;
-    mutexUnlock(&logger->mutex_);
+    atomicStoreRelaxed(&logger->bufsize, bufsize);
 }
 
 void loggerEnableColor(logger_t *logger, int on)
@@ -295,9 +288,7 @@ void loggerEnableColor(logger_t *logger, int on)
     {
         return;
     }
-    mutexLock(&logger->mutex_);
-    logger->enable_color = on;
-    mutexUnlock(&logger->mutex_);
+    atomicStoreRelaxed(&logger->enable_color, on);
 }
 
 bool loggerSetFile(logger_t *logger, const char *filepath)
@@ -316,10 +307,10 @@ bool loggerSetFile(logger_t *logger, const char *filepath)
             fclose(logger->fp_);
             logger->fp_ = NULL;
         }
-        logger->filepath[0] = 0X0;
-        logger->cur_logfile[0] = '\0';
+        logger->filepath[0]     = 0X0;
+        logger->cur_logfile[0]  = '\0';
         logger->last_logfile_ts = 0;
-        logger->can_write_cnt = -1;
+        logger->can_write_cnt   = -1;
         mutexUnlock(&logger->write_mutex_);
         return false;
     }
@@ -338,9 +329,9 @@ bool loggerSetFile(logger_t *logger, const char *filepath)
     {
         *suffix = '\0';
     }
-    logger->cur_logfile[0] = '\0';
+    logger->cur_logfile[0]  = '\0';
     logger->last_logfile_ts = 0;
-    logger->can_write_cnt = -1;
+    logger->can_write_cnt   = -1;
     mutexUnlock(&logger->write_mutex_);
     return true;
 }
@@ -476,8 +467,8 @@ static FILE *shiftLogFile(logger_t *logger)
     time_t ts_now = time(NULL);
     int    interval_days =
         logger->last_logfile_ts == 0
-               ? 0
-               : (int) ((ts_now + s_gmtoff) / SECONDS_PER_DAY - (logger->last_logfile_ts + s_gmtoff) / SECONDS_PER_DAY);
+            ? 0
+            : (int) ((ts_now + s_gmtoff) / SECONDS_PER_DAY - (logger->last_logfile_ts + s_gmtoff) / SECONDS_PER_DAY);
     if (logger->fp_ == NULL || interval_days > 0)
     {
         // close old logfile
@@ -568,7 +559,7 @@ static FILE *shiftLogFile(logger_t *logger)
         }
         else
         {
-            logger->can_write_cnt = (int) ((logger->max_filesize - filesize) / logger->bufsize);
+            logger->can_write_cnt = (int) ((logger->max_filesize - filesize) / atomicLoadRelaxed(&logger->bufsize));
         }
     }
 
@@ -745,32 +736,32 @@ static char *loggerAcquireRenderBuffer(char *stack_buf, int *bufsize, char **hea
 
 int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
 {
-    if (logger == NULL || fmt == NULL)
+    if (UNLIKELY(logger == NULL || fmt == NULL))
     {
         return -1;
     }
 
-    // Snapshot logger settings under mutex_, then render and emit the line
-    // outside of it so stdout/stderr/file writes never hold mutex_.
-    mutexLock(&logger->mutex_);
-
-    if (level < logger->level)
+    // Gate first: a relaxed atomic load lets the common filtered-out case
+    // return immediately without ever touching mutex_.
+    if (level < atomicLoadRelaxed(&logger->level))
     {
-        mutexUnlock(&logger->mutex_);
         return -10;
     }
 
-    logger_handler handler      = logger->handler;
-    int            bufsize      = (int) logger->bufsize;
-    int            enable_color = logger->enable_color;
-    char           format[64];
-    stringCopyN(format, logger->format, sizeof(format));
-    mutexUnlock(&logger->mutex_);
-
+    int bufsize = (int) atomicLoadRelaxed(&logger->bufsize);
     if (bufsize < 2)
     {
         return -1;
     }
+    int enable_color = atomicLoadRelaxed(&logger->enable_color);
+
+    // handler and format are not atomic: snapshot them under mutex_, then render
+    // and emit the line outside of it so stdout/stderr/file writes never hold it.
+    mutexLock(&logger->mutex_);
+    logger_handler handler = logger->handler;
+    char           format[64];
+    stringCopyN(format, logger->format, sizeof(format));
+    mutexUnlock(&logger->mutex_);
 
     char  stack_buf[DEFAULT_LOG_MAX_BUFSIZE];
     char *heap_buf = NULL;
@@ -901,8 +892,18 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
     }
     else
     {
-        loggerAppendFormat(buf, bufsize, &len, "%04d-%02d-%02d %02d:%02d:%02d.%03d %s ", year, month, day, hour,
-                           min, sec, us / 1000, plevel);
+        loggerAppendFormat(buf,
+                           bufsize,
+                           &len,
+                           "%04d-%02d-%02d %02d:%02d:%02d.%03d %s ",
+                           year,
+                           month,
+                           day,
+                           hour,
+                           min,
+                           sec,
+                           us / 1000,
+                           plevel);
 
         loggerAppendMessageFormat(buf, bufsize, &len, fmt, ap);
     }
@@ -930,8 +931,6 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
     return len;
 }
 
-
-
 void stdoutLogger(int loglevel, const char *buf, int len)
 {
     discard loglevel;
@@ -939,7 +938,7 @@ void stdoutLogger(int loglevel, const char *buf, int len)
     {
         return;
     }
-    ssize_t count = write(fileno(stdout), buf,  (size_t) len);
+    ssize_t count = write(fileno(stdout), buf, (size_t) len);
     discard count;
 }
 
