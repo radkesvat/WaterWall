@@ -38,6 +38,7 @@ bool          tundeviceAddRoute(tun_device_t *tdev, const char *cidr, const char
 bool          tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *route_table);
 bool          tundeviceWrite(tun_device_t *tdev, sbuf_t *buf);
 bool          tundeviceDetectDefaultInterface(tun_default_route_t *out);
+bool          tundeviceDisableReversePathFiltering(const char *ifname);
 
 // Retrieves the OS interface LUID value of the device (Windows NET_LUID.Value).
 // Returns false on platforms that have no such identifier; *out is set to 0 then.

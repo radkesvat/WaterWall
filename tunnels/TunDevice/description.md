@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 110
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TunDevice.mdx, and both files must keep the same documentation version.
 -->
 
@@ -175,6 +175,7 @@ During `onStart`, `TunDevice`:
 - creates the TUN device
 - assigns the configured IP/subnet
 - brings the device up
+- on Linux, disables IPv4 reverse-path filtering for `all` and the TUN interface when native system routes are enabled
 - optionally installs native system routes
 - optionally runs `post-up-script`
 
@@ -249,6 +250,7 @@ Most connection-style callbacks such as `init`, `est`, `finish`, `pause`, and `r
 - On Windows, the implementation requires administrative privileges to load and manage the tunnel driver.
 - On macOS, the requested name should be an `utunN` name; if no concrete `utun` unit is requested, macOS assigns the actual interface name.
 - Native system route setup is disabled by default. If enabled, routes are removed during destroy in reverse install order.
+- On Linux, enabling native system routes also writes `0` to `/proc/sys/net/ipv4/conf/all/rp_filter` and the TUN interface's `rp_filter` so reverse-path filtering does not drop packets routed through the TUN. Other interface-specific `rp_filter` files are left untouched. These sysctl changes are not restored on stop or destroy. If the sysctl files are read-only, startup logs a warning and continues.
 - DNS setup is optional. If configured, invalid IPv4 values are rejected during node creation and failed platform DNS application stops startup.
 - On Windows and macOS, `route-table` values other than `"main"` or `"auto"` are rejected.
 - Platform support depends on build and operating system support for TUN devices.

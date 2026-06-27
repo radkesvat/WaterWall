@@ -190,6 +190,12 @@ bool tundeviceDetectDefaultInterface(tun_default_route_t *out)
     return out->have_v4 || out->have_v6;
 }
 
+bool tundeviceDisableReversePathFiltering(const char *ifname)
+{
+    discard ifname;
+    return true;
+}
+
 static bool routeTableIsMain(const char *route_table)
 {
     return route_table == NULL || stringCompare(route_table, "main") == 0 || stringCompare(route_table, "auto") == 0;

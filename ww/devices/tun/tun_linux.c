@@ -366,6 +366,142 @@ bool tundeviceDetectDefaultInterface(tun_default_route_t *out)
 }
 #endif
 
+#ifdef OS_LINUX
+static bool tunReversePathFilterScopeIsSafe(const char *scope)
+{
+    if (scope == NULL || scope[0] == '\0' || stringCompare(scope, ".") == 0 || stringCompare(scope, "..") == 0)
+    {
+        return false;
+    }
+
+    for (const char *p = scope; *p != '\0'; ++p)
+    {
+        if (! (isalnum((unsigned char) *p) || *p == '_' || *p == '-' || *p == '.' || *p == ':'))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool tunReversePathFilterPath(const char *scope, char *path, size_t path_size)
+{
+    static const char proc_conf_dir[] = "/proc/sys/net/ipv4/conf";
+
+    if (! tunReversePathFilterScopeIsSafe(scope))
+    {
+        LOGE("TunDevice: invalid reverse path filter interface scope %s", scope != NULL ? scope : "<null>");
+        return false;
+    }
+
+    int written = stringNPrintf(path, path_size, "%s/%s/rp_filter", proc_conf_dir, scope);
+    if (written < 0 || (size_t) written >= path_size)
+    {
+        LOGE("TunDevice: reverse path filter path is too long for interface scope %s", scope);
+        return false;
+    }
+
+    return true;
+}
+
+static bool tunWriteReversePathFilterValue(const char *path, int value)
+{
+    int fd;
+    do
+    {
+        fd = open(path, O_WRONLY | O_CLOEXEC);
+    } while (fd < 0 && errno == EINTR);
+
+    if (fd < 0)
+    {
+        if (errno == ENOENT)
+        {
+            return true;
+        }
+        LOGE("TunDevice: failed to open %s for reverse path filter update: %s", path, strerror(errno));
+        return false;
+    }
+
+    char value_buf[16];
+    int  written = stringNPrintf(value_buf, sizeof(value_buf), "%d\n", value);
+    if (written < 0 || (size_t) written >= sizeof(value_buf))
+    {
+        LOGE("TunDevice: reverse path filter value is too large for %s", path);
+        close(fd);
+        return false;
+    }
+
+    const char *cursor = value_buf;
+    size_t      left   = (size_t) written;
+    bool        ok     = true;
+
+    while (left > 0)
+    {
+        ssize_t nwrite = write(fd, cursor, left);
+        if (nwrite < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            LOGE("TunDevice: failed to write %s: %s", path, strerror(errno));
+            ok = false;
+            break;
+        }
+
+        if (nwrite == 0)
+        {
+            LOGE("TunDevice: short write while updating %s", path);
+            ok = false;
+            break;
+        }
+
+        cursor += nwrite;
+        left -= (size_t) nwrite;
+    }
+
+    if (close(fd) != 0)
+    {
+        LOGE("TunDevice: failed to close %s after reverse path filter update: %s", path, strerror(errno));
+        ok = false;
+    }
+
+    return ok;
+}
+
+static bool tunDisableReversePathFilterScope(const char *scope)
+{
+    char path[256];
+    if (! tunReversePathFilterPath(scope, path, sizeof(path)))
+    {
+        return false;
+    }
+
+    return tunWriteReversePathFilterValue(path, 0);
+}
+
+bool tundeviceDisableReversePathFiltering(const char *ifname)
+{
+    bool ok = true;
+
+    ok = tunDisableReversePathFilterScope("all") && ok;
+    ok = tunDisableReversePathFilterScope(ifname) && ok;
+    if (ok)
+    {
+        LOGI("TunDevice: disabled Linux reverse path filtering for all and %s", ifname);
+    }
+
+    return ok;
+}
+#else
+bool tundeviceDisableReversePathFiltering(const char *ifname)
+{
+    discard ifname;
+    return true;
+}
+#endif
+
 static bool routeCommandArgIsSafe(const char *arg)
 {
     if (arg == NULL || arg[0] == '\0')

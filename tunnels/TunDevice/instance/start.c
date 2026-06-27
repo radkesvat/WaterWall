@@ -40,6 +40,13 @@ void tundeviceTunnelOnStart(tunnel_t *t)
         terminateProgram(1);
     }
 
+#ifdef OS_LINUX
+    if (state->system_route_enabled && ! tundeviceDisableReversePathFiltering(state->name))
+    {
+        LOGW("TunDevice: could not disable Linux reverse path filtering for %s; continuing", state->name);
+    }
+#endif
+
     if (! tundeviceApplySystemRoutes(state))
     {
         tundeviceClearEgressPinIfPublished(state);

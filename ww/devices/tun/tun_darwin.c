@@ -539,6 +539,12 @@ bool tundeviceDetectDefaultInterface(tun_default_route_t *out)
     return false;
 }
 
+bool tundeviceDisableReversePathFiltering(const char *ifname)
+{
+    discard ifname;
+    return true;
+}
+
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
     assert(sbufGetLength(buf) > 0);
