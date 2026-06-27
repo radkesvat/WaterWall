@@ -240,7 +240,7 @@ void domainresolverCloseBeforeInit(tunnel_t *t, line_t *l, domainresolver_direct
 
     lineLock(l);
 
-    domainresolverLinestateDestroy(ls);
+    domainresolverLinestateDestroy(t, l, ls);
 
     if (direction == kDomainResolverDirectionUpstream && lineIsAlive(l))
     {
@@ -260,7 +260,7 @@ void domainresolverCloseLine(tunnel_t *t, line_t *l, domainresolver_direction_t 
     bool was_open = ls->phase == kDomainResolverPhaseOpen;
     lineLock(l);
 
-    domainresolverLinestateDestroy(ls);
+    domainresolverLinestateDestroy(t, l, ls);
 
     if (! was_open)
     {

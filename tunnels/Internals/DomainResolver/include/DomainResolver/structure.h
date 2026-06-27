@@ -1,13 +1,7 @@
 #pragma once
 
+#include "DomainResolver/interface.h"
 #include "wwapi.h"
-
-typedef enum domainresolver_direction_e
-{
-    kDomainResolverDirectionNone = 0,
-    kDomainResolverDirectionUpstream,
-    kDomainResolverDirectionDownstream
-} domainresolver_direction_t;
 
 typedef enum domainresolver_phase_e
 {
@@ -18,10 +12,15 @@ typedef enum domainresolver_phase_e
 
 typedef struct domainresolver_tstate_s
 {
-    enum domain_strategy strategy;
-    bool                 verbose;
-    bool                 use_line_strategy;
-    bool                 allow_missing_destination;
+    tunnel_t                              *prepare_owner;
+    domainresolver_prepare_fn             prepare;
+    domainresolver_user_lstate_destroy_fn user_lstate_destroy;
+    uint32_t                              user_lstate_offset;
+    uint32_t                              user_lstate_size;
+    enum domain_strategy                  strategy;
+    bool                                  verbose;
+    bool                                  use_line_strategy;
+    bool                                  allow_missing_destination;
 } domainresolver_tstate_t;
 
 typedef struct domainresolver_lstate_s
@@ -59,8 +58,9 @@ void domainresolverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void domainresolverTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void domainresolverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void domainresolverLinestateInitialize(domainresolver_lstate_t *ls);
-void domainresolverLinestateDestroy(domainresolver_lstate_t *ls);
+void  domainresolverLinestateInitialize(tunnel_t *t, domainresolver_lstate_t *ls);
+void  domainresolverLinestateDestroy(tunnel_t *t, line_t *l, domainresolver_lstate_t *ls);
+void *domainresolverGetUserLineState(domainresolver_tstate_t *ts, domainresolver_lstate_t *ls);
 
 bool domainresolverStartResolveIfNeeded(tunnel_t *t, line_t *l, domainresolver_lstate_t *ls,
                                         domainresolver_direction_t direction, bool *started_out);
