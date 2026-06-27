@@ -15,7 +15,7 @@ typedef struct blackhole_lstate_s
 enum
 {
     kTunnelStateSize = sizeof(blackhole_tstate_t),
-    kLineStateSize   = sizeof(blackhole_lstate_t)
+    kLineStateSize   = 0
 };
 
 enum blackhole_mode_e

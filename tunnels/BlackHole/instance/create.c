@@ -35,7 +35,13 @@ static bool parseBlackHoleMode(blackhole_tstate_t *state, const cJSON *settings)
 
 tunnel_t *blackholeTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(blackhole_tstate_t), sizeof(blackhole_lstate_t));
+    if (nodeHasNext(node))
+    {
+        LOGF("BlackHole: this node is a chain end adapter and must not have a next node");
+        return NULL;
+    }
+
+    tunnel_t *t = adapterCreate(node, sizeof(blackhole_tstate_t), 0, true);
     if (t == NULL)
     {
         return NULL;
@@ -48,13 +54,6 @@ tunnel_t *blackholeTunnelCreate(node_t *node)
     t->fnPauseU   = &blackholeTunnelUpStreamPause;
     t->fnResumeU  = &blackholeTunnelUpStreamResume;
 
-    t->fnInitD    = &blackholeTunnelDownStreamInit;
-    t->fnEstD     = &blackholeTunnelDownStreamEst;
-    t->fnFinD     = &blackholeTunnelDownStreamFinish;
-    t->fnPayloadD = &blackholeTunnelDownStreamPayload;
-    t->fnPauseD   = &blackholeTunnelDownStreamPause;
-    t->fnResumeD  = &blackholeTunnelDownStreamResume;
-
     t->onStop    = &blackholeTunnelOnStop;
     t->onDestroy = &blackholeTunnelDestroy;
 
@@ -62,7 +61,7 @@ tunnel_t *blackholeTunnelCreate(node_t *node)
 
     if (! parseBlackHoleMode(state, node->node_settings_json))
     {
-        tunnelDestroy(t);
+        blackholeTunnelDestroy(t);
         return NULL;
     }
 

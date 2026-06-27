@@ -4,9 +4,6 @@
 
 void blackholeTunnelUpStreamEst(tunnel_t *t, line_t *l)
 {
-    if (t->next == NULL)
-    {
-        return;
-    }
-    tunnelNextUpStreamEst(t, l);
+    discard t;
+    discard l;
 }

@@ -4,9 +4,6 @@
 
 void blackholeTunnelUpStreamResume(tunnel_t *t, line_t *l)
 {
-    if (t->next == NULL)
-    {
-        return;
-    }
-    tunnelNextUpStreamResume(t, l);
+    discard t;
+    discard l;
 }

@@ -8,13 +8,15 @@ void blackholeTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     if (state->mode == kBlackHoleModeActive)
     {
-        tunnelPrevDownStreamFinish(t, l);
-        return;
-    }
-    if (t->next == NULL)
-    {
+        if (t->prev != NULL)
+        {
+            tunnelPrevDownStreamFinish(t, l);
+        }
         return;
     }
 
-    tunnelNextUpStreamInit(t, l);
+    if (t->prev != NULL)
+    {
+        tunnelPrevDownStreamEst(t, l);
+    }
 }

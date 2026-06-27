@@ -1,36 +1,39 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/BlackHole.mdx, and both files must keep the same documentation version.
 -->
 
 # BlackHole Node
 
-`BlackHole` is a sink tunnel that keeps normal Waterwall line flow but suppresses payload.
+`BlackHole` is a terminal sink adapter. It is placed at the end of a chain and consumes upstream traffic from the previous node without creating a socket, connecting to a remote peer, or forwarding payload to another node.
 
 It supports two behaviors:
 
-- `passive` mode keeps the line alive and forwards lifecycle callbacks, but drops payload in both directions
-- `active` mode lets upstream `Init` happen, then immediately closes the line and still drops payload
+- `passive` mode accepts the line, reports downstream `Est` to the previous side, and silently drops upstream payload
+- `active` mode immediately sends downstream `Finish` to the previous side during upstream `Init`
 
-This makes it useful when you want a chain stage that either absorbs traffic silently or kills connections quickly without inventing a custom adapter lifecycle.
+Because `BlackHole` is an adapter, downstream callbacks are not part of its valid runtime surface. Do not place another node after it.
 
 ## What It Does
 
-- does not prepend, frame, or rewrite payload
+- can be used as the last node in a chain
+- rejects configuration with a `next` node
+- drops every upstream payload buffer it receives
+- recycles dropped payload buffers with `lineReuseBuffer()`
+- does not prepend, frame, encrypt, decode, or rewrite payload
+- does not allocate per-line tunnel state
 - does not change buffer padding requirements
-- drops every payload buffer it receives
-- preserves normal direction ownership for non-payload callbacks
-- can either keep the line structurally alive (`passive`) or close it immediately after startup (`active`)
+- does not create or destroy packet lines
 
 ## Typical Placement
 
 Common examples:
 
-- `TcpListener <--> BlackHole <--> TcpConnector`
-- `UdpListener <--> BlackHole <--> UdpConnector`
-- test or policy chains where one stage should consume traffic without forwarding application data
+- `TcpListener <--> BlackHole`
+- `UdpListener <--> BlackHole`
+- policy or test chains where accepted traffic should be consumed or rejected at the chain end
 
-`BlackHole` is a middle tunnel, not a socket adapter.
+`BlackHole` is not a middle tunnel. For a chain such as `TcpListener <--> BlackHole <--> TcpConnector`, use another policy or routing tunnel instead.
 
 ## Configuration Example
 
@@ -42,8 +45,7 @@ Common examples:
   "type": "BlackHole",
   "settings": {
     "mode": "passive"
-  },
-  "next": "next-node"
+  }
 }
 ```
 
@@ -63,8 +65,7 @@ Equivalent passive aliases:
   "type": "BlackHole",
   "settings": {
     "mode": "active"
-  },
-  "next": "next-node"
+  }
 }
 ```
 
@@ -92,35 +93,36 @@ Equivalent active aliases:
 
 - `mode` `(string)`
 
+`next` must not be configured. `BlackHole` is a chain-end adapter.
+
 ## `mode` Meaning
 
 ### `passive`
 
 In passive mode:
 
-- upstream `Init`, `Est`, `Finish`, `Pause`, and `Resume` are forwarded normally
-- downstream `Init`, `Est`, `Finish`, `Pause`, and `Resume` are forwarded normally
-- upstream payload is dropped
-- downstream payload is dropped
+- upstream `Init` sends downstream `Est` to the previous side
+- upstream payload is dropped and recycled
+- upstream `Est`, `Finish`, `Pause`, and `Resume` are no-ops
+- downstream callbacks are disabled by the adapter edge
 
-So the line can still open, establish, pause, resume, and close through the chain, but no application payload crosses this tunnel.
+Passive mode does not close the line by itself. It consumes payload until the previous side closes the line.
 
 ### `active`
 
 In active mode:
 
-- per-line state is initialized during upstream `Init`
-- upstream `Init` is still forwarded first
-- then `BlackHole` immediately closes upstream and downstream
-- payload is still dropped in both directions if any payload reaches it
+- upstream `Init` sends downstream `Finish` to the previous side and returns immediately
+- upstream payload is still dropped and recycled if any payload reaches the node
+- downstream callbacks are disabled by the adapter edge
 
-This behaves like an immediate connection kill after startup rather than a silent sink.
+This behaves like an immediate connection reject at the end of the chain.
 
 ## Detailed Behavior
 
 ### Payload handling
 
-Both directions call `lineReuseBuffer()` on received payload and return.
+Upstream payload calls `lineReuseBuffer()` on the received buffer and returns.
 
 That means:
 
@@ -130,16 +132,17 @@ That means:
 
 ### Lifecycle handling
 
-`BlackHole` keeps normal Waterwall callback direction rules:
+`BlackHole` follows downstream-end adapter direction rules:
 
-- upstream control flow uses `tunnelNext*`
-- downstream control flow uses `tunnelPrev*`
-
-In `active` mode it protects the line across re-entrant startup and close callbacks before issuing the immediate finishes.
+- it receives upstream callbacks from the previous node
+- it may send downstream callbacks back toward the previous node
+- it never calls `tunnelNextUpStream*()` because there is no next node
+- downstream callbacks into `BlackHole` are invalid and blocked by `adapterCreate()`
 
 ## Notes And Caveats
 
-- `BlackHole` does not require extra left padding.
-- `passive` mode drops payload but does not itself close lines.
-- `active` mode is intentionally implemented as `upstream Init` followed by immediate close.
-- It does not synthesize a downstream `Init`, because common Waterwall stream adapters do not accept `DownStreamInit`.
+- `required_padding_left = 0`.
+- `kLineStateSize = 0`; the node has no per-line tunnel state.
+- `BlackHole` is layer-agnostic in node metadata, but it does not transform between stream and packet semantics.
+- `passive` mode can leave the previous side open indefinitely if that side keeps the line open.
+- `active` mode is best used as a deliberate reject or kill endpoint.
