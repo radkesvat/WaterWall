@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpOverTcpClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -30,6 +30,23 @@ A common layout is:
 - UDP-facing nodes after `UdpOverTcpServer`
 
 This pair is useful when you need to tunnel packet-preserving traffic through a stream transport.
+
+## Flow Example
+
+```mermaid
+flowchart LR
+    subgraph ClientSide["Client side"]
+      direction LR
+      UL[UdpListener] --> UOTC[UdpOverTcpClient] --> TC[TcpConnector]
+    end
+
+    subgraph ServerSide["Server side"]
+      direction LR
+      TL[TcpListener] --> UOTS[UdpOverTcpServer] --> UC[UdpConnector]
+    end
+
+    TC == "TCP stream" ==> TL
+```
 
 ## Configuration Example
 
