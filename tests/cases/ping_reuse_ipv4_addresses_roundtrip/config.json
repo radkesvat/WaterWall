@@ -6,7 +6,6 @@
       "type": "TesterClient",
       "settings": {
         "packet-mode": true,
-        "packet-start-immediately": true,
         "chunk-count": 9,
         "packet-ipv4": {
           "source-ip": "10.81.0.1",

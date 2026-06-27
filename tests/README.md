@@ -242,7 +242,8 @@ Practical rule:
   XOR, roundup padding, and PingServer's downstream decapsulation direction.
 - `ping_reuse_ipv4_addresses_roundtrip`
   Verifies the bridged `wrap-in-icmp-header-and-reuse-ipv4-addresses` path, including reuse of the original IPv4 header
-  and restoration of the tester packet's original IPv4 protocol.
+  and restoration of the tester packet's original IPv4 protocol. This case waits for the Bridge/PingServer downstream
+  `Est` path instead of using packet immediate-start.
 - `ping_only_icmp_roundtrip`
   Verifies the bridged `wrap-in-only-icmp-header` path using raw packet-mode bytes rather than synthetic IPv4 packets.
 - `ping_protocol_swap_roundtrip`

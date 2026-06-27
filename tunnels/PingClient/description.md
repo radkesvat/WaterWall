@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PingClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -8,6 +8,8 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 `PingClient` is a layer-3 packet tunnel. On the upstream path it transforms IPv4 packets according to a configured ICMP-related strategy, and on the downstream path it applies the inverse logic for the matching peer traffic.
 
 It is a pure packet tunnel created with `packettunnelCreate()`, so it does not create per-connection line state and it works on the worker packet lines supplied by the chain.
+
+The paired `PingServer` is intentionally opposite on the client-to-server ingress path: traffic wrapped by PingClient's upstream payload must reach PingServer's downstream payload, where it is restored toward the plain packet side.
 
 ## What It Does
 

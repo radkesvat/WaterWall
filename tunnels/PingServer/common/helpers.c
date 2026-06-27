@@ -308,7 +308,7 @@ static bool pingserverIcmpIdentifierMatches(const pingserver_tstate_t *state, co
         return true;
     }
 
-    LOGW("PingServer: forwarding downstream %s unchanged because ICMP identifier mismatch: expected %u, got %u (set check-identifier=false to accept mismatched identifiers)",
+    LOGW("PingServer: forwarding inbound %s unchanged because ICMP identifier mismatch: expected %u, got %u (set check-identifier=false to accept mismatched identifiers)",
          mode, (unsigned int) state->identifier, (unsigned int) lwip_ntohs(icmpheader->id));
     return false;
 }
@@ -393,19 +393,19 @@ static bool pingserverMatchOnlyIcmpEnvelope(const pingserver_tstate_t *state, sb
     return pingserverIcmpIdentifierMatches(state, icmpheader, "ICMP-only frame");
 }
 
-static bool pingserverHandleUnmatchedDownstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
+static bool pingserverForwardUnmatchedInboundPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     tunnelPrevDownStreamPayload(t, l, buf);
     return true;
 }
 
-static void pingserverDropMalformedDownstreamPacket(line_t *l, sbuf_t *buf, const char *reason)
+static void pingserverDropMalformedInboundPacket(line_t *l, sbuf_t *buf, const char *reason)
 {
-    LOGE("PingServer: dropping malformed downstream packet because %s", reason);
+    LOGE("PingServer: dropping malformed inbound packet because %s", reason);
     lineReuseBuffer(l, buf);
 }
 
-static void pingserverEncapsulateWithNewIpAndIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
+static void pingserverEncapsulateOutboundWithNewIpAndIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     pingserver_tstate_t *state = tunnelGetState(t);
     uint16_t             icmp_payload_len;
@@ -418,11 +418,11 @@ static void pingserverEncapsulateWithNewIpAndIcmp(tunnel_t *t, line_t *l, sbuf_t
     {
         if (pingserverPeekPacketVersion(buf) == 6)
         {
-            pingserverLogIpv6Passthrough("upstream");
+            pingserverLogIpv6Passthrough("outbound");
         }
         else
         {
-            LOGW("PingServer: forwarding upstream packet unchanged because IPv4+ICMP encapsulation requires a valid IPv4 packet");
+            LOGW("PingServer: forwarding outbound packet unchanged because IPv4+ICMP encapsulation requires a valid IPv4 packet");
         }
 
         tunnelNextUpStreamPayload(t, l, buf);
@@ -471,7 +471,7 @@ static void pingserverEncapsulateWithNewIpAndIcmp(tunnel_t *t, line_t *l, sbuf_t
     tunnelNextUpStreamPayload(t, l, buf);
 }
 
-static void pingserverEncapsulateReusingIpv4Header(tunnel_t *t, line_t *l, sbuf_t *buf)
+static void pingserverEncapsulateOutboundReusingIpv4Header(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     pingserver_tstate_t *state = tunnelGetState(t);
     uint16_t             packet_len;
@@ -480,11 +480,11 @@ static void pingserverEncapsulateReusingIpv4Header(tunnel_t *t, line_t *l, sbuf_
     {
         if (pingserverPeekPacketVersion(buf) == 6)
         {
-            pingserverLogIpv6Passthrough("upstream");
+            pingserverLogIpv6Passthrough("outbound");
         }
         else
         {
-            LOGW("PingServer: forwarding upstream packet unchanged because reuse-header mode requires a valid IPv4 packet");
+            LOGW("PingServer: forwarding outbound packet unchanged because reuse-header mode requires a valid IPv4 packet");
         }
         tunnelNextUpStreamPayload(t, l, buf);
         return;
@@ -582,7 +582,7 @@ static void pingserverEncapsulateReusingIpv4Header(tunnel_t *t, line_t *l, sbuf_
     tunnelNextUpStreamPayload(t, l, buf);
 }
 
-static void pingserverEncapsulateOnlyIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
+static void pingserverEncapsulateOutboundOnlyIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     pingserver_tstate_t *state = tunnelGetState(t);
     uint16_t             icmp_payload_len;
@@ -622,8 +622,8 @@ static void pingserverEncapsulateOnlyIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
     tunnelNextUpStreamPayload(t, l, buf);
 }
 
-static void pingserverForwardDecodedDownstream(tunnel_t *t, line_t *l, sbuf_t *buf, uint16_t header_len,
-                                               uint16_t payload_len_after_strip, bool has_size_prefix)
+static void pingserverForwardDecodedInbound(tunnel_t *t, line_t *l, sbuf_t *buf, uint16_t header_len,
+                                            uint16_t payload_len_after_strip, bool has_size_prefix)
 {
     sbufShiftRight(buf, header_len);
 
@@ -639,14 +639,14 @@ static void pingserverForwardDecodedDownstream(tunnel_t *t, line_t *l, sbuf_t *b
     tunnelPrevDownStreamPayload(t, l, buf);
 }
 
-static void pingserverDecapsulateNewIpAndIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
+static void pingserverDecapsulateInboundNewIpAndIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     pingserver_tstate_t *state = tunnelGetState(t);
     uint16_t             outer_header_len;
 
     if (! pingserverMatchIpv4IcmpEnvelope(state, buf, &outer_header_len))
     {
-        pingserverHandleUnmatchedDownstreamPacket(t, l, buf);
+        pingserverForwardUnmatchedInboundPacket(t, l, buf);
         return;
     }
 
@@ -665,31 +665,31 @@ static void pingserverDecapsulateNewIpAndIcmp(tunnel_t *t, line_t *l, sbuf_t *bu
     {
         if (UNLIKELY(icmp_payload_len < kPingServerSizePrefixLength))
         {
-            pingserverDropMalformedDownstreamPacket(l, buf, "roundup-size prefix is missing");
+            pingserverDropMalformedInboundPacket(l, buf, "roundup-size prefix is missing");
             return;
         }
 
         inner_packet_len = (uint16_t) ((((uint16_t) icmp_payload[0]) << 8) | icmp_payload[1]);
         if (UNLIKELY(inner_packet_len > icmp_payload_len - kPingServerSizePrefixLength))
         {
-            pingserverDropMalformedDownstreamPacket(l, buf, "roundup-size payload length exceeds ICMP payload");
+            pingserverDropMalformedInboundPacket(l, buf, "roundup-size payload length exceeds ICMP payload");
             return;
         }
 
         has_size_prefix = true;
     }
 
-    pingserverForwardDecodedDownstream(t, l, buf, outer_header_len, inner_packet_len, has_size_prefix);
+    pingserverForwardDecodedInbound(t, l, buf, outer_header_len, inner_packet_len, has_size_prefix);
 }
 
-static void pingserverDecapsulateReusedIpv4Header(tunnel_t *t, line_t *l, sbuf_t *buf)
+static void pingserverDecapsulateInboundReusedIpv4Header(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     pingserver_tstate_t *state = tunnelGetState(t);
     uint16_t             outer_header_len;
 
     if (! pingserverMatchIpv4IcmpEnvelope(state, buf, &outer_header_len))
     {
-        pingserverHandleUnmatchedDownstreamPacket(t, l, buf);
+        pingserverForwardUnmatchedInboundPacket(t, l, buf);
         return;
     }
 
@@ -708,13 +708,13 @@ static void pingserverDecapsulateReusedIpv4Header(tunnel_t *t, line_t *l, sbuf_t
     uint16_t transport_len;
     if (! pingserverReadReuseTrailer(icmp_payload, icmp_payload_len, &original_protocol, &transport_len))
     {
-        pingserverDropMalformedDownstreamPacket(l, buf, "reuse-header trailer is missing or invalid");
+        pingserverDropMalformedInboundPacket(l, buf, "reuse-header trailer is missing or invalid");
         return;
     }
 
     if (UNLIKELY(transport_len > icmp_payload_len - kPingServerReuseTrailerLength))
     {
-        pingserverDropMalformedDownstreamPacket(l, buf, "reuse-header transport length exceeds ICMP payload");
+        pingserverDropMalformedInboundPacket(l, buf, "reuse-header transport length exceeds ICMP payload");
         return;
     }
 
@@ -730,7 +730,7 @@ static void pingserverDecapsulateReusedIpv4Header(tunnel_t *t, line_t *l, sbuf_t
     tunnelPrevDownStreamPayload(t, l, buf);
 }
 
-static void pingserverDecapsulateOnlyIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
+static void pingserverDecapsulateInboundOnlyIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     pingserver_tstate_t *state = tunnelGetState(t);
 
@@ -755,24 +755,24 @@ static void pingserverDecapsulateOnlyIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (UNLIKELY(icmp_payload_len < kPingServerSizePrefixLength))
         {
-            pingserverDropMalformedDownstreamPacket(l, buf, "roundup-size prefix is missing");
+            pingserverDropMalformedInboundPacket(l, buf, "roundup-size prefix is missing");
             return;
         }
 
         raw_payload_len = (uint16_t) ((((uint16_t) icmp_payload[0]) << 8) | icmp_payload[1]);
         if (UNLIKELY(raw_payload_len > icmp_payload_len - kPingServerSizePrefixLength))
         {
-            pingserverDropMalformedDownstreamPacket(l, buf, "roundup-size payload length exceeds ICMP payload");
+            pingserverDropMalformedInboundPacket(l, buf, "roundup-size payload length exceeds ICMP payload");
             return;
         }
 
         has_size_prefix = true;
     }
 
-    pingserverForwardDecodedDownstream(t, l, buf, kPingServerIcmpHeaderLength, raw_payload_len, has_size_prefix);
+    pingserverForwardDecodedInbound(t, l, buf, kPingServerIcmpHeaderLength, raw_payload_len, has_size_prefix);
 }
 
-static void pingserverSwapIpv4ProtocolToIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
+static void pingserverSwapOutboundIpv4ProtocolToIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     pingserver_tstate_t *state = tunnelGetState(t);
     uint16_t             packet_len;
@@ -782,11 +782,11 @@ static void pingserverSwapIpv4ProtocolToIcmp(tunnel_t *t, line_t *l, sbuf_t *buf
         discard packet_len;
         if (pingserverPeekPacketVersion(buf) == 6)
         {
-            pingserverLogIpv6Passthrough("upstream");
+            pingserverLogIpv6Passthrough("outbound");
         }
         else
         {
-            LOGW("PingServer: forwarding upstream packet unchanged because protocol-swap mode requires a valid IPv4 packet");
+            LOGW("PingServer: forwarding outbound packet unchanged because protocol-swap mode requires a valid IPv4 packet");
         }
         tunnelNextUpStreamPayload(t, l, buf);
         return;
@@ -809,7 +809,7 @@ static void pingserverSwapIpv4ProtocolToIcmp(tunnel_t *t, line_t *l, sbuf_t *buf
     tunnelNextUpStreamPayload(t, l, buf);
 }
 
-static void pingserverRestoreIpv4ProtocolFromIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
+static void pingserverRestoreInboundIpv4ProtocolFromIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     pingserver_tstate_t *state = tunnelGetState(t);
     uint16_t             packet_len;
@@ -817,7 +817,7 @@ static void pingserverRestoreIpv4ProtocolFromIcmp(tunnel_t *t, line_t *l, sbuf_t
     if (! pingserverValidateIpv4PacketBytes(sbufGetRawPtr(buf), sbufGetLength(buf), &packet_len))
     {
         discard packet_len;
-        pingserverHandleUnmatchedDownstreamPacket(t, l, buf);
+        pingserverForwardUnmatchedInboundPacket(t, l, buf);
         return;
     }
 
@@ -832,51 +832,51 @@ static void pingserverRestoreIpv4ProtocolFromIcmp(tunnel_t *t, line_t *l, sbuf_t
     tunnelPrevDownStreamPayload(t, l, buf);
 }
 
-void pingserverEncapsulatePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
+void pingserverHandleOutboundPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     pingserver_tstate_t *state = tunnelGetState(t);
 
     switch (state->strategy)
     {
     case kPingServerStrategyWrapNewIpAndIcmpHeader:
-        pingserverEncapsulateWithNewIpAndIcmp(t, l, buf);
+        pingserverEncapsulateOutboundWithNewIpAndIcmp(t, l, buf);
         return;
     case kPingServerStrategyWrapIcmpHeaderAndReuseIpv4Addrs:
-        pingserverEncapsulateReusingIpv4Header(t, l, buf);
+        pingserverEncapsulateOutboundReusingIpv4Header(t, l, buf);
         return;
     case kPingServerStrategyWrapOnlyIcmpHeader:
-        pingserverEncapsulateOnlyIcmp(t, l, buf);
+        pingserverEncapsulateOutboundOnlyIcmp(t, l, buf);
         return;
     case kPingServerStrategyChangeOnlyIpv4ProtocolNumber:
-        pingserverSwapIpv4ProtocolToIcmp(t, l, buf);
+        pingserverSwapOutboundIpv4ProtocolToIcmp(t, l, buf);
         return;
     default:
-        LOGW("PingServer: dropping packet because strategy %u is invalid", (unsigned int) state->strategy);
+        LOGW("PingServer: dropping outbound packet because strategy %u is invalid", (unsigned int) state->strategy);
         lineReuseBuffer(l, buf);
         return;
     }
 }
 
-void pingserverDecapsulatePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
+void pingserverHandleInboundPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     pingserver_tstate_t *state = tunnelGetState(t);
 
     switch (state->strategy)
     {
     case kPingServerStrategyWrapNewIpAndIcmpHeader:
-        pingserverDecapsulateNewIpAndIcmp(t, l, buf);
+        pingserverDecapsulateInboundNewIpAndIcmp(t, l, buf);
         return;
     case kPingServerStrategyWrapIcmpHeaderAndReuseIpv4Addrs:
-        pingserverDecapsulateReusedIpv4Header(t, l, buf);
+        pingserverDecapsulateInboundReusedIpv4Header(t, l, buf);
         return;
     case kPingServerStrategyWrapOnlyIcmpHeader:
-        pingserverDecapsulateOnlyIcmp(t, l, buf);
+        pingserverDecapsulateInboundOnlyIcmp(t, l, buf);
         return;
     case kPingServerStrategyChangeOnlyIpv4ProtocolNumber:
-        pingserverRestoreIpv4ProtocolFromIcmp(t, l, buf);
+        pingserverRestoreInboundIpv4ProtocolFromIcmp(t, l, buf);
         return;
     default:
-        LOGW("PingServer: dropping packet because strategy %u is invalid", (unsigned int) state->strategy);
+        LOGW("PingServer: dropping inbound packet because strategy %u is invalid", (unsigned int) state->strategy);
         lineReuseBuffer(l, buf);
         return;
     }

@@ -239,7 +239,12 @@ tunnel_t *pingserverCreate(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(pingserver_tstate_t), 0);
 
+    t->fnInitU    = &pingserverUpStreamInit;
+    t->fnEstU     = &pingserverUpStreamEst;
+    t->fnFinU     = &pingserverUpStreamFinish;
     t->fnPayloadU = &pingserverUpStreamPayload;
+    t->fnPauseU   = &pingserverUpStreamPause;
+    t->fnResumeU  = &pingserverUpStreamResume;
     t->fnInitD    = &pingserverDownStreamInit;
     t->fnEstD     = &pingserverDownStreamEst;
     t->fnFinD     = &pingserverDownStreamFinish;

@@ -1,18 +1,34 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PingServer.mdx, and both files must keep the same documentation version.
 -->
 
 # PingServer Node
 
-`PingServer` is the server-side peer for `PingClient`. On the upstream path it applies the configured packet disguise logic toward the client side, and on the downstream path it reverses matching peer traffic back to plain packets.
+`PingServer` is the server-side peer for `PingClient`. Wrapped traffic from the client side is expected to arrive through the downstream path, where PingServer restores it and forwards plain packets back toward the previous node. Plain server-side packets sent upstream are wrapped toward the next node for the response path.
 
 It is a pure packet tunnel created with `packettunnelCreate()`, so it runs on the chain's worker packet lines and does not add per-line state.
 
+## Direction Model
+
+PingServer is intentionally not a mirror of PingClient's request-side direction:
+
+- client-to-server wrapped packets must enter PingServer through downstream `Payload`
+- PingServer decapsulates that downstream traffic and forwards with `tunnelPrevDownStreamPayload()`
+- server-to-client response packets may enter PingServer through upstream `Payload`
+- PingServer encapsulates those outbound responses and forwards with `tunnelNextUpStreamPayload()`
+
+A Bridge-style topology should preserve that callback flow:
+
+```text
+TesterClient -> PingClient -> Bridge
+TesterServer -> PingServer -> Bridge
+```
+
 ## What It Does
 
-- upstream applies the configured forward transform toward the client side
-- downstream applies the reverse transform for ICMP packets coming from the client side and forwards unmatched packets unchanged
+- downstream is the server inbound path: it applies the reverse transform for ICMP packets coming from the client side and forwards unmatched packets unchanged
+- upstream is the server outbound path: it applies the configured forward transform to plain response packets before forwarding next
 - downstream drops matching ICMP envelopes with malformed recovery metadata and logs the reason
 - IPv4 packet strategies support IPv4 only
 - any packet that an IPv4 packet strategy cannot safely rewrite is forwarded unchanged
@@ -24,9 +40,9 @@ It is a pure packet tunnel created with `packettunnelCreate()`, so it runs on th
 
 ### `wrap-in-new-ip-and-icmp-header`
 
-- downstream expects:
+- downstream expects client-side wrapped traffic:
   `outer IPv4 header -> ICMP echo header -> original IPv4 packet`
-- upstream recreates that same envelope
+- upstream creates that envelope only for outbound server-side response packets
 - `source` and `dest` are optional in `settings`
 - uses configured IPv4 addresses for the outer packet when provided
 - when `source` or `dest` is omitted, that outer address is copied from the inner IPv4 packet
@@ -63,8 +79,8 @@ It is a pure packet tunnel created with `packettunnelCreate()`, so it runs on th
 - does not add an ICMP header and does not prepend a new IPv4 header
 - only swaps the IPv4 protocol number in place
 - requires `swap-protocol`
-- upstream changes packets whose current IPv4 protocol matches `swap-protocol` into `ICMP`
-- downstream changes matching `ICMP` packets back to `swap-protocol`
+- downstream changes matching inbound `ICMP` packets back to `swap-protocol`
+- upstream changes outbound packets whose current IPv4 protocol matches `swap-protocol` into `ICMP`
 - recalculates the IPv4 header checksum immediately and leaves transport bytes unchanged
 - this mode does not use `identifier`, `sequence-start`, `ipv4-id-start`, `xor-byte`, or `roundup-size`
 
@@ -149,7 +165,7 @@ It is a pure packet tunnel created with `packettunnelCreate()`, so it runs on th
     "sequence-start": 0,
     "ttl": 64
   },
-  "next": "tun-out"
+  "next": "raw-out"
 }
 ```
 
