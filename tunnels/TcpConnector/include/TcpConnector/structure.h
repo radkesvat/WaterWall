@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DomainResolver/interface.h"
 #include "wwapi.h"
 
 typedef struct tcpconnector_socket_options_s
@@ -15,23 +16,16 @@ typedef struct tcpconnector_socket_options_s
     const char *source_ip;
 } tcpconnector_socket_options_t;
 
-typedef struct tcpconnector_domain_setup_tstate_s
-{
-    tunnel_t *connector_tunnel;
-} tcpconnector_domain_setup_tstate_t;
-
-typedef struct tcpconnector_domain_setup_lstate_s
+typedef struct tcpconnector_domain_resolver_lstate_s
 {
     uint64_t                      outbound_ip_range;
     tcpconnector_socket_options_t socket_options;
-} tcpconnector_domain_setup_lstate_t;
+} tcpconnector_domain_resolver_lstate_t;
 
 typedef struct tcpconnector_tstate_s
 {
     local_idle_table_t **idle_tables; // worker-local idle tables for closing dead connections
 
-    node_t        domain_setup_node;
-    tunnel_t     *domain_setup_tunnel;
     node_t        domain_resolver_node;
     tunnel_t     *domain_resolver_tunnel;
     struct cJSON *domain_resolver_settings;
@@ -163,14 +157,11 @@ void tcpconnectorTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void tcpconnectorTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void tcpconnectorTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void tcpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
-void tcpconnectorDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void tcpconnectorDomainSetupTunnelUpStreamFinish(tunnel_t *t, line_t *l);
-void tcpconnectorDomainSetupTunnelDownStreamFinish(tunnel_t *t, line_t *l);
+bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l,
+                                       domainresolver_direction_t direction, void *user_lstate);
 
 void                tcpconnectorLinestateInitialize(tcpconnector_lstate_t *ls);
 void                tcpconnectorLinestateDestroy(tcpconnector_lstate_t *ls);
-void                tcpconnectorDomainSetupLinestateInitialize(tcpconnector_domain_setup_lstate_t *ls);
-void                tcpconnectorDomainSetupLinestateDestroy(tcpconnector_domain_setup_lstate_t *ls);
 local_idle_table_t *tcpconnectorGetWorkerIdleTable(tcpconnector_tstate_t *ts);
 local_idle_table_t *tcpconnectorGetLineIdleTable(tcpconnector_tstate_t *ts, line_t *l);
 

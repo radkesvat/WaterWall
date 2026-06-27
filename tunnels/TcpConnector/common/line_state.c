@@ -23,13 +23,3 @@ void tcpconnectorLinestateDestroy(tcpconnector_lstate_t *ls)
     }
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tcpconnector_lstate_t)));
 }
-
-void tcpconnectorDomainSetupLinestateInitialize(tcpconnector_domain_setup_lstate_t *ls)
-{
-    *ls = (tcpconnector_domain_setup_lstate_t) {0};
-}
-
-void tcpconnectorDomainSetupLinestateDestroy(tcpconnector_domain_setup_lstate_t *ls)
-{
-    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tcpconnector_domain_setup_lstate_t)));
-}

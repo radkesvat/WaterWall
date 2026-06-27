@@ -15,5 +15,5 @@ api_result_t tcpconnectorTunnelApi(tunnel_t *instance, sbuf_t *message)
 tunnel_t *tcpconnectorTunnelGetEntryTunnel(tunnel_t *t)
 {
     tcpconnector_tstate_t *ts = tunnelGetState(t);
-    return ts->domain_setup_tunnel != NULL ? ts->domain_setup_tunnel : t;
+    return ts->domain_resolver_tunnel != NULL ? ts->domain_resolver_tunnel : t;
 }

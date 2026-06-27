@@ -328,24 +328,25 @@ fail:
     return false;
 }
 
-void udpconnectorDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l)
+bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l,
+                                       domainresolver_direction_t direction, void *user_lstate)
 {
-    udpconnector_domain_setup_tstate_t *setup_ts                  = tunnelGetState(t);
-    tunnel_t                           *connector                 = setup_ts->connector_tunnel;
-    udpconnector_tstate_t              *ts                        = tunnelGetState(connector);
-    udpconnector_domain_setup_lstate_t *ls                        = lineGetState(l, t);
-    address_context_t                  *dest_ctx                  = lineGetDestinationAddressContext(l);
-    address_context_t                  *src_ctx                   = lineGetSourceAddressContext(l);
-    const dynamic_value_t              *dest_addr_selected        = &ts->dest_addr_selected;
-    const dynamic_value_t              *dest_port_selected        = &ts->dest_port_selected;
-    const address_context_t            *constant_dest_addr        = &ts->constant_dest_addr;
-    uint16_t                            random_dest_port_x        = ts->random_dest_port_x;
-    uint16_t                            random_dest_port_y        = ts->random_dest_port_y;
+    discard resolver;
+    discard direction;
+
+    udpconnector_tstate_t                 *ts                 = tunnelGetState(connector);
+    udpconnector_domain_resolver_lstate_t *ls                 = user_lstate;
+    address_context_t                     *dest_ctx           = lineGetDestinationAddressContext(l);
+    address_context_t                     *src_ctx            = lineGetSourceAddressContext(l);
+    const dynamic_value_t                 *dest_addr_selected = &ts->dest_addr_selected;
+    const dynamic_value_t                 *dest_port_selected = &ts->dest_port_selected;
+    const address_context_t               *constant_dest_addr = &ts->constant_dest_addr;
+    uint16_t                               random_dest_port_x = ts->random_dest_port_x;
+    uint16_t                               random_dest_port_y = ts->random_dest_port_y;
     uint32_t selected_destination_index = udpconnectorSelectWeightedDestinationIndex(ts);
     const udpconnector_destination_t *selected_destination =
         ts->destinations_count > 0 ? &ts->destinations[selected_destination_index] : NULL;
 
-    udpconnectorDomainSetupLinestateInitialize(ls);
     if (ts->balance_mode == kUdpConnectorBalanceModePacket)
     {
         addresscontextAddrCopy(&ls->packet_base_dest_ctx, dest_ctx);
@@ -377,31 +378,43 @@ void udpconnectorDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l)
     if (! addresscontextHasPort(dest_ctx))
     {
         LOGE("UdpConnector: destination port is not initialized");
-        goto fail;
+        return false;
     }
 
     addresscontextSetDomainStrategy(dest_ctx, (enum domain_strategy) ts->domain_strategy);
 
-    tunnelNextUpStreamInit(t, l);
-    return;
+    return true;
+}
 
-fail:
-    udpconnectorDomainSetupLinestateDestroy(ls);
-    tunnelPrevDownStreamFinish(t, l);
+void udpconnectorDomainResolverUserStateDestroy(tunnel_t *resolver, tunnel_t *connector, line_t *l, void *user_lstate)
+{
+    discard resolver;
+    discard connector;
+    discard l;
+
+    udpconnector_domain_resolver_lstate_t *ls = user_lstate;
+    addresscontextReset(&ls->packet_base_dest_ctx);
 }
 
 void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
-    udpconnector_tstate_t              *ts       = tunnelGetState(t);
-    udpconnector_lstate_t              *ls       = lineGetState(l, t);
-    udpconnector_domain_setup_lstate_t *setup_ls = lineGetState(l, ts->domain_setup_tunnel);
-    address_context_t                  *dest_ctx = lineGetDestinationAddressContext(l);
+    udpconnector_tstate_t                 *ts       = tunnelGetState(t);
+    udpconnector_lstate_t                 *ls       = lineGetState(l, t);
+    udpconnector_domain_resolver_lstate_t *resolver_ls =
+        domainresolverTunnelGetUserLineState(ts->domain_resolver_tunnel, l);
+    address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
 
     udpconnectorLinestateInitialize(ls, t, l, NULL);
+    if (UNLIKELY(resolver_ls == NULL))
+    {
+        LOGF("UdpConnector: internal DomainResolver prepare state is missing");
+        terminateProgram(1);
+    }
+
     if (ts->balance_mode == kUdpConnectorBalanceModePacket)
     {
-        addresscontextAddrCopy(&ls->packet_base_dest_ctx, &setup_ls->packet_base_dest_ctx);
-        ls->packet_initial_destination_index = setup_ls->packet_initial_destination_index;
+        addresscontextAddrCopy(&ls->packet_base_dest_ctx, &resolver_ls->packet_base_dest_ctx);
+        ls->packet_initial_destination_index = resolver_ls->packet_initial_destination_index;
     }
 
     if (! addresscontextCanConvertToSockAddr(dest_ctx) || ! addresscontextHasPort(dest_ctx))

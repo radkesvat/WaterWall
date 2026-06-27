@@ -64,34 +64,6 @@ static cJSON *udpconnectorCreateDomainResolverSettings(enum domain_strategy stra
     return settings;
 }
 
-static bool udpconnectorConfigureDomainSetupNode(node_t *child, const node_t *owner)
-{
-    memorySet(child, 0, sizeof(*child));
-
-    const char *type_name = "UdpConnectorDomainSetup";
-    child->name           = udpconnectorMakeChildName(owner, ".domain-setup");
-    child->type           = stringDuplicate(type_name);
-    if (child->name == NULL || child->type == NULL)
-    {
-        return false;
-    }
-
-    child->hash_name             = calcHashBytes(child->name, stringLength(child->name));
-    child->hash_type             = calcHashBytes(type_name, stringLength(type_name));
-    child->version               = owner->version;
-    child->flags                 = kNodeFlagNone;
-    child->required_padding_left = 0;
-    child->node_json             = owner->node_json;
-    child->node_settings_json    = owner->node_settings_json;
-    child->node_manager_config   = owner->node_manager_config;
-    child->layer_group           = owner->layer_group;
-    child->layer_group_next_node = kNodeLayerAnything;
-    child->layer_group_prev_node = kNodeLayerAnything;
-    child->can_have_next         = true;
-    child->can_have_prev         = true;
-    return true;
-}
-
 static bool udpconnectorConfigureDomainResolverNode(node_t *child, node_t template_node, const node_t *owner,
                                                     cJSON *settings)
 {
@@ -111,34 +83,6 @@ static bool udpconnectorConfigureDomainResolverNode(node_t *child, node_t templa
     child->node_settings_json  = settings;
     child->node_manager_config = owner->node_manager_config;
     child->instance            = NULL;
-    return true;
-}
-
-static bool udpconnectorCreateInternalDomainSetup(tunnel_t *t, node_t *node)
-{
-    udpconnector_tstate_t *ts = tunnelGetState(t);
-
-    if (! udpconnectorConfigureDomainSetupNode(&ts->domain_setup_node, node))
-    {
-        LOGF("UdpConnector: failed to configure internal domain setup node");
-        return false;
-    }
-
-    ts->domain_setup_tunnel = tunnelCreate(&ts->domain_setup_node,
-                                           sizeof(udpconnector_domain_setup_tstate_t),
-                                           sizeof(udpconnector_domain_setup_lstate_t));
-    if (ts->domain_setup_tunnel == NULL)
-    {
-        LOGF("UdpConnector: failed to create internal domain setup tunnel");
-        return false;
-    }
-
-    udpconnector_domain_setup_tstate_t *setup_ts = tunnelGetState(ts->domain_setup_tunnel);
-    setup_ts->connector_tunnel                   = t;
-    ts->domain_setup_tunnel->fnInitU             = &udpconnectorDomainSetupTunnelUpStreamInit;
-    ts->domain_setup_tunnel->fnFinU              = &udpconnectorDomainSetupTunnelUpStreamFinish;
-    ts->domain_setup_tunnel->fnFinD              = &udpconnectorDomainSetupTunnelDownStreamFinish;
-    ts->domain_setup_node.instance               = ts->domain_setup_tunnel;
     return true;
 }
 
@@ -169,13 +113,13 @@ static bool udpconnectorCreateInternalDomainResolver(tunnel_t *t, node_t *node)
     }
 
     domainresolverTunnelUseLineStrategy(ts->domain_resolver_tunnel, true);
+    domainresolverTunnelSetPrepareHook(ts->domain_resolver_tunnel,
+                                       t,
+                                       sizeof(udpconnector_domain_resolver_lstate_t),
+                                       udpconnectorDomainResolverPrepare,
+                                       udpconnectorDomainResolverUserStateDestroy);
     ts->domain_resolver_node.instance = ts->domain_resolver_tunnel;
     return true;
-}
-
-static bool udpconnectorCreateInternalDomainResolverChain(tunnel_t *t, node_t *node)
-{
-    return udpconnectorCreateInternalDomainSetup(t, node) && udpconnectorCreateInternalDomainResolver(t, node);
 }
 
 static bool parseBalanceMode(udpconnector_tstate_t *state, const cJSON *settings)
@@ -595,7 +539,7 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
         }
     }
 
-    if (! udpconnectorCreateInternalDomainResolverChain(t, node))
+    if (! udpconnectorCreateInternalDomainResolver(t, node))
     {
         udpconnectorTunnelDestroy(t);
         return NULL;

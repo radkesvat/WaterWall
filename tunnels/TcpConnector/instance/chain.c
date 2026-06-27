@@ -22,19 +22,12 @@ void tcpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         return;
     }
 
-    tunnel_t *setup    = ts->domain_setup_tunnel;
     tunnel_t *resolver = ts->domain_resolver_tunnel;
     tunnel_t *prev     = t->prev;
 
-    if (setup == NULL || resolver == NULL)
+    if (resolver == NULL)
     {
-        LOGF("TcpConnector: internal DomainResolver chain was not created");
-        terminateProgram(1);
-    }
-
-    if ((setup->prev != NULL && setup->prev != prev) || setup->next != NULL)
-    {
-        LOGF("TcpConnector: internal domain setup tunnel is already bound");
+        LOGF("TcpConnector: internal DomainResolver was not created");
         terminateProgram(1);
     }
 
@@ -46,16 +39,13 @@ void tcpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 
     if (prev->next == t)
     {
-        prev->next = setup;
+        prev->next = resolver;
     }
 
-    setup->prev     = prev;
-    setup->next     = resolver;
-    resolver->prev  = setup;
+    resolver->prev  = prev;
     resolver->next  = t;
     t->prev         = resolver;
 
-    tunnelchainInsert(chain, setup);
     tunnelchainInsert(chain, resolver);
     tunnelchainInsert(chain, t);
 }

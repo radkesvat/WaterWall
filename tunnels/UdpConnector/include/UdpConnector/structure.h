@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DomainResolver/interface.h"
 #include "wwapi.h"
 
 enum udp_connector_dynamic_value_status
@@ -16,16 +17,11 @@ typedef enum udpconnector_balance_mode_e
     kUdpConnectorBalanceModePacket
 } udpconnector_balance_mode_e;
 
-typedef struct udpconnector_domain_setup_tstate_s
-{
-    tunnel_t *connector_tunnel;
-} udpconnector_domain_setup_tstate_t;
-
-typedef struct udpconnector_domain_setup_lstate_s
+typedef struct udpconnector_domain_resolver_lstate_s
 {
     address_context_t packet_base_dest_ctx;
     uint32_t          packet_initial_destination_index;
-} udpconnector_domain_setup_lstate_t;
+} udpconnector_domain_resolver_lstate_t;
 
 typedef struct udpconnector_packet_dns_request_s udpconnector_packet_dns_request_t;
 typedef struct udpconnector_packet_destination_s udpconnector_packet_destination_t;
@@ -34,8 +30,6 @@ typedef struct udpconnector_tstate_s
 {
     local_idle_table_t **idle_tables; // worker-local idle tables for closing dead connections
 
-    node_t        domain_setup_node;
-    tunnel_t     *domain_setup_tunnel;
     node_t        domain_resolver_node;
     tunnel_t     *domain_resolver_tunnel;
     struct cJSON *domain_resolver_settings;
@@ -170,14 +164,13 @@ void udpconnectorTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void udpconnectorTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void udpconnectorTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void udpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
-void udpconnectorDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void udpconnectorDomainSetupTunnelUpStreamFinish(tunnel_t *t, line_t *l);
-void udpconnectorDomainSetupTunnelDownStreamFinish(tunnel_t *t, line_t *l);
+bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l,
+                                       domainresolver_direction_t direction, void *user_lstate);
+void udpconnectorDomainResolverUserStateDestroy(tunnel_t *resolver, tunnel_t *connector, line_t *l,
+                                                void *user_lstate);
 
 void   udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, line_t *l, wio_t *io);
 void   udpconnectorLinestateDestroy(udpconnector_lstate_t *ls);
-void   udpconnectorDomainSetupLinestateInitialize(udpconnector_domain_setup_lstate_t *ls);
-void   udpconnectorDomainSetupLinestateDestroy(udpconnector_domain_setup_lstate_t *ls);
 void   udpconnectorCancelPacketDnsRequests(udpconnector_lstate_t *ls);
 void   udpconnectorOnRecvFrom(wio_t *io, sbuf_t *buf);
 void   udpconnectorOnClose(wio_t *io);

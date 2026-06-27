@@ -84,14 +84,3 @@ void udpconnectorLinestateDestroy(udpconnector_lstate_t *ls)
     }
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(udpconnector_lstate_t)));
 }
-
-void udpconnectorDomainSetupLinestateInitialize(udpconnector_domain_setup_lstate_t *ls)
-{
-    *ls = (udpconnector_domain_setup_lstate_t) {0};
-}
-
-void udpconnectorDomainSetupLinestateDestroy(udpconnector_domain_setup_lstate_t *ls)
-{
-    addresscontextReset(&ls->packet_base_dest_ctx);
-    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(udpconnector_domain_setup_lstate_t)));
-}

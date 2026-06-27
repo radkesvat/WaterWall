@@ -12,12 +12,6 @@ static void tcpconnectorClearInternalNode(node_t *node)
 
 static void tcpconnectorDestroyInternalDomainResolverChain(tcpconnector_tstate_t *ts)
 {
-    if (ts->domain_setup_tunnel != NULL)
-    {
-        ts->domain_setup_tunnel->onDestroy(ts->domain_setup_tunnel);
-        ts->domain_setup_tunnel = NULL;
-    }
-
     if (ts->domain_resolver_tunnel != NULL)
     {
         ts->domain_resolver_tunnel->onDestroy(ts->domain_resolver_tunnel);
@@ -30,7 +24,6 @@ static void tcpconnectorDestroyInternalDomainResolverChain(tcpconnector_tstate_t
         ts->domain_resolver_settings = NULL;
     }
 
-    tcpconnectorClearInternalNode(&ts->domain_setup_node);
     tcpconnectorClearInternalNode(&ts->domain_resolver_node);
 }
 

@@ -287,14 +287,14 @@ fail:
     return false;
 }
 
-void tcpconnectorDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l)
+bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l,
+                                       domainresolver_direction_t direction, void *user_lstate)
 {
-    tcpconnector_domain_setup_tstate_t *setup_ts  = tunnelGetState(t);
-    tunnel_t                           *connector = setup_ts->connector_tunnel;
-    tcpconnector_tstate_t              *ts        = tunnelGetState(connector);
-    tcpconnector_domain_setup_lstate_t *ls        = lineGetState(l, t);
+    discard resolver;
+    discard direction;
 
-    tcpconnectorDomainSetupLinestateInitialize(ls);
+    tcpconnector_tstate_t                 *ts = tunnelGetState(connector);
+    tcpconnector_domain_resolver_lstate_t *ls = user_lstate;
 
     // findout how to deal with destination address
     address_context_t                *dest_ctx             = &(l->routing_context.dest_ctx);
@@ -326,33 +326,35 @@ void tcpconnectorDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l)
     if (! addresscontextHasPort(dest_ctx))
     {
         LOGE("TcpConnector: destination port is not initialized");
-        goto fail;
+        return false;
     }
 
     ls->outbound_ip_range = outbound_ip_range;
     ls->socket_options    = socket_options;
 
-    tunnelNextUpStreamInit(t, l);
-    return;
-fail:
-    tcpconnectorDomainSetupLinestateDestroy(ls);
-    tunnelPrevDownStreamFinish(t, l);
+    return true;
 }
 
 void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     tcpconnector_tstate_t              *ts       = tunnelGetState(t);
     tcpconnector_lstate_t              *ls       = lineGetState(l, t);
-    tcpconnector_domain_setup_lstate_t *setup_ls = lineGetState(l, ts->domain_setup_tunnel);
+    tcpconnector_domain_resolver_lstate_t *resolver_ls =
+        domainresolverTunnelGetUserLineState(ts->domain_resolver_tunnel, l);
     address_context_t                  *dest_ctx = lineGetDestinationAddressContext(l);
 
     tcpconnectorLinestateInitialize(ls);
+    if (UNLIKELY(resolver_ls == NULL))
+    {
+        LOGF("TcpConnector: internal DomainResolver prepare state is missing");
+        terminateProgram(1);
+    }
 
     ls->tunnel            = t;
     ls->line              = l;
     ls->write_paused      = true;
-    ls->outbound_ip_range = setup_ls->outbound_ip_range;
-    ls->socket_options    = setup_ls->socket_options;
+    ls->outbound_ip_range = resolver_ls->outbound_ip_range;
+    ls->socket_options    = resolver_ls->socket_options;
 
     if (! addresscontextCanConvertToSockAddr(dest_ctx) || ! addresscontextHasPort(dest_ctx))
     {

@@ -15,5 +15,5 @@ api_result_t udpconnectorTunnelApi(tunnel_t *instance, sbuf_t *message)
 tunnel_t *udpconnectorTunnelGetEntryTunnel(tunnel_t *t)
 {
     udpconnector_tstate_t *ts = tunnelGetState(t);
-    return ts->domain_setup_tunnel != NULL ? ts->domain_setup_tunnel : t;
+    return ts->domain_resolver_tunnel != NULL ? ts->domain_resolver_tunnel : t;
 }

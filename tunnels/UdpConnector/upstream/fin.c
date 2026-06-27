@@ -28,19 +28,3 @@ void udpconnectorTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     udpconnectorLinestateDestroy(ls);
     wioClose(io);
 }
-
-void udpconnectorDomainSetupTunnelUpStreamFinish(tunnel_t *t, line_t *l)
-{
-    udpconnector_domain_setup_lstate_t *ls = lineGetState(l, t);
-
-    udpconnectorDomainSetupLinestateDestroy(ls);
-    tunnelNextUpStreamFinish(t, l);
-}
-
-void udpconnectorDomainSetupTunnelDownStreamFinish(tunnel_t *t, line_t *l)
-{
-    udpconnector_domain_setup_lstate_t *ls = lineGetState(l, t);
-
-    udpconnectorDomainSetupLinestateDestroy(ls);
-    tunnelPrevDownStreamFinish(t, l);
-}
