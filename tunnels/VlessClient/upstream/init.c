@@ -4,13 +4,25 @@
 
 void vlessclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
-    vlessclient_tstate_t *ts = tunnelGetState(t);
-    vlessclient_lstate_t *ls = lineGetState(l, t);
-    vlessclient_domain_setup_lstate_t *setup_ls = lineGetState(l, ts->domain_setup_tunnel);
+    vlessclient_tstate_t   *ts       = tunnelGetState(t);
+    vlessclient_lstate_t   *ls       = lineGetState(l, t);
+    vlessclient_protocol_t  protocol = kVlessClientProtocolTcp;
     address_context_t *target = lineGetDestinationAddressContext(l);
 
+    if (ts->resolve_domains)
+    {
+        vlessclient_domain_resolver_lstate_t *resolver_ls =
+            domainresolverTunnelGetUserLineState(ts->domain_resolver_tunnel, l);
+        protocol = resolver_ls->protocol;
+    }
+    else if (UNLIKELY(! vlessclientApplyTargetContext(t, l, &protocol)))
+    {
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
+
     vlessclientLinestateInitialize(ls, t, l);
-    ls->protocol = setup_ls->protocol;
+    ls->protocol = protocol;
     ls->kind     = ls->protocol == kVlessClientProtocolUdp ? kVlessClientLineKindUdpApp : kVlessClientLineKindDirect;
     addresscontextAddrCopy(&ls->target_addr, target);
     addresscontextSetPort(&ls->target_addr, target->port);
@@ -40,20 +52,19 @@ void vlessclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     tunnelNextUpStreamInit(t, l);
 }
 
-void vlessclientDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l)
+bool vlessclientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l,
+                                      domainresolver_direction_t direction, void *user_lstate)
 {
-    vlessclient_domain_setup_tstate_t *setup_ts = tunnelGetState(t);
-    tunnel_t                          *client   = setup_ts->client_tunnel;
-    vlessclient_domain_setup_lstate_t *ls       = lineGetState(l, t);
+    discard resolver;
+    discard direction;
 
-    vlessclientDomainSetupLinestateInitialize(ls);
+    vlessclient_domain_resolver_lstate_t *ls = user_lstate;
+    ls->protocol = kVlessClientProtocolTcp;
 
-    if (UNLIKELY(! vlessclientApplyTargetContext(client, l)))
+    if (UNLIKELY(! vlessclientApplyTargetContext(client, l, &ls->protocol)))
     {
-        vlessclientDomainSetupLinestateDestroy(ls);
-        tunnelPrevDownStreamFinish(t, l);
-        return;
+        return false;
     }
 
-    tunnelNextUpStreamInit(t, l);
+    return true;
 }

@@ -32,24 +32,13 @@ void vlessclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         terminateProgram(1);
     }
 
-    tunnel_t *setup       = ts->domain_setup_tunnel;
     tunnel_t *resolver    = ts->domain_resolver_tunnel;
     tunnel_t *next_tunnel = next_node->instance;
     tunnel_t *prev        = t->prev;
 
-    if (setup == NULL)
-    {
-        LOGF("VlessClient: internal domain setup tunnel was not created");
-        terminateProgram(1);
-    }
     if (next_tunnel == NULL)
     {
         LOGF("VlessClient: next node \"%s\" has no tunnel instance", next_node->name);
-        terminateProgram(1);
-    }
-    if ((setup->prev != NULL && setup->prev != prev) || setup->next != NULL)
-    {
-        LOGF("VlessClient: internal domain setup tunnel is already bound");
         terminateProgram(1);
     }
     if (resolver != NULL && (resolver->prev != NULL || resolver->next != NULL))
@@ -68,26 +57,19 @@ void vlessclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 
     if (prev->next == t)
     {
-        prev->next = setup;
+        prev->next = resolver != NULL ? resolver : t;
     }
 
-    setup->prev = prev;
-    setup->next = resolver != NULL ? resolver : t;
     if (resolver != NULL)
     {
-        resolver->prev = setup;
+        resolver->prev = prev;
         resolver->next = t;
         t->prev        = resolver;
-    }
-    else
-    {
-        t->prev = setup;
     }
 
     t->next           = next_tunnel;
     next_tunnel->prev = t;
 
-    tunnelchainInsert(chain, setup);
     if (resolver != NULL)
     {
         tunnelchainInsert(chain, resolver);

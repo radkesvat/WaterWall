@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DomainResolver/interface.h"
 #include "wwapi.h"
 
 typedef enum socks5client_protocol_e
@@ -28,8 +29,6 @@ typedef enum socks5client_line_kind_e
 
 typedef struct socks5client_tstate_s
 {
-    node_t        domain_setup_node;
-    tunnel_t     *domain_setup_tunnel;
     node_t        domain_resolver_node;
     tunnel_t     *domain_resolver_tunnel;
     struct cJSON *domain_resolver_settings;
@@ -47,15 +46,10 @@ typedef struct socks5client_tstate_s
     bool                    resolve_domains;
 } socks5client_tstate_t;
 
-typedef struct socks5client_domain_setup_tstate_s
-{
-    tunnel_t *client_tunnel;
-} socks5client_domain_setup_tstate_t;
-
-typedef struct socks5client_domain_setup_lstate_s
+typedef struct socks5client_domain_resolver_lstate_s
 {
     socks5client_protocol_t protocol;
-} socks5client_domain_setup_lstate_t;
+} socks5client_domain_resolver_lstate_t;
 
 typedef struct socks5client_lstate_s
 {
@@ -108,17 +102,14 @@ void socks5clientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void socks5clientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void socks5clientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void socks5clientTunnelDownStreamResume(tunnel_t *t, line_t *l);
-void socks5clientDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void socks5clientDomainSetupTunnelUpStreamFinish(tunnel_t *t, line_t *l);
-void socks5clientDomainSetupTunnelDownStreamFinish(tunnel_t *t, line_t *l);
+bool socks5clientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l,
+                                       domainresolver_direction_t direction, void *user_lstate);
 
 void socks5clientLinestateInitialize(socks5client_lstate_t *ls, tunnel_t *t, line_t *l);
 void socks5clientLinestateDestroy(socks5client_lstate_t *ls);
-void socks5clientDomainSetupLinestateInitialize(socks5client_domain_setup_lstate_t *ls);
-void socks5clientDomainSetupLinestateDestroy(socks5client_domain_setup_lstate_t *ls);
 
 void socks5clientTunnelstateDestroy(socks5client_tstate_t *ts);
-bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l);
+bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l, socks5client_protocol_t *protocol_out);
 bool socks5clientSendGreeting(tunnel_t *t, line_t *l, socks5client_lstate_t *ls);
 bool socks5clientSendAuthRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *ls);
 bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_t *ls);

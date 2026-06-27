@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DomainResolver/interface.h"
 #include "wwapi.h"
 
 typedef enum trojanclient_protocol_e
@@ -43,8 +44,6 @@ enum
 
 typedef struct trojanclient_tstate_s
 {
-    node_t        domain_setup_node;
-    tunnel_t     *domain_setup_tunnel;
     node_t        domain_resolver_node;
     tunnel_t     *domain_resolver_tunnel;
     struct cJSON *domain_resolver_settings;
@@ -59,15 +58,10 @@ typedef struct trojanclient_tstate_s
     bool                    resolve_domains;
 } trojanclient_tstate_t;
 
-typedef struct trojanclient_domain_setup_tstate_s
-{
-    tunnel_t *client_tunnel;
-} trojanclient_domain_setup_tstate_t;
-
-typedef struct trojanclient_domain_setup_lstate_s
+typedef struct trojanclient_domain_resolver_lstate_s
 {
     trojanclient_protocol_t protocol;
-} trojanclient_domain_setup_lstate_t;
+} trojanclient_domain_resolver_lstate_t;
 
 typedef struct trojanclient_lstate_s
 {
@@ -111,17 +105,14 @@ void trojanclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void trojanclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void trojanclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
-void trojanclientDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void trojanclientDomainSetupTunnelUpStreamFinish(tunnel_t *t, line_t *l);
-void trojanclientDomainSetupTunnelDownStreamFinish(tunnel_t *t, line_t *l);
+bool trojanclientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l,
+                                       domainresolver_direction_t direction, void *user_lstate);
 
 void trojanclientLinestateInitialize(trojanclient_lstate_t *ls, tunnel_t *t, line_t *l);
 void trojanclientLinestateDestroy(trojanclient_lstate_t *ls);
-void trojanclientDomainSetupLinestateInitialize(trojanclient_domain_setup_lstate_t *ls);
-void trojanclientDomainSetupLinestateDestroy(trojanclient_domain_setup_lstate_t *ls);
 
 void trojanclientTunnelstateDestroy(trojanclient_tstate_t *ts);
-bool trojanclientApplyTargetContext(tunnel_t *t, line_t *l);
+bool trojanclientApplyTargetContext(tunnel_t *t, line_t *l, trojanclient_protocol_t *protocol_out);
 bool trojanclientStartUdpCarrier(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls, bool *line_alive_out);
 bool trojanclientForwardUdpAppPayload(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls, sbuf_t *buf);
 bool trojanclientHandleUdpCarrierPayload(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls, sbuf_t *buf);

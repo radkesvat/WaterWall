@@ -12,12 +12,6 @@ static void vlessclientClearInternalNode(node_t *node)
 
 static void vlessclientDestroyInternalDomainResolverChain(vlessclient_tstate_t *ts)
 {
-    if (ts->domain_setup_tunnel != NULL)
-    {
-        ts->domain_setup_tunnel->onDestroy(ts->domain_setup_tunnel);
-        ts->domain_setup_tunnel = NULL;
-    }
-
     if (ts->domain_resolver_tunnel != NULL)
     {
         ts->domain_resolver_tunnel->onDestroy(ts->domain_resolver_tunnel);
@@ -30,7 +24,6 @@ static void vlessclientDestroyInternalDomainResolverChain(vlessclient_tstate_t *
         ts->domain_resolver_settings = NULL;
     }
 
-    vlessclientClearInternalNode(&ts->domain_setup_node);
     vlessclientClearInternalNode(&ts->domain_resolver_node);
 }
 

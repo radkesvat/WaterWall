@@ -207,13 +207,12 @@ void vlessclientTunnelstateDestroy(vlessclient_tstate_t *ts)
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }
 
-bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l)
+bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l, vlessclient_protocol_t *protocol_out)
 {
-    vlessclient_tstate_t              *ts       = tunnelGetState(t);
-    vlessclient_domain_setup_lstate_t *setup_ls = lineGetState(l, ts->domain_setup_tunnel);
-    address_context_t                 *dest_ctx = lineGetDestinationAddressContext(l);
-    routing_context_t                 *route    = lineGetRoutingContext(l);
-    address_context_t                  current  = {0};
+    vlessclient_tstate_t *ts       = tunnelGetState(t);
+    address_context_t    *dest_ctx = lineGetDestinationAddressContext(l);
+    routing_context_t    *route    = lineGetRoutingContext(l);
+    address_context_t     current  = {0};
     bool uses_current_dest = (ts->target_addr_source != kDvsConstant) || (ts->target_port_source != kDvsConstant) ||
                              (ts->protocol == kVlessClientProtocolDestContext);
 
@@ -268,7 +267,7 @@ bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l)
         route->network_type = WIO_TYPE_UDP;
     }
 
-    setup_ls->protocol = resolved_protocol;
+    *protocol_out = resolved_protocol;
 
     if (uses_current_dest)
     {

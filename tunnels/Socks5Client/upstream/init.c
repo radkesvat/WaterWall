@@ -4,13 +4,25 @@
 
 void socks5clientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
-    socks5client_tstate_t *ts = tunnelGetState(t);
-    socks5client_lstate_t *ls = lineGetState(l, t);
-    socks5client_domain_setup_lstate_t *setup_ls = lineGetState(l, ts->domain_setup_tunnel);
+    socks5client_tstate_t   *ts       = tunnelGetState(t);
+    socks5client_lstate_t   *ls       = lineGetState(l, t);
+    socks5client_protocol_t  protocol = kSocks5ClientProtocolTcp;
     address_context_t *target = lineGetDestinationAddressContext(l);
 
+    if (ts->resolve_domains)
+    {
+        socks5client_domain_resolver_lstate_t *resolver_ls =
+            domainresolverTunnelGetUserLineState(ts->domain_resolver_tunnel, l);
+        protocol = resolver_ls->protocol;
+    }
+    else if (! socks5clientApplyTargetContext(t, l, &protocol))
+    {
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
+
     socks5clientLinestateInitialize(ls, t, l);
-    ls->protocol = setup_ls->protocol;
+    ls->protocol = protocol;
     ls->kind     = ls->protocol == kSocks5ClientProtocolUdp ? kSocks5ClientLineKindUdpApp : kSocks5ClientLineKindDirect;
     addresscontextAddrCopy(&ls->target_addr, target);
     addresscontextSetPort(&ls->target_addr, target->port);
@@ -45,20 +57,19 @@ void socks5clientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     tunnelNextUpStreamInit(t, l);
 }
 
-void socks5clientDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l)
+bool socks5clientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l,
+                                       domainresolver_direction_t direction, void *user_lstate)
 {
-    socks5client_domain_setup_tstate_t *setup_ts = tunnelGetState(t);
-    tunnel_t                           *client   = setup_ts->client_tunnel;
-    socks5client_domain_setup_lstate_t *ls       = lineGetState(l, t);
+    discard resolver;
+    discard direction;
 
-    socks5clientDomainSetupLinestateInitialize(ls);
+    socks5client_domain_resolver_lstate_t *ls = user_lstate;
+    ls->protocol = kSocks5ClientProtocolTcp;
 
-    if (UNLIKELY(! socks5clientApplyTargetContext(client, l)))
+    if (UNLIKELY(! socks5clientApplyTargetContext(client, l, &ls->protocol)))
     {
-        socks5clientDomainSetupLinestateDestroy(ls);
-        tunnelPrevDownStreamFinish(t, l);
-        return;
+        return false;
     }
 
-    tunnelNextUpStreamInit(t, l);
+    return true;
 }

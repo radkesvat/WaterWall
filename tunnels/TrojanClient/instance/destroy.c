@@ -12,12 +12,6 @@ static void trojanclientClearInternalNode(node_t *node)
 
 static void trojanclientDestroyInternalDomainResolverChain(trojanclient_tstate_t *ts)
 {
-    if (ts->domain_setup_tunnel != NULL)
-    {
-        ts->domain_setup_tunnel->onDestroy(ts->domain_setup_tunnel);
-        ts->domain_setup_tunnel = NULL;
-    }
-
     if (ts->domain_resolver_tunnel != NULL)
     {
         ts->domain_resolver_tunnel->onDestroy(ts->domain_resolver_tunnel);
@@ -30,7 +24,6 @@ static void trojanclientDestroyInternalDomainResolverChain(trojanclient_tstate_t
         ts->domain_resolver_settings = NULL;
     }
 
-    trojanclientClearInternalNode(&ts->domain_setup_node);
     trojanclientClearInternalNode(&ts->domain_resolver_node);
 }
 

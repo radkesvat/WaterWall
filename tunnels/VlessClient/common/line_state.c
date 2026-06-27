@@ -18,13 +18,3 @@ void vlessclientLinestateDestroy(vlessclient_lstate_t *ls)
     bufferqueueDestroy(&ls->pending_up);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }
-
-void vlessclientDomainSetupLinestateInitialize(vlessclient_domain_setup_lstate_t *ls)
-{
-    *ls = (vlessclient_domain_setup_lstate_t) {.protocol = kVlessClientProtocolTcp};
-}
-
-void vlessclientDomainSetupLinestateDestroy(vlessclient_domain_setup_lstate_t *ls)
-{
-    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(vlessclient_domain_setup_lstate_t)));
-}

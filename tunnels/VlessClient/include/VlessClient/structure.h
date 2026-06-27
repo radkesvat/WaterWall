@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DomainResolver/interface.h"
 #include "wwapi.h"
 
 typedef enum vlessclient_protocol_e
@@ -44,8 +45,6 @@ enum
 
 typedef struct vlessclient_tstate_s
 {
-    node_t        domain_setup_node;
-    tunnel_t     *domain_setup_tunnel;
     node_t        domain_resolver_node;
     tunnel_t     *domain_resolver_tunnel;
     struct cJSON *domain_resolver_settings;
@@ -60,15 +59,10 @@ typedef struct vlessclient_tstate_s
     bool                   resolve_domains;
 } vlessclient_tstate_t;
 
-typedef struct vlessclient_domain_setup_tstate_s
-{
-    tunnel_t *client_tunnel;
-} vlessclient_domain_setup_tstate_t;
-
-typedef struct vlessclient_domain_setup_lstate_s
+typedef struct vlessclient_domain_resolver_lstate_s
 {
     vlessclient_protocol_t protocol;
-} vlessclient_domain_setup_lstate_t;
+} vlessclient_domain_resolver_lstate_t;
 
 typedef struct vlessclient_lstate_s
 {
@@ -112,17 +106,14 @@ void vlessclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void vlessclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void vlessclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
-void vlessclientDomainSetupTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void vlessclientDomainSetupTunnelUpStreamFinish(tunnel_t *t, line_t *l);
-void vlessclientDomainSetupTunnelDownStreamFinish(tunnel_t *t, line_t *l);
+bool vlessclientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l,
+                                      domainresolver_direction_t direction, void *user_lstate);
 
 void vlessclientLinestateInitialize(vlessclient_lstate_t *ls, tunnel_t *t, line_t *l);
 void vlessclientLinestateDestroy(vlessclient_lstate_t *ls);
-void vlessclientDomainSetupLinestateInitialize(vlessclient_domain_setup_lstate_t *ls);
-void vlessclientDomainSetupLinestateDestroy(vlessclient_domain_setup_lstate_t *ls);
 
 void vlessclientTunnelstateDestroy(vlessclient_tstate_t *ts);
-bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l);
+bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l, vlessclient_protocol_t *protocol_out);
 bool vlessclientStartUdpCarrier(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, bool *line_alive_out);
 bool vlessclientForwardUdpAppPayload(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, sbuf_t *buf);
 bool vlessclientHandleUdpCarrierPayload(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls, sbuf_t *buf);

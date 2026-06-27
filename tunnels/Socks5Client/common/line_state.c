@@ -20,13 +20,3 @@ void socks5clientLinestateDestroy(socks5client_lstate_t *ls)
     bufferqueueDestroy(&ls->pending_up);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(socks5client_lstate_t)));
 }
-
-void socks5clientDomainSetupLinestateInitialize(socks5client_domain_setup_lstate_t *ls)
-{
-    *ls = (socks5client_domain_setup_lstate_t) {.protocol = kSocks5ClientProtocolTcp};
-}
-
-void socks5clientDomainSetupLinestateDestroy(socks5client_domain_setup_lstate_t *ls)
-{
-    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(socks5client_domain_setup_lstate_t)));
-}

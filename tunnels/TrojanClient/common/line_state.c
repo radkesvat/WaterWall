@@ -18,13 +18,3 @@ void trojanclientLinestateDestroy(trojanclient_lstate_t *ls)
     bufferqueueDestroy(&ls->pending_up);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }
-
-void trojanclientDomainSetupLinestateInitialize(trojanclient_domain_setup_lstate_t *ls)
-{
-    *ls = (trojanclient_domain_setup_lstate_t) {.protocol = kTrojanClientProtocolTcp};
-}
-
-void trojanclientDomainSetupLinestateDestroy(trojanclient_domain_setup_lstate_t *ls)
-{
-    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(trojanclient_domain_setup_lstate_t)));
-}
