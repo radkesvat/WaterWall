@@ -188,14 +188,16 @@ In UDP mode:
   - `"resolve-domains-with-core-settings"`
     Resolve domain targets using the DNS settings and result preference configured in `core.json` under `dns`.
 
-  When local resolution is enabled, `TrojanClient` creates an internal `DomainResolver` after its target setup step.
+  When local resolution is enabled, `TrojanClient` creates an internal `DomainResolver` whose prepare hook applies the
+  configured target before DNS resolution.
   Resolution is applied when the final Trojan target address is a domain. This includes both fixed JSON addresses and
   `"dest_context->address"`. Literal IP addresses are left unchanged. While DNS is pending, the internal resolver queues
   payloads before the Trojan request starts.
 
 ## Behavior
 
-- an internal setup node prepares the final Trojan target before the protocol core starts.
+- the final Trojan target is prepared before the protocol core starts, either by the internal resolver prepare hook or
+  directly during client init when local DNS resolution is disabled.
 - if `domain-strategy` enables resolution and the target is a domain, DNS resolution happens before the Trojan request
   is sent by the internal `DomainResolver`.
 - for TCP, `Init` forwards the same line to the next node.

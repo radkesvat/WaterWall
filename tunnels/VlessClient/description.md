@@ -180,7 +180,8 @@ back to IPv6.
   - `"resolve-domains-with-core-settings"`
     Resolve domain targets using the DNS settings and result preference configured in `core.json` under `dns`.
 
-  When local resolution is enabled, `VlessClient` creates an internal `DomainResolver` after its target setup step.
+  When local resolution is enabled, `VlessClient` creates an internal `DomainResolver` whose prepare hook applies the
+  configured target before DNS resolution.
   Resolution is applied when the final VLESS target address is a domain. This includes both fixed JSON addresses and
   `"dest_context->address"`. Literal IP addresses are left unchanged. While DNS is pending, the internal resolver queues
   payloads before the VLESS request starts.

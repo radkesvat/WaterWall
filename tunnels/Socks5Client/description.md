@@ -140,14 +140,16 @@ falls back to IPv6.
   - `"resolve-domains-with-core-settings"`
     Resolve domain targets using the DNS settings and result preference configured in `core.json` under `dns`.
 
-  When local resolution is enabled, `Socks5Client` creates an internal `DomainResolver` after its target setup step.
+  When local resolution is enabled, `Socks5Client` creates an internal `DomainResolver` whose prepare hook applies the
+  configured target before DNS resolution.
   Resolution is applied when the final SOCKS target address is a domain. This includes both fixed JSON addresses and
   `"dest_context->address"`. Literal IP addresses are left unchanged. While DNS is pending, the internal resolver queues
   payloads before the SOCKS5 handshake starts.
 
 ## Behavior
 
-- an internal setup node mirrors the configured target into the line destination context before the protocol core starts.
+- target preparation mirrors the configured target into the line destination context before the protocol core starts,
+  either by the internal resolver prepare hook or directly during client init when local DNS resolution is disabled.
 - the resolved SOCKS target is kept in `Socks5Client` line state so the proxy transport connector can rewrite
   `line->dest_ctx` without changing the later SOCKS request.
 - if `domain-strategy` enables resolution and the target is a domain, DNS resolution happens before the SOCKS5 greeting
