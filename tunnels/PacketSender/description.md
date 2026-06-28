@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketSender.mdx, and both files must keep the same documentation version.
 -->
 
@@ -29,7 +29,7 @@ packet lines during the configured duration.
       "8.8.8.0/24",
       "1.1.1.0/24"
     ],
-    "dest-ip4": "203.0.113.20",
+    "dest-ipv4": "203.0.113.20",
     "protocol-number": "ICMP",
     "duration-ms": 5000,
     "packets-per-ip": 100
@@ -42,7 +42,7 @@ packet lines during the configured duration.
 
 - `source-ip4-range`: required IPv4 CIDR range or list of ranges
 - `packets-per-ip`: optional positive integer, default `1`
-- `dest-ip4`: required destination IPv4 address
+- `dest-ipv4`: required destination IPv4 address
 - `protocol-number`: `TCP`, `UDP`, `ICMP`, or `ALL`
 - `duration-ms`: required positive duration in milliseconds
 - `dest-port`: required for `TCP`, `UDP`, or `ALL`

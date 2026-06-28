@@ -146,13 +146,13 @@ static bool packetsenderLoadDestIpv4(packetsender_tstate_t *state, const cJSON *
 {
     char *ipbuf = NULL;
 
-    if (! getStringFromJsonObject(&ipbuf, settings, "dest-ip4"))
+    if (! getStringFromJsonObject(&ipbuf, settings, "dest-ipv4"))
     {
-        LOGF("JSON Error: PacketSender->settings->dest-ip4 (string field) : expected a single IPv4 address");
+        LOGF("JSON Error: PacketSender->settings->dest-ipv4 (string field) : expected a single IPv4 address");
         return false;
     }
 
-    const bool ok = packetsenderParseIpv4String(&state->dest_addr_network, ipbuf, "PacketSender->settings->dest-ip4");
+    const bool ok = packetsenderParseIpv4String(&state->dest_addr_network, ipbuf, "PacketSender->settings->dest-ipv4");
     memoryFree(ipbuf);
 
     if (! ok)

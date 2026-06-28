@@ -6,7 +6,7 @@
       "type": "PacketSender",
       "settings": {
         "source-ip4-range": "198.51.112.0/29",
-        "dest-ip4": "203.0.113.32",
+        "dest-ipv4": "203.0.113.32",
         "protocol-number": "UDP",
         "src-port": 41020,
         "dest-port": 42020,

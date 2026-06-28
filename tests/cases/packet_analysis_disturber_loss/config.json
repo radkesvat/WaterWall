@@ -6,7 +6,7 @@
       "type": "PacketSender",
       "settings": {
         "source-ip4-range": "198.51.100.0/31",
-        "dest-ip4": "203.0.113.10",
+        "dest-ipv4": "203.0.113.10",
         "protocol-number": "ICMP",
         "duration-ms": 100,
         "packets-per-ip": 3
