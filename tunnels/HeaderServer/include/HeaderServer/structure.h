@@ -6,7 +6,8 @@ typedef enum headerserver_override_mode_e
 {
     kHeaderServerOverrideModeNone = 0,
     kHeaderServerOverrideModeConstant,
-    kHeaderServerOverrideModeHeaderPort
+    kHeaderServerOverrideModeHeaderPort,
+    kHeaderServerOverrideModeProxyProtocolSourceFields
 } headerserver_override_mode_e;
 
 typedef enum headerserver_phase_e
@@ -30,10 +31,14 @@ typedef struct headerserver_lstate_s
 
 enum
 {
-    kHeaderServerHeaderSize     = 2,
-    kHeaderServerMinAllowedPort = 10,
-    kTunnelStateSize            = sizeof(headerserver_tstate_t),
-    kLineStateSize              = sizeof(headerserver_lstate_t)
+    kHeaderServerHeaderSize                     = 2,
+    kHeaderServerMinAllowedPort                 = 10,
+    kHeaderServerProxyProtocolV1MaxHeaderSize   = 108,
+    kHeaderServerProxyProtocolV2SignatureSize   = 12,
+    kHeaderServerProxyProtocolV2BaseHeaderSize  = 16,
+    kHeaderServerProxyProtocolV2Ipv4AddressSize = 12,
+    kTunnelStateSize                            = sizeof(headerserver_tstate_t),
+    kLineStateSize                              = sizeof(headerserver_lstate_t)
 };
 
 WW_EXPORT void         headerserverTunnelDestroy(tunnel_t *t);

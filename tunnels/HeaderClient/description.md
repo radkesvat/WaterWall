@@ -1,5 +1,5 @@
 <!--
-Documentation version: 109
+Documentation version: 110
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HeaderClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -10,7 +10,7 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 It is most often used for one of two jobs:
 
 - passing WaterWall routing metadata to a paired `HeaderServer`
-- adding a HAProxy PROXY protocol header before traffic reaches a backend that understands PROXY protocol
+- adding a HAProxy PROXY protocol header before traffic reaches a receiver that understands PROXY protocol
 
 `HeaderClient` does not open sockets and does not create lines. It only mutates the first upstream payload, then becomes transparent for the rest of the line.
 
@@ -34,13 +34,18 @@ Internal WaterWall port header:
 TcpListener -> HeaderClient -> ... -> HeaderServer -> TcpConnector
 ```
 
-PROXY protocol header for a backend:
+PROXY protocol header for a PROXY-aware remote receiver:
 
 ```text
-TcpListener -> HeaderClient -> TcpConnector -> HAProxy/nginx/backend
+sender side:   TcpListener -> HeaderClient -> TcpConnector
+receiver side: HeaderServer/HAProxy/nginx/backend
 ```
 
-In PROXY protocol mode, do not pair `HeaderClient` with `HeaderServer`. The next real peer must understand HAProxy PROXY protocol itself. PROXY mode also requires `settings.frontend-ipv4`, which should be the frontend IPv4 address clients connect to, not the backend address.
+In PROXY protocol mode, the next real peer must expect HAProxy PROXY protocol.
+That can be `HeaderServer` with `settings.override =
+"proxy-protocol->source-fields"` or another PROXY-aware backend. PROXY mode also
+requires `settings.frontend-ipv4`, which should be the frontend IPv4 address
+clients connect to, not the backend address.
 
 ## Practical Examples
 
@@ -184,7 +189,9 @@ Some older receivers only accept the text PROXY protocol format. Use `"proxy-pro
 }
 ```
 
-The backend must be configured to expect PROXY protocol v1. Do not put `HeaderServer` after this mode.
+The receiver must be configured to expect PROXY protocol v1. For WaterWall
+receivers, use `HeaderServer` with `settings.override =
+"proxy-protocol->source-fields"`.
 
 ## Required JSON Fields
 
@@ -267,7 +274,9 @@ For PROXY protocol mode, the source address context must be convertible to an IP
 
 ## Pairing With HeaderServer
 
-Use `HeaderClient` with `HeaderServer` only for the WaterWall 2-byte port header:
+Use `HeaderClient` with `HeaderServer` in one of the matching modes.
+
+For the WaterWall 2-byte port header:
 
 ```json
 {
@@ -280,9 +289,24 @@ Use `HeaderClient` with `HeaderServer` only for the WaterWall 2-byte port header
 }
 ```
 
-If `HeaderServer.settings.override` is a number, the server sets a constant destination port during upstream `Init` and does not consume a header. In that mode, a `HeaderClient` in front of it would leave the 2-byte header in the application payload.
+For PROXY protocol source-field restoration:
 
-Do not pair PROXY protocol modes with `HeaderServer`; those modes are intended for an upstream peer that understands HAProxy PROXY protocol.
+```json
+{
+  "name": "header-server",
+  "type": "HeaderServer",
+  "settings": {
+    "override": "proxy-protocol->source-fields"
+  },
+  "next": "connector"
+}
+```
+
+Pair that with `HeaderClient.data` set to `"proxy-protocol"`,
+`"proxy-protocol-v1"`, or `"proxy-protocol-v2"`. The server-side PROXY reader is
+IPv4-only and applies only `src_ctx.ip` and `src_ctx.port`.
+
+If `HeaderServer.settings.override` is a number, the server sets a constant destination port during upstream `Init` and does not consume a header. In that mode, a `HeaderClient` in front of it would leave the 2-byte header in the application payload.
 
 ## Direction Behavior
 

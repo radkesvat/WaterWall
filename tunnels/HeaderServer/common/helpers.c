@@ -6,7 +6,9 @@ static bool headerserverParsePort(uint16_t *out, const cJSON *value, const char 
 {
     if (! cJSON_IsNumber(value))
     {
-        LOGF("HeaderServer: %s must be a port number or \"dest_context->port\"", json_path);
+        LOGF("HeaderServer: %s must be a port number, \"dest_context->port\", or "
+             "\"proxy-protocol->source-fields\"",
+             json_path);
         return false;
     }
 
@@ -22,14 +24,18 @@ static bool headerserverParsePort(uint16_t *out, const cJSON *value, const char 
 
 bool headerserverLoadSettings(headerserver_tstate_t *ts, const cJSON *settings)
 {
-    dynamic_value_t override =
-        parseDynamicNumericValueFromJsonObject(settings, "override", 2, "dest_context->port", "line->dest_ctx->port");
+    dynamic_value_t override = parseDynamicNumericValueFromJsonObject(
+        settings, "override", 3, "dest_context->port", "line->dest_ctx->port", "proxy-protocol->source-fields");
 
     switch (override.status)
     {
     case kDvsFirstOption:
     case kDvsSecondOption:
         ts->override_mode = kHeaderServerOverrideModeHeaderPort;
+        return true;
+
+    case kDvsThirdOption:
+        ts->override_mode = kHeaderServerOverrideModeProxyProtocolSourceFields;
         return true;
 
     case kDvsConstant: {
@@ -39,7 +45,8 @@ bool headerserverLoadSettings(headerserver_tstate_t *ts, const cJSON *settings)
     }
 
     default:
-        LOGF("HeaderServer: settings.override is required and must be a port number or \"dest_context->port\"");
+        LOGF("HeaderServer: settings.override is required and must be a port number, \"dest_context->port\", or "
+             "\"proxy-protocol->source-fields\"");
         return false;
     }
 }
