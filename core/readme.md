@@ -1,3 +1,8 @@
+<!--
+Documentation version: 1
+Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/01-getting-started/tutorial-part1.mdx, and both English files must keep the same documentation version. User-facing behavior changes should also update WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/01-getting-started/tutorial-part1.mdx.
+-->
+
 # Core Settings
 
 `core.json` is the startup configuration file read by the Waterwall executable.
