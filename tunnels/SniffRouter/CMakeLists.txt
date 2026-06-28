@@ -26,7 +26,6 @@ add_library(SniffRouter STATIC
 )
 
 target_include_directories(SniffRouter PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../ReverseClient/include
 )
 

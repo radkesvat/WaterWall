@@ -24,8 +24,6 @@ add_library(PacketSender STATIC
                     downstream/resume.c
 )
 
-target_include_directories(PacketSender PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(PacketSender PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(PacketSender PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/PacketSender)
 

@@ -28,8 +28,6 @@ add_library(MuxServer STATIC
   
 )
 
-target_include_directories(MuxServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(MuxServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(MuxServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/MuxServer)
 

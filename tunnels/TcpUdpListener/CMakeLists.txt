@@ -23,7 +23,6 @@ add_library(TcpUdpListener STATIC
     downstream/resume.c
 )
 
-target_include_directories(TcpUdpListener PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(TcpUdpListener PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(TcpUdpListener PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/TcpUdpListener)
 

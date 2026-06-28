@@ -42,8 +42,6 @@ add_library(JunkDatagramSender STATIC
                     modules/coap.c
 )
 
-target_include_directories(JunkDatagramSender PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(JunkDatagramSender PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(JunkDatagramSender PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/JunkDatagramSender)
 target_include_directories(JunkDatagramSender PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/modules)

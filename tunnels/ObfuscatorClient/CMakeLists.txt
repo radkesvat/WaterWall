@@ -30,8 +30,6 @@ add_library(ObfuscatorClient STATIC
   
 )
 
-target_include_directories(ObfuscatorClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(ObfuscatorClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(ObfuscatorClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/ObfuscatorClient)
 

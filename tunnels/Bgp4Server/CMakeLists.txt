@@ -22,8 +22,6 @@ add_library(Bgp4Server STATIC
                     downstream/resume.c
 )
 
-target_include_directories(Bgp4Server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(Bgp4Server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(Bgp4Server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Bgp4Server)
 

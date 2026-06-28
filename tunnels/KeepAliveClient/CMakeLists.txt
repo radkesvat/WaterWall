@@ -28,8 +28,6 @@ add_library(KeepAliveClient STATIC
   
 )
 
-target_include_directories(KeepAliveClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(KeepAliveClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(KeepAliveClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/KeepAliveClient)
 

@@ -27,8 +27,6 @@ add_library(HttpServer STATIC
   
 )
 
-target_include_directories(HttpServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(HttpServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(HttpServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/HttpServer)
 

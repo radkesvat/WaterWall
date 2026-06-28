@@ -26,7 +26,6 @@ add_library(AuthenticationClient STATIC
 )
 
 target_include_directories(AuthenticationClient PRIVATE
-                    ${CMAKE_CURRENT_SOURCE_DIR}/include
                     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 

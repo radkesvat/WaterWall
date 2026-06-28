@@ -28,8 +28,6 @@ add_library(UdpStatelessSocket STATIC
   
 )
 
-target_include_directories(UdpStatelessSocket PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(UdpStatelessSocket PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(UdpStatelessSocket PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/UdpStatelessSocket)
 

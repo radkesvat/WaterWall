@@ -28,7 +28,6 @@ add_library(UserController STATIC
 )
 
 target_include_directories(UserController PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../AuthenticationClient/include
 )
 

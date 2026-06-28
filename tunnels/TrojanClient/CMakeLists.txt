@@ -24,8 +24,6 @@ add_library(TrojanClient STATIC
 
 )
 
-target_include_directories(TrojanClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(TrojanClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(TrojanClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/TrojanClient)
 

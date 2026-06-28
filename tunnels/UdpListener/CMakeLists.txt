@@ -28,8 +28,6 @@ add_library(UdpListener STATIC
   
 )
 
-target_include_directories(UdpListener PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(UdpListener PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(UdpListener PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/UdpListener)
 

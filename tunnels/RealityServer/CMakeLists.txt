@@ -24,8 +24,6 @@ add_library(RealityServer STATIC
     downstream/resume.c
 )
 
-target_include_directories(RealityServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(RealityServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(RealityServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/RealityServer)
 target_link_libraries(RealityServer PRIVATE ww)

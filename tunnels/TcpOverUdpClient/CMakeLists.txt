@@ -53,7 +53,6 @@ if(NOT TARGET tcp_over_udp_fec)
 endif()
 
 target_include_directories(TcpOverUdpClient PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${TCP_OVER_UDP_FEC_DIR}
     ${TCP_OVER_UDP_KCP_DIR}
 )

@@ -22,8 +22,6 @@ add_library(Bgp4Client STATIC
                     downstream/resume.c
 )
 
-target_include_directories(Bgp4Client PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(Bgp4Client PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(Bgp4Client PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Bgp4Client)
 

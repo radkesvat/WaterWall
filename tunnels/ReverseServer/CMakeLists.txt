@@ -29,7 +29,6 @@ add_library(ReverseServer STATIC
 )
 
 target_include_directories(ReverseServer PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../ReverseClient/include
 )
 

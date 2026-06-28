@@ -29,8 +29,6 @@ add_library(WireGuardDevice STATIC
                     common/wireguard.c
 )   
 
-target_include_directories(WireGuardDevice PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(WireGuardDevice PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(WireGuardDevice PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/WireGuardDevice)
 target_include_directories(WireGuardDevice PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/)

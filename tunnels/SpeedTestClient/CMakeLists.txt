@@ -22,8 +22,6 @@ add_library(SpeedTestClient STATIC
                     downstream/resume.c
 )
 
-target_include_directories(SpeedTestClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(SpeedTestClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(SpeedTestClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/SpeedTestClient)
 

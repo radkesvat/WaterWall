@@ -32,7 +32,6 @@ if(NOT TARGET UserController)
 endif()
 
 target_include_directories(TrojanServer PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../AuthenticationClient/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../Internals/UserController/include
 )
@@ -44,4 +43,3 @@ target_link_libraries(TrojanServer PRIVATE ww AuthenticationClient UserControlle
 if(NOT APPLE)
     target_precompile_headers(TrojanServer REUSE_FROM ww)
 endif()
-

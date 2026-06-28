@@ -22,8 +22,6 @@ add_library(PacketReceiver STATIC
                     downstream/resume.c
 )
 
-target_include_directories(PacketReceiver PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(PacketReceiver PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(PacketReceiver PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/PacketReceiver)
 

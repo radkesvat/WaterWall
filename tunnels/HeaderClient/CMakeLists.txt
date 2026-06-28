@@ -22,8 +22,6 @@ add_library(HeaderClient STATIC
                     downstream/resume.c
 )
 
-target_include_directories(HeaderClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(HeaderClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(HeaderClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/HeaderClient)
 

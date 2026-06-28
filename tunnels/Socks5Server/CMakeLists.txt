@@ -33,7 +33,6 @@ if(NOT TARGET UserController)
 endif()
 
 target_include_directories(Socks5Server PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../AuthenticationClient/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../Internals/UserController/include
 )

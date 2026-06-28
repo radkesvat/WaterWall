@@ -19,8 +19,6 @@ add_library(BlackHole STATIC
                     downstream/resume.c
 )
 
-target_include_directories(BlackHole PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(BlackHole PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(BlackHole PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/BlackHole)
 

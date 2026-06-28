@@ -20,7 +20,6 @@ add_library(DomainResolver STATIC
                     downstream/resume.c
 )
 
-target_include_directories(DomainResolver PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(DomainResolver PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(DomainResolver PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/DomainResolver)
 

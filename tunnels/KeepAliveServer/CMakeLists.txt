@@ -28,8 +28,6 @@ add_library(KeepAliveServer STATIC
   
 )
 
-target_include_directories(KeepAliveServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(KeepAliveServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(KeepAliveServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/KeepAliveServer)
 

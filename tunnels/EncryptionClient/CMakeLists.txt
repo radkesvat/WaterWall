@@ -28,8 +28,6 @@ add_library(EncryptionClient STATIC
   
 )
 
-target_include_directories(EncryptionClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(EncryptionClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(EncryptionClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/EncryptionClient)
 

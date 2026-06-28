@@ -28,8 +28,6 @@ add_library(Disturber STATIC
   
 )
 
-target_include_directories(Disturber PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(Disturber PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(Disturber PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Disturber)
 

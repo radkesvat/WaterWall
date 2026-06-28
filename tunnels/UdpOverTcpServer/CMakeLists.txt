@@ -28,8 +28,6 @@ add_library(UdpOverTcpServer STATIC
   
 )
 
-target_include_directories(UdpOverTcpServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(UdpOverTcpServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(UdpOverTcpServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/UdpOverTcpServer)
 

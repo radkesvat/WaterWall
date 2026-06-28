@@ -20,8 +20,6 @@ add_library(ConnectionFisherServer STATIC
     downstream/resume.c
 )
 
-target_include_directories(ConnectionFisherServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(ConnectionFisherServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(ConnectionFisherServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/ConnectionFisherServer)
 

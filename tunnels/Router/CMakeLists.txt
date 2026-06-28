@@ -41,7 +41,6 @@ add_library(Router STATIC
 )
 
 target_include_directories(Router PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 

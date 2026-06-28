@@ -43,7 +43,6 @@ add_library(AuthenticationServer STATIC
 )
 
 target_include_directories(AuthenticationServer PRIVATE
-                    ${CMAKE_CURRENT_SOURCE_DIR}/include
                     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 

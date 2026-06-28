@@ -19,8 +19,6 @@ add_library(PacketSplitStream STATIC
                     downstream/noop.c
 )
 
-target_include_directories(PacketSplitStream PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(PacketSplitStream PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(PacketSplitStream PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/PacketSplitStream)
 

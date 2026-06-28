@@ -22,8 +22,6 @@ add_library(TesterClient STATIC
                     downstream/resume.c
 )
 
-target_include_directories(TesterClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
 target_include_directories(TesterClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(TesterClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/TesterClient)
 
