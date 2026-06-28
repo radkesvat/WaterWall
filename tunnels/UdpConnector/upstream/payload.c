@@ -405,6 +405,7 @@ static void udpconnectorBuildPacketDestinationContext(tunnel_t *t, line_t *l, ud
                                      dest_ctx,
                                      &original_dest_ctx,
                                      src_ctx);
+    addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_UDP);
     addresscontextReset(&original_dest_ctx);
 }
 

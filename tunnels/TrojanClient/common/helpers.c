@@ -259,7 +259,6 @@ static void setLineProtocol(line_t *l, uint8_t protocol)
 {
     addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), protocol);
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(l), protocol);
-    lineGetRoutingContext(l)->network_type = protocol == IP_PROTO_UDP ? WIO_TYPE_UDP : WIO_TYPE_TCP;
 }
 
 static line_t *createInternalLine(tunnel_t *t, line_t *app_l, trojanclient_line_kind_t kind)
@@ -290,7 +289,6 @@ bool trojanclientApplyTargetContext(tunnel_t *t, line_t *l, trojanclient_protoco
 {
     trojanclient_tstate_t *ts       = tunnelGetState(t);
     address_context_t     *dest_ctx = lineGetDestinationAddressContext(l);
-    routing_context_t     *route    = lineGetRoutingContext(l);
     address_context_t      current  = {0};
     bool uses_current_dest = (ts->target_addr_source != kDvsConstant) || (ts->target_port_source != kDvsConstant) ||
                              (ts->protocol == kTrojanClientProtocolDestContext);
@@ -338,12 +336,10 @@ bool trojanclientApplyTargetContext(tunnel_t *t, line_t *l, trojanclient_protoco
     if (resolved_protocol == kTrojanClientProtocolTcp)
     {
         addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_TCP);
-        route->network_type = WIO_TYPE_TCP;
     }
     else
     {
         addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_UDP);
-        route->network_type = WIO_TYPE_UDP;
     }
 
     *protocol_out = resolved_protocol;

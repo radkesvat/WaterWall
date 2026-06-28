@@ -70,7 +70,6 @@ static void setupDestinationAddress(const dynamic_value_t   *dest_addr_selected,
         break;
     case kTcpConnectorStrategyFromDest:
         addresscontextAddrCopy(dest_ctx, original_dest_ctx);
-        addresscontextSetProtocol(dest_ctx, IPPROTO_TCP);
         break;
     default:
         break;
@@ -320,6 +319,7 @@ bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
 
     setupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, &original_dest_ctx, src_ctx);
     setupDestinationPort(dest_port_selected, constant_dest_addr, dest_ctx, &original_dest_ctx, src_ctx);
+    addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_TCP);
     addresscontextSetDomainStrategy(dest_ctx, (enum domain_strategy) socket_options.domain_strategy);
     addresscontextReset(&original_dest_ctx);
 

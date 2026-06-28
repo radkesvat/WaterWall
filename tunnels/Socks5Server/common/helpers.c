@@ -285,12 +285,10 @@ static int socks5serverParseAddressBytes(const uint8_t *buf, size_t len, address
 
 static void socks5serverApplyDestinationContext(line_t *l, const address_context_t *target, bool udp)
 {
-    address_context_t *dest  = lineGetDestinationAddressContext(l);
-    routing_context_t *route = lineGetRoutingContext(l);
+    address_context_t *dest = lineGetDestinationAddressContext(l);
 
     addresscontextAddrCopy(dest, target);
     addresscontextSetOnlyProtocol(dest, udp ? IP_PROTO_UDP : IP_PROTO_TCP);
-    route->network_type = udp ? WIO_TYPE_UDP : WIO_TYPE_TCP;
 }
 
 static bool socks5serverFieldHasNul(const uint8_t *field, size_t len)

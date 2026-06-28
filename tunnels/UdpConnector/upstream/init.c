@@ -373,6 +373,7 @@ bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
                                      dest_ctx,
                                      &original_dest_ctx,
                                      src_ctx);
+    addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_UDP);
     addresscontextReset(&original_dest_ctx);
 
     if (! addresscontextHasPort(dest_ctx))

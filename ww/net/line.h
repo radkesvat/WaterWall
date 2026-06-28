@@ -40,7 +40,6 @@ typedef struct routing_context_s
 {
     address_context_t src_ctx;
     address_context_t dest_ctx;
-    wio_type_e        network_type;
     uint16_t          local_listener_port;
     uint16_t          peer_source_port;
 
@@ -93,8 +92,7 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
                    .recalculate_checksum = false,
                    // to set a port we need to know the AF family, default v4
                    .routing_context =
-                       (routing_context_t) {.network_type = WIO_TYPE_UNKNOWN,
-                                            .dest_ctx     = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
+                       (routing_context_t) {.dest_ctx     = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
                                             .src_ctx      = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
                                             .local_listener_port = 0}};
 

@@ -198,12 +198,10 @@ static hash_t trojanserverCalcAddressHash(const address_context_t *ctx)
 
 static void trojanserverApplyDestinationContext(line_t *l, const address_context_t *target, bool udp)
 {
-    address_context_t *dest  = lineGetDestinationAddressContext(l);
-    routing_context_t *route = lineGetRoutingContext(l);
+    address_context_t *dest = lineGetDestinationAddressContext(l);
 
     addresscontextAddrCopy(dest, target);
     addresscontextSetOnlyProtocol(dest, udp ? IP_PROTO_UDP : IP_PROTO_TCP);
-    route->network_type = udp ? WIO_TYPE_UDP : WIO_TYPE_TCP;
 }
 
 static bool trojanserverWriteAddress(uint8_t *ptr, const address_context_t *ctx, size_t *offset)

@@ -311,7 +311,6 @@ static void packetsenderApplyRoutingContext(const packetsender_tstate_t *state, 
     src_ip.u_addr.ip4.addr  = src_addr_network;
     dest_ip.u_addr.ip4.addr = state->dest_addr_network;
 
-    route->network_type        = WIO_TYPE_IP;
     route->local_listener_port = 0;
 
     if (protocol == IP_PROTO_TCP || protocol == IP_PROTO_UDP || protocol == IP_PROTO_ICMP)

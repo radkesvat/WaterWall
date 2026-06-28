@@ -3,31 +3,6 @@
 #include "loggers/dns_logger.h"
 #include "loggers/network_logger.h"
 
-static int domainresolverSockTypeForLine(line_t *l)
-{
-    const routing_context_t *route = lineGetRoutingContext(l);
-    const address_context_t *dest  = &route->dest_ctx;
-
-    if (dest->proto_tcp && ! dest->proto_udp)
-    {
-        return SOCK_STREAM;
-    }
-    if (dest->proto_udp && ! dest->proto_tcp)
-    {
-        return SOCK_DGRAM;
-    }
-    if (route->network_type == WIO_TYPE_TCP)
-    {
-        return SOCK_STREAM;
-    }
-    if (route->network_type == WIO_TYPE_UDP)
-    {
-        return SOCK_DGRAM;
-    }
-
-    return 0;
-}
-
 static void domainresolverMovePending(buffer_queue_t *dest, buffer_queue_t *source)
 {
     while (bufferqueueGetBufCount(source) > 0)
@@ -184,8 +159,8 @@ bool domainresolverStartResolveIfNeeded(tunnel_t *t, line_t *l, domainresolver_l
 
     addresscontextSetDomainStrategy(dest_ctx, domainresolverStrategyForLine(ts, dest_ctx));
 
-    const char *domain = dest_ctx->domain;
-    int         socktype = domainresolverSockTypeForLine(l);
+    const char *domain   = dest_ctx->domain;
+    int         socktype = addresscontextGetSockType(dest_ctx);
 
     if (ts->verbose)
     {

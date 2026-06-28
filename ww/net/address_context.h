@@ -473,6 +473,25 @@ static inline int addresscontextGetSockAddrFamily(const address_context_t *conte
 }
 
 /**
+ * @brief Get a socket type hint from the current transport protocol flags.
+ *
+ * Returns 0 when the context has no single TCP or UDP protocol selection.
+ */
+static inline int addresscontextGetSockType(const address_context_t *context)
+{
+    if (context->proto_tcp && ! context->proto_udp)
+    {
+        return SOCK_STREAM;
+    }
+    if (context->proto_udp && ! context->proto_tcp)
+    {
+        return SOCK_DGRAM;
+    }
+
+    return 0;
+}
+
+/**
  * @brief Copy an address context.
  *
  * Copies flags, port, and either IP address or domain.
