@@ -306,23 +306,6 @@ static buffer_queue_t *tlsserverEnsureFallbackPendingQueue(tlsserver_lstate_t *l
     return ls->fallback_pending_up;
 }
 
-static uint32_t tlsserverFallbackDelayWithJitter(const tlsserver_tstate_t *ts)
-{
-    uint32_t delay_ms  = ts->fallback_intentional_delay_ms;
-    uint32_t jitter_ms = ts->fallback_intentional_delay_jitter_ms;
-
-    if (delay_ms == 0 || jitter_ms == 0)
-    {
-        return delay_ms;
-    }
-
-    uint32_t lower = jitter_ms >= delay_ms ? 0 : delay_ms - jitter_ms;
-    uint32_t upper = UINT32_MAX - delay_ms < jitter_ms ? UINT32_MAX : delay_ms + jitter_ms;
-    uint64_t span  = (uint64_t) upper - (uint64_t) lower + 1ULL;
-
-    return lower + (uint32_t) (fastRand64() % span);
-}
-
 static void tlsserverForwardPendingFallbackFinish(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
     tlsserver_tstate_t *ts       = tunnelGetState(t);
@@ -373,7 +356,11 @@ static void tlsserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
     if (tlsserverFallbackPendingCount(ls) > 0 && ! ls->fallback_delay_scheduled)
     {
         ls->fallback_delay_scheduled = true;
-        lineScheduleDelayedTask(l, tlsserverDelayedFallbackPayloadTask, tlsserverFallbackDelayWithJitter(ts), t);
+        lineScheduleDelayedTask(l,
+                                tlsserverDelayedFallbackPayloadTask,
+                                fastRandJittered32(ts->fallback_intentional_delay_ms,
+                                                   ts->fallback_intentional_delay_jitter_ms),
+                                t);
         return;
     }
 
@@ -403,7 +390,11 @@ bool tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls
     if (! ls->fallback_delay_scheduled)
     {
         ls->fallback_delay_scheduled = true;
-        lineScheduleDelayedTask(l, tlsserverDelayedFallbackPayloadTask, tlsserverFallbackDelayWithJitter(ts), t);
+        lineScheduleDelayedTask(l,
+                                tlsserverDelayedFallbackPayloadTask,
+                                fastRandJittered32(ts->fallback_intentional_delay_ms,
+                                                   ts->fallback_intentional_delay_jitter_ms),
+                                t);
     }
 
     return true;

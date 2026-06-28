@@ -27,37 +27,32 @@ static void tcpudplistenerConfigureCallbacks(tunnel_t *t)
     t->onDestroy    = &tcpudplistenerTunnelDestroy;
 }
 
-static char *tcpudplistenerMakeChildName(const node_t *node, const char *suffix)
-{
-    const char *base = node->name != NULL ? node->name : "TcpUdpListener";
-    return stringConcat(base, suffix);
-}
-
-static void tcpudplistenerConfigureChildNode(node_t *child, node_t template_node, const node_t *owner,
+static bool tcpudplistenerConfigureChildNode(node_t *child, node_t template_node, const node_t *owner,
                                              const char *suffix)
 {
-    *child = template_node;
-
-    child->name      = tcpudplistenerMakeChildName(owner, suffix);
-    child->hash_name = calcHashBytes(child->name, stringLength(child->name));
-    child->next      = owner->name != NULL ? stringDuplicate(owner->name) : NULL;
-    child->hash_next = owner->hash_name;
-    child->version   = owner->version;
-
-    child->node_json           = owner->node_json;
-    child->node_settings_json  = owner->node_settings_json;
-    child->node_manager_config = owner->node_manager_config;
-    child->instance            = NULL;
+    if (! nodeConfigureChild(child, template_node, owner, suffix, kNodeChildLinkOwnerSelf, owner->node_settings_json))
+    {
+        return false;
+    }
 
     child->can_have_prev = false;
+    return true;
 }
 
 static bool tcpudplistenerCreateChildTunnels(tunnel_t *t, node_t *node)
 {
     tcpudplistener_tstate_t *ts = tunnelGetState(t);
 
-    tcpudplistenerConfigureChildNode(&ts->tcp_node, nodeTcpListenerGet(), node, ".tcp-listener");
-    tcpudplistenerConfigureChildNode(&ts->udp_node, nodeUdpListenerGet(), node, ".udp-listener");
+    if (! tcpudplistenerConfigureChildNode(&ts->tcp_node, nodeTcpListenerGet(), node, ".tcp-listener"))
+    {
+        LOGF("TcpUdpListener: failed to configure internal TcpListener node");
+        return false;
+    }
+    if (! tcpudplistenerConfigureChildNode(&ts->udp_node, nodeUdpListenerGet(), node, ".udp-listener"))
+    {
+        LOGF("TcpUdpListener: failed to configure internal UdpListener node");
+        return false;
+    }
 
     ts->tcp_listener = ts->tcp_node.createHandle(&ts->tcp_node);
     if (ts->tcp_listener == NULL)

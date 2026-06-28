@@ -264,6 +264,44 @@ static inline bool getStringFromJsonObject(char **dest, const cJSON *json_obj, c
     return false;
 }
 
+static inline const cJSON *getJsonObjectItemByKeys(const cJSON *json_obj, const char *key1, const char *key2,
+                                                   const char *key3)
+{
+    const char *keys[3] = {key1, key2, key3};
+
+    for (size_t i = 0; i < ARRAY_SIZE(keys); ++i)
+    {
+        if (keys[i] == NULL)
+        {
+            continue;
+        }
+
+        const cJSON *item = cJSON_GetObjectItemCaseSensitive(json_obj, keys[i]);
+        if (item != NULL)
+        {
+            return item;
+        }
+    }
+
+    return NULL;
+}
+
+static inline bool getStringFromJsonObjectByKeys(char **dest, const cJSON *json_obj, const char *key1,
+                                                 const char *key2, const char *key3)
+{
+    assert(dest != NULL);
+
+    const cJSON *jstr = getJsonObjectItemByKeys(json_obj, key1, key2, key3);
+    if (cJSON_IsString(jstr) && jstr->valuestring != NULL)
+    {
+        *dest = memoryAllocate(stringLength(jstr->valuestring) + 1U);
+        stringCopy(*dest, jstr->valuestring);
+        return true;
+    }
+
+    return false;
+}
+
 static inline bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *json_obj, const char *key,
                                                     const char *def) // NOLINT
 {

@@ -35,11 +35,6 @@ static uint32_t junkdatagramsenderSyslogWriteLimit(sbuf_t *buf, const junkdatagr
     return limit;
 }
 
-static bool junkdatagramsenderSyslogFormatFits(int written, uint32_t buf_len)
-{
-    return written > 0 && (uint32_t) written < buf_len;
-}
-
 static const char *junkdatagramsenderSyslogRandomHost(char *buf, size_t buf_len)
 {
     static const char *prefixes[] = {
@@ -53,7 +48,7 @@ static const char *junkdatagramsenderSyslogRandomHost(char *buf, size_t buf_len)
         "ww",
     };
 
-    if (junkdatagramsenderSyslogFormatFits(
+    if (stringFormatFits(
             stringNPrintf(buf,
                           buf_len,
                           "%s-%02u",
@@ -189,7 +184,7 @@ static bool junkdatagramsenderSyslogBuildRfc3164(sbuf_t *buf, uint32_t write_lim
                                 event->app,
                                 (unsigned int) pid,
                                 event->message);
-    if (! junkdatagramsenderSyslogFormatFits(written, write_limit))
+    if (! stringFormatFits(written, write_limit))
     {
         return false;
     }
@@ -208,7 +203,7 @@ static bool junkdatagramsenderSyslogBuildRfc5424(sbuf_t *buf, uint32_t write_lim
     uint32_t                                 pid      = 100U + (fastRand32() % 65000U);
     uint32_t                                 sequence = fastRand32() & 0xFFFFU;
 
-    if (! junkdatagramsenderSyslogFormatFits(stringNPrintf(structured_data,
+    if (! stringFormatFits(stringNPrintf(structured_data,
                                                            sizeof(structured_data),
                                                            "[meta sequence=\"%u\" worker=\"%u\"]",
                                                            (unsigned int) sequence,
@@ -235,7 +230,7 @@ static bool junkdatagramsenderSyslogBuildRfc5424(sbuf_t *buf, uint32_t write_lim
                                 event->msgid,
                                 structured_data,
                                 event->message);
-    if (! junkdatagramsenderSyslogFormatFits(written, write_limit))
+    if (! stringFormatFits(written, write_limit))
     {
         return false;
     }

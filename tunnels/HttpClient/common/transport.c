@@ -140,7 +140,7 @@ static bool appendHeaderFmt(char *buf, size_t cap, int *offset, const char *fmt,
 
 static bool httpclientHeaderNameEquals(const char *value, const char *name)
 {
-    return httpclientStringCaseEquals(value, name);
+    return stringAsciiCaseEquals(value, name);
 }
 
 static const char *httpclientUpgradeProtocol(const httpclient_tstate_t *ts)
@@ -155,7 +155,7 @@ static const char *httpclientUpgradeProtocol(const httpclient_tstate_t *ts)
 
 static bool httpclientUpgradeIsH2C(const httpclient_tstate_t *ts)
 {
-    return ts != NULL && httpclientStringCaseEquals(httpclientUpgradeProtocol(ts), "h2c");
+    return ts != NULL && stringAsciiCaseEquals(httpclientUpgradeProtocol(ts), "h2c");
 }
 
 static bool httpclientUpgradeIsCustom(const httpclient_tstate_t *ts)
@@ -244,7 +244,7 @@ static bool httpclientFindHeaderValue(const char *headers, const char *name, cha
                 bool match = true;
                 for (size_t i = 0; i < key_len; ++i)
                 {
-                    if ((char) tolower((unsigned char) line[i]) != (char) tolower((unsigned char) name[i]))
+                    if (! asciiCaseEqual((uint8_t) line[i], (uint8_t) name[i]))
                     {
                         match = false;
                         break;
@@ -311,7 +311,7 @@ static bool httpclientValidateRequiredHeaders(const char *headers, const cJSON *
             return false;
         }
 
-        if (! httpclientStringCaseEquals(found_value, header->valuestring))
+        if (! stringAsciiCaseEquals(found_value, header->valuestring))
         {
             return false;
         }
@@ -1193,33 +1193,33 @@ static bool parseHttp1ResponseHeaders(const char *headers, httpclient_h1_respons
                 ++value;
             }
 
-            if (httpclientStringCaseEquals(key, "Transfer-Encoding") && httpclientStringCaseContainsToken(value, "chunked"))
+            if (stringAsciiCaseEquals(key, "Transfer-Encoding") && stringAsciiCaseContainsToken(value, "chunked"))
             {
                 info->transfer_chunked = true;
             }
-            else if (httpclientStringCaseEquals(key, "Connection") && httpclientStringCaseContainsToken(value, "upgrade"))
+            else if (stringAsciiCaseEquals(key, "Connection") && stringAsciiCaseContainsToken(value, "upgrade"))
             {
                 info->connection_upgrade = true;
             }
-            else if (httpclientStringCaseEquals(key, "Upgrade") && httpclientStringCaseContainsToken(value, "h2c"))
+            else if (stringAsciiCaseEquals(key, "Upgrade") && stringAsciiCaseContainsToken(value, "h2c"))
             {
                 info->has_upgrade_header = true;
                 snprintf(info->upgrade_value, sizeof(info->upgrade_value), "%s", value);
                 info->upgrade_h2c = true;
             }
-            else if (httpclientStringCaseEquals(key, "Upgrade") &&
-                     httpclientStringCaseContainsToken(value, "websocket"))
+            else if (stringAsciiCaseEquals(key, "Upgrade") &&
+                     stringAsciiCaseContainsToken(value, "websocket"))
             {
                 info->has_upgrade_header = true;
                 snprintf(info->upgrade_value, sizeof(info->upgrade_value), "%s", value);
                 info->upgrade_websocket = true;
             }
-            else if (httpclientStringCaseEquals(key, "Upgrade"))
+            else if (stringAsciiCaseEquals(key, "Upgrade"))
             {
                 info->has_upgrade_header = true;
                 snprintf(info->upgrade_value, sizeof(info->upgrade_value), "%s", value);
             }
-            else if (httpclientStringCaseEquals(key, "Content-Length"))
+            else if (stringAsciiCaseEquals(key, "Content-Length"))
             {
                 int64_t parsed = 0;
                 if (! parseContentLength(value, &parsed))
@@ -1239,17 +1239,17 @@ static bool parseHttp1ResponseHeaders(const char *headers, httpclient_h1_respons
                     return false;
                 }
             }
-            else if (httpclientStringCaseEquals(key, "Sec-WebSocket-Accept"))
+            else if (stringAsciiCaseEquals(key, "Sec-WebSocket-Accept"))
             {
                 info->has_sec_websocket_accept = true;
                 snprintf(info->sec_websocket_accept, sizeof(info->sec_websocket_accept), "%s", value);
             }
-            else if (httpclientStringCaseEquals(key, "Sec-WebSocket-Protocol"))
+            else if (stringAsciiCaseEquals(key, "Sec-WebSocket-Protocol"))
             {
                 info->has_sec_websocket_protocol = true;
                 snprintf(info->sec_websocket_protocol, sizeof(info->sec_websocket_protocol), "%s", value);
             }
-            else if (httpclientStringCaseEquals(key, "Sec-WebSocket-Extensions"))
+            else if (stringAsciiCaseEquals(key, "Sec-WebSocket-Extensions"))
             {
                 info->has_sec_websocket_extensions = true;
                 snprintf(info->sec_websocket_extensions, sizeof(info->sec_websocket_extensions), "%s", value);
@@ -1599,7 +1599,7 @@ static int httpclientOnFrameRecvCallback(nghttp2_session *session, const nghttp2
                 if (ts->websocket_subprotocol != NULL)
                 {
                     protocol_ok = ls->websocket_h2_protocol_seen &&
-                                  httpclientStringCaseEquals(ls->websocket_h2_protocol, ts->websocket_subprotocol);
+                                  stringAsciiCaseEquals(ls->websocket_h2_protocol, ts->websocket_subprotocol);
                 }
                 else if (ls->websocket_h2_protocol_seen)
                 {
@@ -2543,7 +2543,7 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
             char expected_accept[128];
             httpclientBuildWebSocketAccept(ls->websocket_key, expected_accept, sizeof(expected_accept));
             if (expected_accept[0] == '\0' ||
-                ! httpclientStringCaseEquals(expected_accept, info.sec_websocket_accept))
+                ! stringAsciiCaseEquals(expected_accept, info.sec_websocket_accept))
             {
                 LOGE("HttpClient: websocket Sec-WebSocket-Accept validation failed expected=%s got=%s", expected_accept,
                      info.has_sec_websocket_accept ? info.sec_websocket_accept : "<none>");
@@ -2554,7 +2554,7 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
             if (ts->websocket_subprotocol != NULL)
             {
                 if (! info.has_sec_websocket_protocol ||
-                    ! httpclientStringCaseEquals(info.sec_websocket_protocol, ts->websocket_subprotocol))
+                    ! stringAsciiCaseEquals(info.sec_websocket_protocol, ts->websocket_subprotocol))
                 {
                     LOGE("HttpClient: websocket subprotocol negotiation failed expected=%s got=%s",
                          ts->websocket_subprotocol,
@@ -2603,7 +2603,7 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
         {
             if (ls->runtime_proto == kHttpClientRuntimeWaitUpgrade && info.connection_upgrade &&
                 httpclientUpgradeIsCustom(ts) && info.has_upgrade_header &&
-                httpclientStringCaseContainsToken(info.upgrade_value, httpclientUpgradeProtocol(ts)) &&
+                stringAsciiCaseContainsToken(info.upgrade_value, httpclientUpgradeProtocol(ts)) &&
                 httpclientValidateRequiredHeaders(header_text, ts->upgrade_response_headers))
             {
                 ls->h1_headers_parsed = true;

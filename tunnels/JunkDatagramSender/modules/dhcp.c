@@ -183,11 +183,6 @@ static void junkdatagramsenderDhcpRandomIpv4Tuple(junkdatagramsender_dhcp_ipv4_t
     }
 }
 
-static bool junkdatagramsenderDhcpFormatFits(int written, size_t buf_len)
-{
-    return written > 0 && (size_t) written < buf_len;
-}
-
 static const char *junkdatagramsenderDhcpRandomHostname(char *buf, size_t buf_len)
 {
     static const char *prefixes[] = {
@@ -202,7 +197,7 @@ static const char *junkdatagramsenderDhcpRandomHostname(char *buf, size_t buf_le
     };
 
     const char *prefix = prefixes[fastRand32() % (sizeof(prefixes) / sizeof(prefixes[0]))];
-    if (junkdatagramsenderDhcpFormatFits(
+    if (stringFormatFits(
             stringNPrintf(buf, buf_len, "%s-%04x", prefix, (unsigned int) (fastRand32() & 0xFFFFU)), buf_len))
     {
         return buf;

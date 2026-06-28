@@ -42,20 +42,6 @@ typedef struct junkdatagramsender_rtcp_report_block_s
     uint32_t delay_since_last_sr;
 } junkdatagramsender_rtcp_report_block_t;
 
-static uint32_t junkdatagramsenderRtpRandomRange(uint32_t min_value, uint32_t max_value)
-{
-    if (max_value <= min_value)
-    {
-        return min_value;
-    }
-    return min_value + (fastRand32() % (max_value - min_value + 1U));
-}
-
-static bool junkdatagramsenderRtpFormatFits(int written, size_t buf_len)
-{
-    return written > 0 && (size_t) written < buf_len;
-}
-
 static uint32_t junkdatagramsenderRtpWriteLimit(sbuf_t *buf, const junkdatagramsender_module_args_t *args)
 {
     uint32_t limit = sbufGetMaximumWriteableSize(buf);
@@ -167,7 +153,7 @@ static bool junkdatagramsenderRtpRandomExtension(uint8_t extension_data[16], uin
         return false;
     }
 
-    *extension_data_len = 4U * junkdatagramsenderRtpRandomRange(1, 3);
+    *extension_data_len = 4U * fastRandRange32(1, 3);
     *extension_profile  = (fastRand32() % 100U) < 75U ? kRtpExtensionProfileOneByte : kRtpExtensionProfileTwoByte;
 
     memorySet(extension_data, 0, *extension_data_len);
@@ -197,11 +183,11 @@ static uint32_t junkdatagramsenderRtpRandomPayloadLen(uint32_t available)
     }
     if (available <= 20)
     {
-        return junkdatagramsenderRtpRandomRange(1, available);
+        return fastRandRange32(1, available);
     }
 
     uint32_t max_payload = available > 240U ? 240U : available;
-    return junkdatagramsenderRtpRandomRange(20, max_payload);
+    return fastRandRange32(20, max_payload);
 }
 
 static bool junkdatagramsenderRtpBuildPacket(sbuf_t *buf, uint32_t write_limit, bool padding, bool marker,
@@ -311,12 +297,12 @@ static void junkdatagramsenderRtcpRandomReportBlock(junkdatagramsender_rtcp_repo
 {
     *report_block = (junkdatagramsender_rtcp_report_block_t) {
         .ssrc                  = fastRand32(),
-        .fraction_lost         = (uint8_t) ((fastRand32() % 100U) < 85U ? 0U : junkdatagramsenderRtpRandomRange(1, 10)),
-        .cumulative_lost_24bit = (fastRand32() % 100U) < 85U ? 0U : junkdatagramsenderRtpRandomRange(1, 2000),
+        .fraction_lost         = (uint8_t) ((fastRand32() % 100U) < 85U ? 0U : fastRandRange32(1, 10)),
+        .cumulative_lost_24bit = (fastRand32() % 100U) < 85U ? 0U : fastRandRange32(1, 2000),
         .extended_highest_seq  = fastRand32(),
-        .jitter                = junkdatagramsenderRtpRandomRange(0, 4000),
+        .jitter                = fastRandRange32(0, 4000),
         .last_sr               = (fastRand32() % 100U) < 45U ? 0U : fastRand32(),
-        .delay_since_last_sr   = junkdatagramsenderRtpRandomRange(0, 65535),
+        .delay_since_last_sr   = fastRandRange32(0, 65535),
     };
 }
 
@@ -336,7 +322,7 @@ static uint8_t junkdatagramsenderRtcpRandomReportBlockCount(uint32_t write_limit
     {
         return 0;
     }
-    return (uint8_t) junkdatagramsenderRtpRandomRange(1, max_count);
+    return (uint8_t) fastRandRange32(1, max_count);
 }
 
 static bool junkdatagramsenderRtcpBuildReceiverReport(sbuf_t *buf, uint32_t write_limit, uint32_t sender_ssrc,
@@ -613,7 +599,7 @@ static bool junkdatagramsenderRtpGenerateRtp(sbuf_t *buf, const junkdatagramsend
     uint8_t  csrc_count         = junkdatagramsenderRtpRandomCsrcList(csrc_list);
     bool has_extension = junkdatagramsenderRtpRandomExtension(extension_data, &extension_data_len, &extension_profile);
     bool padding       = (fastRand32() % 100U) < 10U;
-    uint8_t  padding_count = padding ? (uint8_t) (4U * junkdatagramsenderRtpRandomRange(1, 3)) : 0;
+    uint8_t  padding_count = padding ? (uint8_t) (4U * fastRandRange32(1, 3)) : 0;
     uint32_t overhead =
         kRtpHeaderLen + 4U * csrc_count + (has_extension ? 4U + extension_data_len : 0U) + padding_count;
 
@@ -756,8 +742,8 @@ static bool junkdatagramsenderRtpGenerateRtcpSenderReport(sbuf_t *buf, const jun
                                                    ntp_msw,
                                                    ntp_lsw,
                                                    fastRand32(),
-                                                   junkdatagramsenderRtpRandomRange(1, 200000),
-                                                   junkdatagramsenderRtpRandomRange(1200, 4000000),
+                                                   fastRandRange32(1, 200000),
+                                                   fastRandRange32(1200, 4000000),
                                                    report_count > 0 ? report_blocks : NULL,
                                                    report_count);
 }
@@ -771,7 +757,7 @@ static const char *junkdatagramsenderRtpRandomCname(char *buf, size_t buf_len)
         "ww.local",
     };
 
-    if (junkdatagramsenderRtpFormatFits(stringNPrintf(buf,
+    if (stringFormatFits(stringNPrintf(buf,
                                                       buf_len,
                                                       "u%04x@%s",
                                                       (unsigned int) (fastRand32() & 0xFFFFU),

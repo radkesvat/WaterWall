@@ -59,11 +59,6 @@ static uint32_t junkdatagramsenderSipWriteLimit(sbuf_t *buf, const junkdatagrams
     return limit;
 }
 
-static bool junkdatagramsenderSipFormatFits(int written, size_t buf_len)
-{
-    return written > 0 && (size_t) written < buf_len;
-}
-
 static bool junkdatagramsenderSipAppendChar(uint8_t *out, size_t out_len, size_t *pos, char c)
 {
     if (*pos + 1U > out_len)
@@ -405,7 +400,7 @@ static bool junkdatagramsenderSipBuildEndpoint(char *host, size_t host_len, char
 
     if (selector == 0)
     {
-        if (! junkdatagramsenderSipFormatFits(stringNPrintf(host, host_len, "192.0.2.%u", (unsigned int) last_octet),
+        if (! stringFormatFits(stringNPrintf(host, host_len, "192.0.2.%u", (unsigned int) last_octet),
                                               host_len))
         {
             return false;
@@ -413,13 +408,13 @@ static bool junkdatagramsenderSipBuildEndpoint(char *host, size_t host_len, char
     }
     else if (selector == 1)
     {
-        if (! junkdatagramsenderSipFormatFits(stringNPrintf(host, host_len, "198.51.100.%u", (unsigned int) last_octet),
+        if (! stringFormatFits(stringNPrintf(host, host_len, "198.51.100.%u", (unsigned int) last_octet),
                                               host_len))
         {
             return false;
         }
     }
-    return junkdatagramsenderSipFormatFits(stringNPrintf(sent_by, sent_by_len, "%s:%u", host, (unsigned int) port),
+    return stringFormatFits(stringNPrintf(sent_by, sent_by_len, "%s:%u", host, (unsigned int) port),
                                            sent_by_len);
 }
 
@@ -428,7 +423,7 @@ static bool junkdatagramsenderSipBuildSdp(char *body, size_t body_len, const cha
     uint32_t session_id = fastRand32();
     uint16_t media_port = (uint16_t) (10000U + (fastRand32() % 40000U));
 
-    return junkdatagramsenderSipFormatFits(stringNPrintf(body,
+    return stringFormatFits(stringNPrintf(body,
                                                          body_len,
                                                          "v=0\r\n"
                                                          "o=%s %u %u IN IP4 %s\r\n"
@@ -465,24 +460,24 @@ static bool junkdatagramsenderSipFormatCommonFields(const junkdatagramsender_sip
         return false;
     }
 
-    return junkdatagramsenderSipFormatFits(stringNPrintf(from_uri, from_uri_len, "sip:%s@%s", from->user, from->domain),
+    return stringFormatFits(stringNPrintf(from_uri, from_uri_len, "sip:%s@%s", from->user, from->domain),
                                            from_uri_len) &&
-           junkdatagramsenderSipFormatFits(stringNPrintf(to_uri, to_uri_len, "sip:%s@%s", to->user, to->domain),
+           stringFormatFits(stringNPrintf(to_uri, to_uri_len, "sip:%s@%s", to->user, to->domain),
                                            to_uri_len) &&
-           junkdatagramsenderSipFormatFits(
+           stringFormatFits(
                stringNPrintf(request_uri, request_uri_len, "sip:%s@%s", to->user, to->domain), request_uri_len) &&
-           junkdatagramsenderSipFormatFits(
+           stringFormatFits(
                stringNPrintf(contact_uri, contact_uri_len, "sip:%s@%s:%u", from->user, host, (unsigned int) port),
                contact_uri_len) &&
-           junkdatagramsenderSipFormatFits(
+           stringFormatFits(
                stringNPrintf(
                    branch, branch_len, "z9hG4bK%08x%08x", (unsigned int) fastRand32(), (unsigned int) fastRand32()),
                branch_len) &&
-           junkdatagramsenderSipFormatFits(stringNPrintf(from_tag, from_tag_len, "%08x", (unsigned int) fastRand32()),
+           stringFormatFits(stringNPrintf(from_tag, from_tag_len, "%08x", (unsigned int) fastRand32()),
                                            from_tag_len) &&
-           junkdatagramsenderSipFormatFits(stringNPrintf(to_tag, to_tag_len, "%08x", (unsigned int) fastRand32()),
+           stringFormatFits(stringNPrintf(to_tag, to_tag_len, "%08x", (unsigned int) fastRand32()),
                                            to_tag_len) &&
-           junkdatagramsenderSipFormatFits(
+           stringFormatFits(
                stringNPrintf(
                    call_id, call_id_len, "%08x%08x@%s", (unsigned int) fastRand32(), (unsigned int) fastRand32(), host),
                call_id_len);
@@ -493,11 +488,11 @@ static bool junkdatagramsenderSipBuildHeaderValue(char *out, size_t out_len, con
 {
     if (tag != NULL && tag[0] != '\0')
     {
-        return junkdatagramsenderSipFormatFits(stringNPrintf(out, out_len, "\"%s\" <%s>;tag=%s", display, uri, tag),
+        return stringFormatFits(stringNPrintf(out, out_len, "\"%s\" <%s>;tag=%s", display, uri, tag),
                                                out_len);
     }
 
-    return junkdatagramsenderSipFormatFits(stringNPrintf(out, out_len, "\"%s\" <%s>", display, uri), out_len);
+    return stringFormatFits(stringNPrintf(out, out_len, "\"%s\" <%s>", display, uri), out_len);
 }
 
 static bool junkdatagramsenderSipGenerateRequest(sbuf_t *buf, uint32_t write_limit)
@@ -564,9 +559,9 @@ static bool junkdatagramsenderSipGenerateRequest(sbuf_t *buf, uint32_t write_lim
         break;
     case 1:
         method = "REGISTER";
-        if (! junkdatagramsenderSipFormatFits(
+        if (! stringFormatFits(
                 stringNPrintf(registrar_uri, sizeof(registrar_uri), "sip:%s", from->domain), sizeof(registrar_uri)) ||
-            ! junkdatagramsenderSipFormatFits(stringNPrintf(expires_header,
+            ! stringFormatFits(stringNPrintf(expires_header,
                                                             sizeof(expires_header),
                                                             "Expires: %u\r\n",
                                                             (unsigned int) ((fastRand32() % 8U) == 0 ? 0U : 3600U)),
@@ -734,7 +729,7 @@ static bool junkdatagramsenderSipGenerateResponse(sbuf_t *buf, uint32_t write_li
         break;
     }
 
-    if (! junkdatagramsenderSipFormatFits(
+    if (! stringFormatFits(
             stringNPrintf(via_value, sizeof(via_value), "SIP/2.0/UDP %s;branch=%s", sent_by, branch),
             sizeof(via_value)) ||
         ! junkdatagramsenderSipBuildHeaderValue(from_value, sizeof(from_value), from->display, from_uri, from_tag) ||

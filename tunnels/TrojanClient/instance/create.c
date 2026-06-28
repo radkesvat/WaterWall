@@ -4,12 +4,6 @@
 
 #include "loggers/network_logger.h"
 
-static char *trojanclientMakeChildName(const node_t *node, const char *suffix)
-{
-    const char *base = node->name != NULL ? node->name : "TrojanClient";
-    return stringConcat(base, suffix);
-}
-
 static bool trojanclientAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
 {
     cJSON *strategy_json = cJSON_AddNumberToObject(settings, "strategy", (double) strategy);
@@ -40,28 +34,6 @@ static cJSON *trojanclientCreateDomainResolverSettings(enum domain_strategy stra
     return settings;
 }
 
-static bool trojanclientConfigureDomainResolverNode(node_t *child, node_t template_node, const node_t *owner,
-                                                    cJSON *settings)
-{
-    *child = template_node;
-
-    child->name = trojanclientMakeChildName(owner, ".domain-resolver");
-    if (child->name == NULL)
-    {
-        return false;
-    }
-
-    child->hash_name           = calcHashBytes(child->name, stringLength(child->name));
-    child->next                = NULL;
-    child->hash_next           = 0;
-    child->version             = owner->version;
-    child->node_json           = owner->node_json;
-    child->node_settings_json  = settings;
-    child->node_manager_config = owner->node_manager_config;
-    child->instance            = NULL;
-    return true;
-}
-
 static bool trojanclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
     trojanclient_tstate_t *ts = tunnelGetState(t);
@@ -79,8 +51,12 @@ static bool trojanclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return false;
     }
 
-    if (! trojanclientConfigureDomainResolverNode(
-            &ts->domain_resolver_node, nodeDomainResolverGet(), node, ts->domain_resolver_settings))
+    if (! nodeConfigureChild(&ts->domain_resolver_node,
+                             nodeDomainResolverGet(),
+                             node,
+                             ".domain-resolver",
+                             kNodeChildLinkNone,
+                             ts->domain_resolver_settings))
     {
         LOGF("TrojanClient: failed to configure internal DomainResolver node");
         return false;
@@ -103,82 +79,6 @@ static bool trojanclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
     return true;
 }
 
-static bool getOptionalStringFromKeys(char **dest, const cJSON *settings, const char *key1, const char *key2,
-                                      const char *key3)
-{
-    const char *keys[3] = {key1, key2, key3};
-
-    for (size_t i = 0; i < ARRAY_SIZE(keys); i++)
-    {
-        if (keys[i] == NULL)
-        {
-            continue;
-        }
-
-        const cJSON *node = cJSON_GetObjectItemCaseSensitive(settings, keys[i]);
-        if (cJSON_IsString(node) && node->valuestring != NULL)
-        {
-            *dest = memoryAllocate(stringLength(node->valuestring) + 1U);
-            stringCopy(*dest, node->valuestring);
-            return true;
-        }
-    }
-
-    return false;
-}
-
-static const cJSON *getSettingsItemByKeys(const cJSON *settings, const char *key1, const char *key2, const char *key3)
-{
-    const char *keys[3] = {key1, key2, key3};
-
-    for (size_t i = 0; i < ARRAY_SIZE(keys); i++)
-    {
-        if (keys[i] == NULL)
-        {
-            continue;
-        }
-
-        const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, keys[i]);
-        if (item != NULL)
-        {
-            return item;
-        }
-    }
-
-    return NULL;
-}
-
-static int hexValue(uint8_t c)
-{
-    if (c >= '0' && c <= '9')
-    {
-        return (int) (c - '0');
-    }
-
-    if (c >= 'a' && c <= 'f')
-    {
-        return (int) (c - 'a' + 10);
-    }
-
-    if (c >= 'A' && c <= 'F')
-    {
-        return (int) (c - 'A' + 10);
-    }
-
-    return -1;
-}
-
-static void sha224ToHex(const uint8_t sha224[SHA224_DIGEST_SIZE], uint8_t out[kTrojanClientPasswordHexLen])
-{
-    static const uint8_t hex[] = "0123456789abcdef";
-
-    for (size_t i = 0; i < SHA224_DIGEST_SIZE; ++i)
-    {
-        out[i * 2U]      = hex[(sha224[i] >> 4U) & 0x0FU];
-        out[i * 2U + 1U] = hex[sha224[i] & 0x0FU];
-    }
-}
-
 static bool normalizeSha224Hex(const char *hex, uint8_t out[kTrojanClientPasswordHexLen])
 {
     if (stringLength(hex) != kTrojanClientPasswordHexLen)
@@ -186,24 +86,13 @@ static bool normalizeSha224Hex(const char *hex, uint8_t out[kTrojanClientPasswor
         return false;
     }
 
-    for (size_t i = 0; i < kTrojanClientPasswordHexLen; ++i)
-    {
-        int value = hexValue((uint8_t) hex[i]);
-        if (value < 0)
-        {
-            return false;
-        }
-
-        out[i] = (uint8_t) (value < 10 ? '0' + value : 'a' + value - 10);
-    }
-
-    return true;
+    return asciiHexNormalizeLower((const uint8_t *) hex, kTrojanClientPasswordHexLen, out);
 }
 
 static bool parsePassword(trojanclient_tstate_t *ts, const cJSON *settings)
 {
-    const cJSON *password_json = getSettingsItemByKeys(settings, "password", "pass", NULL);
-    const cJSON *sha224_json   = getSettingsItemByKeys(settings, "sha224", "password-sha224", "password_sha224");
+    const cJSON *password_json = getJsonObjectItemByKeys(settings, "password", "pass", NULL);
+    const cJSON *sha224_json   = getJsonObjectItemByKeys(settings, "sha224", "password-sha224", "password_sha224");
 
     if (password_json != NULL && sha224_json != NULL)
     {
@@ -244,14 +133,14 @@ static bool parsePassword(trojanclient_tstate_t *ts, const cJSON *settings)
         return false;
     }
 
-    sha224ToHex(digest.bytes, ts->password_hex);
+    asciiHexEncodeBytesLower(digest.bytes, SHA224_DIGEST_SIZE, ts->password_hex);
     wCryptoZero(&digest, sizeof(digest));
     return true;
 }
 
 static bool parseTargetAddress(trojanclient_tstate_t *ts, const cJSON *settings)
 {
-    const cJSON *address_json = getSettingsItemByKeys(settings, "target-address", "address", "target");
+    const cJSON *address_json = getJsonObjectItemByKeys(settings, "target-address", "address", "target");
     if (address_json == NULL)
     {
         LOGF("JSON Error: TrojanClient->settings->target-address (string field) is required");
@@ -327,7 +216,7 @@ static bool parseTargetPort(trojanclient_tstate_t *ts, const cJSON *settings)
 static bool parseProtocol(trojanclient_tstate_t *ts, const cJSON *settings)
 {
     char *protocol = NULL;
-    if (! getOptionalStringFromKeys(&protocol, settings, "protocol", "proto", NULL))
+    if (! getStringFromJsonObjectByKeys(&protocol, settings, "protocol", "proto", NULL))
     {
         ts->protocol = kTrojanClientProtocolTcp;
         return true;

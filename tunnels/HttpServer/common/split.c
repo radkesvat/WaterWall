@@ -23,7 +23,7 @@ bool httpserverSplitIsEnabled(tunnel_t *t)
 
 static bool splitHeaderNameEquals(const char *a, const char *b)
 {
-    return httpserverStringCaseEquals(a, b);
+    return stringAsciiCaseEquals(a, b);
 }
 
 static bool splitParseContentLength(const char *value, int64_t *out)
@@ -331,7 +331,7 @@ static bool splitParseRequest(const char *headers, httpserver_split_request_t *i
 
     char value[256];
     if (splitFindHeaderValue(headers, "Transfer-Encoding", value, sizeof(value)) &&
-        httpserverStringCaseContainsToken(value, "chunked"))
+        stringAsciiCaseContainsToken(value, "chunked"))
     {
         info->transfer_chunked = true;
     }
@@ -376,7 +376,7 @@ static bool splitHostMatches(const char *expected, const char *actual)
     {
         return false;
     }
-    if (httpserverStringCaseEquals(expected, actual))
+    if (stringAsciiCaseEquals(expected, actual))
     {
         return true;
     }
@@ -392,7 +392,7 @@ static bool splitHostMatches(const char *expected, const char *actual)
     }
     for (size_t i = 0; i < host_len; ++i)
     {
-        if ((char) tolower((unsigned char) expected[i]) != (char) tolower((unsigned char) actual[i]))
+        if (! asciiCaseEqual((uint8_t) expected[i], (uint8_t) actual[i]))
         {
             return false;
         }
@@ -407,12 +407,12 @@ static httpserver_split_role_t splitDetermineRole(httpserver_tstate_t *ts, const
     if (ts->split_direction_placement == kHttpServerSplitPlacementPath)
     {
         if (splitExtractPathVar(ts->split_upload_path, info->path, "{direction}", direction, sizeof(direction)) &&
-            httpserverStringCaseEquals(direction, ts->split_upload_value))
+            stringAsciiCaseEquals(direction, ts->split_upload_value))
         {
             return kHttpServerSplitRoleUpload;
         }
         if (splitExtractPathVar(ts->split_download_path, info->path, "{direction}", direction, sizeof(direction)) &&
-            httpserverStringCaseEquals(direction, ts->split_download_value))
+            stringAsciiCaseEquals(direction, ts->split_download_value))
         {
             return kHttpServerSplitRoleDownload;
         }
@@ -426,19 +426,19 @@ static httpserver_split_role_t splitDetermineRole(httpserver_tstate_t *ts, const
                                      direction,
                                      sizeof(direction)))
     {
-        if (httpserverStringCaseEquals(direction, ts->split_upload_value))
+        if (stringAsciiCaseEquals(direction, ts->split_upload_value))
         {
             return kHttpServerSplitRoleUpload;
         }
-        if (httpserverStringCaseEquals(direction, ts->split_download_value))
+        if (stringAsciiCaseEquals(direction, ts->split_download_value))
         {
             return kHttpServerSplitRoleDownload;
         }
     }
 
-    bool upload_match   = httpserverStringCaseEquals(info->method, ts->split_upload_method) &&
+    bool upload_match   = stringAsciiCaseEquals(info->method, ts->split_upload_method) &&
                           splitPathTemplateMatches(ts->split_upload_path, info->path);
-    bool download_match = httpserverStringCaseEquals(info->method, ts->split_download_method) &&
+    bool download_match = stringAsciiCaseEquals(info->method, ts->split_download_method) &&
                           splitPathTemplateMatches(ts->split_download_path, info->path);
     if (upload_match && ! download_match)
     {
@@ -458,7 +458,7 @@ static bool splitValidateRequest(tunnel_t *t, line_t *l, const httpserver_split_
     const char *method = role == kHttpServerSplitRoleDownload ? ts->split_download_method : ts->split_upload_method;
     const char *path_template = role == kHttpServerSplitRoleDownload ? ts->split_download_path : ts->split_upload_path;
 
-    if (! httpserverStringCaseEquals(info->method, method) || ! splitPathTemplateMatches(path_template, info->path))
+    if (! stringAsciiCaseEquals(info->method, method) || ! splitPathTemplateMatches(path_template, info->path))
     {
         LOGW("HttpServer: split HTTP/1.1 request mismatch method=%s path=%s", info->method, info->path);
         return false;
@@ -864,7 +864,7 @@ static bool splitHandleHeaders(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
     }
 
     size_t header_end = 0;
-    if (! httpserverBufferstreamFindDoubleCRLF(&ls->in_stream, &header_end))
+    if (! bufferstreamFindDoubleCRLF(&ls->in_stream, &header_end))
     {
         return true;
     }

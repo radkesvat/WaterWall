@@ -28,12 +28,6 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->onDestroy    = &udpconnectorTunnelDestroy;
 }
 
-static char *udpconnectorMakeChildName(const node_t *node, const char *suffix)
-{
-    const char *base = node->name != NULL ? node->name : "UdpConnector";
-    return stringConcat(base, suffix);
-}
-
 static bool udpconnectorAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
 {
     cJSON *strategy_json = cJSON_AddNumberToObject(settings, "strategy", (double) strategy);
@@ -64,28 +58,6 @@ static cJSON *udpconnectorCreateDomainResolverSettings(enum domain_strategy stra
     return settings;
 }
 
-static bool udpconnectorConfigureDomainResolverNode(node_t *child, node_t template_node, const node_t *owner,
-                                                    cJSON *settings)
-{
-    *child = template_node;
-
-    child->name = udpconnectorMakeChildName(owner, ".domain-resolver");
-    if (child->name == NULL)
-    {
-        return false;
-    }
-
-    child->hash_name           = calcHashBytes(child->name, stringLength(child->name));
-    child->next                = NULL;
-    child->hash_next           = 0;
-    child->version             = owner->version;
-    child->node_json           = owner->node_json;
-    child->node_settings_json  = settings;
-    child->node_manager_config = owner->node_manager_config;
-    child->instance            = NULL;
-    return true;
-}
-
 static bool udpconnectorCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
     udpconnector_tstate_t *ts = tunnelGetState(t);
@@ -98,8 +70,12 @@ static bool udpconnectorCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return false;
     }
 
-    if (! udpconnectorConfigureDomainResolverNode(
-            &ts->domain_resolver_node, nodeDomainResolverGet(), node, ts->domain_resolver_settings))
+    if (! nodeConfigureChild(&ts->domain_resolver_node,
+                             nodeDomainResolverGet(),
+                             node,
+                             ".domain-resolver",
+                             kNodeChildLinkNone,
+                             ts->domain_resolver_settings))
     {
         LOGF("UdpConnector: failed to configure internal DomainResolver node");
         return false;

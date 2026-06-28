@@ -4,12 +4,6 @@
 
 #include "loggers/network_logger.h"
 
-static char *vlessclientMakeChildName(const node_t *node, const char *suffix)
-{
-    const char *base = node->name != NULL ? node->name : "VlessClient";
-    return stringConcat(base, suffix);
-}
-
 static bool vlessclientAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
 {
     cJSON *strategy_json = cJSON_AddNumberToObject(settings, "strategy", (double) strategy);
@@ -40,28 +34,6 @@ static cJSON *vlessclientCreateDomainResolverSettings(enum domain_strategy strat
     return settings;
 }
 
-static bool vlessclientConfigureDomainResolverNode(node_t *child, node_t template_node, const node_t *owner,
-                                                   cJSON *settings)
-{
-    *child = template_node;
-
-    child->name = vlessclientMakeChildName(owner, ".domain-resolver");
-    if (child->name == NULL)
-    {
-        return false;
-    }
-
-    child->hash_name           = calcHashBytes(child->name, stringLength(child->name));
-    child->next                = NULL;
-    child->hash_next           = 0;
-    child->version             = owner->version;
-    child->node_json           = owner->node_json;
-    child->node_settings_json  = settings;
-    child->node_manager_config = owner->node_manager_config;
-    child->instance            = NULL;
-    return true;
-}
-
 static bool vlessclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
     vlessclient_tstate_t *ts = tunnelGetState(t);
@@ -79,8 +51,12 @@ static bool vlessclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return false;
     }
 
-    if (! vlessclientConfigureDomainResolverNode(
-            &ts->domain_resolver_node, nodeDomainResolverGet(), node, ts->domain_resolver_settings))
+    if (! nodeConfigureChild(&ts->domain_resolver_node,
+                             nodeDomainResolverGet(),
+                             node,
+                             ".domain-resolver",
+                             kNodeChildLinkNone,
+                             ts->domain_resolver_settings))
     {
         LOGF("VlessClient: failed to configure internal DomainResolver node");
         return false;
@@ -103,123 +79,9 @@ static bool vlessclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
     return true;
 }
 
-static bool getOptionalStringFromKeys(char **dest, const cJSON *settings, const char *key1, const char *key2,
-                                      const char *key3)
-{
-    const char *keys[3] = {key1, key2, key3};
-
-    for (size_t i = 0; i < ARRAY_SIZE(keys); i++)
-    {
-        if (keys[i] == NULL)
-        {
-            continue;
-        }
-
-        const cJSON *node = cJSON_GetObjectItemCaseSensitive(settings, keys[i]);
-        if (cJSON_IsString(node) && node->valuestring != NULL)
-        {
-            *dest = memoryAllocate(stringLength(node->valuestring) + 1U);
-            stringCopy(*dest, node->valuestring);
-            return true;
-        }
-    }
-
-    return false;
-}
-
-static const cJSON *getSettingsItemByKeys(const cJSON *settings, const char *key1, const char *key2, const char *key3)
-{
-    const char *keys[3] = {key1, key2, key3};
-
-    for (size_t i = 0; i < ARRAY_SIZE(keys); i++)
-    {
-        if (keys[i] == NULL)
-        {
-            continue;
-        }
-
-        const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, keys[i]);
-        if (item != NULL)
-        {
-            return item;
-        }
-    }
-
-    return NULL;
-}
-
-static int hexValue(uint8_t c)
-{
-    if (c >= '0' && c <= '9')
-    {
-        return (int) (c - '0');
-    }
-
-    if (c >= 'a' && c <= 'f')
-    {
-        return (int) (c - 'a' + 10);
-    }
-
-    if (c >= 'A' && c <= 'F')
-    {
-        return (int) (c - 'A' + 10);
-    }
-
-    return -1;
-}
-
-static bool parseUuidString(const char *text, uint8_t out[kVlessClientUuidLen])
-{
-    size_t len    = stringLength(text);
-    bool   dashed = len == 36;
-
-    if (len != 32 && len != 36)
-    {
-        return false;
-    }
-
-    memoryZero(out, kVlessClientUuidLen);
-
-    size_t hex_index = 0;
-    for (size_t i = 0; i < len; ++i)
-    {
-        if (dashed && (i == 8 || i == 13 || i == 18 || i == 23))
-        {
-            if (text[i] != '-')
-            {
-                return false;
-            }
-            continue;
-        }
-
-        if (text[i] == '-')
-        {
-            return false;
-        }
-
-        int value = hexValue((uint8_t) text[i]);
-        if (value < 0 || hex_index >= 32)
-        {
-            return false;
-        }
-
-        if ((hex_index & 1U) == 0)
-        {
-            out[hex_index / 2U] = (uint8_t) (value << 4);
-        }
-        else
-        {
-            out[hex_index / 2U] |= (uint8_t) value;
-        }
-        ++hex_index;
-    }
-
-    return hex_index == 32;
-}
-
 static bool parseUuid(vlessclient_tstate_t *ts, const cJSON *settings)
 {
-    const cJSON *uuid_json = getSettingsItemByKeys(settings, "uuid", "id", "user-id");
+    const cJSON *uuid_json = getJsonObjectItemByKeys(settings, "uuid", "id", "user-id");
 
     if (uuid_json == NULL || ! cJSON_IsString(uuid_json) || uuid_json->valuestring == NULL ||
         uuid_json->valuestring[0] == '\0')
@@ -228,7 +90,7 @@ static bool parseUuid(vlessclient_tstate_t *ts, const cJSON *settings)
         return false;
     }
 
-    if (! parseUuidString(uuid_json->valuestring, ts->uuid))
+    if (! wwUuidParseString(uuid_json->valuestring, ts->uuid))
     {
         LOGF("JSON Error: VlessClient->settings->uuid must be an RFC4122 UUID string");
         return false;
@@ -239,7 +101,7 @@ static bool parseUuid(vlessclient_tstate_t *ts, const cJSON *settings)
 
 static bool parseTargetAddress(vlessclient_tstate_t *ts, const cJSON *settings)
 {
-    const cJSON *address_json = getSettingsItemByKeys(settings, "target-address", "address", "target");
+    const cJSON *address_json = getJsonObjectItemByKeys(settings, "target-address", "address", "target");
     if (address_json == NULL)
     {
         LOGF("JSON Error: VlessClient->settings->target-address (string field) is required");
@@ -315,7 +177,7 @@ static bool parseTargetPort(vlessclient_tstate_t *ts, const cJSON *settings)
 static bool parseProtocol(vlessclient_tstate_t *ts, const cJSON *settings)
 {
     char *protocol = NULL;
-    if (! getOptionalStringFromKeys(&protocol, settings, "protocol", "proto", NULL))
+    if (! getStringFromJsonObjectByKeys(&protocol, settings, "protocol", "proto", NULL))
     {
         ts->protocol = kVlessClientProtocolTcp;
         return true;

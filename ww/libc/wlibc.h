@@ -591,6 +591,221 @@ static inline uint8_t asciiLower(uint8_t c)
     return c;
 }
 
+static inline uint8_t asciiUpper(uint8_t c)
+{
+    if (c >= 'a' && c <= 'z')
+    {
+        return (uint8_t) (c & ~0x20U);
+    }
+    return c;
+}
+
+static inline bool asciiIsAlpha(uint8_t c)
+{
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+static inline bool asciiCaseEqual(uint8_t a, uint8_t b)
+{
+    return asciiLower(a) == asciiLower(b);
+}
+
+static inline int asciiHexValue(uint8_t c)
+{
+    if (c >= '0' && c <= '9')
+    {
+        return (int) (c - '0');
+    }
+
+    c = asciiLower(c);
+    if (c >= 'a' && c <= 'f')
+    {
+        return (int) (c - 'a' + 10);
+    }
+
+    return -1;
+}
+
+static inline uint8_t asciiHexDigitLower(uint8_t value)
+{
+    assert(value < 16U);
+    return (uint8_t) (value < 10U ? '0' + value : 'a' + value - 10U);
+}
+
+static inline bool asciiHexDecodeByte(uint8_t hi, uint8_t lo, uint8_t *out)
+{
+    int hi_value = asciiHexValue(hi);
+    int lo_value = asciiHexValue(lo);
+    if (hi_value < 0 || lo_value < 0)
+    {
+        return false;
+    }
+
+    *out = (uint8_t) ((hi_value << 4U) | lo_value);
+    return true;
+}
+
+static inline bool asciiHexDecodeBytes(const uint8_t *hex, size_t hex_len, uint8_t *out, size_t out_len)
+{
+    if (out_len > SIZE_MAX / 2U || hex_len != out_len * 2U)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < out_len; ++i)
+    {
+        if (! asciiHexDecodeByte(hex[i * 2U], hex[i * 2U + 1U], &out[i]))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static inline void asciiHexEncodeBytesLower(const uint8_t *bytes, size_t bytes_len, uint8_t *out)
+{
+    for (size_t i = 0; i < bytes_len; ++i)
+    {
+        out[i * 2U]      = asciiHexDigitLower((uint8_t) ((bytes[i] >> 4U) & 0x0FU));
+        out[i * 2U + 1U] = asciiHexDigitLower((uint8_t) (bytes[i] & 0x0FU));
+    }
+}
+
+static inline bool asciiHexNormalizeLower(const uint8_t *hex, size_t hex_len, uint8_t *out)
+{
+    for (size_t i = 0; i < hex_len; ++i)
+    {
+        int value = asciiHexValue(hex[i]);
+        if (value < 0)
+        {
+            return false;
+        }
+
+        out[i] = asciiHexDigitLower((uint8_t) value);
+    }
+
+    return true;
+}
+
+static inline bool stringAsciiCaseEquals(const char *a, const char *b)
+{
+    if (a == NULL || b == NULL)
+    {
+        return false;
+    }
+
+    while (*a != '\0' && *b != '\0')
+    {
+        if (! asciiCaseEqual((uint8_t) *a, (uint8_t) *b))
+        {
+            return false;
+        }
+        ++a;
+        ++b;
+    }
+
+    return *a == '\0' && *b == '\0';
+}
+
+static inline bool stringAsciiCaseContains(const char *haystack, const char *needle)
+{
+    if (haystack == NULL || needle == NULL || *needle == '\0')
+    {
+        return false;
+    }
+
+    size_t needle_len = stringLength(needle);
+    size_t hay_len    = stringLength(haystack);
+
+    if (needle_len > hay_len)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i <= hay_len - needle_len; ++i)
+    {
+        bool match = true;
+        for (size_t j = 0; j < needle_len; ++j)
+        {
+            if (! asciiCaseEqual((uint8_t) haystack[i + j], (uint8_t) needle[j]))
+            {
+                match = false;
+                break;
+            }
+        }
+
+        if (match)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static inline bool stringAsciiCaseContainsToken(const char *value, const char *token)
+{
+    if (value == NULL || token == NULL || *token == '\0')
+    {
+        return false;
+    }
+
+    size_t      token_len = stringLength(token);
+    const char *p         = value;
+    while (*p != '\0')
+    {
+        while (*p == ' ' || *p == '\t' || *p == ',')
+        {
+            ++p;
+        }
+
+        if (*p == '\0')
+        {
+            break;
+        }
+
+        const char *end = p;
+        while (*end != '\0' && *end != ',')
+        {
+            ++end;
+        }
+
+        const char *tail = end;
+        while (tail > p && (tail[-1] == ' ' || tail[-1] == '\t'))
+        {
+            --tail;
+        }
+
+        size_t part_len = (size_t) (tail - p);
+        if (part_len == token_len)
+        {
+            bool match = true;
+            for (size_t i = 0; i < part_len; ++i)
+            {
+                if (! asciiCaseEqual((uint8_t) p[i], (uint8_t) token[i]))
+                {
+                    match = false;
+                    break;
+                }
+            }
+            if (match)
+            {
+                return true;
+            }
+        }
+
+        p = end;
+    }
+
+    return false;
+}
+
+static inline bool stringFormatFits(int written, size_t buf_len)
+{
+    return written > 0 && (size_t) written < buf_len;
+}
+
 //--------------------file-------------------------------
 
 static inline bool filePathIsSeparator(char ch)

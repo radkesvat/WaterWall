@@ -22,35 +22,12 @@ static sbuf_t *trojanserverAllocBuffer(line_t *l, uint32_t len)
     return buf;
 }
 
-static int trojanserverHexValue(uint8_t ch)
-{
-    if (ch >= '0' && ch <= '9')
-    {
-        return (int) (ch - '0');
-    }
-    if (ch >= 'a' && ch <= 'f')
-    {
-        return (int) (ch - 'a') + 10;
-    }
-    if (ch >= 'A' && ch <= 'F')
-    {
-        return (int) (ch - 'A') + 10;
-    }
-    return -1;
-}
-
 static bool trojanserverDecodeSha224Hex(const uint8_t hex[kTrojanServerPasswordHexLen], uint8_t out[SHA224_DIGEST_SIZE])
 {
-    for (size_t i = 0; i < SHA224_DIGEST_SIZE; ++i)
+    if (! asciiHexDecodeBytes(hex, kTrojanServerPasswordHexLen, out, SHA224_DIGEST_SIZE))
     {
-        int hi = trojanserverHexValue(hex[i * 2U]);
-        int lo = trojanserverHexValue(hex[i * 2U + 1U]);
-        if (UNLIKELY(hi < 0 || lo < 0))
-        {
-            memoryZero(out, SHA224_DIGEST_SIZE);
-            return false;
-        }
-        out[i] = (uint8_t) ((hi << 4) | lo);
+        memoryZero(out, SHA224_DIGEST_SIZE);
+        return false;
     }
 
     return true;
@@ -63,7 +40,7 @@ static bool trojanserverAvailablePasswordPrefixCanBeTrojan(buffer_stream_t *stre
 
     for (size_t i = 0; i < inspect; ++i)
     {
-        if (UNLIKELY(trojanserverHexValue(bufferstreamViewByteAt(stream, i)) < 0))
+        if (UNLIKELY(asciiHexValue(bufferstreamViewByteAt(stream, i)) < 0))
         {
             return false;
         }
@@ -496,23 +473,6 @@ static buffer_queue_t *trojanserverEnsureFallbackPendingQueue(trojanserver_lstat
     return ls->fallback_pending_up;
 }
 
-static uint32_t trojanserverFallbackDelayWithJitter(const trojanserver_tstate_t *ts)
-{
-    uint32_t delay_ms  = ts->fallback_intentional_delay_ms;
-    uint32_t jitter_ms = ts->fallback_intentional_delay_jitter_ms;
-
-    if (delay_ms == 0 || jitter_ms == 0)
-    {
-        return delay_ms;
-    }
-
-    uint32_t lower = jitter_ms >= delay_ms ? 0 : delay_ms - jitter_ms;
-    uint32_t upper = UINT32_MAX - delay_ms < jitter_ms ? UINT32_MAX : delay_ms + jitter_ms;
-    uint64_t span  = (uint64_t) upper - (uint64_t) lower + 1ULL;
-
-    return lower + (uint32_t) (fastRand64() % span);
-}
-
 static void trojanserverForwardPendingFallbackFinish(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
 {
     tunnel_t *fallback = trojanserverSelectedUpstream(t, ls);
@@ -563,7 +523,11 @@ static void trojanserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
     if (trojanserverFallbackPendingCount(ls) > 0 && ! ls->fallback_delay_scheduled)
     {
         ls->fallback_delay_scheduled = true;
-        lineScheduleDelayedTask(l, trojanserverDelayedFallbackPayloadTask, trojanserverFallbackDelayWithJitter(ts), t);
+        lineScheduleDelayedTask(l,
+                                trojanserverDelayedFallbackPayloadTask,
+                                fastRandJittered32(ts->fallback_intentional_delay_ms,
+                                                   ts->fallback_intentional_delay_jitter_ms),
+                                t);
         return;
     }
 
@@ -602,7 +566,11 @@ bool trojanserverSendFallbackPayload(tunnel_t *t, line_t *l, trojanserver_lstate
     if (! ls->fallback_delay_scheduled)
     {
         ls->fallback_delay_scheduled = true;
-        lineScheduleDelayedTask(l, trojanserverDelayedFallbackPayloadTask, trojanserverFallbackDelayWithJitter(ts), t);
+        lineScheduleDelayedTask(l,
+                                trojanserverDelayedFallbackPayloadTask,
+                                fastRandJittered32(ts->fallback_intentional_delay_ms,
+                                                   ts->fallback_intentional_delay_jitter_ms),
+                                t);
     }
 
     return true;

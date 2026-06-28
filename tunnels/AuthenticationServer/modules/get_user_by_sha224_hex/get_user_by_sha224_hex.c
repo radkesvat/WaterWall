@@ -2,42 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-static int authenticationserverSHA224HexValue(uint8_t c)
-{
-    if (c >= '0' && c <= '9')
-    {
-        return (int) (c - '0');
-    }
-    if (c >= 'a' && c <= 'f')
-    {
-        return (int) (c - 'a') + 10;
-    }
-    if (c >= 'A' && c <= 'F')
-    {
-        return (int) (c - 'A') + 10;
-    }
-    return -1;
-}
-
 static bool authenticationserverParseSHA224Hex(const uint8_t *hex, uint32_t hex_len, uint8_t out[SHA224_DIGEST_SIZE])
 {
-    if (UNLIKELY(hex_len != SHA224_DIGEST_SIZE * 2U))
-    {
-        return false;
-    }
-
-    for (uint32_t i = 0; i < SHA224_DIGEST_SIZE; ++i)
-    {
-        int hi = authenticationserverSHA224HexValue(hex[i * 2U]);
-        int lo = authenticationserverSHA224HexValue(hex[i * 2U + 1U]);
-        if (UNLIKELY(hi < 0 || lo < 0))
-        {
-            return false;
-        }
-        out[i] = (uint8_t) ((hi << 4U) | lo);
-    }
-
-    return true;
+    return asciiHexDecodeBytes(hex, hex_len, out, SHA224_DIGEST_SIZE);
 }
 
 sbuf_t *authenticationserverGetUserBySHA224HexHandle(

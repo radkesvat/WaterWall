@@ -87,32 +87,10 @@ static void configureTunnelCallbacks(tunnel_t *t)
     t->onDestroy = &tlsserverTunnelDestroy;
 }
 
-static const cJSON *tlsserverGetSettingsItemByKeys(const cJSON *settings, const char *key1, const char *key2,
-                                                   const char *key3)
-{
-    const char *keys[3] = {key1, key2, key3};
-
-    for (size_t i = 0; i < ARRAY_SIZE(keys); ++i)
-    {
-        if (keys[i] == NULL)
-        {
-            continue;
-        }
-
-        const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, keys[i]);
-        if (item != NULL)
-        {
-            return item;
-        }
-    }
-
-    return NULL;
-}
-
 static bool parseFallbackNode(tlsserver_tstate_t *ts, tunnel_t *t, node_t *node, const cJSON *settings)
 {
     const cJSON *fallback_json =
-        tlsserverGetSettingsItemByKeys(settings, "fallback-node-name", "fallback-node", "fallback");
+        getJsonObjectItemByKeys(settings, "fallback-node-name", "fallback-node", "fallback");
 
     if (fallback_json == NULL)
     {

@@ -214,11 +214,6 @@ void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t 
 void httpclientLinestateDestroy(httpclient_lstate_t *ls);
 void httpclientH2DataQueueDestroy(httpclient_lstate_t *ls);
 
-bool    httpclientStringCaseEquals(const char *a, const char *b);
-bool    httpclientStringCaseContains(const char *haystack, const char *needle);
-bool    httpclientStringCaseContainsToken(const char *value, const char *token);
-bool    bufferstreamFindCRLF(buffer_stream_t *stream, size_t *line_end);
-bool    bufferstreamFindDoubleCRLF(buffer_stream_t *stream, size_t *header_end);
 sbuf_t *allocBufferForLength(line_t *l, uint32_t len);
 
 bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upgrade_to_h2);

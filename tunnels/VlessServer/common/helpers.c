@@ -42,26 +42,6 @@ static const char *vlessserverAuthClientStateName(authenticationclient_state_t s
     }
 }
 
-static void vlessserverUuidToCanonicalString(const uint8_t uuid[kVlessServerUuidLen],
-                                             char          out[kVlessServerCanonicalUuidStringLen + 1U])
-{
-    static const char hex[] = "0123456789abcdef";
-    size_t            off   = 0;
-
-    for (size_t i = 0; i < kVlessServerUuidLen; ++i)
-    {
-        if (i == 4 || i == 6 || i == 8 || i == 10)
-        {
-            out[off++] = '-';
-        }
-
-        out[off++] = hex[(uuid[i] >> 4U) & 0x0FU];
-        out[off++] = hex[uuid[i] & 0x0FU];
-    }
-
-    out[off] = '\0';
-}
-
 static const vlessserver_user_t *vlessserverFindLocalUser(tunnel_t *t, line_t *l,
                                                           const uint8_t uuid[kVlessServerUuidLen])
 {
@@ -103,7 +83,7 @@ static bool vlessserverAuthenticateUuid(tunnel_t *t, line_t *l, vlessserver_lsta
         if (ls->auth_password == NULL)
         {
             char uuid_password[kVlessServerCanonicalUuidStringLen + 1U] = {0};
-            vlessserverUuidToCanonicalString(uuid, uuid_password);
+            wwUuidToCanonicalString(uuid, uuid_password);
             if (matched->username != NULL)
             {
                 ls->auth_username = stringDuplicate(matched->username);
@@ -132,7 +112,7 @@ static bool vlessserverAuthenticateUuid(tunnel_t *t, line_t *l, vlessserver_lsta
     }
 
     char uuid_password[kVlessServerCanonicalUuidStringLen + 1U] = {0};
-    vlessserverUuidToCanonicalString(uuid, uuid_password);
+    wwUuidToCanonicalString(uuid, uuid_password);
 
     user_handle_t                             handle  = userHandleEmpty();
     authenticationclient_user_profile_t       profile = {0};
@@ -337,23 +317,6 @@ static buffer_queue_t *vlessserverEnsureFallbackPendingQueue(vlessserver_lstate_
     return ls->fallback_pending_up;
 }
 
-static uint32_t vlessserverFallbackDelayWithJitter(const vlessserver_tstate_t *ts)
-{
-    uint32_t delay_ms  = ts->fallback_intentional_delay_ms;
-    uint32_t jitter_ms = ts->fallback_intentional_delay_jitter_ms;
-
-    if (delay_ms == 0 || jitter_ms == 0)
-    {
-        return delay_ms;
-    }
-
-    uint32_t lower = jitter_ms >= delay_ms ? 0 : delay_ms - jitter_ms;
-    uint32_t upper = UINT32_MAX - delay_ms < jitter_ms ? UINT32_MAX : delay_ms + jitter_ms;
-    uint64_t span  = (uint64_t) upper - (uint64_t) lower + 1ULL;
-
-    return lower + (uint32_t) (fastRand64() % span);
-}
-
 static void vlessserverForwardPendingFallbackFinish(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls)
 {
     vlessserver_tstate_t *ts       = tunnelGetState(t);
@@ -405,7 +368,11 @@ static void vlessserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
     if (vlessserverFallbackPendingCount(ls) > 0 && ! ls->fallback_delay_scheduled)
     {
         ls->fallback_delay_scheduled = true;
-        lineScheduleDelayedTask(l, vlessserverDelayedFallbackPayloadTask, vlessserverFallbackDelayWithJitter(ts), t);
+        lineScheduleDelayedTask(l,
+                                vlessserverDelayedFallbackPayloadTask,
+                                fastRandJittered32(ts->fallback_intentional_delay_ms,
+                                                   ts->fallback_intentional_delay_jitter_ms),
+                                t);
         return;
     }
 
@@ -444,7 +411,11 @@ bool vlessserverSendFallbackPayload(tunnel_t *t, line_t *l, vlessserver_lstate_t
     if (! ls->fallback_delay_scheduled)
     {
         ls->fallback_delay_scheduled = true;
-        lineScheduleDelayedTask(l, vlessserverDelayedFallbackPayloadTask, vlessserverFallbackDelayWithJitter(ts), t);
+        lineScheduleDelayedTask(l,
+                                vlessserverDelayedFallbackPayloadTask,
+                                fastRandJittered32(ts->fallback_intentional_delay_ms,
+                                                   ts->fallback_intentional_delay_jitter_ms),
+                                t);
     }
 
     return true;

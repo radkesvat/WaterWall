@@ -14,16 +14,6 @@ void junkdatagramsenderLinestateDestroy(junkdatagramsender_lstate_t *ls)
     memorySet(ls, 0, tunnelGetCorrectAlignedLineStateSize(sizeof(junkdatagramsender_lstate_t)));
 }
 
-static uint32_t junkdatagramsenderRandomRange(uint32_t min_value, uint32_t max_value)
-{
-    if (max_value <= min_value)
-    {
-        return min_value;
-    }
-
-    return min_value + (fastRand32() % (max_value - min_value + 1U));
-}
-
 static uint32_t junkdatagramsenderProtocolCount(uint64_t mask)
 {
     uint32_t count = 0;
@@ -125,7 +115,7 @@ static bool junkdatagramsenderSendOne(tunnel_t *t, line_t *l, junkdatagramsender
     if (ts->keep_sending_max_ms > 0)
     {
         sbuf_t  *scheduled = sbufDuplicateByPool(lineGetBufferPool(l), buf);
-        uint32_t delay_ms  = junkdatagramsenderRandomRange(1, ts->keep_sending_max_ms);
+        uint32_t delay_ms  = fastRandRange32(1, ts->keep_sending_max_ms);
         lineScheduleDelayedTaskWithBuf(l, junkdatagramsenderDelayedPayloadFn(direction), delay_ms, t, scheduled);
     }
 
@@ -150,7 +140,7 @@ bool junkdatagramsenderSendJunk(tunnel_t *t, line_t *l, junkdatagramsender_direc
         return true;
     }
 
-    uint32_t packet_count = junkdatagramsenderRandomRange(ts->packet_count_min, ts->packet_count_max);
+    uint32_t packet_count = fastRandRange32(ts->packet_count_min, ts->packet_count_max);
     for (uint32_t i = 0; i < packet_count; ++i)
     {
         if (! lineIsAlive(l))

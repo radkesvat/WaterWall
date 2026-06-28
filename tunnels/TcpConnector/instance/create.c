@@ -21,12 +21,6 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->onDestroy    = &tcpconnectorTunnelDestroy;
 }
 
-static char *tcpconnectorMakeChildName(const node_t *node, const char *suffix)
-{
-    const char *base = node->name != NULL ? node->name : "TcpConnector";
-    return stringConcat(base, suffix);
-}
-
 static bool tcpconnectorAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
 {
     cJSON *strategy_json = cJSON_AddNumberToObject(settings, "strategy", (double) strategy);
@@ -57,28 +51,6 @@ static cJSON *tcpconnectorCreateDomainResolverSettings(enum domain_strategy stra
     return settings;
 }
 
-static bool tcpconnectorConfigureDomainResolverNode(node_t *child, node_t template_node, const node_t *owner,
-                                                    cJSON *settings)
-{
-    *child = template_node;
-
-    child->name = tcpconnectorMakeChildName(owner, ".domain-resolver");
-    if (child->name == NULL)
-    {
-        return false;
-    }
-
-    child->hash_name           = calcHashBytes(child->name, stringLength(child->name));
-    child->next                = NULL;
-    child->hash_next           = 0;
-    child->version             = owner->version;
-    child->node_json           = owner->node_json;
-    child->node_settings_json  = settings;
-    child->node_manager_config = owner->node_manager_config;
-    child->instance            = NULL;
-    return true;
-}
-
 static bool tcpconnectorCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
     tcpconnector_tstate_t *ts = tunnelGetState(t);
@@ -91,8 +63,12 @@ static bool tcpconnectorCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return false;
     }
 
-    if (! tcpconnectorConfigureDomainResolverNode(
-            &ts->domain_resolver_node, nodeDomainResolverGet(), node, ts->domain_resolver_settings))
+    if (! nodeConfigureChild(&ts->domain_resolver_node,
+                             nodeDomainResolverGet(),
+                             node,
+                             ".domain-resolver",
+                             kNodeChildLinkNone,
+                             ts->domain_resolver_settings))
     {
         LOGF("TcpConnector: failed to configure internal DomainResolver node");
         return false;

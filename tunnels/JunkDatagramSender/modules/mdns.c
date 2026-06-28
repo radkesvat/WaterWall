@@ -341,11 +341,6 @@ static const junkdatagramsender_mdns_service_t *junkdatagramsenderMdnsRandomServ
     return &services[fastRand32() % (sizeof(services) / sizeof(services[0]))];
 }
 
-static bool junkdatagramsenderMdnsFormatFits(int written, size_t buf_len)
-{
-    return written > 0 && (size_t) written < buf_len;
-}
-
 static const char *junkdatagramsenderMdnsRandomHostName(char *buf, size_t buf_len)
 {
     static const char *prefixes[] = {
@@ -359,7 +354,7 @@ static const char *junkdatagramsenderMdnsRandomHostName(char *buf, size_t buf_le
         "ww",
     };
 
-    if (junkdatagramsenderMdnsFormatFits(
+    if (stringFormatFits(
             stringNPrintf(buf,
                           buf_len,
                           "%s-%04x.local",
@@ -375,7 +370,7 @@ static const char *junkdatagramsenderMdnsRandomHostName(char *buf, size_t buf_le
 static const char *junkdatagramsenderMdnsBuildInstanceName(char *buf, size_t buf_len,
                                                            const junkdatagramsender_mdns_service_t *service)
 {
-    if (service != NULL && junkdatagramsenderMdnsFormatFits(stringNPrintf(buf,
+    if (service != NULL && stringFormatFits(stringNPrintf(buf,
                                                                           buf_len,
                                                                           "%s-%04x.%s",
                                                                           service->instance_prefix,

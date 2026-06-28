@@ -225,11 +225,6 @@ void httpserverLinestateInitialize(httpserver_lstate_t *ls, tunnel_t *t, line_t 
 void httpserverLinestateDestroy(httpserver_lstate_t *ls);
 void httpserverH2DataQueueDestroy(httpserver_lstate_t *ls);
 
-bool    httpserverStringCaseEquals(const char *a, const char *b);
-bool    httpserverStringCaseContains(const char *haystack, const char *needle);
-bool    httpserverStringCaseContainsToken(const char *value, const char *token);
-bool    httpserverBufferstreamFindCRLF(buffer_stream_t *stream, size_t *line_end);
-bool    httpserverBufferstreamFindDoubleCRLF(buffer_stream_t *stream, size_t *header_end);
 sbuf_t *httpserverAllocBufferForLength(line_t *l, uint32_t len);
 
 bool httpserverTransportSendHttp1ResponseHeaders(tunnel_t *t, line_t *l);

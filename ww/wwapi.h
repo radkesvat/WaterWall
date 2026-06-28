@@ -35,8 +35,11 @@
 #include "node_builder/config_file.h"
 #include "node_builder/node_library.h"
 
+#include "objects/node.h"
+
 #include "utils/base64.h"
 #include "utils/json_helpers.h"
+#include "utils/uuid.h"
 
 #include "crypto/wcrypto.h"
 

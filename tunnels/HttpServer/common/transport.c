@@ -266,7 +266,7 @@ static bool appendHeaderFmt(char *buf, size_t cap, int *offset, const char *fmt,
 
 static bool httpserverHeaderNameEquals(const char *value, const char *name)
 {
-    return httpserverStringCaseEquals(value, name);
+    return stringAsciiCaseEquals(value, name);
 }
 
 static const char *httpserverUpgradeProtocol(const httpserver_tstate_t *ts)
@@ -281,7 +281,7 @@ static const char *httpserverUpgradeProtocol(const httpserver_tstate_t *ts)
 
 static bool httpserverUpgradeIsH2C(const httpserver_tstate_t *ts)
 {
-    return ts != NULL && httpserverStringCaseEquals(httpserverUpgradeProtocol(ts), "h2c");
+    return ts != NULL && stringAsciiCaseEquals(httpserverUpgradeProtocol(ts), "h2c");
 }
 
 static bool httpserverUpgradeIsCustom(const httpserver_tstate_t *ts)
@@ -363,7 +363,7 @@ static bool httpserverFindHeaderValue(const char *headers, const char *name, cha
                 bool match = true;
                 for (size_t i = 0; i < key_len; ++i)
                 {
-                    if ((char) tolower((unsigned char) line[i]) != (char) tolower((unsigned char) name[i]))
+                    if (! asciiCaseEqual((uint8_t) line[i], (uint8_t) name[i]))
                     {
                         match = false;
                         break;
@@ -430,7 +430,7 @@ static bool httpserverValidateRequiredHeaders(const char *headers, const cJSON *
             return false;
         }
 
-        if (! httpserverStringCaseEquals(found_value, header->valuestring))
+        if (! stringAsciiCaseEquals(found_value, header->valuestring))
         {
             return false;
         }
@@ -928,7 +928,7 @@ static bool hostMatchesExpected(const char *expected, const char *actual)
         return false;
     }
 
-    if (httpserverStringCaseEquals(expected, actual))
+    if (stringAsciiCaseEquals(expected, actual))
     {
         return true;
     }
@@ -949,7 +949,7 @@ static bool hostMatchesExpected(const char *expected, const char *actual)
 
     for (size_t i = 0; i < host_len; i++)
     {
-        if ((char) tolower((unsigned char) actual[i]) != (char) tolower((unsigned char) expected[i]))
+        if (! asciiCaseEqual((uint8_t) actual[i], (uint8_t) expected[i]))
         {
             return false;
         }
@@ -1018,40 +1018,40 @@ static bool parseHttp1RequestHeaders(const char *headers, httpserver_h1_request_
                 ++value;
             }
 
-            if (httpserverStringCaseEquals(key, "Transfer-Encoding") && httpserverStringCaseContainsToken(value, "chunked"))
+            if (stringAsciiCaseEquals(key, "Transfer-Encoding") && stringAsciiCaseContainsToken(value, "chunked"))
             {
                 info->transfer_chunked = true;
             }
-            else if (httpserverStringCaseEquals(key, "Connection"))
+            else if (stringAsciiCaseEquals(key, "Connection"))
             {
-                if (httpserverStringCaseContainsToken(value, "upgrade"))
+                if (stringAsciiCaseContainsToken(value, "upgrade"))
                 {
                     info->connection_upgrade = true;
                 }
-                if (httpserverStringCaseContainsToken(value, "http2-settings"))
+                if (stringAsciiCaseContainsToken(value, "http2-settings"))
                 {
                     info->connection_http2_settings = true;
                 }
             }
-            else if (httpserverStringCaseEquals(key, "Upgrade") && httpserverStringCaseContainsToken(value, "h2c"))
+            else if (stringAsciiCaseEquals(key, "Upgrade") && stringAsciiCaseContainsToken(value, "h2c"))
             {
                 info->has_upgrade_header = true;
                 snprintf(info->upgrade_value, sizeof(info->upgrade_value), "%s", value);
                 info->upgrade_h2c = true;
             }
-            else if (httpserverStringCaseEquals(key, "Upgrade") &&
-                     httpserverStringCaseContainsToken(value, "websocket"))
+            else if (stringAsciiCaseEquals(key, "Upgrade") &&
+                     stringAsciiCaseContainsToken(value, "websocket"))
             {
                 info->has_upgrade_header = true;
                 snprintf(info->upgrade_value, sizeof(info->upgrade_value), "%s", value);
                 info->upgrade_websocket = true;
             }
-            else if (httpserverStringCaseEquals(key, "Upgrade"))
+            else if (stringAsciiCaseEquals(key, "Upgrade"))
             {
                 info->has_upgrade_header = true;
                 snprintf(info->upgrade_value, sizeof(info->upgrade_value), "%s", value);
             }
-            else if (httpserverStringCaseEquals(key, "HTTP2-Settings"))
+            else if (stringAsciiCaseEquals(key, "HTTP2-Settings"))
             {
                 if (info->has_http2_settings)
                 {
@@ -1062,11 +1062,11 @@ static bool parseHttp1RequestHeaders(const char *headers, httpserver_h1_request_
                 info->has_http2_settings = true;
                 snprintf(info->http2_settings, sizeof(info->http2_settings), "%s", value);
             }
-            else if (httpserverStringCaseEquals(key, "Host"))
+            else if (stringAsciiCaseEquals(key, "Host"))
             {
                 snprintf(info->host, sizeof(info->host), "%s", value);
             }
-            else if (httpserverStringCaseEquals(key, "Content-Length"))
+            else if (stringAsciiCaseEquals(key, "Content-Length"))
             {
                 int64_t parsed = 0;
                 if (! parseContentLength(value, &parsed))
@@ -1086,22 +1086,22 @@ static bool parseHttp1RequestHeaders(const char *headers, httpserver_h1_request_
                     return false;
                 }
             }
-            else if (httpserverStringCaseEquals(key, "Sec-WebSocket-Key"))
+            else if (stringAsciiCaseEquals(key, "Sec-WebSocket-Key"))
             {
                 info->has_sec_websocket_key = true;
                 snprintf(info->sec_websocket_key, sizeof(info->sec_websocket_key), "%s", value);
             }
-            else if (httpserverStringCaseEquals(key, "Sec-WebSocket-Protocol"))
+            else if (stringAsciiCaseEquals(key, "Sec-WebSocket-Protocol"))
             {
                 info->has_sec_websocket_protocol = true;
                 snprintf(info->sec_websocket_protocol, sizeof(info->sec_websocket_protocol), "%s", value);
             }
-            else if (httpserverStringCaseEquals(key, "Origin"))
+            else if (stringAsciiCaseEquals(key, "Origin"))
             {
                 info->has_origin = true;
                 snprintf(info->origin, sizeof(info->origin), "%s", value);
             }
-            else if (httpserverStringCaseEquals(key, "Sec-WebSocket-Version"))
+            else if (stringAsciiCaseEquals(key, "Sec-WebSocket-Version"))
             {
                 info->has_sec_websocket_version = true;
                 info->sec_websocket_version     = atoi(value);
@@ -1117,7 +1117,7 @@ static bool parseHttp1RequestHeaders(const char *headers, httpserver_h1_request_
 
 static bool validateHttp1Request(const httpserver_tstate_t *ts, const httpserver_h1_request_info_t *info)
 {
-    if (ts->expected_method != NULL && ts->expected_method[0] != '\0' && ! httpserverStringCaseEquals(ts->expected_method, info->method))
+    if (ts->expected_method != NULL && ts->expected_method[0] != '\0' && ! stringAsciiCaseEquals(ts->expected_method, info->method))
     {
         LOGW("HttpServer: method mismatch, expected=%s got=%s", ts->expected_method, info->method);
         return false;
@@ -1140,7 +1140,7 @@ static bool validateHttp1Request(const httpserver_tstate_t *ts, const httpserver
 
 static bool validateWebSocketHttp1Request(const httpserver_tstate_t *ts, const httpserver_h1_request_info_t *info)
 {
-    if (! httpserverStringCaseEquals(info->method, "GET"))
+    if (! stringAsciiCaseEquals(info->method, "GET"))
     {
         LOGW("HttpServer: websocket HTTP/1.1 request must use GET");
         return false;
@@ -1173,7 +1173,7 @@ static bool validateWebSocketHttp1Request(const httpserver_tstate_t *ts, const h
     }
 
     if (ts->websocket_origin != NULL &&
-        (! info->has_origin || ! httpserverStringCaseEquals(ts->websocket_origin, info->origin)))
+        (! info->has_origin || ! stringAsciiCaseEquals(ts->websocket_origin, info->origin)))
     {
         LOGW("HttpServer: websocket origin mismatch");
         return false;
@@ -1181,7 +1181,7 @@ static bool validateWebSocketHttp1Request(const httpserver_tstate_t *ts, const h
 
     if (ts->websocket_subprotocol != NULL &&
         (! info->has_sec_websocket_protocol ||
-         ! httpserverStringCaseContainsToken(info->sec_websocket_protocol, ts->websocket_subprotocol)))
+         ! stringAsciiCaseContainsToken(info->sec_websocket_protocol, ts->websocket_subprotocol)))
     {
         LOGW("HttpServer: websocket subprotocol mismatch");
         return false;
@@ -1446,8 +1446,8 @@ static bool validateWebSocketHttp2Request(const httpserver_tstate_t *ts, const h
         return false;
     }
 
-    if (! httpserverStringCaseEquals(ls->websocket_h2_method, "CONNECT") ||
-        ! httpserverStringCaseEquals(ls->websocket_h2_protocol, "websocket") ||
+    if (! stringAsciiCaseEquals(ls->websocket_h2_method, "CONNECT") ||
+        ! stringAsciiCaseEquals(ls->websocket_h2_protocol, "websocket") ||
         stringCompare(ls->websocket_h2_path, ts->expected_path) != 0 ||
         ! hostMatchesExpected(ts->expected_host, ls->websocket_h2_authority) ||
         stringCompare(ls->websocket_h2_version, "13") != 0)
@@ -1456,14 +1456,14 @@ static bool validateWebSocketHttp2Request(const httpserver_tstate_t *ts, const h
     }
 
     if (ts->websocket_origin != NULL &&
-        (! ls->websocket_h2_origin_seen || ! httpserverStringCaseEquals(ts->websocket_origin, ls->websocket_h2_origin)))
+        (! ls->websocket_h2_origin_seen || ! stringAsciiCaseEquals(ts->websocket_origin, ls->websocket_h2_origin)))
     {
         return false;
     }
 
     if (ts->websocket_subprotocol != NULL &&
         (! ls->websocket_h2_subprotocol_seen ||
-         ! httpserverStringCaseContainsToken(ls->websocket_h2_subprotocol, ts->websocket_subprotocol)))
+         ! stringAsciiCaseContainsToken(ls->websocket_h2_subprotocol, ts->websocket_subprotocol)))
     {
         return false;
     }
@@ -1474,7 +1474,7 @@ static bool validateWebSocketHttp2Request(const httpserver_tstate_t *ts, const h
 static bool validateHttp2Request(const httpserver_tstate_t *ts, const httpserver_lstate_t *ls)
 {
     if (ts->expected_method != NULL && ts->expected_method[0] != '\0' &&
-        (! ls->websocket_h2_method_seen || ! httpserverStringCaseEquals(ts->expected_method, ls->websocket_h2_method)))
+        (! ls->websocket_h2_method_seen || ! stringAsciiCaseEquals(ts->expected_method, ls->websocket_h2_method)))
     {
         LOGW("HttpServer: HTTP/2 method mismatch, expected=%s got=%s", ts->expected_method,
              ls->websocket_h2_method_seen ? ls->websocket_h2_method : "<missing>");
@@ -2446,7 +2446,7 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
     }
 
     size_t header_end = 0;
-    if (! httpserverBufferstreamFindDoubleCRLF(&ls->in_stream, &header_end))
+    if (! bufferstreamFindDoubleCRLF(&ls->in_stream, &header_end))
     {
         return true;
     }
@@ -2533,7 +2533,7 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
         bool request_has_body = info.transfer_chunked || (info.has_content_length && info.content_length > 0);
 
         if (httpserverUpgradeIsCustom(ts) && info.has_upgrade_header &&
-            httpserverStringCaseContainsToken(info.upgrade_value, httpserverUpgradeProtocol(ts)) &&
+            stringAsciiCaseContainsToken(info.upgrade_value, httpserverUpgradeProtocol(ts)) &&
             httpserverValidateRequiredHeaders(header_text, ts->upgrade_request_headers))
         {
             if (request_has_body)
@@ -2702,7 +2702,7 @@ bool httpserverTransportDrainHttp1ChunkedRequestBody(tunnel_t *t, line_t *l, htt
         if (ls->h1_chunk_expected < 0)
         {
             size_t line_end = 0;
-            if (! httpserverBufferstreamFindCRLF(&ls->in_stream, &line_end))
+            if (! bufferstreamFindCRLF(&ls->in_stream, &line_end))
             {
                 return true;
             }
@@ -2726,7 +2726,7 @@ bool httpserverTransportDrainHttp1ChunkedRequestBody(tunnel_t *t, line_t *l, htt
                 while (true)
                 {
                     size_t trailer_line_end = 0;
-                    if (! httpserverBufferstreamFindCRLF(&ls->in_stream, &trailer_line_end))
+                    if (! bufferstreamFindCRLF(&ls->in_stream, &trailer_line_end))
                     {
                         return true;
                     }

@@ -140,30 +140,17 @@ bool routerIpRangesMatch(const address_context_t *ctx, const router_ip_range_t *
     return false;
 }
 
-static bool routerIsAsciiLetter(char c)
-{
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
-}
-
-static char routerAsciiUpper(char c)
-{
-    if (c >= 'a' && c <= 'z')
-    {
-        return (char) (c - ('a' - 'A'));
-    }
-    return c;
-}
-
 static bool routerGeoipCodeParse(const char *pattern, router_geoip_code_t *out, const char *json_path)
 {
-    if (stringLength(pattern) != 8U || ! routerIsAsciiLetter(pattern[6]) || ! routerIsAsciiLetter(pattern[7]))
+    if (stringLength(pattern) != 8U || ! asciiIsAlpha((uint8_t) pattern[6]) ||
+        ! asciiIsAlpha((uint8_t) pattern[7]))
     {
         LOGF("JSON Error: %s : \"%s\" is not a valid geoip:<ISO-3166-alpha-2> token", json_path, pattern);
         return false;
     }
 
-    out->code[0] = routerAsciiUpper(pattern[6]);
-    out->code[1] = routerAsciiUpper(pattern[7]);
+    out->code[0] = (char) asciiUpper((uint8_t) pattern[6]);
+    out->code[1] = (char) asciiUpper((uint8_t) pattern[7]);
     out->code[2] = '\0';
     return true;
 }
@@ -302,8 +289,8 @@ static bool routerGeoipReadIsoCode(MMDB_entry_s *entry, const char *map_name, ch
         return false;
     }
 
-    out_code[0] = routerAsciiUpper(data.utf8_string[0]);
-    out_code[1] = routerAsciiUpper(data.utf8_string[1]);
+    out_code[0] = (char) asciiUpper((uint8_t) data.utf8_string[0]);
+    out_code[1] = (char) asciiUpper((uint8_t) data.utf8_string[1]);
     out_code[2] = '\0';
     return true;
 }

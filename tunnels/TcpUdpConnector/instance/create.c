@@ -27,37 +27,32 @@ static void tcpudpconnectorConfigureCallbacks(tunnel_t *t)
     t->onDestroy    = &tcpudpconnectorTunnelDestroy;
 }
 
-static char *tcpudpconnectorMakeChildName(const node_t *node, const char *suffix)
-{
-    const char *base = node->name != NULL ? node->name : "TcpUdpConnector";
-    return stringConcat(base, suffix);
-}
-
-static void tcpudpconnectorConfigureChildNode(node_t *child, node_t template_node, const node_t *owner,
+static bool tcpudpconnectorConfigureChildNode(node_t *child, node_t template_node, const node_t *owner,
                                               const char *suffix)
 {
-    *child = template_node;
-
-    child->name      = tcpudpconnectorMakeChildName(owner, suffix);
-    child->hash_name = calcHashBytes(child->name, stringLength(child->name));
-    child->next      = NULL;
-    child->hash_next = 0;
-    child->version   = owner->version;
-
-    child->node_json           = owner->node_json;
-    child->node_settings_json  = owner->node_settings_json;
-    child->node_manager_config = owner->node_manager_config;
-    child->instance            = NULL;
+    if (! nodeConfigureChild(child, template_node, owner, suffix, kNodeChildLinkNone, owner->node_settings_json))
+    {
+        return false;
+    }
 
     child->can_have_next = false;
+    return true;
 }
 
 static bool tcpudpconnectorCreateChildTunnels(tunnel_t *t, node_t *node)
 {
     tcpudpconnector_tstate_t *ts = tunnelGetState(t);
 
-    tcpudpconnectorConfigureChildNode(&ts->tcp_node, nodeTcpConnectorGet(), node, ".tcp-connector");
-    tcpudpconnectorConfigureChildNode(&ts->udp_node, nodeUdpConnectorGet(), node, ".udp-connector");
+    if (! tcpudpconnectorConfigureChildNode(&ts->tcp_node, nodeTcpConnectorGet(), node, ".tcp-connector"))
+    {
+        LOGF("TcpUdpConnector: failed to configure internal TcpConnector node");
+        return false;
+    }
+    if (! tcpudpconnectorConfigureChildNode(&ts->udp_node, nodeUdpConnectorGet(), node, ".udp-connector"))
+    {
+        LOGF("TcpUdpConnector: failed to configure internal UdpConnector node");
+        return false;
+    }
 
     ts->tcp_connector = ts->tcp_node.createHandle(&ts->tcp_node);
     if (ts->tcp_connector == NULL)

@@ -4,12 +4,6 @@
 
 #include "loggers/network_logger.h"
 
-static char *socks5clientMakeChildName(const node_t *node, const char *suffix)
-{
-    const char *base = node->name != NULL ? node->name : "Socks5Client";
-    return stringConcat(base, suffix);
-}
-
 static bool socks5clientAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
 {
     cJSON *strategy_json = cJSON_AddNumberToObject(settings, "strategy", (double) strategy);
@@ -40,28 +34,6 @@ static cJSON *socks5clientCreateDomainResolverSettings(enum domain_strategy stra
     return settings;
 }
 
-static bool socks5clientConfigureDomainResolverNode(node_t *child, node_t template_node, const node_t *owner,
-                                                    cJSON *settings)
-{
-    *child = template_node;
-
-    child->name = socks5clientMakeChildName(owner, ".domain-resolver");
-    if (child->name == NULL)
-    {
-        return false;
-    }
-
-    child->hash_name           = calcHashBytes(child->name, stringLength(child->name));
-    child->next                = NULL;
-    child->hash_next           = 0;
-    child->version             = owner->version;
-    child->node_json           = owner->node_json;
-    child->node_settings_json  = settings;
-    child->node_manager_config = owner->node_manager_config;
-    child->instance            = NULL;
-    return true;
-}
-
 static bool socks5clientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
     socks5client_tstate_t *ts = tunnelGetState(t);
@@ -79,8 +51,12 @@ static bool socks5clientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return false;
     }
 
-    if (! socks5clientConfigureDomainResolverNode(
-            &ts->domain_resolver_node, nodeDomainResolverGet(), node, ts->domain_resolver_settings))
+    if (! nodeConfigureChild(&ts->domain_resolver_node,
+                             nodeDomainResolverGet(),
+                             node,
+                             ".domain-resolver",
+                             kNodeChildLinkNone,
+                             ts->domain_resolver_settings))
     {
         LOGF("Socks5Client: failed to configure internal DomainResolver node");
         return false;
@@ -103,54 +79,9 @@ static bool socks5clientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
     return true;
 }
 
-static bool getOptionalStringFromKeys(char **dest, const cJSON *settings, const char *key1, const char *key2,
-                                      const char *key3)
-{
-    const char *keys[3] = {key1, key2, key3};
-
-    for (size_t i = 0; i < ARRAY_SIZE(keys); i++)
-    {
-        if (keys[i] == NULL)
-        {
-            continue;
-        }
-
-        const cJSON *node = cJSON_GetObjectItemCaseSensitive(settings, keys[i]);
-        if (cJSON_IsString(node) && node->valuestring != NULL)
-        {
-            *dest = memoryAllocate(stringLength(node->valuestring) + 1);
-            stringCopy(*dest, node->valuestring);
-            return true;
-        }
-    }
-
-    return false;
-}
-
-static const cJSON *getSettingsItemByKeys(const cJSON *settings, const char *key1, const char *key2, const char *key3)
-{
-    const char *keys[3] = {key1, key2, key3};
-
-    for (size_t i = 0; i < ARRAY_SIZE(keys); i++)
-    {
-        if (keys[i] == NULL)
-        {
-            continue;
-        }
-
-        const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, keys[i]);
-        if (item != NULL)
-        {
-            return item;
-        }
-    }
-
-    return NULL;
-}
-
 static bool parseTargetAddress(socks5client_tstate_t *ts, const cJSON *settings)
 {
-    const cJSON *address_json = getSettingsItemByKeys(settings, "target-address", "address", "target");
+    const cJSON *address_json = getJsonObjectItemByKeys(settings, "target-address", "address", "target");
     if (address_json == NULL)
     {
         LOGF("JSON Error: Socks5Client->settings->target-address (string field) is required");
@@ -225,7 +156,7 @@ static bool parseTargetPort(socks5client_tstate_t *ts, const cJSON *settings)
 static bool parseProtocol(socks5client_tstate_t *ts, const cJSON *settings)
 {
     char *protocol = NULL;
-    if (! getOptionalStringFromKeys(&protocol, settings, "protocol", "proto", NULL))
+    if (! getStringFromJsonObjectByKeys(&protocol, settings, "protocol", "proto", NULL))
     {
         ts->protocol = kSocks5ClientProtocolTcp;
         return true;
@@ -266,8 +197,8 @@ static bool parseCredentials(socks5client_tstate_t *ts, const cJSON *settings)
     char *user = NULL;
     char *pass = NULL;
 
-    getOptionalStringFromKeys(&user, settings, "user", "username", NULL);
-    getOptionalStringFromKeys(&pass, settings, "pass", "password", NULL);
+    getStringFromJsonObjectByKeys(&user, settings, "user", "username", NULL);
+    getStringFromJsonObjectByKeys(&pass, settings, "pass", "password", NULL);
 
     if ((user == NULL) != (pass == NULL))
     {

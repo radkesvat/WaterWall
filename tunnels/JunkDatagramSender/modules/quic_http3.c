@@ -61,20 +61,6 @@ typedef struct junkdatagramsender_quic_bytes_writer_s
     uint32_t capacity;
 } junkdatagramsender_quic_bytes_writer_t;
 
-static bool junkdatagramsenderQuicFormatFits(int written, size_t buf_len)
-{
-    return written > 0 && (size_t) written < buf_len;
-}
-
-static uint32_t junkdatagramsenderQuicRandomRange(uint32_t min_value, uint32_t max_value)
-{
-    if (max_value <= min_value)
-    {
-        return min_value;
-    }
-    return min_value + (fastRand32() % (max_value - min_value + 1U));
-}
-
 static bool junkdatagramsenderQuicCanWrite(const junkdatagramsender_quic_writer_t *writer, uint32_t len)
 {
     return writer->pos <= writer->capacity && len <= writer->capacity - writer->pos;
@@ -534,17 +520,17 @@ static bool junkdatagramsenderQuicBuildTransportParameters(uint8_t *out, uint32_
             kQuicTpMaxUdpPayloadSize,
             max_udp_sizes[fastRand32() % (sizeof(max_udp_sizes) / sizeof(max_udp_sizes[0]))]) ||
         ! junkdatagramsenderQuicBytesPutTransportParameterVarint(
-            &writer, kQuicTpInitialMaxData, junkdatagramsenderQuicRandomRange(262144, 4194304)) ||
+            &writer, kQuicTpInitialMaxData, fastRandRange32(262144, 4194304)) ||
         ! junkdatagramsenderQuicBytesPutTransportParameterVarint(
-            &writer, kQuicTpInitialMaxStreamDataBidiLocal, junkdatagramsenderQuicRandomRange(65536, 1048576)) ||
+            &writer, kQuicTpInitialMaxStreamDataBidiLocal, fastRandRange32(65536, 1048576)) ||
         ! junkdatagramsenderQuicBytesPutTransportParameterVarint(
-            &writer, kQuicTpInitialMaxStreamDataBidiRemote, junkdatagramsenderQuicRandomRange(65536, 1048576)) ||
+            &writer, kQuicTpInitialMaxStreamDataBidiRemote, fastRandRange32(65536, 1048576)) ||
         ! junkdatagramsenderQuicBytesPutTransportParameterVarint(
-            &writer, kQuicTpInitialMaxStreamsBidi, junkdatagramsenderQuicRandomRange(16, 128)) ||
+            &writer, kQuicTpInitialMaxStreamsBidi, fastRandRange32(16, 128)) ||
         ! junkdatagramsenderQuicBytesPutTransportParameterVarint(
-            &writer, kQuicTpInitialMaxStreamsUni, junkdatagramsenderQuicRandomRange(3, 16)) ||
+            &writer, kQuicTpInitialMaxStreamsUni, fastRandRange32(3, 16)) ||
         ! junkdatagramsenderQuicBytesPutTransportParameterVarint(
-            &writer, kQuicTpActiveConnectionIdLimit, junkdatagramsenderQuicRandomRange(2, 8)))
+            &writer, kQuicTpActiveConnectionIdLimit, fastRandRange32(2, 8)))
     {
         return false;
     }
@@ -780,7 +766,7 @@ static const char *junkdatagramsenderQuicRandomHostname(char *buf, size_t buf_le
 
     const char *base = junkdatagramsenderQuicRandomBaseDomain();
     if ((fastRand32() % 100U) < 35U &&
-        junkdatagramsenderQuicFormatFits(
+        stringFormatFits(
             stringNPrintf(
                 buf, buf_len, "%s.%s", prefixes[fastRand32() % (sizeof(prefixes) / sizeof(prefixes[0]))], base),
             buf_len))
@@ -792,7 +778,7 @@ static const char *junkdatagramsenderQuicRandomHostname(char *buf, size_t buf_le
 
 static uint8_t junkdatagramsenderQuicRandomConnectionIdLen(void)
 {
-    return (uint8_t) junkdatagramsenderQuicRandomRange(8, kQuicMaxConnectionIdLen);
+    return (uint8_t) fastRandRange32(8, kQuicMaxConnectionIdLen);
 }
 
 static uint8_t junkdatagramsenderQuicRandomPacketNumberLen(void)
@@ -835,7 +821,7 @@ bool junkdatagramsenderQuicHttp3Generate(sbuf_t *buf, const junkdatagramsender_m
     uint32_t token_len = 0;
     if ((fastRand32() % 100U) < 12U)
     {
-        token_len = junkdatagramsenderQuicRandomRange(8, kQuicMaxTokenLen);
+        token_len = fastRandRange32(8, kQuicMaxTokenLen);
         getRandomBytes(token, token_len);
     }
 

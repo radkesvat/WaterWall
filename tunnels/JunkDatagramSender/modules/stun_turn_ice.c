@@ -47,20 +47,6 @@ typedef struct junkdatagramsender_stun_peer_s
     uint16_t port;
 } junkdatagramsender_stun_peer_t;
 
-static uint32_t junkdatagramsenderStunRandomRange(uint32_t min_value, uint32_t max_value)
-{
-    if (max_value <= min_value)
-    {
-        return min_value;
-    }
-    return min_value + (fastRand32() % (max_value - min_value + 1U));
-}
-
-static bool junkdatagramsenderStunFormatFits(int written, size_t buf_len)
-{
-    return written > 0 && (size_t) written < buf_len;
-}
-
 static uint32_t junkdatagramsenderStunWriteLimit(sbuf_t *buf, const junkdatagramsender_module_args_t *args)
 {
     uint32_t limit = sbufGetMaximumWriteableSize(buf);
@@ -350,7 +336,7 @@ static const char *junkdatagramsenderStunRandomRealm(void)
 static bool junkdatagramsenderStunRandomToken(char *buf, size_t buf_len, uint32_t min_len, uint32_t max_len)
 {
     static const char alphabet[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    uint32_t          len        = junkdatagramsenderStunRandomRange(min_len, max_len);
+    uint32_t          len        = fastRandRange32(min_len, max_len);
 
     if (buf_len == 0 || len + 1U > buf_len)
     {
@@ -372,7 +358,7 @@ static const char *junkdatagramsenderStunRandomIceUsername(char *buf, size_t buf
 
     if (junkdatagramsenderStunRandomToken(local, sizeof(local), 4, 8) &&
         junkdatagramsenderStunRandomToken(remote, sizeof(remote), 4, 8) &&
-        junkdatagramsenderStunFormatFits(stringNPrintf(buf, buf_len, "%s:%s", remote, local), buf_len))
+        stringFormatFits(stringNPrintf(buf, buf_len, "%s:%s", remote, local), buf_len))
     {
         return buf;
     }
@@ -381,7 +367,7 @@ static const char *junkdatagramsenderStunRandomIceUsername(char *buf, size_t buf
 
 static const char *junkdatagramsenderStunRandomTurnUsername(char *buf, size_t buf_len)
 {
-    if (junkdatagramsenderStunFormatFits(
+    if (stringFormatFits(
             stringNPrintf(buf, buf_len, "user%04x", (unsigned int) (fastRand32() & 0xFFFFU)), buf_len))
     {
         return buf;
@@ -406,29 +392,29 @@ static void junkdatagramsenderStunRandomPeer(junkdatagramsender_stun_peer_t *pee
         peer->ip[0] = 192;
         peer->ip[1] = 0;
         peer->ip[2] = 2;
-        peer->ip[3] = (uint8_t) junkdatagramsenderStunRandomRange(1, 254);
+        peer->ip[3] = (uint8_t) fastRandRange32(1, 254);
         break;
     case 1:
         peer->ip[0] = 198;
         peer->ip[1] = 51;
         peer->ip[2] = 100;
-        peer->ip[3] = (uint8_t) junkdatagramsenderStunRandomRange(1, 254);
+        peer->ip[3] = (uint8_t) fastRandRange32(1, 254);
         break;
     case 2:
         peer->ip[0] = 203;
         peer->ip[1] = 0;
         peer->ip[2] = 113;
-        peer->ip[3] = (uint8_t) junkdatagramsenderStunRandomRange(1, 254);
+        peer->ip[3] = (uint8_t) fastRandRange32(1, 254);
         break;
     default:
         peer->ip[0] = 10;
         peer->ip[1] = (uint8_t) (fastRand32() % 255U);
         peer->ip[2] = (uint8_t) (fastRand32() % 255U);
-        peer->ip[3] = (uint8_t) junkdatagramsenderStunRandomRange(1, 254);
+        peer->ip[3] = (uint8_t) fastRandRange32(1, 254);
         break;
     }
 
-    peer->port = (uint16_t) junkdatagramsenderStunRandomRange(1024, 65535);
+    peer->port = (uint16_t) fastRandRange32(1024, 65535);
 }
 
 static void junkdatagramsenderStunMaybeIntegrity(uint8_t message_integrity[20], const uint8_t **selected)
@@ -633,7 +619,7 @@ bool junkdatagramsenderStunTurnIceGenerate(sbuf_t *buf, const junkdatagramsender
             junkdatagramsenderStunRandomTurnUsername(username, sizeof(username)),
             junkdatagramsenderStunRandomRealm(),
             junkdatagramsenderStunRandomNonce(nonce, sizeof(nonce)),
-            junkdatagramsenderStunRandomRange(300, 3600),
+            fastRandRange32(300, 3600),
             selected_integrity,
             junkdatagramsenderStunRandomSoftware(),
             true);
@@ -655,7 +641,7 @@ bool junkdatagramsenderStunTurnIceGenerate(sbuf_t *buf, const junkdatagramsender
             buf,
             write_limit,
             transaction_id,
-            (uint16_t) junkdatagramsenderStunRandomRange(kTurnChannelMin, kTurnChannelMax),
+            (uint16_t) fastRandRange32(kTurnChannelMin, kTurnChannelMax),
             &peer,
             junkdatagramsenderStunRandomTurnUsername(username, sizeof(username)),
             junkdatagramsenderStunRandomRealm(),
@@ -664,7 +650,7 @@ bool junkdatagramsenderStunTurnIceGenerate(sbuf_t *buf, const junkdatagramsender
             true);
 
     default: {
-        uint16_t data_len = (uint16_t) junkdatagramsenderStunRandomRange(8, 96);
+        uint16_t data_len = (uint16_t) fastRandRange32(8, 96);
         if (data_len > sizeof(send_data))
         {
             data_len = sizeof(send_data);

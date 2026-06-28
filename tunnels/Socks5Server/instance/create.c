@@ -4,27 +4,6 @@
 
 #include "loggers/network_logger.h"
 
-static const cJSON *getSettingsItemByKeys(const cJSON *settings, const char *key1, const char *key2)
-{
-    const char *keys[2] = {key1, key2};
-
-    for (size_t i = 0; i < ARRAY_SIZE(keys); ++i)
-    {
-        if (keys[i] == NULL)
-        {
-            continue;
-        }
-
-        const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, keys[i]);
-        if (item != NULL)
-        {
-            return item;
-        }
-    }
-
-    return NULL;
-}
-
 static hash_t socks5serverAuthenticationClientTypeHash(void)
 {
     const char *type_name = "AuthenticationClient";
@@ -121,7 +100,7 @@ static bool parseAuthenticationMode(socks5server_tstate_t *ts, node_t *node, con
 
 static bool parseUdpReplyAddress(socks5server_tstate_t *ts, const cJSON *settings)
 {
-    const cJSON *ipv4_json = getSettingsItemByKeys(settings, "ipv4", "udp-ipv4");
+    const cJSON *ipv4_json = getJsonObjectItemByKeys(settings, "ipv4", "udp-ipv4", NULL);
 
     if (! ts->allow_udp)
     {
@@ -145,33 +124,20 @@ static bool parseUdpReplyAddress(socks5server_tstate_t *ts, const cJSON *setting
     return true;
 }
 
-static char *socks5serverMakeChildName(const node_t *node, const char *suffix)
-{
-    const char *base = node->name != NULL ? node->name : "Socks5Server";
-    return stringConcat(base, suffix);
-}
-
-static void socks5serverConfigureUserControllerNode(node_t *child, node_t template_node, const node_t *owner)
-{
-    *child = template_node;
-
-    child->name      = socks5serverMakeChildName(owner, ".user-controller");
-    child->hash_name = calcHashBytes(child->name, stringLength(child->name));
-    child->next      = owner->next != NULL ? stringDuplicate(owner->next) : NULL;
-    child->hash_next = owner->hash_next;
-    child->version   = owner->version;
-
-    child->node_json           = owner->node_json;
-    child->node_settings_json  = owner->node_settings_json;
-    child->node_manager_config = owner->node_manager_config;
-    child->instance            = NULL;
-}
-
 static bool socks5serverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
 {
     socks5server_tstate_t *ts = tunnelGetState(t);
 
-    socks5serverConfigureUserControllerNode(&ts->user_controller_node, nodeUserControllerGet(), node);
+    if (! nodeConfigureChild(&ts->user_controller_node,
+                             nodeUserControllerGet(),
+                             node,
+                             ".user-controller",
+                             kNodeChildLinkOwnerNext,
+                             node->node_settings_json))
+    {
+        LOGF("Socks5Server: failed to configure internal UserController node");
+        return false;
+    }
 
     ts->user_controller_tunnel = ts->user_controller_node.createHandle(&ts->user_controller_node);
     if (ts->user_controller_tunnel == NULL)

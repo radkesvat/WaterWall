@@ -101,12 +101,6 @@ static bool deriveKeyFromPassword(const char *password, const char *salt, uint32
     return true;
 }
 
-static char *makeInternalNodeName(const char *parent_name)
-{
-    const char *base = parent_name != NULL ? parent_name : "RealityClient";
-    return stringConcat(base, ".internal-tls-client");
-}
-
 static bool initializeInternalTlsClient(tunnel_t *t, node_t *node)
 {
     realityclient_tstate_t *ts = tunnelGetState(t);
@@ -119,7 +113,12 @@ static bool initializeInternalTlsClient(tunnel_t *t, node_t *node)
     }
 
     ts->tls_node                     = nodeTlsClientGet();
-    ts->tls_node.name                = makeInternalNodeName(node->name);
+    ts->tls_node.name                = nodeMakeChildName(node, ".internal-tls-client");
+    if (ts->tls_node.name == NULL)
+    {
+        LOGF("RealityClient: failed to configure internal TlsClient node");
+        return false;
+    }
     ts->tls_node.hash_name           = calcHashBytes(ts->tls_node.name, stringLength(ts->tls_node.name));
     ts->tls_node.next                = stringDuplicate(node->next);
     ts->tls_node.hash_next           = node->hash_next;

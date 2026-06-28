@@ -41,15 +41,6 @@ typedef struct junkdatagramsender_ipsec_writer_s
     uint32_t capacity;
 } junkdatagramsender_ipsec_writer_t;
 
-static uint32_t junkdatagramsenderIpsecRandomRange(uint32_t min_value, uint32_t max_value)
-{
-    if (max_value <= min_value)
-    {
-        return min_value;
-    }
-    return min_value + (fastRand32() % (max_value - min_value + 1U));
-}
-
 static uint32_t junkdatagramsenderIpsecWriteLimit(sbuf_t *buf, const junkdatagramsender_module_args_t *args)
 {
     uint32_t limit = sbufGetMaximumWriteableSize(buf);
@@ -239,7 +230,7 @@ static bool junkdatagramsenderIpsecPutKePayloadBody(junkdatagramsender_ipsec_wri
 
 static bool junkdatagramsenderIpsecPutNoncePayloadBody(junkdatagramsender_ipsec_writer_t *writer)
 {
-    return junkdatagramsenderIpsecPutRandom(writer, junkdatagramsenderIpsecRandomRange(20, 32));
+    return junkdatagramsenderIpsecPutRandom(writer, fastRandRange32(20, 32));
 }
 
 static bool junkdatagramsenderIpsecPutNotifyPayloadBody(junkdatagramsender_ipsec_writer_t *writer, uint16_t notify_type)
@@ -366,7 +357,7 @@ static bool junkdatagramsenderIpsecBuildIkeSaInit(sbuf_t *buf, uint32_t write_li
 
 static bool junkdatagramsenderIpsecPutEncryptedPayloadBody(junkdatagramsender_ipsec_writer_t *writer)
 {
-    return junkdatagramsenderIpsecPutRandom(writer, junkdatagramsenderIpsecRandomRange(48, 192));
+    return junkdatagramsenderIpsecPutRandom(writer, fastRandRange32(48, 192));
 }
 
 static bool junkdatagramsenderIpsecBuildIkeInformational(sbuf_t *buf, uint32_t write_limit)
@@ -379,7 +370,7 @@ static bool junkdatagramsenderIpsecBuildIkeInformational(sbuf_t *buf, uint32_t w
         ! junkdatagramsenderIpsecBuildIkev2Header(&writer,
                                                   kIkev2PayloadSk,
                                                   kIkev2ExchangeInformational,
-                                                  junkdatagramsenderIpsecRandomRange(1, 32),
+                                                  fastRandRange32(1, 32),
                                                   &length_offset,
                                                   true) ||
         ! junkdatagramsenderIpsecPutPayload(&writer, kIkev2PayloadNone, junkdatagramsenderIpsecPutEncryptedPayloadBody))
@@ -393,10 +384,10 @@ static bool junkdatagramsenderIpsecBuildIkeInformational(sbuf_t *buf, uint32_t w
 static bool junkdatagramsenderIpsecBuildEspInUdp(sbuf_t *buf, uint32_t write_limit)
 {
     junkdatagramsender_ipsec_writer_t writer        = {.buf = buf, .pos = 0, .capacity = write_limit};
-    uint32_t                          encrypted_len = junkdatagramsenderIpsecRandomRange(24, 192);
+    uint32_t                          encrypted_len = fastRandRange32(24, 192);
 
     if (! junkdatagramsenderIpsecPutU32(&writer, junkdatagramsenderIpsecRandomNonZeroU32()) ||
-        ! junkdatagramsenderIpsecPutU32(&writer, junkdatagramsenderIpsecRandomRange(1, 65535)) ||
+        ! junkdatagramsenderIpsecPutU32(&writer, fastRandRange32(1, 65535)) ||
         ! junkdatagramsenderIpsecPutRandom(&writer, encrypted_len))
     {
         return false;

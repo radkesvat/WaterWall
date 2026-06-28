@@ -112,3 +112,73 @@ static inline bool nodeHasNext(node_t *node)
 {
     return node->next != NULL;
 }
+
+typedef enum node_child_link_mode_e
+{
+    kNodeChildLinkNone = 0,
+    kNodeChildLinkOwnerNext,
+    kNodeChildLinkOwnerSelf
+} node_child_link_mode_t;
+
+static inline char *nodeMakeChildName(const node_t *node, const char *suffix)
+{
+    assert(node != NULL);
+    assert(suffix != NULL);
+
+    const char *base = node->name != NULL ? node->name : node->type;
+    if (base == NULL)
+    {
+        base = "Node";
+    }
+
+    return stringConcat(base, suffix);
+}
+
+static inline bool nodeConfigureChild(node_t *child, node_t template_node, const node_t *owner, const char *suffix,
+                                      node_child_link_mode_t link_mode, struct cJSON *settings)
+{
+    assert(child != NULL);
+    assert(owner != NULL);
+
+    *child = template_node;
+
+    child->name = nodeMakeChildName(owner, suffix);
+    if (child->name == NULL)
+    {
+        return false;
+    }
+
+    child->hash_name = calcHashBytes(child->name, stringLength(child->name));
+
+    switch (link_mode)
+    {
+    case kNodeChildLinkOwnerNext:
+        child->next      = owner->next != NULL ? stringDuplicate(owner->next) : NULL;
+        child->hash_next = owner->hash_next;
+        break;
+    case kNodeChildLinkOwnerSelf:
+        child->next      = owner->name != NULL ? stringDuplicate(owner->name) : NULL;
+        child->hash_next = owner->hash_name;
+        break;
+    case kNodeChildLinkNone:
+    default:
+        child->next      = NULL;
+        child->hash_next = 0;
+        break;
+    }
+
+    if ((link_mode == kNodeChildLinkOwnerNext && owner->next != NULL && child->next == NULL) ||
+        (link_mode == kNodeChildLinkOwnerSelf && owner->name != NULL && child->next == NULL))
+    {
+        memoryFree(child->name);
+        child->name = NULL;
+        return false;
+    }
+
+    child->version             = owner->version;
+    child->node_json           = owner->node_json;
+    child->node_settings_json  = settings;
+    child->node_manager_config = owner->node_manager_config;
+    child->instance            = NULL;
+    return true;
+}

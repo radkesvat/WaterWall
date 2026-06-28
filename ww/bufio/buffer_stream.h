@@ -137,3 +137,134 @@ static inline bool bufferstreamIsEmpty(buffer_stream_t *self)
     assert(self != NULL);
     return self->size == 0;
 }
+
+static inline bool bufferstreamFindCRLF(buffer_stream_t *stream, size_t *line_end)
+{
+    if (bufferstreamGetBufLen(stream) < 2)
+    {
+        return false;
+    }
+
+    int    state      = 0;
+    size_t match_idx  = 0;
+    size_t cur_offset = 0;
+
+    c_foreach(qi, bs_doublequeue_t, stream->q)
+    {
+        sbuf_t  *b      = *qi.ref;
+        size_t   b_size = sbufGetLength(b);
+        uint8_t *b_data = (uint8_t *) sbufGetRawPtr(b);
+
+        for (size_t i = 0; i < b_size; ++i)
+        {
+            uint8_t c = b_data[i];
+
+            if (state == 0)
+            {
+                if (c == '\r')
+                {
+                    state     = 1;
+                    match_idx = cur_offset + i;
+                }
+            }
+            else if (state == 1)
+            {
+                if (c == '\n')
+                {
+                    *line_end = match_idx;
+                    return true;
+                }
+                if (c == '\r')
+                {
+                    match_idx = cur_offset + i;
+                }
+                else
+                {
+                    state = 0;
+                }
+            }
+        }
+        cur_offset += b_size;
+    }
+
+    return false;
+}
+
+static inline bool bufferstreamFindDoubleCRLF(buffer_stream_t *stream, size_t *header_end)
+{
+    if (bufferstreamGetBufLen(stream) < 4)
+    {
+        return false;
+    }
+
+    int    state      = 0;
+    size_t match_idx  = 0;
+    size_t cur_offset = 0;
+
+    c_foreach(qi, bs_doublequeue_t, stream->q)
+    {
+        sbuf_t  *b      = *qi.ref;
+        size_t   b_size = sbufGetLength(b);
+        uint8_t *b_data = (uint8_t *) sbufGetRawPtr(b);
+
+        for (size_t i = 0; i < b_size; ++i)
+        {
+            uint8_t c = b_data[i];
+
+            if (state == 0)
+            {
+                if (c == '\r')
+                {
+                    state     = 1;
+                    match_idx = cur_offset + i;
+                }
+            }
+            else if (state == 1)
+            {
+                if (c == '\n')
+                {
+                    state = 2;
+                }
+                else if (c == '\r')
+                {
+                    match_idx = cur_offset + i;
+                }
+                else
+                {
+                    state = 0;
+                }
+            }
+            else if (state == 2)
+            {
+                if (c == '\r')
+                {
+                    state = 3;
+                }
+                else
+                {
+                    state = 0;
+                }
+            }
+            else if (state == 3)
+            {
+                if (c == '\n')
+                {
+                    *header_end = match_idx + 4U;
+                    return true;
+                }
+                if (c == '\r')
+                {
+                    state     = 1;
+                    match_idx = cur_offset + i;
+                }
+                else
+                {
+                    state = 0;
+                }
+            }
+        }
+        cur_offset += b_size;
+    }
+
+    return false;
+}

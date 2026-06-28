@@ -4,34 +4,6 @@
 
 #include "loggers/network_logger.h"
 
-static char *routerMakeChildName(const node_t *node, const char *suffix)
-{
-    const char *base = node->name != NULL ? node->name : "Router";
-    return stringConcat(base, suffix);
-}
-
-static bool routerConfigureDomainResolverNode(node_t *child, node_t template_node, const node_t *owner)
-{
-    *child = template_node;
-
-    child->name = routerMakeChildName(owner, ".domain-resolver");
-    if (child->name == NULL)
-    {
-        return false;
-    }
-
-    child->hash_name           = calcHashBytes(child->name, stringLength(child->name));
-    child->next                = NULL;
-    child->hash_next           = 0;
-    child->version             = owner->version;
-    child->flags               = kNodeFlagNone;
-    child->node_json           = owner->node_json;
-    child->node_settings_json  = NULL;
-    child->node_manager_config = owner->node_manager_config;
-    child->instance            = NULL;
-    return true;
-}
-
 static bool routerLoadResolveDomains(router_tstate_t *ts, const cJSON *settings)
 {
     ts->resolve_domains = false;
@@ -66,11 +38,13 @@ static bool routerCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return true;
     }
 
-    if (! routerConfigureDomainResolverNode(&ts->domain_resolver_node, nodeDomainResolverGet(), node))
+    if (! nodeConfigureChild(
+            &ts->domain_resolver_node, nodeDomainResolverGet(), node, ".domain-resolver", kNodeChildLinkNone, NULL))
     {
         LOGF("Router: failed to configure internal DomainResolver node");
         return false;
     }
+    ts->domain_resolver_node.flags = kNodeFlagNone;
 
     ts->domain_resolver_tunnel = ts->domain_resolver_node.createHandle(&ts->domain_resolver_node);
     if (ts->domain_resolver_tunnel == NULL)

@@ -43,30 +43,9 @@ static bool parseAuthClientNode(trojanserver_tstate_t *ts, node_t *node, const c
     return true;
 }
 
-static const cJSON *getSettingsItemByKeys(const cJSON *settings, const char *key1, const char *key2, const char *key3)
-{
-    const char *keys[3] = {key1, key2, key3};
-
-    for (size_t i = 0; i < ARRAY_SIZE(keys); ++i)
-    {
-        if (keys[i] == NULL)
-        {
-            continue;
-        }
-
-        const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, keys[i]);
-        if (item != NULL)
-        {
-            return item;
-        }
-    }
-
-    return NULL;
-}
-
 static bool parseFallbackNode(trojanserver_tstate_t *ts, node_t *node, const cJSON *settings)
 {
-    const cJSON *fallback_json = getSettingsItemByKeys(settings, "fallback-node-name", "fallback-node", "fallback");
+    const cJSON *fallback_json = getJsonObjectItemByKeys(settings, "fallback-node-name", "fallback-node", "fallback");
 
     if (fallback_json == NULL)
     {
@@ -97,33 +76,20 @@ static bool parseFallbackNode(trojanserver_tstate_t *ts, node_t *node, const cJS
     return true;
 }
 
-static char *trojanserverMakeChildName(const node_t *node, const char *suffix)
-{
-    const char *base = node->name != NULL ? node->name : "TrojanServer";
-    return stringConcat(base, suffix);
-}
-
-static void trojanserverConfigureUserControllerNode(node_t *child, node_t template_node, const node_t *owner)
-{
-    *child = template_node;
-
-    child->name      = trojanserverMakeChildName(owner, ".user-controller");
-    child->hash_name = calcHashBytes(child->name, stringLength(child->name));
-    child->next      = owner->next != NULL ? stringDuplicate(owner->next) : NULL;
-    child->hash_next = owner->hash_next;
-    child->version   = owner->version;
-
-    child->node_json           = owner->node_json;
-    child->node_settings_json  = owner->node_settings_json;
-    child->node_manager_config = owner->node_manager_config;
-    child->instance            = NULL;
-}
-
 static bool trojanserverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
 {
     trojanserver_tstate_t *ts = tunnelGetState(t);
 
-    trojanserverConfigureUserControllerNode(&ts->user_controller_node, nodeUserControllerGet(), node);
+    if (! nodeConfigureChild(&ts->user_controller_node,
+                             nodeUserControllerGet(),
+                             node,
+                             ".user-controller",
+                             kNodeChildLinkOwnerNext,
+                             node->node_settings_json))
+    {
+        LOGF("TrojanServer: failed to configure internal UserController node");
+        return false;
+    }
 
     ts->user_controller_tunnel = ts->user_controller_node.createHandle(&ts->user_controller_node);
     if (ts->user_controller_tunnel == NULL)

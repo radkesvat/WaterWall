@@ -43,32 +43,10 @@ static bool vlessserverParseAuthClientNode(vlessserver_tstate_t *ts, node_t *nod
     return true;
 }
 
-static const cJSON *vlessserverGetSettingsItemByKeys(const cJSON *settings, const char *key1, const char *key2,
-                                                     const char *key3)
-{
-    const char *keys[3] = {key1, key2, key3};
-
-    for (size_t i = 0; i < ARRAY_SIZE(keys); ++i)
-    {
-        if (keys[i] == NULL)
-        {
-            continue;
-        }
-
-        const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, keys[i]);
-        if (item != NULL)
-        {
-            return item;
-        }
-    }
-
-    return NULL;
-}
-
 static bool vlessserverParseFallbackNode(vlessserver_tstate_t *ts, node_t *node, const cJSON *settings)
 {
     const cJSON *fallback_json =
-        vlessserverGetSettingsItemByKeys(settings, "fallback-node-name", "fallback-node", "fallback");
+        getJsonObjectItemByKeys(settings, "fallback-node-name", "fallback-node", "fallback");
 
     if (fallback_json == NULL)
     {
@@ -99,33 +77,20 @@ static bool vlessserverParseFallbackNode(vlessserver_tstate_t *ts, node_t *node,
     return true;
 }
 
-static char *vlessserverMakeChildName(const node_t *node, const char *suffix)
-{
-    const char *base = node->name != NULL ? node->name : "VlessServer";
-    return stringConcat(base, suffix);
-}
-
-static void vlessserverConfigureUserControllerNode(node_t *child, node_t template_node, const node_t *owner)
-{
-    *child = template_node;
-
-    child->name      = vlessserverMakeChildName(owner, ".user-controller");
-    child->hash_name = calcHashBytes(child->name, stringLength(child->name));
-    child->next      = owner->next != NULL ? stringDuplicate(owner->next) : NULL;
-    child->hash_next = owner->hash_next;
-    child->version   = owner->version;
-
-    child->node_json           = owner->node_json;
-    child->node_settings_json  = owner->node_settings_json;
-    child->node_manager_config = owner->node_manager_config;
-    child->instance            = NULL;
-}
-
 static bool vlessserverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
 {
     vlessserver_tstate_t *ts = tunnelGetState(t);
 
-    vlessserverConfigureUserControllerNode(&ts->user_controller_node, nodeUserControllerGet(), node);
+    if (! nodeConfigureChild(&ts->user_controller_node,
+                             nodeUserControllerGet(),
+                             node,
+                             ".user-controller",
+                             kNodeChildLinkOwnerNext,
+                             node->node_settings_json))
+    {
+        LOGF("VlessServer: failed to configure internal UserController node");
+        return false;
+    }
 
     ts->user_controller_tunnel = ts->user_controller_node.createHandle(&ts->user_controller_node);
     if (ts->user_controller_tunnel == NULL)
@@ -136,75 +101,6 @@ static bool vlessserverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
 
     ts->user_controller_node.instance = ts->user_controller_tunnel;
     return true;
-}
-
-static int vlessserverHexValue(uint8_t c)
-{
-    if (c >= '0' && c <= '9')
-    {
-        return (int) (c - '0');
-    }
-
-    if (c >= 'a' && c <= 'f')
-    {
-        return (int) (c - 'a' + 10);
-    }
-
-    if (c >= 'A' && c <= 'F')
-    {
-        return (int) (c - 'A' + 10);
-    }
-
-    return -1;
-}
-
-static bool vlessserverParseUuidString(const char *text, uint8_t out[kVlessServerUuidLen])
-{
-    size_t len    = stringLength(text);
-    bool   dashed = len == 36;
-
-    if (len != 32 && len != 36)
-    {
-        return false;
-    }
-
-    memoryZero(out, kVlessServerUuidLen);
-
-    size_t hex_index = 0;
-    for (size_t i = 0; i < len; ++i)
-    {
-        if (dashed && (i == 8 || i == 13 || i == 18 || i == 23))
-        {
-            if (text[i] != '-')
-            {
-                return false;
-            }
-            continue;
-        }
-
-        if (text[i] == '-')
-        {
-            return false;
-        }
-
-        int value = vlessserverHexValue((uint8_t) text[i]);
-        if (value < 0 || hex_index >= 32)
-        {
-            return false;
-        }
-
-        if ((hex_index & 1U) == 0)
-        {
-            out[hex_index / 2U] = (uint8_t) (value << 4);
-        }
-        else
-        {
-            out[hex_index / 2U] |= (uint8_t) value;
-        }
-        ++hex_index;
-    }
-
-    return hex_index == 32;
 }
 
 static bool vlessserverAppendUuid(vlessserver_tstate_t *ts, const uint8_t uuid[kVlessServerUuidLen],
@@ -250,7 +146,7 @@ static bool vlessserverParseUuidValue(vlessserver_tstate_t *ts, const cJSON *ite
     }
 
     uint8_t uuid[kVlessServerUuidLen] = {0};
-    if (! vlessserverParseUuidString(item->valuestring, uuid))
+    if (! wwUuidParseString(item->valuestring, uuid))
     {
         LOGF("JSON Error: VlessServer->settings->%s must be an RFC4122 UUID string", path);
         return false;

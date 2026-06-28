@@ -53,6 +53,31 @@ static inline uint64_t fastRand64(void)
     return ((uint64_t)high << 32) | low;
 }
 
+static inline uint32_t fastRandRange32(uint32_t min_value, uint32_t max_value)
+{
+    if (max_value <= min_value)
+    {
+        return min_value;
+    }
+
+    uint64_t span = (uint64_t) max_value - (uint64_t) min_value + 1ULL;
+    return min_value + (uint32_t) (fastRand64() % span);
+}
+
+static inline uint32_t fastRandJittered32(uint32_t center, uint32_t jitter)
+{
+    if (center == 0 || jitter == 0)
+    {
+        return center;
+    }
+
+    uint32_t lower = jitter >= center ? 0 : center - jitter;
+    uint32_t upper = UINT32_MAX - center < jitter ? UINT32_MAX : center + jitter;
+    uint64_t span  = (uint64_t) upper - (uint64_t) lower + 1ULL;
+
+    return lower + (uint32_t) (fastRand64() % span);
+}
+
 static void getRandomBytes(void *bytes, size_t size)
 {
     uint8_t *b = (uint8_t *) bytes;

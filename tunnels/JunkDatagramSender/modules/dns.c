@@ -239,11 +239,6 @@ static uint16_t junkdatagramsenderDnsRandomEdnsUdpSize(void)
     return sizes[fastRand32() % (sizeof(sizes) / sizeof(sizes[0]))];
 }
 
-static bool junkdatagramsenderDnsFormatFits(int written, size_t buf_len)
-{
-    return written > 0 && (size_t) written < buf_len;
-}
-
 static const char *junkdatagramsenderDnsBuildRandomName(char *buf, size_t buf_len)
 {
     const char *base = junkdatagramsenderDnsRandomBaseDomain();
@@ -253,21 +248,21 @@ static const char *junkdatagramsenderDnsBuildRandomName(char *buf, size_t buf_le
     case 0:
         return base;
     case 1:
-        if (junkdatagramsenderDnsFormatFits(
+        if (stringFormatFits(
                 stringNPrintf(buf, buf_len, "%s.%s", junkdatagramsenderDnsRandomPrefix(), base), buf_len))
         {
             return buf;
         }
         return base;
     case 2:
-        if (junkdatagramsenderDnsFormatFits(
+        if (stringFormatFits(
                 stringNPrintf(buf, buf_len, "x%04x.%s", (unsigned int) (fastRand32() & 0xFFFFU), base), buf_len))
         {
             return buf;
         }
         return base;
     default:
-        if (junkdatagramsenderDnsFormatFits(stringNPrintf(buf,
+        if (stringFormatFits(stringNPrintf(buf,
                                                           buf_len,
                                                           "%s-%u.%s",
                                                           junkdatagramsenderDnsRandomPrefix(),
