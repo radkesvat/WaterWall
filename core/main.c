@@ -97,6 +97,11 @@ int waterwallInnerMain(int argc, char **argv)
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
     LOGI("Parsing core file complete");
     registerAtExitCallBack(exitHandle, NULL);
+    if (getCoreSettings()->try_enabling_bbr)
+    {
+        tryEnableBbr();
+    }
+
     increaseFileLimit();
     loadImportedTunnelsIntoCore();
 

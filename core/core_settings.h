@@ -39,6 +39,7 @@ struct core_settings_s
     enum domain_strategy domain_strategy;
     char        *libs_path;
 
+    bool     try_enabling_bbr;
     uint16_t mtu_size;
     vec_config_path_t config_paths;
 };

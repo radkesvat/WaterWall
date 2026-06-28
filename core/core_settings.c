@@ -15,6 +15,7 @@
 #define DEFAULT_DNS_LOG_FILE            "dns.log"
 #define DEFAULT_DNS_ENABLE_CONSOLE      true
 #define DEFAULT_RAM_PROFILE             kRamProfileServer
+#define DEFAULT_TRY_ENABLING_BBR        true
 
 #define DEFAULT_MTU_PROFILE             1500
 
@@ -683,7 +684,9 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
             mtu_size = DEFAULT_MTU_PROFILE;
         }
         settings->mtu_size = (uint16_t) mtu_size;
-        
+
+        getBoolFromJsonObjectOrDefault(&settings->try_enabling_bbr, misc_obj, "try-enabling-bbr",
+                                       DEFAULT_TRY_ENABLING_BBR);
         getStringFromJsonObjectOrDefault(&(settings->libs_path), misc_obj, "libs-path", DEFAULT_LIBS_PATH);
         if (! getIntFromJsonObjectOrDefault((int *) &(settings->workers_count), misc_obj, "workers", getNCPU()))
         {
@@ -766,8 +769,9 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
     }
     else
     {
-        settings->libs_path     = stringDuplicate(DEFAULT_LIBS_PATH);
-        settings->workers_count = (unsigned int) getNCPU();
+        settings->try_enabling_bbr = DEFAULT_TRY_ENABLING_BBR;
+        settings->libs_path        = stringDuplicate(DEFAULT_LIBS_PATH);
+        settings->workers_count    = (unsigned int) getNCPU();
         printf("misc block unspecified in json, using defaults. cpu cores: %d\n", settings->workers_count);
     }
 }

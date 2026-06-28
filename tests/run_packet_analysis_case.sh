@@ -92,7 +92,8 @@ cat >"$generated_core_json" <<EOF
   "misc": {
     "workers": $workers,
     "ram-profile": "client",
-    "mtu": 1500
+    "mtu": 1500,
+    "try-enabling-bbr": false
   }
 }
 EOF
