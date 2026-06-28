@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpListener.mdx, and both files must keep the same documentation version.
 -->
 
@@ -171,7 +171,7 @@ When a TCP client connects, `TcpListener`:
 - notifies the next node with upstream `init`
 - starts reading from the client socket
 
-The line's source context is populated from the accepted connection. In the current implementation, the peer IP is recorded and the local port that accepted the connection is stored in the source context port field.
+The line's source context is populated from the accepted connection. The peer IP is recorded in `src_ctx`, the local port that accepted the connection is stored in `src_ctx.port` and `local_listener_port`, and the client's real TCP source port is stored separately in `peer_source_port`.
 
 ### Data flow direction
 

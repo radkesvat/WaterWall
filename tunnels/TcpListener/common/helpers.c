@@ -102,10 +102,13 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
 
     tcplistenerLinestateInitialize(ls, io, t, l);
 
+    const sockaddr_u *peer_addr = (const sockaddr_u *) wioGetPeerAddr(io);
+
     l->routing_context.src_ctx.type_ip   = true; // we have a client ip
     l->routing_context.src_ctx.proto_tcp = true; // tcp client
-    sockaddrToIpAddr((const sockaddr_u *) wioGetPeerAddr(io), &(l->routing_context.src_ctx.ip_address));
-    l->routing_context.src_ctx.port = data->real_localport;
+    sockaddrToIpAddr(peer_addr, &(l->routing_context.src_ctx.ip_address));
+    l->routing_context.peer_source_port    = sockaddrPort((sockaddr_u *) peer_addr);
+    l->routing_context.src_ctx.port        = data->real_localport;
     l->routing_context.local_listener_port = data->real_localport;
 
     weventSetUserData(io, ls);
