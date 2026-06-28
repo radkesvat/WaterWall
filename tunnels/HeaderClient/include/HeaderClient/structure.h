@@ -6,7 +6,9 @@ typedef enum headerclient_data_mode_e
 {
     kHeaderClientDataModeNone = 0,
     kHeaderClientDataModeConstant,
-    kHeaderClientDataModeSourcePort
+    kHeaderClientDataModeSourcePort,
+    kHeaderClientDataModeProxyProtocolV1,
+    kHeaderClientDataModeProxyProtocolV2
 } headerclient_data_mode_e;
 
 typedef enum headerclient_phase_e
@@ -19,6 +21,7 @@ typedef struct headerclient_tstate_s
 {
     headerclient_data_mode_e data_mode;
     uint16_t                 constant_port;
+    address_context_t        proxy_frontend_ipv4;
 } headerclient_tstate_t;
 
 typedef struct headerclient_lstate_s
@@ -29,9 +32,13 @@ typedef struct headerclient_lstate_s
 
 enum
 {
-    kHeaderClientHeaderSize = 2,
-    kTunnelStateSize        = sizeof(headerclient_tstate_t),
-    kLineStateSize          = sizeof(headerclient_lstate_t)
+    kHeaderClientPortHeaderSize                 = 2,
+    kHeaderClientProxyProtocolV1MaxHeaderSize   = 108,
+    kHeaderClientProxyProtocolV2BaseHeaderSize  = 16,
+    kHeaderClientProxyProtocolV2Ipv4AddressSize = 12,
+    kHeaderClientMaxHeaderSize                  = kHeaderClientProxyProtocolV1MaxHeaderSize,
+    kTunnelStateSize                            = sizeof(headerclient_tstate_t),
+    kLineStateSize                              = sizeof(headerclient_lstate_t)
 };
 
 WW_EXPORT void         headerclientTunnelDestroy(tunnel_t *t);
