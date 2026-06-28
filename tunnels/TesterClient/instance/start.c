@@ -25,7 +25,7 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
 
     if (ts->initial_dest_context_enabled)
     {
-        addresscontextAddrCopy(lineGetDestinationAddressContext(l), &ts->initial_dest_context);
+        addresscontextCopy(lineGetDestinationAddressContext(l), &ts->initial_dest_context);
     }
 
     if (! withLineLocked(l, tunnelNextUpStreamInit, t))

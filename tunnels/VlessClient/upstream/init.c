@@ -24,8 +24,7 @@ void vlessclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     vlessclientLinestateInitialize(ls, t, l);
     ls->protocol = protocol;
     ls->kind     = ls->protocol == kVlessClientProtocolUdp ? kVlessClientLineKindUdpApp : kVlessClientLineKindDirect;
-    addresscontextAddrCopy(&ls->target_addr, target);
-    addresscontextSetPort(&ls->target_addr, target->port);
+    addresscontextCopy(&ls->target_addr, target);
 
     if (ts->verbose)
     {

@@ -24,8 +24,7 @@ void trojanclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     trojanclientLinestateInitialize(ls, t, l);
     ls->protocol = protocol;
     ls->kind     = ls->protocol == kTrojanClientProtocolUdp ? kTrojanClientLineKindUdpApp : kTrojanClientLineKindDirect;
-    addresscontextAddrCopy(&ls->target_addr, target);
-    addresscontextSetPort(&ls->target_addr, target->port);
+    addresscontextCopy(&ls->target_addr, target);
 
     if (ts->verbose)
     {

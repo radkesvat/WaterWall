@@ -63,13 +63,13 @@ static void setupDestinationAddress(const dynamic_value_t   *dest_addr_selected,
     switch ((tcpconnector_strategy_e) dest_addr_selected->status)
     {
     case kTcpConnectorStrategyFromSource:
-        addresscontextAddrCopy(dest_ctx, src_ctx);
+        addresscontextCopy(dest_ctx, src_ctx);
         break;
     case kTcpConnectorStrategyConstant:
-        addresscontextAddrCopy(dest_ctx, constant_dest_addr);
+        addresscontextCopy(dest_ctx, constant_dest_addr);
         break;
     case kTcpConnectorStrategyFromDest:
-        addresscontextAddrCopy(dest_ctx, original_dest_ctx);
+        addresscontextCopy(dest_ctx, original_dest_ctx);
         break;
     default:
         break;
@@ -315,7 +315,7 @@ bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
     }
 
     address_context_t original_dest_ctx = {0};
-    addresscontextAddrCopy(&original_dest_ctx, dest_ctx);
+    addresscontextCopy(&original_dest_ctx, dest_ctx);
 
     setupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, &original_dest_ctx, src_ctx);
     setupDestinationPort(dest_port_selected, constant_dest_addr, dest_ctx, &original_dest_ctx, src_ctx);

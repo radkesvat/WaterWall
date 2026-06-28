@@ -177,7 +177,7 @@ static void trojanserverApplyDestinationContext(line_t *l, const address_context
 {
     address_context_t *dest = lineGetDestinationAddressContext(l);
 
-    addresscontextAddrCopy(dest, target);
+    addresscontextCopy(dest, target);
     addresscontextSetOnlyProtocol(dest, udp ? IP_PROTO_UDP : IP_PROTO_TCP);
 }
 

@@ -153,13 +153,13 @@ void udpconnectorSetupDestinationAddress(const dynamic_value_t   *dest_addr_sele
     switch (dest_addr_selected->status)
     {
     case kDvsFromSource:
-        addresscontextAddrCopy(dest_ctx, src_ctx);
+        addresscontextCopy(dest_ctx, src_ctx);
         break;
     case kDvsConstant:
-        addresscontextAddrCopy(dest_ctx, constant_dest_addr);
+        addresscontextCopy(dest_ctx, constant_dest_addr);
         break;
     case kDvsFromDest:
-        addresscontextAddrCopy(dest_ctx, original_dest_ctx);
+        addresscontextCopy(dest_ctx, original_dest_ctx);
         break;
     default:
         break;
@@ -214,7 +214,7 @@ static void udpconnectorSeedPacketDestinationCache(udpconnector_tstate_t *ts, ud
     udpconnector_packet_destination_t *cache = &ls->packet_destinations[ls->packet_initial_destination_index];
     if (! cache->has_context)
     {
-        addresscontextAddrCopy(&cache->dest_ctx, dest_ctx);
+        addresscontextCopy(&cache->dest_ctx, dest_ctx);
         cache->has_context = true;
     }
 }
@@ -349,7 +349,7 @@ bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
 
     if (ts->balance_mode == kUdpConnectorBalanceModePacket)
     {
-        addresscontextAddrCopy(&ls->packet_base_dest_ctx, dest_ctx);
+        addresscontextCopy(&ls->packet_base_dest_ctx, dest_ctx);
         ls->packet_initial_destination_index = selected_destination_index;
     }
 
@@ -363,7 +363,7 @@ bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
     }
 
     address_context_t original_dest_ctx = {0};
-    addresscontextAddrCopy(&original_dest_ctx, dest_ctx);
+    addresscontextCopy(&original_dest_ctx, dest_ctx);
 
     udpconnectorSetupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, &original_dest_ctx, src_ctx);
     udpconnectorSetupDestinationPort(dest_port_selected,
@@ -414,7 +414,7 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     if (ts->balance_mode == kUdpConnectorBalanceModePacket)
     {
-        addresscontextAddrCopy(&ls->packet_base_dest_ctx, &resolver_ls->packet_base_dest_ctx);
+        addresscontextCopy(&ls->packet_base_dest_ctx, &resolver_ls->packet_base_dest_ctx);
         ls->packet_initial_destination_index = resolver_ls->packet_initial_destination_index;
     }
 

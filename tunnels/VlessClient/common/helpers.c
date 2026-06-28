@@ -216,15 +216,14 @@ bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l, vlessclient_protocol_
 
     if (uses_current_dest)
     {
-        addresscontextAddrCopy(&current, dest_ctx);
-        addresscontextSetPort(&current, dest_ctx->port);
+        addresscontextCopy(&current, dest_ctx);
     }
 
     vlessclient_protocol_t resolved_protocol = resolveConfiguredProtocol(ts, &current);
 
     if (ts->target_addr_source == kDvsConstant)
     {
-        addresscontextAddrCopy(dest_ctx, &ts->target_addr);
+        addresscontextCopy(dest_ctx, &ts->target_addr);
     }
     else
     {
@@ -235,7 +234,7 @@ bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l, vlessclient_protocol_
             return false;
         }
 
-        addresscontextAddrCopy(dest_ctx, &current);
+        addresscontextCopy(dest_ctx, &current);
     }
 
     if (ts->target_port_source == kDvsConstant)
@@ -410,7 +409,7 @@ bool vlessclientStartUdpCarrier(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls
     line_t               *carrier_l  = createInternalLine(t, l, kVlessClientLineKindUdpCarrier);
     vlessclient_lstate_t *carrier_ls = lineGetState(carrier_l, t);
 
-    addresscontextAddrCopy(&carrier_ls->target_addr, &ls->target_addr);
+    addresscontextCopy(&carrier_ls->target_addr, &ls->target_addr);
     carrier_ls->protocol = ls->protocol;
     setLineProtocol(carrier_l, IP_PROTO_TCP);
 

@@ -383,7 +383,7 @@ static void udpconnectorBuildPacketDestinationContext(tunnel_t *t, line_t *l, ud
     const udpconnector_destination_t *selected_destination =
         ts->destinations_count > 0 ? &ts->destinations[destination_index] : NULL;
 
-    addresscontextAddrCopy(dest_ctx, &ls->packet_base_dest_ctx);
+    addresscontextCopy(dest_ctx, &ls->packet_base_dest_ctx);
 
     if (selected_destination != NULL)
     {
@@ -395,7 +395,7 @@ static void udpconnectorBuildPacketDestinationContext(tunnel_t *t, line_t *l, ud
     }
 
     address_context_t original_dest_ctx = {0};
-    addresscontextAddrCopy(&original_dest_ctx, line_dest_ctx);
+    addresscontextCopy(&original_dest_ctx, line_dest_ctx);
 
     udpconnectorSetupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, &original_dest_ctx, src_ctx);
     udpconnectorSetupDestinationPort(dest_port_selected,

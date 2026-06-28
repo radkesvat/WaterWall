@@ -282,7 +282,7 @@ static bool testerclientLoadInitialDestContext(testerclient_tstate_t *ts, const 
         return false;
     }
 
-    addresscontextAddrCopy(&ts->initial_dest_context, &loaded);
+    addresscontextCopy(&ts->initial_dest_context, &loaded);
     addresscontextReset(&loaded);
     ts->initial_dest_context_enabled = true;
     return true;

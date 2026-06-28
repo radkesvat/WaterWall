@@ -317,15 +317,14 @@ bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l, socks5client_protoco
 
     if (uses_current_dest)
     {
-        addresscontextAddrCopy(&current, dest_ctx);
-        addresscontextSetPort(&current, dest_ctx->port);
+        addresscontextCopy(&current, dest_ctx);
     }
 
     socks5client_protocol_t resolved_protocol = resolveConfiguredProtocol(ts, &current);
 
     if (ts->target_addr_source == kDvsConstant)
     {
-        addresscontextAddrCopy(dest_ctx, &ts->target_addr);
+        addresscontextCopy(dest_ctx, &ts->target_addr);
     }
     else
     {
@@ -336,7 +335,7 @@ bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l, socks5client_protoco
             return false;
         }
 
-        addresscontextAddrCopy(dest_ctx, &current);
+        addresscontextCopy(dest_ctx, &current);
     }
 
     if (ts->target_port_source == kDvsConstant)
@@ -621,7 +620,7 @@ static bool startUdpRelayLine(tunnel_t *t, line_t *control_l, socks5client_lstat
     socks5client_lstate_t *app_ls = lineGetState(app_l, t);
     line_t                *udp_l  = createInternalLine(t, app_l, kSocks5ClientLineKindUdpRelay);
 
-    addresscontextAddrCopy(lineGetDestinationAddressContext(udp_l), relay_addr);
+    addresscontextCopy(lineGetDestinationAddressContext(udp_l), relay_addr);
     addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(udp_l), IP_PROTO_UDP);
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(udp_l), IP_PROTO_UDP);
 
@@ -664,7 +663,7 @@ bool socks5clientStartUdpAssociation(tunnel_t *t, line_t *l, socks5client_lstate
     line_t                *control_l  = createInternalLine(t, l, kSocks5ClientLineKindUdpControl);
     socks5client_lstate_t *control_ls = lineGetState(control_l, t);
 
-    addresscontextAddrCopy(&control_ls->target_addr, &ls->target_addr);
+    addresscontextCopy(&control_ls->target_addr, &ls->target_addr);
     control_ls->protocol = ls->protocol;
     setLineProtocol(control_l, IP_PROTO_TCP);
 
@@ -998,7 +997,7 @@ bool socks5clientDrainHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate
                 }
 
                 addresscontextSetOnlyProtocol(&relay_addr, IP_PROTO_UDP);
-                addresscontextAddrCopy(&ls->relay_addr, &relay_addr);
+                addresscontextCopy(&ls->relay_addr, &relay_addr);
                 ls->phase = kSocks5ClientPhaseEstablished;
 
                 bool control_alive = true;

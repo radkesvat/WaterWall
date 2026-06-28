@@ -251,7 +251,7 @@ static void vlessserverApplyDestinationContext(line_t *l, const address_context_
 {
     address_context_t *dest = lineGetDestinationAddressContext(l);
 
-    addresscontextAddrCopy(dest, target);
+    addresscontextCopy(dest, target);
     addresscontextSetOnlyProtocol(dest, udp ? IP_PROTO_UDP : IP_PROTO_TCP);
 }
 
@@ -544,7 +544,7 @@ static bool vlessserverStartTcpBranch(tunnel_t *t, line_t *l, vlessserver_lstate
 
 static bool vlessserverStartUdpBranch(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls, const address_context_t *target)
 {
-    addresscontextAddrCopy(&ls->udp_target, target);
+    addresscontextCopy(&ls->udp_target, target);
     ls->phase = kVlessServerPhaseUdpConnecting;
 
     lineLock(l);

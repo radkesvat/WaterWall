@@ -496,7 +496,7 @@ static inline int addresscontextGetSockType(const address_context_t *context)
  *
  * Copies flags, port, and either IP address or domain.
  */
-static inline void addresscontextAddrCopy(address_context_t *dest, const address_context_t *const source)
+static inline void addresscontextCopy(address_context_t *dest, const address_context_t *const source)
 {
     addresscontextReset(dest);
 
@@ -541,6 +541,14 @@ static inline void addresscontextAddrCopy(address_context_t *dest, const address
     dest->domain_resolved = source->domain_resolved;
     dest->port            = source->port;
     dest->optional_flags  = source->optional_flags;
+}
+
+/**
+ * @brief Legacy name for addresscontextCopy().
+ */
+static inline void addresscontextAddrCopy(address_context_t *dest, const address_context_t *const source)
+{
+    addresscontextCopy(dest, source);
 }
 
 // ============================================================================
