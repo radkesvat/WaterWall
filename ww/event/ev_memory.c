@@ -24,7 +24,7 @@ long eventloopFreeCount(void) {
 
 
 void* eventloopMalloc(size_t size) {
-    atomicInc(&s_alloc_cnt);
+    atomicIncRelaxed(&s_alloc_cnt);
     void* ptr = memoryAllocate(size);
     if (!ptr) {
         printError("malloc failed!\n");
@@ -34,8 +34,8 @@ void* eventloopMalloc(size_t size) {
 }
 
 void* eventloopRealloc(void* oldptr, size_t newsize, size_t oldsize) {
-    atomicInc(&s_alloc_cnt);
-    if (oldptr) atomicInc(&s_free_cnt);
+    atomicIncRelaxed(&s_alloc_cnt);
+    if (oldptr) atomicIncRelaxed(&s_free_cnt);
     void* ptr = memoryReAllocate(oldptr, newsize);
     if (!ptr) {
         printError("realloc failed!\n");
@@ -48,7 +48,7 @@ void* eventloopRealloc(void* oldptr, size_t newsize, size_t oldsize) {
 }
 
 void* eventloopCalloc(size_t nmemb, size_t size) {
-    atomicInc(&s_alloc_cnt);
+    atomicIncRelaxed(&s_alloc_cnt);
     void* ptr = memoryAllocate(nmemb* size);
     if (!ptr) {
         printError("calloc failed!\n");
@@ -60,7 +60,7 @@ void* eventloopCalloc(size_t nmemb, size_t size) {
 }
 
 void* eventloopZalloc(size_t size) {
-    atomicInc(&s_alloc_cnt);
+    atomicIncRelaxed(&s_alloc_cnt);
     void* ptr = memoryAllocate(size);
     if (!ptr) {
         printError("malloc failed!\n");
@@ -74,6 +74,6 @@ void eventloopFree(void* ptr) {
     if (ptr) {
         memoryFree(ptr);
         ptr = NULL;
-        atomicInc(&s_free_cnt);
+        atomicIncRelaxed(&s_free_cnt);
     }
 }
