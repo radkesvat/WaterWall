@@ -254,7 +254,7 @@ static bool trojanserverAuthenticateHash(tunnel_t *t, line_t *l, const uint8_t s
 
         for (uint32_t i = 0; i < ts->user_count; ++i)
         {
-            if (wCryptoEqual(ts->users[i].sha224, sha224, SHA224_DIGEST_SIZE))
+            if (memoryEqual(ts->users[i].sha224, sha224, SHA224_DIGEST_SIZE))
             {
                 matched = &ts->users[i];
                 break;
@@ -1262,7 +1262,7 @@ void trojanserverTunnelstateDestroy(trojanserver_tstate_t *ts)
 
     for (uint32_t i = 0; i < ts->user_count; ++i)
     {
-        wCryptoZero(ts->users[i].sha224, sizeof(ts->users[i].sha224));
+        memoryZero(ts->users[i].sha224, sizeof(ts->users[i].sha224));
         memoryFree(ts->users[i].username);
         memoryFree(ts->users[i].password);
     }

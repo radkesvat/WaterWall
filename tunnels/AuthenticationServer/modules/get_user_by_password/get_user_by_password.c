@@ -44,7 +44,7 @@ sbuf_t *authenticationserverGetUserByPasswordHandle(
     }
 
     cJSON *user_json = usersUserToJsonByPassword(&ts->store.users, password);
-    wCryptoZero(password, request_data_len);
+    memoryZero(password, request_data_len);
     memoryFree(password);
 
     if (user_json == NULL)

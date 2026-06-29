@@ -108,7 +108,7 @@ static bool vlessserverAppendUuid(vlessserver_tstate_t *ts, const uint8_t uuid[k
 {
     for (uint32_t i = 0; i < ts->user_count; ++i)
     {
-        if (wCryptoEqual(ts->users[i].uuid, uuid, kVlessServerUuidLen))
+        if (memoryEqual(ts->users[i].uuid, uuid, kVlessServerUuidLen))
         {
             LOGF("JSON Error: VlessServer->settings->%s duplicates a configured local UUID", path);
             return false;

@@ -139,7 +139,7 @@ static bool authenticationserverPushStatsHintListContains(const authenticationse
 {
     for (size_t i = 0; i < hints->count; ++i)
     {
-        if (UNLIKELY(wCryptoEqual(hints->items[i].sha256, sha256, SHA256_DIGEST_SIZE)))
+        if (UNLIKELY(memoryEqual(hints->items[i].sha256, sha256, SHA256_DIGEST_SIZE)))
         {
             return true;
         }
@@ -209,11 +209,11 @@ static bool authenticationserverPushStatsAddHintFromJson(authenticationserver_st
     sha256_hash_t                     sha256 = {0};
     if (UNLIKELY(wCryptoSHA256(&sha256, (const unsigned char *) password_json->valuestring, password_len) != 0))
     {
-        wCryptoZero(&sha256, sizeof(sha256));
+        memoryZero(&sha256, sizeof(sha256));
         return false;
     }
     memoryCopy(hint.sha256, sha256.bytes, SHA256_DIGEST_SIZE);
-    wCryptoZero(&sha256, sizeof(sha256));
+    memoryZero(&sha256, sizeof(sha256));
 
     if (UNLIKELY(! authenticationserverPushStatsReadHintTraffic(hint_json, &hint)))
     {

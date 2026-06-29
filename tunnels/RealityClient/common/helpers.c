@@ -237,7 +237,7 @@ void realityclientTunnelstateDestroy(realityclient_tstate_t *ts)
     ts->tls_node.type = NULL;
     ts->tls_node.next = NULL;
 
-    wCryptoZero(ts->key, sizeof(ts->key));
+    memoryZero(ts->key, sizeof(ts->key));
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }
 

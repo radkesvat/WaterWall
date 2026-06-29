@@ -280,7 +280,7 @@ static void authenticationclientClearSessionLocked(authenticationclient_tstate_t
     ts->pending_push_users = NULL;
     rwlockWriteUnlock(&ts->users_lock);
 
-    wCryptoZero(ts->token, sizeof(ts->token));
+    memoryZero(ts->token, sizeof(ts->token));
     ts->authenticated              = false;
     ts->auth_in_flight             = false;
     ts->pull_in_flight             = false;

@@ -91,11 +91,11 @@ static bool deriveKeyFromPassword(const char *password, const char *salt, uint32
 
         if (-1 == blake2s(out_key, 32, (const unsigned char *) password, password_len, iter_block, sizeof(iter_block)))
         {
-            wCryptoZero(iter_block, sizeof(iter_block));
+            memoryZero(iter_block, sizeof(iter_block));
             return false;
         }
 
-        wCryptoZero(iter_block, sizeof(iter_block));
+        memoryZero(iter_block, sizeof(iter_block));
     }
 
     return true;
@@ -215,7 +215,7 @@ static bool realityclientTunnelstateInitialize(tunnel_t *t, node_t *node)
 cleanup:
     if (password != NULL)
     {
-        wCryptoZero(password, stringLength(password));
+        memoryZero(password, stringLength(password));
         memoryFree(password);
     }
     memoryFree(salt);

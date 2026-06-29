@@ -108,16 +108,16 @@ static bool trojanserverAppendPassword(trojanserver_tstate_t *ts, const char *us
     sha224_hash_t digest = {0};
     if (UNLIKELY(wCryptoSHA224(&digest, (const unsigned char *) password, stringLength(password)) != 0))
     {
-        wCryptoZero(&digest, sizeof(digest));
+        memoryZero(&digest, sizeof(digest));
         LOGF("TrojanServer: failed to calculate SHA224 password digest");
         return false;
     }
 
     for (uint32_t i = 0; i < ts->user_count; ++i)
     {
-        if (wCryptoEqual(ts->users[i].sha224, digest.bytes, SHA224_DIGEST_SIZE))
+        if (memoryEqual(ts->users[i].sha224, digest.bytes, SHA224_DIGEST_SIZE))
         {
-            wCryptoZero(&digest, sizeof(digest));
+            memoryZero(&digest, sizeof(digest));
             LOGF("JSON Error: TrojanServer->settings->%s duplicates a configured local password", path);
             return false;
         }
@@ -126,7 +126,7 @@ static bool trojanserverAppendPassword(trojanserver_tstate_t *ts, const char *us
     size_t new_count = (size_t) ts->user_count + 1U;
     if (UNLIKELY(new_count > UINT32_MAX))
     {
-        wCryptoZero(&digest, sizeof(digest));
+        memoryZero(&digest, sizeof(digest));
         LOGF("TrojanServer: too many configured users");
         return false;
     }
@@ -134,7 +134,7 @@ static bool trojanserverAppendPassword(trojanserver_tstate_t *ts, const char *us
     trojanserver_user_t *users = memoryReAllocate(ts->users, sizeof(*users) * new_count);
     if (UNLIKELY(users == NULL))
     {
-        wCryptoZero(&digest, sizeof(digest));
+        memoryZero(&digest, sizeof(digest));
         LOGF("TrojanServer: failed to allocate password allowlist");
         return false;
     }
@@ -145,7 +145,7 @@ static bool trojanserverAppendPassword(trojanserver_tstate_t *ts, const char *us
     ts->users[ts->user_count].password = stringDuplicate(password);
     ts->user_count                     = (uint32_t) new_count;
 
-    wCryptoZero(&digest, sizeof(digest));
+    memoryZero(&digest, sizeof(digest));
     return true;
 }
 

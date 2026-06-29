@@ -285,7 +285,7 @@ authenticationclient_user_lookup_result_t authenticationclientGetUserByPasswordW
     }
     rwlockReadUnlock(&ts->users_lock);
 
-    memoryZero(&sha256, sizeof(sha256)); // i dont want to use wCryptoZero
+    memoryZero(&sha256, sizeof(sha256));
     if (result != kAuthenticationClientUserLookupOk)
     {
         userHandleClear(handle_out);

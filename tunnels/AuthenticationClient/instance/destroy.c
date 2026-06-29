@@ -42,7 +42,7 @@ void authenticationclientTunnelDestroy(tunnel_t *t)
 
     memoryFree(ts->name);
     memoryFree(ts->secret);
-    wCryptoZero(ts->token, sizeof(ts->token));
+    memoryZero(ts->token, sizeof(ts->token));
 
     tunnelDestroy(t);
 }

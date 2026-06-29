@@ -4,7 +4,7 @@
 
 void encryptionserverTunnelstateDestroy(encryptionserver_tstate_t *ts)
 {
-    wCryptoZero(ts->key, sizeof(ts->key));
+    memoryZero(ts->key, sizeof(ts->key));
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }
 

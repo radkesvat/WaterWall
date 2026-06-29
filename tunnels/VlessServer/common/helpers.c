@@ -50,7 +50,7 @@ static const vlessserver_user_t *vlessserverFindLocalUser(tunnel_t *t, line_t *l
 
     for (uint32_t i = 0; i < ts->user_count; ++i)
     {
-        if (wCryptoEqual(ts->users[i].uuid, uuid, kVlessServerUuidLen))
+        if (memoryEqual(ts->users[i].uuid, uuid, kVlessServerUuidLen))
         {
             matched = &ts->users[i];
             break;
@@ -89,7 +89,7 @@ static bool vlessserverAuthenticateUuid(tunnel_t *t, line_t *l, vlessserver_lsta
                 ls->auth_username = stringDuplicate(matched->username);
             }
             ls->auth_password = stringDuplicate(uuid_password);
-            wCryptoZero(uuid_password, sizeof(uuid_password));
+            memoryZero(uuid_password, sizeof(uuid_password));
         }
         return true;
     }
@@ -119,7 +119,7 @@ static bool vlessserverAuthenticateUuid(tunnel_t *t, line_t *l, vlessserver_lsta
     authenticationclient_user_lookup_result_t result =
         authenticationclientGetUserByPasswordWithProfile(ts->auth_client_tunnel, uuid_password, &handle, &profile);
 
-    wCryptoZero(uuid_password, sizeof(uuid_password));
+    memoryZero(uuid_password, sizeof(uuid_password));
 
     if (UNLIKELY(result != kAuthenticationClientUserLookupOk))
     {

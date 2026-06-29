@@ -170,7 +170,7 @@ static bool authenticationserverTokenIsZero(const uint8_t token[kAuthenticationS
 {
     uint8_t zero[kAuthenticationServerSessionTokenSize] = {0};
 
-    return wCryptoEqual(token, zero, sizeof(zero));
+    return memoryEqual(token, zero, sizeof(zero));
 }
 
 static void authenticationserverSessionDestroyFields(authenticationserver_session_t *session)
@@ -182,7 +182,7 @@ static void authenticationserverSessionDestroyFields(authenticationserver_sessio
 
     usersDestroy(&session->baseline_users);
     memoryFree(session->client_name);
-    wCryptoZero(session->token, sizeof(session->token));
+    memoryZero(session->token, sizeof(session->token));
     memoryZero(session, sizeof(*session));
 }
 
@@ -269,7 +269,7 @@ authenticationserver_session_t *authenticationserverSessionFindByTokenLocked(
     for (uint32_t i = 0; i < ts->sessions_count; ++i)
     {
         authenticationserver_session_t *session = ts->sessions[i];
-        if (wCryptoEqual(session->token, token, kAuthenticationServerSessionTokenSize))
+        if (memoryEqual(session->token, token, kAuthenticationServerSessionTokenSize))
         {
             return session;
         }
@@ -286,19 +286,19 @@ static bool authenticationserverGenerateUniqueToken(tunnel_t *t, uint8_t token[k
     {
         if (UNLIKELY(! authenticationserverRandomBytes(raw, sizeof(raw))))
         {
-            wCryptoZero(raw, sizeof(raw));
+            memoryZero(raw, sizeof(raw));
             return false;
         }
 
         authenticationserverBytesToHex(raw, sizeof(raw), token);
         if (LIKELY(authenticationserverSessionFindByTokenLocked(t, token) == NULL))
         {
-            wCryptoZero(raw, sizeof(raw));
+            memoryZero(raw, sizeof(raw));
             return true;
         }
     }
 
-    wCryptoZero(raw, sizeof(raw));
+    memoryZero(raw, sizeof(raw));
     return false;
 }
 
@@ -528,7 +528,7 @@ void authenticationserverAuthClientsDestroy(authenticationserver_tstate_t *ts)
         memoryFree(client->name);
         if (LIKELY(client->secret != NULL))
         {
-            wCryptoZero(client->secret, stringLength(client->secret));
+            memoryZero(client->secret, stringLength(client->secret));
         }
         memoryFree(client->secret);
         memoryZero(client, sizeof(*client));
