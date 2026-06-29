@@ -29,9 +29,9 @@
  * SUCH DAMAGE.
  */
 
-#if 0
+// #if 0
 #define UNROLL_LOOPS /* Enable loops unrolling */
-#endif
+// #endif
 
 #include <string.h>
 
