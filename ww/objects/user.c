@@ -95,10 +95,12 @@ typedef struct user_snapshot_s
     uint8_t       sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
     MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;
     uint8_t       uuid_pass[kWwUuidBytesLen];
+    uint8_t       wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
 
     bool sha224_pass_valid;
     bool sha256_pass_valid;
     bool uuid_pass_valid;
+    bool wireguard_publickey_valid;
 } user_snapshot_t;
 
 _Static_assert(offsetof(user_snapshot_t, sha224_pass) % 32U == 0,
@@ -122,6 +124,7 @@ static void userSnapshotDestroy(user_snapshot_t *snapshot)
     wCryptoZero(&snapshot->sha224_pass, sizeof(snapshot->sha224_pass));
     wCryptoZero(&snapshot->sha256_pass, sizeof(snapshot->sha256_pass));
     memoryZero(snapshot->uuid_pass, sizeof(snapshot->uuid_pass));
+    memoryZero(snapshot->wireguard_publickey, sizeof(snapshot->wireguard_publickey));
     memoryZero(snapshot, sizeof(*snapshot));
 }
 
@@ -161,9 +164,11 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
     snapshot->sha224_pass             = src->sha224_pass;
     snapshot->sha256_pass             = src->sha256_pass;
     memoryCopy(snapshot->uuid_pass, src->uuid_pass, sizeof(snapshot->uuid_pass));
+    memoryCopy(snapshot->wireguard_publickey, src->wireguard_publickey, sizeof(snapshot->wireguard_publickey));
     snapshot->sha224_pass_valid       = src->sha224_pass_valid;
     snapshot->sha256_pass_valid       = src->sha256_pass_valid;
     snapshot->uuid_pass_valid         = src->uuid_pass_valid;
+    snapshot->wireguard_publickey_valid = src->wireguard_publickey_valid;
 
     rwlockReadUnlock(&mutable_src->stats_lock);
     rwlockReadUnlock(&mutable_src->lock);
@@ -172,6 +177,7 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
 
 static bool userPasswordHashesCreate(User *user, const char *password)
 {
+    static const uint8_t wireguard_basepoint[USER_WIREGUARD_PUBLICKEY_SIZE] = {9};
     const size_t password_len = stringLength(password);
 
     user->hash_pass = calcHashBytes(password, password_len);
@@ -179,10 +185,12 @@ static bool userPasswordHashesCreate(User *user, const char *password)
     user->sha224_pass_valid = false;
     user->sha256_pass_valid = false;
     user->uuid_pass_valid   = false;
+    user->wireguard_publickey_valid = false;
 
     memoryZero(&user->sha224_pass, sizeof(user->sha224_pass));
     memoryZero(&user->sha256_pass, sizeof(user->sha256_pass));
     memoryZero(user->uuid_pass, sizeof(user->uuid_pass));
+    memoryZero(user->wireguard_publickey, sizeof(user->wireguard_publickey));
 
     if (UNLIKELY(wCryptoSHA224(&user->sha224_pass, (const unsigned char *) password, password_len) != 0))
     {
@@ -195,6 +203,13 @@ static bool userPasswordHashesCreate(User *user, const char *password)
         return false;
     }
     user->sha256_pass_valid = true;
+
+    if (UNLIKELY(performX25519(user->wireguard_publickey, user->sha256_pass.bytes, wireguard_basepoint) != 0))
+    {
+        memoryZero(user->wireguard_publickey, sizeof(user->wireguard_publickey));
+        return false;
+    }
+    user->wireguard_publickey_valid = true;
 
     if (wwUuidParseString(password, user->uuid_pass))
     {
@@ -732,9 +747,11 @@ bool userCopy(User *dest, const User *src)
     dest->sha224_pass             = snapshot.sha224_pass;
     dest->sha256_pass             = snapshot.sha256_pass;
     memoryCopy(dest->uuid_pass, snapshot.uuid_pass, sizeof(dest->uuid_pass));
+    memoryCopy(dest->wireguard_publickey, snapshot.wireguard_publickey, sizeof(dest->wireguard_publickey));
     dest->sha224_pass_valid       = snapshot.sha224_pass_valid;
     dest->sha256_pass_valid       = snapshot.sha256_pass_valid;
     dest->uuid_pass_valid         = snapshot.uuid_pass_valid;
+    dest->wireguard_publickey_valid = snapshot.wireguard_publickey_valid;
 
     snapshot.name     = NULL;
     snapshot.password = NULL;
@@ -743,6 +760,7 @@ bool userCopy(User *dest, const User *src)
     memoryZero(&snapshot.sha224_pass, sizeof(snapshot.sha224_pass));
     memoryZero(&snapshot.sha256_pass, sizeof(snapshot.sha256_pass));
     memoryZero(snapshot.uuid_pass, sizeof(snapshot.uuid_pass));
+    memoryZero(snapshot.wireguard_publickey, sizeof(snapshot.wireguard_publickey));
     userSnapshotDestroy(&snapshot);
     return true;
 }
@@ -763,6 +781,7 @@ void userDestroy(User *user)
     wCryptoZero(&user->sha224_pass, sizeof(user->sha224_pass));
     wCryptoZero(&user->sha256_pass, sizeof(user->sha256_pass));
     memoryZero(user->uuid_pass, sizeof(user->uuid_pass));
+    memoryZero(user->wireguard_publickey, sizeof(user->wireguard_publickey));
     memoryZero(&user->limit, sizeof(user->limit));
     memoryZero(&user->timeinfo, sizeof(user->timeinfo));
     memoryZero(&user->stats, sizeof(user->stats));
@@ -790,6 +809,7 @@ bool userChangePassword(User *user, const char *password)
         wCryptoZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
         wCryptoZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
         memoryZero(staged_hashes.uuid_pass, sizeof(staged_hashes.uuid_pass));
+        memoryZero(staged_hashes.wireguard_publickey, sizeof(staged_hashes.wireguard_publickey));
         return false;
     }
 
@@ -799,6 +819,7 @@ bool userChangePassword(User *user, const char *password)
         wCryptoZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
         wCryptoZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
         memoryZero(staged_hashes.uuid_pass, sizeof(staged_hashes.uuid_pass));
+        memoryZero(staged_hashes.wireguard_publickey, sizeof(staged_hashes.wireguard_publickey));
         return false;
     }
 
@@ -807,13 +828,16 @@ bool userChangePassword(User *user, const char *password)
     wCryptoZero(&user->sha224_pass, sizeof(user->sha224_pass));
     wCryptoZero(&user->sha256_pass, sizeof(user->sha256_pass));
     memoryZero(user->uuid_pass, sizeof(user->uuid_pass));
+    memoryZero(user->wireguard_publickey, sizeof(user->wireguard_publickey));
     user->hash_pass         = staged_hashes.hash_pass;
     user->sha224_pass       = staged_hashes.sha224_pass;
     user->sha256_pass       = staged_hashes.sha256_pass;
     memoryCopy(user->uuid_pass, staged_hashes.uuid_pass, sizeof(user->uuid_pass));
+    memoryCopy(user->wireguard_publickey, staged_hashes.wireguard_publickey, sizeof(user->wireguard_publickey));
     user->sha224_pass_valid = staged_hashes.sha224_pass_valid;
     user->sha256_pass_valid = staged_hashes.sha256_pass_valid;
     user->uuid_pass_valid   = staged_hashes.uuid_pass_valid;
+    user->wireguard_publickey_valid = staged_hashes.wireguard_publickey_valid;
 
     userFreePassword(user->password);
     user->password = copy;
@@ -821,6 +845,7 @@ bool userChangePassword(User *user, const char *password)
     wCryptoZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
     wCryptoZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
     memoryZero(staged_hashes.uuid_pass, sizeof(staged_hashes.uuid_pass));
+    memoryZero(staged_hashes.wireguard_publickey, sizeof(staged_hashes.wireguard_publickey));
     return true;
 }
 
@@ -977,9 +1002,11 @@ bool userPasswordMatches(User *user, const char *password)
 
 bool userPasswordDataValid(User *user)
 {
+    static const uint8_t wireguard_basepoint[USER_WIREGUARD_PUBLICKEY_SIZE] = {9};
     sha224_hash_t sha224 = {0};
     sha256_hash_t sha256 = {0};
     uint8_t       uuid[kWwUuidBytesLen] = {0};
+    uint8_t       wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE] = {0};
     bool          result = false;
 
     if (UNLIKELY(! userObjectIsInitialized(user)))
@@ -1007,12 +1034,19 @@ bool userPasswordDataValid(User *user)
                          ? user->uuid_pass_valid && wCryptoEqual(uuid, user->uuid_pass, sizeof(uuid))
                          : ! user->uuid_pass_valid;
         }
+        if (result)
+        {
+            result = user->wireguard_publickey_valid &&
+                     performX25519(wireguard_publickey, sha256.bytes, wireguard_basepoint) == 0 &&
+                     wCryptoEqual(wireguard_publickey, user->wireguard_publickey, sizeof(wireguard_publickey));
+        }
     }
     rwlockReadUnlock(&user->lock);
 
     wCryptoZero(&sha224, sizeof(sha224));
     wCryptoZero(&sha256, sizeof(sha256));
     memoryZero(uuid, sizeof(uuid));
+    memoryZero(wireguard_publickey, sizeof(wireguard_publickey));
     return result;
 }
 

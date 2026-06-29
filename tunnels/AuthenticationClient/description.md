@@ -305,8 +305,9 @@ The handle is a value identifier, not an owned object. `user_id` is copied from 
 non-zero for the handle to be valid. A full users-table replacement increments the generation, so generation-gated read
 helpers may reject old handles. Callers can either look up a fresh handle or check with
 `authenticationclientUserHandleIsLive()`. `authenticationclientGetUserBySHA224()`,
-`authenticationclientGetUserBySHA256()`, and `authenticationclientGetUserByUUID()` are alternate lookup entry points;
-successful lookups still return the normal id-backed handle.
+`authenticationclientGetUserBySHA256()`, `authenticationclientGetUserByUUID()`, and
+`authenticationclientGetUserByWireGuardPublicKey()` are alternate lookup entry points; successful lookups still return
+the normal id-backed handle.
 
 Available internal operations:
 
@@ -318,6 +319,7 @@ authenticationclientGetUserByPassword(t, password, &handle)
 authenticationclientGetUserBySHA224(t, sha224, &handle)
 authenticationclientGetUserBySHA256(t, sha256, &handle)
 authenticationclientGetUserByUUID(t, uuid, &handle)
+authenticationclientGetUserByWireGuardPublicKey(t, publickey, &handle)
 authenticationclientUserHandleIsLive(t, &handle)
 authenticationclientUserToJson(t, &handle)
 authenticationclientUsersToJson(t)

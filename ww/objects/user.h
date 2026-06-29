@@ -33,6 +33,7 @@
 #define USER_NO_LIMIT                        0ULL
 #define USER_NO_EXPIRY                       0ULL
 #define USER_DEFAULT_RECORD_STAT_INTERVAL_MS 120000
+#define USER_WIREGUARD_PUBLICKEY_SIZE        32U
 
 typedef struct user_ud_s
 {
@@ -178,10 +179,12 @@ struct user_s
     uint8_t       sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
     MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;
     uint8_t       uuid_pass[kWwUuidBytesLen];
+    uint8_t       wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
 
     bool sha224_pass_valid;
     bool sha256_pass_valid;
     bool uuid_pass_valid;
+    bool wireguard_publickey_valid;
 };
 
 bool userCreate(User *user, const char *password);

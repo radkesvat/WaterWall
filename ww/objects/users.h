@@ -50,6 +50,7 @@
 typedef struct users_sha224_table_s users_sha224_table_t;
 typedef struct users_sha256_table_s users_sha256_table_t;
 typedef struct users_uuid_table_s   users_uuid_table_t;
+typedef struct users_wireguard_publickey_table_s users_wireguard_publickey_table_t;
 typedef struct users_id_table_s     users_id_table_t;
 
 typedef struct user_update_s
@@ -81,6 +82,7 @@ typedef enum users_add_result_e
     kUsersAddResultDuplicateSHA224,
     kUsersAddResultDuplicateSHA256,
     kUsersAddResultDuplicateUUID,
+    kUsersAddResultDuplicateWireGuardPublicKey,
     kUsersAddResultAllocationFailed,
     kUsersAddResultCommitFailed
 } users_add_result_t;
@@ -95,6 +97,7 @@ typedef enum users_update_result_e
     kUsersUpdateResultUserNotFound,
     kUsersUpdateResultDuplicateName,
     kUsersUpdateResultDuplicateUUID,
+    kUsersUpdateResultDuplicateWireGuardPublicKey,
     kUsersUpdateResultPasswordUpdateFailed
 } users_update_result_t;
 
@@ -129,6 +132,7 @@ typedef struct users_s
     users_sha224_table_t *sha224_table;
     users_sha256_table_t *sha256_table;
     users_uuid_table_t   *uuid_table;
+    users_wireguard_publickey_table_t *wireguard_publickey_table;
     users_id_table_t     *id_table;
 } users_t;
 
@@ -149,6 +153,10 @@ user_t       *usersLookupBySHA256(users_t *users, const uint8_t sha256[SHA256_DI
 const user_t *usersLookupBySHA256Const(const users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE]);
 user_t       *usersLookupByUUID(users_t *users, const uint8_t uuid[kWwUuidBytesLen]);
 const user_t *usersLookupByUUIDConst(const users_t *users, const uint8_t uuid[kWwUuidBytesLen]);
+user_t       *usersLookupByWireGuardPublicKey(users_t *users,
+                                              const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE]);
+const user_t *usersLookupByWireGuardPublicKeyConst(const users_t *users,
+                                                   const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE]);
 user_t       *usersLookupByIdentifier(users_t *users, uint64_t id);
 const user_t *usersLookupByIdentifierConst(const users_t *users, uint64_t id);
 cJSON        *usersUserToJsonBySHA224(const users_t *users, const uint8_t sha224[SHA224_DIGEST_SIZE]);

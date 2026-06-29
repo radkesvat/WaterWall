@@ -20,6 +20,8 @@ static const char *authenticationserverUsersUpdateResultError(users_update_resul
         return "user-name-exists";
     case kUsersUpdateResultDuplicateUUID:
         return "user-uuid-exists";
+    case kUsersUpdateResultDuplicateWireGuardPublicKey:
+        return "user-wireguard-publickey-exists";
     case kUsersUpdateResultPasswordUpdateFailed:
         return "password-update-disabled";
     }

@@ -285,17 +285,18 @@ except `expire-after-first-usage-ms`, which is a duration after first usage.
   `db-path` and `db-path.backup` with filesystem permissions appropriate for secret material.
 - For `Socks5Server`, the stored password is the final authentication lookup key in `username:password` form, not just the
   password part submitted by the SOCKS client.
-- Password-derived hashes are not stored directly in JSON. They are rebuilt from `password` while loading users.
+- Password-derived lookup keys are not stored directly in JSON. They are rebuilt from `password` while loading users.
 - The SHA-256 password hash is the canonical password lookup key. SHA-224 is also indexed for explicit SHA-224 lookups.
-  Two users must not share the same password/SHA-224 or SHA-256 key.
+  UUID credentials and WireGuard-style public keys are derived from the same password when applicable. Two users must not
+  share the same password/SHA-224, SHA-256, UUID credential, or derived WireGuard public key.
 - `id` is the durable logical user identity. Keep each non-zero id unique and stable for that logical user's lifetime;
   reusing an existing id for a different user can intentionally transfer client-side runtime state on the next
   `GetAllUsers` refresh.
 - AuthenticationClient credentials are not stored in the user database. They live only in `settings.auth-clients`.
 - The authoritative in-memory table tracks separate configuration and statistics revisions. These revisions are server
   metadata, not fields inside individual user objects.
-- `AddNewUser` rejects duplicate usernames, duplicate durable user ids, and duplicate SHA-224 or SHA-256 password lookup
-  keys, then saves the file immediately and bumps the configuration revision.
+- `AddNewUser` rejects duplicate usernames, duplicate durable user ids, and duplicate password-derived lookup keys, then
+  saves the file immediately and bumps the configuration revision.
 - `UpdateUser` uses the supplied password only to find the existing user and deliberately does not change password or
   password hashes. It updates in-memory metadata only, bumps the configuration revision, and does not force an immediate
   file save.

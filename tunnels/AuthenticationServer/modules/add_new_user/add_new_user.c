@@ -24,6 +24,8 @@ static const char *authenticationserverUsersAddResultError(users_add_result_t re
         return "user-sha256-exists";
     case kUsersAddResultDuplicateUUID:
         return "user-uuid-exists";
+    case kUsersAddResultDuplicateWireGuardPublicKey:
+        return "user-wireguard-publickey-exists";
     case kUsersAddResultAllocationFailed:
         return "allocation-failed";
     case kUsersAddResultCommitFailed:

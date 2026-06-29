@@ -263,6 +263,81 @@ authenticationclient_user_lookup_result_t authenticationclientGetUserByUUIDWithP
     return result;
 }
 
+bool authenticationclientGetUserByWireGuardPublicKey(tunnel_t *t,
+                                                     const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE],
+                                                     user_handle_t *handle_out)
+{
+    return authenticationclientGetUserByWireGuardPublicKeyWithProfile(t, publickey, handle_out, NULL) ==
+           kAuthenticationClientUserLookupOk;
+}
+
+authenticationclient_user_lookup_result_t authenticationclientGetUserByWireGuardPublicKeyWithProfile(
+    tunnel_t *t, const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE], user_handle_t *handle_out,
+    authenticationclient_user_profile_t *profile_out)
+{
+    authenticationclientAssertProfileEmpty(profile_out, "authenticationclientGetUserByWireGuardPublicKeyWithProfile");
+
+    if (UNLIKELY(t == NULL || publickey == NULL || handle_out == NULL))
+    {
+        if (handle_out != NULL)
+        {
+            userHandleClear(handle_out);
+        }
+        return kAuthenticationClientUserLookupInvalidArgument;
+    }
+
+    authenticationclient_tstate_t            *ts     = tunnelGetState(t);
+    uint64_t                                  now_ms = authenticationclientLocalTimeMS();
+    authenticationclient_user_lookup_result_t result = kAuthenticationClientUserLookupUserNotFound;
+
+    rwlockReadLock(&ts->users_lock);
+    user_t *user = NULL;
+    if (UNLIKELY(ts->users == NULL || ! ts->users_loaded))
+    {
+        result = kAuthenticationClientUserLookupUsersUnavailable;
+    }
+    else
+    {
+        user = usersLookupByWireGuardPublicKey(ts->users, publickey);
+    }
+
+    if (user != NULL)
+    {
+        if (! userIsEnabled(user))
+        {
+            result = kAuthenticationClientUserLookupUserDisabled;
+        }
+        else if (userIsExpired(user, now_ms))
+        {
+            result = kAuthenticationClientUserLookupUserExpired;
+        }
+        else if (userHasReachedLimit(user))
+        {
+            result = kAuthenticationClientUserLookupUserLimitReached;
+        }
+        else if (userGetId(user) == 0)
+        {
+            result = kAuthenticationClientUserLookupUserIdRequired;
+        }
+        else
+        {
+            userHandleSet(handle_out, ts->users_generation, userGetId(user));
+            if (profile_out != NULL)
+            {
+                authenticationclientFillUserProfileLocked(profile_out, user);
+            }
+            result = kAuthenticationClientUserLookupOk;
+        }
+    }
+    rwlockReadUnlock(&ts->users_lock);
+
+    if (result != kAuthenticationClientUserLookupOk)
+    {
+        userHandleClear(handle_out);
+    }
+    return result;
+}
+
 bool authenticationclientGetUserByPassword(tunnel_t *t, const char *password, user_handle_t *handle_out)
 {
     return authenticationclientGetUserByPasswordWithResult(t, password, handle_out) ==

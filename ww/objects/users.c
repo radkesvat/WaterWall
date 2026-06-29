@@ -36,15 +36,22 @@ typedef struct users_uuid_key_s
     uint8_t bytes[kWwUuidBytesLen];
 } users_uuid_key_t;
 
+typedef struct users_wireguard_publickey_key_s
+{
+    uint8_t bytes[USER_WIREGUARD_PUBLICKEY_SIZE];
+} users_wireguard_publickey_key_t;
+
 typedef struct users_password_probe_s
 {
     MSVC_ATTR_ALIGNED_32 sha224_hash_t sha224_pass GNU_ATTR_ALIGNED_32;
     uint8_t       sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
     MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;
     uint8_t uuid_pass[kWwUuidBytesLen];
+    uint8_t wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
     bool sha224_pass_valid;
     bool sha256_pass_valid;
     bool uuid_pass_valid;
+    bool wireguard_publickey_valid;
 } users_password_probe_t;
 
 _Static_assert(offsetof(users_password_probe_t, sha224_pass) % 32U == 0,
@@ -71,6 +78,11 @@ static uint64_t usersUUIDKeyHash(const users_uuid_key_t *key)
     return calcHashBytes(key->bytes, kWwUuidBytesLen);
 }
 
+static uint64_t usersWireGuardPublicKeyHash(const users_wireguard_publickey_key_t *key)
+{
+    return calcHashBytes(key->bytes, USER_WIREGUARD_PUBLICKEY_SIZE);
+}
+
 static bool usersSHA224KeyEq(const users_sha224_key_t *a, const users_sha224_key_t *b)
 {
     /*
@@ -94,6 +106,12 @@ static bool usersSHA256KeyEq(const users_sha256_key_t *a, const users_sha256_key
 static bool usersUUIDKeyEq(const users_uuid_key_t *a, const users_uuid_key_t *b)
 {
     return memoryCompare(a->bytes, b->bytes, kWwUuidBytesLen) == 0;
+}
+
+static bool usersWireGuardPublicKeyEq(const users_wireguard_publickey_key_t *a,
+                                      const users_wireguard_publickey_key_t *b)
+{
+    return memoryCompare(a->bytes, b->bytes, USER_WIREGUARD_PUBLICKEY_SIZE) == 0;
 }
 
 #define i_type users_sha224_map_t // NOLINT
@@ -132,6 +150,18 @@ static bool usersUUIDKeyEq(const users_uuid_key_t *a, const users_uuid_key_t *b)
 #undef i_key
 #undef i_type
 
+#define i_type users_wireguard_publickey_map_t // NOLINT
+#define i_key  users_wireguard_publickey_key_t // NOLINT
+#define i_val  user_t  *                       // NOLINT
+#define i_hash usersWireGuardPublicKeyHash     // NOLINT
+#define i_eq   usersWireGuardPublicKeyEq       // NOLINT
+#include "stc/hmap.h"
+#undef i_eq
+#undef i_hash
+#undef i_val
+#undef i_key
+#undef i_type
+
 #define i_type users_id_map_t // NOLINT
 #define i_key  uint64_t       // NOLINT
 #define i_val  user_t *       // NOLINT
@@ -153,6 +183,11 @@ struct users_sha256_table_s
 struct users_uuid_table_s
 {
     users_uuid_map_t map;
+};
+
+struct users_wireguard_publickey_table_s
+{
+    users_wireguard_publickey_map_t map;
 };
 
 struct users_id_table_s
@@ -230,6 +265,12 @@ static bool usersUUIDEqual(const uint8_t a[kWwUuidBytesLen], const uint8_t b[kWw
     return wCryptoEqual(a, b, kWwUuidBytesLen);
 }
 
+static bool usersWireGuardPublicKeyEqual(const uint8_t a[USER_WIREGUARD_PUBLICKEY_SIZE],
+                                         const uint8_t b[USER_WIREGUARD_PUBLICKEY_SIZE])
+{
+    return wCryptoEqual(a, b, USER_WIREGUARD_PUBLICKEY_SIZE);
+}
+
 static void usersSha224ToHex(const uint8_t sha224[SHA224_DIGEST_SIZE], char out[SHA224_DIGEST_SIZE * 2U + 1U])
 {
     static const char hex[] = "0123456789abcdef";
@@ -278,8 +319,20 @@ static users_uuid_key_t usersUUIDKeyFromBytes(const uint8_t bytes[kWwUuidBytesLe
     return key;
 }
 
-static bool usersPasswordProbeCreate(users_password_probe_t *probe, const char *password)
+static users_wireguard_publickey_key_t usersWireGuardPublicKeyFromBytes(
+    const uint8_t bytes[USER_WIREGUARD_PUBLICKEY_SIZE])
 {
+    users_wireguard_publickey_key_t key = {0};
+
+    memoryCopy(key.bytes, bytes, USER_WIREGUARD_PUBLICKEY_SIZE);
+    return key;
+}
+
+static bool usersPasswordProbeCreate(users_password_probe_t *probe, const char *password,
+                                     bool derive_wireguard_publickey)
+{
+    static const uint8_t wireguard_basepoint[USER_WIREGUARD_PUBLICKEY_SIZE] = {9};
+
     if (UNLIKELY(probe == NULL || password == NULL || password[0] == '\0'))
     {
         return false;
@@ -301,6 +354,17 @@ static bool usersPasswordProbeCreate(users_password_probe_t *probe, const char *
     }
     probe->sha224_pass_valid = true;
     probe->sha256_pass_valid = true;
+    if (derive_wireguard_publickey)
+    {
+        if (UNLIKELY(performX25519(probe->wireguard_publickey, probe->sha256_pass.bytes, wireguard_basepoint) != 0))
+        {
+            wCryptoZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
+            wCryptoZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
+            memoryZero(probe->wireguard_publickey, sizeof(probe->wireguard_publickey));
+            return false;
+        }
+        probe->wireguard_publickey_valid = true;
+    }
     if (wwUuidParseString(password, probe->uuid_pass))
     {
         probe->uuid_pass_valid = true;
@@ -319,6 +383,7 @@ static void usersPasswordProbeDestroy(users_password_probe_t *probe)
     wCryptoZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
     wCryptoZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
     memoryZero(probe->uuid_pass, sizeof(probe->uuid_pass));
+    memoryZero(probe->wireguard_publickey, sizeof(probe->wireguard_publickey));
     memoryZero(probe, sizeof(*probe));
 }
 
@@ -370,6 +435,24 @@ static bool usersUUIDTableReserve(users_uuid_table_t *table, size_t count)
     if (UNLIKELY(! users_uuid_map_t_reserve(&table->map, (isize) capacity)))
     {
         LOGE("Users: failed to reserve UUID lookup table");
+        return false;
+    }
+
+    return true;
+}
+
+static bool usersWireGuardPublicKeyTableReserve(users_wireguard_publickey_table_t *table, size_t count)
+{
+    size_t capacity = count < kUsersInitialTableCapacity ? kUsersInitialTableCapacity : count;
+
+    if (UNLIKELY(capacity > (size_t) PTRDIFF_MAX))
+    {
+        LOGE("Users: WireGuard public key lookup table capacity overflow");
+        return false;
+    }
+    if (UNLIKELY(! users_wireguard_publickey_map_t_reserve(&table->map, (isize) capacity)))
+    {
+        LOGE("Users: failed to reserve WireGuard public key lookup table");
         return false;
     }
 
@@ -478,6 +561,34 @@ static bool usersUUIDTableCreateIfNeeded(users_t *users)
     return true;
 }
 
+static bool usersWireGuardPublicKeyTableCreateIfNeeded(users_t *users)
+{
+    users_wireguard_publickey_table_t *table;
+
+    if (LIKELY(users->wireguard_publickey_table != NULL))
+    {
+        return true;
+    }
+
+    table = memoryAllocate(sizeof(*table));
+    if (UNLIKELY(table == NULL))
+    {
+        LOGE("Users: failed to allocate WireGuard public key lookup table");
+        return false;
+    }
+    memoryZero(table, sizeof(*table));
+
+    if (UNLIKELY(! usersWireGuardPublicKeyTableReserve(table, kUsersInitialTableCapacity)))
+    {
+        users_wireguard_publickey_map_t_drop(&table->map);
+        memoryFree(table);
+        return false;
+    }
+
+    users->wireguard_publickey_table = table;
+    return true;
+}
+
 static bool usersIDTableCreateIfNeeded(users_t *users)
 {
     users_id_table_t *table;
@@ -521,6 +632,12 @@ static bool usersUUIDTableEnsureCapacity(users_t *users, size_t count)
     return usersUUIDTableCreateIfNeeded(users) && usersUUIDTableReserve(users->uuid_table, count);
 }
 
+static bool usersWireGuardPublicKeyTableEnsureCapacity(users_t *users, size_t count)
+{
+    return usersWireGuardPublicKeyTableCreateIfNeeded(users) &&
+           usersWireGuardPublicKeyTableReserve(users->wireguard_publickey_table, count);
+}
+
 static bool usersIDTableEnsureCapacity(users_t *users, size_t count)
 {
     return usersIDTableCreateIfNeeded(users) && usersIDTableReserve(users->id_table, count);
@@ -554,6 +671,16 @@ static void usersUUIDTableClear(users_uuid_table_t *table)
     }
 
     users_uuid_map_t_clear(&table->map);
+}
+
+static void usersWireGuardPublicKeyTableClear(users_wireguard_publickey_table_t *table)
+{
+    if (UNLIKELY(table == NULL))
+    {
+        return;
+    }
+
+    users_wireguard_publickey_map_t_clear(&table->map);
 }
 
 static void usersIDTableClear(users_id_table_t *table)
@@ -596,6 +723,17 @@ static void usersUUIDTableDestroy(users_uuid_table_t *table)
     }
 
     users_uuid_map_t_drop(&table->map);
+    memoryFree(table);
+}
+
+static void usersWireGuardPublicKeyTableDestroy(users_wireguard_publickey_table_t *table)
+{
+    if (UNLIKELY(table == NULL))
+    {
+        return;
+    }
+
+    users_wireguard_publickey_map_t_drop(&table->map);
     memoryFree(table);
 }
 
@@ -649,6 +787,21 @@ static user_t *usersUUIDTableLookupLocked(const users_t *users, const uint8_t ke
 
     users_uuid_key_t      key = usersUUIDKeyFromBytes(key_bytes);
     users_uuid_map_t_iter it  = users_uuid_map_t_find(&table->map, key);
+    return it.ref != NULL ? it.ref->second : NULL;
+}
+
+static user_t *usersWireGuardPublicKeyTableLookupLocked(
+    const users_t *users, const uint8_t key_bytes[USER_WIREGUARD_PUBLICKEY_SIZE])
+{
+    users_wireguard_publickey_table_t *table = users->wireguard_publickey_table;
+
+    if (UNLIKELY(table == NULL || key_bytes == NULL))
+    {
+        return NULL;
+    }
+
+    users_wireguard_publickey_key_t      key = usersWireGuardPublicKeyFromBytes(key_bytes);
+    users_wireguard_publickey_map_t_iter it  = users_wireguard_publickey_map_t_find(&table->map, key);
     return it.ref != NULL ? it.ref->second : NULL;
 }
 
@@ -772,6 +925,39 @@ static bool usersUUIDTableInsertLocked(users_t *users, user_t *user)
     return true;
 }
 
+static bool usersWireGuardPublicKeyTableInsertLocked(users_t *users, user_t *user)
+{
+    users_wireguard_publickey_key_t        key;
+    users_wireguard_publickey_map_t_result result;
+
+    if (UNLIKELY(! user->wireguard_publickey_valid))
+    {
+        LOGE("Users: user \"%s\" does not have a usable WireGuard public key", usersUserNameForLog(user));
+        return false;
+    }
+    if (UNLIKELY(! usersWireGuardPublicKeyTableEnsureCapacity(users, users->count + 1U)))
+    {
+        return false;
+    }
+
+    key    = usersWireGuardPublicKeyFromBytes(user->wireguard_publickey);
+    result = users_wireguard_publickey_map_t_insert(&users->wireguard_publickey_table->map, key, user);
+    if (UNLIKELY(result.ref == NULL))
+    {
+        LOGE("Users: failed to insert WireGuard public key lookup entry");
+        return false;
+    }
+    if (UNLIKELY(! result.inserted && result.ref->second != user))
+    {
+        LOGE("Users: duplicate WireGuard public key between users \"%s\" and \"%s\"",
+             usersUserNameForLog(result.ref->second),
+             usersUserNameForLog(user));
+        return false;
+    }
+
+    return true;
+}
+
 static bool usersIDTableInsertLocked(users_t *users, user_t *user)
 {
     users_id_map_t_result result;
@@ -818,6 +1004,10 @@ static bool usersEnsureLookupCapacityLocked(users_t *users, size_t count)
     {
         return false;
     }
+    if (UNLIKELY(! usersWireGuardPublicKeyTableEnsureCapacity(users, count)))
+    {
+        return false;
+    }
     if (UNLIKELY(! usersIDTableEnsureCapacity(users, count)))
     {
         return false;
@@ -836,6 +1026,7 @@ static bool usersRebuildLookupTablesLocked(users_t *users)
     usersSHA224TableClear(users->sha224_table);
     usersSHA256TableClear(users->sha256_table);
     usersUUIDTableClear(users->uuid_table);
+    usersWireGuardPublicKeyTableClear(users->wireguard_publickey_table);
     usersIDTableClear(users->id_table);
 
     for (size_t i = 0; i < users->count; ++i)
@@ -850,6 +1041,10 @@ static bool usersRebuildLookupTablesLocked(users_t *users)
             return false;
         }
         if (UNLIKELY(! usersUUIDTableInsertLocked(users, user)))
+        {
+            return false;
+        }
+        if (UNLIKELY(! usersWireGuardPublicKeyTableInsertLocked(users, user)))
         {
             return false;
         }
@@ -1075,6 +1270,12 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot)
              usersUserNameForLog(slot));
         return false;
     }
+    if (UNLIKELY(slot->wireguard_publickey_valid &&
+                 usersWireGuardPublicKeyTableLookupLocked(users, slot->wireguard_publickey) != NULL))
+    {
+        LOGE("Users: duplicate WireGuard public key while loading user \"%s\"", usersUserNameForLog(slot));
+        return false;
+    }
     if (UNLIKELY(slot->id != 0 && usersIDTableLookupLocked(users, slot->id) != NULL))
     {
         LOGE("Users: duplicate id %" PRIu64 " while loading user \"%s\"",
@@ -1097,6 +1298,15 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot)
         return false;
     }
     if (UNLIKELY(! usersUUIDTableInsertLocked(users, slot)))
+    {
+        if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
+        {
+            LOGF("Users: failed to restore lookup tables after an insertion failure");
+            terminateProgram(1);
+        }
+        return false;
+    }
+    if (UNLIKELY(! usersWireGuardPublicKeyTableInsertLocked(users, slot)))
     {
         if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
         {
@@ -1151,6 +1361,11 @@ static users_add_result_t usersValidateNewUserNoFatalLocked(const users_t *users
                      usersUUIDEqual(existing->uuid_pass, user->uuid_pass)))
         {
             return kUsersAddResultDuplicateUUID;
+        }
+        if (UNLIKELY(user->wireguard_publickey_valid && existing->wireguard_publickey_valid &&
+                     usersWireGuardPublicKeyEqual(existing->wireguard_publickey, user->wireguard_publickey)))
+        {
+            return kUsersAddResultDuplicateWireGuardPublicKey;
         }
         if (UNLIKELY(user->id != 0 && existing->id == user->id))
         {
@@ -1207,6 +1422,7 @@ static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *u
     user_t                *sha224_duplicate;
     user_t                *sha256_duplicate;
     user_t                *uuid_duplicate;
+    user_t                *wireguard_publickey_duplicate;
     users_password_probe_t password_probe;
 
     if (UNLIKELY(! usersIndexOfLocked(users, user, NULL)))
@@ -1215,7 +1431,7 @@ static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *u
     }
 
     memoryZero(&password_probe, sizeof(password_probe));
-    if (UNLIKELY(! usersPasswordProbeCreate(&password_probe, password)))
+    if (UNLIKELY(! usersPasswordProbeCreate(&password_probe, password, true)))
     {
         return kUsersUpdateResultPasswordUpdateFailed;
     }
@@ -1246,6 +1462,17 @@ static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *u
                  usersUserNameForLog(user));
             usersPasswordProbeDestroy(&password_probe);
             return kUsersUpdateResultDuplicateUUID;
+        }
+    }
+    if (LIKELY(password_probe.wireguard_publickey_valid))
+    {
+        wireguard_publickey_duplicate =
+            usersWireGuardPublicKeyTableLookupLocked(users, password_probe.wireguard_publickey);
+        if (UNLIKELY(wireguard_publickey_duplicate != NULL && wireguard_publickey_duplicate != user))
+        {
+            LOGE("Users: duplicate WireGuard public key while updating user \"%s\"", usersUserNameForLog(user));
+            usersPasswordProbeDestroy(&password_probe);
+            return kUsersUpdateResultDuplicateWireGuardPublicKey;
         }
     }
 
@@ -1360,6 +1587,7 @@ static void usersClearLocked(users_t *users)
     usersSHA224TableClear(users->sha224_table);
     usersSHA256TableClear(users->sha256_table);
     usersUUIDTableClear(users->uuid_table);
+    usersWireGuardPublicKeyTableClear(users->wireguard_publickey_table);
     usersIDTableClear(users->id_table);
 }
 
@@ -1535,6 +1763,11 @@ static bool usersValidateUserLookupKeysLocked(const users_t *users)
             LOGE("Users: user \"%s\" has no SHA-256 lookup key", usersUserNameForLog(a));
             return false;
         }
+        if (UNLIKELY(! a->wireguard_publickey_valid))
+        {
+            LOGE("Users: user \"%s\" has no WireGuard public key lookup key", usersUserNameForLog(a));
+            return false;
+        }
         if (UNLIKELY(! userPasswordDataValid((user_t *) a)))
         {
             LOGE("Users: user \"%s\" has inconsistent password lookup data", usersUserNameForLog(a));
@@ -1553,6 +1786,12 @@ static bool usersValidateUserLookupKeysLocked(const users_t *users)
         if (UNLIKELY(a->uuid_pass_valid && usersUUIDTableLookupLocked(users, a->uuid_pass) != a))
         {
             LOGE("Users: UUID lookup table does not point back to user \"%s\"", usersUserNameForLog(a));
+            return false;
+        }
+        if (UNLIKELY(usersWireGuardPublicKeyTableLookupLocked(users, a->wireguard_publickey) != a))
+        {
+            LOGE("Users: WireGuard public key lookup table does not point back to user \"%s\"",
+                 usersUserNameForLog(a));
             return false;
         }
         if (UNLIKELY(a->id != 0 && usersIDTableLookupLocked(users, a->id) != a))
@@ -1594,6 +1833,13 @@ static bool usersValidateUserLookupKeysLocked(const users_t *users)
                      usersUserNameForLog(b));
                 return false;
             }
+            if (UNLIKELY(usersWireGuardPublicKeyEqual(a->wireguard_publickey, b->wireguard_publickey)))
+            {
+                LOGE("Users: duplicate WireGuard public key between users \"%s\" and \"%s\"",
+                     usersUserNameForLog(a),
+                     usersUserNameForLog(b));
+                return false;
+            }
             if (UNLIKELY(a->id != 0 && a->id == b->id))
             {
                 LOGE("Users: duplicate id %" PRIu64 " between users \"%s\" and \"%s\"",
@@ -1624,11 +1870,13 @@ bool usersCreate(users_t *users)
     memoryZero(users, sizeof(*users));
     rwlockinit(&users->lock);
     if (UNLIKELY(! usersSHA224TableCreateIfNeeded(users) || ! usersSHA256TableCreateIfNeeded(users) ||
-                 ! usersUUIDTableCreateIfNeeded(users) || ! usersIDTableCreateIfNeeded(users)))
+                 ! usersUUIDTableCreateIfNeeded(users) || ! usersWireGuardPublicKeyTableCreateIfNeeded(users) ||
+                 ! usersIDTableCreateIfNeeded(users)))
     {
         usersSHA224TableDestroy(users->sha224_table);
         usersSHA256TableDestroy(users->sha256_table);
         usersUUIDTableDestroy(users->uuid_table);
+        usersWireGuardPublicKeyTableDestroy(users->wireguard_publickey_table);
         usersIDTableDestroy(users->id_table);
         rwlockDestroy(&users->lock);
         memoryZero(users, sizeof(*users));
@@ -1656,6 +1904,7 @@ void usersDestroy(users_t *users)
     usersSHA224TableDestroy(users->sha224_table);
     usersSHA256TableDestroy(users->sha256_table);
     usersUUIDTableDestroy(users->uuid_table);
+    usersWireGuardPublicKeyTableDestroy(users->wireguard_publickey_table);
     usersIDTableDestroy(users->id_table);
 
     rwlockDestroy(&users->lock);
@@ -1895,6 +2144,27 @@ const user_t *usersLookupByUUIDConst(const users_t *users, const uint8_t uuid[kW
     return usersLookupByUUID((users_t *) users, uuid);
 }
 
+user_t *usersLookupByWireGuardPublicKey(users_t *users, const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE])
+{
+    user_t *result;
+
+    if (UNLIKELY(users == NULL || publickey == NULL))
+    {
+        return NULL;
+    }
+
+    rwlockReadLock(&users->lock);
+    result = usersWireGuardPublicKeyTableLookupLocked(users, publickey);
+    rwlockReadUnlock(&users->lock);
+    return result;
+}
+
+const user_t *usersLookupByWireGuardPublicKeyConst(const users_t *users,
+                                                   const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE])
+{
+    return usersLookupByWireGuardPublicKey((users_t *) users, publickey);
+}
+
 user_t *usersLookupByIdentifier(users_t *users, uint64_t id)
 {
     user_t *result;
@@ -1991,7 +2261,7 @@ cJSON *usersUserToJsonByPassword(const users_t *users, const char *password)
     }
 
     memoryZero(&password_probe, sizeof(password_probe));
-    if (UNLIKELY(! usersPasswordProbeCreate(&password_probe, password)))
+    if (UNLIKELY(! usersPasswordProbeCreate(&password_probe, password, false)))
     {
         return NULL;
     }
@@ -2019,7 +2289,7 @@ user_t *usersLookupByPassword(users_t *users, const char *password)
     }
 
     memoryZero(&password_probe, sizeof(password_probe));
-    if (UNLIKELY(! usersPasswordProbeCreate(&password_probe, password)))
+    if (UNLIKELY(! usersPasswordProbeCreate(&password_probe, password, false)))
     {
         return NULL;
     }

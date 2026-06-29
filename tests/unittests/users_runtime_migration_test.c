@@ -38,6 +38,17 @@ static user_ip_key_t testIp(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
     return ip;
 }
 
+static void deriveWireGuardPublicKey(const char *password, uint8_t out[USER_WIREGUARD_PUBLICKEY_SIZE])
+{
+    static const uint8_t basepoint[USER_WIREGUARD_PUBLICKEY_SIZE] = {9};
+    sha256_hash_t        sha256 = {0};
+
+    require(wCryptoSHA256(&sha256, (const unsigned char *) password, stringLength(password)) == 0,
+            "failed to derive WireGuard private key seed");
+    require(performX25519(out, sha256.bytes, basepoint) == 0, "failed to derive WireGuard public key");
+    memoryZero(&sha256, sizeof(sha256));
+}
+
 static void testIdentifierLookupAndJsonRoundTrip(void)
 {
     users_t users;
@@ -319,6 +330,81 @@ static void testUUIDLookupUpdatesOnPasswordChange(void)
     require(! usersChangePassword(&users, first, uuid_c_compact), "duplicate UUID password change unexpectedly worked");
     require(usersLookupByUUID(&users, uuid_b_bytes) == first, "duplicate UUID change displaced previous UUID key");
     require(usersLookupByUUID(&users, uuid_c_bytes) == second, "duplicate UUID change displaced existing owner");
+
+    usersDestroy(&users);
+}
+
+static void testWireGuardPublicKeyLookupAndDerivation(void)
+{
+    static const char password_a[] = "wireguard-publickey-password-a";
+    static const char password_b[] = "wireguard-publickey-password-b";
+    static const char password_c[] = "wireguard-publickey-password-c";
+    uint8_t           publickey_a[USER_WIREGUARD_PUBLICKEY_SIZE] = {0};
+    uint8_t           publickey_b[USER_WIREGUARD_PUBLICKEY_SIZE] = {0};
+    uint8_t           publickey_c[USER_WIREGUARD_PUBLICKEY_SIZE] = {0};
+    uint8_t           current_sha256[SHA256_DIGEST_SIZE] = {0};
+    users_t           users;
+    user_t            first_source;
+    user_t            second_source;
+    user_update_t     update = {0};
+
+    memoryZero(&users, sizeof(users));
+    memoryZero(&first_source, sizeof(first_source));
+    memoryZero(&second_source, sizeof(second_source));
+    deriveWireGuardPublicKey(password_a, publickey_a);
+    deriveWireGuardPublicKey(password_b, publickey_b);
+    deriveWireGuardPublicKey(password_c, publickey_c);
+
+    require(usersCreate(&users), "failed to create WireGuard public key users table");
+    require(userCreate(&first_source, password_a), "failed to create first WireGuard-key user");
+    require(userCreate(&second_source, password_c), "failed to create second WireGuard-key user");
+    userSetId(&first_source, 4301);
+    userSetId(&second_source, 4302);
+
+    require(first_source.wireguard_publickey_valid, "WireGuard public key was not derived from password");
+    require(memoryEqual(first_source.wireguard_publickey, publickey_a, sizeof(publickey_a)),
+            "derived WireGuard public key did not match expected X25519 output");
+    require(usersAddUser(&users, &first_source), "failed to add first WireGuard-key user");
+    require(usersAddUser(&users, &second_source), "failed to add second WireGuard-key user");
+    userDestroy(&second_source);
+    userDestroy(&first_source);
+
+    user_t *first  = usersLookupByWireGuardPublicKey(&users, publickey_a);
+    user_t *second = usersLookupByWireGuardPublicKey(&users, publickey_c);
+    require(first != NULL && userGetId(first) == 4301, "failed to look first user up by WireGuard public key");
+    require(second != NULL && userGetId(second) == 4302, "failed to look second user up by WireGuard public key");
+
+    cJSON *json = userToJson(first);
+    require(json != NULL, "failed to serialize WireGuard-key user");
+    require(cJSON_GetObjectItemCaseSensitive(json, "wireguard-publickey") == NULL,
+            "serialized user unexpectedly included WireGuard public key");
+
+    user_t parsed;
+    memoryZero(&parsed, sizeof(parsed));
+    require(userCreateFromJson(&parsed, json), "failed to parse serialized WireGuard-key user");
+    require(parsed.wireguard_publickey_valid, "JSON round trip did not re-derive WireGuard public key");
+    require(memoryEqual(parsed.wireguard_publickey, publickey_a, sizeof(publickey_a)),
+            "JSON round trip derived a different WireGuard public key");
+    userDestroy(&parsed);
+    cJSON_Delete(json);
+
+    require(usersChangePassword(&users, first, password_b), "failed to change WireGuard-key user password");
+    require(usersLookupByWireGuardPublicKey(&users, publickey_a) == NULL,
+            "old WireGuard public key still resolved after password change");
+    require(usersLookupByWireGuardPublicKey(&users, publickey_b) == first,
+            "new WireGuard public key did not resolve after password change");
+    require(first->wireguard_publickey_valid, "password change left WireGuard public key invalid");
+
+    memoryCopy(current_sha256, first->sha256_pass.bytes, sizeof(current_sha256));
+    update.mask     = kUserUpdatePassword;
+    update.password = password_c;
+    require(usersUpdateUserBySHA256(&users, current_sha256, &update) ==
+                kUsersUpdateResultDuplicateWireGuardPublicKey,
+            "duplicate WireGuard public key password update returned the wrong result");
+    require(usersLookupByWireGuardPublicKey(&users, publickey_b) == first,
+            "duplicate WireGuard public key update displaced previous key");
+    require(usersLookupByWireGuardPublicKey(&users, publickey_c) == second,
+            "duplicate WireGuard public key update displaced existing owner");
 
     usersDestroy(&users);
 }
@@ -734,6 +820,7 @@ int main(void)
     testJsonFeedRejectsDuplicateKeysWithoutTerminating();
     testUUIDCredentialLookupAndDerivation();
     testUUIDLookupUpdatesOnPasswordChange();
+    testWireGuardPublicKeyLookupAndDerivation();
     testRuntimeMigrationPreservesActiveIpByIdentifier();
     testRuntimeMigrationPrefersIdentifierAcrossPasswordChange();
     testIdentifierLookupSurvivesPasswordChange();
