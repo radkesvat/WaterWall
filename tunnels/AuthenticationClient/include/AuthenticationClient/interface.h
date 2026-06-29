@@ -20,7 +20,8 @@ typedef enum authenticationclient_user_lookup_result_e
     kAuthenticationClientUserLookupPasswordMismatch,
     kAuthenticationClientUserLookupUserDisabled,
     kAuthenticationClientUserLookupUserExpired,
-    kAuthenticationClientUserLookupUserLimitReached
+    kAuthenticationClientUserLookupUserLimitReached,
+    kAuthenticationClientUserLookupUserIdRequired
 } authenticationclient_user_lookup_result_t;
 
 WW_EXPORT node_t nodeAuthenticationClientGet(void);
@@ -30,9 +31,9 @@ WW_EXPORT node_t nodeAuthenticationClientGet(void);
  *
  * Other tunnels should include this header and use handles plus copy-out helpers.
  * The AuthenticationClient never exposes user_t pointers from its private users_t
- * table; returned handles are value identifiers. Generation-gated read helpers
- * may reject handles after a full GetAllUsers replacement, while enforcement
- * helpers resolve by durable user id with SHA-256 fallback.
+ * table; returned handles are value identifiers keyed by durable user id.
+ * Generation-gated read helpers may reject handles after a full GetAllUsers
+ * replacement, while enforcement helpers resolve by durable user id only.
  */
 WW_EXPORT authenticationclient_state_t authenticationclientGetState(tunnel_t *t);
 WW_EXPORT bool                         authenticationclientIsReady(tunnel_t *t);
@@ -46,6 +47,8 @@ WW_EXPORT bool        authenticationclientGetUserBySHA224(tunnel_t *t, const uin
                                                           user_handle_t *handle_out);
 WW_EXPORT bool        authenticationclientGetUserBySHA256(tunnel_t *t, const uint8_t sha256[SHA256_DIGEST_SIZE],
                                                           user_handle_t *handle_out);
+WW_EXPORT bool        authenticationclientGetUserByUUID(tunnel_t *t, const uint8_t uuid[kWwUuidBytesLen],
+                                                        user_handle_t *handle_out);
 
 /*
  * Resolved copies of a user's identity fields, taken in the same locked lookup
@@ -66,6 +69,9 @@ WW_EXPORT bool authenticationclientGetUserBySHA224WithProfile(tunnel_t *t, const
                                                               user_handle_t                       *handle_out,
                                                               authenticationclient_user_profile_t *profile_out);
 
+WW_EXPORT authenticationclient_user_lookup_result_t authenticationclientGetUserByUUIDWithProfile(
+    tunnel_t *t, const uint8_t uuid[kWwUuidBytesLen], user_handle_t *handle_out,
+    authenticationclient_user_profile_t *profile_out);
 WW_EXPORT authenticationclient_user_lookup_result_t authenticationclientGetUserByPasswordWithProfile(
     tunnel_t *t, const char *password, user_handle_t *handle_out, authenticationclient_user_profile_t *profile_out);
 WW_EXPORT bool authenticationclientUserHandleIsLive(tunnel_t *t, const user_handle_t *handle);
@@ -82,8 +88,7 @@ WW_EXPORT void authenticationclientRequestPush(tunnel_t *t);
 /*
  * Live connection-admission and enforcement helpers for traffic-serving nodes
  * such as UserController. They resolve the handle against the current local
- * users table by durable user id when present, or by SHA-256 key for legacy users,
- * and run the matching runtime helper.
+ * users table by durable user id and run the matching runtime helper.
  * They touch only process-local runtime state and cumulative traffic counters, never synced
  * configuration. now_ms is in the AuthenticationClient/UserController local-clock domain; pulled
  * server expiry fields are projected into that domain when GetAllUsers is installed.

@@ -22,6 +22,8 @@ static const char *authenticationserverUsersAddResultError(users_add_result_t re
         return "user-sha224-exists";
     case kUsersAddResultDuplicateSHA256:
         return "user-sha256-exists";
+    case kUsersAddResultDuplicateUUID:
+        return "user-uuid-exists";
     case kUsersAddResultAllocationFailed:
         return "allocation-failed";
     case kUsersAddResultCommitFailed:

@@ -31,13 +31,20 @@ typedef struct users_sha256_key_s
     uint8_t bytes[SHA256_DIGEST_SIZE];
 } users_sha256_key_t;
 
+typedef struct users_uuid_key_s
+{
+    uint8_t bytes[kWwUuidBytesLen];
+} users_uuid_key_t;
+
 typedef struct users_password_probe_s
 {
     MSVC_ATTR_ALIGNED_32 sha224_hash_t sha224_pass GNU_ATTR_ALIGNED_32;
     uint8_t       sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
     MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;
+    uint8_t uuid_pass[kWwUuidBytesLen];
     bool sha224_pass_valid;
     bool sha256_pass_valid;
+    bool uuid_pass_valid;
 } users_password_probe_t;
 
 _Static_assert(offsetof(users_password_probe_t, sha224_pass) % 32U == 0,
@@ -59,6 +66,11 @@ static uint64_t usersSHA256KeyHash(const users_sha256_key_t *key)
     return calcHashBytes(key->bytes, SHA256_DIGEST_SIZE);
 }
 
+static uint64_t usersUUIDKeyHash(const users_uuid_key_t *key)
+{
+    return calcHashBytes(key->bytes, kWwUuidBytesLen);
+}
+
 static bool usersSHA224KeyEq(const users_sha224_key_t *a, const users_sha224_key_t *b)
 {
     /*
@@ -77,6 +89,11 @@ static bool usersSHA256KeyEq(const users_sha256_key_t *a, const users_sha256_key
      * used in hash-map callbacks.
      */
     return memoryCompare(a->bytes, b->bytes, SHA256_DIGEST_SIZE) == 0;
+}
+
+static bool usersUUIDKeyEq(const users_uuid_key_t *a, const users_uuid_key_t *b)
+{
+    return memoryCompare(a->bytes, b->bytes, kWwUuidBytesLen) == 0;
 }
 
 #define i_type users_sha224_map_t // NOLINT
@@ -103,6 +120,18 @@ static bool usersSHA256KeyEq(const users_sha256_key_t *a, const users_sha256_key
 #undef i_key
 #undef i_type
 
+#define i_type users_uuid_map_t // NOLINT
+#define i_key  users_uuid_key_t // NOLINT
+#define i_val  user_t  *        // NOLINT
+#define i_hash usersUUIDKeyHash // NOLINT
+#define i_eq   usersUUIDKeyEq   // NOLINT
+#include "stc/hmap.h"
+#undef i_eq
+#undef i_hash
+#undef i_val
+#undef i_key
+#undef i_type
+
 #define i_type users_id_map_t // NOLINT
 #define i_key  uint64_t       // NOLINT
 #define i_val  user_t *       // NOLINT
@@ -119,6 +148,11 @@ struct users_sha224_table_s
 struct users_sha256_table_s
 {
     users_sha256_map_t map;
+};
+
+struct users_uuid_table_s
+{
+    users_uuid_map_t map;
 };
 
 struct users_id_table_s
@@ -191,6 +225,11 @@ static bool usersSha256Equal(const uint8_t a[SHA256_DIGEST_SIZE], const uint8_t 
     return wCryptoEqual(a, b, SHA256_DIGEST_SIZE);
 }
 
+static bool usersUUIDEqual(const uint8_t a[kWwUuidBytesLen], const uint8_t b[kWwUuidBytesLen])
+{
+    return wCryptoEqual(a, b, kWwUuidBytesLen);
+}
+
 static void usersSha224ToHex(const uint8_t sha224[SHA224_DIGEST_SIZE], char out[SHA224_DIGEST_SIZE * 2U + 1U])
 {
     static const char hex[] = "0123456789abcdef";
@@ -231,6 +270,14 @@ static users_sha256_key_t usersSHA256KeyFromBytes(const uint8_t bytes[SHA256_DIG
     return key;
 }
 
+static users_uuid_key_t usersUUIDKeyFromBytes(const uint8_t bytes[kWwUuidBytesLen])
+{
+    users_uuid_key_t key = {0};
+
+    memoryCopy(key.bytes, bytes, kWwUuidBytesLen);
+    return key;
+}
+
 static bool usersPasswordProbeCreate(users_password_probe_t *probe, const char *password)
 {
     if (UNLIKELY(probe == NULL || password == NULL || password[0] == '\0'))
@@ -254,6 +301,10 @@ static bool usersPasswordProbeCreate(users_password_probe_t *probe, const char *
     }
     probe->sha224_pass_valid = true;
     probe->sha256_pass_valid = true;
+    if (wwUuidParseString(password, probe->uuid_pass))
+    {
+        probe->uuid_pass_valid = true;
+    }
 
     return true;
 }
@@ -267,6 +318,7 @@ static void usersPasswordProbeDestroy(users_password_probe_t *probe)
 
     wCryptoZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
     wCryptoZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
+    memoryZero(probe->uuid_pass, sizeof(probe->uuid_pass));
     memoryZero(probe, sizeof(*probe));
 }
 
@@ -300,6 +352,24 @@ static bool usersSHA256TableReserve(users_sha256_table_t *table, size_t count)
     if (UNLIKELY(! users_sha256_map_t_reserve(&table->map, (isize) capacity)))
     {
         LOGE("Users: failed to reserve SHA-256 lookup table");
+        return false;
+    }
+
+    return true;
+}
+
+static bool usersUUIDTableReserve(users_uuid_table_t *table, size_t count)
+{
+    size_t capacity = count < kUsersInitialTableCapacity ? kUsersInitialTableCapacity : count;
+
+    if (UNLIKELY(capacity > (size_t) PTRDIFF_MAX))
+    {
+        LOGE("Users: UUID lookup table capacity overflow");
+        return false;
+    }
+    if (UNLIKELY(! users_uuid_map_t_reserve(&table->map, (isize) capacity)))
+    {
+        LOGE("Users: failed to reserve UUID lookup table");
         return false;
     }
 
@@ -380,6 +450,34 @@ static bool usersSHA256TableCreateIfNeeded(users_t *users)
     return true;
 }
 
+static bool usersUUIDTableCreateIfNeeded(users_t *users)
+{
+    users_uuid_table_t *table;
+
+    if (LIKELY(users->uuid_table != NULL))
+    {
+        return true;
+    }
+
+    table = memoryAllocate(sizeof(*table));
+    if (UNLIKELY(table == NULL))
+    {
+        LOGE("Users: failed to allocate UUID lookup table");
+        return false;
+    }
+    memoryZero(table, sizeof(*table));
+
+    if (UNLIKELY(! usersUUIDTableReserve(table, kUsersInitialTableCapacity)))
+    {
+        users_uuid_map_t_drop(&table->map);
+        memoryFree(table);
+        return false;
+    }
+
+    users->uuid_table = table;
+    return true;
+}
+
 static bool usersIDTableCreateIfNeeded(users_t *users)
 {
     users_id_table_t *table;
@@ -418,6 +516,11 @@ static bool usersSHA224TableEnsureCapacity(users_t *users, size_t count)
     return usersSHA224TableCreateIfNeeded(users) && usersSHA224TableReserve(users->sha224_table, count);
 }
 
+static bool usersUUIDTableEnsureCapacity(users_t *users, size_t count)
+{
+    return usersUUIDTableCreateIfNeeded(users) && usersUUIDTableReserve(users->uuid_table, count);
+}
+
 static bool usersIDTableEnsureCapacity(users_t *users, size_t count)
 {
     return usersIDTableCreateIfNeeded(users) && usersIDTableReserve(users->id_table, count);
@@ -441,6 +544,16 @@ static void usersSHA256TableClear(users_sha256_table_t *table)
     }
 
     users_sha256_map_t_clear(&table->map);
+}
+
+static void usersUUIDTableClear(users_uuid_table_t *table)
+{
+    if (UNLIKELY(table == NULL))
+    {
+        return;
+    }
+
+    users_uuid_map_t_clear(&table->map);
 }
 
 static void usersIDTableClear(users_id_table_t *table)
@@ -472,6 +585,17 @@ static void usersSHA256TableDestroy(users_sha256_table_t *table)
     }
 
     users_sha256_map_t_drop(&table->map);
+    memoryFree(table);
+}
+
+static void usersUUIDTableDestroy(users_uuid_table_t *table)
+{
+    if (UNLIKELY(table == NULL))
+    {
+        return;
+    }
+
+    users_uuid_map_t_drop(&table->map);
     memoryFree(table);
 }
 
@@ -514,6 +638,20 @@ static user_t *usersSHA256TableLookupLocked(const users_t *users, const uint8_t 
     return it.ref != NULL ? it.ref->second : NULL;
 }
 
+static user_t *usersUUIDTableLookupLocked(const users_t *users, const uint8_t key_bytes[kWwUuidBytesLen])
+{
+    users_uuid_table_t *table = users->uuid_table;
+
+    if (UNLIKELY(table == NULL || key_bytes == NULL))
+    {
+        return NULL;
+    }
+
+    users_uuid_key_t      key = usersUUIDKeyFromBytes(key_bytes);
+    users_uuid_map_t_iter it  = users_uuid_map_t_find(&table->map, key);
+    return it.ref != NULL ? it.ref->second : NULL;
+}
+
 static user_t *usersIDTableLookupLocked(const users_t *users, uint64_t id)
 {
     users_id_table_t *table = users->id_table;
@@ -553,11 +691,11 @@ static bool usersSHA224TableInsertLocked(users_t *users, user_t *user)
     {
         char key_hex[SHA224_DIGEST_SIZE * 2U + 1U];
         usersSha224ToHex(user->sha224_pass.bytes, key_hex);
-        LOGF("Users: fatal SHA-224 lookup collision for key %s between users \"%s\" and \"%s\"",
+        LOGE("Users: duplicate SHA-224 lookup key %s between users \"%s\" and \"%s\"",
              key_hex,
              usersUserNameForLog(result.ref->second),
              usersUserNameForLog(user));
-        terminateProgram(1);
+        return false;
     }
 
     return true;
@@ -589,11 +727,46 @@ static bool usersSHA256TableInsertLocked(users_t *users, user_t *user)
     {
         char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
         usersSha256ToHex(user->sha256_pass.bytes, key_hex);
-        LOGF("Users: fatal SHA-256 lookup collision for key %s between users \"%s\" and \"%s\"",
+        LOGE("Users: duplicate SHA-256 lookup key %s between users \"%s\" and \"%s\"",
              key_hex,
              usersUserNameForLog(result.ref->second),
              usersUserNameForLog(user));
-        terminateProgram(1);
+        return false;
+    }
+
+    return true;
+}
+
+static bool usersUUIDTableInsertLocked(users_t *users, user_t *user)
+{
+    users_uuid_key_t        key;
+    users_uuid_map_t_result result;
+
+    if (! user->uuid_pass_valid)
+    {
+        return true;
+    }
+    if (UNLIKELY(! usersUUIDTableEnsureCapacity(users, users->count + 1U)))
+    {
+        return false;
+    }
+
+    key    = usersUUIDKeyFromBytes(user->uuid_pass);
+    result = users_uuid_map_t_insert(&users->uuid_table->map, key, user);
+    if (UNLIKELY(result.ref == NULL))
+    {
+        LOGE("Users: failed to insert UUID lookup entry");
+        return false;
+    }
+    if (UNLIKELY(! result.inserted && result.ref->second != user))
+    {
+        char key_text[kWwUuidCanonicalStringLen + 1U];
+        wwUuidToCanonicalString(user->uuid_pass, key_text);
+        LOGE("Users: duplicate UUID credential %s between users \"%s\" and \"%s\"",
+             key_text,
+             usersUserNameForLog(result.ref->second),
+             usersUserNameForLog(user));
+        return false;
     }
 
     return true;
@@ -621,11 +794,11 @@ static bool usersIDTableInsertLocked(users_t *users, user_t *user)
     }
     if (UNLIKELY(! result.inserted && result.ref->second != user))
     {
-        LOGF("Users: fatal duplicate id %" PRIu64 " between users \"%s\" and \"%s\"",
+        LOGE("Users: duplicate id %" PRIu64 " between users \"%s\" and \"%s\"",
              id,
              usersUserNameForLog(result.ref->second),
              usersUserNameForLog(user));
-        terminateProgram(1);
+        return false;
     }
 
     return true;
@@ -638,6 +811,10 @@ static bool usersEnsureLookupCapacityLocked(users_t *users, size_t count)
         return false;
     }
     if (UNLIKELY(! usersSHA256TableEnsureCapacity(users, count)))
+    {
+        return false;
+    }
+    if (UNLIKELY(! usersUUIDTableEnsureCapacity(users, count)))
     {
         return false;
     }
@@ -658,6 +835,7 @@ static bool usersRebuildLookupTablesLocked(users_t *users)
 
     usersSHA224TableClear(users->sha224_table);
     usersSHA256TableClear(users->sha256_table);
+    usersUUIDTableClear(users->uuid_table);
     usersIDTableClear(users->id_table);
 
     for (size_t i = 0; i < users->count; ++i)
@@ -668,6 +846,10 @@ static bool usersRebuildLookupTablesLocked(users_t *users)
             return false;
         }
         if (UNLIKELY(! usersSHA256TableInsertLocked(users, user)))
+        {
+            return false;
+        }
+        if (UNLIKELY(! usersUUIDTableInsertLocked(users, user)))
         {
             return false;
         }
@@ -870,26 +1052,35 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot)
     {
         char key_hex[SHA224_DIGEST_SIZE * 2U + 1U];
         usersSha224ToHex(slot->sha224_pass.bytes, key_hex);
-        LOGF("Users: fatal duplicate SHA-224 lookup key %s while loading user \"%s\"",
+        LOGE("Users: duplicate SHA-224 lookup key %s while loading user \"%s\"",
              key_hex,
              usersUserNameForLog(slot));
-        terminateProgram(1);
+        return false;
     }
     if (UNLIKELY(usersSHA256TableLookupLocked(users, slot->sha256_pass.bytes) != NULL))
     {
         char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
         usersSha256ToHex(slot->sha256_pass.bytes, key_hex);
-        LOGF("Users: fatal duplicate SHA-256 lookup key %s while loading user \"%s\"",
+        LOGE("Users: duplicate SHA-256 lookup key %s while loading user \"%s\"",
              key_hex,
              usersUserNameForLog(slot));
-        terminateProgram(1);
+        return false;
+    }
+    if (UNLIKELY(slot->uuid_pass_valid && usersUUIDTableLookupLocked(users, slot->uuid_pass) != NULL))
+    {
+        char key_text[kWwUuidCanonicalStringLen + 1U];
+        wwUuidToCanonicalString(slot->uuid_pass, key_text);
+        LOGE("Users: duplicate UUID credential %s while loading user \"%s\"",
+             key_text,
+             usersUserNameForLog(slot));
+        return false;
     }
     if (UNLIKELY(slot->id != 0 && usersIDTableLookupLocked(users, slot->id) != NULL))
     {
-        LOGF("Users: fatal duplicate id %" PRIu64 " while loading user \"%s\"",
+        LOGE("Users: duplicate id %" PRIu64 " while loading user \"%s\"",
              slot->id,
              usersUserNameForLog(slot));
-        terminateProgram(1);
+        return false;
     }
 
     if (UNLIKELY(! usersSHA224TableInsertLocked(users, slot)))
@@ -897,6 +1088,15 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot)
         return false;
     }
     if (UNLIKELY(! usersSHA256TableInsertLocked(users, slot)))
+    {
+        if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
+        {
+            LOGF("Users: failed to restore lookup tables after an insertion failure");
+            terminateProgram(1);
+        }
+        return false;
+    }
+    if (UNLIKELY(! usersUUIDTableInsertLocked(users, slot)))
     {
         if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
         {
@@ -946,6 +1146,11 @@ static users_add_result_t usersValidateNewUserNoFatalLocked(const users_t *users
                      usersSha256Equal(existing->sha256_pass.bytes, user->sha256_pass.bytes)))
         {
             return kUsersAddResultDuplicateSHA256;
+        }
+        if (UNLIKELY(user->uuid_pass_valid && existing->uuid_pass_valid &&
+                     usersUUIDEqual(existing->uuid_pass, user->uuid_pass)))
+        {
+            return kUsersAddResultDuplicateUUID;
         }
         if (UNLIKELY(user->id != 0 && existing->id == user->id))
         {
@@ -997,35 +1202,51 @@ users_add_result_t usersAddUserChecked(users_t *users, const user_t *user)
     return kUsersAddResultOk;
 }
 
-static bool usersChangePasswordLocked(users_t *users, user_t *user, const char *password)
+static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *user, const char *password)
 {
     user_t                *sha224_duplicate;
     user_t                *sha256_duplicate;
+    user_t                *uuid_duplicate;
     users_password_probe_t password_probe;
 
     if (UNLIKELY(! usersIndexOfLocked(users, user, NULL)))
     {
-        return false;
+        return kUsersUpdateResultUserNotFound;
     }
 
     memoryZero(&password_probe, sizeof(password_probe));
     if (UNLIKELY(! usersPasswordProbeCreate(&password_probe, password)))
     {
-        return false;
+        return kUsersUpdateResultPasswordUpdateFailed;
     }
     if (UNLIKELY(! password_probe.sha224_pass_valid))
     {
         LOGE("Users: updated password for user \"%s\" does not produce a usable SHA-224 hash",
              usersUserNameForLog(user));
         usersPasswordProbeDestroy(&password_probe);
-        return false;
+        return kUsersUpdateResultPasswordUpdateFailed;
     }
     if (UNLIKELY(! password_probe.sha256_pass_valid))
     {
         LOGE("Users: updated password for user \"%s\" does not produce a usable SHA-256 hash",
              usersUserNameForLog(user));
         usersPasswordProbeDestroy(&password_probe);
-        return false;
+        return kUsersUpdateResultPasswordUpdateFailed;
+    }
+
+    if (password_probe.uuid_pass_valid)
+    {
+        uuid_duplicate = usersUUIDTableLookupLocked(users, password_probe.uuid_pass);
+        if (UNLIKELY(uuid_duplicate != NULL && uuid_duplicate != user))
+        {
+            char key_text[kWwUuidCanonicalStringLen + 1U];
+            wwUuidToCanonicalString(password_probe.uuid_pass, key_text);
+            LOGE("Users: duplicate UUID credential %s while updating user \"%s\"",
+                 key_text,
+                 usersUserNameForLog(user));
+            usersPasswordProbeDestroy(&password_probe);
+            return kUsersUpdateResultDuplicateUUID;
+        }
     }
 
     sha224_duplicate = usersSHA224TableLookupLocked(users, password_probe.sha224_pass.bytes);
@@ -1033,11 +1254,11 @@ static bool usersChangePasswordLocked(users_t *users, user_t *user, const char *
     {
         char key_hex[SHA224_DIGEST_SIZE * 2U + 1U];
         usersSha224ToHex(password_probe.sha224_pass.bytes, key_hex);
-        LOGF("Users: fatal SHA-224 lookup collision for key %s while updating user \"%s\"",
+        LOGE("Users: duplicate SHA-224 lookup key %s while updating user \"%s\"",
              key_hex,
              usersUserNameForLog(user));
         usersPasswordProbeDestroy(&password_probe);
-        terminateProgram(1);
+        return kUsersUpdateResultPasswordUpdateFailed;
     }
 
     sha256_duplicate = usersSHA256TableLookupLocked(users, password_probe.sha256_pass.bytes);
@@ -1045,21 +1266,21 @@ static bool usersChangePasswordLocked(users_t *users, user_t *user, const char *
     {
         char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
         usersSha256ToHex(password_probe.sha256_pass.bytes, key_hex);
-        LOGF("Users: fatal SHA-256 lookup collision for key %s while updating user \"%s\"",
+        LOGE("Users: duplicate SHA-256 lookup key %s while updating user \"%s\"",
              key_hex,
              usersUserNameForLog(user));
         usersPasswordProbeDestroy(&password_probe);
-        terminateProgram(1);
+        return kUsersUpdateResultPasswordUpdateFailed;
     }
     if (UNLIKELY(! usersEnsureLookupCapacityLocked(users, users->count)))
     {
         usersPasswordProbeDestroy(&password_probe);
-        return false;
+        return kUsersUpdateResultAllocationFailed;
     }
     if (UNLIKELY(! userChangePassword(user, password)))
     {
         usersPasswordProbeDestroy(&password_probe);
-        return false;
+        return kUsersUpdateResultPasswordUpdateFailed;
     }
     if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
     {
@@ -1069,7 +1290,7 @@ static bool usersChangePasswordLocked(users_t *users, user_t *user, const char *
     }
 
     usersPasswordProbeDestroy(&password_probe);
-    return true;
+    return kUsersUpdateResultOk;
 }
 
 static user_t *usersLookupByPasswordLocked(users_t *users, const users_password_probe_t *password_probe,
@@ -1138,6 +1359,7 @@ static void usersClearLocked(users_t *users)
     users->slot_count = 0;
     usersSHA224TableClear(users->sha224_table);
     usersSHA256TableClear(users->sha256_table);
+    usersUUIDTableClear(users->uuid_table);
     usersIDTableClear(users->id_table);
 }
 
@@ -1328,6 +1550,11 @@ static bool usersValidateUserLookupKeysLocked(const users_t *users)
             LOGE("Users: SHA-256 lookup table does not point back to user \"%s\"", usersUserNameForLog(a));
             return false;
         }
+        if (UNLIKELY(a->uuid_pass_valid && usersUUIDTableLookupLocked(users, a->uuid_pass) != a))
+        {
+            LOGE("Users: UUID lookup table does not point back to user \"%s\"", usersUserNameForLog(a));
+            return false;
+        }
         if (UNLIKELY(a->id != 0 && usersIDTableLookupLocked(users, a->id) != a))
         {
             LOGE("Users: id lookup table does not point back to user \"%s\"", usersUserNameForLog(a));
@@ -1341,21 +1568,31 @@ static bool usersValidateUserLookupKeysLocked(const users_t *users)
             {
                 char key_hex[SHA224_DIGEST_SIZE * 2U + 1U];
                 usersSha224ToHex(a->sha224_pass.bytes, key_hex);
-                LOGF("Users: fatal SHA-224 lookup collision for key %s between users \"%s\" and \"%s\"",
+                LOGE("Users: duplicate SHA-224 lookup key %s between users \"%s\" and \"%s\"",
                      key_hex,
                      usersUserNameForLog(a),
                      usersUserNameForLog(b));
-                terminateProgram(1);
+                return false;
             }
             if (UNLIKELY(usersSha256Equal(a->sha256_pass.bytes, b->sha256_pass.bytes)))
             {
                 char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
                 usersSha256ToHex(a->sha256_pass.bytes, key_hex);
-                LOGF("Users: fatal SHA-256 lookup collision for key %s between users \"%s\" and \"%s\"",
+                LOGE("Users: duplicate SHA-256 lookup key %s between users \"%s\" and \"%s\"",
                      key_hex,
                      usersUserNameForLog(a),
                      usersUserNameForLog(b));
-                terminateProgram(1);
+                return false;
+            }
+            if (UNLIKELY(a->uuid_pass_valid && b->uuid_pass_valid && usersUUIDEqual(a->uuid_pass, b->uuid_pass)))
+            {
+                char key_text[kWwUuidCanonicalStringLen + 1U];
+                wwUuidToCanonicalString(a->uuid_pass, key_text);
+                LOGE("Users: duplicate UUID credential %s between users \"%s\" and \"%s\"",
+                     key_text,
+                     usersUserNameForLog(a),
+                     usersUserNameForLog(b));
+                return false;
             }
             if (UNLIKELY(a->id != 0 && a->id == b->id))
             {
@@ -1387,10 +1624,11 @@ bool usersCreate(users_t *users)
     memoryZero(users, sizeof(*users));
     rwlockinit(&users->lock);
     if (UNLIKELY(! usersSHA224TableCreateIfNeeded(users) || ! usersSHA256TableCreateIfNeeded(users) ||
-                 ! usersIDTableCreateIfNeeded(users)))
+                 ! usersUUIDTableCreateIfNeeded(users) || ! usersIDTableCreateIfNeeded(users)))
     {
         usersSHA224TableDestroy(users->sha224_table);
         usersSHA256TableDestroy(users->sha256_table);
+        usersUUIDTableDestroy(users->uuid_table);
         usersIDTableDestroy(users->id_table);
         rwlockDestroy(&users->lock);
         memoryZero(users, sizeof(*users));
@@ -1417,6 +1655,7 @@ void usersDestroy(users_t *users)
     memoryFreeAligned(users->items);
     usersSHA224TableDestroy(users->sha224_table);
     usersSHA256TableDestroy(users->sha256_table);
+    usersUUIDTableDestroy(users->uuid_table);
     usersIDTableDestroy(users->id_table);
 
     rwlockDestroy(&users->lock);
@@ -1636,6 +1875,26 @@ const user_t *usersLookupBySHA256Const(const users_t *users, const uint8_t sha25
     return usersLookupBySHA256((users_t *) users, sha256);
 }
 
+user_t *usersLookupByUUID(users_t *users, const uint8_t uuid[kWwUuidBytesLen])
+{
+    user_t *result;
+
+    if (UNLIKELY(users == NULL || uuid == NULL))
+    {
+        return NULL;
+    }
+
+    rwlockReadLock(&users->lock);
+    result = usersUUIDTableLookupLocked(users, uuid);
+    rwlockReadUnlock(&users->lock);
+    return result;
+}
+
+const user_t *usersLookupByUUIDConst(const users_t *users, const uint8_t uuid[kWwUuidBytesLen])
+{
+    return usersLookupByUUID((users_t *) users, uuid);
+}
+
 user_t *usersLookupByIdentifier(users_t *users, uint64_t id)
 {
     user_t *result;
@@ -1690,6 +1949,27 @@ cJSON *usersUserToJsonBySHA256(const users_t *users, const uint8_t sha256[SHA256
 
     rwlockReadLock(&self->lock);
     user = usersSHA256TableLookupLocked(self, sha256);
+    if (LIKELY(user != NULL))
+    {
+        json = userToJson(user);
+    }
+    rwlockReadUnlock(&self->lock);
+    return json;
+}
+
+cJSON *usersUserToJsonByIdentifier(const users_t *users, uint64_t id)
+{
+    users_t *self = (users_t *) users;
+    user_t  *user = NULL;
+    cJSON   *json = NULL;
+
+    if (UNLIKELY(users == NULL || id == 0))
+    {
+        return NULL;
+    }
+
+    rwlockReadLock(&self->lock);
+    user = usersIDTableLookupLocked(self, id);
     if (LIKELY(user != NULL))
     {
         json = userToJson(user);
@@ -1814,7 +2094,7 @@ bool usersRemoveUserByIdentifier(users_t *users, uint64_t id)
 
 bool usersChangePassword(users_t *users, user_t *user, const char *password)
 {
-    bool result;
+    users_update_result_t result;
 
     if (UNLIKELY(users == NULL || user == NULL))
     {
@@ -1824,7 +2104,7 @@ bool usersChangePassword(users_t *users, user_t *user, const char *password)
     rwlockWriteLock(&users->lock);
     result = usersChangePasswordLocked(users, user, password);
     rwlockWriteUnlock(&users->lock);
-    return result;
+    return result == kUsersUpdateResultOk;
 }
 
 static users_update_result_t usersValidateUpdateRequest(const user_update_t *update)
@@ -1908,10 +2188,13 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(users_t *users
             return kUsersUpdateResultDuplicateName;
         }
     }
-    if (UNLIKELY((update->mask & kUserUpdatePassword) != 0U &&
-                 ! usersChangePasswordLocked(users, user, update->password)))
+    if ((update->mask & kUserUpdatePassword) != 0U)
     {
-        return kUsersUpdateResultPasswordUpdateFailed;
+        users_update_result_t result = usersChangePasswordLocked(users, user, update->password);
+        if (UNLIKELY(result != kUsersUpdateResultOk))
+        {
+            return result;
+        }
     }
 
     rwlockWriteLock(&user->lock);
@@ -2200,14 +2483,12 @@ bool usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src)
     for (size_t i = 0; i < src->count; ++i)
     {
         user_t *old_user = usersGetAtLocked(src, i);
-        if (UNLIKELY(old_user == NULL || ! old_user->sha256_pass_valid))
+        if (UNLIKELY(old_user == NULL || old_user->id == 0))
         {
             continue;
         }
 
-        user_t *new_user =
-            old_user->id != 0 ? usersIDTableLookupLocked(dest, old_user->id)
-                              : usersSHA256TableLookupLocked(dest, old_user->sha256_pass.bytes);
+        user_t *new_user = usersIDTableLookupLocked(dest, old_user->id);
         if (new_user == NULL)
         {
             continue;
@@ -2219,11 +2500,6 @@ bool usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src)
     rwlockWriteUnlock(&second->lock);
     rwlockWriteUnlock(&first->lock);
     return true;
-}
-
-bool usersMigrateRuntimeStateBySHA256(users_t *dest, users_t *src)
-{
-    return usersMigrateRuntimeStateByIdentifier(dest, src);
 }
 
 users_update_result_t usersSetFirstUsageIfMissingBySHA256(users_t *users,
@@ -2304,25 +2580,6 @@ users_update_result_t usersSetFirstUsageIfMissingByIdentifier(users_t *users,
     return user != NULL ? kUsersUpdateResultOk : kUsersUpdateResultUserNotFound;
 }
 
-user_admission_result_t usersTryAdmitConnectionBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
-                                                        const user_ip_key_t *ip_key, uint64_t now_ms)
-{
-    user_t                 *user;
-    user_admission_result_t result;
-
-    if (UNLIKELY(users == NULL || sha256 == NULL))
-    {
-        return kUserAdmissionInvalid;
-    }
-
-    rwlockReadLock(&users->lock);
-    user   = usersSHA256TableLookupLocked(users, sha256);
-    result = user != NULL ? userTryAdmitConnection(user, ip_key, now_ms) : kUserAdmissionInvalid;
-    rwlockReadUnlock(&users->lock);
-
-    return result;
-}
-
 user_admission_result_t usersTryAdmitConnectionByIdentifier(users_t *users, uint64_t id,
                                                             const user_ip_key_t *ip_key, uint64_t now_ms)
 {
@@ -2342,25 +2599,6 @@ user_admission_result_t usersTryAdmitConnectionByIdentifier(users_t *users, uint
     return result;
 }
 
-void usersReleaseConnectionBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
-                                    const user_ip_key_t *ip_key)
-{
-    user_t *user;
-
-    if (UNLIKELY(users == NULL || sha256 == NULL))
-    {
-        return;
-    }
-
-    rwlockReadLock(&users->lock);
-    user = usersSHA256TableLookupLocked(users, sha256);
-    if (LIKELY(user != NULL))
-    {
-        userReleaseConnection(user, ip_key);
-    }
-    rwlockReadUnlock(&users->lock);
-}
-
 void usersReleaseConnectionByIdentifier(users_t *users, uint64_t id, const user_ip_key_t *ip_key)
 {
     user_t *user;
@@ -2377,42 +2615,6 @@ void usersReleaseConnectionByIdentifier(users_t *users, uint64_t id, const user_
         userReleaseConnection(user, ip_key);
     }
     rwlockReadUnlock(&users->lock);
-}
-
-bool usersAccountTrafficBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE], uint64_t upload_bytes,
-                                 uint64_t download_bytes, uint64_t now_ms, bool *found,
-                                 bool *first_usage_push_needed)
-{
-    user_t *user;
-    bool    should_close = true;
-
-    if (first_usage_push_needed != NULL)
-    {
-        *first_usage_push_needed = false;
-    }
-
-    if (UNLIKELY(users == NULL || sha256 == NULL))
-    {
-        if (found != NULL)
-        {
-            *found = false;
-        }
-        return true;
-    }
-
-    rwlockReadLock(&users->lock);
-    user = usersSHA256TableLookupLocked(users, sha256);
-    if (LIKELY(user != NULL))
-    {
-        should_close = userAccountTraffic(user, upload_bytes, download_bytes, now_ms, first_usage_push_needed);
-    }
-    rwlockReadUnlock(&users->lock);
-
-    if (found != NULL)
-    {
-        *found = user != NULL;
-    }
-    return should_close;
 }
 
 bool usersAccountTrafficByIdentifier(users_t *users, uint64_t id, uint64_t upload_bytes, uint64_t download_bytes,
@@ -2473,24 +2675,6 @@ void usersResetFirstUsagePushRequests(users_t *users)
     rwlockReadUnlock(&users->lock);
 }
 
-void usersResetFirstUsagePushRequestBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE])
-{
-    if (UNLIKELY(users == NULL || sha256 == NULL))
-    {
-        return;
-    }
-
-    rwlockReadLock(&users->lock);
-    user_t *user = usersSHA256TableLookupLocked(users, sha256);
-    if (LIKELY(user != NULL))
-    {
-        rwlockWriteLock(&user->stats_lock);
-        user->runtime.first_usage_push_requested = false;
-        rwlockWriteUnlock(&user->stats_lock);
-    }
-    rwlockReadUnlock(&users->lock);
-}
-
 void usersResetFirstUsagePushRequestByIdentifier(users_t *users, uint64_t id)
 {
     if (UNLIKELY(users == NULL || id == 0))
@@ -2507,27 +2691,6 @@ void usersResetFirstUsagePushRequestByIdentifier(users_t *users, uint64_t id)
         rwlockWriteUnlock(&user->stats_lock);
     }
     rwlockReadUnlock(&users->lock);
-}
-
-bool usersRuntimeShouldCloseBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE], uint64_t now_ms)
-{
-    user_t *user;
-    bool    should_close = true;
-
-    if (UNLIKELY(users == NULL || sha256 == NULL))
-    {
-        return true;
-    }
-
-    rwlockReadLock(&users->lock);
-    user = usersSHA256TableLookupLocked(users, sha256);
-    if (LIKELY(user != NULL))
-    {
-        should_close = userRuntimeShouldClose(user, now_ms);
-    }
-    rwlockReadUnlock(&users->lock);
-
-    return should_close;
 }
 
 bool usersRuntimeShouldCloseByIdentifier(users_t *users, uint64_t id, uint64_t now_ms)

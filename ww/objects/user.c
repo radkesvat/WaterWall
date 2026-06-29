@@ -94,9 +94,11 @@ typedef struct user_snapshot_s
     MSVC_ATTR_ALIGNED_32 sha224_hash_t sha224_pass GNU_ATTR_ALIGNED_32;
     uint8_t       sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
     MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;
+    uint8_t       uuid_pass[kWwUuidBytesLen];
 
     bool sha224_pass_valid;
     bool sha256_pass_valid;
+    bool uuid_pass_valid;
 } user_snapshot_t;
 
 _Static_assert(offsetof(user_snapshot_t, sha224_pass) % 32U == 0,
@@ -119,6 +121,7 @@ static void userSnapshotDestroy(user_snapshot_t *snapshot)
     memoryFree(snapshot->notes);
     wCryptoZero(&snapshot->sha224_pass, sizeof(snapshot->sha224_pass));
     wCryptoZero(&snapshot->sha256_pass, sizeof(snapshot->sha256_pass));
+    memoryZero(snapshot->uuid_pass, sizeof(snapshot->uuid_pass));
     memoryZero(snapshot, sizeof(*snapshot));
 }
 
@@ -157,8 +160,10 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
     snapshot->hash_pass               = src->hash_pass;
     snapshot->sha224_pass             = src->sha224_pass;
     snapshot->sha256_pass             = src->sha256_pass;
+    memoryCopy(snapshot->uuid_pass, src->uuid_pass, sizeof(snapshot->uuid_pass));
     snapshot->sha224_pass_valid       = src->sha224_pass_valid;
     snapshot->sha256_pass_valid       = src->sha256_pass_valid;
+    snapshot->uuid_pass_valid         = src->uuid_pass_valid;
 
     rwlockReadUnlock(&mutable_src->stats_lock);
     rwlockReadUnlock(&mutable_src->lock);
@@ -173,9 +178,11 @@ static bool userPasswordHashesCreate(User *user, const char *password)
 
     user->sha224_pass_valid = false;
     user->sha256_pass_valid = false;
+    user->uuid_pass_valid   = false;
 
     memoryZero(&user->sha224_pass, sizeof(user->sha224_pass));
     memoryZero(&user->sha256_pass, sizeof(user->sha256_pass));
+    memoryZero(user->uuid_pass, sizeof(user->uuid_pass));
 
     if (UNLIKELY(wCryptoSHA224(&user->sha224_pass, (const unsigned char *) password, password_len) != 0))
     {
@@ -188,6 +195,11 @@ static bool userPasswordHashesCreate(User *user, const char *password)
         return false;
     }
     user->sha256_pass_valid = true;
+
+    if (wwUuidParseString(password, user->uuid_pass))
+    {
+        user->uuid_pass_valid = true;
+    }
 
     return true;
 }
@@ -719,8 +731,10 @@ bool userCopy(User *dest, const User *src)
     dest->hash_pass               = snapshot.hash_pass;
     dest->sha224_pass             = snapshot.sha224_pass;
     dest->sha256_pass             = snapshot.sha256_pass;
+    memoryCopy(dest->uuid_pass, snapshot.uuid_pass, sizeof(dest->uuid_pass));
     dest->sha224_pass_valid       = snapshot.sha224_pass_valid;
     dest->sha256_pass_valid       = snapshot.sha256_pass_valid;
+    dest->uuid_pass_valid         = snapshot.uuid_pass_valid;
 
     snapshot.name     = NULL;
     snapshot.password = NULL;
@@ -728,6 +742,7 @@ bool userCopy(User *dest, const User *src)
     snapshot.notes    = NULL;
     memoryZero(&snapshot.sha224_pass, sizeof(snapshot.sha224_pass));
     memoryZero(&snapshot.sha256_pass, sizeof(snapshot.sha256_pass));
+    memoryZero(snapshot.uuid_pass, sizeof(snapshot.uuid_pass));
     userSnapshotDestroy(&snapshot);
     return true;
 }
@@ -747,6 +762,7 @@ void userDestroy(User *user)
     memoryZero(&user->runtime, sizeof(user->runtime));
     wCryptoZero(&user->sha224_pass, sizeof(user->sha224_pass));
     wCryptoZero(&user->sha256_pass, sizeof(user->sha256_pass));
+    memoryZero(user->uuid_pass, sizeof(user->uuid_pass));
     memoryZero(&user->limit, sizeof(user->limit));
     memoryZero(&user->timeinfo, sizeof(user->timeinfo));
     memoryZero(&user->stats, sizeof(user->stats));
@@ -773,6 +789,7 @@ bool userChangePassword(User *user, const char *password)
     {
         wCryptoZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
         wCryptoZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
+        memoryZero(staged_hashes.uuid_pass, sizeof(staged_hashes.uuid_pass));
         return false;
     }
 
@@ -781,6 +798,7 @@ bool userChangePassword(User *user, const char *password)
     {
         wCryptoZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
         wCryptoZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
+        memoryZero(staged_hashes.uuid_pass, sizeof(staged_hashes.uuid_pass));
         return false;
     }
 
@@ -788,17 +806,21 @@ bool userChangePassword(User *user, const char *password)
 
     wCryptoZero(&user->sha224_pass, sizeof(user->sha224_pass));
     wCryptoZero(&user->sha256_pass, sizeof(user->sha256_pass));
+    memoryZero(user->uuid_pass, sizeof(user->uuid_pass));
     user->hash_pass         = staged_hashes.hash_pass;
     user->sha224_pass       = staged_hashes.sha224_pass;
     user->sha256_pass       = staged_hashes.sha256_pass;
+    memoryCopy(user->uuid_pass, staged_hashes.uuid_pass, sizeof(user->uuid_pass));
     user->sha224_pass_valid = staged_hashes.sha224_pass_valid;
     user->sha256_pass_valid = staged_hashes.sha256_pass_valid;
+    user->uuid_pass_valid   = staged_hashes.uuid_pass_valid;
 
     userFreePassword(user->password);
     user->password = copy;
     rwlockWriteUnlock(&user->lock);
     wCryptoZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
     wCryptoZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
+    memoryZero(staged_hashes.uuid_pass, sizeof(staged_hashes.uuid_pass));
     return true;
 }
 
@@ -957,6 +979,7 @@ bool userPasswordDataValid(User *user)
 {
     sha224_hash_t sha224 = {0};
     sha256_hash_t sha256 = {0};
+    uint8_t       uuid[kWwUuidBytesLen] = {0};
     bool          result = false;
 
     if (UNLIKELY(! userObjectIsInitialized(user)))
@@ -977,11 +1000,19 @@ bool userPasswordDataValid(User *user)
             result = wCryptoEqual(&sha256, &user->sha256_pass, sizeof(sha256)) &&
                      wCryptoEqual(&sha224, &user->sha224_pass, sizeof(sha224));
         }
+        if (result)
+        {
+            const bool password_is_uuid = wwUuidParseString(user->password, uuid);
+            result = password_is_uuid
+                         ? user->uuid_pass_valid && wCryptoEqual(uuid, user->uuid_pass, sizeof(uuid))
+                         : ! user->uuid_pass_valid;
+        }
     }
     rwlockReadUnlock(&user->lock);
 
     wCryptoZero(&sha224, sizeof(sha224));
     wCryptoZero(&sha256, sizeof(sha256));
+    memoryZero(uuid, sizeof(uuid));
     return result;
 }
 

@@ -46,26 +46,18 @@ static void requireStringEquals(const char *actual, const char *expected, const 
 static void requireUserHandleEquals(const user_handle_t *actual, const user_handle_t *expected, const char *message)
 {
     require(actual != NULL, message);
-    require(memoryEqual(actual->sha256, expected->sha256, SHA256_DIGEST_SIZE), message);
     require(actual->generation == expected->generation, message);
     require(actual->user_id == expected->user_id, message);
 }
 
-static user_handle_t testUserHandle(uint8_t seed, uint64_t generation, uint64_t user_id)
+static user_handle_t testUserHandle(uint64_t generation, uint64_t user_id)
 {
-    uint8_t sha256[SHA256_DIGEST_SIZE] = {0};
-
-    for (size_t i = 0; i < sizeof(sha256); ++i)
-    {
-        sha256[i] = (uint8_t) (seed + (uint8_t) (i * 13U));
-    }
-
     user_handle_t handle = userHandleEmpty();
-    userHandleSet(&handle, sha256, generation, user_id);
+    userHandleSet(&handle, generation, user_id);
     return handle;
 }
 
-static void testAnonymousAuthentication(void)
+static void testAnonymousUserHandlesRemainInvalid(void)
 {
     line_t       *line  = testLineCreate();
     user_handle_t empty = userHandleEmpty();
@@ -88,21 +80,21 @@ static void testAnonymousAuthentication(void)
 
 static void testUserHandleStoresPassedIdentifier(void)
 {
-    user_handle_t legacy = testUserHandle(0x11, 1, 0);
-    user_handle_t first  = testUserHandle(0x11, 99, 42);
-    user_handle_t second = testUserHandle(0x41, 1, 77);
+    user_handle_t zero_id = testUserHandle(1, 0);
+    user_handle_t first   = testUserHandle(99, 42);
+    user_handle_t second  = testUserHandle(1, 77);
 
-    require(userHandleIsValid(&legacy), "legacy user handle with id 0 was not valid");
-    require(legacy.user_id == 0, "legacy user handle did not keep id 0");
+    require(! userHandleIsValid(&zero_id), "zero id user handle was valid");
+    require(zero_id.user_id == 0, "zero id user handle did not clear id");
     require(first.user_id == 42, "first user handle did not keep the passed id");
     require(second.user_id == 77, "second user handle did not keep the passed id");
 }
 
 static void testLineUserRecording(void)
 {
-    user_handle_t first  = testUserHandle(0x11, 1, 42);
-    user_handle_t legacy = testUserHandle(0x21, 2, 0);
-    user_handle_t second = testUserHandle(0x41, 1, 77);
+    user_handle_t first  = testUserHandle(1, 42);
+    user_handle_t second = testUserHandle(2, 77);
+    user_handle_t third  = testUserHandle(3, 99);
     user_handle_t empty  = userHandleEmpty();
 
     line_t *line = testLineCreate();
@@ -113,15 +105,15 @@ static void testLineUserRecording(void)
     requireUserHandleEquals(&line->user_handles[0], &first, "line did not record first user handle");
     require(lineGetCurrentUser(line) == &line->user_handles[0], "current user did not point to first user");
 
-    lineAddUser(line, &legacy, NULL, NULL);
-    require(line->user_count == 2, "line user count did not increment for legacy user");
-    requireUserHandleEquals(&line->user_handles[1], &legacy, "line did not record legacy user handle");
-    require(lineGetCurrentUser(line) == &line->user_handles[1], "current user did not point to legacy user");
-
     lineAddUser(line, &second, NULL, NULL);
-    require(line->user_count == 3, "line user count did not increment for second user");
-    requireUserHandleEquals(&line->user_handles[2], &second, "line did not record second user handle");
-    require(lineGetCurrentUser(line) == &line->user_handles[2], "current user did not point to second user");
+    require(line->user_count == 2, "line user count did not increment for second user");
+    requireUserHandleEquals(&line->user_handles[1], &second, "line did not record second user handle");
+    require(lineGetCurrentUser(line) == &line->user_handles[1], "current user did not point to second user");
+
+    lineAddUser(line, &third, NULL, NULL);
+    require(line->user_count == 3, "line user count did not increment for third user");
+    requireUserHandleEquals(&line->user_handles[2], &third, "line did not record third user handle");
+    require(lineGetCurrentUser(line) == &line->user_handles[2], "current user did not point to third user");
 
     lineAddUser(line, &empty, NULL, NULL);
     require(line->user_count == kLineMaxUsers, "line did not allow exactly four user entries");
@@ -134,8 +126,8 @@ static void testLineUserRecording(void)
 
 static void testLineUserCopy(void)
 {
-    user_handle_t first  = testUserHandle(0x21, 7, 42);
-    user_handle_t second = testUserHandle(0x71, 11, 0);
+    user_handle_t first  = testUserHandle(7, 42);
+    user_handle_t second = testUserHandle(11, 84);
 
     line_t *src  = testLineCreate();
     line_t *dest = testLineCreate();
@@ -184,7 +176,7 @@ static void testLineCredentialOnlyRecordingAndCopy(void)
 
 int main(void)
 {
-    testAnonymousAuthentication();
+    testAnonymousUserHandlesRemainInvalid();
     testUserHandleStoresPassedIdentifier();
     testLineUserRecording();
     testLineUserCopy();

@@ -43,15 +43,15 @@ static void usercontrollerLogUserContext(tunnel_t *t, line_t *l, const usercontr
 {
     usercontroller_tstate_t *ts = tunnelGetState(t);
 
-    if (! ts->verbose || ls == NULL || ! userHandleIsValid(&ls->handle))
+    if (! ts->verbose || ls == NULL)
     {
         LOGW("UserController: %s: %s", action, reason != NULL ? reason : "unknown");
         return;
     }
 
-    if (ls->handle.user_id != 0)
+    if (! userHandleIsValid(&ls->handle))
     {
-        LOGW("UserController: %s on worker %u: %s (user-id=%" PRIu64 ", generation=%" PRIu64
+        LOGW("UserController: %s on worker %u: %s (invalid user handle: user-id=%" PRIu64 ", generation=%" PRIu64
              ", ip-key-type=%u)",
              action,
              l != NULL ? (unsigned int) lineGetWID(l) : (unsigned int) getWID(),
@@ -62,10 +62,11 @@ static void usercontrollerLogUserContext(tunnel_t *t, line_t *l, const usercontr
         return;
     }
 
-    LOGW("UserController: %s on worker %u: %s (legacy-handle-generation=%" PRIu64 ", ip-key-type=%u)",
+    LOGW("UserController: %s on worker %u: %s (user-id=%" PRIu64 ", generation=%" PRIu64 ", ip-key-type=%u)",
          action,
          l != NULL ? (unsigned int) lineGetWID(l) : (unsigned int) getWID(),
          reason != NULL ? reason : "unknown",
+         ls->handle.user_id,
          ls->handle.generation,
          (unsigned int) ls->ip_key.type);
 }

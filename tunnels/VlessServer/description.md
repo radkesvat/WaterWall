@@ -53,7 +53,7 @@ Important:
 - Operators should place `TlsServer` before `VlessServer` for normal VLESS deployments.
 - Without TLS, the UUID and destination metadata are visible on the wire.
 - The UUID is a bearer credential. Anyone who knows it can authenticate.
-- In user-database mode, put the canonical lowercase dashed UUID string in the user's `password` field.
+- In user-database mode, put the user's UUID string in the user's `password` field.
 
 ## Configuration Example
 
@@ -127,7 +127,7 @@ Example with fallback:
 }
 ```
 
-The matching user database entry should use the canonical UUID string as the password:
+The matching user database entry should use the UUID string as the password:
 
 ```json
 {
@@ -198,13 +198,15 @@ For user-database mode, configure:
   Name of an existing `AuthenticationClient` node in the same config file.
 
 In this mode, local UUID settings (`uuid`, `id`, `uuids`, `users`, `clients`) are rejected so the user database remains
-the only authority. The wire UUID is converted to canonical lowercase dashed form before lookup, for example:
+the only authority. The 16-byte wire UUID is looked up directly against UUID credentials locally derived from each
+user's `password`. For example, this password is accepted:
 
 ```text
 5783a3e7-e373-51cd-8642-c83782b807c5
 ```
 
-That string is authenticated as the user's `password` through `AuthenticationClient`.
+Dashed, uppercase, and compact 32-character UUID password forms derive the same credential key. Duplicate equivalent
+UUID credentials are rejected because a VLESS request cannot distinguish them.
 
 In local allowlist mode, the canonical lowercase dashed UUID string is stored as the line's raw password after the full
 VLESS request is parsed, so `Router` can match `password` rules without a users database. If the matching local object

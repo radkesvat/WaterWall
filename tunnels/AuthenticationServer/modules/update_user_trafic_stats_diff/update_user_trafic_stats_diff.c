@@ -17,6 +17,7 @@ static const char *authenticationserverTrafficDiffResultError(users_update_resul
     case kUsersUpdateResultUserNotFound:
         return "user-not-found";
     case kUsersUpdateResultDuplicateName:
+    case kUsersUpdateResultDuplicateUUID:
     case kUsersUpdateResultPasswordUpdateFailed:
         return "user-update-failed";
     }

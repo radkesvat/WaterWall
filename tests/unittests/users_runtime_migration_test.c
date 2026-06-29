@@ -72,6 +72,8 @@ static void testIdentifierLookupAndJsonRoundTrip(void)
     require(usersAddUser(&users, &legacy), "failed to add legacy id user");
     require(usersAddUserChecked(&users, &duplicate) == kUsersAddResultDuplicateId,
             "duplicate id was not rejected by checked insert");
+    require(! usersAddUser(&users, &duplicate), "duplicate id legacy insert unexpectedly worked");
+    require(usersCount(&users) == 3, "duplicate id legacy insert changed the users table");
 
     user_t *first_lookup = usersLookupByIdentifier(&users, 101);
     user_t *second_lookup = usersLookupByIdentifier(&users, 202);
@@ -125,6 +127,8 @@ static void testSHA224LookupAndHashAlignment(void)
     require(usersAddUser(&users, &source_user), "failed to add SHA-224 lookup user");
     require(usersAddUserChecked(&users, &duplicate_user) == kUsersAddResultDuplicateSHA224,
             "duplicate SHA-224 lookup key was not rejected by checked insert");
+    require(! usersAddUser(&users, &duplicate_user), "duplicate SHA legacy insert unexpectedly worked");
+    require(usersCount(&users) == 1, "duplicate SHA legacy insert changed the users table");
 
     user_t *lookup = usersLookupBySHA224(&users, old_sha224);
     require(lookup != NULL, "failed to look user up by SHA-224");
@@ -149,12 +153,182 @@ static void testSHA224LookupAndHashAlignment(void)
     usersDestroy(&users);
 }
 
-static void testRuntimeMigrationPreservesActiveIpOnly(void)
+static void testJsonFeedRejectsDuplicateKeysWithoutTerminating(void)
+{
+    static const char duplicate_sha_json[] =
+        "{\"users\":["
+        "{\"id\":5101,\"password\":\"json-duplicate-password\"},"
+        "{\"id\":5102,\"password\":\"json-duplicate-password\"}"
+        "]}";
+    static const char duplicate_id_json[] =
+        "{\"users\":["
+        "{\"id\":5201,\"password\":\"json-duplicate-id-a\"},"
+        "{\"id\":5201,\"password\":\"json-duplicate-id-b\"}"
+        "]}";
+    users_t users;
+    user_t  seed;
+
+    memoryZero(&users, sizeof(users));
+    memoryZero(&seed, sizeof(seed));
+
+    require(usersCreate(&users), "failed to create duplicate JSON users table");
+    require(userCreate(&seed, "json-feed-seed-password"), "failed to create duplicate JSON seed user");
+    userSetId(&seed, 5001);
+    require(usersAddUser(&users, &seed), "failed to add duplicate JSON seed user");
+    userDestroy(&seed);
+
+    cJSON *json = cJSON_Parse(duplicate_sha_json);
+    require(json != NULL, "failed to parse duplicate SHA JSON");
+    require(! usersFeedJson(&users, json), "duplicate SHA JSON feed unexpectedly worked");
+    cJSON_Delete(json);
+    require(usersCount(&users) == 1, "duplicate SHA JSON feed did not roll back");
+    require(usersLookupByIdentifier(&users, 5001) != NULL, "duplicate SHA JSON feed lost existing user");
+
+    json = cJSON_Parse(duplicate_id_json);
+    require(json != NULL, "failed to parse duplicate id JSON");
+    require(! usersFeedJson(&users, json), "duplicate id JSON feed unexpectedly worked");
+    cJSON_Delete(json);
+    require(usersCount(&users) == 1, "duplicate id JSON feed did not roll back");
+    require(usersLookupByIdentifier(&users, 5001) != NULL, "duplicate id JSON feed lost existing user");
+
+    usersDestroy(&users);
+}
+
+static void testUUIDCredentialLookupAndDerivation(void)
+{
+    static const char canonical_uuid[] = "84949cc5-4701-4a84-895b-354c584a981b";
+    static const char uppercase_uuid[] = "84949CC5-4701-4A84-895B-354C584A981B";
+    static const char compact_uuid[]   = "84949cc547014a84895b354c584a981b";
+    uint8_t           expected_uuid[kWwUuidBytesLen] = {0};
+    users_t           users;
+    user_t            canonical_user;
+    user_t            uppercase_user;
+    user_t            compact_user;
+    user_t            plain_user;
+
+    memoryZero(&users, sizeof(users));
+    memoryZero(&canonical_user, sizeof(canonical_user));
+    memoryZero(&uppercase_user, sizeof(uppercase_user));
+    memoryZero(&compact_user, sizeof(compact_user));
+    memoryZero(&plain_user, sizeof(plain_user));
+
+    require(wwUuidParseString(canonical_uuid, expected_uuid), "failed to parse expected UUID");
+    require(usersCreate(&users), "failed to create UUID lookup users table");
+    require(userCreate(&canonical_user, canonical_uuid), "failed to create canonical UUID user");
+    require(userCreate(&uppercase_user, uppercase_uuid), "failed to create uppercase UUID user");
+    require(userCreate(&compact_user, compact_uuid), "failed to create compact UUID user");
+    require(userCreate(&plain_user, "plain-non-uuid-password"), "failed to create plain password user");
+
+    userSetId(&canonical_user, 3001);
+    userSetId(&uppercase_user, 3002);
+    userSetId(&compact_user, 3003);
+    userSetId(&plain_user, 3004);
+
+    require(canonical_user.uuid_pass_valid, "canonical UUID password did not derive UUID bytes");
+    require(uppercase_user.uuid_pass_valid, "uppercase UUID password did not derive UUID bytes");
+    require(compact_user.uuid_pass_valid, "compact UUID password did not derive UUID bytes");
+    require(! plain_user.uuid_pass_valid, "plain password unexpectedly derived UUID bytes");
+    require(memoryEqual(canonical_user.uuid_pass, expected_uuid, sizeof(expected_uuid)),
+            "canonical UUID bytes were not derived as expected");
+    require(memoryEqual(uppercase_user.uuid_pass, expected_uuid, sizeof(expected_uuid)),
+            "uppercase UUID bytes did not match canonical bytes");
+    require(memoryEqual(compact_user.uuid_pass, expected_uuid, sizeof(expected_uuid)),
+            "compact UUID bytes did not match canonical bytes");
+
+    require(usersAddUser(&users, &canonical_user), "failed to add canonical UUID user");
+    require(usersAddUser(&users, &plain_user), "failed to add plain password user");
+    require(usersLookupByUUID(&users, expected_uuid) != NULL, "failed to look user up by UUID");
+    require(usersAddUserChecked(&users, &uppercase_user) == kUsersAddResultDuplicateUUID,
+            "uppercase UUID duplicate was not rejected");
+    require(usersAddUserChecked(&users, &compact_user) == kUsersAddResultDuplicateUUID,
+            "compact UUID duplicate was not rejected");
+
+    user_t *lookup = usersLookupByUUID(&users, expected_uuid);
+    require(lookup != NULL && userGetId(lookup) == 3001, "UUID lookup returned the wrong user");
+
+    cJSON *json = userToJson(lookup);
+    require(json != NULL, "failed to serialize UUID user");
+    require(cJSON_GetObjectItemCaseSensitive(json, "uuid") == NULL, "serialized user unexpectedly included UUID");
+
+    user_t parsed;
+    memoryZero(&parsed, sizeof(parsed));
+    require(userCreateFromJson(&parsed, json), "failed to parse serialized UUID user");
+    require(parsed.uuid_pass_valid, "JSON round trip did not re-derive UUID bytes from password");
+    require(memoryEqual(parsed.uuid_pass, expected_uuid, sizeof(expected_uuid)),
+            "JSON round trip derived different UUID bytes");
+    userDestroy(&parsed);
+    cJSON_Delete(json);
+
+    userDestroy(&plain_user);
+    userDestroy(&compact_user);
+    userDestroy(&uppercase_user);
+    userDestroy(&canonical_user);
+    usersDestroy(&users);
+}
+
+static void testUUIDLookupUpdatesOnPasswordChange(void)
+{
+    static const char uuid_a[]         = "11111111-1111-1111-1111-111111111111";
+    static const char uuid_b[]         = "22222222-2222-2222-2222-222222222222";
+    static const char uuid_c[]         = "33333333-3333-3333-3333-333333333333";
+    static const char uuid_c_compact[] = "33333333333333333333333333333333";
+    uint8_t           uuid_a_bytes[kWwUuidBytesLen] = {0};
+    uint8_t           uuid_b_bytes[kWwUuidBytesLen] = {0};
+    uint8_t           uuid_c_bytes[kWwUuidBytesLen] = {0};
+    users_t           users;
+    user_t            first_source;
+    user_t            second_source;
+
+    memoryZero(&users, sizeof(users));
+    memoryZero(&first_source, sizeof(first_source));
+    memoryZero(&second_source, sizeof(second_source));
+
+    require(wwUuidParseString(uuid_a, uuid_a_bytes), "failed to parse UUID A");
+    require(wwUuidParseString(uuid_b, uuid_b_bytes), "failed to parse UUID B");
+    require(wwUuidParseString(uuid_c, uuid_c_bytes), "failed to parse UUID C");
+    require(usersCreate(&users), "failed to create UUID password-change users table");
+    require(userCreate(&first_source, uuid_a), "failed to create UUID A user");
+    require(userCreate(&second_source, uuid_c), "failed to create UUID C user");
+    userSetId(&first_source, 4001);
+    userSetId(&second_source, 4002);
+    require(usersAddUser(&users, &first_source), "failed to add UUID A user");
+    require(usersAddUser(&users, &second_source), "failed to add UUID C user");
+    userDestroy(&second_source);
+    userDestroy(&first_source);
+
+    user_t *first = usersLookupByUUID(&users, uuid_a_bytes);
+    user_t *second = usersLookupByUUID(&users, uuid_c_bytes);
+    require(first != NULL && userGetId(first) == 4001, "failed to look first UUID user up");
+    require(second != NULL && userGetId(second) == 4002, "failed to look second UUID user up");
+
+    require(usersChangePassword(&users, first, "changed-to-non-uuid-password"),
+            "failed to change UUID user to non-UUID password");
+    require(usersLookupByUUID(&users, uuid_a_bytes) == NULL, "old UUID still resolved after non-UUID password change");
+    require(! first->uuid_pass_valid, "non-UUID password left UUID key marked valid");
+
+    require(usersChangePassword(&users, first, uuid_b), "failed to change UUID user to UUID B");
+    require(usersLookupByUUID(&users, uuid_b_bytes) == first, "UUID B did not resolve after password change");
+    require(first->uuid_pass_valid, "UUID B password did not mark UUID key valid");
+
+    require(! usersChangePassword(&users, first, uuid_c), "exact duplicate UUID password change unexpectedly worked");
+    require(usersLookupByUUID(&users, uuid_b_bytes) == first,
+            "exact duplicate UUID change displaced previous UUID key");
+    require(usersLookupByUUID(&users, uuid_c_bytes) == second,
+            "exact duplicate UUID change displaced existing owner");
+
+    require(! usersChangePassword(&users, first, uuid_c_compact), "duplicate UUID password change unexpectedly worked");
+    require(usersLookupByUUID(&users, uuid_b_bytes) == first, "duplicate UUID change displaced previous UUID key");
+    require(usersLookupByUUID(&users, uuid_c_bytes) == second, "duplicate UUID change displaced existing owner");
+
+    usersDestroy(&users);
+}
+
+static void testRuntimeMigrationPreservesActiveIpByIdentifier(void)
 {
     users_t old_users;
     users_t new_users;
     user_t  source_user;
-    uint8_t sha256[SHA256_DIGEST_SIZE] = {0};
+    const uint64_t user_id = 8080;
 
     memoryZero(&old_users, sizeof(old_users));
     memoryZero(&new_users, sizeof(new_users));
@@ -164,9 +338,9 @@ static void testRuntimeMigrationPreservesActiveIpOnly(void)
     require(usersCreate(&new_users), "failed to create new users table");
 
     require(userCreate(&source_user, "runtime-migration-password"), "failed to create source user");
+    userSetId(&source_user, user_id);
     source_user.limit.ips      = 1;
     source_user.limit.cons_out = 2;
-    memoryCopy(sha256, source_user.sha256_pass.bytes, sizeof(sha256));
 
     require(usersAddUser(&old_users, &source_user), "failed to add old user");
     require(usersAddUser(&new_users, &source_user), "failed to add refreshed user");
@@ -175,31 +349,31 @@ static void testRuntimeMigrationPreservesActiveIpOnly(void)
     user_ip_key_t ip1 = testIp(10, 0, 0, 1);
     user_ip_key_t ip2 = testIp(10, 0, 0, 2);
 
-    require(usersTryAdmitConnectionBySHA256(&old_users, sha256, &ip1, 1234) == kUserAdmissionOk,
+    require(usersTryAdmitConnectionByIdentifier(&old_users, user_id, &ip1, 1234) == kUserAdmissionOk,
             "old users table did not admit first connection");
 
-    user_t *old_user = usersLookupBySHA256(&old_users, sha256);
-    user_t *new_user = usersLookupBySHA256(&new_users, sha256);
-    require(old_user != NULL && new_user != NULL, "failed to look users up by SHA-256");
+    user_t *old_user = usersLookupByIdentifier(&old_users, user_id);
+    user_t *new_user = usersLookupByIdentifier(&new_users, user_id);
+    require(old_user != NULL && new_user != NULL, "failed to look users up by id");
     require(old_user->timeinfo.first_usage_at_ms == 0, "old user first usage was unexpectedly marked");
     require(new_user->timeinfo.first_usage_at_ms == 0, "refreshed user unexpectedly had first usage");
 
-    require(usersMigrateRuntimeStateBySHA256(&new_users, &old_users), "runtime migration failed");
+    require(usersMigrateRuntimeStateByIdentifier(&new_users, &old_users), "runtime migration failed");
 
-    old_user = usersLookupBySHA256(&old_users, sha256);
-    new_user = usersLookupBySHA256(&new_users, sha256);
+    old_user = usersLookupByIdentifier(&old_users, user_id);
+    new_user = usersLookupByIdentifier(&new_users, user_id);
     require(old_user != NULL && new_user != NULL, "users disappeared after migration");
     require(old_user->runtime.active_cons_out == 0, "old user kept migrated active connection count");
     require(old_user->runtime.ip_usage_count == 0, "old user kept migrated IP usage entries");
     require(new_user->timeinfo.first_usage_at_ms == 0, "new user unexpectedly inherited first usage");
 
-    require(usersTryAdmitConnectionBySHA256(&new_users, sha256, &ip2, 2000) == kUserAdmissionIpLimited,
+    require(usersTryAdmitConnectionByIdentifier(&new_users, user_id, &ip2, 2000) == kUserAdmissionIpLimited,
             "new users table did not enforce migrated active IP usage");
 
-    usersReleaseConnectionBySHA256(&new_users, sha256, &ip1);
-    require(usersTryAdmitConnectionBySHA256(&new_users, sha256, &ip2, 2000) == kUserAdmissionOk,
+    usersReleaseConnectionByIdentifier(&new_users, user_id, &ip1);
+    require(usersTryAdmitConnectionByIdentifier(&new_users, user_id, &ip2, 2000) == kUserAdmissionOk,
             "new users table did not release migrated active IP usage");
-    usersReleaseConnectionBySHA256(&new_users, sha256, &ip2);
+    usersReleaseConnectionByIdentifier(&new_users, user_id, &ip2);
 
     usersDestroy(&new_users);
     usersDestroy(&old_users);
@@ -467,8 +641,8 @@ static void testFirstUsagePushRequestFlagIsOneShot(void)
 {
     users_t users;
     user_t  source_user;
-    uint8_t sha256[SHA256_DIGEST_SIZE] = {0};
-    bool    needed                    = false;
+    const uint64_t user_id = 5501;
+    bool           needed  = false;
 
     memoryZero(&users, sizeof(users));
     memoryZero(&source_user, sizeof(source_user));
@@ -476,37 +650,37 @@ static void testFirstUsagePushRequestFlagIsOneShot(void)
     require(usersCreate(&users), "failed to create first usage push users table");
     require(userCreate(&source_user, "first-usage-push-flag-password"),
             "failed to create first usage push flag user");
-    memoryCopy(sha256, source_user.sha256_pass.bytes, sizeof(sha256));
+    userSetId(&source_user, user_id);
     require(usersAddUser(&users, &source_user), "failed to add first usage push flag user");
     userDestroy(&source_user);
 
-    require(! usersAccountTrafficBySHA256(&users, sha256, 0, 0, 0, NULL, &needed),
+    require(! usersAccountTrafficByIdentifier(&users, user_id, 0, 0, 0, NULL, &needed),
             "zero traffic unexpectedly closed user");
     require(! needed, "zero traffic requested first usage push");
 
-    require(! usersAccountTrafficBySHA256(&users, sha256, 10, 0, 0, NULL, &needed),
+    require(! usersAccountTrafficByIdentifier(&users, user_id, 10, 0, 0, NULL, &needed),
             "first traffic unexpectedly closed user");
     require(needed, "first non-zero traffic did not request first usage push");
 
     needed = false;
-    require(! usersAccountTrafficBySHA256(&users, sha256, 1, 0, 0, NULL, &needed),
+    require(! usersAccountTrafficByIdentifier(&users, user_id, 1, 0, 0, NULL, &needed),
             "second traffic unexpectedly closed user");
     require(! needed, "first usage push request was not one-shot");
 
-    usersResetFirstUsagePushRequestBySHA256(&users, sha256);
+    usersResetFirstUsagePushRequestByIdentifier(&users, user_id);
     needed = false;
-    require(! usersAccountTrafficBySHA256(&users, sha256, 1, 0, 0, NULL, &needed),
+    require(! usersAccountTrafficByIdentifier(&users, user_id, 1, 0, 0, NULL, &needed),
             "traffic after per-user reset unexpectedly closed user");
     require(needed, "per-user reset did not re-enable first usage push request");
 
     needed = false;
-    require(! usersAccountTrafficBySHA256(&users, sha256, 1, 0, 0, NULL, &needed),
+    require(! usersAccountTrafficByIdentifier(&users, user_id, 1, 0, 0, NULL, &needed),
             "traffic after per-user retry unexpectedly closed user");
     require(! needed, "per-user reset allowed more than one retry");
 
     usersResetFirstUsagePushRequests(&users);
     needed = false;
-    require(! usersAccountTrafficBySHA256(&users, sha256, 1, 0, 0, NULL, &needed),
+    require(! usersAccountTrafficByIdentifier(&users, user_id, 1, 0, 0, NULL, &needed),
             "traffic after table reset unexpectedly closed user");
     require(needed, "table reset did not re-enable first usage push request");
 
@@ -557,7 +731,10 @@ int main(void)
     initializeCryptoBackend();
     testIdentifierLookupAndJsonRoundTrip();
     testSHA224LookupAndHashAlignment();
-    testRuntimeMigrationPreservesActiveIpOnly();
+    testJsonFeedRejectsDuplicateKeysWithoutTerminating();
+    testUUIDCredentialLookupAndDerivation();
+    testUUIDLookupUpdatesOnPasswordChange();
+    testRuntimeMigrationPreservesActiveIpByIdentifier();
     testRuntimeMigrationPrefersIdentifierAcrossPasswordChange();
     testIdentifierLookupSurvivesPasswordChange();
     testFirstUsageSetIfMissingKeepsServerValue();

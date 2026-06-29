@@ -28,6 +28,7 @@
 #include "cJSON.h"
 #include "wmutex.h"
 #include "wcrypto.h"
+#include "utils/uuid.h"
 
 #define USER_NO_LIMIT                        0ULL
 #define USER_NO_EXPIRY                       0ULL
@@ -176,9 +177,11 @@ struct user_s
     MSVC_ATTR_ALIGNED_32 sha224_hash_t sha224_pass GNU_ATTR_ALIGNED_32;
     uint8_t       sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
     MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;
+    uint8_t       uuid_pass[kWwUuidBytesLen];
 
     bool sha224_pass_valid;
     bool sha256_pass_valid;
+    bool uuid_pass_valid;
 };
 
 bool userCreate(User *user, const char *password);

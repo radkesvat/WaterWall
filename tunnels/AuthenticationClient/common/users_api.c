@@ -65,6 +65,19 @@ uint64_t authenticationclientUsersGeneration(tunnel_t *t)
     return generation;
 }
 
+static bool authenticationclientSetUserHandle(authenticationclient_tstate_t *ts, user_t *user, user_handle_t *handle_out)
+{
+    const uint64_t user_id = userGetId(user);
+    if (UNLIKELY(user_id == 0))
+    {
+        userHandleClear(handle_out);
+        return false;
+    }
+
+    userHandleSet(handle_out, ts->users_generation, user_id);
+    return true;
+}
+
 bool authenticationclientGetUserBySHA256(tunnel_t *t, const uint8_t sha256[SHA256_DIGEST_SIZE],
                                          user_handle_t *handle_out)
 {
@@ -81,8 +94,7 @@ bool authenticationclientGetUserBySHA256(tunnel_t *t, const uint8_t sha256[SHA25
     user_t *user = ts->users != NULL ? usersLookupBySHA256(ts->users, sha256) : NULL;
     if (user != NULL && userIsActive(user, now_ms))
     {
-        userHandleSet(handle_out, sha256, ts->users_generation, userGetId(user));
-        found = true;
+        found = authenticationclientSetUserHandle(ts, user, handle_out);
     }
     rwlockReadUnlock(&ts->users_lock);
 
@@ -161,9 +173,8 @@ bool authenticationclientGetUserBySHA224WithProfile(tunnel_t *t, const uint8_t s
 
     rwlockReadLock(&ts->users_lock);
     user_t *user = ts->users != NULL ? usersLookupBySHA224(ts->users, sha224) : NULL;
-    if (user != NULL && user->sha256_pass_valid && userIsActive(user, now_ms))
+    if (user != NULL && userIsActive(user, now_ms) && authenticationclientSetUserHandle(ts, user, handle_out))
     {
-        userHandleSet(handle_out, user->sha256_pass.bytes, ts->users_generation, userGetId(user));
         if (profile_out != NULL)
         {
             authenticationclientFillUserProfileLocked(profile_out, user);
@@ -177,6 +188,79 @@ bool authenticationclientGetUserBySHA224WithProfile(tunnel_t *t, const uint8_t s
         userHandleClear(handle_out);
     }
     return found;
+}
+
+bool authenticationclientGetUserByUUID(tunnel_t *t, const uint8_t uuid[kWwUuidBytesLen], user_handle_t *handle_out)
+{
+    return authenticationclientGetUserByUUIDWithProfile(t, uuid, handle_out, NULL) ==
+           kAuthenticationClientUserLookupOk;
+}
+
+authenticationclient_user_lookup_result_t authenticationclientGetUserByUUIDWithProfile(
+    tunnel_t *t, const uint8_t uuid[kWwUuidBytesLen], user_handle_t *handle_out,
+    authenticationclient_user_profile_t *profile_out)
+{
+    authenticationclientAssertProfileEmpty(profile_out, "authenticationclientGetUserByUUIDWithProfile");
+
+    if (UNLIKELY(t == NULL || uuid == NULL || handle_out == NULL))
+    {
+        if (handle_out != NULL)
+        {
+            userHandleClear(handle_out);
+        }
+        return kAuthenticationClientUserLookupInvalidArgument;
+    }
+
+    authenticationclient_tstate_t            *ts     = tunnelGetState(t);
+    uint64_t                                  now_ms = authenticationclientLocalTimeMS();
+    authenticationclient_user_lookup_result_t result = kAuthenticationClientUserLookupUserNotFound;
+
+    rwlockReadLock(&ts->users_lock);
+    user_t *user = NULL;
+    if (UNLIKELY(ts->users == NULL || ! ts->users_loaded))
+    {
+        result = kAuthenticationClientUserLookupUsersUnavailable;
+    }
+    else
+    {
+        user = usersLookupByUUID(ts->users, uuid);
+    }
+
+    if (user != NULL)
+    {
+        if (! userIsEnabled(user))
+        {
+            result = kAuthenticationClientUserLookupUserDisabled;
+        }
+        else if (userIsExpired(user, now_ms))
+        {
+            result = kAuthenticationClientUserLookupUserExpired;
+        }
+        else if (userHasReachedLimit(user))
+        {
+            result = kAuthenticationClientUserLookupUserLimitReached;
+        }
+        else if (userGetId(user) == 0)
+        {
+            result = kAuthenticationClientUserLookupUserIdRequired;
+        }
+        else
+        {
+            userHandleSet(handle_out, ts->users_generation, userGetId(user));
+            if (profile_out != NULL)
+            {
+                authenticationclientFillUserProfileLocked(profile_out, user);
+            }
+            result = kAuthenticationClientUserLookupOk;
+        }
+    }
+    rwlockReadUnlock(&ts->users_lock);
+
+    if (result != kAuthenticationClientUserLookupOk)
+    {
+        userHandleClear(handle_out);
+    }
+    return result;
 }
 
 bool authenticationclientGetUserByPassword(tunnel_t *t, const char *password, user_handle_t *handle_out)
@@ -207,6 +291,8 @@ const char *authenticationclientUserLookupResultString(authenticationclient_user
         return "user expired";
     case kAuthenticationClientUserLookupUserLimitReached:
         return "user limit reached";
+    case kAuthenticationClientUserLookupUserIdRequired:
+        return "user id required";
     default:
         return "unknown";
     }
@@ -273,9 +359,13 @@ authenticationclient_user_lookup_result_t authenticationclientGetUserByPasswordW
         {
             result = kAuthenticationClientUserLookupUserLimitReached;
         }
+        else if (userGetId(user) == 0)
+        {
+            result = kAuthenticationClientUserLookupUserIdRequired;
+        }
         else
         {
-            userHandleSet(handle_out, sha256.bytes, ts->users_generation, userGetId(user));
+            userHandleSet(handle_out, ts->users_generation, userGetId(user));
             if (profile_out != NULL)
             {
                 authenticationclientFillUserProfileLocked(profile_out, user);
@@ -308,7 +398,7 @@ bool authenticationclientUserHandleIsLive(tunnel_t *t, const user_handle_t *hand
     user_t *user = NULL;
     if (LIKELY(ts->users != NULL) && handle->generation == ts->users_generation)
     {
-        user = usersLookupBySHA256(ts->users, handle->sha256);
+        user = usersLookupByIdentifier(ts->users, handle->user_id);
     }
     live = user != NULL && userIsActive(user, now_ms);
     rwlockReadUnlock(&ts->users_lock);
@@ -329,7 +419,7 @@ cJSON *authenticationclientUserToJson(tunnel_t *t, const user_handle_t *handle)
     rwlockReadLock(&ts->users_lock);
     if (LIKELY(ts->users != NULL) && handle->generation == ts->users_generation)
     {
-        json = usersUserToJsonBySHA256(ts->users, handle->sha256);
+        json = usersUserToJsonByIdentifier(ts->users, handle->user_id);
     }
     rwlockReadUnlock(&ts->users_lock);
 
@@ -370,7 +460,7 @@ bool authenticationclientUserGetStats(tunnel_t *t, const user_handle_t *handle, 
     user_t *user = NULL;
     if (LIKELY(ts->users != NULL) && handle->generation == ts->users_generation)
     {
-        user = usersLookupBySHA256(ts->users, handle->sha256);
+        user = usersLookupByIdentifier(ts->users, handle->user_id);
     }
     if (user != NULL)
     {
@@ -389,11 +479,7 @@ bool authenticationclientUserGetStats(tunnel_t *t, const user_handle_t *handle, 
 static users_update_result_t authenticationclientUsersAddTrafficByHandle(users_t *users, const user_handle_t *handle,
                                                                          uint64_t upload_bytes, uint64_t download_bytes)
 {
-    if (handle->user_id != 0)
-    {
-        return usersAddTrafficByIdentifier(users, handle->user_id, upload_bytes, download_bytes);
-    }
-    return usersAddTrafficBySHA256(users, handle->sha256, upload_bytes, download_bytes);
+    return usersAddTrafficByIdentifier(users, handle->user_id, upload_bytes, download_bytes);
 }
 
 static user_admission_result_t authenticationclientUsersTryAdmitConnectionByHandle(users_t             *users,
@@ -401,55 +487,32 @@ static user_admission_result_t authenticationclientUsersTryAdmitConnectionByHand
                                                                                    const user_ip_key_t *ip_key,
                                                                                    uint64_t             now_ms)
 {
-    if (handle->user_id != 0)
-    {
-        return usersTryAdmitConnectionByIdentifier(users, handle->user_id, ip_key, now_ms);
-    }
-    return usersTryAdmitConnectionBySHA256(users, handle->sha256, ip_key, now_ms);
+    return usersTryAdmitConnectionByIdentifier(users, handle->user_id, ip_key, now_ms);
 }
 
 static void authenticationclientUsersReleaseConnectionByHandle(users_t *users, const user_handle_t *handle,
                                                                const user_ip_key_t *ip_key)
 {
-    if (handle->user_id != 0)
-    {
-        usersReleaseConnectionByIdentifier(users, handle->user_id, ip_key);
-        return;
-    }
-    usersReleaseConnectionBySHA256(users, handle->sha256, ip_key);
+    usersReleaseConnectionByIdentifier(users, handle->user_id, ip_key);
 }
 
 static bool authenticationclientUsersAccountTrafficByHandle(users_t *users, const user_handle_t *handle,
                                                             uint64_t upload_bytes, uint64_t download_bytes,
                                                             uint64_t now_ms, bool *found, bool *first_usage_push_needed)
 {
-    if (handle->user_id != 0)
-    {
-        return usersAccountTrafficByIdentifier(
-            users, handle->user_id, upload_bytes, download_bytes, now_ms, found, first_usage_push_needed);
-    }
-    return usersAccountTrafficBySHA256(
-        users, handle->sha256, upload_bytes, download_bytes, now_ms, found, first_usage_push_needed);
+    return usersAccountTrafficByIdentifier(
+        users, handle->user_id, upload_bytes, download_bytes, now_ms, found, first_usage_push_needed);
 }
 
 static void authenticationclientUsersResetFirstUsagePushRequestByHandle(users_t *users, const user_handle_t *handle)
 {
-    if (handle->user_id != 0)
-    {
-        usersResetFirstUsagePushRequestByIdentifier(users, handle->user_id);
-        return;
-    }
-    usersResetFirstUsagePushRequestBySHA256(users, handle->sha256);
+    usersResetFirstUsagePushRequestByIdentifier(users, handle->user_id);
 }
 
 static bool authenticationclientUsersRuntimeShouldCloseByHandle(users_t *users, const user_handle_t *handle,
                                                                 uint64_t now_ms)
 {
-    if (handle->user_id != 0)
-    {
-        return usersRuntimeShouldCloseByIdentifier(users, handle->user_id, now_ms);
-    }
-    return usersRuntimeShouldCloseBySHA256(users, handle->sha256, now_ms);
+    return usersRuntimeShouldCloseByIdentifier(users, handle->user_id, now_ms);
 }
 
 bool authenticationclientUserAddTraffic(tunnel_t *t, const user_handle_t *handle, uint64_t upload_bytes,
@@ -474,11 +537,10 @@ bool authenticationclientUserAddTraffic(tunnel_t *t, const user_handle_t *handle
 }
 
 /*
- * These enforcement helpers identify the user by durable id when present, with SHA-256 password
- * digest as the legacy fallback. They deliberately do NOT gate on handle->generation: a GetAllUsers
- * refresh bumps the generation but the same logical user keeps the same durable id, so enforcement
- * (admission, accounting, closing) must keep working against the refreshed user object. A miss means
- * the user was actually removed from the table (revoked).
+ * These enforcement helpers identify the user by durable id only. They deliberately do NOT gate on
+ * handle->generation: a GetAllUsers refresh bumps the generation but the same logical user keeps the
+ * same durable id, so enforcement (admission, accounting, closing) must keep working against the
+ * refreshed user object. A miss means the user was actually removed from the table (revoked).
  */
 user_admission_result_t authenticationclientUserTryAdmitConnection(tunnel_t *t, const user_handle_t *handle,
                                                                    const user_ip_key_t *ip_key, uint64_t now_ms)

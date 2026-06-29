@@ -135,12 +135,28 @@ static users_t *authenticationclientCreateUsersCopy(const users_t *src)
     return copy;
 }
 
+static bool authenticationclientUsersHaveRequiredIds(const users_t *users)
+{
+    const size_t count = usersCount(users);
+    for (size_t i = 0; i < count; ++i)
+    {
+        const user_t *user = usersGetAtConst(users, i);
+        if (UNLIKELY(user == NULL || user->id == 0))
+        {
+            LOGW("AuthenticationClient: GetAllUsers returned user at index %zu without a required non-zero id", i);
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static uint64_t authenticationclientCounterDelta(uint64_t current, uint64_t baseline)
 {
     return current > baseline ? current - baseline : 0;
 }
 
-static user_t *authenticationclientLookupUserByStableKey(users_t *users, const user_t *reference)
+static user_t *authenticationclientLookupUserByStableId(users_t *users, const user_t *reference)
 {
     if (users == NULL || reference == NULL)
     {
@@ -150,25 +166,17 @@ static user_t *authenticationclientLookupUserByStableKey(users_t *users, const u
     {
         return usersLookupByIdentifier(users, reference->id);
     }
-    if (! reference->sha256_pass_valid)
-    {
-        return NULL;
-    }
-    return usersLookupBySHA256(users, reference->sha256_pass.bytes);
+    return NULL;
 }
 
-static users_update_result_t authenticationclientAddTrafficByStableKey(users_t *users, const user_t *reference,
+static users_update_result_t authenticationclientAddTrafficByStableId(users_t *users, const user_t *reference,
                                                                        uint64_t upload_delta, uint64_t download_delta)
 {
     if (reference->id != 0)
     {
         return usersAddTrafficByIdentifier(users, reference->id, upload_delta, download_delta);
     }
-    if (! reference->sha256_pass_valid)
-    {
-        return kUsersUpdateResultInvalidArgument;
-    }
-    return usersAddTrafficBySHA256(users, reference->sha256_pass.bytes, upload_delta, download_delta);
+    return kUsersUpdateResultInvalidArgument;
 }
 
 static uint64_t authenticationclientSaturatingAdd(uint64_t a, uint64_t b)
@@ -807,7 +815,8 @@ bool authenticationclientSendGetAllUsers(tunnel_t *t)
 
 static bool authenticationclientAppendStatsHint(cJSON *array, user_t *user, const users_t *baseline_users)
 {
-    if (user == NULL || user->password == NULL || user->password[0] == '\0' || ! user->sha256_pass_valid)
+    if (user == NULL || user->id == 0 || user->password == NULL || user->password[0] == '\0' ||
+        ! user->sha256_pass_valid)
     {
         return true;
     }
@@ -818,7 +827,7 @@ static bool authenticationclientAppendStatsHint(cJSON *array, user_t *user, cons
     user_stat_t baseline_stats = {0};
     if (baseline_users != NULL)
     {
-        user_t *baseline_user = authenticationclientLookupUserByStableKey((users_t *) baseline_users, user);
+        user_t *baseline_user = authenticationclientLookupUserByStableId((users_t *) baseline_users, user);
         if (baseline_user != NULL)
         {
             userGetStats(baseline_user, &baseline_stats);
@@ -1027,7 +1036,8 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
         return false;
     }
 
-    bool ok = usersFeedJson(new_users, json) && usersValidate(new_users);
+    bool ok =
+        usersFeedJson(new_users, json) && usersValidate(new_users) && authenticationclientUsersHaveRequiredIds(new_users);
     cJSON_Delete(json);
     if (UNLIKELY(! ok))
     {
@@ -1124,7 +1134,7 @@ static bool authenticationclientApplyLocalTrafficDelta(users_t *dest, users_t *o
     for (size_t i = 0; i < users_count; ++i)
     {
         user_t *old_user = usersGetAt(old_users, i);
-        if (UNLIKELY(old_user == NULL || ! old_user->sha256_pass_valid))
+        if (UNLIKELY(old_user == NULL || old_user->id == 0))
         {
             continue;
         }
@@ -1135,7 +1145,7 @@ static bool authenticationclientApplyLocalTrafficDelta(users_t *dest, users_t *o
         user_stat_t baseline_stats = {0};
         if (baseline_users != NULL)
         {
-            user_t *baseline_user = authenticationclientLookupUserByStableKey(baseline_users, old_user);
+            user_t *baseline_user = authenticationclientLookupUserByStableId(baseline_users, old_user);
             if (baseline_user != NULL)
             {
                 userGetStats(baseline_user, &baseline_stats);
@@ -1150,7 +1160,7 @@ static bool authenticationclientApplyLocalTrafficDelta(users_t *dest, users_t *o
         }
 
         users_update_result_t result =
-            authenticationclientAddTrafficByStableKey(dest, old_user, upload_delta, download_delta);
+            authenticationclientAddTrafficByStableId(dest, old_user, upload_delta, download_delta);
         if (UNLIKELY(result != kUsersUpdateResultOk && result != kUsersUpdateResultUserNotFound))
         {
             return false;

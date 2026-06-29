@@ -18,6 +18,8 @@ static const char *authenticationserverUsersUpdateResultError(users_update_resul
         return "user-not-found";
     case kUsersUpdateResultDuplicateName:
         return "user-name-exists";
+    case kUsersUpdateResultDuplicateUUID:
+        return "user-uuid-exists";
     case kUsersUpdateResultPasswordUpdateFailed:
         return "password-update-disabled";
     }

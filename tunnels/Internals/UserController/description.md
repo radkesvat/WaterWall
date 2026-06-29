@@ -107,10 +107,10 @@ Live enforcement state (current outbound connection count and the set of in-use 
 object inside `AuthenticationClient`, in a dedicated process-local `runtime` field that is never serialized or synced to
 `AuthenticationServer`. Cumulative traffic is added to the normal `stats.traffic` counters. `UserController` never creates
 or pushes `first-usage-at-ms`; the server owns that timestamp and returns enough server-time metadata for
-`AuthenticationClient` to compute a process-local expiry deadline. All access goes through SHA-256 keyed
+`AuthenticationClient` to compute a process-local expiry deadline. All access goes through id-keyed
 `AuthenticationClient` helpers, so `UserController` never holds a raw `user_t` pointer.
 
-During a full users-table refresh (`GetAllUsers`), matching users are found by SHA-256 and their process-local runtime
+During a full users-table refresh (`GetAllUsers`), matching users are found by durable user id and their process-local runtime
 connection/IP counters are moved to the refreshed user object. Expiry state is recalculated from the refreshed server
 table and the response's server-time metadata.
 

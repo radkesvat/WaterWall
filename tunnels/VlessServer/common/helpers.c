@@ -111,15 +111,10 @@ static bool vlessserverAuthenticateUuid(tunnel_t *t, line_t *l, vlessserver_lsta
         return false;
     }
 
-    char uuid_password[kVlessServerCanonicalUuidStringLen + 1U] = {0};
-    wwUuidToCanonicalString(uuid, uuid_password);
-
     user_handle_t                             handle  = userHandleEmpty();
     authenticationclient_user_profile_t       profile = {0};
     authenticationclient_user_lookup_result_t result =
-        authenticationclientGetUserByPasswordWithProfile(ts->auth_client_tunnel, uuid_password, &handle, &profile);
-
-    memoryZero(uuid_password, sizeof(uuid_password));
+        authenticationclientGetUserByUUIDWithProfile(ts->auth_client_tunnel, uuid, &handle, &profile);
 
     if (UNLIKELY(result != kAuthenticationClientUserLookupOk))
     {
