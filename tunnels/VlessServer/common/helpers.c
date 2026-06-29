@@ -163,7 +163,7 @@ static void vlessserverRecordLineUser(line_t *l, vlessserver_lstate_t *ls)
     }
     else if (ls->auth_username != NULL || ls->auth_password != NULL)
     {
-        lineSetAuthenticatedCredentials(l, ls->auth_username, ls->auth_password);
+        lineAddAuthenticatedCredentials(l, ls->auth_username, ls->auth_password);
     }
     else
     {

@@ -28,24 +28,7 @@ bool routerPasswordMatch(const router_rule_t *rule, const router_match_ctx_t *mc
         return true;
     }
 
-    // The authenticating tunnel stores the raw password on the line. NULL means
-    // no authenticated user, so a password rule cannot match.
-    const char *password = lineGetAuthenticatedPassword(mctx->line);
-    if (password == NULL)
-    {
-        return false;
-    }
-
-    // Exact, case-sensitive match against any configured password.
-    for (uint32_t i = 0; i < rule->password.values.count; ++i)
-    {
-        if (stringCompare(rule->password.values.items[i], password) == 0)
-        {
-            return true;
-        }
-    }
-
-    return false;
+    return routerAuthenticatedCredentialsMatch(rule, mctx->line);
 }
 
 void routerPasswordDestroy(router_rule_t *rule)

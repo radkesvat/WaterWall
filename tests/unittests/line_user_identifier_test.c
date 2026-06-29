@@ -24,14 +24,7 @@ static line_t *testLineCreate(void)
 
 static void testLineDestroy(line_t *line)
 {
-    if (line->last_authenticated_user_username != NULL)
-    {
-        memoryFree((void *) line->last_authenticated_user_username);
-    }
-    if (line->last_authenticated_user_password != NULL)
-    {
-        memoryFree((void *) line->last_authenticated_user_password);
-    }
+    lineClearUsers(line);
     memoryFree(line);
 }
 
@@ -50,6 +43,20 @@ static void requireUserHandleEquals(const user_handle_t *actual, const user_hand
     require(actual->user_id == expected->user_id, message);
 }
 
+static const user_handle_t *requireHandleEntry(line_t *line, uint8_t index, const char *message)
+{
+    require(index < line->user_count, message);
+    require(line->user_auths[index].has_handle, message);
+    return &line->user_auths[index].handle;
+}
+
+static const line_user_credentials_t *requireCredentialsEntry(line_t *line, uint8_t index, const char *message)
+{
+    require(index < line->user_count, message);
+    require(line->user_auths[index].has_credentials, message);
+    return &line->user_auths[index].credentials;
+}
+
 static user_handle_t testUserHandle(uint64_t generation, uint64_t user_id)
 {
     user_handle_t handle = userHandleEmpty();
@@ -59,21 +66,24 @@ static user_handle_t testUserHandle(uint64_t generation, uint64_t user_id)
 
 static void testAnonymousUserHandlesRemainInvalid(void)
 {
-    line_t       *line  = testLineCreate();
-    user_handle_t empty = userHandleEmpty();
+    line_t              *line   = testLineCreate();
+    user_handle_t        empty  = userHandleEmpty();
+    const user_handle_t *stored = NULL;
 
     lineAddUser(line, NULL, NULL, NULL);
     require(lineIsAuthenticated(line), "NULL handle did not authenticate line");
     require(line->user_count == 1, "NULL handle did not increment line user count");
-    require(! userHandleIsValid(&line->user_handles[0]), "NULL handle stored a valid user handle");
-    require(line->user_handles[0].user_id == 0, "NULL handle assigned a user id");
-    require(lineGetCurrentUser(line) == &line->user_handles[0], "current user did not point to first anonymous user");
+    stored = requireHandleEntry(line, 0, "NULL handle did not store a handle marker");
+    require(! userHandleIsValid(stored), "NULL handle stored a valid user handle");
+    require(stored->user_id == 0, "NULL handle assigned a user id");
+    require(lineGetCurrentUser(line) == stored, "current user did not point to first anonymous user");
 
     lineAddUser(line, &empty, NULL, NULL);
     require(line->user_count == 2, "empty handle did not increment line user count");
-    require(! userHandleIsValid(&line->user_handles[1]), "empty handle stored a valid user handle");
-    require(line->user_handles[1].user_id == 0, "empty handle assigned a user id");
-    require(lineGetCurrentUser(line) == &line->user_handles[1], "current user did not point to latest anonymous user");
+    stored = requireHandleEntry(line, 1, "empty handle did not store a handle marker");
+    require(! userHandleIsValid(stored), "empty handle stored a valid user handle");
+    require(stored->user_id == 0, "empty handle assigned a user id");
+    require(lineGetCurrentUser(line) == stored, "current user did not point to latest anonymous user");
 
     testLineDestroy(line);
 }
@@ -92,34 +102,42 @@ static void testUserHandleStoresPassedIdentifier(void)
 
 static void testLineUserRecording(void)
 {
-    user_handle_t first  = testUserHandle(1, 42);
-    user_handle_t second = testUserHandle(2, 77);
-    user_handle_t third  = testUserHandle(3, 99);
-    user_handle_t empty  = userHandleEmpty();
+    user_handle_t        first     = testUserHandle(1, 42);
+    user_handle_t        second    = testUserHandle(2, 77);
+    user_handle_t        third     = testUserHandle(3, 99);
+    user_handle_t        empty     = userHandleEmpty();
+    line_t              *line      = testLineCreate();
+    const user_handle_t *anonymous = NULL;
 
-    line_t *line = testLineCreate();
     require(lineGetCurrentUser(line) == NULL, "empty line returned a current user");
 
     lineAddUser(line, &first, NULL, NULL);
     require(line->user_count == 1, "line user count did not increment for first user");
-    requireUserHandleEquals(&line->user_handles[0], &first, "line did not record first user handle");
-    require(lineGetCurrentUser(line) == &line->user_handles[0], "current user did not point to first user");
+    requireUserHandleEquals(requireHandleEntry(line, 0, "first user was not a handle marker"), &first,
+                            "line did not record first user handle");
+    require(lineGetCurrentUser(line) == requireHandleEntry(line, 0, "first user marker disappeared"),
+            "current user did not point to first user");
 
     lineAddUser(line, &second, NULL, NULL);
     require(line->user_count == 2, "line user count did not increment for second user");
-    requireUserHandleEquals(&line->user_handles[1], &second, "line did not record second user handle");
-    require(lineGetCurrentUser(line) == &line->user_handles[1], "current user did not point to second user");
+    requireUserHandleEquals(requireHandleEntry(line, 1, "second user was not a handle marker"), &second,
+                            "line did not record second user handle");
+    require(lineGetCurrentUser(line) == requireHandleEntry(line, 1, "second user marker disappeared"),
+            "current user did not point to second user");
 
     lineAddUser(line, &third, NULL, NULL);
     require(line->user_count == 3, "line user count did not increment for third user");
-    requireUserHandleEquals(&line->user_handles[2], &third, "line did not record third user handle");
-    require(lineGetCurrentUser(line) == &line->user_handles[2], "current user did not point to third user");
+    requireUserHandleEquals(requireHandleEntry(line, 2, "third user was not a handle marker"), &third,
+                            "line did not record third user handle");
+    require(lineGetCurrentUser(line) == requireHandleEntry(line, 2, "third user marker disappeared"),
+            "current user did not point to third user");
 
     lineAddUser(line, &empty, NULL, NULL);
     require(line->user_count == kLineMaxUsers, "line did not allow exactly four user entries");
-    require(! userHandleIsValid(&line->user_handles[3]), "line did not record anonymous user handle");
-    require(line->user_handles[3].user_id == 0, "line did not record anonymous user marker");
-    require(lineGetCurrentUser(line) == &line->user_handles[3], "current user did not point to anonymous user");
+    anonymous = requireHandleEntry(line, 3, "anonymous user was not a handle marker");
+    require(! userHandleIsValid(anonymous), "line did not record anonymous user handle");
+    require(anonymous->user_id == 0, "line did not record anonymous user marker");
+    require(lineGetCurrentUser(line) == anonymous, "current user did not point to anonymous user");
 
     testLineDestroy(line);
 }
@@ -137,15 +155,37 @@ static void testLineUserCopy(void)
 
     lineCopyUsers(dest, src);
     require(dest->user_count == src->user_count, "line user copy did not preserve user count");
-    requireUserHandleEquals(&dest->user_handles[0], &src->user_handles[0], "line user copy lost first user");
-    requireUserHandleEquals(&dest->user_handles[1], &src->user_handles[1], "line user copy lost second user");
-    require(lineGetCurrentUser(dest) == &dest->user_handles[1], "line user copy did not preserve current user");
+    require(dest->user_count == 2, "handle-plus-credential users were not stored as two auth layers");
+    requireStringEquals(requireCredentialsEntry(dest, 0, "line user copy lost first credentials")->username,
+                        "first-user",
+                        "line user copy lost first username");
+    requireStringEquals(requireCredentialsEntry(dest, 0, "line user copy lost first credentials")->password,
+                        "first-password",
+                        "line user copy lost first password");
+    requireUserHandleEquals(requireHandleEntry(dest, 0, "line user copy lost first handle"), &first,
+                            "line user copy lost first user");
+    requireStringEquals(requireCredentialsEntry(dest, 1, "line user copy lost second credentials")->username,
+                        "second-user",
+                        "line user copy lost second username");
+    requireStringEquals(requireCredentialsEntry(dest, 1, "line user copy lost second credentials")->password,
+                        "second-password",
+                        "line user copy lost second password");
+    requireUserHandleEquals(requireHandleEntry(dest, 1, "line user copy lost second handle"), &second,
+                            "line user copy lost second user");
+    require(lineGetCurrentUser(dest) == requireHandleEntry(dest, 1, "line user copy lost latest handle"),
+            "line user copy did not preserve current user");
     requireStringEquals(lineGetAuthenticatedUsername(dest), "second-user", "line user copy lost username");
     requireStringEquals(lineGetAuthenticatedPassword(dest), "second-password", "line user copy lost password");
     require(lineGetAuthenticatedUsername(dest) != lineGetAuthenticatedUsername(src),
             "line user copy did not duplicate username");
     require(lineGetAuthenticatedPassword(dest) != lineGetAuthenticatedPassword(src),
             "line user copy did not duplicate password");
+    require(lineHasAuthenticatedCredentials(dest, "first-user", "first-password"),
+            "line user copy did not preserve first credential pair");
+    require(lineHasAuthenticatedCredentials(dest, "second-user", "second-password"),
+            "line user copy did not preserve second credential pair");
+    require(! lineHasAuthenticatedCredentials(dest, "first-user", "second-password"),
+            "line credential pair matching crossed auth layers");
 
     testLineDestroy(dest);
     testLineDestroy(src);
@@ -156,14 +196,16 @@ static void testLineCredentialOnlyRecordingAndCopy(void)
     line_t *src  = testLineCreate();
     line_t *dest = testLineCreate();
 
-    lineSetAuthenticatedCredentials(src, NULL, "uuid-password");
-    require(src->user_count == 0, "credential-only line unexpectedly added a user marker");
+    lineAddAuthenticatedCredentials(src, NULL, "uuid-password");
+    require(src->user_count == 1, "credential-only line did not add a credential marker");
+    require(lineIsAuthenticated(src), "credential-only line was not authenticated");
     require(lineGetCurrentUser(src) == NULL, "credential-only line unexpectedly exposed a current user");
     require(lineGetAuthenticatedUsername(src) == NULL, "credential-only line unexpectedly stored a username");
     requireStringEquals(lineGetAuthenticatedPassword(src), "uuid-password", "credential-only line lost password");
+    require(lineHasAuthenticatedPassword(src, "uuid-password"), "credential-only line did not match password");
 
     lineCopyUsers(dest, src);
-    require(dest->user_count == 0, "credential-only copy unexpectedly added a user marker");
+    require(dest->user_count == 1, "credential-only copy did not preserve credential marker");
     require(lineGetCurrentUser(dest) == NULL, "credential-only copy unexpectedly exposed a current user");
     require(lineGetAuthenticatedUsername(dest) == NULL, "credential-only copy unexpectedly stored a username");
     requireStringEquals(lineGetAuthenticatedPassword(dest), "uuid-password", "credential-only copy lost password");
@@ -174,6 +216,28 @@ static void testLineCredentialOnlyRecordingAndCopy(void)
     testLineDestroy(src);
 }
 
+static void testStackedRawCredentialsRemainAddressable(void)
+{
+    line_t *line = testLineCreate();
+
+    lineAddAuthenticatedCredentials(line, "vless-user", "vless-password");
+    lineAddAuthenticatedCredentials(line, "trojan-user", "trojan-password");
+
+    require(line->user_count == 2, "stacked raw credentials did not preserve both entries");
+    requireStringEquals(lineGetAuthenticatedUsername(line), "trojan-user", "latest credential username was wrong");
+    requireStringEquals(lineGetAuthenticatedPassword(line), "trojan-password", "latest credential password was wrong");
+    require(lineHasAuthenticatedCredentials(line, "vless-user", "vless-password"),
+            "first credential pair was not matchable");
+    require(lineHasAuthenticatedCredentials(line, "trojan-user", "trojan-password"),
+            "second credential pair was not matchable");
+    require(lineHasAuthenticatedUsername(line, "vless-user"), "first username was not matchable");
+    require(lineHasAuthenticatedPassword(line, "trojan-password"), "second password was not matchable");
+    require(! lineHasAuthenticatedCredentials(line, "vless-user", "trojan-password"),
+            "credential pair matching crossed stacked raw auth entries");
+
+    testLineDestroy(line);
+}
+
 int main(void)
 {
     testAnonymousUserHandlesRemainInvalid();
@@ -181,6 +245,7 @@ int main(void)
     testLineUserRecording();
     testLineUserCopy();
     testLineCredentialOnlyRecordingAndCopy();
+    testStackedRawCredentialsRemainAddressable();
 
     return 0;
 }

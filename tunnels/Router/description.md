@@ -158,8 +158,8 @@ error.
 | `network` | string or array | Match the destination transport flags: `tcp`, `udp`, `icmp`, `packet`, or combined in one string `"tcp,udp"`. OR within the field. |
 | `protocol` | string or array | Match an application protocol detected from the first upstream payload: `http1`, `tls`, `bittorrent`. OR within the field. See [Protocol detection](#protocol-detection). |
 | `attributes` | non-empty array | Match sniffed facts. Currently supports `"http_upgrade_present"`. See [Attributes](#attributes). |
-| `username` | string or array | Exact, **case-sensitive** match of the authenticated username on the line. No authenticated username → no match. See [Authenticated identity](#authenticated-identity-username--password). |
-| `password` | string or array | Exact, **case-sensitive** match of the authenticated password on the line. No authenticated password → no match. |
+| `username` | string or array | Exact, **case-sensitive** match against authenticated credential markers on the line. No authenticated username → no match. See [Authenticated identity](#authenticated-identity-username--password). |
+| `password` | string or array | Exact, **case-sensitive** match against authenticated credential markers on the line. No authenticated password → no match. |
 
 > **GeoSite domain semantics:** `domain` lists match the root and its subdomains,
 > `full` lists match exactly, `plain` lists match by substring, and `regex` lists
@@ -298,9 +298,11 @@ case-insensitive.
 
 ## Authenticated identity (`username` / `password`)
 
-`username` and `password` match credentials that the **authenticating tunnel**
-stored on the line (`lineGetAuthenticatedUsername` / `lineGetAuthenticatedPassword`),
-so Router needs no users-table lookup. Both matches are exact and case-sensitive.
+`username` and `password` match credential markers that **authenticating tunnels**
+stored on the line, so Router needs no users-table lookup. Both matches are exact
+and case-sensitive. When a rule contains both `username` and `password`, they
+must match the same credential marker; stacked authentication layers do not mix a
+username from one layer with a password from another.
 
 How they get populated:
 

@@ -154,8 +154,9 @@ object's `password` field using that exact `username:password` form. The user ob
 Socks5Server authentication and may be kept as operator metadata.
 
 The resulting `user_handle_t` is stored in `Socks5Server` line state and copied into `line_t` through `lineAddUser()`.
-In no-auth mode the handle stays empty and `lineAddUser()` stores an empty anonymous handle. Multiple
-protocol/authentication servers can add separate user handles to one line without sharing one mutable global user slot.
+The raw SOCKS username/password are also stored as a line credential marker for downstream `Router` username/password
+rules. In no-auth mode the handle stays empty and `lineAddUser()` stores an empty anonymous handle marker. Multiple
+protocol/authentication servers can add separate auth markers to one line without sharing one mutable global user slot.
 The internal `UserController` reads this handle on upstream `Init` and enforces the user's live connection, IP, traffic,
 expiry, and enabled-state limits before the line reaches the configured next tunnel.
 

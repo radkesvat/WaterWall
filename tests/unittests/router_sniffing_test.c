@@ -2,8 +2,10 @@
 #include "modules/attributes/attributes.h"
 #include "modules/destination_domain/destination_domain.h"
 #include "modules/destination_port/destination_port.h"
+#include "modules/password/password.h"
 #include "modules/protocol/protocol.h"
 #include "modules/source_port/source_port.h"
+#include "modules/username/username.h"
 #include "protocol_sniff.h"
 
 #include <stdio.h>
@@ -31,6 +33,7 @@ static void testLineDestroy(line_t *line)
 {
     addresscontextReset(&line->routing_context.src_ctx);
     addresscontextReset(&line->routing_context.dest_ctx);
+    lineClearUsers(line);
     memoryFree(line);
 }
 
@@ -190,6 +193,27 @@ static router_rule_t parseDestinationPortRule(const char *json_text, tunnel_t *t
     rule.target_tunnel = target;
     cJSON_Delete(json);
     return rule;
+}
+
+static router_rule_t parseAuthenticatedIdentityRule(const char *json_text)
+{
+    router_rule_t       rule            = {0};
+    cJSON              *json            = parseJsonObject(json_text);
+    router_field_parse_t username_result = routerUsernameParse(&rule, json, 0);
+    router_field_parse_t password_result = routerPasswordParse(&rule, json, 0);
+
+    require(username_result != kRouterFieldError, "username parse failed");
+    require(password_result != kRouterFieldError, "password parse failed");
+    require(username_result == kRouterFieldPresent || password_result == kRouterFieldPresent,
+            "authenticated identity rule had no username or password");
+    cJSON_Delete(json);
+    return rule;
+}
+
+static void destroyAuthenticatedIdentityRule(router_rule_t *rule)
+{
+    routerUsernameDestroy(rule);
+    routerPasswordDestroy(rule);
 }
 
 static bool attributesConfigFails(const char *json_text)
@@ -940,6 +964,39 @@ static void testHttpUpgradeAttributeNeedMore(void)
     testLineDestroy(line);
 }
 
+static void testAuthenticatedIdentityMatchesCredentialMarkers(void)
+{
+    line_t            *line = testLineCreate();
+    router_match_ctx_t mctx = {.line = line};
+    user_handle_t      vless_handle;
+
+    router_rule_t username_rule = parseAuthenticatedIdentityRule("{\"username\":\"vless-user\"}");
+    router_rule_t password_rule = parseAuthenticatedIdentityRule("{\"password\":\"trojan-password\"}");
+    router_rule_t pair_rule =
+        parseAuthenticatedIdentityRule("{\"username\":\"vless-user\",\"password\":\"vless-password\"}");
+    router_rule_t crossed_rule =
+        parseAuthenticatedIdentityRule("{\"username\":\"vless-user\",\"password\":\"trojan-password\"}");
+
+    userHandleSet(&vless_handle, 7, 42);
+    lineAddUser(line, &vless_handle, "vless-user", "vless-password");
+    lineAddAuthenticatedCredentials(line, "trojan-user", "trojan-password");
+
+    require(routerUsernameMatch(&username_rule, &mctx), "Router username did not match an older credential marker");
+    require(routerPasswordMatch(&password_rule, &mctx), "Router password did not match the latest credential marker");
+    require(routerUsernameMatch(&pair_rule, &mctx), "Router username/password pair did not match one marker");
+    require(routerPasswordMatch(&pair_rule, &mctx), "Router password pair check did not match one marker");
+    require(! routerUsernameMatch(&crossed_rule, &mctx),
+            "Router username match crossed stacked credential markers");
+    require(! routerPasswordMatch(&crossed_rule, &mctx),
+            "Router password match crossed stacked credential markers");
+
+    destroyAuthenticatedIdentityRule(&crossed_rule);
+    destroyAuthenticatedIdentityRule(&pair_rule);
+    destroyAuthenticatedIdentityRule(&password_rule);
+    destroyAuthenticatedIdentityRule(&username_rule);
+    testLineDestroy(line);
+}
+
 int main(void)
 {
     testSniffingConfig();
@@ -965,5 +1022,6 @@ int main(void)
     testHttpUpgradeAttributeMissingDoesNotMatch();
     testHttpUpgradeAttributeSniffsWhenDestinationDomainExists();
     testHttpUpgradeAttributeNeedMore();
+    testAuthenticatedIdentityMatchesCredentialMarkers();
     return 0;
 }

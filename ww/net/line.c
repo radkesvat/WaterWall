@@ -6,59 +6,106 @@
 
 #include "loggers/internal_logger.h"
 
-static void lineReplaceAuthenticatedCredentials(line_t *const line, const char *username, const char *password)
+static void lineFreeCredentialString(char **value, bool secret)
 {
-    assert(line != NULL);
-
-    if (line->last_authenticated_user_username != NULL)
+    if (*value == NULL)
     {
-        memoryFree((void *) line->last_authenticated_user_username);
-        line->last_authenticated_user_username = NULL;
-    }
-    if (username != NULL)
-    {
-        line->last_authenticated_user_username = stringDuplicate(username);
+        return;
     }
 
-    if (line->last_authenticated_user_password != NULL)
+    if (secret)
     {
-        memoryFree((void *) line->last_authenticated_user_password);
-        line->last_authenticated_user_password = NULL;
+        memoryZero(*value, stringLength(*value));
     }
-    if (password != NULL)
+    memoryFree(*value);
+    *value = NULL;
+}
+
+static void lineAuthEntryDestroy(line_user_auth_t *entry)
+{
+    if (entry->has_credentials)
     {
-        line->last_authenticated_user_password = stringDuplicate(password);
+        lineFreeCredentialString(&entry->credentials.username, false);
+        lineFreeCredentialString(&entry->credentials.password, true);
     }
+
+    memoryZero(entry, sizeof(*entry));
+}
+
+static void lineEnsureAuthCapacity(const line_t *const line, uint8_t needed)
+{
+    if (LIKELY(line->user_count <= kLineMaxUsers && needed <= kLineMaxUsers - line->user_count))
+    {
+        return;
+    }
+
+    LOGF("Line: too many users added to line; maximum is %u", (unsigned int) kLineMaxUsers);
+    terminateProgram(1);
+}
+
+static void lineAddAuthEntry(line_t *const line, const user_handle_t *user_handle, bool add_handle,
+                             const char *username, const char *password)
+{
+    line_user_auth_t *entry = &line->user_auths[line->user_count];
+
+    *entry = (line_user_auth_t) {0};
+    if (add_handle)
+    {
+        entry->has_handle = true;
+        entry->handle     = userHandleEmpty();
+        if (userHandleIsValid(user_handle))
+        {
+            entry->handle = *user_handle;
+        }
+    }
+
+    entry->has_credentials = username != NULL || password != NULL;
+    if (entry->has_credentials)
+    {
+        if (username != NULL)
+        {
+            entry->credentials.username = stringDuplicate(username);
+        }
+        if (password != NULL)
+        {
+            entry->credentials.password = stringDuplicate(password);
+        }
+    }
+    line->user_count += 1;
+}
+
+static bool lineCredentialValueMatches(const char *stored, const char *expected)
+{
+    return expected == NULL || (stored != NULL && stringCompare(stored, expected) == 0);
 }
 
 void lineAddUser(line_t *const line, const user_handle_t *user_handle, const char *username, const char *password)
 {
+    bool has_credentials = username != NULL || password != NULL;
+    bool add_handle      = userHandleIsValid(user_handle) || ! has_credentials;
+
     assert(line != NULL);
 
-    if (UNLIKELY(line->user_count >= kLineMaxUsers))
+    lineEnsureAuthCapacity(line, 1);
+    lineAddAuthEntry(line, user_handle, add_handle, username, password);
+}
+
+void lineAddAuthenticatedCredentials(line_t *const line, const char *username, const char *password)
+{
+    assert(line != NULL);
+
+    if (username == NULL && password == NULL)
     {
-        LOGF("Line: too many users added to line; maximum is %u", (unsigned int) kLineMaxUsers);
-        terminateProgram(1);
         return;
     }
 
-    user_handle_t stored_user = userHandleEmpty();
-    if (userHandleIsValid(user_handle))
-    {
-        stored_user = *user_handle;
-    }
-
-    line->user_handles[line->user_count] = stored_user;
-    line->user_count += 1;
-
-    // Store the raw credentials so routers can match by username/password without
-    // a users-table lookup. Replace any previously stored values.
-    lineReplaceAuthenticatedCredentials(line, username, password);
+    lineEnsureAuthCapacity(line, 1);
+    lineAddAuthEntry(line, NULL, false, username, password);
 }
 
 void lineSetAuthenticatedCredentials(line_t *const line, const char *username, const char *password)
 {
-    lineReplaceAuthenticatedCredentials(line, username, password);
+    lineAddAuthenticatedCredentials(line, username, password);
 }
 
 void lineCopyUsers(line_t *const dest, const line_t *const src)
@@ -71,41 +118,131 @@ void lineCopyUsers(line_t *const dest, const line_t *const src)
         return;
     }
 
-    if (UNLIKELY(dest->user_count != 0 || dest->last_authenticated_user_username != NULL ||
-                 dest->last_authenticated_user_password != NULL))
+    if (UNLIKELY(dest->user_count != 0))
     {
         LOGF("Line: attempted to copy users into a line that already has user markers or credentials");
         terminateProgram(1);
         return;
     }
 
-    if (src->user_count != 0)
+    lineEnsureAuthCapacity(dest, src->user_count);
+
+    for (uint8_t i = 0; i < src->user_count; ++i)
     {
-        memoryCopy(dest->user_handles, src->user_handles, sizeof(src->user_handles));
-        dest->user_count = src->user_count;
+        const line_user_auth_t *src_entry = &src->user_auths[i];
+
+        lineAddAuthEntry(dest,
+                         &src_entry->handle,
+                         src_entry->has_handle,
+                         src_entry->has_credentials ? src_entry->credentials.username : NULL,
+                         src_entry->has_credentials ? src_entry->credentials.password : NULL);
+    }
+}
+
+void lineClearUsers(line_t *const line)
+{
+    if (line == NULL)
+    {
+        return;
     }
 
-    // Carry the raw credentials onto the companion line as owned duplicates.
-    if (src->last_authenticated_user_username != NULL)
+    for (uint8_t i = 0; i < line->user_count; ++i)
     {
-        dest->last_authenticated_user_username = stringDuplicate(src->last_authenticated_user_username);
+        lineAuthEntryDestroy(&line->user_auths[i]);
     }
-    if (src->last_authenticated_user_password != NULL)
-    {
-        dest->last_authenticated_user_password = stringDuplicate(src->last_authenticated_user_password);
-    }
+    line->user_count = 0;
 }
 
 const user_handle_t *lineGetCurrentUser(const line_t *const line)
 {
     assert(line != NULL);
 
-    if (line->user_count == 0)
+    for (uint8_t i = line->user_count; i > 0; --i)
     {
-        return NULL;
+        const line_user_auth_t *entry = &line->user_auths[i - 1U];
+        if (entry->has_handle)
+        {
+            return &entry->handle;
+        }
     }
 
-    return &line->user_handles[line->user_count - 1];
+    return NULL;
+}
+
+const char *lineGetAuthenticatedUsername(const line_t *const line)
+{
+    assert(line != NULL);
+
+    for (uint8_t i = line->user_count; i > 0; --i)
+    {
+        const line_user_auth_t *entry = &line->user_auths[i - 1U];
+        if (entry->has_credentials)
+        {
+            return entry->credentials.username;
+        }
+    }
+
+    return NULL;
+}
+
+const char *lineGetAuthenticatedPassword(const line_t *const line)
+{
+    assert(line != NULL);
+
+    for (uint8_t i = line->user_count; i > 0; --i)
+    {
+        const line_user_auth_t *entry = &line->user_auths[i - 1U];
+        if (entry->has_credentials)
+        {
+            return entry->credentials.password;
+        }
+    }
+
+    return NULL;
+}
+
+bool lineHasAuthenticatedCredentials(const line_t *const line, const char *username, const char *password)
+{
+    assert(line != NULL);
+
+    if (username == NULL && password == NULL)
+    {
+        return false;
+    }
+
+    for (uint8_t i = line->user_count; i > 0; --i)
+    {
+        const line_user_auth_t *entry = &line->user_auths[i - 1U];
+        if (! entry->has_credentials)
+        {
+            continue;
+        }
+        if (lineCredentialValueMatches(entry->credentials.username, username) &&
+            lineCredentialValueMatches(entry->credentials.password, password))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool lineHasAuthenticatedUsername(const line_t *const line, const char *username)
+{
+    if (username == NULL)
+    {
+        return false;
+    }
+    return lineHasAuthenticatedCredentials(line, username, NULL);
+}
+
+bool lineHasAuthenticatedPassword(const line_t *const line, const char *password)
+{
+    if (password == NULL)
+    {
+        return false;
+    }
+    return lineHasAuthenticatedCredentials(line, NULL, password);
 }
 
 typedef union line_task_callback_u {

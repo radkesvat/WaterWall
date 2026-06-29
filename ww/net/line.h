@@ -22,6 +22,20 @@ enum
     kLineMaxUsers = 4
 };
 
+typedef struct line_user_credentials_s
+{
+    char *username;
+    char *password;
+} line_user_credentials_t;
+
+typedef struct line_user_auth_s
+{
+    bool                    has_handle;
+    bool                    has_credentials;
+    user_handle_t           handle;
+    line_user_credentials_t credentials;
+} line_user_auth_t;
+
 /*
     The line struct represents a connection, it has two ends ( Down-end < --------- > Up-end)
 
@@ -50,24 +64,24 @@ typedef struct line_s
     line_refc_t       refc;
     bool              alive;
     wid_t             wid;
-    user_handle_t     user_handles[kLineMaxUsers];
+    line_user_auth_t  user_auths[kLineMaxUsers];
     uint8_t           user_count;
     uint8_t           established : 1;
     uint8_t           recalculate_checksum : 1; // used for packet tunnels
     routing_context_t routing_context;
-
-    // Raw credentials of the last authenticated user on this line, owned by the
-    // line. NULL means unknown / not authenticated. They are filled (duplicated)
-    // by lineAddUser() and freed on line teardown, letting routers match by
-    // username/password without a users-table lookup.
-    const char *last_authenticated_user_username;
-    const char *last_authenticated_user_password;
 
     generic_pool_t **pools;
 
     MSVC_ATTR_ALIGNED_LINE_CACHE uintptr_t *tunnels_line_state[] GNU_ATTR_ALIGNED_LINE_CACHE;
 
 } line_t;
+
+/**
+ * @brief Clears all authenticated user markers on the line.
+ *
+ * This releases line-owned raw credential strings and resets user_count.
+ */
+void lineClearUsers(line_t *const line);
 
 /**
  * @brief Allocate and initialize a line in a specific worker pool.
@@ -83,7 +97,7 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
     line_t *l = genericpoolGetItem(pools[current]);
 
     *l = (line_t) {.refc                 = 1,
-                   .user_handles         = {0},
+                   .user_auths           = {0},
                    .user_count           = 0,
                    .wid                  = wid,
                    .alive                = true,
@@ -151,14 +165,7 @@ static inline void lineUnRefInternal(line_t *const l)
         memoryFree(l->routing_context.dest_ctx.domain);
     }
 
-    if (l->last_authenticated_user_username != NULL)
-    {
-        memoryFree((void *) l->last_authenticated_user_username);
-    }
-    if (l->last_authenticated_user_password != NULL)
-    {
-        memoryFree((void *) l->last_authenticated_user_password);
-    }
+    lineClearUsers(l);
     genericpoolReuseItem(l->pools[wid], l);
 }
 
@@ -201,10 +208,12 @@ static inline void lineDestroy(line_t *const l)
 }
 
 /**
- * @brief Adds a user marker to the line.
+ * @brief Adds authenticated user marker(s) to the line.
  *
  * Empty or NULL user handles add an anonymous empty handle.
- * Valid user handles are copied into the line.
+ * Valid user handles are copied into the line. When username/password are also
+ * supplied, they are stored on the same auth marker so consumers such as Router
+ * can match raw authenticated credentials without a users-table lookup.
  *
  * @param line Pointer to the line.
  * @param user_handle Optional user handle.
@@ -214,14 +223,20 @@ static inline void lineDestroy(line_t *const l)
 void lineAddUser(line_t *const line, const user_handle_t *user_handle, const char *username, const char *password);
 
 /**
- * @brief Store raw authenticated credentials without adding a user marker.
+ * @brief Add raw authenticated credentials to the line.
  *
  * This is for protocols that authenticated a peer but do not have a
- * user_handle_t from AuthenticationClient. Existing credentials are replaced.
+ * user_handle_t from AuthenticationClient. The credentials are stored as a new
+ * marker, preserving earlier authentication layers on the same line.
  *
  * @param line Pointer to the line.
  * @param username Optional raw/resolved username; duplicated when non-NULL.
  * @param password Optional raw/resolved password; duplicated when non-NULL.
+ */
+void lineAddAuthenticatedCredentials(line_t *const line, const char *username, const char *password);
+
+/**
+ * @brief Compatibility alias for lineAddAuthenticatedCredentials().
  */
 void lineSetAuthenticatedCredentials(line_t *const line, const char *username, const char *password);
 
@@ -236,10 +251,10 @@ void lineSetAuthenticatedCredentials(line_t *const line, const char *username, c
 void lineCopyUsers(line_t *const dest, const line_t *const src);
 
 /**
- * @brief Returns the latest user handle added to the line.
+ * @brief Returns the latest user handle marker added to the line.
  *
  * @param line Pointer to the line.
- * @return const user_handle_t* Latest stored user handle, or NULL if no user was added.
+ * @return const user_handle_t* Latest stored user handle marker, or NULL if no handle marker was added.
  */
 const user_handle_t *lineGetCurrentUser(const line_t *const line);
 
@@ -256,25 +271,54 @@ static inline bool lineIsAuthenticated(line_t *const line)
 }
 
 /**
- * @brief Get the raw username of the last authenticated user on the line.
+ * @brief Get the raw username of the latest credential marker on the line.
  *
  * @param line Pointer to the line.
- * @return const char* Username, or NULL if unknown / not authenticated.
+ * @return const char* Username, or NULL if unknown / not authenticated by raw credentials.
  */
-static inline const char *lineGetAuthenticatedUsername(const line_t *const line)
+const char *lineGetAuthenticatedUsername(const line_t *const line);
+
+/**
+ * @brief Get the raw password of the latest credential marker on the line.
+ *
+ * @param line Pointer to the line.
+ * @return const char* Password, or NULL if unknown / not authenticated by raw credentials.
+ */
+const char *lineGetAuthenticatedPassword(const line_t *const line);
+
+/**
+ * @brief Checks for an exact username match in any authenticated credential marker.
+ */
+bool lineHasAuthenticatedUsername(const line_t *const line, const char *username);
+
+/**
+ * @brief Checks for an exact password match in any authenticated credential marker.
+ */
+bool lineHasAuthenticatedPassword(const line_t *const line, const char *password);
+
+/**
+ * @brief Checks for an exact username/password pair in one authenticated credential marker.
+ *
+ * username or password may be NULL to act as a wildcard, but at least one should
+ * be non-NULL for a meaningful match.
+ */
+bool lineHasAuthenticatedCredentials(const line_t *const line, const char *username, const char *password);
+
+/**
+ * @brief Get the number of authenticated user markers on the line.
+ */
+static inline uint8_t lineGetUserAuthCount(const line_t *const line)
 {
-    return line->last_authenticated_user_username;
+    return line->user_count;
 }
 
 /**
- * @brief Get the raw password of the last authenticated user on the line.
- *
- * @param line Pointer to the line.
- * @return const char* Password, or NULL if unknown / not authenticated.
+ * @brief Get one authenticated user marker by index.
  */
-static inline const char *lineGetAuthenticatedPassword(const line_t *const line)
+static inline const line_user_auth_t *lineGetUserAuthAt(const line_t *const line, uint8_t index)
 {
-    return line->last_authenticated_user_password;
+    assert(index < line->user_count);
+    return &line->user_auths[index];
 }
 
 /**

@@ -28,24 +28,7 @@ bool routerUsernameMatch(const router_rule_t *rule, const router_match_ctx_t *mc
         return true;
     }
 
-    // The authenticating tunnel stores the raw username on the line. NULL means
-    // no authenticated user, so a username rule cannot match.
-    const char *username = lineGetAuthenticatedUsername(mctx->line);
-    if (username == NULL)
-    {
-        return false;
-    }
-
-    // Exact, case-sensitive match against any configured username.
-    for (uint32_t i = 0; i < rule->username.values.count; ++i)
-    {
-        if (stringCompare(rule->username.values.items[i], username) == 0)
-        {
-            return true;
-        }
-    }
-
-    return false;
+    return routerAuthenticatedCredentialsMatch(rule, mctx->line);
 }
 
 void routerUsernameDestroy(router_rule_t *rule)

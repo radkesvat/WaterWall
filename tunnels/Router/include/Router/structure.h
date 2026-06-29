@@ -384,6 +384,7 @@ uint32_t routerGeositeBuildSuffixOffsets(const char *host, uint32_t host_len, ui
 bool routerGeositeCompiledListMatches(const router_geosite_compiled_list_t *list, const char *host, uint32_t host_len);
 bool routerGeositeCompiledListMatchesPrepared(const router_geosite_compiled_list_t *list,
                                               const router_geosite_host_cache_t    *host);
+bool routerAuthenticatedCredentialsMatch(const router_rule_t *rule, const line_t *line);
 
 // Parse JSON exact-port and inclusive-range fields into numeric ranges.
 bool routerPortRangesParse(const cJSON *ports_json, const cJSON *range_json, router_port_range_t **out_ranges,

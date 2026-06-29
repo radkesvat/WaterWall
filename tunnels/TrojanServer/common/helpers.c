@@ -345,7 +345,7 @@ static void trojanserverRecordLineUser(line_t *l, trojanserver_lstate_t *ls, con
     }
     else if (ls->auth_username != NULL || ls->auth_password != NULL)
     {
-        lineSetAuthenticatedCredentials(l, ls->auth_username, ls->auth_password);
+        lineAddAuthenticatedCredentials(l, ls->auth_username, ls->auth_password);
     }
     else
     {
