@@ -4,16 +4,13 @@
 
 void usercontrollerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    usercontroller_tstate_t *ts = tunnelGetState(t);
     usercontroller_lstate_t *ls = lineGetState(l, t);
 
     if (ls->managed)
     {
-        // Downstream payload is remote -> client, i.e. the user's download.
+        // Downstream payload counts as download for a forward-started line, upload for a reverse one.
         uint64_t bytes = (uint64_t) sbufGetLength(buf);
-        bool     close = authenticationclientUserAccountTraffic(ts->auth_client_tunnel, &ls->handle, 0, bytes,
-                                                                usercontrollerLocalTimeMS());
-        if (close)
+        if (usercontrollerAccountDirectional(t, ls, bytes, /*upstream_payload=*/false))
         {
             usercontrollerLogActiveClose(t, l, ls, "disabled, expired, traffic quota reached, or user removed");
             lineReuseBuffer(l, buf);

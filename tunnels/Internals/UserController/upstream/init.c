@@ -4,44 +4,26 @@
 
 void usercontrollerTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
-    usercontroller_tstate_t *ts = tunnelGetState(t);
     usercontroller_lstate_t *ls = lineGetState(l, t);
 
-    usercontrollerLinestateInitialize(ls);
+    // Forward origin: the line was initiated from the prev side (this upstream Init), so upstream
+    // payload is the user's upload.
+    usercontrollerLinestateInitialize(ls, false);
 
-    const user_handle_t *current = lineGetCurrentUser(l);
+    // Admit the line at start if it already carries an authenticated user. Anonymous/no-auth lines
+    // return kUserAdmissionOk and simply pass through unmanaged; nodes that authenticate later promote
+    // the line on demand with usercontrollerTunnelTryManageLine().
+    user_admission_result_t result = usercontrollerTunnelTryManageLine(t, l);
 
-    // Only authenticated lines are subject to limits. Anonymous/no-auth lines pass through untouched.
-    if (current != NULL && userHandleIsValid(current))
+    if (result != kUserAdmissionOk)
     {
-        ls->handle        = *current;
-        ls->authenticated = true;
-        usercontrollerBuildIpKey(l, &ls->ip_key);
+        usercontrollerLogAdmissionRejected(t, l, ls, result);
 
-        user_admission_result_t result = authenticationclientUserTryAdmitConnection(
-            ts->auth_client_tunnel, &ls->handle, &ls->ip_key, usercontrollerLocalTimeMS());
-
-        if (result != kUserAdmissionOk)
-        {
-            usercontrollerLogAdmissionRejected(t, l, ls, result);
-
-            // The upstream side was never opened, so we only finish the prev/downstream side that
-            // initiated us. This is the natural "upstream is unavailable" close (close prev only).
-            usercontrollerLinestateDestroy(ls);
-            tunnelPrevDownStreamFinish(t, l);
-            return;
-        }
-
-        ls->managed = true;
-        if (UNLIKELY(! usercontrollerRegisterLine(t, l, ls)))
-        {
-            LOGW("UserController: rejected new connection: failed to register live enforcement state");
-            authenticationclientUserReleaseConnection(ts->auth_client_tunnel, &ls->handle, &ls->ip_key);
-            ls->managed = false;
-            usercontrollerLinestateDestroy(ls);
-            tunnelPrevDownStreamFinish(t, l);
-            return;
-        }
+        // The upstream side was never opened, so we only finish the prev/downstream side that
+        // initiated us. This is the natural "upstream is unavailable" close (close prev only).
+        usercontrollerLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
+        return;
     }
 
     tunnelNextUpStreamInit(t, l);

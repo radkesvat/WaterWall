@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AuthenticationClient/interface.h"
+#include "interface.h"
 #include "wwapi.h"
 
 // Origin of a line teardown, so the close path never sends a callback back toward the side that
@@ -37,9 +38,9 @@ typedef struct usercontroller_lstate_s
     bool          authenticated; // true when the line carried a valid user handle
     bool          managed;       // true once we reserved a connection slot for this line
     bool          registered;    // true while the worker sweep registry holds a line reference
-    bool          closing;       // re-entrancy guard for the teardown path
-    bool          prev_finished; // prev/downstream side already finished this line
-    bool          next_finished; // next/upstream side already finished this line
+    bool          closing;       // set once teardown begins; sweep skips it, re-entrant closes no-op
+    bool          started_from_next; // line was initiated from the next side (downstream Init); flips
+                                     // the upload/download mapping for traffic accounting
 } usercontroller_lstate_t;
 
 enum
@@ -72,7 +73,7 @@ void usercontrollerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void usercontrollerTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void usercontrollerTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void usercontrollerLinestateInitialize(usercontroller_lstate_t *ls);
+void usercontrollerLinestateInitialize(usercontroller_lstate_t *ls, bool started_from_next);
 void usercontrollerLinestateDestroy(usercontroller_lstate_t *ls);
 
 void        usercontrollerTunnelstateDestroy(usercontroller_tstate_t *ts);
@@ -80,6 +81,8 @@ bool        usercontrollerBuildIpKey(line_t *l, user_ip_key_t *out);
 bool        usercontrollerRegisterLine(tunnel_t *t, line_t *l, usercontroller_lstate_t *ls);
 void        usercontrollerUnregisterLine(tunnel_t *t, line_t *l, usercontroller_lstate_t *ls);
 void        usercontrollerWorkerClearRegistry(tunnel_t *t, wid_t wid);
+bool        usercontrollerAccountDirectional(tunnel_t *t, usercontroller_lstate_t *ls, uint64_t bytes,
+                                             bool upstream_payload);
 void        usercontrollerSweepTimerCallback(wtimer_t *timer);
 void        usercontrollerCloseLine(tunnel_t *t, line_t *l, usercontroller_close_origin_t origin);
 uint64_t    usercontrollerLocalTimeMS(void);

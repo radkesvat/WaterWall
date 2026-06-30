@@ -2,17 +2,16 @@
 
 #include "loggers/network_logger.h"
 
-void usercontrollerLinestateInitialize(usercontroller_lstate_t *ls)
+void usercontrollerLinestateInitialize(usercontroller_lstate_t *ls, bool started_from_next)
 {
     *ls = (usercontroller_lstate_t) {
-        .handle        = userHandleEmpty(),
-        .ip_key        = {0},
-        .authenticated = false,
-        .managed       = false,
-        .registered    = false,
-        .closing       = false,
-        .prev_finished = false,
-        .next_finished = false,
+        .handle            = userHandleEmpty(),
+        .ip_key            = {0},
+        .authenticated     = false,
+        .managed           = false,
+        .registered        = false,
+        .closing           = false,
+        .started_from_next = started_from_next,
     };
 }
 

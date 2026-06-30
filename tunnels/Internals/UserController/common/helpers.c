@@ -226,6 +226,85 @@ void usercontrollerWorkerClearRegistry(tunnel_t *t, wid_t wid)
     }
 }
 
+// Account payload bytes against the user's upload/download quota, mapping the physical flow direction
+// to the user's perspective based on where the line started.
+//
+// "Upload" is traffic leaving the user toward the far side; "download" is traffic arriving at the user.
+// The user sits on the side the line was initiated from:
+//   - started_from_next == false (forward, prev-initiated): upstream payload is the user's upload.
+//   - started_from_next == true  (reverse, next-initiated):  upstream payload is the user's download.
+// So a line started from the next side flips the mapping, which is exactly the
+// TunDevice -> WireGuardDevice -> UserController -> UdpStatelessSocket case.
+//
+// Returns true when accounting says the user is now over quota / disabled / expired and the line must
+// be torn down (the caller recycles the buffer and closes the line).
+bool usercontrollerAccountDirectional(tunnel_t *t, usercontroller_lstate_t *ls, uint64_t bytes, bool upstream_payload)
+{
+    usercontroller_tstate_t *ts = tunnelGetState(t);
+
+    bool     is_upload = (upstream_payload != ls->started_from_next);
+    uint64_t up        = is_upload ? bytes : 0;
+    uint64_t down      = is_upload ? 0 : bytes;
+
+    return authenticationclientUserAccountTraffic(ts->auth_client_tunnel, &ls->handle, up, down,
+                                                  usercontrollerLocalTimeMS());
+}
+
+// Shared admission path. Promotes an unmanaged line to managed using the user currently recorded on
+// it, reserving a connection + IP slot and starting sweep-tracking. Used both by upstream Init and by
+// the public usercontrollerTunnelTryManageLine() API for nodes that authenticate mid-connection.
+//
+// Never sends a finish and never destroys line state: on any non-OK result the line is simply left
+// unmanaged so the caller can reject it however it wants. Idempotent for already-managed lines, and a
+// no-op (kUserAdmissionOk) for lines that carry no user, exactly like Init's passthrough behavior.
+user_admission_result_t usercontrollerTunnelTryManageLine(tunnel_t *t, line_t *l)
+{
+    assert(lineGetWID(l) == getWID());
+
+    usercontroller_lstate_t *ls = lineGetState(l, t);
+
+    // Already enforced: do not admit/reserve twice.
+    if (ls->managed)
+    {
+        return kUserAdmissionOk;
+    }
+
+    // Only lines that carry a valid authenticated user are subject to limits. Anonymous/no-auth lines
+    // (or a caller that promotes before authentication) stay unmanaged passthroughs.
+    const user_handle_t *current = lineGetCurrentUser(l);
+    if (current == NULL || ! userHandleIsValid(current))
+    {
+        return kUserAdmissionOk;
+    }
+
+    usercontroller_tstate_t *ts = tunnelGetState(t);
+
+    ls->handle        = *current;
+    ls->authenticated = true;
+    usercontrollerBuildIpKey(l, &ls->ip_key);
+
+    user_admission_result_t result = authenticationclientUserTryAdmitConnection(
+        ts->auth_client_tunnel, &ls->handle, &ls->ip_key, usercontrollerLocalTimeMS());
+
+    if (result != kUserAdmissionOk)
+    {
+        // Reserved nothing. Every later path gates on `managed`, so the handle/ip_key filled in above
+        // are inert until the caller rejects the line or a later call retries.
+        return result;
+    }
+
+    ls->managed = true;
+    if (UNLIKELY(! usercontrollerRegisterLine(t, l, ls)))
+    {
+        LOGW("UserController: failed to register live enforcement state; rejecting connection");
+        authenticationclientUserReleaseConnection(ts->auth_client_tunnel, &ls->handle, &ls->ip_key);
+        ls->managed = false;
+        return kUserAdmissionInvalid;
+    }
+
+    return kUserAdmissionOk;
+}
+
 void usercontrollerSweepTimerCallback(wtimer_t *timer)
 {
     tunnel_t *t = weventGetUserdata(timer);
@@ -289,7 +368,9 @@ static void usercontrollerReleaseAccounting(tunnel_t *t, line_t *l, usercontroll
 }
 
 // Single teardown path. Releases this user's reserved connection slot, destroys local line state,
-// then propagates the real Waterwall finish in the correct directions:
+// then propagates the real Waterwall finish in the correct directions. The `origin` alone decides
+// which side(s) we may finish, which is what keeps us from reflecting a finish back toward the side
+// that already finished us:
 //
 //   kUserControllerCloseFromPrev : prev finished us -> close next only, never touch prev
 //   kUserControllerCloseFromNext : next finished us -> close prev only, never touch next
@@ -297,52 +378,32 @@ static void usercontrollerReleaseAccounting(tunnel_t *t, line_t *l, usercontroll
 //
 // We never send protocol bytes here, so the only re-entrancy boundary is the finish propagation
 // itself, which Waterwall guarantees is non re-entrant. lineLock keeps the line memory valid until
-// we return; the closing/finished flags collapse any re-entrant teardown into a no-op.
+// we return; `closing` collapses any re-entrant teardown into a no-op.
 void usercontrollerCloseLine(tunnel_t *t, line_t *l, usercontroller_close_origin_t origin)
 {
     usercontroller_lstate_t *ls = lineGetState(l, t);
 
     if (ls->closing)
     {
-        if (origin == kUserControllerCloseFromPrev)
-        {
-            ls->prev_finished = true;
-        }
-        else if (origin == kUserControllerCloseFromNext)
-        {
-            ls->next_finished = true;
-        }
         return;
     }
 
     bool close_next = origin != kUserControllerCloseFromNext;
     bool close_prev = origin != kUserControllerCloseFromPrev;
 
-    if (origin == kUserControllerCloseFromPrev)
-    {
-        ls->prev_finished = true;
-    }
-    else if (origin == kUserControllerCloseFromNext)
-    {
-        ls->next_finished = true;
-    }
-
     ls->closing = true;
     lineLock(l);
 
     usercontrollerReleaseAccounting(t, l, ls);
 
-    bool send_next_finish = close_next && ! ls->next_finished;
-    bool send_prev_finish = close_prev && ! ls->prev_finished;
-
     usercontrollerLinestateDestroy(ls);
 
-    if (send_next_finish && lineIsAlive(l))
+    if (close_next && lineIsAlive(l))
     {
         tunnelNextUpStreamFinish(t, l);
     }
 
-    if (send_prev_finish && lineIsAlive(l))
+    if (close_prev && lineIsAlive(l))
     {
         tunnelPrevDownStreamFinish(t, l);
     }
