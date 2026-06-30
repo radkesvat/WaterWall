@@ -34,6 +34,9 @@ struct wloop_s {
     uint64_t                    start_hrtime;   // us
     uint64_t                    end_hrtime;
     uint64_t                    cur_hrtime;
+    uint64_t                    cur_time;       // s
+    uint64_t                    cur_time_ms;    // ms
+    uint64_t                    cur_time_us;    // us
     uint64_t                    loop_cnt;
     long                        pid;
     long                        wid;

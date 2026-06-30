@@ -37,6 +37,15 @@ typedef struct wio_release_no_close_msg_s
     bool     detached;
 } wio_release_no_close_msg_t;
 
+static void wloopRefreshCachedTime(wloop_t *loop)
+{
+    uint64_t elapsed_us = loop->cur_hrtime - loop->start_hrtime;
+
+    loop->cur_time    = (loop->start_ms / 1000) + (elapsed_us / 1000000);
+    loop->cur_time_ms = loop->start_ms + (elapsed_us / 1000);
+    loop->cur_time_us = (loop->start_ms * 1000) + elapsed_us;
+}
+
 static int timersCompare(const struct heap_node *lhs, const struct heap_node *rhs)
 {
     return TIMER_ENTRY(lhs)->next_timeout < TIMER_ENTRY(rhs)->next_timeout;
@@ -426,6 +435,7 @@ static void wloopInit(wloop_t *loop)
     // NOTE: init start_time here, because wtimerAdd use it.
     loop->start_ms     = getTimeOfDayMS();
     loop->start_hrtime = loop->cur_hrtime = getHRTimeUs();
+    wloopRefreshCachedTime(loop);
 }
 
 static void wloopCleanup(wloop_t *loop)
@@ -634,26 +644,28 @@ wloop_status_e wloopStatus(wloop_t *loop)
 void wloopUpdateTime(wloop_t *loop)
 {
     loop->cur_hrtime = getHRTimeUs();
-    if ((time_t) wloopNow(loop) != time(NULL))
+    wloopRefreshCachedTime(loop);
+    if ((time_t) loop->cur_time != time(NULL))
     {
         // systemtime changed, we adjust start_ms
         loop->start_ms = getTimeOfDayMS() - (loop->cur_hrtime - loop->start_hrtime) / 1000;
+        wloopRefreshCachedTime(loop);
     }
 }
 
 uint64_t wloopNow(wloop_t *loop)
 {
-    return (loop->start_ms / 1000) + ((loop->cur_hrtime - loop->start_hrtime) / 1000000);
+    return loop->cur_time;
 }
 
 uint64_t wloopNowMS(wloop_t *loop)
 {
-    return loop->start_ms + ((loop->cur_hrtime - loop->start_hrtime) / 1000);
+    return loop->cur_time_ms;
 }
 
 uint64_t wloopNowUS(wloop_t *loop)
 {
-    return (loop->start_ms * 1000) + (loop->cur_hrtime - loop->start_hrtime);
+    return loop->cur_time_us;
 }
 
 uint64_t wloopNowLoopRunTime(wloop_t *loop)
