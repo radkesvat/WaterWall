@@ -14,6 +14,8 @@ static const char *authenticationserverUsersAddResultError(users_add_result_t re
         return "invalid-user-json";
     case kUsersAddResultInvalidUser:
         return "invalid-user";
+    case kUsersAddResultInvalidWireGuardAllowedIps:
+        return "invalid-wireguard-allowed-ips";
     case kUsersAddResultDuplicateName:
         return "user-name-exists";
     case kUsersAddResultDuplicateId:
@@ -26,6 +28,8 @@ static const char *authenticationserverUsersAddResultError(users_add_result_t re
         return "user-uuid-exists";
     case kUsersAddResultDuplicateWireGuardPublicKey:
         return "user-wireguard-publickey-exists";
+    case kUsersAddResultDuplicateWireGuardAllowedIps:
+        return "user-wireguard-allowed-ips-overlap";
     case kUsersAddResultAllocationFailed:
         return "allocation-failed";
     case kUsersAddResultCommitFailed:
@@ -33,6 +37,21 @@ static const char *authenticationserverUsersAddResultError(users_add_result_t re
     }
 
     return "user-add-failed";
+}
+
+static bool authenticationserverUserJsonWireGuardAllowedIpsValid(const cJSON *user_json)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(user_json, "wireguard-allowed-ips");
+
+    if (item == NULL || cJSON_IsNull(item))
+    {
+        return true;
+    }
+    if (UNLIKELY(! cJSON_IsString(item) || item->valuestring == NULL))
+    {
+        return false;
+    }
+    return userWireGuardAllowedIpsStringValid(item->valuestring);
 }
 
 sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
@@ -61,6 +80,12 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
         LOGW("AuthenticationServer: AddNewUser JSON payload is not a user object");
         cJSON_Delete(user_json);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-user-json");
+    }
+    if (UNLIKELY(! authenticationserverUserJsonWireGuardAllowedIpsValid(user_json)))
+    {
+        LOGW("AuthenticationServer: AddNewUser rejected user JSON: invalid-wireguard-allowed-ips");
+        cJSON_Delete(user_json);
+        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-wireguard-allowed-ips");
     }
 
     memoryZero(&user, sizeof(user));

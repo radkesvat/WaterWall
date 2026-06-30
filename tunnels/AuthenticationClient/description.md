@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -269,7 +269,8 @@ The client keeps one active local users table. It is protected by a tunnel-level
 `GetAllUsers` replacement is atomic from the point of view of other tunnels:
 
 1. The response JSON is parsed into a fresh `users_t`.
-2. The fresh table is validated, including requiring every user to have a non-zero durable id.
+2. The fresh table is validated, including requiring every user to have a non-zero durable id and rejecting overlapping
+   `wireguard-allowed-ips` ranges.
 3. Local unsynced traffic deltas and process-local runtime counters are carried forward by durable user id.
 4. Each user's local expiry deadline is projected from the server-owned time fields and response server-time metadata.
 5. The active table pointer is swapped under the write side of the rwlock.
@@ -279,9 +280,9 @@ The client keeps one active local users table. It is protected by a tunnel-level
 Readers hold the read side of the same rwlock while copying JSON, copying stats, or updating traffic by user id. This
 prevents a user pointer returned by `users_t` from becoming invalid during the operation.
 
-The table is local cache plus local counter accumulation. The server remains the source of truth for full user config and
-for `first-usage-at-ms`. The client never invents or pushes that timestamp; it only converts server expiry state into a
-process-local deadline used by admission and close checks.
+The table is local cache plus local counter accumulation. The server remains the source of truth for full user config,
+including optional `wireguard-allowed-ips`, and for `first-usage-at-ms`. The client never invents or pushes that
+timestamp; it only converts server expiry state into a process-local deadline used by admission and close checks.
 
 ## Internal API
 

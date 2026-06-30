@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx, and both files must keep the same documentation version.
 -->
 
@@ -129,6 +129,7 @@ The recommended on-disk shape is an object with a `users` array:
       "name": "alice",
       "password": "alice:alice-secret",
       "email": "alice@example.com",
+      "wireguard-allowed-ips": "10.44.0.23/32",
       "enabled": true,
       "limit": {
         "traffic": {
@@ -218,6 +219,12 @@ A user object must contain a unique non-zero `id` and a password string. All oth
 - `record-stat-interval-ms` `(optional non-negative integer)`
   Statistics record interval. If omitted, the default from `user.h` is used.
 
+- `wireguard-allowed-ips` `(optional string)`
+  One normalized WireGuard inner CIDR owned by this user, for example `"10.44.0.23/32"` or `"fd00::23/128"`.
+  Empty, `null`, or omitted means the user has no WireGuard allowed IP configured. The field accepts IPv4 and IPv6, but
+  it must contain exactly one CIDR, not a comma-separated list. Saved JSON normalizes the network address, so
+  `"10.44.0.23/24"` is written back as `"10.44.0.0/24"`. Two users must not have overlapping WireGuard allowed ranges.
+
 - `limit` `(optional object)`
   User limits. Missing fields mean no limit.
 
@@ -289,14 +296,16 @@ except `expire-after-first-usage-ms`, which is a duration after first usage.
 - The SHA-256 password hash is the canonical password lookup key. SHA-224 is also indexed for explicit SHA-224 lookups.
   UUID credentials and WireGuard-style public keys are derived from the same password when applicable. Two users must not
   share the same password/SHA-224, SHA-256, UUID credential, or derived WireGuard public key.
+- `wireguard-allowed-ips` is durable user configuration, not a password-derived key. It is stored in JSON, synchronized
+  by `GetAllUsers`, and validated so configured ranges do not overlap between users.
 - `id` is the durable logical user identity. Keep each non-zero id unique and stable for that logical user's lifetime;
   reusing an existing id for a different user can intentionally transfer client-side runtime state on the next
   `GetAllUsers` refresh.
 - AuthenticationClient credentials are not stored in the user database. They live only in `settings.auth-clients`.
 - The authoritative in-memory table tracks separate configuration and statistics revisions. These revisions are server
   metadata, not fields inside individual user objects.
-- `AddNewUser` rejects duplicate usernames, duplicate durable user ids, and duplicate password-derived lookup keys, then
-  saves the file immediately and bumps the configuration revision.
+- `AddNewUser` rejects duplicate usernames, duplicate durable user ids, duplicate password-derived lookup keys, and
+  overlapping `wireguard-allowed-ips`, then saves the file immediately and bumps the configuration revision.
 - `UpdateUser` uses the supplied password only to find the existing user and deliberately does not change password or
   password hashes. It updates in-memory metadata only, bumps the configuration revision, and does not force an immediate
   file save.
@@ -795,13 +804,14 @@ password-hash values are not updated by this module because they are database lo
 must be present, non-zero, and match the existing user found by that password hash.
 
 If the user exists, the module updates the mutable user fields in memory, including name, email, notes, group ID,
-enabled state, limits, time information, stats, and record-stat interval. It does not trigger an immediate database
-file save; the normal periodic save timer is still responsible for persisting in-memory state later.
+enabled state, limits, time information, stats, record-stat interval, and `wireguard-allowed-ips`. It does not trigger an
+immediate database file save; the normal periodic save timer is still responsible for persisting in-memory state later.
 
 On success it returns response type `0` and response data equal to `user-updated`.
 
 If the JSON is malformed, the user does not exist, the submitted id is missing or mismatched, or the update would create
-a conflicting user name, it returns an error response frame with the same correlation ID.
+a conflicting user name or overlapping `wireguard-allowed-ips`, it returns an error response frame with the same
+correlation ID.
 
 ### UpdateUserTraficStatsDiff Module
 

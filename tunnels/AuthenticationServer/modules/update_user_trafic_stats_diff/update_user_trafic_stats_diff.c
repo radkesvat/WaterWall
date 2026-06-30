@@ -11,6 +11,7 @@ static const char *authenticationserverTrafficDiffResultError(users_update_resul
     case kUsersUpdateResultInvalidArgument:
     case kUsersUpdateResultUnknownFields:
     case kUsersUpdateResultInvalidRecordStatInterval:
+    case kUsersUpdateResultInvalidWireGuardAllowedIps:
         return "invalid-update-user-traffic-stats-diff-request";
     case kUsersUpdateResultAllocationFailed:
         return "allocation-failed";
@@ -19,6 +20,7 @@ static const char *authenticationserverTrafficDiffResultError(users_update_resul
     case kUsersUpdateResultDuplicateName:
     case kUsersUpdateResultDuplicateUUID:
     case kUsersUpdateResultDuplicateWireGuardPublicKey:
+    case kUsersUpdateResultDuplicateWireGuardAllowedIps:
     case kUsersUpdateResultPasswordUpdateFailed:
         return "user-update-failed";
     }

@@ -12,6 +12,8 @@ static const char *authenticationserverUsersUpdateResultError(users_update_resul
     case kUsersUpdateResultUnknownFields:
     case kUsersUpdateResultInvalidRecordStatInterval:
         return "invalid-update-user-request";
+    case kUsersUpdateResultInvalidWireGuardAllowedIps:
+        return "invalid-wireguard-allowed-ips";
     case kUsersUpdateResultAllocationFailed:
         return "allocation-failed";
     case kUsersUpdateResultUserNotFound:
@@ -22,6 +24,8 @@ static const char *authenticationserverUsersUpdateResultError(users_update_resul
         return "user-uuid-exists";
     case kUsersUpdateResultDuplicateWireGuardPublicKey:
         return "user-wireguard-publickey-exists";
+    case kUsersUpdateResultDuplicateWireGuardAllowedIps:
+        return "user-wireguard-allowed-ips-overlap";
     case kUsersUpdateResultPasswordUpdateFailed:
         return "password-update-disabled";
     }
@@ -33,10 +37,12 @@ static user_update_t authenticationserverUpdateFromUser(const user_t *user)
 {
     user_update_t update = {
         .mask = kUserUpdateName | kUserUpdateEmail | kUserUpdateNotes | kUserUpdateGid | kUserUpdateEnabled |
-                kUserUpdateLimit | kUserUpdateTimeInfo | kUserUpdateStats | kUserUpdateRecordStatInterval,
+                kUserUpdateLimit | kUserUpdateTimeInfo | kUserUpdateStats | kUserUpdateRecordStatInterval |
+                kUserUpdateWireGuardAllowedIps,
         .name                    = user->name,
         .email                   = user->email,
         .notes                   = user->notes,
+        .wireguard_allowed_ips   = user->wireguard_allowed_ips,
         .gid                     = user->gid,
         .enabled                 = user->enabled,
         .limit                   = user->limit,
@@ -46,6 +52,21 @@ static user_update_t authenticationserverUpdateFromUser(const user_t *user)
     };
 
     return update;
+}
+
+static bool authenticationserverUserJsonWireGuardAllowedIpsValid(const cJSON *user_json)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(user_json, "wireguard-allowed-ips");
+
+    if (item == NULL || cJSON_IsNull(item))
+    {
+        return true;
+    }
+    if (UNLIKELY(! cJSON_IsString(item) || item->valuestring == NULL))
+    {
+        return false;
+    }
+    return userWireGuardAllowedIpsStringValid(item->valuestring);
 }
 
 sbuf_t *authenticationserverUpdateUserHandle(const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
@@ -72,6 +93,12 @@ sbuf_t *authenticationserverUpdateUserHandle(const uint8_t correlation_id[kAuthe
         LOGW("AuthenticationServer: UpdateUser JSON payload is not a user object");
         cJSON_Delete(user_json);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-user-json");
+    }
+    if (UNLIKELY(! authenticationserverUserJsonWireGuardAllowedIpsValid(user_json)))
+    {
+        LOGW("AuthenticationServer: UpdateUser rejected user JSON: invalid-wireguard-allowed-ips");
+        cJSON_Delete(user_json);
+        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "invalid-wireguard-allowed-ips");
     }
 
     memoryZero(&user, sizeof(user));
