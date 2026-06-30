@@ -1,5 +1,7 @@
 #include "structure.h"
 
+#include "UserController/interface.h"
+
 #include "loggers/network_logger.h"
 
 /*
@@ -108,6 +110,7 @@ static tunnel_t *createBaseTunnel(node_t *node)
     t->fnPayloadD   = &wireguarddeviceTunnelDownStreamPayload;
     t->fnPauseD     = &wireguarddeviceTunnelDownStreamPause;
     t->fnResumeD    = &wireguarddeviceTunnelDownStreamResume;
+    t->onChain      = &wireguarddeviceTunnelOnChain;
     t->onPrepare    = &wireguarddeviceTunnelOnPrepair;
     t->onStart      = &wireguarddeviceTunnelOnStart;
     t->onStop       = &wireguarddeviceTunnelOnStop;
@@ -447,6 +450,7 @@ static bool parseTransportDirection(wgd_tstate_t *state, const cJSON *settings)
     {
         state->transport_side_is_next         = true;
         state->transport_direction_configured = true;
+        state->transport_side_resolved        = true;
         return true;
     }
 
@@ -455,12 +459,45 @@ static bool parseTransportDirection(wgd_tstate_t *state, const cJSON *settings)
     {
         state->transport_side_is_next         = false;
         state->transport_direction_configured = true;
+        state->transport_side_resolved        = true;
         return true;
     }
 
     LOGF("JSON Error: WireGuardDevice->settings->transport-direction must be \"next\"/\"up\" or "
          "\"prev\"/\"down\"");
     return false;
+}
+
+static bool wireguarddeviceCreateUserControllerTunnel(tunnel_t *t, node_t *node, const cJSON *settings)
+{
+    wgd_tstate_t *state          = tunnelGetState(t);
+    const cJSON  *auth_node_json = cJSON_GetObjectItemCaseSensitive(settings, "auth-client-node-name");
+
+    if (auth_node_json == NULL)
+    {
+        return true;
+    }
+
+    if (! nodeConfigureChild(&state->user_controller_node,
+                             nodeUserControllerGet(),
+                             node,
+                             ".user-controller",
+                             kNodeChildLinkNone,
+                             node->node_settings_json))
+    {
+        LOGF("WireGuardDevice: failed to configure internal UserController node");
+        return false;
+    }
+
+    state->user_controller_tunnel = state->user_controller_node.createHandle(&state->user_controller_node);
+    if (state->user_controller_tunnel == NULL)
+    {
+        LOGF("WireGuardDevice: failed to create internal UserController");
+        return false;
+    }
+
+    state->user_controller_node.instance = state->user_controller_tunnel;
+    return true;
 }
 
 static void wireguarddeviceInit(wireguard_device_t *device, wireguard_device_init_data_t *data)
@@ -505,14 +542,19 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
         goto fail;
     }
 
+    wireguard_device_init_data_t device_configuration = {0};
+    device_configuration.private_key                  = (const uint8_t *) device_private_key;
+    state->device_configuration                       = device_configuration;
+
     if (! parseTransportDirection(state, settings))
     {
         goto fail;
     }
 
-    wireguard_device_init_data_t device_configuration = {0};
-    device_configuration.private_key                  = (const uint8_t *) device_private_key;
-    state->device_configuration                       = device_configuration;
+    if (! wireguarddeviceCreateUserControllerTunnel(t, node, settings))
+    {
+        goto fail;
+    }
 
     wireguard_device_t *device = &state->wg_device;
     wireguarddeviceInit(device, &state->device_configuration);

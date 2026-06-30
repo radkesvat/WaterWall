@@ -2,9 +2,31 @@
 
 #include "loggers/network_logger.h"
 
+static void wireguarddeviceClearInternalNode(node_t *node)
+{
+    memoryFree(node->name);
+    memoryFree(node->type);
+    memoryFree(node->next);
+    memorySet(node, 0, sizeof(*node));
+}
+
+static void wireguarddeviceDestroyInternalUserController(wgd_tstate_t *state)
+{
+    if (state->user_controller_tunnel != NULL)
+    {
+        state->user_controller_tunnel->onDestroy(state->user_controller_tunnel);
+        state->user_controller_tunnel = NULL;
+    }
+
+    state->user_controller_node.instance = NULL;
+    wireguarddeviceClearInternalNode(&state->user_controller_node);
+}
+
 void wireguarddeviceTunnelDestroy(tunnel_t *t)
 {
     wgd_tstate_t *state = tunnelGetState(t);
+    wireguarddeviceDestroyInternalUserController(state);
+
     if (state->device_configuration.private_key != NULL)
     {
         memoryFree((void *) state->device_configuration.private_key);

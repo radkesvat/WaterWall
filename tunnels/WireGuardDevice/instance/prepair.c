@@ -1,6 +1,7 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
+#include "managers/node_manager.h"
 
 typedef bool (*wireguarddeviceTunnelMatchFn)(const tunnel_t *candidate);
 
@@ -37,19 +38,62 @@ static uint16_t wireguarddeviceCountMatchingTunnels(const tunnel_t *start, bool 
     return count;
 }
 
-void wireguarddeviceTunnelOnPrepair(tunnel_t *t)
+static uint16_t wireguarddeviceCountMatchingConfiguredNext(const node_t *start_node,
+                                                           wireguarddeviceTunnelMatchFn match)
+{
+    uint16_t      count = 0;
+    uint16_t      steps = 0;
+    const node_t *node  = start_node;
+
+    while (node != NULL && node->hash_next != 0 && steps < kMaxChainLen)
+    {
+        node_t *next_node = nodemanagerGetConfigNodeByHash(node->node_manager_config, node->hash_next);
+        if (next_node == NULL)
+        {
+            LOGF("Node Map Failure: node (\"%s\")->next (\"%s\") not found", node->name, node->next);
+            terminateProgram(1);
+        }
+
+        if (match(next_node->instance))
+        {
+            count++;
+        }
+
+        node = next_node;
+        steps++;
+    }
+
+    return count;
+}
+
+static uint16_t wireguarddeviceCountMatchingNext(tunnel_t *t, wireguarddeviceTunnelMatchFn match)
+{
+    if (t->next != NULL)
+    {
+        return wireguarddeviceCountMatchingTunnels(t->next, true, match);
+    }
+
+    return wireguarddeviceCountMatchingConfiguredNext(tunnelGetNode(t), match);
+}
+
+void wireguarddeviceResolveTransportSide(tunnel_t *t)
 {
     wgd_tstate_t *state = tunnelGetState(t);
 
+    if (state->transport_side_resolved)
+    {
+        return;
+    }
+
     if (state->transport_direction_configured)
     {
+        state->transport_side_resolved = true;
         return;
     }
 
     const uint16_t prev_udp_count =
         wireguarddeviceCountMatchingTunnels(t->prev, false, wireguarddeviceTunnelIsUdpStatelessSocket);
-    const uint16_t next_udp_count =
-        wireguarddeviceCountMatchingTunnels(t->next, true, wireguarddeviceTunnelIsUdpStatelessSocket);
+    const uint16_t next_udp_count = wireguarddeviceCountMatchingNext(t, wireguarddeviceTunnelIsUdpStatelessSocket);
 
     state->transport_side_is_next = true;
 
@@ -63,22 +107,30 @@ void wireguarddeviceTunnelOnPrepair(tunnel_t *t)
     if (prev_udp_count > 0)
     {
         state->transport_side_is_next = false;
+        state->transport_side_resolved = true;
         return;
     }
 
     if (next_udp_count > 0)
     {
         state->transport_side_is_next = true;
+        state->transport_side_resolved = true;
         return;
     }
 
     const bool prev_has_layer4 =
         wireguarddeviceCountMatchingTunnels(t->prev, false, wireguarddeviceTunnelHasLayer4) > 0;
-    const bool next_has_layer4 =
-        wireguarddeviceCountMatchingTunnels(t->next, true, wireguarddeviceTunnelHasLayer4) > 0;
+    const bool next_has_layer4 = wireguarddeviceCountMatchingNext(t, wireguarddeviceTunnelHasLayer4) > 0;
 
     if (prev_has_layer4 && ! next_has_layer4)
     {
         state->transport_side_is_next = false;
     }
+
+    state->transport_side_resolved = true;
+}
+
+void wireguarddeviceTunnelOnPrepair(tunnel_t *t)
+{
+    wireguarddeviceResolveTransportSide(t);
 }

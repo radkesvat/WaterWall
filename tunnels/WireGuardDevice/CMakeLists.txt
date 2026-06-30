@@ -32,8 +32,12 @@ add_library(WireGuardDevice STATIC
 target_include_directories(WireGuardDevice PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(WireGuardDevice PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/WireGuardDevice)
 target_include_directories(WireGuardDevice PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/)
+if(NOT TARGET UserController)
+    message(FATAL_ERROR "WireGuardDevice requires UserController target")
+endif()
+target_include_directories(WireGuardDevice PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../Internals/UserController/include)
 
-target_link_libraries(WireGuardDevice ww)
+target_link_libraries(WireGuardDevice ww UserController)
 if(NOT APPLE)
     target_precompile_headers(WireGuardDevice REUSE_FROM ww)
 endif()

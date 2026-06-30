@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/WireGuardDevice.mdx, and both files must keep the same documentation version.
 -->
 
@@ -69,6 +69,17 @@ Common packet-side neighbors include:
 - `PacketsToConnection`
 - `PacketsToStream` / `StreamToPackets`
 - packet-mode `TesterClient` / `TesterServer`
+
+When `settings.auth-client-node-name` is set, `WireGuardDevice` creates an internal `UserController` on the transport
+side only:
+
+```text
+UdpStatelessSocket -> UserController -> WireGuardDevice -> packet side node
+packet side node -> WireGuardDevice -> UserController -> UdpStatelessSocket
+```
+
+The packet side is intentionally left untouched. Worker packet lines do not pass through the internal `UserController`;
+only the normal companion transport lines owned by `WireGuardDevice` do.
 
 ## Transport-Side Detection
 
@@ -140,6 +151,19 @@ If no UDP stateless socket is found, the Layer 4 search is a compatibility fallb
   - `"prev"` or `"down"` or `"downstream"`: the transport side is the previous/downstream side
 
   When omitted, `WireGuardDevice` auto-detects the transport side by searching for `UdpStatelessSocket` in both directions, then falls back to Layer 4 node detection. Set this field when both directions contain `UdpStatelessSocket` or when the chain shape is intentionally unusual.
+
+- `auth-client-node-name` `(string)`
+  Creates an internal `UserController` on the transport side, using this `AuthenticationClient` node.
+
+- `sweep-interval-ms` `(integer)`
+  Passed to the internal `UserController` when `auth-client-node-name` is set. Defaults to `1000`.
+
+- `verbose` `(boolean)`
+  Passed to the internal `UserController` when `auth-client-node-name` is set. Defaults to `false`.
+
+The internal `UserController` setup is currently chain plumbing only. `WireGuardDevice` still uses its configured
+`peers` for WireGuard authentication and does not yet attach database users to peers by itself. Until that authentication
+step is implemented, the internal `UserController` sees the transport lines as unmanaged passthrough lines.
 
 ### Per-peer required fields
 
@@ -237,6 +261,7 @@ If session state later expires hard enough to reset the peer, the code falls bac
 
 When the tunnel starts:
 
+- normal companion transport lines are created for every worker
 - every configured peer is marked active with `wireguardifConnect()`
 - the periodic device loop begins
 - the loop runs every `400 ms`
@@ -254,6 +279,9 @@ In other words:
 
 - `endpoint` is mandatory today
 - later authenticated traffic can still update the live endpoint
+
+When the internal `UserController` is enabled, the normal companion transport lines are initialized through the
+controller. Packet-line initialization continues to bypass it.
 
 ## Buffer And Padding Notes
 
@@ -384,5 +412,6 @@ That layout is useful as a minimal reference when you want WireGuard transport o
 - The tunnel itself does not add a UDP header; that belongs to `UdpStatelessSocket`.
 - Hostname endpoints are resolved once during startup, not continuously re-resolved later.
 - Keep the chain shape unambiguous by placing `UdpStatelessSocket` on only one side, or set `transport-direction` explicitly.
+- Do not manually place a `UserController` on the transport side while also setting `auth-client-node-name`; `WireGuardDevice` creates that internal node itself.
 - Outbound routing depends entirely on `AllowedIPs`; if your inner destination addresses do not match a peer, traffic is dropped.
 - Inbound plaintext is forwarded only if the decrypted source address is allowed for that peer.

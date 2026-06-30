@@ -15,7 +15,11 @@ typedef struct wgd_tstate_s
     wmutex_t  mutex;
     bool      transport_side_is_next;
     bool      transport_direction_configured;
+    bool      transport_side_resolved;
     line_t  **transport_lines;
+
+    node_t    user_controller_node;
+    tunnel_t *user_controller_tunnel;
 
     // the data that came from json configuration, we build real wireguard device from this
     wireguard_device_init_data_t device_configuration;
@@ -63,6 +67,7 @@ void              wireguarddeviceLinestateDestroy(wgd_lstate_t *ls);
 void              wireguarddeviceStateLock(wgd_tstate_t *state);
 void              wireguarddeviceStateUnlock(wgd_tstate_t *state);
 bool              wireguarddeviceTransportSideIsNext(const wgd_tstate_t *state);
+void              wireguarddeviceResolveTransportSide(tunnel_t *t);
 line_t           *wireguarddeviceEnsureTransportLine(wgd_tstate_t *state, wid_t wid);
 void              wireguarddeviceCloseTransportLine(tunnel_t *t, wid_t wid);
 void              wireguarddeviceHandleTransportLineFinish(tunnel_t *t, line_t *line);
