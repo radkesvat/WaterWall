@@ -5,11 +5,12 @@
 void softiplimiterTunnelstateInitialize(softiplimiter_tstate_t *ts)
 {
     rwlockinit(&ts->table_lock);
-    ts->table                   = softiplimiter_identity_map_t_with_capacity(kSoftIpLimiterInitialTableCap);
-    ts->identifier_mode         = kSoftIpLimiterIdentifierNone;
-    ts->tolerance_ms            = 0;
-    ts->simultaneous_user_limit = 0;
-    ts->verbose                 = false;
+    ts->table                         = softiplimiter_identity_map_t_with_capacity(kSoftIpLimiterInitialTableCap);
+    ts->identifier_mode               = kSoftIpLimiterIdentifierNone;
+    ts->identification_failure_action = kSoftIpLimiterIdentificationFailurePassthrough;
+    ts->tolerance_ms                  = 0;
+    ts->simultaneous_user_limit       = 0;
+    ts->verbose                       = false;
 }
 
 void softiplimiterTunnelstateDestroy(softiplimiter_tstate_t *ts)
@@ -630,7 +631,8 @@ void softiplimiterCloseLine(tunnel_t *t, line_t *l, softiplimiter_close_origin_t
     lineUnlock(l);
 }
 
-static bool softiplimiterEnsureNextInitAndFlush(tunnel_t *t, line_t *l, softiplimiter_lstate_t *ls)
+static bool softiplimiterEnsureNextInitAndFlushAs(tunnel_t *t, line_t *l, softiplimiter_lstate_t *ls,
+                                                  softiplimiter_phase_t phase)
 {
     if (! ls->next_init_sent)
     {
@@ -646,7 +648,7 @@ static bool softiplimiterEnsureNextInitAndFlush(tunnel_t *t, line_t *l, softipli
     {
         return false;
     }
-    ls->phase = kSoftIpLimiterPhaseEstablished;
+    ls->phase = phase;
 
     sbuf_t *replay = bufferstreamFullRead(&ls->in_stream);
     if (replay != NULL && ! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, replay))
@@ -675,9 +677,16 @@ void softiplimiterHandleInitialPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (UNLIKELY(extract != kSoftIpLimiterExtractOk))
     {
-        ls->ip_key_valid = softiplimiterBuildIpKey(l, &ls->ip_key);
-        softiplimiterLogRejected(t, l, ls, "malformed or unsupported early identity", NULL);
-        softiplimiterCloseLine(t, l, kSoftIpLimiterCloseInternal);
+        if (ts->identification_failure_action == kSoftIpLimiterIdentificationFailureClose)
+        {
+            ls->ip_key_valid = softiplimiterBuildIpKey(l, &ls->ip_key);
+            softiplimiterLogRejected(t, l, ls, "malformed or unsupported early identity", NULL);
+            softiplimiterCloseLine(t, l, kSoftIpLimiterCloseInternal);
+        }
+        else
+        {
+            discard softiplimiterEnsureNextInitAndFlushAs(t, l, ls, kSoftIpLimiterPhasePassthrough);
+        }
         return;
     }
 
@@ -691,5 +700,5 @@ void softiplimiterHandleInitialPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    discard softiplimiterEnsureNextInitAndFlush(t, l, ls);
+    discard softiplimiterEnsureNextInitAndFlushAs(t, l, ls, kSoftIpLimiterPhaseEstablished);
 }

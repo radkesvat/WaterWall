@@ -12,6 +12,12 @@ void softiplimiterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->phase != kSoftIpLimiterPhaseEstablished)
     {
+        if (ls->phase == kSoftIpLimiterPhasePassthrough)
+        {
+            tunnelNextUpStreamPayload(t, l, buf);
+            return;
+        }
+
         softiplimiterHandleInitialPayload(t, l, buf);
         return;
     }
@@ -27,4 +33,3 @@ void softiplimiterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     tunnelNextUpStreamPayload(t, l, buf);
 }
-

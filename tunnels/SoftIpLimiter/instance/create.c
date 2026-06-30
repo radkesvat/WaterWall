@@ -27,6 +27,40 @@ static bool softiplimiterParseIdentifierMode(softiplimiter_tstate_t *ts, const c
     return false;
 }
 
+static bool softiplimiterParseIdentificationFailureAction(softiplimiter_tstate_t *ts, const cJSON *settings)
+{
+    const cJSON *action = cJSON_GetObjectItemCaseSensitive(settings, "on-identification-failure");
+    if (action == NULL)
+    {
+        ts->identification_failure_action = kSoftIpLimiterIdentificationFailurePassthrough;
+        return true;
+    }
+
+    if (! cJSON_IsString(action) || action->valuestring == NULL || action->valuestring[0] == '\0')
+    {
+        LOGF("JSON Error: SoftIpLimiter->settings->on-identification-failure (string field) must be either "
+             "passthrough or close");
+        return false;
+    }
+
+    if (stringCompare(action->valuestring, "passthrough") == 0 || stringCompare(action->valuestring, "pass") == 0 ||
+        stringCompare(action->valuestring, "pass-through") == 0)
+    {
+        ts->identification_failure_action = kSoftIpLimiterIdentificationFailurePassthrough;
+        return true;
+    }
+
+    if (stringCompare(action->valuestring, "close") == 0)
+    {
+        ts->identification_failure_action = kSoftIpLimiterIdentificationFailureClose;
+        return true;
+    }
+
+    LOGF("JSON Error: SoftIpLimiter->settings->on-identification-failure (string field) must be either passthrough or "
+         "close");
+    return false;
+}
+
 static bool softiplimiterParseRequiredInt(int *out, const cJSON *settings, const char *key)
 {
     const cJSON *value = cJSON_GetObjectItemCaseSensitive(settings, key);
@@ -46,6 +80,7 @@ static bool softiplimiterParseSettings(softiplimiter_tstate_t *ts, const cJSON *
     int tolerance_ms = 0;
 
     if (! softiplimiterParseIdentifierMode(ts, settings) ||
+        ! softiplimiterParseIdentificationFailureAction(ts, settings) ||
         ! softiplimiterParseRequiredInt(&simultaneous_user_limit, settings, "simultaneous-user-limit") ||
         ! softiplimiterParseRequiredInt(&tolerance_ms, settings, "tolerance-ms"))
     {
@@ -111,4 +146,3 @@ tunnel_t *softiplimiterTunnelCreate(node_t *node)
 
     return t;
 }
-

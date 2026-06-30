@@ -18,10 +18,17 @@ typedef enum softiplimiter_identifier_mode_e
     kSoftIpLimiterIdentifierTrojan
 } softiplimiter_identifier_mode_t;
 
+typedef enum softiplimiter_identification_failure_action_e
+{
+    kSoftIpLimiterIdentificationFailurePassthrough = 0,
+    kSoftIpLimiterIdentificationFailureClose
+} softiplimiter_identification_failure_action_t;
+
 typedef enum softiplimiter_phase_e
 {
     kSoftIpLimiterPhaseWaitIdentity = 0,
     kSoftIpLimiterPhaseEstablished,
+    kSoftIpLimiterPhasePassthrough,
     kSoftIpLimiterPhaseClosing
 } softiplimiter_phase_t;
 
@@ -84,12 +91,13 @@ typedef struct softiplimiter_table_result_s
 
 typedef struct softiplimiter_tstate_s
 {
-    wrwlock_t                       table_lock;
-    softiplimiter_identity_map_t    table;
-    softiplimiter_identifier_mode_t identifier_mode;
-    uint64_t                        tolerance_ms;
-    uint8_t                         simultaneous_user_limit;
-    bool                            verbose;
+    wrwlock_t                                         table_lock;
+    softiplimiter_identity_map_t                      table;
+    softiplimiter_identifier_mode_t                   identifier_mode;
+    softiplimiter_identification_failure_action_t     identification_failure_action;
+    uint64_t                                          tolerance_ms;
+    uint8_t                                           simultaneous_user_limit;
+    bool                                              verbose;
 } softiplimiter_tstate_t;
 
 typedef struct softiplimiter_lstate_s
@@ -136,6 +144,10 @@ void     softiplimiterTunnelstateDestroy(softiplimiter_tstate_t *ts);
 uint64_t softiplimiterNowMs(void);
 
 const char *softiplimiterIdentifierModeName(softiplimiter_identifier_mode_t mode);
+static inline bool softiplimiterPhaseForwards(softiplimiter_phase_t phase)
+{
+    return phase == kSoftIpLimiterPhaseEstablished || phase == kSoftIpLimiterPhasePassthrough;
+}
 bool        softiplimiterIpKeyEqual(const softiplimiter_ip_key_t *a, const softiplimiter_ip_key_t *b);
 bool        softiplimiterBuildIpKey(line_t *l, softiplimiter_ip_key_t *out);
 void        softiplimiterFormatIpKey(const softiplimiter_ip_key_t *ip_key, char *out, size_t out_len);

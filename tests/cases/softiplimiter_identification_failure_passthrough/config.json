@@ -1,0 +1,51 @@
+{
+  "name": "softiplimiter-identification-failure-passthrough",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "chunk-count": 3
+      },
+      "next": "proxy-connector"
+    },
+    {
+      "name": "proxy-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43040,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "proxy-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43040,
+        "nodelay": true
+      },
+      "next": "soft-limiter"
+    },
+    {
+      "name": "soft-limiter",
+      "type": "SoftIpLimiter",
+      "settings": {
+        "identifier": "vless",
+        "simultaneous-user-limit": 1,
+        "tolerance-ms": 30000
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "chunk-count": 3
+      }
+    }
+  ]
+}

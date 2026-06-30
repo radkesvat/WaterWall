@@ -1,5 +1,6 @@
 *.h linguist-language=C
 tests/** linguist-vendored
+tests/**/*.py linguist-vendored
 tests/cases/**/probe.py linguist-vendored
 ww/lwip/** linguist-vendored
 ww/vendor/** linguist-vendored

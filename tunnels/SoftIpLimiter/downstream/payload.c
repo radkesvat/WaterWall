@@ -4,13 +4,22 @@ void softiplimiterTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     softiplimiter_lstate_t *ls = lineGetState(l, t);
 
-    if (UNLIKELY(ls->closing || ls->phase != kSoftIpLimiterPhaseEstablished))
+    if (UNLIKELY(ls->closing))
     {
         lineReuseBuffer(l, buf);
-        if (! ls->closing)
-        {
-            softiplimiterCloseLine(t, l, kSoftIpLimiterCloseFromNext);
-        }
+        return;
+    }
+
+    if (ls->phase == kSoftIpLimiterPhasePassthrough)
+    {
+        tunnelPrevDownStreamPayload(t, l, buf);
+        return;
+    }
+
+    if (UNLIKELY(ls->phase != kSoftIpLimiterPhaseEstablished))
+    {
+        lineReuseBuffer(l, buf);
+        softiplimiterCloseLine(t, l, kSoftIpLimiterCloseFromNext);
         return;
     }
 
@@ -25,4 +34,3 @@ void softiplimiterTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     tunnelPrevDownStreamPayload(t, l, buf);
 }
-
