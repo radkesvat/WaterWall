@@ -182,6 +182,36 @@ static inline struct wloop_s *getWorkerLoop(wid_t wid)
     return GSTATE.shortcut_loops[wid];
 }
 
+/*!
+ * @brief Cached "now" in milliseconds for a worker's event loop.
+ *
+ * Reads the loop's cached timestamp (refreshed once per loop iteration by
+ * wloopUpdateTime), so it costs a few arithmetic ops instead of a clock_gettime
+ * syscall. Accuracy is one loop iteration, which is sufficient for ms-scale
+ * timekeeping on hot data paths. Must be called from the worker that owns @p wid.
+ *
+ * @param wid The worker ID.
+ * @return Cached wall-clock time in milliseconds.
+ */
+static inline uint64_t getWorkerNowMS(wid_t wid)
+{
+    return wloopNowMS(getWorkerLoop(wid));
+}
+
+/*!
+ * @brief Cached "now" in microseconds for a worker's event loop.
+ *
+ * Microsecond-resolution counterpart of getWorkerNowMS(); same caching and
+ * threading constraints apply.
+ *
+ * @param wid The worker ID.
+ * @return Cached wall-clock time in microseconds.
+ */
+static inline uint64_t getWorkerNowUS(wid_t wid)
+{
+    return wloopNowUS(getWorkerLoop(wid));
+}
+
 static inline wid_t getNextDistributionWID(void)
 {
     wid_t wid = atomicAddExplicit(&GSTATE.distribute_wid, 1, memory_order_relaxed);
