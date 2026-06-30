@@ -208,6 +208,7 @@ option(INCLUDE_DISTURBER                "link Disturber staticly to the core"   
 option(INCLUDE_JUNK_DATAGRAM_SENDER     "link JunkDatagramSender staticly to the core"       TRUE)
 option(INCLUDE_BLACKHOLE                "link BlackHole staticly to the core"                TRUE)
 option(INCLUDE_SPEEDLIMIT               "link SpeedLimit staticly to the core"               TRUE)
+option(INCLUDE_SOFT_IP_LIMITER          "link SoftIpLimiter staticly to the core"            TRUE)
 option(INCLUDE_DOMAIN_RESOLVER          "link DomainResolver staticly to the core"           TRUE)
 option(INCLUDE_USER_CONTROLLER          "link UserController staticly to the core"           TRUE)
 
@@ -1038,6 +1039,13 @@ if(INCLUDE_SPEEDLIMIT)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/SpeedLimit)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/SpeedLimit)
   target_link_libraries(Waterwall SpeedLimit)
+endif()
+
+if(INCLUDE_SOFT_IP_LIMITER)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_SOFT_IP_LIMITER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/SoftIpLimiter)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/SoftIpLimiter)
+  target_link_libraries(Waterwall SoftIpLimiter)
 endif()
 
 #--------------------------------------------------------------------------------

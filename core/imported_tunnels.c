@@ -324,6 +324,10 @@
 #include "SpeedLimit/interface.h"
 #endif
 
+#ifdef INCLUDE_SOFT_IP_LIMITER
+#include "SoftIpLimiter/interface.h"
+#endif
+
 #ifdef INCLUDE_DOMAIN_RESOLVER
 #include "DomainResolver/interface.h"
 #endif
@@ -653,6 +657,10 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_SPEEDLIMIT
     USING(SpeedLimit);
+#endif
+
+#ifdef INCLUDE_SOFT_IP_LIMITER
+    USING(SoftIpLimiter);
 #endif
 
 #ifdef INCLUDE_DOMAIN_RESOLVER
