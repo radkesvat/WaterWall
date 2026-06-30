@@ -54,21 +54,6 @@ static user_update_t authenticationserverUpdateFromUser(const user_t *user)
     return update;
 }
 
-static bool authenticationserverUserJsonWireGuardAllowedIpsValid(const cJSON *user_json)
-{
-    const cJSON *item = cJSON_GetObjectItemCaseSensitive(user_json, "wireguard-allowed-ips");
-
-    if (item == NULL || cJSON_IsNull(item))
-    {
-        return true;
-    }
-    if (UNLIKELY(! cJSON_IsString(item) || item->valuestring == NULL))
-    {
-        return false;
-    }
-    return userWireGuardAllowedIpsStringValid(item->valuestring);
-}
-
 sbuf_t *authenticationserverUpdateUserHandle(const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
                                              tunnel_t *t, line_t *l, authenticationserver_session_t *session,
                                              const uint8_t *request_data, uint32_t request_data_len)

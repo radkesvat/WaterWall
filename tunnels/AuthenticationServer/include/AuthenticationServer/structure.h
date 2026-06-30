@@ -189,6 +189,8 @@ sbuf_t *authenticationserverCreateUserJsonResponseFrame(
     line_t *l, const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize], cJSON *user_json,
     const char *module_name);
 
+bool authenticationserverUserJsonWireGuardAllowedIpsValid(const cJSON *user_json);
+
 sbuf_t *authenticationserverDispatchRequest(uint8_t       request_type,
                                             const uint8_t correlation_id[kAuthenticationServerCorrelationIdSize],
                                             tunnel_t *t, line_t *l, authenticationserver_session_t *session,

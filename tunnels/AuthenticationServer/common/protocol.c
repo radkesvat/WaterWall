@@ -149,6 +149,21 @@ sbuf_t *authenticationserverCreateUserJsonResponseFrame(
     return response;
 }
 
+bool authenticationserverUserJsonWireGuardAllowedIpsValid(const cJSON *user_json)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(user_json, "wireguard-allowed-ips");
+
+    if (item == NULL || cJSON_IsNull(item))
+    {
+        return true;
+    }
+    if (UNLIKELY(! cJSON_IsString(item) || item->valuestring == NULL))
+    {
+        return false;
+    }
+    return userWireGuardAllowedIpsStringValid(item->valuestring);
+}
+
 void authenticationserverCloseLine(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls, const char *reason)
 {
     // Internal close paths pass literal reasons; keep that contract for new callers.
