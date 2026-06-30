@@ -644,13 +644,14 @@ wloop_status_e wloopStatus(wloop_t *loop)
 void wloopUpdateTime(wloop_t *loop)
 {
     loop->cur_hrtime = getHRTimeUs();
-    wloopRefreshCachedTime(loop);
-    if ((time_t) loop->cur_time != time(NULL))
+    uint64_t elapsed_us = loop->cur_hrtime - loop->start_hrtime;
+    uint64_t now = (loop->start_ms / 1000) + (elapsed_us / 1000000);
+    if ((time_t) now != time(NULL))
     {
         // systemtime changed, we adjust start_ms
-        loop->start_ms = getTimeOfDayMS() - (loop->cur_hrtime - loop->start_hrtime) / 1000;
-        wloopRefreshCachedTime(loop);
+        loop->start_ms = getTimeOfDayMS() - (elapsed_us / 1000);
     }
+    wloopRefreshCachedTime(loop);
 }
 
 uint64_t wloopNow(wloop_t *loop)

@@ -186,7 +186,7 @@ static inline struct wloop_s *getWorkerLoop(wid_t wid)
  * @brief Cached "now" in milliseconds for a worker's event loop.
  *
  * Reads the loop's cached timestamp (refreshed once per loop iteration by
- * wloopUpdateTime), so it costs a few arithmetic ops instead of a clock_gettime
+ * wloopUpdateTime), so the accessor is a cached read instead of a clock_gettime
  * syscall. Accuracy is one loop iteration, which is sufficient for ms-scale
  * timekeeping on hot data paths. Must be called from the worker that owns @p wid.
  *
