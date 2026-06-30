@@ -109,6 +109,17 @@ if(TARGET PacketsToStream)
   add_waterwall_unit_test(waterwall.packetstostream_parser_unit packetstostream_parser_test "unit;tunnels;packetstostream")
 endif()
 
+if(TARGET SoftIpLimiter)
+  add_executable(softiplimiter_test softiplimiter_test.c)
+  target_include_directories(softiplimiter_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/SoftIpLimiter/include
+  )
+  target_link_libraries(softiplimiter_test PRIVATE SoftIpLimiter ww)
+  add_dependencies(waterwall_unit_tests softiplimiter_test)
+
+  add_waterwall_unit_test(waterwall.softiplimiter_unit softiplimiter_test "unit;tunnels;softiplimiter")
+endif()
+
 set(ROUTER_GEOIP_TEST_DB "")
 if(DEFINED maxminddb_SOURCE_DIR)
   set(ROUTER_GEOIP_TEST_DB "${maxminddb_SOURCE_DIR}/t/maxmind-db/test-data/GeoLite2-Country-Test.mmdb")

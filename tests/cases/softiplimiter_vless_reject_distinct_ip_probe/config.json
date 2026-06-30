@@ -1,0 +1,43 @@
+{
+  "name": "softiplimiter-vless-reject-distinct-ip-probe",
+  "nodes": [
+    {
+      "name": "proxy-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42940,
+        "nodelay": true
+      },
+      "next": "soft-limiter"
+    },
+    {
+      "name": "soft-limiter",
+      "type": "SoftIpLimiter",
+      "settings": {
+        "identifier": "vless",
+        "simultaneous-user-limit": 1,
+        "tolerance-ms": 30000,
+        "verbose": true
+      },
+      "next": "vless-server"
+    },
+    {
+      "name": "vless-server",
+      "type": "VlessServer",
+      "settings": {
+        "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+        "connect": true,
+        "udp": false
+      },
+      "next": "blackhole"
+    },
+    {
+      "name": "blackhole",
+      "type": "BlackHole",
+      "settings": {
+        "mode": "passive"
+      }
+    }
+  ]
+}
