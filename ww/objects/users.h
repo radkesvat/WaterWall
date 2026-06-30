@@ -61,6 +61,7 @@ typedef struct user_update_s
     const char *name;
     const char *email;
     const char *notes;
+    const char *wireguard_allowed_ips;
 
     hash_t gid;
     bool   enabled;
@@ -77,12 +78,14 @@ typedef enum users_add_result_e
     kUsersAddResultInvalidArgument,
     kUsersAddResultInvalidJson,
     kUsersAddResultInvalidUser,
+    kUsersAddResultInvalidWireGuardAllowedIps,
     kUsersAddResultDuplicateName,
     kUsersAddResultDuplicateId,
     kUsersAddResultDuplicateSHA224,
     kUsersAddResultDuplicateSHA256,
     kUsersAddResultDuplicateUUID,
     kUsersAddResultDuplicateWireGuardPublicKey,
+    kUsersAddResultDuplicateWireGuardAllowedIps,
     kUsersAddResultAllocationFailed,
     kUsersAddResultCommitFailed
 } users_add_result_t;
@@ -93,11 +96,13 @@ typedef enum users_update_result_e
     kUsersUpdateResultInvalidArgument,
     kUsersUpdateResultUnknownFields,
     kUsersUpdateResultInvalidRecordStatInterval,
+    kUsersUpdateResultInvalidWireGuardAllowedIps,
     kUsersUpdateResultAllocationFailed,
     kUsersUpdateResultUserNotFound,
     kUsersUpdateResultDuplicateName,
     kUsersUpdateResultDuplicateUUID,
     kUsersUpdateResultDuplicateWireGuardPublicKey,
+    kUsersUpdateResultDuplicateWireGuardAllowedIps,
     kUsersUpdateResultPasswordUpdateFailed
 } users_update_result_t;
 
@@ -112,7 +117,8 @@ enum
     kUserUpdateLimit              = 1U << 6U,
     kUserUpdateTimeInfo           = 1U << 7U,
     kUserUpdateStats              = 1U << 8U,
-    kUserUpdateRecordStatInterval = 1U << 9U
+    kUserUpdateRecordStatInterval = 1U << 9U,
+    kUserUpdateWireGuardAllowedIps = 1U << 10U
 };
 
 typedef struct users_s
@@ -157,6 +163,8 @@ user_t       *usersLookupByWireGuardPublicKey(users_t *users,
                                               const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE]);
 const user_t *usersLookupByWireGuardPublicKeyConst(const users_t *users,
                                                    const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE]);
+user_t       *usersLookupByWireGuardAllowedIp(users_t *users, const ip_addr_t *ip);
+const user_t *usersLookupByWireGuardAllowedIpConst(const users_t *users, const ip_addr_t *ip);
 user_t       *usersLookupByIdentifier(users_t *users, uint64_t id);
 const user_t *usersLookupByIdentifierConst(const users_t *users, uint64_t id);
 cJSON        *usersUserToJsonBySHA224(const users_t *users, const uint8_t sha224[SHA224_DIGEST_SIZE]);

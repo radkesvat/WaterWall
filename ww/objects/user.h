@@ -34,6 +34,7 @@
 #define USER_NO_EXPIRY                       0ULL
 #define USER_DEFAULT_RECORD_STAT_INTERVAL_MS 120000
 #define USER_WIREGUARD_PUBLICKEY_SIZE        32U
+#define USER_WIREGUARD_ALLOWED_IPS_MAX_TEXT  64U
 
 typedef struct user_ud_s
 {
@@ -146,6 +147,7 @@ struct user_s
     char *password;
     char *email;
     char *notes;
+    char *wireguard_allowed_ips;
 
     uint64_t id;
     hash_t gid;
@@ -161,6 +163,13 @@ struct user_s
     uint64_t client_view_expires_at_ms;
     bool     client_view_expiry_valid;
     int              record_stat_interval_ms;
+
+    ip_addr_t wireguard_allowed_ip;
+    ip_addr_t wireguard_allowed_mask;
+    uint64_t  wireguard_allowed_ip_count;
+    uint8_t   wireguard_allowed_ip_family;
+    uint8_t   wireguard_allowed_ip_prefix;
+    bool      wireguard_allowed_ips_valid;
 
     user_stat_t stats;
 
@@ -194,6 +203,17 @@ bool userCopy(User *dest, const User *src);
 void userDestroy(User *user);
 
 cJSON *userToJson(User *user);
+
+/*
+ * Parses a single WireGuard AllowedIPs CIDR. NULL/empty input is valid and
+ * means "not configured"; in that case valid_out is false and normalized_out
+ * receives an allocated empty string when requested. normalized_out is owned by
+ * the caller and must be released with memoryFree().
+ */
+bool userWireGuardAllowedIpsParse(const char *value, char **normalized_out, ip_addr_t *ip_out, ip_addr_t *mask_out,
+                                  uint8_t *family_out, uint8_t *prefix_out, uint64_t *count_out, bool *valid_out);
+bool userWireGuardAllowedIpsStringValid(const char *value);
+bool userSetWireGuardAllowedIps(User *user, const char *value);
 
 bool userChangePassword(User *user, const char *password);
 /* Compatibility alias for userChangePassword(); prefer usersChangePassword() for database-owned users. */

@@ -409,6 +409,168 @@ static void testWireGuardPublicKeyLookupAndDerivation(void)
     usersDestroy(&users);
 }
 
+static ip_addr_t parseTestIp(const char *text)
+{
+    ip_addr_t ip;
+
+    memoryZero(&ip, sizeof(ip));
+    require(parseIpAddress(text, &ip) != IPADDR_TYPE_ANY, "failed to parse test IP address");
+    return ip;
+}
+
+static void testWireGuardAllowedIpsJsonValidationAndLookup(void)
+{
+    users_t       users;
+    user_t        first;
+    user_t        second;
+    user_t        overlap;
+    user_t        ipv6_user;
+    user_update_t update = {0};
+    uint8_t       second_sha256[SHA256_DIGEST_SIZE] = {0};
+
+    memoryZero(&users, sizeof(users));
+    memoryZero(&first, sizeof(first));
+    memoryZero(&second, sizeof(second));
+    memoryZero(&overlap, sizeof(overlap));
+    memoryZero(&ipv6_user, sizeof(ipv6_user));
+
+    require(usersCreate(&users), "failed to create WireGuard allowed IP users table");
+    require(userCreate(&first, "wireguard-allowed-ips-first-password"), "failed to create first allowed IP user");
+    require(userCreate(&second, "wireguard-allowed-ips-second-password"), "failed to create second allowed IP user");
+    require(userCreate(&overlap, "wireguard-allowed-ips-overlap-password"),
+            "failed to create overlapping allowed IP user");
+    require(userCreate(&ipv6_user, "wireguard-allowed-ips-ipv6-password"), "failed to create IPv6 allowed IP user");
+
+    userSetId(&first, 4401);
+    userSetId(&second, 4402);
+    userSetId(&overlap, 4403);
+    userSetId(&ipv6_user, 4404);
+
+    require(userSetWireGuardAllowedIps(&first, "10.44.0.23/24"), "failed to set first WireGuard allowed IPs");
+    require(first.wireguard_allowed_ips_valid, "first WireGuard allowed IPs were not marked valid");
+    require(stringCompare(first.wireguard_allowed_ips, "10.44.0.0/24") == 0,
+            "WireGuard allowed IPs were not normalized to the network CIDR");
+    require(first.wireguard_allowed_ip_family == 4 && first.wireguard_allowed_ip_prefix == 24,
+            "IPv4 WireGuard allowed IP family/prefix were wrong");
+    require(first.wireguard_allowed_ip_count == 256, "IPv4 WireGuard allowed IP count was wrong");
+
+    require(userSetWireGuardAllowedIps(&second, "10.44.2.9/32"), "failed to set second WireGuard allowed IPs");
+    require(second.wireguard_allowed_ip_count == 1, "IPv4 host route count was wrong");
+    require(userSetWireGuardAllowedIps(&overlap, "10.44.0.128/25"), "failed to set overlapping allowed IPs");
+    require(userSetWireGuardAllowedIps(&ipv6_user, "fd00::1234/64"), "failed to set IPv6 WireGuard allowed IPs");
+    ip_addr_t expected_ipv6_network = parseTestIp("fd00::");
+    require(ipAddrCmp(&ipv6_user.wireguard_allowed_ip, &expected_ipv6_network) != 0 &&
+                stringChr(ipv6_user.wireguard_allowed_ips, '/') != NULL,
+            "IPv6 WireGuard allowed IPs were not normalized");
+    require(ipv6_user.wireguard_allowed_ip_family == 6 && ipv6_user.wireguard_allowed_ip_prefix == 64,
+            "IPv6 WireGuard allowed IP family/prefix were wrong");
+    require(ipv6_user.wireguard_allowed_ip_count == UINT64_MAX, "large IPv6 WireGuard allowed IP count did not saturate");
+
+    require(usersAddUser(&users, &first), "failed to add first WireGuard allowed IP user");
+    require(usersAddUser(&users, &second), "failed to add second WireGuard allowed IP user");
+    require(usersAddUserChecked(&users, &overlap) == kUsersAddResultDuplicateWireGuardAllowedIps,
+            "overlapping WireGuard allowed IPs were not rejected");
+    require(usersAddUser(&users, &ipv6_user), "failed to add IPv6 WireGuard allowed IP user");
+    userDestroy(&ipv6_user);
+    userDestroy(&overlap);
+    userDestroy(&second);
+    userDestroy(&first);
+
+    ip_addr_t inside_first = parseTestIp("10.44.0.200");
+    ip_addr_t outside      = parseTestIp("10.44.1.1");
+    ip_addr_t inside_ipv6  = parseTestIp("fd00::abcd");
+    user_t   *first_lookup = usersLookupByWireGuardAllowedIp(&users, &inside_first);
+    user_t   *ipv6_lookup  = usersLookupByWireGuardAllowedIp(&users, &inside_ipv6);
+    require(first_lookup != NULL && userGetId(first_lookup) == 4401, "failed to lookup user by IPv4 allowed IP");
+    require(usersLookupByWireGuardAllowedIp(&users, &outside) == NULL, "outside IPv4 address unexpectedly matched");
+    require(ipv6_lookup != NULL && userGetId(ipv6_lookup) == 4404, "failed to lookup user by IPv6 allowed IP");
+
+    cJSON *json = userToJson(first_lookup);
+    require(json != NULL, "failed to serialize WireGuard allowed IP user");
+    const cJSON *allowed = cJSON_GetObjectItemCaseSensitive(json, "wireguard-allowed-ips");
+    require(cJSON_IsString(allowed) && stringCompare(allowed->valuestring, "10.44.0.0/24") == 0,
+            "serialized WireGuard allowed IPs were missing or not normalized");
+
+    user_t parsed;
+    memoryZero(&parsed, sizeof(parsed));
+    require(userCreateFromJson(&parsed, json), "failed to parse serialized WireGuard allowed IP user");
+    require(parsed.wireguard_allowed_ips_valid, "JSON round trip lost WireGuard allowed IPs");
+    require(stringCompare(parsed.wireguard_allowed_ips, "10.44.0.0/24") == 0,
+            "JSON round trip changed WireGuard allowed IPs");
+    userDestroy(&parsed);
+    cJSON_Delete(json);
+
+    static const char empty_json_text[] =
+        "{\"id\":4501,\"password\":\"wireguard-allowed-ips-empty\",\"wireguard-allowed-ips\":\"\"}";
+    cJSON *empty_json = cJSON_Parse(empty_json_text);
+    require(empty_json != NULL, "failed to parse empty WireGuard allowed IPs JSON");
+    require(userCreateFromJson(&parsed, empty_json), "empty WireGuard allowed IPs JSON was rejected");
+    require(! parsed.wireguard_allowed_ips_valid, "empty WireGuard allowed IPs were marked valid");
+    cJSON *empty_out = userToJson(&parsed);
+    require(empty_out != NULL, "failed to serialize empty WireGuard allowed IPs user");
+    require(cJSON_GetObjectItemCaseSensitive(empty_out, "wireguard-allowed-ips") == NULL,
+            "empty WireGuard allowed IPs were unexpectedly serialized");
+    cJSON_Delete(empty_out);
+    userDestroy(&parsed);
+    cJSON_Delete(empty_json);
+
+    static const char invalid_missing_prefix[] =
+        "{\"id\":4502,\"password\":\"wireguard-allowed-ips-invalid-a\",\"wireguard-allowed-ips\":\"10.0.0.1\"}";
+    static const char invalid_list[] =
+        "{\"id\":4503,\"password\":\"wireguard-allowed-ips-invalid-b\","
+        "\"wireguard-allowed-ips\":\"10.0.0.1/32,10.0.0.2/32\"}";
+    static const char invalid_prefix[] =
+        "{\"id\":4504,\"password\":\"wireguard-allowed-ips-invalid-c\",\"wireguard-allowed-ips\":\"10.0.0.1/33\"}";
+    cJSON *invalid_json = cJSON_Parse(invalid_missing_prefix);
+    require(invalid_json != NULL, "failed to parse invalid missing-prefix JSON");
+    require(! userCreateFromJson(&parsed, invalid_json), "missing-prefix WireGuard allowed IPs were accepted");
+    cJSON_Delete(invalid_json);
+    invalid_json = cJSON_Parse(invalid_list);
+    require(invalid_json != NULL, "failed to parse invalid list JSON");
+    require(! userCreateFromJson(&parsed, invalid_json), "comma-separated WireGuard allowed IPs were accepted");
+    require(usersAddUserFromJsonChecked(&users, invalid_json) == kUsersAddResultInvalidWireGuardAllowedIps,
+            "invalid WireGuard allowed IPs JSON returned the wrong checked add result");
+    cJSON_Delete(invalid_json);
+    invalid_json = cJSON_Parse(invalid_prefix);
+    require(invalid_json != NULL, "failed to parse invalid prefix JSON");
+    require(! userCreateFromJson(&parsed, invalid_json), "bad-prefix WireGuard allowed IPs were accepted");
+    cJSON_Delete(invalid_json);
+
+    user_t *second_lookup = usersLookupByIdentifier(&users, 4402);
+    require(second_lookup != NULL, "failed to lookup second WireGuard allowed IP user by id");
+    memoryCopy(second_sha256, second_lookup->sha256_pass.bytes, sizeof(second_sha256));
+    update.mask                  = kUserUpdateWireGuardAllowedIps;
+    update.wireguard_allowed_ips = "10.44.0.44/32";
+    require(usersUpdateUserBySHA256(&users, second_sha256, &update) ==
+                kUsersUpdateResultDuplicateWireGuardAllowedIps,
+            "overlapping WireGuard allowed IP update was not rejected");
+    require(stringCompare(second_lookup->wireguard_allowed_ips, "10.44.2.9/32") == 0,
+            "rejected WireGuard allowed IP update changed the user");
+
+    update.wireguard_allowed_ips = "not-a-cidr";
+    require(usersUpdateUserBySHA256(&users, second_sha256, &update) ==
+                kUsersUpdateResultInvalidWireGuardAllowedIps,
+            "invalid WireGuard allowed IP update returned the wrong result");
+
+    update.wireguard_allowed_ips = "";
+    require(usersUpdateUserBySHA256(&users, second_sha256, &update) == kUsersUpdateResultOk,
+            "failed to clear WireGuard allowed IPs");
+    require(! second_lookup->wireguard_allowed_ips_valid, "cleared WireGuard allowed IPs stayed valid");
+
+    static const char overlap_feed_json[] =
+        "{\"users\":["
+        "{\"id\":4601,\"password\":\"wireguard-feed-a\",\"wireguard-allowed-ips\":\"172.16.0.0/24\"},"
+        "{\"id\":4602,\"password\":\"wireguard-feed-b\",\"wireguard-allowed-ips\":\"172.16.0.128/25\"}"
+        "]}";
+    cJSON *feed_json = cJSON_Parse(overlap_feed_json);
+    require(feed_json != NULL, "failed to parse overlapping feed JSON");
+    require(! usersFeedJson(&users, feed_json), "overlapping WireGuard allowed IP feed unexpectedly worked");
+    require(usersLookupByIdentifier(&users, 4401) == first_lookup, "failed feed did not preserve existing table");
+    cJSON_Delete(feed_json);
+
+    usersDestroy(&users);
+}
+
 static void testRuntimeMigrationPreservesActiveIpByIdentifier(void)
 {
     users_t old_users;
@@ -821,6 +983,7 @@ int main(void)
     testUUIDCredentialLookupAndDerivation();
     testUUIDLookupUpdatesOnPasswordChange();
     testWireGuardPublicKeyLookupAndDerivation();
+    testWireGuardAllowedIpsJsonValidationAndLookup();
     testRuntimeMigrationPreservesActiveIpByIdentifier();
     testRuntimeMigrationPrefersIdentifierAcrossPasswordChange();
     testIdentifierLookupSurvivesPasswordChange();

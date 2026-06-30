@@ -65,11 +65,305 @@ static void userDestroyStrings(User *user)
     userFreePassword(user->password);
     memoryFree(user->email);
     memoryFree(user->notes);
+    memoryFree(user->wireguard_allowed_ips);
 
-    user->name     = NULL;
-    user->password = NULL;
-    user->email    = NULL;
-    user->notes    = NULL;
+    user->name                  = NULL;
+    user->password              = NULL;
+    user->email                 = NULL;
+    user->notes                 = NULL;
+    user->wireguard_allowed_ips = NULL;
+}
+
+static bool userParsePrefixLength(const char *text, uint8_t max_prefix, uint8_t *prefix_out)
+{
+    uint32_t value = 0;
+
+    if (UNLIKELY(text == NULL || text[0] == '\0' || prefix_out == NULL))
+    {
+        return false;
+    }
+
+    for (const char *p = text; *p != '\0'; ++p)
+    {
+        if (UNLIKELY(*p < '0' || *p > '9'))
+        {
+            return false;
+        }
+        value = (value * 10U) + (uint32_t) (*p - '0');
+        if (UNLIKELY(value > max_prefix))
+        {
+            return false;
+        }
+    }
+
+    *prefix_out = (uint8_t) value;
+    return true;
+}
+
+static void userBuildIpv4Mask(uint8_t prefix, ip_addr_t *mask)
+{
+    const uint32_t mask_value = prefix == 0U ? 0U : (0xFFFFFFFFU << (32U - prefix));
+
+    mask->type = IPADDR_TYPE_V4;
+    IP4_ADDR(&mask->u_addr.ip4,
+             (mask_value >> 24U) & 0xFFU,
+             (mask_value >> 16U) & 0xFFU,
+             (mask_value >> 8U) & 0xFFU,
+             mask_value & 0xFFU);
+}
+
+static void userBuildIpv6Mask(uint8_t prefix, ip_addr_t *mask)
+{
+    mask->type = IPADDR_TYPE_V6;
+    memoryZero(&mask->u_addr.ip6.addr, sizeof(mask->u_addr.ip6.addr));
+
+    for (uint8_t i = 0; i < prefix / 32U; ++i)
+    {
+        mask->u_addr.ip6.addr[i] = 0xFFFFFFFFU;
+    }
+
+    const uint8_t remaining_bits = prefix % 32U;
+    if (remaining_bits > 0U)
+    {
+        mask->u_addr.ip6.addr[prefix / 32U] = htonl(0xFFFFFFFFU << (32U - remaining_bits));
+    }
+}
+
+static void userNormalizeIpWithMask(ip_addr_t *ip, const ip_addr_t *mask)
+{
+    if (ip->type == IPADDR_TYPE_V4)
+    {
+        ip->u_addr.ip4.addr &= mask->u_addr.ip4.addr;
+        return;
+    }
+
+    if (ip->type == IPADDR_TYPE_V6)
+    {
+        for (size_t i = 0; i < 4U; ++i)
+        {
+            ip->u_addr.ip6.addr[i] &= mask->u_addr.ip6.addr[i];
+        }
+    }
+}
+
+static uint64_t userWireGuardAllowedIpCount(uint8_t family, uint8_t prefix)
+{
+    if (family == 4U)
+    {
+        return 1ULL << (32U - prefix);
+    }
+
+    const uint8_t host_bits = (uint8_t) (128U - prefix);
+    if (host_bits >= 64U)
+    {
+        return UINT64_MAX;
+    }
+    return 1ULL << host_bits;
+}
+
+bool userWireGuardAllowedIpsParse(const char *value, char **normalized_out, ip_addr_t *ip_out, ip_addr_t *mask_out,
+                                  uint8_t *family_out, uint8_t *prefix_out, uint64_t *count_out, bool *valid_out)
+{
+    char     *compact = NULL;
+    char     *slash;
+    char      ip_text[48];
+    uint8_t   prefix = 0;
+    uint8_t   family = 0;
+    ip_addr_t ip;
+    ip_addr_t mask;
+    char      normalized[USER_WIREGUARD_ALLOWED_IPS_MAX_TEXT];
+
+    if (normalized_out != NULL)
+    {
+        *normalized_out = NULL;
+    }
+    if (ip_out != NULL)
+    {
+        memoryZero(ip_out, sizeof(*ip_out));
+    }
+    if (mask_out != NULL)
+    {
+        memoryZero(mask_out, sizeof(*mask_out));
+    }
+    if (family_out != NULL)
+    {
+        *family_out = 0;
+    }
+    if (prefix_out != NULL)
+    {
+        *prefix_out = 0;
+    }
+    if (count_out != NULL)
+    {
+        *count_out = 0;
+    }
+    if (valid_out != NULL)
+    {
+        *valid_out = false;
+    }
+
+    if (value == NULL || value[0] == '\0')
+    {
+        if (normalized_out != NULL)
+        {
+            *normalized_out = stringDuplicate("");
+            return *normalized_out != NULL;
+        }
+        return true;
+    }
+    if (UNLIKELY(stringChr(value, ',') != NULL))
+    {
+        return false;
+    }
+
+    compact = stringNewWithoutSpace(value);
+    if (UNLIKELY(compact == NULL))
+    {
+        return false;
+    }
+    if (compact[0] == '\0')
+    {
+        if (normalized_out != NULL)
+        {
+            *normalized_out = stringDuplicate("");
+            memoryFree(compact);
+            return *normalized_out != NULL;
+        }
+        memoryFree(compact);
+        return true;
+    }
+
+    slash = stringChr(compact, '/');
+    if (UNLIKELY(slash == NULL || slash == compact || slash[1] == '\0' || stringChr(slash + 1, '/') != NULL))
+    {
+        memoryFree(compact);
+        return false;
+    }
+
+    const size_t ip_len = (size_t) (slash - compact);
+    if (UNLIKELY(ip_len >= sizeof(ip_text)))
+    {
+        memoryFree(compact);
+        return false;
+    }
+
+    memoryCopy(ip_text, compact, ip_len);
+    ip_text[ip_len] = '\0';
+
+    ip4_addr_t ip4;
+    if (ip4addr_aton(ip_text, &ip4))
+    {
+        if (UNLIKELY(! userParsePrefixLength(slash + 1, 32U, &prefix)))
+        {
+            memoryFree(compact);
+            return false;
+        }
+        memoryZero(&ip, sizeof(ip));
+        ip.type        = IPADDR_TYPE_V4;
+        ip.u_addr.ip4 = ip4;
+        userBuildIpv4Mask(prefix, &mask);
+        family = 4U;
+    }
+    else
+    {
+        ip6_addr_t ip6;
+        if (UNLIKELY(! ip6addr_aton(ip_text, &ip6) || ! userParsePrefixLength(slash + 1, 128U, &prefix)))
+        {
+            memoryFree(compact);
+            return false;
+        }
+        memoryZero(&ip, sizeof(ip));
+        ip.type        = IPADDR_TYPE_V6;
+        ip.u_addr.ip6 = ip6;
+        userBuildIpv6Mask(prefix, &mask);
+        family = 6U;
+    }
+
+    memoryFree(compact);
+    userNormalizeIpWithMask(&ip, &mask);
+
+    const char *ip_string = ipAddrNetworkToAddress(&ip);
+    if (UNLIKELY(ip_string == NULL))
+    {
+        return false;
+    }
+
+    const int written = snprintf(normalized, sizeof(normalized), "%s/%u", ip_string, (unsigned int) prefix);
+    if (UNLIKELY(written <= 0 || (size_t) written >= sizeof(normalized)))
+    {
+        return false;
+    }
+
+    if (normalized_out != NULL)
+    {
+        *normalized_out = stringDuplicate(normalized);
+        if (UNLIKELY(*normalized_out == NULL))
+        {
+            return false;
+        }
+    }
+    if (ip_out != NULL)
+    {
+        *ip_out = ip;
+    }
+    if (mask_out != NULL)
+    {
+        *mask_out = mask;
+    }
+    if (family_out != NULL)
+    {
+        *family_out = family;
+    }
+    if (prefix_out != NULL)
+    {
+        *prefix_out = prefix;
+    }
+    if (count_out != NULL)
+    {
+        *count_out = userWireGuardAllowedIpCount(family, prefix);
+    }
+    if (valid_out != NULL)
+    {
+        *valid_out = true;
+    }
+    return true;
+}
+
+bool userWireGuardAllowedIpsStringValid(const char *value)
+{
+    return userWireGuardAllowedIpsParse(value, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+}
+
+bool userSetWireGuardAllowedIps(User *user, const char *value)
+{
+    char     *normalized = NULL;
+    ip_addr_t ip;
+    ip_addr_t mask;
+    uint8_t   family = 0;
+    uint8_t   prefix = 0;
+    uint64_t  count  = 0;
+    bool      valid  = false;
+
+    if (UNLIKELY(! userObjectIsInitialized(user)))
+    {
+        return false;
+    }
+    if (UNLIKELY(! userWireGuardAllowedIpsParse(value, &normalized, &ip, &mask, &family, &prefix, &count, &valid)))
+    {
+        return false;
+    }
+
+    rwlockWriteLock(&user->lock);
+    memoryFree(user->wireguard_allowed_ips);
+    user->wireguard_allowed_ips        = normalized;
+    user->wireguard_allowed_ip         = ip;
+    user->wireguard_allowed_mask       = mask;
+    user->wireguard_allowed_ip_count   = count;
+    user->wireguard_allowed_ip_family  = family;
+    user->wireguard_allowed_ip_prefix  = prefix;
+    user->wireguard_allowed_ips_valid  = valid;
+    rwlockWriteUnlock(&user->lock);
+    return true;
 }
 
 typedef struct user_snapshot_s
@@ -78,6 +372,7 @@ typedef struct user_snapshot_s
     char *password;
     char *email;
     char *notes;
+    char *wireguard_allowed_ips;
 
     uint64_t id;
     hash_t gid;
@@ -86,6 +381,13 @@ typedef struct user_snapshot_s
     user_limit_t     limit;
     user_time_info_t timeinfo;
     int              record_stat_interval_ms;
+
+    ip_addr_t wireguard_allowed_ip;
+    ip_addr_t wireguard_allowed_mask;
+    uint64_t  wireguard_allowed_ip_count;
+    uint8_t   wireguard_allowed_ip_family;
+    uint8_t   wireguard_allowed_ip_prefix;
+    bool      wireguard_allowed_ips_valid;
 
     user_stat_t stats;
 
@@ -121,6 +423,7 @@ static void userSnapshotDestroy(user_snapshot_t *snapshot)
     userFreePassword(snapshot->password);
     memoryFree(snapshot->email);
     memoryFree(snapshot->notes);
+    memoryFree(snapshot->wireguard_allowed_ips);
     wCryptoZero(&snapshot->sha224_pass, sizeof(snapshot->sha224_pass));
     wCryptoZero(&snapshot->sha256_pass, sizeof(snapshot->sha256_pass));
     memoryZero(snapshot->uuid_pass, sizeof(snapshot->uuid_pass));
@@ -145,7 +448,8 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
     if (UNLIKELY(! userStringDuplicate(&snapshot->name, src->name) ||
                  ! userStringDuplicate(&snapshot->password, src->password) ||
                  ! userStringDuplicate(&snapshot->email, src->email) ||
-                 ! userStringDuplicate(&snapshot->notes, src->notes)))
+                 ! userStringDuplicate(&snapshot->notes, src->notes) ||
+                 ! userStringDuplicate(&snapshot->wireguard_allowed_ips, src->wireguard_allowed_ips)))
     {
         rwlockReadUnlock(&mutable_src->stats_lock);
         rwlockReadUnlock(&mutable_src->lock);
@@ -159,6 +463,12 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
     snapshot->limit                   = src->limit;
     snapshot->timeinfo                = src->timeinfo;
     snapshot->record_stat_interval_ms = src->record_stat_interval_ms;
+    snapshot->wireguard_allowed_ip    = src->wireguard_allowed_ip;
+    snapshot->wireguard_allowed_mask  = src->wireguard_allowed_mask;
+    snapshot->wireguard_allowed_ip_count  = src->wireguard_allowed_ip_count;
+    snapshot->wireguard_allowed_ip_family = src->wireguard_allowed_ip_family;
+    snapshot->wireguard_allowed_ip_prefix = src->wireguard_allowed_ip_prefix;
+    snapshot->wireguard_allowed_ips_valid = src->wireguard_allowed_ips_valid;
     snapshot->stats                   = src->stats;
     snapshot->hash_pass               = src->hash_pass;
     snapshot->sha224_pass             = src->sha224_pass;
@@ -703,7 +1013,8 @@ bool userCreate(User *user, const char *password)
     user->timeinfo.created_at_ms  = getTimeOfDayMS();
 
     if (UNLIKELY(! userStringDuplicate(&user->name, "") || ! userStringDuplicate(&user->email, "") ||
-                 ! userStringDuplicate(&user->notes, "") || ! userChangePassword(user, password)))
+                 ! userStringDuplicate(&user->notes, "") ||
+                 ! userStringDuplicate(&user->wireguard_allowed_ips, "") || ! userChangePassword(user, password)))
     {
         userDestroy(user);
         return false;
@@ -735,6 +1046,7 @@ bool userCopy(User *dest, const User *src)
     dest->password = snapshot.password;
     dest->email    = snapshot.email;
     dest->notes    = snapshot.notes;
+    dest->wireguard_allowed_ips = snapshot.wireguard_allowed_ips;
 
     dest->id                      = snapshot.id;
     dest->gid                     = snapshot.gid;
@@ -742,6 +1054,12 @@ bool userCopy(User *dest, const User *src)
     dest->limit                   = snapshot.limit;
     dest->timeinfo                = snapshot.timeinfo;
     dest->record_stat_interval_ms = snapshot.record_stat_interval_ms;
+    dest->wireguard_allowed_ip    = snapshot.wireguard_allowed_ip;
+    dest->wireguard_allowed_mask  = snapshot.wireguard_allowed_mask;
+    dest->wireguard_allowed_ip_count  = snapshot.wireguard_allowed_ip_count;
+    dest->wireguard_allowed_ip_family = snapshot.wireguard_allowed_ip_family;
+    dest->wireguard_allowed_ip_prefix = snapshot.wireguard_allowed_ip_prefix;
+    dest->wireguard_allowed_ips_valid = snapshot.wireguard_allowed_ips_valid;
     dest->stats                   = snapshot.stats;
     dest->hash_pass               = snapshot.hash_pass;
     dest->sha224_pass             = snapshot.sha224_pass;
@@ -757,6 +1075,7 @@ bool userCopy(User *dest, const User *src)
     snapshot.password = NULL;
     snapshot.email    = NULL;
     snapshot.notes    = NULL;
+    snapshot.wireguard_allowed_ips = NULL;
     memoryZero(&snapshot.sha224_pass, sizeof(snapshot.sha224_pass));
     memoryZero(&snapshot.sha256_pass, sizeof(snapshot.sha256_pass));
     memoryZero(snapshot.uuid_pass, sizeof(snapshot.uuid_pass));
@@ -784,10 +1103,16 @@ void userDestroy(User *user)
     memoryZero(user->wireguard_publickey, sizeof(user->wireguard_publickey));
     memoryZero(&user->limit, sizeof(user->limit));
     memoryZero(&user->timeinfo, sizeof(user->timeinfo));
+    memoryZero(&user->wireguard_allowed_ip, sizeof(user->wireguard_allowed_ip));
+    memoryZero(&user->wireguard_allowed_mask, sizeof(user->wireguard_allowed_mask));
     memoryZero(&user->stats, sizeof(user->stats));
     user->id        = 0;
     user->hash_pass = 0;
     user->enabled   = false;
+    user->wireguard_allowed_ip_count  = 0;
+    user->wireguard_allowed_ip_family = 0;
+    user->wireguard_allowed_ip_prefix = 0;
+    user->wireguard_allowed_ips_valid = false;
 
     rwlockDestroy(&user->stats_lock);
     rwlockDestroy(&user->lock);
@@ -881,6 +1206,8 @@ bool userCreateFromJson(User *user, const cJSON *user_json)
                  (value != NULL && ! userReplaceString(&user->email, value)) ||
                  ! userJsonReadOptionalString(user_json, "notes", &value) ||
                  (value != NULL && ! userReplaceString(&user->notes, value)) ||
+                 ! userJsonReadOptionalString(user_json, "wireguard-allowed-ips", &value) ||
+                 (value != NULL && ! userSetWireGuardAllowedIps(user, value)) ||
                  ! userJsonReadOptionalUint64Aliased(user_json, "id", "user-id", &user->id) ||
                  ! userJsonReadOptionalUint64Aliased(user_json, "gid", "group-id", &user->gid) ||
                  ! userJsonReadOptionalBoolAliased(user_json, "enabled", "enable", &user->enabled) ||
@@ -943,6 +1270,7 @@ cJSON *userToJson(User *user)
                  ! cJSON_AddStringToObject(json, "password", user->password) ||
                  ! userJsonAddStringIfNotEmpty(json, "email", user->email) ||
                  ! userJsonAddStringIfNotEmpty(json, "notes", user->notes) ||
+                 ! userJsonAddStringIfNotEmpty(json, "wireguard-allowed-ips", user->wireguard_allowed_ips) ||
                  (user->id != 0 && ! jsonAddUint64ToObject(json, "id", user->id)) ||
                  (user->gid != 0 && ! jsonAddUint64ToObject(json, "gid", user->gid)) ||
                  (! user->enabled && cJSON_AddFalseToObject(json, "enabled") == NULL) ||

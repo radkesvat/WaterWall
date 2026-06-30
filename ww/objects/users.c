@@ -14,7 +14,7 @@ enum
     kUsersInitialTableCapacity = 16,
     kKnownUserUpdateMask       = kUserUpdatePassword | kUserUpdateName | kUserUpdateEmail | kUserUpdateNotes |
                                  kUserUpdateGid | kUserUpdateEnabled | kUserUpdateLimit | kUserUpdateTimeInfo |
-                                 kUserUpdateStats | kUserUpdateRecordStatInterval
+                                 kUserUpdateStats | kUserUpdateRecordStatInterval | kUserUpdateWireGuardAllowedIps
 };
 
 _Static_assert(_Alignof(user_t) >= 32U, "user_t storage must be at least 32-byte aligned");
@@ -53,6 +53,17 @@ typedef struct users_password_probe_s
     bool uuid_pass_valid;
     bool wireguard_publickey_valid;
 } users_password_probe_t;
+
+typedef struct users_wireguard_allowed_ips_update_s
+{
+    char     *copy;
+    ip_addr_t ip;
+    ip_addr_t mask;
+    uint64_t  count;
+    uint8_t   family;
+    uint8_t   prefix;
+    bool      valid;
+} users_wireguard_allowed_ips_update_t;
 
 _Static_assert(offsetof(users_password_probe_t, sha224_pass) % 32U == 0,
                "users_password_probe_t.sha224_pass must be 32-byte aligned");
@@ -269,6 +280,89 @@ static bool usersWireGuardPublicKeyEqual(const uint8_t a[USER_WIREGUARD_PUBLICKE
                                          const uint8_t b[USER_WIREGUARD_PUBLICKEY_SIZE])
 {
     return wCryptoEqual(a, b, USER_WIREGUARD_PUBLICKEY_SIZE);
+}
+
+static bool usersWireGuardAllowedIpContainsFields(bool valid, const ip_addr_t *network, const ip_addr_t *mask,
+                                                  uint8_t family, const ip_addr_t *ip)
+{
+    if (! valid || network == NULL || mask == NULL || ip == NULL)
+    {
+        return false;
+    }
+    if (family == 4U && ip->type == IPADDR_TYPE_V4)
+    {
+        return ip4AddrNetcmp(ip_2_ip4(ip), ip_2_ip4(network), ip_2_ip4(mask)) != 0;
+    }
+    if (family == 6U && ip->type == IPADDR_TYPE_V6)
+    {
+        return ip6AddrNetcmp(ip_2_ip6(ip), ip_2_ip6(network), ip_2_ip6(mask)) != 0;
+    }
+    return false;
+}
+
+static bool usersWireGuardAllowedIpContainsUser(const user_t *user, const ip_addr_t *ip)
+{
+    return user != NULL &&
+           usersWireGuardAllowedIpContainsFields(user->wireguard_allowed_ips_valid,
+                                                 &user->wireguard_allowed_ip,
+                                                 &user->wireguard_allowed_mask,
+                                                 user->wireguard_allowed_ip_family,
+                                                 ip);
+}
+
+static bool usersWireGuardAllowedIpsOverlapFields(bool valid, const ip_addr_t *network, const ip_addr_t *mask,
+                                                  uint8_t family, const user_t *user)
+{
+    if (! valid || user == NULL || ! user->wireguard_allowed_ips_valid ||
+        user->wireguard_allowed_ip_family != family)
+    {
+        return false;
+    }
+
+    return usersWireGuardAllowedIpContainsFields(true,
+                                                 network,
+                                                 mask,
+                                                 family,
+                                                 &user->wireguard_allowed_ip) ||
+           usersWireGuardAllowedIpContainsFields(user->wireguard_allowed_ips_valid,
+                                                 &user->wireguard_allowed_ip,
+                                                 &user->wireguard_allowed_mask,
+                                                 user->wireguard_allowed_ip_family,
+                                                 network);
+}
+
+static bool usersWireGuardAllowedIpsOverlapUsers(const user_t *a, const user_t *b)
+{
+    if (a == NULL)
+    {
+        return false;
+    }
+    return usersWireGuardAllowedIpsOverlapFields(a->wireguard_allowed_ips_valid,
+                                                &a->wireguard_allowed_ip,
+                                                &a->wireguard_allowed_mask,
+                                                a->wireguard_allowed_ip_family,
+                                                b);
+}
+
+static user_t *usersFindWireGuardAllowedIpsOverlapLocked(const users_t *users, bool valid, const ip_addr_t *network,
+                                                         const ip_addr_t *mask, uint8_t family,
+                                                         const user_t *ignore)
+{
+    if (! valid)
+    {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < users->count; ++i)
+    {
+        user_t *existing = usersGetAtLocked(users, i);
+        if (existing != ignore && usersWireGuardAllowedIpsOverlapFields(valid, network, mask, family, existing))
+        {
+            return existing;
+        }
+    }
+
+    return NULL;
 }
 
 static void usersSha224ToHex(const uint8_t sha224[SHA224_DIGEST_SIZE], char out[SHA224_DIGEST_SIZE * 2U + 1U])
@@ -1276,6 +1370,18 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot)
         LOGE("Users: duplicate WireGuard public key while loading user \"%s\"", usersUserNameForLog(slot));
         return false;
     }
+    if (UNLIKELY(usersFindWireGuardAllowedIpsOverlapLocked(users,
+                                                           slot->wireguard_allowed_ips_valid,
+                                                           &slot->wireguard_allowed_ip,
+                                                           &slot->wireguard_allowed_mask,
+                                                           slot->wireguard_allowed_ip_family,
+                                                           NULL) != NULL))
+    {
+        LOGE("Users: overlapping WireGuard allowed IPs \"%s\" while loading user \"%s\"",
+             slot->wireguard_allowed_ips,
+             usersUserNameForLog(slot));
+        return false;
+    }
     if (UNLIKELY(slot->id != 0 && usersIDTableLookupLocked(users, slot->id) != NULL))
     {
         LOGE("Users: duplicate id %" PRIu64 " while loading user \"%s\"",
@@ -1338,6 +1444,13 @@ static users_add_result_t usersValidateNewUserNoFatalLocked(const users_t *users
     {
         return kUsersAddResultInvalidUser;
     }
+    if (UNLIKELY(user->wireguard_allowed_ips_valid &&
+                 (user->wireguard_allowed_ips == NULL || user->wireguard_allowed_ips[0] == '\0' ||
+                  (user->wireguard_allowed_ip_family != 4U && user->wireguard_allowed_ip_family != 6U) ||
+                  user->wireguard_allowed_ip_count == 0U)))
+    {
+        return kUsersAddResultInvalidWireGuardAllowedIps;
+    }
     if (UNLIKELY(usersFindByNameLocked(users, user->name, NULL) != NULL))
     {
         return kUsersAddResultDuplicateName;
@@ -1366,6 +1479,10 @@ static users_add_result_t usersValidateNewUserNoFatalLocked(const users_t *users
                      usersWireGuardPublicKeyEqual(existing->wireguard_publickey, user->wireguard_publickey)))
         {
             return kUsersAddResultDuplicateWireGuardPublicKey;
+        }
+        if (UNLIKELY(usersWireGuardAllowedIpsOverlapUsers(existing, user)))
+        {
+            return kUsersAddResultDuplicateWireGuardAllowedIps;
         }
         if (UNLIKELY(user->id != 0 && existing->id == user->id))
         {
@@ -1698,6 +1815,21 @@ static bool usersJsonObjectLooksLikeSingleUser(const cJSON *json)
            cJSON_GetObjectItemCaseSensitive(json, "pass") != NULL;
 }
 
+static bool usersUserJsonWireGuardAllowedIpsValid(const cJSON *json)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(json, "wireguard-allowed-ips");
+
+    if (item == NULL || cJSON_IsNull(item))
+    {
+        return true;
+    }
+    if (UNLIKELY(! cJSON_IsString(item) || item->valuestring == NULL))
+    {
+        return false;
+    }
+    return userWireGuardAllowedIpsStringValid(item->valuestring);
+}
+
 /*
  * Accepted layouts:
  * - null, an empty array, or an empty object: no-op success.
@@ -1773,6 +1905,21 @@ static bool usersValidateUserLookupKeysLocked(const users_t *users)
             LOGE("Users: user \"%s\" has inconsistent password lookup data", usersUserNameForLog(a));
             return false;
         }
+        if (UNLIKELY(a->wireguard_allowed_ips_valid &&
+                     (a->wireguard_allowed_ips == NULL || a->wireguard_allowed_ips[0] == '\0' ||
+                      (a->wireguard_allowed_ip_family != 4U && a->wireguard_allowed_ip_family != 6U) ||
+                      a->wireguard_allowed_ip_count == 0U ||
+                      ! usersWireGuardAllowedIpContainsUser(a, &a->wireguard_allowed_ip))))
+        {
+            LOGE("Users: user \"%s\" has inconsistent WireGuard allowed IPs data", usersUserNameForLog(a));
+            return false;
+        }
+        if (UNLIKELY(! a->wireguard_allowed_ips_valid && a->wireguard_allowed_ips != NULL &&
+                     a->wireguard_allowed_ips[0] != '\0'))
+        {
+            LOGE("Users: user \"%s\" has WireGuard allowed IPs text without parsed data", usersUserNameForLog(a));
+            return false;
+        }
         if (UNLIKELY(usersSHA224TableLookupLocked(users, a->sha224_pass.bytes) != a))
         {
             LOGE("Users: SHA-224 lookup table does not point back to user \"%s\"", usersUserNameForLog(a));
@@ -1836,6 +1983,15 @@ static bool usersValidateUserLookupKeysLocked(const users_t *users)
             if (UNLIKELY(usersWireGuardPublicKeyEqual(a->wireguard_publickey, b->wireguard_publickey)))
             {
                 LOGE("Users: duplicate WireGuard public key between users \"%s\" and \"%s\"",
+                     usersUserNameForLog(a),
+                     usersUserNameForLog(b));
+                return false;
+            }
+            if (UNLIKELY(usersWireGuardAllowedIpsOverlapUsers(a, b)))
+            {
+                LOGE("Users: overlapping WireGuard allowed IPs \"%s\" and \"%s\" between users \"%s\" and \"%s\"",
+                     a->wireguard_allowed_ips,
+                     b->wireguard_allowed_ips,
                      usersUserNameForLog(a),
                      usersUserNameForLog(b));
                 return false;
@@ -1980,6 +2136,10 @@ users_add_result_t usersAddUserFromJsonChecked(users_t *users, const cJSON *json
     if (UNLIKELY(! cJSON_IsObject(json)))
     {
         return kUsersAddResultInvalidJson;
+    }
+    if (UNLIKELY(! usersUserJsonWireGuardAllowedIpsValid(json)))
+    {
+        return kUsersAddResultInvalidWireGuardAllowedIps;
     }
 
     memoryZero(&user, sizeof(user));
@@ -2163,6 +2323,34 @@ const user_t *usersLookupByWireGuardPublicKeyConst(const users_t *users,
                                                    const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE])
 {
     return usersLookupByWireGuardPublicKey((users_t *) users, publickey);
+}
+
+user_t *usersLookupByWireGuardAllowedIp(users_t *users, const ip_addr_t *ip)
+{
+    user_t *result = NULL;
+
+    if (UNLIKELY(users == NULL || ip == NULL))
+    {
+        return NULL;
+    }
+
+    rwlockReadLock(&users->lock);
+    for (size_t i = 0; i < users->count; ++i)
+    {
+        user_t *candidate = usersGetAtLocked(users, i);
+        if (usersWireGuardAllowedIpContainsUser(candidate, ip))
+        {
+            result = candidate;
+            break;
+        }
+    }
+    rwlockReadUnlock(&users->lock);
+    return result;
+}
+
+const user_t *usersLookupByWireGuardAllowedIpConst(const users_t *users, const ip_addr_t *ip)
+{
+    return usersLookupByWireGuardAllowedIp((users_t *) users, ip);
 }
 
 user_t *usersLookupByIdentifier(users_t *users, uint64_t id)
@@ -2397,19 +2585,27 @@ static users_update_result_t usersValidateUpdateRequest(const user_update_t *upd
     return kUsersUpdateResultOk;
 }
 
-static void usersFreeUpdateStringCopies(char *name_copy, char *email_copy, char *notes_copy)
+static void usersFreeUpdateStringCopies(char *name_copy, char *email_copy, char *notes_copy,
+                                        users_wireguard_allowed_ips_update_t *wireguard_allowed_ips)
 {
     memoryFree(name_copy);
     memoryFree(email_copy);
     memoryFree(notes_copy);
+    if (wireguard_allowed_ips != NULL)
+    {
+        memoryFree(wireguard_allowed_ips->copy);
+        memoryZero(wireguard_allowed_ips, sizeof(*wireguard_allowed_ips));
+    }
 }
 
 static users_update_result_t usersCopyUpdateStrings(const user_update_t *update, char **name_copy, char **email_copy,
-                                                    char **notes_copy)
+                                                    char **notes_copy,
+                                                    users_wireguard_allowed_ips_update_t *wireguard_allowed_ips)
 {
     *name_copy  = NULL;
     *email_copy = NULL;
     *notes_copy = NULL;
+    memoryZero(wireguard_allowed_ips, sizeof(*wireguard_allowed_ips));
 
     if (UNLIKELY((update->mask & kUserUpdateName) != 0U && ! usersStringDuplicate(name_copy, update->name)))
     {
@@ -2417,22 +2613,39 @@ static users_update_result_t usersCopyUpdateStrings(const user_update_t *update,
     }
     if (UNLIKELY((update->mask & kUserUpdateEmail) != 0U && ! usersStringDuplicate(email_copy, update->email)))
     {
-        usersFreeUpdateStringCopies(*name_copy, *email_copy, *notes_copy);
+        usersFreeUpdateStringCopies(*name_copy, *email_copy, *notes_copy, wireguard_allowed_ips);
         *name_copy = *email_copy = *notes_copy = NULL;
         return kUsersUpdateResultAllocationFailed;
     }
     if (UNLIKELY((update->mask & kUserUpdateNotes) != 0U && ! usersStringDuplicate(notes_copy, update->notes)))
     {
-        usersFreeUpdateStringCopies(*name_copy, *email_copy, *notes_copy);
+        usersFreeUpdateStringCopies(*name_copy, *email_copy, *notes_copy, wireguard_allowed_ips);
         *name_copy = *email_copy = *notes_copy = NULL;
         return kUsersUpdateResultAllocationFailed;
+    }
+    if ((update->mask & kUserUpdateWireGuardAllowedIps) != 0U)
+    {
+        if (UNLIKELY(! userWireGuardAllowedIpsParse(update->wireguard_allowed_ips,
+                                                    &wireguard_allowed_ips->copy,
+                                                    &wireguard_allowed_ips->ip,
+                                                    &wireguard_allowed_ips->mask,
+                                                    &wireguard_allowed_ips->family,
+                                                    &wireguard_allowed_ips->prefix,
+                                                    &wireguard_allowed_ips->count,
+                                                    &wireguard_allowed_ips->valid)))
+        {
+            usersFreeUpdateStringCopies(*name_copy, *email_copy, *notes_copy, wireguard_allowed_ips);
+            *name_copy = *email_copy = *notes_copy = NULL;
+            return kUsersUpdateResultInvalidWireGuardAllowedIps;
+        }
     }
 
     return kUsersUpdateResultOk;
 }
 
 static users_update_result_t usersPrepareUpdate(const user_update_t *update, char **name_copy, char **email_copy,
-                                                char **notes_copy)
+                                                char **notes_copy,
+                                                users_wireguard_allowed_ips_update_t *wireguard_allowed_ips)
 {
     users_update_result_t result = usersValidateUpdateRequest(update);
     if (UNLIKELY(result != kUsersUpdateResultOk))
@@ -2440,12 +2653,14 @@ static users_update_result_t usersPrepareUpdate(const user_update_t *update, cha
         return result;
     }
 
-    return usersCopyUpdateStrings(update, name_copy, email_copy, notes_copy);
+    return usersCopyUpdateStrings(update, name_copy, email_copy, notes_copy, wireguard_allowed_ips);
 }
 
 static users_update_result_t usersApplyUpdateToExistingUserLocked(users_t *users, user_t *user,
                                                                   const user_update_t *update, char **name_copy,
-                                                                  char **email_copy, char **notes_copy)
+                                                                  char **email_copy, char **notes_copy,
+                                                                  users_wireguard_allowed_ips_update_t
+                                                                      *wireguard_allowed_ips)
 {
     user_t *duplicate_name;
 
@@ -2456,6 +2671,22 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(users_t *users
         {
             LOGE("Users: duplicate username \"%s\" in update", *name_copy);
             return kUsersUpdateResultDuplicateName;
+        }
+    }
+    if ((update->mask & kUserUpdateWireGuardAllowedIps) != 0U)
+    {
+        user_t *overlap = usersFindWireGuardAllowedIpsOverlapLocked(users,
+                                                                    wireguard_allowed_ips->valid,
+                                                                    &wireguard_allowed_ips->ip,
+                                                                    &wireguard_allowed_ips->mask,
+                                                                    wireguard_allowed_ips->family,
+                                                                    user);
+        if (UNLIKELY(overlap != NULL))
+        {
+            LOGE("Users: WireGuard allowed IPs \"%s\" overlap with user \"%s\" in update",
+                 wireguard_allowed_ips->copy,
+                 usersUserNameForLog(overlap));
+            return kUsersUpdateResultDuplicateWireGuardAllowedIps;
         }
     }
     if ((update->mask & kUserUpdatePassword) != 0U)
@@ -2479,6 +2710,16 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(users_t *users
     if ((update->mask & kUserUpdateNotes) != 0U)
     {
         usersReplaceStringOwned(&user->notes, notes_copy);
+    }
+    if ((update->mask & kUserUpdateWireGuardAllowedIps) != 0U)
+    {
+        usersReplaceStringOwned(&user->wireguard_allowed_ips, &wireguard_allowed_ips->copy);
+        user->wireguard_allowed_ip         = wireguard_allowed_ips->ip;
+        user->wireguard_allowed_mask       = wireguard_allowed_ips->mask;
+        user->wireguard_allowed_ip_count   = wireguard_allowed_ips->count;
+        user->wireguard_allowed_ip_family  = wireguard_allowed_ips->family;
+        user->wireguard_allowed_ip_prefix  = wireguard_allowed_ips->prefix;
+        user->wireguard_allowed_ips_valid  = wireguard_allowed_ips->valid;
     }
     if ((update->mask & kUserUpdateGid) != 0U)
     {
@@ -2517,6 +2758,7 @@ bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update)
     char                 *name_copy  = NULL;
     char                 *email_copy = NULL;
     char                 *notes_copy = NULL;
+    users_wireguard_allowed_ips_update_t wireguard_allowed_ips;
     users_update_result_t result;
 
     if (UNLIKELY(users == NULL || user == NULL))
@@ -2524,7 +2766,7 @@ bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update)
         return false;
     }
 
-    result = usersPrepareUpdate(update, &name_copy, &email_copy, &notes_copy);
+    result = usersPrepareUpdate(update, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips);
     if (UNLIKELY(result != kUsersUpdateResultOk))
     {
         return false;
@@ -2537,11 +2779,12 @@ bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update)
     }
     else
     {
-        result = usersApplyUpdateToExistingUserLocked(users, user, update, &name_copy, &email_copy, &notes_copy);
+        result = usersApplyUpdateToExistingUserLocked(
+            users, user, update, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips);
     }
     rwlockWriteUnlock(&users->lock);
 
-    usersFreeUpdateStringCopies(name_copy, email_copy, notes_copy);
+    usersFreeUpdateStringCopies(name_copy, email_copy, notes_copy, &wireguard_allowed_ips);
     return result == kUsersUpdateResultOk;
 }
 
@@ -2551,6 +2794,7 @@ users_update_result_t usersUpdateUserBySHA256(users_t *users, const uint8_t sha2
     char                 *name_copy  = NULL;
     char                 *email_copy = NULL;
     char                 *notes_copy = NULL;
+    users_wireguard_allowed_ips_update_t wireguard_allowed_ips;
     users_update_result_t result;
     user_t               *user;
 
@@ -2559,7 +2803,7 @@ users_update_result_t usersUpdateUserBySHA256(users_t *users, const uint8_t sha2
         return kUsersUpdateResultInvalidArgument;
     }
 
-    result = usersPrepareUpdate(update, &name_copy, &email_copy, &notes_copy);
+    result = usersPrepareUpdate(update, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips);
     if (UNLIKELY(result != kUsersUpdateResultOk))
     {
         return result;
@@ -2573,11 +2817,12 @@ users_update_result_t usersUpdateUserBySHA256(users_t *users, const uint8_t sha2
     }
     else
     {
-        result = usersApplyUpdateToExistingUserLocked(users, user, update, &name_copy, &email_copy, &notes_copy);
+        result = usersApplyUpdateToExistingUserLocked(
+            users, user, update, &name_copy, &email_copy, &notes_copy, &wireguard_allowed_ips);
     }
     rwlockWriteUnlock(&users->lock);
 
-    usersFreeUpdateStringCopies(name_copy, email_copy, notes_copy);
+    usersFreeUpdateStringCopies(name_copy, email_copy, notes_copy, &wireguard_allowed_ips);
     return result;
 }
 
