@@ -36,7 +36,7 @@ static bool softiplimiterParseRequiredInt(int *out, const cJSON *settings, const
         return false;
     }
 
-    *out = value->valueint;
+    *out = (int) value->valueint;
     return true;
 }
 
