@@ -22,7 +22,8 @@ typedef struct udplistener_lstate_s
     udpsock_t         *uio;    // IO handle for the connection (socket)
     local_idle_item_t *idle_handle;
     int                listener_fd;
-    sockaddr_u         peer_addr; // peer address of the connection
+    sockaddr_u         peer_addr;  // peer address of the connection
+    sockaddr_u         local_addr; // local destination snapshot used for idle identity
     // These fields are used internally for the queue implementation for TCP
     bool read_paused : 1;
 
@@ -62,7 +63,8 @@ void udplistenerTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void udplistenerTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void udplistenerLinestateInitialize(udplistener_lstate_t *ls, line_t *l, tunnel_t *t, udpsock_t *uio,
-                                    uint16_t real_localport, const sockaddr_u *peer_addr);
+                                    uint16_t real_localport, const sockaddr_u *peer_addr,
+                                    const sockaddr_u *local_addr);
 void udplistenerLinestateDestroy(udplistener_lstate_t *ls);
 
 void onUdpListenerFilteredPayloadReceived(wevent_t *ev);
