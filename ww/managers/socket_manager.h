@@ -16,7 +16,9 @@
 
 struct balance_group_s;
 
-// if you asked for tcp, you'll get such struct when someone connects and passes all filters
+/*
+ * TCP accept result delivered to the selected listener tunnel after filtering.
+ */
 typedef struct socket_accept_result_s
 {
     wio_t    *io;
@@ -36,21 +38,27 @@ typedef struct udpsock_s
 
 } udpsock_t;
 
+/**
+ * @brief Get the current worker's UDP idle table for a listener socket.
+ */
 local_idle_table_t *udpsockGetWorkerIdleTable(udpsock_t *socket);
 
-// if you asked for udp, you'll get such struct when a udp packet is received and passes all filters
+/*
+ * UDP packet result delivered to the selected listener tunnel after filtering.
+ */
 typedef struct udp_payload_s
 {
     udpsock_t *sock;
     tunnel_t  *tunnel;
     sbuf_t    *buf;
     sockaddr_u peer_addr;
+    // Local destination snapshot for listen-aware UDP dispatch; wildcard sockets may report a wildcard address.
+    sockaddr_u real_localaddr;
     uint16_t   real_localport;
     wid_t      wid;
 
 } udp_payload_t;
 
-// Function declarations
 /**
  * @brief Release an accepted-socket dispatch object back to pools.
  *
@@ -126,6 +134,40 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
  * their effective accepted-socket buffer defaults.
  */
 void socketacceptorUpdateBufferOptions(tunnel_t *tunnel, int send_buffer_size, int recv_buffer_size);
+
+/**
+ * @brief Whether a wildcard listener serves a destination at a given dispatch tier (specificity ordering).
+ *
+ * Exposed for unit tests of exact, same-family wildcard, and dual-stack fallback dispatch.
+ */
+bool socketManagerWildcardMatchesTier(bool bind_is_v6_wildcard, bool dest_is_v4, int tier);
+
+/**
+ * @brief Fold the full matched endpoint scope into a balance stickiness hash.
+ *
+ * Keeps sticky balancing scoped to the listener endpoint that actually matched. Exposed for unit tests.
+ */
+hash_t socketManagerCombineBalanceLocalHash(hash_t src_hash, const ip_addr_t *local_addr, uint16_t local_port,
+                                            int match_tier);
+
+/**
+ * @brief Compute the install-order rank for a NAT redirect rule.
+ *
+ * Lower ranks install first so specific-address and interface-scoped rules win over wildcard rules.
+ *
+ * @return 0: specific+interface, 1: specific, 2: wildcard+interface, 3: wildcard.
+ */
+int socketManagerComputeRedirectRuleRank(bool has_specific_dest, bool has_interface);
+
+/**
+ * @brief Build one iptables/ip6tables PREROUTING REDIRECT command string.
+ *
+ * Wildcard destinations must pass has_dest=false so no "-d" match is emitted (never "-d 0.0.0.0" / "-d ::").
+ * Interface-scoped rules add "-i <iface>". Exposed for unit tests.
+ */
+void socketManagerBuildRedirectCommand(char *out, size_t out_len, const char *tool, const char *proto_token,
+                                       bool has_dest, const char *dest, const char *interface, uint16_t port_min,
+                                       uint16_t port_max, uint16_t to_port);
 
 /**
  * @brief Post an asynchronous UDP write to socket-manager worker context.

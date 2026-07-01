@@ -507,6 +507,34 @@ WW_INLINE int socketOptionSetFwMark(int sockfd, int fwmark)
 }
 
 /**
+ * @brief Read a socket's firewall mark (SO_MARK) when the platform supports it.
+ *
+ * Reading SO_MARK is unprivileged (only setting requires CAP_NET_ADMIN), so this can be used to decide whether
+ * a mark change is actually needed before calling the privileged setter.
+ *
+ * @param sockfd Socket descriptor.
+ * @param out_fwmark Receives the current mark on success.
+ * @return `true` on success, `false` when unsupported or the read failed.
+ */
+WW_INLINE bool socketOptionGetFwMark(int sockfd, int *out_fwmark)
+{
+#if defined(OS_LINUX) && defined(SO_MARK)
+    int       value = 0;
+    socklen_t len   = sizeof(value);
+    if (getsockopt(sockfd, SOL_SOCKET, SO_MARK, (char *) &value, &len) != 0)
+    {
+        return false;
+    }
+    *out_fwmark = value;
+    return true;
+#else
+    discard sockfd;
+    discard out_fwmark;
+    return false;
+#endif
+}
+
+/**
  * @brief Restrict an IPv6 socket to IPv6 only.
  *
  * @param sockfd Socket descriptor.
