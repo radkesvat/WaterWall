@@ -59,6 +59,12 @@ if(TARGET ww)
   add_dependencies(waterwall_unit_tests users_runtime_migration_test)
 
   add_waterwall_unit_test(waterwall.users_runtime_migration_unit users_runtime_migration_test "unit;objects;users")
+
+  add_executable(socket_manager_rules_test socket_manager_rules_test.c)
+  target_link_libraries(socket_manager_rules_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests socket_manager_rules_test)
+
+  add_waterwall_unit_test(waterwall.socket_manager_rules_unit socket_manager_rules_test "unit;net;socket-manager")
 endif()
 
 if(TARGET tcp_over_udp_fec)
