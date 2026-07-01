@@ -77,7 +77,7 @@ typedef struct pending_iptables_rule_s
     bool        has_dest;    // emit -d <ip> (never for wildcard)
     bool        dual_stack;  // AF_INET6 wildcard (::) that also accepts IPv4-mapped traffic
     char        dest[64];    // destination address text when has_dest
-    const char *interface;   // emit -i <iface> when set
+    const char *iface_name;  // emit -i <iface> when set
     uint16_t    port_min;
     uint16_t    port_max;
     uint16_t    to_port;
@@ -244,7 +244,7 @@ int socketManagerComputeRedirectRuleRank(bool has_specific_dest, bool has_interf
 }
 
 void socketManagerBuildRedirectCommand(char *out, size_t out_len, const char *tool, const char *proto_token,
-                                       bool has_dest, const char *dest, const char *interface, uint16_t port_min,
+                                       bool has_dest, const char *dest, const char *iface_name, uint16_t port_min,
                                        uint16_t port_max, uint16_t to_port)
 {
     char dport[32];
@@ -258,9 +258,9 @@ void socketManagerBuildRedirectCommand(char *out, size_t out_len, const char *to
     }
 
     char iface_part[96] = {0};
-    if (interface != NULL && interface[0] != '\0')
+    if (iface_name != NULL && iface_name[0] != '\0')
     {
-        snprintf(iface_part, sizeof(iface_part), " -i %s", interface);
+        snprintf(iface_part, sizeof(iface_part), " -i %s", iface_name);
     }
 
     char dest_part[80] = {0};
@@ -292,7 +292,7 @@ static void buildIptablesCommand(char *out, size_t outlen, const char *tool, con
                                       proto_token,
                                       rule->has_dest,
                                       rule->dest,
-                                      rule->interface,
+                                      rule->iface_name,
                                       rule->port_min,
                                       rule->port_max,
                                       rule->to_port);
@@ -336,13 +336,13 @@ static void queueIptablesRule(uint8_t protocol, socket_filter_t *filter, uint16_
     rule.to_port  = to_port;
     // Dual-stack IPv6 wildcard listeners also need an IPv4 redirect rule.
     rule.dual_stack = (filter->bind_family == AF_INET6 && filter->bind_is_wildcard);
-    rule.interface =
+    rule.iface_name =
         (filter->option.interface_name != NULL && filter->option.interface_name[0] != '\0') ? filter->option.interface_name
                                                                                              : NULL;
 
-    if (rule.interface != NULL && ! isSafeIptablesToken(rule.interface))
+    if (rule.iface_name != NULL && ! isSafeIptablesToken(rule.iface_name))
     {
-        LOGF("SocketManager: unsafe interface name \"%s\" for iptables rule", rule.interface);
+        LOGF("SocketManager: unsafe interface name \"%s\" for iptables rule", rule.iface_name);
         terminateProgram(1);
     }
 
@@ -362,7 +362,7 @@ static void queueIptablesRule(uint8_t protocol, socket_filter_t *filter, uint16_
         }
     }
 
-    rule.sort_rank = socketManagerComputeRedirectRuleRank(rule.has_dest, rule.interface != NULL);
+    rule.sort_rank = socketManagerComputeRedirectRuleRank(rule.has_dest, rule.iface_name != NULL);
 
     pending_rules_t_push(&socketmanager_gstate->pending_rules, rule);
 }

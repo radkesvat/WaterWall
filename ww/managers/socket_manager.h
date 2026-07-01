@@ -166,7 +166,7 @@ int socketManagerComputeRedirectRuleRank(bool has_specific_dest, bool has_interf
  * Interface-scoped rules add "-i <iface>". Exposed for unit tests.
  */
 void socketManagerBuildRedirectCommand(char *out, size_t out_len, const char *tool, const char *proto_token,
-                                       bool has_dest, const char *dest, const char *interface, uint16_t port_min,
+                                       bool has_dest, const char *dest, const char *iface_name, uint16_t port_min,
                                        uint16_t port_max, uint16_t to_port);
 
 /**
