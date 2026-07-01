@@ -252,7 +252,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build ccache
+          sudo apt-get install -y ninja-build ccache iproute2
 
       - name: Install cross-compiler
         if: matrix.preset == 'linux-gcc-arm64' || matrix.preset == 'linux-gcc-arm64-old-cpu'
@@ -273,7 +273,10 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }} --target check_waterwall_unit_tests
       - name: Integration tests
         if: matrix.preset == 'linux-gcc-x64'
-        run: ctest --preset linux-gcc -C Release --output-on-failure -L integration
+        run: ctest --preset linux-gcc -C Release --output-on-failure -L integration -LE privileged
+      - name: Privileged integration tests
+        if: matrix.preset == 'linux-gcc-x64'
+        run: sudo -E ctest --preset linux-gcc -C Release --output-on-failure -L privileged
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:

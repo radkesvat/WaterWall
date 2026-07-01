@@ -1,6 +1,12 @@
 find_program(BASH_EXECUTABLE bash REQUIRED)
 find_program(PYTHON3_EXECUTABLE python3 REQUIRED)
 
+option(
+  WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS
+  "Enable integration tests that require root/CAP_NET_ADMIN and TUN device support"
+  ON
+)
+
 add_subdirectory(unittests)
 
 function(add_waterwall_integration_test_with_timeout test_name case_name timeout_seconds)
@@ -77,6 +83,41 @@ function(add_waterwall_probe_integration_test test_name case_name timeout_second
       TIMEOUT 120
       LABELS "integration;tunnels;probe"
   )
+endfunction()
+
+function(add_waterwall_privileged_probe_integration_test test_name case_name timeout_seconds)
+  set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
+
+  if(WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
+    add_test(
+      NAME ${test_name}
+      COMMAND
+        "${BASH_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_privileged_probe_case.sh"
+        "$<TARGET_FILE:Waterwall>"
+        "${case_dir}"
+        "${timeout_seconds}"
+        "${PYTHON3_EXECUTABLE}"
+    )
+
+    set_tests_properties(
+      ${test_name}
+      PROPERTIES
+        TIMEOUT 120
+        LABELS "integration;tunnels;probe;privileged;socket-manager"
+        SKIP_RETURN_CODE 77
+    )
+  else()
+    add_waterwall_skipped_integration_test(
+      ${test_name}
+      "privileged integration tests disabled; configure with -DWATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS=ON"
+    )
+    set_tests_properties(
+      ${test_name}
+      PROPERTIES
+        LABELS "integration;tunnels;probe;privileged;socket-manager"
+    )
+  endif()
 endfunction()
 
 function(add_waterwall_packet_analysis_test test_name case_name)
@@ -211,6 +252,10 @@ add_waterwall_packet_analysis_test(waterwall.udp_listener_multiport_socket_packe
 add_waterwall_integration_test(waterwall.udp_connector_listener_connection_multiworker_roundtrip udp_connector_listener_connection_multiworker_roundtrip)
 add_waterwall_integration_test(waterwall.udp_listener_connector_connection_multiworker_roundtrip udp_listener_connector_connection_multiworker_roundtrip)
 add_waterwall_integration_test(waterwall.udp_listener_multiport_socket_connection_multiworker_roundtrip udp_listener_multiport_socket_connection_multiworker_roundtrip)
+add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_tcp_wildcard_specific_tun socket_manager_tcp_wildcard_specific_tun 15)
+add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_udp_wildcard_specific_tun socket_manager_udp_wildcard_specific_tun 15)
+add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_tcp_range_socket_wildcard_specific_tun socket_manager_tcp_range_socket_wildcard_specific_tun 15)
+add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_udp_range_socket_wildcard_specific_tun socket_manager_udp_range_socket_wildcard_specific_tun 15)
 add_waterwall_integration_test(waterwall.ping_new_ip_icmp_roundtrip ping_new_ip_icmp_roundtrip)
 add_waterwall_integration_test(waterwall.ping_reuse_ipv4_addresses_roundtrip ping_reuse_ipv4_addresses_roundtrip)
 add_waterwall_integration_test(waterwall.ping_only_icmp_roundtrip ping_only_icmp_roundtrip)

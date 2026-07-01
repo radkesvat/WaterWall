@@ -1,0 +1,59 @@
+{
+  "name": "socket-manager-udp-wildcard-specific-tun",
+  "nodes": [
+    {
+      "name": "fixture-tun",
+      "type": "TunDevice",
+      "settings": {
+        "device-name": "wwsmudp1",
+        "device-ip": "10.251.22.1/32",
+        "device-mtu": 1500,
+        "route-table": "off"
+      },
+      "next": "fixture-sink"
+    },
+    {
+      "name": "fixture-sink",
+      "type": "BlackHole",
+      "settings": {
+        "mode": "passive"
+      }
+    },
+    {
+      "name": "udp-specific-listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "10.251.22.1",
+        "port": 43620
+      },
+      "next": "udp-specific-out"
+    },
+    {
+      "name": "udp-specific-out",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43621,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "udp-wildcard-listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "0.0.0.0",
+        "port": 43620
+      },
+      "next": "udp-wildcard-out"
+    },
+    {
+      "name": "udp-wildcard-out",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43622,
+        "reuseaddr": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "name": "socket-manager-tcp-wildcard-specific-tun",
+  "nodes": [
+    {
+      "name": "fixture-tun",
+      "type": "TunDevice",
+      "settings": {
+        "device-name": "wwsmtcp1",
+        "device-ip": "10.251.21.1/32",
+        "device-mtu": 1500,
+        "route-table": "off"
+      },
+      "next": "fixture-sink"
+    },
+    {
+      "name": "fixture-sink",
+      "type": "BlackHole",
+      "settings": {
+        "mode": "passive"
+      }
+    },
+    {
+      "name": "tcp-specific-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "10.251.21.1",
+        "port": 43610,
+        "nodelay": true
+      },
+      "next": "tcp-specific-out"
+    },
+    {
+      "name": "tcp-specific-out",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43611,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-wildcard-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "0.0.0.0",
+        "port": 43610,
+        "nodelay": true
+      },
+      "next": "tcp-wildcard-out"
+    },
+    {
+      "name": "tcp-wildcard-out",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43612,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    }
+  ]
+}

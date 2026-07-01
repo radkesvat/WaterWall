@@ -1,0 +1,67 @@
+{
+  "name": "socket-manager-tcp-range-socket-wildcard-specific-tun",
+  "nodes": [
+    {
+      "name": "fixture-tun",
+      "type": "TunDevice",
+      "settings": {
+        "device-name": "wwsmtcpr1",
+        "device-ip": "10.251.23.1/32",
+        "device-mtu": 1500,
+        "route-table": "off"
+      },
+      "next": "fixture-sink"
+    },
+    {
+      "name": "fixture-sink",
+      "type": "BlackHole",
+      "settings": {
+        "mode": "passive"
+      }
+    },
+    {
+      "name": "tcp-range-specific-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "10.251.23.1",
+        "port-range": [43630, 43631],
+        "multiport-backend": "socket",
+        "nodelay": true
+      },
+      "next": "tcp-range-specific-out"
+    },
+    {
+      "name": "tcp-range-specific-out",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43632,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-range-wildcard-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "0.0.0.0",
+        "port-range": [43630, 43631],
+        "multiport-backend": "socket",
+        "nodelay": true
+      },
+      "next": "tcp-range-wildcard-out"
+    },
+    {
+      "name": "tcp-range-wildcard-out",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43633,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    }
+  ]
+}
