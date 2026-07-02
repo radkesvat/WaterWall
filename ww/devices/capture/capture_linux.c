@@ -825,8 +825,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     }
     int queue_number = GSTATE.capturedevice_queue_start_number++;
 
-    char **capture_cidrs = memoryAllocate((size_t) capture_range_count * sizeof(*capture_cidrs));
-    memorySet(capture_cidrs, 0, (size_t) capture_range_count * sizeof(*capture_cidrs));
+    char **capture_cidrs = memoryAllocateZero((size_t) capture_range_count * sizeof(*capture_cidrs));
 
     for (uint32_t i = 0; i < capture_range_count; ++i)
     {

@@ -70,8 +70,7 @@ static void wireguarddeviceEnsureTransportLineStorage(tunnel_t *t, wgd_tstate_t 
         terminateProgram(1);
     }
 
-    state->transport_lines = memoryAllocate(sizeof(*state->transport_lines) * tc->workers_count);
-    memorySet(state->transport_lines, 0, sizeof(*state->transport_lines) * tc->workers_count);
+    state->transport_lines = memoryAllocateZero(sizeof(*state->transport_lines) * tc->workers_count);
 }
 
 static void wireguarddeviceEnsureTransportLineInit(tunnel_t *t, wgd_tstate_t *state)

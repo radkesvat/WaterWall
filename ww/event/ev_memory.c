@@ -49,24 +49,22 @@ void* eventloopRealloc(void* oldptr, size_t newsize, size_t oldsize) {
 
 void* eventloopCalloc(size_t nmemb, size_t size) {
     atomicIncRelaxed(&s_alloc_cnt);
-    void* ptr = memoryAllocate(nmemb* size);
+    void* ptr = memoryAllocateZero(nmemb* size);
     if (!ptr) {
         printError("calloc failed!\n");
         exit(-1);
     }
-    memorySet(ptr, 0,nmemb* size);
 
     return ptr;
 }
 
 void* eventloopZalloc(size_t size) {
     atomicIncRelaxed(&s_alloc_cnt);
-    void* ptr = memoryAllocate(size);
+    void* ptr = memoryAllocateZero(size);
     if (!ptr) {
         printError("malloc failed!\n");
         exit(-1);
     }
-    memorySet(ptr, 0, size);
     return ptr;
 }
 

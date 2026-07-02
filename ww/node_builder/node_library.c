@@ -46,8 +46,7 @@ static void nodelibraryEnsureStateInitialized(void)
     {
         return;
     }
-    nodelib_state = memoryAllocate(sizeof(*nodelib_state));
-    memorySet(nodelib_state, 0, sizeof(*nodelib_state));
+    nodelib_state = memoryAllocateZero(sizeof(*nodelib_state));
     nodelib_state->slibs = vec_static_libs_init();
     nodelib_state->dlibs = vec_dynamic_libs_init();
 }

@@ -266,6 +266,9 @@ void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
 void *memoryAllocateZero(size_t size)
 {
     void *ptr = memoryAllocate(size);
-    memorySet(ptr, 0, size);
+    if (ptr != NULL)
+    {
+        memorySet(ptr, 0, size);
+    }
     return ptr;
 }

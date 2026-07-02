@@ -225,8 +225,7 @@ static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len, bool verify,
 static bool createSslContextPool(SSL_CTX ***out_contexts, void *alpn_format, size_t alpn_len, int worker_count,
                                  bool verify, bool x25519mlkem768_enabled)
 {
-    *out_contexts = memoryAllocate((size_t) worker_count * sizeof(SSL_CTX *));
-    memoryZero(*out_contexts, (size_t) worker_count * sizeof(SSL_CTX *));
+    *out_contexts = memoryAllocateZero((size_t) worker_count * sizeof(SSL_CTX *));
 
     for (int i = 0; i < worker_count; i++)
     {

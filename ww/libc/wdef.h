@@ -163,12 +163,11 @@
 #ifndef SAFE_ALLOC
 #define SAFE_ALLOC(p, size) \
     do { \
-        void* ptr = memoryAllocate(size); \
+        void* ptr = memoryAllocateZero(size); \
         if (!ptr) { \
             printError("malloc failed!\n"); \
             exit(-1); \
         } \
-        memorySet(ptr, 0, size); \
         *(void**)&(p) = ptr; \
     } while(0)
 #endif

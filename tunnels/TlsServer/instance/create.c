@@ -347,8 +347,7 @@ static bool parseAlpnList(struct tlsserver_alpn_item_s **out, unsigned int *out_
         return true;
     }
 
-    *out = memoryAllocate((size_t) count * sizeof(**out));
-    memoryZero(*out, (size_t) count * sizeof(**out));
+    *out = memoryAllocateZero((size_t) count * sizeof(**out));
 
     int          i    = 0;
     const cJSON *item = NULL;
@@ -391,8 +390,7 @@ static bool parseAlpnList(struct tlsserver_alpn_item_s **out, unsigned int *out_
 static void tlsserverSetDefaultSelectAlpns(tlsserver_tstate_t *ts)
 {
     ts->select_alpns =
-        memoryAllocate(ARRAY_SIZE(kTlsServerDefaultSelectAlpns) * sizeof(*ts->select_alpns));
-    memoryZero(ts->select_alpns, ARRAY_SIZE(kTlsServerDefaultSelectAlpns) * sizeof(*ts->select_alpns));
+        memoryAllocateZero(ARRAY_SIZE(kTlsServerDefaultSelectAlpns) * sizeof(*ts->select_alpns));
 
     for (unsigned int i = 0; i < ARRAY_SIZE(kTlsServerDefaultSelectAlpns); ++i)
     {
@@ -676,8 +674,7 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
             worker_count);
     }
 
-    ts->threadlocal_ssl_contexts = memoryAllocate((size_t) worker_count * sizeof(SSL_CTX *));
-    memoryZero(ts->threadlocal_ssl_contexts, (size_t) worker_count * sizeof(SSL_CTX *));
+    ts->threadlocal_ssl_contexts = memoryAllocateZero((size_t) worker_count * sizeof(SSL_CTX *));
 
     for (int i = 0; i < worker_count; ++i)
     {

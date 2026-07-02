@@ -687,13 +687,12 @@ wchan_t *chanOpen(size_t elemsize, uint32_t cap)
     const size_t required_size = sizeof(wchan_t) + buffer_size;
 
     // allocate memory, placing wchan_t at a line cache address boundary
-    wchan_t *c = memoryAllocateCacheAligned(required_size);
+    wchan_t *c = memoryAllocateCacheAlignedZero(required_size);
     if (c == NULL)
     {
         printError("buffer size out of range");
         terminateProgram(1);
     }
-    memorySet(c, 0, required_size);
 
     c->elemsize = elemsize;
     c->qcap     = cap;

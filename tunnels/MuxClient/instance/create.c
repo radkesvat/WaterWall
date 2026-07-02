@@ -139,11 +139,8 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
         }
 
         ts->fixed_connections_count   = (uint32_t) fixed_connections_count;
-        ts->fixed_parent_lines        = memoryAllocate(fixed_slots_count * sizeof(line_t *));
-        ts->fixed_next_parent_indexes = memoryAllocate((size_t) wc * sizeof(uint32_t));
-
-        memorySet(ts->fixed_parent_lines, 0, fixed_slots_count * sizeof(line_t *));
-        memorySet(ts->fixed_next_parent_indexes, 0, (size_t) wc * sizeof(uint32_t));
+        ts->fixed_parent_lines        = memoryAllocateZero(fixed_slots_count * sizeof(line_t *));
+        ts->fixed_next_parent_indexes = memoryAllocateZero((size_t) wc * sizeof(uint32_t));
     }
 
     return t;

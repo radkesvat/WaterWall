@@ -540,8 +540,7 @@ void commitChangesSoft(config_file_t *state)
 
 config_file_t *configfileParse(const char *const file_path)
 {
-    config_file_t *state = memoryAllocate(sizeof(config_file_t));
-    memorySet(state, 0, sizeof(config_file_t));
+    config_file_t *state = memoryAllocateZero(sizeof(config_file_t));
     mutexInit(&(state->guard));
 
     state->file_path = memoryAllocate(strlen(file_path) + 1);

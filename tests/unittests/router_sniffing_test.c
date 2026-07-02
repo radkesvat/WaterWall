@@ -35,9 +35,8 @@ static void require(bool condition, const char *message)
 
 static line_t *testLineCreate(void)
 {
-    line_t *line = memoryAllocate(sizeof(*line) + sizeof(router_lstate_t));
+    line_t *line = memoryAllocateZero(sizeof(*line) + sizeof(router_lstate_t));
     require(line != NULL, "failed to allocate test line");
-    memoryZero(line, sizeof(*line) + sizeof(router_lstate_t));
     line->alive = true;
     return line;
 }

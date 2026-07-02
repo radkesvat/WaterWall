@@ -17,9 +17,8 @@ static void require(bool condition, const char *message)
 
 static line_t *testLineCreate(void)
 {
-    line_t *line = memoryAllocate(sizeof(*line));
+    line_t *line = memoryAllocateZero(sizeof(*line));
     require(line != NULL, "failed to allocate test line");
-    memoryZero(line, sizeof(*line));
     line->alive = true;
     return line;
 }

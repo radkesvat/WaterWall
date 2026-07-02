@@ -162,9 +162,8 @@ static udpsock_t *createUdpSocketSideData(wio_t *io)
     udpsock_t *socket = memoryAllocate(sizeof(*socket));
     assert(socket != NULL);
 
-    socket->idle_tables = memoryAllocate(sizeof(*socket->idle_tables) * getWorkersCount());
+    socket->idle_tables = memoryAllocateZero(sizeof(*socket->idle_tables) * getWorkersCount());
     assert(socket->idle_tables != NULL);
-    memorySet(socket->idle_tables, 0, sizeof(*socket->idle_tables) * getWorkersCount());
 
     socket->io = io;
     return socket;
@@ -1650,8 +1649,7 @@ static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
                                       endpoint_registry_t *reg, uint16_t port_max)
 {
     const int length   = (int) (port_max - port_min + 1);
-    filter->listen_ios = (wio_t **) memoryAllocate(sizeof(wio_t *) * ((size_t) length + 1));
-    memorySet(filter->listen_ios, 0, sizeof(wio_t *) * ((size_t) length + 1));
+    filter->listen_ios = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
     int i = 0;
 
     for (uint16_t p = port_min; p <= port_max; p++)
@@ -1692,8 +1690,7 @@ static void listenTcpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
                                      const vec_listener_port_t *ports)
 {
     const isize length = vec_listener_port_t_size(ports);
-    filter->listen_ios = (wio_t **) memoryAllocate(sizeof(wio_t *) * ((size_t) length + 1));
-    memorySet(filter->listen_ios, 0, sizeof(wio_t *) * ((size_t) length + 1));
+    filter->listen_ios = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
     int i = 0;
 
     for (isize pi = 0; pi < length; ++pi)
@@ -2264,10 +2261,8 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
                                       endpoint_registry_t *reg, uint16_t port_max)
 {
     const int length   = (int) (port_max - port_min + 1);
-    filter->listen_ios = (wio_t **) memoryAllocate(sizeof(wio_t *) * ((size_t) length + 1));
-    memorySet(filter->listen_ios, 0, sizeof(wio_t *) * ((size_t) length + 1));
-    filter->listen_udp_sockets = (udpsock_t **) memoryAllocate(sizeof(udpsock_t *) * (size_t) length);
-    memorySet(filter->listen_udp_sockets, 0, sizeof(udpsock_t *) * (size_t) length);
+    filter->listen_ios = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
+    filter->listen_udp_sockets = (udpsock_t **) memoryAllocateZero(sizeof(udpsock_t *) * (size_t) length);
     int i = 0;
 
     for (uint16_t p = port_min; p <= port_max; p++)
@@ -2311,10 +2306,8 @@ static void listenUdpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
                                      const vec_listener_port_t *ports)
 {
     const isize length = vec_listener_port_t_size(ports);
-    filter->listen_ios = (wio_t **) memoryAllocate(sizeof(wio_t *) * ((size_t) length + 1));
-    memorySet(filter->listen_ios, 0, sizeof(wio_t *) * ((size_t) length + 1));
-    filter->listen_udp_sockets = (udpsock_t **) memoryAllocate(sizeof(udpsock_t *) * (size_t) length);
-    memorySet(filter->listen_udp_sockets, 0, sizeof(udpsock_t *) * (size_t) length);
+    filter->listen_ios = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
+    filter->listen_udp_sockets = (udpsock_t **) memoryAllocateZero(sizeof(udpsock_t *) * (size_t) length);
     int i = 0;
 
     for (isize pi = 0; pi < length; ++pi)
@@ -2507,11 +2500,11 @@ void socketmanagerStart(void)
  */
 static void initializeSocketManagerPools(void)
 {
-    socketmanager_gstate->udp_pools = memoryAllocate(sizeof(*socketmanager_gstate->udp_pools) * getTotalWorkersCount());
-    memorySet(socketmanager_gstate->udp_pools, 0, sizeof(*socketmanager_gstate->udp_pools) * getTotalWorkersCount());
+    socketmanager_gstate->udp_pools =
+        memoryAllocateZero(sizeof(*socketmanager_gstate->udp_pools) * getTotalWorkersCount());
 
-    socketmanager_gstate->tcp_pools = memoryAllocate(sizeof(*socketmanager_gstate->tcp_pools) * getTotalWorkersCount());
-    memorySet(socketmanager_gstate->tcp_pools, 0, sizeof(*socketmanager_gstate->tcp_pools) * getTotalWorkersCount());
+    socketmanager_gstate->tcp_pools =
+        memoryAllocateZero(sizeof(*socketmanager_gstate->tcp_pools) * getTotalWorkersCount());
 
     socketmanager_gstate->mp_udp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
     socketmanager_gstate->mp_tcp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
@@ -2545,8 +2538,7 @@ static void detectSystemCapabilities(void)
 socket_manager_state_t *socketmanagerCreate(void)
 {
     assert(socketmanager_gstate == NULL);
-    socketmanager_gstate = memoryAllocate(sizeof(socket_manager_state_t));
-    memorySet(socketmanager_gstate, 0, sizeof(socket_manager_state_t));
+    socketmanager_gstate = memoryAllocateZero(sizeof(socket_manager_state_t));
 
     assert(getWID() == 0);
     socketmanager_gstate->worker = getWorker(0);

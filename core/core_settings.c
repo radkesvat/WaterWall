@@ -36,8 +36,7 @@ static void initCoreSettings(void)
 {
     assert(settings == NULL);
 
-    settings = memoryAllocate(sizeof(struct core_settings_s));
-    memorySet(settings, 0, sizeof(struct core_settings_s));
+    settings = memoryAllocateZero(sizeof(struct core_settings_s));
 
     settings->config_paths = vec_config_path_t_with_capacity(2);
 }

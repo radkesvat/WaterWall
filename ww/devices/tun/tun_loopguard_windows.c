@@ -499,8 +499,7 @@ tun_loopguard_t *tunLoopGuardStart(uint64_t tun_luid_value)
         return NULL;
     }
 
-    tun_loopguard_t *guard = memoryAllocate(sizeof(tun_loopguard_t));
-    memorySet(guard, 0, sizeof(*guard));
+    tun_loopguard_t *guard = memoryAllocateZero(sizeof(tun_loopguard_t));
     guard->pid      = GetCurrentProcessId();
     guard->tun_luid = tun_luid_value;
     mutexInit(&guard->lock);

@@ -225,14 +225,12 @@ tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
     }
 
     // allocate memory, placing tunnel_t at a line cache address boundary
-    tunnel_t *tunnel_ptr = memoryAllocateCacheAligned(required_size);
+    tunnel_t *tunnel_ptr = memoryAllocateCacheAlignedZero(required_size);
     if (tunnel_ptr == NULL)
     {
         // Handle memory allocation failure
         return NULL;
     }
-
-    memorySet(tunnel_ptr, 0, sizeof(tunnel_t) + tstate_size);
 
     *tunnel_ptr = (tunnel_t) {.fnInitU     = &tunnelDefaultUpStreamInit,
                               .fnInitD     = &tunnelDefaultDownStreamInit,

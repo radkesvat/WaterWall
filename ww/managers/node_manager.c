@@ -562,8 +562,7 @@ node_t *nodemanagerGetConfigNodeByName(node_manager_config_t *cfg, const char *n
 
 node_t *nodemanagerNewNode(void)
 {
-    node_t *new_node = memoryAllocate(sizeof(node_t));
-    memorySet(new_node, 0, sizeof(node_t));
+    node_t *new_node = memoryAllocateZero(sizeof(node_t));
     return new_node;
 }
 
@@ -710,8 +709,7 @@ node_manager_t *nodemanagerCreate(void)
 {
     assert(nodemanager_gstate == NULL);
 
-    nodemanager_gstate = memoryAllocate(sizeof(node_manager_t));
-    memorySet(nodemanager_gstate, 0, sizeof(node_manager_t));
+    nodemanager_gstate = memoryAllocateZero(sizeof(node_manager_t));
 
     nodemanager_gstate->configs = vec_configs_t_with_capacity(kNmConfigsVectorCap);
 

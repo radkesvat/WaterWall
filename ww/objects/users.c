@@ -213,14 +213,9 @@ static void *usersAllocateAlignedZero32(size_t size)
     /*
      * users_t-owned user_t objects rely on real 32-byte base alignment so their
      * SHA fields are actually 32-byte aligned at runtime. Keep this as aligned
-     * allocation plus strict zeroing; do not replace it with memoryAllocateZero().
+     * zero allocation; do not replace it with memoryAllocateZero().
      */
-    void *ptr = memoryAllocateAligned(size, 32);
-    if (LIKELY(ptr != NULL))
-    {
-        memoryZeroAligned32(ptr, size);
-    }
-    return ptr;
+    return memoryAllocateAlignedZero(size, 32);
 }
 
 static user_t *usersStorageAtLocked(const users_t *users, size_t index)
@@ -580,13 +575,12 @@ static bool usersSHA224TableCreateIfNeeded(users_t *users)
         return true;
     }
 
-    table = memoryAllocate(sizeof(*table));
+    table = memoryAllocateZero(sizeof(*table));
     if (UNLIKELY(table == NULL))
     {
         LOGE("Users: failed to allocate SHA-224 lookup table");
         return false;
     }
-    memoryZero(table, sizeof(*table));
 
     if (UNLIKELY(! usersSHA224TableReserve(table, kUsersInitialTableCapacity)))
     {
@@ -608,13 +602,12 @@ static bool usersSHA256TableCreateIfNeeded(users_t *users)
         return true;
     }
 
-    table = memoryAllocate(sizeof(*table));
+    table = memoryAllocateZero(sizeof(*table));
     if (UNLIKELY(table == NULL))
     {
         LOGE("Users: failed to allocate SHA-256 lookup table");
         return false;
     }
-    memoryZero(table, sizeof(*table));
 
     if (UNLIKELY(! usersSHA256TableReserve(table, kUsersInitialTableCapacity)))
     {
@@ -636,13 +629,12 @@ static bool usersUUIDTableCreateIfNeeded(users_t *users)
         return true;
     }
 
-    table = memoryAllocate(sizeof(*table));
+    table = memoryAllocateZero(sizeof(*table));
     if (UNLIKELY(table == NULL))
     {
         LOGE("Users: failed to allocate UUID lookup table");
         return false;
     }
-    memoryZero(table, sizeof(*table));
 
     if (UNLIKELY(! usersUUIDTableReserve(table, kUsersInitialTableCapacity)))
     {
@@ -664,13 +656,12 @@ static bool usersWireGuardPublicKeyTableCreateIfNeeded(users_t *users)
         return true;
     }
 
-    table = memoryAllocate(sizeof(*table));
+    table = memoryAllocateZero(sizeof(*table));
     if (UNLIKELY(table == NULL))
     {
         LOGE("Users: failed to allocate WireGuard public key lookup table");
         return false;
     }
-    memoryZero(table, sizeof(*table));
 
     if (UNLIKELY(! usersWireGuardPublicKeyTableReserve(table, kUsersInitialTableCapacity)))
     {
@@ -692,13 +683,12 @@ static bool usersIDTableCreateIfNeeded(users_t *users)
         return true;
     }
 
-    table = memoryAllocate(sizeof(*table));
+    table = memoryAllocateZero(sizeof(*table));
     if (UNLIKELY(table == NULL))
     {
         LOGE("Users: failed to allocate id lookup table");
         return false;
     }
-    memoryZero(table, sizeof(*table));
 
     if (UNLIKELY(! usersIDTableReserve(table, kUsersInitialTableCapacity)))
     {

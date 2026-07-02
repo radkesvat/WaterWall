@@ -521,8 +521,7 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
         return NULL;
     }
 
-    state->idle_tables = memoryAllocate(sizeof(*state->idle_tables) * getWorkersCount());
-    memorySet(state->idle_tables, 0, sizeof(*state->idle_tables) * getWorkersCount());
+    state->idle_tables = memoryAllocateZero(sizeof(*state->idle_tables) * getWorkersCount());
 
     return t;
 }

@@ -352,8 +352,7 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
     socket_filter_option_t filter_opt;
     setupFilterOptions(&filter_opt, state, settings);
 
-    state->idle_tables = memoryAllocate(sizeof(*state->idle_tables) * getWorkersCount());
-    memorySet(state->idle_tables, 0, sizeof(*state->idle_tables) * getWorkersCount());
+    state->idle_tables = memoryAllocateZero(sizeof(*state->idle_tables) * getWorkersCount());
     atomicStoreRelaxed(&state->stopping, false);
 
     socketacceptorRegister(t, filter_opt, tcplistenerOnInboundConnected);
