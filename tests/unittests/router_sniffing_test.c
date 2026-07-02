@@ -444,13 +444,13 @@ static void testQuicSniffingRejectsNonQuicPayload(void)
 
     const uint8_t http[] = "GET / HTTP/1.1\r\nHost: not-quic.example.test\r\n\r\n";
     require(routerQuicSniffClientHelloSni(http, (uint32_t) sizeof(http) - 1U, host, (uint32_t) sizeof(host),
-                                          &host_len) == kRouterQuicSniMissing,
+                                          &host_len) == kGenericSnifferMissing,
             "QUIC sniffing treated HTTP payload as QUIC");
     require(host_len == 0, "QUIC sniffing filled host for non-QUIC payload");
 
     const uint8_t partial_quic_long_header[] = {0xc3, 0x00};
     require(routerQuicSniffClientHelloSni(partial_quic_long_header, (uint32_t) sizeof(partial_quic_long_header), host,
-                                          (uint32_t) sizeof(host), &host_len) == kRouterQuicSniMissing,
+                                          (uint32_t) sizeof(host), &host_len) == kGenericSnifferMissing,
             "partial QUIC long-header payload asked Router to keep buffering");
 
     const uint8_t truncated_v1_initial[] = {
@@ -458,7 +458,7 @@ static void testQuicSniffingRejectsNonQuicPayload(void)
         0x04, 0x05, 0x06, 0x07, 0x08, 0x00, 0x00, 0x40, 0x20,
     };
     require(routerQuicSniffClientHelloSni(truncated_v1_initial, (uint32_t) sizeof(truncated_v1_initial), host,
-                                          (uint32_t) sizeof(host), &host_len) == kRouterQuicSniMissing,
+                                          (uint32_t) sizeof(host), &host_len) == kGenericSnifferMissing,
             "truncated QUIC v1 Initial asked Router to keep buffering");
 
     line_t *line = testLineCreate();
@@ -489,22 +489,22 @@ typedef struct quic_vector_buffer_s
     uint32_t cap;
 } quic_vector_buffer_t;
 
-static const char *quicSniffResultName(router_quic_sni_result_t result)
+static const char *quicSniffResultName(generic_sniffer_result_t result)
 {
     switch (result)
     {
-    case kRouterQuicSniFound:
+    case kGenericSnifferFound:
         return "Found";
-    case kRouterQuicSniNeedMore:
+    case kGenericSnifferNeedMore:
         return "NeedMore";
-    case kRouterQuicSniMissing:
+    case kGenericSnifferMissing:
         return "Missing";
     default:
         return "Unknown";
     }
 }
 
-static void quicVectorFail(const char *name, const char *expect, router_quic_sni_result_t result,
+static void quicVectorFail(const char *name, const char *expect, generic_sniffer_result_t result,
                            const uint8_t *domain, const char *want_domain, const char *comment)
 {
     fprintf(stderr,
@@ -630,31 +630,31 @@ static bool quicVectorNextFile(char **cursor, const char **file_name)
     return true;
 }
 
-static bool quicVectorFinalResultMatches(const char *expect, router_quic_sni_result_t result, const uint8_t *domain,
+static bool quicVectorFinalResultMatches(const char *expect, generic_sniffer_result_t result, const uint8_t *domain,
                                          uint32_t domain_len, const char *want_domain)
 {
     bool domain_empty = domain_len == 0 && domain[0] == '\0';
     if (stringCompare(expect, "OK") == 0)
     {
         uint32_t want_len = (uint32_t) stringLength(want_domain);
-        return result == kRouterQuicSniFound && domain_len == want_len &&
+        return result == kGenericSnifferFound && domain_len == want_len &&
                memoryCompare(domain, want_domain, want_len) == 0 && domain[want_len] == '\0';
     }
     if (stringCompare(expect, "NO_SNI") == 0)
     {
-        return result == kRouterQuicSniMissing && domain_empty;
+        return result == kGenericSnifferMissing && domain_empty;
     }
     if (stringCompare(expect, "FAIL") == 0)
     {
-        return result != kRouterQuicSniFound && domain_empty;
+        return result != kGenericSnifferFound && domain_empty;
     }
     if (stringCompare(expect, "NEED_MORE_OR_FAIL") == 0)
     {
-        return (result == kRouterQuicSniNeedMore || result == kRouterQuicSniMissing) && domain_empty;
+        return (result == kGenericSnifferNeedMore || result == kGenericSnifferMissing) && domain_empty;
     }
     if (stringCompare(expect, "UNSUPPORTED_OR_FAIL") == 0)
     {
-        return result != kRouterQuicSniFound && domain_empty;
+        return result != kGenericSnifferFound && domain_empty;
     }
 
     return false;
@@ -672,7 +672,7 @@ static void runQuicVectorCase(char *line)
     const char *comment     = fields[4];
 
     quic_vector_buffer_t accumulated = {0};
-    router_quic_sni_result_t result  = kRouterQuicSniMissing;
+    generic_sniffer_result_t result  = kGenericSnifferMissing;
     uint8_t domain[UINT8_MAX + 1U];
     uint32_t domain_len = 0;
     domain[0]           = '\0';
@@ -695,7 +695,7 @@ static void runQuicVectorCase(char *line)
                                                &domain_len);
 
         bool has_more_files = cursor != NULL && cursor[0] != '\0';
-        if (has_more_files && stringCompare(expect, "OK") == 0 && result != kRouterQuicSniNeedMore)
+        if (has_more_files && stringCompare(expect, "OK") == 0 && result != kGenericSnifferNeedMore)
         {
             quicVectorFail(name, "intermediate NeedMore", result, domain, want_domain, comment);
         }
@@ -945,7 +945,7 @@ static void testRouterInitClearsOptionalFlags(void)
     router_lstate_t *ls = lineGetState(line, &tunnel);
     require(line->routing_context.dest_ctx.optional_flags.detected_protocols == 0,
             "Router upstream init did not clear destination optional protocol flags");
-    require(ls->decided == kRouterRouteUndecided, "Router upstream init did not initialize line state");
+    require(ls->route == kRouterRouteUndecided, "Router upstream init did not initialize line state");
     require(ls->pending == NULL, "Router upstream init left pending payload state");
 
     testLineDestroy(line);
@@ -1015,7 +1015,7 @@ static void testHttp2PartialPrefaceNeedsMore(void)
                                    (uint32_t) sizeof(partial_preface) - 1U,
                                    host,
                                    (uint32_t) sizeof(host),
-                                   &host_len) == kRouterHttp2DomainNeedMore,
+                                   &host_len) == kGenericSnifferNeedMore,
             "partial valid HTTP/2 preface did not ask for more bytes");
     require(host_len == 0 && host[0] == '\0', "partial HTTP/2 preface filled a host");
 }

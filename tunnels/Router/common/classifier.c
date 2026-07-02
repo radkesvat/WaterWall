@@ -1,6 +1,6 @@
 #include "structure.h"
 
-static void routerPrepareClassifyGeositeHost(router_tstate_t *ts, router_match_ctx_t *mctx)
+static void routerClassifyPrepareGeositeHost(router_tstate_t *ts, router_match_ctx_t *mctx)
 {
     if (ts->geosite_lists_count == 0)
     {
@@ -17,14 +17,14 @@ static void routerPrepareClassifyGeositeHost(router_tstate_t *ts, router_match_c
  * routerRuleMatches) selects that rule's target tunnel. If no rule matches, the
  * connection uses the default route (the node's top-level "next").
  */
-router_match_t routerClassify(router_tstate_t *ts, const router_match_ctx_t *mctx)
+router_match_t routerClassify(router_tstate_t *ts, router_match_ctx_t *mctx)
 {
     router_match_t match = {
         .result = kRouterClassifyDefault,
         .target = NULL,
     };
 
-    if (routerSniffBeforeClassify(ts, mctx) == kRouterSniffNeedMore)
+    if (routerSniffRun(ts, mctx) == kRouterSniffNeedMore)
     {
         match.result = kRouterClassifyNeedMore;
         return match;
@@ -35,14 +35,13 @@ router_match_t routerClassify(router_tstate_t *ts, const router_match_ctx_t *mct
         return match;
     }
 
-    router_match_ctx_t prepared_mctx = *mctx;
-    routerPrepareClassifyGeositeHost(ts, &prepared_mctx);
+    routerClassifyPrepareGeositeHost(ts, mctx);
 
     for (uint32_t ri = 0; ri < ts->rules_count; ++ri)
     {
         router_rule_t *rule = &ts->rules[ri];
 
-        if (routerRuleMatches(rule, &prepared_mctx))
+        if (routerRuleMatches(rule, mctx))
         {
             match.result = kRouterClassifyTarget;
             match.target = rule->target_tunnel;

@@ -436,21 +436,9 @@ static bool geositeDbLoadFromJsonFile(const char *path, geosite_db_t **out_db)
     return ok;
 }
 
-static bool geositeHasPrefix(const char *text, const char *prefix)
-{
-    for (uint32_t i = 0; prefix[i] != '\0'; ++i)
-    {
-        if (asciiLower((uint8_t) text[i]) != (uint8_t) prefix[i])
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
 static bool geositePatternListName(const char *pattern, const char **out_name)
 {
-    if (! geositeHasPrefix(pattern, "geosite:"))
+    if (! stringStartsWithIgnoreCase(pattern, "geosite:"))
     {
         return false;
     }
@@ -1488,6 +1476,28 @@ bool routerGeositeCompiledListMatches(const router_geosite_compiled_list_t *list
     router_geosite_host_cache_t cache = {0};
     routerGeositeHostCachePrepare(&cache, (const uint8_t *) host, host_len);
     return routerGeositeCompiledListMatchesPrepared(list, &cache);
+}
+
+bool routerRuleTableNeedsGeosite(const router_tstate_t *ts)
+{
+    for (uint32_t i = 0; i < ts->rules_count; ++i)
+    {
+        const router_rule_t *rule = &ts->rules[i];
+        if (! rule->destination_domain.present)
+        {
+            continue;
+        }
+
+        for (uint32_t j = 0; j < rule->destination_domain.patterns.count; ++j)
+        {
+            if (stringStartsWithIgnoreCase(rule->destination_domain.patterns.items[j], "geosite:"))
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 bool routerGeositeOpenIfNeeded(router_tstate_t *ts, const cJSON *settings)

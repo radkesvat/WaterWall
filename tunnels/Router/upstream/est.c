@@ -8,7 +8,7 @@ void routerTunnelUpStreamEst(tunnel_t *t, line_t *l)
      * Rule targets are often adapter/server nodes whose upstream Est is not a
      * valid callback. Only forward upstream Est to the normal default branch.
      */
-    if (ls->decided == kRouterRouteDefault)
+    if (ls->route == kRouterRouteDefault)
     {
         tunnelNextUpStreamEst(t, l);
     }

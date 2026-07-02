@@ -38,9 +38,9 @@ static const uint8_t kRouterQuicSaltDraft29[kRouterQuicInitialSaltLength] = {
     0x86, 0xf1, 0x9c, 0x61, 0x11, 0xe0, 0x43, 0x90, 0xa8, 0x99,
 };
 
-static router_quic_sni_result_t routerQuicNeedMoreOrMissing(uint32_t payload_len)
+static generic_sniffer_result_t routerQuicNeedMoreOrMissing(uint32_t payload_len)
 {
-    return payload_len < (uint32_t) kGenericSnifferMaxWindowBytes ? kRouterQuicSniNeedMore : kRouterQuicSniMissing;
+    return payload_len < (uint32_t) kGenericSnifferMaxWindowBytes ? kGenericSnifferNeedMore : kGenericSnifferMissing;
 }
 
 static bool routerQuicReadVarint(const uint8_t *payload, size_t payload_len, size_t *offset, uint64_t *value,
@@ -509,12 +509,12 @@ static bool routerQuicParseInitialFrames(const uint8_t *payload, size_t payload_
     return true;
 }
 
-router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, uint32_t payload_len, uint8_t *host,
+generic_sniffer_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, uint32_t payload_len, uint8_t *host,
                                                        uint32_t host_cap, uint32_t *host_len)
 {
     if (payload == NULL || host == NULL || host_cap == 0 || host_len == NULL)
     {
-        return kRouterQuicSniMissing;
+        return kGenericSnifferMissing;
     }
     if (payload_len == 0)
     {
@@ -526,7 +526,7 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
 
     uint8_t                 *crypto         = NULL;
     uint8_t                 *seen           = NULL;
-    router_quic_sni_result_t result         = kRouterQuicSniMissing;
+    generic_sniffer_result_t result         = kGenericSnifferMissing;
     size_t                   max_crypto_end = 0;
     bool                     saw_initial    = false;
     size_t                   pos            = 0;
@@ -541,7 +541,7 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         {
             if (! saw_initial)
             {
-                result = kRouterQuicSniMissing;
+                result = kGenericSnifferMissing;
             }
             break;
         }
@@ -549,7 +549,7 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         uint8_t first = packet_start[offset++];
         if ((first & 0x80U) == 0 || (first & 0x40U) == 0)
         {
-            result = saw_initial ? routerQuicNeedMoreOrMissing(payload_len) : kRouterQuicSniMissing;
+            result = saw_initial ? routerQuicNeedMoreOrMissing(payload_len) : kGenericSnifferMissing;
             break;
         }
 
@@ -557,7 +557,7 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         offset += 4U;
         if (version != ROUTER_QUIC_VERSION_1 && version != ROUTER_QUIC_VERSION_DRAFT29)
         {
-            result = kRouterQuicSniMissing;
+            result = kGenericSnifferMissing;
             break;
         }
         const uint8_t *salt = version == ROUTER_QUIC_VERSION_1 ? kRouterQuicSaltV1 : kRouterQuicSaltDraft29;
@@ -566,13 +566,13 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
 
         if (offset >= available)
         {
-            result = kRouterQuicSniMissing;
+            result = kGenericSnifferMissing;
             break;
         }
         uint8_t dcid_len = packet_start[offset++];
         if (dcid_len > kRouterQuicMaxConnectionIdLength || offset + dcid_len > available)
         {
-            result = kRouterQuicSniMissing;
+            result = kGenericSnifferMissing;
             break;
         }
         const uint8_t *dcid = packet_start + offset;
@@ -580,13 +580,13 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
 
         if (offset >= available)
         {
-            result = kRouterQuicSniMissing;
+            result = kGenericSnifferMissing;
             break;
         }
         uint8_t scid_len = packet_start[offset++];
         if (scid_len > kRouterQuicMaxConnectionIdLength || offset + scid_len > available)
         {
-            result = kRouterQuicSniMissing;
+            result = kGenericSnifferMissing;
             break;
         }
         offset += scid_len;
@@ -597,7 +597,7 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
             if (! routerQuicReadVarint(packet_start, available, &offset, &token_len, NULL) ||
                 token_len > available - offset)
             {
-                result = kRouterQuicSniMissing;
+                result = kGenericSnifferMissing;
                 break;
             }
             offset += (size_t) token_len;
@@ -610,7 +610,7 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         }
         if (protected_packet_len64 < 4U || protected_packet_len64 > available - offset)
         {
-            result = kRouterQuicSniMissing;
+            result = kGenericSnifferMissing;
             break;
         }
 
@@ -628,7 +628,7 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
 
         if (pn_offset + 4U + kRouterQuicAes128BlockLength > packet_end)
         {
-            result = kRouterQuicSniMissing;
+            result = kGenericSnifferMissing;
             break;
         }
 
@@ -646,14 +646,14 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
             ! routerQuicHkdfExpandLabelSha256(client_secret, sizeof(client_secret), "quic key", key, sizeof(key)) ||
             ! routerQuicHkdfExpandLabelSha256(client_secret, sizeof(client_secret), "quic iv", iv, sizeof(iv)))
         {
-            result = kRouterQuicSniMissing;
+            result = kGenericSnifferMissing;
             break;
         }
 
         uint8_t *packet = memoryAllocate(packet_end);
         if (packet == NULL)
         {
-            result = kRouterQuicSniMissing;
+            result = kGenericSnifferMissing;
             break;
         }
         memoryCopy(packet, packet_start, packet_end);
@@ -661,7 +661,7 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         if (! routerQuicAes128EncryptBlock(hp, packet + pn_offset + 4U, mask))
         {
             memoryFree(packet);
-            result = kRouterQuicSniMissing;
+            result = kGenericSnifferMissing;
             break;
         }
 
@@ -670,7 +670,7 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         if (pn_offset + pn_len > packet_end)
         {
             memoryFree(packet);
-            result = kRouterQuicSniMissing;
+            result = kGenericSnifferMissing;
             break;
         }
 
@@ -694,7 +694,7 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         if (decrypted_payload == NULL)
         {
             memoryFree(packet);
-            result = kRouterQuicSniMissing;
+            result = kGenericSnifferMissing;
             break;
         }
 
@@ -704,7 +704,7 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         {
             memoryFree(decrypted_payload);
             memoryFree(packet);
-            result = kRouterQuicSniMissing;
+            result = kGenericSnifferMissing;
             break;
         }
 
@@ -720,7 +720,7 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
                 seen   = NULL;
                 memoryFree(decrypted_payload);
                 memoryFree(packet);
-                result = kRouterQuicSniMissing;
+                result = kGenericSnifferMissing;
                 break;
             }
         }
@@ -731,7 +731,7 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         memoryFree(packet);
         if (! frames_ok)
         {
-            result = kRouterQuicSniMissing;
+            result = kGenericSnifferMissing;
             break;
         }
 
@@ -739,7 +739,7 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         switch (routerQuicParseTlsClientHelloSni(crypto, contiguous_crypto_len, host, host_cap, host_len))
         {
         case kRouterQuicTlsParseOk:
-            result = kRouterQuicSniFound;
+            result = kGenericSnifferFound;
             goto cleanup;
         case kRouterQuicTlsParseNeedMore:
             result = routerQuicNeedMoreOrMissing(payload_len);
@@ -747,7 +747,7 @@ router_quic_sni_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         case kRouterQuicTlsParseNoSni:
         case kRouterQuicTlsParseBad:
         default:
-            result = kRouterQuicSniMissing;
+            result = kGenericSnifferMissing;
             goto cleanup;
         }
 

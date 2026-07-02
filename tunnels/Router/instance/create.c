@@ -117,7 +117,7 @@ tunnel_t *routerTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (settings != NULL && ! routerLoadRules(ts, node, settings))
+    if (settings != NULL && ! routerRuleTableLoad(ts, node, settings))
     {
         routerTunnelDestroy(t);
         return NULL;

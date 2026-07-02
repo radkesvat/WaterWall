@@ -87,18 +87,18 @@ static int routerHttp2OnHeaderCallback(nghttp2_session *session, const nghttp2_f
     return 0;
 }
 
-static router_http2_domain_result_t routerHttp2NeedMoreOrMissing(uint32_t payload_len)
+static generic_sniffer_result_t routerHttp2NeedMoreOrMissing(uint32_t payload_len)
 {
-    return payload_len < (uint32_t) kGenericSnifferMaxWindowBytes ? kRouterHttp2DomainNeedMore
-                                                                 : kRouterHttp2DomainMissing;
+    return payload_len < (uint32_t) kGenericSnifferMaxWindowBytes ? kGenericSnifferNeedMore
+                                                                 : kGenericSnifferMissing;
 }
 
-router_http2_domain_result_t routerHttp2SniffDomain(const uint8_t *payload, uint32_t payload_len, uint8_t *host,
+generic_sniffer_result_t routerHttp2SniffDomain(const uint8_t *payload, uint32_t payload_len, uint8_t *host,
                                                     uint32_t host_cap, uint32_t *host_len)
 {
     if ((payload == NULL && payload_len > 0) || host == NULL || host_cap == 0 || host_len == NULL)
     {
-        return kRouterHttp2DomainMissing;
+        return kGenericSnifferMissing;
     }
 
     host[0]   = '\0';
@@ -112,7 +112,7 @@ router_http2_domain_result_t routerHttp2SniffDomain(const uint8_t *payload, uint
     uint32_t compare_len = payload_len < kRouterHttp2PrefaceLen ? payload_len : kRouterHttp2PrefaceLen;
     if (memoryCompare(payload, kRouterHttp2Preface, compare_len) != 0)
     {
-        return kRouterHttp2DomainMissing;
+        return kGenericSnifferMissing;
     }
 
     if (payload_len < kRouterHttp2PrefaceLen)
@@ -126,7 +126,7 @@ router_http2_domain_result_t routerHttp2SniffDomain(const uint8_t *payload, uint
 
     if (nghttp2_session_callbacks_new(&callbacks) != 0)
     {
-        return kRouterHttp2DomainMissing;
+        return kGenericSnifferMissing;
     }
 
     nghttp2_session_callbacks_set_on_header_callback(callbacks, routerHttp2OnHeaderCallback);
@@ -135,14 +135,14 @@ router_http2_domain_result_t routerHttp2SniffDomain(const uint8_t *payload, uint
     nghttp2_session_callbacks_del(callbacks);
     if (rc != 0)
     {
-        return kRouterHttp2DomainMissing;
+        return kGenericSnifferMissing;
     }
 
     nghttp2_ssize consumed = nghttp2_session_mem_recv2(session, payload, payload_len);
     nghttp2_session_del(session);
     if (consumed < 0)
     {
-        return kRouterHttp2DomainMissing;
+        return kGenericSnifferMissing;
     }
 
     const uint8_t *found     = NULL;
@@ -165,13 +165,13 @@ router_http2_domain_result_t routerHttp2SniffDomain(const uint8_t *payload, uint
     {
         if (found_len >= host_cap)
         {
-            return kRouterHttp2DomainMissing;
+            return kGenericSnifferMissing;
         }
 
         memoryCopy(host, found, found_len);
         host[found_len] = '\0';
         *host_len       = found_len;
-        return kRouterHttp2DomainFound;
+        return kGenericSnifferFound;
     }
 
     return routerHttp2NeedMoreOrMissing(payload_len);

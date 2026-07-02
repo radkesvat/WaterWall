@@ -5,7 +5,7 @@ void routerLinestateInitialize(router_lstate_t *ls)
     *ls = (router_lstate_t) {
         .pending            = NULL,
         .target             = NULL,
-        .decided            = kRouterRouteUndecided,
+        .route            = kRouterRouteUndecided,
         .sniffed_attributes = 0,
     };
 }

@@ -1,8 +1,11 @@
 add_library(Router STATIC
     common/classifier.c
+    common/credentials.c
+    common/geoip.c
     common/geosite_db.c
     common/line_state.c
-    common/match_helpers.c
+    common/match_ip.c
+    common/match_port.c
     common/rules.c
     common/sniffing.c
     common/stc_regex.c

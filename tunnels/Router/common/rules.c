@@ -108,7 +108,7 @@ static void routerWarnUnknownRuleKeys(const cJSON *rule_json, uint32_t rule_inde
     }
 }
 
-bool routerLoadRules(router_tstate_t *ts, node_t *node, const cJSON *settings)
+bool routerRuleTableLoad(router_tstate_t *ts, node_t *node, const cJSON *settings)
 {
     ts->needs_http_upgrade_attribute = false;
     ts->needed_protocols             = 0;

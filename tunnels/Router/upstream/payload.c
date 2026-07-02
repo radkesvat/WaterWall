@@ -1,8 +1,22 @@
 #include "structure.h"
 
-static void forwardSelectedPayload(tunnel_t *t, line_t *l, router_lstate_t *ls, sbuf_t *buf)
+static void routerBufferPendingPayload(line_t *l, router_lstate_t *ls, sbuf_t *buf)
 {
-    if (ls->decided == kRouterRouteTarget)
+    if (ls->pending == NULL)
+    {
+        ls->pending = buf;
+        return;
+    }
+
+    uint32_t need = sbufGetLength(ls->pending) + sbufGetLength(buf);
+    ls->pending   = sbufReserveSpace(ls->pending, need);
+    sbufConcatNoCheck(ls->pending, buf);
+    lineReuseBuffer(l, buf);
+}
+
+static void routerForwardPayload(tunnel_t *t, line_t *l, router_lstate_t *ls, sbuf_t *buf)
+{
+    if (ls->route == kRouterRouteTarget)
     {
         tunnelUpStreamPayload(ls->target, l, buf);
         return;
@@ -11,14 +25,14 @@ static void forwardSelectedPayload(tunnel_t *t, line_t *l, router_lstate_t *ls, 
     tunnelNextUpStreamPayload(t, l, buf);
 }
 
-static void initializeSelectedRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, tunnel_t *target, sbuf_t *first)
+static void routerCommitRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, tunnel_t *target, sbuf_t *first)
 {
     lineLock(l);
 
     if (target != NULL)
     {
         ls->target  = target;
-        ls->decided = kRouterRouteTarget;
+        ls->route   = kRouterRouteTarget;
         tunnelUpStreamInit(target, l);
         if (lineIsAlive(l))
         {
@@ -29,7 +43,7 @@ static void initializeSelectedRoute(tunnel_t *t, line_t *l, router_lstate_t *ls,
     else
     {
         ls->target  = NULL;
-        ls->decided = kRouterRouteDefault;
+        ls->route   = kRouterRouteDefault;
         tunnelNextUpStreamInit(t, l);
         if (lineIsAlive(l))
         {
@@ -51,23 +65,13 @@ void routerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     router_tstate_t *ts = tunnelGetState(t);
     router_lstate_t *ls = lineGetState(l, t);
 
-    if (ls->decided != kRouterRouteUndecided)
+    if (ls->route != kRouterRouteUndecided)
     {
-        forwardSelectedPayload(t, l, ls, buf);
+        routerForwardPayload(t, l, ls, buf);
         return;
     }
 
-    if (ls->pending == NULL)
-    {
-        ls->pending = buf;
-    }
-    else
-    {
-        uint32_t need = sbufGetLength(ls->pending) + sbufGetLength(buf);
-        ls->pending   = sbufReserveSpace(ls->pending, need);
-        sbufConcatNoCheck(ls->pending, buf);
-        lineReuseBuffer(l, buf);
-    }
+    routerBufferPendingPayload(l, ls, buf);
 
     router_match_ctx_t mctx = {
         .router_state = ts,
@@ -87,5 +91,5 @@ void routerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     sbuf_t *first = ls->pending;
     ls->pending   = NULL;
 
-    initializeSelectedRoute(t, l, ls, match.result == kRouterClassifyTarget ? match.target : NULL, first);
+    routerCommitRoute(t, l, ls, match.result == kRouterClassifyTarget ? match.target : NULL, first);
 }

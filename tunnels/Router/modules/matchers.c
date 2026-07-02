@@ -51,6 +51,11 @@ static const char *const kRouterKnownConditionAliases[] = {
     "destination-port-range",
 };
 
+static bool routerMatcherIsCredentialPairMember(const router_matcher_t *matcher)
+{
+    return matcher->match == routerUsernameMatch || matcher->match == routerPasswordMatch;
+}
+
 enum
 {
     kRouterMatchersCount              = (int) (sizeof(kRouterMatchers) / sizeof(kRouterMatchers[0])),
@@ -87,8 +92,19 @@ bool routerRuleMatches(const router_rule_t *rule, const router_match_ctx_t *mctx
 {
     // AND across every configured condition. Matchers for fields that are not
     // present in this rule return true and therefore do not constrain it.
+    bool credentials_pair_checked = false;
+
     for (int i = 0; i < kRouterMatchersCount; ++i)
     {
+        if (rule->username.present && rule->password.present && routerMatcherIsCredentialPairMember(&kRouterMatchers[i]))
+        {
+            if (credentials_pair_checked)
+            {
+                continue;
+            }
+            credentials_pair_checked = true;
+        }
+
         if (! kRouterMatchers[i].match(rule, mctx))
         {
             return false;

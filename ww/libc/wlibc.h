@@ -610,6 +610,21 @@ static inline bool asciiCaseEqual(uint8_t a, uint8_t b)
     return asciiLower(a) == asciiLower(b);
 }
 
+static inline bool stringStartsWithIgnoreCase(const char *str, const char *start)
+{
+    assert(str != NULL && start != NULL);
+    while (*start != '\0')
+    {
+        if (*str == '\0' || ! asciiCaseEqual((uint8_t) *str, (uint8_t) *start))
+        {
+            return false;
+        }
+        ++str;
+        ++start;
+    }
+    return true;
+}
+
 static inline int asciiHexValue(uint8_t c)
 {
     if (c >= '0' && c <= '9')

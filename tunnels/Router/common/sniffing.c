@@ -115,7 +115,19 @@ bool routerLoadSniffing(router_tstate_t *ts, const cJSON *settings)
     return true;
 }
 
-static bool routerDestinationAlreadyHasDomain(line_t *line)
+typedef generic_sniffer_result_t (*router_domain_sniff_fn)(const uint8_t *payload, uint32_t payload_len,
+                                                           uint8_t scratch[UINT8_MAX + 1U],
+                                                           const uint8_t **host, uint32_t *host_len);
+
+typedef struct router_domain_sniffer_s
+{
+    const char            *name;
+    uint8_t                mode_flag;
+    bool (*applies)(line_t *line);
+    router_domain_sniff_fn sniff;
+} router_domain_sniffer_t;
+
+static bool routerLineHasKnownDomain(line_t *line)
 {
     address_context_t *dest = lineGetDestinationAddressContext(line);
     return dest->domain != NULL && dest->domain_len > 0;
@@ -137,7 +149,74 @@ static bool routerLineIsUdpOnly(line_t *line)
 }
 #endif
 
-static bool routerNeedsHttpUpgradeSniff(const router_tstate_t *ts, const router_match_ctx_t *mctx)
+static generic_sniffer_result_t routerSniffAdapterHttp1Host(const uint8_t *payload, uint32_t payload_len,
+                                                            uint8_t scratch[UINT8_MAX + 1U],
+                                                            const uint8_t **host, uint32_t *host_len)
+{
+    discard scratch;
+    return genericsnifferSniffHttp1Host(payload, payload_len, host, host_len);
+}
+
+#ifdef ROUTER_ENABLE_HTTP2_SNIFFING
+static generic_sniffer_result_t routerSniffAdapterHttp2Domain(const uint8_t *payload, uint32_t payload_len,
+                                                              uint8_t scratch[UINT8_MAX + 1U],
+                                                              const uint8_t **host, uint32_t *host_len)
+{
+    generic_sniffer_result_t result =
+        routerHttp2SniffDomain(payload, payload_len, scratch, UINT8_MAX + 1U, host_len);
+    if (result == kGenericSnifferFound)
+    {
+        *host = scratch;
+    }
+    return result;
+}
+#endif
+
+static generic_sniffer_result_t routerSniffAdapterTlsSni(const uint8_t *payload, uint32_t payload_len,
+                                                         uint8_t scratch[UINT8_MAX + 1U], const uint8_t **host,
+                                                         uint32_t *host_len)
+{
+    discard scratch;
+    return genericsnifferSniffTlsClientHelloSni(payload, payload_len, host, host_len);
+}
+
+#ifdef ROUTER_ENABLE_QUIC_SNIFFING
+static generic_sniffer_result_t routerSniffAdapterQuicSni(const uint8_t *payload, uint32_t payload_len,
+                                                          uint8_t scratch[UINT8_MAX + 1U], const uint8_t **host,
+                                                          uint32_t *host_len)
+{
+    generic_sniffer_result_t result =
+        routerQuicSniffClientHelloSni(payload, payload_len, scratch, UINT8_MAX + 1U, host_len);
+    if (result == kGenericSnifferFound)
+    {
+        *host = scratch;
+    }
+    return result;
+}
+#endif
+
+static const router_domain_sniffer_t kRouterDomainSniffers[] = {
+    {"http1", kRouterSniffHttp1, NULL, routerSniffAdapterHttp1Host},
+#ifdef ROUTER_ENABLE_HTTP2_SNIFFING
+    {"http2", kRouterSniffHttp2, routerLineIsTcpOnly, routerSniffAdapterHttp2Domain},
+#endif
+    {"tls", kRouterSniffTls, NULL, routerSniffAdapterTlsSni},
+#ifdef ROUTER_ENABLE_QUIC_SNIFFING
+    {"quic", kRouterSniffQuic, routerLineIsUdpOnly, routerSniffAdapterQuicSni},
+#endif
+};
+
+enum
+{
+    kRouterDomainSniffersCount = (int) (sizeof(kRouterDomainSniffers) / sizeof(kRouterDomainSniffers[0]))
+};
+
+static router_sniff_result_t routerSniffResult(bool need_more)
+{
+    return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
+}
+
+static bool routerShouldSniffHttpUpgrade(const router_tstate_t *ts, router_match_ctx_t *mctx)
 {
     return (ts->sniffing_modes & kRouterSniffHttp1) != 0 && ts->needs_http_upgrade_attribute &&
            mctx->line_state != NULL && (mctx->line_state->sniffed_attributes & kRouterAttributeHttpUpgradePresent) == 0;
@@ -161,12 +240,12 @@ static bool routerStoreSniffedDomain(line_t *line, const uint8_t *host, uint32_t
     return true;
 }
 
-static router_sniff_result_t routerSniffProtocolsBeforeClassify(router_tstate_t *ts, const router_match_ctx_t *mctx)
+static bool routerSniffDetectProtocols(router_tstate_t *ts, router_match_ctx_t *mctx)
 {
     uint32_t needed_protocols = ts->needed_protocols;
     if (needed_protocols == 0)
     {
-        return kRouterSniffDone;
+        return false;
     }
 
     address_context_t *dest              = lineGetDestinationAddressContext(mctx->line);
@@ -197,98 +276,50 @@ static router_sniff_result_t routerSniffProtocolsBeforeClassify(router_tstate_t 
         }
     }
 
-    return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
+    return need_more;
 }
 
-router_sniff_result_t routerSniffBeforeClassify(router_tstate_t *ts, const router_match_ctx_t *mctx)
+static bool routerSniffDetectHttpUpgrade(router_match_ctx_t *mctx)
 {
-    bool need_more = routerSniffProtocolsBeforeClassify(ts, mctx) == kRouterSniffNeedMore;
-
-    if (ts->sniffing_modes == 0)
+    switch (genericsnifferSniffHttp1UpgradeHeader(mctx->payload, mctx->payload_len))
     {
-        return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
+    case kGenericSnifferFound:
+        mctx->line_state->sniffed_attributes |= kRouterAttributeHttpUpgradePresent;
+        break;
+    case kGenericSnifferNeedMore:
+        return true;
+    case kGenericSnifferMissing:
+    default:
+        break;
     }
 
-    bool sniff_domain = ts->sniff_even_if_domain_is_already_provided || ! routerDestinationAlreadyHasDomain(mctx->line);
-    bool sniff_http_upgrade = routerNeedsHttpUpgradeSniff(ts, mctx);
+    return false;
+}
 
-    if (! sniff_domain && ! sniff_http_upgrade)
+static bool routerSniffDetectDomain(router_tstate_t *ts, router_match_ctx_t *mctx, bool *need_more)
+{
+    uint8_t scratch[UINT8_MAX + 1U];
+
+    for (int i = 0; i < kRouterDomainSniffersCount; ++i)
     {
-        return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
-    }
+        const router_domain_sniffer_t *sniffer = &kRouterDomainSniffers[i];
 
-    const uint8_t *http_host     = NULL;
-    uint32_t       http_host_len = 0;
-
-    if ((ts->sniffing_modes & kRouterSniffHttp1) != 0)
-    {
-        if (sniff_http_upgrade)
+        if ((ts->sniffing_modes & sniffer->mode_flag) == 0 ||
+            (sniffer->applies != NULL && ! sniffer->applies(mctx->line)))
         {
-            switch (genericsnifferSniffHttp1UpgradeHeader(mctx->payload, mctx->payload_len))
-            {
-            case kGenericSnifferFound:
-                mctx->line_state->sniffed_attributes |= kRouterAttributeHttpUpgradePresent;
-                break;
-            case kGenericSnifferNeedMore:
-                need_more = true;
-                break;
-            case kGenericSnifferMissing:
-            default:
-                break;
-            }
+            continue;
         }
 
-        if (sniff_domain)
-        {
-            switch (genericsnifferSniffHttp1Host(mctx->payload, mctx->payload_len, &http_host, &http_host_len))
-            {
-            case kGenericSnifferFound:
-                discard routerStoreSniffedDomain(mctx->line, http_host, http_host_len);
-                return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
-            case kGenericSnifferNeedMore:
-                need_more = true;
-                break;
-            case kGenericSnifferMissing:
-            default:
-                break;
-            }
-        }
-    }
+        const uint8_t *host     = NULL;
+        uint32_t       host_len = 0;
 
-#ifdef ROUTER_ENABLE_HTTP2_SNIFFING
-    uint8_t  http2_host[UINT8_MAX + 1U];
-    uint32_t http2_host_len = 0;
-
-    if (sniff_domain && (ts->sniffing_modes & kRouterSniffHttp2) != 0 && routerLineIsTcpOnly(mctx->line))
-    {
-        switch (routerHttp2SniffDomain(mctx->payload, mctx->payload_len, http2_host, (uint32_t) sizeof(http2_host),
-                                       &http2_host_len))
-        {
-        case kRouterHttp2DomainFound:
-            discard routerStoreSniffedDomain(mctx->line, http2_host, http2_host_len);
-            return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
-        case kRouterHttp2DomainNeedMore:
-            need_more = true;
-            break;
-        case kRouterHttp2DomainMissing:
-        default:
-            break;
-        }
-    }
-#endif
-
-    const uint8_t *tls_sni     = NULL;
-    uint32_t       tls_sni_len = 0;
-
-    if (sniff_domain && (ts->sniffing_modes & kRouterSniffTls) != 0)
-    {
-        switch (genericsnifferSniffTlsClientHelloSni(mctx->payload, mctx->payload_len, &tls_sni, &tls_sni_len))
+        switch (sniffer->sniff(mctx->payload, mctx->payload_len, scratch, &host, &host_len))
         {
         case kGenericSnifferFound:
-            discard routerStoreSniffedDomain(mctx->line, tls_sni, tls_sni_len);
-            return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
+            discard routerStoreSniffedDomain(mctx->line, host, host_len);
+            return true;
         case kGenericSnifferNeedMore:
-            need_more = true;
+            *need_more = true;
             break;
         case kGenericSnifferMissing:
         default:
@@ -296,27 +327,35 @@ router_sniff_result_t routerSniffBeforeClassify(router_tstate_t *ts, const route
         }
     }
 
-#ifdef ROUTER_ENABLE_QUIC_SNIFFING
-    uint8_t  quic_sni[UINT8_MAX + 1U];
-    uint32_t quic_sni_len = 0;
+    return false;
+}
 
-    if (sniff_domain && (ts->sniffing_modes & kRouterSniffQuic) != 0 && routerLineIsUdpOnly(mctx->line))
+router_sniff_result_t routerSniffRun(router_tstate_t *ts, router_match_ctx_t *mctx)
+{
+    bool need_more = routerSniffDetectProtocols(ts, mctx);
+
+    if (ts->sniffing_modes == 0)
     {
-        switch (routerQuicSniffClientHelloSni(mctx->payload, mctx->payload_len, quic_sni,
-                                             (uint32_t) sizeof(quic_sni), &quic_sni_len))
-        {
-        case kRouterQuicSniFound:
-            discard routerStoreSniffedDomain(mctx->line, quic_sni, quic_sni_len);
-            return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
-        case kRouterQuicSniNeedMore:
-            need_more = true;
-            break;
-        case kRouterQuicSniMissing:
-        default:
-            break;
-        }
+        return routerSniffResult(need_more);
     }
-#endif
 
-    return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
+    bool sniff_domain = ts->sniff_even_if_domain_is_already_provided || ! routerLineHasKnownDomain(mctx->line);
+    bool sniff_upgrade = routerShouldSniffHttpUpgrade(ts, mctx);
+
+    if (! sniff_domain && ! sniff_upgrade)
+    {
+        return routerSniffResult(need_more);
+    }
+
+    if (sniff_upgrade)
+    {
+        need_more = routerSniffDetectHttpUpgrade(mctx) || need_more;
+    }
+
+    if (sniff_domain)
+    {
+        discard routerSniffDetectDomain(ts, mctx, &need_more);
+    }
+
+    return routerSniffResult(need_more);
 }

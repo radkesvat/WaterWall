@@ -4,7 +4,7 @@ void routerTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 {
     router_lstate_t *ls = lineGetState(l, t);
 
-    uint8_t   route  = ls->decided;
+    uint8_t   route  = ls->route;
     tunnel_t *target = ls->target;
 
     lineLock(l);

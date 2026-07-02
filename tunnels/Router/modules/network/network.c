@@ -2,6 +2,93 @@
 
 #include "loggers/network_logger.h"
 
+static bool routerTokenEquals(const char *p, uint32_t len, const char *word)
+{
+    for (uint32_t i = 0; i < len; ++i)
+    {
+        if (word[i] == '\0' || asciiLower((uint8_t) p[i]) != (uint8_t) word[i])
+        {
+            return false;
+        }
+    }
+    return word[len] == '\0';
+}
+
+static bool routerNetworkTokenMask(const char *p, uint32_t len, uint8_t *mask, const char *json_path)
+{
+    while (len > 0 && (p[0] == ' ' || p[0] == '\t'))
+    {
+        ++p;
+        --len;
+    }
+    while (len > 0 && (p[len - 1U] == ' ' || p[len - 1U] == '\t'))
+    {
+        --len;
+    }
+
+    if (len == 0)
+    {
+        return true;
+    }
+
+    if (routerTokenEquals(p, len, "tcp"))
+    {
+        *mask |= kRouterNetworkTcp;
+        return true;
+    }
+    if (routerTokenEquals(p, len, "udp"))
+    {
+        *mask |= kRouterNetworkUdp;
+        return true;
+    }
+    if (routerTokenEquals(p, len, "icmp"))
+    {
+        *mask |= kRouterNetworkIcmp;
+        return true;
+    }
+    if (routerTokenEquals(p, len, "packet"))
+    {
+        *mask |= kRouterNetworkPacket;
+        return true;
+    }
+
+    LOGF("JSON Error: %s : unsupported network type (expected tcp, udp, icmp or packet)", json_path);
+    return false;
+}
+
+static bool routerNetworkMaskParse(const router_string_list_t *values, uint8_t *out_mask, const char *json_path)
+{
+    uint8_t mask = 0;
+
+    for (uint32_t i = 0; i < values->count; ++i)
+    {
+        const char *value = values->items[i];
+        uint32_t    len   = (uint32_t) stringLength(value);
+
+        uint32_t start = 0;
+        for (uint32_t j = 0; j <= len; ++j)
+        {
+            if (j == len || value[j] == ',')
+            {
+                if (! routerNetworkTokenMask(value + start, j - start, &mask, json_path))
+                {
+                    return false;
+                }
+                start = j + 1U;
+            }
+        }
+    }
+
+    if (mask == 0)
+    {
+        LOGF("JSON Error: %s : no valid network type configured", json_path);
+        return false;
+    }
+
+    *out_mask = mask;
+    return true;
+}
+
 router_field_parse_t routerNetworkParse(router_rule_t *rule, const cJSON *rule_json, uint32_t rule_index)
 {
     const cJSON *value = cJSON_GetObjectItemCaseSensitive(rule_json, "network");
