@@ -106,6 +106,29 @@ static tunnel_t *findMatchingRoute(sniffrouter_tstate_t *ts, const uint8_t *http
     return NULL;
 }
 
+static sniffrouter_match_t classifyFoundSignals(sniffrouter_tstate_t *ts, const uint8_t *http_host,
+                                                uint32_t http_host_len, bool http_found, const uint8_t *tls_sni,
+                                                uint32_t tls_sni_len, bool tls_found, bool reverse_found,
+                                                bool need_more)
+{
+    sniffrouter_match_t match = {
+        .result = kSniffClassifyDefault,
+        .target = findMatchingRoute(ts, http_host, http_host_len, http_found, tls_sni, tls_sni_len, tls_found,
+                                    reverse_found),
+    };
+
+    if (match.target != NULL)
+    {
+        match.result = kSniffClassifyTarget;
+    }
+    else if (need_more)
+    {
+        match.result = kSniffClassifyNeedMore;
+    }
+
+    return match;
+}
+
 sniffrouter_match_t sniffrouterClassify(sniffrouter_tstate_t *ts, const uint8_t *p, uint32_t n)
 {
     sniffrouter_match_t match = {
@@ -143,6 +166,12 @@ sniffrouter_match_t sniffrouterClassify(sniffrouter_tstate_t *ts, const uint8_t 
         }
     }
 
+    if (http_found)
+    {
+        // A complete HTTP/1 Host makes TLS SNI/reverse signature checks pointless for this payload.
+        return classifyFoundSignals(ts, http_host, http_host_len, true, NULL, 0, false, false, false);
+    }
+
     const uint8_t *tls_sni     = NULL;
     uint32_t       tls_sni_len = 0;
     bool           tls_found   = false;
@@ -161,6 +190,12 @@ sniffrouter_match_t sniffrouterClassify(sniffrouter_tstate_t *ts, const uint8_t 
         default:
             break;
         }
+    }
+
+    if (tls_found)
+    {
+        // A complete TLS SNI result is also definitive; avoid reverse-signature probing afterward.
+        return classifyFoundSignals(ts, NULL, 0, false, tls_sni, tls_sni_len, true, false, false);
     }
 
     bool reverse_found = false;
@@ -187,18 +222,6 @@ sniffrouter_match_t sniffrouterClassify(sniffrouter_tstate_t *ts, const uint8_t 
         return match;
     }
 
-    match.target =
-        findMatchingRoute(ts, http_host, http_host_len, http_found, tls_sni, tls_sni_len, tls_found, reverse_found);
-    if (match.target != NULL)
-    {
-        match.result = kSniffClassifyTarget;
-        return match;
-    }
-
-    if (need_more)
-    {
-        match.result = kSniffClassifyNeedMore;
-    }
-
-    return match;
+    return classifyFoundSignals(ts, http_host, http_host_len, http_found, tls_sni, tls_sni_len, tls_found,
+                                reverse_found, need_more);
 }
