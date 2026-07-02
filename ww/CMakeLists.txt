@@ -15,10 +15,17 @@ set(WW_VERSION_PATCH 0)
 option(WW_STATICLIB "Build as static library" ON)
 option(ASMLIB_OVERRIDE "Try to link against asm lib and override standard functions" OFF)
 
-# Crypto backend options (only one can be enabled)
-option(WCRYPTO_BACKEND_SODIUM "Enable Sodium backend" ON)
-option(WCRYPTO_BACKEND_OPENSSL "Enable OpenSSL backend" OFF)
-option(WCRYPTO_BACKEND_SOFTWARE "Enable Software backend" OFF)
+# Crypto backend options. These compose as a priority stack:
+# OpenSSL > libsodium > software fallback. The software fallback is always
+# compiled, while the external backends are configurable.
+set(WCRYPTO_OPENSSL_DEFAULT OFF)
+if(PROJECT_REQUIRES_OPENSSL)
+    set(WCRYPTO_OPENSSL_DEFAULT ON)
+endif()
+option(WCRYPTO_BACKEND_SODIUM "Enable libsodium crypto backend" ON)
+option(WCRYPTO_BACKEND_OPENSSL "Enable OpenSSL crypto backend" ${WCRYPTO_OPENSSL_DEFAULT})
+set(WCRYPTO_BACKEND_SOFTWARE ON CACHE BOOL "Always enable software crypto fallback" FORCE)
+mark_as_advanced(WCRYPTO_BACKEND_SOFTWARE)
 
 # Windows-specific options
 if(WIN32)
@@ -397,27 +404,46 @@ set(WW_CHECKSUM_SSE3 ${WW_CHECKSUM_SSE3} CACHE INTERNAL "Enable Checksum() to us
 ################################################################################
 # Crypto Backend Source Selection
 ################################################################################
+if(WCRYPTO_BACKEND_OPENSSL)
+    set(PROJECT_REQUIRES_OPENSSL TRUE CACHE INTERNAL "if any of the tunnels that require openssl is included, this will be set to true" FORCE)
+endif()
+
+target_sources(ww PRIVATE
+    crypto/aes256gcm.c
+    crypto/blake2s.c
+    crypto/chacha20poly1305.c
+    crypto/hash.c
+    crypto/x25519.c
+    crypto/xchacha20poly1305.c
+    crypto/impl_software/aes256gcm.c
+    crypto/impl_software/blake2s.c
+    crypto/impl_software/chacha20.c
+    crypto/impl_software/chacha20poly1305.c
+    crypto/impl_software/hash_md5_sha1.c
+    crypto/impl_software/hash_sha2.c
+    crypto/impl_software/poly1305.c
+    crypto/impl_software/poly1305-donna.c
+    crypto/impl_software/sha2.c
+    crypto/impl_software/x25519.c
+)
+target_compile_definitions(ww PUBLIC
+    WCRYPTO_BACKEND_SOFTWARE=1
+    WCRYPTO_HAS_SOFTWARE_AES256GCM=1
+    WCRYPTO_HAS_SOFTWARE_BLAKE2S=1
+    WCRYPTO_HAS_SOFTWARE_CHACHA20POLY1305=1
+    WCRYPTO_HAS_SOFTWARE_HASH=1
+    WCRYPTO_HAS_SOFTWARE_X25519=1
+    WCRYPTO_HAS_SOFTWARE_XCHACHA20POLY1305=1
+)
+
 if(WCRYPTO_BACKEND_SODIUM)
-    set(WCRYPTO_BACKEND_OPENSSL OFF CACHE BOOL "Enable OpenSSL backend" FORCE)
-    set(WCRYPTO_BACKEND_SOFTWARE OFF CACHE BOOL "Enable Software backend" FORCE)
-    
-    target_sources(ww PRIVATE 
+    target_sources(ww PRIVATE
         crypto/sodium_instance.c
-        crypto/aes256gcm.c
-        crypto/blake2s.c
-        crypto/chacha20poly1305.c
-        crypto/hash.c
-        crypto/x25519.c
-        crypto/xchacha20poly1305.c
         crypto/impl_sodium/aes256gcm.c
         crypto/impl_sodium/chacha20poly1305.c
         crypto/impl_sodium/hash.c
         crypto/impl_sodium/xchacha20poly1305.c
         crypto/impl_sodium/x25519.c
-        crypto/impl_software/blake2s.c
-        crypto/impl_software/hash_md5_sha1.c
-        crypto/impl_software/hash_sha2.c
-        crypto/impl_software/sha2.c
     )
     target_compile_definitions(ww PUBLIC
         WCRYPTO_BACKEND_SODIUM=1
@@ -426,31 +452,17 @@ if(WCRYPTO_BACKEND_SODIUM)
         WCRYPTO_HAS_SODIUM_HASH=1
         WCRYPTO_HAS_SODIUM_X25519=1
         WCRYPTO_HAS_SODIUM_XCHACHA20POLY1305=1
-        WCRYPTO_HAS_SOFTWARE_BLAKE2S=1
-        WCRYPTO_HAS_SOFTWARE_HASH=1
     )
-    
-elseif(WCRYPTO_BACKEND_OPENSSL)
-    set(WCRYPTO_BACKEND_SODIUM OFF CACHE BOOL "Enable Sodium backend" FORCE)
-    set(WCRYPTO_BACKEND_SOFTWARE OFF CACHE BOOL "Enable Software backend" FORCE)
-    
-    set(PROJECT_REQUIRES_OPENSSL TRUE CACHE INTERNAL "if any of the tunnels that require openssl is included, this will be set to true" FORCE)
+endif()
 
-
-    target_sources(ww PRIVATE 
-        crypto/aes256gcm.c
-        crypto/blake2s.c
-        crypto/chacha20poly1305.c
-        crypto/hash.c
-        crypto/x25519.c
-        crypto/xchacha20poly1305.c
+if(WCRYPTO_BACKEND_OPENSSL)
+    target_sources(ww PRIVATE
         crypto/imp_openssl/aes256gcm.c
         crypto/imp_openssl/blake2s.c
         crypto/imp_openssl/chacha20poly1305.c
         crypto/imp_openssl/hash.c
         crypto/imp_openssl/xchacha20poly1305.c
         crypto/imp_openssl/x25519.c
-        crypto/impl_software/chacha20.c
     )
     target_compile_definitions(ww PUBLIC
         WCRYPTO_BACKEND_OPENSSL=1
@@ -460,38 +472,6 @@ elseif(WCRYPTO_BACKEND_OPENSSL)
         WCRYPTO_HAS_OPENSSL_HASH=1
         WCRYPTO_HAS_OPENSSL_X25519=1
         WCRYPTO_HAS_OPENSSL_XCHACHA20POLY1305=1
-    )
-    
-elseif(WCRYPTO_BACKEND_SOFTWARE)
-    set(WCRYPTO_BACKEND_SODIUM OFF CACHE BOOL "Enable Sodium backend" FORCE)
-    set(WCRYPTO_BACKEND_OPENSSL OFF CACHE BOOL "Enable OpenSSL backend" FORCE)
-    
-    target_sources(ww PRIVATE 
-        crypto/aes256gcm.c
-        crypto/blake2s.c
-        crypto/chacha20poly1305.c
-        crypto/hash.c
-        crypto/x25519.c
-        crypto/xchacha20poly1305.c
-        crypto/impl_software/aes256gcm.c
-        crypto/impl_software/blake2s.c
-        crypto/impl_software/chacha20.c
-        crypto/impl_software/chacha20poly1305.c
-        crypto/impl_software/hash_md5_sha1.c
-        crypto/impl_software/hash_sha2.c
-        crypto/impl_software/poly1305.c
-        crypto/impl_software/poly1305-donna.c
-        crypto/impl_software/sha2.c
-        crypto/impl_software/x25519.c
-    )
-    target_compile_definitions(ww PUBLIC
-        WCRYPTO_BACKEND_SOFTWARE=1
-        WCRYPTO_HAS_SOFTWARE_AES256GCM=1
-        WCRYPTO_HAS_SOFTWARE_BLAKE2S=1
-        WCRYPTO_HAS_SOFTWARE_CHACHA20POLY1305=1
-        WCRYPTO_HAS_SOFTWARE_HASH=1
-        WCRYPTO_HAS_SOFTWARE_X25519=1
-        WCRYPTO_HAS_SOFTWARE_XCHACHA20POLY1305=1
     )
 endif()
 
@@ -680,25 +660,31 @@ endif()
 
 
 # LibSodium library
-CPMAddPackage(
-    NAME libsodium
-    GITHUB_REPOSITORY robinlinden/libsodium-cmake
-    GIT_TAG 24f829c6d1bf88adb05ff3ee594abc367ffc0590
-    OPTIONS
-        "SODIUM_MINIMAL ON"
-        "SODIUM_DISABLE_TESTS ON"
-        "BUILD_SHARED_LIBS OFF"
-        "SODIUM_BUILD_TESTS OFF"
-        "SODIUM_BUILD_EXAMPLES OFF"
-        "SODIUM_BUILD_SHARED OFF"
-        "SODIUM_STATIC ON"
-)
+if(WCRYPTO_BACKEND_SODIUM)
+    CPMAddPackage(
+        NAME libsodium
+        GITHUB_REPOSITORY robinlinden/libsodium-cmake
+        GIT_TAG 24f829c6d1bf88adb05ff3ee594abc367ffc0590
+        OPTIONS
+            "SODIUM_MINIMAL ON"
+            "SODIUM_DISABLE_TESTS ON"
+            "BUILD_SHARED_LIBS OFF"
+            "SODIUM_BUILD_TESTS OFF"
+            "SODIUM_BUILD_EXAMPLES OFF"
+            "SODIUM_BUILD_SHARED OFF"
+            "SODIUM_STATIC ON"
+    )
 
-if(NOT MSVC)        
-    target_compile_options(sodium PRIVATE -Wno-attributes)
+    if(NOT TARGET sodium)
+        message(FATAL_ERROR "libsodium backend is enabled, but the sodium target was not created")
+    endif()
+
+    if(NOT MSVC)
+        target_compile_options(sodium PRIVATE -Wno-attributes)
+    endif()
+
+    list(APPEND LIBS sodium)
 endif()
-
-set(LIBS ${LIBS} sodium)
 
 
 
@@ -1217,7 +1203,9 @@ else()
 endif()
 
 # Disable Unity Build for targets that cannot use it
-set_target_properties(sodium PROPERTIES UNITY_BUILD OFF)
+if(TARGET sodium)
+    set_target_properties(sodium PROPERTIES UNITY_BUILD OFF)
+endif()
 # set_target_properties(ww_lwip PROPERTIES UNITY_BUILD_BATCH_SIZE 16)
 set_target_properties(ww PROPERTIES UNITY_BUILD_BATCH_SIZE 500)
 

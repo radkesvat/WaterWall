@@ -6,9 +6,9 @@
  * X25519 Diffie-Hellman key exchange, and AEAD encryption/decryption using
  * ChaCha20-Poly1305 and XChaCha20-Poly1305.
  *
- * The WCRYPTO_BACKEND_* macro selects the preferred backend. Individual hash
- * functions may use another compiled backend or a software fallback when the
- * preferred backend does not provide that algorithm.
+ * Enabled WCRYPTO_BACKEND_* macros compose into a priority stack. Public
+ * functions prefer OpenSSL, then libsodium, then the always-present software
+ * fallback when that function is implemented by multiple compiled backends.
  *
  * @note The inline functions use constant-time comparisons and secure memory zeroing
  *       to mitigate side-channel attacks.
@@ -154,12 +154,10 @@ int wCryptoSHA3_512(sha3_512_hash_t *out, const unsigned char *in, size_t inlen)
 
 
 
-#if defined (WCRYPTO_BACKEND_SODIUM) || defined (WCRYPTO_BACKEND_SOFTWARE)
+#if defined (WCRYPTO_HAS_SOFTWARE_BLAKE2S)
 
 /**
- * @brief Context for BLAKE2s hash computations.
- *
- * Contains the internal state, buffering, and parameters.
+ * @brief Context for software BLAKE2s hash computations.
  */
 typedef struct
 {
@@ -168,11 +166,11 @@ typedef struct
     uint32_t t[2];    ///< Total number of bytes hashed.
     size_t   c;       ///< Current buffer offset.
     size_t   outlen;  ///< Desired output digest length.
-} blake2s_ctx_t;
+} wcrypto_software_blake2s_ctx_t;
 
-#endif 
+#endif
 
-#if defined (WCRYPTO_BACKEND_OPENSSL) 
+#if defined (WCRYPTO_HAS_OPENSSL_BLAKE2S)
 
 /**
  * @brief Concrete BLAKE2s context wrapper for the OpenSSL backend.
@@ -188,6 +186,14 @@ typedef struct
     struct evp_mac_st     *mac;
     size_t                 outlen;
 } blake2s_ctx_t;
+
+#elif defined (WCRYPTO_HAS_SOFTWARE_BLAKE2S)
+
+typedef wcrypto_software_blake2s_ctx_t blake2s_ctx_t;
+
+#else
+
+#error "No BLAKE2s backend is enabled"
 
 #endif
 

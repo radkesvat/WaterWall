@@ -33,7 +33,7 @@ static const uint32_t blake2s_iv[8] =
 };
 
 // Compression function. "last" flag indicates last block.
-static void blake2s_compress(blake2s_ctx_t *ctx, int last)
+static void blake2s_compress(wcrypto_software_blake2s_ctx_t *ctx, int last)
 {
 	const uint8_t sigma[10][16] = {
 		{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
@@ -80,7 +80,8 @@ static void blake2s_compress(blake2s_ctx_t *ctx, int last)
 // Initialize the hashing context "ctx" with optional key "key".
 //      1 <= outlen <= 32 gives the digest size in bytes.
 //      Secret key (also <= 32 bytes) is optional (keylen = 0).
-int wCryptoSoftwareBlake2sInit(blake2s_ctx_t *ctx, size_t outlen, const unsigned char *key, size_t keylen)
+int wCryptoSoftwareBlake2sInit(wcrypto_software_blake2s_ctx_t *ctx, size_t outlen, const unsigned char *key,
+                               size_t keylen)
 {
 	size_t i;
 
@@ -107,7 +108,7 @@ int wCryptoSoftwareBlake2sInit(blake2s_ctx_t *ctx, size_t outlen, const unsigned
 }
 
 // Add "inlen" bytes from "in" into the hash.
-int wCryptoSoftwareBlake2sUpdate(blake2s_ctx_t *ctx, const unsigned char *in, size_t inlen)
+int wCryptoSoftwareBlake2sUpdate(wcrypto_software_blake2s_ctx_t *ctx, const unsigned char *in, size_t inlen)
 {
 	size_t i;
 
@@ -126,7 +127,7 @@ int wCryptoSoftwareBlake2sUpdate(blake2s_ctx_t *ctx, const unsigned char *in, si
 
 // Generate the message digest (size given in init).
 //      Result placed in "out".
-int wCryptoSoftwareBlake2sFinal(blake2s_ctx_t *ctx, unsigned char *out)
+int wCryptoSoftwareBlake2sFinal(wcrypto_software_blake2s_ctx_t *ctx, unsigned char *out)
 {
 	size_t i;
 
@@ -150,7 +151,7 @@ int wCryptoSoftwareBlake2sFinal(blake2s_ctx_t *ctx, unsigned char *out)
 int wCryptoSoftwareBlake2s(unsigned char *out, size_t outlen, const unsigned char *key, size_t keylen, const unsigned char *in,
 	size_t inlen)
 {
-	blake2s_ctx_t ctx;
+	wcrypto_software_blake2s_ctx_t ctx;
 	if (wCryptoSoftwareBlake2sInit(&ctx, outlen, key, keylen))
 		return -1;
 	wCryptoSoftwareBlake2sUpdate(&ctx, in, inlen);

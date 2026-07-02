@@ -5,16 +5,10 @@
 
 int performX25519(unsigned char out[32], const unsigned char scalar[32], const unsigned char point[32])
 {
-#if defined(WCRYPTO_BACKEND_SODIUM) && defined(WCRYPTO_HAS_SODIUM_X25519)
-    return wCryptoSodiumX25519(out, scalar, point);
-#elif defined(WCRYPTO_BACKEND_OPENSSL) && defined(WCRYPTO_HAS_OPENSSL_X25519)
+#if defined(WCRYPTO_HAS_OPENSSL_X25519)
     return wCryptoOpenSSLX25519(out, scalar, point);
-#elif defined(WCRYPTO_BACKEND_SOFTWARE) && defined(WCRYPTO_HAS_SOFTWARE_X25519)
-    return wCryptoSoftwareX25519(out, scalar, point);
 #elif defined(WCRYPTO_HAS_SODIUM_X25519)
     return wCryptoSodiumX25519(out, scalar, point);
-#elif defined(WCRYPTO_HAS_OPENSSL_X25519)
-    return wCryptoOpenSSLX25519(out, scalar, point);
 #elif defined(WCRYPTO_HAS_SOFTWARE_X25519)
     return wCryptoSoftwareX25519(out, scalar, point);
 #else

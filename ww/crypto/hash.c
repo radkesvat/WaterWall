@@ -11,11 +11,7 @@ static _Noreturn void unsupportedHash(const char *name)
 
 int wCryptoMD5(md5_hash_t *out, const unsigned char *in, size_t inlen)
 {
-#if defined(WCRYPTO_BACKEND_OPENSSL) && defined(WCRYPTO_HAS_OPENSSL_HASH)
-    return wCryptoOpenSSLMD5(out, in, inlen);
-#elif defined(WCRYPTO_BACKEND_SOFTWARE) && defined(WCRYPTO_HAS_SOFTWARE_HASH)
-    return wCryptoSoftwareMD5(out, in, inlen);
-#elif defined(WCRYPTO_HAS_OPENSSL_HASH)
+#if defined(WCRYPTO_HAS_OPENSSL_HASH)
     return wCryptoOpenSSLMD5(out, in, inlen);
 #elif defined(WCRYPTO_HAS_SOFTWARE_HASH)
     return wCryptoSoftwareMD5(out, in, inlen);
@@ -29,11 +25,7 @@ int wCryptoMD5(md5_hash_t *out, const unsigned char *in, size_t inlen)
 
 int wCryptoSHA1(sha1_hash_t *out, const unsigned char *in, size_t inlen)
 {
-#if defined(WCRYPTO_BACKEND_OPENSSL) && defined(WCRYPTO_HAS_OPENSSL_HASH)
-    return wCryptoOpenSSLSHA1(out, in, inlen);
-#elif defined(WCRYPTO_BACKEND_SOFTWARE) && defined(WCRYPTO_HAS_SOFTWARE_HASH)
-    return wCryptoSoftwareSHA1(out, in, inlen);
-#elif defined(WCRYPTO_HAS_OPENSSL_HASH)
+#if defined(WCRYPTO_HAS_OPENSSL_HASH)
     return wCryptoOpenSSLSHA1(out, in, inlen);
 #elif defined(WCRYPTO_HAS_SOFTWARE_HASH)
     return wCryptoSoftwareSHA1(out, in, inlen);
@@ -47,11 +39,7 @@ int wCryptoSHA1(sha1_hash_t *out, const unsigned char *in, size_t inlen)
 
 int wCryptoSHA224(sha224_hash_t *out, const unsigned char *in, size_t inlen)
 {
-#if defined(WCRYPTO_BACKEND_OPENSSL) && defined(WCRYPTO_HAS_OPENSSL_HASH)
-    return wCryptoOpenSSLSHA224(out, in, inlen);
-#elif defined(WCRYPTO_BACKEND_SOFTWARE) && defined(WCRYPTO_HAS_SOFTWARE_HASH)
-    return wCryptoSoftwareSHA224(out, in, inlen);
-#elif defined(WCRYPTO_HAS_OPENSSL_HASH)
+#if defined(WCRYPTO_HAS_OPENSSL_HASH)
     return wCryptoOpenSSLSHA224(out, in, inlen);
 #elif defined(WCRYPTO_HAS_SOFTWARE_HASH)
     return wCryptoSoftwareSHA224(out, in, inlen);
@@ -65,16 +53,10 @@ int wCryptoSHA224(sha224_hash_t *out, const unsigned char *in, size_t inlen)
 
 int wCryptoSHA256(sha256_hash_t *out, const unsigned char *in, size_t inlen)
 {
-#if defined(WCRYPTO_BACKEND_SODIUM) && defined(WCRYPTO_HAS_SODIUM_HASH)
-    return wCryptoSodiumSHA256(out, in, inlen);
-#elif defined(WCRYPTO_BACKEND_OPENSSL) && defined(WCRYPTO_HAS_OPENSSL_HASH)
+#if defined(WCRYPTO_HAS_OPENSSL_HASH)
     return wCryptoOpenSSLSHA256(out, in, inlen);
-#elif defined(WCRYPTO_BACKEND_SOFTWARE) && defined(WCRYPTO_HAS_SOFTWARE_HASH)
-    return wCryptoSoftwareSHA256(out, in, inlen);
 #elif defined(WCRYPTO_HAS_SODIUM_HASH)
     return wCryptoSodiumSHA256(out, in, inlen);
-#elif defined(WCRYPTO_HAS_OPENSSL_HASH)
-    return wCryptoOpenSSLSHA256(out, in, inlen);
 #elif defined(WCRYPTO_HAS_SOFTWARE_HASH)
     return wCryptoSoftwareSHA256(out, in, inlen);
 #else
@@ -87,9 +69,7 @@ int wCryptoSHA256(sha256_hash_t *out, const unsigned char *in, size_t inlen)
 
 int wCryptoSHA384(sha384_hash_t *out, const unsigned char *in, size_t inlen)
 {
-#if defined(WCRYPTO_BACKEND_OPENSSL) && defined(WCRYPTO_HAS_OPENSSL_HASH)
-    return wCryptoOpenSSLSHA384(out, in, inlen);
-#elif defined(WCRYPTO_HAS_OPENSSL_HASH)
+#if defined(WCRYPTO_HAS_OPENSSL_HASH)
     return wCryptoOpenSSLSHA384(out, in, inlen);
 #else
     discard out;
@@ -101,14 +81,10 @@ int wCryptoSHA384(sha384_hash_t *out, const unsigned char *in, size_t inlen)
 
 int wCryptoSHA512(sha512_hash_t *out, const unsigned char *in, size_t inlen)
 {
-#if defined(WCRYPTO_BACKEND_SODIUM) && defined(WCRYPTO_HAS_SODIUM_HASH)
-    return wCryptoSodiumSHA512(out, in, inlen);
-#elif defined(WCRYPTO_BACKEND_OPENSSL) && defined(WCRYPTO_HAS_OPENSSL_HASH)
+#if defined(WCRYPTO_HAS_OPENSSL_HASH)
     return wCryptoOpenSSLSHA512(out, in, inlen);
 #elif defined(WCRYPTO_HAS_SODIUM_HASH)
     return wCryptoSodiumSHA512(out, in, inlen);
-#elif defined(WCRYPTO_HAS_OPENSSL_HASH)
-    return wCryptoOpenSSLSHA512(out, in, inlen);
 #else
     discard out;
     discard in;
@@ -119,9 +95,7 @@ int wCryptoSHA512(sha512_hash_t *out, const unsigned char *in, size_t inlen)
 
 int wCryptoSHA3_224(sha3_224_hash_t *out, const unsigned char *in, size_t inlen)
 {
-#if defined(WCRYPTO_BACKEND_OPENSSL) && defined(WCRYPTO_HAS_OPENSSL_HASH)
-    return wCryptoOpenSSLSHA3_224(out, in, inlen);
-#elif defined(WCRYPTO_HAS_OPENSSL_HASH)
+#if defined(WCRYPTO_HAS_OPENSSL_HASH)
     return wCryptoOpenSSLSHA3_224(out, in, inlen);
 #else
     discard out;
@@ -133,9 +107,7 @@ int wCryptoSHA3_224(sha3_224_hash_t *out, const unsigned char *in, size_t inlen)
 
 int wCryptoSHA3_256(sha3_256_hash_t *out, const unsigned char *in, size_t inlen)
 {
-#if defined(WCRYPTO_BACKEND_OPENSSL) && defined(WCRYPTO_HAS_OPENSSL_HASH)
-    return wCryptoOpenSSLSHA3_256(out, in, inlen);
-#elif defined(WCRYPTO_HAS_OPENSSL_HASH)
+#if defined(WCRYPTO_HAS_OPENSSL_HASH)
     return wCryptoOpenSSLSHA3_256(out, in, inlen);
 #else
     discard out;
@@ -147,9 +119,7 @@ int wCryptoSHA3_256(sha3_256_hash_t *out, const unsigned char *in, size_t inlen)
 
 int wCryptoSHA3_384(sha3_384_hash_t *out, const unsigned char *in, size_t inlen)
 {
-#if defined(WCRYPTO_BACKEND_OPENSSL) && defined(WCRYPTO_HAS_OPENSSL_HASH)
-    return wCryptoOpenSSLSHA3_384(out, in, inlen);
-#elif defined(WCRYPTO_HAS_OPENSSL_HASH)
+#if defined(WCRYPTO_HAS_OPENSSL_HASH)
     return wCryptoOpenSSLSHA3_384(out, in, inlen);
 #else
     discard out;
@@ -161,9 +131,7 @@ int wCryptoSHA3_384(sha3_384_hash_t *out, const unsigned char *in, size_t inlen)
 
 int wCryptoSHA3_512(sha3_512_hash_t *out, const unsigned char *in, size_t inlen)
 {
-#if defined(WCRYPTO_BACKEND_OPENSSL) && defined(WCRYPTO_HAS_OPENSSL_HASH)
-    return wCryptoOpenSSLSHA3_512(out, in, inlen);
-#elif defined(WCRYPTO_HAS_OPENSSL_HASH)
+#if defined(WCRYPTO_HAS_OPENSSL_HASH)
     return wCryptoOpenSSLSHA3_512(out, in, inlen);
 #else
     discard out;

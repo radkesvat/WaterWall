@@ -10,9 +10,10 @@ int wCryptoSoftwareSHA256(sha256_hash_t *out, const unsigned char *in, size_t in
 #endif
 
 #if defined(WCRYPTO_HAS_SOFTWARE_BLAKE2S)
-int wCryptoSoftwareBlake2sInit(blake2s_ctx_t *ctx, size_t outlen, const unsigned char *key, size_t keylen);
-int wCryptoSoftwareBlake2sUpdate(blake2s_ctx_t *ctx, const unsigned char *in, size_t inlen);
-int wCryptoSoftwareBlake2sFinal(blake2s_ctx_t *ctx, unsigned char *out);
+int wCryptoSoftwareBlake2sInit(wcrypto_software_blake2s_ctx_t *ctx, size_t outlen, const unsigned char *key,
+                               size_t keylen);
+int wCryptoSoftwareBlake2sUpdate(wcrypto_software_blake2s_ctx_t *ctx, const unsigned char *in, size_t inlen);
+int wCryptoSoftwareBlake2sFinal(wcrypto_software_blake2s_ctx_t *ctx, unsigned char *out);
 int wCryptoSoftwareBlake2s(unsigned char *out, size_t outlen, const unsigned char *key, size_t keylen,
                            const unsigned char *in, size_t inlen);
 #endif
