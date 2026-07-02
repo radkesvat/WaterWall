@@ -3,9 +3,9 @@
 #include "loggers/network_logger.h"
 
 static const router_protocol_descriptor_t kRouterProtocolDescriptors[] = {
-    {"http1", kAddressContextProtocolHttp1, protocolsniffHttp1Request},
-    {"tls", kAddressContextProtocolTls, protocolsniffTlsClientHello},
-    {"bittorrent", kAddressContextProtocolBittorrent, protocolsniffBittorrentHandshake},
+    {"http1", kAddressContextProtocolHttp1, genericsnifferSniffHttp1Request},
+    {"tls", kAddressContextProtocolTls, genericsnifferSniffTlsClientHello},
+    {"bittorrent", kAddressContextProtocolBittorrent, genericsnifferSniffBittorrentHandshake},
 };
 
 const router_protocol_descriptor_t *routerProtocolDescriptors(uint32_t *out_count)

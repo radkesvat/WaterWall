@@ -1,6 +1,6 @@
 #include "quic_sniffing.h"
 
-#include "protocol_sniff.h"
+#include "generic_sniffer.h"
 
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -10,7 +10,7 @@
 
 enum
 {
-    kRouterQuicCryptoMax             = kProtocolSniffMaxWindowBytes,
+    kRouterQuicCryptoMax             = kGenericSnifferMaxWindowBytes,
     kRouterQuicInitialSaltLength     = 20U,
     kRouterQuicInitialSecretLength   = 32U,
     kRouterQuicAes128KeyLength       = 16U,
@@ -40,7 +40,7 @@ static const uint8_t kRouterQuicSaltDraft29[kRouterQuicInitialSaltLength] = {
 
 static router_quic_sni_result_t routerQuicNeedMoreOrMissing(uint32_t payload_len)
 {
-    return payload_len < (uint32_t) kProtocolSniffMaxWindowBytes ? kRouterQuicSniNeedMore : kRouterQuicSniMissing;
+    return payload_len < (uint32_t) kGenericSnifferMaxWindowBytes ? kRouterQuicSniNeedMore : kRouterQuicSniMissing;
 }
 
 static bool routerQuicReadVarint(const uint8_t *payload, size_t payload_len, size_t *offset, uint64_t *value,

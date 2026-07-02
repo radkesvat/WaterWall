@@ -1,6 +1,6 @@
 #include "http2_sniffing.h"
 
-#include "protocol_sniff.h"
+#include "generic_sniffer.h"
 
 #include <nghttp2/nghttp2.h>
 
@@ -42,7 +42,7 @@ static bool routerHttp2NormalizeHost(const uint8_t *value, size_t value_len, uin
 
     const uint8_t *host     = value;
     uint32_t       host_len = (uint32_t) value_len;
-    protocolsniffStripHostPortAndDot(&host, &host_len);
+    genericsnifferStripHostPortAndDot(&host, &host_len);
     if (host_len == 0 || host_len > UINT8_MAX)
     {
         return false;
@@ -89,7 +89,7 @@ static int routerHttp2OnHeaderCallback(nghttp2_session *session, const nghttp2_f
 
 static router_http2_domain_result_t routerHttp2NeedMoreOrMissing(uint32_t payload_len)
 {
-    return payload_len < (uint32_t) kProtocolSniffMaxWindowBytes ? kRouterHttp2DomainNeedMore
+    return payload_len < (uint32_t) kGenericSnifferMaxWindowBytes ? kRouterHttp2DomainNeedMore
                                                                  : kRouterHttp2DomainMissing;
 }
 

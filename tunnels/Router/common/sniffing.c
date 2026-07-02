@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 #include "modules/protocol/protocol.h"
-#include "protocol_sniff.h"
+#include "generic_sniffer.h"
 
 #ifdef ROUTER_ENABLE_HTTP2_SNIFFING
 #include "http2_sniffing.h"
@@ -185,13 +185,13 @@ static router_sniff_result_t routerSniffProtocolsBeforeClassify(router_tstate_t 
 
         switch (protocols[i].sniff(mctx->payload, mctx->payload_len))
         {
-        case kProtocolSniffFound:
+        case kGenericSnifferFound:
             dest->optional_flags.detected_protocols |= flag;
             break;
-        case kProtocolSniffNeedMore:
+        case kGenericSnifferNeedMore:
             need_more = true;
             break;
-        case kProtocolSniffMissing:
+        case kGenericSnifferMissing:
         default:
             break;
         }
@@ -224,15 +224,15 @@ router_sniff_result_t routerSniffBeforeClassify(router_tstate_t *ts, const route
     {
         if (sniff_http_upgrade)
         {
-            switch (protocolsniffHttpUpgradeHeader(mctx->payload, mctx->payload_len))
+            switch (genericsnifferSniffHttp1UpgradeHeader(mctx->payload, mctx->payload_len))
             {
-            case kProtocolSniffFound:
+            case kGenericSnifferFound:
                 mctx->line_state->sniffed_attributes |= kRouterAttributeHttpUpgradePresent;
                 break;
-            case kProtocolSniffNeedMore:
+            case kGenericSnifferNeedMore:
                 need_more = true;
                 break;
-            case kProtocolSniffMissing:
+            case kGenericSnifferMissing:
             default:
                 break;
             }
@@ -240,15 +240,15 @@ router_sniff_result_t routerSniffBeforeClassify(router_tstate_t *ts, const route
 
         if (sniff_domain)
         {
-            switch (protocolsniffHttpHost(mctx->payload, mctx->payload_len, &http_host, &http_host_len))
+            switch (genericsnifferSniffHttp1Host(mctx->payload, mctx->payload_len, &http_host, &http_host_len))
             {
-            case kProtocolSniffFound:
+            case kGenericSnifferFound:
                 discard routerStoreSniffedDomain(mctx->line, http_host, http_host_len);
                 return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
-            case kProtocolSniffNeedMore:
+            case kGenericSnifferNeedMore:
                 need_more = true;
                 break;
-            case kProtocolSniffMissing:
+            case kGenericSnifferMissing:
             default:
                 break;
             }
@@ -282,15 +282,15 @@ router_sniff_result_t routerSniffBeforeClassify(router_tstate_t *ts, const route
 
     if (sniff_domain && (ts->sniffing_modes & kRouterSniffTls) != 0)
     {
-        switch (protocolsniffTlsClientHelloSni(mctx->payload, mctx->payload_len, &tls_sni, &tls_sni_len))
+        switch (genericsnifferSniffTlsClientHelloSni(mctx->payload, mctx->payload_len, &tls_sni, &tls_sni_len))
         {
-        case kProtocolSniffFound:
+        case kGenericSnifferFound:
             discard routerStoreSniffedDomain(mctx->line, tls_sni, tls_sni_len);
             return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
-        case kProtocolSniffNeedMore:
+        case kGenericSnifferNeedMore:
             need_more = true;
             break;
-        case kProtocolSniffMissing:
+        case kGenericSnifferMissing:
         default:
             break;
         }

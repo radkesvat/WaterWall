@@ -6,7 +6,7 @@
 #include "modules/protocol/protocol.h"
 #include "modules/source_port/source_port.h"
 #include "modules/username/username.h"
-#include "protocol_sniff.h"
+#include "generic_sniffer.h"
 
 #ifdef ROUTER_ENABLE_HTTP2_SNIFFING
 #include "Router/http2_sniffing.h"
@@ -1292,7 +1292,7 @@ static void testNeedMoreAndWindowLimit(void)
     require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.30", 80, IP_PROTO_TCP),
             "failed to reset destination IP after TLS");
 
-    uint8_t too_large[kProtocolSniffMaxWindowBytes];
+    uint8_t too_large[kGenericSnifferMaxWindowBytes];
     memorySet(too_large, 'X', sizeof(too_large));
     too_large[0] = 'G';
     too_large[1] = 'E';

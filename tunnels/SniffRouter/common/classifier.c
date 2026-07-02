@@ -1,7 +1,7 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "protocol_sniff.h"
+#include "generic_sniffer.h"
 
 typedef enum sniffrouter_reverse_parse_e
 {
@@ -129,15 +129,15 @@ sniffrouter_match_t sniffrouterClassify(sniffrouter_tstate_t *ts, const uint8_t 
 
     if (http_enabled)
     {
-        switch (protocolsniffHttpHost(p, n, &http_host, &http_host_len))
+        switch (genericsnifferSniffHttp1Host(p, n, &http_host, &http_host_len))
         {
-        case kProtocolSniffNeedMore:
+        case kGenericSnifferNeedMore:
             need_more = true;
             break;
-        case kProtocolSniffFound:
+        case kGenericSnifferFound:
             http_found = true;
             break;
-        case kProtocolSniffMissing:
+        case kGenericSnifferMissing:
         default:
             break;
         }
@@ -149,15 +149,15 @@ sniffrouter_match_t sniffrouterClassify(sniffrouter_tstate_t *ts, const uint8_t 
 
     if (tls_enabled)
     {
-        switch (protocolsniffTlsClientHelloSni(p, n, &tls_sni, &tls_sni_len))
+        switch (genericsnifferSniffTlsClientHelloSni(p, n, &tls_sni, &tls_sni_len))
         {
-        case kProtocolSniffNeedMore:
+        case kGenericSnifferNeedMore:
             need_more = true;
             break;
-        case kProtocolSniffFound:
+        case kGenericSnifferFound:
             tls_found = true;
             break;
-        case kProtocolSniffMissing:
+        case kGenericSnifferMissing:
         default:
             break;
         }

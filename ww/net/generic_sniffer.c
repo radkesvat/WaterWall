@@ -1,4 +1,4 @@
-#include "protocol_sniff.h"
+#include "generic_sniffer.h"
 
 static bool headerNameEquals(const uint8_t *p, uint32_t n, const char *name)
 {
@@ -100,7 +100,7 @@ static bool findHeaderEnd(const uint8_t *p, uint32_t n, uint32_t *header_end)
     return false;
 }
 
-void protocolsniffStripHostPortAndDot(const uint8_t **host, uint32_t *host_len)
+void genericsnifferStripHostPortAndDot(const uint8_t **host, uint32_t *host_len)
 {
     if (host == NULL || *host == NULL || host_len == NULL)
     {
@@ -158,19 +158,19 @@ void protocolsniffStripHostPortAndDot(const uint8_t **host, uint32_t *host_len)
     }
 }
 
-static protocol_sniff_result_t findHttpHeader(const uint8_t *p, uint32_t n, const char *name, const uint8_t **value,
-                                              uint32_t *value_len)
+static generic_sniffer_result_t findHttpHeader(const uint8_t *p, uint32_t n, const char *name, const uint8_t **value,
+                                               uint32_t *value_len)
 {
     uint32_t header_end = 0;
     if (! findHeaderEnd(p, n, &header_end))
     {
-        return n < (uint32_t) kProtocolSniffMaxWindowBytes ? kProtocolSniffNeedMore : kProtocolSniffMissing;
+        return n < (uint32_t) kGenericSnifferMaxWindowBytes ? kGenericSnifferNeedMore : kGenericSnifferMissing;
     }
 
     uint32_t request_line_end = 0;
     if (! findLineFeed(p, 0, header_end, &request_line_end))
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
     uint32_t line_start = request_line_end + 1U;
@@ -210,90 +210,90 @@ static protocol_sniff_result_t findHttpHeader(const uint8_t *p, uint32_t n, cons
                 *value     = p + value_start;
                 *value_len = content_end - value_start;
             }
-            return kProtocolSniffFound;
+            return kGenericSnifferFound;
         }
 
         line_start = line_end + 1U;
     }
 
-    return kProtocolSniffMissing;
+    return kGenericSnifferMissing;
 }
 
-static protocol_sniff_result_t findHttpHost(const uint8_t *p, uint32_t n, const uint8_t **host, uint32_t *host_len)
+static generic_sniffer_result_t findHttpHost(const uint8_t *p, uint32_t n, const uint8_t **host, uint32_t *host_len)
 {
-    const uint8_t          *value     = NULL;
-    uint32_t                value_len = 0;
-    protocol_sniff_result_t result    = findHttpHeader(p, n, "host", &value, &value_len);
-    if (result != kProtocolSniffFound)
+    const uint8_t           *value     = NULL;
+    uint32_t                 value_len = 0;
+    generic_sniffer_result_t result    = findHttpHeader(p, n, "host", &value, &value_len);
+    if (result != kGenericSnifferFound)
     {
         return result;
     }
 
-    protocolsniffStripHostPortAndDot(&value, &value_len);
+    genericsnifferStripHostPortAndDot(&value, &value_len);
     if (value_len == 0)
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
     *host     = value;
     *host_len = value_len;
-    return kProtocolSniffFound;
+    return kGenericSnifferFound;
 }
 
-protocol_sniff_result_t protocolsniffHttpHost(const uint8_t *payload, uint32_t payload_len, const uint8_t **host,
-                                              uint32_t *host_len)
+generic_sniffer_result_t genericsnifferSniffHttp1Host(const uint8_t *payload, uint32_t payload_len, const uint8_t **host,
+                                                      uint32_t *host_len)
 {
     if (payload_len == 0)
     {
-        return kProtocolSniffNeedMore;
+        return kGenericSnifferNeedMore;
     }
 
     int http_method = classifyHttpMethod(payload, payload_len);
-    if (http_method < 0 && payload_len < (uint32_t) kProtocolSniffMethodDecideBytes)
+    if (http_method < 0 && payload_len < (uint32_t) kGenericSnifferMethodDecideBytes)
     {
-        return kProtocolSniffNeedMore;
+        return kGenericSnifferNeedMore;
     }
 
     if (http_method <= 0)
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
     return findHttpHost(payload, payload_len, host, host_len);
 }
 
-protocol_sniff_result_t protocolsniffHttp1Request(const uint8_t *payload, uint32_t payload_len)
+generic_sniffer_result_t genericsnifferSniffHttp1Request(const uint8_t *payload, uint32_t payload_len)
 {
     if (payload_len == 0)
     {
-        return kProtocolSniffNeedMore;
+        return kGenericSnifferNeedMore;
     }
 
     int http_method = classifyHttp1Method(payload, payload_len);
-    if (http_method < 0 && payload_len < (uint32_t) kProtocolSniffMethodDecideBytes)
+    if (http_method < 0 && payload_len < (uint32_t) kGenericSnifferMethodDecideBytes)
     {
-        return kProtocolSniffNeedMore;
+        return kGenericSnifferNeedMore;
     }
 
-    return http_method > 0 ? kProtocolSniffFound : kProtocolSniffMissing;
+    return http_method > 0 ? kGenericSnifferFound : kGenericSnifferMissing;
 }
 
-protocol_sniff_result_t protocolsniffHttpUpgradeHeader(const uint8_t *payload, uint32_t payload_len)
+generic_sniffer_result_t genericsnifferSniffHttp1UpgradeHeader(const uint8_t *payload, uint32_t payload_len)
 {
     if (payload_len == 0)
     {
-        return kProtocolSniffNeedMore;
+        return kGenericSnifferNeedMore;
     }
 
     int http_method = classifyHttpMethod(payload, payload_len);
-    if (http_method < 0 && payload_len < (uint32_t) kProtocolSniffMethodDecideBytes)
+    if (http_method < 0 && payload_len < (uint32_t) kGenericSnifferMethodDecideBytes)
     {
-        return kProtocolSniffNeedMore;
+        return kGenericSnifferNeedMore;
     }
 
     if (http_method <= 0)
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
     return findHttpHeader(payload, payload_len, "upgrade", NULL, NULL);
@@ -304,98 +304,98 @@ static bool remainingAtLeast(const uint8_t *cursor, const uint8_t *end, size_t n
     return cursor <= end && (size_t) (end - cursor) >= needed;
 }
 
-protocol_sniff_result_t protocolsniffTlsClientHello(const uint8_t *payload, uint32_t payload_len)
+generic_sniffer_result_t genericsnifferSniffTlsClientHello(const uint8_t *payload, uint32_t payload_len)
 {
     if (payload_len == 0)
     {
-        return kProtocolSniffNeedMore;
+        return kGenericSnifferNeedMore;
     }
 
     if (payload[0] != 0x16)
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
     if (payload_len < 5U)
     {
-        return kProtocolSniffNeedMore;
+        return kGenericSnifferNeedMore;
     }
 
     if (payload[1] != 0x03 || payload[2] > 0x03)
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
     uint16_t tls_record_len = GET_BE16(payload + 3);
     if (tls_record_len < 4U)
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
     uint32_t tls_record_total_len = (uint32_t) tls_record_len + 5U;
     if (payload_len < tls_record_total_len)
     {
-        return payload_len < (uint32_t) kProtocolSniffMaxWindowBytes ? kProtocolSniffNeedMore : kProtocolSniffMissing;
+        return payload_len < (uint32_t) kGenericSnifferMaxWindowBytes ? kGenericSnifferNeedMore : kGenericSnifferMissing;
     }
 
     if (payload[5] != 0x01)
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
     uint32_t client_hello_len = GET_BE24(payload + 6);
     if (client_hello_len < 34U || client_hello_len + 4U > (uint32_t) tls_record_len)
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
-    return kProtocolSniffFound;
+    return kGenericSnifferFound;
 }
 
-protocol_sniff_result_t protocolsniffTlsClientHelloSni(const uint8_t *payload, uint32_t payload_len,
+generic_sniffer_result_t genericsnifferSniffTlsClientHelloSni(const uint8_t *payload, uint32_t payload_len,
                                                        const uint8_t **host, uint32_t *host_len)
 {
     if (payload_len == 0)
     {
-        return kProtocolSniffNeedMore;
+        return kGenericSnifferNeedMore;
     }
 
     if (payload[0] != 0x16)
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
     if (payload_len < 5U)
     {
-        return kProtocolSniffNeedMore;
+        return kGenericSnifferNeedMore;
     }
 
     if (payload[1] != 0x03 || payload[2] > 0x03)
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
     uint16_t tls_record_len = GET_BE16(payload + 3);
     if (tls_record_len < 4U)
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
     uint32_t tls_record_total_len = (uint32_t) tls_record_len + 5U;
     if (payload_len < tls_record_total_len)
     {
-        return payload_len < (uint32_t) kProtocolSniffMaxWindowBytes ? kProtocolSniffNeedMore : kProtocolSniffMissing;
+        return payload_len < (uint32_t) kGenericSnifferMaxWindowBytes ? kGenericSnifferNeedMore : kGenericSnifferMissing;
     }
 
     if (payload[5] != 0x01)
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
     uint32_t client_hello_len = GET_BE24(payload + 6);
     if (client_hello_len < 34U || client_hello_len + 4U > (uint32_t) tls_record_len)
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
     const uint8_t *client_hello = payload + 9;
@@ -404,14 +404,14 @@ protocol_sniff_result_t protocolsniffTlsClientHelloSni(const uint8_t *payload, u
 
     if (! remainingAtLeast(cursor, hello_end, 1U))
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
     uint8_t session_id_len = cursor[0];
     cursor += 1;
     if (! remainingAtLeast(cursor, hello_end, (size_t) session_id_len + 2U))
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
     cursor += session_id_len;
 
@@ -419,7 +419,7 @@ protocol_sniff_result_t protocolsniffTlsClientHelloSni(const uint8_t *payload, u
     cursor += 2;
     if (! remainingAtLeast(cursor, hello_end, (size_t) cipher_suites_len + 1U))
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
     cursor += cipher_suites_len;
 
@@ -427,7 +427,7 @@ protocol_sniff_result_t protocolsniffTlsClientHelloSni(const uint8_t *payload, u
     cursor += 1;
     if (! remainingAtLeast(cursor, hello_end, (size_t) compression_methods_len + 2U))
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
     cursor += compression_methods_len;
 
@@ -435,7 +435,7 @@ protocol_sniff_result_t protocolsniffTlsClientHelloSni(const uint8_t *payload, u
     cursor += 2;
     if (! remainingAtLeast(cursor, hello_end, extensions_len))
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
     const uint8_t *extensions_end = cursor + extensions_len;
@@ -446,7 +446,7 @@ protocol_sniff_result_t protocolsniffTlsClientHelloSni(const uint8_t *payload, u
         const uint8_t *extension_data = cursor + 4;
         if (! remainingAtLeast(extension_data, extensions_end, extension_len))
         {
-            return kProtocolSniffMissing;
+            return kGenericSnifferMissing;
         }
         const uint8_t *next_extension = extension_data + extension_len;
 
@@ -454,7 +454,7 @@ protocol_sniff_result_t protocolsniffTlsClientHelloSni(const uint8_t *payload, u
         {
             if (extension_len < 2U)
             {
-                return kProtocolSniffMissing;
+                return kGenericSnifferMissing;
             }
 
             uint16_t       server_name_list_len = GET_BE16(extension_data);
@@ -462,7 +462,7 @@ protocol_sniff_result_t protocolsniffTlsClientHelloSni(const uint8_t *payload, u
 
             if (server_name_list_len > extension_len - 2U)
             {
-                return kProtocolSniffMissing;
+                return kGenericSnifferMissing;
             }
             const uint8_t *server_name_list_end = server_name_cursor + server_name_list_len;
 
@@ -473,7 +473,7 @@ protocol_sniff_result_t protocolsniffTlsClientHelloSni(const uint8_t *payload, u
                 const uint8_t *name_data = server_name_cursor + 3;
                 if (! remainingAtLeast(name_data, server_name_list_end, name_len))
                 {
-                    return kProtocolSniffMissing;
+                    return kGenericSnifferMissing;
                 }
                 const uint8_t *next_name = name_data + name_len;
 
@@ -481,31 +481,31 @@ protocol_sniff_result_t protocolsniffTlsClientHelloSni(const uint8_t *payload, u
                 {
                     const uint8_t *value     = name_data;
                     uint32_t       value_len = name_len;
-                    protocolsniffStripHostPortAndDot(&value, &value_len);
+                    genericsnifferStripHostPortAndDot(&value, &value_len);
 
                     if (value_len == 0)
                     {
-                        return kProtocolSniffMissing;
+                        return kGenericSnifferMissing;
                     }
 
                     *host     = value;
                     *host_len = value_len;
-                    return kProtocolSniffFound;
+                    return kGenericSnifferFound;
                 }
 
                 server_name_cursor = next_name;
             }
 
-            return kProtocolSniffMissing;
+            return kGenericSnifferMissing;
         }
 
         cursor = next_extension;
     }
 
-    return kProtocolSniffMissing;
+    return kGenericSnifferMissing;
 }
 
-protocol_sniff_result_t protocolsniffBittorrentHandshake(const uint8_t *payload, uint32_t payload_len)
+generic_sniffer_result_t genericsnifferSniffBittorrentHandshake(const uint8_t *payload, uint32_t payload_len)
 {
     static const uint8_t bittorrent_prefix[20] = {
         19, 'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l',
@@ -513,15 +513,15 @@ protocol_sniff_result_t protocolsniffBittorrentHandshake(const uint8_t *payload,
 
     if (payload_len == 0)
     {
-        return kProtocolSniffNeedMore;
+        return kGenericSnifferNeedMore;
     }
 
     uint32_t compare_len =
         payload_len < (uint32_t) sizeof(bittorrent_prefix) ? payload_len : (uint32_t) sizeof(bittorrent_prefix);
     if (memoryCompare(payload, bittorrent_prefix, compare_len) != 0)
     {
-        return kProtocolSniffMissing;
+        return kGenericSnifferMissing;
     }
 
-    return payload_len < (uint32_t) sizeof(bittorrent_prefix) ? kProtocolSniffNeedMore : kProtocolSniffFound;
+    return payload_len < (uint32_t) sizeof(bittorrent_prefix) ? kGenericSnifferNeedMore : kGenericSnifferFound;
 }
