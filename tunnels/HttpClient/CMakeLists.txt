@@ -43,44 +43,11 @@ endif()
 
 target_link_libraries(HttpClient http_def)
 
-CPMAddPackage(
-    NAME nghttp2
-    GIT_TAG v1.66.0
-    GITHUB_REPOSITORY nghttp2/nghttp2
-    OPTIONS 
-    "ENABLE_APP OFF"
-    "ENABLE_HPACK_TOOLS OFF"
-    "BUILD_SHARED_LIBS OFF"
-    "BUILD_STATIC_LIBS ON"
-    "ENABLE_STATIC_CRT ON" 
-    "ENABLE_HTTP3 OFF"     
-    "WITH_JEMALLOC OFF"
-    "WITH_LIBXML2 OFF"
-    "ENABLE_EXAMPLES OFF"
-    "ENABLE_DOC OFF"
-    "ENABLE_LIB_ONLY ON"
-    # "ENABLE_DEBUG ON"
-)
-
-if(WW_HAVE_SSE3)
-    if(MSVC)
-        target_compile_options(nghttp2_static PRIVATE /arch:SSE2)   # SSE3 is included in SSE2 support on MSVC
-    else()
-        target_compile_options(nghttp2_static PRIVATE -msse3)
-    endif()
-endif()
-
-if(WW_HAVE_AVX2)
-    if(MSVC)
-        target_compile_options(nghttp2_static PRIVATE /arch:AVX2)
-    else()
-        target_compile_options(nghttp2_static PRIVATE -mavx2)
-    endif()
+if(NOT TARGET nghttp2_static)
+    message(FATAL_ERROR "HttpClient requires nghttp2_static, but it was not created")
 endif()
 
 target_link_libraries(HttpClient nghttp2_static)
-
-set_target_properties(nghttp2_static PROPERTIES UNITY_BUILD_BATCH_SIZE 18)
 
 if(NOT APPLE)
     target_precompile_headers(HttpClient REUSE_FROM ww)

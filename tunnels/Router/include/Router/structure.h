@@ -53,7 +53,8 @@ enum
 {
     kRouterSniffHttp1 = 1U << 0U,
     kRouterSniffTls   = 1U << 1U,
-    kRouterSniffQuic  = 1U << 2U
+    kRouterSniffQuic  = 1U << 2U,
+    kRouterSniffHttp2 = 1U << 3U
 };
 
 enum

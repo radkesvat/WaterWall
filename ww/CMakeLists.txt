@@ -282,6 +282,16 @@ function(ww_add_cpu_compile_option target msvc_option non_msvc_option)
     endif()
 endfunction()
 
+function(ww_add_private_cpu_compile_option target msvc_option non_msvc_option)
+    if(MSVC)
+        if(NOT "${msvc_option}" STREQUAL "")
+            target_compile_options(${target} PRIVATE "${msvc_option}")
+        endif()
+    elseif(NOT "${non_msvc_option}" STREQUAL "")
+        target_compile_options(${target} PRIVATE "${non_msvc_option}")
+    endif()
+endfunction()
+
 if(WW_TARGET_X86_64 AND WW_HAS_X86_INTRINSICS AND NOT WW_DISABLE_ADVANCED_CPU_INSTRUCTIONS)
 
     message(STATUS "Using advanced CPU instructions")
@@ -635,6 +645,41 @@ if(cares_ADDED)
     set(LIBS ${LIBS} c-ares::cares_static)
 else()
     message(FATAL_ERROR "c-ares was added by CPM, but no c-ares CMake target was created")
+endif()
+
+# nghttp2 library
+if(PROJECT_REQUIRES_NGHTTP2)
+    CPMAddPackage(
+        NAME nghttp2
+        GIT_TAG v1.66.0
+        GITHUB_REPOSITORY nghttp2/nghttp2
+        OPTIONS
+            "ENABLE_APP OFF"
+            "ENABLE_HPACK_TOOLS OFF"
+            "BUILD_SHARED_LIBS OFF"
+            "BUILD_STATIC_LIBS ON"
+            "ENABLE_STATIC_CRT ON"
+            "ENABLE_HTTP3 OFF"
+            "WITH_JEMALLOC OFF"
+            "WITH_LIBXML2 OFF"
+            "ENABLE_EXAMPLES OFF"
+            "ENABLE_DOC OFF"
+            "ENABLE_LIB_ONLY ON"
+    )
+
+    if(NOT TARGET nghttp2_static)
+        message(FATAL_ERROR "nghttp2 is required, but nghttp2_static was not created")
+    endif()
+
+    if(WW_HAVE_SSE3)
+        ww_add_private_cpu_compile_option(nghttp2_static "/arch:SSE2" "-msse3")
+    endif()
+
+    if(WW_HAVE_AVX2)
+        ww_add_private_cpu_compile_option(nghttp2_static "/arch:AVX2" "-mavx2")
+    endif()
+
+    set_target_properties(nghttp2_static PROPERTIES UNITY_BUILD_BATCH_SIZE 18)
 endif()
 
 

@@ -20,8 +20,10 @@ These tests exercise small library-level behavior without launching the `Waterwa
   Verifies `IpManipulator` TCP-bit rewriting handles the full TCP flags byte, including downstream CWR/ECE handling and
   carried original flag restore.
 - `waterwall.router_sniffing_unit`
-  Verifies Router sniffing config, Host/SNI classification behavior, protocol bits, HTTP upgrade attributes, and the
-  guarded QUIC sniffing config path when Router QUIC sniffing is compiled in.
+  Verifies Router sniffing config, Host/:authority/SNI classification behavior, protocol bits, HTTP upgrade attributes,
+  cleartext HTTP/2 authority sniffing, and protected QUIC/HTTP3 Initial SNI vectors when Router QUIC sniffing is compiled
+  in. The QUIC vector generator is kept at `tests/unittests/fixtures/router_quic_sni/gen_quic_sni_vectors.go`; generated
+  binary vectors are checked in under `tests/unittests/fixtures/router_quic_sni/vectors`.
 
 ## Running Unit Tests
 

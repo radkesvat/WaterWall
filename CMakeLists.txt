@@ -170,7 +170,8 @@ option(INCLUDE_TCP_OVER_UDP_SERVER      "link TcpOverUdpServer staticly to the c
 option(INCLUDE_BRIDGE                   "link Bridge staticly to the core"                   TRUE)
 option(INCLUDE_SNIFF_ROUTER             "link SniffRouter staticly to the core"              TRUE)
 option(INCLUDE_ROUTER                   "link Router staticly to the core"                   TRUE)
-option(router_enable_quick_sniffing     "Enable Router QUIC SNI sniffing support (requires OpenSSL)" TRUE)
+option(router_enable_quic_sniffing      "Enable Router QUIC SNI sniffing support (requires OpenSSL)" TRUE)
+option(router_enable_http2_sniffing     "Enable Router HTTP/2 plaintext domain sniffing support (requires nghttp2)" TRUE)
 option(INCLUDE_TLS_CLIENT               "link TLSClient staticly to the core"                TRUE)
 option(INCLUDE_TLS_SERVER               "link TLSServer staticly to the core"                TRUE)
 option(INCLUDE_TROJAN_CLIENT            "link TrojanClient staticly to the core"             TRUE)
@@ -219,10 +220,16 @@ if((INCLUDE_TCPCONNECTOR OR INCLUDE_UDP_CONNECTOR OR INCLUDE_SOCKS5_CLIENT OR IN
 endif()
 
 # Determine if OpenSSL is required based on included tunnels
-if(INCLUDE_TLS_SERVER OR router_enable_quick_sniffing)
+if(INCLUDE_TLS_SERVER OR router_enable_quic_sniffing)
   set(PROJECT_REQUIRES_OPENSSL TRUE CACHE INTERNAL "if any of the tunnels that require openssl is included, this will be set to true" FORCE)
 else()
   set(PROJECT_REQUIRES_OPENSSL FALSE CACHE INTERNAL "if any of the tunnels that require openssl is included, this will be set to true" FORCE)
+endif()
+
+if(INCLUDE_HTTP_SERVER OR INCLUDE_HTTP_CLIENT OR (INCLUDE_ROUTER AND router_enable_http2_sniffing))
+  set(PROJECT_REQUIRES_NGHTTP2 TRUE CACHE INTERNAL "if any of the tunnels that require nghttp2 is included, this will be set to true" FORCE)
+else()
+  set(PROJECT_REQUIRES_NGHTTP2 FALSE CACHE INTERNAL "if any of the tunnels that require nghttp2 is included, this will be set to true" FORCE)
 endif()
 
 

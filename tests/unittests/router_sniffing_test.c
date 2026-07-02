@@ -8,12 +8,21 @@
 #include "modules/username/username.h"
 #include "protocol_sniff.h"
 
+#ifdef ROUTER_ENABLE_HTTP2_SNIFFING
+#include "Router/http2_sniffing.h"
+#include <nghttp2/nghttp2.h>
+#endif
+
 #ifdef ROUTER_ENABLE_QUIC_SNIFFING
 #include "Router/quic_sniffing.h"
 #endif
 
 #include <stdio.h>
 #include <stdlib.h>
+
+#ifndef ROUTER_QUIC_SNI_VECTOR_DIR
+#define ROUTER_QUIC_SNI_VECTOR_DIR "fixtures/router_quic_sni/vectors"
+#endif
 
 static void require(bool condition, const char *message)
 {
@@ -104,6 +113,78 @@ static uint32_t makeClientHello(uint8_t *buf, const char *sni)
 
     return (uint32_t) (cursor - buf);
 }
+
+#ifdef ROUTER_ENABLE_HTTP2_SNIFFING
+static void appendHttp2Wire(uint8_t **wire, size_t *wire_len, size_t *wire_cap, const uint8_t *data, size_t data_len)
+{
+    if (*wire_len + data_len > *wire_cap)
+    {
+        size_t new_cap = *wire_cap == 0 ? 1024U : *wire_cap;
+        while (*wire_len + data_len > new_cap)
+        {
+            new_cap *= 2U;
+        }
+
+        uint8_t *grown = realloc(*wire, new_cap);
+        require(grown != NULL, "realloc failed while collecting HTTP/2 test request");
+        *wire     = grown;
+        *wire_cap = new_cap;
+    }
+
+    memoryCopy(*wire + *wire_len, data, data_len);
+    *wire_len += data_len;
+}
+
+static uint32_t makeHttp2PriorKnowledgeRequest(uint8_t **out_wire, const char *authority)
+{
+    nghttp2_session_callbacks *callbacks = NULL;
+    nghttp2_session           *client    = NULL;
+
+    require(nghttp2_session_callbacks_new(&callbacks) == 0, "HTTP/2 client callbacks allocation failed");
+    require(nghttp2_session_client_new(&client, callbacks, NULL) == 0, "HTTP/2 client session allocation failed");
+
+    require(nghttp2_submit_settings(client, NGHTTP2_FLAG_NONE, NULL, 0) == 0, "HTTP/2 client settings submit failed");
+
+    nghttp2_nv headers[] = {
+        {(uint8_t *) ":method", (uint8_t *) "GET", 7, 3, NGHTTP2_NV_FLAG_NONE},
+        {(uint8_t *) ":scheme", (uint8_t *) "http", 7, 4, NGHTTP2_NV_FLAG_NONE},
+        {(uint8_t *) ":path", (uint8_t *) "/", 5, 1, NGHTTP2_NV_FLAG_NONE},
+        {(uint8_t *) ":authority",
+         (uint8_t *) authority,
+         10,
+         stringLength(authority),
+         NGHTTP2_NV_FLAG_NONE},
+    };
+
+    int32_t stream_id = nghttp2_submit_request(client, NULL, headers, ARRAY_SIZE(headers), NULL, NULL);
+    require(stream_id > 0, "HTTP/2 request submit failed");
+
+    uint8_t *wire     = NULL;
+    size_t   wire_len = 0;
+    size_t   wire_cap = 0;
+
+    while (true)
+    {
+        const uint8_t *data = NULL;
+        nghttp2_ssize  len  = nghttp2_session_mem_send2(client, &data);
+        require(len >= 0, "HTTP/2 client mem_send failed");
+        if (len == 0)
+        {
+            break;
+        }
+        appendHttp2Wire(&wire, &wire_len, &wire_cap, data, (size_t) len);
+    }
+
+    require(wire_len > 24U, "HTTP/2 prior-knowledge request did not include frames");
+    require(wire_len <= UINT32_MAX, "HTTP/2 prior-knowledge request is too large");
+
+    nghttp2_session_del(client);
+    nghttp2_session_callbacks_del(callbacks);
+
+    *out_wire = wire;
+    return (uint32_t) wire_len;
+}
+#endif
 
 static void expectMatch(const char *name, router_match_t got, enum router_classify_result_e result, tunnel_t *target)
 {
@@ -314,12 +395,32 @@ static void testSniffingConfig(void)
     require(sniffingConfigSucceeds("{\"sniffing\":[]}", 0), "empty sniffing did not disable sniffing");
     require(sniffingConfigSucceeds("{\"sniffing\":[\"http1\",\"TLS\",\"http1\"]}", kRouterSniffHttp1 | kRouterSniffTls),
             "valid sniffing modes were not parsed case-insensitively");
+#ifdef ROUTER_ENABLE_HTTP2_SNIFFING
+    require(sniffingConfigSucceeds("{\"sniffing\":[\"HTTP2\"]}", kRouterSniffHttp2),
+            "HTTP/2 sniffing mode was not parsed when Router HTTP/2 sniffing is enabled");
+    require(sniffingConfigSucceeds("{\"sniffing\":[\"http\"]}", kRouterSniffHttp1 | kRouterSniffHttp2),
+            "http sniffing alias did not expand to HTTP/1 + HTTP/2");
+#else
+    require(sniffingConfigFails("{\"sniffing\":[\"http2\"]}"),
+            "HTTP/2 sniffing mode was accepted when Router HTTP/2 sniffing is disabled");
+    require(sniffingConfigFails("{\"sniffing\":[\"http\"]}"),
+            "http sniffing alias was accepted when Router HTTP/2 sniffing is disabled");
+#endif
 #ifdef ROUTER_ENABLE_QUIC_SNIFFING
     require(sniffingConfigSucceeds("{\"sniffing\":[\"QUIC\"]}", kRouterSniffQuic),
             "QUIC sniffing mode was not parsed when Router QUIC sniffing is enabled");
+    require(sniffingConfigSucceeds("{\"sniffing\":[\"http3\"]}", kRouterSniffQuic),
+            "HTTP/3 sniffing alias was not parsed as QUIC when Router QUIC sniffing is enabled");
 #else
     require(sniffingConfigFails("{\"sniffing\":[\"quic\"]}"),
             "QUIC sniffing mode was accepted when Router QUIC sniffing is disabled");
+    require(sniffingConfigFails("{\"sniffing\":[\"http3\"]}"),
+            "HTTP/3 sniffing alias was accepted when Router QUIC sniffing is disabled");
+#endif
+#if defined(ROUTER_ENABLE_HTTP2_SNIFFING) && defined(ROUTER_ENABLE_QUIC_SNIFFING)
+    require(sniffingConfigSucceeds("{\"sniffing\":[\"http\",\"http3\"]}",
+                                   kRouterSniffHttp1 | kRouterSniffHttp2 | kRouterSniffQuic),
+            "http + http3 sniffing aliases did not include all expected HTTP versions");
 #endif
     require(sniffingConfigSucceedsEx("{\"sniff-even-if-domain-is-already-provided\":true,\"sniffing\":[\"http1\"]}",
                                      kRouterSniffHttp1,
@@ -327,7 +428,6 @@ static void testSniffingConfig(void)
             "sniff-even-if-domain-is-already-provided=true was not parsed");
 
     require(sniffingConfigFails("{\"sniffing\":\"http1\"}"), "string sniffing value was accepted");
-    require(sniffingConfigFails("{\"sniffing\":[\"http\"]}"), "removed http sniffing value was accepted");
     require(sniffingConfigFails("{\"sniffing\":[1]}"), "non-string sniffing item was accepted");
     require(sniffingConfigFails("{\"sniffing\":[\"client-hello\"]}"), "removed TLS alias was accepted");
     require(sniffingConfigFails("{\"sniff-even-if-domain-is-already-provided\":\"true\"}"),
@@ -379,6 +479,343 @@ static void testQuicSniffingRejectsNonQuicPayload(void)
                 kRouterClassifyDefault,
                 NULL);
 
+    testLineDestroy(line);
+}
+
+typedef struct quic_vector_buffer_s
+{
+    uint8_t *data;
+    uint32_t len;
+    uint32_t cap;
+} quic_vector_buffer_t;
+
+static const char *quicSniffResultName(router_quic_sni_result_t result)
+{
+    switch (result)
+    {
+    case kRouterQuicSniFound:
+        return "Found";
+    case kRouterQuicSniNeedMore:
+        return "NeedMore";
+    case kRouterQuicSniMissing:
+        return "Missing";
+    default:
+        return "Unknown";
+    }
+}
+
+static void quicVectorFail(const char *name, const char *expect, router_quic_sni_result_t result,
+                           const uint8_t *domain, const char *want_domain, const char *comment)
+{
+    fprintf(stderr,
+            "QUIC vector %s failed: expect=%s got=%s domain='%s' want='%s' note=%s\n",
+            name,
+            expect,
+            quicSniffResultName(result),
+            domain != NULL ? (const char *) domain : "",
+            want_domain,
+            comment);
+    exit(1);
+}
+
+static void quicVectorPath(char *out, size_t out_len, const char *file_name)
+{
+    int written = snprintf(out, out_len, "%s/%s", ROUTER_QUIC_SNI_VECTOR_DIR, file_name);
+    require(written > 0 && (size_t) written < out_len, "QUIC vector path is too long");
+}
+
+static uint8_t *readQuicVectorFile(const char *file_name, uint32_t *out_len)
+{
+    char path[1024];
+    quicVectorPath(path, sizeof(path), file_name);
+
+    FILE *f = fopen(path, "rb");
+    require(f != NULL, "failed to open QUIC vector fixture");
+    require(fseek(f, 0, SEEK_END) == 0, "failed to seek QUIC vector fixture");
+    long file_size = ftell(f);
+    require(file_size >= 0, "failed to tell QUIC vector fixture size");
+    require(file_size <= (long) UINT32_MAX, "QUIC vector fixture is too large");
+    rewind(f);
+
+    uint32_t len = (uint32_t) file_size;
+    uint8_t *buf = memoryAllocate(len == 0 ? 1U : len);
+    require(buf != NULL, "failed to allocate QUIC vector fixture buffer");
+    if (len > 0)
+    {
+        require(fread(buf, 1, len, f) == len, "failed to read QUIC vector fixture");
+    }
+    fclose(f);
+
+    *out_len = len;
+    return buf;
+}
+
+static void quicVectorAppend(quic_vector_buffer_t *buffer, const uint8_t *data, uint32_t data_len)
+{
+    require(data_len <= UINT32_MAX - buffer->len, "QUIC vector accumulated payload is too large");
+    uint32_t need = buffer->len + data_len;
+    if (need > buffer->cap)
+    {
+        uint32_t new_cap = buffer->cap == 0 ? 4096U : buffer->cap;
+        while (new_cap < need)
+        {
+            require(new_cap <= UINT32_MAX / 2U, "QUIC vector accumulated payload capacity overflowed");
+            new_cap *= 2U;
+        }
+        uint8_t *grown = memoryReAllocate(buffer->data, new_cap);
+        require(grown != NULL, "failed to grow QUIC vector accumulated payload");
+        buffer->data = grown;
+        buffer->cap  = new_cap;
+    }
+
+    if (data_len > 0)
+    {
+        memoryCopy(buffer->data + buffer->len, data, data_len);
+        buffer->len = need;
+    }
+}
+
+static void quicVectorTrimLine(char *line)
+{
+    uint32_t len = (uint32_t) stringLength(line);
+    while (len > 0 && (line[len - 1U] == '\n' || line[len - 1U] == '\r'))
+    {
+        line[--len] = '\0';
+    }
+}
+
+static bool quicVectorSplitManifestLine(char *line, char **fields, uint32_t fields_count)
+{
+    char *cursor = line;
+    for (uint32_t i = 0; i < fields_count; ++i)
+    {
+        fields[i] = cursor;
+        if (i == fields_count - 1U)
+        {
+            return true;
+        }
+
+        char *bar = stringChr(cursor, '|');
+        if (bar == NULL)
+        {
+            return false;
+        }
+        *bar   = '\0';
+        cursor = bar + 1;
+    }
+
+    return true;
+}
+
+static bool quicVectorNextFile(char **cursor, const char **file_name)
+{
+    if (*cursor == NULL || **cursor == '\0')
+    {
+        return false;
+    }
+
+    char *start = *cursor;
+    char *comma = stringChr(start, ',');
+    if (comma != NULL)
+    {
+        *comma  = '\0';
+        *cursor = comma + 1;
+    }
+    else
+    {
+        *cursor = NULL;
+    }
+
+    *file_name = start;
+    return true;
+}
+
+static bool quicVectorFinalResultMatches(const char *expect, router_quic_sni_result_t result, const uint8_t *domain,
+                                         uint32_t domain_len, const char *want_domain)
+{
+    bool domain_empty = domain_len == 0 && domain[0] == '\0';
+    if (stringCompare(expect, "OK") == 0)
+    {
+        uint32_t want_len = (uint32_t) stringLength(want_domain);
+        return result == kRouterQuicSniFound && domain_len == want_len &&
+               memoryCompare(domain, want_domain, want_len) == 0 && domain[want_len] == '\0';
+    }
+    if (stringCompare(expect, "NO_SNI") == 0)
+    {
+        return result == kRouterQuicSniMissing && domain_empty;
+    }
+    if (stringCompare(expect, "FAIL") == 0)
+    {
+        return result != kRouterQuicSniFound && domain_empty;
+    }
+    if (stringCompare(expect, "NEED_MORE_OR_FAIL") == 0)
+    {
+        return (result == kRouterQuicSniNeedMore || result == kRouterQuicSniMissing) && domain_empty;
+    }
+    if (stringCompare(expect, "UNSUPPORTED_OR_FAIL") == 0)
+    {
+        return result != kRouterQuicSniFound && domain_empty;
+    }
+
+    return false;
+}
+
+static void runQuicVectorCase(char *line)
+{
+    char *fields[5] = {0};
+    require(quicVectorSplitManifestLine(line, fields, ARRAY_SIZE(fields)), "malformed QUIC vector manifest line");
+
+    const char *name        = fields[0];
+    const char *expect      = fields[1];
+    const char *want_domain = fields[2];
+    char       *files_csv   = fields[3];
+    const char *comment     = fields[4];
+
+    quic_vector_buffer_t accumulated = {0};
+    router_quic_sni_result_t result  = kRouterQuicSniMissing;
+    uint8_t domain[UINT8_MAX + 1U];
+    uint32_t domain_len = 0;
+    domain[0]           = '\0';
+
+    char       *cursor = files_csv;
+    const char *file_name;
+    while (quicVectorNextFile(&cursor, &file_name))
+    {
+        require(file_name[0] != '\0', "empty QUIC vector fixture file name");
+
+        uint32_t file_len = 0;
+        uint8_t *file     = readQuicVectorFile(file_name, &file_len);
+        quicVectorAppend(&accumulated, file, file_len);
+        memoryFree(file);
+
+        result = routerQuicSniffClientHelloSni(accumulated.data,
+                                               accumulated.len,
+                                               domain,
+                                               (uint32_t) sizeof(domain),
+                                               &domain_len);
+
+        bool has_more_files = cursor != NULL && cursor[0] != '\0';
+        if (has_more_files && stringCompare(expect, "OK") == 0 && result != kRouterQuicSniNeedMore)
+        {
+            quicVectorFail(name, "intermediate NeedMore", result, domain, want_domain, comment);
+        }
+    }
+
+    if (! quicVectorFinalResultMatches(expect, result, domain, domain_len, want_domain))
+    {
+        quicVectorFail(name, expect, result, domain, want_domain, comment);
+    }
+
+    memoryFree(accumulated.data);
+}
+
+static void testQuicVectorFixtures(void)
+{
+    char manifest[1024];
+    quicVectorPath(manifest, sizeof(manifest), "manifest.txt");
+
+    FILE *f = fopen(manifest, "r");
+    require(f != NULL, "failed to open QUIC vector manifest");
+
+    char     line[4096];
+    uint32_t total = 0;
+    while (fgets(line, sizeof(line), f) != NULL)
+    {
+        quicVectorTrimLine(line);
+        if (line[0] == '\0' || line[0] == '#')
+        {
+            continue;
+        }
+
+        ++total;
+        runQuicVectorCase(line);
+    }
+    fclose(f);
+
+    require(total > 0, "QUIC vector manifest did not contain any test cases");
+}
+
+static void testQuicHttp3AliasRoutesVector(void)
+{
+    tunnel_t *target = (tunnel_t *) (uintptr_t) 0x26;
+
+    line_t *line = testLineCreate();
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.26", 443, IP_PROTO_UDP),
+            "failed to set UDP destination IP for HTTP/3 vector test");
+    ip_addr_t original_ip = line->routing_context.dest_ctx.ip_address;
+
+    router_rule_t   rule = parseDestinationDomainRule("{\"destination-domain\":\"basic.example\"}", target);
+    router_tstate_t ts   = {0};
+    cJSON          *json = parseJsonObject("{\"sniffing\":[\"http3\"]}");
+    require(routerLoadSniffing(&ts, json), "HTTP/3 sniffing alias config failed");
+    cJSON_Delete(json);
+    require(ts.sniffing_modes == kRouterSniffQuic, "HTTP/3 sniffing alias did not enable QUIC sniffing");
+
+    uint32_t vector_len = 0;
+    uint8_t *vector     = readQuicVectorFile("01_single_initial.bin", &vector_len);
+    expectMatch("HTTP/3 alias routed QUIC SNI",
+                classifyOneRule(&ts, &rule, line, vector, vector_len),
+                kRouterClassifyTarget,
+                target);
+
+    address_context_t *dest = &line->routing_context.dest_ctx;
+    requireDomain(dest, "basic.example");
+    require(dest->type_ip == kCCTypeIp, "HTTP/3 sniffed domain changed destination type away from IP");
+    require(ipAddrCmp(&dest->ip_address, &original_ip), "HTTP/3 sniffed domain changed destination IP");
+    require(dest->port == 443, "HTTP/3 sniffed domain changed destination port");
+    require(dest->proto_udp, "HTTP/3 sniffed domain cleared destination UDP protocol");
+    require(dest->domain_resolved, "IP-backed HTTP/3 sniffed domain was not marked resolved");
+
+    memoryFree(vector);
+    routerDestinationDomainDestroy(&rule);
+    testLineDestroy(line);
+}
+
+static void testQuicSniffingSkippedOnTcpVector(void)
+{
+    tunnel_t *target = (tunnel_t *) (uintptr_t) 0x27;
+
+    line_t *line = testLineCreate();
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.27", 443, IP_PROTO_TCP),
+            "failed to set TCP destination IP for QUIC vector test");
+
+    router_rule_t   rule = parseDestinationDomainRule("{\"destination-domain\":\"basic.example\"}", target);
+    router_tstate_t ts   = {.sniffing_modes = kRouterSniffQuic};
+
+    uint32_t vector_len = 0;
+    uint8_t *vector     = readQuicVectorFile("01_single_initial.bin", &vector_len);
+    expectMatch("QUIC vector sniff skipped on TCP",
+                classifyOneRule(&ts, &rule, line, vector, vector_len),
+                kRouterClassifyDefault,
+                NULL);
+    require(line->routing_context.dest_ctx.domain == NULL, "TCP QUIC vector sniffing stored a domain");
+
+    memoryFree(vector);
+    routerDestinationDomainDestroy(&rule);
+    testLineDestroy(line);
+}
+
+static void testQuicBadVectorFallsThrough(void)
+{
+    tunnel_t *target = (tunnel_t *) (uintptr_t) 0x28;
+
+    line_t *line = testLineCreate();
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.28", 443, IP_PROTO_UDP),
+            "failed to set UDP destination IP for bad QUIC vector test");
+
+    router_rule_t   rule = parseDestinationDomainRule("{\"destination-domain\":\"basic.example\"}", target);
+    router_tstate_t ts   = {.sniffing_modes = kRouterSniffQuic};
+
+    uint32_t vector_len = 0;
+    uint8_t *vector     = readQuicVectorFile("14_bad_gcm_tag.bin", &vector_len);
+    expectMatch("bad QUIC vector falls through",
+                classifyOneRule(&ts, &rule, line, vector, vector_len),
+                kRouterClassifyDefault,
+                NULL);
+    require(line->routing_context.dest_ctx.domain == NULL, "bad QUIC vector stored a domain");
+
+    memoryFree(vector);
+    routerDestinationDomainDestroy(&rule);
     testLineDestroy(line);
 }
 #endif
@@ -566,6 +1003,141 @@ static void testTlsSniffingMatchesDestinationDomain(void)
     routerDestinationDomainDestroy(&rule);
     testLineDestroy(line);
 }
+
+#ifdef ROUTER_ENABLE_HTTP2_SNIFFING
+static void testHttp2PartialPrefaceNeedsMore(void)
+{
+    uint8_t  host[UINT8_MAX + 1U];
+    uint32_t host_len = 0;
+
+    const uint8_t partial_preface[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n";
+    require(routerHttp2SniffDomain(partial_preface,
+                                   (uint32_t) sizeof(partial_preface) - 1U,
+                                   host,
+                                   (uint32_t) sizeof(host),
+                                   &host_len) == kRouterHttp2DomainNeedMore,
+            "partial valid HTTP/2 preface did not ask for more bytes");
+    require(host_len == 0 && host[0] == '\0', "partial HTTP/2 preface filled a host");
+}
+
+static void testHttp2MalformedPayloadFallsThrough(void)
+{
+    tunnel_t *target = (tunnel_t *) (uintptr_t) 0x21;
+
+    line_t *line = testLineCreate();
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.21", 443, IP_PROTO_TCP),
+            "failed to set malformed HTTP/2 destination IP");
+
+    router_rule_t   rule = parseDestinationDomainRule("{\"destination-domain\":\"h2.example.test\"}", target);
+    router_tstate_t ts   = {.sniffing_modes = kRouterSniffHttp2};
+
+    const uint8_t payload[] = "NOT HTTP/2\r\n\r\n";
+    expectMatch("malformed HTTP/2 sniff falls through",
+                classifyOneRule(&ts, &rule, line, payload, (uint32_t) sizeof(payload) - 1U),
+                kRouterClassifyDefault,
+                NULL);
+    require(line->routing_context.dest_ctx.domain == NULL, "malformed HTTP/2 payload stored a domain");
+
+    routerDestinationDomainDestroy(&rule);
+    testLineDestroy(line);
+}
+
+static void testHttp2SniffingMatchesDestinationDomain(void)
+{
+    tunnel_t *target = (tunnel_t *) (uintptr_t) 0x22;
+
+    line_t *line = testLineCreate();
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.22", 443, IP_PROTO_TCP),
+            "failed to set HTTP/2 destination IP");
+    ip_addr_t original_ip = line->routing_context.dest_ctx.ip_address;
+
+    router_rule_t   rule = parseDestinationDomainRule("{\"destination-domain\":\"h2.example.test\"}", target);
+    router_tstate_t ts   = {.sniffing_modes = kRouterSniffHttp2};
+
+    uint8_t *request     = NULL;
+    uint32_t request_len = makeHttp2PriorKnowledgeRequest(&request, "H2.Example.Test.:443");
+    expectMatch("HTTP/2 sniffed authority route",
+                classifyOneRule(&ts, &rule, line, request, request_len),
+                kRouterClassifyTarget,
+                target);
+
+    address_context_t *dest = &line->routing_context.dest_ctx;
+    requireDomain(dest, "H2.Example.Test");
+    require(dest->type_ip == kCCTypeIp, "HTTP/2 sniffed domain changed destination type away from IP");
+    require(ipAddrCmp(&dest->ip_address, &original_ip), "HTTP/2 sniffed domain changed destination IP");
+    require(dest->port == 443, "HTTP/2 sniffed domain changed destination port");
+    require(dest->proto_tcp, "HTTP/2 sniffed domain cleared destination TCP protocol");
+    require(dest->domain_resolved, "IP-backed HTTP/2 sniffed domain was not marked resolved");
+
+    free(request);
+    routerDestinationDomainDestroy(&rule);
+    testLineDestroy(line);
+}
+
+static void testHttp2SniffingSkippedOnUdpLines(void)
+{
+    tunnel_t *target = (tunnel_t *) (uintptr_t) 0x23;
+
+    line_t *line = testLineCreate();
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.23", 443, IP_PROTO_UDP),
+            "failed to set UDP destination IP for HTTP/2 sniffing test");
+
+    router_rule_t   rule = parseDestinationDomainRule("{\"destination-domain\":\"udp-h2.example.test\"}", target);
+    router_tstate_t ts   = {.sniffing_modes = kRouterSniffHttp2};
+
+    uint8_t *request     = NULL;
+    uint32_t request_len = makeHttp2PriorKnowledgeRequest(&request, "udp-h2.example.test");
+    expectMatch("HTTP/2 sniff skipped on UDP",
+                classifyOneRule(&ts, &rule, line, request, request_len),
+                kRouterClassifyDefault,
+                NULL);
+    require(line->routing_context.dest_ctx.domain == NULL, "UDP HTTP/2 sniffing stored a domain");
+
+    free(request);
+    routerDestinationDomainDestroy(&rule);
+    testLineDestroy(line);
+}
+
+static void testHttpAliasRoutesHttp1AndHttp2(void)
+{
+    tunnel_t *target = (tunnel_t *) (uintptr_t) 0x24;
+
+    router_tstate_t ts   = {0};
+    cJSON          *json = parseJsonObject("{\"sniffing\":[\"http\"]}");
+    require(routerLoadSniffing(&ts, json), "http sniffing alias config failed");
+    cJSON_Delete(json);
+    require(ts.sniffing_modes == (kRouterSniffHttp1 | kRouterSniffHttp2),
+            "http sniffing alias included an unexpected sniffing mode");
+
+    router_rule_t rule = parseDestinationDomainRule("{\"destination-domain\":\"alias.example.test\"}", target);
+
+    line_t *line = testLineCreate();
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.24", 80, IP_PROTO_TCP),
+            "failed to set HTTP alias HTTP/1 destination IP");
+    const uint8_t request[] = "GET / HTTP/1.1\r\nHost: alias.example.test\r\n\r\n";
+    expectMatch("http alias routed HTTP/1 Host",
+                classifyOneRule(&ts, &rule, line, request, (uint32_t) sizeof(request) - 1U),
+                kRouterClassifyTarget,
+                target);
+    requireDomain(&line->routing_context.dest_ctx, "alias.example.test");
+    testLineDestroy(line);
+
+    line = testLineCreate();
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.25", 443, IP_PROTO_TCP),
+            "failed to set HTTP alias HTTP/2 destination IP");
+    uint8_t *h2_request     = NULL;
+    uint32_t h2_request_len = makeHttp2PriorKnowledgeRequest(&h2_request, "alias.example.test");
+    expectMatch("http alias routed HTTP/2 authority",
+                classifyOneRule(&ts, &rule, line, h2_request, h2_request_len),
+                kRouterClassifyTarget,
+                target);
+    requireDomain(&line->routing_context.dest_ctx, "alias.example.test");
+
+    free(h2_request);
+    routerDestinationDomainDestroy(&rule);
+    testLineDestroy(line);
+}
+#endif
 
 static void testProtocolHttp1MatchesOnlyHttp1(void)
 {
@@ -1059,6 +1631,10 @@ int main(void)
     testSniffingConfig();
 #ifdef ROUTER_ENABLE_QUIC_SNIFFING
     testQuicSniffingRejectsNonQuicPayload();
+    testQuicVectorFixtures();
+    testQuicHttp3AliasRoutesVector();
+    testQuicSniffingSkippedOnTcpVector();
+    testQuicBadVectorFallsThrough();
 #endif
     testProtocolConfig();
     testProtocolDescriptorTable();
@@ -1066,6 +1642,13 @@ int main(void)
     testRouterInitClearsOptionalFlags();
     testHttpSniffingMatchesDestinationDomain();
     testTlsSniffingMatchesDestinationDomain();
+#ifdef ROUTER_ENABLE_HTTP2_SNIFFING
+    testHttp2PartialPrefaceNeedsMore();
+    testHttp2MalformedPayloadFallsThrough();
+    testHttp2SniffingMatchesDestinationDomain();
+    testHttp2SniffingSkippedOnUdpLines();
+    testHttpAliasRoutesHttp1AndHttp2();
+#endif
     testProtocolHttp1MatchesOnlyHttp1();
     testProtocolBittorrentMatches();
     testProtocolBittorrentNeedMore();

@@ -1,6 +1,7 @@
 *.h linguist-language=C
 tests/** linguist-vendored
 tests/**/*.py linguist-vendored
+tests/unittests/fixtures/router_quic_sni/gen_quic_sni_vectors.go linguist-vendored
 tests/cases/**/probe.py linguist-vendored
 ww/lwip/** linguist-vendored
 ww/vendor/** linguist-vendored

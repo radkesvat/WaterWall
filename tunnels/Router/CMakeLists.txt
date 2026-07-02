@@ -49,7 +49,7 @@ target_include_directories(Router PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Ro
 
 target_link_libraries(Router PUBLIC ww DomainResolver)
 
-if(router_enable_quick_sniffing)
+if(router_enable_quic_sniffing)
     if(NOT TARGET OpenSSL::Crypto)
         message(FATAL_ERROR "Router QUIC sniffing is enabled, but OpenSSL::Crypto is not available")
     endif()
@@ -67,6 +67,26 @@ if(router_enable_quick_sniffing)
     target_compile_definitions(Router PUBLIC ROUTER_ENABLE_QUIC_SNIFFING=1)
     target_sources(Router PRIVATE $<TARGET_OBJECTS:RouterQuicSniffing>)
     target_link_libraries(Router PUBLIC OpenSSL::Crypto)
+endif()
+
+if(router_enable_http2_sniffing)
+    if(NOT TARGET nghttp2_static)
+        message(FATAL_ERROR "Router HTTP/2 sniffing is enabled, but nghttp2_static is not available")
+    endif()
+
+    add_library(RouterHttp2Sniffing OBJECT
+        common/http2_sniffing.c
+    )
+    target_include_directories(RouterHttp2Sniffing PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    target_include_directories(RouterHttp2Sniffing PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_include_directories(RouterHttp2Sniffing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Router)
+    target_link_libraries(RouterHttp2Sniffing PRIVATE ww nghttp2_static)
+
+    target_compile_definitions(Router PUBLIC ROUTER_ENABLE_HTTP2_SNIFFING=1)
+    target_sources(Router PRIVATE $<TARGET_OBJECTS:RouterHttp2Sniffing>)
+    target_link_libraries(Router PUBLIC nghttp2_static)
 endif()
 
 if(TARGET maxminddb::maxminddb)
@@ -93,5 +113,8 @@ if(NOT APPLE)
     target_precompile_headers(Router REUSE_FROM ww)
     if(TARGET RouterQuicSniffing)
         target_precompile_headers(RouterQuicSniffing REUSE_FROM ww)
+    endif()
+    if(TARGET RouterHttp2Sniffing)
+        target_precompile_headers(RouterHttp2Sniffing REUSE_FROM ww)
     endif()
 endif()

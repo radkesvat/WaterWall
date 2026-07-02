@@ -1,0 +1,16 @@
+# name|expect|domain|files_csv|comment
+single_initial|OK|basic.example|01_single_initial.bin|Complete ClientHello/SNI in one QUIC v1 Initial packet.
+split_inside_hostname_two_datagrams|OK|split-inside-host.example|02_split_inside_host_part1.bin,02_split_inside_host_part2.bin|Feed part1 first: sniffer should need more. Feed part2: SNI should appear. Split is inside hostname bytes.
+coalesced_two_initial_packets|OK|coalesced.example|03_coalesced_two_initials.bin|One UDP payload containing two protected Initial packets; sniffer must loop over coalesced packets.
+padding_ping_before_crypto|OK|padding-ping.example|04_padding_ping_before_crypto.bin|Initial payload starts with PADDING and PING before the CRYPTO frame.
+packet_number_length_4|OK|pnlen4.example|05_packet_number_length_4.bin|Valid Initial with 4-byte packet number; catches sniffers that only accept 1-byte PN.
+initial_with_token|OK|token.example|06_initial_with_token.bin|Client Initial with non-empty token field and 2-byte packet number.
+two_crypto_frames_same_packet|OK|two-crypto-frames.example|07_two_crypto_frames_same_packet.bin|ClientHello split across two CRYPTO frames inside the same Initial packet.
+out_of_order_crypto_offsets|OK|out-of-order.example|08_out_of_order_crypto_offsets.bin|CRYPTO stream data arrives with higher offset before offset 0; reassembly must be offset-based.
+large_offset_varint_split|OK|large-offset.example|09_large_offset_part1.bin,09_large_offset_part2.bin|Second CRYPTO offset is >63, requiring a multi-byte QUIC varint. Also puts a large extension before SNI.
+draft29_initial|OK|draft29.example|10_draft29_initial.bin|QUIC draft-29 Initial using the draft-29 Initial salt.
+no_sni_clienthello|NO_SNI||11_no_sni.bin|Valid ClientHello without server_name extension.
+fake_ech_outer_sni|OK|outer.example|12_fake_ech_outer_sni.bin|Contains SNI plus an unknown fake ECH-like extension; real ECH would hide the private name.
+truncated_initial|NEED_MORE_OR_FAIL||13_truncated_initial.bin|Half of a valid Initial packet; sniffer must not report a domain.
+bad_gcm_tag|FAIL||14_bad_gcm_tag.bin|Ciphertext/tag corrupted; sniffer must not return a domain.
+unsupported_version|UNSUPPORTED_OR_FAIL||15_unsupported_version.bin|Version field changed after encryption; v1-only sniffer should reject, not sniff.

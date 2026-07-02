@@ -4,6 +4,10 @@
 #include "modules/protocol/protocol.h"
 #include "protocol_sniff.h"
 
+#ifdef ROUTER_ENABLE_HTTP2_SNIFFING
+#include "http2_sniffing.h"
+#endif
+
 #ifdef ROUTER_ENABLE_QUIC_SNIFFING
 #include "quic_sniffing.h"
 #endif
@@ -56,34 +60,50 @@ bool routerLoadSniffing(router_tstate_t *ts, const cJSON *settings)
 
         if (routerStringEqualsIgnoreCase(value, "http"))
         {
-            LOGF("JSON Error: Router->settings->sniffing[] : value \"http\" was removed and migrated to \"http1\"");
+#ifdef ROUTER_ENABLE_HTTP2_SNIFFING
+            ts->sniffing_modes |= kRouterSniffHttp1 | kRouterSniffHttp2;
+#else
+            LOGF("JSON Error: Router->settings->sniffing[] : value \"http\" requires building with "
+                 "-Drouter_enable_http2_sniffing=ON because it expands to \"http1\" + \"http2\"");
             memoryFree(value);
             return false;
+#endif
         }
-
-        if (routerStringEqualsIgnoreCase(value, "http1"))
+        else if (routerStringEqualsIgnoreCase(value, "http1"))
         {
             ts->sniffing_modes |= kRouterSniffHttp1;
+        }
+        else if (routerStringEqualsIgnoreCase(value, "http2"))
+        {
+#ifdef ROUTER_ENABLE_HTTP2_SNIFFING
+            ts->sniffing_modes |= kRouterSniffHttp2;
+#else
+            LOGF("JSON Error: Router->settings->sniffing[] : value \"http2\" requires building with "
+                 "-Drouter_enable_http2_sniffing=ON");
+            memoryFree(value);
+            return false;
+#endif
         }
         else if (routerStringEqualsIgnoreCase(value, "tls"))
         {
             ts->sniffing_modes |= kRouterSniffTls;
         }
-        else if (routerStringEqualsIgnoreCase(value, "quic"))
+        else if (routerStringEqualsIgnoreCase(value, "quic") || routerStringEqualsIgnoreCase(value, "http3"))
         {
 #ifdef ROUTER_ENABLE_QUIC_SNIFFING
             ts->sniffing_modes |= kRouterSniffQuic;
 #else
-            LOGF("JSON Error: Router->settings->sniffing[] : value \"quic\" requires building with "
-                 "-Drouter_enable_quick_sniffing=ON");
+            LOGF("JSON Error: Router->settings->sniffing[] : value \"%s\" requires building with "
+                 "-Drouter_enable_quic_sniffing=ON",
+                 value);
             memoryFree(value);
             return false;
 #endif
         }
         else
         {
-            LOGF("JSON Error: Router->settings->sniffing[] : unsupported value \"%s\" (expected \"http1\", \"tls\", "
-                 "or \"quic\")",
+            LOGF("JSON Error: Router->settings->sniffing[] : unsupported value \"%s\" (expected \"http\", "
+                 "\"http1\", \"http2\", \"tls\", \"quic\", or \"http3\")",
                  value);
             memoryFree(value);
             return false;
@@ -101,11 +121,19 @@ static bool routerDestinationAlreadyHasDomain(line_t *line)
     return dest->domain != NULL && dest->domain_len > 0;
 }
 
+#ifdef ROUTER_ENABLE_HTTP2_SNIFFING
+static bool routerLineIsTcpOnly(line_t *line)
+{
+    const address_context_t *dest = lineGetDestinationAddressContext(line);
+    return dest->proto_tcp && ! dest->proto_udp && ! dest->proto_icmp && ! dest->proto_packet;
+}
+#endif
+
 #ifdef ROUTER_ENABLE_QUIC_SNIFFING
 static bool routerLineIsUdpOnly(line_t *line)
 {
     const address_context_t *dest = lineGetDestinationAddressContext(line);
-    return dest->proto_udp && ! dest->proto_tcp && ! dest->proto_icmp;
+    return dest->proto_udp && ! dest->proto_tcp && ! dest->proto_icmp && ! dest->proto_packet;
 }
 #endif
 
@@ -226,6 +254,28 @@ router_sniff_result_t routerSniffBeforeClassify(router_tstate_t *ts, const route
             }
         }
     }
+
+#ifdef ROUTER_ENABLE_HTTP2_SNIFFING
+    uint8_t  http2_host[UINT8_MAX + 1U];
+    uint32_t http2_host_len = 0;
+
+    if (sniff_domain && (ts->sniffing_modes & kRouterSniffHttp2) != 0 && routerLineIsTcpOnly(mctx->line))
+    {
+        switch (routerHttp2SniffDomain(mctx->payload, mctx->payload_len, http2_host, (uint32_t) sizeof(http2_host),
+                                       &http2_host_len))
+        {
+        case kRouterHttp2DomainFound:
+            discard routerStoreSniffedDomain(mctx->line, http2_host, http2_host_len);
+            return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
+        case kRouterHttp2DomainNeedMore:
+            need_more = true;
+            break;
+        case kRouterHttp2DomainMissing:
+        default:
+            break;
+        }
+    }
+#endif
 
     const uint8_t *tls_sni     = NULL;
     uint32_t       tls_sni_len = 0;

@@ -180,6 +180,9 @@ if(TARGET Router)
     ${CMAKE_SOURCE_DIR}/tunnels/Router
     ${CMAKE_SOURCE_DIR}/tunnels/Router/include/Router
   )
+  target_compile_definitions(router_sniffing_test PRIVATE
+    ROUTER_QUIC_SNI_VECTOR_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/router_quic_sni/vectors"
+  )
   target_link_libraries(router_sniffing_test PRIVATE Router ww)
   add_dependencies(waterwall_unit_tests router_sniffing_test)
 

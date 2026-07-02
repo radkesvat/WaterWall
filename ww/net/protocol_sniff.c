@@ -100,8 +100,13 @@ static bool findHeaderEnd(const uint8_t *p, uint32_t n, uint32_t *header_end)
     return false;
 }
 
-static void stripHostPortAndDot(const uint8_t **host, uint32_t *host_len)
+void protocolsniffStripHostPortAndDot(const uint8_t **host, uint32_t *host_len)
 {
+    if (host == NULL || *host == NULL || host_len == NULL)
+    {
+        return;
+    }
+
     while (*host_len > 0 &&
            ((*host)[*host_len - 1U] == ' ' || (*host)[*host_len - 1U] == '\t' || (*host)[*host_len - 1U] == '\r'))
     {
@@ -224,7 +229,7 @@ static protocol_sniff_result_t findHttpHost(const uint8_t *p, uint32_t n, const 
         return result;
     }
 
-    stripHostPortAndDot(&value, &value_len);
+    protocolsniffStripHostPortAndDot(&value, &value_len);
     if (value_len == 0)
     {
         return kProtocolSniffMissing;
@@ -476,7 +481,7 @@ protocol_sniff_result_t protocolsniffTlsClientHelloSni(const uint8_t *payload, u
                 {
                     const uint8_t *value     = name_data;
                     uint32_t       value_len = name_len;
-                    stripHostPortAndDot(&value, &value_len);
+                    protocolsniffStripHostPortAndDot(&value, &value_len);
 
                     if (value_len == 0)
                     {
