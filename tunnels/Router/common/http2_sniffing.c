@@ -9,7 +9,10 @@ enum
     kRouterHttp2PrefaceLen = 24U
 };
 
-static const uint8_t kRouterHttp2Preface[kRouterHttp2PrefaceLen] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+static const uint8_t kRouterHttp2Preface[kRouterHttp2PrefaceLen] = {
+    'P', 'R', 'I', ' ', '*', ' ', 'H', 'T', 'T', 'P', '/', '2',
+    '.', '0', '\r', '\n', '\r', '\n', 'S', 'M', '\r', '\n', '\r', '\n',
+};
 
 typedef struct router_http2_sniff_ctx_s
 {
