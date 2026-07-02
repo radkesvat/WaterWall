@@ -434,7 +434,7 @@ elseif(WCRYPTO_BACKEND_OPENSSL)
     set(WCRYPTO_BACKEND_SODIUM OFF CACHE BOOL "Enable Sodium backend" FORCE)
     set(WCRYPTO_BACKEND_SOFTWARE OFF CACHE BOOL "Enable Software backend" FORCE)
     
-    set(PROJECT_REQUIRERS_OPENSSL TRUE CACHE INTERNAL "if any of the tunnels that require openssl is included, this will be set to true" FORCE)
+    set(PROJECT_REQUIRES_OPENSSL TRUE CACHE INTERNAL "if any of the tunnels that require openssl is included, this will be set to true" FORCE)
 
 
     target_sources(ww PRIVATE 
@@ -703,7 +703,7 @@ set(LIBS ${LIBS} sodium)
 
 
 # Openssl Library
-if(PROJECT_REQUIRERS_OPENSSL)
+if(PROJECT_REQUIRES_OPENSSL)
     if(NOT TARGET OpenSSL::SSL OR NOT TARGET OpenSSL::Crypto)
         set(WW_OPENSSL_CONFIGURE_OPTIONS ${OPENSSL_CONFIGURE_OPTIONS})
         if(WW_OPENSSL_CONFIGURE_OPTIONS)

@@ -219,9 +219,9 @@ endif()
 
 # Determine if OpenSSL is required based on included tunnels
 if(INCLUDE_TLS_SERVER)
-  set(PROJECT_REQUIRERS_OPENSSL TRUE CACHE INTERNAL "if any of the tunnels that require openssl is included, this will be set to true" FORCE)
+  set(PROJECT_REQUIRES_OPENSSL TRUE CACHE INTERNAL "if any of the tunnels that require openssl is included, this will be set to true" FORCE)
 else()
-  set(PROJECT_REQUIRERS_OPENSSL FALSE CACHE INTERNAL "if any of the tunnels that require openssl is included, this will be set to true" FORCE)
+  set(PROJECT_REQUIRES_OPENSSL FALSE CACHE INTERNAL "if any of the tunnels that require openssl is included, this will be set to true" FORCE)
 endif()
 
 
