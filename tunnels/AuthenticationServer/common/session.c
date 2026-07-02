@@ -317,9 +317,7 @@ static bool authenticationserverEnsureSessionCapacity(authenticationserver_tstat
         return false;
     }
 
-    memorySet(&new_sessions[ts->sessions_capacity],
-              0,
-              sizeof(*new_sessions) * (size_t) (new_capacity - ts->sessions_capacity));
+    memoryZero(&new_sessions[ts->sessions_capacity], sizeof(*new_sessions) * (size_t) (new_capacity - ts->sessions_capacity));
     ts->sessions          = new_sessions;
     ts->sessions_capacity = new_capacity;
     return true;

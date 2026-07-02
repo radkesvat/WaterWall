@@ -9,5 +9,5 @@ void ipoverriderLinestateInitialize(ipoverrider_lstate_t *ls)
 
 void ipoverriderLinestateDestroy(ipoverrider_lstate_t *ls)
 {
-    memorySet(ls, 0, sizeof(ipoverrider_lstate_t));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(ipoverrider_lstate_t)));
 }

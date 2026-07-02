@@ -410,7 +410,7 @@ static void junkdatagramsenderMdnsRandomIpv4(uint8_t ip[4])
 
 static void junkdatagramsenderMdnsRandomIpv6LinkLocal(uint8_t ip[16])
 {
-    memorySet(ip, 0, 16);
+    memoryZero(ip, 16);
     ip[0] = 0xFE;
     ip[1] = 0x80;
     getRandomBytes(ip + 8, 8);

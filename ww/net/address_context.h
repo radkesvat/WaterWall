@@ -91,7 +91,7 @@ static inline void addresscontextReset(address_context_t *ctx)
     {
         memoryFree(ctx->domain);
     }
-    memset(ctx, 0, sizeof(*ctx));
+    memoryZero(ctx, sizeof(*ctx));
     ctx->type_ip = kCCTypeDomain;
 }
 

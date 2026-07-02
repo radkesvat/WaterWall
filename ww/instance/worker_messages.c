@@ -102,7 +102,7 @@ static bool workerTimedMessageRemoveLocked(worker_message_queue_t *queue, timed_
 static bool workerMessagePostWakeup(worker_t *worker)
 {
     wevent_t ev;
-    memorySet(&ev, 0, sizeof(ev));
+    memoryZero(&ev, sizeof(ev));
     ev.loop = worker->loop;
     ev.cb   = workerMessageReceived;
     return wloopPostEvent(worker->loop, &ev);

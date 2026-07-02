@@ -120,7 +120,7 @@ static bool tunSetMtuByName(const char *name, uint16_t mtu)
     }
 
     struct ifreq ifr;
-    memorySet(&ifr, 0, sizeof(ifr));
+    memoryZero(&ifr, sizeof(ifr));
     stringCopyN(ifr.ifr_name, name, IFNAMSIZ);
     ifr.ifr_name[IFNAMSIZ - 1] = '\0';
     ifr.ifr_mtu                = mtu;
@@ -146,7 +146,7 @@ static bool tunSetStateByName(const char *name, bool up)
     }
 
     struct ifreq ifr;
-    memorySet(&ifr, 0, sizeof(ifr));
+    memoryZero(&ifr, sizeof(ifr));
     stringCopyN(ifr.ifr_name, name, IFNAMSIZ);
     ifr.ifr_name[IFNAMSIZ - 1] = '\0';
 
@@ -200,7 +200,7 @@ static bool tunGetIfIndexByName(const char *name, uint32_t *out_index)
     }
 
     struct ifreq ifr;
-    memorySet(&ifr, 0, sizeof(ifr));
+    memoryZero(&ifr, sizeof(ifr));
     stringCopyN(ifr.ifr_name, name, IFNAMSIZ);
     ifr.ifr_name[IFNAMSIZ - 1] = '\0';
 
@@ -332,7 +332,7 @@ static bool tunDetectDefaultRouteV6(char *ifname, size_t ifname_len)
 
 bool tundeviceDetectDefaultInterface(tun_default_route_t *out)
 {
-    memorySet(out, 0, sizeof(*out));
+    memoryZero(out, sizeof(*out));
 
     char ifname_v4[64] = {0};
     char ifname_v6[64] = {0};
@@ -361,7 +361,7 @@ bool tundeviceDetectDefaultInterface(tun_default_route_t *out)
 #else
 bool tundeviceDetectDefaultInterface(tun_default_route_t *out)
 {
-    memorySet(out, 0, sizeof(*out));
+    memoryZero(out, sizeof(*out));
     return false;
 }
 #endif
@@ -966,7 +966,7 @@ bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsign
     if (family == AF_INET)
     {
         struct ifreq ifr;
-        memorySet(&ifr, 0, sizeof(ifr));
+        memoryZero(&ifr, sizeof(ifr));
         stringCopyN(ifr.ifr_name, tdev->name, IFNAMSIZ);
         ifr.ifr_name[IFNAMSIZ - 1] = '\0';
 
@@ -988,7 +988,7 @@ bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsign
     else
     {
         struct ifreq ifr;
-        memorySet(&ifr, 0, sizeof(ifr));
+        memoryZero(&ifr, sizeof(ifr));
         stringCopyN(ifr.ifr_name, tdev->name, IFNAMSIZ);
         ifr.ifr_name[IFNAMSIZ - 1] = '\0';
         if (ioctl(fd, SIOCGIFINDEX, &ifr) < 0)
@@ -999,7 +999,7 @@ bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsign
         }
 
         struct in6_ifreq ifr6;
-        memorySet(&ifr6, 0, sizeof(ifr6));
+        memoryZero(&ifr6, sizeof(ifr6));
         ifr6.ifr6_ifindex   = ifr.ifr_ifindex;
         ifr6.ifr6_prefixlen = subnet;
         if (inet_pton(AF_INET6, ip_presentation, &ifr6.ifr6_addr) != 1)
@@ -1050,7 +1050,7 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
     if (subnet <= 32)
     {
         struct ifreq ifr;
-        memorySet(&ifr, 0, sizeof(ifr));
+        memoryZero(&ifr, sizeof(ifr));
         stringCopyN(ifr.ifr_name, tdev->name, IFNAMSIZ);
         ifr.ifr_name[IFNAMSIZ - 1] = '\0';
 
@@ -1075,7 +1075,7 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
             if (ok)
             {
                 struct sockaddr_in *mask = (struct sockaddr_in *) &ifr.ifr_netmask;
-                memorySet(mask, 0, sizeof(*mask));
+                memoryZero(mask, sizeof(*mask));
                 mask->sin_family      = AF_INET;
                 mask->sin_addr.s_addr = ipv4PrefixToMask(subnet);
                 if (ioctl(fd, SIOCSIFNETMASK, &ifr) < 0)
@@ -1107,7 +1107,7 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
             }
 
             struct ifreq ifr;
-            memorySet(&ifr, 0, sizeof(ifr));
+            memoryZero(&ifr, sizeof(ifr));
             stringCopyN(ifr.ifr_name, tdev->name, IFNAMSIZ);
             ifr.ifr_name[IFNAMSIZ - 1] = '\0';
             if (ioctl(fd, SIOCGIFINDEX, &ifr) < 0)
@@ -1118,7 +1118,7 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
             }
 
             struct in6_ifreq ifr6;
-            memorySet(&ifr6, 0, sizeof(ifr6));
+            memoryZero(&ifr6, sizeof(ifr6));
             ifr6.ifr6_addr      = in6_addr;
             ifr6.ifr6_prefixlen = subnet;
             ifr6.ifr6_ifindex   = ifr.ifr_ifindex;
@@ -1471,7 +1471,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
     }
 
     // Prepare the ifreq structure to configure the TUN device
-    memset(&ifr, 0, sizeof(ifr));
+    memoryZero(&ifr, sizeof(ifr));
     strncpy(ifr.ifr_name, name, IFNAMSIZ - 1);
     ifr.ifr_name[IFNAMSIZ - 1] = '\0';
 
@@ -1504,7 +1504,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         return NULL;
     }
 
-    memorySet(&ifr, 0, sizeof(ifr));
+    memoryZero(&ifr, sizeof(ifr));
     ifr.ifr_flags = IFF_TUN | IFF_NO_PI; // TUN device, no packet information
     if (*name)
     {

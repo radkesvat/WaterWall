@@ -277,7 +277,7 @@ static void x25519_core(fe xs[5], const uint8_t scalar[X25519_BYTES], const uint
 #endif
     limb_t  swap = 0;
     limb_t *x2 = xs[0], *x3 = xs[2], *z3 = xs[3];
-    memset(xs, 0, 4 * sizeof(fe));
+    memoryZero(xs, 4 * sizeof(fe));
     x2[0] = z3[0] = 1;
     memcpy(x3, x1, sizeof(fe));
 
@@ -473,12 +473,12 @@ void x25519_sign_p2(uint8_t response[X25519_BYTES], const uint8_t challenge[X255
     swapin(scalar2, secret);
     swapin(scalar3, challenge);
     sc_montmul(scalar1, scalar2, scalar3);
-    memset(scalar2, 0, sizeof(scalar2));
+    memoryZero(scalar2, sizeof(scalar2));
     sc_montmul(scalar2, scalar1, sc_r2);
     swapout(response, scalar2);
 #else
     sc_montmul(scalar1, (const limb_t *) secret, (const limb_t *) challenge);
-    memset(response, 0, X25519_BYTES);
+    memoryZero(response, X25519_BYTES);
     sc_montmul((limb_t *) response, scalar1, sc_r2);
 #endif
 }

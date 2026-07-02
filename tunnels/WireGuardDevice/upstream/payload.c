@@ -56,7 +56,7 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
 
             if (padded_len > unpadded_len)
             {
-                memorySet(sbufGetMutablePtr(q) + unpadded_len, 0, padded_len - unpadded_len);
+                memoryZero(sbufGetMutablePtr(q) + unpadded_len, padded_len - unpadded_len);
             }
 
             // The buffer needs to be allocated from "transport" pool to leave room for LwIP generated IP headers

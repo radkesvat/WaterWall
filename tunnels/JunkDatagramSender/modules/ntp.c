@@ -49,7 +49,7 @@ static bool junkdatagramsenderNtpBuildClientRequest(sbuf_t *buf, uint8_t version
 
     sbufSetLength(buf, kNtpPacketLen);
     uint8_t *out = sbufGetMutablePtr(buf);
-    memorySet(out, 0, kNtpPacketLen);
+    memoryZero(out, kNtpPacketLen);
 
     out[0] = (uint8_t) (((version & 0x07U) << 3) | kNtpModeClient);
     out[1] = 0;

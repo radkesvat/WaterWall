@@ -6,7 +6,7 @@
 
 void socketfilteroptionInit(socket_filter_option_t *sfo)
 {
-    memorySet(sfo, 0, sizeof(*sfo));
+    memoryZero(sfo, sizeof(*sfo));
     sfo->white_list         = vec_ipmask_t_with_capacity(8);
     sfo->black_list         = vec_ipmask_t_with_capacity(8);
     sfo->ports              = vec_listener_port_t_with_capacity(4);

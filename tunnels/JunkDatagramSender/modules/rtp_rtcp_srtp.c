@@ -81,7 +81,7 @@ static bool junkdatagramsenderRtpPutZeros(junkdatagramsender_rtp_writer_t *write
 
     if (len > 0)
     {
-        memorySet(sbufGetMutablePtr(writer->buf) + writer->pos, 0, len);
+        memoryZero(sbufGetMutablePtr(writer->buf) + writer->pos, len);
     }
     writer->pos += len;
     return true;
@@ -156,7 +156,7 @@ static bool junkdatagramsenderRtpRandomExtension(uint8_t extension_data[16], uin
     *extension_data_len = 4U * fastRandRange32(1, 3);
     *extension_profile  = (fastRand32() % 100U) < 75U ? kRtpExtensionProfileOneByte : kRtpExtensionProfileTwoByte;
 
-    memorySet(extension_data, 0, *extension_data_len);
+    memoryZero(extension_data, *extension_data_len);
     if (*extension_profile == kRtpExtensionProfileOneByte)
     {
         extension_data[0] = 0x10U;

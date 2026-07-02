@@ -439,7 +439,7 @@ bool streamtopacketsSendSensitivePong(tunnel_t *t, line_t *stream_line)
     sbufSetLength(buf, kHeartbeatPacketSize);
 
     uint8_t *raw = sbufGetMutablePtr(buf);
-    memorySet(raw, 0, IP_HLEN);
+    memoryZero(raw, IP_HLEN);
 
     struct ip_hdr *iphdr = (struct ip_hdr *) raw;
     IPH_VHL_SET(iphdr, 4, IP_HLEN / 4);

@@ -62,7 +62,7 @@ static inline void qtype##_init(qtype* p, int maxsize) {\
 static inline void qtype##_clear(qtype* p) {\
     p->_offset = 0;\
     p->size = 0;\
-    memorySet(p->ptr, 0, sizeof(type) * p->maxsize);\
+    memoryZero(p->ptr, sizeof(type) * p->maxsize);\
 }\
 \
 static inline void qtype##_cleanup(qtype* p) {\

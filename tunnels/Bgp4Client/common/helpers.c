@@ -67,7 +67,7 @@ bool bgp4clientWrapFirstOpenPayload(tunnel_t *t, line_t *l, sbuf_t **buf_io)
     sbufShiftLeft(buf, kBgp4ClientOpenHeaderSize + optional_len);
 
     uint8_t *open = sbufGetMutablePtr(buf);
-    memorySet(open, 0, kBgp4ClientOpenHeaderSize + optional_len);
+    memoryZero(open, kBgp4ClientOpenHeaderSize + optional_len);
 
     uint16_t as_number_network = htons(ts->as_number);
     uint16_t hold_time_network = htons(90);

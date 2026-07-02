@@ -281,7 +281,7 @@ void trojanclientTunnelstateDestroy(trojanclient_tstate_t *ts)
     }
 
     addresscontextReset(&ts->target_addr);
-    memorySet(ts->password_hex, 0, sizeof(ts->password_hex));
+    memoryZero(ts->password_hex, sizeof(ts->password_hex));
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }
 

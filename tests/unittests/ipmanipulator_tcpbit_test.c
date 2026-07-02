@@ -50,7 +50,7 @@ static sbuf_t *createTcpPacket(uint8_t flags, uint8_t extra_tail_byte, bool appe
     sbufSetLength(buf, packet_len);
 
     uint8_t *packet = sbufGetMutablePtr(buf);
-    memorySet(packet, 0, packet_len);
+    memoryZero(packet, packet_len);
 
     struct ip_hdr  *ipheader   = (struct ip_hdr *) packet;
     struct tcp_hdr *tcp_header = (struct tcp_hdr *) (packet + ip_header_len);

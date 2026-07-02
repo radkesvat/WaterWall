@@ -69,7 +69,7 @@ static inline void atype##_init(atype* p, int maxsize) {\
 \
 static inline void atype##_clear(atype* p) {\
     p->size = 0;\
-    memorySet(p->ptr, 0, sizeof(type) * p->maxsize);\
+    memoryZero(p->ptr, sizeof(type) * p->maxsize);\
 }\
 \
 static inline void atype##_cleanup(atype* p) {\

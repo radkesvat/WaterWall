@@ -219,7 +219,7 @@ static bool parseCredentials(socks5client_tstate_t *ts, const cJSON *settings)
     if (user_len == 0 || pass_len == 0 || user_len > UINT8_MAX || pass_len > UINT8_MAX)
     {
         memoryFree(user);
-        memorySet(pass, 0, pass_len);
+        memoryZero(pass, pass_len);
         memoryFree(pass);
         LOGF("JSON Error: Socks5Client credentials must be non-empty and at most %u bytes each",
              (unsigned int) UINT8_MAX);

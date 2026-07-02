@@ -15,7 +15,7 @@ static void tcpudplistenerClearChildNode(node_t *child_node)
     memoryFree(child_node->name);
     memoryFree(child_node->type);
     memoryFree(child_node->next);
-    memorySet(child_node, 0, sizeof(*child_node));
+    memoryZero(child_node, sizeof(*child_node));
 }
 
 void tcpudplistenerTunnelstateDestroy(tcpudplistener_tstate_t *ts)

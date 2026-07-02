@@ -386,7 +386,7 @@ int Bind(int port, const char *host, int type)
     WSAInit();
 #endif
     sockaddr_u localaddr;
-    memorySet(&localaddr, 0, sizeof(localaddr));
+    memoryZero(&localaddr, sizeof(localaddr));
     int ret = sockaddrSetIpAddressPort(&localaddr, host, port);
     if (ret != 0)
     {
@@ -409,7 +409,7 @@ int wwConnect(const char *host, int port, int nonblock)
     WSAInit();
 #endif
     sockaddr_u peeraddr;
-    memorySet(&peeraddr, 0, sizeof(peeraddr));
+    memoryZero(&peeraddr, sizeof(peeraddr));
     int ret = sockaddrSetIpAddressPort(&peeraddr, host, port);
     if (ret != 0)
     {
@@ -443,7 +443,7 @@ int ConnectTimeout(const char *host, int port, int ms)
 int BindUnix(const char *path, int type)
 {
     sockaddr_u localaddr;
-    memorySet(&localaddr, 0, sizeof(localaddr));
+    memoryZero(&localaddr, sizeof(localaddr));
     sockaddr_set_path(&localaddr, path);
     return sockaddrBind(&localaddr, type);
 }
@@ -459,7 +459,7 @@ int wwListenUnix(const char *path)
 int ConnectUnix(const char *path, int nonblock)
 {
     sockaddr_u peeraddr;
-    memorySet(&peeraddr, 0, sizeof(peeraddr));
+    memoryZero(&peeraddr, sizeof(peeraddr));
     sockaddr_set_path(&peeraddr, path);
     return sockaddrConnect(&peeraddr, nonblock);
 }
@@ -495,7 +495,7 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
     listenfd = connfd = acceptfd = -1;
     struct sockaddr_in localaddr;
     socklen_t          addrlen = sizeof(localaddr);
-    memorySet(&localaddr, 0, (size_t) addrlen);
+    memoryZero(&localaddr, (size_t) addrlen);
     localaddr.sin_family      = AF_INET;
     localaddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     localaddr.sin_port        = 0;

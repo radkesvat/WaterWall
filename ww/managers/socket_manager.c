@@ -326,7 +326,7 @@ static void queueIptablesRule(uint8_t protocol, socket_filter_t *filter, uint16_
                               uint16_t to_port)
 {
     pending_iptables_rule_t rule;
-    memorySet(&rule, 0, sizeof(rule));
+    memoryZero(&rule, sizeof(rule));
 
     rule.protocol = protocol;
     rule.family   = filter->bind_family;
@@ -1198,7 +1198,7 @@ static void onAcceptTcpMultiPort(wio_t *io)
     // Recover address + port so redirected sockets still dispatch by listener specificity.
     uint16_t  orig_port = (uint16_t) ((pbuf[2] << 8) | pbuf[3]);
     ip_addr_t local_addr;
-    memorySet(&local_addr, 0, sizeof(local_addr));
+    memoryZero(&local_addr, sizeof(local_addr));
     if (use_v4_strategy)
     {
         local_addr.type = IPADDR_TYPE_V4;
@@ -1271,7 +1271,7 @@ static void computeFilterBindEndpoint(socket_filter_t *filter)
     const char *host                     = getSocketBindHost(filter, filter->option.host, host_if);
 
     ip_addr_t addr;
-    memorySet(&addr, 0, sizeof(addr));
+    memoryZero(&addr, sizeof(addr));
     bool    wildcard = false;
     uint8_t family   = AF_INET;
 
@@ -1377,7 +1377,7 @@ static void endpointRegistryReserve(endpoint_registry_t *reg, uint8_t protocol, 
     computeFilterBindEndpoint(filter);
 
     listener_endpoint_t ep;
-    memorySet(&ep, 0, sizeof(ep));
+    memoryZero(&ep, sizeof(ep));
     ep.protocol        = protocol;
     ep.family          = filter->bind_family;
     ep.is_wildcard     = filter->bind_is_wildcard;
@@ -2069,7 +2069,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
     ip_addr_t local_addr;
     if (! sockaddrToNormalizedIpAddr(&pl.real_localaddr, &local_addr))
     {
-        memorySet(&local_addr, 0, sizeof(local_addr));
+        memoryZero(&local_addr, sizeof(local_addr));
         local_addr.type = IPADDR_TYPE_V4;
     }
 

@@ -253,7 +253,7 @@ static bool junkdatagramsenderDhcpBuildClientMessage(sbuf_t *buf, uint8_t dhcp_m
         return false;
     }
 
-    memorySet(sbufGetMutablePtr(buf), 0, kDhcpv4MinPacketSize);
+    memoryZero(sbufGetMutablePtr(buf), kDhcpv4MinPacketSize);
 
     uint16_t flags = broadcast_flag ? kDhcpv4BroadcastFlag : 0;
 

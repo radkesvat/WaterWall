@@ -865,7 +865,7 @@ static inline int parseIPWithSubnetMask(const char *ip_str, ip_addr_t *ip, ip_ad
         ip->u_addr.ip6 = ip6;
 
         subnet_mask->type = IPADDR_TYPE_V6;
-        memset(&subnet_mask->u_addr.ip6.addr, 0, sizeof(subnet_mask->u_addr.ip6.addr));
+        memoryZero(&subnet_mask->u_addr.ip6.addr, sizeof(subnet_mask->u_addr.ip6.addr));
 
         for (int i = 0; i < prefix_len / 32; i++)
         {

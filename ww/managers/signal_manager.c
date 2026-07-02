@@ -276,7 +276,7 @@ static bool wakeWorker0Shutdown(void)
         return false;
     }
     wevent_t ev;
-    memorySet(&ev, 0, sizeof(ev));
+    memoryZero(&ev, sizeof(ev));
     ev.loop = loop;
     ev.cb   = worker0ShutdownEventCB;
     weventSetPriority(&ev, WEVENT_HIGH_PRIORITY);
@@ -492,7 +492,7 @@ static void posixGracefulSignalHandler(int signum)
 static void restoreOneSignalDefault(int signum)
 {
     struct sigaction sa;
-    memorySet(&sa, 0, sizeof(sa));
+    memoryZero(&sa, sizeof(sa));
     sa.sa_handler = SIG_DFL;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
@@ -552,7 +552,7 @@ static void restorePosixSignalHandlers(void)
 static void installOneSigaction(int signum, void (*handler)(int), const sigset_t *mask)
 {
     struct sigaction sa;
-    memorySet(&sa, 0, sizeof(sa));
+    memoryZero(&sa, sizeof(sa));
     sa.sa_handler = handler;
     if (mask != NULL)
     {

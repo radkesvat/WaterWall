@@ -282,7 +282,7 @@ static inline void sbufWriteLarge(sbuf_t *restrict const b, const void *restrict
  */
 static inline void sbufWriteZeros(sbuf_t *restrict const b, const uint32_t len)
 {
-    memorySet(sbufGetMutablePtr(b), 0, len);
+    memoryZero(sbufGetMutablePtr(b), len);
 }
 
 /**

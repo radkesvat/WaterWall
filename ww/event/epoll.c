@@ -50,7 +50,7 @@ int iowatcherAddEvent(wloop_t* loop, int fd, int selected_events) {
     wio_t* io = loop->ios.ptr[fd];
 
     struct epoll_event ee;
-    memorySet(&ee, 0, sizeof(ee));
+    memoryZero(&ee, sizeof(ee));
     ee.data.fd = fd;
     // pre events
     if (io->events & WW_READ) {
@@ -83,7 +83,7 @@ int iowatcherDelEvent(wloop_t* loop, int fd, int selected_events) {
     wio_t* io = loop->ios.ptr[fd];
 
     struct epoll_event ee;
-    memorySet(&ee, 0, sizeof(ee));
+    memoryZero(&ee, sizeof(ee));
     ee.data.fd = fd;
     // pre events
     if (io->events & WW_READ) {

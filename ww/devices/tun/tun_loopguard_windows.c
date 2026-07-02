@@ -119,7 +119,7 @@ static bool sockaddrInetSameAddr(const SOCKADDR_INET *a, const SOCKADDR_INET *b)
 
 static void setSockaddrInetV4(SOCKADDR_INET *out, const struct in_addr *v4)
 {
-    memorySet(out, 0, sizeof(*out));
+    memoryZero(out, sizeof(*out));
     out->Ipv4.sin_family = AF_INET;
     out->Ipv4.sin_addr   = *v4;
 }
@@ -155,7 +155,7 @@ static bool decodeFlowRemote(const WINDIVERT_ADDRESS *addr, SOCKADDR_INET *out)
         return true;
     }
 
-    memorySet(out, 0, sizeof(*out));
+    memoryZero(out, sizeof(*out));
     out->Ipv6.sin6_family = AF_INET6;
     out->Ipv6.sin6_addr   = v6;
     return true;
@@ -170,7 +170,7 @@ static bool decodeFlowRemote(const WINDIVERT_ADDRESS *addr, SOCKADDR_INET *out)
 static bool captureDefaultRoute(int family, NET_LUID *out_luid, SOCKADDR_INET *out_gateway)
 {
     SOCKADDR_INET dest;
-    memorySet(&dest, 0, sizeof(dest));
+    memoryZero(&dest, sizeof(dest));
 
     if (family == AF_INET)
     {

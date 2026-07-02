@@ -78,7 +78,7 @@ static int __add_event(wloop_t* loop, int fd, int event) {
         if (idx == kqueue_ctx->capacity) {
             kqueue_ctx_resize(kqueue_ctx, kqueue_ctx->capacity*2);
         }
-        memorySet(kqueue_ctx->changes+idx, 0, sizeof(struct kevent));
+        memoryZero(kqueue_ctx->changes+idx, sizeof(struct kevent));
         kqueue_ctx->changes[idx].ident = (uintptr_t)fd;
     }
     assert(kqueue_ctx->changes[idx].ident == fd);

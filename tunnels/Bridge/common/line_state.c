@@ -9,5 +9,5 @@ void bridgeLinestateInitialize(bridge_lstate_t *ls)
 
 void bridgeLinestateDestroy(bridge_lstate_t *ls)
 {
-    memorySet(ls, 0, sizeof(bridge_lstate_t));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(bridge_lstate_t)));
 }

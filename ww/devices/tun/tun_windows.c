@@ -105,7 +105,7 @@ static bool tunWindowsSetMtu(tun_device_t *tdev)
         return false;
     }
 
-    memorySet(&if_row, 0, sizeof(if_row));
+    memoryZero(&if_row, sizeof(if_row));
     if_row.dwIndex   = index;
     DWORD last_error = GetIfEntry(&if_row);
     if (last_error != NO_ERROR)
@@ -128,7 +128,7 @@ static bool tunWindowsSetMtu(tun_device_t *tdev)
 static bool tunWindowsDetectDefaultRouteForFamily(int family, uint32_t *out_index, char *out_name, size_t out_name_len)
 {
     SOCKADDR_INET dest;
-    memorySet(&dest, 0, sizeof(dest));
+    memoryZero(&dest, sizeof(dest));
 
     if (family == AF_INET)
     {
@@ -159,7 +159,7 @@ static bool tunWindowsDetectDefaultRouteForFamily(int family, uint32_t *out_inde
     *out_index = (uint32_t) ifindex;
 
     char ifname[256];
-    memorySet(ifname, 0, sizeof(ifname));
+    memoryZero(ifname, sizeof(ifname));
     if (ConvertInterfaceLuidToNameA(&row.InterfaceLuid, ifname, sizeof(ifname)) == NO_ERROR && ifname[0] != '\0')
     {
         stringCopyN(out_name, ifname, out_name_len);
@@ -170,7 +170,7 @@ static bool tunWindowsDetectDefaultRouteForFamily(int family, uint32_t *out_inde
 
 bool tundeviceDetectDefaultInterface(tun_default_route_t *out)
 {
-    memorySet(out, 0, sizeof(*out));
+    memoryZero(out, sizeof(*out));
 
     char ifname_v4[64] = {0};
     char ifname_v6[64] = {0};
@@ -242,8 +242,8 @@ static int tunWindowsRunCommand(const char *command_line)
     STARTUPINFOA        si;
     PROCESS_INFORMATION pi;
 
-    memorySet(&si, 0, sizeof(si));
-    memorySet(&pi, 0, sizeof(pi));
+    memoryZero(&si, sizeof(si));
+    memoryZero(&pi, sizeof(pi));
     si.cb = sizeof(si);
 
     char *command = stringDuplicate(command_line);
@@ -310,7 +310,7 @@ static bool tunWindowsParseRouteCidr(const char *cidr, SOCKADDR_INET *addr, UINT
         return false;
     }
 
-    memorySet(addr, 0, sizeof(*addr));
+    memoryZero(addr, sizeof(*addr));
     if (inet_pton(AF_INET, ip_part, &addr->Ipv4.sin_addr) == 1)
     {
         if (prefix_l < 0 || prefix_l > 32)

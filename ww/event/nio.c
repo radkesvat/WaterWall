@@ -172,7 +172,7 @@ static void nio_connect_event_cb(wevent_t *ev)
 static int nio_connect_async(wio_t *io)
 {
     wevent_t ev;
-    memorySet(&ev, 0, sizeof(ev));
+    memoryZero(&ev, sizeof(ev));
     ev.cb       = nio_connect_event_cb;
     ev.userdata = io;
     ev.privdata = (void *) (uintptr_t) io->id;

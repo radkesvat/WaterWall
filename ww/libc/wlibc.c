@@ -426,7 +426,7 @@ bool isDir(const char *path)
     if (access(path, 0) != 0)
         return false;
     struct stat st;
-    memorySet(&st, 0, sizeof(st));
+    memoryZero(&st, sizeof(st));
     stat(path, &st);
     return S_ISDIR(st.st_mode);
 }
@@ -436,7 +436,7 @@ bool isFile(const char *path)
     if (access(path, 0) != 0)
         return false;
     struct stat st;
-    memorySet(&st, 0, sizeof(st));
+    memoryZero(&st, sizeof(st));
     stat(path, &st);
     return S_ISREG(st.st_mode);
 }
@@ -449,7 +449,7 @@ bool isLink(const char *path)
     if (access(path, 0) != 0)
         return false;
     struct stat st;
-    memorySet(&st, 0, sizeof(st));
+    memoryZero(&st, sizeof(st));
     lstat(path, &st);
     return S_ISLNK(st.st_mode);
 #endif
@@ -458,7 +458,7 @@ bool isLink(const char *path)
 size_t getFileSize(const char *filepath)
 {
     struct stat st;
-    memorySet(&st, 0, sizeof(st));
+    memoryZero(&st, sizeof(st));
     stat(filepath, &st);
     return (size_t) st.st_size;
 }
@@ -719,7 +719,7 @@ int stringToUrl(hurl_t *stURL, const char *strURL)
 {
     if (stURL == NULL || strURL == NULL)
         return -1;
-    memorySet(stURL, 0, sizeof(hurl_t));
+    memoryZero(stURL, sizeof(hurl_t));
     const char *begin = strURL;
     const char *end   = strURL;
     while (*end != '\0')

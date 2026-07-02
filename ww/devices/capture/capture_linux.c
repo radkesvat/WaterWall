@@ -356,7 +356,7 @@ static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa
 {
     size_t  nl_size = NLMSG_ALIGN(NLMSG_LENGTH(sizeof(struct nfgenmsg))) + NFA_ALIGN(NFA_LENGTH(size));
     uint8_t buff[nl_size];
-    memorySet(buff, 0, nl_size);
+    memoryZero(buff, nl_size);
     struct nlmsghdr *nl_hdr = (struct nlmsghdr *) buff;
 
     nl_hdr->nlmsg_len   = NLMSG_LENGTH(sizeof(struct nfgenmsg));
@@ -379,7 +379,7 @@ static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa
     memoryMove(NFA_DATA(nl_attr), msg, size);
 
     struct sockaddr_nl nl_addr;
-    memorySet(&nl_addr, 0x0, sizeof(nl_addr));
+    memoryZero(&nl_addr, sizeof(nl_addr));
     nl_addr.nl_family = AF_NETLINK;
 
     if (sendto(netfilter_socket, buff, sizeof(buff), 0, (struct sockaddr *) &nl_addr, sizeof(nl_addr)) !=
@@ -779,7 +779,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     }
 
     struct sockaddr_nl nl_addr;
-    memorySet(&nl_addr, 0x0, sizeof(nl_addr));
+    memoryZero(&nl_addr, sizeof(nl_addr));
     nl_addr.nl_family = AF_NETLINK;
     nl_addr.nl_pid    = 0;
 

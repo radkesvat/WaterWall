@@ -517,7 +517,7 @@ inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
         if (chan_empty(c))
         {
             // The channel is irreversibly closed and empty
-            memorySet(dstelemptr, 0, c->elemsize);
+            memoryZero(dstelemptr, c->elemsize);
             *closed = true;
             return false;
         }
@@ -531,7 +531,7 @@ inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
         // channel is closed and the buffer queue is empty
         // dlog_recv("channel closed & empty queue");
         chan_unlock(&c->lock);
-        memorySet(dstelemptr, 0, c->elemsize);
+        memoryZero(dstelemptr, c->elemsize);
         if (closed)
             *closed = true;
         return false;
@@ -561,7 +561,7 @@ inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
         void *srcelemptr = chan_bufptr(c, i);
         memoryCopy(dstelemptr, srcelemptr, c->elemsize);
 #ifdef DEBUG
-        memorySet(srcelemptr, 0, c->elemsize); // zero buffer memory
+        memoryZero(srcelemptr, c->elemsize); // zero buffer memory
 #endif
 
         // dlog_recv("dequeue elemptr %p from buf[%u]", srcelemptr, i);
@@ -604,7 +604,7 @@ inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
 
 ret_closed:
     // dlog_recv("channel closed");
-    memorySet(dstelemptr, 0, c->elemsize);
+    memoryZero(dstelemptr, c->elemsize);
     return false;
 }
 

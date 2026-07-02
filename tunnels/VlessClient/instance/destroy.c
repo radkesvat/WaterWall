@@ -7,7 +7,7 @@ static void vlessclientClearInternalNode(node_t *node)
     memoryFree(node->name);
     memoryFree(node->type);
     memoryFree(node->next);
-    memorySet(node, 0, sizeof(*node));
+    memoryZero(node, sizeof(*node));
 }
 
 static void vlessclientDestroyInternalDomainResolverChain(vlessclient_tstate_t *ts)

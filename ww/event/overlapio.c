@@ -278,7 +278,7 @@ int wioConnect (wio_t* io) {
     // NOTE: ConnectEx must call bind
     struct sockaddr_in localaddr;
     socklen_t addrlen = sizeof(localaddr);
-    memorySet(&localaddr, 0, addrlen);
+    memoryZero(&localaddr, addrlen);
     localaddr.sin_family = AF_INET;
     localaddr.sin_addr.s_addr = htonl(INADDR_ANY);
     localaddr.sin_port = htons(0);

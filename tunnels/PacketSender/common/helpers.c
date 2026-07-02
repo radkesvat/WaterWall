@@ -104,7 +104,7 @@ static uint64_t packetsenderNowMs(void)
 static void packetsenderInitIpv4Header(struct ip_hdr *ipheader, uint16_t packet_len, uint16_t packet_id,
                                        uint8_t protocol, uint32_t src_addr_network, uint32_t dest_addr_network)
 {
-    memorySet(ipheader, 0, kPacketSenderIpv4HeaderLength);
+    memoryZero(ipheader, kPacketSenderIpv4HeaderLength);
 
     IPH_VHL_SET(ipheader, 4, kPacketSenderIpv4HeaderLength / 4U);
     IPH_TOS_SET(ipheader, 0);
@@ -126,7 +126,7 @@ static void packetsenderBuildTcpPacket(const packetsender_tstate_t *state, uint8
     struct ip_hdr  *ipheader  = (struct ip_hdr *) packet;
     struct tcp_hdr *tcpheader = (struct tcp_hdr *) (packet + kPacketSenderIpv4HeaderLength);
 
-    memorySet(packet, 0, kPacketSenderTcpPacketLength);
+    memoryZero(packet, kPacketSenderTcpPacketLength);
 
     packetsenderInitIpv4Header(ipheader,
                                kPacketSenderTcpPacketLength,
@@ -154,7 +154,7 @@ static void packetsenderBuildUdpPacket(const packetsender_tstate_t *state, uint8
     struct ip_hdr  *ipheader  = (struct ip_hdr *) packet;
     struct udp_hdr *udpheader = (struct udp_hdr *) (packet + kPacketSenderIpv4HeaderLength);
 
-    memorySet(packet, 0, kPacketSenderUdpPacketLength);
+    memoryZero(packet, kPacketSenderUdpPacketLength);
 
     packetsenderInitIpv4Header(ipheader,
                                kPacketSenderUdpPacketLength,
@@ -177,7 +177,7 @@ static void packetsenderBuildIcmpPacket(const packetsender_tstate_t *state, uint
     struct ip_hdr        *ipheader   = (struct ip_hdr *) packet;
     struct icmp_echo_hdr *icmpheader = (struct icmp_echo_hdr *) (packet + kPacketSenderIpv4HeaderLength);
 
-    memorySet(packet, 0, kPacketSenderIcmpPacketLength);
+    memoryZero(packet, kPacketSenderIcmpPacketLength);
 
     packetsenderInitIpv4Header(ipheader,
                                kPacketSenderIcmpPacketLength,
@@ -202,7 +202,7 @@ static void packetsenderBuildGenericPacket(const packetsender_tstate_t *state, u
     struct ip_hdr *ipheader = (struct ip_hdr *) packet;
     uint8_t       *payload  = packet + kPacketSenderIpv4HeaderLength;
 
-    memorySet(packet, 0, kPacketSenderGenericPacketLength);
+    memoryZero(packet, kPacketSenderGenericPacketLength);
 
     packetsenderInitIpv4Header(ipheader,
                                kPacketSenderGenericPacketLength,

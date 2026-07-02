@@ -9,5 +9,5 @@ void ipmanipulatorLinestateInitialize(ipmanipulator_lstate_t *ls)
 
 void ipmanipulatorLinestateDestroy(ipmanipulator_lstate_t *ls)
 {
-    memorySet(ls, 0, sizeof(ipmanipulator_lstate_t));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(ipmanipulator_lstate_t)));
 }

@@ -53,7 +53,7 @@ void *memoryAllocateAlignedZero(size_t size, size_t alignment)
     void *ptr = memoryAllocateAligned(size, alignment);
     if (ptr != NULL)
     {
-        memorySet(ptr, 0, size);
+        memoryZero(ptr, size);
     }
     return ptr;
 }
@@ -268,7 +268,7 @@ void *memoryAllocateZero(size_t size)
     void *ptr = memoryAllocate(size);
     if (ptr != NULL)
     {
-        memorySet(ptr, 0, size);
+        memoryZero(ptr, size);
     }
     return ptr;
 }

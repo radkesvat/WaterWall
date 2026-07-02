@@ -110,7 +110,7 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
                                             .src_ctx      = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
                                             .local_listener_port = 0}};
 
-    memorySet((void *) &l->tunnels_line_state[0], 0, genericpoolGetItemSize(pools[current]) - sizeof(line_t));
+    memoryZero((void *) &l->tunnels_line_state[0], genericpoolGetItemSize(pools[current]) - sizeof(line_t));
 
     return l;
 }
@@ -342,7 +342,7 @@ static inline void *lineGetState(line_t *l, tunnel_t *t)
 static inline void lineClearState(void *state, size_t size)
 {
 #ifdef DEBUG
-    memorySet(state, 0, size);
+    memoryZero(state, size);
 #endif
     discard size;
     discard state;

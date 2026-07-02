@@ -42,7 +42,7 @@ void* eventloopRealloc(void* oldptr, size_t newsize, size_t oldsize) {
         exit(-1);
     }
     if (newsize > oldsize) {
-        memorySet((char*)ptr + oldsize, 0, newsize - oldsize);
+        memoryZero((char*)ptr + oldsize, newsize - oldsize);
     }
     return ptr;
 }

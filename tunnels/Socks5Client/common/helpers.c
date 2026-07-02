@@ -299,7 +299,7 @@ void socks5clientTunnelstateDestroy(socks5client_tstate_t *ts)
 
     if (ts->password != NULL)
     {
-        memorySet(ts->password, 0, ts->password_len);
+        memoryZero(ts->password, ts->password_len);
         memoryFree(ts->password);
         ts->password = NULL;
     }

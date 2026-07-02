@@ -28,7 +28,7 @@ void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx)
         BIO_free(ls->rbio);
         BIO_free(ls->wbio);
         bufferqueueDestroy(&(ls->bq));
-        memorySet(ls, 0, sizeof(tlsclient_lstate_t));
+        memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tlsclient_lstate_t)));
         terminateProgram(1);
         return;
     }
@@ -42,7 +42,7 @@ void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx)
         BIO_free(ls->rbio);
         BIO_free(ls->wbio);
         bufferqueueDestroy(&(ls->bq));
-        memorySet(ls, 0, sizeof(tlsclient_lstate_t));
+        memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tlsclient_lstate_t)));
         terminateProgram(1);
         return;
     }

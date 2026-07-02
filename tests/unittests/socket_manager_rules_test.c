@@ -104,7 +104,7 @@ static void testEmptyDestTreatedAsWildcard(void)
 static ip_addr_t ipv4Addr(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
 {
     ip_addr_t ip;
-    memset(&ip, 0, sizeof(ip));
+    memoryZero(&ip, sizeof(ip));
     ip.type = IPADDR_TYPE_V4;
     IP4_ADDR(&ip.u_addr.ip4, a, b, c, d);
     return ip;

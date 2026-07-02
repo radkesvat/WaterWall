@@ -18,5 +18,5 @@ void routerLinestateDestroy(line_t *l, router_lstate_t *ls)
         ls->pending = NULL;
     }
 
-    memorySet(ls, 0, sizeof(*ls));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }

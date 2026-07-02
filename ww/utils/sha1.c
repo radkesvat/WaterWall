@@ -163,7 +163,7 @@ void wwSHA1Transform(
     /* Wipe variables */
     a = b = c = d = e = 0;
 #ifdef SHA1HANDSOFF
-    memorySet(block, '\0', sizeof(block));
+    memoryZero(block, sizeof(block));
 #endif
 }
 
@@ -266,8 +266,8 @@ void wwSHA1Final(
             ((context->state[i >> 2] >> ((3 - (i & 3)) * 8)) & 255);
     }
     /* Wipe variables */
-    memorySet(context, '\0', sizeof(*context));
-    memorySet(&finalcount, '\0', sizeof(finalcount));
+    memoryZero(context, sizeof(*context));
+    memoryZero(&finalcount, sizeof(finalcount));
 }
 
 void wwSHA1Pointer(

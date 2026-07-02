@@ -134,7 +134,7 @@ static bool bindSourceIpIfNeeded(int sockfd, int addr_type, const tcpconnector_s
     }
 
     sockaddr_u local_addr;
-    memorySet(&local_addr, 0, sizeof(local_addr));
+    memoryZero(&local_addr, sizeof(local_addr));
 
     if (sockaddrSetIpAddressPort(&local_addr, source_ip, 0) != 0)
     {

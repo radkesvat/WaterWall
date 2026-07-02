@@ -215,7 +215,7 @@ static void testerserverWritePacketIpv4Header(testerserver_tstate_t *ts, sbuf_t 
 
     testerserverPacketIpv4DirectionAddrs(ts, direction, &src_addr, &dest_addr);
 
-    memorySet(packet, 0, header_len);
+    memoryZero(packet, header_len);
 
     IPH_VHL_SET(ipheader, 4, header_len / 4U);
     IPH_TOS_SET(ipheader, 0);
@@ -245,7 +245,7 @@ static void testerserverWritePacketIpv4Transport(testerserver_tstate_t *ts, sbuf
     case kTesterServerPacketIpv4TransportTcp: {
         struct tcp_hdr *tcpheader = (struct tcp_hdr *) transport;
 
-        memorySet(tcpheader, 0, sizeof(*tcpheader));
+        memoryZero(tcpheader, sizeof(*tcpheader));
         tcpheader->src   = lwip_htons(src_port);
         tcpheader->dest  = lwip_htons(dest_port);
         tcpheader->seqno = lwip_htonl(0x10203040U + (uint32_t) chunk_index);
@@ -258,7 +258,7 @@ static void testerserverWritePacketIpv4Transport(testerserver_tstate_t *ts, sbuf
     case kTesterServerPacketIpv4TransportUdp: {
         struct udp_hdr *udpheader = (struct udp_hdr *) transport;
 
-        memorySet(udpheader, 0, sizeof(*udpheader));
+        memoryZero(udpheader, sizeof(*udpheader));
         udpheader->src  = lwip_htons(src_port);
         udpheader->dest = lwip_htons(dest_port);
         udpheader->len  = lwip_htons(transport_len);
@@ -267,7 +267,7 @@ static void testerserverWritePacketIpv4Transport(testerserver_tstate_t *ts, sbuf
     case kTesterServerPacketIpv4TransportIcmp: {
         struct icmp_echo_hdr *icmpheader = (struct icmp_echo_hdr *) transport;
 
-        memorySet(icmpheader, 0, sizeof(*icmpheader));
+        memoryZero(icmpheader, sizeof(*icmpheader));
         ICMPH_TYPE_SET(icmpheader, direction == kTesterServerDirectionRequest ? ICMP_ECHO : ICMP_ER);
         ICMPH_CODE_SET(icmpheader, 0);
         icmpheader->id    = lwip_htons(0x5151U);

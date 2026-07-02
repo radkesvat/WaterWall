@@ -598,7 +598,7 @@ int wloopRun(wloop_t *loop)
 int wloopWakeup(wloop_t *loop)
 {
     wevent_t ev;
-    memorySet(&ev, 0, sizeof(ev));
+    memoryZero(&ev, sizeof(ev));
     wloopPostEvent(loop, &ev);
     return 0;
 }
@@ -1177,7 +1177,7 @@ static void wio_close_event_cb(wevent_t *ev)
 int wioCloseAsync(wio_t *io)
 {
     wevent_t ev;
-    memorySet(&ev, 0, sizeof(ev));
+    memoryZero(&ev, sizeof(ev));
     ev.cb       = wio_close_event_cb;
     ev.userdata = io;
     ev.privdata = (void *) (uintptr_t) io->id;
@@ -1311,7 +1311,7 @@ wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio
     if (sock_type == -1)
         return NULL;
     sockaddr_u addr;
-    memorySet(&addr, 0, sizeof(addr));
+    memoryZero(&addr, sizeof(addr));
     int ret =  sockaddrSetIpAddressPort(&addr, host, port);
 
     if (ret != 0)

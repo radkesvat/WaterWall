@@ -71,14 +71,14 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 
         struct iphdr *ip_header0 = (struct iphdr *) sbufGetRawPtr(buf);
 
-        memorySet(&addrs[0], 0, sizeof(addrs[0]));
+        memoryZero(&addrs[0], sizeof(addrs[0]));
         addrs[0].sin_family      = AF_INET;
         addrs[0].sin_addr.s_addr = ip_header0->daddr;
 
         iovs[0].iov_base = (void *) ip_header0;
         iovs[0].iov_len  = len0;
 
-        memorySet(&msgs[0], 0, sizeof(msgs[0]));
+        memoryZero(&msgs[0], sizeof(msgs[0]));
         msgs[0].msg_hdr.msg_name    = &addrs[0];
         msgs[0].msg_hdr.msg_namelen = sizeof(addrs[0]);
         msgs[0].msg_hdr.msg_iov     = &iovs[0];
@@ -110,12 +110,12 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
             }
 
             struct iphdr *ip_header = (struct iphdr *) sbufGetRawPtr(b2);
-            memorySet(&addrs[i], 0, sizeof(addrs[i]));
+            memoryZero(&addrs[i], sizeof(addrs[i]));
             addrs[i].sin_family      = AF_INET;
             addrs[i].sin_addr.s_addr = ip_header->daddr;
             iovs[i].iov_base         = (void *) ip_header;
             iovs[i].iov_len          = sbufGetLength(b2);
-            memorySet(&msgs[i], 0, sizeof(msgs[i]));
+            memoryZero(&msgs[i], sizeof(msgs[i]));
             msgs[i].msg_hdr.msg_name    = &addrs[i];
             msgs[i].msg_hdr.msg_namelen = sizeof(addrs[i]);
             msgs[i].msg_hdr.msg_iov     = &iovs[i];

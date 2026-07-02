@@ -450,7 +450,7 @@ static void pingserverEncapsulateOutboundWithNewIpAndIcmp(tunnel_t *t, line_t *l
     struct ip_hdr        *ipheader   = (struct ip_hdr *) packet;
     struct icmp_echo_hdr *icmpheader = (struct icmp_echo_hdr *) (packet + kPingServerIpv4HeaderLength);
 
-    memorySet(packet, 0, kPingServerEncapsulationOverhead);
+    memoryZero(packet, kPingServerEncapsulationOverhead);
 
     IPH_VHL_SET(ipheader, 4, sizeof(struct ip_hdr) / 4U);
     IPH_TOS_SET(ipheader, state->tos);
@@ -568,7 +568,7 @@ static void pingserverEncapsulateOutboundReusingIpv4Header(tunnel_t *t, line_t *
         pingserverXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
     }
 
-    memorySet(icmpheader, 0, kPingServerIcmpHeaderLength);
+    memoryZero(icmpheader, kPingServerIcmpHeaderLength);
     pingserverFillIcmpEchoHeader(state, icmpheader);
 
     IPH_LEN_SET(ipheader, lwip_htons((uint16_t) final_packet_len));
@@ -614,7 +614,7 @@ static void pingserverEncapsulateOutboundOnlyIcmp(tunnel_t *t, line_t *l, sbuf_t
     uint8_t              *frame      = sbufGetMutablePtr(buf);
     struct icmp_echo_hdr *icmpheader = (struct icmp_echo_hdr *) frame;
 
-    memorySet(icmpheader, 0, kPingServerIcmpHeaderLength);
+    memoryZero(icmpheader, kPingServerIcmpHeaderLength);
     pingserverFillIcmpEchoHeader(state, icmpheader);
     icmpheader->chksum = calcGenericChecksum(frame, (uint16_t) frame_len, 0);
     lineSetRecalculateChecksum(l, false);

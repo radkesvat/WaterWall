@@ -29,7 +29,7 @@ static void require(bool cond, const char *msg)
 // filled with payload_fill so the test can recognize a recovered packet.
 static uint32_t buildIpv4(uint8_t *dst, uint16_t total_len, uint8_t proto, uint8_t payload_fill)
 {
-    memorySet(dst, 0, IP_HLEN);
+    memoryZero(dst, IP_HLEN);
 
     struct ip_hdr *ip = (struct ip_hdr *) dst;
     IPH_VHL_SET(ip, 4, IP_HLEN / 4);
@@ -155,7 +155,7 @@ static void testGarbagePrefixRecovers(buffer_stream_t *bs, buffer_pool_t *pool)
     // A run of bytes that can never begin a valid IPv4 packet (version nibble 0), followed by a real
     // packet. The parser must drop the garbage and recover the valid packet intact.
     uint8_t raw[300];
-    memorySet(raw, 0x00, 137);
+    memoryZero(raw, 137);
     uint32_t len = 137 + buildIpv4(raw + 137, 60, IP_PROTO_ICMP, 0xC7);
 
     pushBytes(bs, pool, raw, len, 23);
@@ -268,7 +268,7 @@ static void testFuzzRecovers(buffer_stream_t *bs, buffer_pool_t *pool)
 
         // Wide clean-zero gap then a sentinel packet.
         uint8_t zeros[2048];
-        memorySet(zeros, 0x00, sizeof(zeros));
+        memoryZero(zeros, sizeof(zeros));
         pushBytes(bs, pool, zeros, sizeof(zeros), 211);
 
         uint8_t pkt[80];
@@ -308,7 +308,7 @@ static void testIsForwardable(buffer_pool_t *pool)
 
     // IPv6 version nibble.
     sbufSetLength(b, 50);
-    memorySet(sbufGetMutablePtr(b), 0, 50);
+    memoryZero(sbufGetMutablePtr(b), 50);
     ((uint8_t *) sbufGetMutablePtr(b))[0] = 0x60;
     require(! packetstostreamIsForwardableIpv4Packet(b), "forwardable: IPv6 must be dropped");
 
@@ -321,7 +321,7 @@ static void testIsForwardable(buffer_pool_t *pool)
     // Oversized packet (> kMaxAllowedPacketLength) using a large buffer.
     sbuf_t *big = bufferpoolGetLargeBuffer(pool);
     sbufSetLength(big, kMaxAllowedPacketLength + 1);
-    memorySet(sbufGetMutablePtr(big), 0, IP_HLEN);
+    memoryZero(sbufGetMutablePtr(big), IP_HLEN);
     ((uint8_t *) sbufGetMutablePtr(big))[0] = 0x45;
     require(! packetstostreamIsForwardableIpv4Packet(big), "forwardable: oversized packet must fail");
     bufferpoolReuseBuffer(pool, big);

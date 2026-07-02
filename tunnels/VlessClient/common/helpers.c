@@ -202,7 +202,7 @@ void vlessclientTunnelstateDestroy(vlessclient_tstate_t *ts)
     }
 
     addresscontextReset(&ts->target_addr);
-    memorySet(ts->uuid, 0, sizeof(ts->uuid));
+    memoryZero(ts->uuid, sizeof(ts->uuid));
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }
 

@@ -1028,7 +1028,7 @@ void vlessserverTunnelstateDestroy(vlessserver_tstate_t *ts)
     memoryFree(ts->user_controller_node.name);
     memoryFree(ts->user_controller_node.type);
     memoryFree(ts->user_controller_node.next);
-    memorySet(&ts->user_controller_node, 0, sizeof(ts->user_controller_node));
+    memoryZero(&ts->user_controller_node, sizeof(ts->user_controller_node));
 
     for (uint32_t i = 0; i < ts->user_count; ++i)
     {

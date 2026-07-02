@@ -11,7 +11,7 @@ void junkdatagramsenderLinestateInitialize(junkdatagramsender_lstate_t *ls, cons
 
 void junkdatagramsenderLinestateDestroy(junkdatagramsender_lstate_t *ls)
 {
-    memorySet(ls, 0, tunnelGetCorrectAlignedLineStateSize(sizeof(junkdatagramsender_lstate_t)));
+    memoryZero(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(junkdatagramsender_lstate_t)));
 }
 
 static uint32_t junkdatagramsenderProtocolCount(uint64_t mask)

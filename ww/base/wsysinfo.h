@@ -55,7 +55,7 @@ static inline int getMemInfo(meminfo_t *mem)
 {
 #ifdef OS_WIN
     MEMORYSTATUSEX memstat;
-    memorySet(&memstat, 0, sizeof(memstat));
+    memoryZero(&memstat, sizeof(memstat));
     memstat.dwLength = sizeof(memstat);
     GlobalMemoryStatusEx(&memstat);
     mem->total = (unsigned long) (memstat.ullTotalPhys >> 10);

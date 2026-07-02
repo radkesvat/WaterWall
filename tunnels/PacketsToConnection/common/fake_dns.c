@@ -531,7 +531,7 @@ void ptcFakeDnsDestroy(ptc_tstate_t *ts)
     }
 
     memoryFree(dns->records);
-    memorySet(dns, 0, sizeof(*dns));
+    memoryZero(dns, sizeof(*dns));
 }
 
 bool ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_line, sbuf_t *buf, const struct ip_hdr *iphdr,
@@ -583,7 +583,7 @@ bool ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_line, sbuf_t *buf
 
     uint32_t response_len = IP_HLEN + UDP_HLEN + (uint32_t) dns_response_len;
     sbufSetLength(response, response_len);
-    memorySet(packet, 0, IP_HLEN + UDP_HLEN);
+    memoryZero(packet, IP_HLEN + UDP_HLEN);
 
     IPH_VHL_SET(rip, 4, IP_HLEN / 4U);
     IPH_TOS_SET(rip, 0);

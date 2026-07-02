@@ -134,7 +134,7 @@ static const char *muxclientBoolText(bool value)
 
 static void muxclientCollectParentStats(muxclient_lstate_t *parent_ls, muxclient_parent_stats_t *stats)
 {
-    memorySet(stats, 0, sizeof(*stats));
+    memoryZero(stats, sizeof(*stats));
 
     for (muxclient_lstate_t *child_ls = parent_ls->child_next; child_ls != NULL; child_ls = child_ls->child_next)
     {

@@ -64,7 +64,7 @@ static const char *muxserverBoolText(bool value)
 
 static void muxserverCollectParentStats(muxserver_lstate_t *parent_ls, muxserver_parent_stats_t *stats)
 {
-    memorySet(stats, 0, sizeof(*stats));
+    memoryZero(stats, sizeof(*stats));
 
     for (muxserver_lstate_t *child_ls = parent_ls->child_next; child_ls != NULL; child_ls = child_ls->child_next)
     {

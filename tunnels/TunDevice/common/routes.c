@@ -97,7 +97,7 @@ static bool parseRouteCidr(const char *cidr, route_cidr_t *out)
         return false;
     }
 
-    memorySet(out, 0, sizeof(*out));
+    memoryZero(out, sizeof(*out));
     if (inet_pton(AF_INET, ip_part, out->addr) == 1)
     {
         if (prefix_l < 0 || prefix_l > 32)
@@ -132,7 +132,7 @@ static bool parseRouteCidr(const char *cidr, route_cidr_t *out)
     }
     if (full_bytes < addr_bytes)
     {
-        memorySet(out->addr + full_bytes, 0, (size_t) (addr_bytes - full_bytes));
+        memoryZero(out->addr + full_bytes, (size_t) (addr_bytes - full_bytes));
     }
 
     return true;

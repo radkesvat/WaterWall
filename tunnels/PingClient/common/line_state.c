@@ -9,5 +9,5 @@ void pingclientLinestateInitialize(pingclient_lstate_t *ls)
 
 void pingclientLinestateDestroy(pingclient_lstate_t *ls)
 {
-    memorySet(ls, 0, sizeof(pingclient_lstate_t));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(pingclient_lstate_t)));
 }
