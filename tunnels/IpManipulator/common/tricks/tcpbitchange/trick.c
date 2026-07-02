@@ -4,8 +4,22 @@
 
 enum
 {
-    kIpv4FragmentMask = 0x3FFF
+    kIpv4FragmentMask = 0x3FFF,
+    kTcpAllFlagsMask  = 0x00FF
 };
+
+static uint8_t tcpbitchangeGetAllTcpFlags(const struct tcp_hdr *tcp_header)
+{
+    return (uint8_t) (lwip_ntohs(tcp_header->_hdrlen_rsvd_flags) & kTcpAllFlagsMask);
+}
+
+static void tcpbitchangeSetAllTcpFlags(struct tcp_hdr *tcp_header, uint8_t flags)
+{
+    uint16_t hdrlen_rsvd_flags = lwip_ntohs(tcp_header->_hdrlen_rsvd_flags);
+
+    hdrlen_rsvd_flags = (uint16_t) ((hdrlen_rsvd_flags & ~kTcpAllFlagsMask) | flags);
+    tcp_header->_hdrlen_rsvd_flags = lwip_htons(hdrlen_rsvd_flags);
+}
 
 // processes each bit and it can return 1 or 0 based on the action
 static uint8_t processTcpBitAction(enum tcp_bit_action_dynamic_value action, uint8_t current_bit, uint8_t all_flags)
@@ -112,7 +126,7 @@ static bool restoreOriginalTcpFlagsFromPayload(sbuf_t *buf, struct ip_hdr *iphea
     uint8_t  restored_flags    = packet[flags_offset];
     uint16_t restored_len      = (uint16_t) (ip_total_len - 1U);
 
-    TCPH_FLAGS_SET(tcp_header, restored_flags);
+    tcpbitchangeSetAllTcpFlags(tcp_header, restored_flags);
     IPH_LEN_SET(ipheader, lwip_htons(restored_len));
     sbufSetLength(buf, restored_len);
     return true;
@@ -223,7 +237,7 @@ static void tcpbitchangetrickPayload(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, b
             return;
         }
 
-        uint8_t original_flags = TCPH_FLAGS(tcp_header);
+        uint8_t original_flags = tcpbitchangeGetAllTcpFlags(tcp_header);
         uint8_t new_flags      = processAllTcpFlags(original_flags, state, is_upstream);
 
         if (state->trick_carry_original_tcp_flags && has_actions)
@@ -241,7 +255,7 @@ static void tcpbitchangetrickPayload(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, b
 
         if (new_flags != original_flags)
         {
-            TCPH_FLAGS_SET(tcp_header, new_flags);
+            tcpbitchangeSetAllTcpFlags(tcp_header, new_flags);
         }
 
         if ((state->trick_carry_original_tcp_flags && has_actions) || new_flags != original_flags)

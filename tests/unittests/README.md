@@ -16,6 +16,9 @@ These tests exercise small library-level behavior without launching the `Waterwa
 - `waterwall.nghttp2_large_recv_unit`
   Verifies the bundled nghttp2 can consume one contiguous HTTP/2 input buffer larger than 32 KiB while preserving DATA
   callbacks. The Waterwall HTTP tunnels still feed nghttp2 in smaller slices defensively.
+- `waterwall.ipmanipulator_tcpbit_unit`
+  Verifies `IpManipulator` TCP-bit rewriting handles the full TCP flags byte, including downstream CWR/ECE handling and
+  carried original flag restore.
 
 ## Running Unit Tests
 
