@@ -8,6 +8,10 @@
 #include "modules/username/username.h"
 #include "protocol_sniff.h"
 
+#ifdef ROUTER_ENABLE_QUIC_SNIFFING
+#include "Router/quic_sniffing.h"
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -310,6 +314,13 @@ static void testSniffingConfig(void)
     require(sniffingConfigSucceeds("{\"sniffing\":[]}", 0), "empty sniffing did not disable sniffing");
     require(sniffingConfigSucceeds("{\"sniffing\":[\"http1\",\"TLS\",\"http1\"]}", kRouterSniffHttp1 | kRouterSniffTls),
             "valid sniffing modes were not parsed case-insensitively");
+#ifdef ROUTER_ENABLE_QUIC_SNIFFING
+    require(sniffingConfigSucceeds("{\"sniffing\":[\"QUIC\"]}", kRouterSniffQuic),
+            "QUIC sniffing mode was not parsed when Router QUIC sniffing is enabled");
+#else
+    require(sniffingConfigFails("{\"sniffing\":[\"quic\"]}"),
+            "QUIC sniffing mode was accepted when Router QUIC sniffing is disabled");
+#endif
     require(sniffingConfigSucceedsEx("{\"sniff-even-if-domain-is-already-provided\":true,\"sniffing\":[\"http1\"]}",
                                      kRouterSniffHttp1,
                                      true),
@@ -319,12 +330,58 @@ static void testSniffingConfig(void)
     require(sniffingConfigFails("{\"sniffing\":[\"http\"]}"), "removed http sniffing value was accepted");
     require(sniffingConfigFails("{\"sniffing\":[1]}"), "non-string sniffing item was accepted");
     require(sniffingConfigFails("{\"sniffing\":[\"client-hello\"]}"), "removed TLS alias was accepted");
-    require(sniffingConfigFails("{\"sniffing\":[\"quic\"]}"), "unsupported sniffing value was accepted");
     require(sniffingConfigFails("{\"sniff-even-if-domain-is-already-provided\":\"true\"}"),
             "non-boolean sniff-even-if-domain-is-already-provided was accepted");
     require(attributesConfigFails("{\"attributes\":[]}"), "empty Router attributes array was accepted");
     require(attributesConfigFails("{\"attributes\":[\"typo\"]}"), "unknown Router attribute was accepted");
 }
+
+#ifdef ROUTER_ENABLE_QUIC_SNIFFING
+static void testQuicSniffingRejectsNonQuicPayload(void)
+{
+    uint8_t  host[UINT8_MAX + 1U];
+    uint32_t host_len = 0;
+
+    const uint8_t http[] = "GET / HTTP/1.1\r\nHost: not-quic.example.test\r\n\r\n";
+    require(routerQuicSniffClientHelloSni(http, (uint32_t) sizeof(http) - 1U, host, (uint32_t) sizeof(host),
+                                          &host_len) == kRouterQuicSniMissing,
+            "QUIC sniffing treated HTTP payload as QUIC");
+    require(host_len == 0, "QUIC sniffing filled host for non-QUIC payload");
+
+    const uint8_t partial_quic_long_header[] = {0xc3, 0x00};
+    require(routerQuicSniffClientHelloSni(partial_quic_long_header, (uint32_t) sizeof(partial_quic_long_header), host,
+                                          (uint32_t) sizeof(host), &host_len) == kRouterQuicSniMissing,
+            "partial QUIC long-header payload asked Router to keep buffering");
+
+    const uint8_t truncated_v1_initial[] = {
+        0xc3, 0x00, 0x00, 0x00, 0x01, 0x08, 0x01, 0x02, 0x03,
+        0x04, 0x05, 0x06, 0x07, 0x08, 0x00, 0x00, 0x40, 0x20,
+    };
+    require(routerQuicSniffClientHelloSni(truncated_v1_initial, (uint32_t) sizeof(truncated_v1_initial), host,
+                                          (uint32_t) sizeof(host), &host_len) == kRouterQuicSniMissing,
+            "truncated QUIC v1 Initial asked Router to keep buffering");
+
+    line_t *line = testLineCreate();
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.53", 443, IP_PROTO_UDP),
+            "failed to set UDP destination IP for QUIC sniffing test");
+
+    router_tstate_t ts = {.sniffing_modes = kRouterSniffQuic};
+    expectMatch("truncated UDP QUIC sniff falls through",
+                classifyNoRules(&ts, line, truncated_v1_initial, (uint32_t) sizeof(truncated_v1_initial)),
+                kRouterClassifyDefault,
+                NULL);
+
+    addresscontextReset(&line->routing_context.dest_ctx);
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.53", 443, IP_PROTO_TCP),
+            "failed to set TCP destination IP for QUIC sniffing test");
+    expectMatch("QUIC sniff skipped on TCP",
+                classifyNoRules(&ts, line, truncated_v1_initial, (uint32_t) sizeof(truncated_v1_initial)),
+                kRouterClassifyDefault,
+                NULL);
+
+    testLineDestroy(line);
+}
+#endif
 
 static void testProtocolConfig(void)
 {
@@ -1000,6 +1057,9 @@ static void testAuthenticatedIdentityMatchesCredentialMarkers(void)
 int main(void)
 {
     testSniffingConfig();
+#ifdef ROUTER_ENABLE_QUIC_SNIFFING
+    testQuicSniffingRejectsNonQuicPayload();
+#endif
     testProtocolConfig();
     testProtocolDescriptorTable();
     testPortMatchers();

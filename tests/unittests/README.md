@@ -19,6 +19,9 @@ These tests exercise small library-level behavior without launching the `Waterwa
 - `waterwall.ipmanipulator_tcpbit_unit`
   Verifies `IpManipulator` TCP-bit rewriting handles the full TCP flags byte, including downstream CWR/ECE handling and
   carried original flag restore.
+- `waterwall.router_sniffing_unit`
+  Verifies Router sniffing config, Host/SNI classification behavior, protocol bits, HTTP upgrade attributes, and the
+  guarded QUIC sniffing config path when Router QUIC sniffing is compiled in.
 
 ## Running Unit Tests
 

@@ -48,6 +48,27 @@ target_include_directories(Router PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(Router PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Router)
 
 target_link_libraries(Router PUBLIC ww DomainResolver)
+
+if(router_enable_quick_sniffing)
+    if(NOT TARGET OpenSSL::Crypto)
+        message(FATAL_ERROR "Router QUIC sniffing is enabled, but OpenSSL::Crypto is not available")
+    endif()
+
+    add_library(RouterQuicSniffing OBJECT
+        common/quic_sniffing.c
+    )
+    target_include_directories(RouterQuicSniffing PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    target_include_directories(RouterQuicSniffing PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_include_directories(RouterQuicSniffing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Router)
+    target_link_libraries(RouterQuicSniffing PRIVATE ww OpenSSL::Crypto)
+
+    target_compile_definitions(Router PUBLIC ROUTER_ENABLE_QUIC_SNIFFING=1)
+    target_sources(Router PRIVATE $<TARGET_OBJECTS:RouterQuicSniffing>)
+    target_link_libraries(Router PUBLIC OpenSSL::Crypto)
+endif()
+
 if(TARGET maxminddb::maxminddb)
     get_target_property(ROUTER_MAXMIND_REAL_TARGET maxminddb::maxminddb ALIASED_TARGET)
     if(ROUTER_MAXMIND_REAL_TARGET)
@@ -70,4 +91,7 @@ endif()
 
 if(NOT APPLE)
     target_precompile_headers(Router REUSE_FROM ww)
+    if(TARGET RouterQuicSniffing)
+        target_precompile_headers(RouterQuicSniffing REUSE_FROM ww)
+    endif()
 endif()

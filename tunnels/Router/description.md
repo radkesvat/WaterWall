@@ -106,7 +106,7 @@ object:
 |-----|------|----------|-------------|
 | `rules` | array | no | ordered list of routing rule objects (see [Rules](#rules)) |
 | `resolve-domains` | boolean | no | default `false`. Resolve an unresolved domain destination before Router classifies the first payload |
-| `sniffing` | array | no | domain-sniffing methods: `http1`, `tls`. Missing or empty disables domain sniffing |
+| `sniffing` | array | no | domain-sniffing methods: `http1`, `tls`, `quic`. Missing or empty disables domain sniffing |
 | `sniff-even-if-domain-is-already-provided` | boolean | no | default `false`. When `false`, Router will not sniff or overwrite a destination that already has `dest_ctx.domain` |
 | `geoip-db-path` | string | only with `geoip:` tokens | path to a MaxMind country database used by `geoip:<cc>` |
 | `geosite-db-path` | string | only with `geosite:` tokens | path to a Router geosite JSON database (see [GeoIP & GeoSite](#geoip--geosite-databases)) |
@@ -173,16 +173,20 @@ destination (e.g. a transparent-proxy flow). It is a root-level setting, outside
 `rules`:
 
 ```json
-{ "sniffing": ["http1", "tls"] }
+{ "sniffing": ["http1", "tls", "quic"] }
 ```
 
 | value | reads |
 |-------|-------|
 | `http1` | the HTTP/1 `Host` header |
 | `tls` | the TLS ClientHello SNI |
+| `quic` | the QUIC Initial TLS ClientHello SNI |
 
 Values are an array, parsed case-insensitively. Missing or empty disables domain
 sniffing. The old `http` value was removed — use `http1`.
+
+`quic` sniffing is compiled when CMake option `router_enable_quick_sniffing` is
+enabled (default `ON`) and requires OpenSSL.
 
 ### Why Router won't overwrite an existing domain by default
 

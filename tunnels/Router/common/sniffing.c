@@ -4,6 +4,10 @@
 #include "modules/protocol/protocol.h"
 #include "protocol_sniff.h"
 
+#ifdef ROUTER_ENABLE_QUIC_SNIFFING
+#include "quic_sniffing.h"
+#endif
+
 bool routerLoadSniffing(router_tstate_t *ts, const cJSON *settings)
 {
     ts->sniffing_modes                           = 0;
@@ -65,9 +69,21 @@ bool routerLoadSniffing(router_tstate_t *ts, const cJSON *settings)
         {
             ts->sniffing_modes |= kRouterSniffTls;
         }
+        else if (routerStringEqualsIgnoreCase(value, "quic"))
+        {
+#ifdef ROUTER_ENABLE_QUIC_SNIFFING
+            ts->sniffing_modes |= kRouterSniffQuic;
+#else
+            LOGF("JSON Error: Router->settings->sniffing[] : value \"quic\" requires building with "
+                 "-Drouter_enable_quick_sniffing=ON");
+            memoryFree(value);
+            return false;
+#endif
+        }
         else
         {
-            LOGF("JSON Error: Router->settings->sniffing[] : unsupported value \"%s\" (expected \"http1\" or \"tls\")",
+            LOGF("JSON Error: Router->settings->sniffing[] : unsupported value \"%s\" (expected \"http1\", \"tls\", "
+                 "or \"quic\")",
                  value);
             memoryFree(value);
             return false;
@@ -84,6 +100,14 @@ static bool routerDestinationAlreadyHasDomain(line_t *line)
     address_context_t *dest = lineGetDestinationAddressContext(line);
     return dest->domain != NULL && dest->domain_len > 0;
 }
+
+#ifdef ROUTER_ENABLE_QUIC_SNIFFING
+static bool routerLineIsUdpOnly(line_t *line)
+{
+    const address_context_t *dest = lineGetDestinationAddressContext(line);
+    return dest->proto_udp && ! dest->proto_tcp && ! dest->proto_icmp;
+}
+#endif
 
 static bool routerNeedsHttpUpgradeSniff(const router_tstate_t *ts, const router_match_ctx_t *mctx)
 {
@@ -221,6 +245,28 @@ router_sniff_result_t routerSniffBeforeClassify(router_tstate_t *ts, const route
             break;
         }
     }
+
+#ifdef ROUTER_ENABLE_QUIC_SNIFFING
+    uint8_t  quic_sni[UINT8_MAX + 1U];
+    uint32_t quic_sni_len = 0;
+
+    if (sniff_domain && (ts->sniffing_modes & kRouterSniffQuic) != 0 && routerLineIsUdpOnly(mctx->line))
+    {
+        switch (routerQuicSniffClientHelloSni(mctx->payload, mctx->payload_len, quic_sni,
+                                             (uint32_t) sizeof(quic_sni), &quic_sni_len))
+        {
+        case kRouterQuicSniFound:
+            discard routerStoreSniffedDomain(mctx->line, quic_sni, quic_sni_len);
+            return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
+        case kRouterQuicSniNeedMore:
+            need_more = true;
+            break;
+        case kRouterQuicSniMissing:
+        default:
+            break;
+        }
+    }
+#endif
 
     return need_more ? kRouterSniffNeedMore : kRouterSniffDone;
 }

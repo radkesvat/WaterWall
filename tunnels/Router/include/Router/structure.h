@@ -52,7 +52,8 @@ typedef enum router_sniff_result_e
 enum
 {
     kRouterSniffHttp1 = 1U << 0U,
-    kRouterSniffTls   = 1U << 1U
+    kRouterSniffTls   = 1U << 1U,
+    kRouterSniffQuic  = 1U << 2U
 };
 
 enum
