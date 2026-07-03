@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpConnector.mdx, and both files must keep the same documentation version.
 -->
 
@@ -18,7 +18,7 @@ In practice, this node is used at the end of a chain.
 - Forwards datagrams received from the remote UDP peer back downstream.
 - Drops datagrams that arrive from a peer other than the selected remote endpoint.
 - Tracks the UDP line with idle timeouts.
-- Applies optional socket options such as `SO_REUSEADDR`, `SO_MARK`, device binding, and source-IP binding when supported by the platform.
+- Applies optional socket options such as `SO_MARK`, device binding, and source-IP binding when supported by the platform.
 
 This node acts like a chain end. Its downstream entry callbacks are disabled because the socket is created from upstream `init`.
 
@@ -28,10 +28,9 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
 {
   "name": "udp-out",
   "type": "UdpConnector",
-  "settings": {
+    "settings": {
     "address": "example.com",
     "port": "random(40000,40100)",
-    "reuseaddr": true,
     "large-send-buffer": true,
     "large-recv-buffer": true,
     "fwmark": 10,
@@ -62,7 +61,6 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
         "weight": 1
       }
     ],
-    "reuseaddr": true,
     "large-send-buffer": true,
     "large-recv-buffer": true
   }
@@ -139,9 +137,6 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
   - `"connection"`: choose one target during upstream `init`; all packets on that WaterWall line keep using that target.
   - `"packet"`: choose a target for each upstream payload packet before sending it.
 
-- `reuseaddr` `(boolean)`
-  Enables `SO_REUSEADDR` on the created UDP socket.
-
 - `large-send-buffer` `(boolean or positive integer)`
   Sets `SO_SNDBUF` on created UDP sockets.
   `true` uses WaterWall's default large socket buffer size, currently `4194304` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
@@ -195,7 +190,7 @@ During upstream `init`, `UdpConnector`:
 - resolves the domain if needed through its internal `DomainResolver`
 - creates a UDP socket after the destination is an IP address
 - applies the configured send and receive socket buffer sizes
-- applies optional `interface`, `fwmark`, and `reuseaddr` socket options
+- applies optional `interface` and `fwmark` socket options
 - applies the automatic `TunDevice` egress pin when loop protection is active and `interface` is omitted
 - binds the socket to `source-ip:0` when `source-ip` is configured, otherwise to the wildcard address for the selected address family
 - starts reading immediately

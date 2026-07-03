@@ -1,5 +1,5 @@
 <!--
-Documentation version: 107
+Documentation version: 108
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpUdpConnector.mdx, and both files must keep the same documentation version.
 -->
 
@@ -44,7 +44,6 @@ The previous node must set either the destination protocol or the source protoco
     "address": "dest_context->address",
     "port": "dest_context->port",
     "domain-strategy": "prefer-ipv4",
-    "reuseaddr": true,
     "nodelay": true,
     "fastopen": false,
     "large-send-buffer": true,
@@ -85,7 +84,6 @@ Alternatively, use the `addresses` array supported by `TcpConnector` and `UdpCon
 Most options are inherited directly from `TcpConnector` and `UdpConnector`:
 
 - `domain-strategy`, `large-send-buffer`, `large-recv-buffer`, `interface`, `source-ip`, and `fwmark` are parsed by both child connectors where supported.
-- `reuseaddr` applies only to the internal `UdpConnector`; the internal `TcpConnector` ignores it.
 - `nodelay` and `fastopen` apply to the internal `TcpConnector`.
 - `balance-mode` applies to the internal `UdpConnector`.
 

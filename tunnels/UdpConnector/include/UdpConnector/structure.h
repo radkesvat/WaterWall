@@ -37,7 +37,6 @@ typedef struct udpconnector_tstate_s
     dynamic_value_t   dest_addr_selected; // selected destination address
     dynamic_value_t   dest_port_selected; // selected destination port
     address_context_t constant_dest_addr; // constant destination address for the connection
-    bool              reuse_addr;         // whether to reuse address
     int               domain_strategy;    // DNS resolution strategy
     int               fwmark;             // firewall mark on linux (beta)
     int               send_buffer_size;   // optional socket SO_SNDBUF size

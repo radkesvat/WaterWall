@@ -56,8 +56,7 @@
       "type": "UdpConnector",
       "settings": {
         "address": "dest_context->address",
-        "port": "dest_context->port",
-        "reuseaddr": false
+        "port": "dest_context->port"
       }
     },
     {

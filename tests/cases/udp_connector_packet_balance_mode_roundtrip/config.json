@@ -50,8 +50,7 @@
             "port": 42145,
             "weight": 1
           }
-        ],
-        "reuseaddr": false
+        ]
       }
     },
     {

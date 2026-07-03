@@ -15,8 +15,7 @@
       "type": "UdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42351,
-        "reuseaddr": false
+        "port": 42351
       }
     },
     {
@@ -33,8 +32,7 @@
       "type": "UdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42352,
-        "reuseaddr": false
+        "port": 42352
       }
     },
     {

@@ -29,8 +29,7 @@
       "settings": {
         "address": "127.0.0.1",
         "port": 42430,
-        "balance-mode": "packet",
-        "reuseaddr": false
+        "balance-mode": "packet"
       }
     },
     {

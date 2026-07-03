@@ -129,13 +129,6 @@ static int createAndBindSocket(int family, const udpconnector_tstate_t *ts)
         return -1;
     }
 
-    if (ts->reuse_addr && socketOptionReuseAddr(sockfd, 1) != 0)
-    {
-        LOGE("UdpConnector: set socket reuseaddr failed");
-        closesocket(sockfd);
-        return -1;
-    }
-
     if (bind(sockfd, &host_addr.sa, sockaddrLen(&host_addr)) < 0)
     {
         LOGE("UdpConnector: UDP bind failed;");

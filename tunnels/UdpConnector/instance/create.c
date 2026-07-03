@@ -445,7 +445,6 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
         return NULL;
     }
 
-    getBoolFromJsonObject(&(state->reuse_addr), settings, "reuseaddr");
     enum domain_strategy domain_strategy = GSTATE.domain_strategy;
     if (! getDomainStrategyFromJsonObjectOrDefault(
             &domain_strategy, settings, "domain-strategy", GSTATE.domain_strategy))
