@@ -3,6 +3,7 @@ node_modules
 /build
 /scripts
 /WaterWall-Docs
+/tests/cases/__pycache__
 
 /tunnels/shared/protobuf/generator
 /core/texts
