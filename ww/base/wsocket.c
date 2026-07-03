@@ -243,10 +243,8 @@ static int sockaddrBind(sockaddr_u *localaddr, int type)
         goto error;
     }
 
-#ifdef OS_UNIX
-    socketOptionReuseAddr(sockfd, 1);
+    socketOptionServerAddressUse(sockfd);
     // so_reuseport(sockfd, 1);
-#endif
 
     if (localaddr->sa.sa_family == AF_INET6)
     {

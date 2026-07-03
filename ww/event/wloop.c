@@ -1336,10 +1336,8 @@ wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio
     wio_t *io = NULL;
     if (side == WIO_SERVER_SIDE)
     {
-#ifdef OS_UNIX
-        socketOptionReuseAddr(sockfd, 1);
+        socketOptionServerAddressUse(sockfd);
         // so_reuseport(sockfd, 1);
-#endif
         if (addr.sa.sa_family == AF_INET6)
         {
             ipV6Only(sockfd, 0);

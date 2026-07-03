@@ -636,6 +636,46 @@ WW_INLINE int socketOptionReuseAddr(int sockfd, int on DEFAULT(1))
 }
 
 /**
+ * @brief Enable/disable Windows exclusive local address ownership.
+ *
+ * @param sockfd Socket descriptor.
+ * @param on Non-zero to enable.
+ * @return `setsockopt` result or `0` when unsupported.
+ */
+WW_INLINE int socketOptionExclusiveAddrUse(int sockfd, int on DEFAULT(1))
+{
+#ifdef SO_EXCLUSIVEADDRUSE
+    return setsockopt(sockfd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &on, sizeof(int));
+#else
+    discard sockfd;
+    discard on;
+    return 0;
+#endif
+}
+
+/**
+ * @brief Apply the platform's pre-bind server address ownership option.
+ *
+ * Unix keeps the existing `SO_REUSEADDR` behavior. Windows uses
+ * `SO_EXCLUSIVEADDRUSE` to prevent another socket from binding the same local
+ * address.
+ *
+ * @param sockfd Socket descriptor.
+ * @return socket option result or `0` when no platform option is needed.
+ */
+WW_INLINE int socketOptionServerAddressUse(int sockfd)
+{
+#ifdef OS_UNIX
+    return socketOptionReuseAddr(sockfd, 1);
+#elif defined(OS_WIN)
+    return socketOptionExclusiveAddrUse(sockfd, 1);
+#else
+    discard sockfd;
+    return 0;
+#endif
+}
+
+/**
  * @brief Enable/disable `SO_REUSEPORT`.
  *
  * @param sockfd Socket descriptor.

@@ -39,9 +39,7 @@ static wio_t *udpstatelesssocketCreateUdpServer(udpstatelesssocket_tstate_t *sta
         return NULL;
     }
 
-#ifdef OS_UNIX
-    socketOptionReuseAddr(sockfd, 1);
-#endif
+    socketOptionServerAddressUse(sockfd);
 
     if (addr.sa.sa_family == AF_INET6)
     {
