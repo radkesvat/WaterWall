@@ -31,6 +31,8 @@ bool sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
                                             void *arg1, void *arg2, void *arg3);
 
 // Same as above but with a delay in ms. delay=0 means next event-loop iteration.
+// Note, order of execution is not guaranteed for messages with the same delay, so if you need to guarantee order,
+// use your own FIFO queue.
 void sendWorkerMessageTimed(wid_t wid, WorkerMessageCallback cb, uint32_t delay_ms, void *arg1, void *arg2, void *arg3);
 void sendWorkerMessageTimedWithCleanup(wid_t wid, WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup,
                                        uint32_t delay_ms, void *arg1, void *arg2, void *arg3);
