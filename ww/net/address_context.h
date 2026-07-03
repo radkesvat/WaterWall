@@ -590,7 +590,7 @@ static inline void addresscontextFromSockAddrWithProtocol(address_context_t *des
 }
 
 /**
- * @brief Convert an address context with IP to a sockaddr structure.
+ * @brief Convert a concrete or resolved address context to a sockaddr structure.
  */
 static inline sockaddr_u addresscontextToSockAddr(const address_context_t *context)
 {
@@ -599,7 +599,7 @@ static inline sockaddr_u addresscontextToSockAddr(const address_context_t *conte
     // verbatim by connect()/sendto(), so leaving them uninitialized feeds garbage to the kernel.
     sockaddr_u addr = {0};
     assert(addresscontextCanConvertToSockAddr(context));
-    if (addresscontextIsIpv4(context))
+    if (context->ip_address.type == IPADDR_TYPE_V4)
     {
         struct sockaddr_in *addr_in = (struct sockaddr_in *) &addr;
         addr_in->sin_family         = AF_INET;
@@ -607,7 +607,7 @@ static inline sockaddr_u addresscontextToSockAddr(const address_context_t *conte
         addr_in->sin_addr.s_addr    = context->ip_address.u_addr.ip4.addr;
         return addr;
     }
-    if (addresscontextIsIpv6(context))
+    if (context->ip_address.type == IPADDR_TYPE_V6)
     {
         struct sockaddr_in6 *addr_in6 = (struct sockaddr_in6 *) &addr;
         addr_in6->sin6_family         = AF_INET6;

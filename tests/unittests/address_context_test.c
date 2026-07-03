@@ -156,6 +156,25 @@ static void testObservedDomainPreservesOptionalFlags(void)
     addresscontextReset(&ctx);
 }
 
+static void testResolvedDomainConvertsToSockAddr(void)
+{
+    address_context_t ctx = {0};
+
+    addresscontextDomainSetByString(&ctx, "resolved.example");
+    ctx.ip_address      = testIpv4Address(203, 0, 113, 10);
+    ctx.port            = 5353;
+    ctx.domain_resolved = true;
+
+    require(addresscontextCanConvertToSockAddr(&ctx), "resolved domain is not convertible to sockaddr");
+
+    sockaddr_u addr = addresscontextToSockAddr(&ctx);
+    require(addr.sa.sa_family == AF_INET, "resolved domain converted to wrong sockaddr family");
+    require(ntohs(addr.sin.sin_port) == 5353, "resolved domain converted with wrong port");
+    require(addr.sin.sin_addr.s_addr == ctx.ip_address.u_addr.ip4.addr, "resolved domain converted with wrong IPv4");
+
+    addresscontextReset(&ctx);
+}
+
 int main(void)
 {
     testDynamicDomainCopyKeepsMetadata();
@@ -164,5 +183,6 @@ int main(void)
     testResetClearsOptionalFlags();
     testEndpointSettersClearOptionalFlags();
     testObservedDomainPreservesOptionalFlags();
+    testResolvedDomainConvertsToSockAddr();
     return 0;
 }

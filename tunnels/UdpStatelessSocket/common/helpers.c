@@ -23,33 +23,6 @@ typedef struct udpstatelesssocket_dns_request_s
 
 static void udpstatelesssocketCleanupSendRequest(void *arg1, void *arg2, void *arg3);
 
-static sockaddr_u udpstatelesssocketSockAddrFromContext(const address_context_t *context)
-{
-    sockaddr_u addr = {0};
-
-    assert(context != NULL);
-    assert(addresscontextCanConvertToSockAddr(context));
-
-    if (context->ip_address.type == IPADDR_TYPE_V4)
-    {
-        addr.sin.sin_family      = AF_INET;
-        addr.sin.sin_port        = htons(context->port);
-        addr.sin.sin_addr.s_addr = context->ip_address.u_addr.ip4.addr;
-        return addr;
-    }
-
-    if (context->ip_address.type == IPADDR_TYPE_V6)
-    {
-        addr.sin6.sin6_family = AF_INET6;
-        addr.sin6.sin6_port   = htons(context->port);
-        memoryCopy(&addr.sin6.sin6_addr.s6_addr, &context->ip_address.u_addr.ip6, sizeof(addr.sin6.sin6_addr.s6_addr));
-        return addr;
-    }
-
-    assert(false);
-    return addr;
-}
-
 static bool udpstatelesssocketGetLinePeerAddr(line_t *l, sockaddr_u *addr_out)
 {
     address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
@@ -59,7 +32,7 @@ static bool udpstatelesssocketGetLinePeerAddr(line_t *l, sockaddr_u *addr_out)
         return false;
     }
 
-    *addr_out = udpstatelesssocketSockAddrFromContext(dest_ctx);
+    *addr_out = addresscontextToSockAddr(dest_ctx);
     return true;
 }
 
