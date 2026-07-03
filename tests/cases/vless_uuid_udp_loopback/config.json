@@ -33,8 +33,7 @@
         "address": "127.0.0.1",
         "port": 42820,
         "nodelay": true,
-        "fastopen": false,
-        "reuseaddr": false
+        "fastopen": false
       }
     },
     {

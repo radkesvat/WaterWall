@@ -40,8 +40,7 @@
         "address": "127.0.0.1",
         "port": 42577,
         "nodelay": true,
-        "fastopen": false,
-        "reuseaddr": false
+        "fastopen": false
       }
     },
     {
@@ -64,8 +63,7 @@
       "type": "TcpUdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42578,
-        "reuseaddr": false
+        "port": 42578
       }
     },
     {

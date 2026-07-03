@@ -28,8 +28,7 @@
         "address": $connect_target$,
         "port": $connect_port$,
         "nodelay": true,
-        "fastopen": false,
-        "reuseaddr": false
+        "fastopen": false
       }
     },
     {

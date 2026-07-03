@@ -31,7 +31,6 @@ static tcpconnector_socket_options_t getRootSocketOptions(const tcpconnector_tst
     return (tcpconnector_socket_options_t) {
         .option_tcp_no_delay  = ts->option_tcp_no_delay,
         .option_tcp_fast_open = ts->option_tcp_fast_open,
-        .option_reuse_addr    = ts->option_reuse_addr,
         .domain_strategy      = ts->domain_strategy,
         .fwmark               = ts->fwmark,
         .send_buffer_size     = ts->send_buffer_size,
@@ -46,7 +45,6 @@ static tcpconnector_socket_options_t getDestinationSocketOptions(const tcpconnec
     return (tcpconnector_socket_options_t) {
         .option_tcp_no_delay  = destination->option_tcp_no_delay,
         .option_tcp_fast_open = destination->option_tcp_fast_open,
-        .option_reuse_addr    = destination->option_reuse_addr,
         .domain_strategy      = destination->domain_strategy,
         .fwmark               = destination->fwmark,
         .send_buffer_size     = destination->send_buffer_size,
@@ -232,12 +230,6 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
             LOGE("TcpConnector: setsockopt SO_MARK error");
             goto fail;
         }
-    }
-
-    if (socket_options->option_reuse_addr && socketOptionReuseAddr(sockfd, 1) != 0)
-    {
-        LOGE("TcpConnector: set socket reuseaddr failed");
-        goto fail;
     }
 
     if (! bindSourceIpIfNeeded(sockfd, addr_type, socket_options))

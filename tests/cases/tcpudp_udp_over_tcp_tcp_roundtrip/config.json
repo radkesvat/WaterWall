@@ -13,8 +13,7 @@
         "address": "127.0.0.1",
         "port": 42570,
         "nodelay": true,
-        "fastopen": false,
-        "reuseaddr": false
+        "fastopen": false
       }
     },
     {
@@ -39,8 +38,7 @@
         "address": "127.0.0.1",
         "port": 42571,
         "nodelay": true,
-        "fastopen": false,
-        "reuseaddr": false
+        "fastopen": false
       }
     },
     {
@@ -65,8 +63,7 @@
         "address": "127.0.0.1",
         "port": 42572,
         "nodelay": true,
-        "fastopen": false,
-        "reuseaddr": false
+        "fastopen": false
       }
     },
     {

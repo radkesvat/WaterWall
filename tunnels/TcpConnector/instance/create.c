@@ -101,7 +101,6 @@ static bool parseBasicSettings(tcpconnector_tstate_t *state, const cJSON *settin
 
     getBoolFromJsonObjectOrDefault(&(state->option_tcp_no_delay), settings, "nodelay", true);
     getBoolFromJsonObjectOrDefault(&(state->option_tcp_fast_open), settings, "fastopen", false);
-    getBoolFromJsonObjectOrDefault(&(state->option_reuse_addr), settings, "reuseaddr", false);
     enum domain_strategy domain_strategy = GSTATE.domain_strategy;
     if (! getDomainStrategyFromJsonObjectOrDefault(
             &domain_strategy, settings, "domain-strategy", GSTATE.domain_strategy))
@@ -173,7 +172,6 @@ static bool parseDestinationSocketOptions(tcpconnector_destination_t *destinatio
     getBoolFromJsonObjectOrDefault(&destination->option_tcp_no_delay, settings, "nodelay", state->option_tcp_no_delay);
     getBoolFromJsonObjectOrDefault(
         &destination->option_tcp_fast_open, settings, "fastopen", state->option_tcp_fast_open);
-    getBoolFromJsonObjectOrDefault(&destination->option_reuse_addr, settings, "reuseaddr", state->option_reuse_addr);
     getIntFromJsonObjectOrDefault(&destination->fwmark, settings, "fwmark", state->fwmark);
     enum domain_strategy domain_strategy = (enum domain_strategy) state->domain_strategy;
     if (! getDomainStrategyFromJsonObjectOrDefault(

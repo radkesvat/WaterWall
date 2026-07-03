@@ -24,8 +24,7 @@
         "address": "127.0.0.1",
         "port": 41203,
         "nodelay": true,
-        "fastopen": false,
-        "reuseaddr": false
+        "fastopen": false
       }
     },
     {
@@ -55,8 +54,7 @@
         "address": "dest_context->address",
         "port": "dest_context->port",
         "nodelay": true,
-        "fastopen": false,
-        "reuseaddr": false
+        "fastopen": false
       }
     },
     {

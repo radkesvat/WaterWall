@@ -7,7 +7,6 @@ typedef struct tcpconnector_socket_options_s
 {
     bool        option_tcp_no_delay;
     bool        option_tcp_fast_open;
-    bool        option_reuse_addr;
     int         domain_strategy;
     int         fwmark;
     int         send_buffer_size;
@@ -35,7 +34,6 @@ typedef struct tcpconnector_tstate_s
     dynamic_value_t dest_port_selected;   // dynamic value for destination port
     bool            option_tcp_no_delay;  // apply TCP no delay option on sockets
     bool            option_tcp_fast_open; // apply TCP fast open option on sockets
-    bool            option_reuse_addr;    // apply reuse address option on sockets
     int             domain_strategy;      // prefer ipv4 or ipv6
     int             fwmark;               // firewall mark on linux (beta)
     int             send_buffer_size;     // optional socket SO_SNDBUF size
@@ -64,7 +62,6 @@ typedef struct tcpconnector_destination_s
     uint32_t          weight;
     bool              option_tcp_no_delay;
     bool              option_tcp_fast_open;
-    bool              option_reuse_addr;
     int               domain_strategy;
     int               fwmark;
     int               send_buffer_size;

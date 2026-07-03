@@ -16,8 +16,7 @@
         "address": "127.0.0.1",
         "port": 43040,
         "nodelay": true,
-        "fastopen": false,
-        "reuseaddr": false
+        "fastopen": false
       }
     },
     {

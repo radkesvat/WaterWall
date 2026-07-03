@@ -37,8 +37,7 @@
         "address": "127.0.0.1",
         "port": 42470,
         "nodelay": true,
-        "fastopen": false,
-        "reuseaddr": false
+        "fastopen": false
       }
     },
     {
@@ -80,8 +79,7 @@
         "address": "google.com",
         "port": 443,
         "nodelay": true,
-        "fastopen": false,
-        "reuseaddr": false
+        "fastopen": false
       }
     }
   ]

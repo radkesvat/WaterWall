@@ -24,8 +24,7 @@
         "address": "127.0.0.1",
         "port": 42440,
         "nodelay": true,
-        "fastopen": false,
-        "reuseaddr": false
+        "fastopen": false
       }
     },
     {
@@ -67,8 +66,7 @@
         "address": "127.0.0.1",
         "port": 42441,
         "nodelay": true,
-        "fastopen": false,
-        "reuseaddr": false
+        "fastopen": false
       }
     },
     {

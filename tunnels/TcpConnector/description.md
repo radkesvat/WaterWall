@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpConnector.mdx, and both files must keep the same documentation version.
 -->
 
@@ -16,7 +16,7 @@ In practice, this node is used at the end of a chain.
 - Opens an outbound TCP socket.
 - Forwards upstream payloads from the previous node to the remote socket.
 - Forwards remote socket payloads back downstream to the previous node.
-- Applies optional socket options such as `TCP_NODELAY`, `TCP_FASTOPEN`, `SO_REUSEADDR`, `SO_MARK`, device binding, and source-IP binding when supported by the platform.
+- Applies optional socket options such as `TCP_NODELAY`, `TCP_FASTOPEN`, `SO_MARK`, device binding, and source-IP binding when supported by the platform.
 
 This node behaves like a chain end. Its downstream entry callbacks are disabled because the outbound connection is initiated from upstream `init`.
 
@@ -31,7 +31,6 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
     "port": 443,
     "nodelay": true,
     "fastopen": false,
-    "reuseaddr": false,
     "large-send-buffer": true,
     "large-recv-buffer": 4194304,
     "fwmark": 10,
@@ -56,7 +55,6 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
         "weight": 5,
         "nodelay": true,
         "fastopen": false,
-        "reuseaddr": false,
         "large-send-buffer": true,
         "large-recv-buffer": 4194304,
         "fwmark": 10,
@@ -74,7 +72,6 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
     ],
     "nodelay": true,
     "fastopen": false,
-    "reuseaddr": false,
     "large-send-buffer": true,
     "large-recv-buffer": true,
     "fwmark": -1,
@@ -145,7 +142,6 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
   Each object may also contain its own:
   - `nodelay`
   - `fastopen`
-  - `reuseaddr`
   - `large-send-buffer`
   - `large-recv-buffer`
   - `fwmark`
@@ -163,10 +159,6 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
 
 - `fastopen` `(boolean)`
   Requests `TCP_FASTOPEN` on the outbound socket when the platform exposes that socket option.
-  Default: `false`
-
-- `reuseaddr` `(boolean)`
-  Enables `SO_REUSEADDR` on the outbound socket.
   Default: `false`
 
 - `large-send-buffer` `(boolean or positive integer)`
@@ -274,7 +266,6 @@ After the destination is ready, `TcpConnector` creates a TCP socket and may appl
 
 - `TCP_NODELAY` when `nodelay` is enabled
 - `TCP_FASTOPEN` when `fastopen` is enabled and the platform supports it
-- `SO_REUSEADDR` when `reuseaddr` is enabled
 - `SO_SNDBUF` when `large-send-buffer` is enabled or set to a byte size
 - `SO_RCVBUF` when `large-recv-buffer` is enabled or set to a byte size
 - `SO_MARK` when `fwmark` is set and the platform supports it

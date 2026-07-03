@@ -33,8 +33,7 @@
       "type": "TcpUdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42513,
-        "reuseaddr": false
+        "port": 42513
       }
     },
     {

@@ -59,8 +59,7 @@
         "address": "google.com",
         "port": 443,
         "nodelay": true,
-        "fastopen": false,
-        "reuseaddr": false
+        "fastopen": false
       }
     }
   ]

@@ -31,8 +31,7 @@
         "address": "127.0.0.1",
         "port": 41104,
         "nodelay": true,
-        "fastopen": false,
-        "reuseaddr": false
+        "fastopen": false
       }
     },
     {
