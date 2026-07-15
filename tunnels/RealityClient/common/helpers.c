@@ -49,7 +49,10 @@ static bool realityclientEncryptFrame(realityclient_tstate_t *ts, sbuf_t **buf, 
     frame[4]       = (uint8_t) body_len;
 
     uint8_t *nonce = frame + kRealityClientTlsHeaderSize;
-    getRandomBytes(nonce, kRealityClientNonceSize);
+    if (UNLIKELY(! secureRandomBytes(nonce, kRealityClientNonceSize)))
+    {
+        return false;
+    }
 
     uint8_t *ciphertext = frame + kRealityClientFramePrefixSize;
     if (0 !=

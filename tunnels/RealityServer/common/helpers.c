@@ -60,7 +60,10 @@ static bool realityserverEncryptFrame(realityserver_tstate_t *ts, sbuf_t **buf, 
     frame[4]       = (uint8_t) body_len;
 
     uint8_t *nonce = frame + kRealityServerTlsHeaderSize;
-    getRandomBytes(nonce, kRealityServerNonceSize);
+    if (UNLIKELY(! secureRandomBytes(nonce, kRealityServerNonceSize)))
+    {
+        return false;
+    }
 
     uint8_t *ciphertext = frame + kRealityServerFramePrefixSize;
     if (0 !=
