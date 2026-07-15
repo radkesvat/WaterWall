@@ -1,11 +1,11 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RealityClient.mdx, and both files must keep the same documentation version.
 -->
 
 # RealityClient
 
-`RealityClient` performs a real client TLS handshake through an internal `TlsClient`, then takes over the raw connection and sends Reality-authenticated payload inside TLS-like application records.
+`RealityClient` implements Reality v2. It performs a real client TLS handshake through an internal `TlsClient`, derives fresh directional session keys from that handshake, then takes over the raw connection and sends authenticated payload inside TLS-like application records.
 
 Typical placement:
 
@@ -27,9 +27,15 @@ The configured `next` node is the transport to the Reality server. The client st
 
 ## Behavior
 
-On upstream `Init`, `RealityClient` initializes its own line state and forwards `Init` into the internal `TlsClient`. When the TLS handshake completes, the internal TLS line is deinitialized without closing the underlying connection. From that point, upstream payload is AEAD-encrypted and framed as TLS application-data records; downstream records are authenticated, decrypted, and forwarded as cleartext.
+On upstream `Init`, `RealityClient` initializes its own line state and forwards `Init` into the internal `TlsClient`. When the TLS handshake completes, it captures the negotiated TLS version, cipher suite, client random, and server random while the SSL object is still available. It then deinitializes the internal TLS line and derives independent client-to-server and server-to-client keys and IVs from the captured values and password-derived root key.
 
-The node advertises enough left padding for the TLS record header and nonce prefix it prepends.
+From takeover onward, upstream payload is AEAD-encrypted and framed as TLS application-data records; downstream records are authenticated, decrypted, and forwarded as cleartext. Each direction accepts only its next implicit 64-bit sequence number. Duplicate, deleted, reordered, reflected, or cross-connection records fail authentication and close an authorized line. Counters never wrap.
+
+The visible 12-byte field after the TLS header is random authenticated cover data, not the AEAD nonce. The nonce is derived from the directional IV and implicit sequence number. The node still advertises 17 bytes of left padding.
+
+## Compatibility
+
+Reality v2 is wire-incompatible with the previous static-key format. Upgrade `RealityClient` and `RealityServer` together. There is no automatic v1 fallback after v2 authentication fails. Changing the shared password invalidates future sessions; no server-side replay database is required.
 
 ## Example
 
