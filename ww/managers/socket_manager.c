@@ -15,6 +15,7 @@
 #include "wloop.h"
 #include "wmutex.h"
 #include "wproc.h"
+#include "wthread.h"
 
 #define i_type balancegroup_registry_t // NOLINT
 #define i_key  hash_t                  // NOLINT
@@ -87,6 +88,13 @@ typedef struct pending_iptables_rule_s
 #define i_type pending_rules_t, pending_iptables_rule_t // NOLINT
 #include "stc/vec.h"
 
+typedef struct owned_iptables_chain_s
+{
+    char name[32];
+    bool created;
+    bool linked;
+} owned_iptables_chain_t;
+
 #define SUPPORT_V6 true
 
 enum
@@ -110,13 +118,14 @@ typedef struct socket_manager_s
     wmutex_t                mutex;
     balancegroup_registry_t balance_groups;
     pending_rules_t         pending_rules;
+    owned_iptables_chain_t  iptables_v4_chain;
+    owned_iptables_chain_t  iptables_v6_chain;
     worker_t               *worker;
     wid_t                   wid;
 
     bool iptables_installed;
     bool ip6tables_installed;
     bool lsof_installed;
-    bool iptable_cleaned;
     bool iptables_used;
     bool started;
     // Avoid accepted-socket SO_MARK writes unless at least one filter requested them.
@@ -242,9 +251,38 @@ int socketManagerComputeRedirectRuleRank(bool has_specific_dest, bool has_interf
     return has_interface ? 2 : 3;
 }
 
-void socketManagerBuildRedirectCommand(char *out, size_t out_len, const char *tool, const char *proto_token,
-                                       bool has_dest, const char *dest, const char *iface_name, uint16_t port_min,
-                                       uint16_t port_max, uint16_t to_port)
+void socketManagerBuildOwnedChainCommand(char *out, size_t out_len, const char *tool,
+                                         socket_manager_iptables_chain_action_t action, const char *chain_name)
+{
+    switch (action)
+    {
+    case kSocketManagerIptablesCreateChain:
+        snprintf(out, out_len, "%s -t nat -N %s", tool, chain_name);
+        return;
+    case kSocketManagerIptablesAddJump:
+        snprintf(out, out_len, "%s -t nat -A PREROUTING -j %s", tool, chain_name);
+        return;
+    case kSocketManagerIptablesDeleteJump:
+        snprintf(out, out_len, "%s -t nat -D PREROUTING -j %s", tool, chain_name);
+        return;
+    case kSocketManagerIptablesFlushChain:
+        snprintf(out, out_len, "%s -t nat -F %s", tool, chain_name);
+        return;
+    case kSocketManagerIptablesDeleteChain:
+        snprintf(out, out_len, "%s -t nat -X %s", tool, chain_name);
+        return;
+    }
+
+    if (out_len > 0)
+    {
+        out[0] = '\0';
+    }
+    assert(false);
+}
+
+void socketManagerBuildRedirectCommand(char *out, size_t out_len, const char *tool, const char *chain_name,
+                                       const char *proto_token, bool has_dest, const char *dest, const char *iface_name,
+                                       uint16_t port_min, uint16_t port_max, uint16_t to_port)
 {
     char dport[32];
     if (port_min == port_max)
@@ -270,8 +308,9 @@ void socketManagerBuildRedirectCommand(char *out, size_t out_len, const char *to
 
     snprintf(out,
              out_len,
-             "%s -t nat -A PREROUTING -p %s%s%s --dport %s -j REDIRECT --to-port %u",
+             "%s -t nat -A %s -p %s%s%s --dport %s -j REDIRECT --to-port %u",
              tool,
+             chain_name,
              proto_token,
              iface_part,
              dest_part,
@@ -283,11 +322,12 @@ void socketManagerBuildRedirectCommand(char *out, size_t out_len, const char *to
  * @brief Build an iptables command from a queued redirect rule.
  */
 static void buildIptablesCommand(char *out, size_t outlen, const char *tool, const char *proto_token,
-                                 const pending_iptables_rule_t *rule)
+                                 const char *chain_name, const pending_iptables_rule_t *rule)
 {
     socketManagerBuildRedirectCommand(out,
                                       outlen,
                                       tool,
+                                      chain_name,
                                       proto_token,
                                       rule->has_dest,
                                       rule->dest,
@@ -295,6 +335,101 @@ static void buildIptablesCommand(char *out, size_t outlen, const char *tool, con
                                       rule->port_min,
                                       rule->port_max,
                                       rule->to_port);
+}
+
+/**
+ * @brief Execute one lifecycle operation for a socket-manager-owned chain.
+ */
+static bool runOwnedChainCommand(const char *tool, socket_manager_iptables_chain_action_t action,
+                                 const owned_iptables_chain_t *chain)
+{
+    char command[128];
+    socketManagerBuildOwnedChainCommand(command, sizeof(command), tool, action, chain->name);
+    return execCmd(command).exit_code == 0;
+}
+
+/**
+ * @brief Create and link one private NAT chain on first use.
+ */
+static bool ensureOwnedIptablesChain(const char *tool, owned_iptables_chain_t *chain)
+{
+    if (! chain->created)
+    {
+        if (! runOwnedChainCommand(tool, kSocketManagerIptablesCreateChain, chain))
+        {
+            return false;
+        }
+        chain->created = true;
+    }
+
+    if (! chain->linked)
+    {
+        if (! runOwnedChainCommand(tool, kSocketManagerIptablesAddJump, chain))
+        {
+            return false;
+        }
+        chain->linked = true;
+    }
+
+    return true;
+}
+
+/**
+ * @brief Remove one private NAT chain without touching any unrelated rule or chain.
+ */
+static bool cleanupOneOwnedIptablesChain(const char *tool, owned_iptables_chain_t *chain)
+{
+    bool result = true;
+
+    if (chain->linked)
+    {
+        const bool jump_removed = runOwnedChainCommand(tool, kSocketManagerIptablesDeleteJump, chain);
+        result                  = jump_removed && result;
+        if (jump_removed)
+        {
+            chain->linked = false;
+        }
+    }
+
+    if (chain->created)
+    {
+        const bool chain_flushed = runOwnedChainCommand(tool, kSocketManagerIptablesFlushChain, chain);
+        result                   = chain_flushed && result;
+
+        const bool chain_deleted = runOwnedChainCommand(tool, kSocketManagerIptablesDeleteChain, chain);
+        result                   = chain_deleted && result;
+        if (chain_deleted)
+        {
+            chain->created = false;
+        }
+    }
+
+    return result;
+}
+
+/**
+ * @brief Remove every socket-manager-owned IPv4/IPv6 NAT artifact.
+ */
+static bool cleanupOwnedIptablesChains(bool safe_mode)
+{
+    if (safe_mode)
+    {
+        const char msg[] = "SocketManager: removing owned iptables nat rules\n";
+        ssize_t    n     = write(STDOUT_FILENO, msg, sizeof(msg) - 1);
+        discard n;
+    }
+    else
+    {
+        LOGD("SocketManager: removing owned iptables nat rules");
+    }
+
+    const bool v4_result = cleanupOneOwnedIptablesChain("iptables", &socketmanager_gstate->iptables_v4_chain);
+#if SUPPORT_V6
+    const bool v6_result = cleanupOneOwnedIptablesChain("ip6tables", &socketmanager_gstate->iptables_v6_chain);
+    return v4_result && v6_result;
+#else
+    return v4_result;
+#endif
 }
 
 /**
@@ -376,7 +511,12 @@ static bool installOnePendingRule(const pending_iptables_rule_t *rule)
 
     if (rule->family == AF_INET)
     {
-        buildIptablesCommand(command, sizeof(command), "iptables", proto_token, rule);
+        owned_iptables_chain_t *chain = &socketmanager_gstate->iptables_v4_chain;
+        if (! ensureOwnedIptablesChain("iptables", chain))
+        {
+            return false;
+        }
+        buildIptablesCommand(command, sizeof(command), "iptables", proto_token, chain->name, rule);
         return execCmd(command).exit_code == 0;
     }
 
@@ -387,8 +527,13 @@ static bool installOnePendingRule(const pending_iptables_rule_t *rule)
 
         if (rule->dual_stack)
         {
-            buildIptablesCommand(command, sizeof(command), "iptables", proto_token, rule);
-            result = execCmd(command).exit_code == 0;
+            owned_iptables_chain_t *chain = &socketmanager_gstate->iptables_v4_chain;
+            result = ensureOwnedIptablesChain("iptables", chain);
+            if (result)
+            {
+                buildIptablesCommand(command, sizeof(command), "iptables", proto_token, chain->name, rule);
+                result = execCmd(command).exit_code == 0;
+            }
         }
 
         if (! socketmanager_gstate->ip6tables_installed)
@@ -396,8 +541,18 @@ static bool installOnePendingRule(const pending_iptables_rule_t *rule)
             LOGW("SocketManager: ip6tables not installed, skipping ipv6 redirect rule");
             return result;
         }
-        buildIptablesCommand(command, sizeof(command), "ip6tables", proto_token, rule);
-        return result && execCmd(command).exit_code == 0;
+        if (! result)
+        {
+            return false;
+        }
+
+        owned_iptables_chain_t *chain = &socketmanager_gstate->iptables_v6_chain;
+        if (! ensureOwnedIptablesChain("ip6tables", chain))
+        {
+            return false;
+        }
+        buildIptablesCommand(command, sizeof(command), "ip6tables", proto_token, chain->name, rule);
+        return execCmd(command).exit_code == 0;
     }
 #endif
     return false;
@@ -425,43 +580,16 @@ static void installPendingIptablesRules(void)
                      rule->protocol == IPPROTO_TCP ? "tcp" : "udp",
                      (unsigned int) rule->port_min,
                      (unsigned int) rule->port_max);
+                if (! cleanupOwnedIptablesChains(false))
+                {
+                    LOGE("SocketManager: failed to fully roll back owned iptables rules");
+                }
                 terminateProgram(1);
             }
         }
     }
 
     pending_rules_t_clear(&socketmanager_gstate->pending_rules);
-}
-
-/**
- * @brief Flush socket-manager NAT redirect rules.
- */
-static bool resetIptables(bool safe_mode)
-{
-    if (safe_mode)
-    {
-        char    msg[] = "SocketManager: clearing iptables nat rules\n";
-        ssize_t _     = write(STDOUT_FILENO, msg, sizeof(msg));
-        discard _;
-    }
-    else
-    {
-        char msg[] = "SocketManager: clearing iptables nat rules";
-        LOGD(msg);
-    }
-
-    bool result = true;
-    result      = result && execCmd("iptables -t nat -F").exit_code == 0;
-    result      = result && execCmd("iptables -t nat -X").exit_code == 0;
-#if SUPPORT_V6
-    if (socketmanager_gstate->ip6tables_installed)
-    {
-        result = result && execCmd("ip6tables -t nat -F").exit_code == 0;
-        result = result && execCmd("ip6tables -t nat -X").exit_code == 0;
-    }
-#endif
-
-    return result;
 }
 
 /**
@@ -1591,7 +1719,7 @@ static uint16_t selectMainPortForIptables(socket_filter_t *filter, wloop_t *loop
 }
 
 /**
- * @brief Validate and initialize iptables state on first use.
+ * @brief Validate iptables availability on first use.
  */
 static void initializeIptablesIfNeeded(void)
 {
@@ -1608,15 +1736,6 @@ static void initializeIptablesIfNeeded(void)
 #endif
 
     socketmanager_gstate->iptables_used = true;
-    if (! socketmanager_gstate->iptable_cleaned)
-    {
-        if (! resetIptables(false))
-        {
-            LOGF("SocketManager: could not clear iptables rules");
-            terminateProgram(1);
-        }
-        socketmanager_gstate->iptable_cleaned = true;
-    }
 }
 
 /**
@@ -2551,6 +2670,19 @@ socket_manager_state_t *socketmanagerCreate(void)
     socketmanager_gstate->balance_groups = balancegroup_registry_t_with_capacity(8);
     socketmanager_gstate->pending_rules  = pending_rules_t_init();
 
+    const unsigned int process_id = (unsigned int) getProcessID();
+    const unsigned int nonce      = fastRand32();
+    snprintf(socketmanager_gstate->iptables_v4_chain.name,
+             sizeof(socketmanager_gstate->iptables_v4_chain.name),
+             "WW_%08X_%08X_4",
+             process_id,
+             nonce);
+    snprintf(socketmanager_gstate->iptables_v6_chain.name,
+             sizeof(socketmanager_gstate->iptables_v6_chain.name),
+             "WW_%08X_%08X_6",
+             process_id,
+             nonce);
+
     mutexInit(&socketmanager_gstate->mutex);
     initializeSocketManagerPools();
     detectSystemCapabilities();
@@ -2807,7 +2939,12 @@ void socketmanagerDestroy(void)
 
     if (socketmanager_gstate->iptables_used)
     {
-        resetIptables(true);
+        if (! cleanupOwnedIptablesChains(true))
+        {
+            const char msg[] = "SocketManager: failed to fully remove owned iptables nat rules\n";
+            ssize_t    n     = write(STDOUT_FILENO, msg, sizeof(msg) - 1);
+            discard n;
+        }
     }
 
     cleanupFilters();

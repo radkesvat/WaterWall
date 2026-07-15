@@ -159,15 +159,33 @@ hash_t socketManagerCombineBalanceLocalHash(hash_t src_hash, const ip_addr_t *lo
  */
 int socketManagerComputeRedirectRuleRank(bool has_specific_dest, bool has_interface);
 
+typedef enum socket_manager_iptables_chain_action_e
+{
+    kSocketManagerIptablesCreateChain,
+    kSocketManagerIptablesAddJump,
+    kSocketManagerIptablesDeleteJump,
+    kSocketManagerIptablesFlushChain,
+    kSocketManagerIptablesDeleteChain
+} socket_manager_iptables_chain_action_t;
+
 /**
- * @brief Build one iptables/ip6tables PREROUTING REDIRECT command string.
+ * @brief Build one command that manages a socket-manager-owned NAT chain.
+ *
+ * The create/flush/delete actions always name the private chain. Jump actions add/remove only that chain's
+ * PREROUTING reference. Exposed for unit tests of firewall ownership boundaries.
+ */
+void socketManagerBuildOwnedChainCommand(char *out, size_t out_len, const char *tool,
+                                         socket_manager_iptables_chain_action_t action, const char *chain_name);
+
+/**
+ * @brief Build one iptables/ip6tables REDIRECT command in a socket-manager-owned chain.
  *
  * Wildcard destinations must pass has_dest=false so no "-d" match is emitted (never "-d 0.0.0.0" / "-d ::").
  * Interface-scoped rules add "-i <iface>". Exposed for unit tests.
  */
-void socketManagerBuildRedirectCommand(char *out, size_t out_len, const char *tool, const char *proto_token,
-                                       bool has_dest, const char *dest, const char *iface_name, uint16_t port_min,
-                                       uint16_t port_max, uint16_t to_port);
+void socketManagerBuildRedirectCommand(char *out, size_t out_len, const char *tool, const char *chain_name,
+                                       const char *proto_token, bool has_dest, const char *dest, const char *iface_name,
+                                       uint16_t port_min, uint16_t port_max, uint16_t to_port);
 
 /**
  * @brief Post an asynchronous UDP write to socket-manager worker context.
