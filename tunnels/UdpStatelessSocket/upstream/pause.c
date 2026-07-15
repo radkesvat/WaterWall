@@ -4,8 +4,10 @@
 
 void udpstatelesssocketTunnelUpStreamPause(tunnel_t *t, line_t *l)
 {
-    // discarding
-    discard t;
-    discard l;
-    // This function is disabled, but this node is bidirectional, so just ignore it
+    udpstatelesssocket_lstate_t *ls = lineGetState(l, t);
+    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    if (udpstatelesssocketLinestateOwnsLine(t, l, ls) && state->is_chain_end)
+    {
+        ls->read_paused = true;
+    }
 }

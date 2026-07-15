@@ -109,29 +109,19 @@ void udpstatelesssocketTunnelOnPrepair(tunnel_t *t)
         bind_address = interface_ip;
     }
 
-    state->io = udpstatelesssocketCreateUdpServer(state, bind_address);
+    state->socket.io = udpstatelesssocketCreateUdpServer(state, bind_address);
 
-    if (! state->io)
+    if (! state->socket.io)
     {
         LOGF("UdpStatelessSocket: could not create udp socket");
         terminateProgram(1);
     }
 
-    udpstatelesssocketRefreshLocalAddress(state->io);
-    state->io_wid = wloopGetWid(weventGetLoop(state->io));
+    udpstatelesssocketRefreshLocalAddress(state->socket.io);
+    state->io_wid       = wloopGetWid(weventGetLoop(state->socket.io));
+    state->is_chain_end = nodeIsLastInChain(t->node);
 
-    weventSetUserData(state->io, t);
-    wioSetCallBackRead(state->io, udpstatelesssocketOnRecvFrom);
-    wioRead(state->io);
-
-    if (nodeIsLastInChain(t->node))
-    {
-        state->WriteReceivedPacket = t->prev->fnPayloadD;
-        state->write_tunnel        = t->prev;
-    }
-    else
-    {
-        state->WriteReceivedPacket = t->next->fnPayloadU;
-        state->write_tunnel        = t->next;
-    }
+    weventSetUserData(state->socket.io, t);
+    wioSetCallBackRead(state->socket.io, udpstatelesssocketOnRecvFrom);
+    wioRead(state->socket.io);
 }

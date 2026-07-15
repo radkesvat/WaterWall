@@ -23,6 +23,7 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
     t->onPrepare = &udpstatelesssocketTunnelOnPrepair;
     t->onStart   = &udpstatelesssocketTunnelOnStart;
     t->onStop    = &udpstatelesssocketTunnelOnStop;
+    t->onWorkerStop = &udpstatelesssocketTunnelOnWorkerStop;
     t->onDestroy = &udpstatelesssocketTunnelDestroy;
 
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
@@ -100,6 +101,19 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
         return NULL;
     }
     state->listen_port = (uint16_t) temp_port;
+
+    state->socket.idle_tables = memoryAllocateZero(sizeof(*state->socket.idle_tables) * getWorkersCount());
+    state->send_request_master_pool = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
+    state->send_request_pools =
+        memoryAllocateZero(sizeof(*state->send_request_pools) * getTotalWorkersCount());
+
+    for (wid_t wid = 0; wid < getTotalWorkersCount(); ++wid)
+    {
+        state->send_request_pools[wid] = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(
+            state->send_request_master_pool,
+            sizeof(udpstatelesssocket_send_request_t),
+            (8) + RAM_PROFILE);
+    }
 
     return t;
 }

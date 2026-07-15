@@ -4,9 +4,10 @@
 
 void udpstatelesssocketTunnelDownStreamEst(tunnel_t *t, line_t *l)
 {
-    discard t;
-    discard l;
-    // This function is disabled, but this node is bidirectional, so just ignore it
-    // LOGF("This Function is disabled, this node is up end adapter");
-    // terminateProgram(1);
+    udpstatelesssocket_lstate_t *ls = lineGetState(l, t);
+    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    if (udpstatelesssocketLinestateOwnsLine(t, l, ls) && ! state->is_chain_end && ! lineIsEstablished(l))
+    {
+        lineMarkEstablished(l);
+    }
 }
