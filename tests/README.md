@@ -100,6 +100,18 @@ Practical rule:
 - `reality_google_roundtrip`
   Verifies `TesterClient -> RealityClient -> TcpConnector` and `TcpListener -> RealityServer -> TesterServer` across a
   real TCP loopback hop while the Reality visitor branch handshakes with `google.com:443`.
+- `reality_v2_roundtrip`
+  Verifies bidirectional Reality v2 operation through a local TLS 1.3 cover destination. A `256`-byte frame limit forces
+  both directions to use many ordered records without depending on an external site.
+- `reality_v2_tls12_roundtrip`
+  Verifies the same multi-record bidirectional Reality v2 flow when the local cover destination is restricted to TLS 1.2.
+- `reality_v2_aes_gcm_roundtrip`
+  Verifies multi-record bidirectional Reality v2 operation with the `aes-gcm` record-protection algorithm.
+- `reality_v2_cross_connection_replay_rejected`, `reality_v2_direct_record_replay_rejected`, and
+  `reality_v2_wrong_direction_rejected`
+  Run a byte-blind recording relay that first proves a valid protected roundtrip, then reflects the captured downstream
+  record upstream, sends a captured client record without a handshake, and substitutes that old record after a fresh
+  TLS handshake. The protected sink must observe exactly the one original request.
 - `reality_visitor_plaintext_probe`
   Verifies that non-TLS first bytes reaching `RealityServer` are immediately treated as visitor traffic instead of being
   held in the Reality sniff buffer.

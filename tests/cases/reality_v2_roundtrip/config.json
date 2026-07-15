@@ -1,0 +1,107 @@
+{
+  "name": "reality-v2-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true,
+        "max-payload-size": 32768
+      },
+      "next": "reality-client"
+    },
+    {
+      "name": "reality-client",
+      "type": "RealityClient",
+      "settings": {
+        "sni": "tls.integration.test",
+        "verify": false,
+        "password": "waterwall-reality-v2-integration",
+        "algorithm": "chacha20-poly1305",
+        "salt": "waterwall-reality-v2-roundtrip",
+        "kdf-iterations": 12000,
+        "max-frame-size": 256
+      },
+      "next": "reality-connector"
+    },
+    {
+      "name": "reality-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43200,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "reality-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43200,
+        "nodelay": true
+      },
+      "next": "reality-server"
+    },
+    {
+      "name": "reality-server",
+      "type": "RealityServer",
+      "settings": {
+        "destination": "cover-connector",
+        "password": "waterwall-reality-v2-integration",
+        "algorithm": "chacha20-poly1305",
+        "salt": "waterwall-reality-v2-roundtrip",
+        "kdf-iterations": 12000,
+        "max-frame-size": 256,
+        "sniffing-attempts": 8
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "streaming-response": true,
+        "max-payload-size": 32768
+      }
+    },
+    {
+      "name": "cover-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43201,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "cover-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43201,
+        "nodelay": true
+      },
+      "next": "cover-tls-server"
+    },
+    {
+      "name": "cover-tls-server",
+      "type": "TlsServer",
+      "settings": {
+        "cert-file": "../tls_roundtrip/server.crt",
+        "key-file": "../tls_roundtrip/server.key",
+        "sni": "tls.integration.test"
+      },
+      "next": "cover-server"
+    },
+    {
+      "name": "cover-server",
+      "type": "BlackHole",
+      "settings": {
+        "mode": "passive"
+      }
+    }
+  ]
+}

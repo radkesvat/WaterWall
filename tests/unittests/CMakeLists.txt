@@ -98,6 +98,57 @@ if(TARGET TlsServer)
   add_waterwall_unit_test(waterwall.tlsserver_alpn_unit tlsserver_alpn_test "unit;tunnels;tlsserver")
 endif()
 
+if(TARGET RealityCommon)
+  add_executable(reality_v2_test reality_v2_test.c)
+  target_link_libraries(reality_v2_test PRIVATE RealityCommon ww)
+  add_dependencies(waterwall_unit_tests reality_v2_test)
+
+  add_waterwall_unit_test(waterwall.reality_v2_unit reality_v2_test "unit;tunnels;reality;v2;crypto;replay;direction")
+endif()
+
+if(TARGET RealityServer)
+  add_executable(reality_tls_binding_test reality_tls_binding_test.c)
+  target_include_directories(reality_tls_binding_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/RealityServer/include
+    ${CMAKE_SOURCE_DIR}/tunnels/RealityServer/include/RealityServer
+  )
+  target_link_libraries(reality_tls_binding_test PRIVATE RealityServer RealityCommon ww)
+  add_dependencies(waterwall_unit_tests reality_tls_binding_test)
+
+  add_waterwall_unit_test(waterwall.reality_tls_binding_unit reality_tls_binding_test "unit;tunnels;reality;v2;tls-parser")
+endif()
+
+if(TARGET RealityServer AND TARGET TlsClient)
+  add_executable(reality_tls_binding_interop_test
+    reality_tls_binding_interop_test.c
+    reality_tls_binding_fixture.c
+  )
+  target_include_directories(reality_tls_binding_interop_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/RealityServer/include
+    ${CMAKE_SOURCE_DIR}/tunnels/RealityServer/include/RealityServer
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include
+  )
+  target_include_directories(reality_tls_binding_interop_test BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
+    ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
+  )
+  target_compile_definitions(reality_tls_binding_interop_test PRIVATE
+    BORINGSSL_PREFIX=WW_BSSL
+    REALITY_TEST_CERT_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.crt"
+    REALITY_TEST_KEY_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.key"
+  )
+  target_link_libraries(reality_tls_binding_interop_test PRIVATE
+    RealityServer RealityCommon TlsClient ww ssl crypto
+  )
+  add_dependencies(waterwall_unit_tests reality_tls_binding_interop_test)
+
+  add_waterwall_unit_test(
+    waterwall.reality_tls_binding_interop_unit
+    reality_tls_binding_interop_test
+    "unit;tunnels;reality;v2;tls-parser;tls-accessor"
+  )
+endif()
+
 if(TARGET SniffRouter)
   add_executable(sniffrouter_classifier_test sniffrouter_classifier_test.c)
   target_include_directories(sniffrouter_classifier_test PRIVATE

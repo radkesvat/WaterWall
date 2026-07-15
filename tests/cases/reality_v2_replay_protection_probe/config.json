@@ -1,0 +1,108 @@
+{
+  "name": "reality-v2-replay-protection-probe",
+  "nodes": [
+    {
+      "name": "client-entry",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43210,
+        "nodelay": true
+      },
+      "next": "reality-client"
+    },
+    {
+      "name": "reality-client",
+      "type": "RealityClient",
+      "settings": {
+        "sni": "tls.integration.test",
+        "verify": false,
+        "password": "waterwall-reality-v2-probe",
+        "algorithm": "chacha20-poly1305",
+        "salt": "reality-v2-replay-probe",
+        "kdf-iterations": 12000
+      },
+      "next": "relay-connector"
+    },
+    {
+      "name": "relay-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43211,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "reality-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43212,
+        "nodelay": true
+      },
+      "next": "reality-server"
+    },
+    {
+      "name": "reality-server",
+      "type": "RealityServer",
+      "settings": {
+        "destination": "cover-connector",
+        "password": "waterwall-reality-v2-probe",
+        "algorithm": "chacha20-poly1305",
+        "salt": "reality-v2-replay-probe",
+        "kdf-iterations": 12000,
+        "sniffing-attempts": 8
+      },
+      "next": "protected-connector"
+    },
+    {
+      "name": "protected-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43214,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "cover-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43213,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "cover-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43213,
+        "nodelay": true
+      },
+      "next": "cover-tls-server"
+    },
+    {
+      "name": "cover-tls-server",
+      "type": "TlsServer",
+      "settings": {
+        "cert-file": "../tls_roundtrip/server.crt",
+        "key-file": "../tls_roundtrip/server.key",
+        "sni": "tls.integration.test"
+      },
+      "next": "cover-blackhole"
+    },
+    {
+      "name": "cover-blackhole",
+      "type": "BlackHole",
+      "settings": {
+        "mode": "passive"
+      }
+    }
+  ]
+}
