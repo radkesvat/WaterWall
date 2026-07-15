@@ -2,13 +2,14 @@
 
 #include "wwapi.h"
 #include "TlsClient/interface.h"
+#include "RealityCommon/reality_v2.h"
 
 typedef struct realityclient_tstate_s
 {
     uint32_t algorithm;
     uint32_t kdf_iterations;
     uint32_t max_frame_payload;
-    uint8_t  key[32];
+    uint8_t  root_key[kRealityV2KeySize];
 
     node_t    tls_node;
     cJSON    *tls_settings;
@@ -19,7 +20,14 @@ typedef struct realityclient_lstate_s
 {
     buffer_stream_t read_stream;
     buffer_queue_t  pending_up;
-    bool            tls_ready;
+    uint8_t         session_id[kRealityV2SessionIdSize];
+    uint8_t         c2s_key[kRealityV2KeySize];
+    uint8_t         s2c_key[kRealityV2KeySize];
+    uint8_t         c2s_iv[kRealityV2IvSize];
+    uint8_t         s2c_iv[kRealityV2IvSize];
+    uint64_t        c2s_send_seq;
+    uint64_t        s2c_recv_seq;
+    bool            session_keys_ready;
 } realityclient_lstate_t;
 
 enum realityclient_algorithm_e
@@ -34,11 +42,11 @@ enum realityclient_frame_e
     kRealityClientTlsApplicationData = 0x17,
     kRealityClientTlsVersionMajor    = 0x03,
     kRealityClientTlsVersionMinor    = 0x03,
-    kRealityClientNonceSize          = 12,
+    kRealityClientCoverPrefixSize    = kRealityV2CoverPrefixSize,
     kRealityClientTagSize            = 16,
-    kRealityClientFramePrefixSize    = kRealityClientTlsHeaderSize + kRealityClientNonceSize,
+    kRealityClientFramePrefixSize    = kRealityClientTlsHeaderSize + kRealityClientCoverPrefixSize,
     kRealityClientMaxTlsRecordBody   = 16384,
-    kRealityClientMaxFramePayload    = kRealityClientMaxTlsRecordBody - kRealityClientNonceSize - kRealityClientTagSize,
+    kRealityClientMaxFramePayload = kRealityClientMaxTlsRecordBody - kRealityClientCoverPrefixSize - kRealityClientTagSize,
     kRealityClientDefaultKdfIterations = 12000,
 };
 

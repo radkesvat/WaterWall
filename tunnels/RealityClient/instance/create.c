@@ -199,7 +199,7 @@ static bool realityclientTunnelstateInitialize(tunnel_t *t, node_t *node)
     ts->kdf_iterations    = (uint32_t) kdf_iterations;
     ts->max_frame_payload = (uint32_t) max_frame_size;
 
-    if (! deriveKeyFromPassword(password, salt, ts->kdf_iterations, ts->key))
+    if (! deriveKeyFromPassword(password, salt, ts->kdf_iterations, ts->root_key))
     {
         LOGF("RealityClient: failed to derive key from password");
         goto cleanup;

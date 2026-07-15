@@ -951,6 +951,10 @@ if(INCLUDE_SOCKS_5_SERVER)
   target_link_libraries(Waterwall Socks5Server)
 endif()
 
+if(INCLUDE_REALITY_SERVER OR INCLUDE_REALITY_CLIENT)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/RealityCommon)
+endif()
+
 #reality server
 if(INCLUDE_REALITY_SERVER)
   target_compile_definitions(Waterwall PUBLIC INCLUDE_REALITY_SERVER=1)

@@ -188,7 +188,7 @@ static bool realityserverTunnelstateInitialize(realityserver_tstate_t *ts, node_
     ts->max_frame_payload = (uint32_t) max_frame_size;
     ts->sniffing_attempts = (uint32_t) sniffing_attempts;
 
-    if (! deriveKeyFromPassword(password, salt, ts->kdf_iterations, ts->key))
+    if (! deriveKeyFromPassword(password, salt, ts->kdf_iterations, ts->root_key))
     {
         LOGF("RealityServer: failed to derive key from password");
         goto cleanup;

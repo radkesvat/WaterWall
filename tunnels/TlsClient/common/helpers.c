@@ -75,6 +75,46 @@ bool tlsclientTunnelIsHandshakeCompleted(tunnel_t *t, line_t *l)
     return ls->handshake_completed;
 }
 
+bool tlsclientTunnelGetHandshakeBinding(tunnel_t *t, line_t *l, tlsclient_handshake_binding_t *binding)
+{
+    if (t == NULL || l == NULL || binding == NULL)
+    {
+        return false;
+    }
+
+    tlsclient_lstate_t *ls = lineGetState(l, t);
+    if (! ls->handshake_completed || ls->ssl == NULL || ls->resources_released || ls->passthrough)
+    {
+        return false;
+    }
+
+    tlsclient_handshake_binding_t result = {0};
+    const SSL_CIPHER             *cipher = SSL_get_current_cipher(ls->ssl);
+    int                           version = SSL_version(ls->ssl);
+
+    if (cipher == NULL || version <= 0 || version > UINT16_MAX ||
+        SSL_get_client_random(ls->ssl, result.client_random, sizeof(result.client_random)) !=
+            sizeof(result.client_random) ||
+        SSL_get_server_random(ls->ssl, result.server_random, sizeof(result.server_random)) !=
+            sizeof(result.server_random))
+    {
+        memoryZero(&result, sizeof(result));
+        return false;
+    }
+
+    result.tls_version  = (uint16_t) version;
+    result.cipher_suite = SSL_CIPHER_get_protocol_id(cipher);
+    if (result.cipher_suite == 0)
+    {
+        memoryZero(&result, sizeof(result));
+        return false;
+    }
+
+    *binding = result;
+    memoryZero(&result, sizeof(result));
+    return true;
+}
+
 bool tlsclientTunnelDeinitAfterHandshake(tunnel_t *t, line_t *l, sbuf_t **pending_raw)
 {
     tlsclient_lstate_t *ls = lineGetState(l, t);

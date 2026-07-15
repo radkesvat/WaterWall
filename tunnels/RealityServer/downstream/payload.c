@@ -16,5 +16,19 @@ void realityserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    if (ls->mode == kRealityServerModePending)
+    {
+        buffer_pool_t *pool = lineGetBufferPool(l);
+        lineLock(l);
+        bool alive = realityserverObserveDownstreamHandshake(t, l, sbufGetRawPtr(buf), sbufGetLength(buf));
+        if (! alive || ! lineIsAlive(l))
+        {
+            bufferpoolReuseBuffer(pool, buf);
+            lineUnlock(l);
+            return;
+        }
+        lineUnlock(l);
+    }
+
     tunnelPrevDownStreamPayload(t, l, buf);
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "interface.h"
 #include "wwapi.h"
 
 #include <openssl/bio.h>
@@ -68,6 +69,8 @@ WW_EXPORT tunnel_t    *tlsclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 WW_EXPORT void         tlsclientTunnelEnableHandshakeTakeover(tunnel_t *t);
 WW_EXPORT bool         tlsclientTunnelIsHandshakeCompleted(tunnel_t *t, line_t *l);
+WW_EXPORT bool         tlsclientTunnelGetHandshakeBinding(tunnel_t *t, line_t *l,
+                                                          tlsclient_handshake_binding_t *binding);
 WW_EXPORT bool         tlsclientTunnelDeinitAfterHandshake(tunnel_t *t, line_t *l, sbuf_t **pending_raw);
 
 void tlsclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);

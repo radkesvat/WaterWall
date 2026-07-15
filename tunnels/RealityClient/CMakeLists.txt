@@ -26,7 +26,7 @@ add_library(RealityClient STATIC
 
 target_include_directories(RealityClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(RealityClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/RealityClient)
-target_link_libraries(RealityClient PRIVATE ww TlsClient)
+target_link_libraries(RealityClient PRIVATE ww TlsClient RealityCommon)
 
 if(NOT APPLE)
     target_precompile_headers(RealityClient REUSE_FROM ww)

@@ -10,6 +10,7 @@ add_library(RealityServer STATIC
     instance/index.c
     common/helpers.c
     common/line_state.c
+    common/tls_binding.c
     upstream/init.c
     upstream/est.c
     upstream/fin.c
@@ -26,7 +27,7 @@ add_library(RealityServer STATIC
 
 target_include_directories(RealityServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(RealityServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/RealityServer)
-target_link_libraries(RealityServer PRIVATE ww)
+target_link_libraries(RealityServer PRIVATE ww RealityCommon)
 
 if(NOT APPLE)
     target_precompile_headers(RealityServer REUSE_FROM ww)
