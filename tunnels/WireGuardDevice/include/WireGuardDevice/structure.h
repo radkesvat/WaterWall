@@ -145,7 +145,7 @@ bool wireguardCreateHandshakeInitiation(wireguard_device_t *device, wireguard_pe
                                         message_handshake_initiation_t *dst);
 bool wireguardCreateHandshakeResponse(wireguard_device_t *device, wireguard_peer_t *peer,
                                       message_handshake_response_t *dst);
-void wireguardCreateCookieReply(wireguard_device_t *device, message_cookie_reply_t *dst, const uint8_t *mac1,
+bool wireguardCreateCookieReply(wireguard_device_t *device, message_cookie_reply_t *dst, const uint8_t *mac1,
                                 uint32_t index, uint8_t *source_addr_port, size_t source_length);
 
 bool wireguardCheckMac1(wireguard_device_t *device, const uint8_t *data, size_t len, const uint8_t *mac1);

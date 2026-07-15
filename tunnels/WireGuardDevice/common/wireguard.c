@@ -197,13 +197,22 @@ bool wireguardExpired(uint32_t created_millis, uint32_t valid_seconds)
     return (diff >= (valid_seconds * 1000));
 }
 
-static void generateCookieSecret(wireguard_device_t *device)
+static bool generateCookieSecret(wireguard_device_t *device)
 {
-    getRandomBytes(device->cookie_secret, WIREGUARD_HASH_LEN);
+    uint8_t secret[WIREGUARD_HASH_LEN];
+    if (UNLIKELY(! secureRandomBytes(secret, sizeof(secret))))
+    {
+        wCryptoZero(secret, sizeof(secret));
+        return false;
+    }
+
+    memoryCopy(device->cookie_secret, secret, sizeof(secret));
+    wCryptoZero(secret, sizeof(secret));
     device->cookie_secret_millis = getTickMS();
+    return true;
 }
 
-static void generatePeerCookie(wireguard_device_t *device, uint8_t *cookie, uint8_t *source_addr_port,
+static bool generatePeerCookie(wireguard_device_t *device, uint8_t *cookie, uint8_t *source_addr_port,
                                size_t source_length)
 {
     blake2s_ctx_t ctx = {0};
@@ -211,7 +220,10 @@ static void generatePeerCookie(wireguard_device_t *device, uint8_t *cookie, uint
     if (wireguardExpired(device->cookie_secret_millis, COOKIE_SECRET_MAX_AGE))
     {
         // Generate new random bytes
-        generateCookieSecret(device);
+        if (UNLIKELY(! generateCookieSecret(device)))
+        {
+            return false;
+        }
     }
 
     // Mac(key, input) Keyed-Blake2s(key, input, 16), the keyed MAC variant of the BLAKE2s hash function, returning 16
@@ -225,6 +237,7 @@ static void generatePeerCookie(wireguard_device_t *device, uint8_t *cookie, uint
         blake2sUpdate(&ctx, source_addr_port, source_length);
     }
     blake2sFinal(&ctx, cookie);
+    return true;
 }
 
 static void wireguardMac(uint8_t *dst, const void *message, size_t len, const uint8_t *key, size_t keylen)
@@ -451,7 +464,7 @@ wireguard_keypair_t *getPeerKeypairForIdx(wireguard_peer_t *peer, uint32_t idx)
 static uint32_t wireguardGenerateUniqueIndex(wireguard_device_t *device)
 {
     // We need a random 32-bit number but make sure it's not already been used in the context of this device
-    uint32_t          result;
+    uint32_t          result = 0;
     uint8_t           buf[4];
     int               x;
     wireguard_peer_t *peer;
@@ -460,7 +473,11 @@ static uint32_t wireguardGenerateUniqueIndex(wireguard_device_t *device)
     {
         do
         {
-            getRandomBytes(buf, 4);
+            if (UNLIKELY(! secureRandomBytes(buf, sizeof(buf))))
+            {
+                wCryptoZero(buf, sizeof(buf));
+                return 0;
+            }
             result = U8TO32_LITTLE(buf);
         } while ((result == 0) || (result == 0xFFFFFFFF)); // Don't allow 0 or 0xFFFFFFFF as valid values
 
@@ -477,6 +494,7 @@ static uint32_t wireguardGenerateUniqueIndex(wireguard_device_t *device)
         }
     } while (existing);
 
+    wCryptoZero(buf, sizeof(buf));
     return result;
 }
 
@@ -486,10 +504,16 @@ static void wireguardClampPrivateKey(uint8_t *key)
     key[31] = (key[31] & 127) | 64;
 }
 
-static void wireguardGeneratePrivateKey(uint8_t *key)
+static bool wireguardGeneratePrivateKey(uint8_t *key)
 {
-    getRandomBytes(key, WIREGUARD_PRIVATE_KEY_LEN);
+    if (UNLIKELY(! secureRandomBytes(key, WIREGUARD_PRIVATE_KEY_LEN)))
+    {
+        wCryptoZero(key, WIREGUARD_PRIVATE_KEY_LEN);
+        return false;
+    }
+
     wireguardClampPrivateKey(key);
+    return true;
 }
 
 static bool wireguardGeneratePublicKey(uint8_t *public_key, const uint8_t *private_key)
@@ -522,7 +546,10 @@ bool wireguardCheckMac2(wireguard_device_t *device, const uint8_t *data, size_t 
     uint8_t cookie[WIREGUARD_COOKIE_LEN];
     uint8_t calculated[WIREGUARD_COOKIE_LEN];
 
-    generatePeerCookie(device, cookie, source_addr_port, source_length);
+    if (UNLIKELY(! generatePeerCookie(device, cookie, source_addr_port, source_length)))
+    {
+        return false;
+    }
 
     wireguardMac(calculated, data, len, cookie, WIREGUARD_COOKIE_LEN);
     if (wCryptoEqual(calculated, mac2, WIREGUARD_COOKIE_LEN))
@@ -931,8 +958,8 @@ bool wireguardCreateHandshakeInitiation(wireguard_device_t *device, wireguard_pe
     wireguardMixHash(handshake->hash, peer->public_key, WIREGUARD_PUBLIC_KEY_LEN);
 
     // (Eprivi, Epubi) := DH-Generate()
-    wireguardGeneratePrivateKey(handshake->ephemeral_private);
-    if (wireguardGeneratePublicKey(dst->ephemeral, handshake->ephemeral_private))
+    if (wireguardGeneratePrivateKey(handshake->ephemeral_private) &&
+        wireguardGeneratePublicKey(dst->ephemeral, handshake->ephemeral_private))
     {
 
         // Ci := Kdf1(Ci, Epubi)
@@ -976,11 +1003,14 @@ bool wireguardCreateHandshakeInitiation(wireguard_device_t *device, wireguard_pe
             dst->type   = MESSAGE_HANDSHAKE_INITIATION;
             dst->sender = wireguardGenerateUniqueIndex(device);
 
-            handshake->valid       = true;
-            handshake->initiator   = true;
-            handshake->local_index = dst->sender;
+            if (LIKELY(dst->sender != 0))
+            {
+                handshake->valid       = true;
+                handshake->initiator   = true;
+                handshake->local_index = dst->sender;
 
-            result = true;
+                result = true;
+            }
         }
     }
 
@@ -1026,8 +1056,8 @@ bool wireguardCreateHandshakeResponse(wireguard_device_t *device, wireguard_peer
     {
 
         // (Eprivr, Epubr) := DH-Generate()
-        wireguardGeneratePrivateKey(handshake->ephemeral_private);
-        if (wireguardGeneratePublicKey(dst->ephemeral, handshake->ephemeral_private))
+        if (wireguardGeneratePrivateKey(handshake->ephemeral_private) &&
+            wireguardGeneratePublicKey(dst->ephemeral, handshake->ephemeral_private))
         {
 
             // Cr := Kdf1(Cr,Epubr)
@@ -1072,10 +1102,13 @@ bool wireguardCreateHandshakeResponse(wireguard_device_t *device, wireguard_peer
                     dst->type     = MESSAGE_HANDSHAKE_RESPONSE;
                     dst->receiver = handshake->remote_index;
                     dst->sender   = wireguardGenerateUniqueIndex(device);
-                    // Update handshake object too
-                    handshake->local_index = dst->sender;
 
-                    result = true;
+                    if (LIKELY(dst->sender != 0))
+                    {
+                        // Update handshake object too
+                        handshake->local_index = dst->sender;
+                        result                 = true;
+                    }
                 }
                 else
                 {
@@ -1121,17 +1154,36 @@ bool wireguardCreateHandshakeResponse(wireguard_device_t *device, wireguard_peer
     return result;
 }
 
-void wireguardCreateCookieReply(wireguard_device_t *device, message_cookie_reply_t *dst, const uint8_t *mac1,
+bool wireguardCreateCookieReply(wireguard_device_t *device, message_cookie_reply_t *dst, const uint8_t *mac1,
                                 uint32_t index, uint8_t *source_addr_port, size_t source_length)
 {
     uint8_t cookie[WIREGUARD_COOKIE_LEN];
     wCryptoZero(dst, sizeof(message_cookie_reply_t));
+
+    if (UNLIKELY(! generatePeerCookie(device, cookie, source_addr_port, source_length)) ||
+        UNLIKELY(! secureRandomBytes(dst->nonce, COOKIE_NONCE_LEN)))
+    {
+        wCryptoZero(cookie, sizeof(cookie));
+        wCryptoZero(dst, sizeof(message_cookie_reply_t));
+        return false;
+    }
+
     dst->type     = MESSAGE_COOKIE_REPLY;
     dst->receiver = index;
-    getRandomBytes(dst->nonce, COOKIE_NONCE_LEN);
-    generatePeerCookie(device, cookie, source_addr_port, source_length);
-    xchacha20poly1305Encrypt(dst->enc_cookie, cookie, WIREGUARD_COOKIE_LEN, mac1, WIREGUARD_COOKIE_LEN, dst->nonce,
-                             device->label_cookie_key);
+    bool encrypted = 0 == xchacha20poly1305Encrypt(dst->enc_cookie,
+                                                   cookie,
+                                                   WIREGUARD_COOKIE_LEN,
+                                                   mac1,
+                                                   WIREGUARD_COOKIE_LEN,
+                                                   dst->nonce,
+                                                   device->label_cookie_key);
+    wCryptoZero(cookie, sizeof(cookie));
+    if (UNLIKELY(! encrypted))
+    {
+        wCryptoZero(dst, sizeof(message_cookie_reply_t));
+        return false;
+    }
+    return true;
 }
 
 bool wireguardPeerInit(wireguard_device_t *device, wireguard_peer_t *peer, const uint8_t *public_key,
@@ -1186,15 +1238,20 @@ bool wireguardDeviceInit(wireguard_device_t *device, const uint8_t *private_key)
     device->valid = wireguardGeneratePublicKey(device->public_key, device->private_key);
     if (device->valid)
     {
-        generateCookieSecret(device);
-        // 5.4.4 Cookie MACs - The value Hash(Label-Mac1 || Spubm' ) above can be pre-computed.
-        wireguardMacKey(device->label_mac1_key, device->public_key, LABEL_MAC1, sizeof(LABEL_MAC1));
-        // 5.4.7 Under Load: Cookie Reply Message - The value Hash(Label-Cookie || Spubm) above can be pre-computed.
-        wireguardMacKey(device->label_cookie_key, device->public_key, LABEL_COOKIE, sizeof(LABEL_COOKIE));
+        device->valid = generateCookieSecret(device);
+        if (device->valid)
+        {
+            // 5.4.4 Cookie MACs - The value Hash(Label-Mac1 || Spubm' ) above can be pre-computed.
+            wireguardMacKey(device->label_mac1_key, device->public_key, LABEL_MAC1, sizeof(LABEL_MAC1));
+            // 5.4.7 Under Load: Cookie Reply Message - The value Hash(Label-Cookie || Spubm) above can be pre-computed.
+            wireguardMacKey(device->label_cookie_key, device->public_key, LABEL_COOKIE, sizeof(LABEL_COOKIE));
+        }
     }
-    else
+    if (! device->valid)
     {
         wCryptoZero(device->private_key, WIREGUARD_PRIVATE_KEY_LEN);
+        wCryptoZero(device->public_key, WIREGUARD_PUBLIC_KEY_LEN);
+        wCryptoZero(device->cookie_secret, WIREGUARD_HASH_LEN);
     }
     return device->valid;
 }

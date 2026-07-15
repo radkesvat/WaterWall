@@ -43,7 +43,11 @@ static void wireguardifSendHandshakeCookie(wireguard_device_t *device, const uin
     uint8_t                source_buf[18];
     size_t                 source_len = getSourceAddrPort(addr, port, source_buf, sizeof(source_buf));
 
-    wireguardCreateCookieReply(device, &packet, mac1, index, source_buf, source_len);
+    if (UNLIKELY(! wireguardCreateCookieReply(device, &packet, mac1, index, source_buf, source_len)))
+    {
+        LOGW("WireGuardDevice: failed to create secure handshake cookie reply");
+        return;
+    }
 
     // Send this packet out!
     buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(getWID()));
