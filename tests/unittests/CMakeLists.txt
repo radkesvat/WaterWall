@@ -42,6 +42,12 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.wlibc_memcopy_unit wlibc_memcopy_test "unit;libc;memory")
 
+  add_executable(wfrand_test wfrand_test.c)
+  target_link_libraries(wfrand_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests wfrand_test)
+
+  add_waterwall_unit_test(waterwall.wfrand_unit wfrand_test "unit;libc;random")
+
   add_executable(line_user_identifier_test line_user_identifier_test.c)
   target_link_libraries(line_user_identifier_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests line_user_identifier_test)

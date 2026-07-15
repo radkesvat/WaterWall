@@ -14,6 +14,17 @@ extern thread_local uint32_t frand_seed32;
 extern thread_local uint64_t frand_seed64;
 
 /*
+    Fill a buffer with cryptographically secure random bytes supplied by the
+    operating system.
+
+    The provider is initialized and probed by createGlobalState() before
+    workers or tunnels start. Returns true only when the entire buffer was
+    filled. A zero-sized request succeeds even when bytes is NULL. No insecure
+    fallback is used, and the buffer contents are unspecified on failure.
+*/
+WW_EXPORT bool secureRandomBytes(void *bytes, size_t size);
+
+/*
 
     Compute a pseudorandom integer.
     Output value in range [0, 32767]
@@ -78,6 +89,7 @@ static inline uint32_t fastRandJittered32(uint32_t center, uint32_t jitter)
     return lower + (uint32_t) (fastRand64() % span);
 }
 
+/* Fill a buffer using the fast, non-secure pseudorandom generator above. */
 static void getRandomBytes(void *bytes, size_t size)
 {
     uint8_t *b = (uint8_t *) bytes;

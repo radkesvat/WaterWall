@@ -13,6 +13,12 @@
 
 #include <ares.h>
 
+#if defined(OS_UNIX) && ! (defined(OS_DARWIN) || defined(OS_BSD))
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 #if defined(WCRYPTO_USING_OPENSSL)
 
 #include "crypto/openssl_instance.h"
@@ -140,6 +146,94 @@ ww_global_state_t *getGlobalState(void)
     return &GSTATE;
 }
 
+bool globalstateInitializeSecureRandom(void)
+{
+    secure_random_state_t *state = &GSTATE.secure_random;
+    if (state->initialized)
+    {
+        return true;
+    }
+
+    *state = (secure_random_state_t) {0};
+
+#if defined(OS_WIN)
+    state->library_handle = LoadLibraryA("bcrypt.dll");
+    if (UNLIKELY(state->library_handle == NULL))
+    {
+        return false;
+    }
+
+    FARPROC proc = GetProcAddress(state->library_handle, "BCryptGenRandom");
+    if (UNLIKELY(proc == NULL))
+    {
+        FreeLibrary(state->library_handle);
+        *state = (secure_random_state_t) {0};
+        return false;
+    }
+
+    _Static_assert(sizeof(state->generator) == sizeof(proc), "FARPROC size mismatch");
+    memoryCopy(&state->generator, &proc, sizeof(state->generator));
+#elif defined(OS_UNIX) && ! (defined(OS_DARWIN) || defined(OS_BSD))
+    state->device_fd = -1;
+    int open_flags = O_RDONLY;
+#if defined(O_CLOEXEC)
+    open_flags |= O_CLOEXEC;
+#endif
+
+    do
+    {
+        state->device_fd = open("/dev/urandom", open_flags);
+    } while (state->device_fd < 0 && errno == EINTR);
+
+    if (UNLIKELY(state->device_fd < 0))
+    {
+        return false;
+    }
+#elif ! (defined(OS_DARWIN) || defined(OS_BSD))
+    return false;
+#endif
+
+    state->initialized = true;
+
+    uint8_t probe = 0;
+    if (UNLIKELY(! secureRandomBytes(&probe, sizeof(probe))))
+    {
+        memoryZero(&probe, sizeof(probe));
+        globalstateDestroySecureRandom();
+        return false;
+    }
+
+    memoryZero(&probe, sizeof(probe));
+    return true;
+}
+
+void globalstateDestroySecureRandom(void)
+{
+    secure_random_state_t *state = &GSTATE.secure_random;
+    if (! state->initialized)
+    {
+        return;
+    }
+
+#if defined(OS_WIN)
+    state->generator = NULL;
+    if (state->library_handle != NULL)
+    {
+        FreeLibrary(state->library_handle);
+    }
+#elif defined(OS_UNIX) && ! (defined(OS_DARWIN) || defined(OS_BSD))
+    if (state->device_fd >= 0)
+    {
+        discard close(state->device_fd);
+    }
+#endif
+
+    memoryZero(state, sizeof(*state));
+#if defined(OS_UNIX) && ! (defined(OS_DARWIN) || defined(OS_BSD))
+    state->device_fd = -1;
+#endif
+}
+
 /*!
  * @brief Sets the global state.
  *
@@ -204,6 +298,13 @@ void createGlobalState(const ww_construction_data_t init_data)
     }
     atomicStoreRelaxed(&GSTATE.application_stopping_flag, false);
     atomicStoreRelaxed(&GSTATE.workers_run_flag, false);
+
+    if (UNLIKELY(! globalstateInitializeSecureRandom()))
+    {
+        printError("Failed to initialize the operating-system secure random provider\n");
+        terminateProgram(1);
+    }
+
     int ares_rc = ares_library_init(ARES_LIB_INIT_ALL);
     if (ares_rc != ARES_SUCCESS)
     {
@@ -418,6 +519,8 @@ WW_EXPORT void destroyGlobalState(void)
     nodelibraryCleanup();
 
     ares_library_cleanup();
+
+    globalstateDestroySecureRandom();
 
     signalmanagerDestroy();
 

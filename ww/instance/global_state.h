@@ -28,6 +28,21 @@ typedef struct
 
 typedef err_t (*LwipV4Hook)(struct pbuf *, struct netif *);
 
+#if defined(OS_WIN)
+typedef LONG(WINAPI *secure_random_windows_generator_fn)(void *, unsigned char *, ULONG, ULONG);
+#endif
+
+typedef struct secure_random_state_s
+{
+#if defined(OS_WIN)
+    HMODULE                            library_handle;
+    secure_random_windows_generator_fn generator;
+#elif defined(OS_UNIX) && ! (defined(OS_DARWIN) || defined(OS_BSD))
+    int device_fd;
+#endif
+    bool initialized;
+} secure_random_state_t;
+
 typedef struct ww_global_state_s
 {
     wloop_t                   **shortcut_loops;
@@ -49,6 +64,7 @@ typedef struct ww_global_state_s
     struct logger_s            *internal_logger;
     struct dedicated_memory_s  *openssl_dedicated_memory;
     LwipV4Hook                  lwip_process_v4_hook;
+    secure_random_state_t       secure_random;
     void                       *wintun_dll_handle;
     void                       *windivert_dll_handle;
     uint32_t                    workers_count;
@@ -256,6 +272,16 @@ WW_EXPORT ww_global_state_t *getGlobalState(void);
  * @param state A pointer to the global state.
  */
 WW_EXPORT void setGlobalState(ww_global_state_t *state);
+
+/*
+ * Initializes and probes the process-wide secure random provider.
+ * createGlobalState() calls this before workers or tunnels are started.
+ */
+WW_EXPORT bool globalstateInitializeSecureRandom(void);
+
+/* Releases resources cached by globalstateInitializeSecureRandom(). */
+WW_EXPORT void globalstateDestroySecureRandom(void);
+
 /*!
  * @brief Updates the allocation padding for the global state.
  *
