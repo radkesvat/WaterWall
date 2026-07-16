@@ -104,7 +104,41 @@ Practical rule:
   Verifies bidirectional Reality v2 operation through a local TLS 1.3 cover destination. A `256`-byte frame limit forces
   both directions to use many ordered records without depending on an external site.
 - `reality_v2_tls12_roundtrip`
-  Verifies the same multi-record bidirectional Reality v2 flow when the local cover destination is restricted to TLS 1.2.
+  Forces `ECDHE-RSA-AES128-GCM-SHA256` and verifies the multi-record TLS 1.2 AES-GCM profile with the `auto`
+  server-nonce policy, including takeover after the real protected epoch.
+- `reality_v2_tls12_cbc_roundtrip`
+  Forces `ECDHE-RSA-AES128-SHA` and a `33`-byte frame limit to exercise TLS 1.2 CBC explicit-IV generation,
+  block-aligned camouflage sizing, encrypted inner lengths, and filler validation in both directions on four workers.
+- `reality_v2_tls12_gcm_sequence_roundtrip`, `reality_v2_tls12_gcm_counter_roundtrip`, and
+  `reality_v2_tls12_gcm_random_roundtrip`
+  Force AES-128/AES-256 TLS 1.2 GCM suites and small frame limits while exercising every explicit server-nonce policy
+  with both Reality record-protection algorithms.
+- `reality_v2_tls12_cbc256_roundtrip`
+  Forces `ECDHE-RSA-AES256-SHA`, the `aes-gcm` Reality algorithm, and a `17`-byte frame limit to cover the AES-256 CBC
+  suite family under multi-worker load.
+- `reality_v2_tls12_gcm_wire_camouflage`, `reality_v2_tls12_cbc_wire_camouflage`,
+  `reality_v2_tls12_chacha_wire_camouflage`, and `reality_v2_tls13_wire_camouflage`
+  Use a keyless recording relay to parse only public TLS bytes. They verify the selected ServerHello suite, TLS 1.2
+  record headers, exact GCM/CBC body formulas, client GCM sequence continuation, frozen server GCM policy behavior,
+  aligned CBC bodies, non-repeating CBC IVs, and the TLS 1.3/TLS 1.2 ChaCha opaque shapes. Client-initiated normal close
+  must use raw FIN with no alert in either direction. Server-initiated normal close must emit exactly one profile-correct
+  server `close_notify` before FIN, with no client response or response wait; the relay withholds server FIN and requires
+  RealityClient to close its TCP side from the authenticated alert alone. The TLS 1.2 probes also close immediately
+  after both protected Finished records and require no first-close-alert authorization. Mirrored authorized corruption
+  exercises both detector roles: each emits one direction-correct fatal-shaped record and the receiver never answers it.
+  The same probes retain cross-connection replay and reordering checks.
+  The real BoringSSL fixture compares passive and accessor sequence state and captures `SSL_shutdown()` only as a public
+  shape oracle for TLS 1.3 and full/resumed AES-128/256-GCM, AES-128/256-CBC, and ChaCha TLS 1.2 handshakes. It also
+  verifies GCM close-record nonce continuation and fresh CBC close-record IVs; Reality does not copy its shutdown state
+  machine.
+  The real-handshake fixtures use the repository's RSA certificate; ECDSA and non-ECDHE advertised suite families are
+  covered by the fixed ClientHello/profile-map unit test rather than a real certificate handshake.
+- `waterwall.reality_close_lifecycle_unit`
+  Uses synchronous fake neighbors to verify server/fatal Payload-before-Finish ordering, no reflection toward a finished
+  side, raw-Finish behavior, Reality-owned cleanup after line death during final Payload, and fatal no-response/dominance
+  behavior. Every record profile covers fragmented and coalesced alerts. A client consumes server `close_notify` without
+  replying and immediately closes both sides even when the fake peer supplies no FIN. Generic
+  first-alert authorization uses a fatal record; Pending/Visitor/destination teardown remains free of synthetic alerts.
 - `reality_v2_aes_gcm_roundtrip`
   Verifies multi-record bidirectional Reality v2 operation with the `aes-gcm` record-protection algorithm.
 - `reality_v2_cross_connection_replay_rejected`, `reality_v2_direct_record_replay_rejected`, and

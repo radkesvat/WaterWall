@@ -1,5 +1,5 @@
 {
-  "name": "reality-v2-tls12-roundtrip",
+  "name": "reality-v2-tls12-cbc-roundtrip",
   "nodes": [
     {
       "name": "tester-client",
@@ -16,11 +16,11 @@
       "settings": {
         "sni": "tls.integration.test",
         "verify": false,
-        "password": "waterwall-reality-v2-integration",
+        "password": "waterwall-reality-v2-cbc",
         "algorithm": "chacha20-poly1305",
-        "salt": "reality-v2-tls12-roundtrip",
+        "salt": "reality-v2-tls12-cbc-roundtrip",
         "kdf-iterations": 12000,
-        "max-frame-size": 256
+        "max-frame-size": 33
       },
       "next": "reality-connector"
     },
@@ -29,7 +29,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43210,
+        "port": 43230,
         "nodelay": true,
         "fastopen": false
       }
@@ -39,7 +39,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43210,
+        "port": 43230,
         "nodelay": true
       },
       "next": "reality-server"
@@ -49,13 +49,12 @@
       "type": "RealityServer",
       "settings": {
         "destination": "cover-connector",
-        "password": "waterwall-reality-v2-integration",
+        "password": "waterwall-reality-v2-cbc",
         "algorithm": "chacha20-poly1305",
-        "salt": "reality-v2-tls12-roundtrip",
+        "salt": "reality-v2-tls12-cbc-roundtrip",
         "kdf-iterations": 12000,
-        "max-frame-size": 256,
-        "sniffing-attempts": 8,
-        "tls12-gcm-server-nonce-policy": "auto"
+        "max-frame-size": 33,
+        "sniffing-attempts": 8
       },
       "next": "tester-server"
     },
@@ -72,7 +71,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43211,
+        "port": 43231,
         "nodelay": true,
         "fastopen": false
       }
@@ -82,7 +81,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43211,
+        "port": 43231,
         "nodelay": true
       },
       "next": "cover-tls-server"
@@ -96,7 +95,7 @@
         "sni": "tls.integration.test",
         "min-version": "TLSv1.2",
         "max-version": "TLSv1.2",
-        "ciphers": "ECDHE-RSA-AES128-GCM-SHA256"
+        "ciphers": "ECDHE-RSA-AES128-SHA"
       },
       "next": "cover-server"
     },

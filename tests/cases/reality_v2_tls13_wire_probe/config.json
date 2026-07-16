@@ -1,0 +1,39 @@
+{
+  "name": "reality-v2-tls13-wire-probe",
+  "nodes": [
+    { "name": "client-entry", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 43330, "nodelay": true }, "next": "reality-client" },
+    {
+      "name": "reality-client", "type": "RealityClient",
+      "settings": {
+        "sni": "tls.integration.test", "verify": false,
+        "password": "waterwall-reality-v2-tls13-wire", "algorithm": "chacha20-poly1305",
+        "salt": "reality-v2-tls13-wire", "kdf-iterations": 12000, "max-frame-size": 1
+      },
+      "next": "relay-connector"
+    },
+    { "name": "relay-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 43331, "nodelay": true, "fastopen": false } },
+    { "name": "reality-listener", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 43332, "nodelay": true }, "next": "reality-server" },
+    {
+      "name": "reality-server", "type": "RealityServer",
+      "settings": {
+        "destination": "cover-connector",
+        "password": "waterwall-reality-v2-tls13-wire", "algorithm": "chacha20-poly1305",
+        "salt": "reality-v2-tls13-wire", "kdf-iterations": 12000,
+        "max-frame-size": 1, "sniffing-attempts": 8
+      },
+      "next": "protected-connector"
+    },
+    { "name": "protected-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 43334, "nodelay": true, "fastopen": false } },
+    { "name": "cover-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 43333, "nodelay": true, "fastopen": false } },
+    { "name": "cover-listener", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 43333, "nodelay": true }, "next": "cover-tls-server" },
+    {
+      "name": "cover-tls-server", "type": "TlsServer",
+      "settings": {
+        "cert-file": "../tls_roundtrip/server.crt", "key-file": "../tls_roundtrip/server.key",
+        "sni": "tls.integration.test", "min-version": "TLSv1.3", "max-version": "TLSv1.3"
+      },
+      "next": "cover-blackhole"
+    },
+    { "name": "cover-blackhole", "type": "BlackHole", "settings": { "mode": "passive" } }
+  ]
+}

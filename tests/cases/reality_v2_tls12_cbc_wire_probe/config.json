@@ -1,0 +1,40 @@
+{
+  "name": "reality-v2-tls12-cbc-wire-probe",
+  "nodes": [
+    { "name": "client-entry", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 43310, "nodelay": true }, "next": "reality-client" },
+    {
+      "name": "reality-client", "type": "RealityClient",
+      "settings": {
+        "sni": "tls.integration.test", "verify": false,
+        "password": "waterwall-reality-v2-cbc-wire", "algorithm": "aes-gcm",
+        "salt": "reality-v2-tls12-cbc-wire", "kdf-iterations": 12000, "max-frame-size": 1
+      },
+      "next": "relay-connector"
+    },
+    { "name": "relay-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 43311, "nodelay": true, "fastopen": false } },
+    { "name": "reality-listener", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 43312, "nodelay": true }, "next": "reality-server" },
+    {
+      "name": "reality-server", "type": "RealityServer",
+      "settings": {
+        "destination": "cover-connector",
+        "password": "waterwall-reality-v2-cbc-wire", "algorithm": "aes-gcm",
+        "salt": "reality-v2-tls12-cbc-wire", "kdf-iterations": 12000,
+        "max-frame-size": 1, "sniffing-attempts": 8
+      },
+      "next": "protected-connector"
+    },
+    { "name": "protected-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 43314, "nodelay": true, "fastopen": false } },
+    { "name": "cover-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 43313, "nodelay": true, "fastopen": false } },
+    { "name": "cover-listener", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 43313, "nodelay": true }, "next": "cover-tls-server" },
+    {
+      "name": "cover-tls-server", "type": "TlsServer",
+      "settings": {
+        "cert-file": "../tls_roundtrip/server.crt", "key-file": "../tls_roundtrip/server.key",
+        "sni": "tls.integration.test", "min-version": "TLSv1.2", "max-version": "TLSv1.2",
+        "ciphers": "ECDHE-RSA-AES128-SHA"
+      },
+      "next": "cover-blackhole"
+    },
+    { "name": "cover-blackhole", "type": "BlackHole", "settings": { "mode": "passive" } }
+  ]
+}

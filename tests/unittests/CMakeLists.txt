@@ -100,6 +100,9 @@ endif()
 
 if(TARGET RealityCommon)
   add_executable(reality_v2_test reality_v2_test.c)
+  target_compile_definitions(reality_v2_test PRIVATE
+    REALITY_TLS_CLIENT_HANDSHAKE_SOURCE="${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/ssl/handshake_client.cc"
+  )
   target_link_libraries(reality_v2_test PRIVATE RealityCommon ww)
   add_dependencies(waterwall_unit_tests reality_v2_test)
 
@@ -146,6 +149,29 @@ if(TARGET RealityServer AND TARGET TlsClient)
     waterwall.reality_tls_binding_interop_unit
     reality_tls_binding_interop_test
     "unit;tunnels;reality;v2;tls-parser;tls-accessor"
+  )
+endif()
+
+if(TARGET RealityClient AND TARGET RealityServer)
+  add_executable(reality_close_lifecycle_test
+    reality_close_lifecycle_test.c
+    reality_close_lifecycle_client.c
+    reality_close_lifecycle_server.c
+  )
+  target_include_directories(reality_close_lifecycle_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/RealityClient/include
+    ${CMAKE_SOURCE_DIR}/tunnels/RealityServer/include
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include
+  )
+  target_link_libraries(reality_close_lifecycle_test PRIVATE
+    RealityClient RealityServer RealityCommon ww
+  )
+  add_dependencies(waterwall_unit_tests reality_close_lifecycle_test)
+
+  add_waterwall_unit_test(
+    waterwall.reality_close_lifecycle_unit
+    reality_close_lifecycle_test
+    "unit;tunnels;reality;v2;lifecycle;reentry"
   )
 endif()
 

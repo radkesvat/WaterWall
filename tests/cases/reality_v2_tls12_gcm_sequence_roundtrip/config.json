@@ -1,13 +1,10 @@
 {
-  "name": "reality-v2-tls12-roundtrip",
+  "name": "reality-v2-tls12-gcm-sequence-roundtrip",
   "nodes": [
     {
       "name": "tester-client",
       "type": "TesterClient",
-      "settings": {
-        "allow-early-response": true,
-        "max-payload-size": 32768
-      },
+      "settings": { "allow-early-response": true, "max-payload-size": 32768 },
       "next": "reality-client"
     },
     {
@@ -16,32 +13,23 @@
       "settings": {
         "sni": "tls.integration.test",
         "verify": false,
-        "password": "waterwall-reality-v2-integration",
-        "algorithm": "chacha20-poly1305",
-        "salt": "reality-v2-tls12-roundtrip",
+        "password": "ww-rv2-gcm-sequence",
+        "algorithm": "aes-gcm",
+        "salt": "rv2-gcm-sequence",
         "kdf-iterations": 12000,
-        "max-frame-size": 256
+        "max-frame-size": 17
       },
       "next": "reality-connector"
     },
     {
       "name": "reality-connector",
       "type": "TcpConnector",
-      "settings": {
-        "address": "127.0.0.1",
-        "port": 43210,
-        "nodelay": true,
-        "fastopen": false
-      }
+      "settings": { "address": "127.0.0.1", "port": 43240, "nodelay": true, "fastopen": false }
     },
     {
       "name": "reality-listener",
       "type": "TcpListener",
-      "settings": {
-        "address": "127.0.0.1",
-        "port": 43210,
-        "nodelay": true
-      },
+      "settings": { "address": "127.0.0.1", "port": 43240, "nodelay": true },
       "next": "reality-server"
     },
     {
@@ -49,42 +37,30 @@
       "type": "RealityServer",
       "settings": {
         "destination": "cover-connector",
-        "password": "waterwall-reality-v2-integration",
-        "algorithm": "chacha20-poly1305",
-        "salt": "reality-v2-tls12-roundtrip",
+        "password": "ww-rv2-gcm-sequence",
+        "algorithm": "aes-gcm",
+        "salt": "rv2-gcm-sequence",
         "kdf-iterations": 12000,
-        "max-frame-size": 256,
+        "max-frame-size": 17,
         "sniffing-attempts": 8,
-        "tls12-gcm-server-nonce-policy": "auto"
+        "tls12-gcm-server-nonce-policy": "sequence"
       },
       "next": "tester-server"
     },
     {
       "name": "tester-server",
       "type": "TesterServer",
-      "settings": {
-        "streaming-response": true,
-        "max-payload-size": 32768
-      }
+      "settings": { "streaming-response": true, "max-payload-size": 32768 }
     },
     {
       "name": "cover-connector",
       "type": "TcpConnector",
-      "settings": {
-        "address": "127.0.0.1",
-        "port": 43211,
-        "nodelay": true,
-        "fastopen": false
-      }
+      "settings": { "address": "127.0.0.1", "port": 43241, "nodelay": true, "fastopen": false }
     },
     {
       "name": "cover-listener",
       "type": "TcpListener",
-      "settings": {
-        "address": "127.0.0.1",
-        "port": 43211,
-        "nodelay": true
-      },
+      "settings": { "address": "127.0.0.1", "port": 43241, "nodelay": true },
       "next": "cover-tls-server"
     },
     {
@@ -96,16 +72,10 @@
         "sni": "tls.integration.test",
         "min-version": "TLSv1.2",
         "max-version": "TLSv1.2",
-        "ciphers": "ECDHE-RSA-AES128-GCM-SHA256"
+        "ciphers": "ECDHE-RSA-AES256-GCM-SHA384"
       },
       "next": "cover-server"
     },
-    {
-      "name": "cover-server",
-      "type": "BlackHole",
-      "settings": {
-        "mode": "passive"
-      }
-    }
+    { "name": "cover-server", "type": "BlackHole", "settings": { "mode": "passive" } }
   ]
 }

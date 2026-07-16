@@ -88,6 +88,58 @@ static bool driveHandshake(SSL *client, SSL *server, reality_tls_handshake_fixtu
     return false;
 }
 
+static bool advanceShutdown(SSL *ssl, bool *complete)
+{
+    if (*complete)
+    {
+        return true;
+    }
+
+    int result = SSL_shutdown(ssl);
+    if (result == 1)
+    {
+        *complete = true;
+        return true;
+    }
+    if (result == 0)
+    {
+        return true;
+    }
+
+    int error = SSL_get_error(ssl, result);
+    return error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE;
+}
+
+static bool driveShutdown(SSL *client, SSL *server, reality_tls_handshake_fixture_t *fixture)
+{
+    bool client_complete = false;
+    bool server_complete = false;
+
+    for (uint32_t step = 0; step < 100; ++step)
+    {
+        if (! advanceShutdown(client, &client_complete) ||
+            ! appendAndForward(SSL_get_wbio(client),
+                               SSL_get_rbio(server),
+                               fixture->client_close_flight,
+                               &fixture->client_close_flight_len) ||
+            ! advanceShutdown(server, &server_complete) ||
+            ! appendAndForward(SSL_get_wbio(server),
+                               SSL_get_rbio(client),
+                               fixture->server_close_flight,
+                               &fixture->server_close_flight_len))
+        {
+            return false;
+        }
+
+        if (client_complete && server_complete)
+        {
+            return fixture->client_close_flight_len != 0 && fixture->server_close_flight_len != 0;
+        }
+    }
+
+    return false;
+}
+
 static bool readTlsClientAccessor(SSL *ssl, tlsclient_handshake_binding_t *binding)
 {
     tunnel_t *tunnel = tunnelCreate(NULL, 0, sizeof(tlsclient_lstate_t));
@@ -115,7 +167,8 @@ static bool readTlsClientAccessor(SSL *ssl, tlsclient_handshake_binding_t *bindi
     return ok;
 }
 
-bool realityTestBuildTlsHandshakeFixture(uint16_t version, reality_tls_handshake_fixture_t *fixture)
+static bool buildTlsHandshakeFixture(uint16_t version, const char *cipher, bool resume,
+                                     reality_tls_handshake_fixture_t *fixture)
 {
     SSL_CTX *client_context = NULL;
     SSL_CTX *server_context = NULL;
@@ -127,7 +180,8 @@ bool realityTestBuildTlsHandshakeFixture(uint16_t version, reality_tls_handshake
     BIO     *server_wbio    = NULL;
     bool     ok             = false;
 
-    if (fixture == NULL || (version != TLS1_2_VERSION && version != TLS1_3_VERSION))
+    if (fixture == NULL || (version != TLS1_2_VERSION && version != TLS1_3_VERSION) ||
+        (resume && version != TLS1_2_VERSION))
     {
         return false;
     }
@@ -143,6 +197,13 @@ bool realityTestBuildTlsHandshakeFixture(uint16_t version, reality_tls_handshake
         SSL_CTX_use_certificate_chain_file(server_context, REALITY_TEST_CERT_FILE) != 1 ||
         SSL_CTX_use_PrivateKey_file(server_context, REALITY_TEST_KEY_FILE, SSL_FILETYPE_PEM) != 1 ||
         SSL_CTX_check_private_key(server_context) != 1)
+    {
+        goto cleanup;
+    }
+
+    if (version == TLS1_2_VERSION && cipher != NULL &&
+        (SSL_CTX_set_cipher_list(client_context, cipher) != 1 ||
+         SSL_CTX_set_cipher_list(server_context, cipher) != 1))
     {
         goto cleanup;
     }
@@ -173,8 +234,31 @@ bool realityTestBuildTlsHandshakeFixture(uint16_t version, reality_tls_handshake
     SSL_set_connect_state(client);
     SSL_set_accept_state(server);
 
-    ok = driveHandshake(client, server, fixture) &&
-         readTlsClientAccessor(client, &fixture->accessor_binding);
+    if (! driveHandshake(client, server, fixture))
+    {
+        goto cleanup;
+    }
+
+    if (resume)
+    {
+        SSL_SESSION *session = SSL_get_session(client);
+        if (session == NULL || ! SSL_SESSION_is_resumable(session) ||
+            SSL_clear(client) != 1 || SSL_clear(server) != 1)
+        {
+            goto cleanup;
+        }
+
+        *fixture = (reality_tls_handshake_fixture_t) {0};
+        if (! driveHandshake(client, server, fixture) ||
+            ! SSL_session_reused(client) || ! SSL_session_reused(server))
+        {
+            goto cleanup;
+        }
+        fixture->session_reused = true;
+    }
+
+    ok = readTlsClientAccessor(client, &fixture->accessor_binding) &&
+         driveShutdown(client, server, fixture);
 
 cleanup:
     BIO_free(client_rbio);
@@ -186,4 +270,21 @@ cleanup:
     SSL_CTX_free(client_context);
     SSL_CTX_free(server_context);
     return ok;
+}
+
+bool realityTestBuildTlsHandshakeFixtureForCipher(uint16_t version, const char *cipher,
+                                                  reality_tls_handshake_fixture_t *fixture)
+{
+    return buildTlsHandshakeFixture(version, cipher, false, fixture);
+}
+
+bool realityTestBuildResumedTls12HandshakeFixtureForCipher(const char *cipher,
+                                                           reality_tls_handshake_fixture_t *fixture)
+{
+    return buildTlsHandshakeFixture(TLS1_2_VERSION, cipher, true, fixture);
+}
+
+bool realityTestBuildTlsHandshakeFixture(uint16_t version, reality_tls_handshake_fixture_t *fixture)
+{
+    return realityTestBuildTlsHandshakeFixtureForCipher(version, NULL, fixture);
 }

@@ -1,0 +1,43 @@
+{
+  "name": "reality-v2-tls12-gcm-counter-roundtrip",
+  "nodes": [
+    { "name": "tester-client", "type": "TesterClient", "settings": { "allow-early-response": true, "max-payload-size": 32768 }, "next": "reality-client" },
+    {
+      "name": "reality-client",
+      "type": "RealityClient",
+      "settings": {
+        "sni": "tls.integration.test", "verify": false,
+        "password": "waterwall-reality-v2-gcm-counter", "algorithm": "chacha20-poly1305",
+        "salt": "reality-v2-tls12-gcm-counter", "kdf-iterations": 12000, "max-frame-size": 15
+      },
+      "next": "reality-connector"
+    },
+    { "name": "reality-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 43242, "nodelay": true, "fastopen": false } },
+    { "name": "reality-listener", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 43242, "nodelay": true }, "next": "reality-server" },
+    {
+      "name": "reality-server",
+      "type": "RealityServer",
+      "settings": {
+        "destination": "cover-connector",
+        "password": "waterwall-reality-v2-gcm-counter", "algorithm": "chacha20-poly1305",
+        "salt": "reality-v2-tls12-gcm-counter", "kdf-iterations": 12000,
+        "max-frame-size": 15, "sniffing-attempts": 8,
+        "tls12-gcm-server-nonce-policy": "counter"
+      },
+      "next": "tester-server"
+    },
+    { "name": "tester-server", "type": "TesterServer", "settings": { "streaming-response": true, "max-payload-size": 32768 } },
+    { "name": "cover-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 43243, "nodelay": true, "fastopen": false } },
+    { "name": "cover-listener", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 43243, "nodelay": true }, "next": "cover-tls-server" },
+    {
+      "name": "cover-tls-server", "type": "TlsServer",
+      "settings": {
+        "cert-file": "../tls_roundtrip/server.crt", "key-file": "../tls_roundtrip/server.key",
+        "sni": "tls.integration.test", "min-version": "TLSv1.2", "max-version": "TLSv1.2",
+        "ciphers": "ECDHE-RSA-AES128-GCM-SHA256"
+      },
+      "next": "cover-server"
+    },
+    { "name": "cover-server", "type": "BlackHole", "settings": { "mode": "passive" } }
+  ]
+}
