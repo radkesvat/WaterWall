@@ -10,6 +10,12 @@ void realityserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    if (ls->terminal_closing || ls->prev_finished)
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
+
     if (ls->mode == kRealityServerModeAuthorized)
     {
         realityserverEncryptAndSendDownstream(t, l, buf);

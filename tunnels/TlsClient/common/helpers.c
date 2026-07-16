@@ -110,6 +110,13 @@ bool tlsclientTunnelGetHandshakeBinding(tunnel_t *t, line_t *l, tlsclient_handsh
         return false;
     }
 
+    if (result.tls_version == TLS1_2_VERSION)
+    {
+        result.next_read_sequence    = SSL_get_read_sequence(ls->ssl);
+        result.next_write_sequence   = SSL_get_write_sequence(ls->ssl);
+        result.tls12_sequences_valid = true;
+    }
+
     *binding = result;
     memoryZero(&result, sizeof(result));
     return true;

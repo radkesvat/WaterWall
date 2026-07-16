@@ -25,9 +25,18 @@ typedef struct realityclient_lstate_s
     uint8_t         s2c_key[kRealityV2KeySize];
     uint8_t         c2s_iv[kRealityV2IvSize];
     uint8_t         s2c_iv[kRealityV2IvSize];
+    reality_v2_record_profile_t record_profile;
     uint64_t        c2s_send_seq;
     uint64_t        s2c_recv_seq;
+    uint64_t        tls12_next_write_sequence;
+    uint64_t        tls12_next_read_sequence;
+    uint16_t        tls_version;
     bool            session_keys_ready;
+    bool            tls12_sequences_valid;
+    bool            prev_finished;
+    bool            next_finished;
+    bool            terminal_closing;
+    bool            wire_alert_sent;
 } realityclient_lstate_t;
 
 enum realityclient_algorithm_e
@@ -42,11 +51,10 @@ enum realityclient_frame_e
     kRealityClientTlsApplicationData = 0x17,
     kRealityClientTlsVersionMajor    = 0x03,
     kRealityClientTlsVersionMinor    = 0x03,
-    kRealityClientCoverPrefixSize    = kRealityV2CoverPrefixSize,
-    kRealityClientTagSize            = 16,
-    kRealityClientFramePrefixSize    = kRealityClientTlsHeaderSize + kRealityClientCoverPrefixSize,
-    kRealityClientMaxTlsRecordBody   = 16384,
-    kRealityClientMaxFramePayload = kRealityClientMaxTlsRecordBody - kRealityClientCoverPrefixSize - kRealityClientTagSize,
+    kRealityClientTagSize            = kRealityV2TagSize,
+    kRealityClientMaxFramePrefixSize = kRealityClientTlsHeaderSize + kRealityV2MaxVisiblePrefixSize,
+    kRealityClientMaxTlsRecordBody   = kRealityV2MaxTlsRecordBody,
+    kRealityClientMaxFramePayload    = 16384 - kRealityV2OpaquePrefixSize - kRealityV2TagSize,
     kRealityClientDefaultKdfIterations = 12000,
 };
 
@@ -93,3 +101,7 @@ int  realityclientDecryptAead(uint32_t algorithm, unsigned char *dst, const unsi
 bool realityclientEncryptAndSend(tunnel_t *t, line_t *l, sbuf_t *buf);
 bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf);
 void realityclientCloseLineBidirectional(tunnel_t *t, line_t *l);
+void realityclientFailAuthenticated(tunnel_t *t, line_t *l);
+void realityclientHandlePeerAlert(tunnel_t *t, line_t *l, uint8_t alert);
+void realityclientHandleUpstreamFinish(tunnel_t *t, line_t *l);
+void realityclientHandleDownstreamFinish(tunnel_t *t, line_t *l);

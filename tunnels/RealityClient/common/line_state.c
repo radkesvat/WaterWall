@@ -3,7 +3,7 @@
 void realityclientLinestateInitialize(realityclient_lstate_t *ls, buffer_pool_t *pool)
 {
     *ls = (realityclient_lstate_t) {
-        .read_stream = bufferstreamCreate(pool, kRealityClientFramePrefixSize),
+        .read_stream = bufferstreamCreate(pool, kRealityClientMaxFramePrefixSize),
         .pending_up  = bufferqueueCreate(2),
     };
 }

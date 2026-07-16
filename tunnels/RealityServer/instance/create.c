@@ -60,6 +60,42 @@ static uint32_t parseAlgorithmFromSettings(const cJSON *settings)
     return result;
 }
 
+static uint8_t parseTls12GcmNoncePolicy(const cJSON *settings)
+{
+    char   *value  = NULL;
+    uint8_t result = kRealityServerGcmNoncePolicyAuto;
+
+    if (! getStringFromJsonObject(&value, settings, "tls12-gcm-server-nonce-policy"))
+    {
+        return result;
+    }
+
+    stringLowerCase(value);
+    if (stringCompare(value, "auto") == 0)
+    {
+        result = kRealityServerGcmNoncePolicyAuto;
+    }
+    else if (stringCompare(value, "sequence") == 0)
+    {
+        result = kRealityServerGcmNoncePolicySequence;
+    }
+    else if (stringCompare(value, "counter") == 0)
+    {
+        result = kRealityServerGcmNoncePolicyCounter;
+    }
+    else if (stringCompare(value, "random") == 0)
+    {
+        result = kRealityServerGcmNoncePolicyRandom;
+    }
+    else
+    {
+        result = 0;
+    }
+
+    memoryFree(value);
+    return result;
+}
+
 static bool deriveKeyFromPassword(const char *password, const char *salt, uint32_t iterations, uint8_t out_key[32])
 {
     size_t password_len = stringLength(password);
@@ -130,6 +166,13 @@ static bool realityserverTunnelstateInitialize(realityserver_tstate_t *ts, node_
     if (ts->algorithm != kRealityServerAlgorithmChaCha20Poly1305 && ts->algorithm != kRealityServerAlgorithmAes256Gcm)
     {
         LOGF("RealityServer: 'algorithm'/'method' is unsupported. Use chacha20-poly1305 or aes-gcm");
+        goto cleanup;
+    }
+
+    ts->tls12_gcm_server_nonce_policy = parseTls12GcmNoncePolicy(settings);
+    if (ts->tls12_gcm_server_nonce_policy == 0)
+    {
+        LOGF("RealityServer: 'tls12-gcm-server-nonce-policy' must be auto, sequence, counter, or random");
         goto cleanup;
     }
 

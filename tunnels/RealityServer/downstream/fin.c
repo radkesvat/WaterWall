@@ -8,7 +8,5 @@ void realityserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         return;
     }
 
-    realityserverLinestateDestroy(ls);
-
-    tunnelPrevDownStreamFinish(t, l);
+    realityserverHandleDownstreamFinish(t, l);
 }

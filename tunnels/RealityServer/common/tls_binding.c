@@ -133,12 +133,12 @@ static bool realityserverParseClientHello(const uint8_t *body, size_t len,
         return false;
     }
 
-    capture->client_legacy_version = realityserverReadBe16(legacy_version);
-    if (capture->client_legacy_version < 0x0301 || capture->client_legacy_version > 0x0303)
+    uint16_t parsed_legacy_version = realityserverReadBe16(legacy_version);
+    if (parsed_legacy_version < 0x0301 || parsed_legacy_version > 0x0303)
     {
-        capture->client_legacy_version = 0;
         return false;
     }
+    capture->client_legacy_version = parsed_legacy_version;
     memoryCopy(capture->binding.client_random, random, kRealityV2TlsRandomSize);
     capture->client_ready = true;
     return true;
@@ -409,5 +409,249 @@ bool realityserverTlsParserFeed(realityserver_tls_parser_t *parser, const uint8_
             return true;
         }
     }
+    return true;
+}
+
+static bool realityserverTls12RecordTrackerFail(realityserver_tls12_record_tracker_t *tracker)
+{
+    tracker->failed = true;
+    return false;
+}
+
+static bool realityserverTls12ProtectedLengthIsValid(const realityserver_tls12_record_tracker_t *tracker)
+{
+    uint32_t body_len = tracker->record_body_len;
+    switch (tracker->profile.profile_id)
+    {
+        case kRealityV2RecordProfileOpaque:
+            return body_len >= kRealityV2TagSize && body_len <= kRealityV2MaxTlsRecordBody;
+        case kRealityV2RecordProfileTls12Gcm:
+            return body_len >= kRealityV2Tls12GcmPrefixSize + kRealityV2TagSize &&
+                   body_len <= kRealityV2MaxTlsRecordBody;
+        case kRealityV2RecordProfileTls12Cbc:
+        {
+            reality_v2_record_layout_t minimum;
+            return realityV2CalculateRecordLayout(&tracker->profile, 0, &minimum) &&
+                   body_len >= minimum.wire_body_len && body_len <= kRealityV2MaxTlsRecordBody &&
+                   ((body_len - kRealityV2Tls12CbcPrefixSize) % tracker->profile.block_size) == 0;
+        }
+        default:
+            return false;
+    }
+}
+
+void realityserverTls12RecordTrackerInitialize(realityserver_tls12_record_tracker_t *tracker)
+{
+    *tracker = (realityserver_tls12_record_tracker_t) {
+        .sequence_pattern = true,
+        .counter_pattern  = true,
+    };
+}
+
+bool realityserverTls12RecordTrackerSetProfile(realityserver_tls12_record_tracker_t *tracker,
+                                               const reality_v2_record_profile_t *profile)
+{
+    if (tracker == NULL || tracker->failed || tracker->frozen || tracker->record_header_length != 0 ||
+        tracker->record_remaining != 0 || ! realityV2RecordProfileIsValid(profile))
+    {
+        return false;
+    }
+
+    tracker->profile = *profile;
+    return true;
+}
+
+bool realityserverTls12RecordTrackerFeed(realityserver_tls12_record_tracker_t *tracker,
+                                         const uint8_t *data, size_t len)
+{
+    if (tracker == NULL || (data == NULL && len != 0) || tracker->failed ||
+        ! realityV2RecordProfileIsValid(&tracker->profile))
+    {
+        return false;
+    }
+    if (tracker->frozen)
+    {
+        return true;
+    }
+
+    while (len > 0)
+    {
+        if (tracker->record_header_length < kTlsRecordHeaderSize)
+        {
+            if (tracker->record_header_length == 0)
+            {
+                tracker->last_record_was_protected = false;
+            }
+
+            size_t needed = kTlsRecordHeaderSize - tracker->record_header_length;
+            size_t take   = min(needed, len);
+            memoryCopy(tracker->record_header + tracker->record_header_length, data, take);
+            tracker->record_header_length += (uint8_t) take;
+            data += take;
+            len -= take;
+
+            if (tracker->record_header_length < kTlsRecordHeaderSize)
+            {
+                return true;
+            }
+
+            tracker->record_type = tracker->record_header[0];
+            bool valid_type = tracker->record_type == kTlsRecordHandshake ||
+                              tracker->record_type == kTlsRecordChangeCipherSpec ||
+                              tracker->record_type == kTlsRecordAlert ||
+                              tracker->record_type == kTlsRecordApplicationData;
+            tracker->record_body_len = ((uint32_t) tracker->record_header[3] << 8) |
+                                       tracker->record_header[4];
+            tracker->record_remaining         = tracker->record_body_len;
+            tracker->current_record_protected = tracker->protected_epoch;
+            tracker->explicit_nonce_length    = 0;
+            tracker->ccs_value                = 0;
+
+            if (! valid_type || tracker->record_header[1] != 0x03 || tracker->record_header[2] > 0x03 ||
+                tracker->record_body_len > kRealityV2MaxTlsRecordBody ||
+                (tracker->current_record_protected && ! realityserverTls12ProtectedLengthIsValid(tracker)) ||
+                (! tracker->current_record_protected && tracker->record_type == kTlsRecordChangeCipherSpec &&
+                 tracker->record_body_len != 1))
+            {
+                return realityserverTls12RecordTrackerFail(tracker);
+            }
+
+            if (tracker->current_record_protected)
+            {
+                tracker->last_record_sequence = tracker->next_sequence;
+            }
+        }
+
+        uint32_t body_offset = tracker->record_body_len - tracker->record_remaining;
+        size_t   take        = min((size_t) tracker->record_remaining, len);
+        if (tracker->current_record_protected &&
+            tracker->profile.profile_id == kRealityV2RecordProfileTls12Gcm && body_offset < 8)
+        {
+            size_t nonce_take = min(take, (size_t) 8 - body_offset);
+            memoryCopy(tracker->explicit_nonce + body_offset, data, nonce_take);
+            tracker->explicit_nonce_length += (uint8_t) nonce_take;
+        }
+        else if (! tracker->current_record_protected &&
+                 tracker->record_type == kTlsRecordChangeCipherSpec && body_offset == 0 && take > 0)
+        {
+            tracker->ccs_value = data[0];
+        }
+
+        data += take;
+        len -= take;
+        tracker->record_remaining -= (uint32_t) take;
+        if (tracker->record_remaining != 0)
+        {
+            continue;
+        }
+
+        if (tracker->current_record_protected)
+        {
+            if (tracker->next_sequence == UINT64_MAX)
+            {
+                return realityserverTls12RecordTrackerFail(tracker);
+            }
+
+            if (tracker->profile.profile_id == kRealityV2RecordProfileTls12Gcm)
+            {
+                if (tracker->explicit_nonce_length != 8)
+                {
+                    return realityserverTls12RecordTrackerFail(tracker);
+                }
+                uint64_t explicit_nonce = realityV2ReadBe64(tracker->explicit_nonce);
+                if (explicit_nonce != tracker->next_sequence)
+                {
+                    tracker->sequence_pattern = false;
+                }
+                if (tracker->explicit_nonce_sample_count > 0 &&
+                    (tracker->last_explicit_nonce == UINT64_MAX ||
+                     explicit_nonce != tracker->last_explicit_nonce + 1U))
+                {
+                    tracker->counter_pattern = false;
+                }
+                tracker->last_explicit_nonce = explicit_nonce;
+                ++tracker->explicit_nonce_sample_count;
+            }
+
+            ++tracker->next_sequence;
+            tracker->saw_protected_record      = true;
+            tracker->last_record_was_protected = true;
+        }
+        else if (tracker->record_type == kTlsRecordChangeCipherSpec)
+        {
+            if (tracker->ccs_value != 1)
+            {
+                return realityserverTls12RecordTrackerFail(tracker);
+            }
+            tracker->protected_epoch = true;
+            tracker->next_sequence   = 0;
+        }
+
+        tracker->record_header_length     = 0;
+        tracker->record_type              = 0;
+        tracker->record_body_len          = 0;
+        tracker->current_record_protected = false;
+        memoryZero(tracker->record_header, sizeof(tracker->record_header));
+        memoryZero(tracker->explicit_nonce, sizeof(tracker->explicit_nonce));
+    }
+    return true;
+}
+
+void realityserverTls12RecordTrackerFreeze(realityserver_tls12_record_tracker_t *tracker)
+{
+    if (tracker != NULL)
+    {
+        tracker->frozen = true;
+    }
+}
+
+void realityserverTls12RecordTrackerDestroy(realityserver_tls12_record_tracker_t *tracker)
+{
+    if (tracker != NULL)
+    {
+        memoryZero(tracker, sizeof(*tracker));
+    }
+}
+
+bool realityserverResolveGcmNoncePolicy(uint8_t configured_policy,
+                                        const realityserver_tls12_record_tracker_t *server_tracker,
+                                        uint8_t *resolved_policy, uint64_t *counter_next)
+{
+    if (server_tracker == NULL || resolved_policy == NULL || counter_next == NULL ||
+        configured_policy < kRealityServerGcmNoncePolicyAuto ||
+        configured_policy > kRealityServerGcmNoncePolicyRandom)
+    {
+        return false;
+    }
+
+    uint8_t policy = configured_policy;
+    if (policy == kRealityServerGcmNoncePolicyAuto)
+    {
+        if (server_tracker->explicit_nonce_sample_count >= 1 && server_tracker->sequence_pattern)
+        {
+            policy = kRealityServerGcmNoncePolicySequence;
+        }
+        else if (server_tracker->explicit_nonce_sample_count >= 2 && server_tracker->counter_pattern)
+        {
+            policy = kRealityServerGcmNoncePolicyCounter;
+        }
+        else
+        {
+            policy = kRealityServerGcmNoncePolicyRandom;
+        }
+    }
+
+    uint64_t next = 0;
+    if (policy == kRealityServerGcmNoncePolicyCounter)
+    {
+        if (server_tracker->explicit_nonce_sample_count == 0 || server_tracker->last_explicit_nonce == UINT64_MAX)
+        {
+            return false;
+        }
+        next = server_tracker->last_explicit_nonce + 1U;
+    }
+
+    *resolved_policy = policy;
+    *counter_next     = next;
     return true;
 }
