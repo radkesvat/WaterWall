@@ -87,8 +87,5 @@ failed:
         tlsclientPrintSSLState(ls->ssl);
     }
 
-    tlsclientLinestateDestroy(ls);
-
-    tunnelNextUpStreamFinish(t, l);
-    tunnelPrevDownStreamFinish(t, l);
+    tlsclientCloseLineBidirectional(t, l);
 }

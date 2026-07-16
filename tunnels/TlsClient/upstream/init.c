@@ -91,9 +91,7 @@ failed:
     LOGW("TlsClient: upstream init failed: boringssl state is printed below");
     tlsclientPrintSSLState(ls->ssl);
 
-    tlsclientLinestateDestroy(ls);
-    tunnelNextUpStreamFinish(t, l);
-    tunnelPrevDownStreamFinish(t, l);
+    tlsclientCloseLineBidirectional(t, l);
     return;
 
 failed_before_next_init:

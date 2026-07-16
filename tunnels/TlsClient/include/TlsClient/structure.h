@@ -96,6 +96,7 @@ void tlsclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx);
 void tlsclientLinestateDestroy(tlsclient_lstate_t *ls);
 void tlsclientLinestateRelease(tlsclient_lstate_t *ls);
+void tlsclientCloseLineBidirectional(tunnel_t *t, line_t *l);
 
 void tlsclientPrintSSLState(const SSL *ssl);
 void tlsclientPrintSSLError(void);

@@ -35,6 +35,10 @@ static inline bool flushSSLOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls
         else
         {
             lineReuseBuffer(l, ssl_buf);
+            if (! BIO_should_retry(ls->wbio))
+            {
+                return false;
+            }
             break;
         }
     } while (r > 0);
@@ -266,7 +270,14 @@ void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! flushSslProtocolMessages(t, l, ls))
         {
             lineReuseBuffer(l, buf);
+            if (! lineIsAlive(l))
+            {
+                lineUnlock(l);
+                return;
+            }
             lineUnlock(l);
+            LOGW("TlsClient: downstream payload failed while flushing TLS protocol output");
+            tlsclientCloseLineBidirectional(t, l);
             return;
         }
     }
@@ -283,15 +294,12 @@ failed:
         return;
     }
 
-    lineUnlock(l);
-
     LOGW("TlsClient: downstream payload failed: boringssl state is printed below");
     if (ls->ssl != NULL)
     {
         tlsclientPrintSSLState(ls->ssl);
     }
 
-    tlsclientLinestateDestroy(ls);
-    tunnelNextUpStreamFinish(t, l);
-    tunnelPrevDownStreamFinish(t, l);
+    lineUnlock(l);
+    tlsclientCloseLineBidirectional(t, l);
 }

@@ -2,6 +2,29 @@
 
 #include "loggers/network_logger.h"
 
+void tlsclientCloseLineBidirectional(tunnel_t *t, line_t *l)
+{
+    if (! lineIsAlive(l))
+    {
+        return;
+    }
+
+    lineLock(l);
+
+    tlsclient_lstate_t *ls = lineGetState(l, t);
+    tlsclientLinestateDestroy(ls);
+
+    tunnelNextUpStreamFinish(t, l);
+    if (! lineIsAlive(l))
+    {
+        lineUnlock(l);
+        return;
+    }
+
+    tunnelPrevDownStreamFinish(t, l);
+    lineUnlock(l);
+}
+
 void tlsclientPrintSSLState(const SSL *ssl)
 {
     const char *current_state = SSL_state_string_long(ssl);
