@@ -84,6 +84,10 @@ Practical rule:
 - `tls_roundtrip`
   Verifies `TlsClient` and `TlsServer` chained directly with a self-signed test certificate, peer verification disabled
   on the client, SNI checked by the server, and streaming responses enabled so TLS traffic flows in both directions.
+- `tlsclient_direct_close_probe`
+  Uses a local TLS 1.2 peer behind a recording TCP relay to verify TlsClient direct-close policy: normal protected-side
+  close emits no client alert, peer `close_notify` closes without a client response or FIN wait, corrupted records close
+  promptly without a client alert, and certificate verification failure does not hang in shutdown.
 - `tls_fallback_plaintext_probe_tcp_loopback`
   Verifies that plaintext first bytes reaching `TlsServer` over a real TCP loopback hop are forwarded to the configured
   fallback branch with the original bytes preserved, while the protected TLS branch points at an invalid connector.
@@ -139,6 +143,10 @@ Practical rule:
   behavior. Every record profile covers fragmented and coalesced alerts. A client consumes server `close_notify` without
   replying and immediately closes both sides even when the fake peer supplies no FIN. Generic
   first-alert authorization uses a fatal record; Pending/Visitor/destination teardown remains free of synthetic alerts.
+- `waterwall.tlsclient_close_lifecycle_unit`
+  Uses synchronous fake neighbors and real TlsClient line state to verify direct-close lifecycle behavior: normal upstream
+  and downstream finishes remain directional and payload-free, fatal close finishes upstream before downstream, line death
+  during the first fatal finish suppresses the second finish, and handshake-takeover release remains payload-free.
 - `reality_v2_aes_gcm_roundtrip`
   Verifies multi-record bidirectional Reality v2 operation with the `aes-gcm` record-protection algorithm.
 - `reality_v2_cross_connection_replay_rejected`, `reality_v2_direct_record_replay_rejected`, and

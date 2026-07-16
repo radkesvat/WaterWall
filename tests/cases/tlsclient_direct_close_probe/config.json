@@ -1,0 +1,63 @@
+{
+  "name": "tlsclient-direct-close-probe",
+  "nodes": [
+    {
+      "name": "plain-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43400,
+        "nodelay": true
+      },
+      "next": "tls-client"
+    },
+    {
+      "name": "tls-client",
+      "type": "TlsClient",
+      "settings": {
+        "sni": "tls.integration.test",
+        "verify": false
+      },
+      "next": "recording-relay"
+    },
+    {
+      "name": "recording-relay",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43401,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "verify-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43410,
+        "nodelay": true
+      },
+      "next": "verify-tls-client"
+    },
+    {
+      "name": "verify-tls-client",
+      "type": "TlsClient",
+      "settings": {
+        "sni": "tls.integration.test",
+        "verify": true
+      },
+      "next": "verify-recording-relay"
+    },
+    {
+      "name": "verify-recording-relay",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 43411,
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

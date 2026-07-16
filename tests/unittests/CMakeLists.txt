@@ -98,6 +98,26 @@ if(TARGET TlsServer)
   add_waterwall_unit_test(waterwall.tlsserver_alpn_unit tlsserver_alpn_test "unit;tunnels;tlsserver")
 endif()
 
+if(TARGET TlsClient)
+  add_executable(tlsclient_close_lifecycle_test tlsclient_close_lifecycle_test.c)
+  target_include_directories(tlsclient_close_lifecycle_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include
+  )
+  target_include_directories(tlsclient_close_lifecycle_test BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
+    ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
+  )
+  target_compile_definitions(tlsclient_close_lifecycle_test PRIVATE BORINGSSL_PREFIX=WW_BSSL)
+  target_link_libraries(tlsclient_close_lifecycle_test PRIVATE TlsClient ww ssl crypto)
+  add_dependencies(waterwall_unit_tests tlsclient_close_lifecycle_test)
+
+  add_waterwall_unit_test(
+    waterwall.tlsclient_close_lifecycle_unit
+    tlsclient_close_lifecycle_test
+    "unit;tunnels;tlsclient;lifecycle;reentry"
+  )
+endif()
+
 if(TARGET RealityCommon)
   add_executable(reality_v2_test reality_v2_test.c)
   target_compile_definitions(reality_v2_test PRIVATE
