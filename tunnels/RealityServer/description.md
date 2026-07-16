@@ -1,5 +1,5 @@
 <!--
-Documentation version: 111
+Documentation version: 112
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RealityServer.mdx, and both files must keep the same documentation version.
 -->
 
@@ -19,7 +19,6 @@ Typical placement:
 - `algorithm` / `method` (string, optional): `chacha20-poly1305` (default) or `aes-gcm`
 - `salt` (string, optional): key derivation salt, default `waterwall-reality`
 - `kdf-iterations` (number, optional): key derivation rounds, default `12000`
-- `max-frame-size` (number, optional): maximum plaintext per Reality record, default `16356`
 - `sniffing-attempts` (number, optional): TLS application records to try before treating the peer as a visitor, default `8`
 - `tls12-gcm-server-nonce-policy` (string, optional): `auto` (default), `sequence`, `counter`, or `random`
 
@@ -33,13 +32,13 @@ After authorization, upstream traffic must be the exact next client-to-server re
 
 The server owns orderly Reality shutdown. A protected-side finish queues exactly one TLS-shaped `close_notify`, then immediately finishes the wire side without waiting for a reply. RealityClient consumes that record without replying and closes its TCP side immediately, even if a later server FIN is withheld. Normal clients close with raw transport FIN and do not send `close_notify`. A client `close_notify` is nevertheless recognized defensively, including as the first takeover record: it authorizes the secure path, is consumed rather than forwarded, causes one server `close_notify` when possible, and closes both sides immediately. Authorized corruption queues at most one fatal `bad_record_mac`; received fatal alerts are never answered. Raw wire finish cannot be answered and closes only the remaining protected path. Pending and Visitor failures remain owned by `destination` and never synthesize Reality alerts.
 
-The selected record profile matches the negotiated cover suite: opaque 12-byte prefixes for TLS 1.3/TLS 1.2 ChaCha, eight-byte explicit nonces for TLS 1.2 AES-GCM, and random 16-byte explicit IVs with block-aligned bodies for TLS 1.2 AES-CBC. CBC sizing reproduces the suite's visible MAC/minimum-padding length without implementing CBC cryptography. Every visible prefix, profile ID, header, direction, session, and Reality sequence is authenticated.
+Reality automatically limits each application plaintext fragment to `16384` bytes and immediately splits larger WaterWall payload callbacks. The selected record profile matches the negotiated cover suite: TLS 1.3 has no visible prefix and encrypts `payload | inner type 0x17`; TLS 1.2 ChaCha has no visible prefix and encrypts only the payload; TLS 1.2 AES-GCM retains an eight-byte explicit nonce; and TLS 1.2 AES-CBC retains a random 16-byte explicit IV with a block-aligned body. Full-fragment bodies are `16401`, `16400`, `16408`, and `16432` bytes respectively. CBC sizing reproduces the suite's visible MAC/minimum-padding length without implementing CBC cryptography. Every visible prefix, profile ID, header, direction, session, and Reality sequence is authenticated.
 
 TLS-shaped alerts follow BoringSSL's public layout: TLS 1.3 outer application data has a 19-byte body with encrypted inner alert type; TLS 1.2 GCM, CBC/SHA-1, and ChaCha outer alerts have 26-, 48-, and 18-byte bodies. Their two-byte semantic value is encrypted. Data and alerts use the same send/receive sequence, and record kind plus TLS version are included in associated data. These are Reality-AEAD camouflage records, not genuine TLS closure or TLS-key alert encryption.
 
 For downstream TLS 1.2 GCM, `auto` freezes `sequence` when observed cover nonces match record sequences, otherwise `counter` when at least two samples increment, and otherwise `random`. `sequence` emits the tracked next TLS record sequence, `counter` increments the last observed explicit nonce, and `random` emits fresh CSPRNG bytes. A manually selected `counter` requires an observed nonce. With one non-sequence sample, `auto` cannot distinguish random output from an arbitrary fixed-prefix counter; configure an explicit policy when the cover server's convention is known.
 
-The visible TLS facade counter is separate from the secret Reality replay counter and is never used as the Reality AEAD nonce. Both nodes advertise `21` bytes of left padding for the largest CBC prefix. There is no fallback to the earlier unpublished fixed-prefix layout or the legacy static-key format.
+The visible TLS facade counter is separate from the secret Reality replay counter and is never used as the Reality AEAD nonce. Both nodes advertise `21` bytes of left padding for the largest CBC prefix. There is no fallback to the earlier unpublished 12-byte-prefix application layout or the legacy static-key format, and the obsolete `max-frame-size` setting is rejected at startup.
 
 ## Compatibility
 

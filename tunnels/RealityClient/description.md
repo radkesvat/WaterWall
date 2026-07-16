@@ -1,5 +1,5 @@
 <!--
-Documentation version: 111
+Documentation version: 112
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RealityClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -23,7 +23,6 @@ The configured `next` node is the transport to the Reality server. The client st
 - `algorithm` / `method` (string, optional): `chacha20-poly1305` (default) or `aes-gcm`
 - `salt` (string, optional): key derivation salt, default `waterwall-reality`
 - `kdf-iterations` (number, optional): key derivation rounds, default `12000`
-- `max-frame-size` (number, optional): maximum plaintext per Reality record, default `16356`
 
 ## Behavior
 
@@ -33,11 +32,12 @@ From takeover onward, upstream payload is AEAD-encrypted and framed as TLS appli
 
 Shutdown is role-specific. A local upstream finish destroys Reality state and finishes only the wire side; it never synthesizes `close_notify`. An authenticated server `close_notify` is consumed without a response, then RealityClient immediately destroys its state and closes both still-open sides. It never waits for a later TCP FIN, so an authenticated peer cannot pin the connection open by withholding FIN. Authenticated record corruption detected locally is the client's only alert-producing path and emits at most one TLS-shaped fatal `bad_record_mac` before both sides close; a received fatal alert likewise closes both sides immediately without a response. A raw transport finish closes only the remaining local side. No setting controls this policy.
 
-The visible takeover layout follows the negotiated cover TLS profile:
+Reality automatically limits each application plaintext fragment to `16384` bytes and immediately splits larger WaterWall payload callbacks without buffering across callbacks. The visible takeover layout follows the negotiated cover TLS profile:
 
-- TLS 1.3 and TLS 1.2 ChaCha use `12-byte random prefix | Reality ciphertext | 16-byte tag`.
+- TLS 1.3 uses `Reality-AEAD(payload | encrypted inner type 0x17) | 16-byte tag`, with no visible nonce or prefix. The body is `payload + 17` bytes and reaches `16401` bytes for a full fragment.
+- TLS 1.2 ChaCha uses `Reality-AEAD(payload) | 16-byte tag`, with no visible nonce or prefix. The body reaches `16400` bytes.
 - TLS 1.2 AES-GCM uses `8-byte explicit nonce | Reality ciphertext | 16-byte tag`; client records continue BoringSSL's captured TLS write sequence in big-endian form.
-- TLS 1.2 AES-CBC uses `16-byte random explicit IV | block-aligned opaque body`. Its authenticated inner plaintext carries a two-byte payload length and zero filler so the public length matches the suite's TLS MAC and minimum-padding formula. Reality does not perform CBC encryption.
+- TLS 1.2 AES-CBC uses `16-byte random explicit IV | block-aligned opaque body`. Its authenticated inner plaintext carries a two-byte payload length and zero filler so the public length matches the suite's TLS MAC and minimum-padding formula. Reality does not perform CBC encryption. Full-fragment GCM and CBC/SHA-1 bodies are `16408` and `16432` bytes.
 
 Alert records match BoringSSL's public shutdown shapes: TLS 1.3 uses outer application data with a 19-byte body and encrypted inner alert type; TLS 1.2 GCM, CBC/SHA-1, and ChaCha use outer alert records with 26-, 48-, and 18-byte bodies respectively. Alert semantics are encrypted, and application data and alerts share one sequence in each direction. These are Reality-AEAD camouflage records, not genuine TLS closure or TLS-key alert encryption.
 
@@ -45,7 +45,7 @@ Visible prefixes are authenticated camouflage and are never used as Reality AEAD
 
 ## Compatibility
 
-This profile-aware format remains Reality v2 but replaces the earlier unpublished fixed-prefix v2 layout. Record kind and TLS version are now authenticated in the associated data, so upgrade `RealityClient` and `RealityServer` together. There is no old-layout or v1 fallback after authentication fails. Changing the shared password invalidates future sessions; no server-side replay database is required.
+This native-sized profile-aware format remains Reality v2 but replaces the earlier unpublished 12-byte-prefix application layout. Record kind and TLS version are authenticated in the associated data, so upgrade `RealityClient` and `RealityServer` together. There is no old-layout or v1 fallback after authentication fails. Supplying the obsolete `max-frame-size` setting is a startup error. Changing the shared password invalidates future sessions; no server-side replay database is required.
 
 ## Example
 
