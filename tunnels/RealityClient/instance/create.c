@@ -144,7 +144,6 @@ static bool realityclientTunnelstateInitialize(tunnel_t *t, node_t *node)
     char                   *password       = NULL;
     char                   *salt           = NULL;
     int                     kdf_iterations = kRealityClientDefaultKdfIterations;
-    int                     max_frame_size = kRealityClientMaxFramePayload;
     bool                    result         = false;
 
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
@@ -158,6 +157,12 @@ static bool realityclientTunnelstateInitialize(tunnel_t *t, node_t *node)
     if (! checkJsonIsObjectAndHasChild(settings))
     {
         LOGF("RealityClient: 'settings' object is empty or invalid");
+        goto cleanup;
+    }
+
+    if (cJSON_GetObjectItemCaseSensitive(settings, "max-frame-size") != NULL)
+    {
+        LOGF("RealityClient: 'max-frame-size' is obsolete; Reality v2 selects native TLS record sizing automatically");
         goto cleanup;
     }
 
@@ -183,21 +188,13 @@ static bool realityclientTunnelstateInitialize(tunnel_t *t, node_t *node)
         goto cleanup;
     }
 
-    getIntFromJsonObject(&max_frame_size, settings, "max-frame-size");
-    if (max_frame_size <= 0 || max_frame_size > kRealityClientMaxFramePayload)
-    {
-        LOGF("RealityClient: 'max-frame-size' must be in range [1, %d]", kRealityClientMaxFramePayload);
-        goto cleanup;
-    }
-
     if (ts->algorithm == kRealityClientAlgorithmAes256Gcm && ! aes256gcmIsAvailable())
     {
         LOGF("RealityClient: AES-GCM selected but it is unavailable in the active crypto backend");
         goto cleanup;
     }
 
-    ts->kdf_iterations    = (uint32_t) kdf_iterations;
-    ts->max_frame_payload = (uint32_t) max_frame_size;
+    ts->kdf_iterations = (uint32_t) kdf_iterations;
 
     if (! deriveKeyFromPassword(password, salt, ts->kdf_iterations, ts->root_key))
     {

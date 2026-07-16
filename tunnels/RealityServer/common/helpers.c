@@ -259,8 +259,7 @@ static int realityserverTryReadTlsRecord(buffer_stream_t *stream, sbuf_t **recor
     return kRealityFrameOk;
 }
 
-static bool realityserverIsRealityCandidate(const realityserver_tstate_t *ts,
-                                             const realityserver_lstate_t *ls, sbuf_t *record)
+static bool realityserverIsRealityCandidate(const realityserver_lstate_t *ls, sbuf_t *record)
 {
     if (sbufGetLength(record) < kRealityServerTlsHeaderSize)
     {
@@ -271,7 +270,6 @@ static bool realityserverIsRealityCandidate(const realityserver_tstate_t *ts,
     return realityV2ClassifyRecord(ls->tls_capture.binding.tls_version,
                                    &ls->record_profile,
                                    sbufGetRawPtr(record),
-                                   ts->max_frame_payload,
                                    &descriptor);
 }
 
@@ -291,7 +289,6 @@ static bool realityserverDecryptFrame(realityserver_tstate_t *ts, realityserver_
     if (! realityV2ClassifyRecord(ls->tls_capture.binding.tls_version,
                                   &ls->record_profile,
                                   frame,
-                                  ts->max_frame_payload,
                                   &descriptor))
     {
         return false;
@@ -300,6 +297,26 @@ static bool realityserverDecryptFrame(realityserver_tstate_t *ts, realityserver_
 
     uint8_t *visible_prefix = frame + kRealityServerTlsHeaderSize;
     uint8_t *ciphertext     = visible_prefix + descriptor.visible_prefix_len;
+
+    reality_v2_record_descriptor_t application_descriptor;
+    bool ambiguous_tls13_kind =
+        descriptor.tls_version == kRealityV2Tls13 &&
+        descriptor.record_kind == kRealityV2RecordKindAlert &&
+        realityV2BuildRecordDescriptor(ls->tls_capture.binding.tls_version,
+                                       &ls->record_profile,
+                                       kRealityV2RecordKindApplicationData,
+                                       &application_descriptor) &&
+        application_descriptor.outer_content_type == frame[0] &&
+        realityV2ValidateDescriptorBodyLength(&application_descriptor, body_len);
+    uint8_t encrypted_alert_backup[kRealityV2AlertMessageSize + 1U + kRealityV2TagSize];
+    if (ambiguous_tls13_kind)
+    {
+        if (ciphertext_len != sizeof(encrypted_alert_backup))
+        {
+            return false;
+        }
+        memoryCopy(encrypted_alert_backup, ciphertext, ciphertext_len);
+    }
 
     if (descriptor.profile.profile_id == kRealityV2RecordProfileTls12Gcm)
     {
@@ -347,8 +364,34 @@ static bool realityserverDecryptFrame(realityserver_tstate_t *ts, realityserver_
                                                            nonce,
                                                            ls->c2s_key)
                                 : -1;
+    if (decrypt_result != 0 && ambiguous_tls13_kind)
+    {
+        memoryCopy(ciphertext, encrypted_alert_backup, ciphertext_len);
+        descriptor = application_descriptor;
+        aad_len     = 0;
+        memoryZero(aad, sizeof(aad));
+        aad_ok = realityV2BuildRecordAad(&descriptor,
+                                         kRealityV2DirectionClientToServer,
+                                         sequence_number,
+                                         ls->session_id,
+                                         frame,
+                                         visible_prefix,
+                                         descriptor.visible_prefix_len,
+                                         aad,
+                                         &aad_len);
+        decrypt_result = aad_ok ? realityserverDecryptAead(ts->algorithm,
+                                                           ciphertext,
+                                                           ciphertext,
+                                                           ciphertext_len,
+                                                           aad,
+                                                           aad_len,
+                                                           nonce,
+                                                           ls->c2s_key)
+                                : -1;
+    }
     memoryZero(nonce, sizeof(nonce));
     memoryZero(aad, sizeof(aad));
+    memoryZero(encrypted_alert_backup, sizeof(encrypted_alert_backup));
     if (decrypt_result != 0)
     {
         return false;
@@ -360,7 +403,6 @@ static bool realityserverDecryptFrame(realityserver_tstate_t *ts, realityserver_
     if (! realityV2ValidateInnerPlaintext(&descriptor,
                                           ciphertext,
                                           inner_plaintext_len,
-                                          ts->max_frame_payload,
                                           &inner_payload_offset,
                                           &payload_len))
     {
@@ -500,7 +542,7 @@ bool realityserverEncryptAndSendDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
         return true;
     }
 
-    if (plaintext_len > ts->max_frame_payload)
+    if (plaintext_len > kRealityV2MaxPlaintextFragment)
     {
         buffer_pool_t *pool      = lineGetBufferPool(l);
         const uint8_t *src       = sbufGetRawPtr(buf);
@@ -508,7 +550,7 @@ bool realityserverEncryptAndSendDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         while (remaining > 0)
         {
-            uint32_t chunk_len = min(remaining, ts->max_frame_payload);
+            uint32_t chunk_len = min(remaining, (uint32_t) kRealityV2MaxPlaintextFragment);
             sbuf_t *frame_buf = NULL;
             if (! realityserverEncryptFrame(ts,
                                              ls,
@@ -625,7 +667,7 @@ bool realityserverProcessUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
             return realityserverFlushBufferedToDestination(t, l, ls);
         }
 
-        bool candidate = realityserverIsRealityCandidate(ts, ls, record);
+        bool candidate = realityserverIsRealityCandidate(ls, record);
         if (! candidate)
         {
             if (ls->mode == kRealityServerModeAuthorized)

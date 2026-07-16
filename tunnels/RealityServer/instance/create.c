@@ -144,7 +144,6 @@ static bool realityserverTunnelstateInitialize(realityserver_tstate_t *ts, node_
     char        *salt              = NULL;
     char        *destination_name  = NULL;
     int          kdf_iterations    = kRealityServerDefaultKdfIterations;
-    int          max_frame_size    = kRealityServerMaxFramePayload;
     int          sniffing_attempts = kRealityServerDefaultSniffingAttempts;
     bool         result            = false;
 
@@ -159,6 +158,12 @@ static bool realityserverTunnelstateInitialize(realityserver_tstate_t *ts, node_
     if (! checkJsonIsObjectAndHasChild(settings))
     {
         LOGF("RealityServer: 'settings' object is empty or invalid");
+        goto cleanup;
+    }
+
+    if (cJSON_GetObjectItemCaseSensitive(settings, "max-frame-size") != NULL)
+    {
+        LOGF("RealityServer: 'max-frame-size' is obsolete; Reality v2 selects native TLS record sizing automatically");
         goto cleanup;
     }
 
@@ -204,13 +209,6 @@ static bool realityserverTunnelstateInitialize(realityserver_tstate_t *ts, node_
         goto cleanup;
     }
 
-    getIntFromJsonObject(&max_frame_size, settings, "max-frame-size");
-    if (max_frame_size <= 0 || max_frame_size > kRealityServerMaxFramePayload)
-    {
-        LOGF("RealityServer: 'max-frame-size' must be in range [1, %d]", kRealityServerMaxFramePayload);
-        goto cleanup;
-    }
-
     if (! getIntFromJsonObject(&sniffing_attempts, settings, "sniffing-attempts"))
     {
         getIntFromJsonObject(&sniffing_attempts, settings, "sniffing-counter");
@@ -228,7 +226,6 @@ static bool realityserverTunnelstateInitialize(realityserver_tstate_t *ts, node_
     }
 
     ts->kdf_iterations    = (uint32_t) kdf_iterations;
-    ts->max_frame_payload = (uint32_t) max_frame_size;
     ts->sniffing_attempts = (uint32_t) sniffing_attempts;
 
     if (! deriveKeyFromPassword(password, salt, ts->kdf_iterations, ts->root_key))

@@ -8,7 +8,6 @@ typedef struct realityclient_tstate_s
 {
     uint32_t algorithm;
     uint32_t kdf_iterations;
-    uint32_t max_frame_payload;
     uint8_t  root_key[kRealityV2KeySize];
 
     node_t    tls_node;
@@ -54,7 +53,6 @@ enum realityclient_frame_e
     kRealityClientTagSize            = kRealityV2TagSize,
     kRealityClientMaxFramePrefixSize = kRealityClientTlsHeaderSize + kRealityV2MaxVisiblePrefixSize,
     kRealityClientMaxTlsRecordBody   = kRealityV2MaxTlsRecordBody,
-    kRealityClientMaxFramePayload    = 16384 - kRealityV2OpaquePrefixSize - kRealityV2TagSize,
     kRealityClientDefaultKdfIterations = 12000,
 };
 

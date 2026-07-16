@@ -15,6 +15,7 @@ enum
     kTlsContentTypeAlert           = 0x15,
     kTlsContentTypeApplicationData = 0x17,
     kTls13InnerContentTypeAlert    = 0x15,
+    kTls13InnerContentTypeApplicationData = 0x17,
 };
 
 typedef struct reality_v2_profile_map_s
@@ -25,15 +26,15 @@ typedef struct reality_v2_profile_map_s
 } reality_v2_profile_map_t;
 
 static const reality_v2_profile_map_t kRealityV2Profiles[] = {
-    {kRealityV2Tls13, 0x1301, {kRealityV2RecordProfileOpaque, kRealityV2OpaquePrefixSize, 0, 0}},
-    {kRealityV2Tls13, 0x1302, {kRealityV2RecordProfileOpaque, kRealityV2OpaquePrefixSize, 0, 0}},
-    {kRealityV2Tls13, 0x1303, {kRealityV2RecordProfileOpaque, kRealityV2OpaquePrefixSize, 0, 0}},
+    {kRealityV2Tls13, 0x1301, {kRealityV2RecordProfileTls13Aead, 0, 0, 0}},
+    {kRealityV2Tls13, 0x1302, {kRealityV2RecordProfileTls13Aead, 0, 0, 0}},
+    {kRealityV2Tls13, 0x1303, {kRealityV2RecordProfileTls13Aead, 0, 0, 0}},
     {kRealityV2Tls12, 0xC02B, {kRealityV2RecordProfileTls12Gcm, kRealityV2Tls12GcmPrefixSize, 0, 0}},
     {kRealityV2Tls12, 0xC02F, {kRealityV2RecordProfileTls12Gcm, kRealityV2Tls12GcmPrefixSize, 0, 0}},
     {kRealityV2Tls12, 0xC02C, {kRealityV2RecordProfileTls12Gcm, kRealityV2Tls12GcmPrefixSize, 0, 0}},
     {kRealityV2Tls12, 0xC030, {kRealityV2RecordProfileTls12Gcm, kRealityV2Tls12GcmPrefixSize, 0, 0}},
-    {kRealityV2Tls12, 0xCCA9, {kRealityV2RecordProfileOpaque, kRealityV2OpaquePrefixSize, 0, 0}},
-    {kRealityV2Tls12, 0xCCA8, {kRealityV2RecordProfileOpaque, kRealityV2OpaquePrefixSize, 0, 0}},
+    {kRealityV2Tls12, 0xCCA9, {kRealityV2RecordProfileTls12ChaCha, 0, 0, 0}},
+    {kRealityV2Tls12, 0xCCA8, {kRealityV2RecordProfileTls12ChaCha, 0, 0, 0}},
     {kRealityV2Tls12, 0xC013, {kRealityV2RecordProfileTls12Cbc, kRealityV2Tls12CbcPrefixSize, 16, 20}},
     {kRealityV2Tls12, 0xC014, {kRealityV2RecordProfileTls12Cbc, kRealityV2Tls12CbcPrefixSize, 16, 20}},
     {kRealityV2Tls12, 0x009C, {kRealityV2RecordProfileTls12Gcm, kRealityV2Tls12GcmPrefixSize, 0, 0}},
@@ -154,15 +155,16 @@ bool realityV2RecordProfileIsValid(const reality_v2_record_profile_t *profile)
 
     switch (profile->profile_id)
     {
-        case kRealityV2RecordProfileOpaque:
-            return profile->visible_prefix_len == kRealityV2OpaquePrefixSize && profile->block_size == 0 &&
+        case kRealityV2RecordProfileTls13Aead:
+        case kRealityV2RecordProfileTls12ChaCha:
+            return profile->visible_prefix_len == 0 && profile->block_size == 0 &&
                    profile->tls_mac_len == 0;
         case kRealityV2RecordProfileTls12Gcm:
             return profile->visible_prefix_len == kRealityV2Tls12GcmPrefixSize && profile->block_size == 0 &&
                    profile->tls_mac_len == 0;
         case kRealityV2RecordProfileTls12Cbc:
             return profile->visible_prefix_len == kRealityV2Tls12CbcPrefixSize &&
-                   profile->block_size == kRealityV2Tls12CbcPrefixSize && profile->tls_mac_len > 0;
+                   profile->block_size == kRealityV2Tls12CbcPrefixSize && profile->tls_mac_len == 20;
         default:
             return false;
     }
@@ -199,17 +201,24 @@ bool realityV2RecordDescriptorIsValid(const reality_v2_record_descriptor_t *desc
     {
         return false;
     }
-    if (descriptor->tls_version == kRealityV2Tls13 &&
-        descriptor->profile.profile_id != kRealityV2RecordProfileOpaque)
+    if ((descriptor->tls_version == kRealityV2Tls13 &&
+         descriptor->profile.profile_id != kRealityV2RecordProfileTls13Aead) ||
+        (descriptor->tls_version == kRealityV2Tls12 &&
+         descriptor->profile.profile_id != kRealityV2RecordProfileTls12ChaCha &&
+         descriptor->profile.profile_id != kRealityV2RecordProfileTls12Gcm &&
+         descriptor->profile.profile_id != kRealityV2RecordProfileTls12Cbc))
     {
         return false;
     }
 
     if (descriptor->record_kind == kRealityV2RecordKindApplicationData)
     {
+        uint8_t expected_inner_type = descriptor->tls_version == kRealityV2Tls13
+                                          ? kTls13InnerContentTypeApplicationData
+                                          : 0;
         return descriptor->outer_content_type == kTlsContentTypeApplicationData &&
                descriptor->visible_prefix_len == descriptor->profile.visible_prefix_len &&
-               descriptor->tls13_inner_content_type == 0;
+               descriptor->tls13_inner_content_type == expected_inner_type;
     }
 
     if (descriptor->record_kind != kRealityV2RecordKindAlert)
@@ -219,7 +228,7 @@ bool realityV2RecordDescriptorIsValid(const reality_v2_record_descriptor_t *desc
 
     if (descriptor->tls_version == kRealityV2Tls13)
     {
-        return descriptor->profile.profile_id == kRealityV2RecordProfileOpaque &&
+        return descriptor->profile.profile_id == kRealityV2RecordProfileTls13Aead &&
                descriptor->outer_content_type == kTlsContentTypeApplicationData &&
                descriptor->visible_prefix_len == 0 &&
                descriptor->tls13_inner_content_type == kTls13InnerContentTypeAlert;
@@ -234,7 +243,7 @@ bool realityV2RecordDescriptorIsValid(const reality_v2_record_descriptor_t *desc
     {
         expected_prefix = kRealityV2Tls12CbcPrefixSize;
     }
-    else if (descriptor->profile.profile_id != kRealityV2RecordProfileOpaque)
+    else if (descriptor->profile.profile_id != kRealityV2RecordProfileTls12ChaCha)
     {
         return false;
     }
@@ -260,6 +269,11 @@ bool realityV2BuildRecordDescriptor(uint16_t tls_version, const reality_v2_recor
         .visible_prefix_len = profile->visible_prefix_len,
     };
 
+    if (record_kind == kRealityV2RecordKindApplicationData && tls_version == kRealityV2Tls13)
+    {
+        result.tls13_inner_content_type = kTls13InnerContentTypeApplicationData;
+    }
+
     if (record_kind == kRealityV2RecordKindAlert)
     {
         if (tls_version == kRealityV2Tls13)
@@ -270,7 +284,7 @@ bool realityV2BuildRecordDescriptor(uint16_t tls_version, const reality_v2_recor
         else if (tls_version == kRealityV2Tls12)
         {
             result.outer_content_type = kTlsContentTypeAlert;
-            if (profile->profile_id == kRealityV2RecordProfileOpaque)
+            if (profile->profile_id == kRealityV2RecordProfileTls12ChaCha)
             {
                 result.visible_prefix_len = 0;
             }
@@ -289,6 +303,8 @@ bool realityV2CalculateDescriptorLayout(const reality_v2_record_descriptor_t *de
                                         uint32_t payload_len, reality_v2_record_layout_t *layout)
 {
     if (! realityV2RecordDescriptorIsValid(descriptor) || layout == NULL ||
+        (descriptor->record_kind == kRealityV2RecordKindApplicationData &&
+         payload_len > kRealityV2MaxPlaintextFragment) ||
         (descriptor->record_kind == kRealityV2RecordKindAlert && payload_len != kRealityV2AlertMessageSize))
     {
         return false;
@@ -346,7 +362,7 @@ bool realityV2CalculateRecordLayout(const reality_v2_record_profile_t *profile, 
                                     reality_v2_record_layout_t *layout)
 {
     reality_v2_record_descriptor_t descriptor;
-    uint16_t tls_version = profile != NULL && profile->profile_id == kRealityV2RecordProfileOpaque
+    uint16_t tls_version = profile != NULL && profile->profile_id == kRealityV2RecordProfileTls13Aead
                                ? kRealityV2Tls13
                                : kRealityV2Tls12;
     return realityV2BuildRecordDescriptor(tls_version,
@@ -357,7 +373,7 @@ bool realityV2CalculateRecordLayout(const reality_v2_record_profile_t *profile, 
 }
 
 bool realityV2ValidateDescriptorBodyLength(const reality_v2_record_descriptor_t *descriptor,
-                                           uint32_t body_len, uint32_t max_payload_len)
+                                           uint32_t body_len)
 {
     if (! realityV2RecordDescriptorIsValid(descriptor) || body_len > kRealityV2MaxTlsRecordBody)
     {
@@ -372,7 +388,7 @@ bool realityV2ValidateDescriptorBodyLength(const reality_v2_record_descriptor_t 
     }
 
     reality_v2_record_layout_t maximum;
-    if (! realityV2CalculateDescriptorLayout(descriptor, max_payload_len, &maximum) ||
+    if (! realityV2CalculateDescriptorLayout(descriptor, kRealityV2MaxPlaintextFragment, &maximum) ||
         body_len > maximum.wire_body_len)
     {
         return false;
@@ -388,26 +404,27 @@ bool realityV2ValidateDescriptorBodyLength(const reality_v2_record_descriptor_t 
         return ((body_len - descriptor->visible_prefix_len) % descriptor->profile.block_size) == 0;
     }
 
-    return body_len >= (uint32_t) descriptor->visible_prefix_len + kRealityV2TagSize;
+    reality_v2_record_layout_t minimum;
+    return realityV2CalculateDescriptorLayout(descriptor, 0, &minimum) &&
+           body_len >= minimum.wire_body_len;
 }
 
-bool realityV2ValidateRecordBodyLength(const reality_v2_record_profile_t *profile, uint32_t body_len,
-                                       uint32_t max_payload_len)
+bool realityV2ValidateRecordBodyLength(const reality_v2_record_profile_t *profile, uint32_t body_len)
 {
     reality_v2_record_descriptor_t descriptor;
-    uint16_t tls_version = profile != NULL && profile->profile_id == kRealityV2RecordProfileOpaque
+    uint16_t tls_version = profile != NULL && profile->profile_id == kRealityV2RecordProfileTls13Aead
                                ? kRealityV2Tls13
                                : kRealityV2Tls12;
     return realityV2BuildRecordDescriptor(tls_version,
                                           profile,
                                           kRealityV2RecordKindApplicationData,
                                           &descriptor) &&
-           realityV2ValidateDescriptorBodyLength(&descriptor, body_len, max_payload_len);
+           realityV2ValidateDescriptorBodyLength(&descriptor, body_len);
 }
 
 bool realityV2ClassifyRecord(uint16_t tls_version, const reality_v2_record_profile_t *profile,
                              const uint8_t tls_record_header[kRealityV2TlsRecordHeaderSize],
-                             uint32_t max_payload_len, reality_v2_record_descriptor_t *descriptor)
+                             reality_v2_record_descriptor_t *descriptor)
 {
     if (tls_record_header == NULL || descriptor == NULL || tls_record_header[1] != 0x03 ||
         tls_record_header[2] != 0x03)
@@ -419,7 +436,7 @@ bool realityV2ClassifyRecord(uint16_t tls_version, const reality_v2_record_profi
     reality_v2_record_descriptor_t candidate;
     if (realityV2BuildRecordDescriptor(tls_version, profile, kRealityV2RecordKindAlert, &candidate) &&
         tls_record_header[0] == candidate.outer_content_type &&
-        realityV2ValidateDescriptorBodyLength(&candidate, body_len, max_payload_len))
+        realityV2ValidateDescriptorBodyLength(&candidate, body_len))
     {
         *descriptor = candidate;
         return true;
@@ -427,7 +444,7 @@ bool realityV2ClassifyRecord(uint16_t tls_version, const reality_v2_record_profi
 
     if (realityV2BuildRecordDescriptor(tls_version, profile, kRealityV2RecordKindApplicationData, &candidate) &&
         tls_record_header[0] == candidate.outer_content_type &&
-        realityV2ValidateDescriptorBodyLength(&candidate, body_len, max_payload_len))
+        realityV2ValidateDescriptorBodyLength(&candidate, body_len))
     {
         *descriptor = candidate;
         return true;
@@ -437,7 +454,7 @@ bool realityV2ClassifyRecord(uint16_t tls_version, const reality_v2_record_profi
 
 bool realityV2ValidateCbcInnerPlaintext(const reality_v2_record_profile_t *profile,
                                         const uint8_t *inner_plaintext, uint32_t inner_plaintext_len,
-                                        uint32_t max_payload_len, uint32_t *payload_len)
+                                        uint32_t *payload_len)
 {
     if (! realityV2RecordProfileIsValid(profile) ||
         profile->profile_id != kRealityV2RecordProfileTls12Cbc || inner_plaintext == NULL ||
@@ -448,7 +465,8 @@ bool realityV2ValidateCbcInnerPlaintext(const reality_v2_record_profile_t *profi
 
     uint32_t declared_len = ((uint32_t) inner_plaintext[0] << 8) | inner_plaintext[1];
     reality_v2_record_layout_t expected;
-    if (declared_len > max_payload_len || ! realityV2CalculateRecordLayout(profile, declared_len, &expected) ||
+    if (declared_len > kRealityV2MaxPlaintextFragment ||
+        ! realityV2CalculateRecordLayout(profile, declared_len, &expected) ||
         expected.inner_plaintext_len != inner_plaintext_len)
     {
         return false;
@@ -507,8 +525,7 @@ bool realityV2BuildInnerPlaintext(const reality_v2_record_descriptor_t *descript
 
 bool realityV2ValidateInnerPlaintext(const reality_v2_record_descriptor_t *descriptor,
                                      const uint8_t *inner_plaintext, uint32_t inner_plaintext_len,
-                                     uint32_t max_payload_len, uint32_t *payload_offset,
-                                     uint32_t *payload_len)
+                                     uint32_t *payload_offset, uint32_t *payload_len)
 {
     if (! realityV2RecordDescriptorIsValid(descriptor) || inner_plaintext == NULL ||
         payload_offset == NULL || payload_len == NULL)
@@ -525,7 +542,7 @@ bool realityV2ValidateInnerPlaintext(const reality_v2_record_descriptor_t *descr
         uint32_t declared_len = ((uint32_t) inner_plaintext[0] << 8) | inner_plaintext[1];
         reality_v2_record_layout_t expected;
         if ((descriptor->record_kind == kRealityV2RecordKindApplicationData &&
-             declared_len > max_payload_len) ||
+             declared_len > kRealityV2MaxPlaintextFragment) ||
             (descriptor->record_kind == kRealityV2RecordKindAlert &&
              declared_len != kRealityV2AlertMessageSize) ||
             ! realityV2CalculateDescriptorLayout(descriptor, declared_len, &expected) ||
@@ -564,12 +581,22 @@ bool realityV2ValidateInnerPlaintext(const reality_v2_record_descriptor_t *descr
         return true;
     }
 
-    if (inner_plaintext_len > max_payload_len)
+    uint32_t application_payload_len = inner_plaintext_len;
+    if (descriptor->tls13_inner_content_type != 0)
+    {
+        if (inner_plaintext_len == 0 ||
+            inner_plaintext[inner_plaintext_len - 1] != descriptor->tls13_inner_content_type)
+        {
+            return false;
+        }
+        --application_payload_len;
+    }
+    if (application_payload_len > kRealityV2MaxPlaintextFragment)
     {
         return false;
     }
     *payload_offset = 0;
-    *payload_len    = inner_plaintext_len;
+    *payload_len    = application_payload_len;
     return true;
 }
 

@@ -10,17 +10,15 @@ enum reality_v2_size_e
     kRealityV2KeySize             = 32,
     kRealityV2IvSize              = 12,
     kRealityV2TlsRandomSize       = 32,
-    kRealityV2TlsRecordHeaderSize = 5,
-    kRealityV2OpaquePrefixSize    = 12,
-    kRealityV2Tls12GcmPrefixSize  = 8,
-    kRealityV2Tls12CbcPrefixSize  = 16,
+    kRealityV2TlsRecordHeaderSize  = 5,
+    kRealityV2Tls12GcmPrefixSize   = 8,
+    kRealityV2Tls12CbcPrefixSize   = 16,
     kRealityV2MaxVisiblePrefixSize = 16,
-    kRealityV2TagSize             = 16,
-    kRealityV2AlertMessageSize    = 2,
-    kRealityV2RecordAadMaxSize    = 102,
-    kRealityV2MaxTlsRecordBody    = 18432,
-    /* Compatibility name for the opaque v2 profile. */
-    kRealityV2CoverPrefixSize = kRealityV2OpaquePrefixSize,
+    kRealityV2TagSize              = 16,
+    kRealityV2AlertMessageSize     = 2,
+    kRealityV2RecordAadMaxSize     = 102,
+    kRealityV2MaxPlaintextFragment = 16384,
+    kRealityV2MaxTlsRecordBody     = 18432,
 };
 
 enum reality_v2_tls_version_e
@@ -51,10 +49,11 @@ typedef enum reality_v2_alert_e
 
 typedef enum reality_v2_record_profile_id_e
 {
-    kRealityV2RecordProfileInvalid  = 0,
-    kRealityV2RecordProfileOpaque   = 1,
-    kRealityV2RecordProfileTls12Gcm = 2,
-    kRealityV2RecordProfileTls12Cbc = 3,
+    kRealityV2RecordProfileInvalid     = 0,
+    kRealityV2RecordProfileTls13Aead   = 1,
+    kRealityV2RecordProfileTls12ChaCha = 2,
+    kRealityV2RecordProfileTls12Gcm    = 3,
+    kRealityV2RecordProfileTls12Cbc    = 4,
 } reality_v2_record_profile_id_t;
 
 typedef struct reality_v2_record_profile_s
@@ -114,23 +113,21 @@ bool realityV2CalculateRecordLayout(const reality_v2_record_profile_t *profile, 
                                     reality_v2_record_layout_t *layout);
 bool realityV2CalculateDescriptorLayout(const reality_v2_record_descriptor_t *descriptor,
                                         uint32_t payload_len, reality_v2_record_layout_t *layout);
-bool realityV2ValidateRecordBodyLength(const reality_v2_record_profile_t *profile, uint32_t body_len,
-                                       uint32_t max_payload_len);
+bool realityV2ValidateRecordBodyLength(const reality_v2_record_profile_t *profile, uint32_t body_len);
 bool realityV2ValidateDescriptorBodyLength(const reality_v2_record_descriptor_t *descriptor,
-                                           uint32_t body_len, uint32_t max_payload_len);
+                                           uint32_t body_len);
 bool realityV2ClassifyRecord(uint16_t tls_version, const reality_v2_record_profile_t *profile,
                              const uint8_t tls_record_header[kRealityV2TlsRecordHeaderSize],
-                             uint32_t max_payload_len, reality_v2_record_descriptor_t *descriptor);
+                             reality_v2_record_descriptor_t *descriptor);
 bool realityV2ValidateCbcInnerPlaintext(const reality_v2_record_profile_t *profile,
                                         const uint8_t *inner_plaintext, uint32_t inner_plaintext_len,
-                                        uint32_t max_payload_len, uint32_t *payload_len);
+                                        uint32_t *payload_len);
 bool realityV2BuildInnerPlaintext(const reality_v2_record_descriptor_t *descriptor,
                                   const uint8_t *payload, uint32_t payload_len,
                                   uint8_t *inner_plaintext, uint32_t inner_plaintext_len);
 bool realityV2ValidateInnerPlaintext(const reality_v2_record_descriptor_t *descriptor,
                                      const uint8_t *inner_plaintext, uint32_t inner_plaintext_len,
-                                     uint32_t max_payload_len, uint32_t *payload_offset,
-                                     uint32_t *payload_len);
+                                     uint32_t *payload_offset, uint32_t *payload_len);
 bool realityV2SerializeAlert(uint8_t alert, uint8_t out[kRealityV2AlertMessageSize]);
 bool realityV2ParseAlert(const uint8_t *data, uint32_t len, uint8_t *alert);
 bool realityV2SequenceAvailable(uint64_t sequence_number);

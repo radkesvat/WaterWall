@@ -423,7 +423,7 @@ static bool realityserverTls12ProtectedLengthIsValid(const realityserver_tls12_r
     uint32_t body_len = tracker->record_body_len;
     switch (tracker->profile.profile_id)
     {
-        case kRealityV2RecordProfileOpaque:
+        case kRealityV2RecordProfileTls12ChaCha:
             return body_len >= kRealityV2TagSize && body_len <= kRealityV2MaxTlsRecordBody;
         case kRealityV2RecordProfileTls12Gcm:
             return body_len >= kRealityV2Tls12GcmPrefixSize + kRealityV2TagSize &&
@@ -452,7 +452,8 @@ bool realityserverTls12RecordTrackerSetProfile(realityserver_tls12_record_tracke
                                                const reality_v2_record_profile_t *profile)
 {
     if (tracker == NULL || tracker->failed || tracker->frozen || tracker->record_header_length != 0 ||
-        tracker->record_remaining != 0 || ! realityV2RecordProfileIsValid(profile))
+        tracker->record_remaining != 0 || ! realityV2RecordProfileIsValid(profile) ||
+        profile->profile_id == kRealityV2RecordProfileTls13Aead)
     {
         return false;
     }

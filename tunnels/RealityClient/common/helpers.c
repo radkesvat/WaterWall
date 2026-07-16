@@ -129,8 +129,8 @@ static bool realityclientEncryptFrame(realityclient_tstate_t *ts, realityclient_
     return true;
 }
 
-static int realityclientTryReadCompleteFrame(buffer_stream_t *stream, const realityclient_tstate_t *ts,
-                                             const realityclient_lstate_t *ls, sbuf_t **frame_buffer,
+static int realityclientTryReadCompleteFrame(buffer_stream_t *stream, const realityclient_lstate_t *ls,
+                                             sbuf_t **frame_buffer,
                                              reality_v2_record_descriptor_t *descriptor)
 {
     if (bufferstreamGetBufLen(stream) < kRealityClientTlsHeaderSize)
@@ -145,7 +145,6 @@ static int realityclientTryReadCompleteFrame(buffer_stream_t *stream, const real
     if (! realityV2ClassifyRecord(ls->tls_version,
                                   &ls->record_profile,
                                   header,
-                                  ts->max_frame_payload,
                                   descriptor))
     {
         return kRealityFrameInvalid;
@@ -173,7 +172,7 @@ bool realityclientEncryptAndSend(tunnel_t *t, line_t *l, sbuf_t *buf)
         return true;
     }
 
-    if (plaintext_len > ts->max_frame_payload)
+    if (plaintext_len > kRealityV2MaxPlaintextFragment)
     {
         buffer_pool_t *pool      = lineGetBufferPool(l);
         const uint8_t *src       = sbufGetRawPtr(buf);
@@ -181,7 +180,7 @@ bool realityclientEncryptAndSend(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         while (remaining > 0)
         {
-            uint32_t chunk_len = min(remaining, ts->max_frame_payload);
+            uint32_t chunk_len = min(remaining, (uint32_t) kRealityV2MaxPlaintextFragment);
             sbuf_t *frame_buf = NULL;
             if (! realityclientEncryptFrame(ts,
                                              ls,
@@ -252,7 +251,6 @@ bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
         sbuf_t                         *frame_buffer = NULL;
         reality_v2_record_descriptor_t descriptor;
         int read_result = realityclientTryReadCompleteFrame(&ls->read_stream,
-                                                             ts,
                                                              ls,
                                                              &frame_buffer,
                                                              &descriptor);
@@ -276,6 +274,29 @@ bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         uint8_t *visible_prefix = frame + kRealityClientTlsHeaderSize;
         uint8_t *ciphertext     = visible_prefix + descriptor.visible_prefix_len;
+
+        reality_v2_record_descriptor_t application_descriptor;
+        bool ambiguous_tls13_kind =
+            descriptor.tls_version == kRealityV2Tls13 &&
+            descriptor.record_kind == kRealityV2RecordKindAlert &&
+            realityV2BuildRecordDescriptor(ls->tls_version,
+                                           &ls->record_profile,
+                                           kRealityV2RecordKindApplicationData,
+                                           &application_descriptor) &&
+            application_descriptor.outer_content_type == frame[0] &&
+            realityV2ValidateDescriptorBodyLength(&application_descriptor, body_len);
+        uint8_t encrypted_alert_backup[kRealityV2AlertMessageSize + 1U + kRealityV2TagSize];
+        if (ambiguous_tls13_kind)
+        {
+            if (ciphertext_len != sizeof(encrypted_alert_backup))
+            {
+                lineReuseBuffer(l, frame_buffer);
+                bufferstreamEmpty(&ls->read_stream);
+                realityclientFailAuthenticated(t, l);
+                return false;
+            }
+            memoryCopy(encrypted_alert_backup, ciphertext, ciphertext_len);
+        }
 
         if (! ls->session_keys_ready || ! realityV2SequenceAvailable(ls->s2c_recv_seq))
         {
@@ -309,8 +330,35 @@ bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
                                                                nonce,
                                                                ls->s2c_key)
                                     : -1;
+
+        if (decrypt_result != 0 && ambiguous_tls13_kind)
+        {
+            memoryCopy(ciphertext, encrypted_alert_backup, ciphertext_len);
+            descriptor = application_descriptor;
+            aad_len     = 0;
+            memoryZero(aad, sizeof(aad));
+            aad_ok = realityV2BuildRecordAad(&descriptor,
+                                             kRealityV2DirectionServerToClient,
+                                             sequence_number,
+                                             ls->session_id,
+                                             frame,
+                                             visible_prefix,
+                                             descriptor.visible_prefix_len,
+                                             aad,
+                                             &aad_len);
+            decrypt_result = aad_ok ? realityclientDecryptAead(ts->algorithm,
+                                                               ciphertext,
+                                                               ciphertext,
+                                                               ciphertext_len,
+                                                               aad,
+                                                               aad_len,
+                                                               nonce,
+                                                               ls->s2c_key)
+                                    : -1;
+        }
         memoryZero(nonce, sizeof(nonce));
         memoryZero(aad, sizeof(aad));
+        memoryZero(encrypted_alert_backup, sizeof(encrypted_alert_backup));
 
         if (decrypt_result != 0)
         {
@@ -327,7 +375,6 @@ bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! realityV2ValidateInnerPlaintext(&descriptor,
                                               ciphertext,
                                               inner_plaintext_len,
-                                              ts->max_frame_payload,
                                               &inner_payload_offset,
                                               &payload_len))
         {

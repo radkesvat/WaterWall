@@ -28,7 +28,6 @@ typedef struct realityserver_tstate_s
 {
     uint32_t algorithm;
     uint32_t kdf_iterations;
-    uint32_t max_frame_payload;
     uint32_t sniffing_attempts;
     uint8_t  tls12_gcm_server_nonce_policy;
     uint8_t  root_key[kRealityV2KeySize];
@@ -141,7 +140,6 @@ enum realityserver_frame_e
     kRealityServerTagSize             = kRealityV2TagSize,
     kRealityServerMaxFramePrefixSize  = kRealityServerTlsHeaderSize + kRealityV2MaxVisiblePrefixSize,
     kRealityServerMaxTlsRecordBody    = kRealityV2MaxTlsRecordBody,
-    kRealityServerMaxFramePayload     = 16384 - kRealityV2OpaquePrefixSize - kRealityV2TagSize,
     kRealityServerDefaultKdfIterations    = 12000,
     kRealityServerDefaultSniffingAttempts = 8,
 };
