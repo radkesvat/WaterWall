@@ -19,8 +19,7 @@
         "password": "waterwall-reality-v2-integration",
         "algorithm": "chacha20-poly1305",
         "salt": "reality-v2-tls12-roundtrip",
-        "kdf-iterations": 12000,
-        "max-frame-size": 256
+        "kdf-iterations": 12000
       },
       "next": "reality-connector"
     },
@@ -53,7 +52,6 @@
         "algorithm": "chacha20-poly1305",
         "salt": "reality-v2-tls12-roundtrip",
         "kdf-iterations": 12000,
-        "max-frame-size": 256,
         "sniffing-attempts": 8,
         "tls12-gcm-server-nonce-policy": "auto"
       },

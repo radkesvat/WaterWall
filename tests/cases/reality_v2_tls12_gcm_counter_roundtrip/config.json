@@ -8,7 +8,7 @@
       "settings": {
         "sni": "tls.integration.test", "verify": false,
         "password": "waterwall-reality-v2-gcm-counter", "algorithm": "chacha20-poly1305",
-        "salt": "reality-v2-tls12-gcm-counter", "kdf-iterations": 12000, "max-frame-size": 15
+        "salt": "reality-v2-tls12-gcm-counter", "kdf-iterations": 12000
       },
       "next": "reality-connector"
     },
@@ -21,7 +21,7 @@
         "destination": "cover-connector",
         "password": "waterwall-reality-v2-gcm-counter", "algorithm": "chacha20-poly1305",
         "salt": "reality-v2-tls12-gcm-counter", "kdf-iterations": 12000,
-        "max-frame-size": 15, "sniffing-attempts": 8,
+        "sniffing-attempts": 8,
         "tls12-gcm-server-nonce-policy": "counter"
       },
       "next": "tester-server"

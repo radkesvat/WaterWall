@@ -25,6 +25,8 @@ int main(void)
     }
     realityTestClientCloseLifecycle();
     realityTestServerCloseLifecycle();
+    realityTestClientRecordSizing();
+    realityTestServerRecordSizing();
     globalstateDestroySecureRandom();
     return 0;
 }

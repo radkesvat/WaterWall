@@ -7,7 +7,7 @@
       "settings": {
         "sni": "tls.integration.test", "verify": false,
         "password": "waterwall-reality-v2-gcm-random", "algorithm": "aes-gcm",
-        "salt": "reality-v2-tls12-gcm-random", "kdf-iterations": 12000, "max-frame-size": 16
+        "salt": "reality-v2-tls12-gcm-random", "kdf-iterations": 12000
       },
       "next": "reality-connector"
     },
@@ -19,7 +19,7 @@
         "destination": "cover-connector",
         "password": "waterwall-reality-v2-gcm-random", "algorithm": "aes-gcm",
         "salt": "reality-v2-tls12-gcm-random", "kdf-iterations": 12000,
-        "max-frame-size": 16, "sniffing-attempts": 8,
+        "sniffing-attempts": 8,
         "tls12-gcm-server-nonce-policy": "random"
       },
       "next": "tester-server"

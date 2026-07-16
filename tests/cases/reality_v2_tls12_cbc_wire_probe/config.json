@@ -7,7 +7,7 @@
       "settings": {
         "sni": "tls.integration.test", "verify": false,
         "password": "waterwall-reality-v2-cbc-wire", "algorithm": "aes-gcm",
-        "salt": "reality-v2-tls12-cbc-wire", "kdf-iterations": 12000, "max-frame-size": 1
+        "salt": "reality-v2-tls12-cbc-wire", "kdf-iterations": 12000
       },
       "next": "relay-connector"
     },
@@ -19,7 +19,7 @@
         "destination": "cover-connector",
         "password": "waterwall-reality-v2-cbc-wire", "algorithm": "aes-gcm",
         "salt": "reality-v2-tls12-cbc-wire", "kdf-iterations": 12000,
-        "max-frame-size": 1, "sniffing-attempts": 8
+        "sniffing-attempts": 8
       },
       "next": "protected-connector"
     },

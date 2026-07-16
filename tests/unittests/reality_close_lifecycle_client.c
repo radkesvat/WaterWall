@@ -133,7 +133,6 @@ static void clientNextPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     requireClient(realityV2ValidateInnerPlaintext(&descriptor,
                                                   inner,
                                                   ciphertext_len - kRealityV2TagSize,
-                                                  1,
                                                   &payload_offset,
                                                   &payload_len) &&
                       realityV2ParseAlert(inner + payload_offset,
@@ -225,12 +224,11 @@ static void clientFixtureInitialize(client_lifecycle_fixture_t *fixture)
 
     realityclient_tstate_t *ts = tunnelGetState(fixture->reality);
     ts->algorithm = kRealityClientAlgorithmChaCha20Poly1305;
-    ts->max_frame_payload = 1;
     realityclient_lstate_t *ls = lineGetState(fixture->line, fixture->reality);
     realityclientLinestateInitialize(ls, fixture->pool);
     ls->record_profile = (reality_v2_record_profile_t) {
-        .profile_id = kRealityV2RecordProfileOpaque,
-        .visible_prefix_len = kRealityV2OpaquePrefixSize,
+        .profile_id = kRealityV2RecordProfileTls13Aead,
+        .visible_prefix_len = 0,
     };
     ls->tls_version = kRealityV2Tls13;
     ls->session_keys_ready = true;
@@ -534,10 +532,10 @@ void realityTestClientCloseLifecycle(void)
     runClientScenario(realityclientFailAuthenticated, "PU", false, true);
 
     const reality_v2_record_profile_t profiles[] = {
-        {kRealityV2RecordProfileOpaque, kRealityV2OpaquePrefixSize, 0, 0},
+        {kRealityV2RecordProfileTls13Aead, 0, 0, 0},
         {kRealityV2RecordProfileTls12Gcm, kRealityV2Tls12GcmPrefixSize, 0, 0},
         {kRealityV2RecordProfileTls12Cbc, kRealityV2Tls12CbcPrefixSize, 16, 20},
-        {kRealityV2RecordProfileOpaque, kRealityV2OpaquePrefixSize, 0, 0},
+        {kRealityV2RecordProfileTls12ChaCha, 0, 0, 0},
     };
     const uint16_t versions[] = {
         kRealityV2Tls13,
@@ -553,4 +551,223 @@ void realityTestClientCloseLifecycle(void)
     }
     testClientTerminalReentry();
     testClientSecureRandomFailure();
+}
+
+typedef struct client_sizing_context_s
+{
+    tunnel_t *reality;
+    buffer_pool_t *pool;
+    const uint8_t *expected_payload;
+    uint32_t expected_payload_len;
+    uint32_t recovered_payload_len;
+    uint32_t body_lengths[3];
+    uint32_t record_count;
+    bool kill_after_first_record;
+} client_sizing_context_t;
+
+static void clientSizingCapture(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    client_sizing_context_t *context = *(client_sizing_context_t **) tunnelGetState(t);
+    realityclient_lstate_t *ls = lineGetState(l, context->reality);
+    const uint8_t *record = sbufGetRawPtr(buf);
+    uint32_t record_len = sbufGetLength(buf);
+    requireClient(record_len >= kRealityV2TlsRecordHeaderSize,
+                  "client sizing capture received a truncated TLS record");
+
+    reality_v2_record_descriptor_t descriptor;
+    requireClient(realityV2BuildRecordDescriptor(ls->tls_version,
+                                                  &ls->record_profile,
+                                                  kRealityV2RecordKindApplicationData,
+                                                  &descriptor),
+                  "client sizing descriptor construction failed");
+    uint32_t chunk_len = min(context->expected_payload_len - context->recovered_payload_len,
+                             (uint32_t) kRealityV2MaxPlaintextFragment);
+    reality_v2_record_layout_t layout;
+    requireClient(realityV2CalculateDescriptorLayout(&descriptor, chunk_len, &layout) &&
+                      record_len == kRealityV2TlsRecordHeaderSize + layout.wire_body_len &&
+                      record[0] == descriptor.outer_content_type && record[1] == 0x03 &&
+                      record[2] == 0x03 &&
+                      ((((uint32_t) record[3] << 8) | record[4]) == layout.wire_body_len),
+                  "client sizing capture observed the wrong native record body length");
+    requireClient(context->record_count < sizeof(context->body_lengths) / sizeof(context->body_lengths[0]),
+                  "client sizing capture emitted too many records");
+    context->body_lengths[context->record_count] = layout.wire_body_len;
+
+    const uint8_t *visible_prefix = record + kRealityV2TlsRecordHeaderSize;
+    if (descriptor.profile.profile_id == kRealityV2RecordProfileTls12Gcm)
+    {
+        requireClient(realityV2ReadBe64(visible_prefix) == 10U + context->record_count,
+                      "client sizing GCM explicit nonce did not continue the TLS sequence");
+    }
+    const uint8_t *ciphertext = visible_prefix + descriptor.visible_prefix_len;
+    uint32_t ciphertext_len = layout.wire_body_len - descriptor.visible_prefix_len;
+    uint8_t nonce[kRealityV2IvSize];
+    uint8_t aad[kRealityV2RecordAadMaxSize];
+    uint8_t inner[kRealityV2MaxPlaintextFragment + kRealityV2TagSize + 1];
+    size_t aad_len = 0;
+    realityV2BuildNonce(ls->c2s_iv, context->record_count, nonce);
+    requireClient(realityV2BuildRecordAad(&descriptor,
+                                          kRealityV2DirectionClientToServer,
+                                          context->record_count,
+                                          ls->session_id,
+                                          record,
+                                          visible_prefix,
+                                          descriptor.visible_prefix_len,
+                                          aad,
+                                          &aad_len) &&
+                      chacha20poly1305Decrypt(inner,
+                                              ciphertext,
+                                              ciphertext_len,
+                                              aad,
+                                              aad_len,
+                                              nonce,
+                                              ls->c2s_key) == 0,
+                  "client sizing record failed to decrypt");
+    uint32_t payload_offset;
+    uint32_t payload_len;
+    requireClient(realityV2ValidateInnerPlaintext(&descriptor,
+                                                  inner,
+                                                  ciphertext_len - kRealityV2TagSize,
+                                                  &payload_offset,
+                                                  &payload_len) &&
+                      payload_len == chunk_len &&
+                      memcmp(inner + payload_offset,
+                             context->expected_payload + context->recovered_payload_len,
+                             payload_len) == 0,
+                  "client sizing record did not recover the original plaintext chunk");
+
+    context->recovered_payload_len += payload_len;
+    ++context->record_count;
+    bufferpoolReuseBuffer(context->pool, buf);
+    if (context->kill_after_first_record)
+    {
+        l->alive = false;
+    }
+}
+
+static void runClientSizingCase(uint16_t tls_version,
+                                const reality_v2_record_profile_t *profile,
+                                uint32_t input_len,
+                                bool kill_after_first_record)
+{
+    master_pool_t *large_master = masterpoolCreateWithCapacity(8);
+    master_pool_t *small_master = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *pool = bufferpoolCreate(large_master, small_master, 8, 65536, 1024);
+    bufferpoolUpdateAllocationPaddings(pool,
+                                       kRealityClientMaxFramePrefixSize,
+                                       kRealityClientMaxFramePrefixSize);
+    buffer_pool_t *shortcut[1] = {pool};
+    buffer_pool_t **saved_shortcuts = GSTATE.shortcut_buffer_pools;
+    GSTATE.shortcut_buffer_pools = shortcut;
+
+    tunnel_t *reality = tunnelCreate(NULL, sizeof(realityclient_tstate_t), sizeof(realityclient_lstate_t));
+    tunnel_t *capture = tunnelCreate(NULL, sizeof(client_sizing_context_t *), 0);
+    requireClient(reality != NULL && capture != NULL, "failed to create client sizing tunnels");
+    tunnelBind(reality, capture);
+    capture->fnPayloadU = clientSizingCapture;
+
+    line_t *line = memoryAllocateCacheAlignedZero(sizeof(line_t) + reality->lstate_size);
+    requireClient(line != NULL, "failed to allocate client sizing line");
+    atomic_init(&line->refc, 1);
+    line->alive = true;
+    line->wid = 0;
+
+    realityclient_tstate_t *ts = tunnelGetState(reality);
+    ts->algorithm = kRealityClientAlgorithmChaCha20Poly1305;
+    realityclient_lstate_t *ls = lineGetState(line, reality);
+    realityclientLinestateInitialize(ls, pool);
+    ls->record_profile = *profile;
+    ls->tls_version = tls_version;
+    ls->session_keys_ready = true;
+    ls->tls12_sequences_valid = tls_version == kRealityV2Tls12;
+    ls->tls12_next_write_sequence = 10;
+    memorySet(ls->session_id, 0x31, sizeof(ls->session_id));
+    memorySet(ls->c2s_key, 0x42, sizeof(ls->c2s_key));
+    memorySet(ls->c2s_iv, 0x53, sizeof(ls->c2s_iv));
+
+    sbuf_t *input = bufferpoolGetLargeBuffer(pool);
+    requireClient(input_len <= sbufGetMaximumWriteableSize(input),
+                  "client sizing input does not fit the test buffer");
+    input = sbufReserveSpace(input, input_len);
+    sbufSetLength(input, input_len);
+    uint8_t *input_bytes = sbufGetMutablePtr(input);
+    uint8_t *expected_bytes = memoryAllocate(input_len);
+    requireClient(expected_bytes != NULL, "failed to allocate client sizing expected payload");
+    for (uint32_t i = 0; i < input_len; ++i)
+    {
+        input_bytes[i] = (uint8_t) (i * 29U + 7U);
+        expected_bytes[i] = input_bytes[i];
+    }
+
+    client_sizing_context_t context = {
+        .reality = reality,
+        .pool = pool,
+        .expected_payload = expected_bytes,
+        .expected_payload_len = input_len,
+        .kill_after_first_record = kill_after_first_record,
+    };
+    *(client_sizing_context_t **) tunnelGetState(capture) = &context;
+
+    bool sent = realityclientEncryptAndSend(reality, line, input);
+    uint32_t expected_records = (input_len + kRealityV2MaxPlaintextFragment - 1U) /
+                                kRealityV2MaxPlaintextFragment;
+    if (kill_after_first_record)
+    {
+        requireClient(! sent && context.record_count == 1 &&
+                          context.recovered_payload_len == kRealityV2MaxPlaintextFragment,
+                      "client sizing sender did not stop immediately when the line died");
+        line->alive = true;
+    }
+    else
+    {
+        requireClient(sent && context.record_count == expected_records &&
+                          context.recovered_payload_len == input_len,
+                      "client sizing sender emitted the wrong chunk sequence");
+        if (input_len == 32768)
+        {
+            requireClient(context.record_count == 2,
+                          "client 32768-byte callback emitted a tiny third record");
+        }
+    }
+
+    realityclientLinestateDestroy(ls);
+    memoryFree(expected_bytes);
+    requireClient(atomic_load(&line->refc) == 1, "client sizing line reference leaked");
+    memoryFreeAligned(line);
+    tunnelDestroy(reality);
+    tunnelDestroy(capture);
+    GSTATE.shortcut_buffer_pools = saved_shortcuts;
+    bufferpoolDestroy(pool);
+    masterpoolMakeEmpty(large_master);
+    masterpoolMakeEmpty(small_master);
+    masterpoolDestroy(large_master);
+    masterpoolDestroy(small_master);
+}
+
+void realityTestClientRecordSizing(void)
+{
+    static const struct
+    {
+        uint16_t tls_version;
+        reality_v2_record_profile_t profile;
+    } profiles[] = {
+        {kRealityV2Tls13, {kRealityV2RecordProfileTls13Aead, 0, 0, 0}},
+        {kRealityV2Tls12, {kRealityV2RecordProfileTls12ChaCha, 0, 0, 0}},
+        {kRealityV2Tls12,
+         {kRealityV2RecordProfileTls12Gcm, kRealityV2Tls12GcmPrefixSize, 0, 0}},
+        {kRealityV2Tls12,
+         {kRealityV2RecordProfileTls12Cbc, kRealityV2Tls12CbcPrefixSize, 16, 20}},
+    };
+    static const uint32_t input_lengths[] = {1, 16383, 16384, 16385, 32768, 32769};
+    for (size_t i = 0; i < sizeof(profiles) / sizeof(profiles[0]); ++i)
+    {
+        for (size_t j = 0; j < sizeof(input_lengths) / sizeof(input_lengths[0]); ++j)
+        {
+            runClientSizingCase(profiles[i].tls_version,
+                                &profiles[i].profile,
+                                input_lengths[j],
+                                false);
+        }
+        runClientSizingCase(profiles[i].tls_version, &profiles[i].profile, 32768, true);
+    }
 }

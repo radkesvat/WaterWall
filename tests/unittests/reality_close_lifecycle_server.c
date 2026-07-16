@@ -104,7 +104,6 @@ static void serverPrevPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     requireServer(realityV2ValidateInnerPlaintext(&descriptor,
                                                   inner,
                                                   ciphertext_len - kRealityV2TagSize,
-                                                  1,
                                                   &payload_offset,
                                                   &payload_len) &&
                       realityV2ParseAlert(inner + payload_offset,
@@ -232,14 +231,13 @@ static void serverFixtureInitialize(server_lifecycle_fixture_t *fixture)
 
     realityserver_tstate_t *ts = tunnelGetState(fixture->reality);
     ts->algorithm = kRealityServerAlgorithmChaCha20Poly1305;
-    ts->max_frame_payload = 1;
     realityserver_lstate_t *ls = lineGetState(fixture->line, fixture->reality);
     realityserverLinestateInitialize(ls, fixture->pool);
     ls->mode = kRealityServerModeAuthorized;
     ls->protected_init_sent = true;
     ls->record_profile = (reality_v2_record_profile_t) {
-        .profile_id = kRealityV2RecordProfileOpaque,
-        .visible_prefix_len = kRealityV2OpaquePrefixSize,
+        .profile_id = kRealityV2RecordProfileTls13Aead,
+        .visible_prefix_len = 0,
     };
     ls->tls_capture.binding.tls_version = kRealityV2Tls13;
     ls->session_keys_ready = true;
@@ -629,10 +627,10 @@ void realityTestServerCloseLifecycle(void)
     runServerScenario(realityserverFailAuthenticated, "PU", false, true);
 
     const reality_v2_record_profile_t profiles[] = {
-        {kRealityV2RecordProfileOpaque, kRealityV2OpaquePrefixSize, 0, 0},
+        {kRealityV2RecordProfileTls13Aead, 0, 0, 0},
         {kRealityV2RecordProfileTls12Gcm, kRealityV2Tls12GcmPrefixSize, 0, 0},
         {kRealityV2RecordProfileTls12Cbc, kRealityV2Tls12CbcPrefixSize, 16, 20},
-        {kRealityV2RecordProfileOpaque, kRealityV2OpaquePrefixSize, 0, 0},
+        {kRealityV2RecordProfileTls12ChaCha, 0, 0, 0},
     };
     const uint16_t versions[] = {
         kRealityV2Tls13,
@@ -650,4 +648,224 @@ void realityTestServerCloseLifecycle(void)
     testServerTerminalReentry();
     testServerUnauthenticatedCloseModes();
     testServerSecureRandomFailure();
+}
+
+typedef struct server_sizing_context_s
+{
+    tunnel_t *reality;
+    buffer_pool_t *pool;
+    const uint8_t *expected_payload;
+    uint32_t expected_payload_len;
+    uint32_t recovered_payload_len;
+    uint32_t body_lengths[3];
+    uint32_t record_count;
+    bool kill_after_first_record;
+} server_sizing_context_t;
+
+static void serverSizingCapture(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    server_sizing_context_t *context = *(server_sizing_context_t **) tunnelGetState(t);
+    realityserver_lstate_t *ls = lineGetState(l, context->reality);
+    const uint8_t *record = sbufGetRawPtr(buf);
+    uint32_t record_len = sbufGetLength(buf);
+    requireServer(record_len >= kRealityV2TlsRecordHeaderSize,
+                  "server sizing capture received a truncated TLS record");
+
+    reality_v2_record_descriptor_t descriptor;
+    requireServer(realityV2BuildRecordDescriptor(ls->tls_capture.binding.tls_version,
+                                                  &ls->record_profile,
+                                                  kRealityV2RecordKindApplicationData,
+                                                  &descriptor),
+                  "server sizing descriptor construction failed");
+    uint32_t chunk_len = min(context->expected_payload_len - context->recovered_payload_len,
+                             (uint32_t) kRealityV2MaxPlaintextFragment);
+    reality_v2_record_layout_t layout;
+    requireServer(realityV2CalculateDescriptorLayout(&descriptor, chunk_len, &layout) &&
+                      record_len == kRealityV2TlsRecordHeaderSize + layout.wire_body_len &&
+                      record[0] == descriptor.outer_content_type && record[1] == 0x03 &&
+                      record[2] == 0x03 &&
+                      ((((uint32_t) record[3] << 8) | record[4]) == layout.wire_body_len),
+                  "server sizing capture observed the wrong native record body length");
+    requireServer(context->record_count < sizeof(context->body_lengths) / sizeof(context->body_lengths[0]),
+                  "server sizing capture emitted too many records");
+    context->body_lengths[context->record_count] = layout.wire_body_len;
+
+    const uint8_t *visible_prefix = record + kRealityV2TlsRecordHeaderSize;
+    if (descriptor.profile.profile_id == kRealityV2RecordProfileTls12Gcm)
+    {
+        requireServer(realityV2ReadBe64(visible_prefix) == 10U + context->record_count,
+                      "server sizing GCM explicit nonce did not continue the TLS sequence");
+    }
+    const uint8_t *ciphertext = visible_prefix + descriptor.visible_prefix_len;
+    uint32_t ciphertext_len = layout.wire_body_len - descriptor.visible_prefix_len;
+    uint8_t nonce[kRealityV2IvSize];
+    uint8_t aad[kRealityV2RecordAadMaxSize];
+    uint8_t inner[kRealityV2MaxPlaintextFragment + kRealityV2TagSize + 1];
+    size_t aad_len = 0;
+    realityV2BuildNonce(ls->s2c_iv, context->record_count, nonce);
+    requireServer(realityV2BuildRecordAad(&descriptor,
+                                          kRealityV2DirectionServerToClient,
+                                          context->record_count,
+                                          ls->session_id,
+                                          record,
+                                          visible_prefix,
+                                          descriptor.visible_prefix_len,
+                                          aad,
+                                          &aad_len) &&
+                      chacha20poly1305Decrypt(inner,
+                                              ciphertext,
+                                              ciphertext_len,
+                                              aad,
+                                              aad_len,
+                                              nonce,
+                                              ls->s2c_key) == 0,
+                  "server sizing record failed to decrypt");
+    uint32_t payload_offset;
+    uint32_t payload_len;
+    requireServer(realityV2ValidateInnerPlaintext(&descriptor,
+                                                  inner,
+                                                  ciphertext_len - kRealityV2TagSize,
+                                                  &payload_offset,
+                                                  &payload_len) &&
+                      payload_len == chunk_len &&
+                      memcmp(inner + payload_offset,
+                             context->expected_payload + context->recovered_payload_len,
+                             payload_len) == 0,
+                  "server sizing record did not recover the original plaintext chunk");
+
+    context->recovered_payload_len += payload_len;
+    ++context->record_count;
+    bufferpoolReuseBuffer(context->pool, buf);
+    if (context->kill_after_first_record)
+    {
+        l->alive = false;
+    }
+}
+
+static void runServerSizingCase(uint16_t tls_version,
+                                const reality_v2_record_profile_t *profile,
+                                uint32_t input_len,
+                                bool kill_after_first_record)
+{
+    master_pool_t *large_master = masterpoolCreateWithCapacity(8);
+    master_pool_t *small_master = masterpoolCreateWithCapacity(8);
+    buffer_pool_t *pool = bufferpoolCreate(large_master, small_master, 8, 65536, 1024);
+    bufferpoolUpdateAllocationPaddings(pool,
+                                       kRealityServerMaxFramePrefixSize,
+                                       kRealityServerMaxFramePrefixSize);
+    buffer_pool_t *shortcut[1] = {pool};
+    buffer_pool_t **saved_shortcuts = GSTATE.shortcut_buffer_pools;
+    GSTATE.shortcut_buffer_pools = shortcut;
+
+    tunnel_t *capture = tunnelCreate(NULL, sizeof(server_sizing_context_t *), 0);
+    tunnel_t *reality = tunnelCreate(NULL, sizeof(realityserver_tstate_t), sizeof(realityserver_lstate_t));
+    requireServer(capture != NULL && reality != NULL, "failed to create server sizing tunnels");
+    tunnelBind(capture, reality);
+    capture->fnPayloadD = serverSizingCapture;
+
+    line_t *line = memoryAllocateCacheAlignedZero(sizeof(line_t) + reality->lstate_size);
+    requireServer(line != NULL, "failed to allocate server sizing line");
+    atomic_init(&line->refc, 1);
+    line->alive = true;
+    line->wid = 0;
+
+    realityserver_tstate_t *ts = tunnelGetState(reality);
+    ts->algorithm = kRealityServerAlgorithmChaCha20Poly1305;
+    realityserver_lstate_t *ls = lineGetState(line, reality);
+    realityserverLinestateInitialize(ls, pool);
+    ls->record_profile = *profile;
+    ls->tls_capture.binding.tls_version = tls_version;
+    ls->session_keys_ready = true;
+    ls->mode = kRealityServerModeAuthorized;
+    ls->server_gcm_nonce_policy = kRealityServerGcmNoncePolicySequence;
+    ls->server_tls_sequence_base = 10;
+    memorySet(ls->session_id, 0x64, sizeof(ls->session_id));
+    memorySet(ls->s2c_key, 0x75, sizeof(ls->s2c_key));
+    memorySet(ls->s2c_iv, 0x86, sizeof(ls->s2c_iv));
+
+    sbuf_t *input = bufferpoolGetLargeBuffer(pool);
+    requireServer(input_len <= sbufGetMaximumWriteableSize(input),
+                  "server sizing input does not fit the test buffer");
+    input = sbufReserveSpace(input, input_len);
+    sbufSetLength(input, input_len);
+    uint8_t *input_bytes = sbufGetMutablePtr(input);
+    uint8_t *expected_bytes = memoryAllocate(input_len);
+    requireServer(expected_bytes != NULL, "failed to allocate server sizing expected payload");
+    for (uint32_t i = 0; i < input_len; ++i)
+    {
+        input_bytes[i] = (uint8_t) (i * 31U + 11U);
+        expected_bytes[i] = input_bytes[i];
+    }
+
+    server_sizing_context_t context = {
+        .reality = reality,
+        .pool = pool,
+        .expected_payload = expected_bytes,
+        .expected_payload_len = input_len,
+        .kill_after_first_record = kill_after_first_record,
+    };
+    *(server_sizing_context_t **) tunnelGetState(capture) = &context;
+
+    bool sent = realityserverEncryptAndSendDownstream(reality, line, input);
+    uint32_t expected_records = (input_len + kRealityV2MaxPlaintextFragment - 1U) /
+                                kRealityV2MaxPlaintextFragment;
+    if (kill_after_first_record)
+    {
+        requireServer(! sent && context.record_count == 1 &&
+                          context.recovered_payload_len == kRealityV2MaxPlaintextFragment,
+                      "server sizing sender did not stop immediately when the line died");
+        line->alive = true;
+    }
+    else
+    {
+        requireServer(sent && context.record_count == expected_records &&
+                          context.recovered_payload_len == input_len,
+                      "server sizing sender emitted the wrong chunk sequence");
+        if (input_len == 32768)
+        {
+            requireServer(context.record_count == 2,
+                          "server 32768-byte callback emitted a tiny third record");
+        }
+    }
+
+    realityserverLinestateDestroy(ls);
+    memoryFree(expected_bytes);
+    requireServer(atomic_load(&line->refc) == 1, "server sizing line reference leaked");
+    memoryFreeAligned(line);
+    tunnelDestroy(capture);
+    tunnelDestroy(reality);
+    GSTATE.shortcut_buffer_pools = saved_shortcuts;
+    bufferpoolDestroy(pool);
+    masterpoolMakeEmpty(large_master);
+    masterpoolMakeEmpty(small_master);
+    masterpoolDestroy(large_master);
+    masterpoolDestroy(small_master);
+}
+
+void realityTestServerRecordSizing(void)
+{
+    static const struct
+    {
+        uint16_t tls_version;
+        reality_v2_record_profile_t profile;
+    } profiles[] = {
+        {kRealityV2Tls13, {kRealityV2RecordProfileTls13Aead, 0, 0, 0}},
+        {kRealityV2Tls12, {kRealityV2RecordProfileTls12ChaCha, 0, 0, 0}},
+        {kRealityV2Tls12,
+         {kRealityV2RecordProfileTls12Gcm, kRealityV2Tls12GcmPrefixSize, 0, 0}},
+        {kRealityV2Tls12,
+         {kRealityV2RecordProfileTls12Cbc, kRealityV2Tls12CbcPrefixSize, 16, 20}},
+    };
+    static const uint32_t input_lengths[] = {1, 16383, 16384, 16385, 32768, 32769};
+    for (size_t i = 0; i < sizeof(profiles) / sizeof(profiles[0]); ++i)
+    {
+        for (size_t j = 0; j < sizeof(input_lengths) / sizeof(input_lengths[0]); ++j)
+        {
+            runServerSizingCase(profiles[i].tls_version,
+                                &profiles[i].profile,
+                                input_lengths[j],
+                                false);
+        }
+        runServerSizingCase(profiles[i].tls_version, &profiles[i].profile, 32768, true);
+    }
 }

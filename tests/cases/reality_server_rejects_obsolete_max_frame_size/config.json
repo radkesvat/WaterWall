@@ -1,0 +1,41 @@
+{
+  "name": "reality-server-rejects-obsolete-max-frame-size",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "chunk-count": 1
+      },
+      "next": "reality-server"
+    },
+    {
+      "name": "reality-server",
+      "type": "RealityServer",
+      "settings": {
+        "destination": "visitor-black-hole",
+        "password": "obsolete-setting-test",
+        "algorithm": "chacha20-poly1305",
+        "salt": "obsolete-setting-test",
+        "kdf-iterations": 12000,
+        "sniffing-attempts": 8,
+        "max-frame-size": 1
+      },
+      "next": "black-hole"
+    },
+    {
+      "name": "black-hole",
+      "type": "BlackHole",
+      "settings": {
+        "mode": "passive"
+      }
+    },
+    {
+      "name": "visitor-black-hole",
+      "type": "BlackHole",
+      "settings": {
+        "mode": "passive"
+      }
+    }
+  ]
+}

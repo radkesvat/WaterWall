@@ -17,14 +17,14 @@
 
 enum
 {
-    kPlaintextSize = 19,
-    kCiphertextSize = kPlaintextSize + kRealityV2TagSize,
+    kPlaintextSize      = 19,
+    kInnerPlaintextSize = kPlaintextSize + 1,
+    kCiphertextSize     = kInnerPlaintextSize + kRealityV2TagSize,
 };
 
 typedef struct test_record_s
 {
     uint8_t header[kRealityV2TlsRecordHeaderSize];
-    uint8_t cover[kRealityV2CoverPrefixSize];
     uint8_t ciphertext[kCiphertextSize];
 } test_record_t;
 
@@ -64,10 +64,10 @@ static void makeRecord(const reality_v2_session_material_t *material, uint8_t di
     const uint8_t *iv  = direction == kRealityV2DirectionClientToServer ? material->c2s_iv : material->s2c_iv;
     uint8_t nonce[kRealityV2IvSize];
     uint8_t aad[kRealityV2RecordAadMaxSize];
+    uint8_t inner[kInnerPlaintextSize];
     size_t  aad_len = 0;
     const reality_v2_record_profile_t profile = {
-        .profile_id         = kRealityV2RecordProfileOpaque,
-        .visible_prefix_len = kRealityV2OpaquePrefixSize,
+        .profile_id = kRealityV2RecordProfileTls13Aead,
     };
     reality_v2_record_descriptor_t descriptor;
     require(realityV2BuildRecordDescriptor(kRealityV2Tls13,
@@ -80,11 +80,14 @@ static void makeRecord(const reality_v2_session_material_t *material, uint8_t di
     record->header[1] = 0x03;
     record->header[2] = 0x03;
     record->header[3] = 0;
-    record->header[4] = kRealityV2CoverPrefixSize + kCiphertextSize;
-    for (uint32_t i = 0; i < kRealityV2CoverPrefixSize; ++i)
-    {
-        record->cover[i] = (uint8_t) (marker + i);
-    }
+    record->header[4] = kCiphertextSize;
+    require(realityV2BuildInnerPlaintext(&descriptor,
+                                         plaintext,
+                                         sizeof(plaintext),
+                                         inner,
+                                         sizeof(inner)),
+            "record inner plaintext construction failed");
+    inner[0] ^= marker;
 
     realityV2BuildNonce(iv, sequence, nonce);
     require(realityV2BuildRecordAad(&descriptor,
@@ -92,14 +95,14 @@ static void makeRecord(const reality_v2_session_material_t *material, uint8_t di
                                     sequence,
                                     material->session_id,
                                     record->header,
-                                    record->cover,
-                                    sizeof(record->cover),
+                                    NULL,
+                                    0,
                                     aad,
                                     &aad_len),
             "record AAD construction failed");
     require(chacha20poly1305Encrypt(record->ciphertext,
-                                    plaintext,
-                                    sizeof(plaintext),
+                                    inner,
+                                    sizeof(inner),
                                     aad,
                                     aad_len,
                                     nonce,
@@ -119,11 +122,10 @@ static bool receiveRecord(const reality_v2_session_material_t *material, uint8_t
     const uint8_t *iv  = direction == kRealityV2DirectionClientToServer ? material->c2s_iv : material->s2c_iv;
     uint8_t nonce[kRealityV2IvSize];
     uint8_t aad[kRealityV2RecordAadMaxSize];
-    uint8_t plaintext[kPlaintextSize];
+    uint8_t plaintext[kInnerPlaintextSize];
     size_t  aad_len = 0;
     const reality_v2_record_profile_t profile = {
-        .profile_id         = kRealityV2RecordProfileOpaque,
-        .visible_prefix_len = kRealityV2OpaquePrefixSize,
+        .profile_id = kRealityV2RecordProfileTls13Aead,
     };
     reality_v2_record_descriptor_t descriptor;
     if (! realityV2BuildRecordDescriptor(kRealityV2Tls13,
@@ -140,8 +142,8 @@ static bool receiveRecord(const reality_v2_session_material_t *material, uint8_t
                                   *expected_sequence,
                                   material->session_id,
                                   record->header,
-                                  record->cover,
-                                  sizeof(record->cover),
+                                  NULL,
+                                  0,
                                   aad,
                                   &aad_len) ||
         chacha20poly1305Decrypt(plaintext,
@@ -151,6 +153,18 @@ static bool receiveRecord(const reality_v2_session_material_t *material, uint8_t
                                 aad_len,
                                 nonce,
                                 key) != 0)
+    {
+        return false;
+    }
+
+    uint32_t payload_offset;
+    uint32_t payload_len;
+    if (! realityV2ValidateInnerPlaintext(&descriptor,
+                                          plaintext,
+                                          sizeof(plaintext),
+                                          &payload_offset,
+                                          &payload_len) ||
+        payload_offset != 0 || payload_len != kPlaintextSize)
     {
         return false;
     }
@@ -236,7 +250,7 @@ static void testDeterministicAlertAeadVectors(void)
          0x83, 0x4f, 0x72, 0x1c, 0x4a, 0xb5, 0xe9, 0x59, 0x7f},
     };
     const reality_v2_record_profile_t profile = {
-        kRealityV2RecordProfileOpaque, kRealityV2OpaquePrefixSize, 0, 0};
+        kRealityV2RecordProfileTls13Aead, 0, 0, 0};
     reality_v2_record_descriptor_t descriptor;
     reality_v2_record_layout_t layout;
     require(realityV2BuildRecordDescriptor(kRealityV2Tls13,
@@ -355,27 +369,24 @@ static void testNonceAndAadEncoding(void)
         0x5a, 0x0f, 0x1b,
         0xca, 0xe9, 0xd9, 0xfc, 0xb0, 0x02, 0x5f, 0x90, 0x56, 0xa3, 0xf9, 0xd4, 0x84, 0x44, 0x15, 0xcb,
         0xe5, 0x4c, 0x4f, 0xdf, 0x6f, 0xa3, 0xe7, 0x62, 0xf5, 0x44, 0x29, 0x37, 0xcd, 0x17, 0x03, 0x03,
-        0x00, 0x2c, 0x0c, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab,
+        0x00, 0x24, 0x00,
     };
     const uint64_t sequence = UINT64_C(0x0102030405060708);
     uint8_t base_iv[kRealityV2IvSize];
     uint8_t nonce[kRealityV2IvSize];
     uint8_t aad[kRealityV2RecordAadMaxSize];
-    uint8_t header[kRealityV2TlsRecordHeaderSize] = {0x17, 0x03, 0x03, 0x00, 0x2c};
-    uint8_t cover[kRealityV2CoverPrefixSize];
+    uint8_t header[kRealityV2TlsRecordHeaderSize] = {0x17, 0x03, 0x03, 0x00, 0x24};
     reality_v2_handshake_binding_t binding = makeBinding();
     uint8_t session_id[kRealityV2SessionIdSize];
     size_t aad_len = 0;
     const reality_v2_record_profile_t profile = {
-        .profile_id         = kRealityV2RecordProfileOpaque,
-        .visible_prefix_len = kRealityV2OpaquePrefixSize,
+        .profile_id = kRealityV2RecordProfileTls13Aead,
     };
     reality_v2_record_descriptor_t descriptor;
 
     for (uint32_t i = 0; i < sizeof(base_iv); ++i)
     {
         base_iv[i] = (uint8_t) i;
-        cover[i]   = (uint8_t) (0xa0U + i);
     }
     require(realityV2DeriveSessionId(&binding, session_id), "session-id derivation failed");
     require(realityV2BuildRecordDescriptor(kRealityV2Tls13,
@@ -390,15 +401,15 @@ static void testNonceAndAadEncoding(void)
                                     sequence,
                                     session_id,
                                     header,
-                                    cover,
-                                    sizeof(cover),
+                                    NULL,
+                                    0,
                                     aad,
                                     &aad_len),
             "AAD encoding failed");
     require(aad_len == sizeof(expected_aad), "AAD encoding length mismatch");
     requireEqual(aad, expected_aad, aad_len, "AAD encoding vector mismatch");
-    require(! realityV2BuildRecordAad(&descriptor, 0xff, sequence, session_id, header, cover,
-                                      sizeof(cover), aad, &aad_len),
+    require(! realityV2BuildRecordAad(&descriptor, 0xff, sequence, session_id, header, NULL,
+                                      0, aad, &aad_len),
             "invalid direction must be rejected");
     require(realityV2SequenceAvailable(0), "sequence zero must be available");
     require(realityV2SequenceAvailable(UINT64_MAX - 1), "last permitted sequence must be available");
@@ -463,9 +474,9 @@ static void testReplayOrderingAndBinding(void)
     require(! receiveRecord(&material, kRealityV2DirectionClientToServer, &expected, &tampered),
             "header tampering must fail");
     tampered = records[0];
-    tampered.cover[3] ^= 1;
+    tampered.ciphertext[3] ^= 1;
     require(! receiveRecord(&material, kRealityV2DirectionClientToServer, &expected, &tampered),
-            "cover-prefix tampering must fail");
+            "ciphertext tampering must fail");
 }
 
 static uint32_t roundUp(uint32_t value, uint32_t block_size)
@@ -487,7 +498,7 @@ static bool profileRecordDecrypts(const reality_v2_session_material_t *material,
     uint8_t aad[kRealityV2RecordAadMaxSize];
     uint8_t plaintext[64];
     size_t  aad_len = 0;
-    uint16_t tls_version = profile->profile_id == kRealityV2RecordProfileOpaque
+    uint16_t tls_version = profile->profile_id == kRealityV2RecordProfileTls13Aead
                                ? kRealityV2Tls13
                                : kRealityV2Tls12;
     reality_v2_record_descriptor_t descriptor;
@@ -518,7 +529,8 @@ static bool profileRecordDecrypts(const reality_v2_session_material_t *material,
 static void testEveryProfileAuthenticatesPublicShape(void)
 {
     const reality_v2_record_profile_t profiles[] = {
-        {kRealityV2RecordProfileOpaque, kRealityV2OpaquePrefixSize, 0, 0},
+        {kRealityV2RecordProfileTls13Aead, 0, 0, 0},
+        {kRealityV2RecordProfileTls12ChaCha, 0, 0, 0},
         {kRealityV2RecordProfileTls12Gcm, kRealityV2Tls12GcmPrefixSize, 0, 0},
         {kRealityV2RecordProfileTls12Cbc, kRealityV2Tls12CbcPrefixSize, 16, 20},
     };
@@ -532,7 +544,7 @@ static void testEveryProfileAuthenticatesPublicShape(void)
     for (size_t i = 0; i < sizeof(profiles) / sizeof(profiles[0]); ++i)
     {
         const reality_v2_record_profile_t *profile = &profiles[i];
-        uint16_t tls_version = profile->profile_id == kRealityV2RecordProfileOpaque
+        uint16_t tls_version = profile->profile_id == kRealityV2RecordProfileTls13Aead
                                    ? kRealityV2Tls13
                                    : kRealityV2Tls12;
         reality_v2_record_descriptor_t descriptor;
@@ -561,8 +573,13 @@ static void testEveryProfileAuthenticatesPublicShape(void)
         {
             visible_prefix[j] = (uint8_t) (0x40U + j);
         }
-        memset(inner, 0, sizeof(inner));
-        inner[0] = 0xa5;
+        const uint8_t application_payload = 0xa5;
+        require(realityV2BuildInnerPlaintext(&descriptor,
+                                             &application_payload,
+                                             sizeof(application_payload),
+                                             inner,
+                                             layout.inner_plaintext_len),
+                "profile authentication inner plaintext construction failed");
 
         realityV2BuildNonce(material.c2s_iv, 7, nonce);
         require(realityV2BuildRecordAad(&descriptor,
@@ -608,18 +625,21 @@ static void testEveryProfileAuthenticatesPublicShape(void)
                                         ciphertext_len),
                 "profile header tampering must fail authentication");
 
-        uint8_t tampered_prefix[kRealityV2MaxVisiblePrefixSize];
-        memcpy(tampered_prefix, visible_prefix, profile->visible_prefix_len);
-        tampered_prefix[0] ^= 1;
-        require(! profileRecordDecrypts(&material,
-                                        profile,
-                                        kRealityV2DirectionClientToServer,
-                                        7,
-                                        header,
-                                        tampered_prefix,
-                                        ciphertext,
-                                        ciphertext_len),
-                "profile visible-prefix tampering must fail authentication");
+        if (profile->visible_prefix_len != 0)
+        {
+            uint8_t tampered_prefix[kRealityV2MaxVisiblePrefixSize];
+            memcpy(tampered_prefix, visible_prefix, profile->visible_prefix_len);
+            tampered_prefix[0] ^= 1;
+            require(! profileRecordDecrypts(&material,
+                                            profile,
+                                            kRealityV2DirectionClientToServer,
+                                            7,
+                                            header,
+                                            tampered_prefix,
+                                            ciphertext,
+                                            ciphertext_len),
+                    "profile visible-prefix tampering must fail authentication");
+        }
         require(! profileRecordDecrypts(&material,
                                         profile,
                                         kRealityV2DirectionServerToClient,
@@ -651,7 +671,8 @@ static void testEveryProfileAuthenticatesPublicShape(void)
                                         ciphertext_len),
                 "profile cross-connection binding must fail authentication");
 
-        const reality_v2_record_profile_t *other_profile = &profiles[(i + 1) % 3];
+        const reality_v2_record_profile_t *other_profile =
+            &profiles[(i + 1) % (sizeof(profiles) / sizeof(profiles[0]))];
         uint8_t other_prefix[kRealityV2MaxVisiblePrefixSize] = {0};
         memcpy(other_prefix,
                visible_prefix,
@@ -679,10 +700,10 @@ static void testAlertRecords(void)
         uint32_t body_len;
         uint32_t inner_len;
     } cases[] = {
-        {kRealityV2Tls13, {kRealityV2RecordProfileOpaque, 12, 0, 0}, 0x17, 0, 19, 3},
+        {kRealityV2Tls13, {kRealityV2RecordProfileTls13Aead, 0, 0, 0}, 0x17, 0, 19, 3},
         {kRealityV2Tls12, {kRealityV2RecordProfileTls12Gcm, 8, 0, 0}, 0x15, 8, 26, 2},
         {kRealityV2Tls12, {kRealityV2RecordProfileTls12Cbc, 16, 16, 20}, 0x15, 16, 48, 16},
-        {kRealityV2Tls12, {kRealityV2RecordProfileOpaque, 12, 0, 0}, 0x15, 0, 18, 2},
+        {kRealityV2Tls12, {kRealityV2RecordProfileTls12ChaCha, 0, 0, 0}, 0x15, 0, 18, 2},
     };
 
     uint8_t root_key[kRealityV2KeySize];
@@ -759,19 +780,18 @@ static void testAlertRecords(void)
         require(realityV2ClassifyRecord(cases[i].tls_version,
                                         &cases[i].profile,
                                         header,
-                                        16356,
                                         &classified) &&
                     classified.record_kind == kRealityV2RecordKindAlert,
                 "alert classification failed");
         uint8_t wrong_length_header[kRealityV2TlsRecordHeaderSize];
         memcpy(wrong_length_header, header, sizeof(wrong_length_header));
         ++wrong_length_header[4];
-        require(! realityV2ClassifyRecord(cases[i].tls_version,
-                                          &cases[i].profile,
-                                          wrong_length_header,
-                                          16356,
-                                          &classified),
-                "non-exact alert length must be rejected");
+        bool wrong_length_classified = realityV2ClassifyRecord(cases[i].tls_version,
+                                                                &cases[i].profile,
+                                                                wrong_length_header,
+                                                                &classified);
+        require(! wrong_length_classified || classified.record_kind != kRealityV2RecordKindAlert,
+                "non-exact alert length must not classify as an alert");
 
         uint8_t visible_prefix[kRealityV2MaxVisiblePrefixSize];
         for (uint8_t j = 0; j < descriptor.visible_prefix_len; ++j)
@@ -790,7 +810,6 @@ static void testAlertRecords(void)
         require(realityV2ValidateInnerPlaintext(&descriptor,
                                                 inner,
                                                 layout.inner_plaintext_len,
-                                                1,
                                                 &payload_offset,
                                                 &payload_len) &&
                     payload_len == kRealityV2AlertMessageSize &&
@@ -842,42 +861,38 @@ static void testAlertRecords(void)
                                             material.c2s_key) == 0,
                 "authenticated alert did not round-trip");
 
-        if (cases[i].profile.profile_id == kRealityV2RecordProfileTls12Gcm ||
-            cases[i].profile.profile_id == kRealityV2RecordProfileTls12Cbc)
-        {
-            reality_v2_record_descriptor_t data_descriptor;
-            reality_v2_record_layout_t data_layout;
-            require(realityV2BuildRecordDescriptor(kRealityV2Tls12,
-                                                    &cases[i].profile,
-                                                    kRealityV2RecordKindApplicationData,
-                                                    &data_descriptor) &&
-                        realityV2CalculateDescriptorLayout(&data_descriptor, 2, &data_layout) &&
-                        data_layout.wire_body_len == layout.wire_body_len,
-                    "data/alert kind-substitution fixture shape mismatch");
-            uint8_t data_header[kRealityV2TlsRecordHeaderSize];
-            memcpy(data_header, header, sizeof(data_header));
-            data_header[0] = data_descriptor.outer_content_type;
-            size_t data_aad_len = 0;
-            uint8_t data_aad[kRealityV2RecordAadMaxSize];
-            require(realityV2BuildRecordAad(&data_descriptor,
-                                            kRealityV2DirectionClientToServer,
-                                            4,
-                                            material.session_id,
-                                            data_header,
-                                            visible_prefix,
-                                            data_descriptor.visible_prefix_len,
-                                            data_aad,
-                                            &data_aad_len),
-                    "data substitution AAD construction failed");
-            require(chacha20poly1305Decrypt(decoded,
-                                            ciphertext,
-                                            layout.inner_plaintext_len + kRealityV2TagSize,
-                                            data_aad,
-                                            data_aad_len,
-                                            nonce,
-                                            material.c2s_key) != 0,
-                    "record-kind substitution must fail authentication");
-        }
+        reality_v2_record_descriptor_t data_descriptor;
+        reality_v2_record_layout_t data_layout;
+        require(realityV2BuildRecordDescriptor(cases[i].tls_version,
+                                                &cases[i].profile,
+                                                kRealityV2RecordKindApplicationData,
+                                                &data_descriptor) &&
+                    realityV2CalculateDescriptorLayout(&data_descriptor, 2, &data_layout) &&
+                    data_layout.wire_body_len == layout.wire_body_len,
+                "data/alert kind-substitution fixture shape mismatch");
+        uint8_t data_header[kRealityV2TlsRecordHeaderSize];
+        memcpy(data_header, header, sizeof(data_header));
+        data_header[0] = data_descriptor.outer_content_type;
+        size_t data_aad_len = 0;
+        uint8_t data_aad[kRealityV2RecordAadMaxSize];
+        require(realityV2BuildRecordAad(&data_descriptor,
+                                        kRealityV2DirectionClientToServer,
+                                        4,
+                                        material.session_id,
+                                        data_header,
+                                        visible_prefix,
+                                        data_descriptor.visible_prefix_len,
+                                        data_aad,
+                                        &data_aad_len),
+                "data substitution AAD construction failed");
+        require(chacha20poly1305Decrypt(decoded,
+                                        ciphertext,
+                                        layout.inner_plaintext_len + kRealityV2TagSize,
+                                        data_aad,
+                                        data_aad_len,
+                                        nonce,
+                                        material.c2s_key) != 0,
+                "record-kind substitution must fail authentication");
     }
 }
 
@@ -938,8 +953,8 @@ static void testRecordProfilesAndLayouts(void)
         {0xC02F, kRealityV2RecordProfileTls12Gcm},
         {0xC02C, kRealityV2RecordProfileTls12Gcm},
         {0xC030, kRealityV2RecordProfileTls12Gcm},
-        {0xCCA9, kRealityV2RecordProfileOpaque},
-        {0xCCA8, kRealityV2RecordProfileOpaque},
+        {0xCCA9, kRealityV2RecordProfileTls12ChaCha},
+        {0xCCA8, kRealityV2RecordProfileTls12ChaCha},
         {0xC013, kRealityV2RecordProfileTls12Cbc},
         {0xC014, kRealityV2RecordProfileTls12Cbc},
         {0x009C, kRealityV2RecordProfileTls12Gcm},
@@ -947,6 +962,29 @@ static void testRecordProfilesAndLayouts(void)
         {0x002F, kRealityV2RecordProfileTls12Cbc},
         {0x0035, kRealityV2RecordProfileTls12Cbc},
     };
+
+    static const struct
+    {
+        uint16_t tls_version;
+        reality_v2_record_profile_t profile;
+        uint8_t visible_prefix_len;
+        uint8_t inner_content_type;
+        uint32_t maximum_body_len;
+    } profiles[] = {
+        {kRealityV2Tls13, {kRealityV2RecordProfileTls13Aead, 0, 0, 0}, 0, 0x17, 16401},
+        {kRealityV2Tls12, {kRealityV2RecordProfileTls12ChaCha, 0, 0, 0}, 0, 0, 16400},
+        {kRealityV2Tls12,
+         {kRealityV2RecordProfileTls12Gcm, kRealityV2Tls12GcmPrefixSize, 0, 0},
+         kRealityV2Tls12GcmPrefixSize,
+         0,
+         16408},
+        {kRealityV2Tls12,
+         {kRealityV2RecordProfileTls12Cbc, kRealityV2Tls12CbcPrefixSize, 16, 20},
+         kRealityV2Tls12CbcPrefixSize,
+         0,
+         16432},
+    };
+    static const uint32_t payload_lengths[] = {0, 1, 16383, 16384};
 
     reality_v2_record_profile_t profile = {0};
     for (size_t i = 0; i < sizeof(tls12_suites) / sizeof(tls12_suites[0]); ++i)
@@ -958,60 +996,113 @@ static void testRecordProfilesAndLayouts(void)
         require(realityV2RecordProfileIsValid(&profile), "selected Reality profile is invalid");
     }
     require(! realityV2SelectRecordProfile(kRealityV2Tls12, 0xFFFF, &profile),
-            "unknown TLS 1.2 suite must not fall back to opaque");
-    require(realityV2SelectRecordProfile(kRealityV2Tls13, 0x1301, &profile) &&
-                profile.profile_id == kRealityV2RecordProfileOpaque,
-            "TLS 1.3 AES profile must be opaque");
-    require(realityV2SelectRecordProfile(kRealityV2Tls13, 0x1303, &profile) &&
-                profile.profile_id == kRealityV2RecordProfileOpaque,
-            "TLS 1.3 ChaCha profile must be opaque");
-
-    require(realityV2SelectRecordProfile(kRealityV2Tls12, 0xC02F, &profile), "GCM profile selection failed");
-    reality_v2_record_layout_t layout;
-    require(realityV2CalculateRecordLayout(&profile, 123, &layout), "GCM layout failed");
-    require(layout.wire_body_len == 8 + 123 + 16 && layout.inner_plaintext_len == 123,
-            "GCM wire length is incorrect");
-
-    require(realityV2SelectRecordProfile(kRealityV2Tls12, 0xC013, &profile), "CBC profile selection failed");
-    static const uint32_t payload_lengths[] = {1, 2, 14, 15, 16, 17, 30, 31, 32, 33, 16356};
-    for (size_t i = 0; i < sizeof(payload_lengths) / sizeof(payload_lengths[0]); ++i)
+            "unknown TLS 1.2 suite must not fall back to another profile");
+    const uint16_t tls13_suites[] = {0x1301, 0x1302, 0x1303};
+    for (size_t i = 0; i < sizeof(tls13_suites) / sizeof(tls13_suites[0]); ++i)
     {
-        uint32_t payload_len = payload_lengths[i];
-        require(realityV2CalculateRecordLayout(&profile, payload_len, &layout), "CBC layout failed");
-        uint32_t opaque_len = roundUp(payload_len + 20 + 1, 16);
-        require(layout.wire_body_len == 16 + opaque_len, "CBC wire length formula mismatch");
-        require((layout.wire_body_len - 16) % 16 == 0, "CBC opaque body is not block-aligned");
-        require(layout.inner_plaintext_len == opaque_len - 16, "CBC inner length mismatch");
-        require(layout.filler_len == layout.inner_plaintext_len - payload_len - 2,
-                "CBC filler length mismatch");
+        require(realityV2SelectRecordProfile(kRealityV2Tls13, tls13_suites[i], &profile) &&
+                    profile.profile_id == kRealityV2RecordProfileTls13Aead &&
+                    profile.visible_prefix_len == 0,
+                "TLS 1.3 suite mapped to the wrong Reality profile");
     }
-    require(layout.wire_body_len == 16400, "maximum CBC/SHA-1 record size mismatch");
 
-    reality_v2_record_profile_t sha256_profile = {
-        .profile_id         = kRealityV2RecordProfileTls12Cbc,
-        .visible_prefix_len = kRealityV2Tls12CbcPrefixSize,
-        .block_size         = 16,
-        .tls_mac_len        = 32,
-    };
-    require(realityV2CalculateRecordLayout(&sha256_profile, 16356, &layout),
-            "synthetic CBC/SHA-256 layout failed");
-    require(layout.wire_body_len == 16416, "maximum CBC/SHA-256 record size mismatch");
+    require(profiles[0].profile.profile_id != profiles[1].profile.profile_id,
+            "TLS 1.3 and TLS 1.2 ChaCha must use distinct authenticated profiles");
+    require(! realityV2BuildRecordDescriptor(kRealityV2Tls12,
+                                              &profiles[0].profile,
+                                              kRealityV2RecordKindApplicationData,
+                                              &(reality_v2_record_descriptor_t) {0}) &&
+                ! realityV2BuildRecordDescriptor(kRealityV2Tls13,
+                                                  &profiles[1].profile,
+                                                  kRealityV2RecordKindApplicationData,
+                                                  &(reality_v2_record_descriptor_t) {0}),
+            "invalid TLS-version/profile pairings must fail closed");
 
-    require(realityV2CalculateRecordLayout(&profile, 17, &layout), "CBC inner fixture layout failed");
+    for (size_t i = 0; i < sizeof(profiles) / sizeof(profiles[0]); ++i)
+    {
+        reality_v2_record_descriptor_t descriptor;
+        require(realityV2BuildRecordDescriptor(profiles[i].tls_version,
+                                                &profiles[i].profile,
+                                                kRealityV2RecordKindApplicationData,
+                                                &descriptor),
+                "application descriptor construction failed");
+        require(descriptor.outer_content_type == 0x17 &&
+                    descriptor.visible_prefix_len == profiles[i].visible_prefix_len &&
+                    descriptor.tls13_inner_content_type == profiles[i].inner_content_type,
+                "application descriptor has the wrong native TLS shape");
+
+        for (size_t j = 0; j < sizeof(payload_lengths) / sizeof(payload_lengths[0]); ++j)
+        {
+            uint32_t payload_len = payload_lengths[j];
+            reality_v2_record_layout_t layout;
+            require(realityV2CalculateDescriptorLayout(&descriptor, payload_len, &layout),
+                    "native application layout calculation failed");
+            uint32_t expected_body_len;
+            if (profiles[i].profile.profile_id == kRealityV2RecordProfileTls13Aead)
+            {
+                expected_body_len = payload_len + 1 + kRealityV2TagSize;
+            }
+            else if (profiles[i].profile.profile_id == kRealityV2RecordProfileTls12ChaCha)
+            {
+                expected_body_len = payload_len + kRealityV2TagSize;
+            }
+            else if (profiles[i].profile.profile_id == kRealityV2RecordProfileTls12Gcm)
+            {
+                expected_body_len = kRealityV2Tls12GcmPrefixSize + payload_len + kRealityV2TagSize;
+            }
+            else
+            {
+                expected_body_len = kRealityV2Tls12CbcPrefixSize + roundUp(payload_len + 20 + 1, 16);
+            }
+            require(layout.wire_body_len == expected_body_len,
+                    "profile application body length is not native-sized");
+
+            uint8_t header[kRealityV2TlsRecordHeaderSize] = {
+                descriptor.outer_content_type,
+                0x03,
+                0x03,
+                (uint8_t) (layout.wire_body_len >> 8),
+                (uint8_t) layout.wire_body_len,
+            };
+            reality_v2_record_descriptor_t classified;
+            require(realityV2ClassifyRecord(profiles[i].tls_version,
+                                            &profiles[i].profile,
+                                            header,
+                                            &classified) &&
+                        classified.record_kind == kRealityV2RecordKindApplicationData,
+                    "valid native application record was not classified");
+        }
+
+        reality_v2_record_layout_t maximum;
+        require(realityV2CalculateDescriptorLayout(&descriptor,
+                                                    kRealityV2MaxPlaintextFragment,
+                                                    &maximum) &&
+                    maximum.wire_body_len == profiles[i].maximum_body_len &&
+                    maximum.wire_body_len <= kRealityV2MaxTlsRecordBody,
+                "profile maximum record body length is wrong or unsafe");
+        require(! realityV2CalculateDescriptorLayout(&descriptor,
+                                                      kRealityV2MaxPlaintextFragment + 1U,
+                                                      &maximum),
+                "a 16385-byte payload must be split by the sender");
+    }
+
+    const reality_v2_record_profile_t *cbc_profile = &profiles[3].profile;
+    reality_v2_record_layout_t layout;
+    require(realityV2CalculateRecordLayout(cbc_profile, 17, &layout), "CBC inner fixture layout failed");
     uint8_t inner[64] = {0};
     inner[0] = 0;
     inner[1] = 17;
     memset(inner + 2, 0x5a, 17);
     uint32_t decoded_len = 0;
-    require(realityV2ValidateCbcInnerPlaintext(&profile, inner, layout.inner_plaintext_len, 16356, &decoded_len) &&
+    require(realityV2ValidateCbcInnerPlaintext(cbc_profile, inner, layout.inner_plaintext_len, &decoded_len) &&
                 decoded_len == 17,
             "CBC inner length did not round-trip");
     inner[layout.inner_plaintext_len - 1] = 1;
-    require(! realityV2ValidateCbcInnerPlaintext(&profile, inner, layout.inner_plaintext_len, 16356, &decoded_len),
+    require(! realityV2ValidateCbcInnerPlaintext(cbc_profile, inner, layout.inner_plaintext_len, &decoded_len),
             "non-zero CBC filler must fail");
     inner[layout.inner_plaintext_len - 1] = 0;
     inner[1] = 33;
-    require(! realityV2ValidateCbcInnerPlaintext(&profile, inner, layout.inner_plaintext_len, 16356, &decoded_len),
+    require(! realityV2ValidateCbcInnerPlaintext(cbc_profile, inner, layout.inner_plaintext_len, &decoded_len),
             "mismatched CBC encrypted payload length must fail");
 
     const reality_v2_record_profile_t impossible = {
@@ -1021,6 +1112,166 @@ static void testRecordProfilesAndLayouts(void)
         .tls_mac_len        = 20,
     };
     require(! realityV2RecordProfileIsValid(&impossible), "impossible profile sizes must fail");
+
+    const reality_v2_record_profile_t wrong_mac = {
+        .profile_id         = kRealityV2RecordProfileTls12Cbc,
+        .visible_prefix_len = kRealityV2Tls12CbcPrefixSize,
+        .block_size         = 16,
+        .tls_mac_len        = 32,
+    };
+    require(! realityV2RecordProfileIsValid(&wrong_mac), "unmapped CBC MAC length must fail");
+}
+
+static void testTls13ApplicationInnerType(void)
+{
+    const reality_v2_record_profile_t profile = {
+        kRealityV2RecordProfileTls13Aead, 0, 0, 0};
+    reality_v2_record_descriptor_t descriptor;
+    require(realityV2BuildRecordDescriptor(kRealityV2Tls13,
+                                            &profile,
+                                            kRealityV2RecordKindApplicationData,
+                                            &descriptor),
+            "TLS 1.3 application descriptor construction failed");
+
+    const uint8_t payload[] = {0x41, 0x42, 0x43};
+    uint8_t inner[sizeof(payload) + 1];
+    require(realityV2BuildInnerPlaintext(&descriptor,
+                                         payload,
+                                         sizeof(payload),
+                                         inner,
+                                         sizeof(inner)) &&
+                inner[sizeof(payload)] == 0x17,
+            "TLS 1.3 application inner type was not appended");
+
+    uint32_t payload_offset = UINT32_MAX;
+    uint32_t payload_len = UINT32_MAX;
+    require(realityV2ValidateInnerPlaintext(&descriptor,
+                                            inner,
+                                            sizeof(inner),
+                                            &payload_offset,
+                                            &payload_len) &&
+                payload_offset == 0 && payload_len == sizeof(payload) &&
+                memcmp(inner, payload, sizeof(payload)) == 0,
+            "TLS 1.3 application inner type was not stripped");
+
+    inner[sizeof(payload)] = 0x15;
+    require(! realityV2ValidateInnerPlaintext(&descriptor,
+                                              inner,
+                                              sizeof(inner),
+                                              &payload_offset,
+                                              &payload_len),
+            "wrong TLS 1.3 application inner type must fail");
+    require(! realityV2ValidateInnerPlaintext(&descriptor,
+                                              payload,
+                                              sizeof(payload),
+                                              &payload_offset,
+                                              &payload_len),
+            "missing TLS 1.3 application inner type must fail");
+}
+
+static size_t buildOldOpaqueApplicationAad(uint8_t direction, uint64_t sequence,
+                                           const uint8_t session_id[kRealityV2SessionIdSize],
+                                           const uint8_t header[kRealityV2TlsRecordHeaderSize],
+                                           const uint8_t prefix[12], uint8_t aad[kRealityV2RecordAadMaxSize])
+{
+    static const uint8_t domain[] = "WaterWall Reality v2/profile record";
+    uint8_t *cursor = aad;
+    memcpy(cursor, domain, sizeof(domain) - 1);
+    cursor += sizeof(domain) - 1;
+    *cursor++ = kRealityV2RecordKindApplicationData;
+    *cursor++ = 0x03;
+    *cursor++ = 0x04;
+    *cursor++ = 1;
+    *cursor++ = direction;
+    realityV2WriteBe64(cursor, sequence);
+    cursor += 8;
+    memcpy(cursor, session_id, kRealityV2SessionIdSize);
+    cursor += kRealityV2SessionIdSize;
+    memcpy(cursor, header, kRealityV2TlsRecordHeaderSize);
+    cursor += kRealityV2TlsRecordHeaderSize;
+    *cursor++ = 12;
+    memcpy(cursor, prefix, 12);
+    cursor += 12;
+    return (size_t) (cursor - aad);
+}
+
+static void testOldOpaqueApplicationRecordIsRejected(void)
+{
+    uint8_t root_key[kRealityV2KeySize];
+    memset(root_key, 0x6d, sizeof(root_key));
+    reality_v2_handshake_binding_t binding = makeBinding();
+    reality_v2_session_material_t material = {0};
+    require(realityV2DeriveSessionMaterial(root_key, &binding, &material),
+            "old-format rejection material derivation failed");
+
+    enum
+    {
+        kOldPrefixSize = 12,
+        kOldPayloadSize = 1,
+        kOldCiphertextSize = kOldPayloadSize + kRealityV2TagSize,
+        kOldBodySize = kOldPrefixSize + kOldCiphertextSize,
+    };
+    uint8_t record[kRealityV2TlsRecordHeaderSize + kOldBodySize] = {
+        0x17, 0x03, 0x03, 0x00, kOldBodySize};
+    uint8_t *old_prefix = record + kRealityV2TlsRecordHeaderSize;
+    uint8_t *old_ciphertext = old_prefix + kOldPrefixSize;
+    for (uint8_t i = 0; i < kOldPrefixSize; ++i)
+    {
+        old_prefix[i] = (uint8_t) (0xa0U + i);
+    }
+
+    uint8_t old_aad[kRealityV2RecordAadMaxSize];
+    size_t old_aad_len = buildOldOpaqueApplicationAad(kRealityV2DirectionClientToServer,
+                                                       0,
+                                                       material.session_id,
+                                                       record,
+                                                       old_prefix,
+                                                       old_aad);
+    uint8_t nonce[kRealityV2IvSize];
+    const uint8_t payload = 0x5a;
+    realityV2BuildNonce(material.c2s_iv, 0, nonce);
+    require(chacha20poly1305Encrypt(old_ciphertext,
+                                    &payload,
+                                    sizeof(payload),
+                                    old_aad,
+                                    old_aad_len,
+                                    nonce,
+                                    material.c2s_key) == 0,
+            "old-format rejection record encryption failed");
+
+    const reality_v2_record_profile_t new_profile = {
+        kRealityV2RecordProfileTls13Aead, 0, 0, 0};
+    reality_v2_record_descriptor_t descriptor;
+    require(realityV2ClassifyRecord(kRealityV2Tls13,
+                                    &new_profile,
+                                    record,
+                                    &descriptor),
+            "old-format fixture must reach new-format authentication");
+    uint8_t new_aad[kRealityV2RecordAadMaxSize];
+    size_t new_aad_len = 0;
+    require(realityV2BuildRecordAad(&descriptor,
+                                    kRealityV2DirectionClientToServer,
+                                    0,
+                                    material.session_id,
+                                    record,
+                                    NULL,
+                                    0,
+                                    new_aad,
+                                    &new_aad_len),
+            "new-format rejection AAD construction failed");
+    uint8_t decoded[kOldBodySize - kRealityV2TagSize];
+    require(chacha20poly1305Decrypt(decoded,
+                                    old_prefix,
+                                    kOldBodySize,
+                                    new_aad,
+                                    new_aad_len,
+                                    nonce,
+                                    material.c2s_key) != 0,
+            "old 12-byte-prefix application record must not authenticate under the new format");
+
+    const reality_v2_record_profile_t old_profile = {1, 12, 0, 0};
+    require(! realityV2RecordProfileIsValid(&old_profile),
+            "old opaque-prefix profile must not remain valid");
 }
 
 int main(void)
@@ -1036,5 +1287,7 @@ int main(void)
     testAlertRecords();
     testPatchedTls12CipherListCoverage();
     testRecordProfilesAndLayouts();
+    testTls13ApplicationInnerType();
+    testOldOpaqueApplicationRecordIsRejected();
     return 0;
 }

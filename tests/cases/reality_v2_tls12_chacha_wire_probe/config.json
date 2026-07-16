@@ -7,7 +7,7 @@
       "settings": {
         "sni": "tls.integration.test", "verify": false,
         "password": "waterwall-reality-v2-chacha-wire", "algorithm": "chacha20-poly1305",
-        "salt": "reality-v2-tls12-chacha-wire", "kdf-iterations": 12000, "max-frame-size": 1
+        "salt": "reality-v2-tls12-chacha-wire", "kdf-iterations": 12000
       },
       "next": "relay-connector"
     },
@@ -19,7 +19,7 @@
         "destination": "cover-connector",
         "password": "waterwall-reality-v2-chacha-wire", "algorithm": "chacha20-poly1305",
         "salt": "reality-v2-tls12-chacha-wire", "kdf-iterations": 12000,
-        "max-frame-size": 1, "sniffing-attempts": 8
+        "sniffing-attempts": 8
       },
       "next": "protected-connector"
     },

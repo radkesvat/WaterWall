@@ -716,6 +716,30 @@ static void testTls12RecordTrackerPatternsAndProfiles(void)
     require(tracker.saw_protected_record && tracker.next_sequence == 1,
             "CBC protected tracker sequence mismatch");
     realityserverTls12RecordTrackerDestroy(&tracker);
+
+    reality_v2_record_profile_t chacha_profile;
+    require(realityV2SelectRecordProfile(kRealityV2Tls12, 0xCCA8, &chacha_profile) &&
+                chacha_profile.profile_id == kRealityV2RecordProfileTls12ChaCha &&
+                chacha_profile.visible_prefix_len == 0,
+            "failed to select zero-prefix TLS 1.2 ChaCha tracker profile");
+    realityserverTls12RecordTrackerInitialize(&tracker);
+    require(realityserverTls12RecordTrackerSetProfile(&tracker, &chacha_profile),
+            "failed to configure tracker TLS 1.2 ChaCha profile");
+    uint8_t chacha_body[kRealityV2TagSize] = {0};
+    len = buildRecord(kRecordChangeCipherSpec, &ccs, 1, records);
+    len += buildRecord(0x17, chacha_body, sizeof(chacha_body), records + len);
+    require(realityserverTls12RecordTrackerFeed(&tracker, records, len) &&
+                tracker.saw_protected_record && tracker.next_sequence == 1,
+            "TLS 1.2 ChaCha protected tracker feed failed");
+    realityserverTls12RecordTrackerDestroy(&tracker);
+
+    reality_v2_record_profile_t tls13_profile;
+    require(realityV2SelectRecordProfile(kRealityV2Tls13, 0x1301, &tls13_profile),
+            "failed to select TLS 1.3 profile for tracker rejection");
+    realityserverTls12RecordTrackerInitialize(&tracker);
+    require(! realityserverTls12RecordTrackerSetProfile(&tracker, &tls13_profile),
+            "TLS 1.2 tracker must reject the TLS 1.3 AEAD profile");
+    realityserverTls12RecordTrackerDestroy(&tracker);
 }
 
 static void testTls12RecordTrackerFailures(void)

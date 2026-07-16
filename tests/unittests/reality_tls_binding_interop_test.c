@@ -213,12 +213,12 @@ int main(void)
     requireParserMatchesAccessor(0x0303, "ECDHE-RSA-AES128-SHA", kRealityV2RecordProfileTls12Cbc, false);
     requireParserMatchesAccessor(0x0303, "ECDHE-RSA-AES256-SHA", kRealityV2RecordProfileTls12Cbc, false);
     requireParserMatchesAccessor(
-        0x0303, "ECDHE-RSA-CHACHA20-POLY1305", kRealityV2RecordProfileOpaque, false);
-    requireParserMatchesAccessor(0x0304, NULL, kRealityV2RecordProfileOpaque, false);
+        0x0303, "ECDHE-RSA-CHACHA20-POLY1305", kRealityV2RecordProfileTls12ChaCha, false);
+    requireParserMatchesAccessor(0x0304, NULL, kRealityV2RecordProfileTls13Aead, false);
     requireParserMatchesAccessor(
         0x0303, "ECDHE-RSA-AES128-GCM-SHA256", kRealityV2RecordProfileTls12Gcm, true);
     requireParserMatchesAccessor(0x0303, "ECDHE-RSA-AES128-SHA", kRealityV2RecordProfileTls12Cbc, true);
     requireParserMatchesAccessor(
-        0x0303, "ECDHE-RSA-CHACHA20-POLY1305", kRealityV2RecordProfileOpaque, true);
+        0x0303, "ECDHE-RSA-CHACHA20-POLY1305", kRealityV2RecordProfileTls12ChaCha, true);
     return 0;
 }

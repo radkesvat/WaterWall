@@ -19,8 +19,7 @@
         "password": "waterwall-reality-v2-integration",
         "algorithm": "aes-gcm",
         "salt": "reality-v2-aes-roundtrip",
-        "kdf-iterations": 12000,
-        "max-frame-size": 256
+        "kdf-iterations": 12000
       },
       "next": "reality-connector"
     },
@@ -53,7 +52,6 @@
         "algorithm": "aes-gcm",
         "salt": "reality-v2-aes-roundtrip",
         "kdf-iterations": 12000,
-        "max-frame-size": 256,
         "sniffing-attempts": 8
       },
       "next": "tester-server"

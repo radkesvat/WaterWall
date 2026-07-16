@@ -16,8 +16,7 @@
         "password": "ww-rv2-gcm-sequence",
         "algorithm": "aes-gcm",
         "salt": "rv2-gcm-sequence",
-        "kdf-iterations": 12000,
-        "max-frame-size": 17
+        "kdf-iterations": 12000
       },
       "next": "reality-connector"
     },
@@ -41,7 +40,6 @@
         "algorithm": "aes-gcm",
         "salt": "rv2-gcm-sequence",
         "kdf-iterations": 12000,
-        "max-frame-size": 17,
         "sniffing-attempts": 8,
         "tls12-gcm-server-nonce-policy": "sequence"
       },

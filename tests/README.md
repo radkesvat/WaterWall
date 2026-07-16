@@ -105,26 +105,26 @@ Practical rule:
   Verifies `TesterClient -> RealityClient -> TcpConnector` and `TcpListener -> RealityServer -> TesterServer` across a
   real TCP loopback hop while the Reality visitor branch handshakes with `google.com:443`.
 - `reality_v2_roundtrip`
-  Verifies bidirectional Reality v2 operation through a local TLS 1.3 cover destination. A `256`-byte frame limit forces
-  both directions to use many ordered records without depending on an external site.
+  Verifies bidirectional Reality v2 operation through a local TLS 1.3 cover destination with automatic native
+  `16384`-byte plaintext fragmentation, without depending on an external site.
 - `reality_v2_tls12_roundtrip`
   Forces `ECDHE-RSA-AES128-GCM-SHA256` and verifies the multi-record TLS 1.2 AES-GCM profile with the `auto`
   server-nonce policy, including takeover after the real protected epoch.
 - `reality_v2_tls12_cbc_roundtrip`
-  Forces `ECDHE-RSA-AES128-SHA` and a `33`-byte frame limit to exercise TLS 1.2 CBC explicit-IV generation,
+  Forces `ECDHE-RSA-AES128-SHA` to exercise TLS 1.2 CBC explicit-IV generation,
   block-aligned camouflage sizing, encrypted inner lengths, and filler validation in both directions on four workers.
 - `reality_v2_tls12_gcm_sequence_roundtrip`, `reality_v2_tls12_gcm_counter_roundtrip`, and
   `reality_v2_tls12_gcm_random_roundtrip`
-  Force AES-128/AES-256 TLS 1.2 GCM suites and small frame limits while exercising every explicit server-nonce policy
+  Force AES-128/AES-256 TLS 1.2 GCM suites while exercising every explicit server-nonce policy
   with both Reality record-protection algorithms.
 - `reality_v2_tls12_cbc256_roundtrip`
-  Forces `ECDHE-RSA-AES256-SHA`, the `aes-gcm` Reality algorithm, and a `17`-byte frame limit to cover the AES-256 CBC
+  Forces `ECDHE-RSA-AES256-SHA` and the `aes-gcm` Reality algorithm to cover the AES-256 CBC
   suite family under multi-worker load.
 - `reality_v2_tls12_gcm_wire_camouflage`, `reality_v2_tls12_cbc_wire_camouflage`,
   `reality_v2_tls12_chacha_wire_camouflage`, and `reality_v2_tls13_wire_camouflage`
   Use a keyless recording relay to parse only public TLS bytes. They verify the selected ServerHello suite, TLS 1.2
   record headers, exact GCM/CBC body formulas, client GCM sequence continuation, frozen server GCM policy behavior,
-  aligned CBC bodies, non-repeating CBC IVs, and the TLS 1.3/TLS 1.2 ChaCha opaque shapes. Client-initiated normal close
+  aligned CBC bodies, non-repeating CBC IVs, and the zero-prefix TLS 1.3/TLS 1.2 ChaCha native shapes. Client-initiated normal close
   must use raw FIN with no alert in either direction. Server-initiated normal close must emit exactly one profile-correct
   server `close_notify` before FIN, with no client response or response wait; the relay withholds server FIN and requires
   RealityClient to close its TCP side from the authenticated alert alone. The TLS 1.2 probes also close immediately
@@ -143,6 +143,11 @@ Practical rule:
   behavior. Every record profile covers fragmented and coalesced alerts. A client consumes server `close_notify` without
   replying and immediately closes both sides even when the fake peer supplies no FIN. Generic
   first-alert authorization uses a fatal record; Pending/Visitor/destination teardown remains free of synthetic alerts.
+  The same fixture injects `1`, `16383`, `16384`, `16385`, `32768`, and `32769` byte callbacks through both real send
+  helpers for every profile, decrypts/reassembles every record, checks exact native body lengths, and proves re-entrant
+  line death stops a multi-record send after the transferred record.
+- `reality_client_rejects_obsolete_max_frame_size`, `reality_server_rejects_obsolete_max_frame_size`
+  Negative startup cases proving Reality v2 rejects the obsolete `max-frame-size` key instead of silently ignoring it.
 - `waterwall.tlsclient_close_lifecycle_unit`
   Uses synchronous fake neighbors and real TlsClient line state to verify direct-close lifecycle behavior: normal upstream
   and downstream finishes remain directional and payload-free, fatal close finishes upstream before downstream, line death

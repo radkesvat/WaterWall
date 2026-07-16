@@ -16,9 +16,24 @@ PROTECTED_SINK_PORT = BASE_PORT + 4
 REQUEST = b"keyless-wire-request"
 RESPONSE = b"keyless-wire-response"
 EXPECTED_CIPHER = {"gcm": 0xC02F, "cbc": 0xC013, "chacha": 0xCCA8, "tls13": 0x1301}[PROFILE]
-APPLICATION_BODY_LENGTH = 25 if PROFILE == "gcm" else 48 if PROFILE == "cbc" else 29
 ALERT_TYPE = 0x17 if PROFILE == "tls13" else 0x15
 ALERT_BODY_LENGTH = 19 if PROFILE == "tls13" else 26 if PROFILE == "gcm" else 48 if PROFILE == "cbc" else 18
+
+
+def application_body_length(payload_length):
+    if PROFILE == "tls13":
+        return payload_length + 1 + 16
+    if PROFILE == "chacha":
+        return payload_length + 16
+    if PROFILE == "gcm":
+        return 8 + payload_length + 16
+    return 16 + ((payload_length + 20 + 1 + 15) // 16) * 16
+
+
+TAKEOVER_BODY_LENGTHS = {
+    application_body_length(payload_length)
+    for payload_length in (1, len(REQUEST), len(RESPONSE))
+}
 
 
 def fail(message):
@@ -49,7 +64,10 @@ def recv_tls_record(sock):
 
 
 def is_reality_application(record):
-    return record[:3] == b"\x17\x03\x03" and int.from_bytes(record[3:5], "big") == APPLICATION_BODY_LENGTH
+    return (
+        record[:3] == b"\x17\x03\x03"
+        and int.from_bytes(record[3:5], "big") in TAKEOVER_BODY_LENGTHS
+    )
 
 
 def is_reality_alert(record):
@@ -134,6 +152,8 @@ def start_recording_relay():
     reflected = threading.Event()
     mirrored = threading.Event()
     cross_replayed = threading.Event()
+    reorder_first_forwarded = threading.Event()
+    reorder_second_held = threading.Event()
     reordered = threading.Event()
     server_fatal = threading.Event()
     client_fatal = threading.Event()
@@ -180,7 +200,6 @@ def start_recording_relay():
 
         def upstream():
             application_index = 0
-            held_record = None
             saw_eof = False
             try:
                 while True:
@@ -211,7 +230,7 @@ def start_recording_relay():
                     if connection_index == 0:
                         state["c2s_application"].append(record)
                         send_server(record)
-                        if len(state["c2s_application"]) == len(REQUEST):
+                        if len(state["c2s_application"]) == 1:
                             captured.set()
                     elif connection_index in (1, 2, 3):
                         send_server(record)
@@ -222,11 +241,11 @@ def start_recording_relay():
                         send_server(state["c2s_application"][0])
                     elif connection_index == 5 and application_index == 1:
                         send_server(record)
+                        reorder_first_forwarded.set()
                     elif connection_index == 5 and application_index == 2:
-                        held_record = record
+                        reorder_second_held.set()
                     elif connection_index == 5 and application_index == 3:
                         send_server(record)
-                        send_server(held_record)
                         reordered.set()
                         break
                     elif connection_index == 6:
@@ -351,6 +370,8 @@ def start_recording_relay():
         reflected,
         mirrored,
         cross_replayed,
+        reorder_first_forwarded,
+        reorder_second_held,
         reordered,
         server_fatal,
         client_fatal,
@@ -389,7 +410,11 @@ def drain_rejected_connection(sock, event):
     while time.monotonic() < deadline and not event.is_set():
         try:
             if sock.recv(4096) == b"":
+                event.wait(max(0.0, deadline - time.monotonic()))
                 break
+        except ConnectionResetError:
+            event.wait(max(0.0, deadline - time.monotonic()))
+            break
         except socket.timeout:
             pass
     if not event.is_set():
@@ -489,7 +514,7 @@ def validate_server_gcm_policy(records, candidate_records):
             cover_values.append((tls_sequence, value))
         tls_sequence += 1
 
-    if not cover_values or len(candidate_values) < 2:
+    if not cover_values or not candidate_values:
         fail("server did not include enough genuine and takeover GCM records")
 
     if all(value == sequence for sequence, value in cover_values):
@@ -572,10 +597,12 @@ def validate_wire_image(state):
     validate_alerts(state["s2c_alerts"], 0, "client-initiated close", "s2c")
 
     if PROFILE == "gcm":
-        # max-frame-size=1: explicit nonce (8) + payload (1) + Reality tag (16).
-        expected_body_length = 25
-        validate_candidate_headers(state["c2s_application"], len(REQUEST), expected_body_length, "client")
-        validate_candidate_headers(state["s2c_application"], len(RESPONSE), expected_body_length, "server")
+        validate_candidate_headers(
+            state["c2s_application"], 1, application_body_length(len(REQUEST)), "client"
+        )
+        validate_candidate_headers(
+            state["s2c_application"], 1, application_body_length(len(RESPONSE)), "server"
+        )
         validate_client_gcm_sequences(state["c2s_records"])
         validate_server_gcm_policy(
             state["s2c_records"], state["s2c_application"]
@@ -587,16 +614,18 @@ def validate_wire_image(state):
     else:
         if PROFILE in ("chacha", "tls13"):
             validate_candidate_headers(
-                state["c2s_application"], len(REQUEST), APPLICATION_BODY_LENGTH, "client"
+                state["c2s_application"], 1, application_body_length(len(REQUEST)), "client"
             )
             validate_candidate_headers(
-                state["s2c_application"], len(RESPONSE), APPLICATION_BODY_LENGTH, "server"
+                state["s2c_application"], 1, application_body_length(len(RESPONSE)), "server"
             )
             return
-        # max-frame-size=1: IV (16) + round_up(payload (1) + SHA1 MAC (20) + pad byte, 16) (32).
-        expected_body_length = 48
-        validate_candidate_headers(state["c2s_application"], len(REQUEST), expected_body_length, "client")
-        validate_candidate_headers(state["s2c_application"], len(RESPONSE), expected_body_length, "server")
+        validate_candidate_headers(
+            state["c2s_application"], 1, application_body_length(len(REQUEST)), "client"
+        )
+        validate_candidate_headers(
+            state["s2c_application"], 1, application_body_length(len(RESPONSE)), "server"
+        )
         validate_cbc_structure(state["c2s_records"], "client")
         validate_cbc_structure(state["s2c_records"], "server")
         validate_cbc_structure(state["server_normal_s2c_records"], "server-normal")
@@ -619,6 +648,8 @@ def main():
         reflected,
         mirrored,
         cross_replayed,
+        reorder_first_forwarded,
+        reorder_second_held,
         reordered,
         server_fatal,
         client_fatal,
@@ -724,11 +755,19 @@ def main():
         replayed.sendall(REQUEST)
         drain_rejected_connection(replayed, cross_replayed)
 
-    # Sending Reality sequence one before sequence zero must fail after the
-    # first byte authorized the connection.
+    # Stage three one-byte writes and wait for relay acknowledgement between them,
+    # so each write is exactly one payload callback and cannot be split or merged
+    # with the next. Withhold record two and deliver record three after the first
+    # record authorizes the connection to exercise strict Reality sequencing.
     with connect_with_retry(CLIENT_ENTRY_PORT) as out_of_order:
         out_of_order.settimeout(0.2)
-        out_of_order.sendall(REQUEST)
+        out_of_order.sendall(b"0")
+        if not reorder_first_forwarded.wait(2.0):
+            fail("relay did not forward the reorder authorization record")
+        out_of_order.sendall(b"1")
+        if not reorder_second_held.wait(2.0):
+            fail("relay did not hold the second reorder record")
+        out_of_order.sendall(b"2")
         drain_rejected_connection(out_of_order, reordered)
 
     if PROFILE != "tls13":
@@ -773,7 +812,7 @@ def main():
     expected_sink_connections = 5
     if sink_state["connections"] != expected_sink_connections:
         fail(f"protected chain opened {sink_state['connections']} times; expected {expected_sink_connections}")
-    expected_payloads = [REQUEST, REQUEST, REQUEST, REQUEST, REQUEST[:1]]
+    expected_payloads = [REQUEST, REQUEST, REQUEST, REQUEST, b"0"]
     if sink_state["payloads"] != expected_payloads:
         fail(f"protected sink observed unexpected payloads: {sink_state['payloads']!r}")
     expected_relay_connections = 6 if PROFILE == "tls13" else 7

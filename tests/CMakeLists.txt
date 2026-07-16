@@ -63,6 +63,29 @@ function(add_waterwall_negative_integration_test test_name case_name)
   )
 endfunction()
 
+function(add_waterwall_expected_failure_integration_test test_name case_name expected_output)
+  set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
+
+  add_test(
+    NAME ${test_name}
+    COMMAND
+      "${BASH_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_expected_failure_case.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_case.sh"
+      "$<TARGET_FILE:Waterwall>"
+      "${case_dir}"
+      "10"
+      "${expected_output}"
+  )
+
+  set_tests_properties(
+    ${test_name}
+    PROPERTIES
+      TIMEOUT 120
+      LABELS "integration;tunnels;negative"
+  )
+endfunction()
+
 function(add_waterwall_probe_integration_test test_name case_name timeout_seconds)
   set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
 
@@ -194,6 +217,16 @@ add_waterwall_probe_integration_test(waterwall.reality_v2_cross_connection_repla
 add_waterwall_probe_integration_test(waterwall.reality_v2_direct_record_replay_rejected reality_v2_replay_protection_probe 15)
 add_waterwall_probe_integration_test(waterwall.reality_v2_wrong_direction_rejected reality_v2_replay_protection_probe 15)
 add_waterwall_integration_test(waterwall.reality_visitor_plaintext_probe reality_visitor_plaintext_probe)
+add_waterwall_expected_failure_integration_test(
+  waterwall.reality_client_rejects_obsolete_max_frame_size
+  reality_client_rejects_obsolete_max_frame_size
+  "RealityClient: 'max-frame-size' is obsolete"
+)
+add_waterwall_expected_failure_integration_test(
+  waterwall.reality_server_rejects_obsolete_max_frame_size
+  reality_server_rejects_obsolete_max_frame_size
+  "RealityServer: 'max-frame-size' is obsolete"
+)
 add_waterwall_integration_test(waterwall.connection_fisher_roundtrip connection_fisher_roundtrip)
 add_waterwall_integration_test(waterwall.connection_fisher_encryption_roundtrip connection_fisher_encryption_roundtrip)
 add_waterwall_integration_test(waterwall.sniffrouter_non_http_tcp_loopback sniffrouter_non_http_tcp_loopback)
