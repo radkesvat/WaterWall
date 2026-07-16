@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 108
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TlsClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -196,7 +196,27 @@ The tunnel:
 - reads decrypted application bytes with `SSL_read()`
 - forwards those cleartext bytes downstream toward the previous tunnel
 
-When the TLS peer sends `END_STREAM`-equivalent closure or a fatal TLS error occurs, the tunnel destroys its line state and closes the Waterwall line.
+When the TLS peer sends `close_notify` or a fatal TLS error occurs, the tunnel destroys its line state and closes both Waterwall directions immediately.
+
+### Close and shutdown policy
+
+`TlsClient` uses direct transport close semantics. It does not call `SSL_shutdown()`, does not generate a TLS
+`close_notify` during normal Waterwall `Finish`, and does not wait for a peer shutdown response.
+
+This normal-close choice is intended to mimic the Chrome behavior targeted by this tunnel: when the user or application
+closes the connection in this situation, Chrome closes the transport without first sending TLS `close_notify`. This is not
+a claim that Chrome never sends `close_notify` in every TLS shutdown context.
+
+The observable policy is:
+
+- upstream normal `Finish`: free TLS state and forward `Finish` only to the next node
+- downstream raw transport `Finish`: free TLS state and forward `Finish` only to the previous node
+- peer `close_notify`: consume it, send no client `close_notify` response, and close both directions immediately
+- fatal TLS, certificate, record, `SSL_write()`, or BIO failure: close every initialized direction immediately
+- handshake takeover: release TLS state without closing the underlying line, then continue as raw passthrough
+
+There is no JSON setting for this policy. Peers that require a full TLS shutdown handshake may report the resulting EOF as
+a truncated TLS shutdown; that is intentional for this client tunnel.
 
 ### SSL context behavior
 
