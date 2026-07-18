@@ -130,7 +130,8 @@ Practical rule:
   and two immediate tickets; a ticket released after REQUEST; byte-split and partial-boundary tickets; a ticket coalesced
   with ACK; cover application data and close_notify before ACK; segmented cover and control records; and independently
   corrupted REQUEST, ACK, and CONFIRM. It also substitutes a prior connection's sequence-zero REQUEST into a fresh
-  session and requires session binding to reject it. Each success requires an exact protected request/response, authenticated event
+  session and requires session binding to reject it. The server runs with the minimum `sniffing-attempts: 1`, while relay
+  evidence proves a genuine protected client Finished record precedes REQUEST. Each success requires an exact protected request/response, authenticated event
   ordering (`REQUEST < ACK < CONFIRM < application`), complete-record destination cutoff, and fixture evidence that the
   selected ticket/segmentation/coalescing action actually happened. Expected pre-confirm failures must not open the
   protected chain. The probe prints per-scenario transition timing and the sampled control-body-length histogram. Python's
@@ -174,7 +175,10 @@ Practical rule:
   first-alert authorization uses a fatal record; Pending/Visitor/destination teardown remains free of synthetic alerts.
   The same fixture injects `1`, `16383`, `16384`, `16385`, `32768`, and `32769` byte callbacks through both real send
   helpers for every profile, decrypts/reassembles every record, checks exact native body lengths, and proves re-entrant
-  line death stops a multi-record send after the transferred record.
+  line death stops a multi-record send after the transferred record. A real BoringSSL TLS 1.3 client Finished fixture verifies
+  that the one-shot pre-request cover allowance is initialized only after TLS 1.3 key derivation, consumed before re-entrant
+  destination forwarding, never reset, and leaves the minimum configured sniffing budget available for later failed candidates;
+  TLS 1.2 accounting remains unchanged.
 - `reality_client_rejects_obsolete_max_frame_size`, `reality_server_rejects_obsolete_max_frame_size`
   Negative startup cases proving Reality v2 rejects the obsolete `max-frame-size` key instead of silently ignoring it.
 - `waterwall.tlsclient_close_lifecycle_unit`
@@ -191,6 +195,10 @@ Practical rule:
 - `reality_visitor_plaintext_probe`
   Verifies that non-TLS first bytes reaching `RealityServer` are immediately treated as visitor traffic instead of being
   held in the Reality sniff buffer.
+- `reality_visitor_short_prefix_probe`
+  Uses a raw TCP client and instrumented visitor sink to verify an impossible TLS prefix is forwarded before client FIN,
+  while plausible one- through four-byte prefixes remain Pending while open and are delivered byte-for-byte before the
+  visitor destination receives EOF. An invalid prefix followed by FIN is delivered exactly once.
 - `connection_fisher_roundtrip`
   Verifies that `ConnectionFisherClient` and `ConnectionFisherServer` complete their `5`-byte probe handshake and
   preserve the tester roundtrip across a real TCP loopback transport.

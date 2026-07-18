@@ -176,19 +176,29 @@ if(TARGET RealityServer AND TARGET TlsClient)
   )
 endif()
 
-if(TARGET RealityClient AND TARGET RealityServer)
+if(TARGET RealityClient AND TARGET RealityServer AND TARGET TlsClient)
   add_executable(reality_close_lifecycle_test
     reality_close_lifecycle_test.c
     reality_close_lifecycle_client.c
     reality_close_lifecycle_server.c
+    reality_tls_binding_fixture.c
   )
   target_include_directories(reality_close_lifecycle_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/RealityClient/include
     ${CMAKE_SOURCE_DIR}/tunnels/RealityServer/include
     ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include
   )
+  target_include_directories(reality_close_lifecycle_test BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
+    ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
+  )
+  target_compile_definitions(reality_close_lifecycle_test PRIVATE
+    BORINGSSL_PREFIX=WW_BSSL
+    REALITY_TEST_CERT_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.crt"
+    REALITY_TEST_KEY_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.key"
+  )
   target_link_libraries(reality_close_lifecycle_test PRIVATE
-    RealityClient RealityServer RealityCommon ww
+    RealityClient RealityServer RealityCommon TlsClient ww ssl crypto
   )
   add_dependencies(waterwall_unit_tests reality_close_lifecycle_test)
 

@@ -398,6 +398,10 @@ def start_cover_relay():
                     elif is_post_handshake and post_handshake_count == 1 and mode == "partial_until_request":
                         prefix_len = min(8, len(record) - 1)
                         client.sendall(record[:prefix_len])
+                        # The REQUEST travels over a separate loopback connection. Give the
+                        # destination prefix a deterministic scheduling lead before releasing
+                        # that request, so the server has entered a partial-record boundary.
+                        time.sleep(0.03)
                         runtime["partial_prefix_sent"].set()
                         if not runtime["request_forwarded"].wait(2.0):
                             raise OSError("request was not forwarded at the partial ticket boundary")
@@ -600,6 +604,7 @@ def start_main_relay():
                         held = (index, record)
                         continue
                     if mode == "coalesce_ticket_ack" and role == "ack" and held is not None:
+                        runtime["ack_forwarded"].set()
                         client.sendall(held[1] + record)
                         record_write(
                             runtime,
@@ -610,7 +615,6 @@ def start_main_relay():
                         )
                         runtime["evidence"]["ticket_ack_coalesced"] = True
                         held = None
-                        runtime["ack_forwarded"].set()
                         continue
 
                     forwarded = record
@@ -618,14 +622,14 @@ def start_main_relay():
                         forwarded = record[:-1] + bytes((record[-1] ^ 0x20,))
                         runtime["evidence"]["corrupted_ack"] = True
 
+                    if role == "ack":
+                        runtime["ack_forwarded"].set()
                     if mode == "record_segmented" and role in ("cover", "ack"):
                         chunks = tuple(send_segmented(client, forwarded))
                     else:
                         client.sendall(forwarded)
                         chunks = (len(forwarded),)
                     record_write(runtime, "main", "s2c", (index,), chunks)
-                    if role == "ack":
-                        runtime["ack_forwarded"].set()
             except (OSError, socket.timeout) as error:
                 if scenario["expect_success"] and not runtime["confirm_forwarded"].is_set():
                     runtime["errors"].append(f"main s2c pump: {error}")

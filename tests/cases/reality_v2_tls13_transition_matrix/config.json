@@ -45,7 +45,7 @@
         "algorithm": "chacha20-poly1305",
         "salt": "tls13tm",
         "kdf-iterations": 12000,
-        "sniffing-attempts": 8
+        "sniffing-attempts": 1
       },
       "next": "protected-connector"
     },

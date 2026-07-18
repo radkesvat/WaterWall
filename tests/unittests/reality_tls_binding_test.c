@@ -138,6 +138,80 @@ static void requireServerCapture(const realityserver_tls_capture_t *capture, uin
     }
 }
 
+static void testProgressiveTlsRecordPrefixClassification(void)
+{
+    static const struct
+    {
+        uint8_t bytes[5];
+        size_t  length;
+        uint8_t expected;
+    } cases[] = {
+        {{0}, 0, kRealityServerTlsRecordPrefixNeedMore},
+        {{0x16}, 1, kRealityServerTlsRecordPrefixNeedMore},
+        {{0x16, 0x03}, 2, kRealityServerTlsRecordPrefixNeedMore},
+        {{0x16, 0x03, 0x04}, 3, kRealityServerTlsRecordPrefixNeedMore},
+        {{0x16, 0x03, 0x04, 0x40}, 4, kRealityServerTlsRecordPrefixNeedMore},
+        {{0x14, 0x03, 0x00, 0x40, 0x00}, 5, kRealityServerTlsRecordPrefixComplete},
+        {{0x15, 0x03, 0x01, 0x00, 0x00}, 5, kRealityServerTlsRecordPrefixComplete},
+        {{0x16, 0x03, 0x03, 0x00, 0x01}, 5, kRealityServerTlsRecordPrefixComplete},
+        {{0x17, 0x03, 0x04, 0x00, 0x00}, 5, kRealityServerTlsRecordPrefixComplete},
+        {{0x01}, 1, kRealityServerTlsRecordPrefixInvalid},
+        {{0x16, 0x02}, 2, kRealityServerTlsRecordPrefixInvalid},
+        {{0x16, 0x03, 0x05}, 3, kRealityServerTlsRecordPrefixInvalid},
+        {{0x16, 0x03, 0x03, 0x48, 0x01}, 5, kRealityServerTlsRecordPrefixInvalid},
+    };
+
+    require(realityserverClassifyTlsRecordPrefix(NULL, 0) ==
+                kRealityServerTlsRecordPrefixNeedMore,
+            "empty TLS record prefix was not classified as incomplete");
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+    {
+        require(realityserverClassifyTlsRecordPrefix(cases[i].bytes, cases[i].length) ==
+                    cases[i].expected,
+                "progressive TLS record prefix classification mismatch");
+    }
+
+    const uint8_t invalid_prefixes[][5] = {
+        {0x01, 0, 0, 0, 0},
+        {0x16, 0x02, 0, 0, 0},
+        {0x16, 0x03, 0x05, 0, 0},
+        {0x16, 0x03, 0x03, 0x48, 0x01},
+    };
+    const size_t invalid_lengths[] = {1, 2, 3, 5};
+    for (size_t i = 0; i < sizeof(invalid_lengths) / sizeof(invalid_lengths[0]); ++i)
+    {
+        realityserver_tls_parser_t parser;
+        realityserver_tls_capture_t capture = {0};
+        realityserverTlsParserInitialize(&parser, kRealityServerTlsParserClientHello);
+        for (size_t j = 0; j + 1 < invalid_lengths[i]; ++j)
+        {
+            require(realityserverTlsParserFeed(&parser, &invalid_prefixes[i][j], 1, &capture) &&
+                        ! parser.failed,
+                    "TLS parser rejected a prefix before invalidity was proven");
+        }
+        require(! realityserverTlsParserFeed(&parser,
+                                              &invalid_prefixes[i][invalid_lengths[i] - 1],
+                                              1,
+                                              &capture) &&
+                    parser.failed,
+                "TLS parser did not fail on the first impossible prefix byte");
+        realityserverTlsParserDestroy(&parser);
+    }
+
+    const uint8_t plausible_prefix[] = {0x16, 0x03, 0x04, 0x40};
+    for (size_t length = 1; length <= sizeof(plausible_prefix); ++length)
+    {
+        realityserver_tls_parser_t parser;
+        realityserver_tls_capture_t capture = {0};
+        realityserverTlsParserInitialize(&parser, kRealityServerTlsParserClientHello);
+        require(realityserverTlsParserFeed(&parser, plausible_prefix, length, &capture) &&
+                    ! parser.failed && ! parser.complete &&
+                    parser.record_header_length == length,
+                "TLS parser rejected a plausible fragmented record header");
+        realityserverTlsParserDestroy(&parser);
+    }
+}
+
 static void testClientHelloEveryCallbackSplit(void)
 {
     uint8_t body[128];
@@ -864,6 +938,7 @@ static void testLinestateDestroyClearsPartialTlsState(void)
 
 int main(void)
 {
+    testProgressiveTlsRecordPrefixClassification();
     testClientHelloEveryCallbackSplit();
     testClientHelloSpansRecords();
     testServerHelloEveryCallbackSplit();

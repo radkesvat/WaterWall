@@ -133,6 +133,7 @@ typedef struct realityserver_lstate_s
     uint32_t        handoff_tail_bytes;
     uint8_t         mode;
     uint8_t         server_gcm_nonce_policy;
+    uint8_t         tls13_pre_request_cover_records_remaining;
     bool            binding_ready;
     bool            session_keys_ready;
     bool            protected_init_sent;
@@ -164,9 +165,17 @@ enum realityserver_frame_e
     kRealityServerMaxTlsRecordBody    = kRealityV2MaxTlsRecordBody,
     kRealityServerDefaultKdfIterations    = 12000,
     kRealityServerDefaultSniffingAttempts = 8,
+    kRealityServerTls13PreRequestCoverRecordAllowance = 1,
     kRealityServerMaxHandoffTailRecords   = 8,
     kRealityServerMaxHandoffTailBytes =
         kRealityServerMaxHandoffTailRecords * (kRealityV2TlsRecordHeaderSize + kRealityV2MaxTlsRecordBody),
+};
+
+enum realityserver_tls_record_prefix_e
+{
+    kRealityServerTlsRecordPrefixInvalid,
+    kRealityServerTlsRecordPrefixNeedMore,
+    kRealityServerTlsRecordPrefixComplete,
 };
 
 enum
@@ -205,6 +214,8 @@ void realityserverTunnelstateDestroy(realityserver_tstate_t *ts);
 
 void realityserverTlsParserInitialize(realityserver_tls_parser_t *parser, uint8_t role);
 void realityserverTlsParserDestroy(realityserver_tls_parser_t *parser);
+enum realityserver_tls_record_prefix_e
+realityserverClassifyTlsRecordPrefix(const uint8_t *prefix, size_t available_length);
 bool realityserverTlsParserFeed(realityserver_tls_parser_t *parser, const uint8_t *data, size_t len,
                                 realityserver_tls_capture_t *capture);
 void realityserverTls12RecordTrackerInitialize(realityserver_tls12_record_tracker_t *tracker);

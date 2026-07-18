@@ -1,6 +1,7 @@
 #include "RealityServer/structure.h"
 
 #include "reality_close_lifecycle_test.h"
+#include "reality_tls_binding_fixture.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,6 +24,9 @@ typedef struct server_lifecycle_context_s
     bool kill_on_protected_payload;
     bool inject_destination_callbacks_on_ack;
     bool inject_destination_callbacks_on_finish;
+    bool inject_destination_callbacks_on_payload;
+    bool destroy_line_on_destination_payload;
+    bool require_allowance_consumed_on_destination_payload;
     bool reenter_peer_close;
     bool send_data_after_close;
     uint8_t expected_alert_type;
@@ -53,6 +57,10 @@ typedef struct server_lifecycle_fixture_s
     tunnel_t *next;
     tunnel_t *destination;
     line_t *line;
+    master_pool_t *line_master;
+    generic_pool_t *line_pool;
+    generic_pool_t *line_pools[1];
+    uint32_t line_pool_available;
     server_lifecycle_context_t context;
 } server_lifecycle_fixture_t;
 
@@ -353,6 +361,12 @@ static void serverHandoffPrevPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 static void serverDestinationPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     server_lifecycle_context_t *context = serverContext(t);
+    if (context->require_allowance_consumed_on_destination_payload)
+    {
+        realityserver_lstate_t *ls = lineGetState(l, context->reality);
+        requireServer(ls->tls13_pre_request_cover_records_remaining == 0,
+                      "server forwarded a free cover candidate before consuming its allowance");
+    }
     if (context->expected_destination_payload != NULL)
     {
         requireServer(sbufGetLength(buf) == context->expected_destination_payload_len &&
@@ -365,6 +379,18 @@ static void serverDestinationPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     ++context->destination_upstream_records;
     serverEvent(context, 'T');
     bufferpoolReuseBuffer(context->pool, buf);
+    if (context->destroy_line_on_destination_payload)
+    {
+        context->destroy_line_on_destination_payload = false;
+        lineDestroy(l);
+        return;
+    }
+    if (context->inject_destination_callbacks_on_payload)
+    {
+        context->inject_destination_callbacks_on_payload = false;
+        serverInjectDestinationDownstreamCallbacks(context, l);
+        return;
+    }
     if (context->finish_on_destination_payload)
     {
         realityserverTunnelDownStreamFinish(context->reality, l);
@@ -488,8 +514,18 @@ static void serverFixtureDestroy(server_lifecycle_fixture_t *fixture)
     {
         requireServer(state[i] == 0, "server terminal path did not zero line state");
     }
-    requireServer(atomic_load(&fixture->line->refc) == 1, "server lifecycle line reference leaked");
-    memoryFreeAligned(fixture->line);
+    if (fixture->line_pool == NULL)
+    {
+        requireServer(atomic_load(&fixture->line->refc) == 1,
+                      "server lifecycle line reference leaked");
+        memoryFreeAligned(fixture->line);
+    }
+    else
+    {
+        requireServer(! lineIsAlive(fixture->line) &&
+                          fixture->line_pool->len == fixture->line_pool_available,
+                      "server owner did not recycle the terminal line exactly once");
+    }
     tunnelDestroy(fixture->prev);
     tunnelDestroy(fixture->reality);
     tunnelDestroy(fixture->next);
@@ -497,12 +533,53 @@ static void serverFixtureDestroy(server_lifecycle_fixture_t *fixture)
     {
         tunnelDestroy(fixture->destination);
     }
+    if (fixture->line_pool != NULL)
+    {
+        genericpoolDestroy(fixture->line_pool);
+        masterpoolMakeEmpty(fixture->line_master);
+        masterpoolDestroy(fixture->line_master);
+    }
     GSTATE.shortcut_buffer_pools = fixture->saved_shortcuts;
     bufferpoolDestroy(fixture->pool);
     masterpoolMakeEmpty(fixture->large_master);
     masterpoolMakeEmpty(fixture->small_master);
     masterpoolDestroy(fixture->large_master);
     masterpoolDestroy(fixture->small_master);
+}
+
+static realityserver_lstate_t *serverFixturePrepareVisitorPending(
+    server_lifecycle_fixture_t *fixture)
+{
+    serverFixtureInitialize(fixture);
+    realityserver_lstate_t *ls = lineGetState(fixture->line, fixture->reality);
+    realityserverLinestateDestroy(ls);
+    realityserverLinestateInitialize(ls, fixture->pool);
+    ls->mode = kRealityServerModePending;
+    serverFixtureAddDestination(fixture);
+    return ls;
+}
+
+static realityserver_lstate_t *serverFixtureMoveLineToOwnerPool(
+    server_lifecycle_fixture_t *fixture)
+{
+    realityserver_lstate_t *old_ls = lineGetState(fixture->line, fixture->reality);
+    realityserverLinestateDestroy(old_ls);
+    memoryFreeAligned(fixture->line);
+
+    fixture->line_master = masterpoolCreateWithCapacity(8);
+    fixture->line_pool = genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(
+        fixture->line_master,
+        sizeof(line_t) + fixture->reality->lstate_size,
+        8);
+    fixture->line_pools[0] = fixture->line_pool;
+    fixture->line = lineCreateForWorker(0, fixture->line_pools, 0);
+    fixture->line_pool_available = fixture->line_pool->len + 1U;
+
+    realityserver_lstate_t *ls = lineGetState(fixture->line, fixture->reality);
+    realityserverLinestateInitialize(ls, fixture->pool);
+    ls->mode = kRealityServerModePending;
+    ls->destination_init_sent = true;
+    return ls;
 }
 
 static void runServerScenario(void (*action)(tunnel_t *, line_t *), const char *expected,
@@ -646,6 +723,10 @@ static void prepareServerPendingProfile(server_lifecycle_fixture_t *fixture,
     ls->record_profile = *profile;
     ts->tls12_gcm_server_nonce_policy = kRealityServerGcmNoncePolicyAuto;
     ts->sniffing_attempts = kRealityServerDefaultSniffingAttempts;
+    ls->tls13_pre_request_cover_records_remaining =
+        tls_version == kRealityV2Tls13
+            ? kRealityServerTls13PreRequestCoverRecordAllowance
+            : 0;
 
     if (tls_version == kRealityV2Tls12)
     {
@@ -664,6 +745,35 @@ static void prepareServerPendingProfile(server_lifecycle_fixture_t *fixture,
             ls->server_record_tracker.sequence_pattern = true;
         }
     }
+}
+
+static uint32_t serverTlsRecordLength(const uint8_t *record, size_t remaining,
+                                      const char *message)
+{
+    requireServer(remaining >= kRealityV2TlsRecordHeaderSize, message);
+    uint32_t body_len = ((uint32_t) record[3] << 8) | record[4];
+    uint32_t record_len = kRealityV2TlsRecordHeaderSize + body_len;
+    requireServer(record_len <= remaining, message);
+    return record_len;
+}
+
+static sbuf_t *buildServerTls13GenericCandidate(server_lifecycle_fixture_t *fixture,
+                                                uint32_t body_len, uint8_t fill)
+{
+    uint32_t frame_len = kRealityV2TlsRecordHeaderSize + body_len;
+    sbuf_t *record = bufferpoolGetLargeBuffer(fixture->pool);
+    requireServer(frame_len <= sbufGetMaximumWriteableSize(record),
+                  "server generic candidate fixture exceeds the large buffer");
+    record = sbufReserveSpace(record, frame_len);
+    sbufSetLength(record, frame_len);
+    uint8_t *frame = sbufGetMutablePtr(record);
+    memorySet(frame, fill, frame_len);
+    frame[0] = 0x17;
+    frame[1] = 0x03;
+    frame[2] = 0x03;
+    frame[3] = (uint8_t) (body_len >> 8);
+    frame[4] = (uint8_t) body_len;
+    return record;
 }
 
 static void runFirstFatalAuthorization(uint16_t tls_version,
@@ -843,6 +953,212 @@ static void testServerUnauthenticatedCloseModes(void)
     requireServer(fixture.context.events_len == 0,
                   "destination teardown synthesized a Reality alert or Finish");
     realityserverLinestateDestroy(ls);
+    serverFixtureDestroy(&fixture);
+}
+
+static void testServerProgressiveVisitorPrefixForwarding(void)
+{
+    static const struct
+    {
+        uint8_t bytes[3];
+        uint32_t length;
+    } invalid_prefixes[] = {
+        {{0x01, 0, 0}, 1},
+        {{0x16, 0x02, 0}, 2},
+        {{0x16, 0x03, 0x05}, 3},
+    };
+
+    for (uint8_t parser_complete = 0; parser_complete <= 1; ++parser_complete)
+    {
+        for (size_t i = 0; i < sizeof(invalid_prefixes) / sizeof(invalid_prefixes[0]); ++i)
+        {
+            server_lifecycle_fixture_t fixture;
+            realityserver_lstate_t *ls = serverFixturePrepareVisitorPending(&fixture);
+            ls->client_hello_parser.complete = parser_complete != 0;
+            fixture.context.expected_destination_payload = invalid_prefixes[i].bytes;
+            fixture.context.expected_destination_payload_len = invalid_prefixes[i].length;
+
+            for (uint32_t j = 0; j < invalid_prefixes[i].length; ++j)
+            {
+                requireServer(realityserverProcessUpstream(
+                                  fixture.reality,
+                                  fixture.line,
+                                  serverBufferFromBytes(&fixture, &invalid_prefixes[i].bytes[j], 1)),
+                              "server rejected an ordinary visitor prefix");
+                if (j + 1U < invalid_prefixes[i].length)
+                {
+                    requireServer(ls->mode == kRealityServerModePending &&
+                                      fixture.context.events_len == 0,
+                                  "server classified a plausible visitor prefix too early");
+                }
+            }
+
+            requireServer(ls->mode == kRealityServerModeVisitor &&
+                              fixture.context.destination_upstream_records == 1 &&
+                              fixture.context.matched_destination_payloads == 1 &&
+                              strcmp(fixture.context.events, "T") == 0,
+                          "server did not forward an impossible TLS prefix immediately");
+            realityserverHandleUpstreamFinish(fixture.reality, fixture.line);
+            requireServer(fixture.context.destination_upstream_records == 1 &&
+                              strcmp(fixture.context.events, "TF") == 0,
+                          "server duplicated an already-forwarded invalid prefix at Finish");
+            serverFixtureDestroy(&fixture);
+        }
+    }
+}
+
+static void testServerPendingPrefixFlushesBeforeFinish(void)
+{
+    const uint8_t plausible_prefix[] = {0x16, 0x03, 0x04, 0x00};
+    for (uint32_t length = 1; length <= sizeof(plausible_prefix); ++length)
+    {
+        server_lifecycle_fixture_t fixture;
+        realityserver_lstate_t *ls = serverFixturePrepareVisitorPending(&fixture);
+        fixture.context.expected_destination_payload = plausible_prefix;
+        fixture.context.expected_destination_payload_len = length;
+
+        requireServer(realityserverProcessUpstream(
+                          fixture.reality,
+                          fixture.line,
+                          serverBufferFromBytes(&fixture, plausible_prefix, length)) &&
+                          ls->mode == kRealityServerModePending &&
+                          bufferstreamGetBufLen(&ls->read_stream) == length &&
+                          fixture.context.events_len == 0,
+                      "server did not retain a plausible incomplete TLS prefix while open");
+
+        realityserverHandleUpstreamFinish(fixture.reality, fixture.line);
+        requireServer(fixture.context.destination_upstream_records == 1 &&
+                          fixture.context.matched_destination_payloads == 1 &&
+                          strcmp(fixture.context.events, "TF") == 0,
+                      "server did not send a Pending prefix before destination Finish");
+        serverFixtureDestroy(&fixture);
+    }
+
+    server_lifecycle_fixture_t fixture;
+    serverFixturePrepareVisitorPending(&fixture);
+    realityserverHandleUpstreamFinish(fixture.reality, fixture.line);
+    requireServer(fixture.context.destination_upstream_records == 0 &&
+                      strcmp(fixture.context.events, "F") == 0,
+                  "server changed empty Pending Finish behavior");
+    serverFixtureDestroy(&fixture);
+}
+
+static void testServerPendingFinishReentryAndOwnership(void)
+{
+    const uint8_t prefix[] = {0x16, 0x03, 0x04};
+    server_lifecycle_fixture_t fixture;
+    serverFixturePrepareVisitorPending(&fixture);
+    fixture.context.expected_destination_payload = prefix;
+    fixture.context.expected_destination_payload_len = sizeof(prefix);
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      serverBufferFromBytes(&fixture, prefix, sizeof(prefix))),
+                  "server rejected the re-entrant Finish prefix fixture");
+    fixture.context.finish_on_destination_payload = true;
+    realityserverHandleUpstreamFinish(fixture.reality, fixture.line);
+    requireServer(lineIsAlive(fixture.line) &&
+                      fixture.context.destination_upstream_records == 1 &&
+                      strcmp(fixture.context.events, "T") == 0,
+                  "server sent duplicate Finish after synchronous destination Finish");
+    serverFixtureDestroy(&fixture);
+
+    serverFixturePrepareVisitorPending(&fixture);
+    fixture.context.expected_destination_payload = prefix;
+    fixture.context.expected_destination_payload_len = sizeof(prefix);
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      serverBufferFromBytes(&fixture, prefix, sizeof(prefix))),
+                  "server rejected the terminal callback-suppression fixture");
+    fixture.context.inject_destination_callbacks_on_payload = true;
+    realityserverHandleUpstreamFinish(fixture.reality, fixture.line);
+    requireServer(fixture.context.destination_callbacks_injected == 5 &&
+                      fixture.context.events_len == 1 &&
+                      strcmp(fixture.context.events, "T") == 0,
+                  "server reflected callbacks toward the side that sent Finish");
+    serverFixtureDestroy(&fixture);
+
+    serverFixturePrepareVisitorPending(&fixture);
+    serverFixtureMoveLineToOwnerPool(&fixture);
+    fixture.context.expected_destination_payload = prefix;
+    fixture.context.expected_destination_payload_len = sizeof(prefix);
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      serverBufferFromBytes(&fixture, prefix, sizeof(prefix))),
+                  "server rejected the owner-recycled line fixture");
+    fixture.context.destroy_line_on_destination_payload = true;
+    realityserverHandleUpstreamFinish(fixture.reality, fixture.line);
+    requireServer(! lineIsAlive(fixture.line) && strcmp(fixture.context.events, "T") == 0,
+                  "server continued terminal teardown after destination recycled the line");
+    serverFixtureDestroy(&fixture);
+
+    realityserver_lstate_t *ls = serverFixturePrepareVisitorPending(&fixture);
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      serverBufferFromBytes(&fixture, prefix, sizeof(prefix))),
+                  "server rejected the closed-destination prefix fixture");
+    ls->destination_up_finished = true;
+    realityserverHandleUpstreamFinish(fixture.reality, fixture.line);
+    requireServer(fixture.context.destination_upstream_records == 0 &&
+                      fixture.context.events_len == 0,
+                  "server sent detached bytes toward an already-finished destination");
+    serverFixtureDestroy(&fixture);
+}
+
+static void testServerSensitiveModesDoNotFlushPendingBytes(void)
+{
+    const uint8_t prefix[] = {0x17, 0x03, 0x03, 0x00};
+    const uint8_t modes[] = {
+        kRealityServerModeHandoffAwaitBoundary,
+        kRealityServerModeHandoffAwaitConfirm,
+        kRealityServerModeAuthorized,
+    };
+    for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); ++i)
+    {
+        server_lifecycle_fixture_t fixture;
+        realityserver_lstate_t *ls = serverFixturePrepareVisitorPending(&fixture);
+        ls->mode = modes[i];
+        ls->protected_init_sent = modes[i] == kRealityServerModeAuthorized;
+        requireServer(realityserverProcessUpstream(
+                          fixture.reality,
+                          fixture.line,
+                          serverBufferFromBytes(&fixture, prefix, sizeof(prefix))) &&
+                          bufferstreamGetBufLen(&ls->read_stream) == sizeof(prefix),
+                      "server rejected the sensitive-mode truncation fixture");
+        realityserverHandleUpstreamFinish(fixture.reality, fixture.line);
+        requireServer(fixture.context.destination_upstream_records == 0 &&
+                          strcmp(fixture.context.events,
+                                 modes[i] == kRealityServerModeAuthorized ? "U" : "F") == 0,
+                      "server leaked truncated authenticated or handoff bytes to destination");
+        serverFixtureDestroy(&fixture);
+    }
+
+    server_lifecycle_fixture_t fixture;
+    serverFixturePrepareVisitorPending(&fixture);
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      serverBufferFromBytes(&fixture, prefix, sizeof(prefix))),
+                  "server rejected the authentication-failure truncation fixture");
+    realityserverFailAuthenticated(fixture.reality, fixture.line);
+    requireServer(fixture.context.destination_upstream_records == 0 &&
+                      strcmp(fixture.context.events, "FD") == 0,
+                  "server leaked Pending bytes during authentication failure");
+    serverFixtureDestroy(&fixture);
+
+    serverFixturePrepareVisitorPending(&fixture);
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      serverBufferFromBytes(&fixture, prefix, sizeof(prefix))),
+                  "server rejected the downstream-Finish truncation fixture");
+    realityserverHandleDownstreamFinish(fixture.reality, fixture.line);
+    requireServer(fixture.context.destination_upstream_records == 0 &&
+                      strcmp(fixture.context.events, "D") == 0,
+                  "server leaked Pending bytes during downstream-originated Finish");
     serverFixtureDestroy(&fixture);
 }
 
@@ -1185,7 +1501,123 @@ static void testServerTls13NestedDestinationPayloadCompletesBoundary(void)
     serverFixtureDestroy(&fixture);
 }
 
-static void testServerTls13PendingCandidateBudgetIncludesNonControlLengths(void)
+static void testServerTls13MinimumSniffingAllowsRealFinished(void)
+{
+    reality_tls_handshake_fixture_t *handshake = memoryAllocate(sizeof(*handshake));
+    requireServer(handshake != NULL &&
+                      realityTestBuildTlsHandshakeFixture(kRealityV2Tls13, handshake),
+                  "failed to build the real TLS 1.3 Finished fixture");
+
+    server_lifecycle_fixture_t fixture;
+    serverFixtureInitialize(&fixture);
+    serverFixtureAddDestination(&fixture);
+    fixture.prev->fnPayloadD = serverHandoffPrevPayload;
+
+    realityserver_tstate_t *ts = tunnelGetState(fixture.reality);
+    realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+    realityserverLinestateDestroy(ls);
+    realityserverLinestateInitialize(ls, fixture.pool);
+    ls->destination_init_sent = true;
+    ts->sniffing_attempts = 1;
+
+    uint32_t client_hello_len = serverTlsRecordLength(
+        handshake->client_flight,
+        handshake->client_flight_len,
+        "real TLS 1.3 client flight has an invalid ClientHello record");
+    requireServer(handshake->client_flight[0] == kRealityServerTlsHandshake &&
+                      realityserverProcessUpstream(
+                          fixture.reality,
+                          fixture.line,
+                          serverBufferFromBytes(&fixture,
+                                                handshake->client_flight,
+                                                client_hello_len)) &&
+                      ls->tls_capture.client_ready && ! ls->session_keys_ready &&
+                      ls->tls13_pre_request_cover_records_remaining == 0,
+                  "server did not isolate the real TLS 1.3 ClientHello before key derivation");
+
+    requireServer(realityserverObserveDownstreamHandshake(fixture.reality,
+                                                          fixture.line,
+                                                          handshake->server_flight,
+                                                          handshake->server_flight_len) &&
+                      ls->session_keys_ready &&
+                      ls->tls_capture.binding.tls_version == kRealityV2Tls13 &&
+                      ls->tls13_pre_request_cover_records_remaining ==
+                          kRealityServerTls13PreRequestCoverRecordAllowance &&
+                      ls->sniffing_attempts == 0,
+                  "server did not initialize the TLS 1.3 pre-request cover allowance");
+
+    uint32_t protected_handshake_records = 0;
+    size_t offset = client_hello_len;
+    while (offset < handshake->client_flight_len)
+    {
+        const uint8_t *record = handshake->client_flight + offset;
+        uint32_t record_len = serverTlsRecordLength(
+            record,
+            handshake->client_flight_len - offset,
+            "real TLS 1.3 client flight has an invalid post-ClientHello record");
+        uint8_t allowance_before = ls->tls13_pre_request_cover_records_remaining;
+        if (record[0] == kRealityServerTlsApplicationData)
+        {
+            ++protected_handshake_records;
+            requireServer(record_len == 58 && record[3] == 0 && record[4] == 53,
+                          "real TLS 1.3 client Finished changed public record shape");
+            fixture.context.expected_destination_payload = record;
+            fixture.context.expected_destination_payload_len = record_len;
+        }
+
+        requireServer(realityserverProcessUpstream(
+                          fixture.reality,
+                          fixture.line,
+                          serverBufferFromBytes(&fixture, record, record_len)),
+                      "server rejected a real TLS 1.3 client handshake record");
+
+        if (record[0] == kRealityServerTlsApplicationData)
+        {
+            requireServer(ls->mode == kRealityServerModePending &&
+                              ls->tls13_pre_request_cover_records_remaining == 0 &&
+                              ls->sniffing_attempts == 0 && ls->c2s_recv_seq == 0 &&
+                              fixture.context.matched_destination_payloads == 1,
+                          "real TLS 1.3 client Finished consumed the configured sniffing budget");
+            fixture.context.expected_destination_payload = NULL;
+            fixture.context.expected_destination_payload_len = 0;
+        }
+        else
+        {
+            requireServer(ls->tls13_pre_request_cover_records_remaining == allowance_before &&
+                              ls->sniffing_attempts == 0,
+                          "non-candidate TLS handshake traffic consumed the cover allowance");
+        }
+        offset += record_len;
+    }
+    requireServer(protected_handshake_records == 1,
+                  "real TLS 1.3 fixture did not contain exactly one client Finished record");
+
+    requireServer(realityserverObserveDownstreamHandshake(fixture.reality,
+                                                          fixture.line,
+                                                          handshake->server_flight,
+                                                          handshake->server_flight_len) &&
+                      ls->tls13_pre_request_cover_records_remaining == 0,
+                  "server replenished the consumed TLS 1.3 cover allowance");
+
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffRequest,
+                                                0)) &&
+                      ls->mode == kRealityServerModeHandoffAwaitConfirm &&
+                      ls->handoff_request_authenticated && ls->handoff_ack_sent &&
+                      ls->tls13_pre_request_cover_records_remaining == 0 &&
+                      ls->c2s_recv_seq == 1 && ls->s2c_send_seq == 1,
+                  "server did not authenticate REQUEST after the free real Finished record");
+
+    realityserverLinestateDestroy(ls);
+    serverFixtureDestroy(&fixture);
+    memoryZero(handshake, sizeof(*handshake));
+    memoryFree(handshake);
+}
+
+static void testServerTls13CandidateAllowanceIsSingleUse(void)
 {
     server_lifecycle_fixture_t fixture;
     serverFixtureInitialize(&fixture);
@@ -1202,25 +1634,60 @@ static void testServerTls13PendingCandidateBudgetIncludesNonControlLengths(void)
 
     const uint32_t body_len = kRealityV2ControlMaxTlsRecordBody + 1U;
     const uint32_t frame_len = kRealityV2TlsRecordHeaderSize + body_len;
-    sbuf_t *record = bufferpoolGetLargeBuffer(fixture.pool);
-    requireServer(frame_len <= sbufGetMaximumWriteableSize(record),
-                  "server non-control candidate fixture exceeds the large buffer");
-    record = sbufReserveSpace(record, frame_len);
-    sbufSetLength(record, frame_len);
-    uint8_t *frame = sbufGetMutablePtr(record);
-    memoryZero(frame, frame_len);
-    frame[0] = 0x17;
-    frame[1] = 0x03;
-    frame[2] = 0x03;
-    frame[3] = (uint8_t) (body_len >> 8);
-    frame[4] = (uint8_t) body_len;
+    uint8_t expected[2][kRealityV2TlsRecordHeaderSize + kRealityV2ControlMaxTlsRecordBody + 1U];
 
-    requireServer(realityserverProcessUpstream(fixture.reality, fixture.line, record) &&
-                      ls->mode == kRealityServerModeVisitor && ls->sniffing_attempts == 1 &&
-                      ls->c2s_recv_seq == 0 &&
+    sbuf_t *first = buildServerTls13GenericCandidate(&fixture, body_len, 0x31);
+    memoryCopy(expected[0], sbufGetRawPtr(first), frame_len);
+    fixture.context.expected_destination_payload = expected[0];
+    fixture.context.expected_destination_payload_len = frame_len;
+    requireServer(realityserverProcessUpstream(fixture.reality, fixture.line, first) &&
+                      ls->mode == kRealityServerModePending &&
+                      ls->tls13_pre_request_cover_records_remaining == 0 &&
+                      ls->sniffing_attempts == 0 && ls->c2s_recv_seq == 0,
+                  "server charged the first TLS 1.3 cover candidate to the configured budget");
+
+    sbuf_t *second = buildServerTls13GenericCandidate(&fixture, body_len, 0x52);
+    memoryCopy(expected[1], sbufGetRawPtr(second), frame_len);
+    fixture.context.expected_destination_payload = expected[1];
+    requireServer(realityserverProcessUpstream(fixture.reality, fixture.line, second) &&
+                      ls->mode == kRealityServerModeVisitor &&
+                      ls->tls13_pre_request_cover_records_remaining == 0 &&
+                      ls->sniffing_attempts == 1 && ls->c2s_recv_seq == 0 &&
+                      fixture.context.destination_upstream_records == 2 &&
+                      fixture.context.matched_destination_payloads == 2 &&
+                      strcmp(fixture.context.events, "TT") == 0,
+                  "server did not charge the second TLS 1.3 candidate after the allowance");
+
+    realityserverLinestateDestroy(ls);
+    serverFixtureDestroy(&fixture);
+}
+
+static void testServerTls13NonCandidateDoesNotConsumeAllowance(void)
+{
+    server_lifecycle_fixture_t fixture;
+    serverFixtureInitialize(&fixture);
+    serverFixtureAddDestination(&fixture);
+    const reality_v2_record_profile_t profile = {
+        .profile_id = kRealityV2RecordProfileTls13Aead,
+        .visible_prefix_len = 0,
+    };
+    prepareServerPendingProfile(&fixture, kRealityV2Tls13, &profile);
+    realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+
+    const uint8_t ccs[] = {0x14, 0x03, 0x03, 0x00, 0x01, 0x01};
+    fixture.context.expected_destination_payload = ccs;
+    fixture.context.expected_destination_payload_len = sizeof(ccs);
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      serverBufferFromBytes(&fixture, ccs, sizeof(ccs))) &&
+                      ls->mode == kRealityServerModePending &&
+                      ls->tls13_pre_request_cover_records_remaining ==
+                          kRealityServerTls13PreRequestCoverRecordAllowance &&
+                      ls->sniffing_attempts == 0 && ls->c2s_recv_seq == 0 &&
                       fixture.context.destination_upstream_records == 1 &&
-                      strcmp(fixture.context.events, "T") == 0,
-                  "server did not apply the Pending candidate budget outside control lengths");
+                      fixture.context.matched_destination_payloads == 1,
+                  "server consumed the TLS 1.3 cover allowance for a non-candidate CCS record");
 
     realityserverLinestateDestroy(ls);
     serverFixtureDestroy(&fixture);
@@ -1258,7 +1725,8 @@ static void testServerTls13NonRequestControlsStayPending(void)
                           ls->mode == kRealityServerModePending &&
                           ! ls->handoff_request_authenticated && ! ls->handoff_ack_sent &&
                           ! ls->protected_init_sent && ls->c2s_recv_seq == 0 &&
-                          ls->s2c_send_seq == 0 && ls->sniffing_attempts == 1 &&
+                          ls->s2c_send_seq == 0 && ls->sniffing_attempts == 0 &&
+                          ls->tls13_pre_request_cover_records_remaining == 0 &&
                           fixture.context.destination_upstream_records == 1 &&
                           fixture.context.matched_destination_payloads == 1 &&
                           strcmp(fixture.context.events, "T") == 0,
@@ -1271,35 +1739,86 @@ static void testServerTls13NonRequestControlsStayPending(void)
 
 static void testServerTls13FailedRequestIsByteExactFallback(void)
 {
-    server_lifecycle_fixture_t fixture;
-    serverFixtureInitialize(&fixture);
-    serverFixtureAddDestination(&fixture);
     const reality_v2_record_profile_t profile = {
         .profile_id = kRealityV2RecordProfileTls13Aead,
         .visible_prefix_len = 0,
     };
-    prepareServerPendingProfile(&fixture, kRealityV2Tls13, &profile);
-    realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
 
-    sbuf_t *request = buildServerInboundControl(
-        &fixture, kRealityV2RecordKindHandoffRequest, 0);
-    uint32_t expected_len = sbufGetLength(request);
+    for (uint8_t allowance = 0;
+         allowance <= kRealityServerTls13PreRequestCoverRecordAllowance;
+         ++allowance)
+    {
+        server_lifecycle_fixture_t fixture;
+        serverFixtureInitialize(&fixture);
+        serverFixtureAddDestination(&fixture);
+        prepareServerPendingProfile(&fixture, kRealityV2Tls13, &profile);
+        realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+        ls->tls13_pre_request_cover_records_remaining = allowance;
+
+        sbuf_t *request = buildServerInboundControl(
+            &fixture, kRealityV2RecordKindHandoffRequest, 0);
+        uint32_t expected_len = sbufGetLength(request);
+        uint8_t expected[128];
+        requireServer(expected_len <= sizeof(expected), "server failed-REQUEST fixture overflow");
+        sbufGetMutablePtr(request)[expected_len - 1U] ^= 0x80;
+        memoryCopy(expected, sbufGetRawPtr(request), expected_len);
+        fixture.context.expected_destination_payload = expected;
+        fixture.context.expected_destination_payload_len = expected_len;
+
+        requireServer(realityserverProcessUpstream(fixture.reality, fixture.line, request) &&
+                          ls->mode == kRealityServerModePending &&
+                          ! ls->handoff_request_authenticated && ! ls->handoff_ack_sent &&
+                          ! ls->protected_init_sent && ls->c2s_recv_seq == 0 &&
+                          ls->s2c_send_seq == 0 &&
+                          ls->tls13_pre_request_cover_records_remaining == 0 &&
+                          ls->sniffing_attempts == (allowance == 0 ? 1U : 0U) &&
+                          fixture.context.destination_upstream_records == 1 &&
+                          fixture.context.matched_destination_payloads == 1 &&
+                          strcmp(fixture.context.events, "T") == 0,
+                      "server mutated or misaccounted a failed HANDOFF_REQUEST trial");
+
+        realityserverLinestateDestroy(ls);
+        serverFixtureDestroy(&fixture);
+    }
+}
+
+static void testServerTls12CandidateBudgetIsUnchanged(void)
+{
+    server_lifecycle_fixture_t fixture;
+    serverFixtureInitialize(&fixture);
+    serverFixtureAddDestination(&fixture);
+    const reality_v2_record_profile_t profile = {
+        .profile_id = kRealityV2RecordProfileTls12ChaCha,
+        .visible_prefix_len = 0,
+    };
+    prepareServerPendingProfile(&fixture, kRealityV2Tls12, &profile);
+    realityserver_tstate_t *ts = tunnelGetState(fixture.reality);
+    realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+    ts->sniffing_attempts = 1;
+
+    const uint8_t plaintext[] = {0x71};
+    sbuf_t *candidate = buildServerInboundRecord(&fixture,
+                                                 kRealityV2Tls12,
+                                                 &profile,
+                                                 kRealityV2RecordKindApplicationData,
+                                                 plaintext,
+                                                 sizeof(plaintext),
+                                                 0);
+    uint32_t expected_len = sbufGetLength(candidate);
     uint8_t expected[128];
-    requireServer(expected_len <= sizeof(expected), "server failed-REQUEST fixture overflow");
-    sbufGetMutablePtr(request)[expected_len - 1U] ^= 0x80;
-    memoryCopy(expected, sbufGetRawPtr(request), expected_len);
+    requireServer(expected_len <= sizeof(expected), "server TLS 1.2 budget fixture overflow");
+    sbufGetMutablePtr(candidate)[expected_len - 1U] ^= 0x80;
+    memoryCopy(expected, sbufGetRawPtr(candidate), expected_len);
     fixture.context.expected_destination_payload = expected;
     fixture.context.expected_destination_payload_len = expected_len;
 
-    requireServer(realityserverProcessUpstream(fixture.reality, fixture.line, request) &&
-                      ls->mode == kRealityServerModePending &&
-                      ! ls->handoff_request_authenticated && ! ls->handoff_ack_sent &&
-                      ! ls->protected_init_sent && ls->c2s_recv_seq == 0 &&
-                      ls->s2c_send_seq == 0 && ls->sniffing_attempts == 1 &&
+    requireServer(realityserverProcessUpstream(fixture.reality, fixture.line, candidate) &&
+                      ls->mode == kRealityServerModeVisitor &&
+                      ls->tls13_pre_request_cover_records_remaining == 0 &&
+                      ls->sniffing_attempts == 1 && ls->c2s_recv_seq == 0 &&
                       fixture.context.destination_upstream_records == 1 &&
-                      fixture.context.matched_destination_payloads == 1 &&
-                      strcmp(fixture.context.events, "T") == 0,
-                  "server mutated or consumed a failed HANDOFF_REQUEST trial");
+                      fixture.context.matched_destination_payloads == 1,
+                  "server changed TLS 1.2 failed-candidate budget accounting");
 
     realityserverLinestateDestroy(ls);
     serverFixtureDestroy(&fixture);
@@ -1358,6 +1877,7 @@ static void testServerTls13PendingForwardReentrantFinishKillsLine(void)
     prepareServerPendingProfile(&fixture, kRealityV2Tls13, &profile);
     fixture.context.finish_on_destination_payload = true;
     fixture.context.kill_on_prev_finish = true;
+    fixture.context.require_allowance_consumed_on_destination_payload = true;
 
     requireServer(! realityserverProcessUpstream(
                       fixture.reality,
@@ -1387,6 +1907,7 @@ static void testServerTls13PendingBudgetCannotOverwriteReentrantHandoff(void)
     realityserver_tstate_t *ts = tunnelGetState(fixture.reality);
     realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
     ts->sniffing_attempts = 1;
+    fixture.context.require_allowance_consumed_on_destination_payload = true;
     fixture.context.request_on_destination_payload = buildServerInboundControl(
         &fixture, kRealityV2RecordKindHandoffRequest, 0);
 
@@ -1409,7 +1930,8 @@ static void testServerTls13PendingBudgetCannotOverwriteReentrantHandoff(void)
                       fixture.context.request_on_destination_payload == NULL &&
                       ls->mode == kRealityServerModeHandoffAwaitConfirm &&
                       ls->handoff_request_authenticated && ls->handoff_ack_sent &&
-                      ls->destination_downstream_cutoff && ls->sniffing_attempts == 1 &&
+                      ls->destination_downstream_cutoff && ls->sniffing_attempts == 0 &&
+                      ls->tls13_pre_request_cover_records_remaining == 0 &&
                       ls->c2s_recv_seq == 1 && ls->s2c_send_seq == 1 &&
                       fixture.context.destination_upstream_records == 1 &&
                       fixture.context.handoff_ack_records == 1 &&
@@ -1749,11 +2271,18 @@ void realityTestServerCloseLifecycle(void)
     }
     testServerTerminalReentry();
     testServerUnauthenticatedCloseModes();
+    testServerProgressiveVisitorPrefixForwarding();
+    testServerPendingPrefixFlushesBeforeFinish();
+    testServerPendingFinishReentryAndOwnership();
+    testServerSensitiveModesDoNotFlushPendingBytes();
     testServerSecureRandomFailure();
     testServerTlsRecordBoundaryTracker();
-    testServerTls13PendingCandidateBudgetIncludesNonControlLengths();
+    testServerTls13MinimumSniffingAllowsRealFinished();
+    testServerTls13CandidateAllowanceIsSingleUse();
+    testServerTls13NonCandidateDoesNotConsumeAllowance();
     testServerTls13NonRequestControlsStayPending();
     testServerTls13FailedRequestIsByteExactFallback();
+    testServerTls12CandidateBudgetIsUnchanged();
     testServerTls13DuplicateConfirmDoesNotReinitializeNext();
     testServerTls13PendingForwardReentrantFinishKillsLine();
     testServerTls13PendingBudgetCannotOverwriteReentrantHandoff();

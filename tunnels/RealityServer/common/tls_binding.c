@@ -2,16 +2,10 @@
 
 enum
 {
-    kTlsRecordHeaderSize       = 5,
     kTlsHandshakeHeaderSize    = 4,
-    kTlsRecordHandshake        = 0x16,
-    kTlsRecordChangeCipherSpec = 0x14,
-    kTlsRecordAlert            = 0x15,
-    kTlsRecordApplicationData  = 0x17,
     kTlsHandshakeClientHello   = 0x01,
     kTlsHandshakeServerHello   = 0x02,
     kTlsExtensionSupportedVersions = 0x002b,
-    kTlsMaximumRecordBody      = 16384,
     kTlsMaximumHelloBody       = 65535,
 };
 
@@ -23,6 +17,49 @@ static const uint8_t kTls13HelloRetryRequestRandom[kRealityV2TlsRandomSize] = {
 static uint16_t realityserverReadBe16(const uint8_t *data)
 {
     return (uint16_t) (((uint16_t) data[0] << 8) | data[1]);
+}
+
+enum realityserver_tls_record_prefix_e
+realityserverClassifyTlsRecordPrefix(const uint8_t *prefix, size_t available_length)
+{
+    size_t prefix_length = min(available_length, (size_t) kRealityServerTlsHeaderSize);
+    if (prefix_length == 0)
+    {
+        return kRealityServerTlsRecordPrefixNeedMore;
+    }
+    assert(prefix != NULL);
+
+    if (prefix[0] != kRealityServerTlsChangeCipherSpec &&
+        prefix[0] != kRealityServerTlsAlert && prefix[0] != kRealityServerTlsHandshake &&
+        prefix[0] != kRealityServerTlsApplicationData)
+    {
+        return kRealityServerTlsRecordPrefixInvalid;
+    }
+    if (prefix_length == 1)
+    {
+        return kRealityServerTlsRecordPrefixNeedMore;
+    }
+    if (prefix[1] != kRealityServerTlsVersionMajor)
+    {
+        return kRealityServerTlsRecordPrefixInvalid;
+    }
+    if (prefix_length == 2)
+    {
+        return kRealityServerTlsRecordPrefixNeedMore;
+    }
+    if (prefix[2] > 0x04)
+    {
+        return kRealityServerTlsRecordPrefixInvalid;
+    }
+    if (prefix_length < kRealityServerTlsHeaderSize)
+    {
+        return kRealityServerTlsRecordPrefixNeedMore;
+    }
+
+    uint32_t body_length = ((uint32_t) prefix[3] << 8) | prefix[4];
+    return body_length <= kRealityServerMaxTlsRecordBody
+               ? kRealityServerTlsRecordPrefixComplete
+               : kRealityServerTlsRecordPrefixInvalid;
 }
 
 static bool realityserverTake(const uint8_t **cursor, size_t *remaining, size_t count, const uint8_t **out)
@@ -346,36 +383,37 @@ bool realityserverTlsParserFeed(realityserver_tls_parser_t *parser, const uint8_
 
     while (len > 0)
     {
-        if (parser->record_header_length < kTlsRecordHeaderSize)
+        if (parser->record_header_length < kRealityServerTlsHeaderSize)
         {
-            size_t needed = kTlsRecordHeaderSize - parser->record_header_length;
+            size_t needed = kRealityServerTlsHeaderSize - parser->record_header_length;
             size_t take   = min(needed, len);
             memoryCopy(parser->record_header + parser->record_header_length, data, take);
             parser->record_header_length += (uint8_t) take;
             data += take;
             len -= take;
 
-            if (parser->record_header_length < kTlsRecordHeaderSize)
+            enum realityserver_tls_record_prefix_e prefix_result =
+                realityserverClassifyTlsRecordPrefix(parser->record_header,
+                                                     parser->record_header_length);
+            if (prefix_result == kRealityServerTlsRecordPrefixInvalid)
+            {
+                return realityserverTlsParserFail(parser);
+            }
+            if (prefix_result == kRealityServerTlsRecordPrefixNeedMore)
             {
                 return true;
             }
 
             parser->record_type = parser->record_header[0];
-            bool valid_type = parser->record_type == kTlsRecordHandshake ||
-                              parser->record_type == kTlsRecordChangeCipherSpec ||
-                              parser->record_type == kTlsRecordAlert ||
-                              parser->record_type == kTlsRecordApplicationData;
             parser->record_remaining = ((uint32_t) parser->record_header[3] << 8) | parser->record_header[4];
 
-            if (! valid_type || parser->record_header[1] != 0x03 || parser->record_header[2] > 0x04 ||
-                parser->record_remaining > kTlsMaximumRecordBody ||
-                (parser->record_type != kTlsRecordHandshake &&
+            if ((parser->record_type != kRealityServerTlsHandshake &&
                  (parser->handshake_header_length != 0 || parser->handshake_received != 0)))
             {
                 return realityserverTlsParserFail(parser);
             }
 
-            if (parser->record_type == kTlsRecordApplicationData && ! parser->complete)
+            if (parser->record_type == kRealityServerTlsApplicationData && ! parser->complete)
             {
                 return realityserverTlsParserFail(parser);
             }
@@ -388,7 +426,7 @@ bool realityserverTlsParserFeed(realityserver_tls_parser_t *parser, const uint8_
         }
 
         size_t take = min((size_t) parser->record_remaining, len);
-        if (parser->record_type == kTlsRecordHandshake &&
+        if (parser->record_type == kRealityServerTlsHandshake &&
             ! realityserverTlsParserFeedHandshake(parser, data, take, capture))
         {
             return false;
@@ -571,30 +609,30 @@ bool realityserverTls12RecordTrackerFeed(realityserver_tls12_record_tracker_t *t
 
     while (len > 0)
     {
-        if (tracker->record_header_length < kTlsRecordHeaderSize)
+        if (tracker->record_header_length < kRealityServerTlsHeaderSize)
         {
             if (tracker->record_header_length == 0)
             {
                 tracker->last_record_was_protected = false;
             }
 
-            size_t needed = kTlsRecordHeaderSize - tracker->record_header_length;
+            size_t needed = kRealityServerTlsHeaderSize - tracker->record_header_length;
             size_t take   = min(needed, len);
             memoryCopy(tracker->record_header + tracker->record_header_length, data, take);
             tracker->record_header_length += (uint8_t) take;
             data += take;
             len -= take;
 
-            if (tracker->record_header_length < kTlsRecordHeaderSize)
+            if (tracker->record_header_length < kRealityServerTlsHeaderSize)
             {
                 return true;
             }
 
             tracker->record_type = tracker->record_header[0];
-            bool valid_type = tracker->record_type == kTlsRecordHandshake ||
-                              tracker->record_type == kTlsRecordChangeCipherSpec ||
-                              tracker->record_type == kTlsRecordAlert ||
-                              tracker->record_type == kTlsRecordApplicationData;
+            bool valid_type = tracker->record_type == kRealityServerTlsHandshake ||
+                              tracker->record_type == kRealityServerTlsChangeCipherSpec ||
+                              tracker->record_type == kRealityServerTlsAlert ||
+                              tracker->record_type == kRealityServerTlsApplicationData;
             tracker->record_body_len = ((uint32_t) tracker->record_header[3] << 8) |
                                        tracker->record_header[4];
             tracker->record_remaining         = tracker->record_body_len;
@@ -605,7 +643,8 @@ bool realityserverTls12RecordTrackerFeed(realityserver_tls12_record_tracker_t *t
             if (! valid_type || tracker->record_header[1] != 0x03 || tracker->record_header[2] > 0x03 ||
                 tracker->record_body_len > kRealityV2MaxTlsRecordBody ||
                 (tracker->current_record_protected && ! realityserverTls12ProtectedLengthIsValid(tracker)) ||
-                (! tracker->current_record_protected && tracker->record_type == kTlsRecordChangeCipherSpec &&
+                (! tracker->current_record_protected &&
+                 tracker->record_type == kRealityServerTlsChangeCipherSpec &&
                  tracker->record_body_len != 1))
             {
                 return realityserverTls12RecordTrackerFail(tracker);
@@ -627,7 +666,7 @@ bool realityserverTls12RecordTrackerFeed(realityserver_tls12_record_tracker_t *t
             tracker->explicit_nonce_length += (uint8_t) nonce_take;
         }
         else if (! tracker->current_record_protected &&
-                 tracker->record_type == kTlsRecordChangeCipherSpec && body_offset == 0 && take > 0)
+                 tracker->record_type == kRealityServerTlsChangeCipherSpec && body_offset == 0 && take > 0)
         {
             tracker->ccs_value = data[0];
         }
@@ -672,7 +711,7 @@ bool realityserverTls12RecordTrackerFeed(realityserver_tls12_record_tracker_t *t
             tracker->saw_protected_record      = true;
             tracker->last_record_was_protected = true;
         }
-        else if (tracker->record_type == kTlsRecordChangeCipherSpec)
+        else if (tracker->record_type == kRealityServerTlsChangeCipherSpec)
         {
             if (tracker->ccs_value != 1)
             {

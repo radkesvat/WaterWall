@@ -1,0 +1,48 @@
+{
+  "name": "reality-visitor-short-prefix-probe",
+  "nodes": [
+    {
+      "name": "reality-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 25140,
+        "nodelay": true
+      },
+      "next": "reality-server"
+    },
+    {
+      "name": "reality-server",
+      "type": "RealityServer",
+      "settings": {
+        "destination": "visitor-connector",
+        "password": "waterwall-reality-short-prefix",
+        "algorithm": "chacha20-poly1305",
+        "salt": "shortpfx",
+        "kdf-iterations": 12000,
+        "sniffing-attempts": 8
+      },
+      "next": "protected-connector"
+    },
+    {
+      "name": "protected-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 25142,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "visitor-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 25141,
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}
