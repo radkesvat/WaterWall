@@ -308,16 +308,17 @@ poly1305_blocks(poly1305_state_internal_t *st, const unsigned char *m, size_t by
 }
 
 
-#define CHACHA20_BLOCK_SIZE		(64)
-#define CHACHA20_KEY_SIZE		(32)
+#define CHACHA20_BLOCK_SIZE             (64)
+#define CHACHA20_KEY_SIZE               (32)
+#define CHACHA20_IETF_NONCE_SIZE        (12)
 
 struct chacha20_ctx {
 	uint32_t state[16];
 };
 
-void chacha20_init(struct chacha20_ctx *ctx, const uint8_t *key, const uint64_t nonce);
+void chacha20_init_ietf(struct chacha20_ctx *ctx, const uint8_t key[CHACHA20_KEY_SIZE],
+                        const uint8_t nonce[CHACHA20_IETF_NONCE_SIZE]);
 void chacha20(struct chacha20_ctx *ctx, uint8_t *out, const uint8_t *in, uint32_t len);
 void hchacha20(uint8_t *out, const uint8_t *nonce, const uint8_t *key);
-
 
 

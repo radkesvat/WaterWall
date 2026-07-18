@@ -58,16 +58,18 @@ static bool chacha20poly1305EncryptWrapper(unsigned char *dst, const unsigned ch
                                            const unsigned char *ad, size_t adlen, uint64_t nonce,
                                            const unsigned char *key)
 {
-    uint32_t wireguard_way_of_nonce[3] = {0,(uint32_t)(nonce & 0xFFFFFFFFULL), (uint32_t)(nonce >> 32)};
-    return 0 == chacha20poly1305Encrypt(dst, src, srclen, ad, adlen, (unsigned char *) &wireguard_way_of_nonce, key);
+    uint8_t wireguard_nonce[12] = {0};
+    U64TO8_LITTLE(wireguard_nonce + 4, nonce);
+    return 0 == chacha20poly1305Encrypt(dst, src, srclen, ad, adlen, wireguard_nonce, key);
 }
 
 static bool chacha20poly1305DecryptWrapper(unsigned char *dst, const unsigned char *src, size_t srclen,
                                            const unsigned char *ad, size_t adlen, uint64_t nonce,
                                            const unsigned char *key)
 {
-    uint32_t wireguard_way_of_nonce[3] = {0,(uint32_t)(nonce & 0xFFFFFFFFULL), (uint32_t)(nonce >> 32)};
-    return 0 == chacha20poly1305Decrypt(dst, src, srclen, ad, adlen, (unsigned char *) &wireguard_way_of_nonce[0], key);
+    uint8_t wireguard_nonce[12] = {0};
+    U64TO8_LITTLE(wireguard_nonce + 4, nonce);
+    return 0 == chacha20poly1305Decrypt(dst, src, srclen, ad, adlen, wireguard_nonce, key);
 }
 
 void wireguardInit(void)

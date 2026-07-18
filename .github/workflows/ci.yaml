@@ -285,6 +285,41 @@ jobs:
       - name: Show ccache statistics
         run: ccache -sv
 
+  software-crypto:
+    name: linux-software-crypto
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ${{ env.cpm-path }}
+            ${{ github.workspace }}/.ccache
+          key: ${{ env.cpm-key }}-linux-software-crypto-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake') }}
+          restore-keys: |
+            ${{ env.cpm-key }}-linux-software-crypto-
+            ${{ env.cpm-key }}-linux-
+            ${{ env.cpm-key }}-
+          enableCrossOsArchive: false
+      - name: Install dependencies on Linux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache
+      - name: Reset ccache statistics
+        run: ccache --zero-stats
+      - name: Configure software-only crypto
+        run: >
+          cmake --preset linux-software-crypto
+          -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
+      - name: Build crypto primitive tests
+        run: cmake --build --preset linux-software-crypto --target crypto_primitives_test
+      - name: Run crypto primitive tests
+        run: >
+          ctest --preset linux-software-crypto -C Release --output-on-failure
+          -R '^waterwall\.crypto_primitives_unit$'
+      - name: Show ccache statistics
+        run: ccache -sv
+
   
   macos:
     strategy:

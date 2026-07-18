@@ -30,8 +30,8 @@
  * Author: Daniel Hope <daniel.hope@smartalock.com>
  */
 
-// RFC7539 implementation of ChaCha20 with modified nonce size for WireGuard
-// https://tools.ietf.org/html/rfc7539
+// RFC 8439 implementation of ChaCha20 with the IETF 96-bit nonce layout.
+// https://www.rfc-editor.org/rfc/rfc8439
 // Adapted from https://cr.yp.to/streamciphers/timings/estreambench/submissions/salsa20/chacha8/ref/chacha.c by D. J. Bernstein (Public Domain)
 // HChaCha20 is described here: https://tools.ietf.org/id/draft-arciszewski-xchacha-02.html
 
@@ -142,8 +142,8 @@ void chacha20(struct chacha20_ctx *ctx, uint8_t *out, const uint8_t *in, uint32_
 // The next eight words (4-11) are taken from the 256-bit key by reading the bytes in little-endian order, in 4-byte chunks.
 // Word 12 is a block counter.  Since each block is 64-byte, a 32-bit word is enough for 256 gigabytes of data.
 // Words 13-15 are a nonce, which should not be repeated for the same key.
-// For wireguard: "nonce being composed of 32 bits of zeros followed by the 64-bit little-endian value of counter." where counter comes from the Wireguard layer and is separate from the block counter in word 12
-void chacha20_init(struct chacha20_ctx *ctx, const uint8_t *key, const uint64_t nonce) {
+void chacha20_init_ietf(struct chacha20_ctx *ctx, const uint8_t key[CHACHA20_KEY_SIZE],
+						const uint8_t nonce[CHACHA20_IETF_NONCE_SIZE]) {
 	ctx->state[0] = CHACHA20_CONSTANT_1;
 	ctx->state[1] = CHACHA20_CONSTANT_2;
 	ctx->state[2] = CHACHA20_CONSTANT_3;
@@ -157,9 +157,9 @@ void chacha20_init(struct chacha20_ctx *ctx, const uint8_t *key, const uint64_t 
 	ctx->state[10] = U8TO32_LITTLE(key + 24);
 	ctx->state[11] = U8TO32_LITTLE(key + 28);
 	ctx->state[12] = 0;
-	ctx->state[13] = 0;
-	ctx->state[14] = nonce & 0xFFFFFFFF;
-	ctx->state[15] = nonce >> 32;
+	ctx->state[13] = U8TO32_LITTLE(nonce + 0);
+	ctx->state[14] = U8TO32_LITTLE(nonce + 4);
+	ctx->state[15] = U8TO32_LITTLE(nonce + 8);
 }
 
 // 2.2. HChaCha20

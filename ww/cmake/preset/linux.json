@@ -15,6 +15,22 @@
             ]
         },
         {
+            "name": "linux-software-crypto",
+            "inherits": [
+                "host-linux",
+                "target-linux",
+                "ninja",
+                "ccache",
+                "default"
+            ],
+            "cacheVariables": {
+                "WCRYPTO_BACKEND_OPENSSL": false,
+                "WCRYPTO_BACKEND_SODIUM": false,
+                "INCLUDE_TLS_SERVER": false,
+                "router_enable_quic_sniffing": false
+            }
+        },
+        {
             "name": "linux-clang-x64",
             "inherits": [
                 "host-linux",
@@ -94,6 +110,13 @@
         {
             "name": "linux",
             "configurePreset": "linux",
+            "inherits": [
+                "host-linux"
+            ]
+        },
+        {
+            "name": "linux-software-crypto",
+            "configurePreset": "linux-software-crypto",
             "inherits": [
                 "host-linux"
             ]
@@ -257,6 +280,14 @@
         {
             "name": "linux",
             "configurePreset": "linux",
+            "inherits": [
+                "host-linux",
+                "options"
+            ]
+        },
+        {
+            "name": "linux-software-crypto",
+            "configurePreset": "linux-software-crypto",
             "inherits": [
                 "host-linux",
                 "options"

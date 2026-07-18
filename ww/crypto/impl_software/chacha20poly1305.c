@@ -32,7 +32,7 @@
 
 #include "private/crypto_backends.h"
 
-// AEAD_CHACHA20_POLY1305 as described in https://tools.ietf.org/html/rfc7539
+// AEAD_CHACHA20_POLY1305 as described in RFC 8439.
 // AEAD_XChaCha20_Poly1305 as described in https://tools.ietf.org/id/draft-arciszewski-xchacha-02.html
 #include "private/defs.h"
 
@@ -43,14 +43,16 @@
 static const uint8_t zero[CHACHA20_BLOCK_SIZE] = { 0 };
 
 // 2.6.  Generating the Poly1305 Key Using ChaCha20
-static void generate_poly1305_key(struct poly1305_context *poly1305_state, struct chacha20_ctx *chacha20_state, const uint8_t *key, uint64_t nonce) {
+static void generate_poly1305_key(struct poly1305_context *poly1305_state, struct chacha20_ctx *chacha20_state,
+								  const uint8_t key[CHACHA20_KEY_SIZE],
+								  const uint8_t nonce[CHACHA20_IETF_NONCE_SIZE]) {
 	uint8_t block[POLY1305_KEY_SIZE] = {0};
 
 	// The method is to call the block function with the following parameters:
 	// - The 256-bit session integrity key is used as the ChaCha20 key.
 	// - The block counter is set to zero.
-	// - The protocol will specify a 96-bit or 64-bit nonce
-	chacha20_init(chacha20_state, key, nonce);
+	// - The complete 96-bit IETF nonce is placed in state words 13-15.
+	chacha20_init_ietf(chacha20_state, key, nonce);
 
 	// We take the first 256 bits or the serialized state, and use those as the one-time Poly1305 key
 	chacha20(chacha20_state, block, block, sizeof(block));
@@ -67,13 +69,9 @@ int wCryptoSoftwareChacha20Poly1305Encrypt(unsigned char *dst, const unsigned ch
 	struct chacha20_ctx chacha20_state;
 	uint8_t block[8];
 	size_t padded_len;
-	
-	uint64_t nonce = 0;
-	nonce = *(uint64_t*)(&p_nonce[4]);
 
-		
 	// First, a Poly1305 one-time key is generated from the 256-bit key and nonce using the procedure described in Section 2.6.
-	generate_poly1305_key(&poly1305_state, &chacha20_state, key, nonce);
+	generate_poly1305_key(&poly1305_state, &chacha20_state, key, p_nonce);
 
 	// Next, the ChaCha20 encryption function is called to encrypt the plaintext, using the same key and nonce, and with the initial counter set to 1.
 	chacha20(&chacha20_state, dst, src, src_len);
@@ -118,8 +116,6 @@ int wCryptoSoftwareChacha20Poly1305Decrypt(unsigned char *dst, const unsigned ch
 	size_t padded_len;
 	int dst_len;
 	bool result = false;
-	uint64_t nonce = 0;
-	nonce = *(uint64_t*)(&p_nonce[4]);
 	// Decryption is similar [to encryption] with the following differences:
 	// - The roles of ciphertext and plaintext are reversed, so the ChaCha20 encryption function is applied to the ciphertext, producing the plaintext.
 	// - The Poly1305 function is still run on the AAD and the ciphertext, not the plaintext.
@@ -129,7 +125,7 @@ int wCryptoSoftwareChacha20Poly1305Decrypt(unsigned char *dst, const unsigned ch
 		dst_len = src_len - POLY1305_MAC_SIZE;
 
 		// First, a Poly1305 one-time key is generated from the 256-bit key and nonce using the procedure described in Section 2.6.
-		generate_poly1305_key(&poly1305_state, &chacha20_state, key, nonce);
+		generate_poly1305_key(&poly1305_state, &chacha20_state, key, p_nonce);
 
 		// Calculate the MAC before attempting decryption
 
@@ -174,29 +170,28 @@ int wCryptoSoftwareChacha20Poly1305Decrypt(unsigned char *dst, const unsigned ch
 // 2. Use the subkey and remaining 8 bytes of the nonce (prefixed with 4 NUL bytes) with AEAD_CHACHA20_POLY1305 from [RFC7539] as normal. The definition for XChaCha20 is given in Section 2.3.
 int wCryptoSoftwareXChacha20Poly1305Encrypt(uint8_t *dst, const uint8_t *src, size_t src_len, const uint8_t *ad, size_t ad_len, const uint8_t *nonce, const uint8_t *key) {
 	uint8_t subkey[CHACHA20_KEY_SIZE];
-	uint64_t new_nonce;
+	uint8_t derived_nonce[CHACHA20_IETF_NONCE_SIZE] = {0};
+	int result;
 
-	new_nonce = U8TO64_LITTLE(nonce + 16);
-    uint32_t wireguard_way_of_nonce[3] = {0, new_nonce & 0xFFFFFFFF,new_nonce >> 32 };
-	
+	memoryCopy(derived_nonce + 4, nonce + 16, 8);
 	hchacha20(subkey, nonce, key);
-	wCryptoSoftwareChacha20Poly1305Encrypt(dst, src, src_len, ad, ad_len, (unsigned char *) &wireguard_way_of_nonce, subkey);
+	result = wCryptoSoftwareChacha20Poly1305Encrypt(dst, src, src_len, ad, ad_len, derived_nonce, subkey);
 
 	wCryptoZero(subkey, sizeof(subkey));
-	return 0;
+	wCryptoZero(derived_nonce, sizeof(derived_nonce));
+	return result;
 }
 
 int wCryptoSoftwareXChacha20Poly1305Decrypt(uint8_t *dst, const uint8_t *src, size_t src_len, const uint8_t *ad, size_t ad_len, const uint8_t *nonce, const uint8_t *key) {
 	uint8_t subkey[CHACHA20_KEY_SIZE];
-	uint64_t new_nonce;
+	uint8_t derived_nonce[CHACHA20_IETF_NONCE_SIZE] = {0};
 	int result;
 
-	new_nonce = U8TO64_LITTLE(nonce + 16);
-    uint32_t wireguard_way_of_nonce[3] = {0, new_nonce & 0xFFFFFFFF,new_nonce >> 32 };
-
+	memoryCopy(derived_nonce + 4, nonce + 16, 8);
 	hchacha20(subkey, nonce, key);
-	result = wCryptoSoftwareChacha20Poly1305Decrypt(dst, src, src_len, ad, ad_len, (unsigned char *) &wireguard_way_of_nonce, subkey);
+	result = wCryptoSoftwareChacha20Poly1305Decrypt(dst, src, src_len, ad, ad_len, derived_nonce, subkey);
 
 	wCryptoZero(subkey, sizeof(subkey));
+	wCryptoZero(derived_nonce, sizeof(derived_nonce));
 	return result;
 }
