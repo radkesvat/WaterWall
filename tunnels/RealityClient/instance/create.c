@@ -25,79 +25,62 @@ static void configureTunnelCallbacks(tunnel_t *t)
     t->onDestroy = &realityclientTunnelDestroy;
 }
 
-static uint32_t parseAlgorithmFromSettings(const cJSON *settings)
+static bool parseAlgorithmFromSettings(const cJSON *settings, uint32_t *algorithm)
 {
-    char    *algorithm = NULL;
-    uint32_t result    = kRealityClientAlgorithmChaCha20Poly1305;
-
-    if (! getStringFromJsonObject(&algorithm, settings, "algorithm"))
+    const char  *setting_name = "algorithm";
+    const cJSON *item         = cJSON_GetObjectItemCaseSensitive(settings, setting_name);
+    if (item == NULL)
     {
-        getStringFromJsonObject(&algorithm, settings, "method");
+        setting_name = "method";
+        item         = cJSON_GetObjectItemCaseSensitive(settings, setting_name);
     }
 
-    if (algorithm == NULL)
+    if (item == NULL)
     {
-        return result;
+        *algorithm = kRealityClientAlgorithmChaCha20Poly1305;
+        return true;
     }
 
-    stringLowerCase(algorithm);
-
-    if (stringCompare(algorithm, "chacha20poly1305") == 0 || stringCompare(algorithm, "chacha20-poly1305") == 0)
+    if (! cJSON_IsString(item) || item->valuestring == NULL || item->valuestring[0] == '\0')
     {
-        result = kRealityClientAlgorithmChaCha20Poly1305;
-    }
-    else if (stringCompare(algorithm, "aes256gcm") == 0 || stringCompare(algorithm, "aes-256-gcm") == 0 ||
-             stringCompare(algorithm, "aes-gcm") == 0)
-    {
-        result = kRealityClientAlgorithmAes256Gcm;
-    }
-    else
-    {
-        result = 0;
+        LOGF("RealityClient: '%s' must be a supported non-empty string", setting_name);
+        return false;
     }
 
-    memoryFree(algorithm);
-    return result;
+    if (stricmp(item->valuestring, "chacha20poly1305") == 0 ||
+        stricmp(item->valuestring, "chacha20-poly1305") == 0)
+    {
+        *algorithm = kRealityClientAlgorithmChaCha20Poly1305;
+        return true;
+    }
+    if (stricmp(item->valuestring, "aes256gcm") == 0 || stricmp(item->valuestring, "aes-256-gcm") == 0 ||
+        stricmp(item->valuestring, "aes-gcm") == 0)
+    {
+        *algorithm = kRealityClientAlgorithmAes256Gcm;
+        return true;
+    }
+
+    LOGF("RealityClient: '%s' is unsupported. Use chacha20-poly1305 or aes-gcm", setting_name);
+    return false;
 }
 
-static bool deriveKeyFromPassword(const char *password, const char *salt, uint32_t iterations, uint8_t out_key[32])
+static bool parseKdfIterations(const cJSON *settings, uint32_t *iterations)
 {
-    size_t password_len = stringLength(password);
-    size_t salt_len     = stringLength(salt);
-
-    if (password_len == 0)
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, "kdf-iterations");
+    if (item == NULL)
     {
+        *iterations = kRealityClientDefaultKdfIterations;
+        return true;
+    }
+
+    if (! cJSON_IsNumber(item) || item->valuedouble != (double) item->valueint ||
+        item->valuedouble < kRealityV2MinKdfIterations || item->valuedouble > kRealityV2MaxKdfIterations)
+    {
+        LOGF("RealityClient: 'kdf-iterations' must be an integer in range [1, 1000000]");
         return false;
     }
 
-    if (iterations == 0)
-    {
-        iterations = 1;
-    }
-
-    if (-1 ==
-        blake2s(out_key, 32, (const unsigned char *) salt, salt_len, (const unsigned char *) password, password_len))
-    {
-        return false;
-    }
-
-    for (uint32_t i = 1; i < iterations; ++i)
-    {
-        uint8_t  iter_block[36] = {0};
-        uint32_t iter_be        = htobe32(i);
-
-        memoryCopy(iter_block, out_key, 32);
-        memoryCopy(iter_block + 32, &iter_be, sizeof(iter_be));
-
-        if (-1 == blake2s(out_key, 32, (const unsigned char *) password, password_len, iter_block, sizeof(iter_block)))
-        {
-            memoryZero(iter_block, sizeof(iter_block));
-            return false;
-        }
-
-        memoryZero(iter_block, sizeof(iter_block));
-    }
-
+    *iterations = (uint32_t) item->valueint;
     return true;
 }
 
@@ -143,7 +126,6 @@ static bool realityclientTunnelstateInitialize(tunnel_t *t, node_t *node)
     const cJSON            *settings       = node->node_settings_json;
     char                   *password       = NULL;
     char                   *salt           = NULL;
-    int                     kdf_iterations = kRealityClientDefaultKdfIterations;
     bool                    result         = false;
 
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
@@ -166,25 +148,34 @@ static bool realityclientTunnelstateInitialize(tunnel_t *t, node_t *node)
         goto cleanup;
     }
 
-    ts->algorithm = parseAlgorithmFromSettings(settings);
-    if (ts->algorithm != kRealityClientAlgorithmChaCha20Poly1305 && ts->algorithm != kRealityClientAlgorithmAes256Gcm)
+    if (! parseAlgorithmFromSettings(settings, &ts->algorithm))
     {
-        LOGF("RealityClient: 'algorithm'/'method' is unsupported. Use chacha20-poly1305 or aes-gcm");
         goto cleanup;
     }
 
-    if (! getStringFromJsonObject(&password, settings, "password") || stringLength(password) == 0)
+    if (! getStringFromJsonObject(&password, settings, "password") ||
+        stringLength(password) < kRealityV2MinCredentialByteLength ||
+        stringLength(password) > kRealityV2MaxPasswordByteLength)
     {
-        LOGF("RealityClient: 'password' must be a non-empty string");
+        LOGF("RealityClient: 'password' must contain 1..32 bytes");
         goto cleanup;
     }
 
-    getStringFromJsonObjectOrDefault(&salt, settings, "salt", "waterwall-reality");
-
-    getIntFromJsonObject(&kdf_iterations, settings, "kdf-iterations");
-    if (kdf_iterations <= 0 || kdf_iterations > 1000000)
+    const cJSON *salt_item = cJSON_GetObjectItemCaseSensitive(settings, "salt");
+    if (salt_item == NULL)
     {
-        LOGF("RealityClient: 'kdf-iterations' must be in range [1, 1000000]");
+        salt = stringDuplicate("waterwall-reality");
+    }
+    else if (! getStringFromJsonObject(&salt, settings, "salt") ||
+             stringLength(salt) < kRealityV2MinCredentialByteLength ||
+             stringLength(salt) > kRealityV2MaxSaltByteLength)
+    {
+        LOGF("RealityClient: 'salt' must contain 1..32 bytes");
+        goto cleanup;
+    }
+
+    if (! parseKdfIterations(settings, &ts->kdf_iterations))
+    {
         goto cleanup;
     }
 
@@ -194,9 +185,7 @@ static bool realityclientTunnelstateInitialize(tunnel_t *t, node_t *node)
         goto cleanup;
     }
 
-    ts->kdf_iterations = (uint32_t) kdf_iterations;
-
-    if (! deriveKeyFromPassword(password, salt, ts->kdf_iterations, ts->root_key))
+    if (! realityV2DeriveRootKey(password, salt, ts->kdf_iterations, ts->root_key))
     {
         LOGF("RealityClient: failed to derive key from password");
         goto cleanup;

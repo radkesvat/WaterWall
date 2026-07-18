@@ -1,5 +1,5 @@
 <!--
-Documentation version: 113
+Documentation version: 116
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RealityServer.mdx, and both files must keep the same documentation version.
 -->
 
@@ -15,18 +15,22 @@ Typical placement:
 ## Settings
 
 - `destination` (string, required): node name for normal visitor traffic
-- `password` (string, required): shared Reality secret
-- `algorithm` / `method` (string, optional): `chacha20-poly1305` (default) or `aes-gcm`
-- `salt` (string, optional): key derivation salt, default `waterwall-reality`
-- `kdf-iterations` (number, optional): key derivation rounds, default `12000`
-- `sniffing-attempts` (number, optional): TLS application records to try before treating the peer as a visitor, default `8`
-- `tls12-gcm-server-nonce-policy` (string, optional): `auto` (default), `sequence`, `counter`, or `random`
+- `password` (string, required): shared Reality secret, `1..32` UTF-8 bytes
+- `algorithm` (non-empty string, optional): `chacha20-poly1305` (default) or `aes-gcm`
+- `method` (non-empty string, optional): alias consulted only when `algorithm` is absent
+- `salt` (string, optional): explicitly configured values must contain `1..32` UTF-8 bytes; default `waterwall-reality`
+- `kdf-iterations` (integer, optional): key derivation rounds in `1..1000000`, default `12000`
+- `sniffing-attempts` (integer, optional): failed Reality candidates after the one-record TLS 1.3 pre-request cover allowance before treating the peer as a visitor, range `1..1024`, default `8`; TLS 1.2 has no allowance
+- `sniffing-counter` (integer, optional): legacy alias consulted only when `sniffing-attempts` is absent, with the same range
+- `tls12-gcm-server-nonce-policy` (non-empty string, optional): `auto` (default), `sequence`, `counter`, or `random`
+
+Defaults apply only when an optional key is absent. A present optional key with the wrong JSON type is a startup error. Primary fields win over aliases even when malformed; an invalid `algorithm` is not rescued by `method`, and an invalid `sniffing-attempts` is not rescued by `sniffing-counter`.
 
 ## Behavior
 
 The server does not terminate TLS. Its bounded streaming parsers observe fragmented TLS records and handshake messages without delaying their normal forwarding, recognize TLS 1.3 HelloRetryRequest, and wait for the final ServerHello. For TLS 1.2 they independently track each direction's ChangeCipherSpec, protected-record sequence, and AES-GCM explicit nonce samples. Malformed or unsupported handshakes switch to ordinary visitor behavior. Before the TLS binding, record profile, and directional session keys are ready, application-data-looking records are visitor traffic and are never tried with the password-derived root key.
 
-Non-TLS record headers are treated as visitor traffic as soon as the header is available. TLS application records that fail v2 authentication are also forwarded while sniffing remains pending. For TLS 1.3, only `HANDOFF_REQUEST` at client-to-server sequence `0` can leave Pending. The server consumes an authenticated request, tracks the already-forwarded destination stream through the end of its current complete TLS record, marks downstream cutoff, and sends `HANDOFF_ACK` at server-to-client sequence `0` only between records. Destination output after that cutoff is suppressed. Late genuine TLS protocol output from the client may still travel upstream to the destination until `HANDOFF_CONFIRM` authenticates at client-to-server sequence `1`; failed confirmation trials are bounded and never advance the sequence. Only confirmation closes the remaining destination direction and initializes protected `next`.
+TLS record prefixes are classified progressively: an unsupported content type becomes visitor traffic after byte one, an invalid legacy-version major after byte two, and a minor greater than `0x04` after byte three. A still-plausible one- through four-byte prefix remains Pending while the connection is open; if upstream `Finish` arrives, those exact bytes are sent to `destination` before its `Finish`. TLS application records that fail v2 authentication are also forwarded while sniffing remains pending. After TLS 1.3 keys are derived, one failed pre-request candidate is forwarded byte-for-byte without consuming `sniffing-attempts`; this bounded, non-resettable internal allowance covers the genuine encrypted client Finished record and cannot authenticate a client. Later failures consume the configured budget normally, while TLS 1.2 accounting is unchanged. For TLS 1.3, only an authenticated `HANDOFF_REQUEST` at client-to-server sequence `0` can leave Pending. The server consumes an authenticated request, tracks the already-forwarded destination stream through the end of its current complete TLS record, marks downstream cutoff, and sends `HANDOFF_ACK` at server-to-client sequence `0` only between records. Destination output after that cutoff is suppressed. Late genuine TLS protocol output from the client may still travel upstream to the destination until `HANDOFF_CONFIRM` authenticates at client-to-server sequence `1`; failed confirmation trials are bounded and never advance the sequence. Only confirmation closes the remaining destination direction and initializes protected `next`.
 
 After authorization, upstream traffic must be the exact next client-to-server record and downstream protected payload uses the independent server-to-client key, IV, and sequence. Duplicate, deleted, reordered, reflected, and cross-connection records fail; counters close before wrap.
 

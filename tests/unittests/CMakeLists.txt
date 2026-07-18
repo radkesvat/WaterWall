@@ -123,6 +123,16 @@ if(TARGET TlsClient)
 endif()
 
 if(TARGET RealityCommon)
+  add_executable(reality_config_test reality_config_test.c)
+  target_link_libraries(reality_config_test PRIVATE RealityCommon ww)
+  add_dependencies(waterwall_unit_tests reality_config_test)
+
+  add_waterwall_unit_test(
+    waterwall.reality_config_unit
+    reality_config_test
+    "unit;tunnels;reality;v2;crypto;configuration"
+  )
+
   add_executable(reality_v2_test reality_v2_test.c)
   target_compile_definitions(reality_v2_test PRIVATE
     REALITY_TLS_CLIENT_HANDSHAKE_SOURCE="${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/ssl/handshake_client.cc"

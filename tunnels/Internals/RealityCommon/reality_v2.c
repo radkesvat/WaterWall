@@ -56,6 +56,60 @@ static void realityV2WriteBe16(uint8_t out[2], uint16_t value)
     out[1] = (uint8_t) value;
 }
 
+bool realityV2DeriveRootKey(const char *password, const char *salt, uint32_t iterations,
+                            uint8_t out_key[kRealityV2KeySize])
+{
+    if (password == NULL || salt == NULL || out_key == NULL ||
+        iterations < kRealityV2MinKdfIterations || iterations > kRealityV2MaxKdfIterations)
+    {
+        return false;
+    }
+
+    size_t password_len = stringLength(password);
+    size_t salt_len     = stringLength(salt);
+    if (password_len < kRealityV2MinCredentialByteLength ||
+        password_len > kRealityV2MaxPasswordByteLength ||
+        salt_len < kRealityV2MinCredentialByteLength || salt_len > kRealityV2MaxSaltByteLength)
+    {
+        return false;
+    }
+
+    if (blake2s(out_key,
+                kRealityV2KeySize,
+                (const unsigned char *) salt,
+                salt_len,
+                (const unsigned char *) password,
+                password_len) != 0)
+    {
+        return false;
+    }
+
+    uint8_t iter_block[kRealityV2KeySize + sizeof(uint32_t)] = {0};
+    for (uint32_t i = 1; i < iterations; ++i)
+    {
+        uint32_t iter_be = htobe32(i);
+
+        memoryCopy(iter_block, out_key, kRealityV2KeySize);
+        memoryCopy(iter_block + kRealityV2KeySize, &iter_be, sizeof(iter_be));
+
+        if (blake2s(out_key,
+                    kRealityV2KeySize,
+                    (const unsigned char *) password,
+                    password_len,
+                    iter_block,
+                    sizeof(iter_block)) != 0)
+        {
+            memoryZero(iter_block, sizeof(iter_block));
+            return false;
+        }
+
+        memoryZero(iter_block, sizeof(iter_block));
+    }
+
+    memoryZero(iter_block, sizeof(iter_block));
+    return true;
+}
+
 void realityV2WriteBe64(uint8_t out[8], uint64_t value)
 {
     for (uint32_t i = 0; i < 8; ++i)

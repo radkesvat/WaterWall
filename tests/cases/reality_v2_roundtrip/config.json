@@ -18,7 +18,7 @@
         "verify": false,
         "password": "waterwall-reality-v2-integration",
         "algorithm": "chacha20-poly1305",
-        "salt": "waterwall-reality-v2-roundtrip",
+        "salt": "waterwall-reality-v2-roundtrip!!",
         "kdf-iterations": 12000
       },
       "next": "reality-connector"
@@ -50,7 +50,7 @@
         "destination": "cover-connector",
         "password": "waterwall-reality-v2-integration",
         "algorithm": "chacha20-poly1305",
-        "salt": "waterwall-reality-v2-roundtrip",
+        "salt": "waterwall-reality-v2-roundtrip!!",
         "kdf-iterations": 12000,
         "sniffing-attempts": 8
       },

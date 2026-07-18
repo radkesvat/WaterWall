@@ -29,12 +29,11 @@ static void configureTunnelCallbacks(tunnel_t *t)
     t->onDestroy = &tlsclientTunnelDestroy;
 }
 
-static bool getandvalidateSniSetting(tlsclient_tstate_t *ts, const cJSON *settings, tunnel_t *t)
+static bool getandvalidateSniSetting(tlsclient_tstate_t *ts, const cJSON *settings)
 {
     if (! getStringFromJsonObject(&(ts->sni), settings, "sni") || stringLength(ts->sni) == 0)
     {
         LOGF("JSON Error: OpenSSLClient->settings->sni (string field) : The data was empty or invalid");
-        tunnelDestroy(t);
         return false;
     }
     return true;
@@ -55,35 +54,45 @@ static bool getandvalidateAlpnSetting(tlsclient_tstate_t *ts, const cJSON *setti
     return true;
 }
 
-static void getX25519MLKEM768Setting(tlsclient_tstate_t *ts, const cJSON *settings)
+static bool getOptionalBoolSetting(bool *value, const cJSON *settings, const char *name, bool default_value)
 {
-    getBoolFromJsonObjectOrDefault(&ts->x25519mlkem768_enabled, settings, "x25519mlkem768", true);
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, name);
+    if (item == NULL)
+    {
+        *value = default_value;
+        return true;
+    }
+    if (! cJSON_IsBool(item))
+    {
+        LOGF("TlsClient: '%s' must be a boolean", name);
+        return false;
+    }
+
+    *value = cJSON_IsTrue(item);
+    return true;
 }
 
-static void getVerifySetting(tlsclient_tstate_t *ts, const cJSON *settings)
+static bool getAndValidateEchGreaseSniOverrideSetting(tlsclient_tstate_t *ts, const cJSON *settings)
 {
-    getBoolFromJsonObjectOrDefault(&ts->verify, settings, "verify", true);
-}
-
-static void getVerboseSetting(tlsclient_tstate_t *ts, const cJSON *settings)
-{
-    getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
-}
-
-static bool getAndValidateEchGreaseSniOverrideSetting(tlsclient_tstate_t *ts, const cJSON *settings, tunnel_t *t)
-{
-    if (! getStringFromJsonObject(&(ts->ech_grease_sni_override), settings, "ech-sni-trick"))
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, "ech-sni-trick");
+    if (item == NULL)
     {
         return true;
     }
+
+    if (! cJSON_IsString(item) || item->valuestring == NULL)
+    {
+        LOGF("TlsClient: 'ech-sni-trick' must be a non-empty string");
+        return false;
+    }
+
+    getStringFromJsonObject(&(ts->ech_grease_sni_override), settings, "ech-sni-trick");
 
     const size_t override_len = stringLength(ts->ech_grease_sni_override);
 
     if (override_len == 0)
     {
-        LOGF("JSON Error: TlsClient->settings->ech-sni-trick (string field) : The data was empty or invalid");
-        tlsclientTunnelstateDestroy(ts);
-        tunnelDestroy(t);
+        LOGF("TlsClient: 'ech-sni-trick' must be a non-empty string");
         return false;
     }
 
@@ -251,17 +260,17 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
     tlsclient_tstate_t *ts           = tunnelGetState(t);
     const cJSON        *settings     = node->node_settings_json;
 
-    if (! getandvalidateSniSetting(ts, settings, t))
+    if (! getandvalidateSniSetting(ts, settings))
     {
-        return NULL;
+        goto fail;
     }
 
-    getX25519MLKEM768Setting(ts, settings);
-    getVerifySetting(ts, settings);
-    getVerboseSetting(ts, settings);
-    if (! getAndValidateEchGreaseSniOverrideSetting(ts, settings, t))
+    if (! getOptionalBoolSetting(&ts->x25519mlkem768_enabled, settings, "x25519mlkem768", true) ||
+        ! getOptionalBoolSetting(&ts->verify, settings, "verify", true) ||
+        ! getOptionalBoolSetting(&ts->verbose, settings, "verbose", false) ||
+        ! getAndValidateEchGreaseSniOverrideSetting(ts, settings))
     {
-        return NULL;
+        goto fail;
     }
     // We want to build up exact chrome handshake, so we dont ask for alpn settings
 
@@ -312,4 +321,9 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
 
     // memoryFree(alpn_format);
     return t;
+
+fail:
+    tlsclientTunnelstateDestroy(ts);
+    tunnelDestroy(t);
+    return NULL;
 }

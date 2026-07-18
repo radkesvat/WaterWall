@@ -1,5 +1,5 @@
 <!--
-Documentation version: 109
+Documentation version: 110
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TlsClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -113,6 +113,11 @@ That arrangement lets:
   - the generated ClientHello becomes smaller
   - the tunnel no longer mimics Chrome as closely
   - you lose the Chrome-like `X25519MLKEM768` key share behavior
+
+- `verbose` `(boolean, default: false)`
+  Enables extra TLS state logging.
+
+Optional defaults apply only when their keys are absent. If `verify`, `x25519mlkem768`, or `verbose` is present, it must be a JSON boolean. If `ech-sni-trick` is present, it must be a non-empty JSON string. Any other type is a startup error.
 
 Important current-implementation notes:
 

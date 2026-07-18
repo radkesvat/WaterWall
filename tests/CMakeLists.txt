@@ -236,6 +236,20 @@ add_waterwall_expected_failure_integration_test(
   reality_server_rejects_obsolete_max_frame_size
   "RealityServer: 'max-frame-size' is obsolete"
 )
+add_test(
+  NAME waterwall.reality_config_startup
+  COMMAND
+    "${PYTHON3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/reality_config_validation_test.py"
+    "$<TARGET_FILE:Waterwall>"
+)
+set_tests_properties(
+  waterwall.reality_config_startup
+  PROPERTIES
+    TIMEOUT 240
+    LABELS "integration;tunnels;reality;tlsclient;configuration;negative"
+    RESOURCE_LOCK waterwall_reality_configuration
+)
 add_waterwall_integration_test(waterwall.connection_fisher_roundtrip connection_fisher_roundtrip)
 add_waterwall_integration_test(waterwall.connection_fisher_encryption_roundtrip connection_fisher_encryption_roundtrip)
 add_waterwall_integration_test(waterwall.sniffrouter_non_http_tcp_loopback sniffrouter_non_http_tcp_loopback)

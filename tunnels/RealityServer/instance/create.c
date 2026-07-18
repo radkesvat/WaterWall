@@ -25,115 +25,101 @@ static void configureTunnelCallbacks(tunnel_t *t)
     t->onDestroy = &realityserverTunnelDestroy;
 }
 
-static uint32_t parseAlgorithmFromSettings(const cJSON *settings)
+static bool parseAlgorithmFromSettings(const cJSON *settings, uint32_t *algorithm)
 {
-    char    *algorithm = NULL;
-    uint32_t result    = kRealityServerAlgorithmChaCha20Poly1305;
-
-    if (! getStringFromJsonObject(&algorithm, settings, "algorithm"))
+    const char  *setting_name = "algorithm";
+    const cJSON *item         = cJSON_GetObjectItemCaseSensitive(settings, setting_name);
+    if (item == NULL)
     {
-        getStringFromJsonObject(&algorithm, settings, "method");
+        setting_name = "method";
+        item         = cJSON_GetObjectItemCaseSensitive(settings, setting_name);
     }
 
-    if (algorithm == NULL)
+    if (item == NULL)
     {
-        return result;
+        *algorithm = kRealityServerAlgorithmChaCha20Poly1305;
+        return true;
     }
 
-    stringLowerCase(algorithm);
-
-    if (stringCompare(algorithm, "chacha20poly1305") == 0 || stringCompare(algorithm, "chacha20-poly1305") == 0)
+    if (! cJSON_IsString(item) || item->valuestring == NULL || item->valuestring[0] == '\0')
     {
-        result = kRealityServerAlgorithmChaCha20Poly1305;
-    }
-    else if (stringCompare(algorithm, "aes256gcm") == 0 || stringCompare(algorithm, "aes-256-gcm") == 0 ||
-             stringCompare(algorithm, "aes-gcm") == 0)
-    {
-        result = kRealityServerAlgorithmAes256Gcm;
-    }
-    else
-    {
-        result = 0;
+        LOGF("RealityServer: '%s' must be a supported non-empty string", setting_name);
+        return false;
     }
 
-    memoryFree(algorithm);
-    return result;
+    if (stricmp(item->valuestring, "chacha20poly1305") == 0 ||
+        stricmp(item->valuestring, "chacha20-poly1305") == 0)
+    {
+        *algorithm = kRealityServerAlgorithmChaCha20Poly1305;
+        return true;
+    }
+    if (stricmp(item->valuestring, "aes256gcm") == 0 || stricmp(item->valuestring, "aes-256-gcm") == 0 ||
+        stricmp(item->valuestring, "aes-gcm") == 0)
+    {
+        *algorithm = kRealityServerAlgorithmAes256Gcm;
+        return true;
+    }
+
+    LOGF("RealityServer: '%s' is unsupported. Use chacha20-poly1305 or aes-gcm", setting_name);
+    return false;
 }
 
-static uint8_t parseTls12GcmNoncePolicy(const cJSON *settings)
+static bool parseTls12GcmNoncePolicy(const cJSON *settings, uint8_t *policy)
 {
-    char   *value  = NULL;
-    uint8_t result = kRealityServerGcmNoncePolicyAuto;
-
-    if (! getStringFromJsonObject(&value, settings, "tls12-gcm-server-nonce-policy"))
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, "tls12-gcm-server-nonce-policy");
+    if (item == NULL)
     {
-        return result;
+        *policy = kRealityServerGcmNoncePolicyAuto;
+        return true;
     }
 
-    stringLowerCase(value);
-    if (stringCompare(value, "auto") == 0)
+    if (! cJSON_IsString(item) || item->valuestring == NULL || item->valuestring[0] == '\0')
     {
-        result = kRealityServerGcmNoncePolicyAuto;
-    }
-    else if (stringCompare(value, "sequence") == 0)
-    {
-        result = kRealityServerGcmNoncePolicySequence;
-    }
-    else if (stringCompare(value, "counter") == 0)
-    {
-        result = kRealityServerGcmNoncePolicyCounter;
-    }
-    else if (stringCompare(value, "random") == 0)
-    {
-        result = kRealityServerGcmNoncePolicyRandom;
-    }
-    else
-    {
-        result = 0;
+        LOGF("RealityServer: 'tls12-gcm-server-nonce-policy' must be a non-empty string: auto, sequence, counter, or random");
+        return false;
     }
 
-    memoryFree(value);
-    return result;
+    if (stricmp(item->valuestring, "auto") == 0)
+    {
+        *policy = kRealityServerGcmNoncePolicyAuto;
+        return true;
+    }
+    if (stricmp(item->valuestring, "sequence") == 0)
+    {
+        *policy = kRealityServerGcmNoncePolicySequence;
+        return true;
+    }
+    if (stricmp(item->valuestring, "counter") == 0)
+    {
+        *policy = kRealityServerGcmNoncePolicyCounter;
+        return true;
+    }
+    if (stricmp(item->valuestring, "random") == 0)
+    {
+        *policy = kRealityServerGcmNoncePolicyRandom;
+        return true;
+    }
+
+    LOGF("RealityServer: 'tls12-gcm-server-nonce-policy' must be auto, sequence, counter, or random");
+    return false;
 }
 
-static bool deriveKeyFromPassword(const char *password, const char *salt, uint32_t iterations, uint8_t out_key[32])
+static bool parseIntegerItem(const cJSON *item, uint32_t default_value, uint32_t minimum, uint32_t maximum,
+                             uint32_t *value)
 {
-    size_t password_len = stringLength(password);
-    size_t salt_len     = stringLength(salt);
+    if (item == NULL)
+    {
+        *value = default_value;
+        return true;
+    }
 
-    if (password_len == 0)
+    if (! cJSON_IsNumber(item) || item->valuedouble != (double) item->valueint ||
+        item->valuedouble < minimum || item->valuedouble > maximum)
     {
         return false;
     }
 
-    if (iterations == 0)
-    {
-        iterations = 1;
-    }
-
-    if (-1 ==
-        blake2s(out_key, 32, (const unsigned char *) salt, salt_len, (const unsigned char *) password, password_len))
-    {
-        return false;
-    }
-
-    for (uint32_t i = 1; i < iterations; ++i)
-    {
-        uint8_t  iter_block[36] = {0};
-        uint32_t iter_be        = htobe32(i);
-
-        memoryCopy(iter_block, out_key, 32);
-        memoryCopy(iter_block + 32, &iter_be, sizeof(iter_be));
-
-        if (-1 == blake2s(out_key, 32, (const unsigned char *) password, password_len, iter_block, sizeof(iter_block)))
-        {
-            memoryZero(iter_block, sizeof(iter_block));
-            return false;
-        }
-
-        memoryZero(iter_block, sizeof(iter_block));
-    }
-
+    *value = (uint32_t) item->valueint;
     return true;
 }
 
@@ -143,8 +129,6 @@ static bool realityserverTunnelstateInitialize(realityserver_tstate_t *ts, node_
     char        *password          = NULL;
     char        *salt              = NULL;
     char        *destination_name  = NULL;
-    int          kdf_iterations    = kRealityServerDefaultKdfIterations;
-    int          sniffing_attempts = kRealityServerDefaultSniffingAttempts;
     bool         result            = false;
 
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
@@ -167,23 +151,21 @@ static bool realityserverTunnelstateInitialize(realityserver_tstate_t *ts, node_
         goto cleanup;
     }
 
-    ts->algorithm = parseAlgorithmFromSettings(settings);
-    if (ts->algorithm != kRealityServerAlgorithmChaCha20Poly1305 && ts->algorithm != kRealityServerAlgorithmAes256Gcm)
+    if (! parseAlgorithmFromSettings(settings, &ts->algorithm))
     {
-        LOGF("RealityServer: 'algorithm'/'method' is unsupported. Use chacha20-poly1305 or aes-gcm");
         goto cleanup;
     }
 
-    ts->tls12_gcm_server_nonce_policy = parseTls12GcmNoncePolicy(settings);
-    if (ts->tls12_gcm_server_nonce_policy == 0)
+    if (! parseTls12GcmNoncePolicy(settings, &ts->tls12_gcm_server_nonce_policy))
     {
-        LOGF("RealityServer: 'tls12-gcm-server-nonce-policy' must be auto, sequence, counter, or random");
         goto cleanup;
     }
 
-    if (! getStringFromJsonObject(&password, settings, "password") || stringLength(password) == 0)
+    if (! getStringFromJsonObject(&password, settings, "password") ||
+        stringLength(password) < kRealityV2MinCredentialByteLength ||
+        stringLength(password) > kRealityV2MaxPasswordByteLength)
     {
-        LOGF("RealityServer: 'password' must be a non-empty string");
+        LOGF("RealityServer: 'password' must contain 1..32 bytes");
         goto cleanup;
     }
 
@@ -200,22 +182,41 @@ static bool realityserverTunnelstateInitialize(realityserver_tstate_t *ts, node_
         goto cleanup;
     }
 
-    getStringFromJsonObjectOrDefault(&salt, settings, "salt", "waterwall-reality");
-
-    getIntFromJsonObject(&kdf_iterations, settings, "kdf-iterations");
-    if (kdf_iterations <= 0 || kdf_iterations > 1000000)
+    const cJSON *salt_item = cJSON_GetObjectItemCaseSensitive(settings, "salt");
+    if (salt_item == NULL)
     {
-        LOGF("RealityServer: 'kdf-iterations' must be in range [1, 1000000]");
+        salt = stringDuplicate("waterwall-reality");
+    }
+    else if (! getStringFromJsonObject(&salt, settings, "salt") ||
+             stringLength(salt) < kRealityV2MinCredentialByteLength ||
+             stringLength(salt) > kRealityV2MaxSaltByteLength)
+    {
+        LOGF("RealityServer: 'salt' must contain 1..32 bytes");
         goto cleanup;
     }
 
-    if (! getIntFromJsonObject(&sniffing_attempts, settings, "sniffing-attempts"))
+    const cJSON *kdf_item = cJSON_GetObjectItemCaseSensitive(settings, "kdf-iterations");
+    if (! parseIntegerItem(kdf_item,
+                           kRealityServerDefaultKdfIterations,
+                           kRealityV2MinKdfIterations,
+                           kRealityV2MaxKdfIterations,
+                           &ts->kdf_iterations))
     {
-        getIntFromJsonObject(&sniffing_attempts, settings, "sniffing-counter");
+        LOGF("RealityServer: 'kdf-iterations' must be an integer in range [1, 1000000]");
+        goto cleanup;
     }
-    if (sniffing_attempts <= 0 || sniffing_attempts > 1024)
+
+    const char  *sniffing_name = "sniffing-attempts";
+    const cJSON *sniffing_item = cJSON_GetObjectItemCaseSensitive(settings, sniffing_name);
+    if (sniffing_item == NULL)
     {
-        LOGF("RealityServer: 'sniffing-attempts' must be in range [1, 1024]");
+        sniffing_name = "sniffing-counter";
+        sniffing_item = cJSON_GetObjectItemCaseSensitive(settings, sniffing_name);
+    }
+    if (! parseIntegerItem(sniffing_item, kRealityServerDefaultSniffingAttempts, 1, 1024,
+                           &ts->sniffing_attempts))
+    {
+        LOGF("RealityServer: '%s' must be an integer in range [1, 1024]", sniffing_name);
         goto cleanup;
     }
 
@@ -225,10 +226,7 @@ static bool realityserverTunnelstateInitialize(realityserver_tstate_t *ts, node_
         goto cleanup;
     }
 
-    ts->kdf_iterations    = (uint32_t) kdf_iterations;
-    ts->sniffing_attempts = (uint32_t) sniffing_attempts;
-
-    if (! deriveKeyFromPassword(password, salt, ts->kdf_iterations, ts->root_key))
+    if (! realityV2DeriveRootKey(password, salt, ts->kdf_iterations, ts->root_key))
     {
         LOGF("RealityServer: failed to derive key from password");
         goto cleanup;

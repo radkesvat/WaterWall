@@ -1,5 +1,5 @@
 <!--
-Documentation version: 113
+Documentation version: 114
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RealityClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -17,12 +17,16 @@ The configured `next` node is the transport to the Reality server. The client st
 
 - `sni` (string, required): passed to the internal `TlsClient`
 - `verify` (boolean, optional): passed to the internal `TlsClient`, default `true`
-- `ech-sni-trick` (string, optional): passed to the internal `TlsClient`
-- `x25519mlkem768` (boolean, optional): passed to the internal `TlsClient`
-- `password` (string, required): shared Reality secret
-- `algorithm` / `method` (string, optional): `chacha20-poly1305` (default) or `aes-gcm`
-- `salt` (string, optional): key derivation salt, default `waterwall-reality`
-- `kdf-iterations` (number, optional): key derivation rounds, default `12000`
+- `ech-sni-trick` (non-empty string, optional): passed to the internal `TlsClient`
+- `x25519mlkem768` (boolean, optional): passed to the internal `TlsClient`, default `true`
+- `verbose` (boolean, optional): passed to the internal `TlsClient`, default `false`
+- `password` (string, required): shared Reality secret, `1..32` UTF-8 bytes
+- `algorithm` (non-empty string, optional): `chacha20-poly1305` (default) or `aes-gcm`
+- `method` (non-empty string, optional): alias consulted only when `algorithm` is absent
+- `salt` (string, optional): explicitly configured values must contain `1..32` UTF-8 bytes; default `waterwall-reality`
+- `kdf-iterations` (integer, optional): key derivation rounds in `1..1000000`, default `12000`
+
+Defaults apply only when an optional key is absent. A present optional key with the wrong JSON type is a startup error. When both `algorithm` and `method` are present, `algorithm` wins, including when it is malformed; the alias does not rescue an invalid primary value.
 
 ## Behavior
 
