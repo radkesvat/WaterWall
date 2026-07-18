@@ -46,8 +46,8 @@ typedef struct tlsclient_lstate_s
 
 enum
 {
-    kTunnelStateSize = sizeof(tlsclient_tstate_t),
-    kLineStateSize   = sizeof(tlsclient_lstate_t)
+    kTlsClientTunnelStateSize = sizeof(tlsclient_tstate_t),
+    kTlsClientLineStateSize   = sizeof(tlsclient_lstate_t)
 };
 
 enum sslstatus

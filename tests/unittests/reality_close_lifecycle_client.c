@@ -12,36 +12,47 @@
  * peer.  Declare the prefixed entry points used by the fixture rather than
  * adding the private BoringSSL include tree to every RealityClient consumer.
  */
-extern const void *WW_BSSL_TLS_method(void);
-extern const void *WW_BSSL_TLS_server_method(void);
-extern void       *WW_BSSL_SSL_CTX_new(const void *method);
-extern void        WW_BSSL_SSL_CTX_free(void *ctx);
-extern int         WW_BSSL_SSL_CTX_set_min_proto_version(void *ctx, uint16_t version);
-extern int         WW_BSSL_SSL_CTX_set_max_proto_version(void *ctx, uint16_t version);
-extern int         WW_BSSL_SSL_CTX_set_num_tickets(void *ctx, size_t num_tickets);
-extern int         WW_BSSL_SSL_CTX_use_certificate_chain_file(void *ctx, const char *file);
-extern int         WW_BSSL_SSL_CTX_use_PrivateKey_file(void *ctx, const char *file, int type);
-extern int         WW_BSSL_SSL_CTX_check_private_key(const void *ctx);
-extern void       *WW_BSSL_SSL_new(void *ctx);
-extern void        WW_BSSL_SSL_free(void *ssl);
-extern void        WW_BSSL_SSL_set_bio(void *ssl, void *rbio, void *wbio);
-extern void        WW_BSSL_SSL_set_accept_state(void *ssl);
-extern int         WW_BSSL_SSL_do_handshake(void *ssl);
-extern int         WW_BSSL_SSL_is_init_finished(const void *ssl);
-extern int         WW_BSSL_SSL_write(void *ssl, const void *buf, int len);
-extern int         WW_BSSL_SSL_key_update(void *ssl, int request_type);
-extern int         WW_BSSL_SSL_set_max_send_fragment(void *ssl, size_t max_send_fragment);
-extern const void *WW_BSSL_BIO_s_mem(void);
-extern void       *WW_BSSL_BIO_new(const void *method);
-extern int         WW_BSSL_BIO_read(void *bio, void *buf, int len);
-extern int         WW_BSSL_BIO_write(void *bio, const void *buf, int len);
+struct bio_method_st;
+struct bio_st;
+struct ssl_ctx_st;
+struct ssl_method_st;
+struct ssl_st;
+struct tlsclient_lstate_s;
+
+extern const struct ssl_method_st *WW_BSSL_TLS_method(void);
+extern const struct ssl_method_st *WW_BSSL_TLS_server_method(void);
+extern struct ssl_ctx_st          *WW_BSSL_SSL_CTX_new(const struct ssl_method_st *method);
+extern void WW_BSSL_SSL_CTX_free(struct ssl_ctx_st *ctx);
+extern int  WW_BSSL_SSL_CTX_set_min_proto_version(struct ssl_ctx_st *ctx, uint16_t version);
+extern int  WW_BSSL_SSL_CTX_set_max_proto_version(struct ssl_ctx_st *ctx, uint16_t version);
+extern int  WW_BSSL_SSL_CTX_set_num_tickets(struct ssl_ctx_st *ctx, size_t num_tickets);
+extern int  WW_BSSL_SSL_CTX_use_certificate_chain_file(struct ssl_ctx_st *ctx, const char *file);
+extern int  WW_BSSL_SSL_CTX_use_PrivateKey_file(struct ssl_ctx_st *ctx, const char *file, int type);
+extern int  WW_BSSL_SSL_CTX_check_private_key(const struct ssl_ctx_st *ctx);
+extern struct ssl_st *WW_BSSL_SSL_new(struct ssl_ctx_st *ctx);
+extern void WW_BSSL_SSL_free(struct ssl_st *ssl);
+extern void WW_BSSL_SSL_set_bio(struct ssl_st *ssl, struct bio_st *rbio, struct bio_st *wbio);
+extern void WW_BSSL_SSL_set_accept_state(struct ssl_st *ssl);
+extern int  WW_BSSL_SSL_do_handshake(struct ssl_st *ssl);
+extern int  WW_BSSL_SSL_is_init_finished(const struct ssl_st *ssl);
+extern int  WW_BSSL_SSL_write(struct ssl_st *ssl, const void *buf, int len);
+extern int  WW_BSSL_SSL_key_update(struct ssl_st *ssl, int request_type);
+extern int  WW_BSSL_SSL_set_max_send_fragment(struct ssl_st *ssl, size_t max_send_fragment);
+extern const struct bio_method_st *WW_BSSL_BIO_s_mem(void);
+extern struct bio_st              *WW_BSSL_BIO_new(const struct bio_method_st *method);
+extern int WW_BSSL_BIO_read(struct bio_st *bio, void *buf, int len);
+extern int WW_BSSL_BIO_write(struct bio_st *bio, const void *buf, int len);
 
 /* These helpers are internal to TlsClient and intentionally absent from its
- * owner-facing interface.  Opaque declarations keep this test source isolated
- * from TlsClient's generic structure.h constants. */
-extern void tlsclientLinestateInitialize(void *ls, void *ssl_ctx, buffer_pool_t *pool);
-extern void tlsclientLinestateDestroy(void *ls);
-extern bool tlsclientConfigureSslForConnect(void *ssl, void *rbio, void *wbio,
+ * owner-facing interface. Opaque, type-compatible declarations keep this test
+ * source independent of TlsClient's private header while remaining unity-safe. */
+extern void tlsclientLinestateInitialize(struct tlsclient_lstate_s *ls,
+                                         struct ssl_ctx_st *ssl_ctx,
+                                         buffer_pool_t *pool);
+extern void tlsclientLinestateDestroy(struct tlsclient_lstate_s *ls);
+extern bool tlsclientConfigureSslForConnect(struct ssl_st *ssl,
+                                            struct bio_st *rbio,
+                                            struct bio_st *wbio,
                                             const char *sni,
                                             const uint8_t *ech_grease_override_payload,
                                             size_t ech_grease_override_payload_len);
@@ -664,7 +675,9 @@ static void clientFixtureEnableTls13TakeoverWithTickets(client_lifecycle_fixture
                   "client TLS fixture failed to configure TLS 1.3 credentials");
 
     client_tls_lstate_view_t *tls_ls = lineGetState(fixture->line, fixture->tls);
-    tlsclientLinestateInitialize(tls_ls, fixture->tls_client_ctx, fixture->pool);
+    tlsclientLinestateInitialize((struct tlsclient_lstate_s *) tls_ls,
+                                 fixture->tls_client_ctx,
+                                 fixture->pool);
     fixture->tls_state_initialized = true;
     requireClient(tlsclientConfigureSslForConnect(tls_ls->ssl,
                                                    tls_ls->rbio,

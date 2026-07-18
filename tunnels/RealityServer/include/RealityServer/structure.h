@@ -180,8 +180,8 @@ enum realityserver_tls_record_prefix_e
 
 enum
 {
-    kTunnelStateSize = sizeof(realityserver_tstate_t),
-    kLineStateSize   = sizeof(realityserver_lstate_t)
+    kRealityServerTunnelStateSize = sizeof(realityserver_tstate_t),
+    kRealityServerLineStateSize   = sizeof(realityserver_lstate_t)
 };
 
 WW_EXPORT void         realityserverTunnelDestroy(tunnel_t *t);
