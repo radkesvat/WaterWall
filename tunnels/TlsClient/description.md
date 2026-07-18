@@ -1,5 +1,5 @@
 <!--
-Documentation version: 108
+Documentation version: 109
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TlsClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -117,7 +117,7 @@ That arrangement lets:
 Important current-implementation notes:
 
 - a field named `alpn` exists in the source, but the active create path does not use a JSON ALPN value
-- internal users can enable handshake takeover mode, check TLS handshake completion, and deinitialize per-line TLS resources after the handshake without closing the underlying Waterwall line. In that mode `TlsClient` becomes a raw pass-through after takeover.
+- internal users can enable handshake takeover mode. TLS 1.2 may still release immediately after the handshake, while TLS 1.3 uses the phased drain API described below so post-handshake records are processed before the line becomes raw pass-through.
 
 ## Tunnel API
 
@@ -132,6 +132,19 @@ Important note:
 
 - the API follows the tunnel's `settings.x25519mlkem768` value
 - if that setting is disabled, the generated ClientHello is smaller but less Chrome-like
+
+### Internal handshake takeover API
+
+This path is used by internal owners such as `RealityClient`; it has no JSON setting:
+
+- `tlsclientTunnelEnableHandshakeTakeover()` enables record-bounded takeover input.
+- `tlsclientTunnelGetHandshakeBinding()` captures the negotiated binding while BoringSSL is retained.
+- `tlsclientTunnelDeinitAfterHandshake()` performs the TLS 1.2-only immediate release.
+- `tlsclientTunnelBeginTakeoverDrain()` starts TLS 1.3 external post-handshake dispatch and returns accumulated raw bytes.
+- `tlsclientTunnelConsumePostHandshakeRecord()` consumes one complete TLS 1.3 record and flushes generated protocol output.
+- `tlsclientTunnelCompleteTakeover()` releases retained TLS state and enters raw pass-through.
+
+TLS 1.3 callers must not use the immediate TLS 1.2 release API.
 
 ## Detailed Behavior
 
@@ -196,6 +209,13 @@ The tunnel:
 - reads decrypted application bytes with `SSL_read()`
 - forwards those cleartext bytes downstream toward the previous tunnel
 
+Handshake-takeover mode changes only this internal path. It accumulates and validates complete TLS records, feeds one
+record at a time to `SSL_connect()`, and stops at the exact record that completes the handshake. It verifies that neither
+the read BIO nor BoringSSL's internal TLS read buffer owns later ciphertext. For TLS 1.3, the owner can then retain the
+SSL/BIO state, submit complete post-handshake records one at a time, discard any cover application plaintext, and flush
+protocol output generated for messages such as `KeyUpdate`. Only the final completion call releases BoringSSL and enables
+raw pass-through. Ordinary `TlsClient` lines continue using the existing streaming `SSL_read()`/`SSL_write()` path.
+
 When the TLS peer sends `close_notify` or a fatal TLS error occurs, the tunnel destroys its line state and closes both Waterwall directions immediately.
 
 ### Close and shutdown policy
@@ -213,7 +233,9 @@ The observable policy is:
 - downstream raw transport `Finish`: free TLS state and forward `Finish` only to the previous node
 - peer `close_notify`: consume it, send no client `close_notify` response, and close both directions immediately
 - fatal TLS, certificate, record, `SSL_write()`, or BIO failure: close every initialized direction immediately
-- handshake takeover: release TLS state without closing the underlying line, then continue as raw passthrough
+- TLS 1.2 handshake takeover: release TLS state without closing the underlying line, then continue as raw pass-through
+- TLS 1.3 handshake takeover: retain TLS state during authenticated handoff, process complete post-handshake records,
+  then release it only when the owner completes takeover
 
 There is no JSON setting for this policy. Peers that require a full TLS shutdown handshake may report the resulting EOF as
 a truncated TLS shutdown; that is intentional for this client tunnel.
