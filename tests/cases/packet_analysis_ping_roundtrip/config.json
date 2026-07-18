@@ -5,7 +5,7 @@
       "name": "sender",
       "type": "PacketSender",
       "settings": {
-        "source-ip4-range": "198.51.100.0/31",
+        "source-ipv4-range": "198.51.100.0/31",
         "dest-ipv4": "203.0.113.10",
         "protocol-number": "ICMP",
         "duration-ms": 100,
@@ -34,7 +34,7 @@
       "name": "receiver",
       "type": "PacketReceiver",
       "settings": {
-        "source-ip4-range": "192.0.2.30/32",
+        "source-ipv4-range": "192.0.2.30/32",
         "expected-packets-per-ip": 6,
         "report-after-ms": 700,
         "output-file": "packet-receiver-report.txt"

@@ -15,7 +15,7 @@ per-IP count, and writes a file report with loss and a text histogram.
   "name": "packet-receiver",
   "type": "PacketReceiver",
   "settings": {
-    "source-ip4-range": [
+    "source-ipv4-range": [
       "8.8.8.0/24",
       "1.1.1.0/24"
     ],
@@ -28,7 +28,7 @@ per-IP count, and writes a file report with loss and a text histogram.
 
 ## Settings
 
-- `source-ip4-range`: required IPv4 CIDR range or list of ranges to track
+- `source-ipv4-range`: required IPv4 CIDR range or list of ranges to track
 - `expected-packets-per-ip`: required positive count expected for each source IP
 - `report-after-ms`: optional positive report delay, default `1000`; set it longer than the sender duration plus any expected tunnel delay/reordering window
 - `output-file`: report path, default `packet-receiver-report.txt`

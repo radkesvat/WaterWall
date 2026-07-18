@@ -5,7 +5,7 @@
       "name": "receiver",
       "type": "PacketReceiver",
       "settings": {
-        "source-ip4-range": "198.51.101.10/32",
+        "source-ipv4-range": "198.51.101.10/32",
         "expected-packets-per-ip": 22,
         "report-after-ms": 700,
         "output-file": "packet-receiver-report.txt"

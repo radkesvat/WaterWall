@@ -25,7 +25,7 @@ packet lines during the configured duration.
   "name": "packet-sender",
   "type": "PacketSender",
   "settings": {
-    "source-ip4-range": [
+    "source-ipv4-range": [
       "8.8.8.0/24",
       "1.1.1.0/24"
     ],
@@ -40,7 +40,7 @@ packet lines during the configured duration.
 
 ## Settings
 
-- `source-ip4-range`: required IPv4 CIDR range or list of ranges
+- `source-ipv4-range`: required IPv4 CIDR range or list of ranges
 - `packets-per-ip`: optional positive integer, default `1`
 - `dest-ipv4`: required destination IPv4 address
 - `protocol-number`: `TCP`, `UDP`, `ICMP`, or `ALL`

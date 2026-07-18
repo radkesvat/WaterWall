@@ -5,7 +5,7 @@
       "name": "packet-sender",
       "type": "PacketSender",
       "settings": {
-        "source-ip4-range": "198.51.110.0/29",
+        "source-ipv4-range": "198.51.110.0/29",
         "dest-ipv4": "203.0.113.30",
         "protocol-number": "UDP",
         "src-port": 25900,
@@ -36,7 +36,7 @@
       "name": "packet-receiver",
       "type": "PacketReceiver",
       "settings": {
-        "source-ip4-range": "198.51.110.0/29",
+        "source-ipv4-range": "198.51.110.0/29",
         "expected-packets-per-ip": 8,
         "report-after-ms": 1200,
         "output-file": "packet-receiver-report.txt"
