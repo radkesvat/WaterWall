@@ -1,5 +1,5 @@
 <!--
-Documentation version: 114
+Documentation version: 115
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RealityClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -50,6 +50,14 @@ Alert records match BoringSSL's public shutdown shapes: TLS 1.3 uses outer appli
 The three TLS 1.3 handoff controls also use outer application data and encrypted inner application type. Their versioned plaintext contains the AAD-matching control code plus authenticated CSPRNG padding selected by the shared wire-length policy; padding is never exposed to the application. The TLS body length is sampled uniformly from `22..1172` bytes (`3..1153` padding bytes), the range observed across the covered BoringSSL post-handshake paths. Control kind, session, direction, TLS version, header, and strict sequence are authenticated, so request, ACK, confirmation, application, and alert records cannot substitute for one another. There is no control-length JSON setting.
 
 Visible prefixes are authenticated camouflage and are never used as Reality AEAD nonces. Reality nonces still come from the directional secret IV and independent Reality replay sequence. The node advertises the worst-case `21` bytes of left padding (`5 + 16`).
+
+## Security Model And Limitations
+
+The reviewed camouflage threat model is a non-terminating on-path observer. It may capture and reassemble the full bidirectional stream; inspect TLS record types, versions, lengths, directions, ordering, timing, visible nonces/IVs, and close behavior; manipulate bytes; and initiate probes while knowing the implementation. It is assumed not to know the Reality password or genuine TLS traffic secrets, not to terminate TLS, and not to control or collude with the configured cover destination. It also cannot alter a completed TLS handshake without failing TLS Finished verification.
+
+Per-session Reality material depends on the fresh client and server randoms from the genuine TLS handshake. There is no independent Reality server challenge dedicated to session freshness. Cross-connection replay protection therefore assumes that the observer cannot predict or control both handshake randoms. A malicious or colluding cover destination that deliberately helps reproduce a previously observed handshake binding is outside this model; defending that stronger model would require an independently authenticated server challenge.
+
+Reality camouflage reproduces selected public TLS record properties, including suite-specific record shapes, lengths, explicit nonces/IVs, controls, alerts, and close behavior. After takeover, however, the records contain Reality-AEAD ciphertext rather than genuine ciphertext under the cover connection's TLS traffic keys. Reality does not claim to survive TLS termination or to reproduce every Chrome timing distribution, write size, burst pattern, or higher-level application semantic. A TLS-terminating observer can test the real traffic keys against later records and is outside the reviewed camouflage boundary.
 
 ## Compatibility
 

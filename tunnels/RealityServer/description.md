@@ -1,5 +1,5 @@
 <!--
-Documentation version: 116
+Documentation version: 117
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RealityServer.mdx, and both files must keep the same documentation version.
 -->
 
@@ -45,6 +45,14 @@ TLS 1.3 `HANDOFF_REQUEST`, `HANDOFF_ACK`, and `HANDOFF_CONFIRM` use the same dir
 For downstream TLS 1.2 GCM, `auto` freezes `sequence` when observed cover nonces match record sequences, otherwise `counter` when at least two samples increment, and otherwise `random`. `sequence` emits the tracked next TLS record sequence, `counter` increments the last observed explicit nonce, and `random` emits fresh CSPRNG bytes. A manually selected `counter` requires an observed nonce. With one non-sequence sample, `auto` cannot distinguish random output from an arbitrary fixed-prefix counter; configure an explicit policy when the cover server's convention is known.
 
 The visible TLS facade counter is separate from the secret Reality replay counter and is never used as the Reality AEAD nonce. Both nodes advertise `21` bytes of left padding for the largest CBC prefix. There is no fallback to the earlier unpublished 12-byte-prefix application layout or the legacy static-key format, and the obsolete `max-frame-size` setting is rejected at startup.
+
+## Security Model And Limitations
+
+The reviewed camouflage threat model is a non-terminating on-path observer. It may capture and reassemble the full bidirectional stream; inspect TLS record types, versions, lengths, directions, ordering, timing, visible nonces/IVs, and close behavior; manipulate bytes; and initiate probes while knowing the implementation. It is assumed not to know the Reality password or genuine TLS traffic secrets, not to terminate TLS, and not to control or collude with the configured cover destination. It also cannot alter a completed TLS handshake without failing TLS Finished verification.
+
+Per-session Reality material depends on the fresh client and server randoms from the genuine TLS handshake. There is no independent Reality server challenge dedicated to session freshness. Cross-connection replay protection therefore assumes that the observer cannot predict or control both handshake randoms. A malicious or colluding cover destination that deliberately helps reproduce a previously observed handshake binding is outside this model; defending that stronger model would require an independently authenticated server challenge.
+
+Reality camouflage reproduces selected public TLS record properties, including suite-specific record shapes, lengths, explicit nonces/IVs, controls, alerts, and close behavior. After takeover, however, the records contain Reality-AEAD ciphertext rather than genuine ciphertext under the cover connection's TLS traffic keys. Reality does not claim to survive TLS termination or to reproduce every Chrome timing distribution, write size, burst pattern, or higher-level application semantic. A TLS-terminating observer can test the real traffic keys against later records and is outside the reviewed camouflage boundary.
 
 ## Compatibility
 
