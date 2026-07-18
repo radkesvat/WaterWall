@@ -6,6 +6,8 @@
 enum realityserver_mode_e
 {
     kRealityServerModePending,
+    kRealityServerModeHandoffAwaitBoundary,
+    kRealityServerModeHandoffAwaitConfirm,
     kRealityServerModeAuthorized,
     kRealityServerModeVisitor,
 };
@@ -92,6 +94,19 @@ typedef struct realityserver_tls12_record_tracker_s
     bool     frozen;
 } realityserver_tls12_record_tracker_t;
 
+/*
+ * Tracks only the public TLS record envelope on the cover destination's
+ * downstream stream.  It deliberately does not attempt to decrypt or
+ * interpret protected TLS 1.3 content.
+ */
+typedef struct realityserver_tls_record_boundary_tracker_s
+{
+    uint8_t  record_header[kRealityV2TlsRecordHeaderSize];
+    uint32_t record_remaining;
+    uint8_t  record_header_length;
+    bool     failed;
+} realityserver_tls_record_boundary_tracker_t;
+
 typedef struct realityserver_lstate_s
 {
     buffer_stream_t read_stream;
@@ -101,6 +116,7 @@ typedef struct realityserver_lstate_s
     realityserver_tls_capture_t tls_capture;
     realityserver_tls12_record_tracker_t client_record_tracker;
     realityserver_tls12_record_tracker_t server_record_tracker;
+    realityserver_tls_record_boundary_tracker_t destination_record_boundary;
     reality_v2_record_profile_t record_profile;
     uint8_t         session_id[kRealityV2SessionIdSize];
     uint8_t         c2s_key[kRealityV2KeySize];
@@ -113,6 +129,8 @@ typedef struct realityserver_lstate_s
     uint64_t        server_tls_sequence_base;
     uint64_t        server_gcm_counter_next;
     uint32_t        sniffing_attempts;
+    uint32_t        handoff_tail_records;
+    uint32_t        handoff_tail_bytes;
     uint8_t         mode;
     uint8_t         server_gcm_nonce_policy;
     bool            binding_ready;
@@ -120,7 +138,11 @@ typedef struct realityserver_lstate_s
     bool            protected_init_sent;
     bool            destination_init_sent;
     bool            destination_up_finished;
+    uint32_t        destination_downstream_forward_depth;
+    bool            destination_downstream_cutoff;
     bool            closing_destination_for_authorized;
+    bool            handoff_request_authenticated;
+    bool            handoff_ack_sent;
     bool            prev_est_sent;
     bool            prev_finished;
     bool            next_finished;
@@ -142,6 +164,9 @@ enum realityserver_frame_e
     kRealityServerMaxTlsRecordBody    = kRealityV2MaxTlsRecordBody,
     kRealityServerDefaultKdfIterations    = 12000,
     kRealityServerDefaultSniffingAttempts = 8,
+    kRealityServerMaxHandoffTailRecords   = 8,
+    kRealityServerMaxHandoffTailBytes =
+        kRealityServerMaxHandoffTailRecords * (kRealityV2TlsRecordHeaderSize + kRealityV2MaxTlsRecordBody),
 };
 
 enum
@@ -189,6 +214,13 @@ bool realityserverTls12RecordTrackerFeed(realityserver_tls12_record_tracker_t *t
                                          const uint8_t *data, size_t len);
 void realityserverTls12RecordTrackerFreeze(realityserver_tls12_record_tracker_t *tracker);
 void realityserverTls12RecordTrackerDestroy(realityserver_tls12_record_tracker_t *tracker);
+void realityserverTlsRecordBoundaryTrackerInitialize(realityserver_tls_record_boundary_tracker_t *tracker);
+void realityserverTlsRecordBoundaryTrackerDestroy(realityserver_tls_record_boundary_tracker_t *tracker);
+bool realityserverTlsRecordBoundaryTrackerIsAtBoundary(
+    const realityserver_tls_record_boundary_tracker_t *tracker);
+bool realityserverTlsRecordBoundaryTrackerFeed(realityserver_tls_record_boundary_tracker_t *tracker,
+                                               const uint8_t *data, size_t len,
+                                               bool stop_at_boundary, size_t *consumed);
 bool realityserverResolveGcmNoncePolicy(uint8_t configured_policy,
                                         const realityserver_tls12_record_tracker_t *server_tracker,
                                         uint8_t *resolved_policy, uint64_t *counter_next);
@@ -203,6 +235,7 @@ int  realityserverDecryptAead(uint32_t algorithm, unsigned char *dst, const unsi
 bool realityserverEncryptAndSendDownstream(tunnel_t *t, line_t *l, sbuf_t *buf);
 bool realityserverProcessUpstream(tunnel_t *t, line_t *l, sbuf_t *buf);
 bool realityserverObserveDownstreamHandshake(tunnel_t *t, line_t *l, const uint8_t *data, size_t len);
+bool realityserverSendHandoffAckAtBoundary(tunnel_t *t, line_t *l);
 void realityserverCloseLineBidirectional(tunnel_t *t, line_t *l);
 void realityserverFailAuthenticated(tunnel_t *t, line_t *l);
 void realityserverHandlePeerAlert(tunnel_t *t, line_t *l, uint8_t alert);

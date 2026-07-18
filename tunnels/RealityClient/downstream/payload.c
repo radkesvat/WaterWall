@@ -10,10 +10,22 @@ void realityclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (! ls->session_keys_ready)
+    if (ls->phase == kRealityClientPhaseTls13AwaitAck)
+    {
+        realityclientProcessHandoffDownstream(t, l, buf);
+        return;
+    }
+
+    if (ls->phase != kRealityClientPhaseRealityActive || ! ls->session_keys_ready)
     {
         lineReuseBuffer(l, buf);
         realityclientCloseLineBidirectional(t, l);
+        return;
+    }
+
+    if (ls->handoff_completion_in_progress)
+    {
+        bufferstreamPush(&ls->read_stream, buf);
         return;
     }
 

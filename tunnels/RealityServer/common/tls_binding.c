@@ -448,6 +448,100 @@ void realityserverTls12RecordTrackerInitialize(realityserver_tls12_record_tracke
     };
 }
 
+void realityserverTlsRecordBoundaryTrackerInitialize(realityserver_tls_record_boundary_tracker_t *tracker)
+{
+    assert(tracker != NULL);
+    *tracker = (realityserver_tls_record_boundary_tracker_t) {0};
+}
+
+void realityserverTlsRecordBoundaryTrackerDestroy(realityserver_tls_record_boundary_tracker_t *tracker)
+{
+    if (tracker != NULL)
+    {
+        memoryZero(tracker, sizeof(*tracker));
+    }
+}
+
+bool realityserverTlsRecordBoundaryTrackerIsAtBoundary(
+    const realityserver_tls_record_boundary_tracker_t *tracker)
+{
+    return tracker != NULL && ! tracker->failed && tracker->record_header_length == 0 &&
+           tracker->record_remaining == 0;
+}
+
+static bool realityserverTlsRecordBoundaryTrackerFail(
+    realityserver_tls_record_boundary_tracker_t *tracker, size_t offset, size_t *consumed)
+{
+    tracker->failed = true;
+    if (consumed != NULL)
+    {
+        *consumed = offset;
+    }
+    return false;
+}
+
+bool realityserverTlsRecordBoundaryTrackerFeed(realityserver_tls_record_boundary_tracker_t *tracker,
+                                               const uint8_t *data, size_t len,
+                                               bool stop_at_boundary, size_t *consumed)
+{
+    if (tracker == NULL || consumed == NULL || (data == NULL && len != 0) || tracker->failed)
+    {
+        return false;
+    }
+
+    size_t offset = 0;
+    *consumed     = 0;
+    while (offset < len)
+    {
+        if (tracker->record_header_length < kRealityV2TlsRecordHeaderSize)
+        {
+            size_t needed = kRealityV2TlsRecordHeaderSize - tracker->record_header_length;
+            size_t take   = min(needed, len - offset);
+            memoryCopy(tracker->record_header + tracker->record_header_length, data + offset, take);
+            tracker->record_header_length += (uint8_t) take;
+            offset += take;
+
+            if (tracker->record_header_length < kRealityV2TlsRecordHeaderSize)
+            {
+                break;
+            }
+
+            uint8_t type = tracker->record_header[0];
+            bool valid_type = type == kRealityServerTlsChangeCipherSpec ||
+                              type == kRealityServerTlsAlert ||
+                              type == kRealityServerTlsHandshake ||
+                              type == kRealityServerTlsApplicationData;
+            uint32_t body_len = ((uint32_t) tracker->record_header[3] << 8) |
+                                tracker->record_header[4];
+            if (! valid_type || tracker->record_header[1] != kRealityServerTlsVersionMajor ||
+                tracker->record_header[2] != kRealityServerTlsVersionMinor ||
+                body_len > kRealityV2MaxTlsRecordBody)
+            {
+                return realityserverTlsRecordBoundaryTrackerFail(tracker, offset, consumed);
+            }
+            tracker->record_remaining = body_len;
+        }
+
+        size_t take = min((size_t) tracker->record_remaining, len - offset);
+        tracker->record_remaining -= (uint32_t) take;
+        offset += take;
+        if (tracker->record_remaining != 0)
+        {
+            break;
+        }
+
+        tracker->record_header_length = 0;
+        memoryZero(tracker->record_header, sizeof(tracker->record_header));
+        if (stop_at_boundary)
+        {
+            break;
+        }
+    }
+
+    *consumed = offset;
+    return true;
+}
+
 bool realityserverTls12RecordTrackerSetProfile(realityserver_tls12_record_tracker_t *tracker,
                                                const reality_v2_record_profile_t *profile)
 {

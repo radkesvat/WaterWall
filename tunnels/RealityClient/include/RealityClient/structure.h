@@ -15,9 +15,18 @@ typedef struct realityclient_tstate_s
     tunnel_t *tls_tunnel;
 } realityclient_tstate_t;
 
+typedef enum realityclient_phase_e
+{
+    kRealityClientPhaseTlsHandshake = 0,
+    kRealityClientPhaseTls13AwaitAck,
+    kRealityClientPhaseRealityActive,
+    kRealityClientPhaseTerminal,
+} realityclient_phase_t;
+
 typedef struct realityclient_lstate_s
 {
     buffer_stream_t read_stream;
+    buffer_stream_t handoff_stream;
     buffer_queue_t  pending_up;
     uint8_t         session_id[kRealityV2SessionIdSize];
     uint8_t         c2s_key[kRealityV2KeySize];
@@ -30,8 +39,15 @@ typedef struct realityclient_lstate_s
     uint64_t        tls12_next_write_sequence;
     uint64_t        tls12_next_read_sequence;
     uint16_t        tls_version;
+    uint8_t         phase;
     bool            session_keys_ready;
     bool            tls12_sequences_valid;
+    bool            handoff_request_sent;
+    bool            handoff_ack_authenticated;
+    bool            handoff_confirm_sent;
+    bool            handoff_cover_consume_in_progress;
+    bool            handoff_completion_in_progress;
+    bool            downstream_est_sent;
     bool            prev_finished;
     bool            next_finished;
     bool            terminal_closing;
@@ -98,6 +114,9 @@ int  realityclientDecryptAead(uint32_t algorithm, unsigned char *dst, const unsi
                               const unsigned char *key);
 bool realityclientEncryptAndSend(tunnel_t *t, line_t *l, sbuf_t *buf);
 bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf);
+bool realityclientSendHandoffControl(tunnel_t *t, line_t *l, uint8_t record_kind);
+bool realityclientProcessHandoffDownstream(tunnel_t *t, line_t *l, sbuf_t *buf);
+bool realityclientFlushPendingUpstream(tunnel_t *t, line_t *l);
 void realityclientCloseLineBidirectional(tunnel_t *t, line_t *l);
 void realityclientFailAuthenticated(tunnel_t *t, line_t *l);
 void realityclientHandlePeerAlert(tunnel_t *t, line_t *l, uint8_t alert);

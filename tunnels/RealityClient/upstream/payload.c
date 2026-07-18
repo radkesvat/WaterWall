@@ -10,7 +10,7 @@ void realityclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (! ls->session_keys_ready)
+    if (ls->phase != kRealityClientPhaseRealityActive || ls->handoff_completion_in_progress)
     {
         bufferqueuePushBack(&ls->pending_up, buf);
         return;

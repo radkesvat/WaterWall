@@ -11,6 +11,7 @@ void realityserverLinestateInitialize(realityserver_lstate_t *ls, buffer_pool_t 
     realityserverTlsParserInitialize(&ls->server_hello_parser, kRealityServerTlsParserServerHello);
     realityserverTls12RecordTrackerInitialize(&ls->client_record_tracker);
     realityserverTls12RecordTrackerInitialize(&ls->server_record_tracker);
+    realityserverTlsRecordBoundaryTrackerInitialize(&ls->destination_record_boundary);
 }
 
 void realityserverLinestateDestroy(realityserver_lstate_t *ls)
@@ -21,5 +22,6 @@ void realityserverLinestateDestroy(realityserver_lstate_t *ls)
     realityserverTlsParserDestroy(&ls->server_hello_parser);
     realityserverTls12RecordTrackerDestroy(&ls->client_record_tracker);
     realityserverTls12RecordTrackerDestroy(&ls->server_record_tracker);
+    realityserverTlsRecordBoundaryTrackerDestroy(&ls->destination_record_boundary);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }
