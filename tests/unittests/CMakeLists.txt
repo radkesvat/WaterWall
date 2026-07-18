@@ -231,6 +231,23 @@ if(TARGET SniffRouter)
   add_waterwall_unit_test(waterwall.sniffrouter_classifier_unit sniffrouter_classifier_test "unit;tunnels;sniffrouter")
 endif()
 
+if(TARGET SniffRouter AND TARGET Router)
+  add_executable(router_chain_ownership_test router_chain_ownership_test.c)
+  target_include_directories(router_chain_ownership_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/SniffRouter/include
+    ${CMAKE_SOURCE_DIR}/tunnels/Router/include
+    ${CMAKE_SOURCE_DIR}/tunnels/Router
+  )
+  target_link_libraries(router_chain_ownership_test PRIVATE SniffRouter Router ReverseClient ww)
+  add_dependencies(waterwall_unit_tests router_chain_ownership_test)
+
+  add_waterwall_unit_test(
+    waterwall.router_chain_ownership_unit
+    router_chain_ownership_test
+    "unit;tunnels;router;sniffrouter;chain;ownership"
+  )
+endif()
+
 if(TARGET PacketsToStream)
   add_executable(packetstostream_parser_test packetstostream_parser_test.c)
   target_include_directories(packetstostream_parser_test PRIVATE
