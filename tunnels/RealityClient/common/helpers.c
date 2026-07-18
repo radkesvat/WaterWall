@@ -609,7 +609,7 @@ bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
         uint8_t *visible_prefix = frame + kRealityClientTlsHeaderSize;
         uint8_t *ciphertext     = visible_prefix + descriptor.visible_prefix_len;
 
-        reality_v2_record_descriptor_t application_descriptor;
+        reality_v2_record_descriptor_t application_descriptor = {0};
         bool ambiguous_tls13_kind =
             descriptor.tls_version == kRealityV2Tls13 &&
             descriptor.record_kind == kRealityV2RecordKindAlert &&
