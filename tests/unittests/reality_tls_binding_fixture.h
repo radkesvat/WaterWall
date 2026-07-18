@@ -18,10 +18,20 @@ typedef struct reality_tls_handshake_fixture_s
     uint8_t server_flight[kRealityTlsFixtureFlightCapacity];
     uint8_t client_close_flight[kRealityTlsFixtureFlightCapacity];
     uint8_t server_close_flight[kRealityTlsFixtureFlightCapacity];
+    uint8_t server_post_handshake_flight[kRealityTlsFixtureFlightCapacity];
+    uint8_t server_early_application_flight[kRealityTlsFixtureFlightCapacity];
+    uint8_t server_key_update_not_requested_flight[kRealityTlsFixtureFlightCapacity];
+    uint8_t server_key_update_requested_flight[kRealityTlsFixtureFlightCapacity];
+    uint8_t client_key_update_response_flight[kRealityTlsFixtureFlightCapacity];
     size_t  client_flight_len;
     size_t  server_flight_len;
     size_t  client_close_flight_len;
     size_t  server_close_flight_len;
+    size_t  server_post_handshake_flight_len;
+    size_t  server_early_application_flight_len;
+    size_t  server_key_update_not_requested_flight_len;
+    size_t  server_key_update_requested_flight_len;
+    size_t  client_key_update_response_flight_len;
     bool    session_reused;
 } reality_tls_handshake_fixture_t;
 

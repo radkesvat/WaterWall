@@ -107,6 +107,35 @@ Practical rule:
 - `reality_v2_roundtrip`
   Verifies bidirectional Reality v2 operation through a local TLS 1.3 cover destination with automatic native
   `16384`-byte plaintext fragmentation, without depending on an external site.
+- `reality_v2_tls13_post_handshake`
+  Runs Reality through a controllable Python/OpenSSL TLS 1.3 cover server configured to emit exactly two session tickets.
+  A record-aware relay requires both protected post-handshake ticket records after client Finished, while fixture counters
+  require one completed cover handshake and one protected-chain request/response. This verifies that an emitted ticket
+  flight does not break authenticated handoff; the paired BoringSSL unit test verifies that TlsClient consumes the records.
+  A fixture that silently omits the tickets fails the case.
+- `reality_v2_tls13_handoff`
+  Forces TLS 1.3 with session tickets disabled and verifies an immediate bidirectional tester workload survives the
+  REQUEST/ACK/CONFIRM transition. CONFIRM opens the protected chain and the original payload is delivered exactly once
+  without relying on a post-handshake ticket.
+- `reality_v2_tls13_wire_handoff`
+  Repeats twelve authenticated handoffs through a keyless, record-aware relay. It checks that REQUEST, ACK, and CONFIRM
+  occupy plausible TLS 1.3 application records with reviewed body lengths in `22..1172`, that the 36 sampled controls do
+  not collapse to one public length, and that no handoff or application marker is visible. It also requires genuine
+  protected cover-handshake records before ACK, REQUEST-before-ACK ordering, CONFIRM-before-application ordering, the
+  negotiated TLS 1.3 cipher, and exactly one protected request/response per sample. The probe submits application bytes
+  immediately; event ordering on the public stream proves they remain queued until after CONFIRM without classifying the
+  randomly padded controls by public length. The post-handshake case likewise exercises RealityClient's pre-ACK queue.
+- `reality_v2_tls13_transition_matrix`
+  Runs a deterministic local TLS 1.3 endpoint behind separate destination- and public-wire relays. It covers zero, one,
+  and two immediate tickets; a ticket released after REQUEST; byte-split and partial-boundary tickets; a ticket coalesced
+  with ACK; cover application data and close_notify before ACK; segmented cover and control records; and independently
+  corrupted REQUEST, ACK, and CONFIRM. It also substitutes a prior connection's sequence-zero REQUEST into a fresh
+  session and requires session binding to reject it. Each success requires an exact protected request/response, authenticated event
+  ordering (`REQUEST < ACK < CONFIRM < application`), complete-record destination cutoff, and fixture evidence that the
+  selected ticket/segmentation/coalescing action actually happened. Expected pre-confirm failures must not open the
+  protected chain. The probe prints per-scenario transition timing and the sampled control-body-length histogram. Python's
+  `ssl` API cannot initiate TLS 1.3 KeyUpdate, so both KeyUpdate modes remain deterministic real-BoringSSL unit coverage;
+  cryptographic replay/reorder and inner control-identity checks likewise remain in the shared/control unit matrix.
 - `reality_v2_tls12_roundtrip`
   Forces `ECDHE-RSA-AES128-GCM-SHA256` and verifies the multi-record TLS 1.2 AES-GCM profile with the `auto`
   server-nonce policy, including takeover after the real protected epoch.

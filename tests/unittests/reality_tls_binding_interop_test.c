@@ -36,6 +36,15 @@ static const uint8_t *requireLastRecord(const uint8_t *flight, size_t flight_len
     return last_record;
 }
 
+static void requireSingleProtectedRecordBody(const uint8_t *flight, size_t flight_len,
+                                             uint16_t expected_body_len, const char *message)
+{
+    require(flight_len == (size_t) expected_body_len + kRealityV2TlsRecordHeaderSize &&
+                flight[0] == 0x17 && flight[1] == 0x03 && flight[2] == 0x03 &&
+                (((uint16_t) flight[3] << 8) | flight[4]) == expected_body_len,
+            message);
+}
+
 static const uint8_t *requireCloseFlightShape(const uint8_t *flight, size_t flight_len,
                                               uint16_t version, uint8_t profile, const char *message)
 {
@@ -194,6 +203,35 @@ static void requireParserMatchesAccessor(uint16_t version, const char *cipher, u
     }
     else
     {
+        uint16_t protected_handshake_body_len = 0;
+        const uint8_t *protected_handshake =
+            requireLastRecord(fixture->server_flight,
+                              fixture->server_flight_len,
+                              &protected_handshake_body_len,
+                              "failed to locate real TLS 1.3 protected handshake record");
+        require(protected_handshake[0] == 0x17 &&
+                    protected_handshake_body_len == kRealityV2ControlMaxTlsRecordBody,
+                "control padding maximum no longer matches the real protected-handshake evidence");
+        requireSingleProtectedRecordBody(fixture->server_post_handshake_flight,
+                                         fixture->server_post_handshake_flight_len,
+                                         381,
+                                         "real two-ticket flight changed public record length");
+        requireSingleProtectedRecordBody(fixture->server_early_application_flight,
+                                         fixture->server_early_application_flight_len,
+                                         55,
+                                         "real early application flight changed public record length");
+        requireSingleProtectedRecordBody(fixture->server_key_update_not_requested_flight,
+                                         fixture->server_key_update_not_requested_flight_len,
+                                         kRealityV2ControlMinTlsRecordBody,
+                                         "real unrequested KeyUpdate changed public record length");
+        requireSingleProtectedRecordBody(fixture->server_key_update_requested_flight,
+                                         fixture->server_key_update_requested_flight_len,
+                                         kRealityV2ControlMinTlsRecordBody,
+                                         "real requested KeyUpdate changed public record length");
+        requireSingleProtectedRecordBody(fixture->client_key_update_response_flight,
+                                         fixture->client_key_update_response_flight_len,
+                                         kRealityV2ControlMinTlsRecordBody,
+                                         "real KeyUpdate response changed public record length");
         require(! fixture->accessor_binding.tls12_sequences_valid,
                 "TlsClient accessor must not call TLS-only sequence accessors for TLS 1.3");
     }

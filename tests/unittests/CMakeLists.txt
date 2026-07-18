@@ -107,7 +107,11 @@ if(TARGET TlsClient)
     ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
     ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
   )
-  target_compile_definitions(tlsclient_close_lifecycle_test PRIVATE BORINGSSL_PREFIX=WW_BSSL)
+  target_compile_definitions(tlsclient_close_lifecycle_test PRIVATE
+    BORINGSSL_PREFIX=WW_BSSL
+    REALITY_TEST_CERT_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.crt"
+    REALITY_TEST_KEY_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.key"
+  )
   target_link_libraries(tlsclient_close_lifecycle_test PRIVATE TlsClient ww ssl crypto)
   add_dependencies(waterwall_unit_tests tlsclient_close_lifecycle_test)
 

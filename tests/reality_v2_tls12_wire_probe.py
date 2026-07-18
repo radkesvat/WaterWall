@@ -147,6 +147,10 @@ def start_recording_relay():
         },
         "direction_events": {index: [] for index in range(7)},
         "immediate_application": [],
+        # TLS 1.3 controls intentionally overlap application public lengths.
+        # The driver arms classification only after CONFIRM opens protected-next
+        # and before it submits the scenario's first application byte.
+        "handoff_ready": {index: threading.Event() for index in range(7)},
     }
     captured = threading.Event()
     reflected = threading.Event()
@@ -220,7 +224,10 @@ def start_recording_relay():
                         send_server(record)
                         continue
 
-                    if not is_reality_application(record):
+                    reality_application = is_reality_application(record)
+                    if PROFILE == "tls13" and not state["handoff_ready"][connection_index].is_set():
+                        reality_application = False
+                    if not reality_application:
                         send_server(record)
                         continue
 
@@ -289,17 +296,20 @@ def start_recording_relay():
                             server_fatal.set()
 
                     observe_immediate_handshake("s2c", record)
-                    if connection_index == 0 and is_reality_application(record):
+                    reality_application = is_reality_application(record)
+                    if PROFILE == "tls13" and not state["handoff_ready"][connection_index].is_set():
+                        reality_application = False
+                    if connection_index == 0 and reality_application:
                         state["s2c_application"].append(record)
                         application_count += 1
-                    elif connection_index == 1 and is_reality_application(record):
+                    elif connection_index == 1 and reality_application:
                         state["server_normal_s2c_application"].append(record)
-                    elif connection_index == 2 and is_reality_application(record):
+                    elif connection_index == 2 and reality_application:
                         application_count += 1
                         if application_count == 1:
                             send_server(record)
                             reflected.set()
-                    elif connection_index == 3 and is_reality_application(record):
+                    elif connection_index == 3 and reality_application:
                         if handshake_state["first_c2s_application"] is None:
                             break
                         if not corruption_sent:
@@ -308,7 +318,7 @@ def start_recording_relay():
                             mirrored.set()
                         continue
                     elif (connection_index == 6 and immediate_handshake.is_set() and
-                          is_reality_application(record)):
+                          reality_application):
                         state["immediate_application"].append(record)
                     client.sendall(record)
                     if connection_index == 1 and is_reality_alert(record):
@@ -389,6 +399,19 @@ def connect_with_retry(port):
         except OSError:
             time.sleep(0.05)
     fail(f"Waterwall listener on port {port} did not open")
+
+
+def arm_application_after_handoff(relay_state, sink_state, connection_index, expected_connections):
+    if PROFILE == "tls13":
+        deadline = time.monotonic() + 4.0
+        while sink_state["connections"] < expected_connections and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if sink_state["connections"] < expected_connections:
+            fail(
+                f"TLS 1.3 connection {connection_index} did not open protected-next "
+                "after CONFIRM"
+            )
+    relay_state["handoff_ready"][connection_index].set()
 
 
 def receive_exact_response(sock):
@@ -660,6 +683,7 @@ def main():
 
     with connect_with_retry(CLIENT_ENTRY_PORT) as original:
         original.settimeout(0.2)
+        arm_application_after_handoff(relay_state, sink_state, 0, 1)
         original.sendall(REQUEST)
         response = receive_exact_response(original)
         if response != RESPONSE:
@@ -673,6 +697,7 @@ def main():
     # before server EOF. RealityClient consumes it and emits no response alert.
     with connect_with_retry(CLIENT_ENTRY_PORT) as server_closed:
         server_closed.settimeout(0.2)
+        arm_application_after_handoff(relay_state, sink_state, 1, 2)
         server_closed.sendall(REQUEST)
         response = receive_exact_response(server_closed)
         if response != RESPONSE:
@@ -701,6 +726,7 @@ def main():
     # fatal alert; the receiving client must not answer it with another alert.
     with connect_with_retry(CLIENT_ENTRY_PORT) as reflected_connection:
         reflected_connection.settimeout(0.2)
+        arm_application_after_handoff(relay_state, sink_state, 2, 3)
         reflected_connection.sendall(REQUEST)
         response = receive_exact_response(reflected_connection)
         if response != RESPONSE:
@@ -721,6 +747,7 @@ def main():
     # client must emit one fatal alert and the server must not answer it.
     with connect_with_retry(CLIENT_ENTRY_PORT) as mirrored_connection:
         mirrored_connection.settimeout(0.2)
+        arm_application_after_handoff(relay_state, sink_state, 3, 4)
         mirrored_connection.sendall(REQUEST)
         if not mirrored.wait(3.0):
             fail("relay did not corrupt the authorized downstream stream")
@@ -752,6 +779,7 @@ def main():
     # A valid record from another connection must fail the connection-bound AAD.
     with connect_with_retry(CLIENT_ENTRY_PORT) as replayed:
         replayed.settimeout(0.2)
+        arm_application_after_handoff(relay_state, sink_state, 4, 5)
         replayed.sendall(REQUEST)
         drain_rejected_connection(replayed, cross_replayed)
 
@@ -761,6 +789,7 @@ def main():
     # record authorizes the connection to exercise strict Reality sequencing.
     with connect_with_retry(CLIENT_ENTRY_PORT) as out_of_order:
         out_of_order.settimeout(0.2)
+        arm_application_after_handoff(relay_state, sink_state, 5, 6)
         out_of_order.sendall(b"0")
         if not reorder_first_forwarded.wait(2.0):
             fail("relay did not forward the reorder authorization record")
@@ -809,10 +838,18 @@ def main():
     relay_stop.set()
     sink_stop.set()
 
-    expected_sink_connections = 5
+    # TLS 1.3 authenticates the handoff with REQUEST/ACK/CONFIRM before the
+    # first application record. The cross-connection application replay is
+    # therefore rejected after protected-next Init, leaving one deliberately
+    # empty protected connection. TLS 1.2 still authorizes on that first
+    # application record and never opens protected-next for the same attack.
+    expected_sink_connections = 6 if PROFILE == "tls13" else 5
     if sink_state["connections"] != expected_sink_connections:
         fail(f"protected chain opened {sink_state['connections']} times; expected {expected_sink_connections}")
-    expected_payloads = [REQUEST, REQUEST, REQUEST, REQUEST, b"0"]
+    expected_payloads = [REQUEST, REQUEST, REQUEST, REQUEST]
+    if PROFILE == "tls13":
+        expected_payloads.append(b"")
+    expected_payloads.append(b"0")
     if sink_state["payloads"] != expected_payloads:
         fail(f"protected sink observed unexpected payloads: {sink_state['payloads']!r}")
     expected_relay_connections = 6 if PROFILE == "tls13" else 7

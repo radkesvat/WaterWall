@@ -140,6 +140,65 @@ static bool driveShutdown(SSL *client, SSL *server, reality_tls_handshake_fixtur
     return false;
 }
 
+static bool collectTls13PostHandshakeFlights(SSL *client, SSL *server,
+                                             reality_tls_handshake_fixture_t *fixture)
+{
+    static const uint8_t early_application[] = "Chrome-like early application payload";
+    uint8_t application_plaintext[sizeof(early_application)] = {0};
+
+    if (SSL_write(server, NULL, 0) < 0 ||
+        ! appendAndForward(SSL_get_wbio(server),
+                           SSL_get_rbio(client),
+                           fixture->server_post_handshake_flight,
+                           &fixture->server_post_handshake_flight_len) ||
+        SSL_write(server, early_application, sizeof(early_application)) != (int) sizeof(early_application) ||
+        ! appendAndForward(SSL_get_wbio(server),
+                           SSL_get_rbio(client),
+                           fixture->server_early_application_flight,
+                           &fixture->server_early_application_flight_len) ||
+        SSL_read(client, application_plaintext, sizeof(application_plaintext)) !=
+            (int) sizeof(application_plaintext) ||
+        ! memoryEqual(application_plaintext, early_application, sizeof(early_application)) ||
+        ! SSL_key_update(server, SSL_KEY_UPDATE_NOT_REQUESTED) || SSL_write(server, NULL, 0) < 0 ||
+        ! appendAndForward(SSL_get_wbio(server),
+                           SSL_get_rbio(client),
+                           fixture->server_key_update_not_requested_flight,
+                           &fixture->server_key_update_not_requested_flight_len))
+    {
+        memoryZero(application_plaintext, sizeof(application_plaintext));
+        return false;
+    }
+
+    int read_result = SSL_read(client, application_plaintext, sizeof(application_plaintext));
+    if (read_result >= 0 || SSL_get_error(client, read_result) != SSL_ERROR_WANT_READ ||
+        ! SSL_key_update(server, SSL_KEY_UPDATE_REQUESTED) || SSL_write(server, NULL, 0) < 0 ||
+        ! appendAndForward(SSL_get_wbio(server),
+                           SSL_get_rbio(client),
+                           fixture->server_key_update_requested_flight,
+                           &fixture->server_key_update_requested_flight_len))
+    {
+        memoryZero(application_plaintext, sizeof(application_plaintext));
+        return false;
+    }
+
+    read_result = SSL_read(client, application_plaintext, sizeof(application_plaintext));
+    if (read_result >= 0 || SSL_get_error(client, read_result) != SSL_ERROR_WANT_READ ||
+        SSL_write(client, NULL, 0) < 0 ||
+        ! appendAndForward(SSL_get_wbio(client),
+                           SSL_get_rbio(server),
+                           fixture->client_key_update_response_flight,
+                           &fixture->client_key_update_response_flight_len))
+    {
+        memoryZero(application_plaintext, sizeof(application_plaintext));
+        return false;
+    }
+
+    read_result = SSL_read(server, application_plaintext, sizeof(application_plaintext));
+    bool ok = read_result < 0 && SSL_get_error(server, read_result) == SSL_ERROR_WANT_READ;
+    memoryZero(application_plaintext, sizeof(application_plaintext));
+    return ok;
+}
+
 static bool readTlsClientAccessor(SSL *ssl, tlsclient_handshake_binding_t *binding)
 {
     tunnel_t *tunnel = tunnelCreate(NULL, 0, sizeof(tlsclient_lstate_t));
@@ -207,6 +266,10 @@ static bool buildTlsHandshakeFixture(uint16_t version, const char *cipher, bool 
     {
         goto cleanup;
     }
+    if (version == TLS1_3_VERSION && SSL_CTX_set_num_tickets(server_context, 2) != 1)
+    {
+        goto cleanup;
+    }
 
     client = SSL_new(client_context);
     server = SSL_new(server_context);
@@ -258,6 +321,7 @@ static bool buildTlsHandshakeFixture(uint16_t version, const char *cipher, bool 
     }
 
     ok = readTlsClientAccessor(client, &fixture->accessor_binding) &&
+         (version != TLS1_3_VERSION || collectTls13PostHandshakeFlights(client, server, fixture)) &&
          driveShutdown(client, server, fixture);
 
 cleanup:

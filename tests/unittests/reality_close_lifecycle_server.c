@@ -10,15 +10,35 @@ typedef struct server_lifecycle_context_s
 {
     tunnel_t *reality;
     buffer_pool_t *pool;
-    char events[16];
+    char events[64];
     size_t events_len;
     bool kill_on_payload;
     bool kill_on_next_finish;
+    bool kill_on_prev_finish;
+    bool finish_on_destination_payload;
+    bool kill_on_cover_payload;
+    bool kill_on_ack_payload;
+    bool kill_on_destination_finish;
+    bool kill_on_protected_init;
+    bool kill_on_protected_payload;
+    bool inject_destination_callbacks_on_ack;
+    bool inject_destination_callbacks_on_finish;
     bool reenter_peer_close;
     bool send_data_after_close;
     uint8_t expected_alert_type;
     uint16_t expected_alert_body_len;
     uint8_t observed_alert;
+    uint8_t cover_downstream[128];
+    uint32_t cover_downstream_bytes;
+    uint32_t destination_upstream_records;
+    uint32_t handoff_ack_records;
+    uint32_t destination_callbacks_injected;
+    const uint8_t *expected_destination_payload;
+    uint32_t expected_destination_payload_len;
+    uint32_t matched_destination_payloads;
+    sbuf_t *request_on_cover_payload;
+    sbuf_t *destination_payload_on_cover_payload;
+    sbuf_t *request_on_destination_payload;
 } server_lifecycle_context_t;
 
 typedef struct server_lifecycle_fixture_s
@@ -31,6 +51,7 @@ typedef struct server_lifecycle_fixture_s
     tunnel_t *prev;
     tunnel_t *reality;
     tunnel_t *next;
+    tunnel_t *destination;
     line_t *line;
     server_lifecycle_context_t context;
 } server_lifecycle_fixture_t;
@@ -54,6 +75,46 @@ static void serverEvent(server_lifecycle_context_t *context, char event)
 static server_lifecycle_context_t *serverContext(tunnel_t *t)
 {
     return *(server_lifecycle_context_t **) tunnelGetState(t);
+}
+
+static void serverKillLineFromPrevious(server_lifecycle_context_t *context, line_t *l)
+{
+    realityserverTunnelUpStreamFinish(context->reality, l);
+    l->alive = false;
+}
+
+static void serverInjectDestinationDownstreamCallbacks(server_lifecycle_context_t *context,
+                                                       line_t *l)
+{
+    sbuf_t *payload = bufferpoolGetSmallBuffer(context->pool);
+    payload = sbufReserveSpace(payload, 1);
+    sbufSetLength(payload, 1);
+    sbufGetMutablePtr(payload)[0] = 0xd7;
+
+    realityserverTunnelDownStreamPayload(context->reality, l, payload);
+    realityserverTunnelDownStreamPause(context->reality, l);
+    realityserverTunnelDownStreamResume(context->reality, l);
+    realityserverTunnelDownStreamEst(context->reality, l);
+    realityserverTunnelDownStreamFinish(context->reality, l);
+    context->destination_callbacks_injected += 5;
+}
+
+static void serverPrevEst(tunnel_t *t, line_t *l)
+{
+    discard l;
+    serverEvent(serverContext(t), 'e');
+}
+
+static void serverPrevPause(tunnel_t *t, line_t *l)
+{
+    discard l;
+    serverEvent(serverContext(t), 'q');
+}
+
+static void serverPrevResume(tunnel_t *t, line_t *l)
+{
+    discard l;
+    serverEvent(serverContext(t), 's');
 }
 
 static void serverPrevPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -142,8 +203,12 @@ static void serverPrevPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 static void serverPrevFinish(tunnel_t *t, line_t *l)
 {
-    discard l;
-    serverEvent(serverContext(t), 'D');
+    server_lifecycle_context_t *context = serverContext(t);
+    serverEvent(context, 'D');
+    if (context->kill_on_prev_finish)
+    {
+        l->alive = false;
+    }
 }
 
 static void serverNextFinish(tunnel_t *t, line_t *l)
@@ -164,13 +229,22 @@ static void serverNextPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                   "server delivered the wrong application payload");
     serverEvent(context, 'A');
     bufferpoolReuseBuffer(context->pool, buf);
-    discard l;
+    if (context->kill_on_protected_payload)
+    {
+        context->kill_on_protected_payload = false;
+        serverKillLineFromPrevious(context, l);
+    }
 }
 
 static void serverNextInit(tunnel_t *t, line_t *l)
 {
-    discard l;
-    serverEvent(serverContext(t), 'I');
+    server_lifecycle_context_t *context = serverContext(t);
+    serverEvent(context, 'I');
+    if (context->kill_on_protected_init)
+    {
+        context->kill_on_protected_init = false;
+        serverKillLineFromPrevious(context, l);
+    }
 }
 
 static void serverNextPause(tunnel_t *t, line_t *l)
@@ -183,6 +257,156 @@ static void serverNextResume(tunnel_t *t, line_t *l)
 {
     discard l;
     serverEvent(serverContext(t), 'r');
+}
+
+static int serverControlDecrypt(void *context, unsigned char *dst,
+                                const unsigned char *src, size_t src_len,
+                                const unsigned char *ad, size_t ad_len,
+                                const unsigned char *nonce, const unsigned char *key)
+{
+    discard context;
+    return chacha20poly1305Decrypt(dst, src, src_len, ad, ad_len, nonce, key);
+}
+
+static void serverHandoffPrevPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    server_lifecycle_context_t *context = serverContext(t);
+    realityserver_lstate_t *ls = lineGetState(l, context->reality);
+
+    if (ls->mode != kRealityServerModeHandoffAwaitConfirm)
+    {
+        uint32_t len = sbufGetLength(buf);
+        requireServer(context->cover_downstream_bytes + len <= sizeof(context->cover_downstream),
+                      "server cover capture overflow");
+        memoryCopy(context->cover_downstream + context->cover_downstream_bytes,
+                   sbufGetRawPtr(buf),
+                   len);
+        context->cover_downstream_bytes += len;
+        serverEvent(context, 'c');
+        bufferpoolReuseBuffer(context->pool, buf);
+        if (context->kill_on_cover_payload)
+        {
+            context->kill_on_cover_payload = false;
+            serverKillLineFromPrevious(context, l);
+            return;
+        }
+        if (context->request_on_cover_payload != NULL)
+        {
+            sbuf_t *request = context->request_on_cover_payload;
+            context->request_on_cover_payload = NULL;
+            requireServer(realityserverProcessUpstream(context->reality, l, request),
+                          "server rejected re-entrant handoff request");
+        }
+        if (context->destination_payload_on_cover_payload != NULL)
+        {
+            sbuf_t *destination_payload = context->destination_payload_on_cover_payload;
+            context->destination_payload_on_cover_payload = NULL;
+            realityserverTunnelDownStreamPayload(context->reality, l, destination_payload);
+        }
+        return;
+    }
+
+    reality_v2_record_descriptor_t descriptor;
+    uint8_t plaintext[kRealityV2ControlMaxInnerPlaintext];
+    uint32_t payload_offset = 0;
+    uint32_t payload_len = 0;
+    requireServer(ls->handoff_ack_sent && ls->destination_downstream_cutoff &&
+                      ls->s2c_send_seq == 1 &&
+                      realityV2BuildRecordDescriptor(kRealityV2Tls13,
+                                                     &ls->record_profile,
+                                                     kRealityV2RecordKindHandoffAck,
+                                                     &descriptor) &&
+                      realityV2TryDecryptExpectedRecord(&descriptor,
+                                                        kRealityV2DirectionServerToClient,
+                                                        0,
+                                                        ls->session_id,
+                                                        ls->s2c_key,
+                                                        ls->s2c_iv,
+                                                        sbufGetRawPtr(buf),
+                                                        sbufGetLength(buf),
+                                                        serverControlDecrypt,
+                                                        NULL,
+                                                        plaintext,
+                                                        sizeof(plaintext),
+                                                        &payload_offset,
+                                                        &payload_len) &&
+                      realityV2ParseControl(kRealityV2RecordKindHandoffAck,
+                                            plaintext + payload_offset,
+                                            payload_len),
+                  "server handoff emitted an invalid ACK or marked cutoff too late");
+    memoryZero(plaintext, sizeof(plaintext));
+    ++context->handoff_ack_records;
+    serverEvent(context, 'K');
+    bufferpoolReuseBuffer(context->pool, buf);
+    if (context->inject_destination_callbacks_on_ack)
+    {
+        context->inject_destination_callbacks_on_ack = false;
+        serverInjectDestinationDownstreamCallbacks(context, l);
+    }
+    if (context->kill_on_ack_payload)
+    {
+        context->kill_on_ack_payload = false;
+        serverKillLineFromPrevious(context, l);
+    }
+}
+
+static void serverDestinationPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    server_lifecycle_context_t *context = serverContext(t);
+    if (context->expected_destination_payload != NULL)
+    {
+        requireServer(sbufGetLength(buf) == context->expected_destination_payload_len &&
+                          memoryEqual(sbufGetRawPtr(buf),
+                                      context->expected_destination_payload,
+                                      context->expected_destination_payload_len),
+                      "server changed a failed handoff candidate before fallback forwarding");
+        ++context->matched_destination_payloads;
+    }
+    ++context->destination_upstream_records;
+    serverEvent(context, 'T');
+    bufferpoolReuseBuffer(context->pool, buf);
+    if (context->finish_on_destination_payload)
+    {
+        realityserverTunnelDownStreamFinish(context->reality, l);
+        return;
+    }
+    if (context->request_on_destination_payload != NULL)
+    {
+        sbuf_t *request = context->request_on_destination_payload;
+        context->request_on_destination_payload = NULL;
+        requireServer(realityserverProcessUpstream(context->reality, l, request),
+                      "server rejected request re-entered by destination payload");
+    }
+}
+
+static void serverDestinationFinish(tunnel_t *t, line_t *l)
+{
+    server_lifecycle_context_t *context = serverContext(t);
+    serverEvent(context, 'F');
+    if (context->inject_destination_callbacks_on_finish)
+    {
+        context->inject_destination_callbacks_on_finish = false;
+        serverInjectDestinationDownstreamCallbacks(context, l);
+    }
+    if (context->kill_on_destination_finish)
+    {
+        context->kill_on_destination_finish = false;
+        serverKillLineFromPrevious(context, l);
+    }
+}
+
+static void serverFixtureAddDestination(server_lifecycle_fixture_t *fixture)
+{
+    fixture->destination = tunnelCreate(NULL, sizeof(server_lifecycle_context_t *), 0);
+    requireServer(fixture->destination != NULL, "failed to create server destination fixture");
+    *(server_lifecycle_context_t **) tunnelGetState(fixture->destination) = &fixture->context;
+    fixture->destination->fnPayloadU = serverDestinationPayload;
+    fixture->destination->fnFinU = serverDestinationFinish;
+
+    realityserver_tstate_t *ts = tunnelGetState(fixture->reality);
+    realityserver_lstate_t *ls = lineGetState(fixture->line, fixture->reality);
+    ts->destination_tunnel = fixture->destination;
+    ls->destination_init_sent = true;
 }
 
 static void serverFixtureInitialize(server_lifecycle_fixture_t *fixture)
@@ -216,6 +440,9 @@ static void serverFixtureInitialize(server_lifecycle_fixture_t *fixture)
     *(server_lifecycle_context_t **) tunnelGetState(fixture->next) = &fixture->context;
     fixture->prev->fnPayloadD = serverPrevPayload;
     fixture->prev->fnFinD = serverPrevFinish;
+    fixture->prev->fnEstD = serverPrevEst;
+    fixture->prev->fnPauseD = serverPrevPause;
+    fixture->prev->fnResumeD = serverPrevResume;
     fixture->next->fnFinU = serverNextFinish;
     fixture->next->fnPayloadU = serverNextPayload;
     fixture->next->fnInitU = serverNextInit;
@@ -266,6 +493,10 @@ static void serverFixtureDestroy(server_lifecycle_fixture_t *fixture)
     tunnelDestroy(fixture->prev);
     tunnelDestroy(fixture->reality);
     tunnelDestroy(fixture->next);
+    if (fixture->destination != NULL)
+    {
+        tunnelDestroy(fixture->destination);
+    }
     GSTATE.shortcut_buffer_pools = fixture->saved_shortcuts;
     bufferpoolDestroy(fixture->pool);
     masterpoolMakeEmpty(fixture->large_master);
@@ -381,6 +612,27 @@ static sbuf_t *buildServerInboundRecord(server_lifecycle_fixture_t *fixture,
     return buf;
 }
 
+static sbuf_t *buildServerInboundControl(server_lifecycle_fixture_t *fixture,
+                                         uint8_t record_kind, uint64_t sequence)
+{
+    const uint8_t padding[kRealityV2ControlMinPadding] = {0xa1, 0xb2, 0xc3};
+    uint8_t payload[kRealityV2ControlMinPayload];
+    requireServer(realityV2SerializeControl(record_kind,
+                                             padding,
+                                             sizeof(padding),
+                                             payload,
+                                             sizeof(payload)),
+                  "failed to serialize server handoff control fixture");
+    realityserver_lstate_t *ls = lineGetState(fixture->line, fixture->reality);
+    return buildServerInboundRecord(fixture,
+                                    kRealityV2Tls13,
+                                    &ls->record_profile,
+                                    record_kind,
+                                    payload,
+                                    sizeof(payload),
+                                    sequence);
+}
+
 static void prepareServerPendingProfile(server_lifecycle_fixture_t *fixture,
                                         uint16_t tls_version,
                                         const reality_v2_record_profile_t *profile)
@@ -393,6 +645,7 @@ static void prepareServerPendingProfile(server_lifecycle_fixture_t *fixture,
     ls->tls_capture.binding.tls_version = tls_version;
     ls->record_profile = *profile;
     ts->tls12_gcm_server_nonce_policy = kRealityServerGcmNoncePolicyAuto;
+    ts->sniffing_attempts = kRealityServerDefaultSniffingAttempts;
 
     if (tls_version == kRealityV2Tls12)
     {
@@ -563,7 +816,12 @@ static void testServerTerminalReentry(void)
 
 static void testServerUnauthenticatedCloseModes(void)
 {
-    const uint8_t modes[] = {kRealityServerModePending, kRealityServerModeVisitor};
+    const uint8_t modes[] = {
+        kRealityServerModePending,
+        kRealityServerModeHandoffAwaitBoundary,
+        kRealityServerModeHandoffAwaitConfirm,
+        kRealityServerModeVisitor,
+    };
     for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); ++i)
     {
         server_lifecycle_fixture_t fixture;
@@ -573,7 +831,7 @@ static void testServerUnauthenticatedCloseModes(void)
         ls->protected_init_sent = false;
         realityserverHandleDownstreamFinish(fixture.reality, fixture.line);
         requireServer(strcmp(fixture.context.events, "D") == 0,
-                      "Pending/Visitor close synthesized a Reality alert");
+                      "pre-authorization close synthesized a Reality alert");
         serverFixtureDestroy(&fixture);
     }
 
@@ -616,6 +874,847 @@ static void testServerSecureRandomFailure(void)
     }
 }
 
+static void testServerTlsRecordBoundaryTracker(void)
+{
+    const uint8_t first_record[] = {
+        0x17, 0x03, 0x03, 0x00, 0x06, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
+    };
+    const uint8_t second_record[] = {
+        0x16, 0x03, 0x03, 0x00, 0x03, 0x20, 0x21, 0x22,
+    };
+
+    for (size_t split = 1; split < sizeof(first_record); ++split)
+    {
+        realityserver_tls_record_boundary_tracker_t tracker;
+        realityserverTlsRecordBoundaryTrackerInitialize(&tracker);
+        requireServer(realityserverTlsRecordBoundaryTrackerIsAtBoundary(&tracker),
+                      "server boundary tracker did not start between records");
+
+        size_t consumed = 0;
+        requireServer(realityserverTlsRecordBoundaryTrackerFeed(&tracker,
+                                                                 first_record,
+                                                                 split,
+                                                                 false,
+                                                                 &consumed) &&
+                          consumed == split &&
+                          ! realityserverTlsRecordBoundaryTrackerIsAtBoundary(&tracker),
+                      "server boundary tracker lost a fragmented record prefix");
+        requireServer(realityserverTlsRecordBoundaryTrackerFeed(&tracker,
+                                                                 first_record + split,
+                                                                 sizeof(first_record) - split,
+                                                                 true,
+                                                                 &consumed) &&
+                          consumed == sizeof(first_record) - split &&
+                          realityserverTlsRecordBoundaryTrackerIsAtBoundary(&tracker),
+                      "server boundary tracker did not report the fragmented record end");
+        realityserverTlsRecordBoundaryTrackerDestroy(&tracker);
+    }
+
+    uint8_t coalesced[sizeof(first_record) + sizeof(second_record)];
+    memoryCopy(coalesced, first_record, sizeof(first_record));
+    memoryCopy(coalesced + sizeof(first_record), second_record, sizeof(second_record));
+    realityserver_tls_record_boundary_tracker_t tracker;
+    realityserverTlsRecordBoundaryTrackerInitialize(&tracker);
+    size_t consumed = 0;
+    requireServer(realityserverTlsRecordBoundaryTrackerFeed(&tracker,
+                                                             coalesced,
+                                                             sizeof(coalesced),
+                                                             true,
+                                                             &consumed) &&
+                      consumed == sizeof(first_record) &&
+                      realityserverTlsRecordBoundaryTrackerIsAtBoundary(&tracker),
+                  "server boundary tracker did not split at the first complete record");
+    requireServer(realityserverTlsRecordBoundaryTrackerFeed(&tracker,
+                                                             coalesced + consumed,
+                                                             sizeof(coalesced) - consumed,
+                                                             false,
+                                                             &consumed) &&
+                      consumed == sizeof(second_record) &&
+                      realityserverTlsRecordBoundaryTrackerIsAtBoundary(&tracker),
+                  "server boundary tracker did not resume after a cutoff split");
+
+    const uint8_t invalid_header[] = {0x18, 0x03, 0x03, 0x00, 0x00};
+    realityserverTlsRecordBoundaryTrackerInitialize(&tracker);
+    requireServer(! realityserverTlsRecordBoundaryTrackerFeed(&tracker,
+                                                               invalid_header,
+                                                               sizeof(invalid_header),
+                                                               false,
+                                                               &consumed) &&
+                      tracker.failed,
+                  "server boundary tracker accepted an invalid TLS content type");
+    realityserverTlsRecordBoundaryTrackerDestroy(&tracker);
+}
+
+static void testServerTls13AuthenticatedHandoff(void)
+{
+    server_lifecycle_fixture_t fixture;
+    serverFixtureInitialize(&fixture);
+    serverFixtureAddDestination(&fixture);
+    fixture.prev->fnPayloadD = serverHandoffPrevPayload;
+
+    const reality_v2_record_profile_t profile = {
+        .profile_id = kRealityV2RecordProfileTls13Aead,
+        .visible_prefix_len = 0,
+    };
+    prepareServerPendingProfile(&fixture, kRealityV2Tls13, &profile);
+    realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+    memorySet(ls->c2s_key, 0x31, sizeof(ls->c2s_key));
+    memorySet(ls->c2s_iv, 0x42, sizeof(ls->c2s_iv));
+
+    const uint8_t cover_record[] = {
+        0x17, 0x03, 0x03, 0x00, 0x06, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86,
+    };
+    const uint32_t first_cover_part = 8;
+    realityserverTunnelDownStreamPayload(
+        fixture.reality,
+        fixture.line,
+        serverBufferFromBytes(&fixture, cover_record, first_cover_part));
+    requireServer(strcmp(fixture.context.events, "c") == 0 &&
+                      fixture.context.cover_downstream_bytes == first_cover_part &&
+                      ! realityserverTlsRecordBoundaryTrackerIsAtBoundary(
+                          &ls->destination_record_boundary),
+                  "server did not track the already-forwarded partial cover record");
+
+    const uint8_t early_application[] = {0x51, 0x52, 0x53, 0x54, 0x55};
+    sbuf_t *application_before_request = buildServerInboundRecord(
+        &fixture,
+        kRealityV2Tls13,
+        &profile,
+        kRealityV2RecordKindApplicationData,
+        early_application,
+        sizeof(early_application),
+        0);
+    requireServer(realityserverProcessUpstream(fixture.reality,
+                                               fixture.line,
+                                               application_before_request) &&
+                      ls->mode == kRealityServerModePending && ls->c2s_recv_seq == 0 &&
+                      fixture.context.destination_upstream_records == 1,
+                  "TLS 1.3 application data authorized before HANDOFF_REQUEST");
+
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffRequest,
+                                                0)) &&
+                      ls->mode == kRealityServerModeHandoffAwaitBoundary &&
+                      ls->handoff_request_authenticated && ! ls->handoff_ack_sent &&
+                      ls->c2s_recv_seq == 1 && ! ls->protected_init_sent,
+                  "server did not consume REQUEST while waiting for a cover-record boundary");
+
+    const uint8_t suppressed_record[] = {
+        0x17, 0x03, 0x03, 0x00, 0x02, 0x91, 0x92,
+    };
+    uint8_t final_cover_callback[(sizeof(cover_record) - first_cover_part) +
+                                 sizeof(suppressed_record)];
+    uint32_t final_prefix_len = sizeof(cover_record) - first_cover_part;
+    memoryCopy(final_cover_callback, cover_record + first_cover_part, final_prefix_len);
+    memoryCopy(final_cover_callback + final_prefix_len,
+               suppressed_record,
+               sizeof(suppressed_record));
+    realityserverTunnelDownStreamPayload(
+        fixture.reality,
+        fixture.line,
+        serverBufferFromBytes(&fixture,
+                              final_cover_callback,
+                              sizeof(final_cover_callback)));
+    requireServer(ls->mode == kRealityServerModeHandoffAwaitConfirm &&
+                      ls->handoff_ack_sent && ls->destination_downstream_cutoff &&
+                      ls->s2c_send_seq == 1 && fixture.context.handoff_ack_records == 1 &&
+                      fixture.context.cover_downstream_bytes == sizeof(cover_record) &&
+                      strcmp(fixture.context.events, "cTcK") == 0,
+                  "server did not split the final cover record before sending ACK");
+
+    realityserverTunnelDownStreamPayload(
+        fixture.reality,
+        fixture.line,
+        serverBufferFromBytes(&fixture, suppressed_record, sizeof(suppressed_record)));
+    requireServer(strcmp(fixture.context.events, "cTcK") == 0,
+                  "destination payload escaped after the downstream cutoff");
+
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundRecord(&fixture,
+                                               kRealityV2Tls13,
+                                               &profile,
+                                               kRealityV2RecordKindApplicationData,
+                                               early_application,
+                                               sizeof(early_application),
+                                               1)) &&
+                      ls->mode == kRealityServerModeHandoffAwaitConfirm &&
+                      ls->c2s_recv_seq == 1 &&
+                      fixture.context.destination_upstream_records == 2 &&
+                      strcmp(fixture.context.events, "cTcKT") == 0,
+                  "server did not route late cover TLS output to the destination");
+
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffConfirm,
+                                                1)) &&
+                      ls->mode == kRealityServerModeAuthorized && ls->c2s_recv_seq == 2 &&
+                      ls->s2c_send_seq == 1 && ls->destination_up_finished &&
+                      ls->protected_init_sent && strcmp(fixture.context.events, "cTcKTFI") == 0,
+                  "server did not close the destination and initialize protected routing after CONFIRM");
+
+    const uint8_t protected_application = 0x5a;
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundRecord(&fixture,
+                                               kRealityV2Tls13,
+                                               &profile,
+                                               kRealityV2RecordKindApplicationData,
+                                               &protected_application,
+                                               sizeof(protected_application),
+                                               2)) &&
+                      ls->c2s_recv_seq == 3 && strcmp(fixture.context.events, "cTcKTFIA") == 0,
+                  "server did not enter strict application routing at c2s sequence two");
+
+    realityserverLinestateDestroy(ls);
+    serverFixtureDestroy(&fixture);
+}
+
+static void testServerTls13ReentrantRequestCutsOffCoalescedSuffix(void)
+{
+    server_lifecycle_fixture_t fixture;
+    serverFixtureInitialize(&fixture);
+    serverFixtureAddDestination(&fixture);
+    fixture.prev->fnPayloadD = serverHandoffPrevPayload;
+
+    const reality_v2_record_profile_t profile = {
+        .profile_id = kRealityV2RecordProfileTls13Aead,
+        .visible_prefix_len = 0,
+    };
+    prepareServerPendingProfile(&fixture, kRealityV2Tls13, &profile);
+    realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+    memorySet(ls->c2s_key, 0x37, sizeof(ls->c2s_key));
+    memorySet(ls->c2s_iv, 0x48, sizeof(ls->c2s_iv));
+
+    const uint8_t first_record[] = {
+        0x17, 0x03, 0x03, 0x00, 0x03, 0x81, 0x82, 0x83,
+    };
+    const uint8_t suppressed_record[] = {
+        0x17, 0x03, 0x03, 0x00, 0x02, 0x91, 0x92,
+    };
+    uint8_t coalesced[sizeof(first_record) + sizeof(suppressed_record)];
+    memoryCopy(coalesced, first_record, sizeof(first_record));
+    memoryCopy(coalesced + sizeof(first_record), suppressed_record, sizeof(suppressed_record));
+    fixture.context.request_on_cover_payload = buildServerInboundControl(
+        &fixture, kRealityV2RecordKindHandoffRequest, 0);
+
+    realityserverTunnelDownStreamPayload(
+        fixture.reality,
+        fixture.line,
+        serverBufferFromBytes(&fixture, coalesced, sizeof(coalesced)));
+
+    requireServer(ls->mode == kRealityServerModeHandoffAwaitConfirm &&
+                      ls->handoff_request_authenticated && ls->handoff_ack_sent &&
+                      ls->destination_downstream_cutoff && ls->c2s_recv_seq == 1 &&
+                      ls->s2c_send_seq == 1 && fixture.context.handoff_ack_records == 1 &&
+                      fixture.context.cover_downstream_bytes == sizeof(first_record) &&
+                      memoryEqual(fixture.context.cover_downstream,
+                                  first_record,
+                                  sizeof(first_record)) &&
+                      strcmp(fixture.context.events, "cK") == 0,
+                  "server forwarded a coalesced record after the first re-entrant safe boundary");
+
+    realityserverLinestateDestroy(ls);
+    serverFixtureDestroy(&fixture);
+}
+
+static void testServerTls13NestedDestinationPayloadCompletesBoundary(void)
+{
+    server_lifecycle_fixture_t fixture;
+    serverFixtureInitialize(&fixture);
+    serverFixtureAddDestination(&fixture);
+    fixture.prev->fnPayloadD = serverHandoffPrevPayload;
+
+    const reality_v2_record_profile_t profile = {
+        .profile_id = kRealityV2RecordProfileTls13Aead,
+        .visible_prefix_len = 0,
+    };
+    prepareServerPendingProfile(&fixture, kRealityV2Tls13, &profile);
+    realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+    memorySet(ls->c2s_key, 0x39, sizeof(ls->c2s_key));
+    memorySet(ls->c2s_iv, 0x4a, sizeof(ls->c2s_iv));
+
+    const uint8_t first_record[] = {
+        0x17, 0x03, 0x03, 0x00, 0x06, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86,
+    };
+    const uint32_t first_part_len = 8;
+    const uint8_t suppressed_record[] = {
+        0x17, 0x03, 0x03, 0x00, 0x02, 0x91, 0x92,
+    };
+    uint8_t nested_payload[(sizeof(first_record) - first_part_len) +
+                           sizeof(suppressed_record)];
+    memoryCopy(nested_payload,
+               first_record + first_part_len,
+               sizeof(first_record) - first_part_len);
+    memoryCopy(nested_payload + sizeof(first_record) - first_part_len,
+               suppressed_record,
+               sizeof(suppressed_record));
+
+    fixture.context.request_on_cover_payload = buildServerInboundControl(
+        &fixture, kRealityV2RecordKindHandoffRequest, 0);
+    fixture.context.destination_payload_on_cover_payload = serverBufferFromBytes(
+        &fixture, nested_payload, sizeof(nested_payload));
+
+    realityserverTunnelDownStreamPayload(
+        fixture.reality,
+        fixture.line,
+        serverBufferFromBytes(&fixture, first_record, first_part_len));
+
+    requireServer(fixture.context.request_on_cover_payload == NULL &&
+                      fixture.context.destination_payload_on_cover_payload == NULL &&
+                      ls->destination_downstream_forward_depth == 0 &&
+                      ls->mode == kRealityServerModeHandoffAwaitConfirm &&
+                      ls->handoff_request_authenticated && ls->handoff_ack_sent &&
+                      ls->destination_downstream_cutoff && ls->c2s_recv_seq == 1 &&
+                      ls->s2c_send_seq == 1 && fixture.context.handoff_ack_records == 1 &&
+                      fixture.context.cover_downstream_bytes == sizeof(first_record) &&
+                      memoryEqual(fixture.context.cover_downstream,
+                                  first_record,
+                                  sizeof(first_record)) &&
+                      strcmp(fixture.context.events, "ccK") == 0,
+                  "server did not defer ACK across nested destination Payload callbacks");
+
+    realityserverLinestateDestroy(ls);
+    serverFixtureDestroy(&fixture);
+}
+
+static void testServerTls13PendingCandidateBudgetIncludesNonControlLengths(void)
+{
+    server_lifecycle_fixture_t fixture;
+    serverFixtureInitialize(&fixture);
+    serverFixtureAddDestination(&fixture);
+
+    const reality_v2_record_profile_t profile = {
+        .profile_id = kRealityV2RecordProfileTls13Aead,
+        .visible_prefix_len = 0,
+    };
+    prepareServerPendingProfile(&fixture, kRealityV2Tls13, &profile);
+    realityserver_tstate_t *ts = tunnelGetState(fixture.reality);
+    realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+    ts->sniffing_attempts = 1;
+
+    const uint32_t body_len = kRealityV2ControlMaxTlsRecordBody + 1U;
+    const uint32_t frame_len = kRealityV2TlsRecordHeaderSize + body_len;
+    sbuf_t *record = bufferpoolGetLargeBuffer(fixture.pool);
+    requireServer(frame_len <= sbufGetMaximumWriteableSize(record),
+                  "server non-control candidate fixture exceeds the large buffer");
+    record = sbufReserveSpace(record, frame_len);
+    sbufSetLength(record, frame_len);
+    uint8_t *frame = sbufGetMutablePtr(record);
+    memoryZero(frame, frame_len);
+    frame[0] = 0x17;
+    frame[1] = 0x03;
+    frame[2] = 0x03;
+    frame[3] = (uint8_t) (body_len >> 8);
+    frame[4] = (uint8_t) body_len;
+
+    requireServer(realityserverProcessUpstream(fixture.reality, fixture.line, record) &&
+                      ls->mode == kRealityServerModeVisitor && ls->sniffing_attempts == 1 &&
+                      ls->c2s_recv_seq == 0 &&
+                      fixture.context.destination_upstream_records == 1 &&
+                      strcmp(fixture.context.events, "T") == 0,
+                  "server did not apply the Pending candidate budget outside control lengths");
+
+    realityserverLinestateDestroy(ls);
+    serverFixtureDestroy(&fixture);
+}
+
+static void testServerTls13NonRequestControlsStayPending(void)
+{
+    const uint8_t control_kinds[] = {
+        kRealityV2RecordKindHandoffAck,
+        kRealityV2RecordKindHandoffConfirm,
+    };
+    const reality_v2_record_profile_t profile = {
+        .profile_id = kRealityV2RecordProfileTls13Aead,
+        .visible_prefix_len = 0,
+    };
+
+    for (size_t i = 0; i < sizeof(control_kinds) / sizeof(control_kinds[0]); ++i)
+    {
+        server_lifecycle_fixture_t fixture;
+        serverFixtureInitialize(&fixture);
+        serverFixtureAddDestination(&fixture);
+        prepareServerPendingProfile(&fixture, kRealityV2Tls13, &profile);
+        realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+
+        sbuf_t *control = buildServerInboundControl(&fixture, control_kinds[i], 0);
+        uint8_t expected[128];
+        uint32_t expected_len = sbufGetLength(control);
+        requireServer(expected_len <= sizeof(expected),
+                      "server non-REQUEST control fixture overflow");
+        memoryCopy(expected, sbufGetRawPtr(control), expected_len);
+        fixture.context.expected_destination_payload = expected;
+        fixture.context.expected_destination_payload_len = expected_len;
+
+        requireServer(realityserverProcessUpstream(fixture.reality, fixture.line, control) &&
+                          ls->mode == kRealityServerModePending &&
+                          ! ls->handoff_request_authenticated && ! ls->handoff_ack_sent &&
+                          ! ls->protected_init_sent && ls->c2s_recv_seq == 0 &&
+                          ls->s2c_send_seq == 0 && ls->sniffing_attempts == 1 &&
+                          fixture.context.destination_upstream_records == 1 &&
+                          fixture.context.matched_destination_payloads == 1 &&
+                          strcmp(fixture.context.events, "T") == 0,
+                      "server accepted ACK/CONFIRM as the initial handoff control");
+
+        realityserverLinestateDestroy(ls);
+        serverFixtureDestroy(&fixture);
+    }
+}
+
+static void testServerTls13FailedRequestIsByteExactFallback(void)
+{
+    server_lifecycle_fixture_t fixture;
+    serverFixtureInitialize(&fixture);
+    serverFixtureAddDestination(&fixture);
+    const reality_v2_record_profile_t profile = {
+        .profile_id = kRealityV2RecordProfileTls13Aead,
+        .visible_prefix_len = 0,
+    };
+    prepareServerPendingProfile(&fixture, kRealityV2Tls13, &profile);
+    realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+
+    sbuf_t *request = buildServerInboundControl(
+        &fixture, kRealityV2RecordKindHandoffRequest, 0);
+    uint32_t expected_len = sbufGetLength(request);
+    uint8_t expected[128];
+    requireServer(expected_len <= sizeof(expected), "server failed-REQUEST fixture overflow");
+    sbufGetMutablePtr(request)[expected_len - 1U] ^= 0x80;
+    memoryCopy(expected, sbufGetRawPtr(request), expected_len);
+    fixture.context.expected_destination_payload = expected;
+    fixture.context.expected_destination_payload_len = expected_len;
+
+    requireServer(realityserverProcessUpstream(fixture.reality, fixture.line, request) &&
+                      ls->mode == kRealityServerModePending &&
+                      ! ls->handoff_request_authenticated && ! ls->handoff_ack_sent &&
+                      ! ls->protected_init_sent && ls->c2s_recv_seq == 0 &&
+                      ls->s2c_send_seq == 0 && ls->sniffing_attempts == 1 &&
+                      fixture.context.destination_upstream_records == 1 &&
+                      fixture.context.matched_destination_payloads == 1 &&
+                      strcmp(fixture.context.events, "T") == 0,
+                  "server mutated or consumed a failed HANDOFF_REQUEST trial");
+
+    realityserverLinestateDestroy(ls);
+    serverFixtureDestroy(&fixture);
+}
+
+static void testServerTls13DuplicateConfirmDoesNotReinitializeNext(void)
+{
+    server_lifecycle_fixture_t fixture;
+    serverFixtureInitialize(&fixture);
+    serverFixtureAddDestination(&fixture);
+    fixture.prev->fnPayloadD = serverHandoffPrevPayload;
+    const reality_v2_record_profile_t profile = {
+        .profile_id = kRealityV2RecordProfileTls13Aead,
+        .visible_prefix_len = 0,
+    };
+    prepareServerPendingProfile(&fixture, kRealityV2Tls13, &profile);
+    realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffRequest,
+                                                0)) &&
+                      ls->mode == kRealityServerModeHandoffAwaitConfirm &&
+                      strcmp(fixture.context.events, "K") == 0,
+                  "server did not prepare duplicate-CONFIRM fixture");
+
+    sbuf_t *confirm = buildServerInboundControl(
+        &fixture, kRealityV2RecordKindHandoffConfirm, 1);
+    sbuf_t *duplicate = buildServerInboundControl(
+        &fixture, kRealityV2RecordKindHandoffConfirm, 1);
+    requireServer(realityserverProcessUpstream(fixture.reality, fixture.line, confirm) &&
+                      ls->mode == kRealityServerModeAuthorized &&
+                      ls->protected_init_sent && strcmp(fixture.context.events, "KFI") == 0,
+                  "server did not authorize the first valid CONFIRM");
+    requireServer(! realityserverProcessUpstream(fixture.reality, fixture.line, duplicate) &&
+                      strcmp(fixture.context.events, "KFIcUD") == 0,
+                  "server accepted a duplicate CONFIRM or initialized protected routing twice");
+    requireServer(strchr(fixture.context.events, 'I') ==
+                      strrchr(fixture.context.events, 'I'),
+                  "server emitted more than one protected Init for duplicate CONFIRM");
+
+    serverFixtureDestroy(&fixture);
+}
+
+static void testServerTls13PendingForwardReentrantFinishKillsLine(void)
+{
+    server_lifecycle_fixture_t fixture;
+    serverFixtureInitialize(&fixture);
+    serverFixtureAddDestination(&fixture);
+    const reality_v2_record_profile_t profile = {
+        .profile_id = kRealityV2RecordProfileTls13Aead,
+        .visible_prefix_len = 0,
+    };
+    prepareServerPendingProfile(&fixture, kRealityV2Tls13, &profile);
+    fixture.context.finish_on_destination_payload = true;
+    fixture.context.kill_on_prev_finish = true;
+
+    requireServer(! realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffAck,
+                                                0)) &&
+                      ! lineIsAlive(fixture.line) &&
+                      strcmp(fixture.context.events, "TD") == 0,
+                  "server touched Pending state after a re-entrant destination Finish killed the line");
+
+    serverFixtureDestroy(&fixture);
+}
+
+static void testServerTls13PendingBudgetCannotOverwriteReentrantHandoff(void)
+{
+    server_lifecycle_fixture_t fixture;
+    serverFixtureInitialize(&fixture);
+    serverFixtureAddDestination(&fixture);
+    fixture.prev->fnPayloadD = serverHandoffPrevPayload;
+
+    const reality_v2_record_profile_t profile = {
+        .profile_id = kRealityV2RecordProfileTls13Aead,
+        .visible_prefix_len = 0,
+    };
+    prepareServerPendingProfile(&fixture, kRealityV2Tls13, &profile);
+    realityserver_tstate_t *ts = tunnelGetState(fixture.reality);
+    realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+    ts->sniffing_attempts = 1;
+    fixture.context.request_on_destination_payload = buildServerInboundControl(
+        &fixture, kRealityV2RecordKindHandoffRequest, 0);
+
+    const uint32_t body_len = kRealityV2ControlMaxTlsRecordBody + 1U;
+    const uint32_t frame_len = kRealityV2TlsRecordHeaderSize + body_len;
+    sbuf_t *record = bufferpoolGetLargeBuffer(fixture.pool);
+    requireServer(frame_len <= sbufGetMaximumWriteableSize(record),
+                  "server re-entrant budget fixture exceeds the large buffer");
+    record = sbufReserveSpace(record, frame_len);
+    sbufSetLength(record, frame_len);
+    uint8_t *frame = sbufGetMutablePtr(record);
+    memoryZero(frame, frame_len);
+    frame[0] = 0x17;
+    frame[1] = 0x03;
+    frame[2] = 0x03;
+    frame[3] = (uint8_t) (body_len >> 8);
+    frame[4] = (uint8_t) body_len;
+
+    requireServer(realityserverProcessUpstream(fixture.reality, fixture.line, record) &&
+                      fixture.context.request_on_destination_payload == NULL &&
+                      ls->mode == kRealityServerModeHandoffAwaitConfirm &&
+                      ls->handoff_request_authenticated && ls->handoff_ack_sent &&
+                      ls->destination_downstream_cutoff && ls->sniffing_attempts == 1 &&
+                      ls->c2s_recv_seq == 1 && ls->s2c_send_seq == 1 &&
+                      fixture.context.destination_upstream_records == 1 &&
+                      fixture.context.handoff_ack_records == 1 &&
+                      strcmp(fixture.context.events, "TK") == 0,
+                  "server Pending budget overwrote a handoff authenticated by re-entry");
+
+    realityserverLinestateDestroy(ls);
+    serverFixtureDestroy(&fixture);
+}
+
+static void prepareServerTls13ReentryFixture(server_lifecycle_fixture_t *fixture)
+{
+    const reality_v2_record_profile_t profile = {
+        .profile_id = kRealityV2RecordProfileTls13Aead,
+        .visible_prefix_len = 0,
+    };
+
+    serverFixtureInitialize(fixture);
+    serverFixtureAddDestination(fixture);
+    fixture->prev->fnPayloadD = serverHandoffPrevPayload;
+    prepareServerPendingProfile(fixture, kRealityV2Tls13, &profile);
+}
+
+static void testServerTls13LineDeathAtHandoffCallbacks(void)
+{
+    server_lifecycle_fixture_t fixture;
+    prepareServerTls13ReentryFixture(&fixture);
+    realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+
+    const uint8_t cover_record[] = {
+        0x17, 0x03, 0x03, 0x00, 0x06, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86,
+    };
+    const uint8_t suppressed_record[] = {
+        0x17, 0x03, 0x03, 0x00, 0x02, 0x91, 0x92,
+    };
+    const uint32_t first_part_len = 8;
+    realityserverTunnelDownStreamPayload(
+        fixture.reality,
+        fixture.line,
+        serverBufferFromBytes(&fixture, cover_record, first_part_len));
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffRequest,
+                                                0)) &&
+                      ls->mode == kRealityServerModeHandoffAwaitBoundary &&
+                      strcmp(fixture.context.events, "c") == 0,
+                  "server did not prepare the final-cover-prefix death fixture");
+
+    uint8_t final_callback[(sizeof(cover_record) - first_part_len) +
+                           sizeof(suppressed_record)];
+    memoryCopy(final_callback,
+               cover_record + first_part_len,
+               sizeof(cover_record) - first_part_len);
+    memoryCopy(final_callback + sizeof(cover_record) - first_part_len,
+               suppressed_record,
+               sizeof(suppressed_record));
+    fixture.context.kill_on_cover_payload = true;
+    realityserverTunnelDownStreamPayload(
+        fixture.reality,
+        fixture.line,
+        serverBufferFromBytes(&fixture, final_callback, sizeof(final_callback)));
+    requireServer(! lineIsAlive(fixture.line) &&
+                      fixture.context.cover_downstream_bytes == sizeof(cover_record) &&
+                      memoryEqual(fixture.context.cover_downstream,
+                                  cover_record,
+                                  sizeof(cover_record)) &&
+                      fixture.context.handoff_ack_records == 0 &&
+                      strcmp(fixture.context.events, "ccF") == 0,
+                  "server continued after line death in final cover-prefix forwarding");
+    serverFixtureDestroy(&fixture);
+
+    prepareServerTls13ReentryFixture(&fixture);
+    fixture.context.kill_on_ack_payload = true;
+    requireServer(! realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffRequest,
+                                                0)) &&
+                      ! lineIsAlive(fixture.line) &&
+                      fixture.context.handoff_ack_records == 1 &&
+                      strcmp(fixture.context.events, "KF") == 0,
+                  "server continued after line death during HANDOFF_ACK send");
+    serverFixtureDestroy(&fixture);
+
+    prepareServerTls13ReentryFixture(&fixture);
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffRequest,
+                                                0)) &&
+                      strcmp(fixture.context.events, "K") == 0,
+                  "server did not prepare the destination-Finish death fixture");
+    fixture.context.kill_on_destination_finish = true;
+    requireServer(! realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffConfirm,
+                                                1)) &&
+                      ! lineIsAlive(fixture.line) &&
+                      strcmp(fixture.context.events, "KF") == 0,
+                  "server continued after line death during destination Finish");
+    serverFixtureDestroy(&fixture);
+
+    prepareServerTls13ReentryFixture(&fixture);
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffRequest,
+                                                0)) &&
+                      strcmp(fixture.context.events, "K") == 0,
+                  "server did not prepare the protected-Init death fixture");
+    fixture.context.kill_on_protected_init = true;
+    requireServer(! realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffConfirm,
+                                                1)) &&
+                      ! lineIsAlive(fixture.line) &&
+                      strcmp(fixture.context.events, "KFIU") == 0,
+                  "server continued after line death during protected Init");
+    serverFixtureDestroy(&fixture);
+
+    prepareServerTls13ReentryFixture(&fixture);
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffRequest,
+                                                0)) &&
+                      realityserverProcessUpstream(
+                          fixture.reality,
+                          fixture.line,
+                          buildServerInboundControl(&fixture,
+                                                    kRealityV2RecordKindHandoffConfirm,
+                                                    1)) &&
+                      strcmp(fixture.context.events, "KFI") == 0,
+                  "server did not prepare the first-application death fixture");
+    ls = lineGetState(fixture.line, fixture.reality);
+    fixture.context.kill_on_protected_payload = true;
+    const uint8_t protected_application = 0x5a;
+    requireServer(! realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundRecord(&fixture,
+                                               kRealityV2Tls13,
+                                               &ls->record_profile,
+                                               kRealityV2RecordKindApplicationData,
+                                               &protected_application,
+                                               sizeof(protected_application),
+                                               2)) &&
+                      ! lineIsAlive(fixture.line) &&
+                      strcmp(fixture.context.events, "KFIAU") == 0,
+                  "server continued after line death during first protected application");
+    serverFixtureDestroy(&fixture);
+}
+
+static void testServerTls13DestinationCallbacksStaySuppressed(void)
+{
+    server_lifecycle_fixture_t fixture;
+    prepareServerTls13ReentryFixture(&fixture);
+    fixture.context.inject_destination_callbacks_on_ack = true;
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffRequest,
+                                                0)),
+                  "server rejected REQUEST during cutoff callback injection");
+    realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+    requireServer(ls->mode == kRealityServerModeHandoffAwaitConfirm &&
+                      ls->destination_downstream_cutoff && ls->destination_up_finished &&
+                      ! ls->protected_init_sent && ! ls->prev_est_sent &&
+                      fixture.context.destination_callbacks_injected == 5 &&
+                      fixture.context.cover_downstream_bytes == 0 &&
+                      strcmp(fixture.context.events, "K") == 0,
+                  "destination callbacks escaped while the downstream cutoff was active");
+
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffConfirm,
+                                                1)) &&
+                      ls->mode == kRealityServerModeAuthorized &&
+                      ls->protected_init_sent && strcmp(fixture.context.events, "KI") == 0,
+                  "cutoff callback suppression prevented clean authorization");
+    const uint8_t protected_application = 0x5a;
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundRecord(&fixture,
+                                               kRealityV2Tls13,
+                                               &ls->record_profile,
+                                               kRealityV2RecordKindApplicationData,
+                                               &protected_application,
+                                               sizeof(protected_application),
+                                               2)) &&
+                      strcmp(fixture.context.events, "KIA") == 0,
+                  "protected routing did not remain usable after cutoff callback suppression");
+    realityserverLinestateDestroy(ls);
+    serverFixtureDestroy(&fixture);
+
+    prepareServerTls13ReentryFixture(&fixture);
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffRequest,
+                                                0)) &&
+                      strcmp(fixture.context.events, "K") == 0,
+                  "server did not prepare the destination-close callback fixture");
+    fixture.context.inject_destination_callbacks_on_finish = true;
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffConfirm,
+                                                1)),
+                  "server rejected CONFIRM during destination-close callback injection");
+    ls = lineGetState(fixture.line, fixture.reality);
+    requireServer(ls->mode == kRealityServerModeAuthorized && ls->destination_up_finished &&
+                      ls->protected_init_sent && ! ls->closing_destination_for_authorized &&
+                      ! ls->prev_est_sent &&
+                      fixture.context.destination_callbacks_injected == 5 &&
+                      fixture.context.cover_downstream_bytes == 0 &&
+                      strcmp(fixture.context.events, "KFI") == 0,
+                  "destination callbacks escaped during the authorization close window");
+
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundRecord(&fixture,
+                                               kRealityV2Tls13,
+                                               &ls->record_profile,
+                                               kRealityV2RecordKindApplicationData,
+                                               &protected_application,
+                                               sizeof(protected_application),
+                                               2)) &&
+                      strcmp(fixture.context.events, "KFIA") == 0,
+                  "protected routing did not remain usable after close callback suppression");
+    realityserverLinestateDestroy(ls);
+    serverFixtureDestroy(&fixture);
+}
+
+static void testServerTls13HandoffTailBound(void)
+{
+    server_lifecycle_fixture_t fixture;
+    serverFixtureInitialize(&fixture);
+    serverFixtureAddDestination(&fixture);
+    fixture.prev->fnPayloadD = serverHandoffPrevPayload;
+
+    const reality_v2_record_profile_t profile = {
+        .profile_id = kRealityV2RecordProfileTls13Aead,
+        .visible_prefix_len = 0,
+    };
+    prepareServerPendingProfile(&fixture, kRealityV2Tls13, &profile);
+    realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
+    memorySet(ls->c2s_key, 0x61, sizeof(ls->c2s_key));
+    memorySet(ls->c2s_iv, 0x72, sizeof(ls->c2s_iv));
+
+    requireServer(realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      buildServerInboundControl(&fixture,
+                                                kRealityV2RecordKindHandoffRequest,
+                                                0)) &&
+                      ls->mode == kRealityServerModeHandoffAwaitConfirm &&
+                      strcmp(fixture.context.events, "K") == 0,
+                  "server did not ACK an authenticated request at an existing boundary");
+
+    const uint8_t late_cover_record[] = {0x17, 0x03, 0x03, 0x00, 0x01, 0xa5};
+    for (uint32_t i = 0; i < kRealityServerMaxHandoffTailRecords; ++i)
+    {
+        requireServer(realityserverProcessUpstream(
+                          fixture.reality,
+                          fixture.line,
+                          serverBufferFromBytes(&fixture,
+                                                late_cover_record,
+                                                sizeof(late_cover_record))),
+                      "server closed before reaching the handoff-tail record bound");
+    }
+    requireServer(ls->c2s_recv_seq == 1 &&
+                      fixture.context.destination_upstream_records ==
+                          kRealityServerMaxHandoffTailRecords &&
+                      strcmp(fixture.context.events, "KTTTTTTTT") == 0,
+                  "failed handoff trials changed sequence state or skipped destination routing");
+
+    requireServer(! realityserverProcessUpstream(
+                      fixture.reality,
+                      fixture.line,
+                      serverBufferFromBytes(&fixture,
+                                            late_cover_record,
+                                            sizeof(late_cover_record))) &&
+                      strcmp(fixture.context.events, "KTTTTTTTTFD") == 0,
+                  "server did not close silently at the handoff-tail record bound");
+    serverFixtureDestroy(&fixture);
+}
+
 void realityTestServerCloseLifecycle(void)
 {
     runServerScenario(realityserverHandleDownstreamFinish, "PD", false, false);
@@ -640,14 +1739,30 @@ void realityTestServerCloseLifecycle(void)
     };
     for (size_t i = 0; i < sizeof(profiles) / sizeof(profiles[0]); ++i)
     {
-        runFirstFatalAuthorization(versions[i], &profiles[i]);
-        runServerFragmentedAlert(versions[i], &profiles[i]);
-        testServerCoalescedRecords(versions[i], &profiles[i], false);
-        testServerCoalescedRecords(versions[i], &profiles[i], true);
+        if (versions[i] == kRealityV2Tls12)
+        {
+            runFirstFatalAuthorization(versions[i], &profiles[i]);
+            runServerFragmentedAlert(versions[i], &profiles[i]);
+            testServerCoalescedRecords(versions[i], &profiles[i], false);
+            testServerCoalescedRecords(versions[i], &profiles[i], true);
+        }
     }
     testServerTerminalReentry();
     testServerUnauthenticatedCloseModes();
     testServerSecureRandomFailure();
+    testServerTlsRecordBoundaryTracker();
+    testServerTls13PendingCandidateBudgetIncludesNonControlLengths();
+    testServerTls13NonRequestControlsStayPending();
+    testServerTls13FailedRequestIsByteExactFallback();
+    testServerTls13DuplicateConfirmDoesNotReinitializeNext();
+    testServerTls13PendingForwardReentrantFinishKillsLine();
+    testServerTls13PendingBudgetCannotOverwriteReentrantHandoff();
+    testServerTls13ReentrantRequestCutsOffCoalescedSuffix();
+    testServerTls13NestedDestinationPayloadCompletesBoundary();
+    testServerTls13LineDeathAtHandoffCallbacks();
+    testServerTls13DestinationCallbacksStaySuppressed();
+    testServerTls13AuthenticatedHandoff();
+    testServerTls13HandoffTailBound();
 }
 
 typedef struct server_sizing_context_s

@@ -1274,6 +1274,541 @@ static void testOldOpaqueApplicationRecordIsRejected(void)
             "old opaque-prefix profile must not remain valid");
 }
 
+typedef struct test_random_s
+{
+    uint16_t sample;
+    uint32_t calls;
+    uint32_t fail_on_call;
+} test_random_t;
+
+static bool testControlRandom(void *context, void *bytes, size_t size)
+{
+    test_random_t *random = context;
+    ++random->calls;
+    if (random->calls == random->fail_on_call)
+    {
+        return false;
+    }
+    if (random->calls == 1)
+    {
+        require(size == 2, "control padding selection did not request a 16-bit sample");
+        uint8_t *out = bytes;
+        out[0] = (uint8_t) (random->sample >> 8);
+        out[1] = (uint8_t) random->sample;
+        return true;
+    }
+    memset(bytes, 0xa5, size);
+    return true;
+}
+
+static int testChachaDecrypt(void *context, unsigned char *dst, const unsigned char *src,
+                             size_t src_len, const unsigned char *ad, size_t ad_len,
+                             const unsigned char *nonce, const unsigned char *key)
+{
+    (void) context;
+    return chacha20poly1305Decrypt(dst, src, src_len, ad, ad_len, nonce, key);
+}
+
+static bool makeControlRecord(const reality_v2_session_material_t *material, uint8_t direction,
+                              uint64_t sequence, uint8_t kind, uint32_t padding_len,
+                              uint8_t record[kRealityV2TlsRecordHeaderSize + kRealityV2ControlMaxTlsRecordBody],
+                              uint32_t *record_len)
+{
+    const reality_v2_record_profile_t profile = {
+        kRealityV2RecordProfileTls13Aead, 0, 0, 0};
+    reality_v2_record_descriptor_t descriptor;
+    reality_v2_record_layout_t layout;
+    uint32_t control_len = 0;
+    uint8_t padding[kRealityV2ControlMaxPadding];
+    uint8_t control[kRealityV2ControlMaxPayload];
+    memset(padding, 0x5c, sizeof(padding));
+    if (! realityV2CalculateControlPayloadLength(padding_len, &control_len) ||
+        ! realityV2SerializeControl(kind, padding, padding_len, control, control_len) ||
+        ! realityV2BuildRecordDescriptor(kRealityV2Tls13, &profile, kind, &descriptor) ||
+        ! realityV2CalculateDescriptorLayout(&descriptor, control_len, &layout))
+    {
+        return false;
+    }
+
+    record[0] = descriptor.outer_content_type;
+    record[1] = 0x03;
+    record[2] = 0x03;
+    record[3] = (uint8_t) (layout.wire_body_len >> 8);
+    record[4] = (uint8_t) layout.wire_body_len;
+    uint8_t *ciphertext = record + kRealityV2TlsRecordHeaderSize;
+    if (! realityV2BuildInnerPlaintext(&descriptor,
+                                       control,
+                                       control_len,
+                                       ciphertext,
+                                       layout.inner_plaintext_len))
+    {
+        return false;
+    }
+
+    const uint8_t *key = direction == kRealityV2DirectionClientToServer
+                             ? material->c2s_key
+                             : material->s2c_key;
+    const uint8_t *iv = direction == kRealityV2DirectionClientToServer
+                            ? material->c2s_iv
+                            : material->s2c_iv;
+    uint8_t nonce[kRealityV2IvSize];
+    uint8_t aad[kRealityV2RecordAadMaxSize];
+    size_t aad_len = 0;
+    realityV2BuildNonce(iv, sequence, nonce);
+    bool ok = realityV2BuildRecordAad(&descriptor,
+                                      direction,
+                                      sequence,
+                                      material->session_id,
+                                      record,
+                                      NULL,
+                                      0,
+                                      aad,
+                                      &aad_len) &&
+              chacha20poly1305Encrypt(ciphertext,
+                                      ciphertext,
+                                      layout.inner_plaintext_len,
+                                      aad,
+                                      aad_len,
+                                      nonce,
+                                      key) == 0;
+    memset(control, 0, sizeof(control));
+    memset(padding, 0, sizeof(padding));
+    memset(nonce, 0, sizeof(nonce));
+    memset(aad, 0, sizeof(aad));
+    if (ok)
+    {
+        *record_len = kRealityV2TlsRecordHeaderSize + layout.wire_body_len;
+    }
+    return ok;
+}
+
+static void testTls13HandoffControls(void)
+{
+    const reality_v2_record_profile_t tls13_profile = {
+        kRealityV2RecordProfileTls13Aead, 0, 0, 0};
+    const reality_v2_record_profile_t tls12_profile = {
+        kRealityV2RecordProfileTls12ChaCha, 0, 0, 0};
+    const uint8_t kinds[] = {
+        kRealityV2RecordKindHandoffRequest,
+        kRealityV2RecordKindHandoffAck,
+        kRealityV2RecordKindHandoffConfirm,
+    };
+    require(kinds[0] == 3 && kinds[1] == 4 && kinds[2] == 5,
+            "handoff record kind values drifted");
+
+    for (size_t i = 0; i < sizeof(kinds); ++i)
+    {
+        reality_v2_record_descriptor_t descriptor;
+        require(realityV2RecordKindIsControl(kinds[i]) &&
+                    realityV2BuildRecordDescriptor(kRealityV2Tls13,
+                                                   &tls13_profile,
+                                                   kinds[i],
+                                                   &descriptor) &&
+                    descriptor.outer_content_type == 0x17 &&
+                    descriptor.tls13_inner_content_type == 0x17 &&
+                    descriptor.visible_prefix_len == 0,
+                "TLS 1.3 control descriptor has the wrong public shape");
+        require(! realityV2BuildRecordDescriptor(kRealityV2Tls12,
+                                                  &tls12_profile,
+                                                  kinds[i],
+                                                  &descriptor),
+                "TLS 1.2 must reject handoff controls");
+    }
+
+    reality_v2_record_descriptor_t request_descriptor;
+    reality_v2_record_layout_t layout;
+    require(realityV2BuildRecordDescriptor(kRealityV2Tls13,
+                                            &tls13_profile,
+                                            kRealityV2RecordKindHandoffRequest,
+                                            &request_descriptor) &&
+                realityV2CalculateDescriptorLayout(&request_descriptor,
+                                                    kRealityV2ControlMinPayload,
+                                                    &layout) &&
+                layout.wire_body_len == kRealityV2ControlMinTlsRecordBody,
+            "minimum control layout does not match the measured TLS envelope");
+    require(realityV2CalculateDescriptorLayout(&request_descriptor,
+                                                kRealityV2ControlMaxPayload,
+                                                &layout) &&
+                layout.wire_body_len == kRealityV2ControlMaxTlsRecordBody,
+            "maximum control layout does not match the measured TLS envelope");
+    require(! realityV2CalculateDescriptorLayout(&request_descriptor,
+                                                  kRealityV2ControlMinPayload - 1U,
+                                                  &layout) &&
+                ! realityV2CalculateDescriptorLayout(&request_descriptor,
+                                                     kRealityV2ControlMaxPayload + 1U,
+                                                     &layout),
+            "control descriptor accepted a payload adjacent to its reviewed bounds");
+    require(! realityV2ControlPaddingLengthIsValid(kRealityV2ControlMinPadding - 1U) &&
+                realityV2ControlPaddingLengthIsValid(kRealityV2ControlMinPadding) &&
+                realityV2ControlPaddingLengthIsValid(kRealityV2ControlMaxPadding) &&
+                ! realityV2ControlPaddingLengthIsValid(kRealityV2ControlMaxPadding + 1U),
+            "control padding bounds are not exact");
+
+    uint8_t built[kRealityV2ControlMaxPayload];
+    uint32_t built_len = UINT32_MAX;
+    test_random_t minimum_random = {.sample = 0};
+    require(realityV2BuildControlPayloadWithRandom(kRealityV2RecordKindHandoffRequest,
+                                                   testControlRandom,
+                                                   &minimum_random,
+                                                   built,
+                                                   sizeof(built),
+                                                   &built_len) &&
+                built_len == kRealityV2ControlMinPayload &&
+                realityV2ParseControl(kRealityV2RecordKindHandoffRequest, built, built_len),
+            "minimum randomized control payload failed");
+    test_random_t maximum_random = {.sample = kRealityV2ControlMaxPadding -
+                                              kRealityV2ControlMinPadding};
+    require(realityV2BuildControlPayloadWithRandom(kRealityV2RecordKindHandoffConfirm,
+                                                   testControlRandom,
+                                                   &maximum_random,
+                                                   built,
+                                                   sizeof(built),
+                                                   &built_len) &&
+                built_len == kRealityV2ControlMaxPayload &&
+                realityV2ParseControl(kRealityV2RecordKindHandoffConfirm, built, built_len),
+            "maximum randomized control payload failed");
+    require(! realityV2ParseControl(kRealityV2RecordKindHandoffRequest, built, built_len),
+            "control code substitution must fail");
+    built[0] ^= 1;
+    require(! realityV2ParseControl(kRealityV2RecordKindHandoffConfirm, built, built_len),
+            "unknown control format version must fail");
+
+    memset(built, 0xa7, sizeof(built));
+    test_random_t failed_random = {.fail_on_call = 1};
+    built_len = UINT32_MAX;
+    require(! realityV2BuildControlPayloadWithRandom(kRealityV2RecordKindHandoffAck,
+                                                      testControlRandom,
+                                                      &failed_random,
+                                                      built,
+                                                      sizeof(built),
+                                                      &built_len) &&
+                built_len == 0,
+            "CSPRNG failure must not build a control");
+    for (size_t i = 0; i < sizeof(built); ++i)
+    {
+        require(built[i] == 0, "CSPRNG failure did not clear control output");
+    }
+
+    memset(built, 0xa7, sizeof(built));
+    test_random_t padding_random_failure = {.sample = 0, .fail_on_call = 2};
+    built_len = UINT32_MAX;
+    require(! realityV2BuildControlPayloadWithRandom(kRealityV2RecordKindHandoffAck,
+                                                      testControlRandom,
+                                                      &padding_random_failure,
+                                                      built,
+                                                      sizeof(built),
+                                                      &built_len) &&
+                built_len == 0,
+            "CSPRNG padding-byte failure must not build a control");
+    for (size_t i = 0; i < sizeof(built); ++i)
+    {
+        require(built[i] == 0, "CSPRNG padding-byte failure did not clear control output");
+    }
+
+    uint8_t root_key[kRealityV2KeySize];
+    memset(root_key, 0x6e, sizeof(root_key));
+    reality_v2_handshake_binding_t binding = makeBinding();
+    reality_v2_session_material_t material = {0};
+    require(realityV2DeriveSessionMaterial(root_key, &binding, &material),
+            "control trial material derivation failed");
+
+    uint8_t record[kRealityV2TlsRecordHeaderSize + kRealityV2ControlMaxTlsRecordBody];
+    uint8_t original[sizeof(record)];
+    uint32_t record_len = 0;
+    require(makeControlRecord(&material,
+                              kRealityV2DirectionClientToServer,
+                              0,
+                              kRealityV2RecordKindHandoffRequest,
+                              kRealityV2ControlMinPadding,
+                              record,
+                              &record_len),
+            "failed to build request control record");
+    memcpy(original, record, record_len);
+
+    uint8_t plaintext[kRealityV2ControlMaxInnerPlaintext];
+    uint32_t payload_offset = UINT32_MAX;
+    uint32_t payload_len = UINT32_MAX;
+    require(realityV2TryDecryptExpectedRecord(&request_descriptor,
+                                               kRealityV2DirectionClientToServer,
+                                               0,
+                                               material.session_id,
+                                               material.c2s_key,
+                                               material.c2s_iv,
+                                               record,
+                                               record_len,
+                                               testChachaDecrypt,
+                                               NULL,
+                                               plaintext,
+                                               sizeof(plaintext),
+                                               &payload_offset,
+                                               &payload_len) &&
+                realityV2ParseControl(kRealityV2RecordKindHandoffRequest,
+                                      plaintext + payload_offset,
+                                      payload_len) &&
+                memcmp(record, original, record_len) == 0,
+            "expected-kind request trial failed or mutated ciphertext");
+
+    for (size_t i = 1; i < sizeof(kinds); ++i)
+    {
+        reality_v2_record_descriptor_t wrong_descriptor;
+        require(realityV2BuildRecordDescriptor(kRealityV2Tls13,
+                                                &tls13_profile,
+                                                kinds[i],
+                                                &wrong_descriptor) &&
+                    ! realityV2TryDecryptExpectedRecord(&wrong_descriptor,
+                                                        kRealityV2DirectionClientToServer,
+                                                        0,
+                                                        material.session_id,
+                                                        material.c2s_key,
+                                                        material.c2s_iv,
+                                                        record,
+                                                        record_len,
+                                                        testChachaDecrypt,
+                                                        NULL,
+                                                        plaintext,
+                                                        sizeof(plaintext),
+                                                        &payload_offset,
+                                                        &payload_len),
+                "control AAD kind substitution must fail");
+    }
+    reality_v2_record_descriptor_t application_descriptor;
+    require(realityV2BuildRecordDescriptor(kRealityV2Tls13,
+                                            &tls13_profile,
+                                            kRealityV2RecordKindApplicationData,
+                                            &application_descriptor) &&
+                ! realityV2TryDecryptExpectedRecord(&application_descriptor,
+                                                    kRealityV2DirectionClientToServer,
+                                                    0,
+                                                    material.session_id,
+                                                    material.c2s_key,
+                                                    material.c2s_iv,
+                                                    record,
+                                                    record_len,
+                                                    testChachaDecrypt,
+                                                    NULL,
+                                                    plaintext,
+                                                    sizeof(plaintext),
+                                                    &payload_offset,
+                                                    &payload_len),
+            "request must not authenticate as application data");
+    reality_v2_record_descriptor_t alert_descriptor;
+    require(realityV2BuildRecordDescriptor(kRealityV2Tls13,
+                                            &tls13_profile,
+                                            kRealityV2RecordKindAlert,
+                                            &alert_descriptor) &&
+                ! realityV2TryDecryptExpectedRecord(&alert_descriptor,
+                                                    kRealityV2DirectionClientToServer,
+                                                    0,
+                                                    material.session_id,
+                                                    material.c2s_key,
+                                                    material.c2s_iv,
+                                                    record,
+                                                    record_len,
+                                                    testChachaDecrypt,
+                                                    NULL,
+                                                    plaintext,
+                                                    sizeof(plaintext),
+                                                    &payload_offset,
+                                                    &payload_len),
+            "request must not authenticate as an alert");
+    require(! realityV2TryDecryptExpectedRecord(&request_descriptor,
+                                                kRealityV2DirectionServerToClient,
+                                                0,
+                                                material.session_id,
+                                                material.c2s_key,
+                                                material.c2s_iv,
+                                                record,
+                                                record_len,
+                                                testChachaDecrypt,
+                                                NULL,
+                                                plaintext,
+                                                sizeof(plaintext),
+                                                &payload_offset,
+                                                &payload_len),
+            "request must not authenticate in the opposite direction");
+
+    reality_v2_record_descriptor_t classified;
+    require(realityV2ClassifyRecord(kRealityV2Tls13,
+                                    &tls13_profile,
+                                    record,
+                                    &classified) &&
+                ! realityV2RecordKindIsControl(classified.record_kind),
+            "public TLS header must not infer a handoff control kind");
+
+    uint64_t c2s_sequence = 1;
+    require(! realityV2TryDecryptExpectedRecord(&request_descriptor,
+                                                kRealityV2DirectionClientToServer,
+                                                c2s_sequence,
+                                                material.session_id,
+                                                material.c2s_key,
+                                                material.c2s_iv,
+                                                record,
+                                                record_len,
+                                                testChachaDecrypt,
+                                                NULL,
+                                                plaintext,
+                                                sizeof(plaintext),
+                                                &payload_offset,
+                                                &payload_len) &&
+                c2s_sequence == 1,
+            "replayed control authenticated or changed caller sequence");
+    require(memcmp(record, original, record_len) == 0,
+            "failed control authentication mutated ciphertext input");
+
+    reality_v2_session_material_t other_material = {0};
+    binding.server_random[0] ^= 1;
+    require(realityV2DeriveSessionMaterial(root_key, &binding, &other_material) &&
+                ! realityV2TryDecryptExpectedRecord(&request_descriptor,
+                                                    kRealityV2DirectionClientToServer,
+                                                    0,
+                                                    other_material.session_id,
+                                                    other_material.c2s_key,
+                                                    other_material.c2s_iv,
+                                                    record,
+                                                    record_len,
+                                                    testChachaDecrypt,
+                                                    NULL,
+                                                    plaintext,
+                                                    sizeof(plaintext),
+                                                    &payload_offset,
+                                                    &payload_len),
+            "control authenticated against another TLS binding");
+
+    uint64_t s2c_sequence = 0;
+    c2s_sequence = 1;
+
+    reality_v2_record_descriptor_t ack_descriptor;
+    require(makeControlRecord(&material,
+                              kRealityV2DirectionServerToClient,
+                              s2c_sequence,
+                              kRealityV2RecordKindHandoffAck,
+                              kRealityV2ControlMinPadding + 1U,
+                              record,
+                              &record_len) &&
+                realityV2BuildRecordDescriptor(kRealityV2Tls13,
+                                               &tls13_profile,
+                                               kRealityV2RecordKindHandoffAck,
+                                               &ack_descriptor) &&
+                realityV2TryDecryptExpectedRecord(&ack_descriptor,
+                                                  kRealityV2DirectionServerToClient,
+                                                  s2c_sequence,
+                                                  material.session_id,
+                                                  material.s2c_key,
+                                                  material.s2c_iv,
+                                                  record,
+                                                  record_len,
+                                                  testChachaDecrypt,
+                                                  NULL,
+                                                  plaintext,
+                                                  sizeof(plaintext),
+                                                  &payload_offset,
+                                                  &payload_len) &&
+                realityV2ParseControl(kRealityV2RecordKindHandoffAck,
+                                      plaintext + payload_offset,
+                                      payload_len),
+            "ACK did not authenticate at s2c sequence zero");
+    require(! realityV2TryDecryptExpectedRecord(&ack_descriptor,
+                                                kRealityV2DirectionClientToServer,
+                                                s2c_sequence,
+                                                material.session_id,
+                                                material.s2c_key,
+                                                material.s2c_iv,
+                                                record,
+                                                record_len,
+                                                testChachaDecrypt,
+                                                NULL,
+                                                plaintext,
+                                                sizeof(plaintext),
+                                                &payload_offset,
+                                                &payload_len),
+            "ACK authenticated in the client-to-server direction");
+    ++s2c_sequence;
+    require(! realityV2TryDecryptExpectedRecord(&ack_descriptor,
+                                                kRealityV2DirectionServerToClient,
+                                                s2c_sequence,
+                                                material.session_id,
+                                                material.s2c_key,
+                                                material.s2c_iv,
+                                                record,
+                                                record_len,
+                                                testChachaDecrypt,
+                                                NULL,
+                                                plaintext,
+                                                sizeof(plaintext),
+                                                &payload_offset,
+                                                &payload_len),
+            "replayed ACK authenticated at the next s2c sequence");
+
+    reality_v2_record_descriptor_t confirm_descriptor;
+    require(makeControlRecord(&material,
+                              kRealityV2DirectionClientToServer,
+                              c2s_sequence,
+                              kRealityV2RecordKindHandoffConfirm,
+                              kRealityV2ControlMaxPadding,
+                              record,
+                              &record_len) &&
+                realityV2BuildRecordDescriptor(kRealityV2Tls13,
+                                               &tls13_profile,
+                                               kRealityV2RecordKindHandoffConfirm,
+                                               &confirm_descriptor) &&
+                realityV2TryDecryptExpectedRecord(&confirm_descriptor,
+                                                  kRealityV2DirectionClientToServer,
+                                                  c2s_sequence,
+                                                  material.session_id,
+                                                  material.c2s_key,
+                                                  material.c2s_iv,
+                                                  record,
+                                                  record_len,
+                                                  testChachaDecrypt,
+                                                  NULL,
+                                                  plaintext,
+                                                  sizeof(plaintext),
+                                                  &payload_offset,
+                                                  &payload_len) &&
+                realityV2ParseControl(kRealityV2RecordKindHandoffConfirm,
+                                      plaintext + payload_offset,
+                                      payload_len),
+            "CONFIRM did not authenticate at c2s sequence one");
+    require(! realityV2TryDecryptExpectedRecord(&application_descriptor,
+                                                kRealityV2DirectionClientToServer,
+                                                c2s_sequence,
+                                                material.session_id,
+                                                material.c2s_key,
+                                                material.c2s_iv,
+                                                record,
+                                                record_len,
+                                                testChachaDecrypt,
+                                                NULL,
+                                                plaintext,
+                                                sizeof(plaintext),
+                                                &payload_offset,
+                                                &payload_len),
+            "CONFIRM authenticated as application data");
+    ++c2s_sequence;
+    require(! realityV2TryDecryptExpectedRecord(&confirm_descriptor,
+                                                kRealityV2DirectionClientToServer,
+                                                c2s_sequence,
+                                                material.session_id,
+                                                material.c2s_key,
+                                                material.c2s_iv,
+                                                record,
+                                                record_len,
+                                                testChachaDecrypt,
+                                                NULL,
+                                                plaintext,
+                                                sizeof(plaintext),
+                                                &payload_offset,
+                                                &payload_len),
+            "replayed CONFIRM authenticated at the first application sequence");
+    require(c2s_sequence == 2 && s2c_sequence == 1,
+            "post-handoff Reality sequences are incorrect");
+    memset(plaintext, 0, sizeof(plaintext));
+    memset(record, 0, sizeof(record));
+    memset(original, 0, sizeof(original));
+    memset(&material, 0, sizeof(material));
+    memset(&other_material, 0, sizeof(other_material));
+}
+
 int main(void)
 {
 #if defined(WCRYPTO_BACKEND_SODIUM)
@@ -1289,5 +1824,6 @@ int main(void)
     testRecordProfilesAndLayouts();
     testTls13ApplicationInnerType();
     testOldOpaqueApplicationRecordIsRejected();
+    testTls13HandoffControls();
     return 0;
 }

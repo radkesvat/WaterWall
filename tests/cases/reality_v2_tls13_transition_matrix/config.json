@@ -1,0 +1,73 @@
+{
+  "name": "reality-v2-tls13-transition-matrix",
+  "nodes": [
+    {
+      "name": "client-entry",
+      "type": "TcpListener",
+      "settings": { "address": "127.0.0.1", "port": 25130, "nodelay": true },
+      "next": "reality-client"
+    },
+    {
+      "name": "reality-client",
+      "type": "RealityClient",
+      "settings": {
+        "sni": "tls.integration.test",
+        "verify": false,
+        "password": "waterwall-reality-v2-matrix",
+        "algorithm": "chacha20-poly1305",
+        "salt": "tls13tm",
+        "kdf-iterations": 12000
+      },
+      "next": "main-relay-connector"
+    },
+    {
+      "name": "main-relay-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 25131,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "reality-listener",
+      "type": "TcpListener",
+      "settings": { "address": "127.0.0.1", "port": 25132, "nodelay": true },
+      "next": "reality-server"
+    },
+    {
+      "name": "reality-server",
+      "type": "RealityServer",
+      "settings": {
+        "destination": "cover-relay-connector",
+        "password": "waterwall-reality-v2-matrix",
+        "algorithm": "chacha20-poly1305",
+        "salt": "tls13tm",
+        "kdf-iterations": 12000,
+        "sniffing-attempts": 8
+      },
+      "next": "protected-connector"
+    },
+    {
+      "name": "protected-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 25135,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "cover-relay-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 25133,
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}
