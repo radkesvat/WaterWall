@@ -131,5 +131,10 @@ void routerTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     for (uint32_t i = 0; i < ts->rules_count; ++i)
     {
         routerBindRuleTarget(t, chain, &ts->rules[i]);
+
+        // A target's onChain may merge this chain into an already-built downstream chain,
+        // destroying the local pointer while updating t->chain. Reacquire it before the
+        // next rule instead of carrying a potentially freed chain across iterations.
+        chain = tunnelGetChain(t);
     }
 }

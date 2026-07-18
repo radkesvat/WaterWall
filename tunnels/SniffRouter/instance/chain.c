@@ -78,5 +78,10 @@ void sniffrouterTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     for (uint32_t i = 0; i < ts->routes_count; ++i)
     {
         sniffrouterBindRouteTarget(t, chain, &ts->routes[i]);
+
+        // A target's onChain may merge this chain into an already-built downstream chain,
+        // destroying the local pointer while updating t->chain. Reacquire it before the
+        // next route instead of carrying a potentially freed chain across iterations.
+        chain = tunnelGetChain(t);
     }
 }

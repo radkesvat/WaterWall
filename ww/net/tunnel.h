@@ -278,6 +278,10 @@ void tunnelDefaultDownStreamResume(tunnel_t *self, line_t *line);
 /**
  * @brief Default function to handle tunnel chaining.
  *
+ * This call, and any nested onChain callback, may merge @p tc into an already-built
+ * downstream chain and destroy @p tc. A custom onChain implementation that continues
+ * afterward must reacquire the active chain with tunnelGetChain(t) before reusing it.
+ *
  * @param t Pointer to the tunnel.
  * @param tc Pointer to the tunnel chain.
  */
