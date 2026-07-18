@@ -358,19 +358,6 @@ Build/validation rules:
 
 ---
 
-## 8. Required Output Format
-
-When you finish a task, report in this structure (it forces the contracts into the
-open):
-
-1. **Understanding** — the relevant tunnel flow (chain drawn, directions marked,
-   line owner named).
-2. **Change** — the bug or requested feature, precisely.
-3. **Correctness** — how the change preserves lifecycle ordering, line safety,
-   direction ownership, buffer/padding rules, and packet-line semantics (if relevant).
-4. **Implementation** — what you changed, matching the closest reference tunnel.
-5. **Validation** — commands run, build result, tests, fallback checks.
-6. **Risks** — remaining edge cases or follow-ups.
 
 If something is unclear, infer conservatively from the source and existing patterns.
 **Do not invent a new lifecycle model.**
