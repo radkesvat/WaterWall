@@ -10,6 +10,13 @@ static const uint8_t kC2sIvDomain[]   = "WaterWall Reality v2/c2s iv";
 static const uint8_t kS2cIvDomain[]   = "WaterWall Reality v2/s2c iv";
 static const uint8_t kRecordDomain[]  = "WaterWall Reality v2/profile record";
 
+static_assert(kRealityV2ControlMinPayload + 1 + kRealityV2TagSize ==
+                  kRealityV2ControlMinTlsRecordBody,
+              "Reality v2 minimum handoff control envelope drifted");
+static_assert(kRealityV2ControlMaxPayload + 1 + kRealityV2TagSize ==
+                  kRealityV2ControlMaxTlsRecordBody,
+              "Reality v2 maximum handoff control envelope drifted");
+
 enum
 {
     kTlsContentTypeAlert           = 0x15,
@@ -211,6 +218,15 @@ bool realityV2RecordDescriptorIsValid(const reality_v2_record_descriptor_t *desc
         return false;
     }
 
+    if (realityV2RecordKindIsControl(descriptor->record_kind))
+    {
+        return descriptor->tls_version == kRealityV2Tls13 &&
+               descriptor->profile.profile_id == kRealityV2RecordProfileTls13Aead &&
+               descriptor->outer_content_type == kTlsContentTypeApplicationData &&
+               descriptor->visible_prefix_len == 0 &&
+               descriptor->tls13_inner_content_type == kTls13InnerContentTypeApplicationData;
+    }
+
     if (descriptor->record_kind == kRealityV2RecordKindApplicationData)
     {
         uint8_t expected_inner_type = descriptor->tls_version == kRealityV2Tls13
@@ -269,7 +285,8 @@ bool realityV2BuildRecordDescriptor(uint16_t tls_version, const reality_v2_recor
         .visible_prefix_len = profile->visible_prefix_len,
     };
 
-    if (record_kind == kRealityV2RecordKindApplicationData && tls_version == kRealityV2Tls13)
+    if ((record_kind == kRealityV2RecordKindApplicationData || realityV2RecordKindIsControl(record_kind)) &&
+        tls_version == kRealityV2Tls13)
     {
         result.tls13_inner_content_type = kTls13InnerContentTypeApplicationData;
     }
@@ -302,10 +319,16 @@ bool realityV2BuildRecordDescriptor(uint16_t tls_version, const reality_v2_recor
 bool realityV2CalculateDescriptorLayout(const reality_v2_record_descriptor_t *descriptor,
                                         uint32_t payload_len, reality_v2_record_layout_t *layout)
 {
-    if (! realityV2RecordDescriptorIsValid(descriptor) || layout == NULL ||
-        (descriptor->record_kind == kRealityV2RecordKindApplicationData &&
+    if (! realityV2RecordDescriptorIsValid(descriptor) || layout == NULL)
+    {
+        return false;
+    }
+
+    if ((descriptor->record_kind == kRealityV2RecordKindApplicationData &&
          payload_len > kRealityV2MaxPlaintextFragment) ||
-        (descriptor->record_kind == kRealityV2RecordKindAlert && payload_len != kRealityV2AlertMessageSize))
+        (descriptor->record_kind == kRealityV2RecordKindAlert && payload_len != kRealityV2AlertMessageSize) ||
+        (realityV2RecordKindIsControl(descriptor->record_kind) &&
+         (payload_len < kRealityV2ControlMinPayload || payload_len > kRealityV2ControlMaxPayload)))
     {
         return false;
     }
@@ -385,6 +408,15 @@ bool realityV2ValidateDescriptorBodyLength(const reality_v2_record_descriptor_t 
         reality_v2_record_layout_t exact;
         return realityV2CalculateDescriptorLayout(descriptor, kRealityV2AlertMessageSize, &exact) &&
                body_len == exact.wire_body_len;
+    }
+
+    if (realityV2RecordKindIsControl(descriptor->record_kind))
+    {
+        reality_v2_record_layout_t minimum;
+        reality_v2_record_layout_t maximum;
+        return realityV2CalculateDescriptorLayout(descriptor, kRealityV2ControlMinPayload, &minimum) &&
+               realityV2CalculateDescriptorLayout(descriptor, kRealityV2ControlMaxPayload, &maximum) &&
+               body_len >= minimum.wire_body_len && body_len <= maximum.wire_body_len;
     }
 
     reality_v2_record_layout_t maximum;
@@ -581,6 +613,24 @@ bool realityV2ValidateInnerPlaintext(const reality_v2_record_descriptor_t *descr
         return true;
     }
 
+    if (realityV2RecordKindIsControl(descriptor->record_kind))
+    {
+        if (inner_plaintext_len < 1 ||
+            inner_plaintext[inner_plaintext_len - 1] != descriptor->tls13_inner_content_type)
+        {
+            return false;
+        }
+        uint32_t control_payload_len = inner_plaintext_len - 1U;
+        if (control_payload_len < kRealityV2ControlMinPayload ||
+            control_payload_len > kRealityV2ControlMaxPayload)
+        {
+            return false;
+        }
+        *payload_offset = 0;
+        *payload_len    = control_payload_len;
+        return true;
+    }
+
     uint32_t application_payload_len = inner_plaintext_len;
     if (descriptor->tls13_inner_content_type != 0)
     {
@@ -597,6 +647,223 @@ bool realityV2ValidateInnerPlaintext(const reality_v2_record_descriptor_t *descr
     }
     *payload_offset = 0;
     *payload_len    = application_payload_len;
+    return true;
+}
+
+bool realityV2RecordKindIsControl(uint8_t record_kind)
+{
+    return record_kind == kRealityV2RecordKindHandoffRequest ||
+           record_kind == kRealityV2RecordKindHandoffAck ||
+           record_kind == kRealityV2RecordKindHandoffConfirm;
+}
+
+bool realityV2ControlPaddingLengthIsValid(uint32_t padding_len)
+{
+    return padding_len >= kRealityV2ControlMinPadding && padding_len <= kRealityV2ControlMaxPadding;
+}
+
+bool realityV2CalculateControlPayloadLength(uint32_t padding_len, uint32_t *payload_len)
+{
+    if (! realityV2ControlPaddingLengthIsValid(padding_len) || payload_len == NULL)
+    {
+        return false;
+    }
+    *payload_len = kRealityV2ControlHeaderSize + padding_len;
+    return true;
+}
+
+bool realityV2SerializeControl(uint8_t record_kind, const uint8_t *padding, uint32_t padding_len,
+                               uint8_t *out, uint32_t out_len)
+{
+    uint32_t expected_len;
+    if (! realityV2RecordKindIsControl(record_kind) || padding == NULL || out == NULL ||
+        ! realityV2CalculateControlPayloadLength(padding_len, &expected_len) || out_len != expected_len)
+    {
+        return false;
+    }
+
+    out[0] = kRealityV2ControlFormatVersion;
+    out[1] = record_kind;
+    memoryCopy(out + kRealityV2ControlHeaderSize, padding, padding_len);
+    return true;
+}
+
+bool realityV2ParseControl(uint8_t expected_record_kind, const uint8_t *data, uint32_t len)
+{
+    return realityV2RecordKindIsControl(expected_record_kind) && data != NULL &&
+           len >= kRealityV2ControlMinPayload && len <= kRealityV2ControlMaxPayload &&
+           data[0] == kRealityV2ControlFormatVersion && data[1] == expected_record_kind;
+}
+
+static bool realityV2SecureRandomAdapter(void *context, void *bytes, size_t size)
+{
+    discard context;
+    return secureRandomBytes(bytes, size);
+}
+
+static bool realityV2SelectControlPaddingLength(reality_v2_random_bytes_fn random_bytes,
+                                                void *random_context, uint32_t *padding_len)
+{
+    enum
+    {
+        kSampleCardinality = UINT16_MAX + 1U,
+        kMaximumAttempts  = 32,
+    };
+    const uint32_t choice_count =
+        kRealityV2ControlMaxPadding - kRealityV2ControlMinPadding + 1U;
+    const uint32_t acceptance_limit =
+        kSampleCardinality - (kSampleCardinality % choice_count);
+
+    if (random_bytes == NULL || padding_len == NULL)
+    {
+        return false;
+    }
+
+    for (uint32_t attempt = 0; attempt < kMaximumAttempts; ++attempt)
+    {
+        uint8_t sample_bytes[2] = {0};
+        if (! random_bytes(random_context, sample_bytes, sizeof(sample_bytes)))
+        {
+            memoryZero(sample_bytes, sizeof(sample_bytes));
+            return false;
+        }
+        uint32_t sample = ((uint32_t) sample_bytes[0] << 8) | sample_bytes[1];
+        memoryZero(sample_bytes, sizeof(sample_bytes));
+        if (sample < acceptance_limit)
+        {
+            *padding_len = kRealityV2ControlMinPadding + (sample % choice_count);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool realityV2BuildControlPayloadWithRandom(uint8_t record_kind, reality_v2_random_bytes_fn random_bytes,
+                                            void *random_context, uint8_t *out, uint32_t out_capacity,
+                                            uint32_t *out_len)
+{
+    uint32_t padding_len = 0;
+    uint32_t payload_len = 0;
+    if (out_len != NULL)
+    {
+        *out_len = 0;
+    }
+    if (! realityV2RecordKindIsControl(record_kind) || random_bytes == NULL || out == NULL ||
+        out_len == NULL || out_capacity < kRealityV2ControlMaxPayload ||
+        ! realityV2SelectControlPaddingLength(random_bytes, random_context, &padding_len) ||
+        ! realityV2CalculateControlPayloadLength(padding_len, &payload_len))
+    {
+        if (out != NULL)
+        {
+            uint32_t clear_len = out_capacity < kRealityV2ControlMaxPayload
+                                     ? out_capacity
+                                     : kRealityV2ControlMaxPayload;
+            memoryZero(out, clear_len);
+        }
+        return false;
+    }
+
+    uint8_t padding[kRealityV2ControlMaxPadding] = {0};
+    if (! random_bytes(random_context, padding, padding_len) ||
+        ! realityV2SerializeControl(record_kind, padding, padding_len, out, payload_len))
+    {
+        memoryZero(padding, sizeof(padding));
+        uint32_t clear_len = out_capacity < kRealityV2ControlMaxPayload
+                                 ? out_capacity
+                                 : kRealityV2ControlMaxPayload;
+        memoryZero(out, clear_len);
+        return false;
+    }
+
+    memoryZero(padding, sizeof(padding));
+    *out_len = payload_len;
+    return true;
+}
+
+bool realityV2BuildControlPayload(uint8_t record_kind, uint8_t *out, uint32_t out_capacity,
+                                  uint32_t *out_len)
+{
+    return realityV2BuildControlPayloadWithRandom(record_kind,
+                                                  realityV2SecureRandomAdapter,
+                                                  NULL,
+                                                  out,
+                                                  out_capacity,
+                                                  out_len);
+}
+
+bool realityV2TryDecryptExpectedRecord(const reality_v2_record_descriptor_t *descriptor,
+                                       uint8_t direction, uint64_t sequence_number,
+                                       const uint8_t session_id[kRealityV2SessionIdSize],
+                                       const uint8_t key[kRealityV2KeySize],
+                                       const uint8_t base_iv[kRealityV2IvSize],
+                                       const uint8_t *record, uint32_t record_len,
+                                       reality_v2_aead_decrypt_fn decrypt, void *decrypt_context,
+                                       uint8_t *plaintext, uint32_t plaintext_capacity,
+                                       uint32_t *payload_offset, uint32_t *payload_len)
+{
+    if (! realityV2RecordDescriptorIsValid(descriptor) ||
+        (direction != kRealityV2DirectionClientToServer &&
+         direction != kRealityV2DirectionServerToClient) ||
+        ! realityV2SequenceAvailable(sequence_number) || session_id == NULL || key == NULL ||
+        base_iv == NULL || record == NULL || decrypt == NULL || plaintext == NULL ||
+        payload_offset == NULL || payload_len == NULL ||
+        record_len < kRealityV2TlsRecordHeaderSize || record[0] != descriptor->outer_content_type ||
+        record[1] != 0x03 || record[2] != 0x03)
+    {
+        return false;
+    }
+
+    uint32_t body_len = ((uint32_t) record[3] << 8) | record[4];
+    if (body_len != record_len - kRealityV2TlsRecordHeaderSize ||
+        ! realityV2ValidateDescriptorBodyLength(descriptor, body_len) ||
+        body_len < (uint32_t) descriptor->visible_prefix_len + kRealityV2TagSize)
+    {
+        return false;
+    }
+
+    const uint8_t *visible_prefix = record + kRealityV2TlsRecordHeaderSize;
+    const uint8_t *ciphertext = visible_prefix + descriptor->visible_prefix_len;
+    uint32_t ciphertext_len = body_len - descriptor->visible_prefix_len;
+    uint32_t inner_plaintext_len = ciphertext_len - kRealityV2TagSize;
+    if (plaintext_capacity < inner_plaintext_len)
+    {
+        return false;
+    }
+
+    uint8_t nonce[kRealityV2IvSize];
+    uint8_t aad[kRealityV2RecordAadMaxSize];
+    size_t aad_len = 0;
+    realityV2BuildNonce(base_iv, sequence_number, nonce);
+    bool aad_ok = realityV2BuildRecordAad(descriptor,
+                                          direction,
+                                          sequence_number,
+                                          session_id,
+                                          record,
+                                          visible_prefix,
+                                          descriptor->visible_prefix_len,
+                                          aad,
+                                          &aad_len);
+    int decrypt_result = aad_ok ? decrypt(decrypt_context,
+                                          plaintext,
+                                          ciphertext,
+                                          ciphertext_len,
+                                          aad,
+                                          aad_len,
+                                          nonce,
+                                          key)
+                                : -1;
+    memoryZero(nonce, sizeof(nonce));
+    memoryZero(aad, sizeof(aad));
+    if (decrypt_result != 0 ||
+        ! realityV2ValidateInnerPlaintext(descriptor,
+                                          plaintext,
+                                          inner_plaintext_len,
+                                          payload_offset,
+                                          payload_len))
+    {
+        memoryZero(plaintext, inner_plaintext_len);
+        return false;
+    }
     return true;
 }
 

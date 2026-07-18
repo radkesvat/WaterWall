@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx)
+void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_pool_t *pool)
 {
     // Chrome's h2 ALPS payload is a fixed three-byte value captured on the wire.
     // Do not replace this with a serialized HTTP/2 SETTINGS frame.
@@ -12,12 +12,30 @@ void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx)
 
     static_assert(sizeof(kChromeH2AlpsPayload) == 3, "Chrome h2 ALPS payload must stay 0x026832");
 
-    *ls = (tlsclient_lstate_t) {0};
+    assert(ls != NULL && sctx != NULL && pool != NULL);
+
+    *ls = (tlsclient_lstate_t) {
+        .bq              = bufferqueueCreate(2),
+        .takeover_stream = bufferstreamCreate(pool, 0),
+        .takeover_phase  = kTlsClientTakeoverHandshake,
+    };
 
     ls->rbio = BIO_new(BIO_s_mem());
     ls->wbio = BIO_new(BIO_s_mem());
     ls->ssl  = SSL_new(sctx);
-    ls->bq   = bufferqueueCreate(2);
+
+    if (ls->rbio == NULL || ls->wbio == NULL || ls->ssl == NULL)
+    {
+        LOGF("Failed to allocate TlsClient BoringSSL line state");
+        SSL_free(ls->ssl);
+        BIO_free(ls->rbio);
+        BIO_free(ls->wbio);
+        bufferqueueDestroy(&(ls->bq));
+        bufferstreamDestroy(&(ls->takeover_stream));
+        memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tlsclient_lstate_t)));
+        terminateProgram(1);
+        return;
+    }
 
     // Add ALPS for h2
     if (SSL_add_application_settings(
@@ -28,6 +46,7 @@ void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx)
         BIO_free(ls->rbio);
         BIO_free(ls->wbio);
         bufferqueueDestroy(&(ls->bq));
+        bufferstreamDestroy(&(ls->takeover_stream));
         memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tlsclient_lstate_t)));
         terminateProgram(1);
         return;
@@ -42,6 +61,7 @@ void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx)
         BIO_free(ls->rbio);
         BIO_free(ls->wbio);
         bufferqueueDestroy(&(ls->bq));
+        bufferstreamDestroy(&(ls->takeover_stream));
         memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tlsclient_lstate_t)));
         terminateProgram(1);
         return;
@@ -74,6 +94,7 @@ void tlsclientLinestateRelease(tlsclient_lstate_t *ls)
     ls->rbio = NULL;
     ls->wbio = NULL;
     bufferqueueDestroy(&(ls->bq));
+    bufferstreamDestroy(&(ls->takeover_stream));
 }
 
 void tlsclientLinestateDestroy(tlsclient_lstate_t *ls)

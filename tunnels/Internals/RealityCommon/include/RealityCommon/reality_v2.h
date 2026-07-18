@@ -16,6 +16,23 @@ enum reality_v2_size_e
     kRealityV2MaxVisiblePrefixSize = 16,
     kRealityV2TagSize              = 16,
     kRealityV2AlertMessageSize     = 2,
+    kRealityV2ControlFormatVersion = 1,
+    kRealityV2ControlHeaderSize    = 2,
+    /*
+     * TLS 1.3 handoff controls vary across the protected-record envelope
+     * observed by the in-memory BoringSSL wire fixture: 22-byte KeyUpdate
+     * records, a 55-byte early-application record, a 381-byte two-ticket
+     * flight, and the 1172-byte protected server-handshake record.
+     * A control body adds the two-byte control header, TLSInnerPlaintext type,
+     * and AEAD tag, so this maps to 3..1153 authenticated padding bytes.
+     */
+    kRealityV2ControlMinTlsRecordBody = 22,
+    kRealityV2ControlMaxTlsRecordBody = 1172,
+    kRealityV2ControlMinPadding       = 3,
+    kRealityV2ControlMaxPadding       = 1153,
+    kRealityV2ControlMinPayload       = kRealityV2ControlHeaderSize + kRealityV2ControlMinPadding,
+    kRealityV2ControlMaxPayload       = kRealityV2ControlHeaderSize + kRealityV2ControlMaxPadding,
+    kRealityV2ControlMaxInnerPlaintext = kRealityV2ControlMaxPayload + 1,
     kRealityV2RecordAadMaxSize     = 102,
     kRealityV2MaxPlaintextFragment = 16384,
     kRealityV2MaxTlsRecordBody     = 18432,
@@ -38,7 +55,17 @@ typedef enum reality_v2_record_kind_e
     kRealityV2RecordKindInvalid         = 0,
     kRealityV2RecordKindApplicationData = 1,
     kRealityV2RecordKindAlert           = 2,
+    kRealityV2RecordKindHandoffRequest  = 3,
+    kRealityV2RecordKindHandoffAck      = 4,
+    kRealityV2RecordKindHandoffConfirm  = 5,
 } reality_v2_record_kind_t;
+
+typedef bool (*reality_v2_random_bytes_fn)(void *context, void *bytes, size_t size);
+
+typedef int (*reality_v2_aead_decrypt_fn)(void *context, unsigned char *dst,
+                                          const unsigned char *src, size_t src_len,
+                                          const unsigned char *ad, size_t ad_len,
+                                          const unsigned char *nonce, const unsigned char *key);
 
 typedef enum reality_v2_alert_e
 {
@@ -128,6 +155,26 @@ bool realityV2BuildInnerPlaintext(const reality_v2_record_descriptor_t *descript
 bool realityV2ValidateInnerPlaintext(const reality_v2_record_descriptor_t *descriptor,
                                      const uint8_t *inner_plaintext, uint32_t inner_plaintext_len,
                                      uint32_t *payload_offset, uint32_t *payload_len);
+bool realityV2RecordKindIsControl(uint8_t record_kind);
+bool realityV2ControlPaddingLengthIsValid(uint32_t padding_len);
+bool realityV2CalculateControlPayloadLength(uint32_t padding_len, uint32_t *payload_len);
+bool realityV2SerializeControl(uint8_t record_kind, const uint8_t *padding, uint32_t padding_len,
+                               uint8_t *out, uint32_t out_len);
+bool realityV2ParseControl(uint8_t expected_record_kind, const uint8_t *data, uint32_t len);
+bool realityV2BuildControlPayloadWithRandom(uint8_t record_kind, reality_v2_random_bytes_fn random_bytes,
+                                            void *random_context, uint8_t *out, uint32_t out_capacity,
+                                            uint32_t *out_len);
+bool realityV2BuildControlPayload(uint8_t record_kind, uint8_t *out, uint32_t out_capacity,
+                                  uint32_t *out_len);
+bool realityV2TryDecryptExpectedRecord(const reality_v2_record_descriptor_t *descriptor,
+                                       uint8_t direction, uint64_t sequence_number,
+                                       const uint8_t session_id[kRealityV2SessionIdSize],
+                                       const uint8_t key[kRealityV2KeySize],
+                                       const uint8_t base_iv[kRealityV2IvSize],
+                                       const uint8_t *record, uint32_t record_len,
+                                       reality_v2_aead_decrypt_fn decrypt, void *decrypt_context,
+                                       uint8_t *plaintext, uint32_t plaintext_capacity,
+                                       uint32_t *payload_offset, uint32_t *payload_len);
 bool realityV2SerializeAlert(uint8_t alert, uint8_t out[kRealityV2AlertMessageSize]);
 bool realityV2ParseAlert(const uint8_t *data, uint32_t len, uint8_t *alert);
 bool realityV2SequenceAvailable(uint64_t sequence_number);

@@ -6,7 +6,8 @@ void tlsclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     tlsclient_lstate_t *ls = lineGetState(l, t);
 
-    if (ls->passthrough)
+    if (ls->takeover_phase == kTlsClientTakeoverDrain ||
+        ls->takeover_phase == kTlsClientTakeoverPassthrough)
     {
         tunnelNextUpStreamPayload(t, l, buf);
         return;
