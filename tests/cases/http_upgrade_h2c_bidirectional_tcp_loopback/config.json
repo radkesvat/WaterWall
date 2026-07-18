@@ -16,7 +16,7 @@
         "host": "upgrade.example.test",
         "path": "/ww/upgrade",
         "scheme": "http",
-        "port": 41103,
+        "port": 21000,
         "method": "POST",
         "http-version": "both",
         "upgrade": true,
@@ -35,7 +35,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41103,
+        "port": 21000,
         "nodelay": true,
         "fastopen": false
       }
@@ -45,7 +45,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41103,
+        "port": 21000,
         "nodelay": true
       },
       "next": "http-server"

@@ -28,7 +28,7 @@
       "type": "UdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42430,
+        "port": 27350,
         "balance-mode": "packet"
       }
     },
@@ -37,7 +37,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42430
+        "port": 27350
       },
       "next": "tou-server"
     },

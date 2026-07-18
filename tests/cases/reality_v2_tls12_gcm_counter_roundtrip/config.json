@@ -12,8 +12,8 @@
       },
       "next": "reality-connector"
     },
-    { "name": "reality-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 43242, "nodelay": true, "fastopen": false } },
-    { "name": "reality-listener", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 43242, "nodelay": true }, "next": "reality-server" },
+    { "name": "reality-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 22850, "nodelay": true, "fastopen": false } },
+    { "name": "reality-listener", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 22850, "nodelay": true }, "next": "reality-server" },
     {
       "name": "reality-server",
       "type": "RealityServer",
@@ -27,8 +27,8 @@
       "next": "tester-server"
     },
     { "name": "tester-server", "type": "TesterServer", "settings": { "streaming-response": true, "max-payload-size": 32768 } },
-    { "name": "cover-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 43243, "nodelay": true, "fastopen": false } },
-    { "name": "cover-listener", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 43243, "nodelay": true }, "next": "cover-tls-server" },
+    { "name": "cover-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 22851, "nodelay": true, "fastopen": false } },
+    { "name": "cover-listener", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 22851, "nodelay": true }, "next": "cover-tls-server" },
     {
       "name": "cover-tls-server", "type": "TlsServer",
       "settings": {

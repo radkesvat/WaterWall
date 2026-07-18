@@ -9,15 +9,15 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from socket_manager_privileged_common import MarkerServers, UdpMarkerServer, expect_udp_marker
 
 
-LISTEN_PORT = 43620
+LISTEN_PORT = 23900
 SPECIFIC_IP = "10.251.22.1"
 SPECIFIC_MARKER = b"udp-specific-single\n"
 WILDCARD_MARKER = b"udp-wildcard-single\n"
 
 
 def main():
-    specific = UdpMarkerServer("127.0.0.1", 43621, SPECIFIC_MARKER)
-    wildcard = UdpMarkerServer("127.0.0.1", 43622, WILDCARD_MARKER)
+    specific = UdpMarkerServer("127.0.0.1", 23901, SPECIFIC_MARKER)
+    wildcard = UdpMarkerServer("127.0.0.1", 23902, WILDCARD_MARKER)
 
     with MarkerServers(specific, wildcard):
         expect_udp_marker(SPECIFIC_IP, LISTEN_PORT, SPECIFIC_MARKER)

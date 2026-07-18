@@ -8,7 +8,7 @@ from pathlib import Path
 HOST = "127.0.0.1"
 CASE_NAME = Path.cwd().name
 PROFILE = "tls13" if "tls13" in CASE_NAME else "chacha" if "chacha" in CASE_NAME else "cbc" if "cbc" in CASE_NAME else "gcm"
-BASE_PORT = {"gcm": 43300, "cbc": 43310, "chacha": 43320, "tls13": 43330}[PROFILE]
+BASE_PORT = {"gcm": 23000, "cbc": 22750, "chacha": 22800, "tls13": 23300}[PROFILE]
 CLIENT_ENTRY_PORT = BASE_PORT
 RELAY_PORT = BASE_PORT + 1
 REALITY_SERVER_PORT = BASE_PORT + 2

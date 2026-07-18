@@ -14,7 +14,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42970,
+        "port": 26450,
         "nodelay": true,
         "fastopen": false
       }
@@ -24,7 +24,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42970,
+        "port": 26450,
         "nodelay": true
       },
       "next": "vless-server"

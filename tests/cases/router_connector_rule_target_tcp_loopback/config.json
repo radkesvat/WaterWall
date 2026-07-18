@@ -16,7 +16,7 @@
         "resolve-domains": false,
         "rules": [
           {
-            "source-port": 43100,
+            "source-port": 23550,
             "target": "target-connector"
           }
         ]
@@ -28,7 +28,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43100,
+        "port": 23550,
         "nodelay": true,
         "fastopen": false
       }
@@ -38,7 +38,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43100,
+        "port": 23550,
         "nodelay": true
       },
       "next": "router"
@@ -48,7 +48,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43101,
+        "port": 23551,
         "nodelay": true,
         "fastopen": false
       }
@@ -68,7 +68,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43101,
+        "port": 23551,
         "nodelay": true
       },
       "next": "tester-server"

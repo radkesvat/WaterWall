@@ -12,7 +12,7 @@
       "settings": {
         "password": "trojan-local-password",
         "address": "127.0.0.1",
-        "port": 42901,
+        "port": 25651,
         "protocol": "tcp"
       },
       "next": "proxy-connector"
@@ -22,7 +22,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42900,
+        "port": 25650,
         "nodelay": true,
         "fastopen": false
       }
@@ -32,7 +32,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42900,
+        "port": 25650,
         "nodelay": true
       },
       "next": "trojan-server"
@@ -92,7 +92,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42901,
+        "port": 25651,
         "nodelay": true
       },
       "next": "tester-server"

@@ -16,7 +16,7 @@
         "host": "h2.example.test",
         "path": "/ww/h2",
         "scheme": "http",
-        "port": 41102,
+        "port": 20750,
         "method": "POST",
         "http-version": "2",
         "full-duplex": true
@@ -28,7 +28,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41102,
+        "port": 20750,
         "nodelay": true,
         "fastopen": false
       }
@@ -38,7 +38,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41102,
+        "port": 20750,
         "nodelay": true
       },
       "next": "http-server"

@@ -6,7 +6,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43030,
+        "port": 25350,
         "nodelay": true
       },
       "next": "tls-server"
@@ -38,7 +38,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43031,
+        "port": 25351,
         "nodelay": true,
         "fastopen": false
       }

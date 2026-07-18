@@ -49,7 +49,7 @@
       "settings": {
         "password": "trojan-test-password",
         "address": "127.0.0.1",
-        "port": 42721,
+        "port": 25751,
         "protocol": "udp"
       },
       "next": "tls-client"
@@ -68,7 +68,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42720,
+        "port": 25750,
         "nodelay": true,
         "fastopen": false
       }
@@ -78,7 +78,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42720,
+        "port": 25750,
         "nodelay": true
       },
       "next": "tls-server"
@@ -116,7 +116,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42721
+        "port": 25751
       },
       "next": "tester-server"
     },

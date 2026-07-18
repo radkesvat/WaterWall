@@ -16,7 +16,7 @@
         "host": "ws.example.test",
         "path": "/ww/ws",
         "scheme": "http",
-        "port": 41104,
+        "port": 21100,
         "http-version": "1.1",
         "websocket": true,
         "websocket-origin": "https://origin.example.test",
@@ -29,7 +29,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41104,
+        "port": 21100,
         "nodelay": true,
         "fastopen": false
       }
@@ -39,7 +39,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41104,
+        "port": 21100,
         "nodelay": true
       },
       "next": "http-server"

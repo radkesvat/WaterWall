@@ -27,7 +27,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41021,
+        "port": 23500,
         "nodelay": true,
         "fastopen": false
       }
@@ -37,7 +37,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41021,
+        "port": 23500,
         "nodelay": true
       },
       "next": "reverse-server"

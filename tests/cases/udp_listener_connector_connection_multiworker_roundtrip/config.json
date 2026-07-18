@@ -15,7 +15,7 @@
       "type": "UdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42351
+        "port": 26000
       }
     },
     {
@@ -23,7 +23,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42351
+        "port": 26000
       },
       "next": "udp-connector-b"
     },
@@ -32,7 +32,7 @@
       "type": "UdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42352
+        "port": 26001
       }
     },
     {
@@ -40,7 +40,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42352
+        "port": 26001
       },
       "next": "tester-server"
     },

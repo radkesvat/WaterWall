@@ -27,7 +27,7 @@
       "type": "UdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42141
+        "port": 26200
       }
     },
     {
@@ -35,7 +35,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42141
+        "port": 26200
       },
       "next": "stream-to-packets"
     },

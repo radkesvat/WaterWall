@@ -7,7 +7,7 @@
       "settings": {
         "dest-context": {
           "address": "127.0.0.1",
-          "port": 42921,
+          "port": 24451,
           "protocol": "tcp"
         }
       },
@@ -29,7 +29,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42920,
+        "port": 24450,
         "nodelay": true,
         "fastopen": false
       }
@@ -39,7 +39,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42920,
+        "port": 24450,
         "nodelay": true
       },
       "next": "soft-limiter"
@@ -79,7 +79,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42921,
+        "port": 24451,
         "nodelay": true
       },
       "next": "tester-server"

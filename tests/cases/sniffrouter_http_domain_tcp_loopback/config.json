@@ -17,7 +17,7 @@
         "host": "api.route.example.test",
         "path": "/ww/sniffrouter",
         "scheme": "http",
-        "port": 41032,
+        "port": 23650,
         "method": "POST",
         "http-version": "1.1",
         "full-duplex": true
@@ -29,7 +29,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41032,
+        "port": 23650,
         "nodelay": true,
         "fastopen": false
       }
@@ -39,7 +39,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41032,
+        "port": 23650,
         "nodelay": true
       },
       "next": "sniff-router"
@@ -63,7 +63,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 1234,
+        "port": 23699,
         "nodelay": true,
         "fastopen": false
       }

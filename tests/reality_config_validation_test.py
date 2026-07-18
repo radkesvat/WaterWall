@@ -3,7 +3,6 @@
 import copy
 import json
 import signal
-import socket
 import subprocess
 import sys
 import tempfile
@@ -12,6 +11,7 @@ from pathlib import Path
 
 
 STARTED_MARKER = "Core: starting workers ..."
+CONFIGURATION_TEST_PORT = 29900
 
 
 def require(condition, message):
@@ -19,19 +19,12 @@ def require(condition, message):
         raise AssertionError(message)
 
 
-def get_free_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.bind(("127.0.0.1", 0))
-        return listener.getsockname()[1]
-
-
 def make_config(kind, settings):
-    port = get_free_port()
     nodes = [
         {
             "name": "listener",
             "type": "TcpListener",
-            "settings": {"address": "127.0.0.1", "port": port},
+            "settings": {"address": "127.0.0.1", "port": CONFIGURATION_TEST_PORT},
             "next": "target",
         }
     ]

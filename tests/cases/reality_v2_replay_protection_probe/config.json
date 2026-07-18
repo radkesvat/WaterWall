@@ -6,7 +6,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43210,
+        "port": 22550,
         "nodelay": true
       },
       "next": "reality-client"
@@ -29,7 +29,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43211,
+        "port": 22551,
         "nodelay": true,
         "fastopen": false
       }
@@ -39,7 +39,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43212,
+        "port": 22552,
         "nodelay": true
       },
       "next": "reality-server"
@@ -62,7 +62,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43214,
+        "port": 22554,
         "nodelay": true,
         "fastopen": false
       }
@@ -72,7 +72,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43213,
+        "port": 22553,
         "nodelay": true,
         "fastopen": false
       }
@@ -82,7 +82,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43213,
+        "port": 22553,
         "nodelay": true
       },
       "next": "cover-tls-server"

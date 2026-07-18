@@ -7,7 +7,7 @@
       "settings": {
         "dest-context": {
           "address": "localhost",
-          "port": 42811,
+          "port": 26601,
           "protocol": "tcp"
         }
       },
@@ -29,7 +29,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42810,
+        "port": 26600,
         "nodelay": true,
         "fastopen": false
       }
@@ -39,7 +39,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42810,
+        "port": 26600,
         "nodelay": true
       },
       "next": "vless-server"
@@ -70,7 +70,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42811,
+        "port": 26601,
         "nodelay": true
       },
       "next": "tester-server"

@@ -13,7 +13,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41031,
+        "port": 23700,
         "nodelay": true,
         "fastopen": false
       }
@@ -23,7 +23,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41031,
+        "port": 23700,
         "nodelay": true
       },
       "next": "sniff-router"
@@ -46,7 +46,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 1234,
+        "port": 23749,
         "nodelay": true,
         "fastopen": false
       }

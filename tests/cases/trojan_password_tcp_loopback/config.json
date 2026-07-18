@@ -45,7 +45,7 @@
       "settings": {
         "password": "trojan-test-password",
         "address": "localhost",
-        "port": 42701,
+        "port": 25701,
         "protocol": "tcp",
         "domain-strategy": "resolve-domains-and-use-only-ipv4"
       },
@@ -65,7 +65,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42700,
+        "port": 25700,
         "nodelay": true,
         "fastopen": false
       }
@@ -75,7 +75,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42700,
+        "port": 25700,
         "nodelay": true
       },
       "next": "tls-server"
@@ -115,7 +115,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42701,
+        "port": 25701,
         "nodelay": true
       },
       "next": "tester-server"

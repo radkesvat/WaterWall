@@ -4,8 +4,8 @@ import time
 
 
 HOST = "127.0.0.1"
-REALITY_PORT = 25140
-VISITOR_PORT = 25141
+REALITY_PORT = 23400
+VISITOR_PORT = 23401
 
 
 def fail(message):

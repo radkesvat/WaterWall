@@ -24,7 +24,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "10.251.23.1",
-        "port-range": [43630, 43631],
+        "port-range": [23750, 23751],
         "multiport-backend": "socket",
         "nodelay": true
       },
@@ -35,7 +35,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43632,
+        "port": 23752,
         "nodelay": true,
         "fastopen": false
       }
@@ -45,7 +45,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "0.0.0.0",
-        "port-range": [43630, 43631],
+        "port-range": [23750, 23751],
         "multiport-backend": "socket",
         "nodelay": true
       },
@@ -56,7 +56,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43633,
+        "port": 23753,
         "nodelay": true,
         "fastopen": false
       }

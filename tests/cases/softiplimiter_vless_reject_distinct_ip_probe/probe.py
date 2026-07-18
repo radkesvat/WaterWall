@@ -6,7 +6,7 @@ import uuid
 
 
 HOST = "127.0.0.1"
-PORT = 42940
+PORT = 24400
 IDENTITY = uuid.UUID("5783a3e7-e373-51cd-8642-c83782b807c5").bytes
 VLESS_EARLY_IDENTITY = bytes([0]) + IDENTITY
 

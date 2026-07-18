@@ -7,7 +7,7 @@
       "settings": {
         "dest-context": {
           "address": "127.0.0.1",
-          "port": 42931,
+          "port": 24351,
           "protocol": "tcp"
         }
       },
@@ -38,7 +38,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42930,
+        "port": 24350,
         "nodelay": true,
         "fastopen": false
       }
@@ -48,7 +48,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42930,
+        "port": 24350,
         "nodelay": true
       },
       "next": "tls-server"
@@ -98,7 +98,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42931,
+        "port": 24351,
         "nodelay": true
       },
       "next": "tester-server"

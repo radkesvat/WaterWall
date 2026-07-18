@@ -6,7 +6,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42940,
+        "port": 24400,
         "nodelay": true
       },
       "next": "soft-limiter"

@@ -22,7 +22,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41002,
+        "port": 21600,
         "nodelay": true,
         "fastopen": false
       }
@@ -32,7 +32,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41002,
+        "port": 21600,
         "nodelay": true
       },
       "next": "obfuscator-server"

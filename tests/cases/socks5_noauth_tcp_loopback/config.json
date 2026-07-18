@@ -11,7 +11,7 @@
       "type": "Socks5Client",
       "settings": {
         "address": "localhost",
-        "port": 41204,
+        "port": 24151,
         "protocol": "tcp",
         "domain-strategy": "resolve-domains-and-use-only-ipv4"
       },
@@ -22,7 +22,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41203,
+        "port": 24150,
         "nodelay": true,
         "fastopen": false
       }
@@ -32,7 +32,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41203,
+        "port": 24150,
         "nodelay": true
       },
       "next": "socks5-server"
@@ -62,7 +62,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41204,
+        "port": 24151,
         "nodelay": true
       },
       "next": "tester-server"

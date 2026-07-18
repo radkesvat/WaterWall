@@ -23,12 +23,12 @@
     {
       "name": "reality-connector",
       "type": "TcpConnector",
-      "settings": { "address": "127.0.0.1", "port": 43240, "nodelay": true, "fastopen": false }
+      "settings": { "address": "127.0.0.1", "port": 22950, "nodelay": true, "fastopen": false }
     },
     {
       "name": "reality-listener",
       "type": "TcpListener",
-      "settings": { "address": "127.0.0.1", "port": 43240, "nodelay": true },
+      "settings": { "address": "127.0.0.1", "port": 22950, "nodelay": true },
       "next": "reality-server"
     },
     {
@@ -53,12 +53,12 @@
     {
       "name": "cover-connector",
       "type": "TcpConnector",
-      "settings": { "address": "127.0.0.1", "port": 43241, "nodelay": true, "fastopen": false }
+      "settings": { "address": "127.0.0.1", "port": 22951, "nodelay": true, "fastopen": false }
     },
     {
       "name": "cover-listener",
       "type": "TcpListener",
-      "settings": { "address": "127.0.0.1", "port": 43241, "nodelay": true },
+      "settings": { "address": "127.0.0.1", "port": 22951, "nodelay": true },
       "next": "cover-tls-server"
     },
     {

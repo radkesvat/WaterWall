@@ -6,7 +6,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43400,
+        "port": 25400,
         "nodelay": true
       },
       "next": "tls-client"
@@ -25,7 +25,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43401,
+        "port": 25401,
         "nodelay": true,
         "fastopen": false
       }
@@ -35,7 +35,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43410,
+        "port": 25410,
         "nodelay": true
       },
       "next": "verify-tls-client"
@@ -54,7 +54,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43411,
+        "port": 25411,
         "nodelay": true,
         "fastopen": false
       }

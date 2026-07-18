@@ -15,7 +15,7 @@
       "type": "UdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42361
+        "port": 26101
       }
     },
     {
@@ -24,8 +24,8 @@
       "settings": {
         "address": "127.0.0.1",
         "port-range": [
-          42360,
-          42363
+          26100,
+          26103
         ],
         "multiport-backend": "socket"
       },

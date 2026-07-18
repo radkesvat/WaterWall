@@ -49,7 +49,7 @@
       "settings": {
         "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
         "address": "127.0.0.1",
-        "port": 42861,
+        "port": 26351,
         "protocol": "udp"
       },
       "next": "proxy-connector"
@@ -59,7 +59,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42860,
+        "port": 26350,
         "nodelay": true,
         "fastopen": false
       }
@@ -69,7 +69,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42860,
+        "port": 26350,
         "nodelay": true
       },
       "next": "vless-server"
@@ -97,7 +97,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42861
+        "port": 26351
       },
       "next": "tester-server"
     },

@@ -42,7 +42,7 @@
         "split-payload-burst": 1,
         "dest-context": {
           "address": "127.0.0.1",
-          "port": 42731,
+          "port": 25501,
           "protocol": "udp"
         }
       },
@@ -73,7 +73,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42730,
+        "port": 25500,
         "nodelay": true,
         "fastopen": false
       }
@@ -83,7 +83,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42730,
+        "port": 25500,
         "nodelay": true
       },
       "next": "tls-server"
@@ -121,7 +121,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42731
+        "port": 25501
       },
       "next": "tester-server"
     },

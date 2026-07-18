@@ -16,7 +16,7 @@
         "host": "http1.example.test",
         "path": "/ww/http1",
         "scheme": "http",
-        "port": 41101,
+        "port": 20500,
         "method": "POST",
         "http-version": "1.1",
         "full-duplex": true
@@ -28,7 +28,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41101,
+        "port": 20500,
         "nodelay": true,
         "fastopen": false
       }
@@ -38,7 +38,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41101,
+        "port": 20500,
         "nodelay": true
       },
       "next": "http-server"

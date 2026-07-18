@@ -24,7 +24,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "10.251.24.1",
-        "port-range": [43640, 43641],
+        "port-range": [23850, 23851],
         "multiport-backend": "socket"
       },
       "next": "udp-range-specific-out"
@@ -34,7 +34,7 @@
       "type": "UdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43642
+        "port": 23852
       }
     },
     {
@@ -42,7 +42,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "0.0.0.0",
-        "port-range": [43640, 43641],
+        "port-range": [23850, 23851],
         "multiport-backend": "socket"
       },
       "next": "udp-range-wildcard-out"
@@ -52,7 +52,7 @@
       "type": "UdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43643
+        "port": 23853
       }
     }
   ]

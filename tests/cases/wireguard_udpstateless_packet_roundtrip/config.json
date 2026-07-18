@@ -26,7 +26,7 @@
           {
             "publickey": "GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=",
             "allowedips": "0.0.0.0/0",
-            "endpoint": "127.0.0.1:42131",
+            "endpoint": "127.0.0.1:26751",
             "persistentkeepalive": 1
           }
         ]
@@ -38,7 +38,7 @@
       "type": "UdpStatelessSocket",
       "settings": {
         "listen-address": "127.0.0.1",
-        "listen-port": 42130
+        "listen-port": 26750
       }
     },
     {
@@ -46,7 +46,7 @@
       "type": "UdpStatelessSocket",
       "settings": {
         "listen-address": "127.0.0.1",
-        "listen-port": 42131
+        "listen-port": 26751
       },
       "next": "wg-server"
     },
@@ -59,7 +59,7 @@
           {
             "publickey": "dDUfRvZSDy8jZBsB4kQflTO+iwlLbR+jgb840fumqUM=",
             "allowedips": "0.0.0.0/0",
-            "endpoint": "127.0.0.1:42132",
+            "endpoint": "127.0.0.1:26752",
             "persistentkeepalive": 1
           }
         ]

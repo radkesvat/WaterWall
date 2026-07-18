@@ -33,7 +33,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42450,
+        "port": 26900,
         "nodelay": true,
         "fastopen": false
       }
@@ -43,7 +43,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42450,
+        "port": 26900,
         "nodelay": true
       },
       "next": "encryption-server"

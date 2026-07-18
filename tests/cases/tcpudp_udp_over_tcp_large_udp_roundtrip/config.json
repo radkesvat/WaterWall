@@ -15,7 +15,7 @@
       "type": "UdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42576
+        "port": 24850
       }
     },
     {
@@ -23,7 +23,7 @@
       "type": "TcpUdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42576
+        "port": 24850
       },
       "next": "uot-client"
     },
@@ -37,7 +37,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42577,
+        "port": 24851,
         "nodelay": true,
         "fastopen": false
       }
@@ -47,7 +47,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42577,
+        "port": 24851,
         "nodelay": true
       },
       "next": "uot-server"
@@ -62,7 +62,7 @@
       "type": "TcpUdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42578
+        "port": 24852
       }
     },
     {
@@ -70,7 +70,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42578
+        "port": 24852
       },
       "next": "tester-server"
     },

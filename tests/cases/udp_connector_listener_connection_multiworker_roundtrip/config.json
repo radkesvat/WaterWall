@@ -15,7 +15,7 @@
       "type": "UdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42350
+        "port": 25850
       }
     },
     {
@@ -23,7 +23,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42350
+        "port": 25850
       },
       "next": "tester-server"
     },

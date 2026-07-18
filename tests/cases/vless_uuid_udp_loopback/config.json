@@ -9,7 +9,7 @@
         "split-payload-burst": 1,
         "dest-context": {
           "address": "127.0.0.1",
-          "port": 42821,
+          "port": 26701,
           "protocol": "udp"
         }
       },
@@ -31,7 +31,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42820,
+        "port": 26700,
         "nodelay": true,
         "fastopen": false
       }
@@ -41,7 +41,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42820,
+        "port": 26700,
         "nodelay": true
       },
       "next": "vless-server"
@@ -69,7 +69,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42821
+        "port": 26701
       },
       "next": "tester-server"
     },

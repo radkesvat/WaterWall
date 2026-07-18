@@ -11,7 +11,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41001,
+        "port": 24500,
         "nodelay": true,
         "fastopen": false
       }
@@ -21,7 +21,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41001,
+        "port": 24500,
         "nodelay": true
       },
       "next": "tester-server"

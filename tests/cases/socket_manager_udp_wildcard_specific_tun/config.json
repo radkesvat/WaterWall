@@ -24,7 +24,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "10.251.22.1",
-        "port": 43620
+        "port": 23900
       },
       "next": "udp-specific-out"
     },
@@ -33,7 +33,7 @@
       "type": "UdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43621
+        "port": 23901
       }
     },
     {
@@ -41,7 +41,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "0.0.0.0",
-        "port": 43620
+        "port": 23900
       },
       "next": "udp-wildcard-out"
     },
@@ -50,7 +50,7 @@
       "type": "UdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43622
+        "port": 23902
       }
     }
   ]

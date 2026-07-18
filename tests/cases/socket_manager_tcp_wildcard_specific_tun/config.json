@@ -24,7 +24,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "10.251.21.1",
-        "port": 43610,
+        "port": 23800,
         "nodelay": true
       },
       "next": "tcp-specific-out"
@@ -34,7 +34,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43611,
+        "port": 23801,
         "nodelay": true,
         "fastopen": false
       }
@@ -44,7 +44,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "0.0.0.0",
-        "port": 43610,
+        "port": 23800,
         "nodelay": true
       },
       "next": "tcp-wildcard-out"
@@ -54,7 +54,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43612,
+        "port": 23802,
         "nodelay": true,
         "fastopen": false
       }

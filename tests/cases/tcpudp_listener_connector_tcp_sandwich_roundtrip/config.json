@@ -11,7 +11,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42510,
+        "port": 24750,
         "nodelay": true,
         "fastopen": false
       }
@@ -21,7 +21,7 @@
       "type": "TcpUdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42510,
+        "port": 24750,
         "nodelay": true
       },
       "next": "tcpudp-connector"
@@ -31,7 +31,7 @@
       "type": "TcpUdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42511,
+        "port": 24751,
         "nodelay": true,
         "fastopen": false
       }
@@ -41,7 +41,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42511,
+        "port": 24751,
         "nodelay": true
       },
       "next": "tester-server"

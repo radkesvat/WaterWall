@@ -16,7 +16,7 @@
         "host": "split-tcp.example.test",
         "path": "/edge",
         "scheme": "http",
-        "port": 41109,
+        "port": 20650,
         "method": "PUT",
         "http-version": "1.1",
         "http1-mode": "split",
@@ -51,7 +51,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41109,
+        "port": 20650,
         "nodelay": true,
         "fastopen": false
       }
@@ -61,7 +61,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41109,
+        "port": 20650,
         "nodelay": true
       },
       "next": "http-server"

@@ -15,7 +15,7 @@
       "type": "UdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42512
+        "port": 24800
       }
     },
     {
@@ -23,7 +23,7 @@
       "type": "TcpUdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42512
+        "port": 24800
       },
       "next": "tcpudp-connector"
     },
@@ -32,7 +32,7 @@
       "type": "TcpUdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42513
+        "port": 24801
       }
     },
     {
@@ -40,7 +40,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42513
+        "port": 24801
       },
       "next": "tester-server"
     },

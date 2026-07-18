@@ -19,7 +19,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41011,
+        "port": 20150,
         "nodelay": true,
         "fastopen": false
       }
@@ -29,7 +29,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41011,
+        "port": 20150,
         "nodelay": true
       },
       "next": "connection-fisher-server"

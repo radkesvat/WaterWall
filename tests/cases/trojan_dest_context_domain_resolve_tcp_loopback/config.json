@@ -7,7 +7,7 @@
       "settings": {
         "dest-context": {
           "address": "localhost",
-          "port": 43123,
+          "port": 25451,
           "protocol": "tcp"
         }
       },
@@ -30,7 +30,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43122,
+        "port": 25450,
         "nodelay": true,
         "fastopen": false
       }
@@ -40,7 +40,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43122,
+        "port": 25450,
         "nodelay": true
       },
       "next": "trojan-server"
@@ -93,7 +93,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43123,
+        "port": 25451,
         "nodelay": true
       },
       "next": "tester-server"

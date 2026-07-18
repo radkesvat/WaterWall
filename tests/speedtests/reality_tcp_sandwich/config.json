@@ -35,7 +35,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42470,
+        "port": 27200,
         "nodelay": true,
         "fastopen": false
       }
@@ -45,7 +45,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42470,
+        "port": 27200,
         "nodelay": true
       },
       "next": "reality-server"

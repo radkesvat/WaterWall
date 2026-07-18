@@ -9,7 +9,7 @@
         "split-payload-burst": 1,
         "dest-context": {
           "address": "localhost",
-          "port": 43125,
+          "port": 23951,
           "protocol": "udp"
         }
       },
@@ -31,7 +31,7 @@
       "type": "TcpUdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43124,
+        "port": 23950,
         "nodelay": true,
         "fastopen": false
       }
@@ -41,7 +41,7 @@
       "type": "TcpUdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43124,
+        "port": 23950,
         "nodelay": true
       },
       "next": "socks5-server"
@@ -91,7 +91,7 @@
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43125
+        "port": 23951
       },
       "next": "tester-server"
     },

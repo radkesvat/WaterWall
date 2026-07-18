@@ -1,7 +1,7 @@
 {
   "name": "reality-v2-tls12-chacha-wire-probe",
   "nodes": [
-    { "name": "client-entry", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 43320, "nodelay": true }, "next": "reality-client" },
+    { "name": "client-entry", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 22800, "nodelay": true }, "next": "reality-client" },
     {
       "name": "reality-client", "type": "RealityClient",
       "settings": {
@@ -11,8 +11,8 @@
       },
       "next": "relay-connector"
     },
-    { "name": "relay-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 43321, "nodelay": true, "fastopen": false } },
-    { "name": "reality-listener", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 43322, "nodelay": true }, "next": "reality-server" },
+    { "name": "relay-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 22801, "nodelay": true, "fastopen": false } },
+    { "name": "reality-listener", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 22802, "nodelay": true }, "next": "reality-server" },
     {
       "name": "reality-server", "type": "RealityServer",
       "settings": {
@@ -23,9 +23,9 @@
       },
       "next": "protected-connector"
     },
-    { "name": "protected-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 43324, "nodelay": true, "fastopen": false } },
-    { "name": "cover-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 43323, "nodelay": true, "fastopen": false } },
-    { "name": "cover-listener", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 43323, "nodelay": true }, "next": "cover-tls-server" },
+    { "name": "protected-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 22804, "nodelay": true, "fastopen": false } },
+    { "name": "cover-connector", "type": "TcpConnector", "settings": { "address": "127.0.0.1", "port": 22803, "nodelay": true, "fastopen": false } },
+    { "name": "cover-listener", "type": "TcpListener", "settings": { "address": "127.0.0.1", "port": 22803, "nodelay": true }, "next": "cover-tls-server" },
     {
       "name": "cover-tls-server", "type": "TlsServer",
       "settings": {

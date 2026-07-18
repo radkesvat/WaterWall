@@ -12,7 +12,7 @@
       "settings": {
         "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
         "address": "127.0.0.1",
-        "port": 42951,
+        "port": 26501,
         "protocol": "tcp"
       },
       "next": "proxy-connector"
@@ -22,7 +22,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42950,
+        "port": 26500,
         "nodelay": true,
         "fastopen": false
       }
@@ -32,7 +32,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42950,
+        "port": 26500,
         "nodelay": true
       },
       "next": "vless-server"
@@ -91,7 +91,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42951,
+        "port": 26501,
         "nodelay": true
       },
       "next": "tester-server"

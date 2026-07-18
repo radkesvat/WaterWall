@@ -11,7 +11,7 @@
       "type": "Socks5Client",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42651,
+        "port": 24001,
         "protocol": "dest_context->protocol"
       },
       "next": "proxy-connector"
@@ -21,7 +21,7 @@
       "type": "TcpUdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42650,
+        "port": 24000,
         "nodelay": true,
         "fastopen": false
       }
@@ -31,7 +31,7 @@
       "type": "TcpUdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42650,
+        "port": 24000,
         "nodelay": true
       },
       "next": "socks5-server"
@@ -61,7 +61,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42651,
+        "port": 24001,
         "nodelay": true
       },
       "next": "tester-server"

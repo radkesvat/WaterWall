@@ -8,8 +8,8 @@
         "source-ip4-range": "198.51.112.0/29",
         "dest-ipv4": "203.0.113.32",
         "protocol-number": "UDP",
-        "src-port": 41020,
-        "dest-port": 42020,
+        "src-port": 26150,
+        "dest-port": 26160,
         "duration-ms": 200,
         "packets-per-ip": 8
       },
@@ -20,7 +20,7 @@
       "type": "UdpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42341
+        "port": 26171
       }
     },
     {
@@ -29,8 +29,8 @@
       "settings": {
         "address": "127.0.0.1",
         "port-range": [
-          42340,
-          42343
+          26170,
+          26173
         ],
         "multiport-backend": "socket"
       },

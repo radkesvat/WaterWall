@@ -3,9 +3,9 @@
   "name": "config-variables-roundtrip",
   "variables": {
     "listener_address": "127.0.0.1",
-    "listener_port": 45123, // end-of-line comments should work too
+    "listener_port": 20050, // end-of-line comments should work too
     "connect_target": "127.0.0.1",
-    "connect_port": 45123,
+    "connect_port": 20050,
     "whitelisted_ips": [
       "127.0.0.1/32",
       "::1/128"

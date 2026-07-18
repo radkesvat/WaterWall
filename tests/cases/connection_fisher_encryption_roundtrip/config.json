@@ -30,7 +30,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41012,
+        "port": 20100,
         "nodelay": true,
         "fastopen": false
       }
@@ -40,7 +40,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 41012,
+        "port": 20100,
         "nodelay": true
       },
       "next": "enc-server"

@@ -6,7 +6,7 @@
       "type": "TcpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43010,
+        "port": 25200,
         "nodelay": true,
         "initial-idle-timeout-ms": 5000,
         "active-idle-timeout-ms": 5000
@@ -40,7 +40,7 @@
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
-        "port": 43011,
+        "port": 25201,
         "nodelay": true,
         "fastopen": false
       }

@@ -32,43 +32,43 @@
         "addresses": [
           {
             "address": "lvh.me",
-            "port": 42142,
+            "port": 25950,
             "weight": 1
           },
           {
             "address": "lvh.me",
-            "port": 42143,
+            "port": 25951,
             "weight": 1
           },
           {
             "address": "lvh.me",
-            "port": 42144,
+            "port": 25952,
             "weight": 1
           },
           {
             "address": "lvh.me",
-            "port": 42145,
+            "port": 25953,
             "weight": 1
           }
         ]
       }
     },
     {
-      "name": "udp-listener-42142",
+      "name": "udp-listener-25950",
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42142
+        "port": 25950
       },
-      "next": "stream-to-packets-42142"
+      "next": "stream-to-packets-25950"
     },
     {
-      "name": "stream-to-packets-42142",
+      "name": "stream-to-packets-25950",
       "type": "StreamToPackets",
-      "next": "tester-server-42142"
+      "next": "tester-server-25950"
     },
     {
-      "name": "tester-server-42142",
+      "name": "tester-server-25950",
       "type": "TesterServer",
       "settings": {
         "packet-mode": true,
@@ -82,21 +82,21 @@
       }
     },
     {
-      "name": "udp-listener-42143",
+      "name": "udp-listener-25951",
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42143
+        "port": 25951
       },
-      "next": "stream-to-packets-42143"
+      "next": "stream-to-packets-25951"
     },
     {
-      "name": "stream-to-packets-42143",
+      "name": "stream-to-packets-25951",
       "type": "StreamToPackets",
-      "next": "tester-server-42143"
+      "next": "tester-server-25951"
     },
     {
-      "name": "tester-server-42143",
+      "name": "tester-server-25951",
       "type": "TesterServer",
       "settings": {
         "packet-mode": true,
@@ -110,21 +110,21 @@
       }
     },
     {
-      "name": "udp-listener-42144",
+      "name": "udp-listener-25952",
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42144
+        "port": 25952
       },
-      "next": "stream-to-packets-42144"
+      "next": "stream-to-packets-25952"
     },
     {
-      "name": "stream-to-packets-42144",
+      "name": "stream-to-packets-25952",
       "type": "StreamToPackets",
-      "next": "tester-server-42144"
+      "next": "tester-server-25952"
     },
     {
-      "name": "tester-server-42144",
+      "name": "tester-server-25952",
       "type": "TesterServer",
       "settings": {
         "packet-mode": true,
@@ -138,21 +138,21 @@
       }
     },
     {
-      "name": "udp-listener-42145",
+      "name": "udp-listener-25953",
       "type": "UdpListener",
       "settings": {
         "address": "127.0.0.1",
-        "port": 42145
+        "port": 25953
       },
-      "next": "stream-to-packets-42145"
+      "next": "stream-to-packets-25953"
     },
     {
-      "name": "stream-to-packets-42145",
+      "name": "stream-to-packets-25953",
       "type": "StreamToPackets",
-      "next": "tester-server-42145"
+      "next": "tester-server-25953"
     },
     {
-      "name": "tester-server-42145",
+      "name": "tester-server-25953",
       "type": "TesterServer",
       "settings": {
         "packet-mode": true,
