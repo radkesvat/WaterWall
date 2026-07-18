@@ -36,11 +36,16 @@ static bool packetreceiverParseSourceRange(packetreceiver_source_range_t *range,
 
 static bool packetreceiverLoadSourceRanges(packetreceiver_tstate_t *state, const cJSON *settings)
 {
-    const cJSON *range_json = cJSON_GetObjectItemCaseSensitive(settings, "source-ip4-range");
+    const char  *field_name = "source-ipv4-range";
+    const cJSON *range_json = cJSON_GetObjectItemCaseSensitive(settings, field_name);
+    if (range_json == NULL)
+    {
+        range_json = cJSON_GetObjectItemCaseSensitive(settings, "source-ip4-range");
+    }
 
     if (range_json == NULL)
     {
-        LOGF("JSON Error: PacketReceiver->settings->source-ip4-range (string or array field) : expected one or more "
+        LOGF("JSON Error: PacketReceiver->settings->source-ipv4-range (string or array field) : expected one or more "
              "IPv4 CIDR ranges");
         return false;
     }
@@ -59,7 +64,7 @@ static bool packetreceiverLoadSourceRanges(packetreceiver_tstate_t *state, const
 
     if (range_count <= 0)
     {
-        LOGF("JSON Error: PacketReceiver->settings->source-ip4-range (string or array field) : expected one or more "
+        LOGF("JSON Error: PacketReceiver->settings->source-ipv4-range (string or array field) : expected one or more "
              "IPv4 CIDR ranges");
         return false;
     }
@@ -78,7 +83,7 @@ static bool packetreceiverLoadSourceRanges(packetreceiver_tstate_t *state, const
         if (cJSON_IsArray(items))
         {
             item = cJSON_GetArrayItem(items, i);
-            stringNPrintf(json_path, sizeof(json_path), "PacketReceiver->settings->source-ip4-range[%d]", i);
+            stringNPrintf(json_path, sizeof(json_path), "PacketReceiver->settings->source-ipv4-range[%d]", i);
             if (! cJSON_IsString(item) || item->valuestring == NULL)
             {
                 LOGF("JSON Error: %s (string field) : expected an IPv4 CIDR range", json_path);
@@ -90,7 +95,7 @@ static bool packetreceiverLoadSourceRanges(packetreceiver_tstate_t *state, const
         {
             item = items;
             cidr = item->valuestring;
-            stringCopy(json_path, "PacketReceiver->settings->source-ip4-range");
+            stringCopy(json_path, "PacketReceiver->settings->source-ipv4-range");
         }
 
         if (! packetreceiverParseSourceRange(&state->source_ranges[i], cidr, json_path))
@@ -110,7 +115,7 @@ static bool packetreceiverLoadSourceRanges(packetreceiver_tstate_t *state, const
     state->source_count = total_source_count;
     if (state->source_count == 0)
     {
-        LOGF("PacketReceiver: source-ip4-range resolved to zero source IPs");
+        LOGF("PacketReceiver: source-ipv4-range resolved to zero source IPs");
         return false;
     }
 

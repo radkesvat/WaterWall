@@ -557,7 +557,7 @@ void packetsenderPrepareRuntime(tunnel_t *t)
     if (total_packet_bytes_u64 > kPacketSenderMaxMaterializedBytes)
     {
         LOGF("PacketSender: generated packet store needs %llu bytes, exceeding the %llu-byte safety cap; shrink "
-             "source-ip4-range or split traffic across multiple PacketSender nodes",
+             "source-ipv4-range or split traffic across multiple PacketSender nodes",
              (unsigned long long) total_packet_bytes_u64,
              (unsigned long long) kPacketSenderMaxMaterializedBytes);
         terminateProgram(1);

@@ -61,11 +61,16 @@ static bool packetsenderParseSourceRange(packetsender_source_range_t *range, con
 
 static bool packetsenderLoadSourceRanges(packetsender_tstate_t *state, const cJSON *settings)
 {
-    const cJSON *range_json = cJSON_GetObjectItemCaseSensitive(settings, "source-ip4-range");
+    const char  *field_name = "source-ipv4-range";
+    const cJSON *range_json = cJSON_GetObjectItemCaseSensitive(settings, field_name);
+    if (range_json == NULL)
+    {
+        range_json = cJSON_GetObjectItemCaseSensitive(settings, "source-ip4-range");
+    }
 
     if (range_json == NULL)
     {
-        LOGF("JSON Error: PacketSender->settings->source-ip4-range (string or array field) : expected one or more IPv4 "
+        LOGF("JSON Error: PacketSender->settings->source-ipv4-range (string or array field) : expected one or more IPv4 "
              "CIDR ranges");
         return false;
     }
@@ -84,7 +89,7 @@ static bool packetsenderLoadSourceRanges(packetsender_tstate_t *state, const cJS
 
     if (range_count <= 0)
     {
-        LOGF("JSON Error: PacketSender->settings->source-ip4-range (string or array field) : expected one or more IPv4 "
+        LOGF("JSON Error: PacketSender->settings->source-ipv4-range (string or array field) : expected one or more IPv4 "
              "CIDR ranges");
         return false;
     }
@@ -103,7 +108,7 @@ static bool packetsenderLoadSourceRanges(packetsender_tstate_t *state, const cJS
         if (cJSON_IsArray(items))
         {
             item = cJSON_GetArrayItem(items, i);
-            stringNPrintf(json_path, sizeof(json_path), "PacketSender->settings->source-ip4-range[%d]", i);
+            stringNPrintf(json_path, sizeof(json_path), "PacketSender->settings->source-ipv4-range[%d]", i);
             if (! cJSON_IsString(item) || item->valuestring == NULL)
             {
                 LOGF("JSON Error: %s (string field) : expected an IPv4 CIDR range", json_path);
@@ -115,7 +120,7 @@ static bool packetsenderLoadSourceRanges(packetsender_tstate_t *state, const cJS
         {
             item = items;
             cidr = item->valuestring;
-            stringCopy(json_path, "PacketSender->settings->source-ip4-range");
+            stringCopy(json_path, "PacketSender->settings->source-ipv4-range");
         }
 
         if (! packetsenderParseSourceRange(&state->source_ranges[i], cidr, json_path))
