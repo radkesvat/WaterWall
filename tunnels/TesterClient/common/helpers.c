@@ -26,8 +26,8 @@ static const uint32_t kTesterClientPacketChunkSizes[kTesterClientChunkCount] = {
     256U,
     512U,
     1024U,
-    1499U,
-    1500U,
+    kMaxAllowedPacketLength - 1U,
+    kMaxAllowedPacketLength,
 };
 
 static const uint32_t kTesterClientPacketIpv4ChunkSizes[kTesterClientChunkCount] = {
@@ -40,8 +40,8 @@ static const uint32_t kTesterClientPacketIpv4ChunkSizes[kTesterClientChunkCount]
     276U,
     532U,
     1044U,
-    1499U,
-    1500U,
+    kMaxAllowedPacketLength - 1U,
+    kMaxAllowedPacketLength,
 };
 
 static const uint32_t kTesterClientPacketIpv4TransportChunkSizes[kTesterClientChunkCount] = {
@@ -54,11 +54,9 @@ static const uint32_t kTesterClientPacketIpv4TransportChunkSizes[kTesterClientCh
     276U,
     532U,
     1044U,
-    1499U,
-    1500U,
+    kMaxAllowedPacketLength - 1U,
+    kMaxAllowedPacketLength,
 };
-
-static const uint32_t kTesterClientPacketChunkSizeMax = 1500U;
 
 enum
 {
@@ -470,9 +468,9 @@ sbuf_t *testerclientCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, u
             return NULL;
         }
 
-        if (bufferpoolGetSmallBufferSize(pool) < kTesterClientPacketChunkSizeMax)
+        if (bufferpoolGetSmallBufferSize(pool) < kMaxAllowedPacketLength)
         {
-            testerclientFail(t, l, "packet-mode requires small buffers with at least 1500 bytes write capacity");
+            testerclientFail(t, l, "packet-mode requires enough small-buffer capacity for the maximum packet length");
             return NULL;
         }
 

@@ -12,7 +12,6 @@
 
 enum
 {
-    kReadPacketSize              = 1500, // its ok to be >= mtu
     kCaptureWriteChannelQueueMax = 128
 };
 
@@ -165,9 +164,9 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
         buf = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
 
-        buf = sbufReserveSpace(buf, kReadPacketSize);
+        buf = sbufReserveSpace(buf, kMaxAllowedPacketLength);
 
-        if (! windivertRecv(cdev->handle, sbufGetMutablePtr(buf), kReadPacketSize, &read_packet_len, NULL))
+        if (! windivertRecv(cdev->handle, sbufGetMutablePtr(buf), kMaxAllowedPacketLength, &read_packet_len, NULL))
         {
             LOGE("CaptureDevice: failed to read packet from capture device: error %lu", GetLastError());
             bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);

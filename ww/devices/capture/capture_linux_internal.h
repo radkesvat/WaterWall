@@ -8,7 +8,6 @@
 
 enum
 {
-    kCaptureLinuxPacketCopySize          = kMaxAllowedPacketLength,
     kCaptureLinuxNetfilterReadBufferSize = 4096
 };
 

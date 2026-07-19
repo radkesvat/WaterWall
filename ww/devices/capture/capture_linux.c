@@ -32,14 +32,12 @@
 
 enum
 {
-    kReadPacketSize             = kCaptureLinuxPacketCopySize,
     kNetfilterReadBufferSize    = kCaptureLinuxNetfilterReadBufferSize,
     kMaxReadDistributeQueueSize = 512,
     kNetfilterQueueLen          = 64 * 1024,
     kNetfilterSocketRecvBuffer  = 64 * 1024 * 1024
 };
 
-static_assert(kReadPacketSize == kMaxAllowedPacketLength, "NFQUEUE copy range must match packet policy");
 static_assert(SMALL_BUFFER_SIZE >= kNetfilterReadBufferSize, "Linux capture requires 4096-byte small buffers");
 static_assert(kMaxAllowedPacketLength <= kNetfilterReadBufferSize, "packet policy must fit in netlink read buffer");
 static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "capture read batch count must fit in msg_event.count");
@@ -602,7 +600,7 @@ netfilter_packet_parse_result_t captureLinuxNetfilterParsePacket(uint8_t *messag
     {
         return kNetfilterPacketParseMalformed;
     }
-    if (view->payload_length > kReadPacketSize || view->payload_length > kMaxAllowedPacketLength)
+    if (view->payload_length > kMaxAllowedPacketLength)
     {
         return kNetfilterPacketParseDiscarded;
     }
@@ -1137,7 +1135,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         return NULL;
     }
 
-    uint32_t range = kReadPacketSize;
+    uint32_t range = kMaxAllowedPacketLength;
     if (! netfilterSetParams(socket_netfilter, queue_number, NFQNL_COPY_PACKET, range))
     {
         LOGE("CaptureDevice: unable to set netfilter into copy packet mode with maximum "

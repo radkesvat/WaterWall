@@ -337,10 +337,10 @@ static void testPrefixPacketIdRecovery(void)
 int main(void)
 {
     testValidPayload(1U);
-    testValidPayload(1499U);
-    testValidPayload(1500U);
+    testValidPayload(kMaxAllowedPacketLength - 1U);
+    testValidPayload(kMaxAllowedPacketLength);
     testExposePayloadView();
-    testCaptureLengthDiscard(1501U);
+    testCaptureLengthDiscard(kMaxAllowedPacketLength + 1U);
     testCaptureLengthDiscard(65536U);
     testPayloadAbovePolicyDiscarded();
     testDuplicateAttributesRejected();

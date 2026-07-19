@@ -26,8 +26,8 @@ static const uint32_t kTesterServerPacketChunkSizes[kTesterServerChunkCount] = {
     256U,
     512U,
     1024U,
-    1499U,
-    1500U,
+    kMaxAllowedPacketLength - 1U,
+    kMaxAllowedPacketLength,
 };
 
 static const uint32_t kTesterServerPacketIpv4ChunkSizes[kTesterServerChunkCount] = {
@@ -40,8 +40,8 @@ static const uint32_t kTesterServerPacketIpv4ChunkSizes[kTesterServerChunkCount]
     276U,
     532U,
     1044U,
-    1499U,
-    1500U,
+    kMaxAllowedPacketLength - 1U,
+    kMaxAllowedPacketLength,
 };
 
 static const uint32_t kTesterServerPacketIpv4TransportChunkSizes[kTesterServerChunkCount] = {
@@ -54,8 +54,8 @@ static const uint32_t kTesterServerPacketIpv4TransportChunkSizes[kTesterServerCh
     276U,
     532U,
     1044U,
-    1499U,
-    1500U,
+    kMaxAllowedPacketLength - 1U,
+    kMaxAllowedPacketLength,
 };
 
 enum

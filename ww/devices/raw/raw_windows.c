@@ -13,7 +13,6 @@
 
 enum
 {
-    kMaxWriteablePacketSize               = 1500,
     kMasterMessagePoolsbufGetLeftCapacity = 64,
     kRawWriteChannelQueueMax              = 256
 };
@@ -38,10 +37,10 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
             return 0;
         }
 
-        if (UNLIKELY(kMaxWriteablePacketSize < sbufGetLength(buf)))
+        if (UNLIKELY(kMaxAllowedPacketLength < sbufGetLength(buf)))
         {
-            LOGE("RawDevice: WriteThread: Packet size %d exceeds kMaxWriteablePacketSize %d", sbufGetLength(buf),
-                 kMaxWriteablePacketSize);
+            LOGE("RawDevice: WriteThread: Packet size %d exceeds kMaxAllowedPacketLength %d", sbufGetLength(buf),
+                 kMaxAllowedPacketLength);
            
             bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
             terminateProgram(1);
