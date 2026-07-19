@@ -41,6 +41,58 @@ static ip_addr_t testIpv4Address(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
     return ip;
 }
 
+static void testSockaddrIpv4HashIgnoresUnrelatedBytes(void)
+{
+    sockaddr_u first;
+    sockaddr_u second;
+
+    memorySet(&first, 0xAA, sizeof(first));
+    memorySet(&second, 0x55, sizeof(second));
+
+    first.sin.sin_family       = AF_INET;
+    second.sin.sin_family      = AF_INET;
+    first.sin.sin_port         = htons(5353);
+    second.sin.sin_port        = first.sin.sin_port;
+    first.sin.sin_addr.s_addr = PP_HTONL(LWIP_MAKEU32(192, 0, 2, 10));
+    second.sin.sin_addr        = first.sin.sin_addr;
+
+    require(sockaddrCalcHashWithPort(&first) == sockaddrCalcHashWithPort(&second),
+            "IPv4 endpoint hash includes unrelated sockaddr bytes");
+}
+
+static void testSockaddrIpv6HashUsesOnlyEndpointFields(void)
+{
+    struct {
+        sockaddr_u addr;
+        uint8_t    trailing[sizeof(struct sockaddr_in6)];
+    } first, second;
+
+    memorySet(&first, 0xAA, sizeof(first));
+    memorySet(&second, 0x55, sizeof(second));
+
+    first.addr.sin6.sin6_family    = AF_INET6;
+    second.addr.sin6.sin6_family   = AF_INET6;
+    first.addr.sin6.sin6_port      = htons(5353);
+    second.addr.sin6.sin6_port     = first.addr.sin6.sin6_port;
+    first.addr.sin6.sin6_flowinfo  = htonl(7);
+    second.addr.sin6.sin6_flowinfo = first.addr.sin6.sin6_flowinfo;
+    first.addr.sin6.sin6_scope_id  = 3;
+    second.addr.sin6.sin6_scope_id = first.addr.sin6.sin6_scope_id;
+
+    for (size_t i = 0; i < sizeof(first.addr.sin6.sin6_addr.s6_addr); ++i)
+    {
+        first.addr.sin6.sin6_addr.s6_addr[i]  = (uint8_t) i;
+        second.addr.sin6.sin6_addr.s6_addr[i] = (uint8_t) i;
+    }
+
+    require(sockaddrCalcHashWithPort(&first.addr) == sockaddrCalcHashWithPort(&second.addr),
+            "IPv6 endpoint hash includes bytes beyond its fields");
+
+    second.addr.sin6.sin6_flowinfo = htonl(8);
+    require(sockaddrCalcHashWithPort(&first.addr) != sockaddrCalcHashWithPort(&second.addr),
+            "IPv6 endpoint hash ignores flow information");
+}
+
 static void testDynamicDomainCopyKeepsMetadata(void)
 {
     address_context_t source = {0};
@@ -177,6 +229,8 @@ static void testResolvedDomainConvertsToSockAddr(void)
 
 int main(void)
 {
+    testSockaddrIpv4HashIgnoresUnrelatedBytes();
+    testSockaddrIpv6HashUsesOnlyEndpointFields();
     testDynamicDomainCopyKeepsMetadata();
     testConstantDomainCopyKeepsMetadata();
     testIpCopyKeepsMetadata();

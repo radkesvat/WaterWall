@@ -840,14 +840,19 @@ static inline hash_t ipaddrCalcHashNoPort(const ip_addr_t addr)
  */
 static inline hash_t sockaddrCalcHashWithPort(const sockaddr_u *saddr)
 {
-    hash_t result;
+    hash_t result = calcHashBytes(&(saddr->sa.sa_family), sizeof(saddr->sa.sa_family));
+
     if (saddr->sa.sa_family == AF_INET)
     {
-        result = calcHashBytesSeed(&(saddr->sin.sin_addr), sizeof(struct sockaddr_in), saddr->sin.sin_port);
+        result = calcHashBytesSeed(&(saddr->sin.sin_port), sizeof(saddr->sin.sin_port), result);
+        result = calcHashBytesSeed(&(saddr->sin.sin_addr), sizeof(saddr->sin.sin_addr), result);
     }
     else if (saddr->sa.sa_family == AF_INET6)
     {
-        result = calcHashBytesSeed(&(saddr->sin6.sin6_addr), sizeof(struct sockaddr_in6), saddr->sin6.sin6_port);
+        result = calcHashBytesSeed(&(saddr->sin6.sin6_port), sizeof(saddr->sin6.sin6_port), result);
+        result = calcHashBytesSeed(&(saddr->sin6.sin6_flowinfo), sizeof(saddr->sin6.sin6_flowinfo), result);
+        result = calcHashBytesSeed(&(saddr->sin6.sin6_addr), sizeof(saddr->sin6.sin6_addr), result);
+        result = calcHashBytesSeed(&(saddr->sin6.sin6_scope_id), sizeof(saddr->sin6.sin6_scope_id), result);
     }
     else
     {
