@@ -27,7 +27,7 @@ WW_EXPORT void         udpovertcpserverTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *udpovertcpserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t udpovertcpserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void udpovertcpserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void udpovertcpserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void udpovertcpserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void udpovertcpserverTunnelOnPrepair(tunnel_t *t);
 void udpovertcpserverTunnelOnStart(tunnel_t *t);

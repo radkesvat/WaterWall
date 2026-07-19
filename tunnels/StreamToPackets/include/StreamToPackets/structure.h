@@ -40,7 +40,7 @@ WW_EXPORT void         streamtopacketsTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *streamtopacketsTunnelCreate(node_t *node);
 WW_EXPORT api_result_t streamtopacketsTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void streamtopacketsTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void streamtopacketsTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void streamtopacketsTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void streamtopacketsTunnelOnPrepair(tunnel_t *t);
 void streamtopacketsTunnelOnStart(tunnel_t *t);

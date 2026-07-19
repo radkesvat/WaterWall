@@ -97,7 +97,7 @@ void                sniffrouterLinestateInitialize(sniffrouter_lstate_t *ls);
 void                sniffrouterLinestateDestroy(line_t *l, sniffrouter_lstate_t *ls);
 void                sniffrouterRouteTableDestroy(sniffrouter_tstate_t *ts);
 
-void sniffrouterTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void sniffrouterTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void sniffrouterTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void sniffrouterTunnelOnPrepair(tunnel_t *t);
 void sniffrouterTunnelOnStart(tunnel_t *t);

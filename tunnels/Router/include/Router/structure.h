@@ -122,7 +122,7 @@ void routerLinestateInitialize(router_lstate_t *ls);
 void routerLinestateDestroy(line_t *l, router_lstate_t *ls);
 
 // --- instance lifecycle ---
-void routerTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void routerTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void routerTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void routerTunnelOnPrepair(tunnel_t *t);
 void routerTunnelOnStart(tunnel_t *t);

@@ -28,7 +28,7 @@ WW_EXPORT void         tcpudpconnectorTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *tcpudpconnectorTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tcpudpconnectorTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void tcpudpconnectorTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void tcpudpconnectorTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void tcpudpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tcpudpconnectorTunnelOnPrepair(tunnel_t *t);
 void tcpudpconnectorTunnelOnStart(tunnel_t *t);

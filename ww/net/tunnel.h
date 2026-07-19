@@ -48,7 +48,7 @@ typedef struct tunnel_array_s tunnel_array_t;
 typedef void (*TunnelStatusCb)(tunnel_t *);
 typedef void (*TunnelWorkerCb)(tunnel_t *, wid_t wid);
 typedef void (*TunnelChainFn)(tunnel_t *, tunnel_chain_t *chain);
-typedef void (*TunnelIndexFn)(tunnel_t *, uint16_t index, uint16_t *mem_offset);
+typedef void (*TunnelIndexFn)(tunnel_t *, uint16_t index, uint32_t *mem_offset);
 typedef void (*TunnelFlowRoutineInit)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutinePayload)(tunnel_t *, line_t *line, sbuf_t *payload);
 typedef void (*TunnelFlowRoutineEst)(tunnel_t *, line_t *line);
@@ -91,7 +91,7 @@ struct tunnel_s
     uint32_t tstate_size;
     uint32_t lstate_size;
 
-    uint16_t lstate_offset;
+    uint32_t lstate_offset;
     uint16_t chain_index;
 
     node_t         *node;
@@ -294,7 +294,7 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc);
  * @param index index.
  * @param mem_offset Pointer to the memory offset.
  */
-void tunnelDefaultOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void tunnelDefaultOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 
 /**
  * @brief Default function to prepare the tunnel.
@@ -383,7 +383,7 @@ static uint32_t tunnelGetLineStateSize(tunnel_t *self)
  * @brief Retrieves the correctly aligned state size.
  *
  * @param size Size to be aligned.
- * @return uint16_t Correctly aligned state size.
+ * @return uint32_t Correctly aligned state size.
  */
 static uint32_t tunnelGetCorrectAlignedStateSize(uint32_t size)
 {
@@ -394,7 +394,7 @@ static uint32_t tunnelGetCorrectAlignedStateSize(uint32_t size)
  * @brief Retrieves the correctly aligned line state size.
  *
  * @param size Size to be aligned.
- * @return uint16_t Correctly aligned line state size.
+ * @return uint32_t Correctly aligned line state size.
  */
 static uint32_t tunnelGetCorrectAlignedLineStateSize(uint32_t size)
 {

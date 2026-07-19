@@ -92,7 +92,7 @@ WW_EXPORT tlsclient_post_handshake_result_t
 tlsclientTunnelConsumePostHandshakeRecord(tunnel_t *t, line_t *l, sbuf_t *record);
 WW_EXPORT bool tlsclientTunnelCompleteTakeover(tunnel_t *t, line_t *l);
 
-void tlsclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void tlsclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void tlsclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tlsclientTunnelOnPrepair(tunnel_t *t);
 void tlsclientTunnelOnStart(tunnel_t *t);

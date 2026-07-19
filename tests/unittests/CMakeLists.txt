@@ -54,6 +54,12 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.line_user_identifier_unit line_user_identifier_test "unit;net;line")
 
+  add_executable(line_state_index_test line_state_index_test.c)
+  target_link_libraries(line_state_index_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests line_state_index_test)
+
+  add_waterwall_unit_test(waterwall.line_state_index_unit line_state_index_test "unit;net;line;chain")
+
   add_executable(address_context_test address_context_test.c)
   target_link_libraries(address_context_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests address_context_test)

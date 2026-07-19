@@ -407,7 +407,7 @@ static void clientFixtureInitialize(client_lifecycle_fixture_t *fixture)
     tunnelBind(fixture->reality, fixture->next);
     tunnelBind(fixture->tls_owner, fixture->tls);
     tunnelBind(fixture->tls, fixture->tls_wire);
-    fixture->tls->lstate_offset = (uint16_t) fixture->reality->lstate_size;
+    fixture->tls->lstate_offset = fixture->reality->lstate_size;
 
     fixture->context = (client_lifecycle_context_t) {
         .reality = fixture->reality,

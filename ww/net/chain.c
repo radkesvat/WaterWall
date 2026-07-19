@@ -28,6 +28,12 @@ void tunnelarrayInsert(tunnel_array_t *tc, tunnel_t *t)
 
 void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t)
 {
+    if (UNLIKELY(t->lstate_size > UINT32_MAX - tci->sum_line_state_size))
+    {
+        LOGF("tunnelchainInsert: total line-state size overflow");
+        terminateProgram(1);
+    }
+
     tunnelarrayInsert(&(tci->tunnels), t);
     tci->sum_padding_left += tunnelGetNode(t)->required_padding_left;
     tci->sum_line_state_size += t->lstate_size;
@@ -53,6 +59,13 @@ tunnel_chain_t *tunnelchainCreate(wid_t workers_count)
 
 void tunnelchainFinalize(tunnel_chain_t *tc)
 {
+    if (UNLIKELY((size_t) tc->sum_line_state_size > SIZE_MAX - sizeof(line_t)))
+    {
+        LOGF("tunnelchainFinalize: line allocation size overflow");
+        terminateProgram(1);
+    }
+    const size_t line_item_size = sizeof(line_t) + (size_t) tc->sum_line_state_size;
+
     tc->masterpool_line_pool = masterpoolCreateWithCapacity(2 * ((8) + GSTATE.ram_profile));
 
     tc->packet_lines = (line_t **) memoryAllocate(sizeof(line_t) * tc->workers_count);
@@ -60,7 +73,7 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
     for (wid_t i = 0; i < tc->workers_count; i++)
     {
         tc->line_pools[i] = genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(
-            tc->masterpool_line_pool, sizeof(line_t) + tc->sum_line_state_size, (8) + GSTATE.ram_profile);
+            tc->masterpool_line_pool, line_item_size, (8) + GSTATE.ram_profile);
 
         if (tc->contains_packet_node)
         {

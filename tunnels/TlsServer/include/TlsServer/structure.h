@@ -109,7 +109,7 @@ WW_EXPORT void         tlsserverTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *tlsserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tlsserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void tlsserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void tlsserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void tlsserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tlsserverTunnelOnPrepair(tunnel_t *t);
 void tlsserverTunnelOnStart(tunnel_t *t);

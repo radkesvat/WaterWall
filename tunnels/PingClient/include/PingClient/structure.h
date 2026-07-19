@@ -60,7 +60,7 @@ WW_EXPORT void         pingclientDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *pingclientCreate(node_t *node);
 WW_EXPORT api_result_t pingclientApi(tunnel_t *instance, sbuf_t *message);
 
-void pingclientOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void pingclientOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void pingclientOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void pingclientOnPrepair(tunnel_t *t);
 void pingclientOnStart(tunnel_t *t);

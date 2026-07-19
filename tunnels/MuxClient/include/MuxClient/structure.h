@@ -112,7 +112,7 @@ WW_EXPORT void         muxclientTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *muxclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t muxclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void muxclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void muxclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void muxclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void muxclientTunnelOnPrepair(tunnel_t *t);
 void muxclientTunnelOnStart(tunnel_t *t);

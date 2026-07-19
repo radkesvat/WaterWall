@@ -41,7 +41,7 @@ WW_EXPORT void         keepaliveclientTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *keepaliveclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t keepaliveclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void keepaliveclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void keepaliveclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void keepaliveclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void keepaliveclientTunnelOnPrepair(tunnel_t *t);
 void keepaliveclientTunnelOnStart(tunnel_t *t);

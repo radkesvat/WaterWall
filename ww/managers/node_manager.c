@@ -115,17 +115,34 @@ static void finalizeTunnelChains(node_manager_config_t *cfg, tunnel_t **t_array,
 
         if (tunnelchainIsFinalized(chain) == false)
         {
-            tunnelchainFinalize(chain);
-            vec_chains_t_push(&cfg->chains, chain);
-
             uint16_t index      = 0;
-            uint16_t mem_offset = 0;
+            uint32_t mem_offset = 0;
             for (int tci = 0; tci < chain->tunnels.len; tci++)
             {
                 tunnel_t *tunnel_in_chain = chain->tunnels.tuns[tci];
+                if (UNLIKELY(tunnel_in_chain->lstate_size > UINT32_MAX - mem_offset))
+                {
+                    LOGF("NodeManager: total line-state size overflow while indexing chain");
+                    terminateProgram(1);
+                }
+
+                uint32_t expected_offset = mem_offset + tunnel_in_chain->lstate_size;
                 tunnel_in_chain->onIndex(tunnel_in_chain, index++, &mem_offset);
+                if (UNLIKELY(mem_offset != expected_offset))
+                {
+                    LOGF("NodeManager: invalid line-state offset after indexing node (\"%s\")",
+                         tunnel_in_chain->node->name);
+                    terminateProgram(1);
+                }
             }
-            assert(mem_offset == chain->sum_line_state_size);
+            if (UNLIKELY(mem_offset != chain->sum_line_state_size))
+            {
+                LOGF("NodeManager: indexed line-state size does not match chain total");
+                terminateProgram(1);
+            }
+
+            tunnelchainFinalize(chain);
+            vec_chains_t_push(&cfg->chains, chain);
         }
     }
 }

@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-void socks5clientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset)
+void socks5clientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset)
 {
     discard t;
     discard index;

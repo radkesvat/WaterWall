@@ -31,7 +31,7 @@ WW_EXPORT void         keepaliveserverTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *keepaliveserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t keepaliveserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void keepaliveserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void keepaliveserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void keepaliveserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void keepaliveserverTunnelOnPrepair(tunnel_t *t);
 void keepaliveserverTunnelOnStart(tunnel_t *t);

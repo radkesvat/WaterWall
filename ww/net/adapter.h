@@ -30,7 +30,7 @@ void adapterDefaultOnChainDownEnd(tunnel_t *t, tunnel_chain_t *tc);
  * @param index Chain index.
  * @param mem_offset Running line-state offset.
  */
-void adapterDefaultOnIndexUpEnd(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void adapterDefaultOnIndexUpEnd(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 
 /**
  * @brief Default index assignment for a downstream-end adapter.
@@ -39,7 +39,7 @@ void adapterDefaultOnIndexUpEnd(tunnel_t *t, uint16_t index, uint16_t *mem_offse
  * @param index Chain index.
  * @param mem_offset Running line-state offset.
  */
-void adapterDefaultOnIndexDownEnd(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void adapterDefaultOnIndexDownEnd(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 
 
 /**

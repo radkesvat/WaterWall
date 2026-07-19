@@ -121,7 +121,7 @@ WW_EXPORT void         authenticationclientTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *authenticationclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t authenticationclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void authenticationclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void authenticationclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void authenticationclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void authenticationclientTunnelOnPrepair(tunnel_t *t);
 void authenticationclientTunnelOnStart(tunnel_t *t);

@@ -102,7 +102,7 @@ WW_EXPORT void         tcpoverudpserverTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *tcpoverudpserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tcpoverudpserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void tcpoverudpserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void tcpoverudpserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void tcpoverudpserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tcpoverudpserverTunnelOnPrepair(tunnel_t *t);
 void tcpoverudpserverTunnelOnStart(tunnel_t *t);

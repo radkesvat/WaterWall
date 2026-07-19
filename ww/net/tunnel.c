@@ -181,7 +181,7 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
 }
 
 // Default function to handle tunnel indexing
-void tunnelDefaultOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset)
+void tunnelDefaultOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset)
 {
     t->chain_index   = index;
     t->lstate_offset = *mem_offset;

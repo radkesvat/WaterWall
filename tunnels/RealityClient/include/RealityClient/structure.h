@@ -82,7 +82,7 @@ WW_EXPORT void         realityclientTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *realityclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t realityclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void realityclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void realityclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void realityclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void realityclientTunnelOnPrepair(tunnel_t *t);
 void realityclientTunnelOnStart(tunnel_t *t);

@@ -190,7 +190,7 @@ WW_EXPORT void         httpclientTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *httpclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t httpclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void httpclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void httpclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void httpclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void httpclientTunnelOnPrepair(tunnel_t *t);
 void httpclientTunnelOnStart(tunnel_t *t);

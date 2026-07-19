@@ -98,7 +98,7 @@ WW_EXPORT void         packetsenderTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *packetsenderTunnelCreate(node_t *node);
 WW_EXPORT api_result_t packetsenderTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void packetsenderTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void packetsenderTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void packetsenderTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void packetsenderTunnelOnPrepair(tunnel_t *t);
 void packetsenderTunnelOnStart(tunnel_t *t);

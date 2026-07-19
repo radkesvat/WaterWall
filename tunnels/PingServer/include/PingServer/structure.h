@@ -60,7 +60,7 @@ WW_EXPORT void         pingserverDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *pingserverCreate(node_t *node);
 WW_EXPORT api_result_t pingserverApi(tunnel_t *instance, sbuf_t *message);
 
-void pingserverOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
+void pingserverOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void pingserverOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void pingserverOnPrepair(tunnel_t *t);
 void pingserverOnStart(tunnel_t *t);

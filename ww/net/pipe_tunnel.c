@@ -580,7 +580,7 @@ static void pipetunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
  * @param index index.
  * @param mem_offset Pointer to the memory offset.
  */
-static void pipetunnelDefaultOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset)
+static void pipetunnelDefaultOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset)
 {
 
     t->chain_index   = index;

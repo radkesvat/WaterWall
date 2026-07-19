@@ -18,14 +18,14 @@ void adapterDefaultOnChainDownEnd(tunnel_t *t, tunnel_chain_t *tc)
     tunnelDefaultOnChain(t, tc);
 }
 
-void adapterDefaultOnIndexUpEnd(tunnel_t *t, uint16_t index, uint16_t *mem_offset)
+void adapterDefaultOnIndexUpEnd(tunnel_t *t, uint16_t index, uint32_t *mem_offset)
 {
     t->chain_index   = index;
     t->lstate_offset = *mem_offset;
     *mem_offset += t->lstate_size;
 }
 
-void adapterDefaultOnIndexDownEnd(tunnel_t *t, uint16_t index, uint16_t *mem_offset)
+void adapterDefaultOnIndexDownEnd(tunnel_t *t, uint16_t index, uint32_t *mem_offset)
 {
     t->chain_index   = index;
     t->lstate_offset = *mem_offset;
