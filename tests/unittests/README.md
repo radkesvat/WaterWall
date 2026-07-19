@@ -10,6 +10,9 @@ These tests exercise small library-level behavior without launching the `Waterwa
   AES256-GCM, the test exits successfully after reporting that the AES-specific cases were skipped.
 - `waterwall.crypto_primitives_unit`
   Verifies generic `wcrypto` BLAKE2s, X25519, ChaCha20-Poly1305, and XChaCha20-Poly1305 vectors.
+- `waterwall.capture_linux_nfqueue_unit`
+  Verifies the Linux NFQUEUE netlink parser with synthetic messages, including capture-length byte order,
+  malformed attributes, payload cursor exposure, and truncated-prefix packet-id recovery.
 - `waterwall.tcp_over_udp_fec_unit`
   Verifies the TCP-over-UDP Reed-Solomon FEC helper directly, including one missing data shard recovery, encoder reset
   after a failed parity emit callback, and malformed packet rejection.

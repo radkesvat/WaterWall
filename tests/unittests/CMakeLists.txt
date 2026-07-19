@@ -71,6 +71,18 @@ if(TARGET ww)
   add_dependencies(waterwall_unit_tests socket_manager_rules_test)
 
   add_waterwall_unit_test(waterwall.socket_manager_rules_unit socket_manager_rules_test "unit;net;socket-manager")
+
+  if(LINUX)
+    add_executable(capture_linux_nfqueue_test capture_linux_nfqueue_test.c)
+    target_link_libraries(capture_linux_nfqueue_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests capture_linux_nfqueue_test)
+
+    add_waterwall_unit_test(
+      waterwall.capture_linux_nfqueue_unit
+      capture_linux_nfqueue_test
+      "unit;net;capture;nfqueue"
+    )
+  endif()
 endif()
 
 if(TARGET tcp_over_udp_fec)
