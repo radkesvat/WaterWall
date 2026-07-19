@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 108
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx, and both files must keep the same documentation version.
 -->
 
@@ -93,7 +93,7 @@ Typical use cases include:
     "packet-duplicate": 2,
     "source-port-ghost": true,
     "dest-port-ghost": true,
-    "carry-original-tcp-flags": true,
+    "preserve-tcp-bitflags": true,
     "up-tcp-bit-psh": "off",
     "up-tcp-bit-ack": "toggle",
     "dw-tcp-bit-syn": "packet->ack"
@@ -464,12 +464,21 @@ Supported values are:
 
 `flip` and `switch` are accepted as aliases for `toggle`.
 
-- `carry-original-tcp-flags` `(boolean)`
+- `preserve-tcp-bitflags` `(boolean)`
   Optional.
 
-  When `true`, directions with configured TCP-bit rewrite actions append the original TCP flags byte to the end of the TCP transport payload before rewriting flags.
+  When `true`, a direction with configured TCP-bit rewrite actions backs up the original TCP flags byte as the last byte of the IPv4 packet, then rewrites the live TCP flags.
 
-  Directions with no TCP-bit rewrite actions treat that final payload byte as the carried original flags, restore the TCP flags from it, and shrink the packet by one byte.
+  A direction with no TCP-bit rewrite actions, while the opposite direction has actions, treats the final packet byte as the backup, restores the TCP flags from it, and shrinks the packet by one byte.
+
+  The direction roles are selected by the configured TCP-bit actions, not by upstream or downstream alone:
+
+  - only upstream has actions: upstream backs up and rewrites; downstream restores and removes the backup byte
+  - only downstream has actions: downstream backs up and rewrites; upstream restores and removes the backup byte
+  - both directions have actions: both back up and rewrite; neither restores
+  - neither direction has actions: no backup or restoration occurs
+
+  Because this adds one byte to rewritten packets, reduce `misc.mtu` in `core.json` by `1` when your current MTU is already `1500` or the maximum value supported by the network card/path.
 
 ### Port ghost settings
 
@@ -617,10 +626,14 @@ If any flag changes:
 
 This happens independently on upstream and downstream using the `up-...` and `dw-...` setting families.
 
-If `carry-original-tcp-flags` is enabled:
+If `preserve-tcp-bitflags` is enabled:
 
-- rewrite directions append one extra payload byte carrying the original TCP flags before applying any configured TCP-bit actions
-- restore directions copy that byte back into the TCP flags field and reduce the IPv4 packet length by one byte
+- rewrite directions append one extra byte at the end of the IPv4 packet carrying the original TCP flags before applying any configured TCP-bit actions
+- restore directions copy that final byte back into the TCP flags field and reduce the IPv4 packet length by one byte
+- only upstream actions means upstream backs up and rewrites while downstream restores
+- only downstream actions means downstream backs up and rewrites while upstream restores
+- actions in both directions means both directions back up and rewrite, so neither restores
+- no actions in either direction means this option does not add or remove a backup byte
 - fragmented IPv4 packets are skipped so the tunnel only operates on whole TCP packets with a real TCP header and transport payload
 
 ### Port ghost tailing
