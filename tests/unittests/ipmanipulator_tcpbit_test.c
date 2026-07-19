@@ -134,7 +134,7 @@ static void testDownstreamCanCopyPacketCwr(void)
     destroyTestTunnel(t);
 }
 
-static void testCarryOriginalFlagsCanClearCwrEceOnRestore(void)
+static void testPreservedBitflagsCanClearCwrEceOnRestore(void)
 {
     tunnel_t                *t     = createTestTunnel();
     ipmanipulator_tstate_t *state = testTunnelState(t);
@@ -142,15 +142,15 @@ static void testCarryOriginalFlagsCanClearCwrEceOnRestore(void)
     sbuf_t                 *buf   = createTcpPacket(TCP_CWR | TCP_ECE | TCP_ACK, TCP_ACK, true);
     uint16_t                original_len = (uint16_t) sbufGetLength(buf);
 
-    state->trick_carry_original_tcp_flags = true;
+    state->trick_preserve_tcp_bitflags = true;
     state->up_tcp_bit_ack_action          = kDvsToggle;
 
     tcpbitchangetrickDownStreamPayload(t, &line, &buf);
 
     require(buf != NULL, "packet was unexpectedly dropped");
-    require(getAllTcpFlags(buf) == TCP_ACK, "carried original flags restore did not clear CWR/ECE");
-    require(sbufGetLength(buf) == original_len - 1U, "carried original flags byte was not removed");
-    require(lineGetRecalculateChecksum(&line), "carried original flags restore did not request checksum recalculation");
+    require(getAllTcpFlags(buf) == TCP_ACK, "preserved bitflags restore did not clear CWR/ECE");
+    require(sbufGetLength(buf) == original_len - 1U, "preserved bitflags byte was not removed");
+    require(lineGetRecalculateChecksum(&line), "preserved bitflags restore did not request checksum recalculation");
 
     sbufDestroy(buf);
     destroyTestTunnel(t);
@@ -160,7 +160,7 @@ int main(void)
 {
     testDownstreamCanClearCwr();
     testDownstreamCanCopyPacketCwr();
-    testCarryOriginalFlagsCanClearCwrEceOnRestore();
+    testPreservedBitflagsCanClearCwrEceOnRestore();
 
     return 0;
 }

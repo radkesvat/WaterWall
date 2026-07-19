@@ -149,10 +149,11 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         state->trick_packet_duplicate = true;
     }
 
-    bool carry_original_tcp_flags_enabled = false;
-    getBoolFromJsonObject(&carry_original_tcp_flags_enabled, settings, "bit-transport");
-    getBoolFromJsonObject(&carry_original_tcp_flags_enabled, settings, "carry-original-tcp-flags");
-    state->trick_carry_original_tcp_flags = carry_original_tcp_flags_enabled;
+    bool preserve_tcp_bitflags_enabled = false;
+    getBoolFromJsonObject(&preserve_tcp_bitflags_enabled, settings, "bit-transport");
+    getBoolFromJsonObject(&preserve_tcp_bitflags_enabled, settings, "carry-original-tcp-flags");
+    getBoolFromJsonObject(&preserve_tcp_bitflags_enabled, settings, "preserve-tcp-bitflags");
+    state->trick_preserve_tcp_bitflags = preserve_tcp_bitflags_enabled;
 
     bool source_port_ghost_enabled = false;
     bool dest_port_ghost_enabled   = false;
@@ -797,7 +798,7 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
 
     if (! (state->trick_proto_swap || state->trick_sni_blender || state->trick_first_sni || state->trick_smuggle_sni ||
            state->trick_overlap_sni || state->trick_synfin_sni || state->trick_ech_sni || state->trick_smuggle_fin ||
-           state->trick_tcp_bit_changes || state->trick_packet_duplicate || state->trick_carry_original_tcp_flags ||
+           state->trick_tcp_bit_changes || state->trick_packet_duplicate || state->trick_preserve_tcp_bitflags ||
            state->trick_source_port_ghost || state->trick_dest_port_ghost))
     {
         LOGF("IpManipulator: no tricks are enabled, nothing to do");
