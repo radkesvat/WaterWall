@@ -600,7 +600,7 @@ bool ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_line, sbuf_t *buf
     rudp->dest = udphdr->src;
     rudp->len  = lwip_htons((uint16_t) (UDP_HLEN + (uint32_t) dns_response_len));
 
-    calcFullPacketChecksum(packet);
+    calcFullPacketChecksum(packet, response_len);
 
 #ifdef DEBUG
     lineLock(packet_line);

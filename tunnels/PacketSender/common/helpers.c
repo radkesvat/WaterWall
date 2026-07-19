@@ -143,7 +143,7 @@ static void packetsenderBuildTcpPacket(const packetsender_tstate_t *state, uint8
     tcpheader->wnd  = lwip_htons(64240U);
     tcpheader->urgp = 0;
 
-    calcFullPacketChecksum(packet);
+    calcFullPacketChecksum(packet, kPacketSenderTcpPacketLength);
 }
 
 static void packetsenderBuildUdpPacket(const packetsender_tstate_t *state, uint8_t *packet, uint32_t src_addr_host,
@@ -167,7 +167,7 @@ static void packetsenderBuildUdpPacket(const packetsender_tstate_t *state, uint8
     udpheader->dest = lwip_htons(state->dest_port);
     udpheader->len  = lwip_htons(kPacketSenderUdpHeaderLength);
 
-    calcFullPacketChecksum(packet);
+    calcFullPacketChecksum(packet, kPacketSenderUdpPacketLength);
 }
 
 static void packetsenderBuildIcmpPacket(const packetsender_tstate_t *state, uint8_t *packet, uint32_t src_addr_host,
@@ -191,7 +191,7 @@ static void packetsenderBuildIcmpPacket(const packetsender_tstate_t *state, uint
     icmpheader->id    = lwip_htons((uint16_t) seed);
     icmpheader->seqno = lwip_htons((uint16_t) (seed >> 16));
 
-    calcFullPacketChecksum(packet);
+    calcFullPacketChecksum(packet, kPacketSenderIcmpPacketLength);
 }
 
 static void packetsenderBuildGenericPacket(const packetsender_tstate_t *state, uint8_t *packet, uint32_t src_addr_host,
@@ -217,7 +217,7 @@ static void packetsenderBuildGenericPacket(const packetsender_tstate_t *state, u
         payload[i]           = (uint8_t) (mixed & 0xFFU);
     }
 
-    calcFullPacketChecksum(packet);
+    calcFullPacketChecksum(packet, kPacketSenderGenericPacketLength);
 }
 
 static void packetsenderBuildPacketForProtocol(const packetsender_tstate_t *state, uint8_t *packet,

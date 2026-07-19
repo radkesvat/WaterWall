@@ -343,7 +343,7 @@ static bool testerserverVerifyPacketIpv4Transport(testerserver_tstate_t *ts, sbu
     }
 
     uint16_t ip_checksum = IPH_CHKSUM(ipheader);
-    calcFullPacketChecksum(packet);
+    calcFullPacketChecksum(packet, sbufGetLength(buf));
 
     if (IPH_CHKSUM(ipheader) != ip_checksum)
     {
@@ -513,7 +513,7 @@ sbuf_t *testerserverCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, u
         testerserverWritePacketIpv4Transport(ts, buf, chunk_index, direction);
         testerserverFillBytesForFlow(testerserverGetFlowId(t, l), sbufGetMutablePtr(buf) + payload_offset,
                                      payload_len - payload_offset, chunk_index, chunk_offset, direction);
-        calcFullPacketChecksum(sbufGetMutablePtr(buf));
+        calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
         return buf;
     }
 

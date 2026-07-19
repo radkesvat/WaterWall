@@ -607,7 +607,7 @@ static sbuf_t *overlapsnitrickBuildCraftedServerHelloPacket(line_t *l, sbuf_t *s
     tcp_header->ackno = lwip_htonl(client_ack);
     TCPH_FLAGS_SET(tcp_header, TCP_ACK | TCP_PSH);
 
-    calcFullPacketChecksum(packet);
+    calcFullPacketChecksum(packet, packet_len);
 
     *server_seq_out  = server_seq;
     *packet_len_out  = (uint16_t) packet_len;

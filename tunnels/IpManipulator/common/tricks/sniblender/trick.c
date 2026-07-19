@@ -97,9 +97,9 @@ bool sniblendertrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     uint16_t identification = lwip_ntohs(IPH_ID(ipheader));
 
     // Before crafting, satisfy any pending checksum request on the source packet.
-    if (l->recalculate_checksum && IPH_V(ipheader) == 4)
+    if (UNLIKELY(l->recalculate_checksum && IPH_V(ipheader) == 4))
     {
-        calcFullPacketChecksum(sbufGetMutablePtr(buf));
+        calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
         l->recalculate_checksum = false;
     }
 

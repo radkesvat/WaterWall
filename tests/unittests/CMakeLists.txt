@@ -66,6 +66,12 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.address_context_unit address_context_test "unit;net;address-context")
 
+  add_executable(wchecksum_test wchecksum_test.c)
+  target_link_libraries(wchecksum_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests wchecksum_test)
+
+  add_waterwall_unit_test(waterwall.wchecksum_unit wchecksum_test "unit;net;checksum")
+
   add_executable(packet_tunnel_test packet_tunnel_test.c)
   target_link_libraries(packet_tunnel_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests packet_tunnel_test)

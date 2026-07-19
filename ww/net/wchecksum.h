@@ -10,8 +10,10 @@
  * @brief Recalculate IP and L4 checksum fields for an IPv4 packet buffer.
  *
  * @param buf Pointer to packet bytes starting at IPv4 header.
+ * @param available_len Number of valid readable and writable bytes at @p buf.
+ * @return true when a structurally valid IPv4 packet was processed, otherwise false without modifying the buffer.
  */
-void calcFullPacketChecksum(uint8_t *buf);
+bool calcFullPacketChecksum(uint8_t *buf, size_t available_len);
 
 /**
  * @brief Compute a generic one's-complement checksum with an initial seed.

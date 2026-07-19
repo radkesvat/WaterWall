@@ -109,11 +109,9 @@ void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     printIPPacketInfo("TunDevice write", (const unsigned char *) ip_header);
 #endif
 
-    struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
-
-    if (l->recalculate_checksum && IPH_V(ipheader) == 4)
+    if (UNLIKELY(l->recalculate_checksum))
     {
-        calcFullPacketChecksum(sbufGetMutablePtr(buf));
+        calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
         l->recalculate_checksum = false;
     }
 

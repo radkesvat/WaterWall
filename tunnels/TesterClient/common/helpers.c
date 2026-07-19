@@ -338,7 +338,7 @@ static bool testerclientVerifyPacketIpv4Transport(testerclient_tstate_t *ts, sbu
     }
 
     uint16_t ip_checksum = IPH_CHKSUM(ipheader);
-    calcFullPacketChecksum(packet);
+    calcFullPacketChecksum(packet, sbufGetLength(buf));
 
     if (IPH_CHKSUM(ipheader) != ip_checksum)
     {
@@ -510,7 +510,7 @@ sbuf_t *testerclientCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, u
                                      chunk_index,
                                      chunk_offset,
                                      direction);
-        calcFullPacketChecksum(sbufGetMutablePtr(buf));
+        calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
         return buf;
     }
 

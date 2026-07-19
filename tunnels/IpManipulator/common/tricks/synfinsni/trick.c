@@ -60,7 +60,7 @@ static void synfinsnitrickFinalizePacketChecksum(sbuf_t *packet_buf, uint16_t ip
 
     if (! random_checksum)
     {
-        calcFullPacketChecksum(packet);
+        calcFullPacketChecksum(packet, pkt_len);
         return;
     }
 

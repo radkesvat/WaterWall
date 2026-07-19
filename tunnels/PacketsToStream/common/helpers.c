@@ -406,20 +406,12 @@ bool packetstostreamValidatePacket(packetstostream_packet_validation_level_t lev
 
 void packetstostreamRecalculateChecksumIfRequested(line_t *l, sbuf_t *buf)
 {
-    if (! lineGetRecalculateChecksum(l))
+    if (LIKELY(! lineGetRecalculateChecksum(l)))
     {
         return;
     }
 
-    if (sbufGetLength(buf) >= sizeof(struct ip_hdr))
-    {
-        struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
-
-        if (IPH_V(ipheader) == 4)
-        {
-            calcFullPacketChecksum(sbufGetMutablePtr(buf));
-        }
-    }
+    calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
 
     lineSetRecalculateChecksum(l, false);
 }

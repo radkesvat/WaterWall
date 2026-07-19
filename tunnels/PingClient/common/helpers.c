@@ -159,9 +159,9 @@ static sbuf_t *pingclientPrepareNewIpPayloadBuffer(tunnel_t *t, line_t *l, sbuf_
     *inner_source_addr_out              = inner_ipheader->src.addr;
     *inner_dest_addr_out                = inner_ipheader->dest.addr;
 
-    if (lineGetRecalculateChecksum(l))
+    if (UNLIKELY(lineGetRecalculateChecksum(l)))
     {
-        calcFullPacketChecksum(sbufGetMutablePtr(buf));
+        calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
         lineSetRecalculateChecksum(l, false);
     }
 
@@ -222,12 +222,12 @@ static sbuf_t *pingclientPrepareRawIcmpPayloadBuffer(tunnel_t *t, line_t *l, sbu
     pingclient_tstate_t *state   = tunnelGetState(t);
     uint32_t             raw_len = sbufGetLength(buf);
 
-    if (lineGetRecalculateChecksum(l))
+    if (UNLIKELY(lineGetRecalculateChecksum(l)))
     {
         uint16_t packet_len;
         if (pingclientValidateIpv4PacketBytes(sbufGetRawPtr(buf), raw_len, &packet_len))
         {
-            calcFullPacketChecksum(sbufGetMutablePtr(buf));
+            calcFullPacketChecksum(sbufGetMutablePtr(buf), raw_len);
         }
         lineSetRecalculateChecksum(l, false);
     }
@@ -465,7 +465,7 @@ static void pingclientEncapsulateWithNewIpAndIcmp(tunnel_t *t, line_t *l, sbuf_t
 
     pingclientFillIcmpEchoHeader(state, icmpheader);
 
-    calcFullPacketChecksum(packet);
+    calcFullPacketChecksum(packet, packet_len);
     lineSetRecalculateChecksum(l, false);
 
     tunnelNextUpStreamPayload(t, l, buf);
@@ -490,9 +490,9 @@ static void pingclientEncapsulateReusingIpv4Header(tunnel_t *t, line_t *l, sbuf_
         return;
     }
 
-    if (lineGetRecalculateChecksum(l))
+    if (UNLIKELY(lineGetRecalculateChecksum(l)))
     {
-        calcFullPacketChecksum(sbufGetMutablePtr(buf));
+        calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
         lineSetRecalculateChecksum(l, false);
     }
 
@@ -576,7 +576,7 @@ static void pingclientEncapsulateReusingIpv4Header(tunnel_t *t, line_t *l, sbuf_
     IPH_CHKSUM_SET(ipheader, 0);
     sbufSetLength(buf, final_packet_len);
 
-    calcFullPacketChecksum(packet);
+    calcFullPacketChecksum(packet, final_packet_len);
     lineSetRecalculateChecksum(l, false);
 
     tunnelNextUpStreamPayload(t, l, buf);
@@ -724,7 +724,7 @@ static void pingclientDecapsulateReusedIpv4Header(tunnel_t *t, line_t *l, sbuf_t
 
     IPH_LEN_SET(ipheader, lwip_htons(restored_packet_len));
     IPH_PROTO_SET(ipheader, original_protocol);
-    calcFullPacketChecksum(packet);
+    calcFullPacketChecksum(packet, restored_packet_len);
     lineSetRecalculateChecksum(l, false);
 
     tunnelPrevDownStreamPayload(t, l, buf);
@@ -792,9 +792,9 @@ static void pingclientSwapIpv4ProtocolToIcmp(tunnel_t *t, line_t *l, sbuf_t *buf
         return;
     }
 
-    if (lineGetRecalculateChecksum(l))
+    if (UNLIKELY(lineGetRecalculateChecksum(l)))
     {
-        calcFullPacketChecksum(sbufGetMutablePtr(buf));
+        calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
         lineSetRecalculateChecksum(l, false);
     }
 

@@ -44,11 +44,9 @@ void rawsocketWriteStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     rawsocket_tstate_t *state = tunnelGetState(t);
 
     // printIPPacketInfo("RawSocket sending", sbufGetRawPtr(buf));
-    struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
-
-    if (l->recalculate_checksum && IPH_V(ipheader) == 4)
+    if (UNLIKELY(l->recalculate_checksum))
     {
-        calcFullPacketChecksum(sbufGetMutablePtr(buf));
+        calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
         l->recalculate_checksum = false;
     }
 
