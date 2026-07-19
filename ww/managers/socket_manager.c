@@ -1771,33 +1771,35 @@ static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
     filter->listen_ios = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
     int i = 0;
 
-    for (uint16_t p = port_min; p <= port_max; p++)
+    for (uint32_t p = port_min; p <= port_max; ++p)
     {
-        if (endpointRegistryFind(reg, IPPROTO_TCP, filter, p) != NULL)
+        const uint16_t port = (uint16_t) p;
+
+        if (endpointRegistryFind(reg, IPPROTO_TCP, filter, port) != NULL)
         {
-            LOGI("SocketManager: %s:[%u] shares an existing TCP listener", host, p);
+            LOGI("SocketManager: %s:[%u] shares an existing TCP listener", host, port);
             continue;
         }
 
-        if (tcpBindDefersToExisting(reg, filter, p))
+        if (tcpBindDefersToExisting(reg, filter, port))
         {
-            LOGI("SocketManager: %s:[%u] shares the wildcard TCP listener", host, p);
+            LOGI("SocketManager: %s:[%u] shares the wildcard TCP listener", host, port);
             continue;
         }
 
-        wio_t *io = createTcpServerWithSocketOptions(loop, filter, host, p, onAcceptTcpSinglePort);
+        wio_t *io = createTcpServerWithSocketOptions(loop, filter, host, port, onAcceptTcpSinglePort);
 
         if (io == NULL)
         {
-            LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p);
+            LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, port);
             continue;
         }
         filter->listen_ios[i] = io;
-        endpointRegistryReserve(reg, IPPROTO_TCP, filter, p, io, NULL);
+        endpointRegistryReserve(reg, IPPROTO_TCP, filter, port, io, NULL);
         filter->v6_dualstack = wioGetLocaladdr(io)->sa_family == AF_INET6;
 
         i++;
-        LOGI("SocketManager: listening on %s:[%u] (%s)", host, p, "TCP");
+        LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "TCP");
     }
     filter->listen_ios_count = (size_t) i;
 }
@@ -2385,20 +2387,21 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
     filter->listen_udp_sockets = (udpsock_t **) memoryAllocateZero(sizeof(udpsock_t *) * (size_t) length);
     int i = 0;
 
-    for (uint16_t p = port_min; p <= port_max; p++)
+    for (uint32_t p = port_min; p <= port_max; ++p)
     {
-        listener_endpoint_t *shared = endpointRegistryFind(reg, IPPROTO_UDP, filter, p);
+        const uint16_t       port   = (uint16_t) p;
+        listener_endpoint_t *shared = endpointRegistryFind(reg, IPPROTO_UDP, filter, port);
         if (shared != NULL)
         {
-            ensureUdpSharedEndpointCompatible(shared, filter, host, p);
-            LOGI("SocketManager: %s:[%u] shares an existing UDP listener", host, p);
+            ensureUdpSharedEndpointCompatible(shared, filter, host, port);
+            LOGI("SocketManager: %s:[%u] shares an existing UDP listener", host, port);
             continue;
         }
 
-        wio_t *udp_io = createUdpServerWithSocketOptions(loop, filter, host, p);
+        wio_t *udp_io = createUdpServerWithSocketOptions(loop, filter, host, port);
         if (udp_io == NULL)
         {
-            LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p);
+            LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, port);
             continue;
         }
 
@@ -2410,10 +2413,10 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
         weventSetUserData(udp_io, socket);
         wioSetCallBackRead(udp_io, onUdpPacketReceived);
         wioRead(udp_io);
-        endpointRegistryReserve(reg, IPPROTO_UDP, filter, p, udp_io, socket);
+        endpointRegistryReserve(reg, IPPROTO_UDP, filter, port, udp_io, socket);
 
         i++;
-        LOGI("SocketManager: listening on %s:[%u] (%s)", host, p, "UDP");
+        LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "UDP");
     }
     filter->listen_ios_count         = (size_t) i;
     filter->listen_udp_sockets_count = (size_t) i;

@@ -9,7 +9,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from socket_manager_privileged_common import MarkerServers, UdpMarkerServer, expect_udp_marker
 
 
-LISTEN_PORT = 23851
+LISTEN_PORT = 65535
 SPECIFIC_IP = "10.251.24.1"
 SPECIFIC_MARKER = b"udp-specific-range\n"
 WILDCARD_MARKER = b"udp-wildcard-range\n"

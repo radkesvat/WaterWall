@@ -9,7 +9,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from socket_manager_privileged_common import MarkerServers, TcpMarkerServer, expect_tcp_marker
 
 
-LISTEN_PORT = 23751
+LISTEN_PORT = 65535
 SPECIFIC_IP = "10.251.23.1"
 SPECIFIC_MARKER = b"tcp-specific-range\n"
 WILDCARD_MARKER = b"tcp-wildcard-range\n"
