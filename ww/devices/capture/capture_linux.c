@@ -1,12 +1,15 @@
 #include "capture.h"
+#include "capture_linux_internal.h"
 #include "generic_pool.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
 #include "worker.h"
 #include "wproc.h"
+#include "wtime.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <linux/if_ether.h>
 #include <linux/ipv6.h>
 #include <linux/netfilter.h>
@@ -29,14 +32,27 @@
 
 enum
 {
-    kReadPacketSize             = 1500, // its ok to be >= mtu
+    kReadPacketSize             = kCaptureLinuxPacketCopySize,
+    kNetfilterReadBufferSize    = kCaptureLinuxNetfilterReadBufferSize,
     kMaxReadDistributeQueueSize = 512,
-    kEthDataLen                 = 1500,
     kNetfilterQueueLen          = 64 * 1024,
     kNetfilterSocketRecvBuffer  = 64 * 1024 * 1024
 };
 
+static_assert(kReadPacketSize == kMaxAllowedPacketLength, "NFQUEUE copy range must match packet policy");
+static_assert(SMALL_BUFFER_SIZE >= kNetfilterReadBufferSize, "Linux capture requires 4096-byte small buffers");
+static_assert(kMaxAllowedPacketLength <= kNetfilterReadBufferSize, "packet policy must fit in netlink read buffer");
 static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "capture read batch count must fit in msg_event.count");
+
+typedef enum netfilter_packet_result_e
+{
+    kNetfilterPacketError = -1,
+    kNetfilterPacketWouldBlock,
+    kNetfilterPacketEof,
+    kNetfilterPacketDiscarded,
+    kNetfilterPacketMalformedDiscarded,
+    kNetfilterPacketReady
+} netfilter_packet_result_t;
 
 typedef struct capturedevice_sysctl_setting_s
 {
@@ -382,9 +398,13 @@ static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa
     memoryZero(&nl_addr, sizeof(nl_addr));
     nl_addr.nl_family = AF_NETLINK;
 
-    if (sendto(netfilter_socket, buff, sizeof(buff), 0, (struct sockaddr *) &nl_addr, sizeof(nl_addr)) !=
-        (long) sizeof(buff))
+    ssize_t send_result = sendto(netfilter_socket, buff, sizeof(buff), 0, (struct sockaddr *) &nl_addr, sizeof(nl_addr));
+    if (send_result != (ssize_t) sizeof(buff))
     {
+        if (send_result >= 0)
+        {
+            errno = EIO;
+        }
         return false;
     }
 
@@ -448,130 +468,377 @@ static bool netfilterSetQueueLength(int netfilter_socket, uint16_t qnumber, uint
         netfilter_socket, NFQNL_MSG_CONFIG, NFQA_CFG_QUEUE_MAXLEN, qnumber, true, &qlen, sizeof(qlen));
 }
 
-/*
- * Get a packet from netfilter.
- */
-static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, sbuf_t *buff)
+static bool netfilterPointerRangeInside(const uint8_t *base, size_t size, const uint8_t *ptr, size_t len)
 {
-    // Read a message from netlink (non-blocking)
-    char               nl_buff[512 + kEthDataLen + sizeof(struct ethhdr) + sizeof(struct nfqnl_msg_packet_hdr)];
-    struct sockaddr_nl nl_addr;
-    socklen_t          nl_addr_len = sizeof(nl_addr);
-    ssize_t            result =
-        recvfrom(netfilter_socket, nl_buff, sizeof(nl_buff), MSG_DONTWAIT, (struct sockaddr *) &nl_addr, &nl_addr_len);
+    uintptr_t base_addr = (uintptr_t) base;
+    uintptr_t ptr_addr  = (uintptr_t) ptr;
 
-    if (result < 0)
+    if (ptr_addr < base_addr)
     {
-        // Preserve errno for caller (e.g., EAGAIN)
-        return -1;
+        return false;
     }
 
-    if (result <= (int) sizeof(struct nlmsghdr))
+    size_t offset = ptr_addr - base_addr;
+    return offset <= size && len <= size - offset;
+}
+
+static void netfilterPacketViewReset(netfilter_packet_view_t *view)
+{
+    memoryZero(view, sizeof(*view));
+}
+
+netfilter_packet_parse_result_t captureLinuxNetfilterParsePacket(uint8_t *message, size_t copied_len,
+                                                                 netfilter_packet_view_t *view)
+{
+    if (message == NULL || view == NULL)
     {
-        errno = EINVAL;
-        return -1;
-    }
-    if (nl_addr_len != sizeof(nl_addr) || nl_addr.nl_pid != 0)
-    {
-        errno = EINVAL;
-        return -1;
+        return kNetfilterPacketParseMalformed;
     }
 
-    struct nlmsghdr *nl_hdr = (struct nlmsghdr *) nl_buff;
+    netfilterPacketViewReset(view);
+
+    if (copied_len > (size_t) INT_MAX || copied_len <= sizeof(struct nlmsghdr))
+    {
+        return kNetfilterPacketParseMalformed;
+    }
+
+    struct nlmsghdr *nl_hdr          = (struct nlmsghdr *) message;
+    int              remaining_bytes = (int) copied_len;
+    if (! NLMSG_OK(nl_hdr, remaining_bytes))
+    {
+        return kNetfilterPacketParseMalformed;
+    }
     if (NFNL_SUBSYS_ID(nl_hdr->nlmsg_type) != NFNL_SUBSYS_QUEUE)
     {
-        errno = EINVAL;
-        return -1;
+        return kNetfilterPacketParseMalformed;
     }
     if (NFNL_MSG_TYPE(nl_hdr->nlmsg_type) != NFQNL_MSG_PACKET)
     {
-        errno = EINVAL;
-        return -1;
-    }
-    if (nl_hdr->nlmsg_len < sizeof(struct nfgenmsg))
-    {
-        errno = EINVAL;
-        return -1;
+        return kNetfilterPacketParseMalformed;
     }
 
-    // Get the packet data
-    int nl_size0 = NLMSG_SPACE(sizeof(struct nfgenmsg));
-    if ((int) nl_hdr->nlmsg_len < nl_size0)
+    size_t attr_offset = (size_t) NLMSG_HDRLEN + (size_t) NLMSG_ALIGN(sizeof(struct nfgenmsg));
+    if ((size_t) nl_hdr->nlmsg_len < attr_offset)
     {
-        errno = EINVAL;
-        return -1;
+        return kNetfilterPacketParseMalformed;
     }
-    struct nfattr               *nl_attr      = NFM_NFA(NLMSG_DATA(nl_hdr));
-    int                          nl_attr_size = (int) (nl_hdr->nlmsg_len - NLMSG_ALIGN(nl_size0));
-    bool                         found_data = false, found_pkt_hdr = false;
-    uint8_t                     *nl_data      = NULL;
-    size_t                       nl_data_size = 0;
-    struct nfqnl_msg_packet_hdr *nl_pkt_hdr   = NULL;
-    while (NFA_OK(nl_attr, nl_attr_size))
+
+    struct nfattr *nl_attr      = NFM_NFA(NLMSG_DATA(nl_hdr));
+    int            nl_attr_size = (int) ((size_t) nl_hdr->nlmsg_len - attr_offset);
+    bool           found_payload = false;
+
+    while (nl_attr_size > 0)
     {
-        int nl_attr_type = NFA_TYPE(nl_attr);
+        if (! NFA_OK(nl_attr, nl_attr_size))
+        {
+            return kNetfilterPacketParseMalformed;
+        }
+
+        int nl_attr_type    = NFA_TYPE(nl_attr);
+        int nl_attr_payload = NFA_PAYLOAD(nl_attr);
+        if (UNLIKELY(nl_attr_payload < 0))
+        {
+            return kNetfilterPacketParseMalformed;
+        }
+        if (UNLIKELY(! netfilterPointerRangeInside(
+                message, (size_t) nl_hdr->nlmsg_len, (const uint8_t *) NFA_DATA(nl_attr), (size_t) nl_attr_payload)))
+        {
+            return kNetfilterPacketParseMalformed;
+        }
+
         switch (nl_attr_type)
         {
         case NFQA_PAYLOAD:
-            if (found_data)
+            if (found_payload)
             {
-                errno = EINVAL;
-                return -1;
+                return kNetfilterPacketParseMalformed;
             }
-            found_data   = true;
-            nl_data      = (uint8_t *) NFA_DATA(nl_attr);
-            nl_data_size = (size_t) NFA_PAYLOAD(nl_attr);
+            found_payload       = true;
+            view->payload       = (const uint8_t *) NFA_DATA(nl_attr);
+            view->payload_length = (uint32_t) nl_attr_payload;
             break;
         case NFQA_PACKET_HDR:
-            if (found_pkt_hdr)
+            if (view->has_packet_id)
             {
-                errno = EINVAL;
-                return -1;
+                return kNetfilterPacketParseMalformed;
             }
-            found_pkt_hdr = true;
-            nl_pkt_hdr    = (struct nfqnl_msg_packet_hdr *) NFA_DATA(nl_attr);
+            if (nl_attr_payload != (int) sizeof(struct nfqnl_msg_packet_hdr))
+            {
+                return kNetfilterPacketParseMalformed;
+            }
+            view->has_packet_id = true;
+            memoryCopy(&view->packet_id,
+                       &((const struct nfqnl_msg_packet_hdr *) NFA_DATA(nl_attr))->packet_id,
+                       sizeof(view->packet_id));
             break;
+        case NFQA_CAP_LEN:
+        {
+            uint32_t raw_capture_length = 0;
+            if (view->has_capture_length)
+            {
+                return kNetfilterPacketParseMalformed;
+            }
+            if (nl_attr_payload != (int) sizeof(raw_capture_length))
+            {
+                return kNetfilterPacketParseMalformed;
+            }
+            view->has_capture_length = true;
+            memoryCopy(&raw_capture_length, NFA_DATA(nl_attr), sizeof(raw_capture_length));
+            view->capture_length = ntohl(raw_capture_length);
+            break;
+        }
         default:
             // Ignore other attributes
             break;
         }
         nl_attr = NFA_NEXT(nl_attr, nl_attr_size);
     }
-    if (! found_data || ! found_pkt_hdr)
+
+    if (! found_payload || ! view->has_packet_id)
     {
-        errno = EINVAL;
-        return -1;
+        return kNetfilterPacketParseMalformed;
+    }
+    if (view->has_capture_length && view->capture_length < view->payload_length)
+    {
+        return kNetfilterPacketParseMalformed;
+    }
+    if (view->payload_length > kReadPacketSize || view->payload_length > kMaxAllowedPacketLength)
+    {
+        return kNetfilterPacketParseDiscarded;
+    }
+    if (view->has_capture_length &&
+        (view->capture_length > view->payload_length || view->capture_length > kMaxAllowedPacketLength))
+    {
+        return kNetfilterPacketParseDiscarded;
     }
 
-    // Tell netlink to drop the packet
+    return kNetfilterPacketParseReady;
+}
+
+bool captureLinuxNetfilterTryReadPacketIdFromPrefix(const uint8_t *message, size_t copied_len, uint32_t *packet_id)
+{
+    if (message == NULL || packet_id == NULL || copied_len < sizeof(struct nlmsghdr))
+    {
+        return false;
+    }
+
+    const struct nlmsghdr *nl_hdr = (const struct nlmsghdr *) message;
+    if (NFNL_SUBSYS_ID(nl_hdr->nlmsg_type) != NFNL_SUBSYS_QUEUE)
+    {
+        return false;
+    }
+    if (NFNL_MSG_TYPE(nl_hdr->nlmsg_type) != NFQNL_MSG_PACKET)
+    {
+        return false;
+    }
+
+    size_t attr_offset = (size_t) NLMSG_HDRLEN + (size_t) NLMSG_ALIGN(sizeof(struct nfgenmsg));
+    if ((size_t) nl_hdr->nlmsg_len < attr_offset || copied_len < attr_offset)
+    {
+        return false;
+    }
+
+    size_t nlmsg_limit = (size_t) nl_hdr->nlmsg_len;
+    size_t prefix_limit = copied_len < nlmsg_limit ? copied_len : nlmsg_limit;
+    size_t attr_offset_current = attr_offset;
+    while (prefix_limit - attr_offset_current >= sizeof(struct nfattr))
+    {
+        const struct nfattr *nl_attr = (const struct nfattr *) (const void *) (message + attr_offset_current);
+        size_t               attr_len = (size_t) nl_attr->nfa_len;
+        if (attr_len < (size_t) NFA_LENGTH(0))
+        {
+            return false;
+        }
+        if (attr_len > prefix_limit - attr_offset_current)
+        {
+            return false;
+        }
+
+        if (NFA_TYPE(nl_attr) == NFQA_PACKET_HDR)
+        {
+            if (NFA_PAYLOAD(nl_attr) != (int) sizeof(struct nfqnl_msg_packet_hdr))
+            {
+                return false;
+            }
+            memoryCopy(packet_id,
+                       &((const struct nfqnl_msg_packet_hdr *) NFA_DATA(nl_attr))->packet_id,
+                       sizeof(*packet_id));
+            return true;
+        }
+
+        size_t aligned_attr_len = (size_t) NFA_ALIGN(attr_len);
+        if (aligned_attr_len == 0 || aligned_attr_len > prefix_limit - attr_offset_current)
+        {
+            return false;
+        }
+        attr_offset_current += aligned_attr_len;
+    }
+
+    return false;
+}
+
+void captureLinuxNetfilterExposePacket(sbuf_t *buff, const uint8_t *message, const netfilter_packet_view_t *view)
+{
+    assert(buff != NULL);
+    assert(message != NULL);
+    assert(view != NULL);
+    assert(view->payload != NULL);
+    assert(view->payload >= message);
+
+    uintptr_t payload_addr = (uintptr_t) view->payload;
+    uintptr_t message_addr = (uintptr_t) message;
+    uint32_t  payload_offset = (uint32_t) (payload_addr - message_addr);
+
+    buff->curpos += payload_offset;
+    sbufSetLength(buff, view->payload_length);
+}
+
+static bool netfilterSendDropVerdict(int netfilter_socket, uint16_t qnumber, uint32_t packet_id)
+{
     struct nfqnl_msg_verdict_hdr nl_verdict;
     nl_verdict.verdict = htonl(NF_DROP);
-    nl_verdict.id      = nl_pkt_hdr->packet_id;
-    if (! netfilterSendMessage(
-            netfilter_socket, NFQNL_MSG_VERDICT, NFQA_VERDICT_HDR, qnumber, false, &nl_verdict, sizeof(nl_verdict)))
+    nl_verdict.id      = packet_id;
+    return netfilterSendMessage(
+        netfilter_socket, NFQNL_MSG_VERDICT, NFQA_VERDICT_HDR, qnumber, false, &nl_verdict, sizeof(nl_verdict));
+}
+
+/*
+ * Get a packet from netfilter.
+ */
+static netfilter_packet_result_t netfilterGetPacket(int netfilter_socket, uint16_t qnumber, sbuf_t *buff)
+{
+    assert(sbufGetMaximumWriteableSize(buff) >= kNetfilterReadBufferSize);
+    if (UNLIKELY(sbufGetMaximumWriteableSize(buff) < kNetfilterReadBufferSize))
     {
-        return -1;
+        errno = EMSGSIZE;
+        return kNetfilterPacketError;
     }
 
-    // Copy the packet's contents to the output buffer.
-    // Also add a phony ethernet header.
-    // struct ethhdr *eth_header = (struct ethhdr *) buff;
-    // memorySet(&eth_header->h_dest, 0x0, ETH_ALEN);
-    // memorySet(&eth_header->h_source, 0x0, ETH_ALEN);
-    // eth_header->h_proto = htons(ETH_P_IP);
+    // Read a message from netlink (non-blocking)
+    struct sockaddr_nl nl_addr;
+    memoryZero(&nl_addr, sizeof(nl_addr));
+    uint8_t       *message = sbufGetMutablePtr(buff);
+    struct iovec   iov     = {.iov_base = message, .iov_len = kNetfilterReadBufferSize};
+    struct msghdr  msg     = {.msg_name    = &nl_addr,
+                              .msg_namelen = sizeof(nl_addr),
+                              .msg_iov     = &iov,
+                              .msg_iovlen  = 1};
+    ssize_t        result  = recvmsg(netfilter_socket, &msg, MSG_DONTWAIT | MSG_TRUNC);
 
-    sbufSetLength(buff, nl_data_size);
+    if (result < 0)
+    {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            return kNetfilterPacketWouldBlock;
+        }
+        return kNetfilterPacketError;
+    }
 
-    struct iphdr *ip_header = (struct iphdr *) sbufGetMutablePtr(buff);
-    memoryCopyLarge(ip_header, nl_data, (intmax_t) nl_data_size);
+    if (result == 0)
+    {
+        return kNetfilterPacketEof;
+    }
 
-    return (int) (nl_data_size);
+    if (msg.msg_namelen != sizeof(nl_addr) || nl_addr.nl_pid != 0)
+    {
+        errno = EINVAL;
+        return kNetfilterPacketError;
+    }
+
+    size_t copied_len = result > (ssize_t) kNetfilterReadBufferSize ? (size_t) kNetfilterReadBufferSize :
+                                                                      (size_t) result;
+    if ((msg.msg_flags & MSG_TRUNC) != 0 || result > (ssize_t) kNetfilterReadBufferSize)
+    {
+        uint32_t packet_id = 0;
+        if (! captureLinuxNetfilterTryReadPacketIdFromPrefix(message, copied_len, &packet_id))
+        {
+            LOGW("CaptureDevice: oversized netfilter datagram did not contain a complete packet id");
+            errno = EBADMSG;
+            return kNetfilterPacketError;
+        }
+        if (! netfilterSendDropVerdict(netfilter_socket, qnumber, packet_id))
+        {
+            return kNetfilterPacketError;
+        }
+        return kNetfilterPacketDiscarded;
+    }
+
+    sbufSetLength(buff, (uint32_t) copied_len);
+
+    netfilter_packet_view_t         packet_view;
+    netfilter_packet_parse_result_t parse_result =
+        captureLinuxNetfilterParsePacket(message, copied_len, &packet_view);
+    if (parse_result == kNetfilterPacketParseMalformed)
+    {
+        if (! packet_view.has_packet_id)
+        {
+            errno = EBADMSG;
+            return kNetfilterPacketError;
+        }
+        if (! netfilterSendDropVerdict(netfilter_socket, qnumber, packet_view.packet_id))
+        {
+            return kNetfilterPacketError;
+        }
+        return kNetfilterPacketMalformedDiscarded;
+    }
+
+    if (! netfilterSendDropVerdict(netfilter_socket, qnumber, packet_view.packet_id))
+    {
+        return kNetfilterPacketError;
+    }
+
+    if (parse_result == kNetfilterPacketParseDiscarded)
+    {
+        return kNetfilterPacketDiscarded;
+    }
+
+    captureLinuxNetfilterExposePacket(buff, message, &packet_view);
+    return kNetfilterPacketReady;
+}
+
+static void capturedeviceRecordNetfilterDiscard(capture_device_t *cdev)
+{
+    unsigned long long now_ms = getTimeOfDayMS();
+
+    cdev->netfilter_discarded_total++;
+    cdev->netfilter_discarded_suppressed++;
+
+    if (cdev->netfilter_discard_last_report_ms == 0)
+    {
+        cdev->netfilter_discard_last_report_ms = now_ms;
+        return;
+    }
+
+    unsigned long long elapsed_ms = now_ms - cdev->netfilter_discard_last_report_ms;
+    if (elapsed_ms < 1000)
+    {
+        return;
+    }
+
+    LOGW("CaptureDevice: discarded %llu truncated or oversized netfilter packet(s) over %llums (total=%llu)",
+         LLU(cdev->netfilter_discarded_suppressed),
+         LLU(elapsed_ms),
+         LLU(cdev->netfilter_discarded_total));
+    cdev->netfilter_discarded_suppressed   = 0;
+    cdev->netfilter_discard_last_report_ms = now_ms;
+}
+
+static void capturedeviceReportPendingNetfilterDiscards(capture_device_t *cdev)
+{
+    if (cdev->netfilter_discarded_suppressed == 0)
+    {
+        return;
+    }
+
+    LOGW("CaptureDevice: discarded %llu truncated or oversized netfilter packet(s) before reader exit (total=%llu)",
+         LLU(cdev->netfilter_discarded_suppressed),
+         LLU(cdev->netfilter_discarded_total));
+    cdev->netfilter_discarded_suppressed = 0;
 }
 
 static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 {
     capture_device_t *cdev = userdata;
-    ssize_t           nread;
 
     struct pollfd fds[2];
     fds[0].fd     = cdev->socket;
@@ -631,58 +898,79 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
             // Drain multiple packets while the socket remains readable
             for (uint32_t i = 0; i < RAM_PROFILE && queued_count < kMaxReadDistributeQueueSize; ++i)
             {
+                bool leave_drain_loop = false;
                 bufs[queued_count] = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
-                bufs[queued_count] = sbufReserveSpace(bufs[queued_count], kReadPacketSize);
+                bufs[queued_count] = sbufReserveSpace(bufs[queued_count], kNetfilterReadBufferSize);
 
-                nread = netfilterGetPacket(cdev->socket, cdev->queue_number, bufs[queued_count]);
+                netfilter_packet_result_t packet_result =
+                    netfilterGetPacket(cdev->socket, cdev->queue_number, bufs[queued_count]);
 
-                if (nread == 0)
+                switch (packet_result)
                 {
+                case kNetfilterPacketReady:
+                    // Length was set in netfilterGetPacket via sbufSetLength.
+                    if (UNLIKELY(sbufGetLength(bufs[queued_count]) > kMaxAllowedPacketLength))
+                    {
+                        capturedeviceRecordNetfilterDiscard(cdev);
+                        bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
+                        continue;
+                    }
+                    queued_count++;
+                    break;
+
+                case kNetfilterPacketDiscarded:
+                    capturedeviceRecordNetfilterDiscard(cdev);
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
-                    // Distribute any packets we've accumulated before returning
+                    continue;
+
+                case kNetfilterPacketMalformedDiscarded:
+                    LOGW("CaptureDevice: discarded a malformed netfilter packet after sending NF_DROP");
+                    bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
+                    continue;
+
+                case kNetfilterPacketWouldBlock:
+                    bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     if (queued_count > 0)
                     {
                         distributePacketPayloads(cdev, getNextDistributionWID(), bufs, queued_count);
                         queued_count = 0;
                     }
+                    leave_drain_loop = true;
+                    break;
+
+                case kNetfilterPacketEof:
+                    bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
+                    if (queued_count > 0)
+                    {
+                        distributePacketPayloads(cdev, getNextDistributionWID(), bufs, queued_count);
+                        queued_count = 0;
+                    }
+                    capturedeviceReportPendingNetfilterDiscards(cdev);
                     LOGE("CaptureDevice: Exit read routine due to End Of File");
                     return 0;
-                }
 
-                if (nread < 0)
+                case kNetfilterPacketError:
+                default:
                 {
                     int saved_errno = errno;
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
-                    // No more packets right now; distribute any packets we've accumulated and go back to poll
                     if (queued_count > 0)
                     {
                         distributePacketPayloads(cdev, getNextDistributionWID(), bufs, queued_count);
                         queued_count = 0;
-                    }
-
-                    if (saved_errno == EAGAIN || saved_errno == EWOULDBLOCK)
-                    {
-                        break;
                     }
                     LOGW("CaptureDevice: failed to read a packet from netfilter socket, errno is %d (%s)",
                          saved_errno,
                          strerror(saved_errno));
-                    // On other errors, also go back to poll to avoid a tight loop
+                    leave_drain_loop = true;
                     break;
                 }
-
-                // Length was set in netfilterGetPacket via sbufSetLength
-                if (UNLIKELY(sbufGetLength(bufs[queued_count]) > kMaxAllowedPacketLength))
-                {
-                    // we are capturing packets and this can happen, so we just log it
-                    LOGW("CaptureDevice: ReadThread: discarded a packet -> size %d exceeds kMaxAllowedPacketLength %d",
-                         sbufGetLength(bufs[queued_count]),
-                         kMaxAllowedPacketLength);
-                    bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
-                    continue;
                 }
 
-                queued_count++;
+                if (leave_drain_loop)
+                {
+                    break;
+                }
             }
 
             // Distribute all accumulated packets in one batch
@@ -697,9 +985,11 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
         LOGE("CaptureDevice: Exit read routine due to unexpected poll events - fd[0].revents=0x%x, fd[1].revents=0x%x",
              fds[0].revents,
              fds[1].revents);
+        capturedeviceReportPendingNetfilterDiscards(cdev);
         return 0;
     }
 
+    capturedeviceReportPendingNetfilterDiscards(cdev);
     return 0;
 }
 
@@ -847,11 +1137,11 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         return NULL;
     }
 
-    uint32_t range = kEthDataLen + sizeof(struct ethhdr) + sizeof(struct nfqnl_msg_packet_hdr);
+    uint32_t range = kReadPacketSize;
     if (! netfilterSetParams(socket_netfilter, queue_number, NFQNL_COPY_PACKET, range))
     {
         LOGE("CaptureDevice: unable to set netfilter into copy packet mode with maximum "
-             "buffer size %u",
+             "packet payload copy size %u",
              range);
 
         close(socket_netfilter);
@@ -883,6 +1173,16 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
                                                    bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
 
     );
+    if (UNLIKELY(bufferpoolGetSmallBufferSize(reader_bpool) < kNetfilterReadBufferSize))
+    {
+        LOGE("CaptureDevice: Linux capture requires small buffers of at least %u bytes, configured size is %u",
+             kNetfilterReadBufferSize,
+             bufferpoolGetSmallBufferSize(reader_bpool));
+        close(socket_netfilter);
+        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
+        bufferpoolDestroy(reader_bpool);
+        return NULL;
+    }
 
     capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
 

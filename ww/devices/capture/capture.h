@@ -27,6 +27,9 @@ typedef struct capture_device_s
     char   **capture_cidrs;
     uint32_t capture_range_count;
     int      netfilter_queue_number;
+    uint64_t netfilter_discarded_total;
+    uint64_t netfilter_discarded_suppressed;
+    unsigned long long netfilter_discard_last_report_ms;
 #endif
     bool      drop_captured_packet;
     void     *userdata;
