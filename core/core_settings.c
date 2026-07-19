@@ -1,5 +1,6 @@
 #include "core_settings.h"
 #include "wwapi.h"
+#include "wplatform.h"
 
 // Default logging configurations
 #define DEFAULT_INTERNAL_LOG_LEVEL      "INFO"
@@ -15,7 +16,12 @@
 #define DEFAULT_DNS_LOG_FILE            "dns.log"
 #define DEFAULT_DNS_ENABLE_CONSOLE      true
 #define DEFAULT_RAM_PROFILE             kRamProfileServer
-#define DEFAULT_TRY_ENABLING_BBR        true
+
+#if defined(OS_LINUX) && ! defined(OS_ANDROID) && ! defined(OS_CYGWIN)
+#define DEFAULT_TRY_ENABLING_BBR true
+#else
+#define DEFAULT_TRY_ENABLING_BBR false
+#endif
 
 #define DEFAULT_MTU_PROFILE             1500
 

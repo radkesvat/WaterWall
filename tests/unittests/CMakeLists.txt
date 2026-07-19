@@ -82,6 +82,20 @@ if(TARGET ww)
       capture_linux_nfqueue_test
       "unit;net;capture;nfqueue"
     )
+
+    add_executable(os_helpers_bbr_test
+      os_helpers_bbr_test.c
+      ${CMAKE_SOURCE_DIR}/core/os_helpers.c
+    )
+    target_include_directories(os_helpers_bbr_test PRIVATE ${CMAKE_SOURCE_DIR}/core)
+    target_link_libraries(os_helpers_bbr_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests os_helpers_bbr_test)
+
+    add_waterwall_unit_test(
+      waterwall.os_helpers_bbr_unit
+      os_helpers_bbr_test
+      "unit;core;linux;bbr"
+    )
   endif()
 endif()
 

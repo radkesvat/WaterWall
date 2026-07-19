@@ -78,51 +78,118 @@ static bool sysctlOutputHasToken(const char *output, const char *token)
     return false;
 }
 
+static const char *commandResultDiagnostic(cmd_result_t *result)
+{
+    char *start = result->output;
+    while (*start != '\0' && isspace((unsigned char) *start))
+    {
+        ++start;
+    }
+
+    char *end = start + stringLength(start);
+    while (end > start && isspace((unsigned char) end[-1]))
+    {
+        --end;
+    }
+    *end = '\0';
+
+    for (char *p = start; *p != '\0'; ++p)
+    {
+        if (isspace((unsigned char) *p))
+        {
+            *p = ' ';
+        }
+    }
+
+    return *start != '\0' ? start : "no diagnostic output";
+}
+
+static void tryEnableFq(void)
+{
+    cmd_result_t current = execCmd("sysctl -n net.core.default_qdisc 2>&1");
+    if (current.exit_code == 0 && sysctlOutputHasToken(current.output, "fq"))
+    {
+        return;
+    }
+    if (current.exit_code != 0)
+    {
+        LOGW("Core: Could not check net.core.default_qdisc (exit %d: %s); trying to set fq",
+             current.exit_code,
+             commandResultDiagnostic(&current));
+    }
+
+    cmd_result_t qdisc = execCmd("sysctl -w net.core.default_qdisc=fq 2>&1");
+    if (qdisc.exit_code != 0)
+    {
+        LOGW("Core: Failed to set net.core.default_qdisc=fq (exit %d: %s)",
+             qdisc.exit_code,
+             commandResultDiagnostic(&qdisc));
+        return;
+    }
+
+    current = execCmd("sysctl -n net.core.default_qdisc 2>&1");
+    if (current.exit_code == 0 && sysctlOutputHasToken(current.output, "fq"))
+    {
+        LOGI("Core: fq is now the default queueing discipline");
+    }
+    else if (current.exit_code != 0)
+    {
+        LOGW("Core: Could not verify net.core.default_qdisc after setting fq (exit %d: %s)",
+             current.exit_code,
+             commandResultDiagnostic(&current));
+    }
+    else
+    {
+        LOGW("Core: fq enable command completed, but the default queueing discipline is %s",
+             commandResultDiagnostic(&current));
+    }
+}
+
 void tryEnableBbr(void)
 {
-    cmd_result_t current = execCmd("sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null");
-    if (current.exit_code == 0 && sysctlOutputHasToken(current.output, "bbr"))
+    cmd_result_t current = execCmd("sysctl -n net.ipv4.tcp_congestion_control 2>&1");
+    bool         enabled = current.exit_code == 0 && sysctlOutputHasToken(current.output, "bbr");
+    if (current.exit_code != 0)
     {
+        LOGW("Core: Could not check the current TCP congestion control (exit %d: %s); trying BBR anyway",
+             current.exit_code,
+             commandResultDiagnostic(&current));
+    }
+
+    if (enabled)
+    {
+        tryEnableFq();
         LOGI("Core: TCP BBR is already enabled");
         return;
     }
 
-    cmd_result_t available = execCmd("sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null");
-    if (available.exit_code != 0)
-    {
-        LOGW("Core: Could not check available TCP congestion controls; skipping BBR enable attempt");
-        return;
-    }
+    LOGI("Core: Trying to enable TCP BBR");
 
-    if (! sysctlOutputHasToken(available.output, "bbr"))
-    {
-        LOGI("Core: TCP BBR is not available on this Linux kernel; skipping");
-        return;
-    }
-
-    LOGI("Core: TCP BBR is available; trying to enable fq queueing and BBR");
-
-    cmd_result_t qdisc = execCmd("sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1");
-    if (qdisc.exit_code != 0)
-    {
-        LOGW("Core: Failed to set net.core.default_qdisc=fq");
-    }
-
-    cmd_result_t bbr = execCmd("sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1");
+    cmd_result_t bbr = execCmd("sysctl -w net.ipv4.tcp_congestion_control=bbr 2>&1");
     if (bbr.exit_code != 0)
     {
-        LOGW("Core: Failed to set net.ipv4.tcp_congestion_control=bbr");
+        LOGW("Core: Failed to set net.ipv4.tcp_congestion_control=bbr (exit %d: %s)",
+             bbr.exit_code,
+             commandResultDiagnostic(&bbr));
         return;
     }
 
-    current = execCmd("sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null");
+    current = execCmd("sysctl -n net.ipv4.tcp_congestion_control 2>&1");
     if (current.exit_code == 0 && sysctlOutputHasToken(current.output, "bbr"))
     {
+        tryEnableFq();
         LOGI("Core: TCP BBR enabled");
+    }
+    else if (current.exit_code != 0)
+    {
+        LOGW("Core: Could not verify TCP BBR after enabling it (exit %d: %s)",
+             current.exit_code,
+             commandResultDiagnostic(&current));
     }
     else
     {
-        LOGW("Core: TCP BBR enable command completed, but BBR is not active");
+        LOGW("Core: TCP BBR enable command completed, but the active congestion control is %s",
+             commandResultDiagnostic(&current));
     }
 }
 

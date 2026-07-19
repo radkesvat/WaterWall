@@ -198,7 +198,7 @@ block explicit so `mtu` and `ram-profile` are never accidental.
 | `workers` | integer | CPU core count | Number of worker threads. Values less than or equal to `0` fall back to CPU core count. Values above `254` are reduced to `254`. |
 | `ram-profile` | string or integer | `"server"` | Memory pool sizing profile. |
 | `mtu` | integer | `1500` | Global MTU value. Values less than or equal to `0` fall back to `1500`. |
-| `try-enabling-bbr` | boolean | `true` | Linux-only best-effort startup attempt to enable TCP BBR when the running kernel reports BBR support. |
+| `try-enabling-bbr` | boolean | `true` on Linux; `false` otherwise | Linux-only best-effort startup attempt to enable TCP BBR. |
 | `libs-path` | string | `"libs/"` | Directory used when loading external tunnel libraries. |
 
 Recommended example:
@@ -215,12 +215,15 @@ Recommended example:
 }
 ```
 
-When `try-enabling-bbr` is true on Linux, Waterwall first checks the current
-TCP congestion control and the kernel-advertised
-`net.ipv4.tcp_available_congestion_control` list. If BBR is available and not
-already active, it applies live sysctl settings for `net.core.default_qdisc=fq`
-and `net.ipv4.tcp_congestion_control=bbr`. It does not install kernels or edit
-`/etc/sysctl.conf`.
+When `try-enabling-bbr` is true on Linux, Waterwall checks the current TCP
+congestion control, configures `net.core.default_qdisc=fq` when needed, and
+applies `net.ipv4.tcp_congestion_control=bbr`. Writing the congestion-control
+setting lets Linux load the `tcp_bbr` module when it is available. These live
+sysctl changes require permission to write the settings, and module loading
+requires `CAP_NET_ADMIN` in the relevant network namespace; running as root is
+the usual arrangement. Failures are reported in the core log. Waterwall does
+not install kernels, persist settings in `/etc/sysctl.conf`, or replace
+queueing disciplines already attached to network interfaces.
 
 ### `ram-profile`
 
