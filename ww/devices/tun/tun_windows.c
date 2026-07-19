@@ -661,19 +661,18 @@ static WTHREAD_ROUTINE(routineWriteToTun)
         BYTE *Packet = WintunAllocateSendPacket(Session, sbufGetLength(buf));
         if (! Packet)
         {
+            DWORD last_error = GetLastError();
             bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
 
-            if (GetLastError() != ERROR_BUFFER_OVERFLOW)
+            if (last_error == ERROR_BUFFER_OVERFLOW)
             {
-                LOGE("TunDevice: WriteThread: Failed to allocate memory for write packet, WinTun Ring Overflow");
+                // A full Wintun send ring is transient; drop this packet and keep consuming the queue.
+                continue;
             }
-            else
-            {
-                LOGE("TunDevice: WriteThread: Failed to allocate memory for write packet %lu", GetLastError());
-                LOGE("TunDevice: WriteThread: Terminating");
-                return 0;
-            }
-            continue;
+
+            LOGE("TunDevice: WriteThread: Failed to allocate memory for write packet, code: %lu", last_error);
+            LOGE("TunDevice: WriteThread: Terminating");
+            return last_error;
         }
 
         memoryCopyLarge(Packet, sbufGetRawPtr(buf), sbufGetLength(buf));
