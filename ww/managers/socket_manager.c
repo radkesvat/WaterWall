@@ -2203,6 +2203,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
     }
 
     noUdpSocketConsumerFound(pl);
+    sbufDestroy(pl.buf);
 }
 
 /**
