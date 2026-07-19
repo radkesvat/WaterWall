@@ -66,6 +66,24 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.address_context_unit address_context_test "unit;net;address-context")
 
+  add_executable(packet_tunnel_test packet_tunnel_test.c)
+  target_link_libraries(packet_tunnel_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests packet_tunnel_test)
+
+  add_waterwall_unit_test(waterwall.packet_tunnel_unit packet_tunnel_test "unit;net;packet-tunnel")
+
+  if(TARGET TunDevice AND TARGET RawSocket)
+    add_executable(packet_adapter_finish_test packet_adapter_finish_test.c)
+    target_link_libraries(packet_adapter_finish_test PRIVATE TunDevice RawSocket ww)
+    add_dependencies(waterwall_unit_tests packet_adapter_finish_test)
+
+    add_waterwall_unit_test(
+      waterwall.packet_adapter_finish_unit
+      packet_adapter_finish_test
+      "unit;net;packet-tunnel;adapter"
+    )
+  endif()
+
   add_executable(users_runtime_migration_test users_runtime_migration_test.c)
   target_link_libraries(users_runtime_migration_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests users_runtime_migration_test)

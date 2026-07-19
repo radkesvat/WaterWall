@@ -4,7 +4,7 @@
 
 void rawsocketDownStreamFinish(tunnel_t *t, line_t *l)
 {
-    // This node dose not care about this callback
     discard t;
-    discard l;
+    LOGF("RawSocket: unexpected downstream Finish on worker packet line %u", (unsigned int) lineGetWID(l));
+    terminateProgram(1);
 }

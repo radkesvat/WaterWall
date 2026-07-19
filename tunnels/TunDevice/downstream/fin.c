@@ -4,7 +4,7 @@
 
 void tundeviceTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 {
-    // This node dose not care about this callabck
     discard t;
-    discard l;
+    LOGF("TunDevice: unexpected downstream Finish on worker packet line %u", (unsigned int) lineGetWID(l));
+    terminateProgram(1);
 }
