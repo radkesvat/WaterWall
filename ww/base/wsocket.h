@@ -877,7 +877,15 @@ static inline int parseIPWithSubnetMask(const char *ip_str, ip_addr_t *ip, ip_ad
         return ERR_ARG;
     }
 
-    if (ipaddr_aton(ip_part, ip))
+    memoryZero(ip, sizeof(*ip));
+    memoryZero(subnet_mask, sizeof(*subnet_mask));
+
+    if (! ipaddr_aton(ip_part, ip))
+    {
+        return ERR_ARG;
+    }
+
+    if (IP_IS_V4(ip))
     {
         if (prefix_len < 0 || prefix_len > 32)
         {
@@ -893,19 +901,14 @@ static inline int parseIPWithSubnetMask(const char *ip_str, ip_addr_t *ip, ip_ad
         return 4;
     }
 
-    ip6_addr_t ip6;
-    if (ip6addr_aton(ip_part, &ip6))
+    if (IP_IS_V6(ip))
     {
         if (prefix_len < 0 || prefix_len > 128)
         {
             return ERR_ARG;
         }
 
-        ip->type       = IPADDR_TYPE_V6;
-        ip->u_addr.ip6 = ip6;
-
         subnet_mask->type = IPADDR_TYPE_V6;
-        memoryZero(&subnet_mask->u_addr.ip6.addr, sizeof(subnet_mask->u_addr.ip6.addr));
 
         for (int i = 0; i < prefix_len / 32; i++)
         {

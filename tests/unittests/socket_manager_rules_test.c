@@ -142,6 +142,87 @@ static ip_addr_t ipv4Addr(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
     return ip;
 }
 
+static ip_addr_t parsedAddr(const char *text)
+{
+    ip_addr_t ip;
+    memoryZero(&ip, sizeof(ip));
+    require(ipaddr_aton(text, &ip) != 0, "test address should parse");
+    return ip;
+}
+
+static void testCidrParser(void)
+{
+    static const char *const ipv6_cases[] = {
+        "::/0", "2001:db8::/32", "2001:db8::/33", "2001:db8:abcd:1234::/64", "2001:db8::1/128"};
+
+    ip_addr_t ip;
+    ip_addr_t mask;
+
+    require(parseIPWithSubnetMask("192.0.2.0/24", &ip, &mask) == 4, "IPv4 CIDR should parse as IPv4");
+    require(ip.type == IPADDR_TYPE_V4 && mask.type == IPADDR_TYPE_V4,
+            "IPv4 CIDR should produce an IPv4 address and mask");
+    require(checkIPRange4(ipv4Addr(192, 0, 2, 99).u_addr.ip4, ip.u_addr.ip4, mask.u_addr.ip4),
+            "IPv4 /24 should include an address in the subnet");
+    require(! checkIPRange4(ipv4Addr(192, 0, 3, 1).u_addr.ip4, ip.u_addr.ip4, mask.u_addr.ip4),
+            "IPv4 /24 should exclude an address outside the subnet");
+
+    for (size_t i = 0; i < sizeof(ipv6_cases) / sizeof(ipv6_cases[0]); ++i)
+    {
+        require(parseIPWithSubnetMask(ipv6_cases[i], &ip, &mask) == 6, "IPv6 CIDR should parse as IPv6");
+        require(ip.type == IPADDR_TYPE_V6 && mask.type == IPADDR_TYPE_V6,
+                "IPv6 CIDR should produce an IPv6 address and mask");
+    }
+
+    require(parseIPWithSubnetMask("2001:db8::/33", &ip, &mask) == 6, "IPv6 /33 should parse");
+    require(checkIPRange6(parsedAddr("2001:db8:7fff::1").u_addr.ip6, ip.u_addr.ip6, mask.u_addr.ip6),
+            "IPv6 /33 should include an address with the matching prefix bit");
+    require(! checkIPRange6(parsedAddr("2001:db8:8000::1").u_addr.ip6, ip.u_addr.ip6, mask.u_addr.ip6),
+            "IPv6 /33 should exclude an address with a different prefix bit");
+
+    require(parseIPWithSubnetMask("2001:db8:abcd:1234::/64", &ip, &mask) == 6, "IPv6 /64 should parse");
+    require(checkIPRange6(parsedAddr("2001:db8:abcd:1234::99").u_addr.ip6, ip.u_addr.ip6, mask.u_addr.ip6),
+            "IPv6 /64 should include an address in the subnet");
+    require(! checkIPRange6(parsedAddr("2001:db8:abcd:1235::1").u_addr.ip6, ip.u_addr.ip6, mask.u_addr.ip6),
+            "IPv6 /64 should exclude an address outside the subnet");
+
+    require(parseIPWithSubnetMask("2001:db8::1/128", &ip, &mask) == 6, "IPv6 /128 should parse");
+    require(checkIPRange6(parsedAddr("2001:db8::1").u_addr.ip6, ip.u_addr.ip6, mask.u_addr.ip6),
+            "IPv6 /128 should match the exact address");
+    require(! checkIPRange6(parsedAddr("2001:db8::2").u_addr.ip6, ip.u_addr.ip6, mask.u_addr.ip6),
+            "IPv6 /128 should reject a different address");
+
+    require(parseIPWithSubnetMask("192.0.2.1/33", &ip, &mask) == ERR_ARG,
+            "IPv4 prefixes longer than 32 should be rejected");
+    require(parseIPWithSubnetMask("2001:db8::/129", &ip, &mask) == ERR_ARG,
+            "IPv6 prefixes longer than 128 should be rejected");
+}
+
+static void testAclAddressFamilies(void)
+{
+    ipmask_t range;
+
+    vec_ipmask_t acl = vec_ipmask_t_with_capacity(1);
+    require(parseIPWithSubnetMask("::/0", &range.ip, &range.mask) == 6, "IPv6 any-address ACL should parse");
+    vec_ipmask_t_push(&acl, range);
+
+    require(socketManagerIpMatchesAcl(parsedAddr("2001:db8::1"), &acl),
+            "IPv6 ::/0 ACL should match IPv6 peers");
+    require(! socketManagerIpMatchesAcl(parsedAddr("192.0.2.1"), &acl),
+            "IPv6 ::/0 ACL must not match IPv4 peers");
+    vec_ipmask_t_drop(&acl);
+
+    acl = vec_ipmask_t_with_capacity(1);
+    require(parseIPWithSubnetMask("10.0.0.0/8", &range.ip, &range.mask) == 4, "IPv4 ACL should parse");
+    vec_ipmask_t_push(&acl, range);
+
+    require(socketManagerIpMatchesAcl(parsedAddr("10.1.2.3"), &acl), "IPv4 ACL should match IPv4 peers");
+    require(! socketManagerIpMatchesAcl(parsedAddr("2001:db8::1"), &acl),
+            "IPv4 ACL must not match native IPv6 peers");
+    require(socketManagerIpMatchesAcl(parsedAddr("::ffff:10.1.2.3"), &acl),
+            "IPv4-mapped IPv6 peers should retain IPv4 ACL behavior");
+    vec_ipmask_t_drop(&acl);
+}
+
 // The balance hash must keep stickiness separate per local-endpoint class: a source pinned via a wildcard
 // listener must not collide with the same source reaching a specific local address (and vice versa), while
 // the same (source, specific local addr) must remain stable.
@@ -222,6 +303,8 @@ static void testWildcardTierSpecificity(void)
 
 int main(void)
 {
+    testCidrParser();
+    testAclAddressFamilies();
     testRuleRanks();
     testBalanceLocalHash();
     testWildcardTierSpecificity();

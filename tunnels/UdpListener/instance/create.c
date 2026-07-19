@@ -255,7 +255,7 @@ static void parseIpMaskListEntry(const cJSON *list_item, vec_ipmask_t *target_li
     }
 
     int parse_result = parseIPWithSubnetMask(ip_str, &(ipmask.ip), &(ipmask.mask));
-    if (parse_result == -1)
+    if (parse_result != 4 && parse_result != 6)
     {
         LOGF("UdpListener: stopping due to %s address [%d] \"%s\" parse failure", list_name, index, ip_str);
         terminateProgram(1);

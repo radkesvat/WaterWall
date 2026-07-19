@@ -894,67 +894,23 @@ static void noTcpSocketConsumerFound(wio_t *io)
     wioClose(io);
 }
 
-/**
- * @brief Check IPv4 address against whitelist.
- */
-static bool checkIpv4WhiteList(const ip4_addr_t ipv4_addr, const socket_filter_option_t option)
+bool socketManagerIpMatchesAcl(ip_addr_t addr, const vec_ipmask_t *acl)
 {
-    for (int i = 0; i < vec_ipmask_t_size(&option.white_list); i++)
+    normalizeIpAddr(&addr);
+
+    for (isize i = 0; i < vec_ipmask_t_size(acl); ++i)
     {
-        if (checkIPRange4(ipv4_addr,
-                          vec_ipmask_t_at(&option.white_list, i)->ip.u_addr.ip4,
-                          vec_ipmask_t_at(&option.white_list, i)->mask.u_addr.ip4))
+        const ipmask_t *range = vec_ipmask_t_at(acl, i);
+
+        if (addr.type == IPADDR_TYPE_V4 && range->ip.type == IPADDR_TYPE_V4 &&
+            range->mask.type == IPADDR_TYPE_V4 &&
+            checkIPRange4(addr.u_addr.ip4, range->ip.u_addr.ip4, range->mask.u_addr.ip4))
         {
             return true;
         }
-    }
-    return false;
-}
-
-/**
- * @brief Check IPv6 address against whitelist.
- */
-static bool checkIpv6WhiteList(const ip6_addr_t ipv6_addr, const socket_filter_option_t option)
-{
-    for (int i = 0; i < vec_ipmask_t_size(&option.white_list); i++)
-    {
-        if (checkIPRange6(ipv6_addr,
-                          vec_ipmask_t_at(&option.white_list, i)->ip.u_addr.ip6,
-                          vec_ipmask_t_at(&option.white_list, i)->mask.u_addr.ip6))
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-/**
- * @brief Check IPv4 address against blacklist.
- */
-static bool checkIpv4BlackList(const ip4_addr_t ipv4_addr, const socket_filter_option_t option)
-{
-    for (int i = 0; i < vec_ipmask_t_size(&option.black_list); i++)
-    {
-        if (checkIPRange4(ipv4_addr,
-                          vec_ipmask_t_at(&option.black_list, i)->ip.u_addr.ip4,
-                          vec_ipmask_t_at(&option.black_list, i)->mask.u_addr.ip4))
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-/**
- * @brief Check IPv6 address against blacklist.
- */
-static bool checkIpv6BlackList(const ip6_addr_t ipv6_addr, const socket_filter_option_t option)
-{
-    for (int i = 0; i < vec_ipmask_t_size(&option.black_list); i++)
-    {
-        if (checkIPRange6(ipv6_addr,
-                          vec_ipmask_t_at(&option.black_list, i)->ip.u_addr.ip6,
-                          vec_ipmask_t_at(&option.black_list, i)->mask.u_addr.ip6))
+        if (addr.type == IPADDR_TYPE_V6 && range->ip.type == IPADDR_TYPE_V6 &&
+            range->mask.type == IPADDR_TYPE_V6 &&
+            checkIPRange6(addr.u_addr.ip6, range->ip.u_addr.ip6, range->mask.u_addr.ip6))
         {
             return true;
         }
@@ -967,21 +923,7 @@ static bool checkIpv6BlackList(const ip6_addr_t ipv6_addr, const socket_filter_o
  */
 static bool checkIpIsWhiteList(const ip_addr_t addr, const socket_filter_option_t option)
 {
-    const bool is_v4 = addr.type == IPADDR_TYPE_V4;
-    ip4_addr_t ipv4_addr;
-
-    if (is_v4)
-    {
-        ip4_addr_copy(ipv4_addr, addr.u_addr.ip4);
-        return checkIpv4WhiteList(ipv4_addr, option);
-    }
-
-    if (needsV4SocketStrategy(addr.u_addr.ip6))
-    {
-        memoryCopy(&ipv4_addr, &(addr.u_addr.ip6.addr[3]), sizeof(ipv4_addr.addr));
-        return checkIpv4WhiteList(ipv4_addr, option);
-    }
-    return checkIpv6WhiteList(addr.u_addr.ip6, option);
+    return socketManagerIpMatchesAcl(addr, &option.white_list);
 }
 
 /**
@@ -989,21 +931,7 @@ static bool checkIpIsWhiteList(const ip_addr_t addr, const socket_filter_option_
  */
 static bool checkIpIsBlackList(const ip_addr_t addr, const socket_filter_option_t option)
 {
-    const bool is_v4 = addr.type == IPADDR_TYPE_V4;
-    ip4_addr_t ipv4_addr;
-
-    if (is_v4)
-    {
-        ip4_addr_copy(ipv4_addr, addr.u_addr.ip4);
-        return checkIpv4BlackList(ipv4_addr, option);
-    }
-
-    if (needsV4SocketStrategy(addr.u_addr.ip6))
-    {
-        memoryCopy(&ipv4_addr, &(addr.u_addr.ip6.addr[3]), sizeof(ipv4_addr.addr));
-        return checkIpv4BlackList(ipv4_addr, option);
-    }
-    return checkIpv6BlackList(addr.u_addr.ip6, option);
+    return socketManagerIpMatchesAcl(addr, &option.black_list);
 }
 
 hash_t socketManagerCombineBalanceLocalHash(hash_t src_hash, const ip_addr_t *local_addr, uint16_t local_port,
