@@ -502,7 +502,7 @@ netfilter_packet_parse_result_t captureLinuxNetfilterParsePacket(uint8_t *messag
 
     struct nlmsghdr *nl_hdr          = (struct nlmsghdr *) message;
     int              remaining_bytes = (int) copied_len;
-    if (! NLMSG_OK(nl_hdr, remaining_bytes))
+    if (! NLMSG_OK(nl_hdr, (unsigned int) remaining_bytes))
     {
         return kNetfilterPacketParseMalformed;
     }
