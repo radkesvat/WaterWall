@@ -63,7 +63,7 @@ int iowatcherPollEvents(wloop_t* loop, int timeout) {
         }
         return -err;
     }
-    hoverlapped_t* hovlp = (hoverlapped_t*)povlp;
+    woverlapped_t* hovlp = (woverlapped_t*)povlp;
     wio_t* io = hovlp->io;
     if (bRet == FALSE) {
         err = WSAGetLastError();

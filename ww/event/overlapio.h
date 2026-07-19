@@ -12,7 +12,7 @@
 #pragma comment(lib, "mswsock.lib")
 #endif
 
-typedef struct hoverlapped_s {
+typedef struct woverlapped_s {
     OVERLAPPED  ovlp;
     int         fd;
     int         event;
@@ -24,10 +24,10 @@ typedef struct hoverlapped_s {
     // for recvfrom
     struct sockaddr* addr;
     int         addrlen;
-} hoverlapped_t;
+} woverlapped_t;
 
-int post_acceptex(wio_t* listenio, hoverlapped_t* hovlp);
-int post_recv(wio_t* io, hoverlapped_t* hovlp);
+int post_acceptex(wio_t* listenio, woverlapped_t* hovlp);
+int post_recv(wio_t* io, woverlapped_t* hovlp);
 
 #endif
 

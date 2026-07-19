@@ -7,7 +7,7 @@
 
 #define ACCEPTEX_NUM    10
 
-int post_acceptex(wio_t* listenio, hoverlapped_t* hovlp) {
+int post_acceptex(wio_t* listenio, woverlapped_t* hovlp) {
     LPFN_ACCEPTEX AcceptEx = NULL;
     GUID guidAcceptEx = WSAID_ACCEPTEX;
     DWORD dwbytes = 0;
@@ -40,10 +40,11 @@ int post_acceptex(wio_t* listenio, hoverlapped_t* hovlp) {
     return 0;
 }
 
-int post_recv(wio_t* io, hoverlapped_t* hovlp) {
+int post_recv(wio_t* io, woverlapped_t* hovlp) {
     if (hovlp == NULL) {
         EVENTLOOP_ALLOC_SIZEOF(hovlp);
     }
+    memoryZero(&hovlp->ovlp, sizeof(hovlp->ovlp));
     hovlp->fd = io->fd;
     hovlp->event = WW_READ;
     hovlp->io = io;
@@ -70,9 +71,12 @@ int post_recv(wio_t* io, hoverlapped_t* hovlp) {
     else if (io->io_type == WIO_TYPE_UDP ||
             io->io_type == WIO_TYPE_IP) {
         if (hovlp->addr == NULL) {
-            hovlp->addrlen = sizeof(struct sockaddr_in6);
             EVENTLOOP_ALLOC(hovlp->addr, sizeof(struct sockaddr_in6));
         }
+        // WSARecvFrom updates addrlen with the completed peer address length.
+        // Restore the full buffer capacity before every receive, especially when
+        // a dual-stack socket receives IPv4 followed by IPv6.
+        hovlp->addrlen = sizeof(struct sockaddr_in6);
         ret = WSARecvFrom(io->fd, &hovlp->buf, 1, &dwbytes, &flags, hovlp->addr, &hovlp->addrlen, &hovlp->ovlp, NULL);
     }
     else {
@@ -95,7 +99,7 @@ int post_recv(wio_t* io, hoverlapped_t* hovlp) {
 
 static void on_acceptex_complete(wio_t* io) {
     printd("on_acceptex_complete------\n");
-    hoverlapped_t* hovlp = (hoverlapped_t*)io->hovlp;
+    woverlapped_t* hovlp = (woverlapped_t*)io->hovlp;
     int listenfd = io->fd;
     int connfd = hovlp->fd;
     LPFN_GETACCEPTEXSOCKADDRS GetAcceptExSockaddrs = NULL;
@@ -137,7 +141,7 @@ static void on_acceptex_complete(wio_t* io) {
 
 static void on_connectex_complete(wio_t* io) {
     printd("on_connectex_complete------\n");
-    hoverlapped_t* hovlp = (hoverlapped_t*)io->hovlp;
+    woverlapped_t* hovlp = (woverlapped_t*)io->hovlp;
     io->error = hovlp->error;
     EVENTLOOP_FREE(io->hovlp);
     if (io->error != 0) {
@@ -165,7 +169,8 @@ static void on_connectex_complete(wio_t* io) {
 
 static void on_wsarecv_complete(wio_t* io) {
     printd("on_recv_complete------\n");
-    hoverlapped_t* hovlp = (hoverlapped_t*)io->hovlp;
+    woverlapped_t* hovlp = (woverlapped_t*)io->hovlp;
+    int recv_error;
     if (hovlp == NULL) {
         return;
     }
@@ -198,23 +203,19 @@ static void on_wsarecv_complete(wio_t* io) {
         return;
     }
 
-    if (io->io_type == WIO_TYPE_TCP) {
-        // reuse hovlp
-        if (!io->closed) {
-            post_recv(io, (hoverlapped_t*)io->hovlp);
-        }
-    }
-    else if (io->io_type == WIO_TYPE_UDP ||
-            io->io_type == WIO_TYPE_IP) {
-        hoverlapped_t* current_hovlp = (hoverlapped_t*)io->hovlp;
-        EVENTLOOP_FREE(current_hovlp->addr);
-        EVENTLOOP_FREE(io->hovlp);
+    // Keep one receive pending for every socket type. UDP and raw-IP receives
+    // complete one datagram at a time, so freeing hovlp here would permanently
+    // stop delivery after the first packet.
+    recv_error = post_recv(io, hovlp);
+    if (UNLIKELY(recv_error != 0)) {
+        io->error = recv_error;
+        wioClose(io);
     }
 }
 
 static void on_wsasend_complete(wio_t* io) {
     printd("on_send_complete------\n");
-    hoverlapped_t* hovlp = (hoverlapped_t*)io->hovlp;
+    woverlapped_t* hovlp = (woverlapped_t*)io->hovlp;
     if (hovlp->bytes == 0) {
         io->error = WSAGetLastError();
         wioClose(io);
@@ -298,7 +299,7 @@ int wioConnect (wio_t* io) {
         goto error;
     }
     // NOTE: free on_connectex_complete
-    hoverlapped_t* hovlp;
+    woverlapped_t* hovlp;
     EVENTLOOP_ALLOC_SIZEOF(hovlp);
     hovlp->fd = io->fd;
     hovlp->event = WW_WRITE;
@@ -364,7 +365,7 @@ try_send:
     }
 WSASend:
     {
-        hoverlapped_t* hovlp;
+        woverlapped_t* hovlp;
         EVENTLOOP_ALLOC_SIZEOF(hovlp);
         hovlp->fd = io->fd;
         hovlp->event = WW_WRITE;
@@ -410,7 +411,7 @@ int wioClose (wio_t* io) {
     io->closed = 1;
     wioDone(io);
     if (io->hovlp) {
-        hoverlapped_t* hovlp = (hoverlapped_t*)io->hovlp;
+        woverlapped_t* hovlp = (woverlapped_t*)io->hovlp;
         if (hovlp->sbuf) {
             bufferpoolReuseBuffer(io->loop->bufpool, hovlp->sbuf);
             hovlp->sbuf = NULL;
