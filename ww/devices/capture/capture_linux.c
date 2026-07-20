@@ -462,8 +462,9 @@ static bool netfilterSetParams(int netfilter_socket, uint16_t qnumber, uint8_t m
  */
 static bool netfilterSetQueueLength(int netfilter_socket, uint16_t qnumber, uint32_t qlen)
 {
+    uint32_t qlen_be = htonl(qlen);
     return netfilterSendMessage(
-        netfilter_socket, NFQNL_MSG_CONFIG, NFQA_CFG_QUEUE_MAXLEN, qnumber, true, &qlen, sizeof(qlen));
+        netfilter_socket, NFQNL_MSG_CONFIG, NFQA_CFG_QUEUE_MAXLEN, qnumber, true, &qlen_be, sizeof(qlen_be));
 }
 
 static bool netfilterPointerRangeInside(const uint8_t *base, size_t size, const uint8_t *ptr, size_t len)
