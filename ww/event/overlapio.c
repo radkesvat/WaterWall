@@ -174,12 +174,13 @@ static void on_wsarecv_complete(wio_t* io) {
     if (hovlp == NULL) {
         return;
     }
-    if (hovlp->bytes == 0) {
+    if (hovlp->error != 0 ||
+        (hovlp->bytes == 0 && (io->io_type & WIO_TYPE_SOCK_DGRAM) == 0)) {
         if (hovlp->sbuf) {
             bufferpoolReuseBuffer(io->loop->bufpool, hovlp->sbuf);
             hovlp->sbuf = NULL;
         }
-        io->error = WSAGetLastError();
+        io->error = hovlp->error;
         wioClose(io);
         return;
     }

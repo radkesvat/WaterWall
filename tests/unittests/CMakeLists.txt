@@ -102,6 +102,12 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.socket_manager_rules_unit socket_manager_rules_test "unit;net;socket-manager")
 
+  add_executable(udp_zero_length_test udp_zero_length_test.c)
+  target_link_libraries(udp_zero_length_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests udp_zero_length_test)
+
+  add_waterwall_unit_test(waterwall.udp_zero_length_unit udp_zero_length_test "unit;event;udp")
+
   if(LINUX)
     add_executable(capture_linux_nfqueue_test capture_linux_nfqueue_test.c)
     target_link_libraries(capture_linux_nfqueue_test PRIVATE ww)

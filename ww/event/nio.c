@@ -338,7 +338,7 @@ static void nio_read(wio_t *io)
             goto read_error;
         }
     }
-    if (nread == 0)
+    if (UNLIKELY(nread == 0 && (io->io_type & WIO_TYPE_SOCK_DGRAM) == 0))
     {
         bufferpoolReuseBuffer(io->loop->bufpool, buf);
         goto disconnect;
