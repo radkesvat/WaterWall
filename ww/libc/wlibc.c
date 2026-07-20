@@ -295,8 +295,7 @@ bool writeFile(const char *const path, const char *data, size_t len)
         fclose(f);
         return false;
     }
-    fclose(f);
-    return true;
+    return fclose(f) == 0;
 }
 
 static int createSingleDirComponentIfMissing(const char *dir)

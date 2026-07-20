@@ -109,6 +109,12 @@ if(TARGET ww)
   add_waterwall_unit_test(waterwall.udp_zero_length_unit udp_zero_length_test "unit;event;udp")
 
   if(LINUX)
+    add_executable(wlibc_write_file_test wlibc_write_file_test.c)
+    target_link_libraries(wlibc_write_file_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests wlibc_write_file_test)
+
+    add_waterwall_unit_test(waterwall.wlibc_write_file_unit wlibc_write_file_test "unit;libc;file")
+
     add_executable(capture_linux_nfqueue_test capture_linux_nfqueue_test.c)
     target_link_libraries(capture_linux_nfqueue_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests capture_linux_nfqueue_test)
