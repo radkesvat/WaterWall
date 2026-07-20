@@ -166,13 +166,13 @@ int iowatcherPollEvents(wloop_t* loop, int timeout) {
         }
         ++nevents;
         int fd = (int) kqueue_ctx->events[i].ident;
-        int revents = kqueue_ctx->events[i].filter;
+        int filter = kqueue_ctx->events[i].filter;
         wio_t* io = loop->ios.ptr[fd];
         if (io) {
-            if (revents & EVFILT_READ) {
+            if (filter == EVFILT_READ) {
                 io->revents |= WW_READ;
             }
-            if (revents & EVFILT_WRITE) {
+            else if (filter == EVFILT_WRITE) {
                 io->revents |= WW_WRITE;
             }
             EVENT_PENDING(io);
