@@ -181,6 +181,10 @@ Practical rule:
   TLS 1.2 accounting remains unchanged.
 - `reality_client_rejects_obsolete_max_frame_size`, `reality_server_rejects_obsolete_max_frame_size`
   Negative startup cases proving Reality v2 rejects the obsolete `max-frame-size` key instead of silently ignoring it.
+- `waterwall.tlsclient_alpn_unit`
+  Verifies TlsClient's ordered `alpns` encoding, Chrome-like absent-setting default, explicit empty-list disable mode,
+  malformed-list rejection, and an in-memory BoringSSL negotiation in which an HTTP/1.1-only TlsClient context must
+  negotiate `http/1.1`.
 - `waterwall.tlsclient_close_lifecycle_unit`
   Uses synchronous fake neighbors and real TlsClient line state to verify direct-close lifecycle behavior: normal upstream
   and downstream finishes remain directional and payload-free, fatal close finishes upstream before downstream, line death

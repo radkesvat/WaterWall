@@ -10,13 +10,14 @@
 typedef struct tlsclient_tstate_s
 {
     // settings
-    char *alpn;
-    char *sni;
-    char *ech_grease_sni_override;
-    bool  verify;
-    bool  verbose;
-    bool  x25519mlkem768_enabled;
-    bool  handshake_takeover_enabled;
+    uint8_t *alpn_wire;
+    size_t   alpn_wire_len;
+    char    *sni;
+    char    *ech_grease_sni_override;
+    bool     verify;
+    bool     verbose;
+    bool     x25519mlkem768_enabled;
+    bool     handshake_takeover_enabled;
 
     // state
     SSL_CTX **threadlocal_ssl_contexts;
@@ -112,7 +113,9 @@ void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void tlsclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void tlsclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_pool_t *pool);
+bool tlsclientParseAlpnSetting(tlsclient_tstate_t *ts, const cJSON *settings);
+void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_pool_t *pool,
+                                  const uint8_t *alpn_wire, size_t alpn_wire_len);
 void tlsclientLinestateDestroy(tlsclient_lstate_t *ls);
 void tlsclientLinestateRelease(tlsclient_lstate_t *ls);
 void tlsclientCloseLineBidirectional(tunnel_t *t, line_t *l);
@@ -128,6 +131,7 @@ bool tlsclientConfigureSslForConnect(SSL *ssl, BIO *rbio, BIO *wbio, const char 
                                      size_t         ech_grease_override_payload_len);
 bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
                                            const uint8_t *ech_grease_override_payload,
-                                           size_t ech_grease_override_payload_len, sbuf_t **out);
+                                           size_t ech_grease_override_payload_len,
+                                           const uint8_t *alpn_wire, size_t alpn_wire_len, sbuf_t **out);
 bool tlsclientCreateEchGreaseInnerClientHello(tlsclient_tstate_t *ts, wid_t wid, sbuf_t **out);
 void tlsclientTunnelstateDestroy(tlsclient_tstate_t *ts);

@@ -48,7 +48,9 @@ extern int WW_BSSL_BIO_write(struct bio_st *bio, const void *buf, int len);
  * source independent of TlsClient's private header while remaining unity-safe. */
 extern void tlsclientLinestateInitialize(struct tlsclient_lstate_s *ls,
                                          struct ssl_ctx_st *ssl_ctx,
-                                         buffer_pool_t *pool);
+                                         buffer_pool_t *pool,
+                                         const uint8_t *alpn_wire,
+                                         size_t alpn_wire_len);
 extern void tlsclientLinestateDestroy(struct tlsclient_lstate_s *ls);
 extern bool tlsclientConfigureSslForConnect(struct ssl_st *ssl,
                                             struct bio_st *rbio,
@@ -677,7 +679,9 @@ static void clientFixtureEnableTls13TakeoverWithTickets(client_lifecycle_fixture
     client_tls_lstate_view_t *tls_ls = lineGetState(fixture->line, fixture->tls);
     tlsclientLinestateInitialize((struct tlsclient_lstate_s *) tls_ls,
                                  fixture->tls_client_ctx,
-                                 fixture->pool);
+                                 fixture->pool,
+                                 NULL,
+                                 0);
     fixture->tls_state_initialized = true;
     requireClient(tlsclientConfigureSslForConnect(tls_ls->ssl,
                                                    tls_ls->rbio,

@@ -19,6 +19,10 @@ These tests exercise small library-level behavior without launching the `Waterwa
 - `waterwall.nghttp2_large_recv_unit`
   Verifies the bundled nghttp2 can consume one contiguous HTTP/2 input buffer larger than 32 KiB while preserving DATA
   callbacks. The Waterwall HTTP tunnels still feed nghttp2 in smaller slices defensively.
+- `waterwall.tlsclient_alpn_unit`
+  Verifies TlsClient's default and configured ALPN wire encoding, exact configured order, empty-list disable mode, and
+  rejection of malformed or duplicate protocol lists. It also performs a real in-memory BoringSSL client/server
+  handshake and proves that an HTTP/1.1-only TlsClient context negotiates `http/1.1`.
 - `waterwall.ipmanipulator_tcpbit_unit`
   Verifies `IpManipulator` TCP-bit rewriting handles the full TCP flags byte, including downstream CWR/ECE handling and
   carried original flag restore.

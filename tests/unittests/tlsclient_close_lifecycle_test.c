@@ -214,7 +214,7 @@ static void fixtureInitialize(tlsclient_lifecycle_fixture_t *fixture)
     fixture->line->wid = 0;
 
     tlsclient_lstate_t *ls = lineGetState(fixture->line, fixture->tls);
-    tlsclientLinestateInitialize(ls, fixture->ssl_ctx, fixture->pool);
+    tlsclientLinestateInitialize(ls, fixture->ssl_ctx, fixture->pool, NULL, 0);
     requireTlsClient(tlsclientConfigureSslForConnect(ls->ssl, ls->rbio, ls->wbio, "example.com", NULL, 0),
                      "failed to configure TlsClient lifecycle SSL object");
 }

@@ -20,6 +20,30 @@ static inline bool flushSSLOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls
     return tlsclientFlushSslOutput(t, l, ls);
 }
 
+static void logHandshakeComplete(line_t *l, tlsclient_lstate_t *ls)
+{
+    const uint8_t *alpn     = NULL;
+    unsigned int   alpn_len = 0;
+
+    SSL_get0_alpn_selected(ls->ssl, &alpn, &alpn_len);
+
+    if (alpn_len > 0)
+    {
+        LOGD("TlsClient: worker %u TLS handshake complete (version=%s, cipher=%s, alpn=\"%.*s\")",
+             (unsigned int) lineGetWID(l),
+             SSL_get_version(ls->ssl),
+             SSL_get_cipher_name(ls->ssl),
+             (int) alpn_len,
+             (const char *) alpn);
+        return;
+    }
+
+    LOGD("TlsClient: worker %u TLS handshake complete (version=%s, cipher=%s, alpn=<none>)",
+         (unsigned int) lineGetWID(l),
+         SSL_get_version(ls->ssl),
+         SSL_get_cipher_name(ls->ssl));
+}
+
 static inline int performHandshake(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
 {
     int            n      = SSL_connect(ls->ssl);
@@ -63,7 +87,7 @@ static inline int performHandshake(tunnel_t *t, line_t *l, tlsclient_lstate_t *l
 
     if (SSL_is_init_finished(ls->ssl))
     {
-        LOGD("TlsClient: Tls handshake complete");
+        logHandshakeComplete(l, ls);
         ls->handshake_completed = true;
 
         // write the data that we previously wanted to encrypt and send
@@ -117,6 +141,7 @@ static int performTakeoverHandshake(tunnel_t *t, line_t *l, tlsclient_lstate_t *
                 return -1;
             }
 
+            logHandshakeComplete(l, ls);
             ls->handshake_completed = true;
             if (! ls->handshake_est_sent)
             {

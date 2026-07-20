@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_pool_t *pool)
+static bool tlsclientAddConfiguredApplicationSettings(SSL *ssl, const uint8_t *alpn_wire, size_t alpn_wire_len)
 {
     // Chrome's h2 ALPS payload is a fixed three-byte value captured on the wire.
     // Do not replace this with a serialized HTTP/2 SETTINGS frame.
@@ -11,6 +11,41 @@ void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_
     static const uint8_t kChromeH1AlpsPayloadLen = 0;
 
     static_assert(sizeof(kChromeH2AlpsPayload) == 3, "Chrome h2 ALPS payload must stay 0x026832");
+
+    size_t offset = 0;
+    while (offset < alpn_wire_len)
+    {
+        const size_t name_len = alpn_wire[offset++];
+        assert(name_len > 0 && name_len <= alpn_wire_len - offset);
+
+        const uint8_t *name = alpn_wire + offset;
+        if (name_len == 2 && memoryCompare(name, "h2", 2) == 0)
+        {
+            if (SSL_add_application_settings(
+                    ssl, name, name_len, kChromeH2AlpsPayload, sizeof(kChromeH2AlpsPayload)) != 1)
+            {
+                return false;
+            }
+        }
+        else if (name_len == 8 && memoryCompare(name, "http/1.1", 8) == 0)
+        {
+            if (SSL_add_application_settings(
+                    ssl, name, name_len, kChromeH1AlpsPayload, kChromeH1AlpsPayloadLen) != 1)
+            {
+                return false;
+            }
+        }
+
+        offset += name_len;
+    }
+
+    return true;
+}
+
+void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_pool_t *pool,
+                                  const uint8_t *alpn_wire, size_t alpn_wire_len)
+{
+    assert(alpn_wire != NULL || alpn_wire_len == 0);
 
     assert(ls != NULL && sctx != NULL && pool != NULL);
 
@@ -37,26 +72,10 @@ void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_
         return;
     }
 
-    // Add ALPS for h2
-    if (SSL_add_application_settings(
-            ls->ssl, (const uint8_t *) "h2", 2, kChromeH2AlpsPayload, sizeof(kChromeH2AlpsPayload)) != 1)
+    // Register Chrome-like ALPS values only for matching protocols in the configured ALPN offer.
+    if (! tlsclientAddConfiguredApplicationSettings(ls->ssl, alpn_wire, alpn_wire_len))
     {
-        LOGF("Failed to add ALPS for HTTP/2   (part of matching Chrome)");
-        SSL_free(ls->ssl);
-        BIO_free(ls->rbio);
-        BIO_free(ls->wbio);
-        bufferqueueDestroy(&(ls->bq));
-        bufferstreamDestroy(&(ls->takeover_stream));
-        memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tlsclient_lstate_t)));
-        terminateProgram(1);
-        return;
-    }
-
-    // Add ALPS for http/1.1
-    if (SSL_add_application_settings(
-            ls->ssl, (const uint8_t *) "http/1.1", 8, kChromeH1AlpsPayload, kChromeH1AlpsPayloadLen) != 1)
-    {
-        LOGF("Failed to add ALPS for HTTP/1   (part of matching Chrome)");
+        LOGF("Failed to add configured ALPS values (part of matching Chrome)");
         SSL_free(ls->ssl);
         BIO_free(ls->rbio);
         BIO_free(ls->wbio);

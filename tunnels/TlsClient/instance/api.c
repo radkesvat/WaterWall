@@ -48,6 +48,8 @@ api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message)
             sni,
             ech_payload != NULL ? (const uint8_t *) sbufGetRawPtr(ech_payload) : NULL,
             ech_payload != NULL ? sbufGetLength(ech_payload) : 0,
+            ts->alpn_wire,
+            ts->alpn_wire_len,
             &hello_buf);
     }
 

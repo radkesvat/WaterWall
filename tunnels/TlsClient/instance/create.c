@@ -39,18 +39,86 @@ static bool getandvalidateSniSetting(tlsclient_tstate_t *ts, const cJSON *settin
     return true;
 }
 
-static bool getandvalidateAlpnSetting(tlsclient_tstate_t *ts, const cJSON *settings, tunnel_t *t)
+bool tlsclientParseAlpnSetting(tlsclient_tstate_t *ts, const cJSON *settings)
 {
-    getStringFromJsonObjectOrDefault(&(ts->alpn), settings, "alpn", "http/1.1");
+    static const uint8_t kDefaultAlpnWire[] = {
+        2, 'h', '2',
+        8, 'h', 't', 't', 'p', '/', '1', '.', '1',
+    };
 
-    if (stringLength(ts->alpn) == 0)
+    const cJSON *alpns = cJSON_GetObjectItemCaseSensitive(settings, "alpns");
+    if (alpns == NULL)
     {
-        LOGF("JSON Error: OpenSSLClient->settings->alpn (string field) : The data was empty or invalid");
-        memoryFree(ts->sni);
-        memoryFree(ts->alpn);
-        tunnelDestroy(t);
+        ts->alpn_wire = memoryAllocate(sizeof(kDefaultAlpnWire));
+        memoryCopy(ts->alpn_wire, kDefaultAlpnWire, sizeof(kDefaultAlpnWire));
+        ts->alpn_wire_len = sizeof(kDefaultAlpnWire);
+        return true;
+    }
+
+    if (! cJSON_IsArray(alpns))
+    {
+        LOGF("JSON Error: TlsClient->settings->alpns must be an array of strings");
         return false;
     }
+
+    size_t       wire_len = 0;
+    int          index    = 0;
+    const cJSON *item     = NULL;
+    cJSON_ArrayForEach(item, alpns)
+    {
+        if (! cJSON_IsString(item) || item->valuestring == NULL)
+        {
+            LOGF("JSON Error: TlsClient->settings->alpns[%d] must be a non-empty string", index);
+            return false;
+        }
+
+        const size_t name_len = stringLength(item->valuestring);
+        if (name_len == 0 || name_len > UINT8_MAX)
+        {
+            LOGF("JSON Error: TlsClient->settings->alpns[%d] must contain between 1 and 255 bytes", index);
+            return false;
+        }
+
+        for (int previous_index = 0; previous_index < index; ++previous_index)
+        {
+            const cJSON *previous = cJSON_GetArrayItem(alpns, previous_index);
+            if (previous != NULL && cJSON_IsString(previous) && previous->valuestring != NULL &&
+                stringLength(previous->valuestring) == name_len &&
+                memoryCompare(previous->valuestring, item->valuestring, name_len) == 0)
+            {
+                LOGF("JSON Error: TlsClient->settings->alpns[%d] duplicates an earlier protocol", index);
+                return false;
+            }
+        }
+
+        if (wire_len > UINT16_MAX - (1 + name_len))
+        {
+            LOGF("JSON Error: TlsClient->settings->alpns is too large for a TLS ALPN protocol list");
+            return false;
+        }
+
+        wire_len += 1 + name_len;
+        ++index;
+    }
+
+    if (wire_len == 0)
+    {
+        return true;
+    }
+
+    ts->alpn_wire = memoryAllocate(wire_len);
+    ts->alpn_wire_len = wire_len;
+
+    size_t offset = 0;
+    cJSON_ArrayForEach(item, alpns)
+    {
+        const size_t name_len = stringLength(item->valuestring);
+        ts->alpn_wire[offset++] = (uint8_t) name_len;
+        memoryCopy(ts->alpn_wire + offset, item->valuestring, name_len);
+        offset += name_len;
+    }
+
+    assert(offset == wire_len);
     return true;
 }
 
@@ -109,20 +177,6 @@ static const char *getSupportedGroupsList(bool x25519mlkem768_enabled)
     return "X25519:P-256:P-384:P-521";
 }
 
-static void *createAlpnFormat(const char *alpn_string, size_t alpn_len)
-{
-    struct
-    {
-        uint8_t len;
-        char    alpn_data[];
-    } *alpn_format = memoryAllocate(1 + alpn_len);
-
-    alpn_format->len = alpn_len;
-    memoryCopy(&(alpn_format->alpn_data[0]), alpn_string, alpn_len);
-
-    return alpn_format;
-}
-
 static bool loadCaCertificates(SSL_CTX *ssl_ctx)
 {
     BIO *bio = BIO_new(BIO_s_mem());
@@ -147,7 +201,8 @@ static bool loadCaCertificates(SSL_CTX *ssl_ctx)
     return true;
 }
 
-static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len, bool verify, bool x25519mlkem768_enabled)
+static SSL_CTX *setupSslContext(const uint8_t *alpn_wire, size_t alpn_wire_len, bool verify,
+                                bool x25519mlkem768_enabled)
 {
     SSL_CTX *ssl_ctx = SSL_CTX_new(TLS_client_method());
 
@@ -222,23 +277,24 @@ static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len, bool verify,
     }
 
     // boringssl: Note this function's return value is backwards.
-    if (SSL_CTX_set_alpn_protos(ssl_ctx, (const unsigned char *) alpn_format, alpn_len))
+    if (SSL_CTX_set_alpn_protos(ssl_ctx, alpn_wire, alpn_wire_len))
     {
-        LOGF("TlsClient: (part of making SSL_CTX match chrome) Failed to set ALPN for SSL_CTX (len=%zu)", alpn_len);
+        LOGF("TlsClient: failed to set ALPN for SSL_CTX (wire length=%zu)", alpn_wire_len);
         SSL_CTX_free(ssl_ctx);
         return NULL;
     }
     return ssl_ctx;
 }
 
-static bool createSslContextPool(SSL_CTX ***out_contexts, void *alpn_format, size_t alpn_len, int worker_count,
+static bool createSslContextPool(SSL_CTX ***out_contexts, const uint8_t *alpn_wire, size_t alpn_wire_len,
+                                 int worker_count,
                                  bool verify, bool x25519mlkem768_enabled)
 {
     *out_contexts = memoryAllocateZero((size_t) worker_count * sizeof(SSL_CTX *));
 
     for (int i = 0; i < worker_count; i++)
     {
-        (*out_contexts)[i] = setupSslContext(alpn_format, alpn_len, verify, x25519mlkem768_enabled);
+        (*out_contexts)[i] = setupSslContext(alpn_wire, alpn_wire_len, verify, x25519mlkem768_enabled);
 
         if ((*out_contexts)[i] == NULL)
         {
@@ -268,36 +324,15 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
     if (! getOptionalBoolSetting(&ts->x25519mlkem768_enabled, settings, "x25519mlkem768", true) ||
         ! getOptionalBoolSetting(&ts->verify, settings, "verify", true) ||
         ! getOptionalBoolSetting(&ts->verbose, settings, "verbose", false) ||
-        ! getAndValidateEchGreaseSniOverrideSetting(ts, settings))
+        ! getAndValidateEchGreaseSniOverrideSetting(ts, settings) ||
+        ! tlsclientParseAlpnSetting(ts, settings))
     {
         goto fail;
     }
-    // We want to build up exact chrome handshake, so we dont ask for alpn settings
-
-    // if (!validateAlpnSetting(ts, settings, t))
-    // {
-    //     return NULL;
-    // }
-
-    // size_t alpn_len = stringLength(ts->alpn);
-    // void *alpn_format = createAlpnFormat(ts->alpn, alpn_len);
-
-    const uint8_t chrome_alpn[] = {2,
-                                   'h',
-                                   '2', // HTTP/2
-                                   8,
-                                   'h',
-                                   't',
-                                   't',
-                                   'p',
-                                   '/',
-                                   '1',
-                                   '.',
-                                   '1'};
 
     if (! createSslContextPool(&(ts->threadlocal_ssl_contexts),
-                               (void *) &chrome_alpn[0],
-                               sizeof(chrome_alpn),
+                               ts->alpn_wire,
+                               ts->alpn_wire_len,
                                worker_count,
                                ts->verify,
                                ts->x25519mlkem768_enabled))
@@ -308,8 +343,8 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
     }
 
     if (ts->ech_grease_sni_override != NULL && ! createSslContextPool(&(ts->threadlocal_ech_grease_inner_ssl_contexts),
-                                                                      (void *) &chrome_alpn[0],
-                                                                      sizeof(chrome_alpn),
+                                                                      ts->alpn_wire,
+                                                                      ts->alpn_wire_len,
                                                                       worker_count,
                                                                       false,
                                                                       false))
@@ -319,7 +354,6 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
         return NULL;
     }
 
-    // memoryFree(alpn_format);
     return t;
 
 fail:

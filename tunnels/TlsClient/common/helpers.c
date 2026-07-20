@@ -560,7 +560,8 @@ bool tlsclientConfigureSslForConnect(SSL *ssl, BIO *rbio, BIO *wbio, const char 
 
 bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
                                            const uint8_t *ech_grease_override_payload,
-                                           size_t ech_grease_override_payload_len, sbuf_t **out)
+                                           size_t ech_grease_override_payload_len,
+                                           const uint8_t *alpn_wire, size_t alpn_wire_len, sbuf_t **out)
 {
     if (ssl_ctx == NULL || sni == NULL || out == NULL)
     {
@@ -578,7 +579,7 @@ bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
 
     STACK_ALLOCATE_ALIGNED(tlsclient_lstate_t, ls, 32);
     memoryZero(ls, sizeof(*ls));
-    tlsclientLinestateInitialize(ls, ssl_ctx, getWorkerBufferPool(wid));
+    tlsclientLinestateInitialize(ls, ssl_ctx, getWorkerBufferPool(wid), alpn_wire, alpn_wire_len);
 
     if (! tlsclientConfigureSslForConnect(
             ls->ssl, ls->rbio, ls->wbio, sni, ech_grease_override_payload, ech_grease_override_payload_len))
@@ -645,7 +646,13 @@ bool tlsclientCreateEchGreaseInnerClientHello(tlsclient_tstate_t *ts, wid_t wid,
     }
 
     return tlsclientCreateClientHelloFromContext(
-        ts->threadlocal_ech_grease_inner_ssl_contexts[wid], ts->ech_grease_sni_override, NULL, 0, out);
+        ts->threadlocal_ech_grease_inner_ssl_contexts[wid],
+        ts->ech_grease_sni_override,
+        NULL,
+        0,
+        ts->alpn_wire,
+        ts->alpn_wire_len,
+        out);
 }
 
 static void tlsclientFreeSslContextPool(SSL_CTX ***contexts)
@@ -678,11 +685,12 @@ void tlsclientTunnelstateDestroy(tlsclient_tstate_t *ts)
     tlsclientFreeSslContextPool(&ts->threadlocal_ssl_contexts);
     tlsclientFreeSslContextPool(&ts->threadlocal_ech_grease_inner_ssl_contexts);
 
-    memoryFree(ts->alpn);
+    memoryFree(ts->alpn_wire);
     memoryFree(ts->sni);
     memoryFree(ts->ech_grease_sni_override);
 
-    ts->alpn                            = NULL;
+    ts->alpn_wire                       = NULL;
+    ts->alpn_wire_len                   = 0;
     ts->sni                             = NULL;
     ts->ech_grease_sni_override         = NULL;
     ts->verify                          = false;

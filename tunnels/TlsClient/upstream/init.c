@@ -8,7 +8,11 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     tlsclient_lstate_t *ls = lineGetState(l, t);
     sbuf_t             *ech_payload = NULL;
 
-    tlsclientLinestateInitialize(ls, ts->threadlocal_ssl_contexts[lineGetWID(l)], lineGetBufferPool(l));
+    tlsclientLinestateInitialize(ls,
+                                ts->threadlocal_ssl_contexts[lineGetWID(l)],
+                                lineGetBufferPool(l),
+                                ts->alpn_wire,
+                                ts->alpn_wire_len);
 
     if (! tlsclientCreateEchGreaseInnerClientHello(ts, lineGetWID(l), &ech_payload))
     {

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 110
+Documentation version: 112
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TlsClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -49,6 +49,7 @@ That arrangement lets:
   "type": "TlsClient",
   "settings": {
     "sni": "example.com",
+    "alpns": ["http/1.1"],
     "verify": true,
     "ech-sni-trick": "example.net",
     "x25519mlkem768": true
@@ -76,6 +77,12 @@ That arrangement lets:
 
 ## Optional `settings` Fields
 
+- `alpns` `(array of strings, default: ["h2", "http/1.1"])`
+  Ordered ALPN protocol offer. The order written in JSON is preserved in the TLS ClientHello.
+
+  Each protocol name must contain between 1 and 255 bytes, and duplicate names are rejected. An empty array disables
+  ALPN. The singular key `alpn` is not supported.
+
 - `verify` `(boolean, default: true)`
   Controls whether BoringSSL verifies the peer certificate chain.
 
@@ -94,6 +101,8 @@ That arrangement lets:
   When set, `TlsClient` generates a full fake TLS ClientHello using this hostname and embeds those bytes as the GREASE `encrypted_client_hello` payload before the outer ClientHello is serialized and hashed.
 
   The outer cleartext SNI remains `settings.sni`.
+
+  The embedded fake ClientHello uses the same configured `alpns` values and order as the outer ClientHello.
 
   The embedded fake ClientHello is generated with `x25519mlkem768` disabled, even if the outer tunnel keeps `x25519mlkem768` enabled. This keeps the embedded payload small enough for the packet-side trick while leaving the real outer ClientHello Chrome-like.
 
@@ -117,12 +126,13 @@ That arrangement lets:
 - `verbose` `(boolean, default: false)`
   Enables extra TLS state logging.
 
-Optional defaults apply only when their keys are absent. If `verify`, `x25519mlkem768`, or `verbose` is present, it must be a JSON boolean. If `ech-sni-trick` is present, it must be a non-empty JSON string. Any other type is a startup error.
+Optional defaults apply only when their keys are absent. If `alpns` is absent, the Chrome-like default
+`["h2", "http/1.1"]` is used. If `verify`, `x25519mlkem768`, or `verbose` is present, it must be a JSON boolean. If
+`ech-sni-trick` is present, it must be a non-empty JSON string. Any other type is a startup error.
 
-Important current-implementation notes:
-
-- a field named `alpn` exists in the source, but the active create path does not use a JSON ALPN value
-- internal users can enable handshake takeover mode. TLS 1.2 may still release immediately after the handshake, while TLS 1.3 uses the phased drain API described below so post-handshake records are processed before the line becomes raw pass-through.
+Internal users can enable handshake takeover mode. TLS 1.2 may still release immediately after the handshake, while TLS
+1.3 uses the phased drain API described below so post-handshake records are processed before the line becomes raw
+pass-through.
 
 ## Tunnel API
 
@@ -135,6 +145,7 @@ Accepted request format:
 
 Important note:
 
+- the API follows the tunnel's configured `settings.alpns` order
 - the API follows the tunnel's `settings.x25519mlkem768` value
 - if that setting is disabled, the generated ClientHello is smaller but less Chrome-like
 
@@ -195,6 +206,8 @@ After handshake completion:
 - queued payload is flushed through `SSL_write()`
 - new upstream payload is encrypted immediately
 - resulting TLS records are read from the write BIO and forwarded upstream
+- a debug log records the negotiated TLS version, cipher, and ALPN value; it uses `alpn=<none>` when no protocol was
+  negotiated
 
 If `SSL_write()` or BIO flushing fails:
 
@@ -270,8 +283,8 @@ The source code intentionally tries to make the handshake look Chrome-like.
 
 That includes:
 
-- hardcoded ALPN list containing `h2` and `http/1.1`
-- ALPS application settings for `h2` and `http/1.1`
+- a Chrome-like default ALPN list containing `h2` and `http/1.1`, unless `settings.alpns` overrides it
+- ALPS application settings for configured `h2` and `http/1.1` offers
   `h2` is the fixed Chrome payload `0x026832`, not a serialized HTTP/2 `SETTINGS` frame
 - OCSP stapling extension
 - signed certificate timestamp extension
@@ -284,7 +297,7 @@ The bundled BoringSSL tree also contains local patches used by this tunnel.
 - `TlsClient` is a client-side tunnel, not a TLS server.
 - `downstream Init` is disabled in the current implementation and aborts if called.
 - The tunnel does not open sockets by itself. Pair it with a transport such as `TcpConnector`.
-- The active create path hardcodes a Chrome-like ALPN advertisement instead of using a user-provided ALPN list.
+- `settings.alpns` changes a fingerprint-relevant part of the ClientHello; the default remains Chrome-like.
 - `settings.verify` defaults to `true`; when disabled, certificate verification is skipped for that tunnel instance.
 - `Est` reflects transport establishment, not TLS handshake completion.
 
@@ -300,12 +313,32 @@ The implementation work was driven by real Chrome captures and compared primaril
 - JA4 alignment matters more than JA3 for this tunnel because Chrome permutes extension order and JA3 is sensitive to that ordering.
 - Matching JA3 exactly is not expected on every connection once extension permutation is enabled.
 
-### Fixed ALPN advertisement
+### Ordered ALPN advertisement and application-protocol responsibility
 
-The active create path does not accept a user-provided ALPN list.
+`settings.alpns` is encoded into the ClientHello in exactly the configured order. If the setting is absent, `TlsClient`
+advertises the Chrome-like default `h2`, then `http/1.1`. `[]` disables ALPN entirely.
 
-- `TlsClient` always advertises `h2` and `http/1.1`.
-- This keeps the ALPN list stable and aligned with the Chrome-like handshake shaping in this node.
+The list is an offer, not a guarantee that the first item will be used. The TLS server selects the negotiated protocol
+from the offered values. `TlsClient` does not report that selected protocol to the previous WaterWall node, and it does
+not switch or validate the previous node's application protocol. Matching the ALPN offer to the cleartext protocol
+produced before `TlsClient` is therefore the user's responsibility.
+
+This is especially important for `HttpClient -> TlsClient` chains:
+
+- If `HttpClient` is configured for HTTP/1.1 WebSocket Upgrade, configure `TlsClient` with only
+  `"alpns": ["http/1.1"]`.
+- If the deployment uses WebSocket over HTTP/2, configure `HttpClient` for HTTP/2 so it uses the HTTP/2 CONNECT path,
+  and configure `TlsClient` with only `"alpns": ["h2"]`.
+- Do not offer both `h2` and `http/1.1` merely to support either outcome. The server may select either one, while the
+  preceding `HttpClient` cannot learn which one was selected. It may then emit one HTTP version over a TLS connection
+  negotiated for the other.
+
+Only offer multiple protocols when the preceding application layer can safely handle every possible server selection
+without needing ALPN-selection feedback from `TlsClient`.
+
+At handshake completion, `TlsClient` writes the selected value to the debug log as `alpn="..."`, or `alpn=<none>` when
+the handshake negotiated no ALPN. This is diagnostic output only; it does not communicate the selection to the preceding
+application tunnel.
 
 ### TLS version and extension behavior
 
@@ -351,8 +384,9 @@ Chrome supports Brotli certificate decompression, so this tunnel does too.
 ALPS needed special care because it is easy to feed the wrong bytes into the BoringSSL API.
 
 - `SSL_add_application_settings` expects the raw per-protocol application settings value
-- for `h2`, the configured payload is the fixed Chrome value `0x026832`
-- for `http/1.1`, the configured payload is empty
+- for configured `h2`, the payload is the fixed Chrome value `0x026832`
+- for configured `http/1.1`, the payload is empty
+- values other than `h2` and `http/1.1` are offered through ALPN without a TlsClient-defined ALPS payload
 - this value must not be replaced with a serialized HTTP/2 `SETTINGS` frame
 - BoringSSL builds the final ALPS wire representation itself once the per-protocol values are configured
 

@@ -155,6 +155,28 @@ if(TARGET TlsServer)
 endif()
 
 if(TARGET TlsClient)
+  add_executable(tlsclient_alpn_test tlsclient_alpn_test.c)
+  target_include_directories(tlsclient_alpn_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include
+  )
+  target_include_directories(tlsclient_alpn_test BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
+    ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
+  )
+  target_compile_definitions(tlsclient_alpn_test PRIVATE
+    BORINGSSL_PREFIX=WW_BSSL
+    REALITY_TEST_CERT_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.crt"
+    REALITY_TEST_KEY_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.key"
+  )
+  target_link_libraries(tlsclient_alpn_test PRIVATE TlsClient ww ssl crypto)
+  add_dependencies(waterwall_unit_tests tlsclient_alpn_test)
+
+  add_waterwall_unit_test(
+    waterwall.tlsclient_alpn_unit
+    tlsclient_alpn_test
+    "unit;tunnels;tlsclient;configuration;alpn"
+  )
+
   add_executable(tlsclient_close_lifecycle_test tlsclient_close_lifecycle_test.c)
   target_include_directories(tlsclient_close_lifecycle_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include
