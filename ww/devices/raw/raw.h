@@ -13,7 +13,12 @@ typedef struct raw_device_s
 #ifdef OS_WIN
     HANDLE handle;
 #else
-    int socket;
+    int                socket;
+    uint64_t           discarded_packet_total;
+    uint64_t           discarded_packet_suppressed;
+    uint64_t           oversized_packet_total;
+    uint64_t           message_too_large_packet_total;
+    unsigned long long discard_last_report_ms;
 #endif
     uint32_t  mark;
     void     *userdata;
