@@ -64,6 +64,11 @@ int wCryptoOpenSSLChacha20Poly1305Decrypt(unsigned char *dst, const unsigned cha
     int ret = -1; // default to error
     int plaintext_len = 0;
 
+    if (UNLIKELY(srclen < 16))
+    {
+        return -1;
+    }
+
     ctx = EVP_CIPHER_CTX_new();
     if (!ctx)
     {

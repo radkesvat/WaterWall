@@ -327,6 +327,31 @@ static void test_chacha20poly1305_nonce_prefix_sensitivity(void)
     }
 }
 
+static void test_aead_short_ciphertexts(const aead_backend_t *backends, size_t backend_count,
+                                        const uint8_t *nonce)
+{
+    const uint8_t key[CHACHA20POLY1305_KEY_SIZE] = {0};
+    const uint8_t empty_plaintext = 0;
+    uint8_t ciphertext[POLY1305_TAG_SIZE] = {0};
+    uint8_t decrypted = 0;
+
+    for (size_t backend_index = 0; backend_index < backend_count; ++backend_index)
+    {
+        const aead_backend_t *backend = &backends[backend_index];
+
+        for (size_t ciphertext_len = 0; ciphertext_len < POLY1305_TAG_SIZE; ++ciphertext_len)
+        {
+            require_backend(backend->decrypt(&decrypted, ciphertext, ciphertext_len, NULL, 0, nonce, key) != 0,
+                            backend->name, "short AEAD ciphertext was accepted");
+        }
+
+        require_backend(backend->encrypt(ciphertext, &empty_plaintext, 0, NULL, 0, nonce, key) == 0,
+                        backend->name, "empty AEAD plaintext encryption failed");
+        require_backend(backend->decrypt(&decrypted, ciphertext, sizeof(ciphertext), NULL, 0, nonce, key) == 0,
+                        backend->name, "tag-only AEAD ciphertext was rejected");
+    }
+}
+
 static void test_xchacha20poly1305(void)
 {
     const char plaintext[] = "This is a secret message!";
@@ -370,6 +395,9 @@ static void test_xchacha20poly1305(void)
 
 int main(void)
 {
+    const uint8_t chacha_nonce[CHACHA20POLY1305_NONCE_SIZE] = {0};
+    const uint8_t xchacha_nonce[XCHACHA20POLY1305_NONCE_SIZE] = {0};
+
     initialize_crypto_backend();
 
     test_hash_vectors();
@@ -379,6 +407,12 @@ int main(void)
     test_chacha20poly1305();
     test_chacha20poly1305_nonzero_prefix_and_interoperability();
     test_chacha20poly1305_nonce_prefix_sensitivity();
+    test_aead_short_ciphertexts(chacha20poly1305_backends,
+                                sizeof(chacha20poly1305_backends) / sizeof(chacha20poly1305_backends[0]),
+                                chacha_nonce);
     test_xchacha20poly1305();
+    test_aead_short_ciphertexts(xchacha20poly1305_backends,
+                                sizeof(xchacha20poly1305_backends) / sizeof(xchacha20poly1305_backends[0]),
+                                xchacha_nonce);
     return 0;
 }
