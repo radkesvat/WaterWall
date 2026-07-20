@@ -21,13 +21,13 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 {
     raw_device_t     *rdev = userdata;
     sbuf_t           *buf;
-    WINDIVERT_ADDRESS addr;
-    addr.Layer    = WINDIVERT_LAYER_NETWORK; // Set the layer to NETWORK
-    addr.Outbound = 1;                       // Set outbound flag to true
-
-    addr.IPChecksum  = 1; // Enable not recalculating IP checksum
-    addr.TCPChecksum = 1; // Enable not recalculating TCP checksum
-    addr.UDPChecksum = 1; // Enable not recalculating UDP checksum
+    WINDIVERT_ADDRESS addr = {
+        .Layer       = WINDIVERT_LAYER_NETWORK,
+        .Outbound    = 1,
+        .IPChecksum  = 1,
+        .TCPChecksum = 1,
+        .UDPChecksum = 1,
+    };
 
     while (atomicLoadExplicit(&(rdev->running), memory_order_relaxed))
     {
