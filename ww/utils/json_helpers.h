@@ -10,7 +10,16 @@
  * a negative sign, and any trailing non-space characters. */
 static inline bool jsonParseUint64String(const char *value, uint64_t *dest)
 {
-    if (value == NULL || value[0] == '\0' || value[0] == '-')
+    if (value == NULL)
+    {
+        return false;
+    }
+
+    while (isspace((unsigned char) *value))
+    {
+        ++value;
+    }
+    if (! isdigit((unsigned char) *value))
     {
         return false;
     }
@@ -19,7 +28,7 @@ static inline bool jsonParseUint64String(const char *value, uint64_t *dest)
     errno     = 0;
 
     unsigned long long parsed = strtoull(value, &end, 10);
-    if (errno == ERANGE)
+    if (end == value || errno == ERANGE)
     {
         return false;
     }

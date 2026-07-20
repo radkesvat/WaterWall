@@ -42,6 +42,12 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.wlibc_memcopy_unit wlibc_memcopy_test "unit;libc;memory")
 
+  add_executable(json_helpers_test json_helpers_test.c)
+  target_link_libraries(json_helpers_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests json_helpers_test)
+
+  add_waterwall_unit_test(waterwall.json_helpers_unit json_helpers_test "unit;utils;json")
+
   add_executable(wfrand_test wfrand_test.c)
   target_link_libraries(wfrand_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests wfrand_test)
