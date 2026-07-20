@@ -1,5 +1,5 @@
 <!--
-Documentation version: 112
+Documentation version: 114
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TlsClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -329,12 +329,21 @@ This is especially important for `HttpClient -> TlsClient` chains:
   `"alpns": ["http/1.1"]`.
 - If the deployment uses WebSocket over HTTP/2, configure `HttpClient` for HTTP/2 so it uses the HTTP/2 CONNECT path,
   and configure `TlsClient` with only `"alpns": ["h2"]`.
-- Do not offer both `h2` and `http/1.1` merely to support either outcome. The server may select either one, while the
-  preceding `HttpClient` cannot learn which one was selected. It may then emit one HTTP version over a TLS connection
-  negotiated for the other.
+- Offering both `h2` and `http/1.1` is valid, commonly used, and closer to Chrome's default ClientHello. When using that
+  offer with a fixed preceding `HttpClient`, the user must know which protocol the target server will select and
+  configure `HttpClient` for that version. If the target's choice is unknown or can vary, offer only the protocol that
+  matches `HttpClient`.
 
-Only offer multiple protocols when the preceding application layer can safely handle every possible server selection
-without needing ALPN-selection feedback from `TlsClient`.
+**Cloudflare caution (as of July 2026):** For ordinary HTTPS through a Cloudflare-proxied hostname with HTTP/2 enabled,
+Cloudflare selects `h2` when it is offered. It is therefore reasonable to keep the Chrome-like
+`"alpns": ["h2", "http/1.1"]` offer and configure the preceding `HttpClient` for HTTP/2. This does not apply to
+WebSocket: Cloudflare's currently documented proxied WebSocket behavior does not support HTTP/2 WebSocket extended
+`CONNECT` (RFC 8441). For Cloudflare WebSocket, force HTTP/1.1 WebSocket Upgrade by configuring this node with only
+`"alpns": ["http/1.1"]` and configuring `HttpClient` for HTTP/1.1. Re-check Cloudflare's current capabilities before
+depending on either behavior, because provider settings and support can change.
+
+Multiple ALPN offers are appropriate when the target server's selection is known and stable. They are not automatic
+application-protocol discovery: the preceding node must already be configured for the protocol the server will select.
 
 At handshake completion, `TlsClient` writes the selected value to the debug log as `alpn="..."`, or `alpn=<none>` when
 the handshake negotiated no ALPN. This is diagnostic output only; it does not communicate the selection to the preceding

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 109
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HttpClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -40,6 +40,39 @@ Examples:
 - cleartext HTTP: `SomeTunnel -> HttpClient -> TcpConnector`
 - HTTPS-like transport: `SomeTunnel -> HttpClient -> TlsClient -> TcpConnector`
 
+## Matching HttpClient To TlsClient ALPN
+
+When `TlsClient` follows `HttpClient`, the configured HTTP version and the protocols offered through TLS ALPN must
+agree. `HttpClient` selects its wire protocol from `http-version`; it does not receive the server's negotiated ALPN from
+`TlsClient` and cannot switch modes after the TLS handshake. The user is responsible for keeping both nodes consistent.
+
+Use these pairings when you need a deterministic one-protocol offer:
+
+- HTTP/1.1, HTTP/1.1 split mode, or classic WebSocket Upgrade: configure `HttpClient` for HTTP/1.1 and configure
+  `TlsClient` with only `"alpns": ["http/1.1"]`.
+- Direct HTTP/2, including WebSocket over HTTP/2 extended `CONNECT`: configure `HttpClient` for HTTP/2 and configure
+  `TlsClient` with only `"alpns": ["h2"]`.
+
+For WebSocket over HTTP/2, use `"http-version": 2` together with `"websocket": true`. This selects the extended
+`CONNECT` path. Use HTTP/1.1 instead only when the peer expects the classic `GET`/`101 Switching Protocols` upgrade.
+
+Offering both `h2` and `http/1.1` in `TlsClient` is valid, commonly used, and closer to Chrome's default ClientHello.
+When using that offer, the user must know which protocol the target server will select and configure this `HttpClient`
+for that version. For example, an ordinary Cloudflare-proxied HTTPS hostname with HTTP/2 enabled selects `h2` when it is
+offered, so `HttpClient` should use HTTP/2. If the target's choice is unknown or can vary, offer only the protocol that
+matches `HttpClient`.
+
+`http-version: "both"` and its aliases do not solve this problem. They implement an HTTP/1.1-to-`h2c` application-layer
+upgrade and do not follow the TLS ALPN result. Choose an explicit HTTP version when `TlsClient` is next in the chain.
+
+**Cloudflare caution (as of July 2026):** The `h2` assumption above applies to ordinary HTTPS, not WebSocket.
+Cloudflare's currently documented proxied WebSocket behavior does not support HTTP/2 WebSocket extended `CONNECT`
+(RFC 8441). For Cloudflare WebSocket, configure `HttpClient` for HTTP/1.1 WebSocket Upgrade and configure the following
+`TlsClient` with only `"alpns": ["http/1.1"]`. Offering both makes Cloudflare select `h2`: an HTTP/1.1 `HttpClient`
+would then mismatch the negotiated protocol, while an HTTP/2 `HttpClient` would enter the unsupported extended `CONNECT`
+path. Re-check Cloudflare's current capabilities before depending on either behavior, because provider settings and
+support can change.
+
 ## Configuration Example
 
 ```json
@@ -53,8 +86,7 @@ Examples:
     "port": 443,
     "method": "POST",
     "user-agent": "WaterWall/2.0",
-    "http-version": "both",
-    "upgrade": true,
+    "http-version": 2,
     "content-type": "application/json",
     "headers": {
       "x-client-name": "waterwall",
@@ -275,6 +307,11 @@ In `websocket` mode:
 - direct HTTP/2 waits for `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` and then sends an extended `CONNECT` request
 - `http-version = both` plus `upgrade = true` stays on HTTP/1.1 for WebSocket, because the same opening request cannot safely be both `h2c` upgrade and WebSocket upgrade
 
+If `TlsClient` follows this node, the WebSocket path must match the ALPN the target server will select: use HTTP/1.1 with
+`["http/1.1"]`, or direct HTTP/2 with `["h2"]`. A Chrome-like offer containing both is also valid when the target's
+selection is known and stable, but this tunnel must be configured for that known result because it cannot observe the
+TLS server's selection. Cloudflare WebSocket is the exception described above and must be forced to HTTP/1.1.
+
 ### Split HTTP/1.1 mode
 
 With `http1-mode = "split"`, `HttpClient` creates two upstream transport lines for each Waterwall line:
@@ -417,6 +454,8 @@ For HTTP/2 responses:
 ## Notes And Caveats
 
 - `HttpClient` does not provide encryption. Pair it with `TlsClient` if you need TLS on the wire.
+- When paired with `TlsClient`, match `http-version` to the protocol the target is known to select from `alpns`. If that
+  selection is unknown or variable, offer a single protocol; negotiated ALPN is not reported back to `HttpClient`.
 - Response headers and status are not exposed to the previous tunnel. Only body payload and finish events are forwarded.
 - Extra headers in `headers` are appended to HTTP/1.1 requests as-is.
 - In HTTP/2 mode, extra headers whose names start with `:` are ignored.
