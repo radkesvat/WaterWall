@@ -36,7 +36,7 @@ static bool parseAuthClientNode(usercontroller_tstate_t *ts, node_t *node, const
 
 static bool parseSettings(usercontroller_tstate_t *ts, node_t *node, const cJSON *settings)
 {
-    const cJSON *auth_node_json = cJSON_GetObjectItemCaseSensitive(settings, "auth-client-node-name");
+    const cJSON *auth_node_json    = cJSON_GetObjectItemCaseSensitive(settings, "auth-client-node-name");
     int          sweep_interval_ms = kUserControllerDefaultSweepIntervalMs;
 
     if (! cJSON_IsString(auth_node_json) || auth_node_json->valuestring == NULL ||

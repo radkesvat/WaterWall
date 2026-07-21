@@ -1,12 +1,8 @@
 #include "sodium_instance.h"
-#include "sodium.h"
 
-int initSodium(void)
+#include <sodium.h>
+
+wcrypto_status_t sodiumGlobalInit(void)
 {
-    // Ensure libsodium is initialized
-    if (sodium_init() < 0) {
-        return -1;
-    }
-    return 1;
+    return sodium_init() < 0 ? kWCryptoBackendFailed : kWCryptoOk;
 }
-

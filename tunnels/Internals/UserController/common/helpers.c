@@ -38,8 +38,8 @@ const char *usercontrollerAdmissionReason(user_admission_result_t result)
     }
 }
 
-static void usercontrollerLogUserContext(tunnel_t *t, line_t *l, const usercontroller_lstate_t *ls,
-                                         const char *action, const char *reason)
+static void usercontrollerLogUserContext(tunnel_t *t, line_t *l, const usercontroller_lstate_t *ls, const char *action,
+                                         const char *reason)
 {
     usercontroller_tstate_t *ts = tunnelGetState(t);
 
@@ -176,7 +176,7 @@ static bool usercontrollerWorkerRemoveLine(usercontroller_worker_state_t *ws, li
         if (ws->lines[i] == l)
         {
             ws->line_count -= 1U;
-            ws->lines[i] = ws->lines[ws->line_count];
+            ws->lines[i]              = ws->lines[ws->line_count];
             ws->lines[ws->line_count] = NULL;
             return true;
         }
@@ -213,13 +213,13 @@ void usercontrollerWorkerClearRegistry(tunnel_t *t, wid_t wid)
     while (ws->line_count > 0)
     {
         ws->line_count -= 1U;
-        line_t *line = ws->lines[ws->line_count];
+        line_t *line              = ws->lines[ws->line_count];
         ws->lines[ws->line_count] = NULL;
 
         if (lineIsAlive(line))
         {
             usercontroller_lstate_t *ls = lineGetState(line, t);
-            ls->registered = false;
+            ls->registered              = false;
         }
 
         lineUnlock(line);
@@ -246,8 +246,8 @@ bool usercontrollerAccountDirectional(tunnel_t *t, usercontroller_lstate_t *ls, 
     uint64_t up        = is_upload ? bytes : 0;
     uint64_t down      = is_upload ? 0 : bytes;
 
-    return authenticationclientUserAccountTraffic(ts->auth_client_tunnel, &ls->handle, up, down,
-                                                  usercontrollerLocalTimeMS());
+    return authenticationclientUserAccountTraffic(
+        ts->auth_client_tunnel, &ls->handle, up, down, usercontrollerLocalTimeMS());
 }
 
 // Shared admission path. Promotes an unmanaged line to managed using the user currently recorded on
@@ -313,7 +313,7 @@ void usercontrollerSweepTimerCallback(wtimer_t *timer)
         return;
     }
 
-    usercontroller_tstate_t      *ts  = tunnelGetState(t);
+    usercontroller_tstate_t       *ts = tunnelGetState(t);
     usercontroller_worker_state_t *ws = usercontrollerGetWorkerState(t, getWID());
     if (ws == NULL)
     {
@@ -327,7 +327,7 @@ void usercontrollerSweepTimerCallback(wtimer_t *timer)
         if (UNLIKELY(! lineIsAlive(line)))
         {
             ws->line_count -= 1U;
-            ws->lines[i] = ws->lines[ws->line_count];
+            ws->lines[i]              = ws->lines[ws->line_count];
             ws->lines[ws->line_count] = NULL;
             lineUnlock(line);
             continue;

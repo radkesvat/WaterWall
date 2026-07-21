@@ -2,13 +2,73 @@
 #include "utils/json_helpers.h"
 
 #include <stdbool.h>
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-#if defined(WCRYPTO_BACKEND_SODIUM)
-#include <sodium.h>
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+typedef enum crypto_failure_injection_e
+{
+    kCryptoFailureNone,
+    kCryptoFailureSha224,
+    kCryptoFailureSha256,
+    kCryptoFailureX25519,
+} crypto_failure_injection_t;
+
+static crypto_failure_injection_t crypto_failure_injection;
+
+wcrypto_status_t __real_wCryptoSHA224(sha224_hash_t *out, const unsigned char *in, size_t inlen);
+wcrypto_status_t __real_wCryptoSHA256(sha256_hash_t *out, const unsigned char *in, size_t inlen);
+wcrypto_status_t __real_wCryptoX25519(unsigned char       out[WCRYPTO_X25519_KEY_SIZE],
+                                      const unsigned char scalar[WCRYPTO_X25519_KEY_SIZE],
+                                      const unsigned char point[WCRYPTO_X25519_KEY_SIZE]);
+wcrypto_status_t __wrap_wCryptoSHA224(sha224_hash_t *out, const unsigned char *in, size_t inlen);
+wcrypto_status_t __wrap_wCryptoSHA256(sha256_hash_t *out, const unsigned char *in, size_t inlen);
+wcrypto_status_t __wrap_wCryptoX25519(unsigned char       out[WCRYPTO_X25519_KEY_SIZE],
+                                      const unsigned char scalar[WCRYPTO_X25519_KEY_SIZE],
+                                      const unsigned char point[WCRYPTO_X25519_KEY_SIZE]);
+
+wcrypto_status_t __wrap_wCryptoSHA224(sha224_hash_t *out, const unsigned char *in, size_t inlen)
+{
+    if (crypto_failure_injection == kCryptoFailureSha224)
+    {
+        if (out != NULL)
+        {
+            memoryZero(out, sizeof(*out));
+        }
+        return kWCryptoBackendFailed;
+    }
+    return __real_wCryptoSHA224(out, in, inlen);
+}
+
+wcrypto_status_t __wrap_wCryptoSHA256(sha256_hash_t *out, const unsigned char *in, size_t inlen)
+{
+    if (crypto_failure_injection == kCryptoFailureSha256)
+    {
+        if (out != NULL)
+        {
+            memoryZero(out, sizeof(*out));
+        }
+        return kWCryptoBackendFailed;
+    }
+    return __real_wCryptoSHA256(out, in, inlen);
+}
+
+wcrypto_status_t __wrap_wCryptoX25519(unsigned char       out[WCRYPTO_X25519_KEY_SIZE],
+                                      const unsigned char scalar[WCRYPTO_X25519_KEY_SIZE],
+                                      const unsigned char point[WCRYPTO_X25519_KEY_SIZE])
+{
+    if (crypto_failure_injection == kCryptoFailureX25519)
+    {
+        if (out != NULL)
+        {
+            memoryZero(out, WCRYPTO_X25519_KEY_SIZE);
+        }
+        return kWCryptoBackendFailed;
+    }
+    return __real_wCryptoX25519(out, scalar, point);
+}
 #endif
 
 static void require(bool condition, const char *message)
@@ -20,11 +80,15 @@ static void require(bool condition, const char *message)
     }
 }
 
-static void initializeCryptoBackend(void)
+static bool testBytesAreZero(const void *bytes, size_t len)
 {
-#if defined(WCRYPTO_BACKEND_SODIUM)
-    require(sodium_init() != -1, "sodium_init failed");
-#endif
+    const uint8_t *cursor = bytes;
+    uint8_t        value  = 0;
+    for (size_t i = 0; i < len; ++i)
+    {
+        value |= cursor[i];
+    }
+    return value == 0;
 }
 
 static user_ip_key_t testIp(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
@@ -41,12 +105,59 @@ static user_ip_key_t testIp(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
 static void deriveWireGuardPublicKey(const char *password, uint8_t out[USER_WIREGUARD_PUBLICKEY_SIZE])
 {
     static const uint8_t basepoint[USER_WIREGUARD_PUBLICKEY_SIZE] = {9};
-    sha256_hash_t        sha256 = {0};
+    sha256_hash_t        sha256                                   = {0};
 
-    require(wCryptoSHA256(&sha256, (const unsigned char *) password, stringLength(password)) == 0,
+    require(wCryptoSHA256(&sha256, (const unsigned char *) password, stringLength(password)) == kWCryptoOk,
             "failed to derive WireGuard private key seed");
-    require(performX25519(out, sha256.bytes, basepoint) == 0, "failed to derive WireGuard public key");
+    require(wCryptoX25519(out, sha256.bytes, basepoint) == kWCryptoOk, "failed to derive WireGuard public key");
     memoryZero(&sha256, sizeof(sha256));
+}
+
+static void testCryptoFailureDoesNotPublishCredentials(void)
+{
+#if defined(WCRYPTO_TEST_LINKER_WRAP)
+    static const crypto_failure_injection_t failures[] = {
+        kCryptoFailureSha224,
+        kCryptoFailureSha256,
+        kCryptoFailureX25519,
+    };
+
+    for (size_t i = 0; i < sizeof(failures) / sizeof(failures[0]); ++i)
+    {
+        user_t rejected;
+        memorySet(&rejected, 0xa5, sizeof(rejected));
+        crypto_failure_injection = failures[i];
+        require(! userCreate(&rejected, "crypto-failure-new-password"),
+                "user creation published a crypto derivation failure");
+        crypto_failure_injection = kCryptoFailureNone;
+        require(! rejected.initialized && rejected.password == NULL && ! rejected.sha224_pass_valid &&
+                    ! rejected.sha256_pass_valid && ! rejected.wireguard_publickey_valid &&
+                    testBytesAreZero(&rejected.sha224_pass, sizeof(rejected.sha224_pass)) &&
+                    testBytesAreZero(&rejected.sha256_pass, sizeof(rejected.sha256_pass)) &&
+                    testBytesAreZero(rejected.wireguard_publickey, sizeof(rejected.wireguard_publickey)),
+                "failed user creation retained derived credentials");
+
+        user_t existing;
+        memoryZero(&existing, sizeof(existing));
+        require(userCreate(&existing, "crypto-failure-old-password"), "failed to create crypto-failure update fixture");
+        sha224_hash_t old_sha224 = existing.sha224_pass;
+        sha256_hash_t old_sha256 = existing.sha256_pass;
+        uint8_t       old_wireguard[USER_WIREGUARD_PUBLICKEY_SIZE];
+        memoryCopy(old_wireguard, existing.wireguard_publickey, sizeof(old_wireguard));
+
+        crypto_failure_injection = failures[i];
+        require(! userChangePassword(&existing, "crypto-failure-replacement-password"),
+                "password update published a crypto derivation failure");
+        crypto_failure_injection = kCryptoFailureNone;
+        require(userPasswordMatches(&existing, "crypto-failure-old-password") &&
+                    ! userPasswordMatches(&existing, "crypto-failure-replacement-password") &&
+                    memoryEqual(&existing.sha224_pass, &old_sha224, sizeof(old_sha224)) &&
+                    memoryEqual(&existing.sha256_pass, &old_sha256, sizeof(old_sha256)) &&
+                    memoryEqual(existing.wireguard_publickey, old_wireguard, sizeof(old_wireguard)),
+                "failed password update changed published credentials");
+        userDestroy(&existing);
+    }
+#endif
 }
 
 static void testIdentifierLookupAndJsonRoundTrip(void)
@@ -86,7 +197,7 @@ static void testIdentifierLookupAndJsonRoundTrip(void)
     require(! usersAddUser(&users, &duplicate), "duplicate id legacy insert unexpectedly worked");
     require(usersCount(&users) == 3, "duplicate id legacy insert changed the users table");
 
-    user_t *first_lookup = usersLookupByIdentifier(&users, 101);
+    user_t *first_lookup  = usersLookupByIdentifier(&users, 101);
     user_t *second_lookup = usersLookupByIdentifier(&users, 202);
     require(first_lookup != NULL && userGetId(first_lookup) == 101, "failed to look first user up by id");
     require(second_lookup != NULL && userGetId(second_lookup) == 202, "failed to look second user up by id");
@@ -152,10 +263,10 @@ static void testSHA224LookupAndHashAlignment(void)
     require(json != NULL, "failed to export user by SHA-224");
     cJSON_Delete(json);
 
-    require(usersChangePassword(&users, lookup, "sha224-lookup-new-password"), "failed to change SHA-224 user password");
+    require(usersChangePassword(&users, lookup, "sha224-lookup-new-password"),
+            "failed to change SHA-224 user password");
     memoryCopy(new_sha224, lookup->sha224_pass.bytes, sizeof(new_sha224));
-    require(! memoryEqual(old_sha224, new_sha224, sizeof(old_sha224)),
-            "password change did not change SHA-224");
+    require(! memoryEqual(old_sha224, new_sha224, sizeof(old_sha224)), "password change did not change SHA-224");
     require(usersLookupBySHA224(&users, old_sha224) == NULL, "old SHA-224 still resolved after password change");
     require(usersLookupBySHA224(&users, new_sha224) == lookup, "new SHA-224 did not resolve after password change");
 
@@ -166,18 +277,16 @@ static void testSHA224LookupAndHashAlignment(void)
 
 static void testJsonFeedRejectsDuplicateKeysWithoutTerminating(void)
 {
-    static const char duplicate_sha_json[] =
-        "{\"users\":["
-        "{\"id\":5101,\"password\":\"json-duplicate-password\"},"
-        "{\"id\":5102,\"password\":\"json-duplicate-password\"}"
-        "]}";
-    static const char duplicate_id_json[] =
-        "{\"users\":["
-        "{\"id\":5201,\"password\":\"json-duplicate-id-a\"},"
-        "{\"id\":5201,\"password\":\"json-duplicate-id-b\"}"
-        "]}";
-    users_t users;
-    user_t  seed;
+    static const char duplicate_sha_json[] = "{\"users\":["
+                                             "{\"id\":5101,\"password\":\"json-duplicate-password\"},"
+                                             "{\"id\":5102,\"password\":\"json-duplicate-password\"}"
+                                             "]}";
+    static const char duplicate_id_json[]  = "{\"users\":["
+                                             "{\"id\":5201,\"password\":\"json-duplicate-id-a\"},"
+                                             "{\"id\":5201,\"password\":\"json-duplicate-id-b\"}"
+                                             "]}";
+    users_t           users;
+    user_t            seed;
 
     memoryZero(&users, sizeof(users));
     memoryZero(&seed, sizeof(seed));
@@ -207,9 +316,9 @@ static void testJsonFeedRejectsDuplicateKeysWithoutTerminating(void)
 
 static void testUUIDCredentialLookupAndDerivation(void)
 {
-    static const char canonical_uuid[] = "84949cc5-4701-4a84-895b-354c584a981b";
-    static const char uppercase_uuid[] = "84949CC5-4701-4A84-895B-354C584A981B";
-    static const char compact_uuid[]   = "84949cc547014a84895b354c584a981b";
+    static const char canonical_uuid[]               = "84949cc5-4701-4a84-895b-354c584a981b";
+    static const char uppercase_uuid[]               = "84949CC5-4701-4A84-895B-354C584A981B";
+    static const char compact_uuid[]                 = "84949cc547014a84895b354c584a981b";
     uint8_t           expected_uuid[kWwUuidBytesLen] = {0};
     users_t           users;
     user_t            canonical_user;
@@ -279,10 +388,10 @@ static void testUUIDCredentialLookupAndDerivation(void)
 
 static void testUUIDLookupUpdatesOnPasswordChange(void)
 {
-    static const char uuid_a[]         = "11111111-1111-1111-1111-111111111111";
-    static const char uuid_b[]         = "22222222-2222-2222-2222-222222222222";
-    static const char uuid_c[]         = "33333333-3333-3333-3333-333333333333";
-    static const char uuid_c_compact[] = "33333333333333333333333333333333";
+    static const char uuid_a[]                      = "11111111-1111-1111-1111-111111111111";
+    static const char uuid_b[]                      = "22222222-2222-2222-2222-222222222222";
+    static const char uuid_c[]                      = "33333333-3333-3333-3333-333333333333";
+    static const char uuid_c_compact[]              = "33333333333333333333333333333333";
     uint8_t           uuid_a_bytes[kWwUuidBytesLen] = {0};
     uint8_t           uuid_b_bytes[kWwUuidBytesLen] = {0};
     uint8_t           uuid_c_bytes[kWwUuidBytesLen] = {0};
@@ -307,7 +416,7 @@ static void testUUIDLookupUpdatesOnPasswordChange(void)
     userDestroy(&second_source);
     userDestroy(&first_source);
 
-    user_t *first = usersLookupByUUID(&users, uuid_a_bytes);
+    user_t *first  = usersLookupByUUID(&users, uuid_a_bytes);
     user_t *second = usersLookupByUUID(&users, uuid_c_bytes);
     require(first != NULL && userGetId(first) == 4001, "failed to look first UUID user up");
     require(second != NULL && userGetId(second) == 4002, "failed to look second UUID user up");
@@ -324,8 +433,7 @@ static void testUUIDLookupUpdatesOnPasswordChange(void)
     require(! usersChangePassword(&users, first, uuid_c), "exact duplicate UUID password change unexpectedly worked");
     require(usersLookupByUUID(&users, uuid_b_bytes) == first,
             "exact duplicate UUID change displaced previous UUID key");
-    require(usersLookupByUUID(&users, uuid_c_bytes) == second,
-            "exact duplicate UUID change displaced existing owner");
+    require(usersLookupByUUID(&users, uuid_c_bytes) == second, "exact duplicate UUID change displaced existing owner");
 
     require(! usersChangePassword(&users, first, uuid_c_compact), "duplicate UUID password change unexpectedly worked");
     require(usersLookupByUUID(&users, uuid_b_bytes) == first, "duplicate UUID change displaced previous UUID key");
@@ -336,13 +444,13 @@ static void testUUIDLookupUpdatesOnPasswordChange(void)
 
 static void testWireGuardPublicKeyLookupAndDerivation(void)
 {
-    static const char password_a[] = "wireguard-publickey-password-a";
-    static const char password_b[] = "wireguard-publickey-password-b";
-    static const char password_c[] = "wireguard-publickey-password-c";
+    static const char password_a[]                               = "wireguard-publickey-password-a";
+    static const char password_b[]                               = "wireguard-publickey-password-b";
+    static const char password_c[]                               = "wireguard-publickey-password-c";
     uint8_t           publickey_a[USER_WIREGUARD_PUBLICKEY_SIZE] = {0};
     uint8_t           publickey_b[USER_WIREGUARD_PUBLICKEY_SIZE] = {0};
     uint8_t           publickey_c[USER_WIREGUARD_PUBLICKEY_SIZE] = {0};
-    uint8_t           current_sha256[SHA256_DIGEST_SIZE] = {0};
+    uint8_t           current_sha256[SHA256_DIGEST_SIZE]         = {0};
     users_t           users;
     user_t            first_source;
     user_t            second_source;
@@ -398,8 +506,7 @@ static void testWireGuardPublicKeyLookupAndDerivation(void)
     memoryCopy(current_sha256, first->sha256_pass.bytes, sizeof(current_sha256));
     update.mask     = kUserUpdatePassword;
     update.password = password_c;
-    require(usersUpdateUserBySHA256(&users, current_sha256, &update) ==
-                kUsersUpdateResultDuplicateWireGuardPublicKey,
+    require(usersUpdateUserBySHA256(&users, current_sha256, &update) == kUsersUpdateResultDuplicateWireGuardPublicKey,
             "duplicate WireGuard public key password update returned the wrong result");
     require(usersLookupByWireGuardPublicKey(&users, publickey_b) == first,
             "duplicate WireGuard public key update displaced previous key");
@@ -425,7 +532,7 @@ static void testWireGuardAllowedIpsJsonValidationAndLookup(void)
     user_t        second;
     user_t        overlap;
     user_t        ipv6_user;
-    user_update_t update = {0};
+    user_update_t update                            = {0};
     uint8_t       second_sha256[SHA256_DIGEST_SIZE] = {0};
 
     memoryZero(&users, sizeof(users));
@@ -464,7 +571,8 @@ static void testWireGuardAllowedIpsJsonValidationAndLookup(void)
             "IPv6 WireGuard allowed IPs were not normalized");
     require(ipv6_user.wireguard_allowed_ip_family == 6 && ipv6_user.wireguard_allowed_ip_prefix == 64,
             "IPv6 WireGuard allowed IP family/prefix were wrong");
-    require(ipv6_user.wireguard_allowed_ip_count == UINT64_MAX, "large IPv6 WireGuard allowed IP count did not saturate");
+    require(ipv6_user.wireguard_allowed_ip_count == UINT64_MAX,
+            "large IPv6 WireGuard allowed IP count did not saturate");
 
     require(usersAddUser(&users, &first), "failed to add first WireGuard allowed IP user");
     require(usersAddUser(&users, &second), "failed to add second WireGuard allowed IP user");
@@ -516,9 +624,8 @@ static void testWireGuardAllowedIpsJsonValidationAndLookup(void)
 
     static const char invalid_missing_prefix[] =
         "{\"id\":4502,\"password\":\"wireguard-allowed-ips-invalid-a\",\"wireguard-allowed-ips\":\"10.0.0.1\"}";
-    static const char invalid_list[] =
-        "{\"id\":4503,\"password\":\"wireguard-allowed-ips-invalid-b\","
-        "\"wireguard-allowed-ips\":\"10.0.0.1/32,10.0.0.2/32\"}";
+    static const char invalid_list[] = "{\"id\":4503,\"password\":\"wireguard-allowed-ips-invalid-b\","
+                                       "\"wireguard-allowed-ips\":\"10.0.0.1/32,10.0.0.2/32\"}";
     static const char invalid_prefix[] =
         "{\"id\":4504,\"password\":\"wireguard-allowed-ips-invalid-c\",\"wireguard-allowed-ips\":\"10.0.0.1/33\"}";
     cJSON *invalid_json = cJSON_Parse(invalid_missing_prefix);
@@ -541,15 +648,13 @@ static void testWireGuardAllowedIpsJsonValidationAndLookup(void)
     memoryCopy(second_sha256, second_lookup->sha256_pass.bytes, sizeof(second_sha256));
     update.mask                  = kUserUpdateWireGuardAllowedIps;
     update.wireguard_allowed_ips = "10.44.0.44/32";
-    require(usersUpdateUserBySHA256(&users, second_sha256, &update) ==
-                kUsersUpdateResultDuplicateWireGuardAllowedIps,
+    require(usersUpdateUserBySHA256(&users, second_sha256, &update) == kUsersUpdateResultDuplicateWireGuardAllowedIps,
             "overlapping WireGuard allowed IP update was not rejected");
     require(stringCompare(second_lookup->wireguard_allowed_ips, "10.44.2.9/32") == 0,
             "rejected WireGuard allowed IP update changed the user");
 
     update.wireguard_allowed_ips = "not-a-cidr";
-    require(usersUpdateUserBySHA256(&users, second_sha256, &update) ==
-                kUsersUpdateResultInvalidWireGuardAllowedIps,
+    require(usersUpdateUserBySHA256(&users, second_sha256, &update) == kUsersUpdateResultInvalidWireGuardAllowedIps,
             "invalid WireGuard allowed IP update returned the wrong result");
 
     update.wireguard_allowed_ips = "";
@@ -573,9 +678,9 @@ static void testWireGuardAllowedIpsJsonValidationAndLookup(void)
 
 static void testRuntimeMigrationPreservesActiveIpByIdentifier(void)
 {
-    users_t old_users;
-    users_t new_users;
-    user_t  source_user;
+    users_t        old_users;
+    users_t        new_users;
+    user_t         source_user;
     const uint64_t user_id = 8080;
 
     memoryZero(&old_users, sizeof(old_users));
@@ -629,13 +734,13 @@ static void testRuntimeMigrationPreservesActiveIpByIdentifier(void)
 
 static void testRuntimeMigrationPrefersIdentifierAcrossPasswordChange(void)
 {
-    users_t old_users;
-    users_t new_users;
-    user_t  old_source;
-    user_t  new_source;
-    uint8_t old_sha256[SHA256_DIGEST_SIZE] = {0};
-    uint8_t new_sha256[SHA256_DIGEST_SIZE] = {0};
-    const uint64_t user_id                 = 9001;
+    users_t        old_users;
+    users_t        new_users;
+    user_t         old_source;
+    user_t         new_source;
+    uint8_t        old_sha256[SHA256_DIGEST_SIZE] = {0};
+    uint8_t        new_sha256[SHA256_DIGEST_SIZE] = {0};
+    const uint64_t user_id                        = 9001;
 
     memoryZero(&old_users, sizeof(old_users));
     memoryZero(&new_users, sizeof(new_users));
@@ -670,8 +775,7 @@ static void testRuntimeMigrationPrefersIdentifierAcrossPasswordChange(void)
     require(usersLookupBySHA256(&new_users, old_sha256) == NULL, "new users table unexpectedly had old SHA-256");
     require(usersLookupBySHA256(&new_users, new_sha256) != NULL, "new users table did not have new SHA-256");
 
-    require(usersMigrateRuntimeStateByIdentifier(&new_users, &old_users),
-            "id-preferring runtime migration failed");
+    require(usersMigrateRuntimeStateByIdentifier(&new_users, &old_users), "id-preferring runtime migration failed");
 
     user_t *old_user = usersLookupByIdentifier(&old_users, user_id);
     user_t *new_user = usersLookupByIdentifier(&new_users, user_id);
@@ -693,11 +797,11 @@ static void testRuntimeMigrationPrefersIdentifierAcrossPasswordChange(void)
 
 static void testIdentifierLookupSurvivesPasswordChange(void)
 {
-    users_t users;
-    user_t  source_user;
-    uint8_t old_sha256[SHA256_DIGEST_SIZE] = {0};
-    uint8_t new_sha256[SHA256_DIGEST_SIZE] = {0};
-    const uint64_t user_id                 = 777;
+    users_t        users;
+    user_t         source_user;
+    uint8_t        old_sha256[SHA256_DIGEST_SIZE] = {0};
+    uint8_t        new_sha256[SHA256_DIGEST_SIZE] = {0};
+    const uint64_t user_id                        = 777;
 
     memoryZero(&users, sizeof(users));
     memoryZero(&source_user, sizeof(source_user));
@@ -799,26 +903,25 @@ static void testClientViewExpiryOverridesServerTimeFields(void)
 
 static void testZeroUserLimitsAreUnlimited(void)
 {
-    static const char json_text[] =
-        "{"
-        "\"password\":\"zero-limit-password\","
-        "\"limit\":{"
-        "\"traffic\":{\"up\":0,\"down\":0,\"total\":0},"
-        "\"bandwidth\":{\"up\":0,\"down\":0},"
-        "\"ips\":0,"
-        "\"devices\":0,"
-        "\"connections-in\":0,"
-        "\"connections-out\":0"
-        "},"
-        "\"stats\":{"
-        "\"traffic\":{\"up\":\"18446744073709551615\",\"down\":\"18446744073709551615\"},"
-        "\"speed\":{\"up\":\"18446744073709551615\",\"down\":\"18446744073709551615\"},"
-        "\"ips\":\"18446744073709551615\","
-        "\"devices\":\"18446744073709551615\","
-        "\"connections-in\":\"18446744073709551615\","
-        "\"connections-out\":\"18446744073709551615\""
-        "}"
-        "}";
+    static const char json_text[] = "{"
+                                    "\"password\":\"zero-limit-password\","
+                                    "\"limit\":{"
+                                    "\"traffic\":{\"up\":0,\"down\":0,\"total\":0},"
+                                    "\"bandwidth\":{\"up\":0,\"down\":0},"
+                                    "\"ips\":0,"
+                                    "\"devices\":0,"
+                                    "\"connections-in\":0,"
+                                    "\"connections-out\":0"
+                                    "},"
+                                    "\"stats\":{"
+                                    "\"traffic\":{\"up\":\"18446744073709551615\",\"down\":\"18446744073709551615\"},"
+                                    "\"speed\":{\"up\":\"18446744073709551615\",\"down\":\"18446744073709551615\"},"
+                                    "\"ips\":\"18446744073709551615\","
+                                    "\"devices\":\"18446744073709551615\","
+                                    "\"connections-in\":\"18446744073709551615\","
+                                    "\"connections-out\":\"18446744073709551615\""
+                                    "}"
+                                    "}";
 
     cJSON *json = cJSON_Parse(json_text);
     require(json != NULL, "failed to parse zero-limit user JSON");
@@ -876,8 +979,7 @@ static void testTotalTrafficLimitCountsUploadAndDownload(void)
     userDestroy(&user);
 
     memoryZero(&user, sizeof(user));
-    require(userCreate(&user, "total-traffic-mixed-limit-password"),
-            "failed to create mixed total traffic limit user");
+    require(userCreate(&user, "total-traffic-mixed-limit-password"), "failed to create mixed total traffic limit user");
     user.limit.traffic.total = 100;
 
     require(! userAccountTraffic(&user, 40, 59, 0, NULL), "mixed traffic below total limit closed user");
@@ -887,8 +989,8 @@ static void testTotalTrafficLimitCountsUploadAndDownload(void)
 
 static void testFirstUsagePushRequestFlagIsOneShot(void)
 {
-    users_t users;
-    user_t  source_user;
+    users_t        users;
+    user_t         source_user;
     const uint64_t user_id = 5501;
     bool           needed  = false;
 
@@ -896,8 +998,7 @@ static void testFirstUsagePushRequestFlagIsOneShot(void)
     memoryZero(&source_user, sizeof(source_user));
 
     require(usersCreate(&users), "failed to create first usage push users table");
-    require(userCreate(&source_user, "first-usage-push-flag-password"),
-            "failed to create first usage push flag user");
+    require(userCreate(&source_user, "first-usage-push-flag-password"), "failed to create first usage push flag user");
     userSetId(&source_user, user_id);
     require(usersAddUser(&users, &source_user), "failed to add first usage push flag user");
     userDestroy(&source_user);
@@ -976,7 +1077,8 @@ static void testTrafficStatsJsonUsesExactBytes(void)
 
 int main(void)
 {
-    initializeCryptoBackend();
+    require(wCryptoGlobalInit() == kWCryptoOk, "crypto global initialization failed");
+    testCryptoFailureDoesNotPublishCredentials();
     testIdentifierLookupAndJsonRoundTrip();
     testSHA224LookupAndHashAlignment();
     testJsonFeedRejectsDuplicateKeysWithoutTerminating();
@@ -993,5 +1095,6 @@ int main(void)
     testTotalTrafficLimitCountsUploadAndDownload();
     testFirstUsagePushRequestFlagIsOneShot();
     testTrafficStatsJsonUsesExactBytes();
+    wCryptoGlobalCleanup();
     return 0;
 }

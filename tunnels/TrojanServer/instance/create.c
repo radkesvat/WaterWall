@@ -106,7 +106,7 @@ static bool trojanserverAppendPassword(trojanserver_tstate_t *ts, const char *us
                                        const char *path)
 {
     sha224_hash_t digest = {0};
-    if (UNLIKELY(wCryptoSHA224(&digest, (const unsigned char *) password, stringLength(password)) != 0))
+    if (UNLIKELY(wCryptoSHA224(&digest, (const unsigned char *) password, stringLength(password)) != kWCryptoOk))
     {
         memoryZero(&digest, sizeof(digest));
         LOGF("TrojanServer: failed to calculate SHA224 password digest");
@@ -163,7 +163,7 @@ static bool trojanserverParsePasswordValue(trojanserver_tstate_t *ts, const cJSO
 
 static const cJSON *trojanserverGetObjectPasswordField(const cJSON *item, const char *path, bool *invalid)
 {
-    *invalid             = false;
+    *invalid              = false;
     const cJSON *password = cJSON_GetObjectItemCaseSensitive(item, "password");
     const cJSON *pass     = cJSON_GetObjectItemCaseSensitive(item, "pass");
     if (password != NULL && pass != NULL)
@@ -259,8 +259,8 @@ static bool trojanserverParseUsers(trojanserver_tstate_t *ts, const cJSON *setti
         password = pass;
     }
 
-    if (password != NULL && ! trojanserverParsePasswordValue(
-                                ts, password, password->string != NULL ? password->string : "password", NULL))
+    if (password != NULL &&
+        ! trojanserverParsePasswordValue(ts, password, password->string != NULL ? password->string : "password", NULL))
     {
         return false;
     }
@@ -330,7 +330,8 @@ static bool trojanserverParseAuthMode(trojanserver_tstate_t *ts, tunnel_t *t, no
         return false;
     }
 
-    return parseAuthClientNode(ts, node, auth_node_json->valuestring) && trojanserverCreateUserControllerTunnel(t, node);
+    return parseAuthClientNode(ts, node, auth_node_json->valuestring) &&
+           trojanserverCreateUserControllerTunnel(t, node);
 }
 
 tunnel_t *trojanserverTunnelCreate(node_t *node)
@@ -372,8 +373,8 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
         return NULL;
     }
 
-    ts->allow_connect = true;
-    ts->allow_udp     = true;
+    ts->allow_connect                        = true;
+    ts->allow_udp                            = true;
     int fallback_intentional_delay_ms        = kTrojanServerDefaultFallbackIntentionalDelayMs;
     int fallback_intentional_delay_jitter_ms = kTrojanServerDefaultFallbackIntentionalDelayJitterMs;
     getBoolFromJsonObjectOrDefault(&ts->allow_connect, settings, "connect", true);
@@ -406,8 +407,8 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
 
     if (fallback_intentional_delay_jitter_ms < 0)
     {
-        LOGF(
-            "JSON Error: TrojanServer->settings->fallback-intentional-delay-jitter-ms (number field) : The value was invalid");
+        LOGF("JSON Error: TrojanServer->settings->fallback-intentional-delay-jitter-ms (number field) : The value was "
+             "invalid");
         trojanserverTunnelDestroy(t);
         return NULL;
     }
@@ -415,7 +416,8 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
 
     if (ts->fallback_intentional_delay_ms == 0 && ts->fallback_intentional_delay_jitter_ms > 0)
     {
-        LOGD("TrojanServer: fallback-intentional-delay-jitter-ms is ignored because fallback-intentional-delay-ms is 0");
+        LOGD(
+            "TrojanServer: fallback-intentional-delay-jitter-ms is ignored because fallback-intentional-delay-ms is 0");
     }
 
     if (! trojanserverParseAuthMode(ts, t, node, settings) || ! parseFallbackNode(ts, node, settings))

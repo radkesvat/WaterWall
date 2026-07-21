@@ -6,5 +6,5 @@ api_result_t usercontrollerTunnelApi(tunnel_t *instance, sbuf_t *message)
 {
     discard instance;
     bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), message);
-    return (api_result_t){.result_code = kApiResultOk};
+    return (api_result_t) {.result_code = kApiResultOk};
 }

@@ -32,6 +32,7 @@ if(TARGET ww)
 
   add_executable(crypto_primitives_test crypto_primitives_test.c)
   target_link_libraries(crypto_primitives_test PRIVATE ww)
+  target_include_directories(crypto_primitives_test PRIVATE ${CMAKE_BINARY_DIR}/ww/generated)
   add_dependencies(waterwall_unit_tests crypto_primitives_test)
 
   add_waterwall_unit_test(waterwall.crypto_primitives_unit crypto_primitives_test "unit;crypto")
@@ -96,8 +97,24 @@ if(TARGET ww)
     )
   endif()
 
-  add_executable(users_runtime_migration_test users_runtime_migration_test.c)
+  add_executable(users_runtime_migration_test
+    users_runtime_migration_test.c
+    ${CMAKE_SOURCE_DIR}/ww/objects/user.c
+  )
   target_link_libraries(users_runtime_migration_test PRIVATE ww)
+  if(LINUX)
+    set_property(TARGET users_runtime_migration_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+    target_compile_options(users_runtime_migration_test PRIVATE "-fno-lto")
+    target_compile_definitions(users_runtime_migration_test PRIVATE WCRYPTO_TEST_LINKER_WRAP=1)
+    target_link_options(users_runtime_migration_test PRIVATE
+      "-Wl,-u,wCryptoSHA224"
+      "-Wl,-u,wCryptoSHA256"
+      "-Wl,-u,wCryptoX25519"
+      "-Wl,--wrap=wCryptoSHA224"
+      "-Wl,--wrap=wCryptoSHA256"
+      "-Wl,--wrap=wCryptoX25519"
+    )
+  endif()
   add_dependencies(waterwall_unit_tests users_runtime_migration_test)
 
   add_waterwall_unit_test(waterwall.users_runtime_migration_unit users_runtime_migration_test "unit;objects;users")
@@ -144,6 +161,52 @@ if(TARGET ww)
       os_helpers_bbr_test
       "unit;core;linux;bbr"
     )
+
+    add_executable(global_crypto_startup_failure_test
+      global_crypto_startup_failure_test.c
+      ${CMAKE_SOURCE_DIR}/ww/instance/global_state.c
+    )
+    set_property(TARGET global_crypto_startup_failure_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+    target_compile_options(global_crypto_startup_failure_test PRIVATE "-fno-lto")
+    target_include_directories(global_crypto_startup_failure_test PRIVATE ${CMAKE_BINARY_DIR}/ww/generated)
+    target_link_libraries(global_crypto_startup_failure_test PRIVATE ww)
+    if(PROJECT_REQUIRES_OPENSSL AND WCRYPTO_BACKEND_SODIUM)
+      target_sources(global_crypto_startup_failure_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/ww/crypto/global.c
+      )
+    else()
+      target_link_options(global_crypto_startup_failure_test PRIVATE
+        "-Wl,-u,wCryptoGlobalInit"
+        "-Wl,--wrap=wCryptoGlobalInit"
+      )
+    endif()
+    add_dependencies(waterwall_unit_tests global_crypto_startup_failure_test)
+
+    add_waterwall_unit_test(
+      waterwall.global_crypto_startup_failure_unit
+      global_crypto_startup_failure_test
+      "unit;core;crypto;startup;failure"
+    )
+
+    if(PROJECT_REQUIRES_OPENSSL)
+      add_executable(openssl_partial_init_failure_test
+        openssl_partial_init_failure_test.c
+      )
+      set_property(TARGET openssl_partial_init_failure_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+      target_compile_options(openssl_partial_init_failure_test PRIVATE "-fno-lto")
+      target_link_libraries(openssl_partial_init_failure_test PRIVATE ww)
+      target_link_options(openssl_partial_init_failure_test PRIVATE
+        "-Wl,--wrap=OPENSSL_init_ssl"
+        "-Wl,--wrap=OPENSSL_cleanup"
+      )
+      add_dependencies(waterwall_unit_tests openssl_partial_init_failure_test)
+
+      add_waterwall_unit_test(
+        waterwall.openssl_partial_init_failure_unit
+        openssl_partial_init_failure_test
+        "unit;core;crypto;openssl;startup;failure"
+      )
+    endif()
   endif()
 endif()
 
@@ -237,6 +300,89 @@ if(TARGET RealityCommon)
   add_dependencies(waterwall_unit_tests reality_v2_test)
 
   add_waterwall_unit_test(waterwall.reality_v2_unit reality_v2_test "unit;tunnels;reality;v2;crypto;replay;direction")
+endif()
+
+if(LINUX AND TARGET WireGuardDevice)
+  add_executable(wireguard_crypto_failure_test
+    wireguard_crypto_failure_test.c
+    ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice/common/wireguard.c
+  )
+  set_property(TARGET wireguard_crypto_failure_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+  target_compile_options(wireguard_crypto_failure_test PRIVATE "-fno-lto")
+  target_include_directories(wireguard_crypto_failure_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice/include/WireGuardDevice
+    ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice
+  )
+  target_link_libraries(wireguard_crypto_failure_test PRIVATE ww)
+  target_link_options(wireguard_crypto_failure_test PRIVATE
+    "-Wl,-u,wCryptoBlake2sInit"
+    "-Wl,-u,wCryptoX25519"
+    "-Wl,-u,wCryptoChaCha20Poly1305Encrypt"
+    "-Wl,--wrap=wCryptoBlake2sInit"
+    "-Wl,--wrap=wCryptoX25519"
+    "-Wl,--wrap=wCryptoChaCha20Poly1305Encrypt"
+  )
+  add_dependencies(waterwall_unit_tests wireguard_crypto_failure_test)
+
+  add_waterwall_unit_test(
+    waterwall.wireguard_crypto_failure_unit
+    wireguard_crypto_failure_test
+    "unit;tunnels;wireguard;crypto;failure"
+  )
+endif()
+
+if(LINUX AND TARGET EncryptionClient)
+  add_executable(encryptionclient_crypto_failure_test
+    encryption_crypto_failure_test.c
+    ${CMAKE_SOURCE_DIR}/tunnels/EncryptionClient/common/helpers.c
+    ${CMAKE_SOURCE_DIR}/tunnels/EncryptionClient/common/line_state.c
+    ${CMAKE_SOURCE_DIR}/tunnels/EncryptionClient/downstream/payload.c
+  )
+  set_property(TARGET encryptionclient_crypto_failure_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+  target_compile_options(encryptionclient_crypto_failure_test PRIVATE "-fno-lto")
+  target_compile_definitions(encryptionclient_crypto_failure_test PRIVATE TEST_ENCRYPTION_CLIENT=1)
+  target_include_directories(encryptionclient_crypto_failure_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/EncryptionClient/include
+    ${CMAKE_SOURCE_DIR}/tunnels/EncryptionClient/include/EncryptionClient
+  )
+  target_link_libraries(encryptionclient_crypto_failure_test PRIVATE ww)
+  target_link_options(encryptionclient_crypto_failure_test PRIVATE
+    "-Wl,--wrap=wCryptoChaCha20Poly1305Decrypt"
+  )
+  add_dependencies(waterwall_unit_tests encryptionclient_crypto_failure_test)
+
+  add_waterwall_unit_test(
+    waterwall.encryptionclient_crypto_failure_unit
+    encryptionclient_crypto_failure_test
+    "unit;tunnels;encryptionclient;crypto;failure"
+  )
+endif()
+
+if(LINUX AND TARGET EncryptionServer)
+  add_executable(encryptionserver_crypto_failure_test
+    encryption_crypto_failure_test.c
+    ${CMAKE_SOURCE_DIR}/tunnels/EncryptionServer/common/helpers.c
+    ${CMAKE_SOURCE_DIR}/tunnels/EncryptionServer/common/line_state.c
+    ${CMAKE_SOURCE_DIR}/tunnels/EncryptionServer/upstream/payload.c
+  )
+  set_property(TARGET encryptionserver_crypto_failure_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+  target_compile_options(encryptionserver_crypto_failure_test PRIVATE "-fno-lto")
+  target_compile_definitions(encryptionserver_crypto_failure_test PRIVATE TEST_ENCRYPTION_SERVER=1)
+  target_include_directories(encryptionserver_crypto_failure_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/EncryptionServer/include
+    ${CMAKE_SOURCE_DIR}/tunnels/EncryptionServer/include/EncryptionServer
+  )
+  target_link_libraries(encryptionserver_crypto_failure_test PRIVATE ww)
+  target_link_options(encryptionserver_crypto_failure_test PRIVATE
+    "-Wl,--wrap=wCryptoChaCha20Poly1305Decrypt"
+  )
+  add_dependencies(waterwall_unit_tests encryptionserver_crypto_failure_test)
+
+  add_waterwall_unit_test(
+    waterwall.encryptionserver_crypto_failure_unit
+    encryptionserver_crypto_failure_test
+    "unit;tunnels;encryptionserver;crypto;failure"
+  )
 endif()
 
 if(TARGET RealityServer)

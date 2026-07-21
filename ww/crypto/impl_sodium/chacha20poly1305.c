@@ -1,53 +1,62 @@
 #include "private/crypto_backends.h"
-#include "wlibc.h"
+#include "private/crypto_validation.h"
 
-#include "sodium.h"
+#include <sodium.h>
 
-#include "loggers/internal_logger.h"
-
-// Helper function for encryption using EVP API
-int wCryptoSodiumChacha20Poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t srclen,
-                                         const unsigned char *ad, size_t adlen, const unsigned char *nonce,
-                                         const unsigned char *key)
+wcrypto_status_t wCryptoSodiumChacha20Poly1305Encrypt(unsigned char *dst, size_t dst_capacity, const unsigned char *src,
+                                                      size_t src_len, const unsigned char *ad, size_t ad_len,
+                                                      const unsigned char nonce[WCRYPTO_CHACHA20POLY1305_NONCE_SIZE],
+                                                      const unsigned char key[WCRYPTO_CHACHA20POLY1305_KEY_SIZE])
 {
-    assert(sodium_init() != -1 && "libsodium must be initialized before calling this function");
-
-    // Buffer to store the ciphertext and authentication tag
-    unsigned long long ciphertext_len = 0;
-
-    // Perform encryption
-    if (0 != crypto_aead_chacha20poly1305_ietf_encrypt(dst, &ciphertext_len, src, srclen, ad, adlen, NULL, nonce, key))
+    size_t           expected_len = 0;
+    wcrypto_status_t status =
+        wCryptoValidateAeadEncrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key, &expected_len);
+    if (status != kWCryptoOk)
     {
-        // LOGE("chacha20poly1305Encrypt failed\n");
-        return -1;
+        wCryptoZero(dst, expected_len);
+        return status;
     }
 
-    // Return the total length of ciphertext + tag
-    // return (int) ciphertext_len;
-    return 0;
+    static const unsigned char empty    = 0;
+    unsigned long long         produced = 0;
+    if (crypto_aead_chacha20poly1305_ietf_encrypt(
+            dst, &produced, src != NULL ? src : &empty, src_len, ad != NULL ? ad : &empty, ad_len, NULL, nonce, key) !=
+            0 ||
+        produced != (unsigned long long) expected_len)
+    {
+        wCryptoZero(dst, expected_len);
+        return kWCryptoBackendFailed;
+    }
+    return kWCryptoOk;
 }
-
-// Helper function for decryption using EVP API
-int wCryptoSodiumChacha20Poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t srclen,
-                                         const unsigned char *ad, size_t adlen, const unsigned char *nonce,
-                                         const unsigned char *key)
+wcrypto_status_t wCryptoSodiumChacha20Poly1305Decrypt(unsigned char *dst, size_t dst_capacity, const unsigned char *src,
+                                                      size_t src_len, const unsigned char *ad, size_t ad_len,
+                                                      const unsigned char nonce[WCRYPTO_CHACHA20POLY1305_NONCE_SIZE],
+                                                      const unsigned char key[WCRYPTO_CHACHA20POLY1305_KEY_SIZE])
 {
-
-    assert(sodium_init() != -1 && "libsodium must be initialized before calling this function");
-
-    // Buffer to store the decrypted plaintext
-    unsigned long long plaintext_len = 0;
-
-    // Perform decryption
-    if (0 != crypto_aead_chacha20poly1305_ietf_decrypt(dst, &plaintext_len, NULL, src, srclen, ad, adlen, nonce, key))
+    size_t           expected_len = 0;
+    wcrypto_status_t status =
+        wCryptoValidateAeadDecrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key, &expected_len);
+    if (status != kWCryptoOk)
     {
-        // "Decryption failed or authentication tag verification failed
-        // LOGE("chacha20poly1305Decrypt failed\n");
-
-        return -1;
+        wCryptoZero(dst, expected_len);
+        return status;
     }
 
-    // Return the length of the decrypted plaintext
-    // return (int) plaintext_len;
-    return 0;
+    unsigned char              dummy    = 0;
+    static const unsigned char empty    = 0;
+    unsigned long long         produced = 0;
+    if (crypto_aead_chacha20poly1305_ietf_decrypt(
+            dst != NULL ? dst : &dummy, &produced, NULL, src, src_len, ad != NULL ? ad : &empty, ad_len, nonce, key) !=
+        0)
+    {
+        wCryptoZero(dst, expected_len);
+        return kWCryptoAuthenticationFailed;
+    }
+    if (produced != (unsigned long long) expected_len)
+    {
+        wCryptoZero(dst, expected_len);
+        return kWCryptoBackendFailed;
+    }
+    return kWCryptoOk;
 }

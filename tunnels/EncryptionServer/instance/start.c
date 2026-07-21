@@ -6,4 +6,3 @@ void encryptionserverTunnelOnStart(tunnel_t *t)
 {
     discard t;
 }
-

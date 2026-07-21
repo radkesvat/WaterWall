@@ -116,8 +116,7 @@ static void wireguarddeviceInsertUserControllerPrev(tunnel_t *t, tunnel_chain_t 
 
     if (controller->next != NULL && controller->next != t)
     {
-        LOGF("WireGuardDevice: internal UserController is already bound upstream by %s",
-             controller->next->node->name);
+        LOGF("WireGuardDevice: internal UserController is already bound upstream by %s", controller->next->node->name);
         terminateProgram(1);
     }
 
@@ -129,10 +128,10 @@ static void wireguarddeviceInsertUserControllerPrev(tunnel_t *t, tunnel_chain_t 
 
     wireguarddeviceSetInternalUserControllerNext(state, node->name, node->hash_name);
 
-    prev->next        = controller;
-    controller->prev  = prev;
-    controller->next  = t;
-    t->prev           = controller;
+    prev->next       = controller;
+    controller->prev = prev;
+    controller->next = t;
+    t->prev          = controller;
 
     tunnelchainInsert(chain, controller);
     tunnelDefaultOnChain(t, chain);

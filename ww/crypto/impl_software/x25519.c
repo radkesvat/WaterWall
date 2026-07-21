@@ -9,6 +9,7 @@
  * @brief Key exchange and signatures based on X25519.
  */
 #include "private/crypto_backends.h"
+#include "private/crypto_validation.h"
 #include "private/defs.h"
 // #include "strobe.h"
 // #include "strobe_config.h"
@@ -37,7 +38,7 @@ typedef uint32_t limb_t;
 typedef uint64_t dlimb_t;
 typedef int64_t  sdlimb_t;
 #define eswap_limb eswap_letoh_32
-#define LIMB(x)    (uint32_t)(x##ull), (uint32_t) ((x##ull) >> 32)
+#define LIMB(x)    (uint32_t) (x##ull), (uint32_t) ((x##ull) >> 32)
 #else
 #error "Need to know X25519_WBITS"
 #endif
@@ -46,34 +47,33 @@ typedef int64_t  sdlimb_t;
 typedef limb_t fe[NLIMBS];
 
 #if X25519_SUPPORT_SIGN
-typedef limb_t        scalar_t[NLIMBS];
-static const limb_t   MONTGOMERY_FACTOR = (limb_t) 0xd2b51da312547e1bull;
-static const scalar_t sc_p              = {LIMB(0x5812631a5cf5d3ed), LIMB(0x14def9dea2f79cd6), LIMB(0x0000000000000000),
-                                           LIMB(0x1000000000000000)},
-                      sc_r2             = {LIMB(0xa40611e3449c0f01), LIMB(0xd00e1ba768859347), LIMB(0xceec73d217f5be65),
-                                           LIMB(0x0399411b7c309a3d)};
+typedef limb_t      scalar_t[NLIMBS];
+static const limb_t MONTGOMERY_FACTOR = (limb_t) 0xd2b51da312547e1bull;
+static const scalar_t
+    sc_p  = {LIMB(0x5812631a5cf5d3ed), LIMB(0x14def9dea2f79cd6), LIMB(0x0000000000000000), LIMB(0x1000000000000000)},
+    sc_r2 = {LIMB(0xa40611e3449c0f01), LIMB(0xd00e1ba768859347), LIMB(0xceec73d217f5be65), LIMB(0x0399411b7c309a3d)};
 #endif
 
 static inline limb_t umaal(limb_t *carry, limb_t acc, limb_t mand, limb_t mier)
 {
     dlimb_t tmp = (dlimb_t) mand * mier + acc + *carry;
-    *carry      = tmp >> X25519_WBITS;
-    return tmp;
+    *carry      = (limb_t) (tmp >> X25519_WBITS);
+    return (limb_t) tmp;
 }
 
 /* These functions are implemented in terms of umaal on ARM */
 static inline limb_t adc(limb_t *carry, limb_t acc, limb_t mand)
 {
     dlimb_t total = (dlimb_t) *carry + acc + mand;
-    *carry        = total >> X25519_WBITS;
-    return total;
+    *carry        = (limb_t) (total >> X25519_WBITS);
+    return (limb_t) total;
 }
 
 static inline limb_t adc0(limb_t *carry, limb_t acc)
 {
     dlimb_t total = (dlimb_t) *carry + acc;
-    *carry        = total >> X25519_WBITS;
-    return total;
+    *carry        = (limb_t) (total >> X25519_WBITS);
+    return (limb_t) total;
 }
 
 /* Precondition: carry is small.
@@ -111,10 +111,11 @@ static void sub(fe out, const fe a, const fe b)
     sdlimb_t carry = -38;
     for (i = 0; i < NLIMBS; i++)
     {
-        out[i] = carry = carry + a[i] - b[i];
+        carry  = carry + (sdlimb_t) a[i] - (sdlimb_t) b[i];
+        out[i] = (limb_t) carry;
         carry >>= X25519_WBITS;
     }
-    propagate(out, 1 + carry);
+    propagate(out, (limb_t) (1 + carry));
 }
 
 static void __attribute__((unused)) swapin(limb_t *x, const uint8_t *in)
@@ -162,6 +163,7 @@ static void mul(fe out, const fe a, const fe b, unsigned nb)
         out[j] = umaal(&carry2, accum[j], mand, accum[j + NLIMBS]);
     }
     propagate(out, carry2);
+    wCryptoZero(accum, sizeof(accum));
 }
 
 static void sqr(fe out, const fe a)
@@ -221,10 +223,12 @@ static limb_t canon(fe x)
     limb_t   res   = 0;
     for (i = 0; i < NLIMBS; i++)
     {
-        res |= x[i] = carry += x[i];
+        carry += (sdlimb_t) x[i];
+        x[i] = (limb_t) carry;
+        res |= x[i];
         carry >>= X25519_WBITS;
     }
-    return ((dlimb_t) res - 1) >> X25519_WBITS;
+    return (limb_t) (((dlimb_t) res - 1) >> X25519_WBITS);
 }
 
 static const limb_t a24[1] = {121665};
@@ -288,7 +292,7 @@ static void x25519_core(fe xs[5], const uint8_t scalar[X25519_BYTES], const uint
         {
             if (i / 8 == 0)
             {
-                bytei &= ~7;
+                bytei &= UINT8_C(0xf8);
             }
             else if (i / 8 == X25519_BYTES - 1)
             {
@@ -306,11 +310,29 @@ static void x25519_core(fe xs[5], const uint8_t scalar[X25519_BYTES], const uint
     condswap(x2, x3, swap);
 }
 
-int wCryptoSoftwareX25519(uint8_t out[X25519_BYTES], const uint8_t scalar[X25519_BYTES], const uint8_t x1[X25519_BYTES])
+wcrypto_status_t wCryptoSoftwareX25519(uint8_t out[X25519_BYTES], const uint8_t scalar[X25519_BYTES],
+                                       const uint8_t x1[X25519_BYTES])
 {
+    wcrypto_status_t status = wCryptoValidateX25519(out, scalar, x1);
+    if (status != kWCryptoOk)
+    {
+        if (out != NULL)
+        {
+            wCryptoZero(out, X25519_BYTES);
+        }
+        return status;
+    }
+
+    /* RFC 7748 requires implementations to ignore the most significant bit
+     * when decoding a received X25519 u-coordinate.  The embedded ladder pays
+     * attention to it, so normalize a local copy at this API boundary. */
+    uint8_t normalized_x1[X25519_BYTES];
+    memcpy(normalized_x1, x1, sizeof(normalized_x1));
+    normalized_x1[X25519_BYTES - 1] &= UINT8_C(0x7f);
+
     int clamp = 1;
-    fe  xs[5];
-    x25519_core(xs, scalar, x1, clamp);
+    fe  xs[5] = {{0}};
+    x25519_core(xs, scalar, normalized_x1, clamp);
 
     /* Precomputed inversion chain */
     limb_t *x2 = xs[0], *z2 = xs[1], *z3 = xs[3];
@@ -321,8 +343,19 @@ int wCryptoSoftwareX25519(uint8_t out[X25519_BYTES], const uint8_t scalar[X25519
     static const struct
     {
         uint8_t a, c, n;
-    } steps[13] = {{2, 1, 1},  {2, 1, 1},  {4, 2, 3},   {2, 4, 6}, {3, 1, 1}, {3, 2, 12}, {4, 3, 25},
-                   {2, 3, 25}, {2, 4, 50}, {3, 2, 125}, {3, 1, 2}, {3, 1, 2}, {3, 1, 1}};
+    } steps[13] = {{2, 1, 1},
+                   {2, 1, 1},
+                   {4, 2, 3},
+                   {2, 4, 6},
+                   {3, 1, 1},
+                   {3, 2, 12},
+                   {4, 3, 25},
+                   {2, 3, 25},
+                   {2, 4, 50},
+                   {3, 2, 125},
+                   {3, 1, 2},
+                   {3, 1, 2},
+                   {3, 1, 1}};
     for (i = 0; i < 13; i++)
     {
         int     j;
@@ -351,16 +384,19 @@ int wCryptoSoftwareX25519(uint8_t out[X25519_BYTES], const uint8_t scalar[X25519
     /* x2 /= z2 */
 #if X25519_MEMCPY_PARAMS
     mul1(x2, z3);
-    int ret = canon(x2);
+    limb_t ret = canon(x2);
     swapout(out, x2);
 #else
     mul((limb_t *) out, x2, z3, NLIMBS);
-    int ret = canon((limb_t *) out);
+    limb_t ret = canon((limb_t *) out);
 #endif
-    if (clamp)
-        return ret;
-    else
-        return 0;
+    status = (clamp && ret != 0) ? kWCryptoRejectedKey : kWCryptoOk;
+    if (status != kWCryptoOk)
+    {
+        wCryptoZero(out, X25519_BYTES);
+    }
+    wCryptoZero(xs, sizeof(xs));
+    return status;
 }
 
 const uint8_t X25519_BASE_POINT[X25519_BYTES] = {9};

@@ -1,6 +1,5 @@
 #include "structure.h"
 
-
 #include "loggers/network_logger.h"
 
 static bool wireguardifCanSendInitiation(wireguard_peer_t *peer);
@@ -53,7 +52,7 @@ err_t wireguardifStartHandshake(wireguard_device_t *device, wireguard_peer_t *pe
         peer->last_initiation_tx = getTickMS();
         memoryCopy(peer->handshake_mac1, msg.mac1, WIREGUARD_COOKIE_LEN);
         peer->handshake_mac1_valid = true;
-        result                   = wireguardifPeerOutput(device, buf, peer);
+        result                     = wireguardifPeerOutput(device, buf, peer);
     }
     return result;
 }

@@ -273,10 +273,10 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }} --target check_waterwall_unit_tests
       - name: Integration tests
         if: matrix.preset == 'linux-gcc-x64'
-        run: ctest --preset linux-gcc -C Release --output-on-failure -L integration -LE privileged
+        run: ctest --preset linux-gcc -C Release --no-tests=error --output-on-failure -L integration -LE privileged
       - name: Privileged integration tests
         if: matrix.preset == 'linux-gcc-x64'
-        run: sudo -E ctest --preset linux-gcc -C Release --output-on-failure -L privileged
+        run: sudo -E ctest --preset linux-gcc -C Release --no-tests=error --output-on-failure -L privileged
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
@@ -285,8 +285,24 @@ jobs:
       - name: Show ccache statistics
         run: ccache -sv
 
-  software-crypto:
-    name: linux-software-crypto
+  crypto-backends:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: linux-software-crypto
+            sanitizer: false
+          - preset: linux-sodium-crypto
+            sanitizer: false
+          - preset: linux-openssl-crypto
+            sanitizer: false
+          - preset: linux-combined-crypto
+            sanitizer: false
+          - preset: linux-software-crypto-tls
+            sanitizer: false
+          - preset: linux-software-crypto-sanitize
+            sanitizer: true
+    name: ${{ matrix.preset }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -295,28 +311,34 @@ jobs:
           path: |
             ${{ env.cpm-path }}
             ${{ github.workspace }}/.ccache
-          key: ${{ env.cpm-key }}-linux-software-crypto-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake') }}
+          key: ${{ env.cpm-key }}-${{ matrix.preset }}-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake') }}
           restore-keys: |
-            ${{ env.cpm-key }}-linux-software-crypto-
+            ${{ env.cpm-key }}-${{ matrix.preset }}-
             ${{ env.cpm-key }}-linux-
             ${{ env.cpm-key }}-
           enableCrossOsArchive: false
       - name: Install dependencies on Linux
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build ccache
+          sudo apt-get install -y ninja-build ccache iproute2
       - name: Reset ccache statistics
         run: ccache --zero-stats
-      - name: Configure software-only crypto
+      - name: Configure crypto backend matrix entry
         run: >
-          cmake --preset linux-software-crypto
+          cmake --preset ${{ matrix.preset }}
           -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
-      - name: Build crypto primitive tests
-        run: cmake --build --preset linux-software-crypto --target crypto_primitives_test
-      - name: Run crypto primitive tests
+      - name: Build Waterwall and crypto tests
+        run: cmake --build --preset ${{ matrix.preset }} --target Waterwall crypto_primitives_test aes256gcm_test
+      - name: Run backend and consumer verification
+        if: matrix.sanitizer == false
         run: >
-          ctest --preset linux-software-crypto -C Release --output-on-failure
-          -R '^waterwall\.crypto_primitives_unit$'
+          ctest --preset ${{ matrix.preset }} --no-tests=error --output-on-failure
+          -R '^waterwall\.(aes256gcm_unit|crypto_primitives_unit|users_runtime_migration_unit|global_crypto_startup_failure_unit|openssl_partial_init_failure_unit|wireguard_crypto_failure_unit|encryptionclient_crypto_failure_unit|encryptionserver_crypto_failure_unit|tlsserver_alpn_unit|reality_config_unit|reality_v2_unit|reality_close_lifecycle_unit|encryption_roundtrip|encryption_small_frame_roundtrip|wireguard_udpstateless_packet_roundtrip)$'
+      - name: Run ASan and UBSan crypto tests
+        if: matrix.sanitizer == true
+        run: >
+          ctest --preset ${{ matrix.preset }} --no-tests=error --output-on-failure
+          -R '^waterwall\.(aes256gcm_unit|crypto_primitives_unit)$'
       - name: Show ccache statistics
         run: ccache -sv
 

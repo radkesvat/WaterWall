@@ -100,9 +100,11 @@ static bool deriveKeyFromPassword(const char *password, const char *salt, uint32
         iterations = 1;
     }
 
-    if (-1 ==
-        blake2s(out_key, 32, (const unsigned char *) salt, salt_len, (const unsigned char *) password, password_len))
+    if (wCryptoBlake2s(
+            out_key, 32, (const unsigned char *) salt, salt_len, (const unsigned char *) password, password_len) !=
+        kWCryptoOk)
     {
+        wCryptoZero(out_key, 32);
         return false;
     }
 
@@ -114,13 +116,16 @@ static bool deriveKeyFromPassword(const char *password, const char *salt, uint32
         memoryCopy(iter_block, out_key, 32);
         memoryCopy(iter_block + 32, &iter_be, sizeof(iter_be));
 
-        if (-1 == blake2s(out_key, 32, (const unsigned char *) password, password_len, iter_block, sizeof(iter_block)))
+        if (wCryptoBlake2s(
+                out_key, 32, (const unsigned char *) password, password_len, iter_block, sizeof(iter_block)) !=
+            kWCryptoOk)
         {
-            memoryZero(iter_block, sizeof(iter_block));
+            wCryptoZero(iter_block, sizeof(iter_block));
+            wCryptoZero(out_key, 32);
             return false;
         }
 
-        memoryZero(iter_block, sizeof(iter_block));
+        wCryptoZero(iter_block, sizeof(iter_block));
     }
 
     return true;
@@ -178,7 +183,7 @@ static bool encryptionclientTunnelstateInitialize(encryptionclient_tstate_t *ts,
         goto cleanup;
     }
 
-    if (algorithm == kEncryptionAlgorithmAes256Gcm && ! aes256gcmIsAvailable())
+    if (algorithm == kEncryptionAlgorithmAes256Gcm && ! wCryptoAes256GcmIsAvailable())
     {
         LOGF("EncryptionClient: AES-GCM selected but it is unavailable in the active crypto backend");
         goto cleanup;

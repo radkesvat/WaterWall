@@ -5,7 +5,7 @@
 
 node_t nodeWireGuardDeviceGet(void)
 {
-    const char *type_name     = "WireGuardDevice";
+    const char *type_name            = "WireGuardDevice";
     node_t      node_wireguarddevice = {
              .name                  = NULL,
              .type                  = stringDuplicate(type_name),

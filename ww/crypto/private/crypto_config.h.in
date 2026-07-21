@@ -1,0 +1,33 @@
+#pragma once
+
+/* Generated for the ww target. Backend capability macros intentionally live
+ * in this private header so they do not leak through ww's public compile
+ * interface or invalidate the precompiled header reused by tunnel targets. */
+#define WCRYPTO_BACKEND_SOFTWARE 1
+#define WCRYPTO_HAS_SOFTWARE_AES256GCM 1
+#define WCRYPTO_HAS_SOFTWARE_BLAKE2S 1
+#define WCRYPTO_HAS_SOFTWARE_CHACHA20POLY1305 1
+#define WCRYPTO_HAS_SOFTWARE_HASH 1
+#define WCRYPTO_HAS_SOFTWARE_X25519 1
+#define WCRYPTO_HAS_SOFTWARE_XCHACHA20POLY1305 1
+
+#cmakedefine WCRYPTO_BACKEND_SODIUM 1
+#if defined(WCRYPTO_BACKEND_SODIUM)
+#define WCRYPTO_HAS_SODIUM_AES256GCM 1
+#define WCRYPTO_HAS_SODIUM_CHACHA20POLY1305 1
+#define WCRYPTO_HAS_SODIUM_HASH 1
+#define WCRYPTO_HAS_SODIUM_X25519 1
+#define WCRYPTO_HAS_SODIUM_XCHACHA20POLY1305 1
+#endif
+
+#cmakedefine WCRYPTO_OPENSSL_RUNTIME_REQUIRED 1
+
+#cmakedefine WCRYPTO_BACKEND_OPENSSL 1
+#if defined(WCRYPTO_BACKEND_OPENSSL)
+#define WCRYPTO_HAS_OPENSSL_AES256GCM 1
+#define WCRYPTO_HAS_OPENSSL_BLAKE2S 1
+#define WCRYPTO_HAS_OPENSSL_CHACHA20POLY1305 1
+#define WCRYPTO_HAS_OPENSSL_HASH 1
+#define WCRYPTO_HAS_OPENSSL_X25519 1
+#define WCRYPTO_HAS_OPENSSL_XCHACHA20POLY1305 1
+#endif

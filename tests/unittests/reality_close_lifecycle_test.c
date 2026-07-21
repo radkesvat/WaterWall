@@ -3,21 +3,16 @@
 #include "global_state.h"
 #include "wcrypto.h"
 
-#if defined(WCRYPTO_BACKEND_SODIUM)
-#include <sodium.h>
-#endif
 #include <stdio.h>
 #include <stdlib.h>
 
 int main(void)
 {
-#if defined(WCRYPTO_BACKEND_SODIUM)
-    if (sodium_init() == -1)
+    if (wCryptoGlobalInit() != kWCryptoOk)
     {
-        fprintf(stderr, "FAIL: sodium_init failed\n");
+        fprintf(stderr, "FAIL: crypto global initialization failed\n");
         return 1;
     }
-#endif
     if (! globalstateInitializeSecureRandom())
     {
         fprintf(stderr, "FAIL: secure random initialization failed\n");
@@ -28,5 +23,6 @@ int main(void)
     realityTestClientRecordSizing();
     realityTestServerRecordSizing();
     globalstateDestroySecureRandom();
+    wCryptoGlobalCleanup();
     return 0;
 }

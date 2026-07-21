@@ -27,9 +27,8 @@ static sbuf_t *realityclientAllocFrameBuffer(buffer_pool_t *pool, uint32_t frame
     return sbufCreateWithPadding(frame_len, bufferpoolGetLargeBufferPadding(pool));
 }
 
-static bool realityclientEncryptFrame(realityclient_tstate_t *ts, realityclient_lstate_t *ls,
-                                      buffer_pool_t *pool, uint8_t record_kind,
-                                      const uint8_t *plaintext, uint32_t plaintext_len,
+static bool realityclientEncryptFrame(realityclient_tstate_t *ts, realityclient_lstate_t *ls, buffer_pool_t *pool,
+                                      uint8_t record_kind, const uint8_t *plaintext, uint32_t plaintext_len,
                                       sbuf_t **frame_buffer)
 {
     if (! ls->session_keys_ready || ! realityV2SequenceAvailable(ls->c2s_send_seq) ||
@@ -53,11 +52,11 @@ static bool realityclientEncryptFrame(realityclient_tstate_t *ts, realityclient_
 
     uint64_t sequence_number = ls->c2s_send_seq;
     uint8_t *frame           = sbufGetMutablePtr(out);
-    frame[0]       = descriptor.outer_content_type;
-    frame[1]       = kRealityClientTlsVersionMajor;
-    frame[2]       = kRealityClientTlsVersionMinor;
-    frame[3]       = (uint8_t) (layout.wire_body_len >> 8);
-    frame[4]       = (uint8_t) layout.wire_body_len;
+    frame[0]                 = descriptor.outer_content_type;
+    frame[1]                 = kRealityClientTlsVersionMajor;
+    frame[2]                 = kRealityClientTlsVersionMinor;
+    frame[3]                 = (uint8_t) (layout.wire_body_len >> 8);
+    frame[4]                 = (uint8_t) layout.wire_body_len;
 
     uint8_t *visible_prefix = frame + kRealityClientTlsHeaderSize;
     if (descriptor.profile.profile_id == kRealityV2RecordProfileTls12Gcm)
@@ -79,11 +78,7 @@ static bool realityclientEncryptFrame(realityclient_tstate_t *ts, realityclient_
     }
 
     uint8_t *ciphertext = visible_prefix + descriptor.visible_prefix_len;
-    if (! realityV2BuildInnerPlaintext(&descriptor,
-                                       plaintext,
-                                       plaintext_len,
-                                       ciphertext,
-                                       layout.inner_plaintext_len))
+    if (! realityV2BuildInnerPlaintext(&descriptor, plaintext, plaintext_len, ciphertext, layout.inner_plaintext_len))
     {
         bufferpoolReuseBuffer(pool, out);
         return false;
@@ -108,30 +103,31 @@ static bool realityclientEncryptFrame(realityclient_tstate_t *ts, realityclient_
         return false;
     }
 
-    int result = realityclientEncryptAead(ts->algorithm,
-                                          ciphertext,
-                                          ciphertext,
-                                          layout.inner_plaintext_len,
-                                          aad,
-                                          aad_len,
-                                          nonce,
-                                          ls->c2s_key);
+    size_t           ciphertext_capacity = sbufGetMaximumWriteableSize(out) - (size_t) (ciphertext - frame);
+    wcrypto_status_t result              = realityclientEncryptAead(ts->algorithm,
+                                                       ciphertext,
+                                                       ciphertext_capacity,
+                                                       ciphertext,
+                                                       layout.inner_plaintext_len,
+                                                       aad,
+                                                       aad_len,
+                                                       nonce,
+                                                       ls->c2s_key);
     memoryZero(nonce, sizeof(nonce));
     memoryZero(aad, sizeof(aad));
-    if (result != 0)
+    if (result != kWCryptoOk)
     {
         bufferpoolReuseBuffer(pool, out);
         return false;
     }
 
     ls->c2s_send_seq = sequence_number + 1;
-    *frame_buffer     = out;
+    *frame_buffer    = out;
     return true;
 }
 
 static int realityclientTryReadCompleteFrame(buffer_stream_t *stream, const realityclient_lstate_t *ls,
-                                             sbuf_t **frame_buffer,
-                                             reality_v2_record_descriptor_t *descriptor)
+                                             sbuf_t **frame_buffer, reality_v2_record_descriptor_t *descriptor)
 {
     if (bufferstreamGetBufLen(stream) < kRealityClientTlsHeaderSize)
     {
@@ -142,10 +138,7 @@ static int realityclientTryReadCompleteFrame(buffer_stream_t *stream, const real
     bufferstreamViewBytesAt(stream, 0, header, sizeof(header));
 
     uint32_t body_len = ((uint32_t) header[3] << 8) | (uint32_t) header[4];
-    if (! realityV2ClassifyRecord(ls->tls_version,
-                                  &ls->record_profile,
-                                  header,
-                                  descriptor))
+    if (! realityV2ClassifyRecord(ls->tls_version, &ls->record_profile, header, descriptor))
     {
         return kRealityFrameInvalid;
     }
@@ -169,10 +162,8 @@ static int realityclientTryReadCompleteTlsRecord(buffer_stream_t *stream, sbuf_t
 
     uint8_t header[kRealityClientTlsHeaderSize];
     bufferstreamViewBytesAt(stream, 0, header, sizeof(header));
-    bool plausible_type = header[0] == 0x14 || header[0] == 0x15 ||
-                          header[0] == 0x16 || header[0] == 0x17;
-    if (! plausible_type || header[1] != kRealityClientTlsVersionMajor ||
-        header[2] != kRealityClientTlsVersionMinor)
+    bool plausible_type = header[0] == 0x14 || header[0] == 0x15 || header[0] == 0x16 || header[0] == 0x17;
+    if (! plausible_type || header[1] != kRealityClientTlsVersionMajor || header[2] != kRealityClientTlsVersionMinor)
     {
         return kRealityFrameInvalid;
     }
@@ -192,45 +183,39 @@ static int realityclientTryReadCompleteTlsRecord(buffer_stream_t *stream, sbuf_t
     return kRealityFrameOk;
 }
 
-static int realityclientCommonDecrypt(void *context, unsigned char *dst,
-                                      const unsigned char *src, size_t src_len,
-                                      const unsigned char *ad, size_t ad_len,
-                                      const unsigned char *nonce, const unsigned char *key)
+static WCRYPTO_MUST_USE wcrypto_status_t realityclientCommonDecrypt(void *context, unsigned char *dst,
+                                                                    size_t dst_capacity, const unsigned char *src,
+                                                                    size_t src_len, const unsigned char *ad,
+                                                                    size_t ad_len, const unsigned char *nonce,
+                                                                    const unsigned char *key)
 {
     const realityclient_tstate_t *ts = context;
-    return realityclientDecryptAead(ts->algorithm, dst, src, src_len, ad, ad_len, nonce, key);
+    return realityclientDecryptAead(ts->algorithm, dst, dst_capacity, src, src_len, ad, ad_len, nonce, key);
 }
 
 bool realityclientSendHandoffControl(tunnel_t *t, line_t *l, uint8_t record_kind)
 {
-    realityclient_tstate_t *ts = tunnelGetState(t);
-    realityclient_lstate_t *ls = lineGetState(l, t);
-    bool request = record_kind == kRealityV2RecordKindHandoffRequest;
-    bool confirm = record_kind == kRealityV2RecordKindHandoffConfirm;
+    realityclient_tstate_t *ts      = tunnelGetState(t);
+    realityclient_lstate_t *ls      = lineGetState(l, t);
+    bool                    request = record_kind == kRealityV2RecordKindHandoffRequest;
+    bool                    confirm = record_kind == kRealityV2RecordKindHandoffConfirm;
     if (! ls->session_keys_ready || ls->tls_version != kRealityV2Tls13 ||
-        (request && (ls->phase != kRealityClientPhaseTls13AwaitAck ||
-                     ls->handoff_request_sent || ls->c2s_send_seq != 0)) ||
-        (confirm && (ls->phase != kRealityClientPhaseRealityActive ||
-                     ! ls->handoff_ack_authenticated || ls->handoff_confirm_sent ||
-                     ls->c2s_send_seq != 1)) || (! request && ! confirm))
+        (request &&
+         (ls->phase != kRealityClientPhaseTls13AwaitAck || ls->handoff_request_sent || ls->c2s_send_seq != 0)) ||
+        (confirm && (ls->phase != kRealityClientPhaseRealityActive || ! ls->handoff_ack_authenticated ||
+                     ls->handoff_confirm_sent || ls->c2s_send_seq != 1)) ||
+        (! request && ! confirm))
     {
         return false;
     }
 
-    uint8_t control_payload[kRealityV2ControlMaxPayload] = {0};
-    uint32_t control_payload_len = 0;
-    sbuf_t *frame = NULL;
-    bool built = realityV2BuildControlPayload(record_kind,
-                                              control_payload,
-                                              sizeof(control_payload),
-                                              &control_payload_len) &&
-                 realityclientEncryptFrame(ts,
-                                           ls,
-                                           lineGetBufferPool(l),
-                                           record_kind,
-                                           control_payload,
-                                           control_payload_len,
-                                           &frame);
+    uint8_t  control_payload[kRealityV2ControlMaxPayload] = {0};
+    uint32_t control_payload_len                          = 0;
+    sbuf_t  *frame                                        = NULL;
+    bool     built =
+        realityV2BuildControlPayload(record_kind, control_payload, sizeof(control_payload), &control_payload_len) &&
+        realityclientEncryptFrame(
+            ts, ls, lineGetBufferPool(l), record_kind, control_payload, control_payload_len, &frame);
     memoryZero(control_payload, sizeof(control_payload));
     if (! built)
     {
@@ -276,8 +261,7 @@ static bool realityclientCompleteTls13Handoff(tunnel_t *t, line_t *l)
     realityclient_tstate_t *ts = tunnelGetState(t);
     realityclient_lstate_t *ls = lineGetState(l, t);
     if (ls->phase != kRealityClientPhaseTls13AwaitAck || ! ls->handoff_request_sent ||
-        ! ls->handoff_ack_authenticated || ls->handoff_confirm_sent ||
-        ls->c2s_send_seq != 1 || ls->s2c_recv_seq != 1)
+        ! ls->handoff_ack_authenticated || ls->handoff_confirm_sent || ls->c2s_send_seq != 1 || ls->s2c_recv_seq != 1)
     {
         realityclientCloseLineBidirectional(t, l);
         return false;
@@ -296,8 +280,8 @@ static bool realityclientCompleteTls13Handoff(tunnel_t *t, line_t *l)
         return false;
     }
 
-    ls = lineGetState(l, t);
-    ls->phase = kRealityClientPhaseRealityActive;
+    ls                                 = lineGetState(l, t);
+    ls->phase                          = kRealityClientPhaseRealityActive;
     ls->handoff_completion_in_progress = true;
     if (! realityclientSendHandoffControl(t, l, kRealityV2RecordKindHandoffConfirm))
     {
@@ -313,8 +297,7 @@ static bool realityclientCompleteTls13Handoff(tunnel_t *t, line_t *l)
     }
 
     ls = lineGetState(l, t);
-    if (ls->terminal_closing || ls->phase != kRealityClientPhaseRealityActive ||
-        ! ls->handoff_confirm_sent)
+    if (ls->terminal_closing || ls->phase != kRealityClientPhaseRealityActive || ! ls->handoff_confirm_sent)
     {
         return false;
     }
@@ -339,7 +322,7 @@ static bool realityclientCompleteTls13Handoff(tunnel_t *t, line_t *l)
         return false;
     }
 
-    ls = lineGetState(l, t);
+    ls                                 = lineGetState(l, t);
     ls->handoff_completion_in_progress = false;
     return realityclientProcessDownstream(t, l, NULL);
 }
@@ -348,8 +331,7 @@ bool realityclientProcessHandoffDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     realityclient_tstate_t *ts = tunnelGetState(t);
     realityclient_lstate_t *ls = lineGetState(l, t);
-    if (ls->phase != kRealityClientPhaseTls13AwaitAck || ! ls->session_keys_ready ||
-        ! ls->handoff_request_sent)
+    if (ls->phase != kRealityClientPhaseTls13AwaitAck || ! ls->session_keys_ready || ! ls->handoff_request_sent)
     {
         if (buf != NULL)
         {
@@ -384,8 +366,8 @@ bool realityclientProcessHandoffDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
             return ls->phase == kRealityClientPhaseRealityActive;
         }
 
-        sbuf_t *record = NULL;
-        int read_result = realityclientTryReadCompleteTlsRecord(&ls->handoff_stream, &record);
+        sbuf_t *record      = NULL;
+        int     read_result = realityclientTryReadCompleteTlsRecord(&ls->handoff_stream, &record);
         if (read_result == kRealityFrameNeedMore)
         {
             return true;
@@ -398,17 +380,16 @@ bool realityclientProcessHandoffDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
             return false;
         }
 
-        buffer_pool_t *pool = lineGetBufferPool(l);
-        sbuf_t *candidate = sbufDuplicateByPool(pool, record);
+        buffer_pool_t                 *pool      = lineGetBufferPool(l);
+        sbuf_t                        *candidate = sbufDuplicateByPool(pool, record);
         reality_v2_record_descriptor_t ack_descriptor;
-        uint8_t plaintext[kRealityV2ControlMaxInnerPlaintext] = {0};
-        uint32_t payload_offset = 0;
-        uint32_t payload_len = 0;
-        bool ack_decrypted = candidate != NULL &&
-            realityV2BuildRecordDescriptor(kRealityV2Tls13,
-                                           &ls->record_profile,
-                                           kRealityV2RecordKindHandoffAck,
-                                           &ack_descriptor) &&
+        uint8_t                        plaintext[kRealityV2ControlMaxInnerPlaintext] = {0};
+        uint32_t                       payload_offset                                = 0;
+        uint32_t                       payload_len                                   = 0;
+        bool                           ack_decrypted =
+            candidate != NULL &&
+            realityV2BuildRecordDescriptor(
+                kRealityV2Tls13, &ls->record_profile, kRealityV2RecordKindHandoffAck, &ack_descriptor) &&
             realityV2TryDecryptExpectedRecord(&ack_descriptor,
                                               kRealityV2DirectionServerToClient,
                                               ls->s2c_recv_seq,
@@ -430,9 +411,8 @@ bool realityclientProcessHandoffDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (ack_decrypted)
         {
-            bool control_ok = realityV2ParseControl(kRealityV2RecordKindHandoffAck,
-                                                    plaintext + payload_offset,
-                                                    payload_len);
+            bool control_ok =
+                realityV2ParseControl(kRealityV2RecordKindHandoffAck, plaintext + payload_offset, payload_len);
             memoryZero(plaintext, sizeof(plaintext));
             lineReuseBuffer(l, record);
             if (! control_ok || ls->s2c_recv_seq != 0)
@@ -442,7 +422,7 @@ bool realityclientProcessHandoffDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
                 realityclientCloseLineBidirectional(t, l);
                 return false;
             }
-            ls->s2c_recv_seq = 1;
+            ls->s2c_recv_seq              = 1;
             ls->handoff_ack_authenticated = true;
             return realityclientCompleteTls13Handoff(t, l);
         }
@@ -459,8 +439,8 @@ bool realityclientProcessHandoffDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
 
         ls = lineGetState(l, t);
-        if (ls->phase != kRealityClientPhaseTls13AwaitAck || ! ls->session_keys_ready ||
-            ! ls->handoff_request_sent || ls->terminal_closing)
+        if (ls->phase != kRealityClientPhaseTls13AwaitAck || ! ls->session_keys_ready || ! ls->handoff_request_sent ||
+            ls->terminal_closing)
         {
             lineUnlock(l);
             return false;
@@ -504,14 +484,9 @@ bool realityclientEncryptAndSend(tunnel_t *t, line_t *l, sbuf_t *buf)
         while (remaining > 0)
         {
             uint32_t chunk_len = min(remaining, (uint32_t) kRealityV2MaxPlaintextFragment);
-            sbuf_t *frame_buf = NULL;
-            if (! realityclientEncryptFrame(ts,
-                                             ls,
-                                             pool,
-                                             kRealityV2RecordKindApplicationData,
-                                             src,
-                                             chunk_len,
-                                             &frame_buf))
+            sbuf_t  *frame_buf = NULL;
+            if (! realityclientEncryptFrame(
+                    ts, ls, pool, kRealityV2RecordKindApplicationData, src, chunk_len, &frame_buf))
             {
                 LOGW("RealityClient: failed to encrypt payload chunk");
                 bufferpoolReuseBuffer(pool, buf);
@@ -541,13 +516,8 @@ bool realityclientEncryptAndSend(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     buffer_pool_t *pool      = lineGetBufferPool(l);
     sbuf_t        *frame_buf = NULL;
-    if (! realityclientEncryptFrame(ts,
-                                     ls,
-                                     pool,
-                                     kRealityV2RecordKindApplicationData,
-                                     sbufGetRawPtr(buf),
-                                     plaintext_len,
-                                     &frame_buf))
+    if (! realityclientEncryptFrame(
+            ts, ls, pool, kRealityV2RecordKindApplicationData, sbufGetRawPtr(buf), plaintext_len, &frame_buf))
     {
         LOGW("RealityClient: failed to encrypt payload");
         bufferpoolReuseBuffer(pool, buf);
@@ -582,12 +552,9 @@ bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     while (true)
     {
-        sbuf_t                         *frame_buffer = NULL;
+        sbuf_t                        *frame_buffer = NULL;
         reality_v2_record_descriptor_t descriptor;
-        int read_result = realityclientTryReadCompleteFrame(&ls->read_stream,
-                                                             ls,
-                                                             &frame_buffer,
-                                                             &descriptor);
+        int read_result = realityclientTryReadCompleteFrame(&ls->read_stream, ls, &frame_buffer, &descriptor);
 
         if (read_result == kRealityFrameNeedMore)
         {
@@ -610,13 +577,10 @@ bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
         uint8_t *ciphertext     = visible_prefix + descriptor.visible_prefix_len;
 
         reality_v2_record_descriptor_t application_descriptor = {0};
-        bool ambiguous_tls13_kind =
-            descriptor.tls_version == kRealityV2Tls13 &&
-            descriptor.record_kind == kRealityV2RecordKindAlert &&
-            realityV2BuildRecordDescriptor(ls->tls_version,
-                                           &ls->record_profile,
-                                           kRealityV2RecordKindApplicationData,
-                                           &application_descriptor) &&
+        bool                           ambiguous_tls13_kind =
+            descriptor.tls_version == kRealityV2Tls13 && descriptor.record_kind == kRealityV2RecordKindAlert &&
+            realityV2BuildRecordDescriptor(
+                ls->tls_version, &ls->record_profile, kRealityV2RecordKindApplicationData, &application_descriptor) &&
             application_descriptor.outer_content_type == frame[0] &&
             realityV2ValidateDescriptorBodyLength(&application_descriptor, body_len);
         uint8_t encrypted_alert_backup[kRealityV2AlertMessageSize + 1U + kRealityV2TagSize];
@@ -646,7 +610,7 @@ bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
         uint8_t  aad[kRealityV2RecordAadMaxSize];
         size_t   aad_len = 0;
         realityV2BuildNonce(ls->s2c_iv, sequence_number, nonce);
-        bool aad_ok = realityV2BuildRecordAad(&descriptor,
+        bool   aad_ok                   = realityV2BuildRecordAad(&descriptor,
                                               kRealityV2DirectionServerToClient,
                                               sequence_number,
                                               ls->session_id,
@@ -655,23 +619,25 @@ bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
                                               descriptor.visible_prefix_len,
                                               aad,
                                               &aad_len);
-        int decrypt_result = aad_ok ? realityclientDecryptAead(ts->algorithm,
-                                                               ciphertext,
-                                                               ciphertext,
-                                                               ciphertext_len,
-                                                               aad,
-                                                               aad_len,
-                                                               nonce,
-                                                               ls->s2c_key)
-                                    : -1;
+        size_t ciphertext_capacity      = sbufGetMaximumWriteableSize(frame_buffer) - (size_t) (ciphertext - frame);
+        wcrypto_status_t decrypt_result = aad_ok ? realityclientDecryptAead(ts->algorithm,
+                                                                            ciphertext,
+                                                                            ciphertext_capacity,
+                                                                            ciphertext,
+                                                                            ciphertext_len,
+                                                                            aad,
+                                                                            aad_len,
+                                                                            nonce,
+                                                                            ls->s2c_key)
+                                                 : kWCryptoInvalidArgument;
 
-        if (decrypt_result != 0 && ambiguous_tls13_kind)
+        if (ambiguous_tls13_kind && realityV2ShouldRetryAmbiguousTls13Decrypt(decrypt_result))
         {
             memoryCopy(ciphertext, encrypted_alert_backup, ciphertext_len);
             descriptor = application_descriptor;
-            aad_len     = 0;
+            aad_len    = 0;
             memoryZero(aad, sizeof(aad));
-            aad_ok = realityV2BuildRecordAad(&descriptor,
+            aad_ok         = realityV2BuildRecordAad(&descriptor,
                                              kRealityV2DirectionServerToClient,
                                              sequence_number,
                                              ls->session_id,
@@ -682,19 +648,20 @@ bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
                                              &aad_len);
             decrypt_result = aad_ok ? realityclientDecryptAead(ts->algorithm,
                                                                ciphertext,
+                                                               ciphertext_capacity,
                                                                ciphertext,
                                                                ciphertext_len,
                                                                aad,
                                                                aad_len,
                                                                nonce,
                                                                ls->s2c_key)
-                                    : -1;
+                                    : kWCryptoInvalidArgument;
         }
         memoryZero(nonce, sizeof(nonce));
         memoryZero(aad, sizeof(aad));
         memoryZero(encrypted_alert_backup, sizeof(encrypted_alert_backup));
 
-        if (decrypt_result != 0)
+        if (decrypt_result != kWCryptoOk)
         {
             LOGW("RealityClient: failed to decrypt Reality record");
             lineReuseBuffer(l, frame_buffer);
@@ -706,11 +673,8 @@ bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
         uint32_t inner_plaintext_len = ciphertext_len - kRealityClientTagSize;
         uint32_t inner_payload_offset;
         uint32_t payload_len;
-        if (! realityV2ValidateInnerPlaintext(&descriptor,
-                                              ciphertext,
-                                              inner_plaintext_len,
-                                              &inner_payload_offset,
-                                              &payload_len))
+        if (! realityV2ValidateInnerPlaintext(
+                &descriptor, ciphertext, inner_plaintext_len, &inner_payload_offset, &payload_len))
         {
             LOGW("RealityClient: invalid Reality inner record");
             lineReuseBuffer(l, frame_buffer);
@@ -722,7 +686,7 @@ bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (descriptor.record_kind == kRealityV2RecordKindAlert)
         {
             uint8_t alert;
-            bool alert_ok = realityV2ParseAlert(ciphertext + inner_payload_offset, payload_len, &alert);
+            bool    alert_ok = realityV2ParseAlert(ciphertext + inner_payload_offset, payload_len, &alert);
             if (! alert_ok)
             {
                 LOGW("RealityClient: invalid authenticated Reality alert");
@@ -738,9 +702,8 @@ bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
             return false;
         }
 
-        ls->s2c_recv_seq = sequence_number + 1;
-        uint32_t payload_offset = kRealityClientTlsHeaderSize + descriptor.visible_prefix_len +
-                                  inner_payload_offset;
+        ls->s2c_recv_seq        = sequence_number + 1;
+        uint32_t payload_offset = kRealityClientTlsHeaderSize + descriptor.visible_prefix_len + inner_payload_offset;
         sbufShiftRight(frame_buffer, payload_offset);
         sbufSetLength(frame_buffer, payload_len);
 
@@ -778,38 +741,38 @@ void realityclientTunnelstateDestroy(realityclient_tstate_t *ts)
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }
 
-int realityclientEncryptAead(uint32_t algorithm, unsigned char *dst, const unsigned char *src, size_t src_len,
-                             const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
-                             const unsigned char *key)
+wcrypto_status_t realityclientEncryptAead(uint32_t algorithm, unsigned char *dst, size_t dst_capacity,
+                                          const unsigned char *src, size_t src_len, const unsigned char *ad,
+                                          size_t ad_len, const unsigned char *nonce, const unsigned char *key)
 {
     if (algorithm == kRealityClientAlgorithmChaCha20Poly1305)
     {
-        return chacha20poly1305Encrypt(dst, src, src_len, ad, ad_len, nonce, key);
+        return wCryptoChaCha20Poly1305Encrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key);
     }
 
     if (algorithm == kRealityClientAlgorithmAes256Gcm)
     {
-        return aes256gcmEncrypt(dst, src, src_len, ad, ad_len, nonce, key);
+        return wCryptoAes256GcmEncrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key);
     }
 
-    return -1;
+    return kWCryptoUnavailable;
 }
 
-int realityclientDecryptAead(uint32_t algorithm, unsigned char *dst, const unsigned char *src, size_t src_len,
-                             const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
-                             const unsigned char *key)
+wcrypto_status_t realityclientDecryptAead(uint32_t algorithm, unsigned char *dst, size_t dst_capacity,
+                                          const unsigned char *src, size_t src_len, const unsigned char *ad,
+                                          size_t ad_len, const unsigned char *nonce, const unsigned char *key)
 {
     if (algorithm == kRealityClientAlgorithmChaCha20Poly1305)
     {
-        return chacha20poly1305Decrypt(dst, src, src_len, ad, ad_len, nonce, key);
+        return wCryptoChaCha20Poly1305Decrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key);
     }
 
     if (algorithm == kRealityClientAlgorithmAes256Gcm)
     {
-        return aes256gcmDecrypt(dst, src, src_len, ad, ad_len, nonce, key);
+        return wCryptoAes256GcmDecrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key);
     }
 
-    return -1;
+    return kWCryptoUnavailable;
 }
 
 void realityclientCloseLineBidirectional(tunnel_t *t, line_t *l)
@@ -827,10 +790,10 @@ void realityclientCloseLineBidirectional(tunnel_t *t, line_t *l)
         return;
     }
 
-    bool close_next = ! ls->next_finished;
-    bool close_prev = ! ls->prev_finished;
+    bool close_next      = ! ls->next_finished;
+    bool close_prev      = ! ls->prev_finished;
     ls->terminal_closing = true;
-    ls->phase = kRealityClientPhaseTerminal;
+    ls->phase            = kRealityClientPhaseTerminal;
     realityclientLinestateDestroy(ls);
 
     if (close_next)
@@ -873,7 +836,7 @@ static void realityclientFinishFromSide(tunnel_t *t, line_t *l, bool received_pr
     }
 
     ls->terminal_closing = true;
-    ls->phase = kRealityClientPhaseTerminal;
+    ls->phase            = kRealityClientPhaseTerminal;
     realityclientLinestateDestroy(ls);
 
     if (received_prev_finish)
@@ -903,20 +866,20 @@ static void realityclientSendFatalAndClose(tunnel_t *t, line_t *l)
     }
 
     ls->terminal_closing = true;
-    ls->phase = kRealityClientPhaseTerminal;
+    ls->phase            = kRealityClientPhaseTerminal;
 
     if (ls->session_keys_ready && ! ls->next_finished && ! ls->wire_alert_sent)
     {
         uint8_t alert_bytes[kRealityV2AlertMessageSize];
         sbuf_t *frame = NULL;
-        bool built = realityV2SerializeAlert(kRealityV2AlertBadRecordMac, alert_bytes) &&
+        bool    built = realityV2SerializeAlert(kRealityV2AlertBadRecordMac, alert_bytes) &&
                      realityclientEncryptFrame(tunnelGetState(t),
-                                                ls,
-                                                lineGetBufferPool(l),
-                                                kRealityV2RecordKindAlert,
-                                                alert_bytes,
-                                                sizeof(alert_bytes),
-                                                &frame);
+                                               ls,
+                                               lineGetBufferPool(l),
+                                               kRealityV2RecordKindAlert,
+                                               alert_bytes,
+                                               sizeof(alert_bytes),
+                                               &frame);
         memoryZero(alert_bytes, sizeof(alert_bytes));
         if (built)
         {

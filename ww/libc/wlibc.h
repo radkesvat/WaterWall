@@ -29,6 +29,60 @@ bool           isApplicationTerminating(void);  // in signal_manager.c
 #define c_realloc(ptr, old_sz, sz) memoryReAllocate(ptr, (size_t) (sz))
 #define c_free(ptr, sz)            memoryFree(ptr)
 
+/*
+ * Clear sensitive memory without allowing the compiler to remove the stores.
+ * Prefer an optimized platform/libc primitive.  The compiler-barrier fallback
+ * lets memset retain its normal vectorized implementation while making the
+ * cleared storage observable to the optimizer.  The volatile loop is reserved
+ * for compilers without either facility.
+ */
+static inline void memorySecureZero(void *dest, size_t len)
+{
+    if (len == 0)
+    {
+        return;
+    }
+
+#if defined(OS_WIN)
+    SecureZeroMemory(dest, len);
+#elif defined(HAVE_MEMSET_EXPLICIT) && HAVE_MEMSET_EXPLICIT
+    (void) memset_explicit(dest, 0, len);
+#elif defined(HAVE_EXPLICIT_BZERO) && HAVE_EXPLICIT_BZERO
+    explicit_bzero(dest, len);
+#elif defined(__GNUC__) || defined(__clang__)
+    memset(dest, 0, len);
+    __asm__ __volatile__("" : : "r"(dest) : "memory");
+#else
+    volatile unsigned char *p = (volatile unsigned char *) dest;
+    while (len-- > 0)
+    {
+        *p++ = 0;
+    }
+#endif
+}
+
+/* Compare contents without making the execution path depend on their values. */
+static inline bool memorySecureEqual(const void *a, const void *b, size_t len)
+{
+    if (len == 0)
+    {
+        return true;
+    }
+
+#if defined(HAVE_TIMINGSAFE_BCMP) && HAVE_TIMINGSAFE_BCMP
+    return timingsafe_bcmp(a, b, len) == 0;
+#else
+    const unsigned char   *p1   = (const unsigned char *) a;
+    const unsigned char   *p2   = (const unsigned char *) b;
+    volatile unsigned char diff = 0;
+    for (size_t i = 0; i < len; ++i)
+    {
+        diff = (unsigned char) (diff | (unsigned char) (p1[i] ^ p2[i]));
+    }
+    return diff == 0;
+#endif
+}
+
 #ifdef DEBUG
 static inline void debugAssertZeroBuf(void *buf, size_t size)
 {

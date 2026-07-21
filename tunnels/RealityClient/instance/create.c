@@ -47,8 +47,7 @@ static bool parseAlgorithmFromSettings(const cJSON *settings, uint32_t *algorith
         return false;
     }
 
-    if (stricmp(item->valuestring, "chacha20poly1305") == 0 ||
-        stricmp(item->valuestring, "chacha20-poly1305") == 0)
+    if (stricmp(item->valuestring, "chacha20poly1305") == 0 || stricmp(item->valuestring, "chacha20-poly1305") == 0)
     {
         *algorithm = kRealityClientAlgorithmChaCha20Poly1305;
         return true;
@@ -95,8 +94,8 @@ static bool initializeInternalTlsClient(tunnel_t *t, node_t *node)
         return false;
     }
 
-    ts->tls_node                     = nodeTlsClientGet();
-    ts->tls_node.name                = nodeMakeChildName(node, ".internal-tls-client");
+    ts->tls_node      = nodeTlsClientGet();
+    ts->tls_node.name = nodeMakeChildName(node, ".internal-tls-client");
     if (ts->tls_node.name == NULL)
     {
         LOGF("RealityClient: failed to configure internal TlsClient node");
@@ -122,11 +121,11 @@ static bool initializeInternalTlsClient(tunnel_t *t, node_t *node)
 
 static bool realityclientTunnelstateInitialize(tunnel_t *t, node_t *node)
 {
-    realityclient_tstate_t *ts             = tunnelGetState(t);
-    const cJSON            *settings       = node->node_settings_json;
-    char                   *password       = NULL;
-    char                   *salt           = NULL;
-    bool                    result         = false;
+    realityclient_tstate_t *ts       = tunnelGetState(t);
+    const cJSON            *settings = node->node_settings_json;
+    char                   *password = NULL;
+    char                   *salt     = NULL;
+    bool                    result   = false;
 
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 
@@ -167,8 +166,7 @@ static bool realityclientTunnelstateInitialize(tunnel_t *t, node_t *node)
         salt = stringDuplicate("waterwall-reality");
     }
     else if (! getStringFromJsonObject(&salt, settings, "salt") ||
-             stringLength(salt) < kRealityV2MinCredentialByteLength ||
-             stringLength(salt) > kRealityV2MaxSaltByteLength)
+             stringLength(salt) < kRealityV2MinCredentialByteLength || stringLength(salt) > kRealityV2MaxSaltByteLength)
     {
         LOGF("RealityClient: 'salt' must contain 1..32 bytes");
         goto cleanup;
@@ -179,7 +177,7 @@ static bool realityclientTunnelstateInitialize(tunnel_t *t, node_t *node)
         goto cleanup;
     }
 
-    if (ts->algorithm == kRealityClientAlgorithmAes256Gcm && ! aes256gcmIsAvailable())
+    if (ts->algorithm == kRealityClientAlgorithmAes256Gcm && ! wCryptoAes256GcmIsAvailable())
     {
         LOGF("RealityClient: AES-GCM selected but it is unavailable in the active crypto backend");
         goto cleanup;

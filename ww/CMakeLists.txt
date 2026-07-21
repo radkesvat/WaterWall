@@ -209,6 +209,9 @@ check_header("immintrin.h")
 check_function("ftruncate" "unistd.h")
 check_function("gettid" "unistd.h")
 check_function("memset" "string.h")
+check_function("memset_explicit" "string.h")
+check_function("explicit_bzero" "string.h")
+check_function("timingsafe_bcmp" "string.h")
 check_function("socket" "sys/socket.h")
 check_function("strlcpy" "string.h")
 check_function("strlcat" "string.h")
@@ -418,11 +421,23 @@ if(WCRYPTO_BACKEND_OPENSSL)
     set(PROJECT_REQUIRES_OPENSSL TRUE CACHE INTERNAL "if any of the tunnels that require openssl is included, this will be set to true" FORCE)
 endif()
 
+set(WCRYPTO_OPENSSL_RUNTIME_REQUIRED ${PROJECT_REQUIRES_OPENSSL})
+
+configure_file(
+    crypto/private/crypto_config.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/private/crypto_config.h
+)
+target_include_directories(ww PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+
 target_sources(ww PRIVATE
     crypto/aes256gcm.c
     crypto/blake2s.c
     crypto/chacha20poly1305.c
+    crypto/compare.c
+    crypto/crypto_validation.c
+    crypto/global.c
     crypto/hash.c
+    crypto/status.c
     crypto/x25519.c
     crypto/xchacha20poly1305.c
     crypto/impl_software/aes256gcm.c
@@ -436,16 +451,6 @@ target_sources(ww PRIVATE
     crypto/impl_software/sha2.c
     crypto/impl_software/x25519.c
 )
-target_compile_definitions(ww PUBLIC
-    WCRYPTO_BACKEND_SOFTWARE=1
-    WCRYPTO_HAS_SOFTWARE_AES256GCM=1
-    WCRYPTO_HAS_SOFTWARE_BLAKE2S=1
-    WCRYPTO_HAS_SOFTWARE_CHACHA20POLY1305=1
-    WCRYPTO_HAS_SOFTWARE_HASH=1
-    WCRYPTO_HAS_SOFTWARE_X25519=1
-    WCRYPTO_HAS_SOFTWARE_XCHACHA20POLY1305=1
-)
-
 if(WCRYPTO_BACKEND_SODIUM)
     target_sources(ww PRIVATE
         crypto/sodium_instance.c
@@ -455,33 +460,55 @@ if(WCRYPTO_BACKEND_SODIUM)
         crypto/impl_sodium/xchacha20poly1305.c
         crypto/impl_sodium/x25519.c
     )
-    target_compile_definitions(ww PUBLIC
-        WCRYPTO_BACKEND_SODIUM=1
-        WCRYPTO_HAS_SODIUM_AES256GCM=1
-        WCRYPTO_HAS_SODIUM_CHACHA20POLY1305=1
-        WCRYPTO_HAS_SODIUM_HASH=1
-        WCRYPTO_HAS_SODIUM_X25519=1
-        WCRYPTO_HAS_SODIUM_XCHACHA20POLY1305=1
-    )
 endif()
 
 if(WCRYPTO_BACKEND_OPENSSL)
     target_sources(ww PRIVATE
-        crypto/imp_openssl/aes256gcm.c
-        crypto/imp_openssl/blake2s.c
-        crypto/imp_openssl/chacha20poly1305.c
-        crypto/imp_openssl/hash.c
-        crypto/imp_openssl/xchacha20poly1305.c
-        crypto/imp_openssl/x25519.c
+        crypto/impl_openssl/aes256gcm.c
+        crypto/impl_openssl/blake2s.c
+        crypto/impl_openssl/chacha20poly1305.c
+        crypto/impl_openssl/hash.c
+        crypto/impl_openssl/xchacha20poly1305.c
+        crypto/impl_openssl/x25519.c
     )
-    target_compile_definitions(ww PUBLIC
-        WCRYPTO_BACKEND_OPENSSL=1
-        WCRYPTO_HAS_OPENSSL_AES256GCM=1
-        WCRYPTO_HAS_OPENSSL_BLAKE2S=1
-        WCRYPTO_HAS_OPENSSL_CHACHA20POLY1305=1
-        WCRYPTO_HAS_OPENSSL_HASH=1
-        WCRYPTO_HAS_OPENSSL_X25519=1
-        WCRYPTO_HAS_OPENSSL_XCHACHA20POLY1305=1
+endif()
+
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    set_source_files_properties(
+        crypto/aes256gcm.c
+        crypto/blake2s.c
+        crypto/chacha20poly1305.c
+        crypto/compare.c
+        crypto/crypto_validation.c
+        crypto/global.c
+        crypto/hash.c
+        crypto/status.c
+        crypto/x25519.c
+        crypto/xchacha20poly1305.c
+        crypto/impl_software/aes256gcm.c
+        crypto/impl_software/blake2s.c
+        crypto/impl_software/chacha20.c
+        crypto/impl_software/chacha20poly1305.c
+        crypto/impl_software/hash_md5_sha1.c
+        crypto/impl_software/hash_sha2.c
+        crypto/impl_software/poly1305.c
+        crypto/impl_software/poly1305-donna.c
+        crypto/impl_software/sha2.c
+        crypto/impl_software/x25519.c
+        crypto/sodium_instance.c
+        crypto/impl_sodium/aes256gcm.c
+        crypto/impl_sodium/chacha20poly1305.c
+        crypto/impl_sodium/hash.c
+        crypto/impl_sodium/xchacha20poly1305.c
+        crypto/impl_sodium/x25519.c
+        crypto/openssl_instance.c
+        crypto/impl_openssl/aes256gcm.c
+        crypto/impl_openssl/blake2s.c
+        crypto/impl_openssl/chacha20poly1305.c
+        crypto/impl_openssl/hash.c
+        crypto/impl_openssl/xchacha20poly1305.c
+        crypto/impl_openssl/x25519.c
+        PROPERTIES COMPILE_OPTIONS "-Wconversion;-Wsign-conversion"
     )
 endif()
 
@@ -879,6 +906,41 @@ if(PROJECT_REQUIRES_OPENSSL)
         message(FATAL_ERROR "OpenSSL backend is enabled, but OpenSSL::SSL/OpenSSL::Crypto were not created")
     endif()
 
+    # openssl-cmake's Makefile parser in some rolling `main` revisions loses
+    # both archive paths when it is embedded as a subproject.  Keep fresh
+    # backend-matrix build trees usable while the dependency remains unpinned.
+    get_target_property(WW_OPENSSL_SSL_LOCATION OpenSSL::SSL IMPORTED_LOCATION)
+    if(UNIX AND (NOT WW_OPENSSL_SSL_LOCATION OR
+                 WW_OPENSSL_SSL_LOCATION MATCHES "-NOTFOUND$"))
+        set(WW_OPENSSL_BUILD_DIR "${CMAKE_BINARY_DIR}/_deps/openssl-source-build")
+        set(OPENSSL_CRYPTO_LIBRARY
+            "${WW_OPENSSL_BUILD_DIR}/${CMAKE_STATIC_LIBRARY_PREFIX}crypto${CMAKE_STATIC_LIBRARY_SUFFIX}"
+            CACHE STRING "Override FindOpenSSL variables" FORCE)
+        set(OPENSSL_SSL_LIBRARY
+            "${WW_OPENSSL_BUILD_DIR}/${CMAKE_STATIC_LIBRARY_PREFIX}ssl${CMAKE_STATIC_LIBRARY_SUFFIX}"
+            CACHE STRING "Override FindOpenSSL variables" FORCE)
+        set_target_properties(OpenSSL::Crypto PROPERTIES
+            IMPORTED_LOCATION "${OPENSSL_CRYPTO_LIBRARY}"
+        )
+        set_target_properties(OpenSSL::SSL PROPERTIES
+            IMPORTED_LOCATION "${OPENSSL_SSL_LIBRARY}"
+        )
+
+        find_program(WW_OPENSSL_MAKE_EXECUTABLE NAMES gmake make REQUIRED)
+        add_custom_command(
+            OUTPUT "${OPENSSL_CRYPTO_LIBRARY}"
+            COMMAND "${WW_OPENSSL_MAKE_EXECUTABLE}" -j4 build_libs
+            WORKING_DIRECTORY "${WW_OPENSSL_BUILD_DIR}"
+            VERBATIM
+        )
+        add_custom_target(ww-openssl-build-workaround
+            DEPENDS "${OPENSSL_CRYPTO_LIBRARY}"
+        )
+        add_dependencies(ww-openssl-build-workaround openssl-build)
+        add_dependencies(OpenSSL::Crypto ww-openssl-build-workaround)
+        add_dependencies(OpenSSL::SSL ww-openssl-build-workaround)
+    endif()
+
     list(APPEND LIBS OpenSSL::SSL OpenSSL::Crypto)
     if(TARGET OpenSSL::applink)
         list(APPEND LIBS OpenSSL::applink)
@@ -887,8 +949,6 @@ if(PROJECT_REQUIRES_OPENSSL)
     target_sources(ww PRIVATE 
         crypto/openssl_instance.c
     )
-    target_compile_definitions(ww PUBLIC WCRYPTO_USING_OPENSSL=1)
-    
 endif()
 
 # libuuid library
@@ -1260,6 +1320,11 @@ set_source_files_properties(
     devices/raw/raw_windows.c
     devices/capture/capture_windows.c
     base/wlsem.c
+    # Failure-injection tests compile these sources directly. Keep their
+    # production objects separate so extracting ww's Unity object does not
+    # define the same symbols a second time.
+    instance/global_state.c
+    objects/user.c
     PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
 )
 

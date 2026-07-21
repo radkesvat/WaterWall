@@ -1,18 +1,7 @@
 #include "private/crypto_backends.h"
-#include "wlibc.h"
+#include "private/crypto_validation.h"
 
 #include "sha2.h"
-
-static int softwareSHA2HashValidateInput(const void *out, const unsigned char *in, size_t inlen)
-{
-    if (! out || (! in && inlen > 0))
-    {
-        printError("Invalid input for software crypto hash function.\n");
-        return -1;
-    }
-
-    return 0;
-}
 
 static const unsigned char *softwareSHA2HashNormalizeInput(const unsigned char *in)
 {
@@ -20,24 +9,66 @@ static const unsigned char *softwareSHA2HashNormalizeInput(const unsigned char *
     return in ? in : &empty_input;
 }
 
-int wCryptoSoftwareSHA224(sha224_hash_t *out, const unsigned char *in, size_t inlen)
+wcrypto_status_t wCryptoSoftwareSHA224(sha224_hash_t *out, const unsigned char *in, size_t inlen)
 {
-    if (softwareSHA2HashValidateInput(out, in, inlen) != 0)
+    wcrypto_status_t status = wCryptoValidateHash(out, in, inlen);
+    if (status != kWCryptoOk)
     {
-        return -1;
+        if (out != NULL)
+        {
+            wCryptoZero(out, sizeof(*out));
+        }
+        return status;
     }
 
     sha224(softwareSHA2HashNormalizeInput(in), (sha2_uint64) inlen, out->bytes);
-    return 0;
+    return kWCryptoOk;
 }
 
-int wCryptoSoftwareSHA256(sha256_hash_t *out, const unsigned char *in, size_t inlen)
+wcrypto_status_t wCryptoSoftwareSHA256(sha256_hash_t *out, const unsigned char *in, size_t inlen)
 {
-    if (softwareSHA2HashValidateInput(out, in, inlen) != 0)
+    wcrypto_status_t status = wCryptoValidateHash(out, in, inlen);
+    if (status != kWCryptoOk)
     {
-        return -1;
+        if (out != NULL)
+        {
+            wCryptoZero(out, sizeof(*out));
+        }
+        return status;
     }
 
     sha256(softwareSHA2HashNormalizeInput(in), (sha2_uint64) inlen, out->bytes);
-    return 0;
+    return kWCryptoOk;
+}
+
+wcrypto_status_t wCryptoSoftwareSHA384(sha384_hash_t *out, const unsigned char *in, size_t inlen)
+{
+    wcrypto_status_t status = wCryptoValidateHash(out, in, inlen);
+    if (status != kWCryptoOk)
+    {
+        if (out != NULL)
+        {
+            wCryptoZero(out, sizeof(*out));
+        }
+        return status;
+    }
+
+    sha384(softwareSHA2HashNormalizeInput(in), (sha2_uint64) inlen, out->bytes);
+    return kWCryptoOk;
+}
+
+wcrypto_status_t wCryptoSoftwareSHA512(sha512_hash_t *out, const unsigned char *in, size_t inlen)
+{
+    wcrypto_status_t status = wCryptoValidateHash(out, in, inlen);
+    if (status != kWCryptoOk)
+    {
+        if (out != NULL)
+        {
+            wCryptoZero(out, sizeof(*out));
+        }
+        return status;
+    }
+
+    sha512(softwareSHA2HashNormalizeInput(in), (sha2_uint64) inlen, out->bytes);
+    return kWCryptoOk;
 }

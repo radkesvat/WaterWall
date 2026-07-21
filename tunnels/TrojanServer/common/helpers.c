@@ -249,8 +249,8 @@ static bool trojanserverAuthenticateHash(tunnel_t *t, line_t *l, const uint8_t s
 
     if (ts->auth_client_tunnel == NULL)
     {
-        trojanserver_lstate_t      *ls      = lineGetState(l, t);
-        const trojanserver_user_t  *matched = NULL;
+        trojanserver_lstate_t     *ls      = lineGetState(l, t);
+        const trojanserver_user_t *matched = NULL;
 
         for (uint32_t i = 0; i < ts->user_count; ++i)
         {
@@ -523,11 +523,11 @@ static void trojanserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
     if (trojanserverFallbackPendingCount(ls) > 0 && ! ls->fallback_delay_scheduled)
     {
         ls->fallback_delay_scheduled = true;
-        lineScheduleDelayedTask(l,
-                                trojanserverDelayedFallbackPayloadTask,
-                                fastRandJittered32(ts->fallback_intentional_delay_ms,
-                                                   ts->fallback_intentional_delay_jitter_ms),
-                                t);
+        lineScheduleDelayedTask(
+            l,
+            trojanserverDelayedFallbackPayloadTask,
+            fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
+            t);
         return;
     }
 
@@ -537,7 +537,7 @@ static void trojanserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
 bool trojanserverSendFallbackPayload(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls, sbuf_t *buf)
 {
     trojanserver_tstate_t *ts       = tunnelGetState(t);
-    tunnel_t             *fallback = trojanserverSelectedUpstream(t, ls);
+    tunnel_t              *fallback = trojanserverSelectedUpstream(t, ls);
 
     if (fallback == NULL || ls->branch != kTrojanServerBranchFallback || ls->fallback_up_finished ||
         ls->fallback_up_finish_pending)
@@ -566,11 +566,11 @@ bool trojanserverSendFallbackPayload(tunnel_t *t, line_t *l, trojanserver_lstate
     if (! ls->fallback_delay_scheduled)
     {
         ls->fallback_delay_scheduled = true;
-        lineScheduleDelayedTask(l,
-                                trojanserverDelayedFallbackPayloadTask,
-                                fastRandJittered32(ts->fallback_intentional_delay_ms,
-                                                   ts->fallback_intentional_delay_jitter_ms),
-                                t);
+        lineScheduleDelayedTask(
+            l,
+            trojanserverDelayedFallbackPayloadTask,
+            fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
+            t);
     }
 
     return true;
@@ -860,8 +860,7 @@ static bool trojanserverHandleInitialRequest(tunnel_t *t, line_t *l, trojanserve
             // Not verbose-gated by design: a split credential in the very first payload is a
             // probe-resistance/hardening signal we always surface, unlike the per-attempt
             // auth-failure logs (see description.md).
-            LOGW("TrojanServer: rejected segmented password authentication on worker %u",
-                 (unsigned int) lineGetWID(l));
+            LOGW("TrojanServer: rejected segmented password authentication on worker %u", (unsigned int) lineGetWID(l));
             return trojanserverStartFallback(t, l, ls);
         }
         return true;
@@ -869,7 +868,7 @@ static bool trojanserverHandleInitialRequest(tunnel_t *t, line_t *l, trojanserve
 
     if (! trojanserverLineAuthenticated(ls))
     {
-        uint8_t sha224[SHA224_DIGEST_SIZE] = {0};
+        uint8_t sha224[SHA224_DIGEST_SIZE]                = {0};
         uint8_t password_hex[kTrojanServerPasswordHexLen] = {0};
         bufferstreamViewBytesAt(&ls->in_stream, 0, password_hex, sizeof(password_hex));
         if (UNLIKELY(! trojanserverDecodeSha224Hex(password_hex, sha224)))

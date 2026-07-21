@@ -1,14 +1,12 @@
 #include "openssl_instance.h"
 #include "global_state.h"
-#include "utils/cacert.h"
 #include "loggers/internal_logger.h"
 #include "managers/memory_manager.h"
+#include "utils/cacert.h"
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
-
-
 
 static void *opennsl_dedicated_malloc(size_t num, const char *file, int line)
 {
@@ -31,43 +29,56 @@ static void opennsl_dedicated_free(void *addr, const char *file, int line)
     memoryDedicatedFree(GSTATE.openssl_dedicated_memory, addr);
 }
 
-void opensslGlobalInit(void)
+static void opensslRuntimeCleanup(void)
 {
-    if (GSTATE.flag_openssl_initialized == 0)
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+    OPENSSL_cleanup();
+#else
+    ERR_free_strings();
+    EVP_cleanup();
+    CRYPTO_cleanup_all_ex_data();
+#endif
+}
+
+wcrypto_status_t opensslGlobalInit(void)
+{
+    if (GSTATE.flag_openssl_initialized != 0)
     {
-        // #if OPENSSL_VERSION_NUMBER < 0x10100000L
-        //         SSL_library_init();
-        //         SSL_load_error_strings();
-        // #else
-        //         OPENSSL_init_ssl(OPENSSL_INIT_SSL_DEFAULT, NULL);
-        // #endif
-        GSTATE.openssl_dedicated_memory = memorymanagerCreateDedicatedMemory();
-        if (0 == CRYPTO_set_mem_functions(opennsl_dedicated_malloc, opennsl_dedicated_realloc, opennsl_dedicated_free))
-        {
-            LOGF("OpenSSl Global: could not swap openssl allocators (almost always because allocations have already "
-                 "happened)");
-            terminateProgram(1);
-        }
+        return kWCryptoOk;
+    }
+
+    GSTATE.openssl_dedicated_memory = memorymanagerCreateDedicatedMemory();
+    if (0 == CRYPTO_set_mem_functions(opennsl_dedicated_malloc, opennsl_dedicated_realloc, opennsl_dedicated_free))
+    {
+        GSTATE.openssl_dedicated_memory = NULL;
+        return kWCryptoBackendFailed;
+    }
 
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
-        uint64_t init_flags = OPENSSL_INIT_SSL_DEFAULT | OPENSSL_INIT_ADD_ALL_CIPHERS | OPENSSL_INIT_ADD_ALL_DIGESTS |
-                              OPENSSL_INIT_NO_ATEXIT;
-        if (OPENSSL_init_ssl(init_flags, NULL) != 1)
-        {
-            LOGF("OpenSSL Global: OpenSSL initialization failed");
-            terminateProgram(1);
-        }
-#else
-        SSL_library_init();
-        OpenSSL_add_all_algorithms();
-        SSL_load_error_strings();
-        ERR_load_crypto_strings();
-#if OPENSSL_VERSION_MAJOR < 3
-        ERR_load_BIO_strings(); // deprecated since OpenSSL 3.0
-#endif
-#endif
-        GSTATE.flag_openssl_initialized = 1;
+    uint64_t init_flags =
+        OPENSSL_INIT_SSL_DEFAULT | OPENSSL_INIT_ADD_ALL_CIPHERS | OPENSSL_INIT_ADD_ALL_DIGESTS | OPENSSL_INIT_NO_ATEXIT;
+    if (OPENSSL_init_ssl(init_flags, NULL) != 1)
+    {
+        opensslRuntimeCleanup();
+        GSTATE.openssl_dedicated_memory = NULL;
+        return kWCryptoBackendFailed;
     }
+#else
+    if (SSL_library_init() != 1)
+    {
+        opensslRuntimeCleanup();
+        GSTATE.openssl_dedicated_memory = NULL;
+        return kWCryptoBackendFailed;
+    }
+    OpenSSL_add_all_algorithms();
+    SSL_load_error_strings();
+    ERR_load_crypto_strings();
+#if OPENSSL_VERSION_MAJOR < 3
+    ERR_load_BIO_strings(); // deprecated since OpenSSL 3.0
+#endif
+#endif
+    GSTATE.flag_openssl_initialized = 1;
+    return kWCryptoOk;
 }
 
 void opensslGlobalCleanup(void)
@@ -77,18 +88,11 @@ void opensslGlobalCleanup(void)
         return;
     }
 
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
-    OPENSSL_cleanup();
-#else
-    ERR_free_strings();
-    EVP_cleanup();
-    CRYPTO_cleanup_all_ex_data();
-#endif
+    opensslRuntimeCleanup();
 
     GSTATE.flag_openssl_initialized = 0;
     GSTATE.openssl_dedicated_memory = NULL;
 }
-
 
 typedef void *ssl_ctx_t; ///> SSL_CTX
 
@@ -170,7 +174,7 @@ ssl_ctx_t sslCtxNew(ssl_ctx_opt_t *param)
         int  n   = BIO_write(bio, cacert_bytes, (int) cacert_len);
         assert(n == (int) cacert_len);
         discard n;
-        X509 *x = NULL;
+        X509   *x = NULL;
         while (true)
         {
             x = PEM_read_bio_X509_AUX(bio, NULL, NULL, NULL);
@@ -209,11 +213,12 @@ void printSSLError(void)
 {
     BIO *bio = BIO_new(BIO_s_mem());
     ERR_print_errors(bio);
-    char  *buf = NULL;
-    size_t len = BIO_get_mem_data(bio, &buf);
-    if (len > 0)
+    char *buf     = NULL;
+    long  bio_len = BIO_get_mem_data(bio, &buf);
+    if (bio_len > 0)
     {
-        LOGE("%.*s", len, buf);
+        int print_len = bio_len > INT_MAX ? INT_MAX : (int) bio_len;
+        LOGE("%.*s", print_len, buf);
     }
     BIO_free(bio);
 }

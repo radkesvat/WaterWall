@@ -65,12 +65,12 @@ static void domainresolverLogResolved(const char *domain, const address_context_
 
     sockaddr_u resolved_addr = addresscontextToSockAddr(dest_ctx);
     char       ip[SOCKADDR_STRLEN];
-    loggerPrint(getDnsLogger(), LOG_LEVEL_DEBUG, "DomainResolver: %s resolved to %s", domain,
-                SOCKADDR_STR(&resolved_addr, ip));
+    loggerPrint(
+        getDnsLogger(), LOG_LEVEL_DEBUG, "DomainResolver: %s resolved to %s", domain, SOCKADDR_STR(&resolved_addr, ip));
 }
 
 static enum domain_strategy domainresolverStrategyForLine(const domainresolver_tstate_t *ts,
-                                                          const address_context_t *dest_ctx)
+                                                          const address_context_t       *dest_ctx)
 {
     return ts->use_line_strategy ? dest_ctx->domain_strategy : ts->strategy;
 }
@@ -86,15 +86,18 @@ static void domainresolverOnDnsResolved(tunnel_t *t, line_t *l, void *userdata, 
         return;
     }
 
-    domainresolver_tstate_t  *ts        = tunnelGetState(t);
+    domainresolver_tstate_t   *ts        = tunnelGetState(t);
     domainresolver_direction_t direction = ls->init_direction;
-    address_context_t        *dest_ctx  = lineGetDestinationAddressContext(l);
-    char                      domain_buf[256];
-    const char               *domain    = domainresolverCopyDomainForLog(dest_ctx, domain_buf);
+    address_context_t         *dest_ctx  = lineGetDestinationAddressContext(l);
+    char                       domain_buf[256];
+    const char                *domain = domainresolverCopyDomainForLog(dest_ctx, domain_buf);
 
     if (status != ARES_SUCCESS || naddrs == 0)
     {
-        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "DomainResolver: async dns resolve failed for %s: %s", domain,
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "DomainResolver: async dns resolve failed for %s: %s",
+                    domain,
                     error != NULL ? error : ares_strerror(status));
         domainresolverCloseBeforeInit(t, l, direction);
         return;
@@ -104,8 +107,10 @@ static void domainresolverOnDnsResolved(tunnel_t *t, line_t *l, void *userdata, 
         dnsstrategySelectResolvedAddress(addrs, naddrs, domainresolverStrategyForLine(ts, dest_ctx));
     if (UNLIKELY(! dnsstrategyApplyResolvedAddress(dest_ctx, selected)))
     {
-        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR,
-                    "DomainResolver: async dns resolve returned no usable address for %s", domain);
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "DomainResolver: async dns resolve returned no usable address for %s",
+                    domain);
         domainresolverCloseBeforeInit(t, l, direction);
         return;
     }
@@ -133,7 +138,7 @@ bool domainresolverStartResolveIfNeeded(tunnel_t *t, line_t *l, domainresolver_l
                                         domainresolver_direction_t direction, bool *started_out)
 {
     domainresolver_tstate_t *ts       = tunnelGetState(t);
-    address_context_t      *dest_ctx = lineGetDestinationAddressContext(l);
+    address_context_t       *dest_ctx = lineGetDestinationAddressContext(l);
 
     *started_out = false;
 
@@ -177,8 +182,11 @@ bool domainresolverStartResolveIfNeeded(tunnel_t *t, line_t *l, domainresolver_l
         *started_out       = false;
         ls->phase          = kDomainResolverPhaseIdle;
         ls->init_direction = kDomainResolverDirectionNone;
-        loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "DomainResolver: failed to start async dns resolve for %s: %s",
-                    domain, ares_strerror(rc));
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "DomainResolver: failed to start async dns resolve for %s: %s",
+                    domain,
+                    ares_strerror(rc));
         return false;
     }
 
@@ -231,8 +239,8 @@ void domainresolverCloseBeforeInit(tunnel_t *t, line_t *l, domainresolver_direct
 
 void domainresolverCloseLine(tunnel_t *t, line_t *l, domainresolver_direction_t direction)
 {
-    domainresolver_lstate_t *ls = lineGetState(l, t);
-    bool was_open = ls->phase == kDomainResolverPhaseOpen;
+    domainresolver_lstate_t *ls       = lineGetState(l, t);
+    bool                     was_open = ls->phase == kDomainResolverPhaseOpen;
     lineLock(l);
 
     domainresolverLinestateDestroy(t, l, ls);

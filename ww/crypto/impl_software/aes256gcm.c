@@ -1,34 +1,41 @@
 #include "private/crypto_backends.h"
+#include "private/crypto_validation.h"
 
-int wCryptoSoftwareAES256GCMIsAvailable(void)
+bool wCryptoSoftwareAES256GCMIsAvailable(void)
 {
-    return 0;
+    return false;
 }
 
-int wCryptoSoftwareAES256GCMEncrypt(unsigned char *dst, const unsigned char *src, size_t src_len,
-                                    const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
-                                    const unsigned char *key)
+wcrypto_status_t wCryptoSoftwareAES256GCMEncrypt(unsigned char *dst, size_t dst_capacity, const unsigned char *src,
+                                                 size_t src_len, const unsigned char *ad, size_t ad_len,
+                                                 const unsigned char nonce[WCRYPTO_AES256GCM_NONCE_SIZE],
+                                                 const unsigned char key[WCRYPTO_AES256GCM_KEY_SIZE])
 {
-    discard dst;
-    discard src;
-    discard src_len;
-    discard ad;
-    discard ad_len;
-    discard nonce;
-    discard key;
-    return -1;
+    size_t           output_len = 0;
+    wcrypto_status_t status =
+        wCryptoValidateAeadEncrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key, &output_len);
+    if (status != kWCryptoOk)
+    {
+        wCryptoZero(dst, output_len);
+        return status;
+    }
+    wCryptoZero(dst, output_len);
+    return kWCryptoUnavailable;
 }
 
-int wCryptoSoftwareAES256GCMDecrypt(unsigned char *dst, const unsigned char *src, size_t src_len,
-                                    const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
-                                    const unsigned char *key)
+wcrypto_status_t wCryptoSoftwareAES256GCMDecrypt(unsigned char *dst, size_t dst_capacity, const unsigned char *src,
+                                                 size_t src_len, const unsigned char *ad, size_t ad_len,
+                                                 const unsigned char nonce[WCRYPTO_AES256GCM_NONCE_SIZE],
+                                                 const unsigned char key[WCRYPTO_AES256GCM_KEY_SIZE])
 {
-    discard dst;
-    discard src;
-    discard src_len;
-    discard ad;
-    discard ad_len;
-    discard nonce;
-    discard key;
-    return -1;
+    size_t           output_len = 0;
+    wcrypto_status_t status =
+        wCryptoValidateAeadDecrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key, &output_len);
+    if (status != kWCryptoOk)
+    {
+        wCryptoZero(dst, output_len);
+        return status;
+    }
+    wCryptoZero(dst, output_len);
+    return kWCryptoUnavailable;
 }

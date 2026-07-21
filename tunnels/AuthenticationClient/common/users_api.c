@@ -65,7 +65,8 @@ uint64_t authenticationclientUsersGeneration(tunnel_t *t)
     return generation;
 }
 
-static bool authenticationclientSetUserHandle(authenticationclient_tstate_t *ts, user_t *user, user_handle_t *handle_out)
+static bool authenticationclientSetUserHandle(authenticationclient_tstate_t *ts, user_t *user,
+                                              user_handle_t *handle_out)
 {
     const uint64_t user_id = userGetId(user);
     if (UNLIKELY(user_id == 0))
@@ -192,8 +193,7 @@ bool authenticationclientGetUserBySHA224WithProfile(tunnel_t *t, const uint8_t s
 
 bool authenticationclientGetUserByUUID(tunnel_t *t, const uint8_t uuid[kWwUuidBytesLen], user_handle_t *handle_out)
 {
-    return authenticationclientGetUserByUUIDWithProfile(t, uuid, handle_out, NULL) ==
-           kAuthenticationClientUserLookupOk;
+    return authenticationclientGetUserByUUIDWithProfile(t, uuid, handle_out, NULL) == kAuthenticationClientUserLookupOk;
 }
 
 authenticationclient_user_lookup_result_t authenticationclientGetUserByUUIDWithProfile(
@@ -263,8 +263,8 @@ authenticationclient_user_lookup_result_t authenticationclientGetUserByUUIDWithP
     return result;
 }
 
-bool authenticationclientGetUserByWireGuardPublicKey(tunnel_t *t,
-                                                     const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE],
+bool authenticationclientGetUserByWireGuardPublicKey(tunnel_t      *t,
+                                                     const uint8_t  publickey[USER_WIREGUARD_PUBLICKEY_SIZE],
                                                      user_handle_t *handle_out)
 {
     return authenticationclientGetUserByWireGuardPublicKeyWithProfile(t, publickey, handle_out, NULL) ==
@@ -395,7 +395,7 @@ authenticationclient_user_lookup_result_t authenticationclientGetUserByPasswordW
     }
 
     sha256_hash_t sha256 = {0};
-    if (UNLIKELY(wCryptoSHA256(&sha256, (const unsigned char *) password, stringLength(password)) != 0))
+    if (UNLIKELY(wCryptoSHA256(&sha256, (const unsigned char *) password, stringLength(password)) != kWCryptoOk))
     {
         userHandleClear(handle_out);
         return kAuthenticationClientUserLookupHashFailed;

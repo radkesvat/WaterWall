@@ -9,7 +9,6 @@ enum frame_read_result_e
     kFrameReadInvalid  = -1,
 };
 
-
 static int tryReadCompleteFrame(buffer_stream_t *stream, const encryptionclient_tstate_t *ts, sbuf_t **frame_buffer)
 {
     if (bufferstreamGetBufLen(stream) < kEncryptionTlsHeaderSize)
@@ -52,7 +51,8 @@ static bool isOverflow(buffer_stream_t *read_stream, const encryptionclient_tsta
     if (bufferstreamGetBufLen(read_stream) > limit)
     {
         LOGW("EncryptionClient: DownStreamPayload: read stream overflow, size: %zu, limit: %zu",
-             bufferstreamGetBufLen(read_stream), limit);
+             bufferstreamGetBufLen(read_stream),
+             limit);
         return true;
     }
     return false;
@@ -91,8 +91,16 @@ void encryptionclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
         uint8_t *nonce      = frame + kEncryptionTlsHeaderSize;
         uint8_t *ciphertext = frame + kEncryptionFramePrefixSize;
 
-        if (0 != encryptionclientDecryptAead(ts->algorithm, ciphertext, ciphertext, ciphertext_len, frame,
-                                             kEncryptionTlsHeaderSize, nonce, ts->key))
+        size_t plaintext_capacity = sbufGetMaximumWriteableSize(frame_buffer) - kEncryptionFramePrefixSize;
+        if (encryptionclientDecryptAead(ts->algorithm,
+                                        ciphertext,
+                                        plaintext_capacity,
+                                        ciphertext,
+                                        ciphertext_len,
+                                        frame,
+                                        kEncryptionTlsHeaderSize,
+                                        nonce,
+                                        ts->key) != kWCryptoOk)
         {
             LOGW("EncryptionClient: failed to decrypt frame, closing line");
             lineReuseBuffer(l, frame_buffer);

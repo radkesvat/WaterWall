@@ -31,6 +31,67 @@
             }
         },
         {
+            "name": "linux-sodium-crypto",
+            "inherits": [
+                "host-linux",
+                "target-linux",
+                "ninja",
+                "ccache",
+                "default"
+            ],
+            "cacheVariables": {
+                "WCRYPTO_BACKEND_OPENSSL": false,
+                "WCRYPTO_BACKEND_SODIUM": true,
+                "INCLUDE_TLS_SERVER": false,
+                "router_enable_quic_sniffing": false
+            }
+        },
+        {
+            "name": "linux-openssl-crypto",
+            "inherits": [
+                "host-linux",
+                "target-linux",
+                "ninja",
+                "ccache",
+                "default"
+            ],
+            "cacheVariables": {
+                "WCRYPTO_BACKEND_OPENSSL": true,
+                "WCRYPTO_BACKEND_SODIUM": false,
+                "INCLUDE_TLS_SERVER": false,
+                "router_enable_quic_sniffing": false
+            }
+        },
+        {
+            "name": "linux-combined-crypto",
+            "inherits": [
+                "host-linux",
+                "target-linux",
+                "ninja",
+                "ccache",
+                "default"
+            ],
+            "cacheVariables": {
+                "WCRYPTO_BACKEND_OPENSSL": true,
+                "WCRYPTO_BACKEND_SODIUM": true
+            }
+        },
+        {
+            "name": "linux-software-crypto-sanitize",
+            "inherits": "linux-software-crypto",
+            "cacheVariables": {
+                "ENABLE_ASAN": true,
+                "ENABLE_USAN": true
+            }
+        },
+        {
+            "name": "linux-software-crypto-tls",
+            "inherits": "linux-software-crypto",
+            "cacheVariables": {
+                "INCLUDE_TLS_SERVER": true
+            }
+        },
+        {
             "name": "linux-clang-x64",
             "inherits": [
                 "host-linux",
@@ -117,6 +178,42 @@
         {
             "name": "linux-software-crypto",
             "configurePreset": "linux-software-crypto",
+            "inherits": [
+                "host-linux"
+            ]
+        },
+        {
+            "name": "linux-sodium-crypto",
+            "configurePreset": "linux-sodium-crypto",
+            "inherits": [
+                "host-linux"
+            ]
+        },
+        {
+            "name": "linux-openssl-crypto",
+            "configurePreset": "linux-openssl-crypto",
+            "inherits": [
+                "host-linux"
+            ]
+        },
+        {
+            "name": "linux-combined-crypto",
+            "configurePreset": "linux-combined-crypto",
+            "inherits": [
+                "host-linux"
+            ]
+        },
+        {
+            "name": "linux-software-crypto-sanitize",
+            "configurePreset": "linux-software-crypto-sanitize",
+            "configuration": "Debug",
+            "inherits": [
+                "host-linux"
+            ]
+        },
+        {
+            "name": "linux-software-crypto-tls",
+            "configurePreset": "linux-software-crypto-tls",
             "inherits": [
                 "host-linux"
             ]
@@ -288,6 +385,47 @@
         {
             "name": "linux-software-crypto",
             "configurePreset": "linux-software-crypto",
+            "inherits": [
+                "host-linux",
+                "options"
+            ]
+        },
+        {
+            "name": "linux-sodium-crypto",
+            "configurePreset": "linux-sodium-crypto",
+            "inherits": [
+                "host-linux",
+                "options"
+            ]
+        },
+        {
+            "name": "linux-openssl-crypto",
+            "configurePreset": "linux-openssl-crypto",
+            "inherits": [
+                "host-linux",
+                "options"
+            ]
+        },
+        {
+            "name": "linux-combined-crypto",
+            "configurePreset": "linux-combined-crypto",
+            "inherits": [
+                "host-linux",
+                "options"
+            ]
+        },
+        {
+            "name": "linux-software-crypto-sanitize",
+            "configurePreset": "linux-software-crypto-sanitize",
+            "configuration": "Debug",
+            "inherits": [
+                "host-linux",
+                "options"
+            ]
+        },
+        {
+            "name": "linux-software-crypto-tls",
+            "configurePreset": "linux-software-crypto-tls",
             "inherits": [
                 "host-linux",
                 "options"

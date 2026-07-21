@@ -65,16 +65,16 @@ typedef struct trojanclient_domain_resolver_lstate_s
 
 typedef struct trojanclient_lstate_s
 {
-    tunnel_t                  *tunnel;
-    line_t                    *line;
-    line_t                    *app_line;
-    line_t                    *carrier_line;
-    address_context_t          target_addr;
-    buffer_stream_t            in_stream;
-    buffer_queue_t             pending_up;
-    trojanclient_protocol_t    protocol;
-    trojanclient_phase_t       phase;
-    trojanclient_line_kind_t   kind;
+    tunnel_t                *tunnel;
+    line_t                  *line;
+    line_t                  *app_line;
+    line_t                  *carrier_line;
+    address_context_t        target_addr;
+    buffer_stream_t          in_stream;
+    buffer_queue_t           pending_up;
+    trojanclient_protocol_t  protocol;
+    trojanclient_phase_t     phase;
+    trojanclient_line_kind_t kind;
 } trojanclient_lstate_t;
 
 enum

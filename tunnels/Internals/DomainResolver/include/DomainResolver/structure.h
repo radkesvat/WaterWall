@@ -12,7 +12,7 @@ typedef enum domainresolver_phase_e
 
 typedef struct domainresolver_tstate_s
 {
-    tunnel_t                              *prepare_owner;
+    tunnel_t                             *prepare_owner;
     domainresolver_prepare_fn             prepare;
     domainresolver_user_lstate_destroy_fn user_lstate_destroy;
     uint32_t                              user_lstate_offset;

@@ -77,7 +77,7 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
             // Alignment required... pbuf_alloc has probably aligned data, but want to be sure
             U64TO8_LITTLE(hdr->counter, keypair->sending_counter);
 
-            // Copy the encrypted (padded) data to the output packet - chacha20poly1305Encrypt() can encrypt data
+            // Copy the encrypted (padded) data to the output packet - wCryptoChaCha20Poly1305Encrypt() can encrypt data
             // in-place which avoids call to mem_malloc
             dst = &hdr->enc_packet[0];
             // if ((padded_len > 0) && q)
@@ -92,7 +92,16 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
             // }
 
             // Then encrypt
-            wireguardEncryptPacket(dst, dst, padded_len, keypair);
+            if (! wireguardEncryptPacket(dst,
+                                         sbufGetMaximumWriteableSize(q) - (size_t) (dst - sbufGetMutablePtr(q)),
+                                         dst,
+                                         padded_len,
+                                         keypair))
+            {
+                LOGW("WireGuardDevice: transport packet encryption failed");
+                result = ERR_IF;
+                goto finish;
+            }
 
             now              = getTickMS();
             peer->last_tx    = now;
@@ -161,7 +170,7 @@ void wireguarddeviceHandleInnerPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     wgd_tstate_t       *state = tunnelGetState(t);
     wireguard_device_t *dev   = tunnelGetState(t);
     uint8_t            *data  = sbufGetMutablePtr(buf);
-    version                  = IP_HDR_GET_VERSION(data);
+    version                   = IP_HDR_GET_VERSION(data);
 
     if ((version == 6) && (buf_len < sizeof(ip6_hdr_t)))
     {
@@ -172,7 +181,7 @@ void wireguarddeviceHandleInnerPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     wireguarddeviceStateLock(state);
 
     wireguard_peer_t *peer = NULL;
-    ip_addr_t dest;
+    ip_addr_t         dest;
 
     if (version == 4)
     {

@@ -1,5 +1,5 @@
 #pragma once
-#include "wlibc.h"
 
-int initSodium(void);
+#include "wcrypto.h"
 
+WCRYPTO_MUST_USE wcrypto_status_t sodiumGlobalInit(void);

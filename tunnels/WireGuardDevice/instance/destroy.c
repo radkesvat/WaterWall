@@ -29,9 +29,12 @@ void wireguarddeviceTunnelDestroy(tunnel_t *t)
 
     if (state->device_configuration.private_key != NULL)
     {
+        wCryptoZero((void *) state->device_configuration.private_key,
+                    stringLength((const char *) state->device_configuration.private_key) + 1U);
         memoryFree((void *) state->device_configuration.private_key);
         state->device_configuration.private_key = NULL;
     }
+    wireguardDeviceDestroy(&state->wg_device);
     if (state->transport_lines != NULL)
     {
         tunnel_chain_t *chain = tunnelGetChain(t);

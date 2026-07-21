@@ -18,12 +18,12 @@ void domainresolverTunnelUseLineStrategy(tunnel_t *t, bool enabled)
 
 void domainresolverTunnelAllowMissingDestination(tunnel_t *t, bool enabled)
 {
-    domainresolver_tstate_t *ts = tunnelGetState(t);
+    domainresolver_tstate_t *ts   = tunnelGetState(t);
     ts->allow_missing_destination = enabled;
 }
 
 void domainresolverTunnelSetPrepareHook(tunnel_t *t, tunnel_t *owner, uint32_t user_lstate_size,
-                                        domainresolver_prepare_fn              prepare,
+                                        domainresolver_prepare_fn             prepare,
                                         domainresolver_user_lstate_destroy_fn destroy)
 {
     if (UNLIKELY(t->chain != NULL))
@@ -33,10 +33,10 @@ void domainresolverTunnelSetPrepareHook(tunnel_t *t, tunnel_t *owner, uint32_t u
     }
 
     domainresolver_tstate_t *ts = tunnelGetState(t);
-    uint32_t aligned_user_size =
-        user_lstate_size > 0 ? tunnelGetCorrectAlignedLineStateSize(user_lstate_size) : 0;
+    uint32_t aligned_user_size  = user_lstate_size > 0 ? tunnelGetCorrectAlignedLineStateSize(user_lstate_size) : 0;
 
-    if (UNLIKELY(aligned_user_size > UINT32_MAX - tunnelGetCorrectAlignedLineStateSize(sizeof(domainresolver_lstate_t))))
+    if (UNLIKELY(aligned_user_size >
+                 UINT32_MAX - tunnelGetCorrectAlignedLineStateSize(sizeof(domainresolver_lstate_t))))
     {
         LOGF("DomainResolver: prepare hook line state is too large");
         terminateProgram(1);

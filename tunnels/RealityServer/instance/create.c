@@ -47,8 +47,7 @@ static bool parseAlgorithmFromSettings(const cJSON *settings, uint32_t *algorith
         return false;
     }
 
-    if (stricmp(item->valuestring, "chacha20poly1305") == 0 ||
-        stricmp(item->valuestring, "chacha20-poly1305") == 0)
+    if (stricmp(item->valuestring, "chacha20poly1305") == 0 || stricmp(item->valuestring, "chacha20-poly1305") == 0)
     {
         *algorithm = kRealityServerAlgorithmChaCha20Poly1305;
         return true;
@@ -75,7 +74,8 @@ static bool parseTls12GcmNoncePolicy(const cJSON *settings, uint8_t *policy)
 
     if (! cJSON_IsString(item) || item->valuestring == NULL || item->valuestring[0] == '\0')
     {
-        LOGF("RealityServer: 'tls12-gcm-server-nonce-policy' must be a non-empty string: auto, sequence, counter, or random");
+        LOGF("RealityServer: 'tls12-gcm-server-nonce-policy' must be a non-empty string: auto, sequence, counter, or "
+             "random");
         return false;
     }
 
@@ -113,8 +113,8 @@ static bool parseIntegerItem(const cJSON *item, uint32_t default_value, uint32_t
         return true;
     }
 
-    if (! cJSON_IsNumber(item) || item->valuedouble != (double) item->valueint ||
-        item->valuedouble < minimum || item->valuedouble > maximum)
+    if (! cJSON_IsNumber(item) || item->valuedouble != (double) item->valueint || item->valuedouble < minimum ||
+        item->valuedouble > maximum)
     {
         return false;
     }
@@ -125,11 +125,11 @@ static bool parseIntegerItem(const cJSON *item, uint32_t default_value, uint32_t
 
 static bool realityserverTunnelstateInitialize(realityserver_tstate_t *ts, node_t *node)
 {
-    const cJSON *settings          = node->node_settings_json;
-    char        *password          = NULL;
-    char        *salt              = NULL;
-    char        *destination_name  = NULL;
-    bool         result            = false;
+    const cJSON *settings         = node->node_settings_json;
+    char        *password         = NULL;
+    char        *salt             = NULL;
+    char        *destination_name = NULL;
+    bool         result           = false;
 
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 
@@ -188,8 +188,7 @@ static bool realityserverTunnelstateInitialize(realityserver_tstate_t *ts, node_
         salt = stringDuplicate("waterwall-reality");
     }
     else if (! getStringFromJsonObject(&salt, settings, "salt") ||
-             stringLength(salt) < kRealityV2MinCredentialByteLength ||
-             stringLength(salt) > kRealityV2MaxSaltByteLength)
+             stringLength(salt) < kRealityV2MinCredentialByteLength || stringLength(salt) > kRealityV2MaxSaltByteLength)
     {
         LOGF("RealityServer: 'salt' must contain 1..32 bytes");
         goto cleanup;
@@ -213,14 +212,13 @@ static bool realityserverTunnelstateInitialize(realityserver_tstate_t *ts, node_
         sniffing_name = "sniffing-counter";
         sniffing_item = cJSON_GetObjectItemCaseSensitive(settings, sniffing_name);
     }
-    if (! parseIntegerItem(sniffing_item, kRealityServerDefaultSniffingAttempts, 1, 1024,
-                           &ts->sniffing_attempts))
+    if (! parseIntegerItem(sniffing_item, kRealityServerDefaultSniffingAttempts, 1, 1024, &ts->sniffing_attempts))
     {
         LOGF("RealityServer: '%s' must be an integer in range [1, 1024]", sniffing_name);
         goto cleanup;
     }
 
-    if (ts->algorithm == kRealityServerAlgorithmAes256Gcm && ! aes256gcmIsAvailable())
+    if (ts->algorithm == kRealityServerAlgorithmAes256Gcm && ! wCryptoAes256GcmIsAvailable())
     {
         LOGF("RealityServer: AES-GCM selected but it is unavailable in the active crypto backend");
         goto cleanup;

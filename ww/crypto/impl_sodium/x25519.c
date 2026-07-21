@@ -1,20 +1,25 @@
 #include "private/crypto_backends.h"
-#include "wlibc.h"
+#include "private/crypto_validation.h"
 
-#include "sodium.h"
+#include <sodium.h>
 
-// Function to perform X25519 scalar multiplication
-int wCryptoSodiumX25519(unsigned char out[32], const unsigned char scalar[32], const unsigned char point[32])
+wcrypto_status_t wCryptoSodiumX25519(unsigned char       out[WCRYPTO_X25519_KEY_SIZE],
+                                     const unsigned char scalar[WCRYPTO_X25519_KEY_SIZE],
+                                     const unsigned char point[WCRYPTO_X25519_KEY_SIZE])
 {
-    assert(sodium_init() != -1 && "libsodium must be initialized before calling this function");
-
-    // This dose clamp the base point 
-    // Perform the scalar multiplication using crypto_scalarmult
-    if (0 != crypto_scalarmult(out, scalar, point))
+    wcrypto_status_t status = wCryptoValidateX25519(out, scalar, point);
+    if (status != kWCryptoOk)
     {
-        // Scalar multiplication failed
-        return -1;
+        if (out != NULL)
+        {
+            wCryptoZero(out, WCRYPTO_X25519_KEY_SIZE);
+        }
+        return status;
     }
-    // Success
-    return 0;
+    if (crypto_scalarmult(out, scalar, point) != 0)
+    {
+        wCryptoZero(out, WCRYPTO_X25519_KEY_SIZE);
+        return kWCryptoRejectedKey;
+    }
+    return kWCryptoOk;
 }

@@ -6,10 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(WCRYPTO_BACKEND_SODIUM)
-#include <sodium.h>
-#endif
-
 enum
 {
     AES256GCM_KEY_SIZE   = 32,
@@ -26,22 +22,38 @@ static void require(bool condition, const char *message)
     }
 }
 
-static void initialize_crypto_backend(void)
-{
-#if defined(WCRYPTO_BACKEND_SODIUM)
-    require(sodium_init() != -1, "sodium_init failed");
-#endif
-}
-
 static bool can_run_aes256gcm_tests(void)
 {
-    if (aes256gcmIsAvailable())
+    if (wCryptoAes256GcmIsAvailable())
     {
         return true;
     }
 
     fprintf(stderr, "AES256-GCM is not available on this backend or CPU; skipping AES256-GCM unit cases.\n");
     return false;
+}
+
+/* NIST AES-256-GCM: zero key/IV, one zero plaintext block, no AAD. */
+static void test_known_answer(void)
+{
+    const uint8_t key[AES256GCM_KEY_SIZE]                          = {0};
+    const uint8_t nonce[AES256GCM_NONCE_SIZE]                      = {0};
+    const uint8_t plaintext[16]                                    = {0};
+    const uint8_t expected[sizeof(plaintext) + AES256GCM_TAG_SIZE] = {
+        0xce, 0xa7, 0x40, 0x3d, 0x4d, 0x60, 0x6b, 0x6e, 0x07, 0x4e, 0xc5, 0xd3, 0xba, 0xf3, 0x9d, 0x18,
+        0xd0, 0xd1, 0xc8, 0xa7, 0x99, 0x99, 0x6b, 0xf0, 0x26, 0x5b, 0x98, 0xb5, 0xd4, 0x8a, 0xb9, 0x19,
+    };
+    uint8_t ciphertext[sizeof(expected)] = {0};
+    uint8_t decrypted[sizeof(plaintext)] = {0};
+
+    require(wCryptoAes256GcmEncrypt(
+                ciphertext, sizeof(ciphertext), plaintext, sizeof(plaintext), NULL, 0, nonce, key) == kWCryptoOk,
+            "AES-256-GCM known-answer encryption failed");
+    require(memcmp(ciphertext, expected, sizeof(expected)) == 0, "AES-256-GCM known-answer ciphertext/tag mismatch");
+    require(wCryptoAes256GcmDecrypt(decrypted, sizeof(decrypted), expected, sizeof(expected), NULL, 0, nonce, key) ==
+                kWCryptoOk,
+            "AES-256-GCM known-answer decryption failed");
+    require(memcmp(decrypted, plaintext, sizeof(plaintext)) == 0, "AES-256-GCM known-answer plaintext mismatch");
 }
 
 /* Verifies a normal authenticated encryption round trip with associated data. */
@@ -59,15 +71,21 @@ static void test_encryption_decryption(void)
     const size_t plaintext_len = sizeof(plaintext);
     uint8_t      ciphertext[sizeof(plaintext) + AES256GCM_TAG_SIZE];
 
-    int res = aes256gcmEncrypt(ciphertext, plaintext, plaintext_len, associated_data, sizeof(associated_data), nonce,
-                               key);
-    require(res == 0, "Encryption failed");
+    wcrypto_status_t res = wCryptoAes256GcmEncrypt(
+        ciphertext, sizeof(ciphertext), plaintext, plaintext_len, associated_data, sizeof(associated_data), nonce, key);
+    require(res == kWCryptoOk, "Encryption failed");
 
     uint8_t decrypted[sizeof(plaintext)];
-    res = aes256gcmDecrypt(decrypted, ciphertext, sizeof(ciphertext), associated_data, sizeof(associated_data), nonce,
-                           key);
+    res = wCryptoAes256GcmDecrypt(decrypted,
+                                  sizeof(decrypted),
+                                  ciphertext,
+                                  sizeof(ciphertext),
+                                  associated_data,
+                                  sizeof(associated_data),
+                                  nonce,
+                                  key);
 
-    require(res == 0, "Decryption failed");
+    require(res == kWCryptoOk, "Decryption failed");
     require(memcmp(decrypted, plaintext, plaintext_len) == 0, "Decrypted text does not match plaintext");
 }
 
@@ -85,13 +103,14 @@ static void test_encryption_decryption_empty_ad(void)
     const size_t plaintext_len = sizeof(plaintext);
     uint8_t      ciphertext[sizeof(plaintext) + AES256GCM_TAG_SIZE];
 
-    int res = aes256gcmEncrypt(ciphertext, plaintext, plaintext_len, NULL, 0, nonce, key);
-    require(res == 0, "Encryption with empty AD failed");
+    wcrypto_status_t res =
+        wCryptoAes256GcmEncrypt(ciphertext, sizeof(ciphertext), plaintext, plaintext_len, NULL, 0, nonce, key);
+    require(res == kWCryptoOk, "Encryption with empty AD failed");
 
     uint8_t decrypted[sizeof(plaintext)];
-    res = aes256gcmDecrypt(decrypted, ciphertext, sizeof(ciphertext), NULL, 0, nonce, key);
+    res = wCryptoAes256GcmDecrypt(decrypted, sizeof(decrypted), ciphertext, sizeof(ciphertext), NULL, 0, nonce, key);
 
-    require(res == 0, "Decryption with empty AD failed");
+    require(res == kWCryptoOk, "Decryption with empty AD failed");
     require(memcmp(decrypted, plaintext, plaintext_len) == 0, "Decrypted text does not match plaintext (empty AD)");
 }
 
@@ -112,13 +131,17 @@ static void test_decryption_failure_wrong_key(void)
     const size_t plaintext_len = sizeof(plaintext);
     uint8_t      ciphertext[sizeof(plaintext) + AES256GCM_TAG_SIZE];
 
-    int res = aes256gcmEncrypt(ciphertext, plaintext, plaintext_len, NULL, 0, nonce, key);
-    require(res == 0, "Encryption failed");
+    wcrypto_status_t res =
+        wCryptoAes256GcmEncrypt(ciphertext, sizeof(ciphertext), plaintext, plaintext_len, NULL, 0, nonce, key);
+    require(res == kWCryptoOk, "Encryption failed");
 
     uint8_t decrypted[sizeof(plaintext)];
-    res = aes256gcmDecrypt(decrypted, ciphertext, sizeof(ciphertext), NULL, 0, nonce, wrong_key);
+    memset(decrypted, 0xa5, sizeof(decrypted));
+    res = wCryptoAes256GcmDecrypt(
+        decrypted, sizeof(decrypted), ciphertext, sizeof(ciphertext), NULL, 0, nonce, wrong_key);
 
-    require(res != 0, "Decryption should have failed with wrong key");
+    require(res == kWCryptoAuthenticationFailed, "wrong-key status mismatch");
+    require(decrypted[0] == 0 && decrypted[1] == 0 && decrypted[2] == 0, "wrong-key plaintext was not cleared");
 }
 
 /* Verifies that associated data is part of the authentication decision. */
@@ -137,15 +160,21 @@ static void test_decryption_failure_wrong_ad(void)
     const size_t plaintext_len = sizeof(plaintext);
     uint8_t      ciphertext[sizeof(plaintext) + AES256GCM_TAG_SIZE];
 
-    int res = aes256gcmEncrypt(ciphertext, plaintext, plaintext_len, associated_data, sizeof(associated_data), nonce,
-                               key);
-    require(res == 0, "Encryption failed");
+    wcrypto_status_t res = wCryptoAes256GcmEncrypt(
+        ciphertext, sizeof(ciphertext), plaintext, plaintext_len, associated_data, sizeof(associated_data), nonce, key);
+    require(res == kWCryptoOk, "Encryption failed");
 
     uint8_t decrypted[sizeof(plaintext)];
-    res = aes256gcmDecrypt(decrypted, ciphertext, sizeof(ciphertext), wrong_associated_data,
-                           sizeof(wrong_associated_data), nonce, key);
+    res = wCryptoAes256GcmDecrypt(decrypted,
+                                  sizeof(decrypted),
+                                  ciphertext,
+                                  sizeof(ciphertext),
+                                  wrong_associated_data,
+                                  sizeof(wrong_associated_data),
+                                  nonce,
+                                  key);
 
-    require(res != 0, "Decryption should have failed with wrong AD");
+    require(res == kWCryptoAuthenticationFailed, "wrong-AD status mismatch");
 }
 
 /* Verifies that modifying ciphertext bytes invalidates the authentication tag. */
@@ -162,29 +191,33 @@ static void test_decryption_failure_tampered_ciphertext(void)
     const size_t plaintext_len = sizeof(plaintext);
     uint8_t      ciphertext[sizeof(plaintext) + AES256GCM_TAG_SIZE];
 
-    int res = aes256gcmEncrypt(ciphertext, plaintext, plaintext_len, NULL, 0, nonce, key);
-    require(res == 0, "Encryption failed");
+    wcrypto_status_t res =
+        wCryptoAes256GcmEncrypt(ciphertext, sizeof(ciphertext), plaintext, plaintext_len, NULL, 0, nonce, key);
+    require(res == kWCryptoOk, "Encryption failed");
 
     ciphertext[0] ^= 0x01;
 
     uint8_t decrypted[sizeof(plaintext)];
-    res = aes256gcmDecrypt(decrypted, ciphertext, sizeof(ciphertext), NULL, 0, nonce, key);
+    res = wCryptoAes256GcmDecrypt(decrypted, sizeof(decrypted), ciphertext, sizeof(ciphertext), NULL, 0, nonce, key);
 
-    require(res != 0, "Decryption should have failed with tampered ciphertext");
+    require(res == kWCryptoAuthenticationFailed, "tampered-ciphertext status mismatch");
 }
 
 int main(void)
 {
-    initialize_crypto_backend();
+    require(wCryptoGlobalInit() == kWCryptoOk, "crypto global initialization failed");
     if (! can_run_aes256gcm_tests())
     {
+        wCryptoGlobalCleanup();
         return 0;
     }
 
+    test_known_answer();
     test_encryption_decryption();
     test_encryption_decryption_empty_ad();
     test_decryption_failure_wrong_key();
     test_decryption_failure_wrong_ad();
     test_decryption_failure_tampered_ciphertext();
+    wCryptoGlobalCleanup();
     return 0;
 }

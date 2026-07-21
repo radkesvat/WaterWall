@@ -13,8 +13,8 @@ enum
     kUsersBlockSize            = 64,
     kUsersInitialTableCapacity = 16,
     kKnownUserUpdateMask       = kUserUpdatePassword | kUserUpdateName | kUserUpdateEmail | kUserUpdateNotes |
-                                 kUserUpdateGid | kUserUpdateEnabled | kUserUpdateLimit | kUserUpdateTimeInfo |
-                                 kUserUpdateStats | kUserUpdateRecordStatInterval | kUserUpdateWireGuardAllowedIps
+                           kUserUpdateGid | kUserUpdateEnabled | kUserUpdateLimit | kUserUpdateTimeInfo |
+                           kUserUpdateStats | kUserUpdateRecordStatInterval | kUserUpdateWireGuardAllowedIps
 };
 
 _Static_assert(_Alignof(user_t) >= 32U, "user_t storage must be at least 32-byte aligned");
@@ -44,14 +44,14 @@ typedef struct users_wireguard_publickey_key_s
 typedef struct users_password_probe_s
 {
     MSVC_ATTR_ALIGNED_32 sha224_hash_t sha224_pass GNU_ATTR_ALIGNED_32;
-    uint8_t       sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
+    uint8_t                                        sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
     MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;
-    uint8_t uuid_pass[kWwUuidBytesLen];
-    uint8_t wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
-    bool sha224_pass_valid;
-    bool sha256_pass_valid;
-    bool uuid_pass_valid;
-    bool wireguard_publickey_valid;
+    uint8_t                                        uuid_pass[kWwUuidBytesLen];
+    uint8_t                                        wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
+    bool                                           sha224_pass_valid;
+    bool                                           sha256_pass_valid;
+    bool                                           uuid_pass_valid;
+    bool                                           wireguard_publickey_valid;
 } users_password_probe_t;
 
 typedef struct users_wireguard_allowed_ips_update_s
@@ -139,7 +139,7 @@ static bool usersWireGuardPublicKeyEq(const users_wireguard_publickey_key_t *a,
 
 #define i_type users_sha256_map_t // NOLINT
 #define i_key  users_sha256_key_t // NOLINT
-#define i_val  user_t  *          // NOLINT
+#define i_val  user_t *           // NOLINT
 #define i_hash usersSHA256KeyHash // NOLINT
 #define i_eq   usersSHA256KeyEq   // NOLINT
 #include "stc/hmap.h"
@@ -151,7 +151,7 @@ static bool usersWireGuardPublicKeyEq(const users_wireguard_publickey_key_t *a,
 
 #define i_type users_uuid_map_t // NOLINT
 #define i_key  users_uuid_key_t // NOLINT
-#define i_val  user_t  *        // NOLINT
+#define i_val  user_t *         // NOLINT
 #define i_hash usersUUIDKeyHash // NOLINT
 #define i_eq   usersUUIDKeyEq   // NOLINT
 #include "stc/hmap.h"
@@ -163,7 +163,7 @@ static bool usersWireGuardPublicKeyEq(const users_wireguard_publickey_key_t *a,
 
 #define i_type users_wireguard_publickey_map_t // NOLINT
 #define i_key  users_wireguard_publickey_key_t // NOLINT
-#define i_val  user_t  *                       // NOLINT
+#define i_val  user_t *                        // NOLINT
 #define i_hash usersWireGuardPublicKeyHash     // NOLINT
 #define i_eq   usersWireGuardPublicKeyEq       // NOLINT
 #include "stc/hmap.h"
@@ -258,23 +258,23 @@ static void usersReplaceStringOwned(char **dest, char **owned_value)
 
 static bool usersSha224Equal(const uint8_t a[SHA224_DIGEST_SIZE], const uint8_t b[SHA224_DIGEST_SIZE])
 {
-    return wCryptoEqual(a, b, SHA224_DIGEST_SIZE);
+    return memoryEqual(a, b, SHA224_DIGEST_SIZE);
 }
 
 static bool usersSha256Equal(const uint8_t a[SHA256_DIGEST_SIZE], const uint8_t b[SHA256_DIGEST_SIZE])
 {
-    return wCryptoEqual(a, b, SHA256_DIGEST_SIZE);
+    return memoryEqual(a, b, SHA256_DIGEST_SIZE);
 }
 
 static bool usersUUIDEqual(const uint8_t a[kWwUuidBytesLen], const uint8_t b[kWwUuidBytesLen])
 {
-    return wCryptoEqual(a, b, kWwUuidBytesLen);
+    return memoryEqual(a, b, kWwUuidBytesLen);
 }
 
 static bool usersWireGuardPublicKeyEqual(const uint8_t a[USER_WIREGUARD_PUBLICKEY_SIZE],
                                          const uint8_t b[USER_WIREGUARD_PUBLICKEY_SIZE])
 {
-    return wCryptoEqual(a, b, USER_WIREGUARD_PUBLICKEY_SIZE);
+    return memoryEqual(a, b, USER_WIREGUARD_PUBLICKEY_SIZE);
 }
 
 static bool usersWireGuardAllowedIpContainsFields(bool valid, const ip_addr_t *network, const ip_addr_t *mask,
@@ -297,28 +297,22 @@ static bool usersWireGuardAllowedIpContainsFields(bool valid, const ip_addr_t *n
 
 static bool usersWireGuardAllowedIpContainsUser(const user_t *user, const ip_addr_t *ip)
 {
-    return user != NULL &&
-           usersWireGuardAllowedIpContainsFields(user->wireguard_allowed_ips_valid,
-                                                 &user->wireguard_allowed_ip,
-                                                 &user->wireguard_allowed_mask,
-                                                 user->wireguard_allowed_ip_family,
-                                                 ip);
+    return user != NULL && usersWireGuardAllowedIpContainsFields(user->wireguard_allowed_ips_valid,
+                                                                 &user->wireguard_allowed_ip,
+                                                                 &user->wireguard_allowed_mask,
+                                                                 user->wireguard_allowed_ip_family,
+                                                                 ip);
 }
 
 static bool usersWireGuardAllowedIpsOverlapFields(bool valid, const ip_addr_t *network, const ip_addr_t *mask,
                                                   uint8_t family, const user_t *user)
 {
-    if (! valid || user == NULL || ! user->wireguard_allowed_ips_valid ||
-        user->wireguard_allowed_ip_family != family)
+    if (! valid || user == NULL || ! user->wireguard_allowed_ips_valid || user->wireguard_allowed_ip_family != family)
     {
         return false;
     }
 
-    return usersWireGuardAllowedIpContainsFields(true,
-                                                 network,
-                                                 mask,
-                                                 family,
-                                                 &user->wireguard_allowed_ip) ||
+    return usersWireGuardAllowedIpContainsFields(true, network, mask, family, &user->wireguard_allowed_ip) ||
            usersWireGuardAllowedIpContainsFields(user->wireguard_allowed_ips_valid,
                                                  &user->wireguard_allowed_ip,
                                                  &user->wireguard_allowed_mask,
@@ -333,15 +327,14 @@ static bool usersWireGuardAllowedIpsOverlapUsers(const user_t *a, const user_t *
         return false;
     }
     return usersWireGuardAllowedIpsOverlapFields(a->wireguard_allowed_ips_valid,
-                                                &a->wireguard_allowed_ip,
-                                                &a->wireguard_allowed_mask,
-                                                a->wireguard_allowed_ip_family,
-                                                b);
+                                                 &a->wireguard_allowed_ip,
+                                                 &a->wireguard_allowed_mask,
+                                                 a->wireguard_allowed_ip_family,
+                                                 b);
 }
 
 static user_t *usersFindWireGuardAllowedIpsOverlapLocked(const users_t *users, bool valid, const ip_addr_t *network,
-                                                         const ip_addr_t *mask, uint8_t family,
-                                                         const user_t *ignore)
+                                                         const ip_addr_t *mask, uint8_t family, const user_t *ignore)
 {
     if (! valid)
     {
@@ -430,25 +423,26 @@ static bool usersPasswordProbeCreate(users_password_probe_t *probe, const char *
     memoryZero(probe, sizeof(*probe));
 
     const size_t password_len = stringLength(password);
-    if (UNLIKELY(wCryptoSHA224(&probe->sha224_pass, (const unsigned char *) password, password_len) != 0))
+    if (UNLIKELY(wCryptoSHA224(&probe->sha224_pass, (const unsigned char *) password, password_len) != kWCryptoOk))
     {
-        wCryptoZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
+        memoryZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
         return false;
     }
-    if (UNLIKELY(wCryptoSHA256(&probe->sha256_pass, (const unsigned char *) password, password_len) != 0))
+    if (UNLIKELY(wCryptoSHA256(&probe->sha256_pass, (const unsigned char *) password, password_len) != kWCryptoOk))
     {
-        wCryptoZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
-        wCryptoZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
+        memoryZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
+        memoryZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
         return false;
     }
     probe->sha224_pass_valid = true;
     probe->sha256_pass_valid = true;
     if (derive_wireguard_publickey)
     {
-        if (UNLIKELY(performX25519(probe->wireguard_publickey, probe->sha256_pass.bytes, wireguard_basepoint) != 0))
+        if (UNLIKELY(wCryptoX25519(probe->wireguard_publickey, probe->sha256_pass.bytes, wireguard_basepoint) !=
+                     kWCryptoOk))
         {
-            wCryptoZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
-            wCryptoZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
+            memoryZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
+            memoryZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
             memoryZero(probe->wireguard_publickey, sizeof(probe->wireguard_publickey));
             return false;
         }
@@ -469,8 +463,8 @@ static void usersPasswordProbeDestroy(users_password_probe_t *probe)
         return;
     }
 
-    wCryptoZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
-    wCryptoZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
+    memoryZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
+    memoryZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
     memoryZero(probe->uuid_pass, sizeof(probe->uuid_pass));
     memoryZero(probe->wireguard_publickey, sizeof(probe->wireguard_publickey));
     memoryZero(probe, sizeof(*probe));
@@ -874,8 +868,8 @@ static user_t *usersUUIDTableLookupLocked(const users_t *users, const uint8_t ke
     return it.ref != NULL ? it.ref->second : NULL;
 }
 
-static user_t *usersWireGuardPublicKeyTableLookupLocked(
-    const users_t *users, const uint8_t key_bytes[USER_WIREGUARD_PUBLICKEY_SIZE])
+static user_t *usersWireGuardPublicKeyTableLookupLocked(const users_t *users,
+                                                        const uint8_t  key_bytes[USER_WIREGUARD_PUBLICKEY_SIZE])
 {
     users_wireguard_publickey_table_t *table = users->wireguard_publickey_table;
 
@@ -1267,7 +1261,7 @@ static bool usersIndexOfLocked(const users_t *users, const user_t *user, size_t 
     {
         if (usersGetAtLocked(users, i) == user)
         {
-                if (index_out != NULL)
+            if (index_out != NULL)
             {
                 *index_out = i;
             }
@@ -1331,27 +1325,21 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot)
     {
         char key_hex[SHA224_DIGEST_SIZE * 2U + 1U];
         usersSha224ToHex(slot->sha224_pass.bytes, key_hex);
-        LOGE("Users: duplicate SHA-224 lookup key %s while loading user \"%s\"",
-             key_hex,
-             usersUserNameForLog(slot));
+        LOGE("Users: duplicate SHA-224 lookup key %s while loading user \"%s\"", key_hex, usersUserNameForLog(slot));
         return false;
     }
     if (UNLIKELY(usersSHA256TableLookupLocked(users, slot->sha256_pass.bytes) != NULL))
     {
         char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
         usersSha256ToHex(slot->sha256_pass.bytes, key_hex);
-        LOGE("Users: duplicate SHA-256 lookup key %s while loading user \"%s\"",
-             key_hex,
-             usersUserNameForLog(slot));
+        LOGE("Users: duplicate SHA-256 lookup key %s while loading user \"%s\"", key_hex, usersUserNameForLog(slot));
         return false;
     }
     if (UNLIKELY(slot->uuid_pass_valid && usersUUIDTableLookupLocked(users, slot->uuid_pass) != NULL))
     {
         char key_text[kWwUuidCanonicalStringLen + 1U];
         wwUuidToCanonicalString(slot->uuid_pass, key_text);
-        LOGE("Users: duplicate UUID credential %s while loading user \"%s\"",
-             key_text,
-             usersUserNameForLog(slot));
+        LOGE("Users: duplicate UUID credential %s while loading user \"%s\"", key_text, usersUserNameForLog(slot));
         return false;
     }
     if (UNLIKELY(slot->wireguard_publickey_valid &&
@@ -1374,9 +1362,7 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot)
     }
     if (UNLIKELY(slot->id != 0 && usersIDTableLookupLocked(users, slot->id) != NULL))
     {
-        LOGE("Users: duplicate id %" PRIu64 " while loading user \"%s\"",
-             slot->id,
-             usersUserNameForLog(slot));
+        LOGE("Users: duplicate id %" PRIu64 " while loading user \"%s\"", slot->id, usersUserNameForLog(slot));
         return false;
     }
 
@@ -1564,9 +1550,7 @@ static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *u
         {
             char key_text[kWwUuidCanonicalStringLen + 1U];
             wwUuidToCanonicalString(password_probe.uuid_pass, key_text);
-            LOGE("Users: duplicate UUID credential %s while updating user \"%s\"",
-                 key_text,
-                 usersUserNameForLog(user));
+            LOGE("Users: duplicate UUID credential %s while updating user \"%s\"", key_text, usersUserNameForLog(user));
             usersPasswordProbeDestroy(&password_probe);
             return kUsersUpdateResultDuplicateUUID;
         }
@@ -1588,9 +1572,7 @@ static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *u
     {
         char key_hex[SHA224_DIGEST_SIZE * 2U + 1U];
         usersSha224ToHex(password_probe.sha224_pass.bytes, key_hex);
-        LOGE("Users: duplicate SHA-224 lookup key %s while updating user \"%s\"",
-             key_hex,
-             usersUserNameForLog(user));
+        LOGE("Users: duplicate SHA-224 lookup key %s while updating user \"%s\"", key_hex, usersUserNameForLog(user));
         usersPasswordProbeDestroy(&password_probe);
         return kUsersUpdateResultPasswordUpdateFailed;
     }
@@ -1600,9 +1582,7 @@ static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *u
     {
         char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
         usersSha256ToHex(password_probe.sha256_pass.bytes, key_hex);
-        LOGE("Users: duplicate SHA-256 lookup key %s while updating user \"%s\"",
-             key_hex,
-             usersUserNameForLog(user));
+        LOGE("Users: duplicate SHA-256 lookup key %s while updating user \"%s\"", key_hex, usersUserNameForLog(user));
         usersPasswordProbeDestroy(&password_probe);
         return kUsersUpdateResultPasswordUpdateFailed;
     }
@@ -1851,7 +1831,7 @@ static bool usersFeedJsonLocked(users_t *users, const cJSON *json)
     const cJSON *users_array = cJSON_GetObjectItemCaseSensitive(json, "users");
     if (users_array != NULL)
     {
-    if (UNLIKELY(cJSON_IsNull(users_array)))
+        if (UNLIKELY(cJSON_IsNull(users_array)))
         {
             return true;
         }
@@ -1927,8 +1907,7 @@ static bool usersValidateUserLookupKeysLocked(const users_t *users)
         }
         if (UNLIKELY(usersWireGuardPublicKeyTableLookupLocked(users, a->wireguard_publickey) != a))
         {
-            LOGE("Users: WireGuard public key lookup table does not point back to user \"%s\"",
-                 usersUserNameForLog(a));
+            LOGE("Users: WireGuard public key lookup table does not point back to user \"%s\"", usersUserNameForLog(a));
             return false;
         }
         if (UNLIKELY(a->id != 0 && usersIDTableLookupLocked(users, a->id) != a))
@@ -2310,7 +2289,7 @@ user_t *usersLookupByWireGuardPublicKey(users_t *users, const uint8_t publickey[
 }
 
 const user_t *usersLookupByWireGuardPublicKeyConst(const users_t *users,
-                                                   const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE])
+                                                   const uint8_t  publickey[USER_WIREGUARD_PUBLICKEY_SIZE])
 {
     return usersLookupByWireGuardPublicKey((users_t *) users, publickey);
 }
@@ -2589,7 +2568,7 @@ static void usersFreeUpdateStringCopies(char *name_copy, char *email_copy, char 
 }
 
 static users_update_result_t usersCopyUpdateStrings(const user_update_t *update, char **name_copy, char **email_copy,
-                                                    char **notes_copy,
+                                                    char                                **notes_copy,
                                                     users_wireguard_allowed_ips_update_t *wireguard_allowed_ips)
 {
     *name_copy  = NULL;
@@ -2634,7 +2613,7 @@ static users_update_result_t usersCopyUpdateStrings(const user_update_t *update,
 }
 
 static users_update_result_t usersPrepareUpdate(const user_update_t *update, char **name_copy, char **email_copy,
-                                                char **notes_copy,
+                                                char                                **notes_copy,
                                                 users_wireguard_allowed_ips_update_t *wireguard_allowed_ips)
 {
     users_update_result_t result = usersValidateUpdateRequest(update);
@@ -2646,11 +2625,9 @@ static users_update_result_t usersPrepareUpdate(const user_update_t *update, cha
     return usersCopyUpdateStrings(update, name_copy, email_copy, notes_copy, wireguard_allowed_ips);
 }
 
-static users_update_result_t usersApplyUpdateToExistingUserLocked(users_t *users, user_t *user,
-                                                                  const user_update_t *update, char **name_copy,
-                                                                  char **email_copy, char **notes_copy,
-                                                                  users_wireguard_allowed_ips_update_t
-                                                                      *wireguard_allowed_ips)
+static users_update_result_t usersApplyUpdateToExistingUserLocked(
+    users_t *users, user_t *user, const user_update_t *update, char **name_copy, char **email_copy, char **notes_copy,
+    users_wireguard_allowed_ips_update_t *wireguard_allowed_ips)
 {
     user_t *duplicate_name;
 
@@ -2704,12 +2681,12 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(users_t *users
     if ((update->mask & kUserUpdateWireGuardAllowedIps) != 0U)
     {
         usersReplaceStringOwned(&user->wireguard_allowed_ips, &wireguard_allowed_ips->copy);
-        user->wireguard_allowed_ip         = wireguard_allowed_ips->ip;
-        user->wireguard_allowed_mask       = wireguard_allowed_ips->mask;
-        user->wireguard_allowed_ip_count   = wireguard_allowed_ips->count;
-        user->wireguard_allowed_ip_family  = wireguard_allowed_ips->family;
-        user->wireguard_allowed_ip_prefix  = wireguard_allowed_ips->prefix;
-        user->wireguard_allowed_ips_valid  = wireguard_allowed_ips->valid;
+        user->wireguard_allowed_ip        = wireguard_allowed_ips->ip;
+        user->wireguard_allowed_mask      = wireguard_allowed_ips->mask;
+        user->wireguard_allowed_ip_count  = wireguard_allowed_ips->count;
+        user->wireguard_allowed_ip_family = wireguard_allowed_ips->family;
+        user->wireguard_allowed_ip_prefix = wireguard_allowed_ips->prefix;
+        user->wireguard_allowed_ips_valid = wireguard_allowed_ips->valid;
     }
     if ((update->mask & kUserUpdateGid) != 0U)
     {
@@ -2745,11 +2722,11 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(users_t *users
 
 bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update)
 {
-    char                 *name_copy  = NULL;
-    char                 *email_copy = NULL;
-    char                 *notes_copy = NULL;
+    char                                *name_copy  = NULL;
+    char                                *email_copy = NULL;
+    char                                *notes_copy = NULL;
     users_wireguard_allowed_ips_update_t wireguard_allowed_ips;
-    users_update_result_t result;
+    users_update_result_t                result;
 
     if (UNLIKELY(users == NULL || user == NULL))
     {
@@ -2781,12 +2758,12 @@ bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update)
 users_update_result_t usersUpdateUserBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
                                               const user_update_t *update)
 {
-    char                 *name_copy  = NULL;
-    char                 *email_copy = NULL;
-    char                 *notes_copy = NULL;
+    char                                *name_copy  = NULL;
+    char                                *email_copy = NULL;
+    char                                *notes_copy = NULL;
     users_wireguard_allowed_ips_update_t wireguard_allowed_ips;
-    users_update_result_t result;
-    user_t               *user;
+    users_update_result_t                result;
+    user_t                              *user;
 
     if (UNLIKELY(users == NULL || sha256 == NULL))
     {
@@ -3007,10 +2984,8 @@ bool usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src)
     return true;
 }
 
-users_update_result_t usersSetFirstUsageIfMissingBySHA256(users_t *users,
-                                                          const uint8_t sha256[SHA256_DIGEST_SIZE],
-                                                          uint64_t first_usage_at_ms,
-                                                          bool    *changed)
+users_update_result_t usersSetFirstUsageIfMissingBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                                          uint64_t first_usage_at_ms, bool *changed)
 {
     user_t *user;
     bool    local_changed = false;
@@ -3046,10 +3021,8 @@ users_update_result_t usersSetFirstUsageIfMissingBySHA256(users_t *users,
     return user != NULL ? kUsersUpdateResultOk : kUsersUpdateResultUserNotFound;
 }
 
-users_update_result_t usersSetFirstUsageIfMissingByIdentifier(users_t *users,
-                                                              uint64_t id,
-                                                              uint64_t first_usage_at_ms,
-                                                              bool    *changed)
+users_update_result_t usersSetFirstUsageIfMissingByIdentifier(users_t *users, uint64_t id, uint64_t first_usage_at_ms,
+                                                              bool *changed)
 {
     user_t *user;
     bool    local_changed = false;
@@ -3085,8 +3058,8 @@ users_update_result_t usersSetFirstUsageIfMissingByIdentifier(users_t *users,
     return user != NULL ? kUsersUpdateResultOk : kUsersUpdateResultUserNotFound;
 }
 
-user_admission_result_t usersTryAdmitConnectionByIdentifier(users_t *users, uint64_t id,
-                                                            const user_ip_key_t *ip_key, uint64_t now_ms)
+user_admission_result_t usersTryAdmitConnectionByIdentifier(users_t *users, uint64_t id, const user_ip_key_t *ip_key,
+                                                            uint64_t now_ms)
 {
     user_t                 *user;
     user_admission_result_t result;

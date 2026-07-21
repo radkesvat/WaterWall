@@ -1,46 +1,71 @@
-#include "wcrypto.h"
-#include "wlibc.h"
-
 #include "private/crypto_backends.h"
+#include "private/crypto_validation.h"
+#include "wcrypto.h"
 
-int chacha20poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t src_len, const unsigned char *ad,
-                            size_t ad_len, const unsigned char *nonce, const unsigned char *key)
+wcrypto_status_t wCryptoChaCha20Poly1305Encrypt(unsigned char *dst, size_t dst_capacity, const unsigned char *src,
+                                                size_t src_len, const unsigned char *ad, size_t ad_len,
+                                                const unsigned char nonce[WCRYPTO_CHACHA20POLY1305_NONCE_SIZE],
+                                                const unsigned char key[WCRYPTO_CHACHA20POLY1305_KEY_SIZE])
 {
+    size_t           output_len = 0;
+    wcrypto_status_t status =
+        wCryptoValidateAeadEncrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key, &output_len);
+    if (status != kWCryptoOk)
+    {
+        wCryptoZero(dst, output_len);
+        return status;
+    }
+    if (! wCryptoIsInitialized())
+    {
+        wCryptoZero(dst, output_len);
+        return kWCryptoInvalidState;
+    }
 #if defined(WCRYPTO_HAS_OPENSSL_CHACHA20POLY1305)
-    return wCryptoOpenSSLChacha20Poly1305Encrypt(dst, src, src_len, ad, ad_len, nonce, key);
+    status = wCryptoOpenSSLChacha20Poly1305Encrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key);
 #elif defined(WCRYPTO_HAS_SODIUM_CHACHA20POLY1305)
-    return wCryptoSodiumChacha20Poly1305Encrypt(dst, src, src_len, ad, ad_len, nonce, key);
+    status = wCryptoSodiumChacha20Poly1305Encrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key);
 #elif defined(WCRYPTO_HAS_SOFTWARE_CHACHA20POLY1305)
-    return wCryptoSoftwareChacha20Poly1305Encrypt(dst, src, src_len, ad, ad_len, nonce, key);
+    status = wCryptoSoftwareChacha20Poly1305Encrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key);
 #else
-    discard dst;
-    discard src;
-    discard src_len;
-    discard ad;
-    discard ad_len;
-    discard nonce;
-    discard key;
-    return -1;
+    status = kWCryptoUnavailable;
 #endif
+    if (status != kWCryptoOk)
+    {
+        wCryptoZero(dst, output_len);
+    }
+    return status;
 }
 
-int chacha20poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t src_len, const unsigned char *ad,
-                            size_t ad_len, const unsigned char *nonce, const unsigned char *key)
+wcrypto_status_t wCryptoChaCha20Poly1305Decrypt(unsigned char *dst, size_t dst_capacity, const unsigned char *src,
+                                                size_t src_len, const unsigned char *ad, size_t ad_len,
+                                                const unsigned char nonce[WCRYPTO_CHACHA20POLY1305_NONCE_SIZE],
+                                                const unsigned char key[WCRYPTO_CHACHA20POLY1305_KEY_SIZE])
 {
+    size_t           output_len = 0;
+    wcrypto_status_t status =
+        wCryptoValidateAeadDecrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key, &output_len);
+    if (status != kWCryptoOk)
+    {
+        wCryptoZero(dst, output_len);
+        return status;
+    }
+    if (! wCryptoIsInitialized())
+    {
+        wCryptoZero(dst, output_len);
+        return kWCryptoInvalidState;
+    }
 #if defined(WCRYPTO_HAS_OPENSSL_CHACHA20POLY1305)
-    return wCryptoOpenSSLChacha20Poly1305Decrypt(dst, src, src_len, ad, ad_len, nonce, key);
+    status = wCryptoOpenSSLChacha20Poly1305Decrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key);
 #elif defined(WCRYPTO_HAS_SODIUM_CHACHA20POLY1305)
-    return wCryptoSodiumChacha20Poly1305Decrypt(dst, src, src_len, ad, ad_len, nonce, key);
+    status = wCryptoSodiumChacha20Poly1305Decrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key);
 #elif defined(WCRYPTO_HAS_SOFTWARE_CHACHA20POLY1305)
-    return wCryptoSoftwareChacha20Poly1305Decrypt(dst, src, src_len, ad, ad_len, nonce, key);
+    status = wCryptoSoftwareChacha20Poly1305Decrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key);
 #else
-    discard dst;
-    discard src;
-    discard src_len;
-    discard ad;
-    discard ad_len;
-    discard nonce;
-    discard key;
-    return -1;
+    status = kWCryptoUnavailable;
 #endif
+    if (status != kWCryptoOk)
+    {
+        wCryptoZero(dst, output_len);
+    }
+    return status;
 }

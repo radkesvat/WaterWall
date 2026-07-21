@@ -28,6 +28,19 @@ static void requireNoSelection(int ret, const unsigned char *out, unsigned char 
     require(outlen == 0, "ALPN no-overlap changed output length");
 }
 
+static void testOpenSslRuntimeInitialization(void)
+{
+    require(wCryptoGlobalInit() == kWCryptoOk, "crypto global initialization failed");
+    require(GSTATE.flag_openssl_initialized != 0, "crypto initialization did not initialize OpenSSL");
+
+    SSL_CTX *ssl_ctx = sslCtxNew(NULL);
+    require(ssl_ctx != NULL, "OpenSSL context construction failed after crypto initialization");
+    SSL_CTX_free(ssl_ctx);
+
+    wCryptoGlobalCleanup();
+    require(GSTATE.flag_openssl_initialized == 0, "crypto cleanup did not clean up OpenSSL");
+}
+
 static void testLegacyAlpnUsesConfiguredPreference(void)
 {
     char h2[]     = "h2";
@@ -40,8 +53,18 @@ static void testLegacyAlpnUsesConfiguredPreference(void)
     tlsserver_tstate_t ts = {.alpns = alpns, .alpns_length = ARRAY_SIZE(alpns)};
 
     const unsigned char client_offer[] = {
-        8, 'h', 't', 't', 'p', '/', '1', '.', '1',
-        2, 'h', '2',
+        8,
+        'h',
+        't',
+        't',
+        'p',
+        '/',
+        '1',
+        '.',
+        '1',
+        2,
+        'h',
+        '2',
     };
     const unsigned char *out    = NULL;
     unsigned char        outlen = 0;
@@ -64,8 +87,18 @@ static void testSelectAlpnUsesConfiguredPreference(void)
     tlsserver_tstate_t ts = {.select_alpns = alpns, .select_alpns_length = ARRAY_SIZE(alpns)};
 
     const unsigned char client_offer[] = {
-        8, 'h', 't', 't', 'p', '/', '1', '.', '1',
-        2, 'h', '2',
+        8,
+        'h',
+        't',
+        't',
+        'p',
+        '/',
+        '1',
+        '.',
+        '1',
+        2,
+        'h',
+        '2',
     };
     const unsigned char *out    = NULL;
     unsigned char        outlen = 0;
@@ -86,8 +119,18 @@ static void testDefaultHttp11ProfileSelectsHttp11(void)
     tlsserver_tstate_t ts = {.select_alpns = alpns, .select_alpns_length = ARRAY_SIZE(alpns)};
 
     const unsigned char client_offer[] = {
-        2, 'h', '2',
-        8, 'h', 't', 't', 'p', '/', '1', '.', '1',
+        2,
+        'h',
+        '2',
+        8,
+        'h',
+        't',
+        't',
+        'p',
+        '/',
+        '1',
+        '.',
+        '1',
     };
     const unsigned char *out    = NULL;
     unsigned char        outlen = 0;
@@ -156,6 +199,7 @@ static void testLegacyAlpnNoOverlapContinuesWithoutAlpn(void)
 
 int main(void)
 {
+    testOpenSslRuntimeInitialization();
     testLegacyAlpnUsesConfiguredPreference();
     testSelectAlpnUsesConfiguredPreference();
     testDefaultHttp11ProfileSelectsHttp11();

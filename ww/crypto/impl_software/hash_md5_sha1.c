@@ -1,18 +1,7 @@
 #include "private/crypto_backends.h"
-#include "wlibc.h"
+#include "private/crypto_validation.h"
 #include "utils/md5.h"
 #include "utils/sha1.h"
-
-static int softwareMD5SHA1HashValidateInput(const void *out, const unsigned char *in, size_t inlen)
-{
-    if (!out || (!in && inlen > 0))
-    {
-        printError("Invalid input for crypto hash function.\n");
-        return -1;
-    }
-
-    return 0;
-}
 
 static const unsigned char *softwareMD5SHA1HashNormalizeInput(const unsigned char *in)
 {
@@ -20,34 +9,44 @@ static const unsigned char *softwareMD5SHA1HashNormalizeInput(const unsigned cha
     return in ? in : &empty_input;
 }
 
-int wCryptoSoftwareMD5(md5_hash_t *out, const unsigned char *in, size_t inlen)
+wcrypto_status_t wCryptoSoftwareMD5(md5_hash_t *out, const unsigned char *in, size_t inlen)
 {
-    if (softwareMD5SHA1HashValidateInput(out, in, inlen) != 0)
+    wcrypto_status_t status = wCryptoValidateHash(out, in, inlen);
+    if (status != kWCryptoOk)
     {
-        return -1;
+        if (out != NULL)
+        {
+            wCryptoZero(out, sizeof(*out));
+        }
+        return status;
     }
     if (inlen > UINT_MAX)
     {
-        printError("wCryptoMD5 input is too large for the software MD5 implementation.\n");
-        return -1;
+        wCryptoZero(out, sizeof(*out));
+        return kWCryptoInputTooLarge;
     }
 
     wwMD5((unsigned char *) softwareMD5SHA1HashNormalizeInput(in), (unsigned int) inlen, out->bytes);
-    return 0;
+    return kWCryptoOk;
 }
 
-int wCryptoSoftwareSHA1(sha1_hash_t *out, const unsigned char *in, size_t inlen)
+wcrypto_status_t wCryptoSoftwareSHA1(sha1_hash_t *out, const unsigned char *in, size_t inlen)
 {
-    if (softwareMD5SHA1HashValidateInput(out, in, inlen) != 0)
+    wcrypto_status_t status = wCryptoValidateHash(out, in, inlen);
+    if (status != kWCryptoOk)
     {
-        return -1;
+        if (out != NULL)
+        {
+            wCryptoZero(out, sizeof(*out));
+        }
+        return status;
     }
     if (inlen > UINT32_MAX)
     {
-        printError("wCryptoSHA1 input is too large for the software SHA1 implementation.\n");
-        return -1;
+        wCryptoZero(out, sizeof(*out));
+        return kWCryptoInputTooLarge;
     }
 
     wwSHA1((unsigned char *) softwareMD5SHA1HashNormalizeInput(in), (uint32_t) inlen, out->bytes);
-    return 0;
+    return kWCryptoOk;
 }

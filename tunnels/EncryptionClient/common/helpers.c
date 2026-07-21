@@ -8,38 +8,38 @@ void encryptionclientTunnelstateDestroy(encryptionclient_tstate_t *ts)
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));
 }
 
-int encryptionclientEncryptAead(uint32_t algorithm, unsigned char *dst, const unsigned char *src, size_t src_len,
-                                const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
-                                const unsigned char *key)
+wcrypto_status_t encryptionclientEncryptAead(uint32_t algorithm, unsigned char *dst, size_t dst_capacity,
+                                             const unsigned char *src, size_t src_len, const unsigned char *ad,
+                                             size_t ad_len, const unsigned char *nonce, const unsigned char *key)
 {
     if (algorithm == kEncryptionAlgorithmChaCha20Poly1305)
     {
-        return chacha20poly1305Encrypt(dst, src, src_len, ad, ad_len, nonce, key);
+        return wCryptoChaCha20Poly1305Encrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key);
     }
 
     if (algorithm == kEncryptionAlgorithmAes256Gcm)
     {
-        return aes256gcmEncrypt(dst, src, src_len, ad, ad_len, nonce, key);
+        return wCryptoAes256GcmEncrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key);
     }
 
-    return -1;
+    return kWCryptoUnavailable;
 }
 
-int encryptionclientDecryptAead(uint32_t algorithm, unsigned char *dst, const unsigned char *src, size_t src_len,
-                                const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
-                                const unsigned char *key)
+wcrypto_status_t encryptionclientDecryptAead(uint32_t algorithm, unsigned char *dst, size_t dst_capacity,
+                                             const unsigned char *src, size_t src_len, const unsigned char *ad,
+                                             size_t ad_len, const unsigned char *nonce, const unsigned char *key)
 {
     if (algorithm == kEncryptionAlgorithmChaCha20Poly1305)
     {
-        return chacha20poly1305Decrypt(dst, src, src_len, ad, ad_len, nonce, key);
+        return wCryptoChaCha20Poly1305Decrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key);
     }
 
     if (algorithm == kEncryptionAlgorithmAes256Gcm)
     {
-        return aes256gcmDecrypt(dst, src, src_len, ad, ad_len, nonce, key);
+        return wCryptoAes256GcmDecrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key);
     }
 
-    return -1;
+    return kWCryptoUnavailable;
 }
 
 void encryptionclientCloseLineBidirectional(tunnel_t *t, line_t *l)

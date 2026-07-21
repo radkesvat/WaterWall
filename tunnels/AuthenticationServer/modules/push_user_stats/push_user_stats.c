@@ -207,7 +207,8 @@ static bool authenticationserverPushStatsAddHintFromJson(authenticationserver_st
 
     authenticationserver_stats_hint_t hint   = {0};
     sha256_hash_t                     sha256 = {0};
-    if (UNLIKELY(wCryptoSHA256(&sha256, (const unsigned char *) password_json->valuestring, password_len) != 0))
+    if (UNLIKELY(wCryptoSHA256(&sha256, (const unsigned char *) password_json->valuestring, password_len) !=
+                 kWCryptoOk))
     {
         memoryZero(&sha256, sizeof(sha256));
         return false;

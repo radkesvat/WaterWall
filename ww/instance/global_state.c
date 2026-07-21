@@ -19,21 +19,7 @@
 #include <unistd.h>
 #endif
 
-#if defined(WCRYPTO_USING_OPENSSL)
-
-#include "crypto/openssl_instance.h"
-
-#endif
-
-#if defined(WCRYPTO_BACKEND_SODIUM)
-
-#include "crypto/sodium_instance.h"
-
-#endif
-
-#if defined(WCRYPTO_BACKEND_SOFTWARE)
-
-#endif
+#include "crypto/wcrypto.h"
 
 // Global instance of the ww_global_state_t structure.
 ww_global_state_t global_ww_state = {0};
@@ -175,7 +161,7 @@ bool globalstateInitializeSecureRandom(void)
     memoryCopy(&state->generator, &proc, sizeof(state->generator));
 #elif defined(OS_UNIX) && ! (defined(OS_DARWIN) || defined(OS_BSD))
     state->device_fd = -1;
-    int open_flags = O_RDONLY;
+    int open_flags   = O_RDONLY;
 #if defined(O_CLOEXEC)
     open_flags |= O_CLOEXEC;
 #endif
@@ -289,9 +275,9 @@ void createGlobalState(const ww_construction_data_t init_data)
     // Capture the main thread id early so terminateProgram()/the shutdown handoff
     // can reliably tell whether it runs on the main worker thread, even during
     // startup before workers are spawned.
-    GSTATE.main_thread_id = (uint64_t) getTID();
-    GSTATE.dns_options    = init_data.dns_options;
-    GSTATE.domain_strategy  = init_data.domain_strategy;
+    GSTATE.main_thread_id  = (uint64_t) getTID();
+    GSTATE.dns_options     = init_data.dns_options;
+    GSTATE.domain_strategy = init_data.domain_strategy;
     if (! GSTATE.dns_options.defaults_initialized)
     {
         asyncdnsOptionsSetDefaults(&GSTATE.dns_options);
@@ -302,6 +288,21 @@ void createGlobalState(const ww_construction_data_t init_data)
     if (UNLIKELY(! globalstateInitializeSecureRandom()))
     {
         printError("Failed to initialize the operating-system secure random provider\n");
+        GSTATE = (ww_global_state_t) {0};
+        terminateProgram(1);
+    }
+
+    /* Initialize cryptography before any other process-wide subsystem.  If a
+     * backend cannot start, there are no workers, managers, loggers, or c-ares
+     * resources to unwind and no consumer can observe a partially initialized
+     * crypto runtime. */
+    const wcrypto_status_t crypto_status = wCryptoGlobalInit();
+    if (crypto_status != kWCryptoOk)
+    {
+        printError("Failed to initialize cryptography: %s\n", wCryptoStatusString(crypto_status));
+        wCryptoGlobalCleanup();
+        globalstateDestroySecureRandom();
+        GSTATE = (ww_global_state_t) {0};
         terminateProgram(1);
     }
 
@@ -309,6 +310,9 @@ void createGlobalState(const ww_construction_data_t init_data)
     if (ares_rc != ARES_SUCCESS)
     {
         printError("Failed to initialize c-ares: %s\n", ares_strerror(ares_rc));
+        wCryptoGlobalCleanup();
+        globalstateDestroySecureRandom();
+        GSTATE = (ww_global_state_t) {0};
         terminateProgram(1);
     }
 
@@ -377,29 +381,6 @@ void createGlobalState(const ww_construction_data_t init_data)
     {
         GSTATE.capturedevice_queue_start_number = fastRand() % 2000;
         GSTATE.mtu_size                         = init_data.mtu_size;
-    }
-
-    // SSL
-    {
-
-// later we gona brind openssl anyway...
-#if defined(WCRYPTO_USING_OPENSSL)
-
-        opensslGlobalInit();
-        GSTATE.flag_openssl_initialized = true;
-
-#endif
-
-#if defined(WCRYPTO_BACKEND_SODIUM)
-
-        const int sodium_result = initSodium();
-        if (sodium_result < 0)
-        {
-            printError("Failed to initialize libsodium\n");
-            terminateProgram(1);
-        }
-        GSTATE.flag_libsodium_initialized = true;
-#endif
     }
 
     // Spawn all workers except main worker which is current thread
@@ -486,9 +467,7 @@ WW_EXPORT void destroyGlobalState(void)
 
     socketmanagerDestroy();
     nodemanagerDestroy();
-#if defined(WCRYPTO_USING_OPENSSL)
-    opensslGlobalCleanup();
-#endif
+    wCryptoGlobalCleanup();
 
     coreloggerDestroy();
     networkloggerDestroy();

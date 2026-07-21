@@ -55,7 +55,7 @@ static void userFreePassword(char *password)
         return;
     }
 
-    wCryptoZero(password, stringLength(password));
+    memoryZero(password, stringLength(password));
     memoryFree(password);
 }
 
@@ -259,7 +259,7 @@ bool userWireGuardAllowedIpsParse(const char *value, char **normalized_out, ip_a
             return false;
         }
         memoryZero(&ip, sizeof(ip));
-        ip.type        = IPADDR_TYPE_V4;
+        ip.type       = IPADDR_TYPE_V4;
         ip.u_addr.ip4 = ip4;
         userBuildIpv4Mask(prefix, &mask);
         family = 4U;
@@ -273,7 +273,7 @@ bool userWireGuardAllowedIpsParse(const char *value, char **normalized_out, ip_a
             return false;
         }
         memoryZero(&ip, sizeof(ip));
-        ip.type        = IPADDR_TYPE_V6;
+        ip.type       = IPADDR_TYPE_V6;
         ip.u_addr.ip6 = ip6;
         userBuildIpv6Mask(prefix, &mask);
         family = 6U;
@@ -355,13 +355,13 @@ bool userSetWireGuardAllowedIps(User *user, const char *value)
 
     rwlockWriteLock(&user->lock);
     memoryFree(user->wireguard_allowed_ips);
-    user->wireguard_allowed_ips        = normalized;
-    user->wireguard_allowed_ip         = ip;
-    user->wireguard_allowed_mask       = mask;
-    user->wireguard_allowed_ip_count   = count;
-    user->wireguard_allowed_ip_family  = family;
-    user->wireguard_allowed_ip_prefix  = prefix;
-    user->wireguard_allowed_ips_valid  = valid;
+    user->wireguard_allowed_ips       = normalized;
+    user->wireguard_allowed_ip        = ip;
+    user->wireguard_allowed_mask      = mask;
+    user->wireguard_allowed_ip_count  = count;
+    user->wireguard_allowed_ip_family = family;
+    user->wireguard_allowed_ip_prefix = prefix;
+    user->wireguard_allowed_ips_valid = valid;
     rwlockWriteUnlock(&user->lock);
     return true;
 }
@@ -375,8 +375,8 @@ typedef struct user_snapshot_s
     char *wireguard_allowed_ips;
 
     uint64_t id;
-    hash_t gid;
-    bool   enabled;
+    hash_t   gid;
+    bool     enabled;
 
     user_limit_t     limit;
     user_time_info_t timeinfo;
@@ -391,13 +391,13 @@ typedef struct user_snapshot_s
 
     user_stat_t stats;
 
-    hash_t        hash_pass;
-    uint8_t       sha_alignment_padding[8];
+    hash_t                                         hash_pass;
+    uint8_t                                        sha_alignment_padding[8];
     MSVC_ATTR_ALIGNED_32 sha224_hash_t sha224_pass GNU_ATTR_ALIGNED_32;
-    uint8_t       sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
+    uint8_t                                        sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
     MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;
-    uint8_t       uuid_pass[kWwUuidBytesLen];
-    uint8_t       wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
+    uint8_t                                        uuid_pass[kWwUuidBytesLen];
+    uint8_t                                        wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
 
     bool sha224_pass_valid;
     bool sha256_pass_valid;
@@ -424,8 +424,8 @@ static void userSnapshotDestroy(user_snapshot_t *snapshot)
     memoryFree(snapshot->email);
     memoryFree(snapshot->notes);
     memoryFree(snapshot->wireguard_allowed_ips);
-    wCryptoZero(&snapshot->sha224_pass, sizeof(snapshot->sha224_pass));
-    wCryptoZero(&snapshot->sha256_pass, sizeof(snapshot->sha256_pass));
+    memoryZero(&snapshot->sha224_pass, sizeof(snapshot->sha224_pass));
+    memoryZero(&snapshot->sha256_pass, sizeof(snapshot->sha256_pass));
     memoryZero(snapshot->uuid_pass, sizeof(snapshot->uuid_pass));
     memoryZero(snapshot->wireguard_publickey, sizeof(snapshot->wireguard_publickey));
     memoryZero(snapshot, sizeof(*snapshot));
@@ -457,27 +457,27 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
         return false;
     }
 
-    snapshot->id                      = src->id;
-    snapshot->gid                     = src->gid;
-    snapshot->enabled                 = src->enabled;
-    snapshot->limit                   = src->limit;
-    snapshot->timeinfo                = src->timeinfo;
-    snapshot->record_stat_interval_ms = src->record_stat_interval_ms;
-    snapshot->wireguard_allowed_ip    = src->wireguard_allowed_ip;
-    snapshot->wireguard_allowed_mask  = src->wireguard_allowed_mask;
+    snapshot->id                          = src->id;
+    snapshot->gid                         = src->gid;
+    snapshot->enabled                     = src->enabled;
+    snapshot->limit                       = src->limit;
+    snapshot->timeinfo                    = src->timeinfo;
+    snapshot->record_stat_interval_ms     = src->record_stat_interval_ms;
+    snapshot->wireguard_allowed_ip        = src->wireguard_allowed_ip;
+    snapshot->wireguard_allowed_mask      = src->wireguard_allowed_mask;
     snapshot->wireguard_allowed_ip_count  = src->wireguard_allowed_ip_count;
     snapshot->wireguard_allowed_ip_family = src->wireguard_allowed_ip_family;
     snapshot->wireguard_allowed_ip_prefix = src->wireguard_allowed_ip_prefix;
     snapshot->wireguard_allowed_ips_valid = src->wireguard_allowed_ips_valid;
-    snapshot->stats                   = src->stats;
-    snapshot->hash_pass               = src->hash_pass;
-    snapshot->sha224_pass             = src->sha224_pass;
-    snapshot->sha256_pass             = src->sha256_pass;
+    snapshot->stats                       = src->stats;
+    snapshot->hash_pass                   = src->hash_pass;
+    snapshot->sha224_pass                 = src->sha224_pass;
+    snapshot->sha256_pass                 = src->sha256_pass;
     memoryCopy(snapshot->uuid_pass, src->uuid_pass, sizeof(snapshot->uuid_pass));
     memoryCopy(snapshot->wireguard_publickey, src->wireguard_publickey, sizeof(snapshot->wireguard_publickey));
-    snapshot->sha224_pass_valid       = src->sha224_pass_valid;
-    snapshot->sha256_pass_valid       = src->sha256_pass_valid;
-    snapshot->uuid_pass_valid         = src->uuid_pass_valid;
+    snapshot->sha224_pass_valid         = src->sha224_pass_valid;
+    snapshot->sha256_pass_valid         = src->sha256_pass_valid;
+    snapshot->uuid_pass_valid           = src->uuid_pass_valid;
     snapshot->wireguard_publickey_valid = src->wireguard_publickey_valid;
 
     rwlockReadUnlock(&mutable_src->stats_lock);
@@ -488,13 +488,13 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
 static bool userPasswordHashesCreate(User *user, const char *password)
 {
     static const uint8_t wireguard_basepoint[USER_WIREGUARD_PUBLICKEY_SIZE] = {9};
-    const size_t password_len = stringLength(password);
+    const size_t         password_len                                       = stringLength(password);
 
     user->hash_pass = calcHashBytes(password, password_len);
 
-    user->sha224_pass_valid = false;
-    user->sha256_pass_valid = false;
-    user->uuid_pass_valid   = false;
+    user->sha224_pass_valid         = false;
+    user->sha256_pass_valid         = false;
+    user->uuid_pass_valid           = false;
     user->wireguard_publickey_valid = false;
 
     memoryZero(&user->sha224_pass, sizeof(user->sha224_pass));
@@ -502,19 +502,19 @@ static bool userPasswordHashesCreate(User *user, const char *password)
     memoryZero(user->uuid_pass, sizeof(user->uuid_pass));
     memoryZero(user->wireguard_publickey, sizeof(user->wireguard_publickey));
 
-    if (UNLIKELY(wCryptoSHA224(&user->sha224_pass, (const unsigned char *) password, password_len) != 0))
+    if (UNLIKELY(wCryptoSHA224(&user->sha224_pass, (const unsigned char *) password, password_len) != kWCryptoOk))
     {
         return false;
     }
     user->sha224_pass_valid = true;
 
-    if (UNLIKELY(wCryptoSHA256(&user->sha256_pass, (const unsigned char *) password, password_len) != 0))
+    if (UNLIKELY(wCryptoSHA256(&user->sha256_pass, (const unsigned char *) password, password_len) != kWCryptoOk))
     {
         return false;
     }
     user->sha256_pass_valid = true;
 
-    if (UNLIKELY(performX25519(user->wireguard_publickey, user->sha256_pass.bytes, wireguard_basepoint) != 0))
+    if (UNLIKELY(wCryptoX25519(user->wireguard_publickey, user->sha256_pass.bytes, wireguard_basepoint) != kWCryptoOk))
     {
         memoryZero(user->wireguard_publickey, sizeof(user->wireguard_publickey));
         return false;
@@ -707,9 +707,9 @@ static bool userJsonReadTimeInfo(const cJSON *json_obj, user_time_info_t *timein
                json_obj, "first-usage-at-ms", "first_usage_at_ms", &timeinfo->first_usage_at_ms) &&
            userJsonReadOptionalUint64Aliased(json_obj, "expire-at-ms", "expires-at-ms", &timeinfo->expire_at_ms) &&
            userJsonReadOptionalUint64Aliased(json_obj,
-                                       "expire-after-first-usage-ms",
-                                       "expire-after-first-use-ms",
-                                       &timeinfo->expire_after_first_usage_ms);
+                                             "expire-after-first-usage-ms",
+                                             "expire-after-first-use-ms",
+                                             &timeinfo->expire_after_first_usage_ms);
 }
 
 static bool userJsonReadStats(const cJSON *json_obj, user_stat_t *stats)
@@ -801,10 +801,10 @@ static bool userJsonAddLimitIfNotZero(cJSON *root, const user_limit_t *limit)
             return false;
         }
 
-        if (UNLIKELY((limit->traffic.u != 0 && ! jsonAddUint64ToObject(traffic_json, "up", limit->traffic.u)) ||
-                     (limit->traffic.d != 0 && ! jsonAddUint64ToObject(traffic_json, "down", limit->traffic.d)) ||
-                     (limit->traffic.total != 0 &&
-                      ! jsonAddUint64ToObject(traffic_json, "total", limit->traffic.total))))
+        if (UNLIKELY(
+                (limit->traffic.u != 0 && ! jsonAddUint64ToObject(traffic_json, "up", limit->traffic.u)) ||
+                (limit->traffic.d != 0 && ! jsonAddUint64ToObject(traffic_json, "down", limit->traffic.d)) ||
+                (limit->traffic.total != 0 && ! jsonAddUint64ToObject(traffic_json, "total", limit->traffic.total))))
         {
             cJSON_Delete(traffic_json);
             cJSON_Delete(limit_json);
@@ -948,8 +948,7 @@ static bool userTrafficReachedLocked(const User *user)
 {
     return userLimitReached(user->limit.traffic.u, user->stats.traffic.u) ||
            userLimitReached(user->limit.traffic.d, user->stats.traffic.d) ||
-           userLimitReached(user->limit.traffic.total,
-                            userSaturatingAdd(user->stats.traffic.u, user->stats.traffic.d));
+           userLimitReached(user->limit.traffic.total, userSaturatingAdd(user->stats.traffic.u, user->stats.traffic.d));
 }
 
 static bool userIpKeyValid(const user_ip_key_t *ip_key)
@@ -1013,8 +1012,8 @@ bool userCreate(User *user, const char *password)
     user->timeinfo.created_at_ms  = getTimeOfDayMS();
 
     if (UNLIKELY(! userStringDuplicate(&user->name, "") || ! userStringDuplicate(&user->email, "") ||
-                 ! userStringDuplicate(&user->notes, "") ||
-                 ! userStringDuplicate(&user->wireguard_allowed_ips, "") || ! userChangePassword(user, password)))
+                 ! userStringDuplicate(&user->notes, "") || ! userStringDuplicate(&user->wireguard_allowed_ips, "") ||
+                 ! userChangePassword(user, password)))
     {
         userDestroy(user);
         return false;
@@ -1042,39 +1041,39 @@ bool userCopy(User *dest, const User *src)
 
     dest->initialized = true;
 
-    dest->name     = snapshot.name;
-    dest->password = snapshot.password;
-    dest->email    = snapshot.email;
-    dest->notes    = snapshot.notes;
+    dest->name                  = snapshot.name;
+    dest->password              = snapshot.password;
+    dest->email                 = snapshot.email;
+    dest->notes                 = snapshot.notes;
     dest->wireguard_allowed_ips = snapshot.wireguard_allowed_ips;
 
-    dest->id                      = snapshot.id;
-    dest->gid                     = snapshot.gid;
-    dest->enabled                 = snapshot.enabled;
-    dest->limit                   = snapshot.limit;
-    dest->timeinfo                = snapshot.timeinfo;
-    dest->record_stat_interval_ms = snapshot.record_stat_interval_ms;
-    dest->wireguard_allowed_ip    = snapshot.wireguard_allowed_ip;
-    dest->wireguard_allowed_mask  = snapshot.wireguard_allowed_mask;
+    dest->id                          = snapshot.id;
+    dest->gid                         = snapshot.gid;
+    dest->enabled                     = snapshot.enabled;
+    dest->limit                       = snapshot.limit;
+    dest->timeinfo                    = snapshot.timeinfo;
+    dest->record_stat_interval_ms     = snapshot.record_stat_interval_ms;
+    dest->wireguard_allowed_ip        = snapshot.wireguard_allowed_ip;
+    dest->wireguard_allowed_mask      = snapshot.wireguard_allowed_mask;
     dest->wireguard_allowed_ip_count  = snapshot.wireguard_allowed_ip_count;
     dest->wireguard_allowed_ip_family = snapshot.wireguard_allowed_ip_family;
     dest->wireguard_allowed_ip_prefix = snapshot.wireguard_allowed_ip_prefix;
     dest->wireguard_allowed_ips_valid = snapshot.wireguard_allowed_ips_valid;
-    dest->stats                   = snapshot.stats;
-    dest->hash_pass               = snapshot.hash_pass;
-    dest->sha224_pass             = snapshot.sha224_pass;
-    dest->sha256_pass             = snapshot.sha256_pass;
+    dest->stats                       = snapshot.stats;
+    dest->hash_pass                   = snapshot.hash_pass;
+    dest->sha224_pass                 = snapshot.sha224_pass;
+    dest->sha256_pass                 = snapshot.sha256_pass;
     memoryCopy(dest->uuid_pass, snapshot.uuid_pass, sizeof(dest->uuid_pass));
     memoryCopy(dest->wireguard_publickey, snapshot.wireguard_publickey, sizeof(dest->wireguard_publickey));
-    dest->sha224_pass_valid       = snapshot.sha224_pass_valid;
-    dest->sha256_pass_valid       = snapshot.sha256_pass_valid;
-    dest->uuid_pass_valid         = snapshot.uuid_pass_valid;
+    dest->sha224_pass_valid         = snapshot.sha224_pass_valid;
+    dest->sha256_pass_valid         = snapshot.sha256_pass_valid;
+    dest->uuid_pass_valid           = snapshot.uuid_pass_valid;
     dest->wireguard_publickey_valid = snapshot.wireguard_publickey_valid;
 
-    snapshot.name     = NULL;
-    snapshot.password = NULL;
-    snapshot.email    = NULL;
-    snapshot.notes    = NULL;
+    snapshot.name                  = NULL;
+    snapshot.password              = NULL;
+    snapshot.email                 = NULL;
+    snapshot.notes                 = NULL;
     snapshot.wireguard_allowed_ips = NULL;
     memoryZero(&snapshot.sha224_pass, sizeof(snapshot.sha224_pass));
     memoryZero(&snapshot.sha256_pass, sizeof(snapshot.sha256_pass));
@@ -1097,8 +1096,8 @@ void userDestroy(User *user)
         memoryFree(user->runtime.ip_usages);
     }
     memoryZero(&user->runtime, sizeof(user->runtime));
-    wCryptoZero(&user->sha224_pass, sizeof(user->sha224_pass));
-    wCryptoZero(&user->sha256_pass, sizeof(user->sha256_pass));
+    memoryZero(&user->sha224_pass, sizeof(user->sha224_pass));
+    memoryZero(&user->sha256_pass, sizeof(user->sha256_pass));
     memoryZero(user->uuid_pass, sizeof(user->uuid_pass));
     memoryZero(user->wireguard_publickey, sizeof(user->wireguard_publickey));
     memoryZero(&user->limit, sizeof(user->limit));
@@ -1106,9 +1105,9 @@ void userDestroy(User *user)
     memoryZero(&user->wireguard_allowed_ip, sizeof(user->wireguard_allowed_ip));
     memoryZero(&user->wireguard_allowed_mask, sizeof(user->wireguard_allowed_mask));
     memoryZero(&user->stats, sizeof(user->stats));
-    user->id        = 0;
-    user->hash_pass = 0;
-    user->enabled   = false;
+    user->id                          = 0;
+    user->hash_pass                   = 0;
+    user->enabled                     = false;
     user->wireguard_allowed_ip_count  = 0;
     user->wireguard_allowed_ip_family = 0;
     user->wireguard_allowed_ip_prefix = 0;
@@ -1131,8 +1130,8 @@ bool userChangePassword(User *user, const char *password)
 
     if (UNLIKELY(! userPasswordHashesCreate(&staged_hashes, password)))
     {
-        wCryptoZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
-        wCryptoZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
+        memoryZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
+        memoryZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
         memoryZero(staged_hashes.uuid_pass, sizeof(staged_hashes.uuid_pass));
         memoryZero(staged_hashes.wireguard_publickey, sizeof(staged_hashes.wireguard_publickey));
         return false;
@@ -1141,8 +1140,8 @@ bool userChangePassword(User *user, const char *password)
     copy = stringDuplicate(password);
     if (UNLIKELY(copy == NULL))
     {
-        wCryptoZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
-        wCryptoZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
+        memoryZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
+        memoryZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
         memoryZero(staged_hashes.uuid_pass, sizeof(staged_hashes.uuid_pass));
         memoryZero(staged_hashes.wireguard_publickey, sizeof(staged_hashes.wireguard_publickey));
         return false;
@@ -1150,25 +1149,25 @@ bool userChangePassword(User *user, const char *password)
 
     rwlockWriteLock(&user->lock);
 
-    wCryptoZero(&user->sha224_pass, sizeof(user->sha224_pass));
-    wCryptoZero(&user->sha256_pass, sizeof(user->sha256_pass));
+    memoryZero(&user->sha224_pass, sizeof(user->sha224_pass));
+    memoryZero(&user->sha256_pass, sizeof(user->sha256_pass));
     memoryZero(user->uuid_pass, sizeof(user->uuid_pass));
     memoryZero(user->wireguard_publickey, sizeof(user->wireguard_publickey));
-    user->hash_pass         = staged_hashes.hash_pass;
-    user->sha224_pass       = staged_hashes.sha224_pass;
-    user->sha256_pass       = staged_hashes.sha256_pass;
+    user->hash_pass   = staged_hashes.hash_pass;
+    user->sha224_pass = staged_hashes.sha224_pass;
+    user->sha256_pass = staged_hashes.sha256_pass;
     memoryCopy(user->uuid_pass, staged_hashes.uuid_pass, sizeof(user->uuid_pass));
     memoryCopy(user->wireguard_publickey, staged_hashes.wireguard_publickey, sizeof(user->wireguard_publickey));
-    user->sha224_pass_valid = staged_hashes.sha224_pass_valid;
-    user->sha256_pass_valid = staged_hashes.sha256_pass_valid;
-    user->uuid_pass_valid   = staged_hashes.uuid_pass_valid;
+    user->sha224_pass_valid         = staged_hashes.sha224_pass_valid;
+    user->sha256_pass_valid         = staged_hashes.sha256_pass_valid;
+    user->uuid_pass_valid           = staged_hashes.uuid_pass_valid;
     user->wireguard_publickey_valid = staged_hashes.wireguard_publickey_valid;
 
     userFreePassword(user->password);
     user->password = copy;
     rwlockWriteUnlock(&user->lock);
-    wCryptoZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
-    wCryptoZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
+    memoryZero(&staged_hashes.sha224_pass, sizeof(staged_hashes.sha224_pass));
+    memoryZero(&staged_hashes.sha256_pass, sizeof(staged_hashes.sha256_pass));
     memoryZero(staged_hashes.uuid_pass, sizeof(staged_hashes.uuid_pass));
     memoryZero(staged_hashes.wireguard_publickey, sizeof(staged_hashes.wireguard_publickey));
     return true;
@@ -1234,9 +1233,10 @@ bool userCreateFromJson(User *user, const cJSON *user_json)
                      user_json, "first-usage-at-ms", "first_usage_at_ms", &user->timeinfo.first_usage_at_ms) ||
                  ! userJsonReadOptionalUint64Aliased(
                      user_json, "expire-at-ms", "expires-at-ms", &user->timeinfo.expire_at_ms) ||
-                 ! userJsonReadOptionalUint64Aliased(
-                     user_json, "expire-after-first-usage-ms", "expire-after-first-use-ms",
-                     &user->timeinfo.expire_after_first_usage_ms)))
+                 ! userJsonReadOptionalUint64Aliased(user_json,
+                                                     "expire-after-first-usage-ms",
+                                                     "expire-after-first-use-ms",
+                                                     &user->timeinfo.expire_after_first_usage_ms)))
     {
         userDestroy(user);
         return false;
@@ -1312,30 +1312,30 @@ bool userPasswordMatches(User *user, const char *password)
     }
 
     result = stringLength(user->password) == stringLength(password) &&
-             wCryptoEqual(user->password, password, stringLength(password));
+             memoryEqual(user->password, password, stringLength(password));
 
     if (user->sha224_pass_valid && user->sha256_pass_valid &&
-        wCryptoSHA224(&sha224, (const unsigned char *) password, stringLength(password)) == 0 &&
-        wCryptoSHA256(&sha256, (const unsigned char *) password, stringLength(password)) == 0)
+        wCryptoSHA224(&sha224, (const unsigned char *) password, stringLength(password)) == kWCryptoOk &&
+        wCryptoSHA256(&sha256, (const unsigned char *) password, stringLength(password)) == kWCryptoOk)
     {
-        result = wCryptoEqual(&sha256, &user->sha256_pass, sizeof(sha256)) &&
-                 wCryptoEqual(&sha224, &user->sha224_pass, sizeof(sha224));
+        result = memoryEqual(&sha256, &user->sha256_pass, sizeof(sha256)) &&
+                 memoryEqual(&sha224, &user->sha224_pass, sizeof(sha224));
     }
 
     rwlockReadUnlock(&user->lock);
-    wCryptoZero(&sha224, sizeof(sha224));
-    wCryptoZero(&sha256, sizeof(sha256));
+    memoryZero(&sha224, sizeof(sha224));
+    memoryZero(&sha256, sizeof(sha256));
     return result;
 }
 
 bool userPasswordDataValid(User *user)
 {
     static const uint8_t wireguard_basepoint[USER_WIREGUARD_PUBLICKEY_SIZE] = {9};
-    sha224_hash_t sha224 = {0};
-    sha256_hash_t sha256 = {0};
-    uint8_t       uuid[kWwUuidBytesLen] = {0};
-    uint8_t       wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE] = {0};
-    bool          result = false;
+    sha224_hash_t        sha224                                             = {0};
+    sha256_hash_t        sha256                                             = {0};
+    uint8_t              uuid[kWwUuidBytesLen]                              = {0};
+    uint8_t              wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE] = {0};
+    bool                 result                                             = false;
 
     if (UNLIKELY(! userObjectIsInitialized(user)))
     {
@@ -1349,30 +1349,30 @@ bool userPasswordDataValid(User *user)
         result = true;
 
         if (user->sha224_pass_valid && user->sha256_pass_valid &&
-            wCryptoSHA224(&sha224, (const unsigned char *) user->password, stringLength(user->password)) == 0 &&
-            wCryptoSHA256(&sha256, (const unsigned char *) user->password, stringLength(user->password)) == 0)
+            wCryptoSHA224(&sha224, (const unsigned char *) user->password, stringLength(user->password)) ==
+                kWCryptoOk &&
+            wCryptoSHA256(&sha256, (const unsigned char *) user->password, stringLength(user->password)) == kWCryptoOk)
         {
-            result = wCryptoEqual(&sha256, &user->sha256_pass, sizeof(sha256)) &&
-                     wCryptoEqual(&sha224, &user->sha224_pass, sizeof(sha224));
+            result = memoryEqual(&sha256, &user->sha256_pass, sizeof(sha256)) &&
+                     memoryEqual(&sha224, &user->sha224_pass, sizeof(sha224));
         }
         if (result)
         {
             const bool password_is_uuid = wwUuidParseString(user->password, uuid);
-            result = password_is_uuid
-                         ? user->uuid_pass_valid && wCryptoEqual(uuid, user->uuid_pass, sizeof(uuid))
-                         : ! user->uuid_pass_valid;
+            result = password_is_uuid ? user->uuid_pass_valid && memoryEqual(uuid, user->uuid_pass, sizeof(uuid))
+                                      : ! user->uuid_pass_valid;
         }
         if (result)
         {
             result = user->wireguard_publickey_valid &&
-                     performX25519(wireguard_publickey, sha256.bytes, wireguard_basepoint) == 0 &&
-                     wCryptoEqual(wireguard_publickey, user->wireguard_publickey, sizeof(wireguard_publickey));
+                     wCryptoX25519(wireguard_publickey, sha256.bytes, wireguard_basepoint) == kWCryptoOk &&
+                     memoryEqual(wireguard_publickey, user->wireguard_publickey, sizeof(wireguard_publickey));
         }
     }
     rwlockReadUnlock(&user->lock);
 
-    wCryptoZero(&sha224, sizeof(sha224));
-    wCryptoZero(&sha256, sizeof(sha256));
+    memoryZero(&sha224, sizeof(sha224));
+    memoryZero(&sha256, sizeof(sha256));
     memoryZero(uuid, sizeof(uuid));
     memoryZero(wireguard_publickey, sizeof(wireguard_publickey));
     return result;

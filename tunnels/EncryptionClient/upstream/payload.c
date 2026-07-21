@@ -55,8 +55,16 @@ static bool encryptionclientEncryptFrame(encryptionclient_tstate_t *ts, sbuf_t *
 
     uint8_t *ciphertext = frame + kEncryptionFramePrefixSize;
 
-    if (0 != encryptionclientEncryptAead(ts->algorithm, ciphertext, ciphertext, plaintext_len, frame,
-                                         kEncryptionTlsHeaderSize, nonce, ts->key))
+    size_t ciphertext_capacity = sbufGetMaximumWriteableSize(*buf) - kEncryptionFramePrefixSize;
+    if (encryptionclientEncryptAead(ts->algorithm,
+                                    ciphertext,
+                                    ciphertext_capacity,
+                                    ciphertext,
+                                    plaintext_len,
+                                    frame,
+                                    kEncryptionTlsHeaderSize,
+                                    nonce,
+                                    ts->key) != kWCryptoOk)
     {
         return false;
     }

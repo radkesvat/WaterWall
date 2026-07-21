@@ -115,7 +115,7 @@ line_t *wireguarddeviceEnsureTransportLine(wgd_tstate_t *state, wid_t wid)
         return line;
     }
 
-    line = lineCreate(tunnelchainGetLinePools(chain), wid);
+    line                        = lineCreate(tunnelchainGetLinePools(chain), wid);
     state->transport_lines[wid] = line;
 
     lineLock(line);
@@ -142,7 +142,7 @@ void wireguarddeviceCloseTransportLine(tunnel_t *t, wid_t wid)
         return;
     }
 
-    line_t *line = state->transport_lines[wid];
+    line_t *line                = state->transport_lines[wid];
     state->transport_lines[wid] = NULL;
 
     if (line == NULL || ! lineIsAlive(line))
@@ -377,15 +377,16 @@ err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t 
 
     err_t             result;
     uint8_t           public_key[WIREGUARD_PUBLIC_KEY_LEN] = {0};
-    size_t            public_key_len = sizeof(public_key);
-    wireguard_peer_t *peer           = NULL;
+    size_t            public_key_len                       = sizeof(public_key);
+    wireguard_peer_t *peer                                 = NULL;
 
     if (stringLength((const char *) p->public_key) != BASE64_ENCODE_OUT_SIZE(public_key_len))
     {
         return ERR_ARG;
     }
 
-    if (wwBase64Decode((const char *) p->public_key, (unsigned int) stringLength((const char *) p->public_key),
+    if (wwBase64Decode((const char *) p->public_key,
+                       (unsigned int) stringLength((const char *) p->public_key),
                        public_key) != WIREGUARD_PUBLIC_KEY_LEN)
     {
         wCryptoZero(public_key, sizeof(public_key));
@@ -420,7 +421,7 @@ err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t 
                 {
                     wCryptoZero(peer, sizeof(*peer));
                     peer->valid = false;
-                    result = ERR_MEM;
+                    result      = ERR_MEM;
                 }
                 else
                 {
@@ -458,7 +459,8 @@ err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t 
     return result;
 }
 
-err_t wireguardifAddAllowedIp(wireguard_device_t *device, uint8_t peer_index, const ip_addr_t *ip, const ip_addr_t *mask)
+err_t wireguardifAddAllowedIp(wireguard_device_t *device, uint8_t peer_index, const ip_addr_t *ip,
+                              const ip_addr_t *mask)
 {
     wireguard_peer_t *peer;
     err_t             result = wireguardifLookupPeer(device, peer_index, &peer);

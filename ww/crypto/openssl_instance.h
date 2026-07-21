@@ -1,5 +1,6 @@
 #pragma once
 #include "utils/cacert.h"
+#include "wcrypto.h"
 #include "wlibc.h"
 
 #include <openssl/bio.h>
@@ -13,8 +14,8 @@ enum ssl_endpoint
     kSslClient = 1,
 };
 
-void opensslGlobalInit(void);
-void opensslGlobalCleanup(void);
+WCRYPTO_MUST_USE wcrypto_status_t opensslGlobalInit(void);
+void                              opensslGlobalCleanup(void);
 
 typedef struct
 {

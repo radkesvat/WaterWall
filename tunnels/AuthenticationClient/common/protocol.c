@@ -170,7 +170,7 @@ static user_t *authenticationclientLookupUserByStableId(users_t *users, const us
 }
 
 static users_update_result_t authenticationclientAddTrafficByStableId(users_t *users, const user_t *reference,
-                                                                       uint64_t upload_delta, uint64_t download_delta)
+                                                                      uint64_t upload_delta, uint64_t download_delta)
 {
     if (reference->id != 0)
     {
@@ -1036,8 +1036,8 @@ static bool authenticationclientReplaceUsersFromJson(tunnel_t *t, const uint8_t 
         return false;
     }
 
-    bool ok =
-        usersFeedJson(new_users, json) && usersValidate(new_users) && authenticationclientUsersHaveRequiredIds(new_users);
+    bool ok = usersFeedJson(new_users, json) && usersValidate(new_users) &&
+              authenticationclientUsersHaveRequiredIds(new_users);
     cJSON_Delete(json);
     if (UNLIKELY(! ok))
     {

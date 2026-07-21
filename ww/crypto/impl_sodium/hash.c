@@ -1,43 +1,47 @@
 #include "private/crypto_backends.h"
-#include "wlibc.h"
+#include "private/crypto_validation.h"
 
-#include "sodium.h"
+#include <sodium.h>
 
-static int sodiumHashValidateInput(const void *out, const unsigned char *in, size_t inlen)
+static const unsigned char *normalizeInput(const unsigned char *in)
 {
-    if (!out || (!in && inlen > 0))
+    static const unsigned char empty = 0;
+    return in != NULL ? in : &empty;
+}
+wcrypto_status_t wCryptoSodiumSHA256(sha256_hash_t *out, const unsigned char *in, size_t inlen)
+{
+    wcrypto_status_t status = wCryptoValidateHash(out, in, inlen);
+    if (status != kWCryptoOk)
     {
-        printError("Invalid input for crypto hash function.\n");
-        return -1;
+        if (out != NULL)
+        {
+            wCryptoZero(out, sizeof(*out));
+        }
+        return status;
     }
-
-    return 0;
+    if (crypto_hash_sha256(out->bytes, normalizeInput(in), (unsigned long long) inlen) != 0)
+    {
+        wCryptoZero(out, sizeof(*out));
+        return kWCryptoBackendFailed;
+    }
+    return kWCryptoOk;
 }
 
-static const unsigned char *sodiumHashNormalizeInput(const unsigned char *in)
+wcrypto_status_t wCryptoSodiumSHA512(sha512_hash_t *out, const unsigned char *in, size_t inlen)
 {
-    static const unsigned char empty_input = 0;
-    return in ? in : &empty_input;
-}
-
-int wCryptoSodiumSHA256(sha256_hash_t *out, const unsigned char *in, size_t inlen)
-{
-    assert(sodium_init() != -1 && "libsodium must be initialized before calling this function");
-    if (sodiumHashValidateInput(out, in, inlen) != 0)
+    wcrypto_status_t status = wCryptoValidateHash(out, in, inlen);
+    if (status != kWCryptoOk)
     {
-        return -1;
+        if (out != NULL)
+        {
+            wCryptoZero(out, sizeof(*out));
+        }
+        return status;
     }
-
-    return crypto_hash_sha256(out->bytes, sodiumHashNormalizeInput(in), (unsigned long long) inlen);
-}
-
-int wCryptoSodiumSHA512(sha512_hash_t *out, const unsigned char *in, size_t inlen)
-{
-    assert(sodium_init() != -1 && "libsodium must be initialized before calling this function");
-    if (sodiumHashValidateInput(out, in, inlen) != 0)
+    if (crypto_hash_sha512(out->bytes, normalizeInput(in), (unsigned long long) inlen) != 0)
     {
-        return -1;
+        wCryptoZero(out, sizeof(*out));
+        return kWCryptoBackendFailed;
     }
-
-    return crypto_hash_sha512(out->bytes, sodiumHashNormalizeInput(in), (unsigned long long) inlen);
+    return kWCryptoOk;
 }

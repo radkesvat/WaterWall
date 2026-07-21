@@ -101,7 +101,7 @@ static bool wireguarddeviceGetPlaintextPacketMetadata(const sbuf_t *buf, ip_addr
             return false;
         }
 
-        const ip6_hdr_t *ip6hdr    = (const ip6_hdr_t *) data;
+        const ip6_hdr_t *ip6hdr = (const ip6_hdr_t *) data;
         ip6_addr_t       src_addr;
         uint16_t         total_len = (uint16_t) (sizeof(ip6_hdr_t) + PP_NTOHS(ip6hdr->_plen));
 
@@ -165,7 +165,8 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
             // Decrypt the packet
             sbufSetLength(buf, src_len - WIREGUARD_AUTHTAG_LEN);
             sbufWriteZeros(buf, sbufGetLength(buf));
-            if (wireguardDecryptPacket(sbufGetMutablePtr(buf), src, src_len, nonce, keypair))
+            if (wireguardDecryptPacket(
+                    sbufGetMutablePtr(buf), sbufGetMaximumWriteableSize(buf), src, src_len, nonce, keypair))
             {
                 if (! wireguardCheckReplay(keypair, nonce))
                 {
@@ -250,7 +251,11 @@ static void wireguardifProcessResponseMessage(wireguard_device_t *device, wiregu
         // Update the peer location
         updatePeerAddr(peer, addr, port);
 
-        wireguardStartSession(peer, true);
+        if (! wireguardStartSession(peer, true))
+        {
+            LOGW("WireGuardDevice: failed to derive transport session keys");
+            return;
+        }
         // Set the IF-UP flag on ts
         device->status_connected = 1;
         wireguardifSendKeepalive(device, peer);
@@ -269,7 +274,11 @@ static void wireguardifSendHandshakeResponse(wireguard_device_t *device, wiregua
     if (wireguardCreateHandshakeResponse(device, peer, &packet))
     {
 
-        wireguardStartSession(peer, false);
+        if (! wireguardStartSession(peer, false))
+        {
+            LOGW("WireGuardDevice: failed to derive responder transport keys");
+            return;
+        }
 
         // Send this packet out!
         buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(getWID()));
@@ -307,8 +316,12 @@ static bool wireguardifCheckResponseMessage(wireguard_device_t *device, message_
             // If we are under load then check mac2
             source_len = getSourceAddrPort(addr, port, source_buf, sizeof(source_buf));
 
-            result = wireguardCheckMac2(device, data, sizeof(message_handshake_response_t) - (WIREGUARD_COOKIE_LEN),
-                                        source_buf, source_len, msg->mac2);
+            result = wireguardCheckMac2(device,
+                                        data,
+                                        sizeof(message_handshake_response_t) - (WIREGUARD_COOKIE_LEN),
+                                        source_buf,
+                                        source_len,
+                                        msg->mac2);
 
             if (! result)
             {
@@ -336,8 +349,8 @@ static bool wireguardifCheckInitiationMessage(wireguard_device_t *device, messag
     size_t   source_len;
     // We received an initiation packet check it is valid
 
-    if (wireguardCheckMac1(device, data, sizeof(message_handshake_initiation_t) - (2 * WIREGUARD_COOKIE_LEN),
-                           msg->mac1))
+    if (wireguardCheckMac1(
+            device, data, sizeof(message_handshake_initiation_t) - (2 * WIREGUARD_COOKIE_LEN), msg->mac1))
     {
         // mac1 is valid!
         if (! isSystemUnderLoad(SYSTEM_LOAD_THRESHOULD))
@@ -350,8 +363,12 @@ static bool wireguardifCheckInitiationMessage(wireguard_device_t *device, messag
             // If we are under load then check mac2
             source_len = getSourceAddrPort(addr, port, source_buf, sizeof(source_buf));
 
-            result = wireguardCheckMac2(device, data, sizeof(message_handshake_initiation_t) - (WIREGUARD_COOKIE_LEN),
-                                        source_buf, source_len, msg->mac2);
+            result = wireguardCheckMac2(device,
+                                        data,
+                                        sizeof(message_handshake_initiation_t) - (WIREGUARD_COOKIE_LEN),
+                                        source_buf,
+                                        source_len,
+                                        msg->mac2);
 
             if (! result)
             {
@@ -483,14 +500,16 @@ void wireguarddeviceHandleTransportPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (line != l)
     {
-        addresscontextSetIpPortProtocol(lineGetSourceAddressContext(line), &src_ctx->ip_address, src_ctx->port,
-                                        IP_PROTO_UDP);
+        addresscontextSetIpPortProtocol(
+            lineGetSourceAddressContext(line), &src_ctx->ip_address, src_ctx->port, IP_PROTO_UDP);
         lineGetRoutingContext(line)->local_listener_port = lineGetRoutingContext(l)->local_listener_port;
     }
 
     wireguarddeviceStateLock(state);
 
-    wireguardifNetworkRx((wireguard_device_t *) tunnelGetState(t), buf, &line->routing_context.src_ctx.ip_address,
+    wireguardifNetworkRx((wireguard_device_t *) tunnelGetState(t),
+                         buf,
+                         &line->routing_context.src_ctx.ip_address,
                          line->routing_context.src_ctx.port);
 
     wireguarddeviceStateUnlock(state);

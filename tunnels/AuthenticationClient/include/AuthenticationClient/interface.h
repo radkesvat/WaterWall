@@ -49,8 +49,9 @@ WW_EXPORT bool        authenticationclientGetUserBySHA256(tunnel_t *t, const uin
                                                           user_handle_t *handle_out);
 WW_EXPORT bool        authenticationclientGetUserByUUID(tunnel_t *t, const uint8_t uuid[kWwUuidBytesLen],
                                                         user_handle_t *handle_out);
-WW_EXPORT bool authenticationclientGetUserByWireGuardPublicKey(
-    tunnel_t *t, const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE], user_handle_t *handle_out);
+WW_EXPORT bool        authenticationclientGetUserByWireGuardPublicKey(tunnel_t      *t,
+                                                                      const uint8_t  publickey[USER_WIREGUARD_PUBLICKEY_SIZE],
+                                                                      user_handle_t *handle_out);
 
 /*
  * Resolved copies of a user's identity fields, taken in the same locked lookup

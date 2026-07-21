@@ -2,9 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-static void realityclientClearHandshakeTemporaries(tlsclient_handshake_binding_t *tls_binding,
+static void realityclientClearHandshakeTemporaries(tlsclient_handshake_binding_t  *tls_binding,
                                                    reality_v2_handshake_binding_t *reality_binding,
-                                                   reality_v2_session_material_t *session_material)
+                                                   reality_v2_session_material_t  *session_material)
 {
     memoryZero(tls_binding, sizeof(*tls_binding));
     memoryZero(reality_binding, sizeof(*reality_binding));
@@ -13,18 +13,17 @@ static void realityclientClearHandshakeTemporaries(tlsclient_handshake_binding_t
 
 void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
 {
-    realityclient_tstate_t *ts = tunnelGetState(t);
-    tlsclient_handshake_binding_t tls_binding = {0};
-    reality_v2_handshake_binding_t reality_binding = {0};
-    reality_v2_session_material_t session_material = {0};
-    reality_v2_record_profile_t record_profile = {0};
-    sbuf_t *pending_raw = NULL;
+    realityclient_tstate_t        *ts               = tunnelGetState(t);
+    tlsclient_handshake_binding_t  tls_binding      = {0};
+    reality_v2_handshake_binding_t reality_binding  = {0};
+    reality_v2_session_material_t  session_material = {0};
+    reality_v2_record_profile_t    record_profile   = {0};
+    sbuf_t                        *pending_raw      = NULL;
 
     lineLock(l);
-    buffer_pool_t *pool = lineGetBufferPool(l);
-    realityclient_lstate_t *ls = lineGetState(l, t);
-    if (ls->terminal_closing || ls->prev_finished ||
-        ls->phase != kRealityClientPhaseTlsHandshake)
+    buffer_pool_t          *pool = lineGetBufferPool(l);
+    realityclient_lstate_t *ls   = lineGetState(l, t);
+    if (ls->terminal_closing || ls->prev_finished || ls->phase != kRealityClientPhaseTlsHandshake)
     {
         lineUnlock(l);
         return;
@@ -40,16 +39,12 @@ void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
         return;
     }
 
-    memoryCopy(reality_binding.client_random, tls_binding.client_random,
-               sizeof(reality_binding.client_random));
-    memoryCopy(reality_binding.server_random, tls_binding.server_random,
-               sizeof(reality_binding.server_random));
+    memoryCopy(reality_binding.client_random, tls_binding.client_random, sizeof(reality_binding.client_random));
+    memoryCopy(reality_binding.server_random, tls_binding.server_random, sizeof(reality_binding.server_random));
     reality_binding.tls_version  = tls_binding.tls_version;
     reality_binding.cipher_suite = tls_binding.cipher_suite;
 
-    if (! realityV2SelectRecordProfile(tls_binding.tls_version,
-                                       tls_binding.cipher_suite,
-                                       &record_profile) ||
+    if (! realityV2SelectRecordProfile(tls_binding.tls_version, tls_binding.cipher_suite, &record_profile) ||
         (tls_binding.tls_version == kRealityV2Tls12 && ! tls_binding.tls12_sequences_valid) ||
         ! realityV2DeriveSessionMaterial(ts->root_key, &reality_binding, &session_material))
     {
@@ -103,7 +98,7 @@ void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
             return;
         }
 
-        ls = lineGetState(l, t);
+        ls                      = lineGetState(l, t);
         ls->downstream_est_sent = true;
         tunnelPrevDownStreamEst(t, l);
         if (! lineIsAlive(l))
@@ -123,8 +118,7 @@ void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->tls_version != kRealityV2Tls13 ||
-        ! tlsclientTunnelBeginTakeoverDrain(ts->tls_tunnel, l, &pending_raw))
+    if (ls->tls_version != kRealityV2Tls13 || ! tlsclientTunnelBeginTakeoverDrain(ts->tls_tunnel, l, &pending_raw))
     {
         LOGW("RealityClient: failed to begin authenticated TLS 1.3 handoff");
         if (pending_raw != NULL)

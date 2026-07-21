@@ -1,7 +1,6 @@
 #include "structure.h"
 
-static sbuf_t *realityserverCopyCoverBytes(buffer_pool_t *pool, const uint8_t *data,
-                                           uint32_t len)
+static sbuf_t *realityserverCopyCoverBytes(buffer_pool_t *pool, const uint8_t *data, uint32_t len)
 {
     sbuf_t *prefix;
     if (len <= bufferpoolGetSmallBufferSize(pool))
@@ -50,7 +49,7 @@ static void realityserverHandlePendingDestinationPayload(tunnel_t *t, line_t *l,
 {
     buffer_pool_t *pool = lineGetBufferPool(l);
     const uint8_t *data = sbufGetRawPtr(buf);
-    uint32_t len = sbufGetLength(buf);
+    uint32_t       len  = sbufGetLength(buf);
 
     if (len == 0)
     {
@@ -60,8 +59,7 @@ static void realityserverHandlePendingDestinationPayload(tunnel_t *t, line_t *l,
         }
         realityserver_lstate_t *ls = lineGetState(l, t);
         if (ls->mode == kRealityServerModeHandoffAwaitBoundary &&
-            realityserverTlsRecordBoundaryTrackerIsAtBoundary(
-                &ls->destination_record_boundary))
+            realityserverTlsRecordBoundaryTrackerIsAtBoundary(&ls->destination_record_boundary))
         {
             realityserverSendHandoffAckAtBoundary(t, l);
         }
@@ -85,13 +83,9 @@ static void realityserverHandlePendingDestinationPayload(tunnel_t *t, line_t *l,
             return;
         }
 
-        size_t consumed = 0;
-        bool boundary_ok = realityserverTlsRecordBoundaryTrackerFeed(
-            &ls->destination_record_boundary,
-            data + offset,
-            len - offset,
-            true,
-            &consumed);
+        size_t consumed    = 0;
+        bool   boundary_ok = realityserverTlsRecordBoundaryTrackerFeed(
+            &ls->destination_record_boundary, data + offset, len - offset, true, &consumed);
         uint32_t chunk_len = boundary_ok ? (uint32_t) consumed : len - offset;
         if (chunk_len == 0)
         {
@@ -140,8 +134,7 @@ static void realityserverHandlePendingDestinationPayload(tunnel_t *t, line_t *l,
         if (ls->mode == kRealityServerModeHandoffAwaitBoundary)
         {
             bufferpoolReuseBuffer(pool, buf);
-            if (realityserverTlsRecordBoundaryTrackerIsAtBoundary(
-                    &ls->destination_record_boundary))
+            if (realityserverTlsRecordBoundaryTrackerIsAtBoundary(&ls->destination_record_boundary))
             {
                 realityserverSendHandoffAckAtBoundary(t, l);
             }
@@ -173,11 +166,8 @@ static void realityserverHandleBoundaryDestinationPayload(tunnel_t *t, line_t *l
     }
 
     size_t consumed = 0;
-    if (! realityserverTlsRecordBoundaryTrackerFeed(&ls->destination_record_boundary,
-                                                    sbufGetRawPtr(buf),
-                                                    len,
-                                                    true,
-                                                    &consumed))
+    if (! realityserverTlsRecordBoundaryTrackerFeed(
+            &ls->destination_record_boundary, sbufGetRawPtr(buf), len, true, &consumed))
     {
         bufferpoolReuseBuffer(pool, buf);
         realityserverCloseLineBidirectional(t, l);
@@ -221,25 +211,25 @@ void realityserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     switch (ls->mode)
     {
-        case kRealityServerModeAuthorized:
-            realityserverEncryptAndSendDownstream(t, l, buf);
-            return;
-        case kRealityServerModeVisitor:
-            tunnelPrevDownStreamPayload(t, l, buf);
-            return;
-        case kRealityServerModePending:
-            realityserverHandlePendingDestinationPayload(t, l, buf);
-            return;
-        case kRealityServerModeHandoffAwaitBoundary:
-            realityserverHandleBoundaryDestinationPayload(t, l, buf);
-            return;
-        case kRealityServerModeHandoffAwaitConfirm:
-            assert(ls->destination_downstream_cutoff);
-            lineReuseBuffer(l, buf);
-            return;
-        default:
-            assert(false);
-            lineReuseBuffer(l, buf);
-            return;
+    case kRealityServerModeAuthorized:
+        realityserverEncryptAndSendDownstream(t, l, buf);
+        return;
+    case kRealityServerModeVisitor:
+        tunnelPrevDownStreamPayload(t, l, buf);
+        return;
+    case kRealityServerModePending:
+        realityserverHandlePendingDestinationPayload(t, l, buf);
+        return;
+    case kRealityServerModeHandoffAwaitBoundary:
+        realityserverHandleBoundaryDestinationPayload(t, l, buf);
+        return;
+    case kRealityServerModeHandoffAwaitConfirm:
+        assert(ls->destination_downstream_cutoff);
+        lineReuseBuffer(l, buf);
+        return;
+    default:
+        assert(false);
+        lineReuseBuffer(l, buf);
+        return;
     }
 }

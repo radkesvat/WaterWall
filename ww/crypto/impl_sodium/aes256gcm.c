@@ -1,54 +1,78 @@
 #include "private/crypto_backends.h"
-#include "wlibc.h"
+#include "private/crypto_validation.h"
 
-#include "sodium.h"
+#include <sodium.h>
 
-int wCryptoSodiumAES256GCMIsAvailable(void)
+bool wCryptoSodiumAES256GCMIsAvailable(void)
 {
-    assert(sodium_init() != -1 && "libsodium must be initialized before calling this function");
-    return crypto_aead_aes256gcm_is_available();
+    return crypto_aead_aes256gcm_is_available() != 0;
 }
 
-int wCryptoSodiumAES256GCMEncrypt(unsigned char *dst, const unsigned char *src, size_t src_len,
-                                  const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
-                                  const unsigned char *key)
+wcrypto_status_t wCryptoSodiumAES256GCMEncrypt(unsigned char *dst, size_t dst_capacity, const unsigned char *src,
+                                               size_t src_len, const unsigned char *ad, size_t ad_len,
+                                               const unsigned char nonce[WCRYPTO_AES256GCM_NONCE_SIZE],
+                                               const unsigned char key[WCRYPTO_AES256GCM_KEY_SIZE])
 {
-    assert(sodium_init() != -1 && "libsodium must be initialized before calling this function");
-
-    if (! crypto_aead_aes256gcm_is_available())
+    size_t           expected_len = 0;
+    wcrypto_status_t status =
+        wCryptoValidateAeadEncrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key, &expected_len);
+    if (status != kWCryptoOk)
     {
-        printError("aes256gcmEncrypt failed: AES256-GCM is unavailable on this CPU/backend\n");
-        return -1;
+        wCryptoZero(dst, expected_len);
+        return status;
+    }
+    if (! wCryptoSodiumAES256GCMIsAvailable())
+    {
+        wCryptoZero(dst, expected_len);
+        return kWCryptoUnavailable;
     }
 
-    unsigned long long ciphertext_len = 0;
-    if (0 != crypto_aead_aes256gcm_encrypt(dst, &ciphertext_len, src, src_len, ad, ad_len, NULL, nonce, key))
+    static const unsigned char empty    = 0;
+    unsigned long long         produced = 0;
+    if (crypto_aead_aes256gcm_encrypt(
+            dst, &produced, src != NULL ? src : &empty, src_len, ad != NULL ? ad : &empty, ad_len, NULL, nonce, key) !=
+            0 ||
+        produced != (unsigned long long) expected_len)
     {
-        printError("aes256gcmEncrypt failed\n");
-        return -1;
+        wCryptoZero(dst, expected_len);
+        return kWCryptoBackendFailed;
     }
-
-    return 0;
+    return kWCryptoOk;
 }
 
-int wCryptoSodiumAES256GCMDecrypt(unsigned char *dst, const unsigned char *src, size_t src_len,
-                                  const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
-                                  const unsigned char *key)
+wcrypto_status_t wCryptoSodiumAES256GCMDecrypt(unsigned char *dst, size_t dst_capacity, const unsigned char *src,
+                                               size_t src_len, const unsigned char *ad, size_t ad_len,
+                                               const unsigned char nonce[WCRYPTO_AES256GCM_NONCE_SIZE],
+                                               const unsigned char key[WCRYPTO_AES256GCM_KEY_SIZE])
 {
-    assert(sodium_init() != -1 && "libsodium must be initialized before calling this function");
-
-    if (! crypto_aead_aes256gcm_is_available())
+    size_t           expected_len = 0;
+    wcrypto_status_t status =
+        wCryptoValidateAeadDecrypt(dst, dst_capacity, src, src_len, ad, ad_len, nonce, key, &expected_len);
+    if (status != kWCryptoOk)
     {
-        printError("aes256gcmDecrypt failed: AES256-GCM is unavailable on this CPU/backend\n");
-        return -1;
+        wCryptoZero(dst, expected_len);
+        return status;
+    }
+    if (! wCryptoSodiumAES256GCMIsAvailable())
+    {
+        wCryptoZero(dst, expected_len);
+        return kWCryptoUnavailable;
     }
 
-    unsigned long long plaintext_len = 0;
-    if (0 != crypto_aead_aes256gcm_decrypt(dst, &plaintext_len, NULL, src, src_len, ad, ad_len, nonce, key))
+    unsigned char              dummy    = 0;
+    static const unsigned char empty    = 0;
+    unsigned long long         produced = 0;
+    if (crypto_aead_aes256gcm_decrypt(
+            dst != NULL ? dst : &dummy, &produced, NULL, src, src_len, ad != NULL ? ad : &empty, ad_len, nonce, key) !=
+        0)
     {
-        printError("aes256gcmDecrypt failed\n");
-        return -1;
+        wCryptoZero(dst, expected_len);
+        return kWCryptoAuthenticationFailed;
     }
-
-    return 0;
+    if (produced != (unsigned long long) expected_len)
+    {
+        wCryptoZero(dst, expected_len);
+        return kWCryptoBackendFailed;
+    }
+    return kWCryptoOk;
 }

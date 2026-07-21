@@ -38,8 +38,7 @@ static uint16_t wireguarddeviceCountMatchingTunnels(const tunnel_t *start, bool 
     return count;
 }
 
-static uint16_t wireguarddeviceCountMatchingConfiguredNext(const node_t *start_node,
-                                                           wireguarddeviceTunnelMatchFn match)
+static uint16_t wireguarddeviceCountMatchingConfiguredNext(const node_t *start_node, wireguarddeviceTunnelMatchFn match)
 {
     uint16_t      count = 0;
     uint16_t      steps = 0;
@@ -106,14 +105,14 @@ void wireguarddeviceResolveTransportSide(tunnel_t *t)
 
     if (prev_udp_count > 0)
     {
-        state->transport_side_is_next = false;
+        state->transport_side_is_next  = false;
         state->transport_side_resolved = true;
         return;
     }
 
     if (next_udp_count > 0)
     {
-        state->transport_side_is_next = true;
+        state->transport_side_is_next  = true;
         state->transport_side_resolved = true;
         return;
     }

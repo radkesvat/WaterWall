@@ -70,11 +70,12 @@ static bool decodeOptionalPresharedKey(const char *preshared_key_b64, uint8_t *d
 
 static bool decodeAndInitializeDevice(wireguard_device_t *device, const char *private_key)
 {
-    uint8_t decoded_key[WIREGUARD_PRIVATE_KEY_LEN];
+    uint8_t decoded_key[WIREGUARD_PRIVATE_KEY_LEN] = {0};
 
     if (wwBase64Decode((char *) private_key, (unsigned int) stringLength((char *) private_key), decoded_key) !=
         WIREGUARD_PRIVATE_KEY_LEN)
     {
+        wCryptoZero(decoded_key, sizeof(decoded_key));
         return false;
     }
 
@@ -97,12 +98,12 @@ static tunnel_t *createBaseTunnel(node_t *node)
         return NULL;
     }
 
-    t->fnInitU      = &wireguarddeviceTunnelUpStreamInit;
-    t->fnEstU       = &wireguarddeviceTunnelUpStreamEst;
-    t->fnFinU       = &wireguarddeviceTunnelUpStreamFinish;
-    t->fnPayloadU   = &wireguarddeviceTunnelUpStreamPayload;
-    t->fnPauseU     = &wireguarddeviceTunnelUpStreamPause;
-    t->fnResumeU    = &wireguarddeviceTunnelUpStreamResume;
+    t->fnInitU    = &wireguarddeviceTunnelUpStreamInit;
+    t->fnEstU     = &wireguarddeviceTunnelUpStreamEst;
+    t->fnFinU     = &wireguarddeviceTunnelUpStreamFinish;
+    t->fnPayloadU = &wireguarddeviceTunnelUpStreamPayload;
+    t->fnPauseU   = &wireguarddeviceTunnelUpStreamPause;
+    t->fnResumeU  = &wireguarddeviceTunnelUpStreamResume;
 
     t->fnInitD      = &wireguarddeviceTunnelDownStreamInit;
     t->fnEstD       = &wireguarddeviceTunnelDownStreamEst;
@@ -367,6 +368,7 @@ cleanup:
     }
     if (peer_preshared_key != NULL)
     {
+        wCryptoZero(peer_preshared_key, stringLength(peer_preshared_key) + 1U);
         memoryFree(peer_preshared_key);
     }
     if (peer_allowed_ips != NULL)
@@ -500,21 +502,27 @@ static bool wireguarddeviceCreateUserControllerTunnel(tunnel_t *t, node_t *node,
     return true;
 }
 
-static void wireguarddeviceInit(wireguard_device_t *device, wireguard_device_init_data_t *data)
+static bool wireguarddeviceInit(wireguard_device_t *device, wireguard_device_init_data_t *data)
 {
     assert(data != NULL);
 
-    wireguardInit();
+    wcrypto_status_t status = wireguardInit();
+    if (status != kWCryptoOk)
+    {
+        LOGE("WireGuardDevice: crypto initialization failed: %s", wCryptoStatusString(status));
+        return false;
+    }
 
     if (! validatePrivateKeyLength((char *) data->private_key))
     {
-        terminateProgram(1);
+        return false;
     }
 
     if (! decodeAndInitializeDevice(device, (char *) data->private_key))
     {
-        terminateProgram(1);
+        return false;
     }
+    return true;
 }
 
 tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
@@ -557,7 +565,10 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
     }
 
     wireguard_device_t *device = &state->wg_device;
-    wireguarddeviceInit(device, &state->device_configuration);
+    if (! wireguarddeviceInit(device, &state->device_configuration))
+    {
+        goto fail;
+    }
 
     const cJSON *peers_array = cJSON_GetObjectItemCaseSensitive(settings, "peers");
 

@@ -5,7 +5,7 @@
 
 node_t nodeEncryptionServerGet(void)
 {
-    const char *type_name = "EncryptionServer";
+    const char *type_name             = "EncryptionServer";
     node_t      node_encryptionserver = {
              .name                  = NULL,
              .type                  = stringDuplicate(type_name),

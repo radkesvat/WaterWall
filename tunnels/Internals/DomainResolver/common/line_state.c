@@ -15,8 +15,8 @@ void domainresolverLinestateInitialize(tunnel_t *t, domainresolver_lstate_t *ls)
     domainresolver_tstate_t *ts = tunnelGetState(t);
 
     *ls = (domainresolver_lstate_t) {
-        .pending       = bufferqueueCreate(kDomainResolverPendingQueueInitialCapacity),
-        .phase         = kDomainResolverPhaseIdle,
+        .pending        = bufferqueueCreate(kDomainResolverPendingQueueInitialCapacity),
+        .phase          = kDomainResolverPhaseIdle,
         .init_direction = kDomainResolverDirectionNone,
     };
 

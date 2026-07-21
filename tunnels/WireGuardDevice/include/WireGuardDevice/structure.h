@@ -116,8 +116,9 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
 
 /***************************************** WireGuard Device ****************************************** */
 
-void wireguardInit(void);
-bool wireguardDeviceInit(wireguard_device_t *device, const uint8_t *private_key);
+WCRYPTO_MUST_USE wcrypto_status_t wireguardInit(void);
+bool                              wireguardDeviceInit(wireguard_device_t *device, const uint8_t *private_key);
+void                              wireguardDeviceDestroy(wireguard_device_t *device);
 bool wireguardPeerInit(wireguard_device_t *device, wireguard_peer_t *peer, const uint8_t *public_key,
                        const uint8_t *preshared_key);
 
@@ -128,9 +129,9 @@ wireguard_peer_t *peerLookupByPeerIndex(wireguard_device_t *device, uint8_t peer
 wireguard_peer_t *peerLookupByReceiver(wireguard_device_t *device, uint32_t receiver);
 wireguard_peer_t *peerLookupByHandshake(wireguard_device_t *device, uint32_t receiver);
 
-void wireguardStartSession(wireguard_peer_t *peer, bool initiator);
-void keypairUpdate(wireguard_peer_t *peer, wireguard_keypair_t *received_keypair);
-void keypairDestroy(wireguard_keypair_t *keypair);
+WCRYPTO_MUST_USE bool wireguardStartSession(wireguard_peer_t *peer, bool initiator);
+void                  keypairUpdate(wireguard_peer_t *peer, wireguard_keypair_t *received_keypair);
+void                  keypairDestroy(wireguard_keypair_t *keypair);
 
 wireguard_keypair_t *getPeerKeypairForIdx(wireguard_peer_t *peer, uint32_t idx);
 bool                 wireguardCheckReplay(wireguard_keypair_t *keypair, uint64_t seq);
@@ -154,6 +155,7 @@ bool wireguardCheckMac2(wireguard_device_t *device, const uint8_t *data, size_t 
 
 bool wireguardExpired(uint32_t created_millis, uint32_t valid_seconds);
 
-void wireguardEncryptPacket(uint8_t *dst, const uint8_t *src, size_t src_len, wireguard_keypair_t *keypair);
-bool wireguardDecryptPacket(uint8_t *dst, const uint8_t *src, size_t src_len, uint64_t counter,
-                            wireguard_keypair_t *keypair);
+WCRYPTO_MUST_USE bool wireguardEncryptPacket(uint8_t *dst, size_t dst_capacity, const uint8_t *src, size_t src_len,
+                                             wireguard_keypair_t *keypair);
+WCRYPTO_MUST_USE bool wireguardDecryptPacket(uint8_t *dst, size_t dst_capacity, const uint8_t *src, size_t src_len,
+                                             uint64_t counter, wireguard_keypair_t *keypair);

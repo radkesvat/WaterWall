@@ -68,11 +68,13 @@ void encryptionclientLinestateDestroy(encryptionclient_lstate_t *ls);
 
 void encryptionclientTunnelstateDestroy(encryptionclient_tstate_t *ts);
 
-int encryptionclientEncryptAead(uint32_t algorithm, unsigned char *dst, const unsigned char *src, size_t src_len,
-                                const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
-                                const unsigned char *key);
-int encryptionclientDecryptAead(uint32_t algorithm, unsigned char *dst, const unsigned char *src, size_t src_len,
-                                const unsigned char *ad, size_t ad_len, const unsigned char *nonce,
-                                const unsigned char *key);
+WCRYPTO_MUST_USE wcrypto_status_t encryptionclientEncryptAead(uint32_t algorithm, unsigned char *dst,
+                                                              size_t dst_capacity, const unsigned char *src,
+                                                              size_t src_len, const unsigned char *ad, size_t ad_len,
+                                                              const unsigned char *nonce, const unsigned char *key);
+WCRYPTO_MUST_USE wcrypto_status_t encryptionclientDecryptAead(uint32_t algorithm, unsigned char *dst,
+                                                              size_t dst_capacity, const unsigned char *src,
+                                                              size_t src_len, const unsigned char *ad, size_t ad_len,
+                                                              const unsigned char *nonce, const unsigned char *key);
 
 void encryptionclientCloseLineBidirectional(tunnel_t *t, line_t *l);

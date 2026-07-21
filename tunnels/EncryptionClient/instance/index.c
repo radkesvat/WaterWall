@@ -9,5 +9,4 @@ void encryptionclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_of
 
     discard index;
     discard mem_offset;
-    
 }

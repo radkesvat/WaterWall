@@ -43,8 +43,7 @@ static bool trojanclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return true;
     }
 
-    ts->domain_resolver_settings =
-        trojanclientCreateDomainResolverSettings((enum domain_strategy) ts->domain_strategy);
+    ts->domain_resolver_settings = trojanclientCreateDomainResolverSettings((enum domain_strategy) ts->domain_strategy);
     if (ts->domain_resolver_settings == NULL)
     {
         LOGF("TrojanClient: failed to create internal DomainResolver settings");
@@ -126,7 +125,7 @@ static bool parsePassword(trojanclient_tstate_t *ts, const cJSON *settings)
     }
 
     sha224_hash_t digest = {0};
-    if (wCryptoSHA224(&digest, (const unsigned char *) password_json->valuestring, password_len) != 0)
+    if (wCryptoSHA224(&digest, (const unsigned char *) password_json->valuestring, password_len) != kWCryptoOk)
     {
         memoryZero(&digest, sizeof(digest));
         LOGF("TrojanClient: failed to calculate SHA224 password digest");

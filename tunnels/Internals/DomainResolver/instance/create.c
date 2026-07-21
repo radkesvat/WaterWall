@@ -54,7 +54,7 @@ tunnel_t *domainresolverTunnelCreate(node_t *node)
     t->onStop    = &domainresolverTunnelOnStop;
     t->onDestroy = &domainresolverTunnelDestroy;
 
-    domainresolver_tstate_t *ts = tunnelGetState(t);
+    domainresolver_tstate_t *ts       = tunnelGetState(t);
     const cJSON             *settings = node->node_settings_json;
 
     ts->strategy                  = GSTATE.domain_strategy;
