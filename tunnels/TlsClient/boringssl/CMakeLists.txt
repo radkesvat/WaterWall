@@ -224,6 +224,7 @@ elseif(MSVC)
       "C4702" # unreachable code; MSVC's warning is too aggressive. See
               # https://crbug.com/385161043
       "C4706" # assignment within conditional expression
+      "C4714" # SecureZeroMemory may not be inlined during link-time code generation
       )
   string(REPLACE "C" " -wd" MSVC_DISABLED_WARNINGS_STR
                             ${MSVC_DISABLED_WARNINGS_LIST})
