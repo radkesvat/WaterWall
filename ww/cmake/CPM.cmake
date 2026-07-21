@@ -45,7 +45,7 @@ endif()
 if(DEFINED EXTRACTED_CPM_VERSION)
   set(CURRENT_CPM_VERSION "${EXTRACTED_CPM_VERSION}${CPM_DEVELOPMENT}")
 else()
-  set(CURRENT_CPM_VERSION 0.42.0)
+  set(CURRENT_CPM_VERSION 0.43.1)
 endif()
 
 get_filename_component(CPM_CURRENT_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}" REALPATH)
@@ -258,7 +258,9 @@ endfunction()
 
 # Try to infer package name and version from a url
 function(cpm_package_name_and_ver_from_url url outName outVer)
-  if(url MATCHES "[/\\?]([a-zA-Z0-9_\\.-]+)\\.(tar|tar\\.gz|tar\\.bz2|zip|ZIP)(\\?|/|$)")
+  if(url MATCHES
+     "[/\\?]([a-zA-Z0-9_\\.-]+)\\.(tar|tar\\.gz|tar\\.bz2|tar\\.xz|tar\\.zst|zip|ZIP)(\\?|/|$)"
+  )
     # We matched an archive
     set(filename "${CMAKE_MATCH_1}")
 
@@ -766,10 +768,23 @@ function(CPMAddPackage)
     return()
   endif()
 
+  if(NOT DEFINED CPM_${CPM_ARGS_NAME}_SOURCE AND DEFINED ENV{CPM_${CPM_ARGS_NAME}_SOURCE})
+    # Normalize separators to support Windows paths when reading from environment variables.
+    file(TO_CMAKE_PATH "$ENV{CPM_${CPM_ARGS_NAME}_SOURCE}" CPM_${CPM_ARGS_NAME}_SOURCE)
+    message(WARNING "${CPM_INDENT} '${CPM_ARGS_NAME}' version overridden by environment variable "
+                    "CPM_${CPM_ARGS_NAME}_SOURCE='${CPM_${CPM_ARGS_NAME}_SOURCE}'"
+    )
+  endif()
+
   # Check for manual overrides
   if(NOT CPM_ARGS_FORCE AND NOT "${CPM_${CPM_ARGS_NAME}_SOURCE}" STREQUAL "")
     set(PACKAGE_SOURCE ${CPM_${CPM_ARGS_NAME}_SOURCE})
     set(CPM_${CPM_ARGS_NAME}_SOURCE "")
+    if(NOT DEFINED ENV{CPM_${CPM_ARGS_NAME}_SOURCE})
+      message(WARNING "${CPM_INDENT} '${CPM_ARGS_NAME}' version overridden by CMake variable "
+                      "CPM_${CPM_ARGS_NAME}_SOURCE='${PACKAGE_SOURCE}'"
+      )
+    endif()
     CPMAddPackage(
       NAME "${CPM_ARGS_NAME}"
       SOURCE_DIR "${PACKAGE_SOURCE}"
@@ -1241,6 +1256,7 @@ function(cpm_parse_option OPTION)
   else()
     math(EXPR OPTION_KEY_LENGTH "${OPTION_KEY_LENGTH}+1")
     string(SUBSTRING "${OPTION}" "${OPTION_KEY_LENGTH}" "-1" OPTION_VALUE)
+    string(STRIP "${OPTION_VALUE}" OPTION_VALUE)
   endif()
   set(OPTION_KEY
       "${OPTION_KEY}"
