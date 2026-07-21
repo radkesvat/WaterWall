@@ -2,70 +2,9 @@
 
 #include "wcrypto.h"
 
-#define U8C(v)  (v##U)
 #define U32C(v) (v##U)
 
-#define U8V(v)  ((uint8_t) (v) & U8C(0xFF))
 #define U32V(v) ((uint32_t) (v) & U32C(0xFFFFFFFF))
-
-#define U8TO32_LITTLE(p)                                                                                               \
-    (((uint32_t) ((p)[0])) | ((uint32_t) ((p)[1]) << 8) | ((uint32_t) ((p)[2]) << 16) | ((uint32_t) ((p)[3]) << 24))
-
-#define U8TO64_LITTLE(p)                                                                                               \
-    (((uint64_t) ((p)[0])) | ((uint64_t) ((p)[1]) << 8) | ((uint64_t) ((p)[2]) << 16) | ((uint64_t) ((p)[3]) << 24) |  \
-     ((uint64_t) ((p)[4]) << 32) | ((uint64_t) ((p)[5]) << 40) | ((uint64_t) ((p)[6]) << 48) |                         \
-     ((uint64_t) ((p)[7]) << 56))
-
-#define U16TO8_BIG(p, v)                                                                                               \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        (p)[1] = U8V((v));                                                                                             \
-        (p)[0] = U8V((v) >> 8);                                                                                        \
-    } while (0)
-
-#define U32TO8_LITTLE(p, v)                                                                                            \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        (p)[0] = U8V((v));                                                                                             \
-        (p)[1] = U8V((v) >> 8);                                                                                        \
-        (p)[2] = U8V((v) >> 16);                                                                                       \
-        (p)[3] = U8V((v) >> 24);                                                                                       \
-    } while (0)
-
-#define U32TO8_BIG(p, v)                                                                                               \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        (p)[3] = U8V((v));                                                                                             \
-        (p)[2] = U8V((v) >> 8);                                                                                        \
-        (p)[1] = U8V((v) >> 16);                                                                                       \
-        (p)[0] = U8V((v) >> 24);                                                                                       \
-    } while (0)
-
-#define U64TO8_LITTLE(p, v)                                                                                            \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        (p)[0] = U8V((v));                                                                                             \
-        (p)[1] = U8V((v) >> 8);                                                                                        \
-        (p)[2] = U8V((v) >> 16);                                                                                       \
-        (p)[3] = U8V((v) >> 24);                                                                                       \
-        (p)[4] = U8V((v) >> 32);                                                                                       \
-        (p)[5] = U8V((v) >> 40);                                                                                       \
-        (p)[6] = U8V((v) >> 48);                                                                                       \
-        (p)[7] = U8V((v) >> 56);                                                                                       \
-    } while (0)
-
-#define U64TO8_BIG(p, v)                                                                                               \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        (p)[7] = U8V((v));                                                                                             \
-        (p)[6] = U8V((v) >> 8);                                                                                        \
-        (p)[5] = U8V((v) >> 16);                                                                                       \
-        (p)[4] = U8V((v) >> 24);                                                                                       \
-        (p)[3] = U8V((v) >> 32);                                                                                       \
-        (p)[2] = U8V((v) >> 40);                                                                                       \
-        (p)[1] = U8V((v) >> 48);                                                                                       \
-        (p)[0] = U8V((v) >> 56);                                                                                       \
-    } while (0)
 
 #define X25519_BYTES (256 / 8)
 
@@ -169,22 +108,6 @@ typedef struct poly1305_state_internal_t
     unsigned char final;
 } poly1305_state_internal_t;
 
-/* interpret four 8 bit unsigned integers as a 32 bit unsigned integer in little endian */
-static unsigned long U8TO32(const unsigned char *p)
-{
-    return (((unsigned long) (p[0] & 0xff)) | ((unsigned long) (p[1] & 0xff) << 8) |
-            ((unsigned long) (p[2] & 0xff) << 16) | ((unsigned long) (p[3] & 0xff) << 24));
-}
-
-/* store a 32 bit unsigned integer as four 8 bit unsigned integers in little endian */
-static void U32TO8(unsigned char *p, unsigned long v)
-{
-    p[0] = (unsigned char) (v & 0xffUL);
-    p[1] = (unsigned char) ((v >> 8) & 0xffUL);
-    p[2] = (unsigned char) ((v >> 16) & 0xffUL);
-    p[3] = (unsigned char) ((v >> 24) & 0xffUL);
-}
-
 static void poly1305_blocks(poly1305_state_internal_t *st, const unsigned char *m, size_t bytes)
 {
     const unsigned long hibit = (st->final) ? 0 : (1UL << 24); /* 1 << 128 */
@@ -214,11 +137,11 @@ static void poly1305_blocks(poly1305_state_internal_t *st, const unsigned char *
     while (bytes >= poly1305_block_size)
     {
         /* h += m[i] */
-        h0 += (U8TO32(m + 0)) & 0x3ffffff;
-        h1 += (U8TO32(m + 3) >> 2) & 0x3ffffff;
-        h2 += (U8TO32(m + 6) >> 4) & 0x3ffffff;
-        h3 += (U8TO32(m + 9) >> 6) & 0x3ffffff;
-        h4 += (U8TO32(m + 12) >> 8) | hibit;
+        h0 += ((unsigned long) GET_LE32(m + 0)) & 0x3ffffff;
+        h1 += ((unsigned long) GET_LE32(m + 3) >> 2) & 0x3ffffff;
+        h2 += ((unsigned long) GET_LE32(m + 6) >> 4) & 0x3ffffff;
+        h3 += ((unsigned long) GET_LE32(m + 9) >> 6) & 0x3ffffff;
+        h4 += ((unsigned long) GET_LE32(m + 12) >> 8) | hibit;
 
         /* h *= r */
         d0 = ((unsigned long long) h0 * r0) + ((unsigned long long) h1 * s4) + ((unsigned long long) h2 * s3) +

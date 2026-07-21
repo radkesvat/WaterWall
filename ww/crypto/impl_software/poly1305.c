@@ -6,11 +6,11 @@ wCryptoSoftwarePoly1305Init(poly1305_context *ctx, const unsigned char key[32]) 
 	poly1305_state_internal_t *st = (poly1305_state_internal_t *)ctx;
 
 	/* r &= 0xffffffc0ffffffc0ffffffc0fffffff */
-	st->r[0] = (U8TO32(&key[ 0])     ) & 0x3ffffff;
-	st->r[1] = (U8TO32(&key[ 3]) >> 2) & 0x3ffff03;
-	st->r[2] = (U8TO32(&key[ 6]) >> 4) & 0x3ffc0ff;
-	st->r[3] = (U8TO32(&key[ 9]) >> 6) & 0x3f03fff;
-	st->r[4] = (U8TO32(&key[12]) >> 8) & 0x00fffff;
+	st->r[0] = ((unsigned long)GET_LE32(&key[ 0])     ) & 0x3ffffff;
+	st->r[1] = ((unsigned long)GET_LE32(&key[ 3]) >> 2) & 0x3ffff03;
+	st->r[2] = ((unsigned long)GET_LE32(&key[ 6]) >> 4) & 0x3ffc0ff;
+	st->r[3] = ((unsigned long)GET_LE32(&key[ 9]) >> 6) & 0x3f03fff;
+	st->r[4] = ((unsigned long)GET_LE32(&key[12]) >> 8) & 0x00fffff;
 
 	/* h = 0 */
 	st->h[0] = 0;
@@ -20,10 +20,10 @@ wCryptoSoftwarePoly1305Init(poly1305_context *ctx, const unsigned char key[32]) 
 	st->h[4] = 0;
 
 	/* save pad for later */
-	st->pad[0] = U8TO32(&key[16]);
-	st->pad[1] = U8TO32(&key[20]);
-	st->pad[2] = U8TO32(&key[24]);
-	st->pad[3] = U8TO32(&key[28]);
+	st->pad[0] = (unsigned long)GET_LE32(&key[16]);
+	st->pad[1] = (unsigned long)GET_LE32(&key[20]);
+	st->pad[2] = (unsigned long)GET_LE32(&key[24]);
+	st->pad[3] = (unsigned long)GET_LE32(&key[28]);
 
 	st->leftover = 0;
 	st->final = 0;
@@ -95,10 +95,10 @@ wCryptoSoftwarePoly1305Finish(poly1305_context *ctx, unsigned char mac[16]) {
 	f = (unsigned long long)h2 + st->pad[2] + (f >> 32); h2 = (unsigned long)f;
 	f = (unsigned long long)h3 + st->pad[3] + (f >> 32); h3 = (unsigned long)f;
 
-	U32TO8(mac +  0, h0);
-	U32TO8(mac +  4, h1);
-	U32TO8(mac +  8, h2);
-	U32TO8(mac + 12, h3);
+	PUT_LE32(mac +  0, (uint32_t)h0);
+	PUT_LE32(mac +  4, (uint32_t)h1);
+	PUT_LE32(mac +  8, (uint32_t)h2);
+	PUT_LE32(mac + 12, (uint32_t)h3);
 
 	/* zero out the state */
 	st->h[0] = 0;

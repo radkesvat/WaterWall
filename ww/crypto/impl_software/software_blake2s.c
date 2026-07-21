@@ -9,9 +9,6 @@
 #define ROTR32(x, y) (((x) >> (y)) ^ ((x) << (32 - (y))))
 #endif
 
-#define U8TO32_LITTLE(p)                                                                                               \
-    (((uint32_t) ((p)[0])) | ((uint32_t) ((p)[1]) << 8) | ((uint32_t) ((p)[2]) << 16) | ((uint32_t) ((p)[3]) << 24))
-
 // Mixing function G.
 #define B2S_G(a, b, c, d, x, y)                                                                                        \
     {                                                                                                                  \
@@ -56,7 +53,7 @@ static void blake2s_compress(wcrypto_software_blake2s_ctx_t *ctx, int last)
     if (last)           // last block flag set ?
         v[14] = ~v[14];
     for (i = 0; i < 16; i++) // get little-endian words
-        m[i] = U8TO32_LITTLE(&ctx->b[4 * i]);
+        m[i] = GET_LE32(&ctx->b[4 * i]);
 
     for (i = 0; i < 10; i++)
     { // ten rounds

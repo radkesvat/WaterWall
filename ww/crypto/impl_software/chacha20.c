@@ -117,7 +117,7 @@ static void chacha20_block(struct chacha20_ctx *ctx, uint8_t *stream)
 
     for (i = 0; i < 16; ++i)
     {
-        U32TO8_LITTLE(stream + (4 * i), PLUS(working_state[i], ctx->state[i]));
+        PUT_LE32(stream + (4 * i), PLUS(working_state[i], ctx->state[i]));
     }
     wCryptoZero(working_state, sizeof(working_state));
 }
@@ -167,18 +167,18 @@ void chacha20_init_ietf(struct chacha20_ctx *ctx, const uint8_t key[CHACHA20_KEY
     ctx->state[1]  = CHACHA20_CONSTANT_2;
     ctx->state[2]  = CHACHA20_CONSTANT_3;
     ctx->state[3]  = CHACHA20_CONSTANT_4;
-    ctx->state[4]  = U8TO32_LITTLE(key + 0);
-    ctx->state[5]  = U8TO32_LITTLE(key + 4);
-    ctx->state[6]  = U8TO32_LITTLE(key + 8);
-    ctx->state[7]  = U8TO32_LITTLE(key + 12);
-    ctx->state[8]  = U8TO32_LITTLE(key + 16);
-    ctx->state[9]  = U8TO32_LITTLE(key + 20);
-    ctx->state[10] = U8TO32_LITTLE(key + 24);
-    ctx->state[11] = U8TO32_LITTLE(key + 28);
+    ctx->state[4]  = GET_LE32(key + 0);
+    ctx->state[5]  = GET_LE32(key + 4);
+    ctx->state[6]  = GET_LE32(key + 8);
+    ctx->state[7]  = GET_LE32(key + 12);
+    ctx->state[8]  = GET_LE32(key + 16);
+    ctx->state[9]  = GET_LE32(key + 20);
+    ctx->state[10] = GET_LE32(key + 24);
+    ctx->state[11] = GET_LE32(key + 28);
     ctx->state[12] = 0;
-    ctx->state[13] = U8TO32_LITTLE(nonce + 0);
-    ctx->state[14] = U8TO32_LITTLE(nonce + 4);
-    ctx->state[15] = U8TO32_LITTLE(nonce + 8);
+    ctx->state[13] = GET_LE32(nonce + 0);
+    ctx->state[14] = GET_LE32(nonce + 4);
+    ctx->state[15] = GET_LE32(nonce + 8);
 }
 
 // 2.2. HChaCha20
@@ -193,29 +193,29 @@ void hchacha20(uint8_t *out, const uint8_t *nonce, const uint8_t *key)
     state[1]  = CHACHA20_CONSTANT_2;
     state[2]  = CHACHA20_CONSTANT_3;
     state[3]  = CHACHA20_CONSTANT_4;
-    state[4]  = U8TO32_LITTLE(key + 0);
-    state[5]  = U8TO32_LITTLE(key + 4);
-    state[6]  = U8TO32_LITTLE(key + 8);
-    state[7]  = U8TO32_LITTLE(key + 12);
-    state[8]  = U8TO32_LITTLE(key + 16);
-    state[9]  = U8TO32_LITTLE(key + 20);
-    state[10] = U8TO32_LITTLE(key + 24);
-    state[11] = U8TO32_LITTLE(key + 28);
-    state[12] = U8TO32_LITTLE(nonce + 0);
-    state[13] = U8TO32_LITTLE(nonce + 4);
-    state[14] = U8TO32_LITTLE(nonce + 8);
-    state[15] = U8TO32_LITTLE(nonce + 12);
+    state[4]  = GET_LE32(key + 0);
+    state[5]  = GET_LE32(key + 4);
+    state[6]  = GET_LE32(key + 8);
+    state[7]  = GET_LE32(key + 12);
+    state[8]  = GET_LE32(key + 16);
+    state[9]  = GET_LE32(key + 20);
+    state[10] = GET_LE32(key + 24);
+    state[11] = GET_LE32(key + 28);
+    state[12] = GET_LE32(nonce + 0);
+    state[13] = GET_LE32(nonce + 4);
+    state[14] = GET_LE32(nonce + 8);
+    state[15] = GET_LE32(nonce + 12);
 
     TWENTY_ROUNDS(state);
 
     // Concatenate first/last 128 bits into 256bit output (as little endian)
-    U32TO8_LITTLE(out + 0, state[0]);
-    U32TO8_LITTLE(out + 4, state[1]);
-    U32TO8_LITTLE(out + 8, state[2]);
-    U32TO8_LITTLE(out + 12, state[3]);
-    U32TO8_LITTLE(out + 16, state[12]);
-    U32TO8_LITTLE(out + 20, state[13]);
-    U32TO8_LITTLE(out + 24, state[14]);
-    U32TO8_LITTLE(out + 28, state[15]);
+    PUT_LE32(out + 0, state[0]);
+    PUT_LE32(out + 4, state[1]);
+    PUT_LE32(out + 8, state[2]);
+    PUT_LE32(out + 12, state[3]);
+    PUT_LE32(out + 16, state[12]);
+    PUT_LE32(out + 20, state[13]);
+    PUT_LE32(out + 24, state[14]);
+    PUT_LE32(out + 28, state[15]);
     wCryptoZero(state, sizeof(state));
 }

@@ -30,9 +30,9 @@ static void calculateMac(uint8_t mac[POLY1305_MAC_SIZE], struct poly1305_context
     wCryptoSoftwarePoly1305Update(poly1305_state, ciphertext, ciphertext_len);
     padded_len = (ciphertext_len + 15U) & ~(size_t) 15U;
     wCryptoSoftwarePoly1305Update(poly1305_state, zero, padded_len - ciphertext_len);
-    U64TO8_LITTLE(length_block, (uint64_t) ad_len);
+    PUT_LE64(length_block, (uint64_t) ad_len);
     wCryptoSoftwarePoly1305Update(poly1305_state, length_block, sizeof(length_block));
-    U64TO8_LITTLE(length_block, (uint64_t) ciphertext_len);
+    PUT_LE64(length_block, (uint64_t) ciphertext_len);
     wCryptoSoftwarePoly1305Update(poly1305_state, length_block, sizeof(length_block));
     wCryptoSoftwarePoly1305Finish(poly1305_state, mac);
 }
