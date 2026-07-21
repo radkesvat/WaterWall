@@ -500,7 +500,7 @@ void sha224_final(sha224_ctx *ctx, sha2_uint8 *digest)
     len_b = tot_len << 3;
     pm_len = block_nb << 6;
 
-    memoryZero(ctx->block + ctx->len, (size_t) (pm_len - ctx->len));
+    memset(ctx->block + ctx->len, 0, (size_t) (pm_len - ctx->len));
     ctx->block[ctx->len] = 0x80;
     UNPACK64(len_b, ctx->block + pm_len - 8);
 
@@ -603,7 +603,7 @@ void sha256_final(sha256_ctx *ctx, sha2_uint8 *digest)
     len_b = tot_len << 3;
     pm_len = block_nb << 6;
 
-    memoryZero(ctx->block + ctx->len, (size_t) (pm_len - ctx->len));
+    memset(ctx->block + ctx->len, 0, (size_t) (pm_len - ctx->len));
     ctx->block[ctx->len] = 0x80;
     UNPACK64(len_b, ctx->block + pm_len - 8);
 
@@ -707,7 +707,7 @@ void sha384_final(sha384_ctx *ctx, sha2_uint8 *digest)
     len_b = tot_len << 3;
     pm_len = block_nb << 7;
 
-    memoryZero(ctx->block + ctx->len, (size_t) (pm_len - ctx->len));
+    memset(ctx->block + ctx->len, 0, (size_t) (pm_len - ctx->len));
     ctx->block[ctx->len] = 0x80;
     UNPACK64(len_b, ctx->block + pm_len - 8);
 
@@ -809,7 +809,7 @@ void sha512_final(sha512_ctx *ctx, sha2_uint8 *digest)
     len_b = tot_len << 3;
     pm_len = block_nb << 7;
 
-    memoryZero(ctx->block + ctx->len, (size_t) (pm_len - ctx->len));
+    memset(ctx->block + ctx->len, 0, (size_t) (pm_len - ctx->len));
     ctx->block[ctx->len] = 0x80;
     UNPACK64(len_b, ctx->block + pm_len - 8);
 
