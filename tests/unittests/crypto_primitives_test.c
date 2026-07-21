@@ -187,6 +187,21 @@ static void test_x25519(void)
 
     require(performX25519(shared_secret, scalar, point) == 0, "X25519 failed");
     require_bytes_equal(shared_secret, expected, sizeof(shared_secret), "X25519 vector mismatch");
+
+#if defined(WCRYPTO_HAS_SOFTWARE_X25519)
+    union
+    {
+        uint32_t alignment;
+        uint8_t  bytes[X25519_KEY_SIZE + 1];
+    } point_storage = {0};
+    uint8_t *unaligned_point = point_storage.bytes + 1;
+
+    memcpy(unaligned_point, point, sizeof(point));
+    require(wCryptoSoftwareX25519(shared_secret, scalar, unaligned_point) == 0,
+            "Software X25519 failed with an unaligned public key");
+    require_bytes_equal(shared_secret, expected, sizeof(shared_secret),
+                        "Software X25519 unaligned public key mismatch");
+#endif
 }
 
 static void test_chacha20poly1305(void)
