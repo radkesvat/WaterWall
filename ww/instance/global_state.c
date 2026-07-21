@@ -392,12 +392,13 @@ void createGlobalState(const ww_construction_data_t init_data)
 
 #if defined(WCRYPTO_BACKEND_SODIUM)
 
-        GSTATE.flag_libsodium_initialized = initSodium();
-        if (! (GSTATE.flag_libsodium_initialized))
+        const int sodium_result = initSodium();
+        if (sodium_result < 0)
         {
             printError("Failed to initialize libsodium\n");
             terminateProgram(1);
         }
+        GSTATE.flag_libsodium_initialized = true;
 #endif
     }
 
