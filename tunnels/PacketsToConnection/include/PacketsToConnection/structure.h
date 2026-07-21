@@ -27,7 +27,7 @@ typedef struct sbuf_ack_s
     uint32_t total;
 } sbuf_ack_t;
 
-static inline uint64_t ptcUdpFlowKeyHash(const ptc_udp_flow_key_t *key)
+static inline size_t ptcUdpFlowKeyHash(const ptc_udp_flow_key_t *key)
 {
     uint64_t value = (((uint64_t) key->src_addr_network) << 32U) ^ key->dest_addr_network;
     value ^= ((uint64_t) key->src_port << 16U) ^ (uint64_t) key->dest_port;
@@ -36,7 +36,7 @@ static inline uint64_t ptcUdpFlowKeyHash(const ptc_udp_flow_key_t *key)
     value ^= value >> 33U;
     value *= 0xc4ceb9fe1a85ec53uLL;
     value ^= value >> 33U;
-    return value;
+    return (size_t) value;
 }
 
 #define i_type ptc_udp_flow_map_t // NOLINT
@@ -53,7 +53,7 @@ static inline uint64_t ptcUdpFlowKeyHash(const ptc_udp_flow_key_t *key)
 #undef i_key
 #undef i_type
 
-static inline uint64_t ptcFakeDnsNameKeyHash(const ptc_fake_dns_name_key_t *key)
+static inline size_t ptcFakeDnsNameKeyHash(const ptc_fake_dns_name_key_t *key)
 {
     uint64_t hash = 1469598103934665603ULL;
 
@@ -65,7 +65,7 @@ static inline uint64_t ptcFakeDnsNameKeyHash(const ptc_fake_dns_name_key_t *key)
 
     hash ^= key->len;
     hash *= 1099511628211ULL;
-    return hash;
+    return (size_t) hash;
 }
 
 #define i_type     ptc_fake_dns_name_map_t                                                      // NOLINT

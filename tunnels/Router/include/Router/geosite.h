@@ -16,9 +16,9 @@ static inline hash_t routerGeositeHashBytes(const char *value, uint32_t len)
     return calcHashBytesSeed(value, len, 0);
 }
 
-static inline uint64_t routerGeositeDomainKeyHash(const router_geosite_domain_key_t *key)
+static inline size_t routerGeositeDomainKeyHash(const router_geosite_domain_key_t *key)
 {
-    return key->hash;
+    return (size_t) key->hash;
 }
 
 static inline bool routerGeositeDomainKeyEquals(const router_geosite_domain_key_t *left,

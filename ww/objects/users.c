@@ -74,24 +74,24 @@ _Static_assert(_Alignof(users_password_probe_t) >= 32U,
 _Static_assert(sizeof(users_password_probe_t) % 32U == 0,
                "users_password_probe_t storage size must be a 32-byte multiple");
 
-static uint64_t usersSHA224KeyHash(const users_sha224_key_t *key)
+static size_t usersSHA224KeyHash(const users_sha224_key_t *key)
 {
-    return calcHashBytes(key->bytes, SHA224_DIGEST_SIZE);
+    return (size_t) calcHashBytes(key->bytes, SHA224_DIGEST_SIZE);
 }
 
-static uint64_t usersSHA256KeyHash(const users_sha256_key_t *key)
+static size_t usersSHA256KeyHash(const users_sha256_key_t *key)
 {
-    return calcHashBytes(key->bytes, SHA256_DIGEST_SIZE);
+    return (size_t) calcHashBytes(key->bytes, SHA256_DIGEST_SIZE);
 }
 
-static uint64_t usersUUIDKeyHash(const users_uuid_key_t *key)
+static size_t usersUUIDKeyHash(const users_uuid_key_t *key)
 {
-    return calcHashBytes(key->bytes, kWwUuidBytesLen);
+    return (size_t) calcHashBytes(key->bytes, kWwUuidBytesLen);
 }
 
-static uint64_t usersWireGuardPublicKeyHash(const users_wireguard_publickey_key_t *key)
+static size_t usersWireGuardPublicKeyHash(const users_wireguard_publickey_key_t *key)
 {
-    return calcHashBytes(key->bytes, USER_WIREGUARD_PUBLICKEY_SIZE);
+    return (size_t) calcHashBytes(key->bytes, USER_WIREGUARD_PUBLICKEY_SIZE);
 }
 
 static bool usersSHA224KeyEq(const users_sha224_key_t *a, const users_sha224_key_t *b)
