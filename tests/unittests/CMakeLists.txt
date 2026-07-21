@@ -43,6 +43,12 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.wlibc_memcopy_unit wlibc_memcopy_test "unit;libc;memory")
 
+  add_executable(wendian_test wendian_test.c)
+  target_link_libraries(wendian_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests wendian_test)
+
+  add_waterwall_unit_test(waterwall.wendian_unit wendian_test "unit;libc;endian")
+
   add_executable(json_helpers_test json_helpers_test.c)
   target_link_libraries(json_helpers_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests json_helpers_test)

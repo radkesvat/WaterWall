@@ -190,18 +190,41 @@
 
 #endif
 
-#define PI8(p)      *(int8_t*)(p)
-#define PI16(p)     *(int16_t*)(p)
-#define PI32(p)     *(int32_t*)(p)
-#define PI64(p)     *(int64_t*)(p)
+static inline uint16_t wendianLoad16(const void *p)
+{
+    uint16_t v;
+    memcpy(&v, p, sizeof(v));
+    return v;
+}
 
-#define PU8(p)      *(uint8_t*)(p)
-#define PU16(p)     *(uint16_t*)(p)
-#define PU32(p)     *(uint32_t*)(p)
-#define PU64(p)     *(uint64_t*)(p)
+static inline uint32_t wendianLoad32(const void *p)
+{
+    uint32_t v;
+    memcpy(&v, p, sizeof(v));
+    return v;
+}
 
-#define PF32(p)     *(float*)(p)
-#define PF64(p)     *(double*)(p)
+static inline uint64_t wendianLoad64(const void *p)
+{
+    uint64_t v;
+    memcpy(&v, p, sizeof(v));
+    return v;
+}
+
+static inline void wendianStore16(void *p, uint16_t v)
+{
+    memcpy(p, &v, sizeof(v));
+}
+
+static inline void wendianStore32(void *p, uint32_t v)
+{
+    memcpy(p, &v, sizeof(v));
+}
+
+static inline void wendianStore64(void *p, uint64_t v)
+{
+    memcpy(p, &v, sizeof(v));
+}
 
 static inline uint32_t wendianGetBe24(const void *p)
 {
@@ -231,50 +254,50 @@ static inline void wendianPutLe24(void *p, uint32_t v)
     b[2]       = (uint8_t) ((v >> 16) & 0xFF);
 }
 
-#define GET_BE16(p)     be16toh(PU16(p))
+#define GET_BE16(p)     be16toh(wendianLoad16(p))
 #define GET_BE24(p)     wendianGetBe24(p)
-#define GET_BE32(p)     be32toh(PU32(p))
-#define GET_BE64(p)     be64toh(PU64(p))
+#define GET_BE32(p)     be32toh(wendianLoad32(p))
+#define GET_BE64(p)     be64toh(wendianLoad64(p))
 
-#define GET_LE16(p)     le16toh(PU16(p))
+#define GET_LE16(p)     le16toh(wendianLoad16(p))
 #define GET_LE24(p)     wendianGetLe24(p)
-#define GET_LE32(p)     le32toh(PU32(p))
-#define GET_LE64(p)     le64toh(PU64(p))
+#define GET_LE32(p)     le32toh(wendianLoad32(p))
+#define GET_LE64(p)     le64toh(wendianLoad64(p))
 
-#define PUT_BE16(p, v)  PU16(p) = htobe16(v)
+#define PUT_BE16(p, v)  wendianStore16(p, htobe16(v))
 #define PUT_BE24(p, v)  wendianPutBe24(p, v)
-#define PUT_BE32(p, v)  PU32(p) = htobe32(v)
-#define PUT_BE64(p, v)  PU64(p) = htobe64(v)
+#define PUT_BE32(p, v)  wendianStore32(p, htobe32(v))
+#define PUT_BE64(p, v)  wendianStore64(p, htobe64(v))
 
-#define PUT_LE16(p, v)  PU16(p) = htole16(v)
+#define PUT_LE16(p, v)  wendianStore16(p, htole16(v))
 #define PUT_LE24(p, v)  wendianPutLe24(p, v)
-#define PUT_LE32(p, v)  PU32(p) = htole32(v)
-#define PUT_LE64(p, v)  PU64(p) = htole64(v)
+#define PUT_LE32(p, v)  wendianStore32(p, htole32(v))
+#define PUT_LE64(p, v)  wendianStore64(p, htole64(v))
 
 // NOTE: uint8_t* p = (uint8_t*)buf;
 #define POP_BE8(p, v)   v = *p; ++p
-#define POP_BE16(p, v)  v = be16toh(PU16(p)); p += 2
+#define POP_BE16(p, v)  v = GET_BE16(p); p += 2
 #define POP_BE24(p, v)  v = GET_BE24(p); p += 3
-#define POP_BE32(p, v)  v = be32toh(PU32(p)); p += 4
-#define POP_BE64(p, v)  v = be64toh(PU64(p)); p += 8
+#define POP_BE32(p, v)  v = GET_BE32(p); p += 4
+#define POP_BE64(p, v)  v = GET_BE64(p); p += 8
 
 #define POP_LE8(p, v)   v= *p; ++p
-#define POP_LE16(p, v)  v = le16toh(PU16(p)); p += 2
+#define POP_LE16(p, v)  v = GET_LE16(p); p += 2
 #define POP_LE24(p, v)  v = GET_LE24(p); p += 3
-#define POP_LE32(p, v)  v = le32toh(PU32(p)); p += 4
-#define POP_LE64(p, v)  v = le64toh(PU64(p)); p += 8
+#define POP_LE32(p, v)  v = GET_LE32(p); p += 4
+#define POP_LE64(p, v)  v = GET_LE64(p); p += 8
 
 #define PUSH_BE8(p, v)  *p = v; ++p
-#define PUSH_BE16(p, v) PU16(p) = htobe16(v); p += 2
+#define PUSH_BE16(p, v) PUT_BE16(p, v); p += 2
 #define PUSH_BE24(p, v) PUT_BE24(p, v); p += 3
-#define PUSH_BE32(p, v) PU32(p) = htobe32(v); p += 4
-#define PUSH_BE64(p, v) PU64(p) = htobe64(v); p += 8
+#define PUSH_BE32(p, v) PUT_BE32(p, v); p += 4
+#define PUSH_BE64(p, v) PUT_BE64(p, v); p += 8
 
 #define PUSH_LE8(p, v)  *p = v; ++p
-#define PUSH_LE16(p, v) PU16(p) = htole16(v); p += 2
+#define PUSH_LE16(p, v) PUT_LE16(p, v); p += 2
 #define PUSH_LE24(p, v) PUT_LE24(p, v); p += 3
-#define PUSH_LE32(p, v) PU32(p) = htole32(v); p += 4
-#define PUSH_LE64(p, v) PU64(p) = htole64(v); p += 8
+#define PUSH_LE32(p, v) PUT_LE32(p, v); p += 4
+#define PUSH_LE64(p, v) PUT_LE64(p, v); p += 8
 
 // NOTE: NET_ENDIAN = BIG_ENDIAN
 #define POP8(p, v)      POP_BE8(p, v)
