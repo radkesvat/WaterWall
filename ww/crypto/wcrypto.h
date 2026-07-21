@@ -43,6 +43,7 @@ typedef enum wcrypto_status_e
 #define WCRYPTO_BLAKE2S_MAX_DIGEST_SIZE      32
 #define WCRYPTO_BLAKE2S_MAX_KEY_SIZE         32
 #define WCRYPTO_BLAKE2S_CONTEXT_BYTES        256
+#define WCRYPTO_BLAKE2S_CONTEXT_ALIGNMENT    16
 /* Maximum raw buffer accepted by any AEAD backend. Encryption plaintext is
  * limited to this value minus the tag so its result remains decryptable. */
 #define WCRYPTO_AEAD_MAX_INPUT_SIZE         ((size_t) INT_MAX)
@@ -104,7 +105,7 @@ typedef struct
 } sha3_512_hash_t;
 
 typedef union wcrypto_blake2s_ctx_u {
-    max_align_t   alignment;
+    WW_ATTR_ALIGNED(WCRYPTO_BLAKE2S_CONTEXT_ALIGNMENT)
     unsigned char storage[WCRYPTO_BLAKE2S_CONTEXT_BYTES];
 } wcrypto_blake2s_ctx_t;
 
