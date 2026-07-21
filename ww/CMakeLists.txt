@@ -440,36 +440,36 @@ target_sources(ww PRIVATE
     crypto/status.c
     crypto/x25519.c
     crypto/xchacha20poly1305.c
-    crypto/impl_software/aes256gcm.c
-    crypto/impl_software/blake2s.c
+    crypto/impl_software/software_aes256gcm.c
+    crypto/impl_software/software_blake2s.c
     crypto/impl_software/chacha20.c
-    crypto/impl_software/chacha20poly1305.c
+    crypto/impl_software/software_chacha20poly1305.c
     crypto/impl_software/hash_md5_sha1.c
     crypto/impl_software/hash_sha2.c
     crypto/impl_software/poly1305.c
     crypto/impl_software/poly1305-donna.c
     crypto/impl_software/sha2.c
-    crypto/impl_software/x25519.c
+    crypto/impl_software/software_x25519.c
 )
 if(WCRYPTO_BACKEND_SODIUM)
     target_sources(ww PRIVATE
         crypto/sodium_instance.c
-        crypto/impl_sodium/aes256gcm.c
-        crypto/impl_sodium/chacha20poly1305.c
-        crypto/impl_sodium/hash.c
-        crypto/impl_sodium/xchacha20poly1305.c
-        crypto/impl_sodium/x25519.c
+        crypto/impl_sodium/sodium_aes256gcm.c
+        crypto/impl_sodium/sodium_chacha20poly1305.c
+        crypto/impl_sodium/sodium_hash.c
+        crypto/impl_sodium/sodium_xchacha20poly1305.c
+        crypto/impl_sodium/sodium_x25519.c
     )
 endif()
 
 if(WCRYPTO_BACKEND_OPENSSL)
     target_sources(ww PRIVATE
-        crypto/impl_openssl/aes256gcm.c
-        crypto/impl_openssl/blake2s.c
-        crypto/impl_openssl/chacha20poly1305.c
-        crypto/impl_openssl/hash.c
-        crypto/impl_openssl/xchacha20poly1305.c
-        crypto/impl_openssl/x25519.c
+        crypto/impl_openssl/openssl_aes256gcm.c
+        crypto/impl_openssl/openssl_blake2s.c
+        crypto/impl_openssl/openssl_chacha20poly1305.c
+        crypto/impl_openssl/openssl_hash.c
+        crypto/impl_openssl/openssl_xchacha20poly1305.c
+        crypto/impl_openssl/openssl_x25519.c
     )
 endif()
 
@@ -485,29 +485,29 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         crypto/status.c
         crypto/x25519.c
         crypto/xchacha20poly1305.c
-        crypto/impl_software/aes256gcm.c
-        crypto/impl_software/blake2s.c
+        crypto/impl_software/software_aes256gcm.c
+        crypto/impl_software/software_blake2s.c
         crypto/impl_software/chacha20.c
-        crypto/impl_software/chacha20poly1305.c
+        crypto/impl_software/software_chacha20poly1305.c
         crypto/impl_software/hash_md5_sha1.c
         crypto/impl_software/hash_sha2.c
         crypto/impl_software/poly1305.c
         crypto/impl_software/poly1305-donna.c
         crypto/impl_software/sha2.c
-        crypto/impl_software/x25519.c
+        crypto/impl_software/software_x25519.c
         crypto/sodium_instance.c
-        crypto/impl_sodium/aes256gcm.c
-        crypto/impl_sodium/chacha20poly1305.c
-        crypto/impl_sodium/hash.c
-        crypto/impl_sodium/xchacha20poly1305.c
-        crypto/impl_sodium/x25519.c
+        crypto/impl_sodium/sodium_aes256gcm.c
+        crypto/impl_sodium/sodium_chacha20poly1305.c
+        crypto/impl_sodium/sodium_hash.c
+        crypto/impl_sodium/sodium_xchacha20poly1305.c
+        crypto/impl_sodium/sodium_x25519.c
         crypto/openssl_instance.c
-        crypto/impl_openssl/aes256gcm.c
-        crypto/impl_openssl/blake2s.c
-        crypto/impl_openssl/chacha20poly1305.c
-        crypto/impl_openssl/hash.c
-        crypto/impl_openssl/xchacha20poly1305.c
-        crypto/impl_openssl/x25519.c
+        crypto/impl_openssl/openssl_aes256gcm.c
+        crypto/impl_openssl/openssl_blake2s.c
+        crypto/impl_openssl/openssl_chacha20poly1305.c
+        crypto/impl_openssl/openssl_hash.c
+        crypto/impl_openssl/openssl_xchacha20poly1305.c
+        crypto/impl_openssl/openssl_x25519.c
         PROPERTIES COMPILE_OPTIONS "-Wconversion;-Wsign-conversion"
     )
 endif()
