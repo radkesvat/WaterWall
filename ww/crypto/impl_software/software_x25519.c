@@ -118,7 +118,7 @@ static void sub(fe out, const fe a, const fe b)
     propagate(out, (limb_t) (1 + carry));
 }
 
-static void __attribute__((unused)) swapin(limb_t *x, const uint8_t *in)
+static void swapin(limb_t *x, const uint8_t *in)
 {
     memcpy(x, in, sizeof(fe));
     unsigned i;
@@ -128,7 +128,7 @@ static void __attribute__((unused)) swapin(limb_t *x, const uint8_t *in)
     }
 }
 
-static void __attribute__((unused)) swapout(uint8_t *out, limb_t *x)
+static void swapout(uint8_t *out, limb_t *x)
 {
     unsigned i;
     for (i = 0; i < NLIMBS; i++)
