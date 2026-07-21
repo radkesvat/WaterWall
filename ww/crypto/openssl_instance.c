@@ -191,7 +191,7 @@ ssl_ctx_t sslCtxNew(ssl_ctx_opt_t *param)
     }
 
 #ifdef SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER
-    SSL_CTX_set_mode(ctx, SSL_CTX_get_mode(ctx) | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+    SSL_CTX_set_mode(ctx, (long) SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 #endif
 
     SSL_CTX_set_verify(ctx, mode, NULL);
