@@ -122,6 +122,11 @@ static void on_acceptex_complete(wio_t* io) {
     if (io->accept_cb) {
         setsockopt(connfd, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (const char*)&listenfd, sizeof(int));
         wio_t* connio = wioGet(io->loop, connfd);
+        if (wioIsClosed(connio)) {
+            // socket init rejected the accepted fd and already closed it
+            post_acceptex(io, hovlp);
+            return;
+        }
         connio->userdata = io->userdata;
         memoryCopy(connio->localaddr, io->localaddr, localaddrlen);
         memoryCopy(connio->peeraddr, io->peeraddr, peeraddrlen);
@@ -324,8 +329,49 @@ int wioRead (wio_t* io) {
     return wioAdd(io, wio_handle_events, WW_READ);
 }
 
+int wioWriteDatagram(wio_t* io, sbuf_t* buf, const sockaddr_u* peer_addr) {
+    if (io->closed) {
+        io->error = EBADF;
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        return -1;
+    }
+    if ((io->io_type & WIO_TYPE_SOCK_DGRAM) == 0 && (io->io_type & WIO_TYPE_SOCK_RAW) == 0) {
+        io->error = EINVAL;
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        return -1;
+    }
+    // One-shot nonblocking send with the explicit destination. A datagram that
+    // cannot be sent immediately is dropped and recycled; no overlapped retry
+    // is created and io->peeraddr is not read or written.
+    int len = (int)sbufGetLength(buf);
+    int nwrite = sendto(io->fd, (const char*)sbufGetRawPtr(buf), len, 0, &peer_addr->sa, SOCKADDR_LEN(peer_addr));
+    if (nwrite < 0) {
+        int err = socketERRNO();
+        if (err == EAGAIN || err == EINTR || err == WSAENOBUFS) {
+            // Transient pressure: drop without logging, the pressure path must
+            // not amplify overload.
+            bufferpoolReuseBuffer(io->loop->bufpool, buf);
+            return 0;
+        }
+        io->error = err;
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        return -1;
+    }
+    bufferpoolReuseBuffer(io->loop->bufpool, buf);
+    if (io->write_cb) {
+        io->write_cb(io);
+    }
+    return nwrite;
+}
+
 int wioWrite(wio_t* io, sbuf_t* buf) {
     int nwrite = 0;
+    if ((io->io_type & WIO_TYPE_SOCK_DGRAM) || (io->io_type & WIO_TYPE_SOCK_RAW)) {
+        // Datagrams never enter the overlapped retry path; snapshot the default
+        // peer so a later read cannot redirect this datagram.
+        sockaddr_u peer_addr = *io->peeraddr_u;
+        return wioWriteDatagram(io, buf, &peer_addr);
+    }
 try_send:
     if (io->io_type == WIO_TYPE_TCP) {
         nwrite = send(io->fd, sbufGetRawPtr(buf), sbufGetLength(buf), 0);

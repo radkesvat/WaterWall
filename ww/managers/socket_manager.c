@@ -2800,8 +2800,7 @@ static void runUdpWriteCallback(void *worker_ptr, void *arg1, void *arg2, void *
         return;
     }
 
-    wioSetPeerAddr(sock->io, (struct sockaddr *) &upl->peer_addr, sizeof(sockaddr_u));
-    int     nwrite = wioWrite(sock->io, upl->buf);
+    int     nwrite = wioWriteDatagram(sock->io, upl->buf, &upl->peer_addr);
     discard nwrite;
     udppayloadDestroy(upl);
 }
@@ -2826,8 +2825,7 @@ void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf, sockaddr_u 
 {
     if (wid_from == socketmanager_gstate->wid)
     {
-        wioSetPeerAddr(socket_io->io, (struct sockaddr *) &peer_addr, sizeof(sockaddr_u));
-        int     nwrite = wioWrite(socket_io->io, buf);
+        int     nwrite = wioWriteDatagram(socket_io->io, buf, &peer_addr);
         discard nwrite;
         return;
     }

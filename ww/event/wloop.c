@@ -1214,6 +1214,11 @@ wio_t *waccept(wloop_t *loop, int listenfd, waccept_cb accept_cb)
 {
     wio_t *io = wioGet(loop, listenfd);
     assert(io != NULL);
+    if (wioIsClosed(io))
+    {
+        // socket init rejected the fd and already closed it
+        return NULL;
+    }
     if (accept_cb)
     {
         io->accept_cb = accept_cb;
@@ -1227,6 +1232,11 @@ wio_t *wconnect(wloop_t *loop, int connfd, wconnect_cb connect_cb)
 {
     wio_t *io = wioGet(loop, connfd);
     assert(io != NULL);
+    if (wioIsClosed(io))
+    {
+        // socket init rejected the fd and already closed it
+        return NULL;
+    }
     if (connect_cb)
     {
         io->connect_cb = connect_cb;
@@ -1360,6 +1370,12 @@ wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio
     }
     io = wioGet(loop, sockfd);
     assert(io != NULL);
+    if (wioIsClosed(io))
+    {
+        // socket init rejected the fd (e.g. it could not be made nonblocking)
+        // and already closed it.
+        return NULL;
+    }
     io->io_type = type;
     if (side == WIO_SERVER_SIDE)
     {

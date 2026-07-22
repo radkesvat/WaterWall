@@ -145,19 +145,25 @@ static void asyncdnsSockStateCallback(void *data, ares_socket_t fd, int readable
 
     if (watch == NULL)
     {
-        watch = memoryAllocate(sizeof(*watch));
+        // wioReady() keeps every socket nonblocking, exactly what c-ares
+        // expects; a socket it cannot switch comes back closed and rejected.
+        wio_t *io = wioGet(r->loop, fd);
+        if (UNLIKELY(wioIsClosed(io)))
+        {
+            // nothing to watch; c-ares observes the failure on its own
+            // socket operations and times the query out
+            return;
+        }
+        watch  = memoryAllocate(sizeof(*watch));
         *watch = (dns_watch_t) {
             .fd       = fd,
-            .io       = wioGet(r->loop, fd),
+            .io       = io,
             .events   = 0,
             .resolver = r,
             .next     = r->watches,
         };
         r->watches = watch;
 
-        // wioReady() detects UDP sockets and makes them blocking for normal
-        // datagram users. c-ares expects its sockets to remain non-blocking.
-        nonBlocking(fd);
         watch->io->priority = WEVENT_HIGH_PRIORITY;
         weventSetUserData(watch->io, watch);
     }

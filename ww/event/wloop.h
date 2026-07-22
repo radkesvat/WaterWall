@@ -234,6 +234,10 @@ const char* wioGetEngine() {
 */
 WW_EXPORT const char* wioGetEngine(void);
 
+// NOTE: wioGet never returns NULL, but if socket initialization rejects the fd
+// (e.g. it cannot be switched to nonblocking) the returned io is already closed
+// and its fd released — callers must check wioIsClosed() before treating it as
+// usable. wioCreateSocket*() returns NULL in that case.
 WW_EXPORT wio_t* wioGet(wloop_t* loop, int fd);
 WW_EXPORT int wioAdd(wio_t* io, wio_cb cb, int events DEFAULT(WW_READ));
 WW_EXPORT int wioDel(wio_t* io, int events DEFAULT(WW_RDWR));
@@ -360,7 +364,28 @@ WW_EXPORT int wioReadRemain(wio_t* io);
 
 // NOTE: wioWrite is thread-safe, locked by recursive_mutex, allow to be called by other threads.
 // wio_try_write => wioAdd(io, WW_WRITE) => write => wwrite_cb
+// NOTE: The internal retry queue is a stream (TCP) behavior only. For UDP/raw io,
+// wioWrite snapshots the current default peer address and delegates to
+// wioWriteDatagram; datagrams are never queued for retry.
 WW_EXPORT int wioWrite(wio_t* io, sbuf_t* buf);
+
+// Send one datagram to an explicit destination, without touching io->peeraddr.
+// Supported only for WIO_TYPE_UDP and WIO_TYPE_IP; synchronous and nonblocking,
+// the buffer is never enqueued and WW_WRITE is never registered to retry it.
+//
+// Buffer ownership: this function owns `buf` on every path and recycles it
+// exactly once (on success, drop, and error alike). Callers must not recycle
+// the buffer based on the return value.
+//
+// @return positive byte count: the datagram was sent.
+//         0: no payload bytes were reported sent — the datagram was
+//            deliberately dropped because the send would block
+//            (EAGAIN/EWOULDBLOCK), was interrupted (EINTR), or hit transient
+//            send-buffer pressure (ENOBUFS); a successfully sent zero-length
+//            datagram also returns 0. Either way the buffer is consumed and
+//            must not be retried.
+//         -1: permanent error or invalid/closed io; io->error is set.
+WW_EXPORT int wioWriteDatagram(wio_t* io, sbuf_t* buf, const sockaddr_u* peer_addr);
 
 // NOTE: wioClose is thread-safe, wioCloseAsync will be called actually in other thread.
 // wioDel(io, WW_RDWR) => close => wclose_cb

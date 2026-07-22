@@ -175,7 +175,7 @@ void udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls)
         }
 
         sbuf_t *buf = bufferqueuePopFront(&ls->pause_queue);
-        wioWrite(ls->io, buf);
+        wioWriteDatagram(ls->io, buf, &ls->peer_addr);
     }
 }
 

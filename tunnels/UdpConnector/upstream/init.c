@@ -234,6 +234,11 @@ static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_
 
     wloop_t *loop = getWorkerLoop(getWID());
     wio_t   *io   = wioGet(loop, sockfd);
+    if (UNLIKELY(wioIsClosed(io)))
+    {
+        // socket init rejected the fd and already closed it
+        goto fail;
+    }
 
     ls->io        = io;
     ls->peer_addr = addr;

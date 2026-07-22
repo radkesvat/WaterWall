@@ -67,15 +67,6 @@ static void fillIoType(wio_t *io)
 
 static void wioSocketInit(wio_t *io)
 {
-    if ((io->io_type & WIO_TYPE_SOCK_DGRAM) || (io->io_type & WIO_TYPE_SOCK_RAW))
-    {
-        // NOTE: sendto multiple peeraddr cannot use io->write_queue
-        blocking(io->fd);
-    }
-    else
-    {
-        nonBlocking(io->fd);
-    }
     // fill io->localaddr io->peeraddr
     if (io->localaddr == NULL)
     {
@@ -84,6 +75,19 @@ static void wioSocketInit(wio_t *io)
     if (io->peeraddr == NULL)
     {
         EVENTLOOP_ALLOC(io->peeraddr, sizeof(sockaddr_u));
+    }
+    // NOTE: datagram/raw writes go through wioWriteDatagram with an explicit
+    // per-call destination and drop on transient pressure instead of queuing,
+    // so every socket type runs nonblocking on the event loop.
+    if (nonBlocking(io->fd) != 0)
+    {
+        io->error = socketERRNO();
+        wloge(
+            "failed to set fd[%d] nonblocking: %s:%d, rejecting socket", io->fd, socketStrError(io->error), io->error);
+        // A blocking socket must never stay usable on the event loop; the io
+        // comes back closed and every read/write path rejects it.
+        wioClose(io);
+        return;
     }
     socklen_t addrlen = sizeof(sockaddr_u);
     int       ret     = getsockname(io->fd, io->localaddr, &addrlen);

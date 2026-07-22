@@ -198,6 +198,23 @@ if(TARGET ww)
       "unit;net;capture;nfqueue"
     )
 
+    # Wraps send/sendto for a deterministic EAGAIN/EINTR/ENOBUFS seam.
+    add_executable(udp_datagram_write_test udp_datagram_write_test.c)
+    target_link_libraries(udp_datagram_write_test PRIVATE ww)
+    set_property(TARGET udp_datagram_write_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+    target_compile_options(udp_datagram_write_test PRIVATE "-fno-lto")
+    target_link_options(udp_datagram_write_test PRIVATE
+      "-Wl,--wrap=sendto"
+      "-Wl,--wrap=send"
+    )
+    add_dependencies(waterwall_unit_tests udp_datagram_write_test)
+
+    add_waterwall_unit_test(
+      waterwall.udp_datagram_write_unit
+      udp_datagram_write_test
+      "unit;event;udp;datagram"
+    )
+
     add_executable(os_helpers_bbr_test
       os_helpers_bbr_test.c
       ${CMAKE_SOURCE_DIR}/core/os_helpers.c

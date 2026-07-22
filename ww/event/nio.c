@@ -121,6 +121,11 @@ static void nio_accept(wio_t *io)
         addrlen = sizeof(sockaddr_u);
         getsockname(connfd, io->localaddr, &addrlen);
         connio = wioGet(io->loop, connfd);
+        if (UNLIKELY(wioIsClosed(connio)))
+        {
+            // socket init rejected the accepted fd and already closed it
+            continue;
+        }
         // NOTE: inherit from listenio
         connio->accept_cb = io->accept_cb;
         connio->userdata  = io->userdata;
@@ -531,6 +536,77 @@ int wioRead(wio_t *io)
     return 0;
 }
 
+// A transient sendto failure means the datagram is dropped, not retried.
+static bool nio_sendto_error_is_transient(int err)
+{
+    if (err == EAGAIN || err == EINTR)
+    {
+        return true;
+    }
+#if defined(EWOULDBLOCK) && (EWOULDBLOCK != EAGAIN)
+    if (err == EWOULDBLOCK)
+    {
+        return true;
+    }
+#endif
+#ifdef ENOBUFS
+    if (err == ENOBUFS)
+    {
+        return true;
+    }
+#endif
+#ifdef WSAENOBUFS
+    if (err == WSAENOBUFS)
+    {
+        return true;
+    }
+#endif
+    return false;
+}
+
+int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
+{
+    if (io->closed)
+    {
+        wloge("wioWriteDatagram called but fd[%d] already closed!", io->fd);
+        io->error = EBADF;
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        return -1;
+    }
+    if (((io->io_type & WIO_TYPE_SOCK_DGRAM) | (io->io_type & WIO_TYPE_SOCK_RAW)) == 0)
+    {
+        wloge("wioWriteDatagram called on non-datagram fd[%d]!", io->fd);
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        io->error = EINVAL;
+        return -1;
+    }
+    // Datagram writes never enter the stream write_queue.
+    assert(write_queue_empty(&io->write_queue));
+
+    int len = (int) sbufGetLength(buf);
+    int nwrite =
+        sendto(io->fd, (const char *) sbufGetRawPtr(buf), (size_t) len, 0, &peer_addr->sa, SOCKADDR_LEN(peer_addr));
+    if (nwrite < 0)
+    {
+        int err = socketERRNO();
+        if (nio_sendto_error_is_transient(err))
+        {
+            // Drop-on-pressure policy: no logging here, the pressure path must
+            // not amplify overload.
+            bufferpoolReuseBuffer(io->loop->bufpool, buf);
+            return 0;
+        }
+        io->error = err;
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        return -1;
+    }
+    // Datagram sends are atomic: the kernel accepts the whole payload or fails.
+    assert(nwrite == len);
+    bufferpoolReuseBuffer(io->loop->bufpool, buf);
+    __write_cb(io);
+    return nwrite;
+}
+
 int wioWrite(wio_t *io, sbuf_t *buf)
 {
     if (io->closed)
@@ -538,6 +614,13 @@ int wioWrite(wio_t *io, sbuf_t *buf)
         wloge("wioWrite called but fd[%d] already closed!", io->fd);
         bufferpoolReuseBuffer(io->loop->bufpool, buf);
         return -1;
+    }
+    if ((io->io_type & WIO_TYPE_SOCK_DGRAM) || (io->io_type & WIO_TYPE_SOCK_RAW))
+    {
+        // Snapshot the default peer so a read arriving between this call and the
+        // send cannot redirect the datagram; datagrams never use write_queue.
+        sockaddr_u peer_addr = *io->peeraddr_u;
+        return wioWriteDatagram(io, buf, &peer_addr);
     }
     int nwrite = 0, err = 0;
     //

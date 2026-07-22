@@ -240,6 +240,11 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
     wio_t *io = wioGet(loop, sockfd);
     assert(io != NULL);
     sockfd = -1;
+    if (UNLIKELY(wioIsClosed(io)))
+    {
+        // socket init rejected the fd and already closed it
+        goto fail;
+    }
 
     sockaddr_u addr = addresscontextToSockAddr(dest_ctx);
 

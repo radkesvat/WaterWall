@@ -105,26 +105,6 @@ static void udpconnectorPacketDnsRequestUnlink(udpconnector_lstate_t *ls, udpcon
     request->next = NULL;
 }
 
-static bool udpconnectorPayloadSockAddrEquals(const sockaddr_u *lhs, const sockaddr_u *rhs)
-{
-    if (lhs == NULL || rhs == NULL || lhs->sa.sa_family != rhs->sa.sa_family)
-    {
-        return false;
-    }
-
-    switch (lhs->sa.sa_family)
-    {
-    case AF_INET:
-        return lhs->sin.sin_port == rhs->sin.sin_port && lhs->sin.sin_addr.s_addr == rhs->sin.sin_addr.s_addr;
-    case AF_INET6:
-        return lhs->sin6.sin6_port == rhs->sin6.sin6_port && memoryCompare(lhs->sin6.sin6_addr.s6_addr,
-                                                                           rhs->sin6.sin6_addr.s6_addr,
-                                                                           sizeof(lhs->sin6.sin6_addr.s6_addr)) == 0;
-    default:
-        return false;
-    }
-}
-
 static bool udpconnectorPeerMatchesSocketFamily(udpconnector_lstate_t *ls, const sockaddr_u *peer_addr)
 {
     return ls->io != NULL && wioGetLocaladdrU(ls->io)->sa.sa_family == peer_addr->sa.sa_family;
@@ -147,12 +127,7 @@ static void udpconnectorWriteToPeer(tunnel_t *t, line_t *l, udpconnector_tstate_
     localidletableKeepIdleItemForAtleast(udpconnectorGetLineIdleTable(ts, l), ls->idle_handle, kUdpKeepExpireTime);
 
     ls->peer_addr = *peer_addr;
-    if (! udpconnectorPayloadSockAddrEquals(wioGetPeerAddrU(ls->io), peer_addr))
-    {
-        wioSetPeerAddr(ls->io, (struct sockaddr *) &peer_addr->sa, sockaddrLen((sockaddr_u *) peer_addr));
-    }
-
-    wioWrite(ls->io, buf);
+    wioWriteDatagram(ls->io, buf, peer_addr);
 }
 
 static bool udpconnectorMaybeResumeQueuedSender(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls)
