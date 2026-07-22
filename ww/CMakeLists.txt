@@ -1325,6 +1325,7 @@ set_source_files_properties(
     # production objects separate so extracting ww's Unity object does not
     # define the same symbols a second time.
     instance/global_state.c
+    managers/socket_manager_iptables_recovery.c
     objects/user.c
     PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
 )
