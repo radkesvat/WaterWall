@@ -19,6 +19,7 @@ typedef struct capture_device_s
 #ifdef OS_WIN
     HANDLE handle;
     char  *filter;
+    bool   reader_exit_confirmed;
 
 #else
     int      socket;

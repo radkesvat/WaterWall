@@ -1,4 +1,5 @@
 #include "capture.h"
+#include "capture_windows_lifetime.h"
 
 #include "buffer_pool.h"
 #include "global_state.h"
@@ -158,25 +159,40 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
     capture_device_t *cdev = userdata;
     sbuf_t           *buf;
     UINT              read_packet_len = 0;
+    HANDLE            handle          = cdev->handle;
+
+    assert(handle != NULL && handle != INVALID_HANDLE_VALUE);
 
     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
     {
-
         buf = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
 
         buf = sbufReserveSpace(buf, kMaxAllowedPacketLength);
 
-        if (! windivertRecv(cdev->handle, sbufGetMutablePtr(buf), kMaxAllowedPacketLength, &read_packet_len, NULL))
+        if (! windivertRecv(handle, sbufGetMutablePtr(buf), kMaxAllowedPacketLength, &read_packet_len, NULL))
         {
-            LOGE("CaptureDevice: failed to read packet from capture device: error %lu", GetLastError());
+            DWORD recv_error = GetLastError();
             bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
 
-            if (ERROR_NO_DATA == GetLastError())
+            if (recv_error == ERROR_NO_DATA)
             {
-                LOGW("CaptureDevice: either handle shutdown or no data available, exiting read routine...");
+                LOGD("CaptureDevice: receive was shut down, exiting read routine");
                 break;
             }
+
+            if (! atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
+            {
+                break;
+            }
+
+            LOGE("CaptureDevice: failed to read packet from capture device: error %lu", recv_error);
             continue;
+        }
+
+        if (! atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
+        {
+            bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+            break;
         }
 
         if (UNLIKELY(read_packet_len == 0))
@@ -205,44 +221,190 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
     return 0;
 }
 
+static bool capturedeviceHasHandle(const void *context)
+{
+    const capture_device_t *cdev = context;
+    return cdev->handle != NULL && cdev->handle != INVALID_HANDLE_VALUE;
+}
+
+static bool capturedeviceReaderMayBeRunning(const void *context)
+{
+    const capture_device_t *cdev = context;
+    return cdev->read_thread != NULL && ! cdev->reader_exit_confirmed;
+}
+
+static bool capturedeviceHasReader(const void *context)
+{
+    const capture_device_t *cdev = context;
+    return cdev->read_thread != NULL;
+}
+
+static bool capturedeviceHasLiveResources(const capture_device_t *cdev)
+{
+    return atomicLoadExplicit(&(cdev->up), memory_order_relaxed) || capturedeviceHasHandle(cdev) ||
+           capturedeviceHasReader(cdev);
+}
+
+static void capturedeviceBeginShutdown(void *context)
+{
+    capture_device_t *cdev = context;
+
+    atomicStoreExplicit(&(cdev->running), false, memory_order_release);
+    atomicStoreExplicit(&(cdev->up), false, memory_order_relaxed);
+}
+
+static bool capturedeviceShutdownHandle(void *context)
+{
+    capture_device_t *cdev = context;
+    if (! capturedeviceHasHandle(cdev))
+    {
+        return true;
+    }
+
+    if (! windivertShutdown(cdev->handle, WINDIVERT_SHUTDOWN_BOTH))
+    {
+        DWORD last_error = GetLastError();
+        LOGE("CaptureDevice: failed to shut down WinDivert handle: error %lu", last_error);
+        return false;
+    }
+
+    return true;
+}
+
+static capture_windows_join_result_e capturedeviceJoinReader(void *context)
+{
+    capture_device_t *cdev = context;
+    if (cdev->read_thread == NULL)
+    {
+        cdev->reader_exit_confirmed = false;
+        return kCaptureWindowsJoinResultStopped;
+    }
+
+    if (! cdev->reader_exit_confirmed)
+    {
+        DWORD thread_id = GetThreadId(cdev->read_thread);
+        if (thread_id == 0)
+        {
+            DWORD last_error = GetLastError();
+            LOGE("CaptureDevice: failed to identify reader thread: error %lu", last_error);
+            return kCaptureWindowsJoinResultNotStopped;
+        }
+
+        if (GetCurrentThreadId() == thread_id)
+        {
+            LOGE("CaptureDevice: cannot join reader thread from the same thread");
+            return kCaptureWindowsJoinResultNotStopped;
+        }
+
+        DWORD wait_result = WaitForSingleObject(cdev->read_thread, INFINITE);
+        if (wait_result != WAIT_OBJECT_0)
+        {
+            DWORD last_error = wait_result == WAIT_FAILED ? GetLastError() : ERROR_INVALID_FUNCTION;
+            LOGE("CaptureDevice: failed to join reader thread, wait result: %lu, error: %lu", wait_result, last_error);
+            return kCaptureWindowsJoinResultNotStopped;
+        }
+
+        cdev->reader_exit_confirmed = true;
+    }
+
+    if (! CloseHandle(cdev->read_thread))
+    {
+        DWORD last_error = GetLastError();
+        LOGE("CaptureDevice: reader exited but its thread handle could not be closed: error %lu", last_error);
+        return kCaptureWindowsJoinResultStoppedHandleReleaseFailed;
+    }
+
+    cdev->read_thread           = NULL;
+    cdev->reader_exit_confirmed = false;
+    return kCaptureWindowsJoinResultStopped;
+}
+
+static bool capturedeviceCloseHandle(void *context)
+{
+    capture_device_t *cdev = context;
+    if (! capturedeviceHasHandle(cdev))
+    {
+        return true;
+    }
+
+    HANDLE handle = cdev->handle;
+    if (! windivertClose(handle))
+    {
+        DWORD last_error = GetLastError();
+        LOGE("CaptureDevice: failed to close WinDivert handle: error %lu", last_error);
+        return false;
+    }
+
+    cdev->handle = NULL;
+    return true;
+}
+
+static const capture_windows_lifetime_ops_t capture_lifetime_ops = {
+    .begin_shutdown        = capturedeviceBeginShutdown,
+    .has_handle            = capturedeviceHasHandle,
+    .has_reader            = capturedeviceHasReader,
+    .reader_may_be_running = capturedeviceReaderMayBeRunning,
+    .shutdown_handle       = capturedeviceShutdownHandle,
+    .join_reader           = capturedeviceJoinReader,
+    .close_handle          = capturedeviceCloseHandle,
+};
+
 bool caputredeviceBringUp(capture_device_t *cdev)
 {
-    assert(! cdev->up);
-
-    cdev->handle = windivertOpen(cdev->filter, WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_RECV_ONLY);
-    if (cdev->handle == INVALID_HANDLE_VALUE)
+    if (capturedeviceHasLiveResources(cdev))
     {
-        // Handle error
-        LOGE("CaptureDevice: Failed to open WinDivert handle: error %lu", GetLastError());
-        return FALSE;
+        LOGE("CaptureDevice: device is already up or shutdown is incomplete");
+        return false;
     }
+
+    HANDLE handle = windivertOpen(cdev->filter, WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_RECV_ONLY);
+    if (handle == NULL || handle == INVALID_HANDLE_VALUE)
+    {
+        DWORD last_error = GetLastError();
+        LOGE("CaptureDevice: Failed to open WinDivert handle: error %lu", last_error);
+        return false;
+    }
+    cdev->handle = handle;
 
     bufferpoolUpdateAllocationPaddings(cdev->reader_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
-    cdev->up      = true;
-    cdev->running = true;
-
-    LOGI("CaptureDevice: device %s is now up", cdev->name);
+    cdev->reader_exit_confirmed = false;
+    atomicStoreExplicit(&(cdev->running), true, memory_order_release);
 
     cdev->read_thread = threadCreate(cdev->routine_reader, cdev);
+    if (cdev->read_thread == NULL)
+    {
+        DWORD last_error = GetLastError();
+        atomicStoreExplicit(&(cdev->running), false, memory_order_release);
+        LOGE("CaptureDevice: failed to create reader thread: error %lu", last_error);
+
+        if (! captureWindowsLifetimeRollbackOpen(cdev, &capture_lifetime_ops))
+        {
+            LOGE("CaptureDevice: failed to roll back WinDivert handle after reader-thread creation failure");
+        }
+        return false;
+    }
+
+    atomicStoreExplicit(&(cdev->up), true, memory_order_release);
+    LOGI("CaptureDevice: device %s is now up", cdev->name);
     return true;
 }
 
 bool caputredeviceBringDown(capture_device_t *cdev)
 {
-    assert(cdev->up);
+    if (! capturedeviceHasLiveResources(cdev))
+    {
+        return true;
+    }
 
-    cdev->running = false;
-    cdev->up      = false;
+    if (! captureWindowsLifetimeShutdown(cdev, &capture_lifetime_ops))
+    {
+        return false;
+    }
 
-    windivertShutdown(cdev->handle, WINDIVERT_SHUTDOWN_BOTH);
-    windivertClose(cdev->handle);
-    cdev->handle = 0;
-    safeThreadJoin(cdev->read_thread);
     LOGI("CaptureDevice: device %s is now down", cdev->name);
-
     return true;
 }
 
@@ -271,15 +433,17 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
 
     capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
 
-    *cdev = (capture_device_t) {.name                = stringDuplicate(name),
-                                .running             = false,
-                                .up                  = false,
-                                .routine_reader      = routineReadFromCapture,
-                                .handle              = NULL,
-                                .read_event_callback = cb,
-                                .userdata            = userdata,
-                                .reader_message_pool = masterpoolCreateWithCapacity(RAM_PROFILE * 2),
-                                .reader_buffer_pool  = reader_bpool};
+    *cdev = (capture_device_t) {.name                  = stringDuplicate(name),
+                                .running               = false,
+                                .up                    = false,
+                                .routine_reader        = routineReadFromCapture,
+                                .handle                = NULL,
+                                .read_thread           = NULL,
+                                .reader_exit_confirmed = false,
+                                .read_event_callback   = cb,
+                                .userdata              = userdata,
+                                .reader_message_pool   = masterpoolCreateWithCapacity(RAM_PROFILE * 2),
+                                .reader_buffer_pool    = reader_bpool};
 
     cdev->filter = capturedeviceBuildWinDivertFilter(capture_ranges, capture_range_count);
 
@@ -290,10 +454,19 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
 
 void capturedeviceDestroy(capture_device_t *cdev)
 {
-    if (cdev->up)
+    if (capturedeviceHasLiveResources(cdev))
     {
-        caputredeviceBringDown(cdev);
+        if (! caputredeviceBringDown(cdev))
+        {
+            LOGF("CaptureDevice: refusing to destroy device while the reader may still own resources");
+            terminateProgram(1);
+        }
     }
+
+    assert(! capturedeviceHasHandle(cdev));
+    assert(cdev->read_thread == NULL);
+    assert(! cdev->reader_exit_confirmed);
+
     memoryFree(cdev->name);
     memoryFree(cdev->filter);
     bufferpoolDestroy(cdev->reader_buffer_pool);

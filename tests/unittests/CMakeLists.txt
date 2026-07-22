@@ -24,6 +24,16 @@ function(add_waterwall_unit_test test_name target_name labels)
 endfunction()
 
 if(TARGET ww)
+  add_executable(capture_windows_lifetime_test capture_windows_lifetime_test.c)
+  target_include_directories(capture_windows_lifetime_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices/capture)
+  add_dependencies(waterwall_unit_tests capture_windows_lifetime_test)
+
+  add_waterwall_unit_test(
+    waterwall.capture_windows_lifetime_unit
+    capture_windows_lifetime_test
+    "unit;net;capture;windows;lifetime"
+  )
+
   add_executable(tun_windows_lifetime_test tun_windows_lifetime_test.c)
   target_include_directories(tun_windows_lifetime_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices/tun)
   add_dependencies(waterwall_unit_tests tun_windows_lifetime_test)
