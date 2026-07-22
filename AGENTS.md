@@ -309,6 +309,17 @@ tests/run_waterwall_case.sh build/linux/Release/Waterwall tests/cases/tls_roundt
 Build/validation rules:
 
 - The binary is at `build/linux/Release/Waterwall` (also `Debug/`, `RelWithDebInfo/`).
+- **Run clang-format on every C/header file you modify**, using the project's
+  `.clang-format` file. The executable in this environment is `clang-format-19`:
+
+  ```bash
+  clang-format-19 -i --style=file path/to/changed_file.c            # apply
+  clang-format-19 --dry-run -Werror --style=file path/to/changed_file.c  # verify
+  ```
+
+  Some legacy files (e.g. `ww/event/overlapio.c`) are not fully conformant; do not
+  reformat untouched code wholesale — at minimum your added/changed lines must be
+  clean (`--lines=<from>:<to>` checks a range). New files must be fully conformant.
 - **Do not hand-assemble compile commands.** For a syntax-only check, reuse the exact
   flags from `build/linux/compile_commands.json`. Beware the `structure.h` collision:
   adding multiple tunnels' `include/` dirs to one command can include the wrong
