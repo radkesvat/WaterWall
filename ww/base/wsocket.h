@@ -165,7 +165,6 @@ typedef union {
 #endif
 } sockaddr_u;
 
-
 /**
  * @brief Resolve a host string into a socket address.
  *
@@ -190,7 +189,7 @@ WW_EXPORT const char *sockaddrIp(sockaddr_u *addr, char *ip, int len);
  * @param addr Input socket address.
  * @return Host-order port number.
  */
-WW_EXPORT uint16_t    sockaddrPort(sockaddr_u *addr);
+WW_EXPORT uint16_t sockaddrPort(sockaddr_u *addr);
 /**
  * @brief Set address family and IP from host string.
  *
@@ -198,14 +197,14 @@ WW_EXPORT uint16_t    sockaddrPort(sockaddr_u *addr);
  * @param host Hostname/IP; empty means `INADDR_ANY`.
  * @return `0` on success, otherwise resolver error code.
  */
-WW_EXPORT int         sockaddrSetIpAddress(sockaddr_u *addr, const char *host);
+WW_EXPORT int sockaddrSetIpAddress(sockaddr_u *addr, const char *host);
 /**
  * @brief Set port on IPv4/IPv6 socket address.
  *
  * @param addr Socket address to update.
  * @param port Host-order port.
  */
-WW_EXPORT void        sockaddrSetPort(sockaddr_u *addr, int port);
+WW_EXPORT void sockaddrSetPort(sockaddr_u *addr, int port);
 /**
  * @brief Set both host/IP and port on a socket address.
  *
@@ -214,14 +213,14 @@ WW_EXPORT void        sockaddrSetPort(sockaddr_u *addr, int port);
  * @param port Host-order port.
  * @return `0` on success, otherwise resolver error code.
  */
-WW_EXPORT int         sockaddrSetIpAddressPort(sockaddr_u *addr, const char *host, int port);
+WW_EXPORT int sockaddrSetIpAddressPort(sockaddr_u *addr, const char *host, int port);
 /**
  * @brief Get structure length suitable for `bind`/`connect`.
  *
  * @param addr Socket address.
  * @return Size in bytes of the concrete address structure.
  */
-WW_EXPORT socklen_t   sockaddrLen(sockaddr_u *addr);
+WW_EXPORT socklen_t sockaddrLen(sockaddr_u *addr);
 /**
  * @brief Render full socket address to string.
  *
@@ -479,8 +478,8 @@ WW_INLINE int socketOptionBindToDevice(int sockfd, const char *interface_name)
     }
 
 #if defined(OS_LINUX) && defined(SO_BINDTODEVICE)
-    return setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, interface_name,
-                      (socklen_t) (stringLength(interface_name) + 1));
+    return setsockopt(
+        sockfd, SOL_SOCKET, SO_BINDTODEVICE, interface_name, (socklen_t) (stringLength(interface_name) + 1));
 #else
     discard sockfd;
     discard interface_name;
@@ -735,8 +734,8 @@ static inline void sockaddrCopy(sockaddr_u *restrict dest, const sockaddr_u *res
         memoryCopy(&(dest->sin.sin_addr.s_addr), &(source->sin.sin_addr.s_addr), sizeof(source->sin.sin_addr.s_addr));
         return;
     }
-    memoryCopy(&(dest->sin6.sin6_addr.s6_addr), &(source->sin6.sin6_addr.s6_addr),
-               sizeof(source->sin6.sin6_addr.s6_addr));
+    memoryCopy(
+        &(dest->sin6.sin6_addr.s6_addr), &(source->sin6.sin6_addr.s6_addr), sizeof(source->sin6.sin6_addr.s6_addr));
 }
 
 /**
@@ -863,24 +862,54 @@ static inline hash_t sockaddrCalcHashWithPort(const sockaddr_u *saddr)
     return result;
 }
 
-
 /**
- * @brief Parse `ip/prefix` string and derive subnet mask.
+ * @brief Strictly parse `ip/prefix`, derive its subnet mask, and optionally return the prefix length.
  *
  * @param ip_str Input CIDR string.
  * @param ip Output IP address.
  * @param subnet_mask Output subnet mask.
+ * @param prefix_len Optional output prefix length.
  * @return `4` for IPv4, `6` for IPv6, `ERR_ARG` on failure.
  */
-static inline int parseIPWithSubnetMask(const char *ip_str, ip_addr_t *ip, ip_addr_t *subnet_mask)
+static inline int parseIPWithSubnetMaskAndPrefix(const char *ip_str, ip_addr_t *ip, ip_addr_t *subnet_mask,
+                                                 uint8_t *prefix_len)
 {
-    char ip_part[40];
-    int  prefix_len = 0;
-
-    if (sscanf(ip_str, "%39[^/]/%d", ip_part, &prefix_len) != 2)
+    if (ip_str == NULL || ip == NULL || subnet_mask == NULL)
     {
         return ERR_ARG;
     }
+
+    const char *slash = stringChr(ip_str, '/');
+    if (slash == NULL || slash == ip_str || slash[1] == '\0')
+    {
+        return ERR_ARG;
+    }
+
+    size_t ip_len = (size_t) (slash - ip_str);
+    char   ip_part[INET6_ADDRSTRLEN];
+    if (ip_len >= sizeof(ip_part))
+    {
+        return ERR_ARG;
+    }
+
+    unsigned int parsed_prefix = 0;
+    for (const char *cursor = slash + 1; *cursor != '\0'; ++cursor)
+    {
+        if (*cursor < '0' || *cursor > '9')
+        {
+            return ERR_ARG;
+        }
+
+        unsigned int digit = (unsigned int) (*cursor - '0');
+        if (parsed_prefix > (128U - digit) / 10U)
+        {
+            return ERR_ARG;
+        }
+        parsed_prefix = parsed_prefix * 10U + digit;
+    }
+
+    memoryCopy(ip_part, ip_str, ip_len);
+    ip_part[ip_len] = '\0';
 
     memoryZero(ip, sizeof(*ip));
     memoryZero(subnet_mask, sizeof(*subnet_mask));
@@ -892,43 +921,62 @@ static inline int parseIPWithSubnetMask(const char *ip_str, ip_addr_t *ip, ip_ad
 
     if (IP_IS_V4(ip))
     {
-        if (prefix_len < 0 || prefix_len > 32)
+        if (parsed_prefix > 32U)
         {
             return ERR_ARG;
         }
 
         subnet_mask->type = IPADDR_TYPE_V4;
         // Calculate the subnet mask for IPv4
-        u32_t subnet_mask_value = (prefix_len == 0) ? 0U : (0xFFFFFFFFU << (32 - prefix_len));
-        IP4_ADDR(&subnet_mask->u_addr.ip4, (subnet_mask_value >> 24) & 0xFF, (subnet_mask_value >> 16) & 0xFF,
-                 (subnet_mask_value >> 8) & 0xFF, subnet_mask_value & 0xFF);
+        u32_t subnet_mask_value = (parsed_prefix == 0U) ? 0U : (0xFFFFFFFFU << (32U - parsed_prefix));
+        IP4_ADDR(&subnet_mask->u_addr.ip4,
+                 (subnet_mask_value >> 24) & 0xFF,
+                 (subnet_mask_value >> 16) & 0xFF,
+                 (subnet_mask_value >> 8) & 0xFF,
+                 subnet_mask_value & 0xFF);
 
+        if (prefix_len != NULL)
+        {
+            *prefix_len = (uint8_t) parsed_prefix;
+        }
         return 4;
     }
 
     if (IP_IS_V6(ip))
     {
-        if (prefix_len < 0 || prefix_len > 128)
-        {
-            return ERR_ARG;
-        }
-
         subnet_mask->type = IPADDR_TYPE_V6;
 
-        for (int i = 0; i < prefix_len / 32; i++)
+        for (unsigned int i = 0; i < parsed_prefix / 32U; i++)
         {
-            subnet_mask->u_addr.ip6.addr[i] = 0xFFFFFFFF;
+            subnet_mask->u_addr.ip6.addr[i] = 0xFFFFFFFFU;
         }
-        int remaining_bits = prefix_len % 32;
-        if (remaining_bits > 0)
+        unsigned int remaining_bits = parsed_prefix % 32U;
+        if (remaining_bits > 0U)
         {
-            subnet_mask->u_addr.ip6.addr[prefix_len / 32] = htonl(0xFFFFFFFF << (32 - remaining_bits));
+            subnet_mask->u_addr.ip6.addr[parsed_prefix / 32U] = htonl(0xFFFFFFFFU << (32U - remaining_bits));
         }
 
+        if (prefix_len != NULL)
+        {
+            *prefix_len = (uint8_t) parsed_prefix;
+        }
         return 6;
     }
 
     return ERR_ARG;
+}
+
+/**
+ * @brief Strictly parse `ip/prefix` and derive its subnet mask.
+ *
+ * @param ip_str Input CIDR string.
+ * @param ip Output IP address.
+ * @param subnet_mask Output subnet mask.
+ * @return `4` for IPv4, `6` for IPv6, `ERR_ARG` on failure.
+ */
+static inline int parseIPWithSubnetMask(const char *ip_str, ip_addr_t *ip, ip_addr_t *subnet_mask)
+{
+    return parseIPWithSubnetMaskAndPrefix(ip_str, ip, subnet_mask, NULL);
 }
 
 /**
@@ -1052,7 +1100,5 @@ bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen);
  * @return `true` on success, otherwise `false`.
  */
 bool getInterfaceIpString(const char *if_name, char *host_buffer, size_t host_buffer_len);
-
-
 
 #endif // WW_SOCKET_H_

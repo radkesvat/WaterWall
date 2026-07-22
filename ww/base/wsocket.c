@@ -330,23 +330,24 @@ static int listenFD(int sockfd)
  */
 static int ConnectFDTimeout(int connfd, int ms)
 {
-    int            err    = 0;
-    socklen_t      optlen = sizeof(err);
+    int       err    = 0;
+    socklen_t optlen = sizeof(err);
 
 #ifdef OS_UNIX
     // Use poll() to avoid FD_SETSIZE limit (fd >= 1024 crashes with select)
     struct pollfd pfd;
-    pfd.fd = connfd;
-    pfd.events = POLLOUT;
+    pfd.fd      = connfd;
+    pfd.events  = POLLOUT;
     pfd.revents = 0;
-    int ret = poll(&pfd, 1, ms);
-    if (ret < 0) {
+    int ret     = poll(&pfd, 1, ms);
+    if (ret < 0)
+    {
         perror("poll");
         goto error;
     }
 #else
     // Windows: select() is safe (fd_set uses different implementation)
-    struct timeval tv     = {ms / 1000, (ms % 1000) * 1000};
+    struct timeval tv = {ms / 1000, (ms % 1000) * 1000};
     fd_set         writefds;
     FD_ZERO(&writefds);
 #if defined(OS_UNIX)
@@ -585,48 +586,14 @@ bool verifyIPPort(const char *ipp)
 
 bool verifyIPCdir(const char *ipc)
 {
-    unsigned int ipc_length = (unsigned int) stringLength(ipc);
-    char        *slash      = (char *) stringChr(ipc, '/');
-    if (slash == NULL)
-    {
-        LOGE("verifyIPCdir Error: Subnet prefix is missing in ip. \"%s\" + /xx", ipc);
-        return false;
-    }
-    *slash = '\0';
-    if (! addressIsIp(ipc))
-    {
-        LOGE("verifyIPCdir Error: \"%s\" is not a valid ip address", ipc);
-        return false;
-    }
+    ip_addr_t ip;
+    ip_addr_t subnet_mask;
 
-    bool is_v4 = addressIsIp4(ipc);
-    *slash     = '/';
-
-    char *subnet_part   = slash + 1;
-    int   prefix_length = atoi(subnet_part);
-
-    if (is_v4 && (prefix_length < 0 || prefix_length > 32))
+    int family = parseIPWithSubnetMask(ipc, &ip, &subnet_mask);
+    if (family != 4 && family != 6)
     {
-        LOGE("verifyIPCdir Error: Invalid subnet mask length for ipv4 %s prefix %d must be between 0 and 32",
-             ipc,
-             prefix_length);
+        LOGE("verifyIPCdir Error: \"%s\" is not a valid CIDR", ipc != NULL ? ipc : "<null>");
         return false;
-    }
-    if (! is_v4 && (prefix_length < 0 || prefix_length > 128))
-    {
-        LOGE("verifyIPCdir Error: Invalid subnet mask length for ipv4 %s prefix %d must be between 0 and 32",
-             ipc,
-             "verifyIPCdir Error: Invalid subnet mask length for ipv6 %s prefix %d must be between 0 and 128",
-             ipc,
-             prefix_length);
-        return false;
-    }
-    if (prefix_length > 0 && slash + 2 + (int) (log10(prefix_length)) < ipc + ipc_length)
-    {
-        LOGE("verifyIPCdir Error: Invalid subnet mask length for ipv4 %s prefix %d must be between 0 and 32",
-             ipc,
-             "verifyIPCdir Warning: the value \"%s\" looks incorrect, it has more data than ip/prefix",
-             ipc);
     }
     return true;
 }

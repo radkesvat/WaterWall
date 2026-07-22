@@ -73,19 +73,23 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
         return tundeviceTunnelCreateFail(t);
     }
 
-    if (! verifyIPCdir(state->ip_subnet))
+    ip_addr_t parsed_ip;
+    ip_addr_t parsed_mask;
+    uint8_t   parsed_prefix = 0;
+    int parsed_family = parseIPWithSubnetMaskAndPrefix(state->ip_subnet, &parsed_ip, &parsed_mask, &parsed_prefix);
+    if (parsed_family != 4 && parsed_family != 6)
     {
-        LOGF("TunDevice: verifyIPCdir failed, check the ip and subnet that you given");
+        LOGF("TunDevice: device-ip must be a valid IPv4 or IPv6 CIDR");
         return tundeviceTunnelCreateFail(t);
     }
 
-    char *slash       = strchr(state->ip_subnet, '/');
-    slash[0]          = 0x0;
-    state->ip_present = stringDuplicate(state->ip_subnet);
-    slash[0]          = '/';
-    char *subnet_part = slash + 1;
+    const char *slash  = stringChr(state->ip_subnet, '/');
+    size_t      ip_len = (size_t) (slash - state->ip_subnet);
+    state->ip_present  = memoryAllocate(ip_len + 1U);
+    memoryCopy(state->ip_present, state->ip_subnet, ip_len);
+    state->ip_present[ip_len] = '\0';
 
-    state->subnet_mask = atoi(subnet_part);
+    state->subnet_mask = (int) parsed_prefix;
 
     int dev_mtu = 0;
     getIntFromJsonObjectOrDefault(&dev_mtu, settings, "device-mtu", GLOBAL_MTU_SIZE);

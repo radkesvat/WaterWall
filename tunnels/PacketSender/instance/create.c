@@ -32,7 +32,7 @@ static bool packetsenderParseSourceRange(packetsender_source_range_t *range, con
 {
     ip_addr_t ip;
     ip_addr_t subnet_mask;
-    int       prefix_length = -1;
+    uint8_t   prefix_length = 0;
 
     if (cidr == NULL || cidr[0] == '\0')
     {
@@ -46,16 +46,15 @@ static bool packetsenderParseSourceRange(packetsender_source_range_t *range, con
         return false;
     }
 
-    if (parseIPWithSubnetMask(cidr, &ip, &subnet_mask) != 4 || sscanf(cidr, "%*[^/]/%d", &prefix_length) != 1 ||
-        prefix_length < 0 || prefix_length > 32)
+    if (parseIPWithSubnetMaskAndPrefix(cidr, &ip, &subnet_mask, &prefix_length) != 4)
     {
         LOGF("JSON Error: %s (string field) : expected an IPv4 CIDR range", json_path);
         return false;
     }
 
     range->base_host     = lwip_ntohl(ip.u_addr.ip4.addr) & lwip_ntohl(subnet_mask.u_addr.ip4.addr);
-    range->prefix_length = (uint8_t) prefix_length;
-    range->count         = 1ULL << (32U - (uint32_t) prefix_length);
+    range->prefix_length = prefix_length;
+    range->count         = 1ULL << (32U - prefix_length);
     return true;
 }
 
@@ -70,8 +69,9 @@ static bool packetsenderLoadSourceRanges(packetsender_tstate_t *state, const cJS
 
     if (range_json == NULL)
     {
-        LOGF("JSON Error: PacketSender->settings->source-ipv4-range (string or array field) : expected one or more IPv4 "
-             "CIDR ranges");
+        LOGF(
+            "JSON Error: PacketSender->settings->source-ipv4-range (string or array field) : expected one or more IPv4 "
+            "CIDR ranges");
         return false;
     }
 
@@ -89,8 +89,9 @@ static bool packetsenderLoadSourceRanges(packetsender_tstate_t *state, const cJS
 
     if (range_count <= 0)
     {
-        LOGF("JSON Error: PacketSender->settings->source-ipv4-range (string or array field) : expected one or more IPv4 "
-             "CIDR ranges");
+        LOGF(
+            "JSON Error: PacketSender->settings->source-ipv4-range (string or array field) : expected one or more IPv4 "
+            "CIDR ranges");
         return false;
     }
 
