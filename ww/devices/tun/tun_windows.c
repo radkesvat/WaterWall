@@ -1,11 +1,12 @@
 #include "tun.h"
+#include "tun_windows_lifetime.h"
 
 #include "buffer_pool.h"
 #include "global_state.h"
 #include "managers/signal_manager.h"
 #include "master_pool.h"
-#include "wchan.h"
 #include "watomic.h"
+#include "wchan.h"
 #include "wintun.h"
 #include "wplatform.h"
 #include "wproc.h"
@@ -21,8 +22,9 @@
 
 enum
 {
-    kTunWriteChannelQueueMax    = 4096,
-    kMaxReadDistributeQueueSize = 128
+    kTunWriteChannelQueueMax     = 4096,
+    kMaxReadDistributeQueueSize  = 128,
+    kTunReaderStopFallbackWaitMs = 500
 };
 
 struct tun_device_s
@@ -31,6 +33,7 @@ struct tun_device_s
     wchar_t                 *name_w;
     HANDLE                   adapter_handle;
     HANDLE                   session_handle;
+    HANDLE                   stop_event;
     MIB_UNICASTIPADDRESS_ROW address_row;
 
     void     *userdata;
@@ -49,6 +52,7 @@ struct tun_device_s
     struct wchan_s *writer_buffer_channel;
     uint16_t        mtu;
     atomic_int      packets_queued;
+    bool            writer_buffer_channel_closed;
 
     atomic_bool running;
     bool        up;
@@ -520,6 +524,34 @@ static void distributePacketPayloads(tun_device_t *tdev, wid_t target_wid, sbuf_
     sendWorkerMessageForceQueueWithCleanup(
         target_wid, localThreadMessageReceived, cleanupPostedTunMessage, msg, NULL, NULL);
 }
+
+static bool tundeviceReaderStopRequested(tun_device_t *tdev, DWORD *routine_result)
+{
+    if (! atomicLoadRelaxed(&(tdev->running)))
+    {
+        return true;
+    }
+
+    DWORD wait_result = WaitForSingleObject(tdev->stop_event, 0);
+    if (wait_result == WAIT_OBJECT_0)
+    {
+        return true;
+    }
+    if (wait_result == WAIT_TIMEOUT)
+    {
+        return false;
+    }
+    if (wait_result == WAIT_FAILED)
+    {
+        *routine_result = GetLastError();
+        LOGE("TunDevice: ReadThread: stop-event check failed, code: %lu", *routine_result);
+        return true;
+    }
+
+    LOGE("TunDevice: ReadThread: unexpected stop-event check result: %lu", wait_result);
+    return true;
+}
+
 /**
  * Reader thread routine - reads packets from TUN device
  */
@@ -528,7 +560,23 @@ static WTHREAD_ROUTINE(routineReadFromTun)
     tun_device_t         *tdev    = userdata;
     WINTUN_SESSION_HANDLE Session = tdev->session_handle;
     sbuf_t               *bufs[kMaxReadDistributeQueueSize];
-    uint8_t               queued_count = 0;
+    uint8_t               queued_count   = 0;
+    DWORD                 routine_result = ERROR_SUCCESS;
+    HANDLE                wait_handles[] = {
+        WintunGetReadWaitEvent(Session),
+        tdev->stop_event,
+    };
+
+    if (wait_handles[0] == NULL || wait_handles[1] == NULL)
+    {
+        routine_result = GetLastError();
+        if (routine_result == ERROR_SUCCESS)
+        {
+            routine_result = ERROR_INVALID_HANDLE;
+        }
+        LOGE("TunDevice: ReadThread: failed to prepare wait handles, code: %lu", routine_result);
+        return routine_result;
+    }
 
     while (atomicLoadRelaxed(&(tdev->running)))
     {
@@ -568,13 +616,14 @@ static WTHREAD_ROUTINE(routineReadFromTun)
                 // printPacket(Packet, PacketSize);
             }
 
-            if (queued_count < kMaxReadDistributeQueueSize - 1)
+            queued_count++;
+            if (queued_count == kMaxReadDistributeQueueSize)
             {
-                queued_count++;
-            }
-            else
-            {
-                distributePacketPayloads(tdev, getNextDistributionWID(), &bufs[0], queued_count + 1);
+                if (tundeviceReaderStopRequested(tdev, &routine_result))
+                {
+                    goto cleanup;
+                }
+                distributePacketPayloads(tdev, getNextDistributionWID(), &bufs[0], queued_count);
                 queued_count = 0;
             }
         }
@@ -594,40 +643,56 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             case ERROR_NO_MORE_ITEMS:
                 if (queued_count > 0)
                 {
+                    if (tundeviceReaderStopRequested(tdev, &routine_result))
+                    {
+                        goto cleanup;
+                    }
                     distributePacketPayloads(tdev, getNextDistributionWID(), &bufs[0], queued_count);
                     queued_count = 0;
                     continue;
                 }
-                HANDLE wait_handle = WintunGetReadWaitEvent(Session);
-            wait:;
-                DWORD wait_result = WaitForSingleObject(wait_handle, 500);
+                DWORD wait_result = WaitForMultipleObjects(2, wait_handles, FALSE, kTunReaderStopFallbackWaitMs);
                 if (wait_result == WAIT_OBJECT_0)
                 {
                     continue;
                 }
+                if (wait_result == WAIT_OBJECT_0 + 1)
+                {
+                    goto cleanup;
+                }
                 if (wait_result == WAIT_TIMEOUT)
                 {
-                    // when it times out we check atomic value to exit read routine if requsted
-
-                    MemoryBarrier();
-                    if (atomicLoadRelaxed(&(tdev->running)) == false)
+                    if (! atomicLoadRelaxed(&(tdev->running)))
                     {
-                        return 0;
+                        goto cleanup;
                     }
-
-                    goto wait;
+                    continue;
                 }
-                return ERROR_SUCCESS;
+                if (wait_result == WAIT_FAILED)
+                {
+                    routine_result = GetLastError();
+                    LOGE("TunDevice: ReadThread: wait failed, code: %lu", routine_result);
+                    goto cleanup;
+                }
+                LOGE("TunDevice: ReadThread: unexpected wait result: %lu", wait_result);
+                goto cleanup;
             default:
                 LOGE("TunDevice: ReadThread: Packet read failed: error %lu", last_error);
                 LOGE("TunDevice: ReadThread: Terminating");
-                return last_error;
+                routine_result = last_error;
+                goto cleanup;
             }
         }
     }
     LOGD("TunDevice: ReadThread: Terminating due to not running");
 
-    return 0;
+cleanup:
+    if (queued_count > 0)
+    {
+        reuseTunReadBuffers(tdev, &bufs[0], queued_count);
+    }
+
+    return routine_result;
 }
 
 /**
@@ -687,11 +752,171 @@ static WTHREAD_ROUTINE(routineWriteToTun)
     return 0;
 }
 
+static void tundeviceCloseWriterChannel(tun_device_t *tdev)
+{
+    if (tdev->writer_buffer_channel == NULL || tdev->writer_buffer_channel_closed)
+    {
+        return;
+    }
+
+    chanClose(tdev->writer_buffer_channel);
+    tdev->writer_buffer_channel_closed = true;
+}
+
+static void tundeviceDrainWriterChannel(tun_device_t *tdev)
+{
+    if (tdev->writer_buffer_channel == NULL)
+    {
+        return;
+    }
+
+    sbuf_t *buf;
+    while (chanRecv(tdev->writer_buffer_channel, (void *) &buf))
+    {
+        bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
+    }
+}
+
+static void tundeviceFreeWriterChannel(tun_device_t *tdev)
+{
+    if (tdev->writer_buffer_channel == NULL)
+    {
+        return;
+    }
+
+    tundeviceCloseWriterChannel(tdev);
+    chanFree(tdev->writer_buffer_channel);
+    tdev->writer_buffer_channel        = NULL;
+    tdev->writer_buffer_channel_closed = false;
+}
+
+static bool tundeviceJoinThread(wthread_t *thread, const char *name)
+{
+    if (*thread == NULL)
+    {
+        return true;
+    }
+
+    DWORD thread_id = GetThreadId(*thread);
+    if (thread_id == 0)
+    {
+        LOGE("TunDevice: failed to identify %s thread, code: %lu", name, GetLastError());
+        return false;
+    }
+
+    if (GetCurrentThreadId() == thread_id)
+    {
+        LOGE("TunDevice: cannot join %s thread from the same thread", name);
+        return false;
+    }
+
+    DWORD wait_result = WaitForSingleObject(*thread, INFINITE);
+    if (wait_result != WAIT_OBJECT_0)
+    {
+        DWORD last_error = wait_result == WAIT_FAILED ? GetLastError() : ERROR_INVALID_FUNCTION;
+        LOGE("TunDevice: failed to join %s thread, wait result: %lu, code: %lu", name, wait_result, last_error);
+        return false;
+    }
+
+    if (! CloseHandle(*thread))
+    {
+        LOGE("TunDevice: failed to close joined %s thread handle, code: %lu", name, GetLastError());
+        return false;
+    }
+
+    *thread = NULL;
+    return true;
+}
+
+static void tundeviceBeginSessionShutdown(void *context)
+{
+    tun_device_t *tdev = context;
+
+    atomicStoreRelaxed(&(tdev->running), false);
+    tdev->up = false;
+    MemoryBarrier();
+
+    tundeviceCloseWriterChannel(tdev);
+}
+
+static bool tundeviceSignalStopEvent(void *context)
+{
+    tun_device_t *tdev = context;
+
+    if (tdev->stop_event == NULL)
+    {
+        LOGE("TunDevice: stop event is not initialized");
+        return false;
+    }
+
+    if (! SetEvent(tdev->stop_event))
+    {
+        LOGE("TunDevice: failed to signal stop event, code: %lu", GetLastError());
+        LOGW("TunDevice: reader will use the bounded shutdown wait fallback");
+        return false;
+    }
+
+    return true;
+}
+
+static bool tundeviceJoinReader(void *context)
+{
+    tun_device_t *tdev = context;
+    return tundeviceJoinThread(&tdev->read_thread, "reader");
+}
+
+static bool tundeviceJoinWriter(void *context)
+{
+    tun_device_t *tdev = context;
+    return tundeviceJoinThread(&tdev->write_thread, "writer");
+}
+
+static void tundeviceReleaseWriter(void *context)
+{
+    tun_device_t *tdev = context;
+
+    tundeviceDrainWriterChannel(tdev);
+    tundeviceFreeWriterChannel(tdev);
+}
+
+static void tundeviceEndSession(void *context)
+{
+    tun_device_t *tdev = context;
+
+    WINTUN_SESSION_HANDLE session = tdev->session_handle;
+    if (session != NULL)
+    {
+        LOGI("TunDevice: Ending WinTun session");
+        WintunEndSession(session);
+        tdev->session_handle = NULL;
+    }
+}
+
+static bool tundeviceShutdownSession(tun_device_t *tdev)
+{
+    static const tun_windows_lifetime_ops_t ops = {
+        .begin_shutdown = tundeviceBeginSessionShutdown,
+        .signal_reader  = tundeviceSignalStopEvent,
+        .join_reader    = tundeviceJoinReader,
+        .join_writer    = tundeviceJoinWriter,
+        .release_writer = tundeviceReleaseWriter,
+        .end_session    = tundeviceEndSession,
+    };
+
+    return tunWindowsLifetimeShutdown(tdev, &ops);
+}
+
 bool tundeviceBringUp(tun_device_t *tdev)
 {
     if (tdev->up)
     {
         LOGE("TunDevice: Device is already up");
+        return false;
+    }
+    if (tdev->session_handle != NULL || tdev->writer_buffer_channel != NULL || tdev->read_thread != NULL ||
+        tdev->write_thread != NULL)
+    {
+        LOGE("TunDevice: Device shutdown is incomplete");
         return false;
     }
 
@@ -709,7 +934,14 @@ bool tundeviceBringUp(tun_device_t *tdev)
         return false;
     }
 
-    tdev->writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax);
+    if (! ResetEvent(tdev->stop_event))
+    {
+        LOGE("TunDevice: failed to reset stop event, code: %lu", GetLastError());
+        return false;
+    }
+
+    tdev->writer_buffer_channel        = chanOpen(sizeof(void *), kTunWriteChannelQueueMax);
+    tdev->writer_buffer_channel_closed = false;
     MemoryBarrier();
 
     LOGI("TunDevice: Starting WinTun session");
@@ -718,55 +950,55 @@ bool tundeviceBringUp(tun_device_t *tdev)
     {
         DWORD lastError = GetLastError();
         LOGE("TunDevice: Failed to start session, code: %lu", lastError);
-        chanClose(tdev->writer_buffer_channel);
-        chanFree(tdev->writer_buffer_channel);
-        tdev->writer_buffer_channel = NULL;
+        tundeviceFreeWriterChannel(tdev);
         return false;
     }
 
     tdev->up = true;
     atomicStoreRelaxed(&(tdev->running), true);
     tdev->session_handle = Session;
+    tdev->read_thread    = NULL;
+    tdev->write_thread   = NULL;
 
     MemoryBarrier();
 
-    tdev->read_thread  = threadCreate(tdev->routine_reader, tdev);
+    tdev->read_thread = threadCreate(tdev->routine_reader, tdev);
+    if (tdev->read_thread == NULL)
+    {
+        LOGE("TunDevice: failed to create reader thread, code: %lu", GetLastError());
+        if (! tundeviceShutdownSession(tdev))
+        {
+            LOGF("TunDevice: cannot safely roll back failed reader-thread startup");
+            terminateProgram(1);
+        }
+        return false;
+    }
+
     tdev->write_thread = threadCreate(tdev->routine_writer, tdev);
+    if (tdev->write_thread == NULL)
+    {
+        LOGE("TunDevice: failed to create writer thread, code: %lu", GetLastError());
+        if (! tundeviceShutdownSession(tdev))
+        {
+            LOGF("TunDevice: cannot safely roll back failed writer-thread startup");
+            terminateProgram(1);
+        }
+        return false;
+    }
+
     return true;
 }
 
 bool tundeviceBringDown(tun_device_t *tdev)
 {
-    if (! tdev->up)
+    if (! tdev->up && tdev->session_handle == NULL && tdev->writer_buffer_channel == NULL &&
+        tdev->read_thread == NULL && tdev->write_thread == NULL)
     {
         LOGE("TunDevice: Device is already down");
         return true;
     }
 
-    atomicStoreRelaxed(&(tdev->running), false);
-    tdev->up = false;
-    MemoryBarrier();
-
-    WintunEndSession(tdev->session_handle);
-
-    chanClose(tdev->writer_buffer_channel);
-
-    safeThreadJoin(tdev->read_thread);
-    safeThreadJoin(tdev->write_thread);
-
-    sbuf_t *buf;
-    while (chanRecv(tdev->writer_buffer_channel, (void *) &buf))
-    {
-        bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
-    }
-    chanFree(tdev->writer_buffer_channel);
-    tdev->writer_buffer_channel = NULL;
-
-    assert(tdev->session_handle != NULL);
-    LOGI("TunDevice: Ending WinTun session");
-    tdev->session_handle = NULL;
-
-    return true;
+    return tundeviceShutdownSession(tdev);
 }
 
 bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
@@ -1057,6 +1289,12 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
     // minimum length of an IP header is 20 bytes
     assert(sbufGetLength(buf) > 20);
 
+    if (UNLIKELY(! tdev->up || tdev->writer_buffer_channel == NULL))
+    {
+        LOGE("TunDevice: Write failed, device is down");
+        return false;
+    }
+
     bool closed = false;
     if (! chanTrySend(tdev->writer_buffer_channel, (void *) &buf, &closed))
     {
@@ -1193,24 +1431,36 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
     *tdev = (tun_device_t) {
-        .name                  = stringDuplicate(name),
-        .running               = false,
-        .up                    = false,
-        .routine_reader        = routineReadFromTun,
-        .routine_writer        = routineWriteToTun,
-        .read_event_callback   = cb,
-        .userdata              = userdata,
-        .writer_buffer_channel = NULL,
-        .reader_message_pool   = masterpoolCreateWithCapacity(RAM_PROFILE * 2),
-        .reader_buffer_pool    = reader_bpool,
-        .writer_buffer_pool    = writer_bpool,
-        .adapter_handle        = NULL,
-        .session_handle        = NULL,
-        .mtu                   = mtu,
-        .packets_queued        = 0,
+        .name                         = stringDuplicate(name),
+        .running                      = false,
+        .up                           = false,
+        .routine_reader               = routineReadFromTun,
+        .routine_writer               = routineWriteToTun,
+        .read_event_callback          = cb,
+        .userdata                     = userdata,
+        .writer_buffer_channel        = NULL,
+        .writer_buffer_channel_closed = false,
+        .reader_message_pool          = masterpoolCreateWithCapacity(RAM_PROFILE * 2),
+        .reader_buffer_pool           = reader_bpool,
+        .writer_buffer_pool           = writer_bpool,
+        .adapter_handle               = NULL,
+        .session_handle               = NULL,
+        .stop_event                   = NULL,
+        .read_thread                  = NULL,
+        .write_thread                 = NULL,
+        .mtu                          = mtu,
+        .packets_queued               = 0,
     };
 
     masterpoolInstallCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
+
+    tdev->stop_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (tdev->stop_event == NULL)
+    {
+        LOGE("TunDevice: failed to create stop event, code: %lu", GetLastError());
+        tundeviceDestroy(tdev);
+        return NULL;
+    }
 
     int wide_size = MultiByteToWideChar(CP_UTF8, 0, name, -1, NULL, 0);
     if (wide_size <= 0)
@@ -1256,9 +1506,14 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
 void tundeviceDestroy(tun_device_t *tdev)
 {
 
-    if (tdev->up)
+    if (tdev->up || tdev->session_handle != NULL || tdev->writer_buffer_channel != NULL || tdev->read_thread != NULL ||
+        tdev->write_thread != NULL)
     {
-        tundeviceBringDown(tdev);
+        if (! tundeviceBringDown(tdev))
+        {
+            LOGF("TunDevice: refusing to destroy device while I/O threads may still be running");
+            terminateProgram(1);
+        }
     }
 
     assert(tdev->session_handle == NULL);
@@ -1268,6 +1523,12 @@ void tundeviceDestroy(tun_device_t *tdev)
 
         WintunCloseAdapter(tdev->adapter_handle);
         tdev->adapter_handle = NULL;
+    }
+
+    if (tdev->stop_event != NULL)
+    {
+        CloseHandle(tdev->stop_event);
+        tdev->stop_event = NULL;
     }
 
     memoryFree(tdev->name);
