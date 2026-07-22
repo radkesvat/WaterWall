@@ -114,6 +114,8 @@ typedef struct system_load_state_s
     bool     have_previous;
     bool     sample_valid;
     bool     sample_error;
+    bool     sample_warming_up;
+    bool     force_under_load;
     bool     memory_sample_valid;
     bool     unsupported_logged;
 } system_load_state_t;
@@ -123,5 +125,6 @@ bool systemLoadSamplerStart(system_load_state_t *state, wloop_t *loop);
 void systemLoadSamplerStop(system_load_state_t *state);
 void systemLoadSamplerDestroy(system_load_state_t *state);
 bool systemLoadSamplerUpdate(system_load_state_t *state);
+void systemLoadSamplerSetForceUnderLoad(system_load_state_t *state, bool force_under_load);
 
 #endif // WW_SYS_INFO_H_

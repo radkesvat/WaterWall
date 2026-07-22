@@ -1097,6 +1097,7 @@ endif()
 target_compile_definitions(Waterwall PUBLIC WATERWALL_VERSION=${Waterwall_VERSION})
 
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+  target_compile_definitions(Waterwall PRIVATE WATERWALL_TEST_HOOKS=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 endif()
 

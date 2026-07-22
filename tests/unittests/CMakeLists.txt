@@ -24,6 +24,16 @@ function(add_waterwall_unit_test test_name target_name labels)
 endfunction()
 
 if(TARGET ww)
+  add_executable(system_load_semantics_test system_load_semantics_test.c)
+  target_link_libraries(system_load_semantics_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests system_load_semantics_test)
+
+  add_waterwall_unit_test(
+    waterwall.system_load_semantics_unit
+    system_load_semantics_test
+    "unit;system-load;failure-semantics"
+  )
+
   add_executable(aes256gcm_test aes256gcm_test.c)
   target_link_libraries(aes256gcm_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests aes256gcm_test)

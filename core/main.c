@@ -92,6 +92,12 @@ int waterwallInnerMain(int argc, char **argv)
 
     // core logger is available after ww setup
     createGlobalState(runtime_data);
+#if defined(WATERWALL_TEST_HOOKS)
+    if (getenv("WATERWALL_TEST_FORCE_SYSTEM_LOAD") != NULL)
+    {
+        systemLoadSamplerSetForceUnderLoad(GSTATE.system_load, true);
+    }
+#endif
     nodelibrarySetSearchPath(getCoreSettings()->libs_path);
 
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));

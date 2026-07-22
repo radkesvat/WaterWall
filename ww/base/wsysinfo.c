@@ -370,7 +370,8 @@ bool systemLoadSamplerStart(system_load_state_t *state, wloop_t *loop)
 
     if (loop == NULL)
     {
-        state->sample_error = true;
+        state->sample_error      = true;
+        state->sample_warming_up = false;
         mutexUnlock(&state->mutex);
         return false;
     }
@@ -378,7 +379,8 @@ bool systemLoadSamplerStart(system_load_state_t *state, wloop_t *loop)
     wtimer_t *timer = wtimerAdd(loop, systemLoadTimerHandle, SYSTEM_LOAD_SAMPLER_INTERVAL_MS, INFINITE);
     if (timer == NULL)
     {
-        state->sample_error = true;
+        state->sample_error      = true;
+        state->sample_warming_up = false;
         mutexUnlock(&state->mutex);
         return false;
     }
@@ -447,10 +449,11 @@ bool systemLoadSamplerUpdate(system_load_state_t *state)
             printError("System load sampler is unsupported on this platform; isSystemUnderLoad() will fail open\n");
             state->unsupported_logged = true;
         }
-        state->supported    = false;
-        state->sample_error = false;
-        state->sample_valid = false;
-        state->have_previous = false;
+        state->supported         = false;
+        state->sample_error      = false;
+        state->sample_valid      = false;
+        state->sample_warming_up = false;
+        state->have_previous     = false;
         mutexUnlock(&state->mutex);
         return false;
     }
@@ -458,9 +461,10 @@ bool systemLoadSamplerUpdate(system_load_state_t *state)
     state->supported = true;
     if (rc == kSystemLoadReadError)
     {
-        state->sample_error = true;
-        state->sample_valid = false;
-        state->have_previous = false;
+        state->sample_error      = true;
+        state->sample_valid      = false;
+        state->sample_warming_up = false;
+        state->have_previous     = false;
         mutexUnlock(&state->mutex);
         return false;
     }
@@ -468,11 +472,12 @@ bool systemLoadSamplerUpdate(system_load_state_t *state)
     state->sample_error = false;
     if (! state->have_previous)
     {
-        state->prev_total    = total;
-        state->prev_idle     = idle;
-        state->prev_read_ms  = now_ms;
-        state->have_previous = true;
-        state->sample_valid  = false;
+        state->prev_total        = total;
+        state->prev_idle         = idle;
+        state->prev_read_ms      = now_ms;
+        state->have_previous     = true;
+        state->sample_valid      = false;
+        state->sample_warming_up = true;
         mutexUnlock(&state->mutex);
         return false;
     }
@@ -491,15 +496,17 @@ bool systemLoadSamplerUpdate(system_load_state_t *state)
         }
         else
         {
-            state->cached_cpu_load = 1.0 - ((double) idle_delta / (double) total_delta);
-            state->last_valid_ms   = now_ms;
-            state->sample_valid    = true;
+            state->cached_cpu_load  = 1.0 - ((double) idle_delta / (double) total_delta);
+            state->last_valid_ms    = now_ms;
+            state->sample_valid     = true;
+            state->sample_warming_up = false;
         }
     }
 
     if (! counters_ok || ! interval_ok)
     {
-        state->sample_valid = false;
+        state->sample_valid      = false;
+        state->sample_warming_up = false;
     }
 
     state->prev_total    = total;
@@ -510,6 +517,18 @@ bool systemLoadSamplerUpdate(system_load_state_t *state)
     bool valid = state->sample_valid;
     mutexUnlock(&state->mutex);
     return valid;
+}
+
+void systemLoadSamplerSetForceUnderLoad(system_load_state_t *state, bool force_under_load)
+{
+    if (state == NULL || ! state->initialized)
+    {
+        return;
+    }
+
+    mutexLock(&state->mutex);
+    state->force_under_load = force_under_load;
+    mutexUnlock(&state->mutex);
 }
 
 bool isSystemUnderLoad(double threshold)
@@ -523,14 +542,22 @@ bool isSystemUnderLoad(double threshold)
     }
 
     mutexLock(&state->mutex);
-    bool   supported          = state->supported;
-    bool   sample_valid       = state->sample_valid;
-    bool   sample_error       = state->sample_error;
-    bool   memory_valid       = state->memory_sample_valid;
-    uint64_t last_valid_ms    = state->last_valid_ms;
-    double cached_cpu_load    = state->cached_cpu_load;
-    double cached_memory_load = state->cached_memory_load;
+    bool     supported          = state->supported;
+    bool     sample_valid       = state->sample_valid;
+    bool     sample_error       = state->sample_error;
+    bool     sample_warming_up  = state->sample_warming_up;
+    bool     force_under_load   = state->force_under_load;
+    bool     memory_valid       = state->memory_sample_valid;
+    uint64_t prev_read_ms       = state->prev_read_ms;
+    uint64_t last_valid_ms      = state->last_valid_ms;
+    double   cached_cpu_load    = state->cached_cpu_load;
+    double   cached_memory_load = state->cached_memory_load;
     mutexUnlock(&state->mutex);
+
+    if (force_under_load)
+    {
+        return true;
+    }
 
     if (! supported)
     {
@@ -538,7 +565,14 @@ bool isSystemUnderLoad(double threshold)
         return false;
     }
 
-    if (sample_error || ! sample_valid || ! systemLoadSampleIsFresh(systemLoadNowMS(), last_valid_ms))
+    uint64_t now_ms = systemLoadNowMS();
+    if (sample_warming_up && ! sample_error && ! sample_valid && last_valid_ms == 0 &&
+        systemLoadSampleIsFresh(now_ms, prev_read_ms))
+    {
+        return false;
+    }
+
+    if (sample_error || ! sample_valid || ! systemLoadSampleIsFresh(now_ms, last_valid_ms))
     {
         return true;
     }
