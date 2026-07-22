@@ -356,9 +356,11 @@ if(LINUX AND TARGET WireGuardDevice)
   target_link_libraries(wireguard_crypto_failure_test PRIVATE ww)
   target_link_options(wireguard_crypto_failure_test PRIVATE
     "-Wl,-u,wCryptoBlake2sInit"
+    "-Wl,-u,wCryptoBlake2s"
     "-Wl,-u,wCryptoX25519"
     "-Wl,-u,wCryptoChaCha20Poly1305Encrypt"
     "-Wl,--wrap=wCryptoBlake2sInit"
+    "-Wl,--wrap=wCryptoBlake2s"
     "-Wl,--wrap=wCryptoX25519"
     "-Wl,--wrap=wCryptoChaCha20Poly1305Encrypt"
   )

@@ -34,6 +34,30 @@ function(add_waterwall_integration_test test_name case_name)
   add_waterwall_integration_test_with_timeout(${test_name} ${case_name} 30)
 endfunction()
 
+function(add_waterwall_wireguard_cookie_test test_name case_name)
+  set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
+
+  add_test(
+    NAME ${test_name}
+    COMMAND
+      "${BASH_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/run_wireguard_cookie_case.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_case.sh"
+      "$<TARGET_FILE:Waterwall>"
+      "${case_dir}"
+      "30"
+      "${PYTHON3_EXECUTABLE}"
+  )
+
+  set_tests_properties(
+    ${test_name}
+    PROPERTIES
+      TIMEOUT 120
+      LABELS "integration;tunnels;wireguard;cookies;overload"
+      RESOURCE_LOCK waterwall_wireguard_cookie_ports
+  )
+endfunction()
+
 function(add_waterwall_skipped_integration_test test_name skip_message)
   add_test(
     NAME ${test_name}
@@ -374,6 +398,7 @@ add_waterwall_integration_test(waterwall.ipmanipulator_tcp_udp_tcp_transport_bri
 add_waterwall_integration_test(waterwall.reverse_tcp_bridge_roundtrip reverse_tcp_bridge_roundtrip)
 add_waterwall_integration_test(waterwall.reverse_custom_secret_tcp_bridge_roundtrip reverse_custom_secret_tcp_bridge_roundtrip)
 add_waterwall_integration_test(waterwall.wireguard_udpstateless_packet_roundtrip wireguard_udpstateless_packet_roundtrip)
+add_waterwall_wireguard_cookie_test(waterwall.wireguard_cookie_overload_roundtrip wireguard_cookie_overload_roundtrip)
 add_waterwall_packet_analysis_test(waterwall.packet_analysis_ping_roundtrip packet_analysis_ping_roundtrip)
 add_waterwall_packet_analysis_test(waterwall.packet_analysis_disturber_loss packet_analysis_disturber_loss)
 add_waterwall_packet_analysis_test(waterwall.packet_analysis_receiver_head_bridge packet_analysis_receiver_head_bridge)
