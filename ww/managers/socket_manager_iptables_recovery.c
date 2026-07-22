@@ -2,21 +2,6 @@
 
 #include "wproc.h"
 
-#include <ctype.h>
-#include <errno.h>
-#include <inttypes.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <string.h>
-
-#if defined(OS_LINUX)
-#include <signal.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#endif
-
 typedef struct iptables_candidate_s
 {
     uint64_t token;

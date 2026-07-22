@@ -2,8 +2,6 @@
 
 #include "wlibc.h"
 
-#include <stdint.h>
-
 enum
 {
     kSocketManagerIptablesTokenHexLen = 16,

@@ -21,6 +21,11 @@ static void workerDestroyResources(worker_t *worker)
 
     if (worker->loop)
     {
+        if (worker->wid == 0)
+        {
+            globalstateStopSystemLoadSampler();
+        }
+
         /*
          * Keep this order: asyncdnsCleanup() still owns timers and c-ares
          * socket watches registered on worker->loop, so it must run while the

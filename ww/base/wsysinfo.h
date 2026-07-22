@@ -10,6 +10,10 @@
  */
 
 #include "wlibc.h"
+#include "wmutex.h"
+
+typedef struct wloop_s  wloop_t;
+typedef struct wtimer_s wtimer_t;
 
 #ifdef OS_LINUX
 #include <sys/sysinfo.h>
@@ -94,5 +98,30 @@ static inline int getMemInfo(meminfo_t *mem)
  * @return `true` if system load is above threshold.
  */
 bool isSystemUnderLoad(double threshold);
+
+typedef struct system_load_state_s
+{
+    wmutex_t mutex;
+    wtimer_t *timer;
+    uint64_t prev_total;
+    uint64_t prev_idle;
+    uint64_t prev_read_ms;
+    uint64_t last_valid_ms;
+    double   cached_cpu_load;
+    double   cached_memory_load;
+    bool     initialized;
+    bool     supported;
+    bool     have_previous;
+    bool     sample_valid;
+    bool     sample_error;
+    bool     memory_sample_valid;
+    bool     unsupported_logged;
+} system_load_state_t;
+
+void systemLoadSamplerInit(system_load_state_t *state);
+bool systemLoadSamplerStart(system_load_state_t *state, wloop_t *loop);
+void systemLoadSamplerStop(system_load_state_t *state);
+void systemLoadSamplerDestroy(system_load_state_t *state);
+bool systemLoadSamplerUpdate(system_load_state_t *state);
 
 #endif // WW_SYS_INFO_H_

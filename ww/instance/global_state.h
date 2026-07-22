@@ -9,6 +9,7 @@
 #include "wloop.h"
 #include "worker.h"
 #include "worker_messages.h"
+#include "wsysinfo.h"
 
 /*
     This is a global state file that powers many WW things up
@@ -65,6 +66,7 @@ typedef struct ww_global_state_s
     struct dedicated_memory_s  *openssl_dedicated_memory;
     LwipV4Hook                  lwip_process_v4_hook;
     secure_random_state_t       secure_random;
+    system_load_state_t        *system_load;
     void                       *wintun_dll_handle;
     void                       *windivert_dll_handle;
     uint32_t                    workers_count;
@@ -281,6 +283,8 @@ WW_EXPORT bool globalstateInitializeSecureRandom(void);
 
 /* Releases resources cached by globalstateInitializeSecureRandom(). */
 WW_EXPORT void globalstateDestroySecureRandom(void);
+
+WW_EXPORT void globalstateStopSystemLoadSampler(void);
 
 /*!
  * @brief Updates the allocation padding for the global state.

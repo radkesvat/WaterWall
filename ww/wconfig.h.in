@@ -193,6 +193,11 @@ enum ram_profiles_e
 #define PROPER_LARGE_BUFFER_SIZE(ram_profile)                                                                           \
     ((ram_profile) >= LARGE_RAM_PROFILE_THRESHOLD ? LARGE_BUFFER_SIZE_RAM_HIGH : LARGE_BUFFER_SIZE_RAM_LOW)
 
+// Recent host-load sampling interval for isSystemUnderLoad().
+#define SYSTEM_LOAD_SAMPLER_INTERVAL_MS 500
+#define SYSTEM_LOAD_SAMPLE_STALE_INTERVALS 2
+#define SYSTEM_LOAD_SAMPLE_MAX_AGE_MS  (SYSTEM_LOAD_SAMPLER_INTERVAL_MS * SYSTEM_LOAD_SAMPLE_STALE_INTERVALS)
+
 
 #define ALLOCATOR_BYPASS    0
 #define BYPASS_BUFFERPOOL   0

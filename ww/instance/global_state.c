@@ -220,6 +220,14 @@ void globalstateDestroySecureRandom(void)
 #endif
 }
 
+void globalstateStopSystemLoadSampler(void)
+{
+    if (GSTATE.system_load != NULL)
+    {
+        systemLoadSamplerStop(GSTATE.system_load);
+    }
+}
+
 /*!
  * @brief Sets the global state.
  *
@@ -369,6 +377,13 @@ void createGlobalState(const ww_construction_data_t init_data)
         workerInit(getWorker(getTotalWorkersCount() - 1), getTotalWorkersCount() - 1, false);
 
         initializeShortCuts();
+
+        GSTATE.system_load = memoryAllocateZero(sizeof(*GSTATE.system_load));
+        systemLoadSamplerInit(GSTATE.system_load);
+        if (UNLIKELY(! systemLoadSamplerStart(GSTATE.system_load, getWorkerLoop(0))))
+        {
+            LOGW("System load sampler could not start; overload checks will use fail-closed cache semantics");
+        }
     }
 
     // managers
@@ -501,6 +516,12 @@ WW_EXPORT void destroyGlobalState(void)
     ares_library_cleanup();
 
     globalstateDestroySecureRandom();
+    if (GSTATE.system_load != NULL)
+    {
+        systemLoadSamplerDestroy(GSTATE.system_load);
+        memoryFree(GSTATE.system_load);
+        GSTATE.system_load = NULL;
+    }
 
     signalmanagerDestroy();
 
