@@ -1,5 +1,5 @@
 <!--
-Documentation version: 114
+Documentation version: 115
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TlsClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -51,7 +51,6 @@ That arrangement lets:
     "sni": "example.com",
     "alpns": ["http/1.1"],
     "verify": true,
-    "ech-sni-trick": "example.net",
     "x25519mlkem768": true
   },
   "next": "tcp-connector"
@@ -97,21 +96,6 @@ That arrangement lets:
   - BoringSSL peer verification is disabled for that tunnel instance
   - certificate chain errors no longer fail the handshake at the TLS layer
 
-- `ech-sni-trick` `(string)`
-  When set, `TlsClient` generates a full fake TLS ClientHello using this hostname and embeds those bytes as the GREASE `encrypted_client_hello` payload before the outer ClientHello is serialized and hashed.
-
-  The outer cleartext SNI remains `settings.sni`.
-
-  The embedded fake ClientHello uses the same configured `alpns` values and order as the outer ClientHello.
-
-  The embedded fake ClientHello is generated with `x25519mlkem768` disabled, even if the outer tunnel keeps `x25519mlkem768` enabled. This keeps the embedded payload small enough for the packet-side trick while leaving the real outer ClientHello Chrome-like.
-
-  Validation rules:
-
-  - the field must not be empty
-
-  This is intended for use with `IpManipulator`'s packet-splitting `ech-sni-trick`, so the bytes that `TlsClient` hashes are the same bytes that go on the wire.
-
 - `x25519mlkem768` `(boolean, default: true)`
   Controls whether `TlsClient` advertises the `X25519MLKEM768` hybrid post-quantum group.
 
@@ -127,8 +111,8 @@ That arrangement lets:
   Enables extra TLS state logging.
 
 Optional defaults apply only when their keys are absent. If `alpns` is absent, the Chrome-like default
-`["h2", "http/1.1"]` is used. If `verify`, `x25519mlkem768`, or `verbose` is present, it must be a JSON boolean. If
-`ech-sni-trick` is present, it must be a non-empty JSON string. Any other type is a startup error.
+`["h2", "http/1.1"]` is used. If `verify`, `x25519mlkem768`, or `verbose` is present, it must be a JSON boolean. Any other
+type is a startup error.
 
 Internal users can enable handshake takeover mode. TLS 1.2 may still release immediately after the handshake, while TLS
 1.3 uses the phased drain API described below so post-handshake records are processed before the line becomes raw
@@ -358,7 +342,6 @@ The SSL context is configured to stay in the same protocol band this tunnel was 
 - GREASE is enabled
 - TLS extension permutation is enabled
 - ECH grease is enabled on each `SSL` object
-- if `settings.ech-sni-trick` is configured, the GREASE ECH payload is replaced with a generated fake ClientHello before the outer ClientHello is emitted
 - OCSP stapling and signed certificate timestamps are enabled
 
 ### Cipher suite ordering patch
@@ -638,3 +621,25 @@ If you want to do this yourself from scratch, the shortest working recipe is:
 10. Build the final executable and confirm there are no duplicate symbol conflicts.
 
 That is the complete pattern this repository uses.
+
+## Advanced: ECH SNI Trick
+
+**Advanced, specialized behavior:** This feature is not part of ordinary TLS configuration or the normal responsibility
+of `TlsClient`. Use it only when a deployment deliberately coordinates TLS ClientHello construction with compatible
+packet-level manipulation.
+
+The optional `ech-sni-trick` setting accepts a non-empty hostname string:
+
+```json
+"ech-sni-trick": "example.net"
+```
+
+When configured, `TlsClient` creates a second, fake ClientHello using that hostname and embeds its bytes as the GREASE
+`encrypted_client_hello` payload of the real outer ClientHello. The outer cleartext SNI remains `settings.sni`.
+
+The embedded fake ClientHello uses the configured `alpns` list in the same order, but disables `x25519mlkem768` to keep
+the payload smaller. This behavior is intended to coordinate with packet-side mechanisms such as `IpManipulator`'s
+packet-splitting trick, keeping the ClientHello bytes hashed by BoringSSL consistent with the bytes placed on the wire.
+
+The value must be a non-empty JSON string; an empty value or another JSON type is a startup error. The raw ClientHello
+generation API also applies this setting when it is configured.
