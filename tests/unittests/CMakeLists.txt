@@ -131,6 +131,30 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.socket_manager_rules_unit socket_manager_rules_test "unit;net;socket-manager")
 
+  add_executable(socket_manager_iptables_recovery_test socket_manager_iptables_recovery_test.c)
+  target_link_libraries(socket_manager_iptables_recovery_test PRIVATE ww)
+  if(LINUX)
+    target_sources(socket_manager_iptables_recovery_test PRIVATE
+      ${CMAKE_SOURCE_DIR}/ww/managers/socket_manager_iptables_recovery.c
+    )
+    set_property(TARGET socket_manager_iptables_recovery_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+    target_compile_options(socket_manager_iptables_recovery_test PRIVATE "-fno-lto")
+    target_compile_definitions(socket_manager_iptables_recovery_test PRIVATE
+      SOCKET_MANAGER_IPTABLES_ALLOC_FAILURE_TEST=1
+    )
+    target_link_options(socket_manager_iptables_recovery_test PRIVATE
+      "-Wl,--wrap=memoryAllocate"
+      "-Wl,--wrap=memoryReAllocate"
+    )
+  endif()
+  add_dependencies(waterwall_unit_tests socket_manager_iptables_recovery_test)
+
+  add_waterwall_unit_test(
+    waterwall.socket_manager_iptables_recovery_unit
+    socket_manager_iptables_recovery_test
+    "unit;net;socket-manager;iptables"
+  )
+
   add_executable(udp_zero_length_test udp_zero_length_test.c)
   target_link_libraries(udp_zero_length_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests udp_zero_length_test)

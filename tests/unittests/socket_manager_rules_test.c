@@ -48,7 +48,7 @@ static void testSpecificSinglePort(void)
     socketManagerBuildRedirectCommand(
         cmd, sizeof(cmd), "iptables", "WW_TEST_4", "TCP", true, "10.0.0.1", NULL, 443, 443, 12345);
     requireEqStr(cmd,
-                 "iptables -t nat -A WW_TEST_4 -p TCP -d 10.0.0.1 --dport 443 -j REDIRECT --to-port 12345",
+                 "iptables -w -t nat -A WW_TEST_4 -p TCP -d 10.0.0.1 --dport 443 -j REDIRECT --to-port 12345",
                  "specific single-port TCP command mismatch");
     require(strstr(cmd, "-A PREROUTING") == NULL, "redirect rules must not be installed directly in PREROUTING");
 }
@@ -60,7 +60,7 @@ static void testWildcardRange(void)
     socketManagerBuildRedirectCommand(
         cmd, sizeof(cmd), "iptables", "WW_TEST_4", "UDP", false, "0.0.0.0", NULL, 1000, 2000, 500);
     requireEqStr(cmd,
-                 "iptables -t nat -A WW_TEST_4 -p UDP --dport 1000:2000 -j REDIRECT --to-port 500",
+                 "iptables -w -t nat -A WW_TEST_4 -p UDP --dport 1000:2000 -j REDIRECT --to-port 500",
                  "wildcard range UDP command mismatch");
     require(strstr(cmd, "-d ") == NULL, "wildcard command must not contain a -d match");
 }
@@ -71,7 +71,7 @@ static void testSpecificWithInterface(void)
     socketManagerBuildRedirectCommand(
         cmd, sizeof(cmd), "iptables", "WW_TEST_4", "TCP", true, "10.0.0.1", "eth0", 80, 80, 8080);
     requireEqStr(cmd,
-                 "iptables -t nat -A WW_TEST_4 -p TCP -i eth0 -d 10.0.0.1 --dport 80 -j REDIRECT --to-port 8080",
+                 "iptables -w -t nat -A WW_TEST_4 -p TCP -i eth0 -d 10.0.0.1 --dport 80 -j REDIRECT --to-port 8080",
                  "specific+interface TCP command mismatch");
 }
 
@@ -81,7 +81,7 @@ static void testWildcardWithInterface(void)
     socketManagerBuildRedirectCommand(
         cmd, sizeof(cmd), "iptables", "WW_TEST_4", "UDP", false, NULL, "wg0", 53, 53, 5300);
     requireEqStr(cmd,
-                 "iptables -t nat -A WW_TEST_4 -p UDP -i wg0 --dport 53 -j REDIRECT --to-port 5300",
+                 "iptables -w -t nat -A WW_TEST_4 -p UDP -i wg0 --dport 53 -j REDIRECT --to-port 5300",
                  "wildcard+interface UDP command mismatch");
     require(strstr(cmd, "-d ") == NULL, "wildcard+interface command must not contain a -d match");
     require(strstr(cmd, "-i wg0") != NULL, "wildcard+interface command must contain -i match");
@@ -93,7 +93,7 @@ static void testIpv6Tool(void)
     socketManagerBuildRedirectCommand(
         cmd, sizeof(cmd), "ip6tables", "WW_TEST_6", "TCP", true, "fd00::1", NULL, 443, 443, 9);
     requireEqStr(cmd,
-                 "ip6tables -t nat -A WW_TEST_6 -p TCP -d fd00::1 --dport 443 -j REDIRECT --to-port 9",
+                 "ip6tables -w -t nat -A WW_TEST_6 -p TCP -d fd00::1 --dport 443 -j REDIRECT --to-port 9",
                  "ipv6 specific TCP command mismatch");
 }
 
@@ -104,7 +104,7 @@ static void testEmptyDestTreatedAsWildcard(void)
     socketManagerBuildRedirectCommand(
         cmd, sizeof(cmd), "iptables", "WW_TEST_4", "TCP", true, "", NULL, 22, 22, 2200);
     requireEqStr(cmd,
-                 "iptables -t nat -A WW_TEST_4 -p TCP --dport 22 -j REDIRECT --to-port 2200",
+                 "iptables -w -t nat -A WW_TEST_4 -p TCP --dport 22 -j REDIRECT --to-port 2200",
                  "empty-dest command should omit -d");
 }
 
@@ -114,23 +114,23 @@ static void testOwnedChainCommands(void)
 
     socketManagerBuildOwnedChainCommand(
         cmd, sizeof(cmd), "iptables", kSocketManagerIptablesCreateChain, "WW_TEST_4");
-    requireEqStr(cmd, "iptables -t nat -N WW_TEST_4", "owned chain create command mismatch");
+    requireEqStr(cmd, "iptables -w -t nat -N WW_TEST_4", "owned chain create command mismatch");
 
     socketManagerBuildOwnedChainCommand(
         cmd, sizeof(cmd), "iptables", kSocketManagerIptablesAddJump, "WW_TEST_4");
-    requireEqStr(cmd, "iptables -t nat -A PREROUTING -j WW_TEST_4", "owned chain jump command mismatch");
+    requireEqStr(cmd, "iptables -w -t nat -A PREROUTING -j WW_TEST_4", "owned chain jump command mismatch");
 
     socketManagerBuildOwnedChainCommand(
         cmd, sizeof(cmd), "iptables", kSocketManagerIptablesDeleteJump, "WW_TEST_4");
-    requireEqStr(cmd, "iptables -t nat -D PREROUTING -j WW_TEST_4", "owned chain jump deletion mismatch");
+    requireEqStr(cmd, "iptables -w -t nat -D PREROUTING -j WW_TEST_4", "owned chain jump deletion mismatch");
 
     socketManagerBuildOwnedChainCommand(
         cmd, sizeof(cmd), "iptables", kSocketManagerIptablesFlushChain, "WW_TEST_4");
-    requireEqStr(cmd, "iptables -t nat -F WW_TEST_4", "owned chain flush must name only WaterWall's chain");
+    requireEqStr(cmd, "iptables -w -t nat -F WW_TEST_4", "owned chain flush must name only WaterWall's chain");
 
     socketManagerBuildOwnedChainCommand(
         cmd, sizeof(cmd), "iptables", kSocketManagerIptablesDeleteChain, "WW_TEST_4");
-    requireEqStr(cmd, "iptables -t nat -X WW_TEST_4", "owned chain deletion must name only WaterWall's chain");
+    requireEqStr(cmd, "iptables -w -t nat -X WW_TEST_4", "owned chain deletion must name only WaterWall's chain");
 }
 
 static ip_addr_t ipv4Addr(uint8_t a, uint8_t b, uint8_t c, uint8_t d)

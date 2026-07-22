@@ -143,6 +143,37 @@ function(add_waterwall_privileged_probe_integration_test test_name case_name tim
   endif()
 endfunction()
 
+function(add_waterwall_iptables_recovery_integration_test test_name)
+  if(WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS AND LINUX)
+    add_test(
+      NAME ${test_name}
+      COMMAND
+        "${BASH_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/run_iptables_crash_recovery_test.sh"
+        "$<TARGET_FILE:Waterwall>"
+        "${PYTHON3_EXECUTABLE}"
+    )
+    set_tests_properties(
+      ${test_name}
+      PROPERTIES
+        TIMEOUT 180
+        LABELS "integration;linux;privileged;socket-manager;iptables"
+        SKIP_RETURN_CODE 77
+        RESOURCE_LOCK waterwall_iptables_recovery
+    )
+  else()
+    add_waterwall_skipped_integration_test(
+      ${test_name}
+      "iptables crash-recovery integration requires enabled Linux privileged tests"
+    )
+    set_tests_properties(
+      ${test_name}
+      PROPERTIES
+        LABELS "integration;linux;privileged;socket-manager;iptables"
+    )
+  endif()
+endfunction()
+
 function(add_waterwall_packet_analysis_test test_name case_name)
   set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
 
@@ -328,6 +359,7 @@ add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_tcp_wil
 add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_udp_wildcard_specific_tun socket_manager_udp_wildcard_specific_tun 15)
 add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_tcp_range_socket_wildcard_specific_tun socket_manager_tcp_range_socket_wildcard_specific_tun 15)
 add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_udp_range_socket_wildcard_specific_tun socket_manager_udp_range_socket_wildcard_specific_tun 15)
+add_waterwall_iptables_recovery_integration_test(waterwall.socket_manager_iptables_crash_recovery)
 add_waterwall_integration_test(waterwall.ping_new_ip_icmp_roundtrip ping_new_ip_icmp_roundtrip)
 add_waterwall_integration_test(waterwall.ping_reuse_ipv4_addresses_roundtrip ping_reuse_ipv4_addresses_roundtrip)
 add_waterwall_integration_test(waterwall.ping_only_icmp_roundtrip ping_only_icmp_roundtrip)
