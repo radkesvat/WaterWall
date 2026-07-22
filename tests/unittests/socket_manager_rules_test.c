@@ -101,8 +101,7 @@ static void testEmptyDestTreatedAsWildcard(void)
 {
     char cmd[256];
     // has_dest true but empty string must still omit -d (defensive).
-    socketManagerBuildRedirectCommand(
-        cmd, sizeof(cmd), "iptables", "WW_TEST_4", "TCP", true, "", NULL, 22, 22, 2200);
+    socketManagerBuildRedirectCommand(cmd, sizeof(cmd), "iptables", "WW_TEST_4", "TCP", true, "", NULL, 22, 22, 2200);
     requireEqStr(cmd,
                  "iptables -w -t nat -A WW_TEST_4 -p TCP --dport 22 -j REDIRECT --to-port 2200",
                  "empty-dest command should omit -d");
@@ -112,24 +111,19 @@ static void testOwnedChainCommands(void)
 {
     char cmd[256];
 
-    socketManagerBuildOwnedChainCommand(
-        cmd, sizeof(cmd), "iptables", kSocketManagerIptablesCreateChain, "WW_TEST_4");
+    socketManagerBuildOwnedChainCommand(cmd, sizeof(cmd), "iptables", kSocketManagerIptablesCreateChain, "WW_TEST_4");
     requireEqStr(cmd, "iptables -w -t nat -N WW_TEST_4", "owned chain create command mismatch");
 
-    socketManagerBuildOwnedChainCommand(
-        cmd, sizeof(cmd), "iptables", kSocketManagerIptablesAddJump, "WW_TEST_4");
+    socketManagerBuildOwnedChainCommand(cmd, sizeof(cmd), "iptables", kSocketManagerIptablesAddJump, "WW_TEST_4");
     requireEqStr(cmd, "iptables -w -t nat -A PREROUTING -j WW_TEST_4", "owned chain jump command mismatch");
 
-    socketManagerBuildOwnedChainCommand(
-        cmd, sizeof(cmd), "iptables", kSocketManagerIptablesDeleteJump, "WW_TEST_4");
+    socketManagerBuildOwnedChainCommand(cmd, sizeof(cmd), "iptables", kSocketManagerIptablesDeleteJump, "WW_TEST_4");
     requireEqStr(cmd, "iptables -w -t nat -D PREROUTING -j WW_TEST_4", "owned chain jump deletion mismatch");
 
-    socketManagerBuildOwnedChainCommand(
-        cmd, sizeof(cmd), "iptables", kSocketManagerIptablesFlushChain, "WW_TEST_4");
+    socketManagerBuildOwnedChainCommand(cmd, sizeof(cmd), "iptables", kSocketManagerIptablesFlushChain, "WW_TEST_4");
     requireEqStr(cmd, "iptables -w -t nat -F WW_TEST_4", "owned chain flush must name only WaterWall's chain");
 
-    socketManagerBuildOwnedChainCommand(
-        cmd, sizeof(cmd), "iptables", kSocketManagerIptablesDeleteChain, "WW_TEST_4");
+    socketManagerBuildOwnedChainCommand(cmd, sizeof(cmd), "iptables", kSocketManagerIptablesDeleteChain, "WW_TEST_4");
     requireEqStr(cmd, "iptables -w -t nat -X WW_TEST_4", "owned chain deletion must name only WaterWall's chain");
 }
 
@@ -197,6 +191,49 @@ static void testCidrParser(void)
             "IPv6 prefixes longer than 128 should be rejected");
 }
 
+static void testCidrParserRejectsMalformedInput(void)
+{
+    static const char *const malformed_cases[] = {"",
+                                                  "192.0.2.0",
+                                                  "/24",
+                                                  "192.0.2.0/",
+                                                  "192.0.2.0/foo",
+                                                  "192.0.2.0/8junk",
+                                                  "192.0.2.0/+8",
+                                                  "192.0.2.0/-0",
+                                                  "192.0.2.0/ 8",
+                                                  "192.0.2.0/8 ",
+                                                  "192.0.2.0/8/9",
+                                                  "192.0.2.0/999999999999999999999",
+                                                  "2001:db8::/64junk",
+                                                  "not-an-ip/24"};
+
+    ip_addr_t ip;
+    ip_addr_t mask;
+    uint8_t   prefix = UINT8_MAX;
+
+    require(parseIPWithSubnetMaskAndPrefix("192.0.2.0/24", &ip, &mask, &prefix) == 4 && prefix == 24,
+            "strict CIDR parser should return the parsed prefix");
+    require(parseIPWithSubnetMaskAndPrefix(NULL, &ip, &mask, &prefix) == ERR_ARG,
+            "strict CIDR parser should reject a null input");
+
+    for (size_t i = 0; i < sizeof(malformed_cases) / sizeof(malformed_cases[0]); ++i)
+    {
+        require(parseIPWithSubnetMask(malformed_cases[i], &ip, &mask) == ERR_ARG,
+                "strict CIDR parser should reject malformed input");
+        require(! verifyIPCdir(malformed_cases[i]), "CIDR verifier should reject malformed input");
+    }
+
+    char valid_input[]   = "192.0.2.0/24";
+    char invalid_input[] = "not-an-ip/24";
+
+    require(verifyIPCdir(valid_input), "CIDR verifier should accept valid input");
+    requireEqStr(valid_input, "192.0.2.0/24", "CIDR verifier must not modify valid input");
+    require(! verifyIPCdir(invalid_input), "CIDR verifier should reject invalid input");
+    requireEqStr(invalid_input, "not-an-ip/24", "CIDR verifier must not modify invalid input");
+    require(verifyIPCdir("2001:db8::/64"), "CIDR verifier should safely accept read-only input");
+}
+
 static void testAclAddressFamilies(void)
 {
     ipmask_t range;
@@ -205,10 +242,8 @@ static void testAclAddressFamilies(void)
     require(parseIPWithSubnetMask("::/0", &range.ip, &range.mask) == 6, "IPv6 any-address ACL should parse");
     vec_ipmask_t_push(&acl, range);
 
-    require(socketManagerIpMatchesAcl(parsedAddr("2001:db8::1"), &acl),
-            "IPv6 ::/0 ACL should match IPv6 peers");
-    require(! socketManagerIpMatchesAcl(parsedAddr("192.0.2.1"), &acl),
-            "IPv6 ::/0 ACL must not match IPv4 peers");
+    require(socketManagerIpMatchesAcl(parsedAddr("2001:db8::1"), &acl), "IPv6 ::/0 ACL should match IPv6 peers");
+    require(! socketManagerIpMatchesAcl(parsedAddr("192.0.2.1"), &acl), "IPv6 ::/0 ACL must not match IPv4 peers");
     vec_ipmask_t_drop(&acl);
 
     acl = vec_ipmask_t_with_capacity(1);
@@ -216,8 +251,7 @@ static void testAclAddressFamilies(void)
     vec_ipmask_t_push(&acl, range);
 
     require(socketManagerIpMatchesAcl(parsedAddr("10.1.2.3"), &acl), "IPv4 ACL should match IPv4 peers");
-    require(! socketManagerIpMatchesAcl(parsedAddr("2001:db8::1"), &acl),
-            "IPv4 ACL must not match native IPv6 peers");
+    require(! socketManagerIpMatchesAcl(parsedAddr("2001:db8::1"), &acl), "IPv4 ACL must not match native IPv6 peers");
     require(socketManagerIpMatchesAcl(parsedAddr("::ffff:10.1.2.3"), &acl),
             "IPv4-mapped IPv6 peers should retain IPv4 ACL behavior");
     vec_ipmask_t_drop(&acl);
@@ -304,6 +338,7 @@ static void testWildcardTierSpecificity(void)
 int main(void)
 {
     testCidrParser();
+    testCidrParserRejectsMalformedInput();
     testAclAddressFamilies();
     testRuleRanks();
     testBalanceLocalHash();
