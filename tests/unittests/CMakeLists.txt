@@ -261,7 +261,7 @@ endif()
 
 if(TARGET nghttp2_static)
   add_executable(nghttp2_large_recv_test nghttp2_large_recv_test.c)
-  target_link_libraries(nghttp2_large_recv_test PRIVATE nghttp2_static)
+  target_link_libraries(nghttp2_large_recv_test PRIVATE nghttp2_static ww)
   add_dependencies(waterwall_unit_tests nghttp2_large_recv_test)
 
   add_waterwall_unit_test(waterwall.nghttp2_large_recv_unit nghttp2_large_recv_test "unit;tunnels;http;nghttp2")
