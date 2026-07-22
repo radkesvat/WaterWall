@@ -11,7 +11,11 @@ typedef struct raw_device_s
 {
     char *name;
 #ifdef OS_WIN
-    HANDLE handle;
+    HANDLE             handle;
+    uint64_t           discarded_packet_total;
+    uint64_t           discarded_packet_suppressed;
+    uint64_t           oversized_packet_total;
+    unsigned long long discard_last_report_ms;
 #else
     int                socket;
     uint64_t           discarded_packet_total;

@@ -8,6 +8,7 @@
 #include "wloop.h"
 #include "worker.h"
 #include "wplatform.h"
+#include "wtime.h"
 
 #include "loggers/internal_logger.h"
 
@@ -16,6 +17,53 @@ enum
     kMasterMessagePoolsbufGetLeftCapacity = 64,
     kRawWriteChannelQueueMax              = 256
 };
+
+static void rawdeviceRecordOversizedDiscard(raw_device_t *rdev)
+{
+    unsigned long long now_ms = getTimeOfDayMS();
+
+    rdev->discarded_packet_total++;
+    rdev->discarded_packet_suppressed++;
+    rdev->oversized_packet_total++;
+
+    if (rdev->discard_last_report_ms == 0)
+    {
+        rdev->discard_last_report_ms = now_ms;
+        return;
+    }
+
+    unsigned long long elapsed_ms = now_ms - rdev->discard_last_report_ms;
+    if (elapsed_ms < 1000)
+    {
+        return;
+    }
+
+    LOGW("RawDevice: discarded %llu oversized packet(s) over %llums "
+         "(total=%llu, exceeding kMaxAllowedPacketLength=%u: %llu)",
+         LLU(rdev->discarded_packet_suppressed),
+         LLU(elapsed_ms),
+         LLU(rdev->discarded_packet_total),
+         (unsigned int) kMaxAllowedPacketLength,
+         LLU(rdev->oversized_packet_total));
+    rdev->discarded_packet_suppressed = 0;
+    rdev->discard_last_report_ms      = now_ms;
+}
+
+static void rawdeviceReportPendingDiscards(raw_device_t *rdev)
+{
+    if (rdev->discarded_packet_suppressed == 0)
+    {
+        return;
+    }
+
+    LOGW("RawDevice: discarded %llu oversized packet(s) before writer exit "
+         "(total=%llu, exceeding kMaxAllowedPacketLength=%u: %llu)",
+         LLU(rdev->discarded_packet_suppressed),
+         LLU(rdev->discarded_packet_total),
+         (unsigned int) kMaxAllowedPacketLength,
+         LLU(rdev->oversized_packet_total));
+    rdev->discarded_packet_suppressed = 0;
+}
 
 static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 {
@@ -34,19 +82,18 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
         if (! chanRecv(rdev->writer_buffer_channel, (void **) &buf))
         {
             LOGD("RawDevice: routine write will exit due to channel closed");
-            return 0;
+            break;
         }
 
-        if (UNLIKELY(kMaxAllowedPacketLength < sbufGetLength(buf)))
+        uint32_t packet_len = sbufGetLength(buf);
+        if (UNLIKELY(packet_len > kMaxAllowedPacketLength))
         {
-            LOGE("RawDevice: WriteThread: Packet size %d exceeds kMaxAllowedPacketLength %d", sbufGetLength(buf),
-                 kMaxAllowedPacketLength);
-           
+            rawdeviceRecordOversizedDiscard(rdev);
             bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
-            terminateProgram(1);
+            continue;
         }
 
-        if (! windivertSend(rdev->handle, sbufGetRawPtr(buf), sbufGetLength(buf), NULL, &addr))
+        if (! windivertSend(rdev->handle, sbufGetRawPtr(buf), packet_len, NULL, &addr))
         {
             LOGW("RawDevice: WinDivertSend failed: error %lu", GetLastError());
             bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
@@ -54,6 +101,8 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
         }
         bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
     }
+
+    rawdeviceReportPendingDiscards(rdev);
     return 0;
 }
 
