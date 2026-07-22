@@ -124,6 +124,7 @@ add_library(ww STATIC
     # Managers
     managers/signal_manager.c
     managers/socket_manager.c
+    managers/socket_manager_iptables_recovery.c
     managers/node_manager.c
     managers/memory_manager.c
 

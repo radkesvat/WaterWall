@@ -7,6 +7,7 @@
 #include "global_state.h"
 #include "local_widle_table.h"
 #include "loggers/internal_logger.h"
+#include "socket_manager_iptables_recovery.h"
 #include "stc/common.h"
 #include "threadsafe_generic_pool.h"
 #include "tunnel.h"
@@ -15,6 +16,7 @@
 #include "wloop.h"
 #include "wmutex.h"
 #include "wproc.h"
+#include "wfrand.h"
 #include "wthread.h"
 
 #define i_type balancegroup_registry_t // NOLINT
@@ -122,11 +124,17 @@ typedef struct socket_manager_s
     owned_iptables_chain_t  iptables_v6_chain;
     worker_t               *worker;
     wid_t                   wid;
+    uint64_t                iptables_owner_token;
+    int                     iptables_owner_lease_fd;
 
     bool iptables_installed;
     bool ip6tables_installed;
     bool lsof_installed;
     bool iptables_used;
+    bool iptables_reconciliation_attempted;
+    bool iptables_v4_reconciled;
+    bool iptables_v6_reconciled;
+    bool iptables_published;
     bool started;
     // Avoid accepted-socket SO_MARK writes unless at least one filter requested them.
     bool any_fwmark;
@@ -257,19 +265,19 @@ void socketManagerBuildOwnedChainCommand(char *out, size_t out_len, const char *
     switch (action)
     {
     case kSocketManagerIptablesCreateChain:
-        snprintf(out, out_len, "%s -t nat -N %s", tool, chain_name);
+        snprintf(out, out_len, "%s -w -t nat -N %s", tool, chain_name);
         return;
     case kSocketManagerIptablesAddJump:
-        snprintf(out, out_len, "%s -t nat -A PREROUTING -j %s", tool, chain_name);
+        snprintf(out, out_len, "%s -w -t nat -A PREROUTING -j %s", tool, chain_name);
         return;
     case kSocketManagerIptablesDeleteJump:
-        snprintf(out, out_len, "%s -t nat -D PREROUTING -j %s", tool, chain_name);
+        snprintf(out, out_len, "%s -w -t nat -D PREROUTING -j %s", tool, chain_name);
         return;
     case kSocketManagerIptablesFlushChain:
-        snprintf(out, out_len, "%s -t nat -F %s", tool, chain_name);
+        snprintf(out, out_len, "%s -w -t nat -F %s", tool, chain_name);
         return;
     case kSocketManagerIptablesDeleteChain:
-        snprintf(out, out_len, "%s -t nat -X %s", tool, chain_name);
+        snprintf(out, out_len, "%s -w -t nat -X %s", tool, chain_name);
         return;
     }
 
@@ -308,7 +316,7 @@ void socketManagerBuildRedirectCommand(char *out, size_t out_len, const char *to
 
     snprintf(out,
              out_len,
-             "%s -t nat -A %s -p %s%s%s --dport %s -j REDIRECT --to-port %u",
+             "%s -w -t nat -A %s -p %s%s%s --dport %s -j REDIRECT --to-port %u",
              tool,
              chain_name,
              proto_token,
@@ -349,9 +357,9 @@ static bool runOwnedChainCommand(const char *tool, socket_manager_iptables_chain
 }
 
 /**
- * @brief Create and link one private NAT chain on first use.
+ * @brief Create one private NAT chain on first use, without publishing a PREROUTING jump.
  */
-static bool ensureOwnedIptablesChain(const char *tool, owned_iptables_chain_t *chain)
+static bool createOwnedIptablesChain(const char *tool, owned_iptables_chain_t *chain)
 {
     if (! chain->created)
     {
@@ -362,15 +370,27 @@ static bool ensureOwnedIptablesChain(const char *tool, owned_iptables_chain_t *c
         chain->created = true;
     }
 
-    if (! chain->linked)
-    {
-        if (! runOwnedChainCommand(tool, kSocketManagerIptablesAddJump, chain))
-        {
-            return false;
-        }
-        chain->linked = true;
-    }
+    return true;
+}
 
+/**
+ * @brief Publish one populated private NAT chain.
+ */
+static bool publishOwnedIptablesChain(const char *tool, owned_iptables_chain_t *chain)
+{
+    if (chain->linked)
+    {
+        return true;
+    }
+    if (! chain->created)
+    {
+        return false;
+    }
+    if (! runOwnedChainCommand(tool, kSocketManagerIptablesAddJump, chain))
+    {
+        return false;
+    }
+    chain->linked = true;
     return true;
 }
 
@@ -384,17 +404,20 @@ static bool cleanupOneOwnedIptablesChain(const char *tool, owned_iptables_chain_
     if (chain->linked)
     {
         const bool jump_removed = runOwnedChainCommand(tool, kSocketManagerIptablesDeleteJump, chain);
-        result                  = jump_removed && result;
-        if (jump_removed)
+        if (! jump_removed)
         {
-            chain->linked = false;
+            return false;
         }
+        chain->linked = false;
     }
 
     if (chain->created)
     {
         const bool chain_flushed = runOwnedChainCommand(tool, kSocketManagerIptablesFlushChain, chain);
-        result                   = chain_flushed && result;
+        if (! chain_flushed)
+        {
+            return false;
+        }
 
         const bool chain_deleted = runOwnedChainCommand(tool, kSocketManagerIptablesDeleteChain, chain);
         result                   = chain_deleted && result;
@@ -432,6 +455,176 @@ static bool cleanupOwnedIptablesChains(bool safe_mode)
 #endif
 }
 
+static bool cleanupOwnedIptablesChainsWithReconcileLock(bool safe_mode)
+{
+    int lock_fd = -1;
+    if (! socketManagerIptablesAcquireReconcileLock(&lock_fd, 5000))
+    {
+        LOGE("SocketManager: failed to acquire iptables reconciliation lock for cleanup");
+        return false;
+    }
+    const bool result = cleanupOwnedIptablesChains(safe_mode);
+    socketManagerIptablesReleaseLease(&lock_fd);
+    return result;
+}
+
+static bool runRecoveryCleanupOp(const socket_manager_iptables_cleanup_op_t *op, void *userdata)
+{
+    discard userdata;
+    const char *tool = op->family == 4 ? "iptables" : "ip6tables";
+    socket_manager_iptables_chain_action_t action = kSocketManagerIptablesDeleteChain;
+    switch (op->action)
+    {
+    case kSocketManagerIptablesCleanupDeleteJump:
+        action = kSocketManagerIptablesDeleteJump;
+        break;
+    case kSocketManagerIptablesCleanupFlushChain:
+        action = kSocketManagerIptablesFlushChain;
+        break;
+    case kSocketManagerIptablesCleanupDeleteChain:
+        action = kSocketManagerIptablesDeleteChain;
+        break;
+    }
+
+    owned_iptables_chain_t chain;
+    memoryZero(&chain, sizeof(chain));
+    snprintf(chain.name, sizeof(chain.name), "%s", op->chain_name);
+    const bool ok = runOwnedChainCommand(tool, action, &chain);
+    if (! ok)
+    {
+        LOGE("SocketManager: failed stale iptables cleanup action %d for %s",
+             (int) op->action,
+             op->chain_name);
+    }
+    return ok;
+}
+
+typedef struct recovery_probe_leases_s
+{
+    int    fds[256];
+    size_t count;
+} recovery_probe_leases_t;
+
+static void releaseRecoveryProbeLeases(recovery_probe_leases_t *leases)
+{
+    for (size_t i = 0; i < leases->count; ++i)
+    {
+        socketManagerIptablesReleaseLease(&leases->fds[i]);
+    }
+    leases->count = 0;
+}
+
+static socket_manager_iptables_lease_probe_result_t probeRecoveryOwnerLease(uint64_t token, int *held_fd,
+                                                                            void *userdata)
+{
+    recovery_probe_leases_t *leases = userdata;
+    int fd = -1;
+    socket_manager_iptables_lease_probe_result_t result = socketManagerIptablesAcquireOwnerLease(token, &fd);
+    if (result != kSocketManagerIptablesLeaseAcquired)
+    {
+        return result;
+    }
+    if (leases == NULL || leases->count >= sizeof(leases->fds) / sizeof(leases->fds[0]))
+    {
+        socketManagerIptablesReleaseLease(&fd);
+        return kSocketManagerIptablesLeaseError;
+    }
+    leases->fds[leases->count++] = fd;
+    *held_fd = -1;
+    return kSocketManagerIptablesLeaseAcquired;
+}
+
+static void reconcileIptablesStartup(void)
+{
+    socketmanager_gstate->iptables_reconciliation_attempted = true;
+    socketmanager_gstate->iptables_v4_reconciled            = ! socketmanager_gstate->iptables_installed;
+    socketmanager_gstate->iptables_v6_reconciled            = ! socketmanager_gstate->ip6tables_installed;
+
+    const bool do_v4 = socketmanager_gstate->iptables_installed;
+    const bool do_v6 = socketmanager_gstate->ip6tables_installed;
+    if (! do_v4 && ! do_v6)
+    {
+        return;
+    }
+
+    int lock_fd = -1;
+    if (! socketManagerIptablesAcquireReconcileLock(&lock_fd, 5000))
+    {
+        LOGW("SocketManager: failed to acquire iptables startup recovery lock");
+        return;
+    }
+
+    socket_manager_iptables_cmd_output_t v4_snapshot;
+    socket_manager_iptables_cmd_output_t v6_snapshot;
+    memoryZero(&v4_snapshot, sizeof(v4_snapshot));
+    memoryZero(&v6_snapshot, sizeof(v6_snapshot));
+
+    bool include_v4 = false;
+    bool include_v6 = false;
+    if (do_v4)
+    {
+        include_v4 = socketManagerIptablesRunInspectCommand("iptables", &v4_snapshot);
+        socketmanager_gstate->iptables_v4_reconciled = include_v4;
+        if (! include_v4)
+        {
+            LOGW("SocketManager: could not inspect ipv4 iptables nat table for stale WaterWall chains");
+        }
+    }
+    if (do_v6)
+    {
+        include_v6 = socketManagerIptablesRunInspectCommand("ip6tables", &v6_snapshot);
+        socketmanager_gstate->iptables_v6_reconciled = include_v6;
+        if (! include_v6)
+        {
+            LOGW("SocketManager: could not inspect ipv6 iptables nat table for stale WaterWall chains");
+        }
+    }
+
+    socket_manager_iptables_cleanup_plan_t plan;
+    socketManagerIptablesCleanupPlanInit(&plan);
+    recovery_probe_leases_t probe_leases;
+    memoryZero(&probe_leases, sizeof(probe_leases));
+    bool v4_ok = true;
+    bool v6_ok = true;
+    if (! socketManagerIptablesBuildCleanupPlan(v4_snapshot.output,
+                                                include_v4,
+                                                v6_snapshot.output,
+                                                include_v6,
+                                                probeRecoveryOwnerLease,
+                                                &probe_leases,
+                                                &plan,
+                                                &v4_ok,
+                                                &v6_ok))
+    {
+        if (include_v4)
+        {
+            socketmanager_gstate->iptables_v4_reconciled = v4_ok;
+        }
+        if (include_v6)
+        {
+            socketmanager_gstate->iptables_v6_reconciled = v6_ok;
+        }
+    }
+
+    if (! socketManagerIptablesExecuteCleanupPlan(&plan, runRecoveryCleanupOp, NULL, &v4_ok, &v6_ok))
+    {
+        if (include_v4)
+        {
+            socketmanager_gstate->iptables_v4_reconciled = v4_ok;
+        }
+        if (include_v6)
+        {
+            socketmanager_gstate->iptables_v6_reconciled = v6_ok;
+        }
+    }
+
+    releaseRecoveryProbeLeases(&probe_leases);
+    socketManagerIptablesCleanupPlanDrop(&plan);
+    socketManagerIptablesCmdOutputDrop(&v4_snapshot);
+    socketManagerIptablesCmdOutputDrop(&v6_snapshot);
+    socketManagerIptablesReleaseLease(&lock_fd);
+}
+
 /**
  * @brief Validate a config-derived token before it is interpolated into a shell command.
  */
@@ -452,6 +645,95 @@ static bool isSafeIptablesToken(const char *s)
         }
     }
     return true;
+}
+
+static bool generateIptablesOwnerToken(void)
+{
+    uint64_t token = 0;
+    if (! secureRandomBytes(&token, sizeof(token)))
+    {
+        return false;
+    }
+    socketmanager_gstate->iptables_owner_token = token;
+    socketManagerIptablesFormatChainName(token,
+                                         4,
+                                         socketmanager_gstate->iptables_v4_chain.name,
+                                         sizeof(socketmanager_gstate->iptables_v4_chain.name));
+    socketManagerIptablesFormatChainName(token,
+                                         6,
+                                         socketmanager_gstate->iptables_v6_chain.name,
+                                         sizeof(socketmanager_gstate->iptables_v6_chain.name));
+    return true;
+}
+
+static bool acquireIptablesOwnerLease(void)
+{
+    if (socketmanager_gstate->iptables_owner_lease_fd >= 0)
+    {
+        return true;
+    }
+
+    for (int attempt = 0; attempt < 16; ++attempt)
+    {
+        if (! generateIptablesOwnerToken())
+        {
+            LOGE("SocketManager: failed to generate iptables owner token");
+            return false;
+        }
+
+        int fd = -1;
+        socket_manager_iptables_lease_probe_result_t lease =
+            socketManagerIptablesAcquireOwnerLease(socketmanager_gstate->iptables_owner_token, &fd);
+        if (lease == kSocketManagerIptablesLeaseAcquired)
+        {
+            socketmanager_gstate->iptables_owner_lease_fd = fd;
+            return true;
+        }
+        if (lease != kSocketManagerIptablesLeaseInUse)
+        {
+            LOGE("SocketManager: failed to bind iptables owner lease");
+            return false;
+        }
+    }
+
+    LOGE("SocketManager: could not find an unused iptables owner token");
+    return false;
+}
+
+static bool pendingIptablesNeedsFamily(int family)
+{
+    const isize count = pending_rules_t_size(&socketmanager_gstate->pending_rules);
+    for (isize i = 0; i < count; ++i)
+    {
+        const pending_iptables_rule_t *rule = pending_rules_t_at(&socketmanager_gstate->pending_rules, i);
+        if (family == 4 && (rule->family == AF_INET || rule->dual_stack))
+        {
+            return true;
+        }
+        if (family == 6 && rule->family == AF_INET6 && socketmanager_gstate->ip6tables_installed)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void enforceIptablesReconciliationForPendingRules(void)
+{
+    if (pendingIptablesNeedsFamily(4) &&
+        (! socketmanager_gstate->iptables_reconciliation_attempted || ! socketmanager_gstate->iptables_v4_reconciled))
+    {
+        LOGF("SocketManager: refusing to install ipv4 iptables rules after failed startup recovery");
+        terminateProgram(1);
+    }
+#if SUPPORT_V6
+    if (pendingIptablesNeedsFamily(6) &&
+        (! socketmanager_gstate->iptables_reconciliation_attempted || ! socketmanager_gstate->iptables_v6_reconciled))
+    {
+        LOGF("SocketManager: refusing to install ipv6 iptables rules after failed startup recovery");
+        terminateProgram(1);
+    }
+#endif
 }
 
 /**
@@ -502,7 +784,7 @@ static void queueIptablesRule(uint8_t protocol, socket_filter_t *filter, uint16_
 }
 
 /**
- * @brief Install one queued redirect rule.
+ * @brief Install one queued redirect rule into already-created private chains.
  */
 static bool installOnePendingRule(const pending_iptables_rule_t *rule)
 {
@@ -512,10 +794,6 @@ static bool installOnePendingRule(const pending_iptables_rule_t *rule)
     if (rule->family == AF_INET)
     {
         owned_iptables_chain_t *chain = &socketmanager_gstate->iptables_v4_chain;
-        if (! ensureOwnedIptablesChain("iptables", chain))
-        {
-            return false;
-        }
         buildIptablesCommand(command, sizeof(command), "iptables", proto_token, chain->name, rule);
         return execCmd(command).exit_code == 0;
     }
@@ -528,12 +806,8 @@ static bool installOnePendingRule(const pending_iptables_rule_t *rule)
         if (rule->dual_stack)
         {
             owned_iptables_chain_t *chain = &socketmanager_gstate->iptables_v4_chain;
-            result = ensureOwnedIptablesChain("iptables", chain);
-            if (result)
-            {
-                buildIptablesCommand(command, sizeof(command), "iptables", proto_token, chain->name, rule);
-                result = execCmd(command).exit_code == 0;
-            }
+            buildIptablesCommand(command, sizeof(command), "iptables", proto_token, chain->name, rule);
+            result = execCmd(command).exit_code == 0;
         }
 
         if (! socketmanager_gstate->ip6tables_installed)
@@ -547,10 +821,6 @@ static bool installOnePendingRule(const pending_iptables_rule_t *rule)
         }
 
         owned_iptables_chain_t *chain = &socketmanager_gstate->iptables_v6_chain;
-        if (! ensureOwnedIptablesChain("ip6tables", chain))
-        {
-            return false;
-        }
         buildIptablesCommand(command, sizeof(command), "ip6tables", proto_token, chain->name, rule);
         return execCmd(command).exit_code == 0;
     }
@@ -564,6 +834,44 @@ static bool installOnePendingRule(const pending_iptables_rule_t *rule)
 static void installPendingIptablesRules(void)
 {
     const isize count = pending_rules_t_size(&socketmanager_gstate->pending_rules);
+    if (count == 0)
+    {
+        return;
+    }
+
+    enforceIptablesReconciliationForPendingRules();
+
+    int lock_fd = -1;
+    if (! socketManagerIptablesAcquireReconcileLock(&lock_fd, 5000))
+    {
+        LOGF("SocketManager: failed to acquire iptables reconciliation lock for rule publication");
+        terminateProgram(1);
+    }
+
+    if (! acquireIptablesOwnerLease())
+    {
+        socketManagerIptablesReleaseLease(&lock_fd);
+        terminateProgram(1);
+    }
+
+    const bool needs_v4 = pendingIptablesNeedsFamily(4);
+    const bool needs_v6 = pendingIptablesNeedsFamily(6);
+
+    if (needs_v4 && ! createOwnedIptablesChain("iptables", &socketmanager_gstate->iptables_v4_chain))
+    {
+        LOGF("SocketManager: failed to create ipv4 iptables chain %s", socketmanager_gstate->iptables_v4_chain.name);
+        socketManagerIptablesReleaseLease(&lock_fd);
+        terminateProgram(1);
+    }
+#if SUPPORT_V6
+    if (needs_v6 && ! createOwnedIptablesChain("ip6tables", &socketmanager_gstate->iptables_v6_chain))
+    {
+        LOGF("SocketManager: failed to create ipv6 iptables chain %s", socketmanager_gstate->iptables_v6_chain.name);
+        cleanupOwnedIptablesChains(false);
+        socketManagerIptablesReleaseLease(&lock_fd);
+        terminateProgram(1);
+    }
+#endif
 
     for (int rank = 0; rank <= 3; ++rank)
     {
@@ -584,11 +892,31 @@ static void installPendingIptablesRules(void)
                 {
                     LOGE("SocketManager: failed to fully roll back owned iptables rules");
                 }
+                socketManagerIptablesReleaseLease(&lock_fd);
                 terminateProgram(1);
             }
         }
     }
 
+    if (needs_v4 && ! publishOwnedIptablesChain("iptables", &socketmanager_gstate->iptables_v4_chain))
+    {
+        LOGF("SocketManager: failed to publish ipv4 iptables chain %s", socketmanager_gstate->iptables_v4_chain.name);
+        cleanupOwnedIptablesChains(false);
+        socketManagerIptablesReleaseLease(&lock_fd);
+        terminateProgram(1);
+    }
+#if SUPPORT_V6
+    if (needs_v6 && ! publishOwnedIptablesChain("ip6tables", &socketmanager_gstate->iptables_v6_chain))
+    {
+        LOGF("SocketManager: failed to publish ipv6 iptables chain %s", socketmanager_gstate->iptables_v6_chain.name);
+        cleanupOwnedIptablesChains(false);
+        socketManagerIptablesReleaseLease(&lock_fd);
+        terminateProgram(1);
+    }
+#endif
+
+    socketmanager_gstate->iptables_published = needs_v4 || needs_v6;
+    socketManagerIptablesReleaseLease(&lock_fd);
     pending_rules_t_clear(&socketmanager_gstate->pending_rules);
 }
 
@@ -2531,6 +2859,8 @@ void socketmanagerStart(void)
 
     mutexLock(&(socketmanager_gstate->mutex));
 
+    reconcileIptablesStartup();
+
     // Record only successful binds, so failed attempts never block later endpoint setup.
     endpoint_registry_t registry = endpoint_registry_t_init();
 
@@ -2602,18 +2932,7 @@ socket_manager_state_t *socketmanagerCreate(void)
     socketmanager_gstate->balance_groups = balancegroup_registry_t_with_capacity(8);
     socketmanager_gstate->pending_rules  = pending_rules_t_init();
 
-    const unsigned int process_id = (unsigned int) getProcessID();
-    const unsigned int nonce      = fastRand32();
-    snprintf(socketmanager_gstate->iptables_v4_chain.name,
-             sizeof(socketmanager_gstate->iptables_v4_chain.name),
-             "WW_%08X_%08X_4",
-             process_id,
-             nonce);
-    snprintf(socketmanager_gstate->iptables_v6_chain.name,
-             sizeof(socketmanager_gstate->iptables_v6_chain.name),
-             "WW_%08X_%08X_6",
-             process_id,
-             nonce);
+    socketmanager_gstate->iptables_owner_lease_fd = -1;
 
     mutexInit(&socketmanager_gstate->mutex);
     initializeSocketManagerPools();
@@ -2869,15 +3188,16 @@ void socketmanagerDestroy(void)
 {
     assert(socketmanager_gstate != NULL);
 
-    if (socketmanager_gstate->iptables_used)
+    if (socketmanager_gstate->iptables_used || socketmanager_gstate->iptables_published)
     {
-        if (! cleanupOwnedIptablesChains(true))
+        if (! cleanupOwnedIptablesChainsWithReconcileLock(true))
         {
             const char msg[] = "SocketManager: failed to fully remove owned iptables nat rules\n";
             ssize_t    n     = write(STDOUT_FILENO, msg, sizeof(msg) - 1);
             discard n;
         }
     }
+    socketManagerIptablesReleaseLease(&socketmanager_gstate->iptables_owner_lease_fd);
 
     cleanupFilters();
     destroyBalanceGroups();
