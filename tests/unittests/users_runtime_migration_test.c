@@ -1,11 +1,6 @@
 #include "objects/users.h"
 #include "utils/json_helpers.h"
 
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
 
 #if defined(WCRYPTO_TEST_LINKER_WRAP)
 typedef enum crypto_failure_injection_e

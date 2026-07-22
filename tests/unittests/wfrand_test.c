@@ -1,10 +1,5 @@
 #include "global_state.h"
 
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 static void require(bool condition, const char *message)
 {

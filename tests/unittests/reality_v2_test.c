@@ -1,11 +1,6 @@
 #include "RealityCommon/reality_v2.h"
 #include "wcrypto.h"
 
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 #ifndef REALITY_TLS_CLIENT_HANDSHAKE_SOURCE
 #error "REALITY_TLS_CLIENT_HANDSHAKE_SOURCE must name the patched TlsClient handshake source"

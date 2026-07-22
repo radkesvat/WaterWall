@@ -1,10 +1,11 @@
 #pragma once
+#include "wlibc.h"
+
+
 #include "cJSON.h"
 #include "net/address_context.h"
 #include "objects/dynamic_value.h"
-#include "wlibc.h"
 
-#include <inttypes.h>
 
 /* Parse a base-10 unsigned 64-bit integer from a string, rejecting empty input,
  * a negative sign, and any trailing non-space characters. */

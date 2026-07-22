@@ -6,6 +6,10 @@
 
 #include "wexport.h"
 
+#if defined(OS_LINUX)
+#include <sys/un.h>
+#endif
+
 #include "watomic.h"
 #include "wendian.h"
 #include "werr.h"
@@ -13,6 +17,8 @@
 #include "whash.h"
 #include "wmath.h"
 #include "wtime.h"
+
+
 
 #include "ww_lwip.h"
 

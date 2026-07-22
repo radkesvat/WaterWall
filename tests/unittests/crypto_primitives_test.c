@@ -1,11 +1,7 @@
 #include "private/crypto_backends.h"
 #include "wcrypto.h"
 
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+
 
 enum
 {

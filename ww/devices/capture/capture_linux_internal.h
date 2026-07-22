@@ -3,8 +3,6 @@
 #include "shiftbuffer.h"
 #include "wlibc.h"
 
-#include <stddef.h>
-#include <stdint.h>
 
 enum
 {
