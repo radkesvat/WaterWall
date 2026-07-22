@@ -54,6 +54,16 @@ struct message_cookie_reply_s
 } ATTR_PACKED;
 typedef struct message_cookie_reply_s message_cookie_reply_t;
 
+typedef struct wireguard_pending_handshake_s
+{
+    bool     valid;
+    uint8_t  message_type;
+    uint16_t packet_len;
+    uint32_t sender;
+    uint8_t  mac1[WIREGUARD_COOKIE_LEN];
+    uint8_t  packet[sizeof(message_handshake_initiation_t)];
+} wireguard_pending_handshake_t;
+
 // 5.4.6 Subsequent Messages: Transport Data Messages
 struct message_transport_data_s
 {
@@ -180,9 +190,8 @@ struct wireguard_peer_s
     uint32_t cookie_millis;
     uint8_t  cookie[WIREGUARD_COOKIE_LEN];
 
-    // The latest mac1 we sent with initiation
-    bool    handshake_mac1_valid;
-    uint8_t handshake_mac1[WIREGUARD_COOKIE_LEN];
+    // The latest outbound initiation or response that may receive a cookie reply.
+    wireguard_pending_handshake_t pending_handshake;
 
     // Precomputed keys for use in mac validation
     uint8_t label_cookie_key[WIREGUARD_SESSION_KEY_LEN];

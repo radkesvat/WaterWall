@@ -235,6 +235,20 @@ wireguard_peer_t *peerLookupByHandshake(wireguard_device_t *device, uint32_t rec
     return result;
 }
 
+wireguard_peer_t *peerLookupByPendingHandshake(wireguard_device_t *device, uint32_t receiver)
+{
+    for (int x = 0; x < WIREGUARD_MAX_PEERS; ++x)
+    {
+        wireguard_peer_t *peer = &device->peers[x];
+        if (peer->valid && peer->pending_handshake.valid && peer->pending_handshake.sender == receiver)
+        {
+            return peer;
+        }
+    }
+
+    return NULL;
+}
+
 bool wireguardExpired(uint32_t created_millis, uint32_t valid_seconds)
 {
     uint32_t diff = getTickMS() - created_millis;
@@ -710,7 +724,7 @@ bool wireguardStartSession(wireguard_peer_t *peer, bool initiator)
             kWCryptoOk)
         {
             wCryptoZero(&new_keypair, sizeof(new_keypair));
-            wireguardHandshakeDestroy(handshake);
+            wireguardClearHandshakeState(peer);
             return false;
         }
     }
@@ -720,7 +734,7 @@ bool wireguardStartSession(wireguard_peer_t *peer, bool initiator)
             kWCryptoOk)
         {
             wCryptoZero(&new_keypair, sizeof(new_keypair));
-            wireguardHandshakeDestroy(handshake);
+            wireguardClearHandshakeState(peer);
             return false;
         }
     }
@@ -957,7 +971,7 @@ bool wireguardProcessHandshakeResponse(wireguard_device_t *device, wireguard_pee
 cleanup:
     if (! result)
     {
-        wireguardHandshakeDestroy(handshake);
+        wireguardClearHandshakeState(peer);
     }
     wCryptoZero(key, sizeof(key));
     wCryptoZero(hash, sizeof(hash));
@@ -973,37 +987,105 @@ cleanup:
 bool wireguardProcessCookieMessage(wireguard_device_t *device, wireguard_peer_t *peer, message_cookie_reply_t *src)
 {
     discard device;
-    uint8_t cookie[WIREGUARD_COOKIE_LEN];
-    bool    result = false;
+    wireguard_pending_handshake_t *pending = &peer->pending_handshake;
+    uint8_t                        cookie[WIREGUARD_COOKIE_LEN] = {0};
+    uint8_t                        mac2[WIREGUARD_COOKIE_LEN]   = {0};
+    bool                           result                       = false;
 
-    if (peer->handshake_mac1_valid)
+    if (! pending->valid || pending->sender != src->receiver ||
+        (pending->message_type != MESSAGE_HANDSHAKE_INITIATION &&
+         pending->message_type != MESSAGE_HANDSHAKE_RESPONSE) ||
+        (pending->packet_len != sizeof(message_handshake_initiation_t) &&
+         pending->packet_len != sizeof(message_handshake_response_t)))
     {
-
-        result = wCryptoXChaCha20Poly1305Decrypt(cookie,
-                                                 sizeof(cookie),
-                                                 src->enc_cookie,
-                                                 sizeof(src->enc_cookie),
-                                                 peer->handshake_mac1,
-                                                 WIREGUARD_COOKIE_LEN,
-                                                 src->nonce,
-                                                 peer->label_cookie_key) == kWCryptoOk;
-
-        if (result)
-        {
-            // 5.4.7 Under Load: Cookie Reply Message
-            // Upon receiving this message, if it is valid, the only thing the recipient of this message should do is
-            // store the cookie along with the time at which it was received
-            memoryCopy(peer->cookie, cookie, WIREGUARD_COOKIE_LEN);
-            peer->cookie_millis        = getTickMS();
-            peer->handshake_mac1_valid = false;
-        }
+        goto cleanup;
     }
-    else
+
+    result = wCryptoXChaCha20Poly1305Decrypt(cookie,
+                                             sizeof(cookie),
+                                             src->enc_cookie,
+                                             sizeof(src->enc_cookie),
+                                             pending->mac1,
+                                             WIREGUARD_COOKIE_LEN,
+                                             src->nonce,
+                                             peer->label_cookie_key) == kWCryptoOk;
+
+    if (result)
     {
-        // We didn't send any initiation packet so we shouldn't be getting a cookie reply!
+        // 5.4.7 Under Load: authenticate the reply with the mac1 of the exact
+        // outbound packet. Do not publish either the cookie or updated packet
+        // until mac2 generation succeeds.
+        result = wireguardMac(mac2,
+                              pending->packet,
+                              pending->packet_len - WIREGUARD_COOKIE_LEN,
+                              cookie,
+                              WIREGUARD_COOKIE_LEN) == kWCryptoOk;
     }
+
+    if (result)
+    {
+        memoryCopy(pending->packet + pending->packet_len - WIREGUARD_COOKIE_LEN, mac2, WIREGUARD_COOKIE_LEN);
+        memoryCopy(peer->cookie, cookie, WIREGUARD_COOKIE_LEN);
+        peer->cookie_millis = getTickMS();
+    }
+
+cleanup:
     wCryptoZero(cookie, sizeof(cookie));
+    wCryptoZero(mac2, sizeof(mac2));
     return result;
+}
+
+bool wireguardStorePendingHandshake(wireguard_peer_t *peer, const void *packet, size_t packet_len)
+{
+    const uint8_t *bytes = packet;
+    uint8_t        type;
+    uint32_t       sender;
+
+    if (peer == NULL || packet == NULL || packet_len > UINT16_MAX)
+    {
+        return false;
+    }
+
+    type = wireguardGetMessageType(bytes, packet_len);
+    if ((type == MESSAGE_HANDSHAKE_INITIATION && packet_len != sizeof(message_handshake_initiation_t)) ||
+        (type == MESSAGE_HANDSHAKE_RESPONSE && packet_len != sizeof(message_handshake_response_t)) ||
+        (type != MESSAGE_HANDSHAKE_INITIATION && type != MESSAGE_HANDSHAKE_RESPONSE))
+    {
+        return false;
+    }
+
+    memoryCopy(&sender, bytes + offsetof(message_handshake_initiation_t, sender), sizeof(sender));
+    if (sender == 0)
+    {
+        return false;
+    }
+
+    wireguard_pending_handshake_t *pending = &peer->pending_handshake;
+    wCryptoZero(pending, sizeof(*pending));
+    pending->message_type = type;
+    pending->packet_len   = (uint16_t) packet_len;
+    pending->sender       = sender;
+    memoryCopy(pending->mac1, bytes + packet_len - (2U * WIREGUARD_COOKIE_LEN), WIREGUARD_COOKIE_LEN);
+    memoryCopy(pending->packet, bytes, packet_len);
+    pending->valid = true;
+    return true;
+}
+
+void wireguardClearPendingHandshake(wireguard_peer_t *peer)
+{
+    if (peer != NULL)
+    {
+        wCryptoZero(&peer->pending_handshake, sizeof(peer->pending_handshake));
+    }
+}
+
+void wireguardClearHandshakeState(wireguard_peer_t *peer)
+{
+    if (peer != NULL)
+    {
+        wireguardHandshakeDestroy(&peer->handshake);
+        wireguardClearPendingHandshake(peer);
+    }
 }
 
 bool wireguardCreateHandshakeInitiation(wireguard_device_t *device, wireguard_peer_t *peer,
@@ -1111,7 +1193,7 @@ cleanup:
     if (! result)
     {
         wCryptoZero(dst, sizeof(*dst));
-        wireguardHandshakeDestroy(handshake);
+        wireguardClearHandshakeState(peer);
     }
     wCryptoZero(timestamp, sizeof(timestamp));
     wCryptoZero(key, sizeof(key));
@@ -1197,7 +1279,7 @@ cleanup:
     if (! result)
     {
         wCryptoZero(dst, sizeof(*dst));
-        wireguardHandshakeDestroy(handshake);
+        wireguardClearHandshakeState(peer);
     }
     wCryptoZero(key, sizeof(key));
     wCryptoZero(dh_calculation, sizeof(dh_calculation));

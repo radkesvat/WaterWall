@@ -181,6 +181,13 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
                 keypair->last_rx = now;
                 peer->last_rx    = now;
 
+                if (peer->pending_handshake.valid &&
+                    peer->pending_handshake.message_type == MESSAGE_HANDSHAKE_RESPONSE &&
+                    peer->pending_handshake.sender == idx)
+                {
+                    wireguardClearPendingHandshake(peer);
+                }
+
                 // Might need to shuffle next key --> current keypair
                 keypairUpdate(peer, keypair);
                 keypair = getPeerKeypairForIdx(peer, idx);
@@ -256,6 +263,7 @@ static void wireguardifProcessResponseMessage(wireguard_device_t *device, wiregu
             LOGW("WireGuardDevice: failed to derive transport session keys");
             return;
         }
+        wireguardClearPendingHandshake(peer);
         // Set the IF-UP flag on ts
         device->status_connected = 1;
         wireguardifSendKeepalive(device, peer);
@@ -285,6 +293,13 @@ static void wireguardifSendHandshakeResponse(wireguard_device_t *device, wiregua
 
         if (buf)
         {
+            if (UNLIKELY(! wireguardStorePendingHandshake(peer, &packet, sizeof(packet))))
+            {
+                bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+                LOGW("WireGuardDevice: failed to retain outbound handshake response");
+                return;
+            }
+
             sbufSetLength(buf, sizeof(message_handshake_response_t));
 
             sbufWrite(buf, &packet, sizeof(message_handshake_response_t));
@@ -443,7 +458,7 @@ static void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip
 
     case MESSAGE_COOKIE_REPLY:
         msg_cookie = (message_cookie_reply_t *) data;
-        peer       = peerLookupByHandshake(device, msg_cookie->receiver);
+        peer       = peerLookupByPendingHandshake(device, msg_cookie->receiver);
         if (peer)
         {
             if (wireguardProcessCookieMessage(device, peer, msg_cookie))
@@ -451,12 +466,20 @@ static void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip
                 // Update the peer location
                 updatePeerAddr(peer, addr, port);
 
-                // Retry promptly with the learned cookie so early inner packets
-                // do not get dropped while we wait for the periodic loop.
-                if (wireguardifStartHandshake(device, peer, true) != ERR_OK)
+                // Retry the exact initiation or response authenticated by this
+                // cookie. A response cannot be replaced with a new initiation.
+                uint8_t retry_type = peer->pending_handshake.message_type;
+                if (wireguardifRetryHandshake(device, peer) != ERR_OK)
                 {
-                    peer->send_handshake     = true;
-                    peer->last_initiation_tx = 0;
+                    if (retry_type == MESSAGE_HANDSHAKE_INITIATION)
+                    {
+                        peer->send_handshake     = true;
+                        peer->last_initiation_tx = 0;
+                    }
+                    else
+                    {
+                        LOGW("WireGuardDevice: failed to retransmit cookie-protected handshake response");
+                    }
                 }
             }
         }

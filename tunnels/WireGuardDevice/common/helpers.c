@@ -601,6 +601,7 @@ err_t wireguardifDisconnect(wireguard_device_t *device, uint8_t peer_index)
         keypairDestroy(&peer->next_keypair);
         keypairDestroy(&peer->curr_keypair);
         keypairDestroy(&peer->prev_keypair);
+        wireguardClearHandshakeState(peer);
         result = ERR_OK;
     }
     return result;

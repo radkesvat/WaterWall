@@ -109,6 +109,7 @@ err_t wireguardifPeerIsUp(wireguard_device_t *device, uint8_t peer_index, ip_add
                           uint16_t *current_port);
 
 err_t wireguardifStartHandshake(wireguard_device_t *device, wireguard_peer_t *peer, bool force);
+err_t wireguardifRetryHandshake(wireguard_device_t *device, wireguard_peer_t *peer);
 err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_peer_t *peer);
 err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, uint16_t port);
 void  wireguardifSendKeepalive(wireguard_device_t *device, wireguard_peer_t *peer);
@@ -128,6 +129,7 @@ wireguard_peer_t *peerLookupByPubkey(wireguard_device_t *device, uint8_t *public
 wireguard_peer_t *peerLookupByPeerIndex(wireguard_device_t *device, uint8_t peer_index);
 wireguard_peer_t *peerLookupByReceiver(wireguard_device_t *device, uint32_t receiver);
 wireguard_peer_t *peerLookupByHandshake(wireguard_device_t *device, uint32_t receiver);
+wireguard_peer_t *peerLookupByPendingHandshake(wireguard_device_t *device, uint32_t receiver);
 
 WCRYPTO_MUST_USE bool wireguardStartSession(wireguard_peer_t *peer, bool initiator);
 void                  keypairUpdate(wireguard_peer_t *peer, wireguard_keypair_t *received_keypair);
@@ -141,6 +143,9 @@ wireguard_peer_t *wireguardProcessInitiationMessage(wireguard_device_t *device, 
 bool              wireguardProcessHandshakeResponse(wireguard_device_t *device, wireguard_peer_t *peer,
                                                     message_handshake_response_t *src);
 bool wireguardProcessCookieMessage(wireguard_device_t *device, wireguard_peer_t *peer, message_cookie_reply_t *src);
+bool wireguardStorePendingHandshake(wireguard_peer_t *peer, const void *packet, size_t packet_len);
+void wireguardClearPendingHandshake(wireguard_peer_t *peer);
+void wireguardClearHandshakeState(wireguard_peer_t *peer);
 
 bool wireguardCreateHandshakeInitiation(wireguard_device_t *device, wireguard_peer_t *peer,
                                         message_handshake_initiation_t *dst);

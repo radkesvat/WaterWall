@@ -48,12 +48,48 @@ err_t wireguardifStartHandshake(wireguard_device_t *device, wireguard_peer_t *pe
     buf = wireguarddeviceCreateiateHandshake(device, peer, &msg, &result);
     if (buf)
     {
+        if (UNLIKELY(! wireguardStorePendingHandshake(peer, &msg, sizeof(msg))))
+        {
+            bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+            return ERR_ARG;
+        }
+
         peer->send_handshake     = false;
         peer->last_initiation_tx = getTickMS();
-        memoryCopy(peer->handshake_mac1, msg.mac1, WIREGUARD_COOKIE_LEN);
-        peer->handshake_mac1_valid = true;
-        result                     = wireguardifPeerOutput(device, buf, peer);
+        result                    = wireguardifPeerOutput(device, buf, peer);
     }
+    return result;
+}
+
+err_t wireguardifRetryHandshake(wireguard_device_t *device, wireguard_peer_t *peer)
+{
+    wireguard_pending_handshake_t pending;
+    sbuf_t                       *buf;
+    err_t                         result;
+
+    if (peer == NULL || ! peer->pending_handshake.valid)
+    {
+        return ERR_ARG;
+    }
+
+    pending = peer->pending_handshake;
+    if (wireguardGetMessageType(pending.packet, pending.packet_len) != pending.message_type ||
+        pending.sender == 0 ||
+        (pending.message_type != MESSAGE_HANDSHAKE_INITIATION &&
+         pending.message_type != MESSAGE_HANDSHAKE_RESPONSE))
+    {
+        return ERR_ARG;
+    }
+
+    buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(getWID()));
+    if (buf == NULL)
+    {
+        return ERR_MEM;
+    }
+
+    sbufWrite(buf, pending.packet, pending.packet_len);
+    sbufSetLength(buf, pending.packet_len);
+    result = wireguardifPeerOutput(device, buf, peer);
     return result;
 }
 
@@ -143,7 +179,7 @@ void wireguarddeviceLoop(wireguard_device_t *device)
                 keypairDestroy(&peer->next_keypair);
                 keypairDestroy(&peer->curr_keypair);
                 keypairDestroy(&peer->prev_keypair);
-                // TODO: Also destroy handshake?
+                wireguardClearHandshakeState(peer);
 
                 // Revert back to default IP/port if these were altered
                 peer->ip   = peer->connect_ip;
