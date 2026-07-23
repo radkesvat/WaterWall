@@ -16,6 +16,9 @@ These tests exercise small library-level behavior without launching the `Waterwa
 - `waterwall.select_fd_range_unit`
   Verifies the POSIX select backend rejects descriptors outside `fd_set` bounds while accepting the highest valid
   descriptor.
+- `waterwall.select_registration_failure_unit`
+  Verifies select registration failures close owned reads, listeners, and connections, roll back connection state, and
+  release borrowed event wrappers without closing their descriptors.
 - `waterwall.tcp_over_udp_fec_unit`
   Verifies the TCP-over-UDP Reed-Solomon FEC helper directly, including one missing data shard recovery, encoder reset
   after a failed parity emit callback, and malformed packet rejection.

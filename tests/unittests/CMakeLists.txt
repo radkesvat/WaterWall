@@ -249,6 +249,28 @@ if(TARGET ww)
       "unit;event;select;bounds"
     )
 
+    add_executable(select_registration_failure_test
+      select_registration_failure_test.c
+      ${CMAKE_SOURCE_DIR}/ww/event/wloop.c
+      ${CMAKE_SOURCE_DIR}/ww/event/nio.c
+      ${CMAKE_SOURCE_DIR}/ww/event/select.c
+    )
+    target_compile_definitions(select_registration_failure_test PRIVATE EVENT_SELECT=1)
+    set_property(
+      TARGET select_registration_failure_test
+      PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE
+    )
+    target_compile_options(select_registration_failure_test PRIVATE "-fno-lto")
+    target_link_options(select_registration_failure_test PRIVATE "-Wl,--wrap=connect")
+    target_link_libraries(select_registration_failure_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests select_registration_failure_test)
+
+    add_waterwall_unit_test(
+      waterwall.select_registration_failure_unit
+      select_registration_failure_test
+      "unit;event;select;registration;lifetime"
+    )
+
     add_executable(os_helpers_bbr_test
       os_helpers_bbr_test.c
       ${CMAKE_SOURCE_DIR}/core/os_helpers.c
