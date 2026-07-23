@@ -20,7 +20,7 @@ void authenticationserverTunnelDestroy(tunnel_t *t)
     memoryFree(ts->backup_path);
     memoryFree(ts->normal_backups_path);
 
-    recursivemutexDestroy(&ts->database_mutex);
+    rwlockDestroy(&ts->state_lock);
 
     tunnelDestroy(t);
 }

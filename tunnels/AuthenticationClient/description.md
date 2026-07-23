@@ -444,3 +444,13 @@ previous data producer. They only update whether new protocol requests may be se
 
 `AuthenticationClient` is not a packet tunnel. It does not use packet lines and does not call `lineDestroy()` on any line
 except the normal control line that it created itself.
+
+## User Database Performance
+
+- Plaintext-password lookups derive SHA-256 once and resolve through the SHA-256
+  hash index with no fallback scan, so hits and misses are average O(1). The
+  candidate is then confirmed with an exact plaintext comparison, so a
+  hypothetical SHA-256 collision fails closed.
+- The local sync baseline is duplicated with the native `usersCopy()` deep copy
+  rather than a JSON round trip. Only the received `GetAllUsers` network response
+  still requires one JSON parse into the active table.

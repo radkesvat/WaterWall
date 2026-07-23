@@ -707,7 +707,7 @@ static bool authenticationserverRewritePrimaryFromMemory(authenticationserver_ts
     return ok;
 }
 
-static bool authenticationserverSaveDatabaseUnlocked(authenticationserver_tstate_t *ts)
+bool authenticationserverSaveDatabaseLocked(authenticationserver_tstate_t *ts)
 {
     char  *json_text = NULL;
     size_t json_len  = 0;
@@ -751,12 +751,12 @@ bool authenticationserverSaveDatabase(authenticationserver_tstate_t *ts)
 {
     /*
      * Runtime modules can temporarily mutate users_t and then roll back on file
-     * failure. The database mutex keeps periodic/final saves from persisting
+     * failure. The state write lock keeps periodic/final saves from persisting
      * those in-flight states or interleaving writes to db-path and backup.
      */
-    recursivemutexLock(&ts->database_mutex);
-    bool ok = authenticationserverSaveDatabaseUnlocked(ts);
-    recursivemutexUnlock(&ts->database_mutex);
+    rwlockWriteLock(&ts->state_lock);
+    bool ok = authenticationserverSaveDatabaseLocked(ts);
+    rwlockWriteUnlock(&ts->state_lock);
     return ok;
 }
 

@@ -109,24 +109,20 @@ static users_t *authenticationclientCreateUsersCopy(const users_t *src)
         return NULL;
     }
 
-    cJSON *json = usersToJson(src);
-    if (UNLIKELY(json == NULL))
-    {
-        return NULL;
-    }
-
     /* users_t snapshots are aligned-allocated; always release them with authenticationclientDestroyUsers(). */
     users_t *copy = memoryAllocateAligned(sizeof(*copy), 32);
     if (UNLIKELY(copy == NULL || ! usersCreate(copy)))
     {
-        cJSON_Delete(json);
         memoryFreeAligned(copy);
         return NULL;
     }
 
-    bool ok = usersFeedJson(copy, json) && usersValidate(copy);
-    cJSON_Delete(json);
-    if (UNLIKELY(! ok))
+    /*
+     * Native O(N) deep copy of the local sync baseline. Only the received
+     * network response still needs a JSON parse into the active table; the local
+     * baseline no longer round-trips through JSON.
+     */
+    if (UNLIKELY(! usersCopy(copy, src)))
     {
         authenticationclientDestroyUsers(copy);
         return NULL;

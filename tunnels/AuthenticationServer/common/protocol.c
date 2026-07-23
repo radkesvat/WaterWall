@@ -360,6 +360,50 @@ static bool authenticationserverRequestMutatesStore(uint8_t request_type)
     }
 }
 
+static bool authenticationserverRequestCanUseSharedStateLock(uint8_t request_type)
+{
+    switch (request_type)
+    {
+    case kAuthenticationServerRequestTypePing:
+    case kAuthenticationServerRequestTypeGetUserBySHA256Hex:
+    case kAuthenticationServerRequestTypeGetUserBySHA256Base64:
+    case kAuthenticationServerRequestTypeGetUserBySHA256:
+    case kAuthenticationServerRequestTypeGetUserBySHA224Hex:
+    case kAuthenticationServerRequestTypeGetUserBySHA224Base64:
+    case kAuthenticationServerRequestTypeGetUserBySHA224:
+    case kAuthenticationServerRequestTypeGetUserByPassword:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool authenticationserverMessageRequiresWriteLock(sbuf_t *payload)
+{
+    const uint8_t *ptr       = sbufGetRawPtr(payload);
+    uint32_t       remaining = sbufGetLength(payload);
+    uint32_t       offset    = 0;
+
+    while (remaining > 0)
+    {
+        const uint8_t *frame            = ptr + offset;
+        const uint8_t  request_type     = frame[0];
+        const uint8_t *length_ptr       = frame + 1 + kAuthenticationServerCorrelationIdSize;
+        const uint32_t request_data_len = authenticationserverReadNetworkUI32(length_ptr);
+        const uint32_t consumed         = kAuthenticationServerRequestHeaderSize + request_data_len;
+
+        if (! authenticationserverRequestCanUseSharedStateLock(request_type))
+        {
+            return true;
+        }
+
+        offset += consumed;
+        remaining -= consumed;
+    }
+
+    return false;
+}
+
 static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *l,
                                                            const uint8_t token[kAuthenticationServerSessionTokenSize],
                                                            sbuf_t *payload, sbuf_t **response_out)
@@ -472,12 +516,27 @@ static bool authenticationserverBuildResponseMessage(tunnel_t *t, line_t *l,
     authenticationserver_tstate_t *ts     = tunnelGetState(t);
     bool                           result = false;
 
-    recursivemutexLock(&ts->database_mutex);
     if (LIKELY(authenticationserverValidateRequestPayload(payload)))
     {
+        const bool write_lock = authenticationserverMessageRequiresWriteLock(payload);
+        if (write_lock)
+        {
+            rwlockWriteLock(&ts->state_lock);
+        }
+        else
+        {
+            rwlockReadLock(&ts->state_lock);
+        }
         result = authenticationserverBuildResponseMessageLocked(t, l, token, payload, response_out);
+        if (write_lock)
+        {
+            rwlockWriteUnlock(&ts->state_lock);
+        }
+        else
+        {
+            rwlockReadUnlock(&ts->state_lock);
+        }
     }
-    recursivemutexUnlock(&ts->database_mutex);
     return result;
 }
 

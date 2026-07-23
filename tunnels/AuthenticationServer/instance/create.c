@@ -287,14 +287,14 @@ tunnel_t *authenticationserverTunnelCreate(node_t *node)
     authenticationserverInitializeCallbacks(t);
 
     authenticationserver_tstate_t *ts = tunnelGetState(t);
-    recursivemutexInit(&ts->database_mutex);
+    rwlockinit(&ts->state_lock);
     ts->store.config_revision = 1U;
     ts->store.stats_revision  = 1U;
 
     if (UNLIKELY(! usersCreate(&ts->store.users)))
     {
         LOGE("AuthenticationServer: failed to create in-memory users database");
-        recursivemutexDestroy(&ts->database_mutex);
+        rwlockDestroy(&ts->state_lock);
         tunnelDestroy(t);
         return NULL;
     }

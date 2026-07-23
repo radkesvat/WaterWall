@@ -32,8 +32,6 @@ static const char *authenticationserverUsersAddResultError(users_add_result_t re
         return "user-wireguard-allowed-ips-overlap";
     case kUsersAddResultAllocationFailed:
         return "allocation-failed";
-    case kUsersAddResultCommitFailed:
-        return "user-add-failed";
     }
 
     return "user-add-failed";
@@ -90,7 +88,6 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
     }
 
     memoryCopy(added_sha256, user.sha256_pass.bytes, SHA256_DIGEST_SIZE);
-    recursivemutexLock(&ts->database_mutex);
     users_add_result_t add_result = usersAddUserChecked(&ts->store.users, &user);
     userDestroy(&user);
 
@@ -98,22 +95,19 @@ sbuf_t *authenticationserverAddNewUserHandle(const uint8_t correlation_id[kAuthe
     {
         const char *error = authenticationserverUsersAddResultError(add_result);
         LOGW("AuthenticationServer: AddNewUser rejected user JSON: %s", error);
-        recursivemutexUnlock(&ts->database_mutex);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, error);
     }
 
-    if (UNLIKELY(! authenticationserverSaveDatabase(ts)))
+    if (UNLIKELY(! authenticationserverSaveDatabaseLocked(ts)))
     {
         LOGW("AuthenticationServer: AddNewUser failed to save database after adding user; rolling back in-memory add");
         if (UNLIKELY(! usersRemoveUserBySHA256(&ts->store.users, added_sha256)))
         {
             LOGW("AuthenticationServer: AddNewUser could not roll back the in-memory user after save failure");
         }
-        recursivemutexUnlock(&ts->database_mutex);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "database-save-failed");
     }
     authenticationserverBumpConfigRevision(t);
-    recursivemutexUnlock(&ts->database_mutex);
 
     static const char ok[] = "user-added";
     LOGI("AuthenticationServer: AddNewUser added a new user and saved the database");

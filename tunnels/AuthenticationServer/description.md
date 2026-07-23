@@ -364,9 +364,10 @@ together with two server metadata revision counters:
   accepted traffic delta, or the server stamping `first-usage-at-ms` for the first observed usage.
 
 `ts->store.users` is authoritative because it is the only table loaded from disk, periodically saved to disk, and used
-as the merge target for client updates. All mutations that read or write this table run while holding the server
-database mutex. This keeps the source of truth on the server, even when many `AuthenticationClient` sessions are active
-and reporting usage at the same time.
+as the merge target for client updates. Requests run under the server state rwlock: independent point reads can share
+the read side, while authentication, baseline replacement, database saves, stats merges, and user mutations take the
+write side. This keeps the source of truth on the server, even when many `AuthenticationClient` sessions are active and
+reporting usage at the same time.
 
 ### AuthenticationClient Handling
 
@@ -436,10 +437,10 @@ Every request message with a valid envelope token refreshes the session's last a
 dispatched. This includes lightweight requests such as `ping`, permission-denied requests, and mixed request batches.
 A request with no valid session token does not refresh any session.
 
-Worker `0` runs a forever timer every 60000 ms to expire idle sessions. The timer locks the same server database mutex
-used by request dispatch, destroys each expired session's baseline table and token, and compacts `ts->sessions`.
-Because dispatch and expiry use the same mutex, a session cannot be destroyed while another worker is using that
-session pointer for an authenticated request.
+Worker `0` runs a forever timer every 60000 ms to expire idle sessions. The timer takes the state write lock, destroys
+each expired session's baseline table and token, and compacts `ts->sessions`. Request dispatch holds either the state
+read or write lock while it uses a session pointer, so expiry cannot destroy a session while another worker is using it.
+The last-activity timestamp itself is atomic so concurrent point-read requests can refresh it under the shared lock.
 
 After a session expires, its token is invalid. `AuthenticationClient` must reauthenticate if a request receives
 `authentication-required`, if the connection is reset, if the server restarts, or if the token has been idle longer than
@@ -907,3 +908,23 @@ own line state first and then sends `tunnelPrevDownStreamFinish()`.
 - The current queued response limit is 16 MiB.
 - This node does not require left padding and does not prepend in-place.
 - This node is not a packet tunnel and does not use packet-line semantics.
+
+## User Database Performance
+
+- SHA-256 is the canonical plaintext-password lookup key. A password lookup
+  derives SHA-256 once and resolves through the SHA-256 hash index; there is no
+  fallback scan over the user table, so both hits and misses are average O(1).
+  The exact plaintext comparison after an index hit is the authoritative,
+  collision-safe check.
+- All keyed lookups (SHA-224, SHA-256, UUID, WireGuard public key, durable id,
+  non-empty name) are average O(1); WireGuard Allowed-IP address lookup and
+  range-overlap detection are O(log M) through an ordered interval index.
+- Session baseline snapshots (`GetAllUsers`, `Authenticate`) use the native
+  `usersCopy()` deep copy instead of a JSON round trip. `GetAllUsers` serializes
+  the store exactly once, for the network response, and reuses the same table
+  for the session baseline via the native copy.
+- Pure point-read request messages (`Ping`, `GetUserBySHA-224/256`, and
+  `GetUserByPassword`) share the server state read lock and may execute
+  concurrently. Any message containing authentication, `GetAllUsers`, a user
+  mutation, a stats mutation, or an unknown/mixed non-point-read request takes
+  the state write lock for the full dispatch.

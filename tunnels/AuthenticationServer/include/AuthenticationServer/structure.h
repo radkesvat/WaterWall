@@ -29,16 +29,16 @@ typedef enum authenticationserver_normal_backups_mode_e
 
 typedef struct authenticationserver_session_s
 {
-    uint8_t  token[64];
-    char    *client_name;
-    users_t  baseline_users;
-    bool     allow_stats_push;
-    bool     allow_user_pull;
-    bool     allow_user_write;
-    uint64_t baseline_config_revision;
-    uint64_t baseline_stats_revision;
-    uint32_t last_activity_ms;
-    uint32_t session_idle_timeout_ms;
+    uint8_t     token[64];
+    char       *client_name;
+    users_t     baseline_users;
+    bool        allow_stats_push;
+    bool        allow_user_pull;
+    bool        allow_user_write;
+    uint64_t    baseline_config_revision;
+    uint64_t    baseline_stats_revision;
+    atomic_uint last_activity_ms;
+    uint32_t    session_idle_timeout_ms;
 } authenticationserver_session_t;
 
 typedef struct authenticationserver_tstate_s
@@ -51,7 +51,7 @@ typedef struct authenticationserver_tstate_s
     authenticationserver_session_t           **sessions;
     wtimer_t                                  *save_timer;
     wtimer_t                                  *session_expiry_timer;
-    wrecursive_mutex_t                         database_mutex;
+    wrwlock_t                                  state_lock;
     uint32_t                                   auth_clients_count;
     uint32_t                                   sessions_count;
     uint32_t                                   sessions_capacity;
@@ -152,6 +152,7 @@ void authenticationserverLinestateInitialize(authenticationserver_lstate_t *ls, 
 void authenticationserverLinestateDestroy(authenticationserver_lstate_t *ls);
 
 bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts);
+bool authenticationserverSaveDatabaseLocked(authenticationserver_tstate_t *ts);
 bool authenticationserverSaveDatabase(authenticationserver_tstate_t *ts);
 void authenticationserverSaveTimerCallback(wtimer_t *timer);
 void authenticationserverSessionExpiryTimerCallback(wtimer_t *timer);

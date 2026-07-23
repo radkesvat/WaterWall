@@ -4,7 +4,7 @@ void authenticationserverGetRevisions(tunnel_t *t, uint64_t *config_revision, ui
 {
     authenticationserver_tstate_t *ts = tunnelGetState(t);
 
-    recursivemutexLock(&ts->database_mutex);
+    rwlockReadLock(&ts->state_lock);
     if (LIKELY(config_revision != NULL))
     {
         *config_revision = ts->store.config_revision;
@@ -13,7 +13,7 @@ void authenticationserverGetRevisions(tunnel_t *t, uint64_t *config_revision, ui
     {
         *stats_revision = ts->store.stats_revision;
     }
-    recursivemutexUnlock(&ts->database_mutex);
+    rwlockReadUnlock(&ts->state_lock);
 }
 
 void authenticationserverBumpConfigRevision(tunnel_t *t)

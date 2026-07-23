@@ -44,17 +44,35 @@ static void authenticationserverSessionFree(authenticationserver_session_t *sess
     memoryFree(session);
 }
 
+static bool authenticationserverSessionCompareExchangeLastActivity(authenticationserver_session_t *session,
+                                                                   uint32_t *expected, uint32_t desired)
+{
+#if HAVE_STDATOMIC_H
+    unsigned int expected_value = (unsigned int) *expected;
+    const bool   exchanged      = atomic_compare_exchange_weak_explicit(&session->last_activity_ms,
+                                                                 &expected_value,
+                                                                 (unsigned int) desired,
+                                                                 memory_order_relaxed,
+                                                                 memory_order_relaxed);
+    *expected                   = (uint32_t) expected_value;
+    return exchanged;
+#else
+    intptr_t   expected_value = (intptr_t) *expected;
+    const bool exchanged      = atomic_compare_exchange_weak_explicit(
+        &session->last_activity_ms, &expected_value, (intptr_t) desired, memory_order_relaxed, memory_order_relaxed);
+    *expected = (uint32_t) expected_value;
+    return exchanged;
+#endif
+}
+
 bool authenticationserverCopyUsersTable(users_t *dest, const users_t *src)
 {
-    cJSON *json = usersToJson(src);
-    if (UNLIKELY(json == NULL))
-    {
-        return false;
-    }
-
-    bool ok = usersClear(dest) && usersFeedJson(dest, json);
-    cJSON_Delete(json);
-    return ok;
+    /*
+     * Native O(N) deep copy. This replaces the former usersToJson() ->
+     * usersClear() -> usersFeedJson() round trip: it no longer serializes the
+     * store to JSON just to duplicate it, and leaves dest unchanged on failure.
+     */
+    return usersCopy(dest, src);
 }
 
 bool authenticationserverSessionReplaceBaselineFromUsers(authenticationserver_session_t *session, const users_t *src,
@@ -219,7 +237,7 @@ authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, c
     session->allow_user_pull         = client->allow_user_pull;
     session->allow_user_write        = client->allow_user_write;
     session->session_idle_timeout_ms = client->session_idle_timeout_ms;
-    session->last_activity_ms        = getTickMS();
+    atomicStoreRelaxed(&session->last_activity_ms, getTickMS());
 
     if (UNLIKELY(! authenticationserverSessionReplaceBaselineFromUsers(
             session, &ts->store.users, ts->store.config_revision, ts->store.stats_revision)))
@@ -248,7 +266,15 @@ void authenticationserverSessionTouch(authenticationserver_session_t *session, u
 {
     if (LIKELY(session != NULL))
     {
-        session->last_activity_ms = now_ms;
+        uint32_t observed = (uint32_t) atomicLoadRelaxed(&session->last_activity_ms);
+
+        while ((int32_t) (now_ms - observed) > 0)
+        {
+            if (authenticationserverSessionCompareExchangeLastActivity(session, &observed, now_ms))
+            {
+                break;
+            }
+        }
     }
 }
 
@@ -302,14 +328,15 @@ static void authenticationserverSessionsRemoveClientLocked(authenticationserver_
 void authenticationserverSessionsExpireIdle(tunnel_t *t)
 {
     authenticationserver_tstate_t *ts            = tunnelGetState(t);
-    const uint32_t                 now_ms        = getTickMS();
     uint32_t                       expired_count = 0;
 
-    recursivemutexLock(&ts->database_mutex);
+    rwlockWriteLock(&ts->state_lock);
+    const uint32_t now_ms = getTickMS();
     for (uint32_t i = 0; i < ts->sessions_count;)
     {
-        authenticationserver_session_t *session = ts->sessions[i];
-        const uint32_t                  idle_ms = now_ms - session->last_activity_ms;
+        authenticationserver_session_t *session          = ts->sessions[i];
+        const uint32_t                  last_activity_ms = (uint32_t) atomicLoadRelaxed(&session->last_activity_ms);
+        const uint32_t                  idle_ms          = now_ms - last_activity_ms;
 
         if (LIKELY(idle_ms < session->session_idle_timeout_ms))
         {
@@ -323,7 +350,7 @@ void authenticationserverSessionsExpireIdle(tunnel_t *t)
         authenticationserverSessionRemoveAtLocked(ts, i);
         ++expired_count;
     }
-    recursivemutexUnlock(&ts->database_mutex);
+    rwlockWriteUnlock(&ts->state_lock);
 
     if (UNLIKELY(expired_count > 0))
     {
