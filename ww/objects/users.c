@@ -425,13 +425,13 @@ static bool usersPasswordProbeCreate(users_password_probe_t *probe, const char *
     const size_t password_len = stringLength(password);
     if (UNLIKELY(wCryptoSHA224(&probe->sha224_pass, (const unsigned char *) password, password_len) != kWCryptoOk))
     {
-        memoryZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
+        memorySecureZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
         return false;
     }
     if (UNLIKELY(wCryptoSHA256(&probe->sha256_pass, (const unsigned char *) password, password_len) != kWCryptoOk))
     {
-        memoryZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
-        memoryZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
+        memorySecureZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
+        memorySecureZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
         return false;
     }
     probe->sha224_pass_valid = true;
@@ -441,8 +441,8 @@ static bool usersPasswordProbeCreate(users_password_probe_t *probe, const char *
         if (UNLIKELY(wCryptoX25519(probe->wireguard_publickey, probe->sha256_pass.bytes, wireguard_basepoint) !=
                      kWCryptoOk))
         {
-            memoryZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
-            memoryZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
+            memorySecureZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
+            memorySecureZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
             memoryZero(probe->wireguard_publickey, sizeof(probe->wireguard_publickey));
             return false;
         }
@@ -463,9 +463,9 @@ static void usersPasswordProbeDestroy(users_password_probe_t *probe)
         return;
     }
 
-    memoryZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
-    memoryZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
-    memoryZero(probe->uuid_pass, sizeof(probe->uuid_pass));
+    memorySecureZero(&probe->sha224_pass, sizeof(probe->sha224_pass));
+    memorySecureZero(&probe->sha256_pass, sizeof(probe->sha256_pass));
+    memorySecureZero(probe->uuid_pass, sizeof(probe->uuid_pass));
     memoryZero(probe->wireguard_publickey, sizeof(probe->wireguard_publickey));
     memoryZero(probe, sizeof(*probe));
 }
