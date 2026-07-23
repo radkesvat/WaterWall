@@ -8,6 +8,7 @@ option(
 )
 
 add_subdirectory(unittests)
+add_subdirectory(benchmarks)
 
 function(add_waterwall_integration_test_with_timeout test_name case_name timeout_seconds)
   set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")

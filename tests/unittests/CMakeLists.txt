@@ -158,6 +158,40 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.users_runtime_migration_unit users_runtime_migration_test "unit;objects;users")
 
+  # Focused lookup-index correctness/instrumentation test. user.c and users.c are
+  # compiled directly into the executable so the test-only password-lookup visit
+  # counter (proving the fallback scan is gone) is available; the archive copies
+  # in libww are left untouched by this compile definition.
+  add_executable(users_index_test
+    users_index_test.c
+    ${CMAKE_SOURCE_DIR}/ww/objects/user.c
+    ${CMAKE_SOURCE_DIR}/ww/objects/users.c
+  )
+  target_link_libraries(users_index_test PRIVATE ww)
+  target_compile_definitions(users_index_test PRIVATE USERS_TEST_PASSWORD_LOOKUP_VISIT_COUNTER=1)
+  if(LINUX)
+    set_property(TARGET users_index_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+    target_compile_options(users_index_test PRIVATE "-fno-lto")
+    target_compile_definitions(users_index_test PRIVATE WCRYPTO_TEST_LINKER_WRAP=1)
+    # Deterministic allocation-fault injection so the transactional password-change,
+    # removal, add, and Allowed-IP-update paths can be swept for failure atomicity.
+    target_compile_definitions(users_index_test PRIVATE USERS_TEST_ALLOC_INJECTION=1)
+    target_link_options(users_index_test PRIVATE
+      "-Wl,-u,wCryptoSHA224"
+      "-Wl,-u,wCryptoSHA256"
+      "-Wl,-u,wCryptoX25519"
+      "-Wl,--wrap=wCryptoSHA224"
+      "-Wl,--wrap=wCryptoSHA256"
+      "-Wl,--wrap=wCryptoX25519"
+      "-Wl,--wrap=memoryAllocate"
+      "-Wl,--wrap=memoryReAllocate"
+      "-Wl,--wrap=memoryCalloc"
+    )
+  endif()
+  add_dependencies(waterwall_unit_tests users_index_test)
+
+  add_waterwall_unit_test(waterwall.users_index_unit users_index_test "unit;objects;users")
+
   add_executable(socket_manager_rules_test socket_manager_rules_test.c)
   target_link_libraries(socket_manager_rules_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests socket_manager_rules_test)
