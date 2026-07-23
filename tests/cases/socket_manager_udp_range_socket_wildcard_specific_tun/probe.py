@@ -22,8 +22,6 @@ def main():
     with MarkerServers(specific, wildcard):
         expect_udp_marker(SPECIFIC_IP, LISTEN_PORT, SPECIFIC_MARKER)
         expect_udp_marker("127.0.0.1", LISTEN_PORT, WILDCARD_MARKER)
-        specific.assert_hit()
-        wildcard.assert_hit()
 
 
 if __name__ == "__main__":

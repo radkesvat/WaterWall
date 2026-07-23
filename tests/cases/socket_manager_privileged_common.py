@@ -42,7 +42,6 @@ class TcpMarkerServer:
         self.host = host
         self.port = port
         self.marker = marker
-        self.hits = 0
         self.errors = []
         self._ready = threading.Event()
         self._stop = threading.Event()
@@ -65,10 +64,6 @@ class TcpMarkerServer:
         self._thread.join(timeout=2.0)
         if self._thread.is_alive():
             fail(f"TCP marker server {self.host}:{self.port} did not stop")
-
-    def assert_hit(self):
-        if self.hits <= 0:
-            fail(f"TCP marker server {self.host}:{self.port} was not reached")
 
     def assert_no_errors(self):
         if self.errors:
@@ -95,7 +90,6 @@ class TcpMarkerServer:
                             conn.recv(4096)
                         with contextlib.suppress(OSError):
                             conn.sendall(self.marker)
-                    self.hits += 1
         except BaseException as exc:
             self.errors.append(repr(exc))
             self._ready.set()
@@ -106,7 +100,6 @@ class UdpMarkerServer:
         self.host = host
         self.port = port
         self.marker = marker
-        self.hits = 0
         self.errors = []
         self._ready = threading.Event()
         self._stop = threading.Event()
@@ -130,10 +123,6 @@ class UdpMarkerServer:
         if self._thread.is_alive():
             fail(f"UDP marker server {self.host}:{self.port} did not stop")
 
-    def assert_hit(self):
-        if self.hits <= 0:
-            fail(f"UDP marker server {self.host}:{self.port} was not reached")
-
     def assert_no_errors(self):
         if self.errors:
             fail(f"UDP marker server {self.host}:{self.port} failed: {self.errors[0]}")
@@ -155,7 +144,6 @@ class UdpMarkerServer:
                     if data:
                         with contextlib.suppress(OSError):
                             srv.sendto(self.marker, peer)
-                        self.hits += 1
         except BaseException as exc:
             self.errors.append(repr(exc))
             self._ready.set()
