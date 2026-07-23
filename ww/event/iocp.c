@@ -11,11 +11,19 @@ typedef struct iocp_ctx_s {
     HANDLE      iocp;
 } iocp_ctx_t;
 
-int iowatcherInit(wloop_t* loop) {
-    if (loop->iowatcher)    return 0;
-    iocp_ctx_t* iocp_ctx;
+int iowatcherInit(wloop_t *loop)
+{
+    if (loop->iowatcher)
+        return 0;
+    iocp_ctx_t *iocp_ctx;
     EVENTLOOP_ALLOC_SIZEOF(iocp_ctx);
     iocp_ctx->iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+    if (iocp_ctx->iocp == NULL)
+    {
+        int init_error = (int) GetLastError();
+        EVENTLOOP_FREE(iocp_ctx);
+        return -init_error;
+    }
     loop->iowatcher = iocp_ctx;
     return 0;
 }
@@ -28,14 +36,24 @@ int iowatcherCleanUp(wloop_t* loop) {
     return 0;
 }
 
-int iowatcherAddEvent(wloop_t* loop, int fd, int events) {
-    if (loop->iowatcher == NULL) {
-        iowatcherInit(loop);
+int iowatcherAddEvent(wloop_t *loop, int fd, int events)
+{
+    if (loop->iowatcher == NULL)
+    {
+        int init_error = iowatcherInit(loop);
+        if (UNLIKELY(init_error != 0))
+        {
+            return init_error;
+        }
     }
-    iocp_ctx_t* iocp_ctx = (iocp_ctx_t*)loop->iowatcher;
-    wio_t* io = loop->ios.ptr[fd];
-    if (io && io->events == 0 && events != 0) {
-        CreateIoCompletionPort((HANDLE)fd, iocp_ctx->iocp, 0, 0);
+    iocp_ctx_t *iocp_ctx = (iocp_ctx_t *) loop->iowatcher;
+    wio_t      *io       = loop->ios.ptr[fd];
+    if (io && io->events == 0 && events != 0)
+    {
+        if (CreateIoCompletionPort((HANDLE) fd, iocp_ctx->iocp, 0, 0) == NULL)
+        {
+            return -(int) GetLastError();
+        }
     }
     return 0;
 }

@@ -7,37 +7,79 @@
 
 #define ACCEPTEX_NUM    10
 
-int post_acceptex(wio_t* listenio, woverlapped_t* hovlp) {
-    LPFN_ACCEPTEX AcceptEx = NULL;
-    GUID guidAcceptEx = WSAID_ACCEPTEX;
-    DWORD dwbytes = 0;
-    if (WSAIoctl(listenio->fd, SIO_GET_EXTENSION_FUNCTION_POINTER,
-        &guidAcceptEx, sizeof(guidAcceptEx),
-        &AcceptEx, sizeof(AcceptEx),
-        &dwbytes, NULL, NULL) != 0) {
-        return WSAGetLastError();
+static void free_buffered_overlapped(wio_t *io, woverlapped_t *hovlp)
+{
+    if (hovlp == NULL)
+    {
+        return;
     }
-    int connfd = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
-    if (connfd < 0) {
-        return WSAGetLastError();
+    if (io != NULL && io->hovlp == hovlp)
+    {
+        io->hovlp = NULL;
     }
-    if (hovlp == NULL) {
+    EVENTLOOP_FREE(hovlp->addr);
+    EVENTLOOP_FREE(hovlp->buf.buf);
+    EVENTLOOP_FREE(hovlp);
+}
+
+int post_acceptex(wio_t *listenio, woverlapped_t *hovlp)
+{
+    LPFN_ACCEPTEX AcceptEx     = NULL;
+    GUID          guidAcceptEx = WSAID_ACCEPTEX;
+    DWORD         dwbytes      = 0;
+    int           accept_error;
+    int           connfd = -1;
+    if (WSAIoctl(listenio->fd,
+                 SIO_GET_EXTENSION_FUNCTION_POINTER,
+                 &guidAcceptEx,
+                 sizeof(guidAcceptEx),
+                 &AcceptEx,
+                 sizeof(AcceptEx),
+                 &dwbytes,
+                 NULL,
+                 NULL) != 0)
+    {
+        accept_error = WSAGetLastError();
+        goto error;
+    }
+    connfd = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+    if (connfd < 0)
+    {
+        accept_error = WSAGetLastError();
+        goto error;
+    }
+    if (hovlp == NULL)
+    {
         EVENTLOOP_ALLOC_SIZEOF(hovlp);
         hovlp->buf.len = 20 + sizeof(struct sockaddr_in6) * 2;
         EVENTLOOP_ALLOC(hovlp->buf.buf, hovlp->buf.len);
     }
-    hovlp->fd = connfd;
+    memoryZero(&hovlp->ovlp, sizeof(hovlp->ovlp));
+    hovlp->fd    = connfd;
     hovlp->event = WW_READ;
-    hovlp->io = listenio;
-    if (AcceptEx(listenio->fd, connfd, hovlp->buf.buf, 0, sizeof(struct sockaddr_in6), sizeof(struct sockaddr_in6),
-        &dwbytes, &hovlp->ovlp) != TRUE) {
+    hovlp->io    = listenio;
+    if (AcceptEx(listenio->fd,
+                 connfd,
+                 hovlp->buf.buf,
+                 0,
+                 sizeof(struct sockaddr_in6),
+                 sizeof(struct sockaddr_in6),
+                 &dwbytes,
+                 &hovlp->ovlp) != TRUE)
+    {
         int err = WSAGetLastError();
-        if (err != ERROR_IO_PENDING) {
+        if (err != ERROR_IO_PENDING)
+        {
             printError("AcceptEx error: %d\n", err);
-            return err;
+            accept_error = err;
+            goto error;
         }
     }
     return 0;
+error:
+    SAFE_CLOSESOCKET(connfd);
+    free_buffered_overlapped(listenio, hovlp);
+    return accept_error;
 }
 
 int post_recv(wio_t* io, woverlapped_t* hovlp) {
@@ -279,55 +321,110 @@ static void wio_handle_events(wio_t* io) {
     io->revents = 0;
 }
 
-int wioAccept (wio_t* io) {
-    for (int i = 0; i < ACCEPTEX_NUM; ++i) {
-        post_acceptex(io, NULL);
-    }
+int wioAccept(wio_t *io)
+{
+    int add_error;
+    int posted_count = 0;
+    int accept_error = 0;
+
     io->accept = 1;
-    return wioAdd(io, wio_handle_events, WW_READ);
+    add_error  = wioAdd(io, wio_handle_events, WW_READ);
+    if (UNLIKELY(add_error != 0))
+    {
+        io->accept = 0;
+        wioClose(io);
+        return add_error;
+    }
+
+    for (int i = 0; i < ACCEPTEX_NUM; ++i)
+    {
+        int post_error = post_acceptex(io, NULL);
+        if (post_error == 0)
+        {
+            posted_count++;
+        }
+        else
+        {
+            accept_error = post_error;
+        }
+    }
+    // A partially populated accept queue is usable. Fail startup only when no
+    // AcceptEx request could be posted.
+    if (UNLIKELY(posted_count == 0))
+    {
+        io->accept = 0;
+        io->error  = accept_error;
+        wioClose(io);
+        return accept_error;
+    }
+    return 0;
 }
 
-int wioConnect (wio_t* io) {
+int wioConnect(wio_t *io)
+{
+    int connect_error;
+    int add_error;
     // NOTE: ConnectEx must call bind
     struct sockaddr_in localaddr;
-    socklen_t addrlen = sizeof(localaddr);
+    socklen_t          addrlen       = sizeof(localaddr);
+    LPFN_CONNECTEX     ConnectEx     = NULL;
+    GUID               guidConnectEx = WSAID_CONNECTEX;
+    DWORD              dwbytes;
+    woverlapped_t     *hovlp = NULL;
+
     memoryZero(&localaddr, addrlen);
-    localaddr.sin_family = AF_INET;
+    localaddr.sin_family      = AF_INET;
     localaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    localaddr.sin_port = htons(0);
-    if (bind(io->fd, (struct sockaddr*)&localaddr, addrlen) < 0) {
-        printError("syscall return error , call: bind , value: %d\n", -1);
+    localaddr.sin_port        = htons(0);
+    if (bind(io->fd, (struct sockaddr *) &localaddr, addrlen) < 0)
+    {
+        connect_error = socketERRNO();
+        printError("syscall return error , call: bind , value: %d\n", connect_error);
         goto error;
     }
     // ConnectEx
-    io->connectex = 1;
-    LPFN_CONNECTEX ConnectEx = NULL;
-    GUID guidConnectEx = WSAID_CONNECTEX;
-    DWORD dwbytes;
-    if (WSAIoctl(io->fd, SIO_GET_EXTENSION_FUNCTION_POINTER,
-        &guidConnectEx, sizeof(guidConnectEx),
-        &ConnectEx, sizeof(ConnectEx),
-        &dwbytes, NULL, NULL) != 0) {
+    if (WSAIoctl(io->fd,
+                 SIO_GET_EXTENSION_FUNCTION_POINTER,
+                 &guidConnectEx,
+                 sizeof(guidConnectEx),
+                 &ConnectEx,
+                 sizeof(ConnectEx),
+                 &dwbytes,
+                 NULL,
+                 NULL) != 0)
+    {
+        connect_error = WSAGetLastError();
+        goto error;
+    }
+    add_error = wioAdd(io, wio_handle_events, WW_WRITE);
+    if (UNLIKELY(add_error != 0))
+    {
+        connect_error = add_error < 0 ? -add_error : add_error;
         goto error;
     }
     // NOTE: free on_connectex_complete
-    woverlapped_t* hovlp;
     EVENTLOOP_ALLOC_SIZEOF(hovlp);
-    hovlp->fd = io->fd;
+    hovlp->fd    = io->fd;
     hovlp->event = WW_WRITE;
-    hovlp->io = io;
-    if (ConnectEx(io->fd, io->peeraddr, sizeof(struct sockaddr_in6), NULL, 0, &dwbytes, &hovlp->ovlp) != TRUE) {
+    hovlp->io    = io;
+    if (ConnectEx(io->fd, io->peeraddr, sizeof(struct sockaddr_in6), NULL, 0, &dwbytes, &hovlp->ovlp) != TRUE)
+    {
         int err = WSAGetLastError();
-        if (err != ERROR_IO_PENDING) {
-            printError("AcceptEx error: %d\n", err);
+        if (err != ERROR_IO_PENDING)
+        {
+            printError("ConnectEx error: %d\n", err);
+            connect_error = err;
             goto error;
         }
     }
-    io->connect = 1;
-    return wioAdd(io, wio_handle_events, WW_WRITE);
-error:
-    wioClose(io);
+    io->connectex = 1;
+    io->connect   = 1;
     return 0;
+error:
+    free_buffered_overlapped(io, hovlp);
+    io->error = connect_error;
+    wioClose(io);
+    return connect_error;
 }
 
 int wioRead (wio_t* io) {
@@ -428,42 +525,58 @@ try_send:
         bufferpoolReuseBuffer(io->loop->bufpool,buf);
         return nwrite;
     }
-WSASend:
+WSASend: {
+    int add_error = wioAdd(io, wio_handle_events, WW_WRITE);
+    if (UNLIKELY(add_error != 0))
     {
-        woverlapped_t* hovlp;
-        EVENTLOOP_ALLOC_SIZEOF(hovlp);
-        hovlp->fd = io->fd;
-        hovlp->event = WW_WRITE;
-        sbufShiftRight(buf,nwrite);
-        hovlp->buf.len = sbufGetLength(buf);
-        // NOTE: free on_send_complete
-        EVENTLOOP_ALLOC(hovlp->buf.buf, hovlp->buf.len);
-        memoryCopy(hovlp->buf.buf, sbufGetRawPtr(buf), hovlp->buf.len);
-        bufferpoolReuseBuffer(io->loop->bufpool,buf);
-        hovlp->io = io;
-        DWORD dwbytes = 0;
-        DWORD flags = 0;
-        int ret = 0;
-        if (io->io_type == WIO_TYPE_TCP) {
-            ret = WSASend(io->fd, &hovlp->buf, 1, &dwbytes, flags, &hovlp->ovlp, NULL);
-        }
-        else if (io->io_type == WIO_TYPE_UDP ||
-                 io->io_type == WIO_TYPE_IP) {
-            ret = WSASendTo(io->fd, &hovlp->buf, 1, &dwbytes, flags, io->peeraddr, sizeof(struct sockaddr_in6), &hovlp->ovlp, NULL);
-        }
-        else {
-            ret = -1;
-        }
-        //printd("WSASend ret=%d bytes=%u\n", ret, dwbytes);
-        if (ret != 0) {
-            int err = WSAGetLastError();
-            if (err != ERROR_IO_PENDING) {
-                printError("WSASend error: %d\n", err);
-                return ret;
-            }
-        }
-        return wioAdd(io, wio_handle_events, WW_WRITE);
+        io->error = add_error < 0 ? -add_error : add_error;
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        wioClose(io);
+        return add_error;
     }
+
+    woverlapped_t *hovlp;
+    EVENTLOOP_ALLOC_SIZEOF(hovlp);
+    hovlp->fd    = io->fd;
+    hovlp->event = WW_WRITE;
+    sbufShiftRight(buf, nwrite);
+    hovlp->buf.len = sbufGetLength(buf);
+    // NOTE: free on_send_complete
+    EVENTLOOP_ALLOC(hovlp->buf.buf, hovlp->buf.len);
+    memoryCopy(hovlp->buf.buf, sbufGetRawPtr(buf), hovlp->buf.len);
+    bufferpoolReuseBuffer(io->loop->bufpool, buf);
+    hovlp->io     = io;
+    DWORD dwbytes = 0;
+    DWORD flags   = 0;
+    int   ret     = 0;
+    if (io->io_type == WIO_TYPE_TCP)
+    {
+        ret = WSASend(io->fd, &hovlp->buf, 1, &dwbytes, flags, &hovlp->ovlp, NULL);
+    }
+    else if (io->io_type == WIO_TYPE_UDP || io->io_type == WIO_TYPE_IP)
+    {
+        ret = WSASendTo(
+            io->fd, &hovlp->buf, 1, &dwbytes, flags, io->peeraddr, sizeof(struct sockaddr_in6), &hovlp->ovlp, NULL);
+    }
+    else
+    {
+        ret = -1;
+    }
+    // printd("WSASend ret=%d bytes=%u\n", ret, dwbytes);
+    if (ret != 0)
+    {
+        int err = WSAGetLastError();
+        if (err != ERROR_IO_PENDING)
+        {
+            printError("WSASend error: %d\n", err);
+            io->error = err;
+            free_buffered_overlapped(io, hovlp);
+            wioClose(io);
+            return ret;
+        }
+    }
+    return 0;
+}
 write_error:
 disconnect:
     bufferpoolReuseBuffer(io->loop->bufpool,buf);
