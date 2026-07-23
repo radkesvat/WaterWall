@@ -171,10 +171,9 @@ bool globalstateInitializeSecureRandom(void)
         state->device_fd = open("/dev/urandom", open_flags);
     } while (state->device_fd < 0 && errno == EINTR);
 
-    if (UNLIKELY(state->device_fd < 0))
-    {
-        return false;
-    }
+    /* A failed open leaves the descriptor disabled.  The provider probe below
+     * can still succeed through getrandom() on Linux and rejects startup when
+     * no operating-system random source is available. */
 #elif ! (defined(OS_DARWIN) || defined(OS_BSD))
     return false;
 #endif

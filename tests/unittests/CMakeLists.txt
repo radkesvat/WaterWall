@@ -87,6 +87,9 @@ if(TARGET ww)
 
   add_executable(wfrand_test wfrand_test.c)
   target_link_libraries(wfrand_test PRIVATE ww)
+  if(LINUX)
+    target_link_options(wfrand_test PRIVATE "-Wl,--wrap=open")
+  endif()
   add_dependencies(waterwall_unit_tests wfrand_test)
 
   add_waterwall_unit_test(waterwall.wfrand_unit wfrand_test "unit;libc;random")
