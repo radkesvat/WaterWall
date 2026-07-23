@@ -255,6 +255,30 @@ static void testAclAddressFamilies(void)
     require(socketManagerIpMatchesAcl(parsedAddr("::ffff:10.1.2.3"), &acl),
             "IPv4-mapped IPv6 peers should retain IPv4 ACL behavior");
     vec_ipmask_t_drop(&acl);
+
+    acl = vec_ipmask_t_with_capacity(1);
+    require(parseIPWithSubnetMask("::ffff:10.0.0.0/104", &range.ip, &range.mask) == 6,
+            "IPv4-mapped IPv6 ACL should parse as IPv6");
+    vec_ipmask_t_push(&acl, range);
+
+    require(socketManagerIpMatchesAcl(parsedAddr("10.1.2.3"), &acl),
+            "IPv4-mapped IPv6 ACL should match its native IPv4 range");
+    require(socketManagerIpMatchesAcl(parsedAddr("::ffff:10.1.2.3"), &acl),
+            "IPv4-mapped IPv6 ACL should match mapped IPv6 peers");
+    require(! socketManagerIpMatchesAcl(parsedAddr("11.1.2.3"), &acl),
+            "IPv4-mapped IPv6 ACL should reject IPv4 peers outside its range");
+    require(! socketManagerIpMatchesAcl(parsedAddr("2001:db8::1"), &acl),
+            "IPv4-mapped IPv6 ACL must not match native IPv6 peers");
+    vec_ipmask_t_drop(&acl);
+
+    acl = vec_ipmask_t_with_capacity(1);
+    require(parseIPWithSubnetMask("::ffff:0.0.0.0/95", &range.ip, &range.mask) == 6,
+            "broad IPv4-mapped IPv6 ACL should parse as IPv6");
+    vec_ipmask_t_push(&acl, range);
+
+    require(! socketManagerIpMatchesAcl(parsedAddr("192.0.2.1"), &acl),
+            "IPv4-mapped IPv6 ACLs broader than /96 must retain IPv6-only behavior");
+    vec_ipmask_t_drop(&acl);
 }
 
 // The balance hash must keep stickiness separate per local-endpoint class: a source pinned via a wildcard

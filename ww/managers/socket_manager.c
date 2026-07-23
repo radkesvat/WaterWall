@@ -979,6 +979,28 @@ static inline void normalizeIpAddr(ip_addr_t *addr)
 }
 
 /**
+ * @brief Convert an ACL range wholly contained in the IPv4-mapped IPv6 prefix to native IPv4.
+ */
+static inline bool mappedAclRangeToV4(const ipmask_t *range, ip4_addr_t *ip, ip4_addr_t *mask)
+{
+    if (range->ip.type != IPADDR_TYPE_V6 || range->mask.type != IPADDR_TYPE_V6 ||
+        ! needsV4SocketStrategy(range->ip.u_addr.ip6))
+    {
+        return false;
+    }
+
+    const ip6_addr_t *range_mask = &range->mask.u_addr.ip6;
+    if (range_mask->addr[0] != UINT32_MAX || range_mask->addr[1] != UINT32_MAX || range_mask->addr[2] != UINT32_MAX)
+    {
+        return false;
+    }
+
+    memoryCopy(ip, &range->ip.u_addr.ip6.addr[3], sizeof(ip->addr));
+    memoryCopy(mask, &range_mask->addr[3], sizeof(mask->addr));
+    return true;
+}
+
+/**
  * @brief Convert an accepted socket address to a normalized IP address for local-address dispatch.
  */
 static inline bool sockaddrToNormalizedIpAddr(const sockaddr_u *src, ip_addr_t *dest)
@@ -1230,14 +1252,23 @@ bool socketManagerIpMatchesAcl(ip_addr_t addr, const vec_ipmask_t *acl)
     {
         const ipmask_t *range = vec_ipmask_t_at(acl, i);
 
-        if (addr.type == IPADDR_TYPE_V4 && range->ip.type == IPADDR_TYPE_V4 &&
-            range->mask.type == IPADDR_TYPE_V4 &&
-            checkIPRange4(addr.u_addr.ip4, range->ip.u_addr.ip4, range->mask.u_addr.ip4))
+        if (addr.type == IPADDR_TYPE_V4)
         {
-            return true;
+            if (range->ip.type == IPADDR_TYPE_V4 && range->mask.type == IPADDR_TYPE_V4 &&
+                checkIPRange4(addr.u_addr.ip4, range->ip.u_addr.ip4, range->mask.u_addr.ip4))
+            {
+                return true;
+            }
+
+            ip4_addr_t mapped_ip;
+            ip4_addr_t mapped_mask;
+            if (mappedAclRangeToV4(range, &mapped_ip, &mapped_mask) &&
+                checkIPRange4(addr.u_addr.ip4, mapped_ip, mapped_mask))
+            {
+                return true;
+            }
         }
-        if (addr.type == IPADDR_TYPE_V6 && range->ip.type == IPADDR_TYPE_V6 &&
-            range->mask.type == IPADDR_TYPE_V6 &&
+        if (addr.type == IPADDR_TYPE_V6 && range->ip.type == IPADDR_TYPE_V6 && range->mask.type == IPADDR_TYPE_V6 &&
             checkIPRange6(addr.u_addr.ip6, range->ip.u_addr.ip6, range->mask.u_addr.ip6))
         {
             return true;

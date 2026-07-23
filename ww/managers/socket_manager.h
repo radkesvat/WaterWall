@@ -136,9 +136,9 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
 void socketacceptorUpdateBufferOptions(tunnel_t *tunnel, int send_buffer_size, int recv_buffer_size);
 
 /**
- * @brief Check a peer address against same-family CIDR entries in an ACL.
+ * @brief Check a peer address against CIDR entries in an ACL.
  *
- * IPv4-mapped IPv6 peers are normalized to IPv4 before matching.
+ * IPv4-mapped IPv6 peers and ranges contained within `::ffff:0:0/96` are normalized to IPv4 before matching.
  */
 bool socketManagerIpMatchesAcl(ip_addr_t addr, const vec_ipmask_t *acl);
 
