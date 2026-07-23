@@ -1113,27 +1113,31 @@ int wioAdd(wio_t *io, wio_cb cb, int events)
         return -1;
 #endif
     wloop_t *loop = io->loop;
+    if (! io->ready)
+    {
+        wioReady(io);
+    }
+
+    if (! (io->events & events))
+    {
+        // printDebug("wioAdd: fd=%x on loop wid %d, real wid %d\n", io->fd, loop->wid, getWID());
+        int add_error = iowatcherAddEvent(loop, io->fd, events);
+        if (UNLIKELY(add_error != 0))
+        {
+            return add_error;
+        }
+        io->events |= events;
+    }
+
     if (! io->active)
     {
         EVENT_ADD(loop, io, cb);
         loop->nios++;
     }
 
-    if (! io->ready)
-    {
-        wioReady(io);
-    }
-
     if (cb)
     {
         io->cb = (wevent_cb) cb;
-    }
-
-    if (! (io->events & events))
-    {
-        // printDebug("wioAdd: fd=%x on loop wid %d, real wid %d\n", io->fd, loop->wid, getWID());
-        iowatcherAddEvent(loop, io->fd, events);
-        io->events |= events;
     }
     return 0;
 }

@@ -531,9 +531,7 @@ int wioRead(wio_t *io)
         wloge("wioRead called but fd[%d] already closed!", io->fd);
         return -1;
     }
-    wioAdd(io, wio_handle_events, WW_READ);
-
-    return 0;
+    return wioAdd(io, wio_handle_events, WW_READ);
 }
 
 // A transient sendto failure means the datagram is dropped, not retried.
@@ -622,7 +620,7 @@ int wioWrite(wio_t *io, sbuf_t *buf)
         sockaddr_u peer_addr = *io->peeraddr_u;
         return wioWriteDatagram(io, buf, &peer_addr);
     }
-    int nwrite = 0, err = 0;
+    int nwrite = 0, err = 0, add_error = 0;
     //
     int len = (int) sbufGetLength(buf);
     if (write_queue_empty(&io->write_queue))
@@ -655,7 +653,13 @@ int wioWrite(wio_t *io, sbuf_t *buf)
             goto write_done;
         }
     enqueue:
-        wioAdd(io, wio_handle_events, WW_WRITE);
+        add_error = wioAdd(io, wio_handle_events, WW_WRITE);
+        if (UNLIKELY(add_error != 0))
+        {
+            io->error = -add_error;
+            nwrite    = add_error;
+            goto write_error;
+        }
     }
 
     if (nwrite < len)

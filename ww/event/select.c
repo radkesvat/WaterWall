@@ -32,22 +32,35 @@ int iowatcherCleanUp(wloop_t* loop) {
     return 0;
 }
 
-int iowatcherAddEvent(wloop_t* loop, int fd, int events) {
-    if (loop->iowatcher == NULL) {
+int iowatcherAddEvent(wloop_t *loop, int fd, int events)
+{
+#ifdef OS_UNIX
+    if (fd < 0 || fd >= FD_SETSIZE)
+    {
+        return -ERANGE;
+    }
+#endif
+    if (loop->iowatcher == NULL)
+    {
         iowatcherInit(loop);
     }
-    select_ctx_t* select_ctx = (select_ctx_t*)loop->iowatcher;
-    if (fd > select_ctx->max_fd) {
+    select_ctx_t *select_ctx = (select_ctx_t *) loop->iowatcher;
+    if (fd > select_ctx->max_fd)
+    {
         select_ctx->max_fd = fd;
     }
-    if (events & WW_READ) {
-        if (!FD_ISSET(fd, &select_ctx->readfds)) {
+    if (events & WW_READ)
+    {
+        if (! FD_ISSET(fd, &select_ctx->readfds))
+        {
             FD_SET(fd, &select_ctx->readfds);
             select_ctx->nread++;
         }
     }
-    if (events & WW_WRITE) {
-        if (!FD_ISSET(fd, &select_ctx->writefds)) {
+    if (events & WW_WRITE)
+    {
+        if (! FD_ISSET(fd, &select_ctx->writefds))
+        {
             FD_SET(fd, &select_ctx->writefds);
             select_ctx->nwrite++;
         }
@@ -55,20 +68,33 @@ int iowatcherAddEvent(wloop_t* loop, int fd, int events) {
     return 0;
 }
 
-int iowatcherDelEvent(wloop_t* loop, int fd, int events) {
-    select_ctx_t* select_ctx = (select_ctx_t*)loop->iowatcher;
-    if (select_ctx == NULL)    return 0;
-    if (fd == select_ctx->max_fd) {
+int iowatcherDelEvent(wloop_t *loop, int fd, int events)
+{
+#ifdef OS_UNIX
+    if (fd < 0 || fd >= FD_SETSIZE)
+    {
+        return -ERANGE;
+    }
+#endif
+    select_ctx_t *select_ctx = (select_ctx_t *) loop->iowatcher;
+    if (select_ctx == NULL)
+        return 0;
+    if (fd == select_ctx->max_fd)
+    {
         select_ctx->max_fd = -1;
     }
-    if (events & WW_READ) {
-        if (FD_ISSET(fd, &select_ctx->readfds)) {
+    if (events & WW_READ)
+    {
+        if (FD_ISSET(fd, &select_ctx->readfds))
+        {
             FD_CLR(fd, &select_ctx->readfds);
             select_ctx->nread--;
         }
     }
-    if (events & WW_WRITE) {
-        if (FD_ISSET(fd, &select_ctx->writefds)) {
+    if (events & WW_WRITE)
+    {
+        if (FD_ISSET(fd, &select_ctx->writefds))
+        {
             FD_CLR(fd, &select_ctx->writefds);
             select_ctx->nwrite--;
         }

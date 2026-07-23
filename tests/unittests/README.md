@@ -13,6 +13,9 @@ These tests exercise small library-level behavior without launching the `Waterwa
 - `waterwall.capture_linux_nfqueue_unit`
   Verifies the Linux NFQUEUE netlink parser with synthetic messages, including capture-length byte order,
   malformed attributes, payload cursor exposure, and truncated-prefix packet-id recovery.
+- `waterwall.select_fd_range_unit`
+  Verifies the POSIX select backend rejects descriptors outside `fd_set` bounds while accepting the highest valid
+  descriptor.
 - `waterwall.tcp_over_udp_fec_unit`
   Verifies the TCP-over-UDP Reed-Solomon FEC helper directly, including one missing data shard recovery, encoder reset
   after a failed parity emit callback, and malformed packet rejection.

@@ -225,6 +225,27 @@ if(TARGET ww)
       "unit;event;udp;datagram"
     )
 
+    add_executable(select_fd_range_test
+      select_fd_range_test.c
+      ${CMAKE_SOURCE_DIR}/ww/event/select.c
+    )
+    target_compile_definitions(select_fd_range_test PRIVATE
+      EVENT_SELECT=1
+      iowatcherInit=selectTestIowatcherInit
+      iowatcherCleanUp=selectTestIowatcherCleanUp
+      iowatcherAddEvent=selectTestIowatcherAddEvent
+      iowatcherDelEvent=selectTestIowatcherDelEvent
+      iowatcherPollEvents=selectTestIowatcherPollEvents
+    )
+    target_link_libraries(select_fd_range_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests select_fd_range_test)
+
+    add_waterwall_unit_test(
+      waterwall.select_fd_range_unit
+      select_fd_range_test
+      "unit;event;select;bounds"
+    )
+
     add_executable(os_helpers_bbr_test
       os_helpers_bbr_test.c
       ${CMAKE_SOURCE_DIR}/core/os_helpers.c
