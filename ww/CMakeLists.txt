@@ -1321,14 +1321,27 @@ set_source_files_properties(
     devices/raw/raw_windows.c
     devices/capture/capture_windows.c
     base/wlsem.c
-    # Failure-injection tests compile these sources directly. Keep their
-    # production objects separate so extracting ww's Unity object does not
-    # define the same symbols a second time.
-    instance/global_state.c
-    managers/socket_manager_iptables_recovery.c
-    objects/user.c
     PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
 )
+
+if(BUILD_TESTING)
+    set_source_files_properties(
+        # The select registration test compiles an alternate event stack directly.
+        # Keep both its sources and the production Linux backend separate so the
+        # archive linker can select one backend without extracting duplicate symbols.
+        event/epoll.c
+        event/nio.c
+        event/select.c
+        event/wloop.c
+        # Failure-injection tests compile these sources directly. Keep their
+        # production objects separate so extracting ww's Unity object does not
+        # define the same symbols a second time.
+        instance/global_state.c
+        managers/socket_manager_iptables_recovery.c
+        objects/user.c
+        PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
+    )
+endif()
 
 ################################################################################
 # Sanitizer Options (Debug builds only)
