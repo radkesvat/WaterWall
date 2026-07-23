@@ -273,7 +273,10 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
     // wioSetReadTimeout(lstate->io, kReadWriteTimeoutMs);
 
     // issue connect on the socket
-    wioConnect(io);
+    if (UNLIKELY(wioConnect(io) != 0))
+    {
+        return false;
+    }
 
     return true;
 fail:

@@ -493,7 +493,13 @@ static void wio_handle_events(wio_t *io)
 int wioAccept(wio_t *io)
 {
     io->accept = 1;
-    return wioAdd(io, wio_handle_events, WW_READ);
+    int add_error = wioAdd(io, wio_handle_events, WW_READ);
+    if (UNLIKELY(add_error != 0))
+    {
+        io->accept = 0;
+        wioClose(io);
+    }
+    return add_error;
 }
 
 int wioConnect(wio_t *io)
@@ -521,7 +527,14 @@ int wioConnect(wio_t *io)
     io->connect_timer           = wtimerAdd(io->loop, __connect_timeout_cb, (uint32_t) timeout, 1);
     io->connect_timer->privdata = io;
     io->connect                 = 1;
-    return wioAdd(io, wio_handle_events, WW_WRITE);
+    int add_error               = wioAdd(io, wio_handle_events, WW_WRITE);
+    if (UNLIKELY(add_error != 0))
+    {
+        io->connect = 0;
+        wioDelConnectTimer(io);
+        wioClose(io);
+    }
+    return add_error;
 }
 
 int wioRead(wio_t *io)
@@ -531,7 +544,12 @@ int wioRead(wio_t *io)
         wloge("wioRead called but fd[%d] already closed!", io->fd);
         return -1;
     }
-    return wioAdd(io, wio_handle_events, WW_READ);
+    int add_error = wioAdd(io, wio_handle_events, WW_READ);
+    if (UNLIKELY(add_error != 0))
+    {
+        wioClose(io);
+    }
+    return add_error;
 }
 
 // A transient sendto failure means the datagram is dropped, not retried.

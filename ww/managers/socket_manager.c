@@ -186,6 +186,12 @@ static udpsock_t *createUdpSocketSideData(wio_t *io)
     return socket;
 }
 
+static bool startUdpListener(wio_t *io, wread_cb read_cb)
+{
+    wioSetCallBackRead(io, read_cb);
+    return wioRead(io) == 0;
+}
+
 static void runAcceptedSocketCallback(void *worker_ptr, void *arg1, void *arg2, void *arg3);
 static void cleanupAcceptedSocketDispatch(void *arg1, void *arg2, void *arg3);
 static void runUdpPayloadCallback(void *worker_ptr, void *arg1, void *arg2, void *arg3);
@@ -2601,11 +2607,15 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
         LOGF("SocketManager: stopping due to null socket handle");
         terminateProgram(1);
     }
+    if (UNLIKELY(! startUdpListener(filter->listen_io, onUdpPacketReceived)))
+    {
+        filter->listen_io = NULL;
+        LOGF("SocketManager: could not register UDP listener on %s:[%u]", host, port);
+        terminateProgram(1);
+    }
     udpsock_t *socket         = createUdpSocketSideData(filter->listen_io);
     filter->listen_udp_socket = socket;
     weventSetUserData(filter->listen_io, socket);
-    wioSetCallBackRead(filter->listen_io, onUdpPacketReceived);
-    wioRead(filter->listen_io);
     endpointRegistryReserve(reg, IPPROTO_UDP, filter, port, filter->listen_io, socket);
     LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "UDP");
 }
@@ -2652,11 +2662,15 @@ static void listenUdpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
 
     filter->v6_dualstack = wioGetLocaladdr(filter->listen_io)->sa_family == AF_INET6;
 
+    if (UNLIKELY(! startUdpListener(filter->listen_io, onUdpPacketReceivedMultiPort)))
+    {
+        filter->listen_io = NULL;
+        LOGF("SocketManager: could not register UDP redirect listener on %s:[%d]", host, main_port);
+        terminateProgram(1);
+    }
     udpsock_t *socket         = createUdpSocketSideData(filter->listen_io);
     filter->listen_udp_socket = socket;
     weventSetUserData(filter->listen_io, socket);
-    wioSetCallBackRead(filter->listen_io, onUdpPacketReceivedMultiPort);
-    wioRead(filter->listen_io);
     endpointRegistryReserve(reg, IPPROTO_UDP, filter, (uint16_t) main_port, filter->listen_io, socket);
 
     queueIptablesRule(IPPROTO_UDP, filter, port_min, port_max, (uint16_t) main_port);
@@ -2692,14 +2706,18 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
             continue;
         }
 
+        if (UNLIKELY(! startUdpListener(udp_io, onUdpPacketReceived)))
+        {
+            LOGW("SocketManager: could not register UDP listener on %s:[%u], skipped...", host, port);
+            continue;
+        }
+
         filter->listen_ios[i] = udp_io;
         filter->v6_dualstack  = wioGetLocaladdr(udp_io)->sa_family == AF_INET6;
 
         udpsock_t *socket             = createUdpSocketSideData(udp_io);
         filter->listen_udp_sockets[i] = socket;
         weventSetUserData(udp_io, socket);
-        wioSetCallBackRead(udp_io, onUdpPacketReceived);
-        wioRead(udp_io);
         endpointRegistryReserve(reg, IPPROTO_UDP, filter, port, udp_io, socket);
 
         i++;
@@ -2739,14 +2757,18 @@ static void listenUdpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
             continue;
         }
 
+        if (UNLIKELY(! startUdpListener(udp_io, onUdpPacketReceived)))
+        {
+            LOGW("SocketManager: could not register UDP listener on %s:[%u], skipped...", host, p);
+            continue;
+        }
+
         filter->listen_ios[i] = udp_io;
         filter->v6_dualstack  = wioGetLocaladdr(udp_io)->sa_family == AF_INET6;
 
         udpsock_t *socket             = createUdpSocketSideData(udp_io);
         filter->listen_udp_sockets[i] = socket;
         weventSetUserData(udp_io, socket);
-        wioSetCallBackRead(udp_io, onUdpPacketReceived);
-        wioRead(udp_io);
         endpointRegistryReserve(reg, IPPROTO_UDP, filter, p, udp_io, socket);
 
         i++;

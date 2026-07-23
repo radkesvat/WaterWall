@@ -153,7 +153,10 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
         return;
     }
 
-    wioRead(io);
+    if (UNLIKELY(wioRead(io) != 0))
+    {
+        return;
+    }
 }
 
 void tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate)

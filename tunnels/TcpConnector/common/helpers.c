@@ -121,7 +121,10 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
 
     if (! lstate->read_paused)
     {
-        wioRead(lstate->io);
+        if (UNLIKELY(wioRead(lstate->io) != 0))
+        {
+            return;
+        }
     }
 
     if (bufferqueueGetBufCount(&lstate->pause_queue) > 0)

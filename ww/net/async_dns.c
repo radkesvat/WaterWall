@@ -177,7 +177,14 @@ static void asyncdnsSockStateCallback(void *data, ares_socket_t fd, int readable
     }
     if (add_events != 0)
     {
-        wioAdd(watch->io, asyncdnsIoCallback, add_events);
+        if (UNLIKELY(wioAdd(watch->io, asyncdnsIoCallback, add_events) != 0))
+        {
+            // c-ares owns this descriptor. Drop only our event wrapper so the
+            // resolver can observe the socket failure or finish by timeout.
+            asyncdnsReleaseWatch(r, watch);
+            asyncdnsRefreshTimer(r);
+            return;
+        }
     }
 
     watch->events = io_events;

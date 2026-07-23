@@ -278,7 +278,10 @@ static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_
 
     if (! ls->read_paused)
     {
-        wioRead(io);
+        if (UNLIKELY(wioRead(io) != 0))
+        {
+            return false;
+        }
     }
 
     const bool resume_prev = ls->queue_pause_sent;

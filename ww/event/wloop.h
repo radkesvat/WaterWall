@@ -338,6 +338,7 @@ typedef void (*wio_send_heartbeat_fn)(wio_t* io);
 WW_EXPORT void wioSetHeartBeat(wio_t* io, int interval_ms, wio_send_heartbeat_fn fn);
 
 // Nonblocking, poll IO events in the loop to call corresponding callback.
+// Registration failures set io->error and close the owned io before returning.
 // wioAdd(io, WW_READ) => accept => waccept_cb
 WW_EXPORT int wioAccept(wio_t* io);
 

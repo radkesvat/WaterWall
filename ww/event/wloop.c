@@ -323,7 +323,19 @@ static int wloopCreateEventFDS(wloop_t *loop)
         return -1;
     }
 #endif
-    wio_t *io    = wRead(loop, loop->eventfds[EVENTFDS_READ_INDEX], eventFDReadCB);
+    wio_t *io = wRead(loop, loop->eventfds[EVENTFDS_READ_INDEX], eventFDReadCB);
+    if (UNLIKELY(io == NULL))
+    {
+        loop->eventfds[EVENTFDS_READ_INDEX] = -1;
+#if defined(OS_UNIX) && HAVE_EVENTFD
+        loop->eventfds[EVENTFDS_WRITE_INDEX] = -1;
+#elif defined(OS_UNIX) && HAVE_PIPE
+        SAFE_CLOSE(loop->eventfds[EVENTFDS_WRITE_INDEX]);
+#else
+        SAFE_CLOSESOCKET(loop->eventfds[EVENTFDS_WRITE_INDEX]);
+#endif
+        return -1;
+    }
     io->priority = WEVENT_HIGH_PRIORITY;
     ++loop->intern_nevents;
     return 0;
@@ -1124,6 +1136,7 @@ int wioAdd(wio_t *io, wio_cb cb, int events)
         int add_error = iowatcherAddEvent(loop, io->fd, events);
         if (UNLIKELY(add_error != 0))
         {
+            io->error = add_error < 0 ? -add_error : add_error;
             return add_error;
         }
         io->events |= events;
@@ -1198,7 +1211,8 @@ wio_t *wRead(wloop_t *loop, int fd, wread_cb read_cb)
     {
         io->read_cb = read_cb;
     }
-    wioRead(io);
+    if (wioRead(io) != 0)
+        return NULL;
     return io;
 }
 
