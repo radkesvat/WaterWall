@@ -38,20 +38,48 @@
  *   objects, but its fields are implementation details. Do not read or write
  *   blocks, count, capacity, lookup tables, flags, or locks directly. Use the
  *   helper functions below so locking and lookup-table consistency are kept.
+ *   Mutating an indexed field directly (id, name, password-derived keys, or
+ *   Allowed-IP range) desynchronizes the lookup indexes; usersValidate() is
+ *   designed to detect exactly that kind of corruption.
  * - If a user is owned by users_t, change its password with
  *   usersChangePassword(), not userChangePassword(), because the SHA-224 and
  *   SHA-256 password hashes are lookup keys in this database.
+ *
+ * Lookup indexes and complexity:
+ * - Keyed lookups (SHA-224, SHA-256, plaintext password, UUID, WireGuard public
+ *   key, durable id, and non-empty name) are average O(1) hash-map lookups.
+ * - WireGuard Allowed-IP address lookup and range-overlap detection use an
+ *   ordered interval index and are O(log M) in the number of configured ranges.
+ * - Add, load, password change, name change, Allowed-IP change, and removal
+ *   update the affected indexes incrementally; they do not rebuild every index.
+ * - Full validation is O(N) (plus O(N log M) for Allowed-IP overlap checks); it
+ *   performs no pairwise user comparison.
+ * - Predicate scans (usersFindFirstExpired/Disabled/Limited), JSON export,
+ *   clear/destroy, and native copy inspect every user and remain O(N) by design.
+ *
+ * Removal ordering and failure atomicity:
+ * - Removal erases the victim's index entries, then swaps the last active user
+ *   into the freed slot, so items[] ordering may change but every remaining
+ *   user keeps a stable object address. The victim's stable storage slot is not
+ *   reused until usersClear()/usersDestroy().
+ * - Add/update/remove are failure-atomic: a failure before the commit point
+ *   leaves the table and every index unchanged. An impossible failure after an
+ *   irreversible commit restores the indexes from the active users and
+ *   terminates, as the current code does.
  */
 
 #include "wlibc.h"
 
 #include "objects/user.h"
 
-typedef struct users_sha224_table_s users_sha224_table_t;
-typedef struct users_sha256_table_s users_sha256_table_t;
-typedef struct users_uuid_table_s   users_uuid_table_t;
+typedef struct users_sha224_table_s              users_sha224_table_t;
+typedef struct users_sha256_table_s              users_sha256_table_t;
+typedef struct users_uuid_table_s                users_uuid_table_t;
 typedef struct users_wireguard_publickey_table_s users_wireguard_publickey_table_t;
-typedef struct users_id_table_s     users_id_table_t;
+typedef struct users_id_table_s                  users_id_table_t;
+typedef struct users_name_table_s                users_name_table_t;
+typedef struct users_pointer_table_s             users_pointer_table_t;
+typedef struct users_allowed_ip_table_s          users_allowed_ip_table_t;
 
 typedef struct user_update_s
 {
@@ -86,8 +114,7 @@ typedef enum users_add_result_e
     kUsersAddResultDuplicateUUID,
     kUsersAddResultDuplicateWireGuardPublicKey,
     kUsersAddResultDuplicateWireGuardAllowedIps,
-    kUsersAddResultAllocationFailed,
-    kUsersAddResultCommitFailed
+    kUsersAddResultAllocationFailed
 } users_add_result_t;
 
 typedef enum users_update_result_e
@@ -108,16 +135,16 @@ typedef enum users_update_result_e
 
 enum
 {
-    kUserUpdatePassword           = 1U << 0U,
-    kUserUpdateName               = 1U << 1U,
-    kUserUpdateEmail              = 1U << 2U,
-    kUserUpdateNotes              = 1U << 3U,
-    kUserUpdateGid                = 1U << 4U,
-    kUserUpdateEnabled            = 1U << 5U,
-    kUserUpdateLimit              = 1U << 6U,
-    kUserUpdateTimeInfo           = 1U << 7U,
-    kUserUpdateStats              = 1U << 8U,
-    kUserUpdateRecordStatInterval = 1U << 9U,
+    kUserUpdatePassword            = 1U << 0U,
+    kUserUpdateName                = 1U << 1U,
+    kUserUpdateEmail               = 1U << 2U,
+    kUserUpdateNotes               = 1U << 3U,
+    kUserUpdateGid                 = 1U << 4U,
+    kUserUpdateEnabled             = 1U << 5U,
+    kUserUpdateLimit               = 1U << 6U,
+    kUserUpdateTimeInfo            = 1U << 7U,
+    kUserUpdateStats               = 1U << 8U,
+    kUserUpdateRecordStatInterval  = 1U << 9U,
     kUserUpdateWireGuardAllowedIps = 1U << 10U
 };
 
@@ -135,11 +162,24 @@ typedef struct users_s
     size_t   block_count;
     size_t   block_capacity;
 
-    users_sha224_table_t *sha224_table;
-    users_sha256_table_t *sha256_table;
-    users_uuid_table_t   *uuid_table;
+    users_sha224_table_t              *sha224_table;
+    users_sha256_table_t              *sha256_table;
+    users_uuid_table_t                *uuid_table;
     users_wireguard_publickey_table_t *wireguard_publickey_table;
-    users_id_table_t     *id_table;
+    users_id_table_t                  *id_table;
+    /*
+     * name_table indexes users by non-empty name for average-O(1) duplicate
+     * checks; pointer_table maps each stored user_t* to its current active
+     * items[] index so pointer membership/index lookups are average-O(1). Both
+     * are implementation details; see users.c for ownership and key rules.
+     */
+    users_name_table_t    *name_table;
+    users_pointer_table_t *pointer_table;
+    /*
+     * allowed_ip_table is an ordered interval index over configured WireGuard
+     * Allowed-IP ranges, giving O(log M) address lookup and overlap detection.
+     */
+    users_allowed_ip_table_t *allowed_ip_table;
 } users_t;
 
 bool usersCreate(users_t *users);
@@ -159,10 +199,9 @@ user_t       *usersLookupBySHA256(users_t *users, const uint8_t sha256[SHA256_DI
 const user_t *usersLookupBySHA256Const(const users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE]);
 user_t       *usersLookupByUUID(users_t *users, const uint8_t uuid[kWwUuidBytesLen]);
 const user_t *usersLookupByUUIDConst(const users_t *users, const uint8_t uuid[kWwUuidBytesLen]);
-user_t       *usersLookupByWireGuardPublicKey(users_t *users,
-                                              const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE]);
+user_t       *usersLookupByWireGuardPublicKey(users_t *users, const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE]);
 const user_t *usersLookupByWireGuardPublicKeyConst(const users_t *users,
-                                                   const uint8_t publickey[USER_WIREGUARD_PUBLICKEY_SIZE]);
+                                                   const uint8_t  publickey[USER_WIREGUARD_PUBLICKEY_SIZE]);
 user_t       *usersLookupByWireGuardAllowedIp(users_t *users, const ip_addr_t *ip);
 const user_t *usersLookupByWireGuardAllowedIpConst(const users_t *users, const ip_addr_t *ip);
 user_t       *usersLookupByIdentifier(users_t *users, uint64_t id);
@@ -205,15 +244,11 @@ users_update_result_t usersAddTrafficByIdentifier(users_t *users, uint64_t id, u
  * Moves process-local runtime enforcement state from matching users in src to
  * dest, keyed by durable id.
  */
-bool usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src);
-users_update_result_t usersSetFirstUsageIfMissingBySHA256(users_t *users,
-                                                          const uint8_t sha256[SHA256_DIGEST_SIZE],
-                                                          uint64_t first_usage_at_ms,
-                                                          bool    *changed);
-users_update_result_t usersSetFirstUsageIfMissingByIdentifier(users_t *users,
-                                                              uint64_t id,
-                                                              uint64_t first_usage_at_ms,
-                                                              bool    *changed);
+bool                  usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src);
+users_update_result_t usersSetFirstUsageIfMissingBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                                          uint64_t first_usage_at_ms, bool *changed);
+users_update_result_t usersSetFirstUsageIfMissingByIdentifier(users_t *users, uint64_t id, uint64_t first_usage_at_ms,
+                                                              bool *changed);
 bool                  usersAddUserUsage(users_t *users, user_t *user, uint64_t upload_bytes, uint64_t download_bytes);
 
 /*
@@ -221,9 +256,9 @@ bool                  usersAddUserUsage(users_t *users, user_t *user, uint64_t u
  * database read lock, locate the user, and run the matching user_t runtime
  * helper. They operate on the process-local runtime state, not the synced stats.
  */
-user_admission_result_t usersTryAdmitConnectionByIdentifier(users_t *users, uint64_t id,
-                                                            const user_ip_key_t *ip_key, uint64_t now_ms);
-void usersReleaseConnectionByIdentifier(users_t *users, uint64_t id, const user_ip_key_t *ip_key);
+user_admission_result_t usersTryAdmitConnectionByIdentifier(users_t *users, uint64_t id, const user_ip_key_t *ip_key,
+                                                            uint64_t now_ms);
+void                    usersReleaseConnectionByIdentifier(users_t *users, uint64_t id, const user_ip_key_t *ip_key);
 /* Adds traffic and returns whether the user must now be cut off; *found reports if the user existed. */
 bool usersAccountTrafficByIdentifier(users_t *users, uint64_t id, uint64_t upload_bytes, uint64_t download_bytes,
                                      uint64_t now_ms, bool *found, bool *first_usage_push_needed);
@@ -255,6 +290,17 @@ bool          usersContainsUser(const users_t *users, const user_t *user);
 
 bool usersRebuildLookups(users_t *users);
 bool usersValidate(const users_t *users);
+
+/*
+ * Native O(N) deep copy of src into dest. Both tables must already be
+ * initialized (usersCreate()). dest == src succeeds without work. On failure
+ * dest is left unchanged. Serialized configuration and stat fields are copied
+ * and lookup indexes are rebuilt directly from the copied users; process-local
+ * runtime connection/IP state and the AuthenticationClient projected local
+ * expiry are NOT copied (use usersMigrateRuntimeStateByIdentifier() for runtime
+ * state). This never serializes through JSON.
+ */
+bool usersCopy(users_t *dest, const users_t *src);
 
 user_t       *usersFindFirstExpired(users_t *users, uint64_t now_ms);
 const user_t *usersFindFirstExpiredConst(const users_t *users, uint64_t now_ms);

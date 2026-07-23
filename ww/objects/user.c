@@ -961,9 +961,163 @@ static bool userIpKeyEqual(const user_ip_key_t *a, const user_ip_key_t *b)
     return a->type == b->type && memoryCompare(a->bytes, b->bytes, sizeof(a->bytes)) == 0;
 }
 
+/*
+ * Distinct active source IPs at which the linear array scan is replaced by the
+ * adaptive hash index. Below this the dense array stays allocation-free; only
+ * genuinely large per-user IP sets pay for the map.
+ */
+enum
+{
+    kUserIpIndexPromotionThreshold = 32
+};
+
+static size_t userIpKeyHash(const user_ip_key_t *key)
+{
+    uint8_t buffer[1U + sizeof(key->bytes)];
+    buffer[0] = key->type;
+    memoryCopy(&buffer[1], key->bytes, sizeof(key->bytes));
+    return (size_t) calcHashBytes(buffer, sizeof(buffer));
+}
+
+#define i_type user_ip_index_map_t // NOLINT
+#define i_key  user_ip_key_t       // NOLINT
+#define i_val  size_t              // NOLINT
+#define i_hash userIpKeyHash       // NOLINT
+#define i_eq   userIpKeyEqual      // NOLINT
+#include "stc/hmap.h"
+#undef i_eq
+#undef i_hash
+#undef i_val
+#undef i_key
+#undef i_type
+
+struct user_ip_index_s
+{
+    user_ip_index_map_t map;
+};
+
+static void userIpIndexFree(user_ip_index_t *index)
+{
+    if (index == NULL)
+    {
+        return;
+    }
+    user_ip_index_map_t_drop(&index->map);
+    memoryFree(index);
+}
+
+void userRuntimeStateClear(user_runtime_stat_t *runtime)
+{
+    if (runtime == NULL)
+    {
+        return;
+    }
+    if (runtime->ip_usages != NULL)
+    {
+        memoryFree(runtime->ip_usages);
+    }
+    userIpIndexFree(runtime->ip_index);
+    memoryZero(runtime, sizeof(*runtime));
+}
+
+void userRuntimeStateMove(user_runtime_stat_t *dest, user_runtime_stat_t *src)
+{
+    if (dest == NULL || src == NULL)
+    {
+        return;
+    }
+    if (dest == src)
+    {
+        /* A self-move must preserve the state; clearing dest first would free the
+         * very buffers we would then copy back, losing (and double-freeing) them. */
+        return;
+    }
+    userRuntimeStateClear(dest);
+    *dest = *src;
+    memoryZero(src, sizeof(*src));
+}
+
+/* Builds the adaptive index from the current dense array. Silently stays on the
+ * linear path (index left NULL) if any allocation fails. */
+static void userRuntimePromoteIpIndexLocked(user_runtime_stat_t *runtime)
+{
+    user_ip_index_t *index = memoryAllocateZero(sizeof(*index));
+    if (index == NULL)
+    {
+        return;
+    }
+    if (runtime->ip_usage_count > (size_t) PTRDIFF_MAX ||
+        ! user_ip_index_map_t_reserve(&index->map, (isize) runtime->ip_usage_count))
+    {
+        userIpIndexFree(index);
+        return;
+    }
+    for (size_t i = 0; i < runtime->ip_usage_count; ++i)
+    {
+        if (user_ip_index_map_t_insert(&index->map, runtime->ip_usages[i].key, i).ref == NULL)
+        {
+            userIpIndexFree(index);
+            return;
+        }
+    }
+    runtime->ip_index = index;
+}
+
+/* Records that a new IP was appended at new_index: extend the index if present,
+ * otherwise promote once the distinct-IP set is large enough. */
+static void userRuntimeIpAddedLocked(user_runtime_stat_t *runtime, size_t new_index)
+{
+    if (runtime->ip_index != NULL)
+    {
+        if (user_ip_index_map_t_insert(&runtime->ip_index->map, runtime->ip_usages[new_index].key, new_index).ref ==
+            NULL)
+        {
+            /* Keep the array authoritative: fall back to the linear scan. */
+            userIpIndexFree(runtime->ip_index);
+            runtime->ip_index = NULL;
+        }
+        return;
+    }
+    if (runtime->ip_usage_count >= (size_t) kUserIpIndexPromotionThreshold)
+    {
+        userRuntimePromoteIpIndexLocked(runtime);
+    }
+}
+
+/*
+ * Updates the index for a swap-with-last removal: the entry at removed_index was
+ * dropped and (unless it was the last) the entry formerly at old_last was moved
+ * into removed_index. Frees the index once the set becomes empty.
+ */
+static void userRuntimeIpRemovedLocked(user_runtime_stat_t *runtime, size_t removed_index,
+                                       const user_ip_key_t *removed_key, size_t old_last)
+{
+    if (runtime->ip_index != NULL)
+    {
+        user_ip_index_map_t_erase(&runtime->ip_index->map, *removed_key);
+        if (removed_index != old_last)
+        {
+            /* The moved entry now lives at removed_index. */
+            user_ip_index_map_t_insert_or_assign(
+                &runtime->ip_index->map, runtime->ip_usages[removed_index].key, removed_index);
+        }
+        if (runtime->ip_usage_count == 0)
+        {
+            userIpIndexFree(runtime->ip_index);
+            runtime->ip_index = NULL;
+        }
+    }
+}
+
 /* Returns the index of ip_key in the runtime tracker, or runtime->ip_usage_count when absent. */
 static size_t userRuntimeFindIpLocked(const user_runtime_stat_t *runtime, const user_ip_key_t *ip_key)
 {
+    if (runtime->ip_index != NULL)
+    {
+        user_ip_index_map_t_iter it = user_ip_index_map_t_find(&runtime->ip_index->map, *ip_key);
+        return it.ref != NULL ? it.ref->second : runtime->ip_usage_count;
+    }
+
     for (size_t i = 0; i < runtime->ip_usage_count; ++i)
     {
         if (userIpKeyEqual(&runtime->ip_usages[i].key, ip_key))
@@ -1091,11 +1245,7 @@ void userDestroy(User *user)
     }
 
     userDestroyStrings(user);
-    if (user->runtime.ip_usages != NULL)
-    {
-        memoryFree(user->runtime.ip_usages);
-    }
-    memoryZero(&user->runtime, sizeof(user->runtime));
+    userRuntimeStateClear(&user->runtime);
     memorySecureZero(&user->sha224_pass, sizeof(user->sha224_pass));
     memorySecureZero(&user->sha256_pass, sizeof(user->sha256_pass));
     memorySecureZero(user->uuid_pass, sizeof(user->uuid_pass));
@@ -1290,41 +1440,28 @@ cJSON *userToJson(User *user)
 
 bool userPasswordMatches(User *user, const char *password)
 {
-    sha224_hash_t sha224 = {0};
-    sha256_hash_t sha256 = {0};
-    bool          result = false;
+    bool result = false;
 
     if (UNLIKELY(! userObjectIsInitialized(user) || userStringIsEmpty(password)))
     {
         return false;
     }
 
+    /*
+     * Exact single-user plaintext verification. The caller has already selected
+     * this candidate through the users_t SHA-256 lookup table, so re-deriving
+     * SHA-224/SHA-256 here would only repeat work already implied by the index
+     * hit. The authoritative, collision-safe check is the exact byte comparison
+     * of the stored plaintext against the supplied plaintext: a hypothetical
+     * SHA-256 index collision fails closed because the plaintext will not match.
+     */
     rwlockReadLock(&user->lock);
-    if (UNLIKELY(userStringIsEmpty(user->password)))
+    if (LIKELY(! userStringIsEmpty(user->password)))
     {
-        rwlockReadUnlock(&user->lock);
-        return false;
+        const size_t password_len = stringLength(password);
+        result = stringLength(user->password) == password_len && memoryEqual(user->password, password, password_len);
     }
-    if (calcHashBytes(password, stringLength(password)) != user->hash_pass)
-    {
-        rwlockReadUnlock(&user->lock);
-        return false;
-    }
-
-    result = stringLength(user->password) == stringLength(password) &&
-             memoryEqual(user->password, password, stringLength(password));
-
-    if (user->sha224_pass_valid && user->sha256_pass_valid &&
-        wCryptoSHA224(&sha224, (const unsigned char *) password, stringLength(password)) == kWCryptoOk &&
-        wCryptoSHA256(&sha256, (const unsigned char *) password, stringLength(password)) == kWCryptoOk)
-    {
-        result = memoryEqual(&sha256, &user->sha256_pass, sizeof(sha256)) &&
-                 memoryEqual(&sha224, &user->sha224_pass, sizeof(sha224));
-    }
-
     rwlockReadUnlock(&user->lock);
-    memorySecureZero(&sha224, sizeof(sha224));
-    memorySecureZero(&sha256, sizeof(sha256));
     return result;
 }
 
@@ -1670,6 +1807,7 @@ user_admission_result_t userTryAdmitConnection(User *user, const user_ip_key_t *
                 runtime->ip_usages[runtime->ip_usage_count].key  = *ip_key;
                 runtime->ip_usages[runtime->ip_usage_count].refs = 1;
                 runtime->ip_usage_count += 1;
+                userRuntimeIpAddedLocked(runtime, runtime->ip_usage_count - 1U);
             }
             else
             {
@@ -1712,8 +1850,11 @@ void userReleaseConnection(User *user, const user_ip_key_t *ip_key)
             else
             {
                 // Last connection from this IP: drop the slot (swap-with-last keeps the array dense).
-                runtime->ip_usages[ip_index] = runtime->ip_usages[runtime->ip_usage_count - 1];
+                user_ip_key_t removed_key    = runtime->ip_usages[ip_index].key;
+                size_t        old_last       = runtime->ip_usage_count - 1U;
+                runtime->ip_usages[ip_index] = runtime->ip_usages[old_last];
                 runtime->ip_usage_count -= 1;
+                userRuntimeIpRemovedLocked(runtime, ip_index, &removed_key, old_last);
             }
         }
     }

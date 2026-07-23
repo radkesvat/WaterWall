@@ -26,9 +26,9 @@
 #include "wlibc.h"
 
 #include "cJSON.h"
-#include "wmutex.h"
-#include "wcrypto.h"
 #include "utils/uuid.h"
+#include "wcrypto.h"
+#include "wmutex.h"
 
 #define USER_NO_LIMIT                        0ULL
 #define USER_NO_EXPIRY                       0ULL
@@ -90,7 +90,7 @@ typedef struct user_stat_s
  */
 typedef struct user_ip_key_s
 {
-    uint8_t type;     // address family discriminator (0 == none)
+    uint8_t type;      // address family discriminator (0 == none)
     uint8_t bytes[16]; // raw address bytes in network order (IPv4 uses the first 4)
 } user_ip_key_t;
 
@@ -120,6 +120,15 @@ typedef struct user_ip_usage_s
 } user_ip_usage_t;
 
 /*
+ * Opaque adaptive index over the active-IP array. For users with only a few
+ * distinct active source IPs the dense ip_usages[] array is scanned directly and
+ * no index is allocated; once the distinct-IP count crosses a promotion
+ * threshold, this hash index maps each user_ip_key_t to its array slot for
+ * average-O(1) lookup. Implemented in user.c.
+ */
+typedef struct user_ip_index_s user_ip_index_t;
+
+/*
  * Live, process-local enforcement state. Unlike user_stat_t this is never
  * serialized, copied, or synced to AuthenticationServer; it is recreated empty
  * whenever the user object is (re)created and tracks only currently-open
@@ -131,6 +140,8 @@ typedef struct user_runtime_stat_s
     user_ip_usage_t *ip_usages;
     size_t           ip_usage_count;
     size_t           ip_usage_capacity;
+    /* Optional; NULL until the distinct-IP set is large enough to promote. */
+    user_ip_index_t *ip_index;
     bool             first_usage_push_requested;
 } user_runtime_stat_t;
 
@@ -150,8 +161,8 @@ struct user_s
     char *wireguard_allowed_ips;
 
     uint64_t id;
-    hash_t gid;
-    bool   enabled;
+    hash_t   gid;
+    bool     enabled;
 
     user_limit_t     limit;
     user_time_info_t timeinfo;
@@ -162,7 +173,7 @@ struct user_s
      */
     uint64_t client_view_expires_at_ms;
     bool     client_view_expiry_valid;
-    int              record_stat_interval_ms;
+    int      record_stat_interval_ms;
 
     ip_addr_t wireguard_allowed_ip;
     ip_addr_t wireguard_allowed_mask;
@@ -182,13 +193,13 @@ struct user_s
      * with standalone/stack users must not use strict aligned helpers unless
      * they also provide aligned storage.
      */
-    hash_t        hash_pass;
-    uint8_t       sha_alignment_padding[8];
+    hash_t                                         hash_pass;
+    uint8_t                                        sha_alignment_padding[8];
     MSVC_ATTR_ALIGNED_32 sha224_hash_t sha224_pass GNU_ATTR_ALIGNED_32;
-    uint8_t       sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
+    uint8_t                                        sha224_pass_padding[SHA256_DIGEST_SIZE - SHA224_DIGEST_SIZE];
     MSVC_ATTR_ALIGNED_32 sha256_hash_t sha256_pass GNU_ATTR_ALIGNED_32;
-    uint8_t       uuid_pass[kWwUuidBytesLen];
-    uint8_t       wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
+    uint8_t                                        uuid_pass[kWwUuidBytesLen];
+    uint8_t                                        wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
 
     bool sha224_pass_valid;
     bool sha256_pass_valid;
@@ -201,6 +212,16 @@ bool userCreateFromJson(User *user, const cJSON *user_json);
 /* Standalone/deep-copy helpers. For users_t-owned users, prefer usersAddUser()/usersUpdateUser(). */
 bool userCopy(User *dest, const User *src);
 void userDestroy(User *user);
+
+/*
+ * Runtime enforcement-state lifecycle helpers. They own both the active-IP array
+ * and the optional adaptive index, so every path that tears down or relocates
+ * runtime state (userDestroy(), users_t runtime migration) routes through them
+ * and cannot leak or double-free the adaptive index. Callers must hold the
+ * relevant user's stats_lock (or otherwise guarantee exclusive access).
+ */
+void userRuntimeStateClear(user_runtime_stat_t *runtime);
+void userRuntimeStateMove(user_runtime_stat_t *dest, user_runtime_stat_t *src);
 
 cJSON *userToJson(User *user);
 
@@ -218,20 +239,33 @@ bool userSetWireGuardAllowedIps(User *user, const char *value);
 bool userChangePassword(User *user, const char *password);
 /* Compatibility alias for userChangePassword(); prefer usersChangePassword() for database-owned users. */
 bool userSetPassword(User *user, const char *password);
+/*
+ * Exact single-user plaintext check: compares the supplied password against this
+ * one user's stored plaintext and derives no password hashes. It is the
+ * authoritative, collision-safe verifier a caller runs after selecting a
+ * candidate through the SHA-256 lookup table, so a hypothetical SHA-256
+ * collision fails closed. It does not consult any collection or hash map.
+ */
 bool userPasswordMatches(User *user, const char *password);
+/*
+ * Cold-path full derived-data validation: recomputes SHA-224/SHA-256, the
+ * UUID form, and the WireGuard public key from the stored plaintext and checks
+ * that all persisted derived credentials agree. Deliberately expensive; used
+ * during load, validation, and diagnostics, not on the authentication hot path.
+ */
 bool userPasswordDataValid(User *user);
 
-void userSetEnabled(User *user, bool enabled);
-bool userIsEnabled(User *user);
+void     userSetEnabled(User *user, bool enabled);
+bool     userIsEnabled(User *user);
 uint64_t userGetId(User *user);
 void     userSetId(User *user, uint64_t id);
-bool userIsDisabled(User *user);
-bool userIsExpired(User *user, uint64_t now_ms);
-bool userIsActive(User *user, uint64_t now_ms);
-bool userIsTrafficLimited(User *user);
-bool userHasReachedTrafficLimit(User *user);
-bool userHasReachedBandwidthLimit(User *user);
-bool userHasReachedLimit(User *user);
+bool     userIsDisabled(User *user);
+bool     userIsExpired(User *user, uint64_t now_ms);
+bool     userIsActive(User *user, uint64_t now_ms);
+bool     userIsTrafficLimited(User *user);
+bool     userHasReachedTrafficLimit(User *user);
+bool     userHasReachedBandwidthLimit(User *user);
+bool     userHasReachedLimit(User *user);
 
 /*
  * Live connection-admission and accounting helpers used by enforcement nodes.
@@ -249,7 +283,7 @@ void                    userReleaseConnection(User *user, const user_ip_key_t *i
 bool userAccountTraffic(User *user, uint64_t upload_bytes, uint64_t download_bytes, uint64_t now_ms,
                         bool *first_usage_push_needed);
 /* True if the user may no longer carry traffic (disabled, expired, or over its traffic quota). */
-bool                    userRuntimeShouldClose(User *user, uint64_t now_ms);
+bool userRuntimeShouldClose(User *user, uint64_t now_ms);
 
 void userMarkFirstUsage(User *user, uint64_t now_ms);
 void userAddTraffic(User *user, uint64_t upload_bytes, uint64_t download_bytes);

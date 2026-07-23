@@ -181,6 +181,90 @@ static bool usersWireGuardPublicKeyEq(const users_wireguard_publickey_key_t *a,
 #undef i_key
 #undef i_type
 
+/*
+ * The name key stores a borrowed pointer to a user-owned name string. The map
+ * neither owns nor duplicates the string: it hashes and compares by string
+ * contents, so the owning user must keep the string alive and unchanged while
+ * its entry exists (erase before rename, insert the replacement before the
+ * users_t write lock is released).
+ */
+typedef struct users_name_key_s
+{
+    const char *name;
+} users_name_key_t;
+
+static size_t usersNameKeyHash(const users_name_key_t *key)
+{
+    return (size_t) calcHashBytes(key->name, stringLength(key->name));
+}
+
+static bool usersNameKeyEq(const users_name_key_t *a, const users_name_key_t *b)
+{
+    return stringCompare(a->name, b->name) == 0;
+}
+
+#define i_type users_name_map_t // NOLINT
+#define i_key  users_name_key_t // NOLINT
+#define i_val  user_t *         // NOLINT
+#define i_hash usersNameKeyHash // NOLINT
+#define i_eq   usersNameKeyEq   // NOLINT
+#include "stc/hmap.h"
+#undef i_eq
+#undef i_hash
+#undef i_val
+#undef i_key
+#undef i_type
+
+/* Maps a stored user_t address (as uintptr_t) to its active items[] index. */
+#define i_type users_pointer_map_t // NOLINT
+#define i_key  uintptr_t           // NOLINT
+#define i_val  size_t              // NOLINT
+#include "stc/hmap.h"
+#undef i_val
+#undef i_key
+#undef i_type
+
+/*
+ * Ordered interval index for WireGuard Allowed-IP ranges. A looked-up address
+ * may fall inside a CIDR without equaling its network address, so a plain hash
+ * map is insufficient; this ordered map is keyed by (address family, inclusive
+ * range end) in network-byte lexicographic order. Because configured ranges may
+ * not overlap, a single lower_bound() probe answers both address containment and
+ * new-range overlap in O(log M). IPv4 uses the first four end/start bytes and
+ * leaves the rest zero; IPv6 uses all sixteen. Family is compared before bytes.
+ */
+typedef struct users_allowed_ip_key_s
+{
+    uint8_t family;
+    uint8_t end[16];
+} users_allowed_ip_key_t;
+
+typedef struct users_allowed_ip_value_s
+{
+    uint8_t start[16];
+    user_t *user;
+} users_allowed_ip_value_t;
+
+static int usersAllowedIpKeyCmp(const users_allowed_ip_key_t *a, const users_allowed_ip_key_t *b)
+{
+    if (a->family != b->family)
+    {
+        return a->family < b->family ? -1 : 1;
+    }
+    int c = memoryCompare(a->end, b->end, sizeof(a->end));
+    return (c > 0) - (c < 0);
+}
+
+#define i_type users_allowed_ip_map_t   // NOLINT
+#define i_key  users_allowed_ip_key_t   // NOLINT
+#define i_val  users_allowed_ip_value_t // NOLINT
+#define i_cmp  usersAllowedIpKeyCmp     // NOLINT
+#include "stc/smap.h"
+#undef i_cmp
+#undef i_val
+#undef i_key
+#undef i_type
+
 struct users_sha224_table_s
 {
     users_sha224_map_t map;
@@ -204,6 +288,21 @@ struct users_wireguard_publickey_table_s
 struct users_id_table_s
 {
     users_id_map_t map;
+};
+
+struct users_name_table_s
+{
+    users_name_map_t map;
+};
+
+struct users_pointer_table_s
+{
+    users_pointer_map_t map;
+};
+
+struct users_allowed_ip_table_s
+{
+    users_allowed_ip_map_t map;
 };
 
 static void *usersAllocateAlignedZero32(size_t size)
@@ -256,27 +355,6 @@ static void usersReplaceStringOwned(char **dest, char **owned_value)
     *owned_value = NULL;
 }
 
-static bool usersSha224Equal(const uint8_t a[SHA224_DIGEST_SIZE], const uint8_t b[SHA224_DIGEST_SIZE])
-{
-    return memoryEqual(a, b, SHA224_DIGEST_SIZE);
-}
-
-static bool usersSha256Equal(const uint8_t a[SHA256_DIGEST_SIZE], const uint8_t b[SHA256_DIGEST_SIZE])
-{
-    return memoryEqual(a, b, SHA256_DIGEST_SIZE);
-}
-
-static bool usersUUIDEqual(const uint8_t a[kWwUuidBytesLen], const uint8_t b[kWwUuidBytesLen])
-{
-    return memoryEqual(a, b, kWwUuidBytesLen);
-}
-
-static bool usersWireGuardPublicKeyEqual(const uint8_t a[USER_WIREGUARD_PUBLICKEY_SIZE],
-                                         const uint8_t b[USER_WIREGUARD_PUBLICKEY_SIZE])
-{
-    return memoryEqual(a, b, USER_WIREGUARD_PUBLICKEY_SIZE);
-}
-
 static bool usersWireGuardAllowedIpContainsFields(bool valid, const ip_addr_t *network, const ip_addr_t *mask,
                                                   uint8_t family, const ip_addr_t *ip)
 {
@@ -304,53 +382,381 @@ static bool usersWireGuardAllowedIpContainsUser(const user_t *user, const ip_add
                                                                  ip);
 }
 
-static bool usersWireGuardAllowedIpsOverlapFields(bool valid, const ip_addr_t *network, const ip_addr_t *mask,
-                                                  uint8_t family, const user_t *user)
+/*
+ * Serializes an ip_addr_t of the given family into a fixed 16-byte network-order
+ * buffer. IPv4 fills the first four bytes and leaves the rest zero; IPv6 fills
+ * all sixteen. The raw ip_addr_t struct is never compared directly because its
+ * padding and platform layout are not part of the interval key.
+ */
+static bool usersAllowedIpExtractBytes(const ip_addr_t *addr, uint8_t family, uint8_t out[16])
 {
-    if (! valid || user == NULL || ! user->wireguard_allowed_ips_valid || user->wireguard_allowed_ip_family != family)
+    memoryZero(out, 16);
+    if (family == 4U)
+    {
+        uint32_t network_order = ip4AddrGetU32(ip_2_ip4(addr));
+        memoryCopy(out, &network_order, sizeof(network_order));
+        return true;
+    }
+    if (family == 6U)
+    {
+        const ip6_addr_t *v6 = ip_2_ip6(addr);
+        memoryCopy(out, v6->addr, 16U);
+        return true;
+    }
+    return false;
+}
+
+/*
+ * Computes the inclusive [start, end] range of a CIDR as fixed network-order
+ * byte arrays. start = network & mask (defensively masked); end = start | ~mask
+ * over the family's meaningful bytes, with trailing bytes left zero.
+ */
+static bool usersAllowedIpRangeFromFields(const ip_addr_t *network, const ip_addr_t *mask, uint8_t family,
+                                          uint8_t start16[16], uint8_t end16[16])
+{
+    uint8_t network_bytes[16];
+    uint8_t mask_bytes[16];
+    size_t  len;
+
+    if (family != 4U && family != 6U)
+    {
+        return false;
+    }
+    len = family == 4U ? 4U : 16U;
+    if (! usersAllowedIpExtractBytes(network, family, network_bytes) ||
+        ! usersAllowedIpExtractBytes(mask, family, mask_bytes))
     {
         return false;
     }
 
-    return usersWireGuardAllowedIpContainsFields(true, network, mask, family, &user->wireguard_allowed_ip) ||
-           usersWireGuardAllowedIpContainsFields(user->wireguard_allowed_ips_valid,
-                                                 &user->wireguard_allowed_ip,
-                                                 &user->wireguard_allowed_mask,
-                                                 user->wireguard_allowed_ip_family,
-                                                 network);
+    memoryZero(start16, 16);
+    memoryZero(end16, 16);
+    for (size_t i = 0; i < len; ++i)
+    {
+        uint8_t start = (uint8_t) (network_bytes[i] & mask_bytes[i]);
+        start16[i]    = start;
+        end16[i]      = (uint8_t) (start | (uint8_t) ~mask_bytes[i]);
+    }
+    return true;
 }
 
-static bool usersWireGuardAllowedIpsOverlapUsers(const user_t *a, const user_t *b)
+static bool usersAllowedIpEntryFromUser(const user_t *user, users_allowed_ip_key_t *key,
+                                        users_allowed_ip_value_t *value)
 {
-    if (a == NULL)
+    uint8_t start16[16];
+    uint8_t end16[16];
+
+    if (! user->wireguard_allowed_ips_valid)
     {
         return false;
     }
-    return usersWireGuardAllowedIpsOverlapFields(a->wireguard_allowed_ips_valid,
-                                                 &a->wireguard_allowed_ip,
-                                                 &a->wireguard_allowed_mask,
-                                                 a->wireguard_allowed_ip_family,
-                                                 b);
+    if (! usersAllowedIpRangeFromFields(&user->wireguard_allowed_ip,
+                                        &user->wireguard_allowed_mask,
+                                        user->wireguard_allowed_ip_family,
+                                        start16,
+                                        end16))
+    {
+        return false;
+    }
+
+    memoryZero(key, sizeof(*key));
+    memoryZero(value, sizeof(*value));
+    key->family = user->wireguard_allowed_ip_family;
+    memoryCopy(key->end, end16, sizeof(key->end));
+    memoryCopy(value->start, start16, sizeof(value->start));
+    value->user = (user_t *) user;
+    return true;
 }
 
-static user_t *usersFindWireGuardAllowedIpsOverlapLocked(const users_t *users, bool valid, const ip_addr_t *network,
-                                                         const ip_addr_t *mask, uint8_t family, const user_t *ignore)
+static bool usersAllowedIpUserFieldsIndexable(const user_t *user)
 {
-    if (! valid)
+    uint8_t start16[16];
+    uint8_t end16[16];
+
+    if (! user->wireguard_allowed_ips_valid)
+    {
+        return true;
+    }
+    if (user->wireguard_allowed_ips == NULL || user->wireguard_allowed_ips[0] == '\0' ||
+        (user->wireguard_allowed_ip_family != 4U && user->wireguard_allowed_ip_family != 6U) ||
+        user->wireguard_allowed_ip_count == 0U)
+    {
+        return false;
+    }
+    return usersAllowedIpRangeFromFields(
+        &user->wireguard_allowed_ip, &user->wireguard_allowed_mask, user->wireguard_allowed_ip_family, start16, end16);
+}
+
+static bool usersAllowedIpTableCreateIfNeeded(users_t *users)
+{
+    users_allowed_ip_table_t *table;
+
+    if (LIKELY(users->allowed_ip_table != NULL))
+    {
+        return true;
+    }
+
+    table = memoryAllocateZero(sizeof(*table));
+    if (UNLIKELY(table == NULL))
+    {
+        LOGE("Users: failed to allocate Allowed-IP lookup table");
+        return false;
+    }
+
+    users->allowed_ip_table = table;
+    return true;
+}
+
+static size_t usersAllowedIpTableSize(const users_allowed_ip_table_t *table)
+{
+    return table != NULL ? (size_t) users_allowed_ip_map_t_size(&table->map) : 0U;
+}
+
+/*
+ * Reserves node headroom in the ordered Allowed-IP tree for actual configured
+ * ranges, not total users. smap's reserve request is exact, so this helper grows
+ * geometrically from the current tree capacity instead of asking for 17, 18, 19,
+ * ... one node at a time. A reserved tree absorbs a later insert without
+ * allocating, which keeps post-mutation reinsert paths transactional. Note that
+ * smap's _clear() frees the node array, so rebuild/copy callers count valid
+ * ranges and reserve that count after clearing.
+ */
+static bool usersAllowedIpTableReserve(users_allowed_ip_table_t *table, size_t min_capacity)
+{
+    size_t capacity = (size_t) users_allowed_ip_map_t_capacity(&table->map);
+
+    if (capacity >= min_capacity)
+    {
+        return true;
+    }
+    if (UNLIKELY(min_capacity > (size_t) INT32_MAX))
+    {
+        LOGE("Users: Allowed-IP lookup table capacity overflow");
+        return false;
+    }
+    if (capacity < kUsersInitialTableCapacity)
+    {
+        capacity = kUsersInitialTableCapacity;
+    }
+    while (capacity < min_capacity)
+    {
+        if (UNLIKELY(capacity > (size_t) INT32_MAX / 2U))
+        {
+            capacity = min_capacity;
+            break;
+        }
+        capacity *= 2U;
+    }
+    if (UNLIKELY(capacity > (size_t) INT32_MAX))
+    {
+        LOGE("Users: Allowed-IP lookup table capacity overflow");
+        return false;
+    }
+    if (UNLIKELY(! users_allowed_ip_map_t_reserve(&table->map, (isize) capacity)))
+    {
+        LOGE("Users: failed to reserve Allowed-IP lookup table");
+        return false;
+    }
+
+    return true;
+}
+
+static bool usersAllowedIpTableEnsureCapacity(users_t *users, size_t count)
+{
+    return usersAllowedIpTableCreateIfNeeded(users) && usersAllowedIpTableReserve(users->allowed_ip_table, count);
+}
+
+static bool usersAllowedIpTableEnsureOneMoreRange(users_t *users)
+{
+    size_t range_count = usersAllowedIpTableSize(users->allowed_ip_table);
+
+    if (UNLIKELY(range_count == SIZE_MAX))
+    {
+        LOGE("Users: Allowed-IP lookup table capacity overflow");
+        return false;
+    }
+    return usersAllowedIpTableEnsureCapacity(users, range_count + 1U);
+}
+
+static void usersAllowedIpTableClear(users_allowed_ip_table_t *table)
+{
+    if (UNLIKELY(table == NULL))
+    {
+        return;
+    }
+
+    users_allowed_ip_map_t_clear(&table->map);
+}
+
+static void usersAllowedIpTableDestroy(users_allowed_ip_table_t *table)
+{
+    if (UNLIKELY(table == NULL))
+    {
+        return;
+    }
+
+    users_allowed_ip_map_t_drop(&table->map);
+    memoryFree(table);
+}
+
+/* Inserts the user's configured range. Users without a range are not indexed. */
+static bool usersAllowedIpTableInsertLocked(users_t *users, user_t *user)
+{
+    users_allowed_ip_key_t   key;
+    users_allowed_ip_value_t value;
+
+    if (! user->wireguard_allowed_ips_valid)
+    {
+        return true;
+    }
+    if (UNLIKELY(! usersAllowedIpEntryFromUser(user, &key, &value)))
+    {
+        LOGE("Users: user \"%s\" has an unparseable WireGuard Allowed-IP range", usersUserNameForLog(user));
+        return false;
+    }
+    if (UNLIKELY(! usersAllowedIpTableCreateIfNeeded(users)))
+    {
+        return false;
+    }
+
+    users_allowed_ip_map_t_result result = users_allowed_ip_map_t_insert(&users->allowed_ip_table->map, key, value);
+    if (UNLIKELY(result.ref == NULL))
+    {
+        LOGE("Users: failed to insert Allowed-IP lookup entry");
+        return false;
+    }
+    if (UNLIKELY(! result.inserted && result.ref->second.user != user))
+    {
+        LOGE("Users: duplicate WireGuard Allowed-IPs \"%s\"", user->wireguard_allowed_ips);
+        return false;
+    }
+
+    return true;
+}
+
+/* Erases the user's current range entry. Reads the user's live range fields, so
+ * the caller must call this before those fields are replaced. */
+static bool usersAllowedIpTableEraseLocked(users_t *users, const user_t *user)
+{
+    users_allowed_ip_key_t   key;
+    users_allowed_ip_value_t value;
+
+    if (! user->wireguard_allowed_ips_valid)
+    {
+        return true;
+    }
+    if (UNLIKELY(users->allowed_ip_table == NULL))
+    {
+        LOGE("Users: Allowed-IP range to erase has no lookup table (corrupted index)");
+        return false;
+    }
+    if (UNLIKELY(! usersAllowedIpEntryFromUser(user, &key, &value)))
+    {
+        LOGE("Users: valid Allowed-IP range to erase is unparseable (corrupted user/index)");
+        return false;
+    }
+
+    users_allowed_ip_map_t_iter it = users_allowed_ip_map_t_find(&users->allowed_ip_table->map, key);
+    if (UNLIKELY(it.ref == NULL))
+    {
+        /* A user with a valid range is always indexed, so a miss here is a
+         * corrupted index, not a no-op; fail closed so the caller can recover. */
+        LOGE("Users: Allowed-IP range to erase is missing (corrupted index)");
+        return false;
+    }
+    if (UNLIKELY(it.ref->second.user != user))
+    {
+        LOGE("Users: refusing to erase an Allowed-IP range owned by a different user");
+        return false;
+    }
+
+    users_allowed_ip_map_t_erase(&users->allowed_ip_table->map, key);
+    return true;
+}
+
+/* Returns the user whose range contains addr16, or NULL. O(log M). */
+static user_t *usersAllowedIpTableFindContainingLocked(const users_t *users, uint8_t family, const uint8_t addr16[16])
+{
+    users_allowed_ip_table_t *table = users->allowed_ip_table;
+
+    if (UNLIKELY(table == NULL))
     {
         return NULL;
     }
 
-    for (size_t i = 0; i < users->count; ++i)
+    users_allowed_ip_key_t probe;
+    memoryZero(&probe, sizeof(probe));
+    probe.family = family;
+    memoryCopy(probe.end, addr16, sizeof(probe.end));
+
+    /* First entry whose (family, end) >= (family, addr): its end >= addr. */
+    users_allowed_ip_map_t_iter it = users_allowed_ip_map_t_lower_bound(&table->map, probe);
+    if (it.ref == NULL || it.ref->first.family != family)
     {
-        user_t *existing = usersGetAtLocked(users, i);
-        if (existing != ignore && usersWireGuardAllowedIpsOverlapFields(valid, network, mask, family, existing))
-        {
-            return existing;
-        }
+        return NULL;
+    }
+    return memoryCompare(it.ref->second.start, addr16, sizeof(probe.end)) <= 0 ? it.ref->second.user : NULL;
+}
+
+/*
+ * Returns a user whose configured range overlaps [start16, end16], ignoring
+ * `ignore` (the caller's own current entry during an update). O(log M): only the
+ * first candidate whose end >= start needs checking, because ranges never
+ * overlap and are ordered by end.
+ */
+static user_t *usersAllowedIpTableFindOverlapLocked(const users_t *users, uint8_t family, const uint8_t start16[16],
+                                                    const uint8_t end16[16], const user_t *ignore)
+{
+    users_allowed_ip_table_t *table = users->allowed_ip_table;
+
+    if (UNLIKELY(table == NULL))
+    {
+        return NULL;
     }
 
-    return NULL;
+    users_allowed_ip_key_t probe;
+    memoryZero(&probe, sizeof(probe));
+    probe.family = family;
+    memoryCopy(probe.end, start16, sizeof(probe.end));
+
+    users_allowed_ip_map_t_iter it = users_allowed_ip_map_t_lower_bound(&table->map, probe);
+    if (it.ref != NULL && it.ref->first.family == family && it.ref->second.user == ignore)
+    {
+        /* Skip our own old range; the next entry still has end >= start. */
+        users_allowed_ip_map_t_next(&it);
+    }
+    if (it.ref == NULL || it.ref->first.family != family)
+    {
+        return NULL;
+    }
+    return memoryCompare(it.ref->second.start, end16, sizeof(probe.end)) <= 0 ? it.ref->second.user : NULL;
+}
+
+static user_t *usersFindWireGuardAllowedIpsOverlapLocked(const users_t *users, bool valid, const ip_addr_t *network,
+                                                         const ip_addr_t *mask, uint8_t family, const user_t *ignore,
+                                                         bool *range_ok)
+{
+    uint8_t start16[16];
+    uint8_t end16[16];
+
+    if (range_ok != NULL)
+    {
+        *range_ok = true;
+    }
+    if (! valid)
+    {
+        return NULL;
+    }
+    if (UNLIKELY(! usersAllowedIpRangeFromFields(network, mask, family, start16, end16)))
+    {
+        if (range_ok != NULL)
+        {
+            *range_ok = false;
+        }
+        return NULL;
+    }
+
+    return usersAllowedIpTableFindOverlapLocked(users, family, start16, end16, ignore);
 }
 
 static void usersSha224ToHex(const uint8_t sha224[SHA224_DIGEST_SIZE], char out[SHA224_DIGEST_SIZE * 2U + 1U])
@@ -468,6 +874,29 @@ static void usersPasswordProbeDestroy(users_password_probe_t *probe)
     memorySecureZero(probe->uuid_pass, sizeof(probe->uuid_pass));
     memoryZero(probe->wireguard_publickey, sizeof(probe->wireguard_publickey));
     memoryZero(probe, sizeof(*probe));
+}
+
+/*
+ * Derives only the SHA-256 lookup key for a plaintext password. The hot
+ * plaintext-lookup path indexes exclusively by SHA-256, so it must not pay for
+ * the SHA-224/UUID/WireGuard-public-key material that usersPasswordProbeCreate()
+ * derives for the cold password-change path. Callers securely zero *sha256 once
+ * they are done with it.
+ */
+static bool usersPasswordLookupKeyCreate(sha256_hash_t *sha256, const char *password)
+{
+    if (UNLIKELY(sha256 == NULL || password == NULL || password[0] == '\0'))
+    {
+        return false;
+    }
+
+    if (UNLIKELY(wCryptoSHA256(sha256, (const unsigned char *) password, stringLength(password)) != kWCryptoOk))
+    {
+        memorySecureZero(sha256, sizeof(*sha256));
+        return false;
+    }
+
+    return true;
 }
 
 static bool usersSHA224TableReserve(users_sha224_table_t *table, size_t count)
@@ -896,7 +1325,13 @@ static user_t *usersIDTableLookupLocked(const users_t *users, uint64_t id)
     return it.ref != NULL ? it.ref->second : NULL;
 }
 
-static bool usersSHA224TableInsertLocked(users_t *users, user_t *user)
+/*
+ * Capacity-free credential inserts. These never reserve, so a caller that has
+ * already reserved headroom (see usersEnsureLookupCapacityLocked) can run them
+ * after an irreversible mutation without risking a rehash-time allocation
+ * failure. The password-change commit relies on this to stay transactional.
+ */
+static bool usersSHA224TableInsertEntryLocked(users_t *users, user_t *user)
 {
     users_sha224_key_t        key;
     users_sha224_map_t_result result;
@@ -904,10 +1339,6 @@ static bool usersSHA224TableInsertLocked(users_t *users, user_t *user)
     if (UNLIKELY(! user->sha224_pass_valid))
     {
         LOGE("Users: user \"%s\" does not have a usable SHA-224 password hash", usersUserNameForLog(user));
-        return false;
-    }
-    if (UNLIKELY(! usersSHA224TableEnsureCapacity(users, users->count + 1U)))
-    {
         return false;
     }
 
@@ -932,7 +1363,16 @@ static bool usersSHA224TableInsertLocked(users_t *users, user_t *user)
     return true;
 }
 
-static bool usersSHA256TableInsertLocked(users_t *users, user_t *user)
+static bool usersSHA224TableInsertLocked(users_t *users, user_t *user)
+{
+    if (UNLIKELY(! usersSHA224TableEnsureCapacity(users, users->count + 1U)))
+    {
+        return false;
+    }
+    return usersSHA224TableInsertEntryLocked(users, user);
+}
+
+static bool usersSHA256TableInsertEntryLocked(users_t *users, user_t *user)
 {
     users_sha256_key_t        key;
     users_sha256_map_t_result result;
@@ -940,10 +1380,6 @@ static bool usersSHA256TableInsertLocked(users_t *users, user_t *user)
     if (UNLIKELY(! user->sha256_pass_valid))
     {
         LOGE("Users: user \"%s\" does not have a usable SHA-256 password hash", usersUserNameForLog(user));
-        return false;
-    }
-    if (UNLIKELY(! usersSHA256TableEnsureCapacity(users, users->count + 1U)))
-    {
         return false;
     }
 
@@ -968,7 +1404,16 @@ static bool usersSHA256TableInsertLocked(users_t *users, user_t *user)
     return true;
 }
 
-static bool usersUUIDTableInsertLocked(users_t *users, user_t *user)
+static bool usersSHA256TableInsertLocked(users_t *users, user_t *user)
+{
+    if (UNLIKELY(! usersSHA256TableEnsureCapacity(users, users->count + 1U)))
+    {
+        return false;
+    }
+    return usersSHA256TableInsertEntryLocked(users, user);
+}
+
+static bool usersUUIDTableInsertEntryLocked(users_t *users, user_t *user)
 {
     users_uuid_key_t        key;
     users_uuid_map_t_result result;
@@ -976,10 +1421,6 @@ static bool usersUUIDTableInsertLocked(users_t *users, user_t *user)
     if (! user->uuid_pass_valid)
     {
         return true;
-    }
-    if (UNLIKELY(! usersUUIDTableEnsureCapacity(users, users->count + 1U)))
-    {
-        return false;
     }
 
     key    = usersUUIDKeyFromBytes(user->uuid_pass);
@@ -1003,7 +1444,20 @@ static bool usersUUIDTableInsertLocked(users_t *users, user_t *user)
     return true;
 }
 
-static bool usersWireGuardPublicKeyTableInsertLocked(users_t *users, user_t *user)
+static bool usersUUIDTableInsertLocked(users_t *users, user_t *user)
+{
+    if (! user->uuid_pass_valid)
+    {
+        return true;
+    }
+    if (UNLIKELY(! usersUUIDTableEnsureCapacity(users, users->count + 1U)))
+    {
+        return false;
+    }
+    return usersUUIDTableInsertEntryLocked(users, user);
+}
+
+static bool usersWireGuardPublicKeyTableInsertEntryLocked(users_t *users, user_t *user)
 {
     users_wireguard_publickey_key_t        key;
     users_wireguard_publickey_map_t_result result;
@@ -1011,10 +1465,6 @@ static bool usersWireGuardPublicKeyTableInsertLocked(users_t *users, user_t *use
     if (UNLIKELY(! user->wireguard_publickey_valid))
     {
         LOGE("Users: user \"%s\" does not have a usable WireGuard public key", usersUserNameForLog(user));
-        return false;
-    }
-    if (UNLIKELY(! usersWireGuardPublicKeyTableEnsureCapacity(users, users->count + 1U)))
-    {
         return false;
     }
 
@@ -1034,6 +1484,20 @@ static bool usersWireGuardPublicKeyTableInsertLocked(users_t *users, user_t *use
     }
 
     return true;
+}
+
+static bool usersWireGuardPublicKeyTableInsertLocked(users_t *users, user_t *user)
+{
+    if (UNLIKELY(! user->wireguard_publickey_valid))
+    {
+        LOGE("Users: user \"%s\" does not have a usable WireGuard public key", usersUserNameForLog(user));
+        return false;
+    }
+    if (UNLIKELY(! usersWireGuardPublicKeyTableEnsureCapacity(users, users->count + 1U)))
+    {
+        return false;
+    }
+    return usersWireGuardPublicKeyTableInsertEntryLocked(users, user);
 }
 
 static bool usersIDTableInsertLocked(users_t *users, user_t *user)
@@ -1068,6 +1532,446 @@ static bool usersIDTableInsertLocked(users_t *users, user_t *user)
     return true;
 }
 
+/*
+ * Exact-erase helpers. Each takes the key bytes explicitly so a caller can erase
+ * a user's OLD credential entry (captured before a password change) or its live
+ * entry (during removal). Each confirms the entry maps to the expected user
+ * before erasing; refusing to erase another user's entry surfaces an invariant
+ * violation instead of silently corrupting a second user's index.
+ */
+static bool usersSHA224TableEraseLocked(users_t *users, const user_t *user, const uint8_t bytes[SHA224_DIGEST_SIZE])
+{
+    if (users->sha224_table == NULL)
+    {
+        LOGE("Users: SHA-224 entry to erase has no lookup table (corrupted index)");
+        return false;
+    }
+    users_sha224_key_t      key = usersSHA224KeyFromBytes(bytes);
+    users_sha224_map_t_iter it  = users_sha224_map_t_find(&users->sha224_table->map, key);
+    if (UNLIKELY(it.ref == NULL))
+    {
+        /* Every committed user carries a SHA-224 entry, so a missing one is a
+         * corrupted index, not a no-op; fail closed so the caller can recover. */
+        LOGE("Users: SHA-224 entry to erase is missing (corrupted index)");
+        return false;
+    }
+    if (UNLIKELY(it.ref->second != user))
+    {
+        LOGE("Users: refusing to erase a SHA-224 entry owned by a different user");
+        return false;
+    }
+    users_sha224_map_t_erase_at(&users->sha224_table->map, it);
+    return true;
+}
+
+static bool usersSHA256TableEraseLocked(users_t *users, const user_t *user, const uint8_t bytes[SHA256_DIGEST_SIZE])
+{
+    if (users->sha256_table == NULL)
+    {
+        LOGE("Users: SHA-256 entry to erase has no lookup table (corrupted index)");
+        return false;
+    }
+    users_sha256_key_t      key = usersSHA256KeyFromBytes(bytes);
+    users_sha256_map_t_iter it  = users_sha256_map_t_find(&users->sha256_table->map, key);
+    if (UNLIKELY(it.ref == NULL))
+    {
+        /* Every committed user carries a SHA-256 entry, so a missing one is a
+         * corrupted index, not a no-op; fail closed so the caller can recover. */
+        LOGE("Users: SHA-256 entry to erase is missing (corrupted index)");
+        return false;
+    }
+    if (UNLIKELY(it.ref->second != user))
+    {
+        LOGE("Users: refusing to erase a SHA-256 entry owned by a different user");
+        return false;
+    }
+    users_sha256_map_t_erase_at(&users->sha256_table->map, it);
+    return true;
+}
+
+static bool usersUUIDTableEraseLocked(users_t *users, const user_t *user, const uint8_t bytes[kWwUuidBytesLen])
+{
+    if (users->uuid_table == NULL)
+    {
+        LOGE("Users: UUID entry to erase has no lookup table (corrupted index)");
+        return false;
+    }
+    users_uuid_key_t      key = usersUUIDKeyFromBytes(bytes);
+    users_uuid_map_t_iter it  = users_uuid_map_t_find(&users->uuid_table->map, key);
+    if (UNLIKELY(it.ref == NULL))
+    {
+        /* Callers only erase a UUID entry for a user that has one, so a miss here
+         * is a corrupted index, not a no-op; fail closed so the caller recovers. */
+        LOGE("Users: UUID entry to erase is missing (corrupted index)");
+        return false;
+    }
+    if (UNLIKELY(it.ref->second != user))
+    {
+        LOGE("Users: refusing to erase a UUID entry owned by a different user");
+        return false;
+    }
+    users_uuid_map_t_erase_at(&users->uuid_table->map, it);
+    return true;
+}
+
+static bool usersWireGuardPublicKeyTableEraseLocked(users_t *users, const user_t *user,
+                                                    const uint8_t bytes[USER_WIREGUARD_PUBLICKEY_SIZE])
+{
+    if (users->wireguard_publickey_table == NULL)
+    {
+        LOGE("Users: WireGuard public key entry to erase has no lookup table (corrupted index)");
+        return false;
+    }
+    users_wireguard_publickey_key_t      key = usersWireGuardPublicKeyFromBytes(bytes);
+    users_wireguard_publickey_map_t_iter it =
+        users_wireguard_publickey_map_t_find(&users->wireguard_publickey_table->map, key);
+    if (UNLIKELY(it.ref == NULL))
+    {
+        /* Callers only erase a WireGuard-key entry for a user that has one, so a
+         * miss here is a corrupted index; fail closed so the caller recovers. */
+        LOGE("Users: WireGuard public key entry to erase is missing (corrupted index)");
+        return false;
+    }
+    if (UNLIKELY(it.ref->second != user))
+    {
+        LOGE("Users: refusing to erase a WireGuard public key entry owned by a different user");
+        return false;
+    }
+    users_wireguard_publickey_map_t_erase_at(&users->wireguard_publickey_table->map, it);
+    return true;
+}
+
+static bool usersIDTableEraseLocked(users_t *users, const user_t *user, uint64_t id)
+{
+    if (id == 0)
+    {
+        return true;
+    }
+    if (users->id_table == NULL)
+    {
+        LOGE("Users: id entry to erase has no lookup table (corrupted index)");
+        return false;
+    }
+    users_id_map_t_iter it = users_id_map_t_find(&users->id_table->map, id);
+    if (UNLIKELY(it.ref == NULL))
+    {
+        /* A nonzero id is always indexed, so a miss here is a corrupted index;
+         * fail closed so the caller can recover. */
+        LOGE("Users: id entry to erase is missing (corrupted index)");
+        return false;
+    }
+    if (UNLIKELY(it.ref->second != user))
+    {
+        LOGE("Users: refusing to erase an id entry owned by a different user");
+        return false;
+    }
+    users_id_map_t_erase_at(&users->id_table->map, it);
+    return true;
+}
+
+static bool usersNameTableReserve(users_name_table_t *table, size_t count)
+{
+    size_t capacity = count < kUsersInitialTableCapacity ? kUsersInitialTableCapacity : count;
+
+    if (UNLIKELY(capacity > (size_t) PTRDIFF_MAX))
+    {
+        LOGE("Users: name lookup table capacity overflow");
+        return false;
+    }
+    if (UNLIKELY(! users_name_map_t_reserve(&table->map, (isize) capacity)))
+    {
+        LOGE("Users: failed to reserve name lookup table");
+        return false;
+    }
+
+    return true;
+}
+
+static bool usersNameTableCreateIfNeeded(users_t *users)
+{
+    users_name_table_t *table;
+
+    if (LIKELY(users->name_table != NULL))
+    {
+        return true;
+    }
+
+    table = memoryAllocateZero(sizeof(*table));
+    if (UNLIKELY(table == NULL))
+    {
+        LOGE("Users: failed to allocate name lookup table");
+        return false;
+    }
+
+    if (UNLIKELY(! usersNameTableReserve(table, kUsersInitialTableCapacity)))
+    {
+        users_name_map_t_drop(&table->map);
+        memoryFree(table);
+        return false;
+    }
+
+    users->name_table = table;
+    return true;
+}
+
+static bool usersNameTableEnsureCapacity(users_t *users, size_t count)
+{
+    return usersNameTableCreateIfNeeded(users) && usersNameTableReserve(users->name_table, count);
+}
+
+static void usersNameTableClear(users_name_table_t *table)
+{
+    if (UNLIKELY(table == NULL))
+    {
+        return;
+    }
+
+    users_name_map_t_clear(&table->map);
+}
+
+static void usersNameTableDestroy(users_name_table_t *table)
+{
+    if (UNLIKELY(table == NULL))
+    {
+        return;
+    }
+
+    users_name_map_t_drop(&table->map);
+    memoryFree(table);
+}
+
+static user_t *usersNameTableLookupLocked(const users_t *users, const char *name)
+{
+    users_name_table_t *table = users->name_table;
+
+    if (UNLIKELY(table == NULL || name == NULL || name[0] == '\0'))
+    {
+        return NULL;
+    }
+
+    users_name_key_t      key = {.name = name};
+    users_name_map_t_iter it  = users_name_map_t_find(&table->map, key);
+    return it.ref != NULL ? it.ref->second : NULL;
+}
+
+/*
+ * Inserts the user's non-empty name. Empty names are intentionally not indexed;
+ * multiple unnamed users remain allowed. The stored key borrows user->name, so
+ * the caller must not free or replace that string while the entry lives.
+ */
+static bool usersNameTableInsertLocked(users_t *users, user_t *user)
+{
+    users_name_key_t        key;
+    users_name_map_t_result result;
+
+    if (user->name == NULL || user->name[0] == '\0')
+    {
+        return true;
+    }
+    if (UNLIKELY(! usersNameTableEnsureCapacity(users, users->count + 1U)))
+    {
+        return false;
+    }
+
+    key    = (users_name_key_t) {.name = user->name};
+    result = users_name_map_t_insert(&users->name_table->map, key, user);
+    if (UNLIKELY(result.ref == NULL))
+    {
+        LOGE("Users: failed to insert name lookup entry");
+        return false;
+    }
+    if (UNLIKELY(! result.inserted && result.ref->second != user))
+    {
+        LOGE("Users: duplicate username \"%s\" between two users", user->name);
+        return false;
+    }
+
+    return true;
+}
+
+/*
+ * Erases the entry for `name` when it maps to `user`. `name` is passed
+ * explicitly so the caller can erase the old string before it is replaced or
+ * freed. Erasing an entry owned by a different user is an invariant violation.
+ */
+static bool usersNameTableEraseLocked(users_t *users, const user_t *user, const char *name)
+{
+    users_name_table_t *table = users->name_table;
+
+    if (name == NULL || name[0] == '\0')
+    {
+        return true;
+    }
+    if (table == NULL)
+    {
+        LOGE("Users: name \"%s\" to erase has no lookup table (corrupted index)", name);
+        return false;
+    }
+
+    users_name_key_t      key = {.name = name};
+    users_name_map_t_iter it  = users_name_map_t_find(&table->map, key);
+    if (UNLIKELY(it.ref == NULL))
+    {
+        /* A non-empty name is always indexed, so a miss here is a corrupted index
+         * (a borrowed name key that outlived its user); fail closed. */
+        LOGE("Users: name \"%s\" to erase is missing (corrupted index)", name);
+        return false;
+    }
+    if (UNLIKELY(it.ref->second != user))
+    {
+        LOGE("Users: refusing to erase name \"%s\" owned by a different user", name);
+        return false;
+    }
+
+    users_name_map_t_erase_at(&table->map, it);
+    return true;
+}
+
+static bool usersPointerTableReserve(users_pointer_table_t *table, size_t count)
+{
+    size_t capacity = count < kUsersInitialTableCapacity ? kUsersInitialTableCapacity : count;
+
+    if (UNLIKELY(capacity > (size_t) PTRDIFF_MAX))
+    {
+        LOGE("Users: pointer lookup table capacity overflow");
+        return false;
+    }
+    if (UNLIKELY(! users_pointer_map_t_reserve(&table->map, (isize) capacity)))
+    {
+        LOGE("Users: failed to reserve pointer lookup table");
+        return false;
+    }
+
+    return true;
+}
+
+static bool usersPointerTableCreateIfNeeded(users_t *users)
+{
+    users_pointer_table_t *table;
+
+    if (LIKELY(users->pointer_table != NULL))
+    {
+        return true;
+    }
+
+    table = memoryAllocateZero(sizeof(*table));
+    if (UNLIKELY(table == NULL))
+    {
+        LOGE("Users: failed to allocate pointer lookup table");
+        return false;
+    }
+
+    if (UNLIKELY(! usersPointerTableReserve(table, kUsersInitialTableCapacity)))
+    {
+        users_pointer_map_t_drop(&table->map);
+        memoryFree(table);
+        return false;
+    }
+
+    users->pointer_table = table;
+    return true;
+}
+
+static bool usersPointerTableEnsureCapacity(users_t *users, size_t count)
+{
+    return usersPointerTableCreateIfNeeded(users) && usersPointerTableReserve(users->pointer_table, count);
+}
+
+static void usersPointerTableClear(users_pointer_table_t *table)
+{
+    if (UNLIKELY(table == NULL))
+    {
+        return;
+    }
+
+    users_pointer_map_t_clear(&table->map);
+}
+
+static void usersPointerTableDestroy(users_pointer_table_t *table)
+{
+    if (UNLIKELY(table == NULL))
+    {
+        return;
+    }
+
+    users_pointer_map_t_drop(&table->map);
+    memoryFree(table);
+}
+
+static bool usersPointerTableLookupLocked(const users_t *users, const user_t *user, size_t *index_out)
+{
+    users_pointer_table_t *table = users->pointer_table;
+
+    if (UNLIKELY(table == NULL || user == NULL))
+    {
+        return false;
+    }
+
+    users_pointer_map_t_iter it = users_pointer_map_t_find(&table->map, (uintptr_t) user);
+    if (it.ref == NULL)
+    {
+        return false;
+    }
+    if (index_out != NULL)
+    {
+        *index_out = it.ref->second;
+    }
+    return true;
+}
+
+/* Records (or updates) the active items[] index for a stored user. */
+static bool usersPointerTableSetLocked(users_t *users, user_t *user, size_t index)
+{
+    users_pointer_map_t_result result;
+
+    if (UNLIKELY(! usersPointerTableEnsureCapacity(users, users->count + 1U)))
+    {
+        return false;
+    }
+
+    result = users_pointer_map_t_insert_or_assign(&users->pointer_table->map, (uintptr_t) user, index);
+    if (UNLIKELY(result.ref == NULL))
+    {
+        LOGE("Users: failed to insert pointer lookup entry");
+        return false;
+    }
+
+    return true;
+}
+
+/*
+ * Repoints an already-indexed user at a new active items[] slot. It only rewrites
+ * an existing entry's value, so unlike usersPointerTableSetLocked() it never
+ * reserves and cannot allocate; the swap-with-last removal relies on this to stay
+ * transactional after items[] has been mutated. A false return means the user was
+ * not in the index, i.e. the pointer index is already corrupt.
+ */
+static bool usersPointerTableUpdateExistingLocked(users_t *users, const user_t *user, size_t index)
+{
+    if (UNLIKELY(users->pointer_table == NULL || user == NULL))
+    {
+        return false;
+    }
+
+    users_pointer_map_t_iter it = users_pointer_map_t_find(&users->pointer_table->map, (uintptr_t) user);
+    if (UNLIKELY(it.ref == NULL))
+    {
+        return false;
+    }
+    it.ref->second = index;
+    return true;
+}
+
+static void usersPointerTableEraseLocked(users_t *users, const user_t *user)
+{
+    if (UNLIKELY(users->pointer_table == NULL || user == NULL))
+    {
+        return;
+    }
+
+    users_pointer_map_t_erase(&users->pointer_table->map, (uintptr_t) user);
+}
+
 static bool usersEnsureLookupCapacityLocked(users_t *users, size_t count)
 {
     if (UNLIKELY(! usersSHA224TableEnsureCapacity(users, count)))
@@ -1090,49 +1994,193 @@ static bool usersEnsureLookupCapacityLocked(users_t *users, size_t count)
     {
         return false;
     }
+    if (UNLIKELY(! usersNameTableEnsureCapacity(users, count)))
+    {
+        return false;
+    }
+    if (UNLIKELY(! usersPointerTableEnsureCapacity(users, count)))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+static bool usersLookupTablesCreateIfNeededLocked(users_t *users)
+{
+    return usersSHA224TableCreateIfNeeded(users) && usersSHA256TableCreateIfNeeded(users) &&
+           usersUUIDTableCreateIfNeeded(users) && usersWireGuardPublicKeyTableCreateIfNeeded(users) &&
+           usersIDTableCreateIfNeeded(users) && usersNameTableCreateIfNeeded(users) &&
+           usersPointerTableCreateIfNeeded(users) && usersAllowedIpTableCreateIfNeeded(users);
+}
+
+static void usersLookupTablesDestroy(users_t *users)
+{
+    usersSHA224TableDestroy(users->sha224_table);
+    usersSHA256TableDestroy(users->sha256_table);
+    usersUUIDTableDestroy(users->uuid_table);
+    usersWireGuardPublicKeyTableDestroy(users->wireguard_publickey_table);
+    usersIDTableDestroy(users->id_table);
+    usersNameTableDestroy(users->name_table);
+    usersPointerTableDestroy(users->pointer_table);
+    usersAllowedIpTableDestroy(users->allowed_ip_table);
+
+    users->sha224_table              = NULL;
+    users->sha256_table              = NULL;
+    users->uuid_table                = NULL;
+    users->wireguard_publickey_table = NULL;
+    users->id_table                  = NULL;
+    users->name_table                = NULL;
+    users->pointer_table             = NULL;
+    users->allowed_ip_table          = NULL;
+}
+
+static void usersLookupTablesSwapLocked(users_t *a, users_t *b)
+{
+#define USERS_SWAP_TABLE_PTR(field)                                                                                    \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        void *swap_tmp = a->field;                                                                                     \
+        a->field       = b->field;                                                                                     \
+        b->field       = swap_tmp;                                                                                     \
+    } while (0)
+
+    USERS_SWAP_TABLE_PTR(sha224_table);
+    USERS_SWAP_TABLE_PTR(sha256_table);
+    USERS_SWAP_TABLE_PTR(uuid_table);
+    USERS_SWAP_TABLE_PTR(wireguard_publickey_table);
+    USERS_SWAP_TABLE_PTR(id_table);
+    USERS_SWAP_TABLE_PTR(name_table);
+    USERS_SWAP_TABLE_PTR(pointer_table);
+    USERS_SWAP_TABLE_PTR(allowed_ip_table);
+
+#undef USERS_SWAP_TABLE_PTR
+}
+
+static bool usersBuildLookupTablesForItemsLocked(users_t *lookup_users, user_t **items, size_t count)
+{
+    size_t ranged_count    = 0;
+    size_t lookup_capacity = count;
+
+    lookup_users->count = count;
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (items[i]->wireguard_allowed_ips_valid)
+        {
+            ranged_count += 1U;
+        }
+    }
+
+    if (UNLIKELY(lookup_capacity == SIZE_MAX))
+    {
+        LOGE("Users: lookup table capacity overflow");
+        return false;
+    }
+    lookup_capacity += 1U;
+
+    if (UNLIKELY(! usersLookupTablesCreateIfNeededLocked(lookup_users) ||
+                 ! usersEnsureLookupCapacityLocked(lookup_users, lookup_capacity) ||
+                 ! usersAllowedIpTableReserve(lookup_users->allowed_ip_table, ranged_count)))
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < count; ++i)
+    {
+        user_t *user = items[i];
+        if (UNLIKELY(! usersSHA224TableInsertLocked(lookup_users, user)))
+        {
+            return false;
+        }
+        if (UNLIKELY(! usersSHA256TableInsertLocked(lookup_users, user)))
+        {
+            return false;
+        }
+        if (UNLIKELY(! usersUUIDTableInsertLocked(lookup_users, user)))
+        {
+            return false;
+        }
+        if (UNLIKELY(! usersWireGuardPublicKeyTableInsertLocked(lookup_users, user)))
+        {
+            return false;
+        }
+        if (UNLIKELY(! usersIDTableInsertLocked(lookup_users, user)))
+        {
+            return false;
+        }
+        if (UNLIKELY(! usersNameTableInsertLocked(lookup_users, user)))
+        {
+            return false;
+        }
+        if (UNLIKELY(! usersPointerTableSetLocked(lookup_users, user, i)))
+        {
+            return false;
+        }
+        if (UNLIKELY(! usersAllowedIpTableInsertLocked(lookup_users, user)))
+        {
+            return false;
+        }
+    }
 
     return true;
 }
 
 static bool usersRebuildLookupTablesLocked(users_t *users)
 {
-    if (UNLIKELY(! usersEnsureLookupCapacityLocked(users, users->count)))
+    users_t temp;
+    bool    ok;
+
+    memoryZero(&temp, sizeof(temp));
+    ok = usersBuildLookupTablesForItemsLocked(&temp, users->items, users->count);
+    if (LIKELY(ok))
     {
-        return false;
+        usersLookupTablesSwapLocked(users, &temp);
     }
+    usersLookupTablesDestroy(&temp);
+    return ok;
+}
 
-    usersSHA224TableClear(users->sha224_table);
-    usersSHA256TableClear(users->sha256_table);
-    usersUUIDTableClear(users->uuid_table);
-    usersWireGuardPublicKeyTableClear(users->wireguard_publickey_table);
-    usersIDTableClear(users->id_table);
+/*
+ * Erases every index entry a user owns, reading the user's live key fields. Used
+ * by incremental removal before the user object is destroyed. Returns false if
+ * any entry resolved to a different user (an invariant violation); it still
+ * attempts every erase so the tables are left as consistent as possible.
+ */
+static bool usersEraseAllIndexEntriesLocked(users_t *users, user_t *user)
+{
+    bool ok = true;
 
-    for (size_t i = 0; i < users->count; ++i)
+    if (! usersSHA224TableEraseLocked(users, user, user->sha224_pass.bytes))
     {
-        user_t *user = usersGetAtLocked(users, i);
-        if (UNLIKELY(! usersSHA224TableInsertLocked(users, user)))
-        {
-            return false;
-        }
-        if (UNLIKELY(! usersSHA256TableInsertLocked(users, user)))
-        {
-            return false;
-        }
-        if (UNLIKELY(! usersUUIDTableInsertLocked(users, user)))
-        {
-            return false;
-        }
-        if (UNLIKELY(! usersWireGuardPublicKeyTableInsertLocked(users, user)))
-        {
-            return false;
-        }
-        if (UNLIKELY(! usersIDTableInsertLocked(users, user)))
-        {
-            return false;
-        }
+        ok = false;
     }
-
-    return true;
+    if (! usersSHA256TableEraseLocked(users, user, user->sha256_pass.bytes))
+    {
+        ok = false;
+    }
+    if (user->uuid_pass_valid && ! usersUUIDTableEraseLocked(users, user, user->uuid_pass))
+    {
+        ok = false;
+    }
+    if (user->wireguard_publickey_valid &&
+        ! usersWireGuardPublicKeyTableEraseLocked(users, user, user->wireguard_publickey))
+    {
+        ok = false;
+    }
+    if (! usersIDTableEraseLocked(users, user, user->id))
+    {
+        ok = false;
+    }
+    if (! usersNameTableEraseLocked(users, user, user->name))
+    {
+        ok = false;
+    }
+    if (! usersAllowedIpTableEraseLocked(users, user))
+    {
+        ok = false;
+    }
+    usersPointerTableEraseLocked(users, user);
+    return ok;
 }
 
 static bool usersReserveItemsLocked(users_t *users, size_t capacity)
@@ -1252,117 +2300,121 @@ static bool usersReserveLocked(users_t *users, size_t capacity)
 
 static bool usersIndexOfLocked(const users_t *users, const user_t *user, size_t *index_out)
 {
-    if (UNLIKELY(user == NULL))
-    {
-        return false;
-    }
-
-    for (size_t i = 0; i < users->count; ++i)
-    {
-        if (usersGetAtLocked(users, i) == user)
-        {
-            if (index_out != NULL)
-            {
-                *index_out = i;
-            }
-            return true;
-        }
-    }
-
-    return false;
+    /* Average-O(1): the pointer table maps each stored user to its items[] index. */
+    return usersPointerTableLookupLocked(users, user, index_out);
 }
 
 static user_t *usersFindByNameLocked(const users_t *users, const char *name, const user_t *exclude)
 {
-    if (UNLIKELY(name == NULL || name[0] == '\0'))
-    {
-        return NULL;
-    }
-
-    for (size_t i = 0; i < users->count; ++i)
-    {
-        user_t *user = usersGetAtLocked(users, i);
-        if (user != exclude && LIKELY(user->name != NULL) && stringCompare(user->name, name) == 0)
-        {
-            return user;
-        }
-    }
-
-    return NULL;
+    /*
+     * Average-O(1) via the name table. Non-empty names are unique, so a hit that
+     * is not the excluded user is a genuine duplicate; a hit equal to `exclude`
+     * (a no-op rename to the same name) is not a conflict.
+     */
+    user_t *found = usersNameTableLookupLocked(users, name);
+    return (found != NULL && found != exclude) ? found : NULL;
 }
 
-static bool usersCommitNewUserLocked(users_t *users, user_t *slot)
+/*
+ * Commits a fully-initialized slot into the active set and every lookup index.
+ *
+ * When `prevalidated` is true the caller has already run
+ * usersValidateNewUserNoFatalLocked() on the identical source under the same held
+ * write lock, so the derived-password revalidation and duplicate-key probes here
+ * would only repeat that work (recomputing SHA-224/256, the UUID form, and the
+ * WireGuard key, plus every index lookup) for no benefit; they are skipped. The
+ * capacity reservation and the index inserts always run, so a false return on the
+ * prevalidated path can only be an allocation failure.
+ */
+static bool usersCommitNewUserLocked(users_t *users, user_t *slot, bool prevalidated)
 {
-    user_t *duplicate_name;
-
-    if (UNLIKELY(! slot->sha224_pass_valid))
+    if (! prevalidated)
     {
-        LOGE("Users: user \"%s\" does not have a usable SHA-224 password hash", usersUserNameForLog(slot));
-        return false;
-    }
-    if (UNLIKELY(! slot->sha256_pass_valid))
-    {
-        LOGE("Users: user \"%s\" does not have a usable SHA-256 password hash", usersUserNameForLog(slot));
-        return false;
-    }
-    if (UNLIKELY(! userPasswordDataValid(slot)))
-    {
-        LOGE("Users: user \"%s\" has inconsistent password lookup data", usersUserNameForLog(slot));
-        return false;
-    }
-
-    duplicate_name = usersFindByNameLocked(users, slot->name, NULL);
-    if (UNLIKELY(duplicate_name != NULL))
-    {
-        LOGE("Users: duplicate username \"%s\" in user database", slot->name);
-        return false;
+        if (UNLIKELY(! slot->sha224_pass_valid))
+        {
+            LOGE("Users: user \"%s\" does not have a usable SHA-224 password hash", usersUserNameForLog(slot));
+            return false;
+        }
+        if (UNLIKELY(! slot->sha256_pass_valid))
+        {
+            LOGE("Users: user \"%s\" does not have a usable SHA-256 password hash", usersUserNameForLog(slot));
+            return false;
+        }
+        if (UNLIKELY(! userPasswordDataValid(slot)))
+        {
+            LOGE("Users: user \"%s\" has inconsistent password lookup data", usersUserNameForLog(slot));
+            return false;
+        }
+        if (UNLIKELY(! usersAllowedIpUserFieldsIndexable(slot)))
+        {
+            LOGE("Users: user \"%s\" has inconsistent WireGuard Allowed-IP range data", usersUserNameForLog(slot));
+            return false;
+        }
+        if (UNLIKELY(usersFindByNameLocked(users, slot->name, NULL) != NULL))
+        {
+            LOGE("Users: duplicate username \"%s\" in user database", slot->name);
+            return false;
+        }
+        if (UNLIKELY(usersSHA224TableLookupLocked(users, slot->sha224_pass.bytes) != NULL))
+        {
+            char key_hex[SHA224_DIGEST_SIZE * 2U + 1U];
+            usersSha224ToHex(slot->sha224_pass.bytes, key_hex);
+            LOGE(
+                "Users: duplicate SHA-224 lookup key %s while loading user \"%s\"", key_hex, usersUserNameForLog(slot));
+            return false;
+        }
+        if (UNLIKELY(usersSHA256TableLookupLocked(users, slot->sha256_pass.bytes) != NULL))
+        {
+            char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
+            usersSha256ToHex(slot->sha256_pass.bytes, key_hex);
+            LOGE(
+                "Users: duplicate SHA-256 lookup key %s while loading user \"%s\"", key_hex, usersUserNameForLog(slot));
+            return false;
+        }
+        if (UNLIKELY(slot->uuid_pass_valid && usersUUIDTableLookupLocked(users, slot->uuid_pass) != NULL))
+        {
+            char key_text[kWwUuidCanonicalStringLen + 1U];
+            wwUuidToCanonicalString(slot->uuid_pass, key_text);
+            LOGE("Users: duplicate UUID credential %s while loading user \"%s\"", key_text, usersUserNameForLog(slot));
+            return false;
+        }
+        if (UNLIKELY(slot->wireguard_publickey_valid &&
+                     usersWireGuardPublicKeyTableLookupLocked(users, slot->wireguard_publickey) != NULL))
+        {
+            LOGE("Users: duplicate WireGuard public key while loading user \"%s\"", usersUserNameForLog(slot));
+            return false;
+        }
+        bool range_ok = true;
+        if (UNLIKELY(usersFindWireGuardAllowedIpsOverlapLocked(users,
+                                                               slot->wireguard_allowed_ips_valid,
+                                                               &slot->wireguard_allowed_ip,
+                                                               &slot->wireguard_allowed_mask,
+                                                               slot->wireguard_allowed_ip_family,
+                                                               NULL,
+                                                               &range_ok) != NULL))
+        {
+            LOGE("Users: overlapping WireGuard allowed IPs \"%s\" while loading user \"%s\"",
+                 slot->wireguard_allowed_ips,
+                 usersUserNameForLog(slot));
+            return false;
+        }
+        if (UNLIKELY(! range_ok))
+        {
+            LOGE("Users: user \"%s\" has an unparseable WireGuard Allowed-IP range", usersUserNameForLog(slot));
+            return false;
+        }
+        if (UNLIKELY(slot->id != 0 && usersIDTableLookupLocked(users, slot->id) != NULL))
+        {
+            LOGE("Users: duplicate id %" PRIu64 " while loading user \"%s\"", slot->id, usersUserNameForLog(slot));
+            return false;
+        }
     }
     if (UNLIKELY(! usersEnsureLookupCapacityLocked(users, users->count + 1U)))
     {
         return false;
     }
-    if (UNLIKELY(usersSHA224TableLookupLocked(users, slot->sha224_pass.bytes) != NULL))
+    if (UNLIKELY(slot->wireguard_allowed_ips_valid && ! usersAllowedIpTableEnsureOneMoreRange(users)))
     {
-        char key_hex[SHA224_DIGEST_SIZE * 2U + 1U];
-        usersSha224ToHex(slot->sha224_pass.bytes, key_hex);
-        LOGE("Users: duplicate SHA-224 lookup key %s while loading user \"%s\"", key_hex, usersUserNameForLog(slot));
-        return false;
-    }
-    if (UNLIKELY(usersSHA256TableLookupLocked(users, slot->sha256_pass.bytes) != NULL))
-    {
-        char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
-        usersSha256ToHex(slot->sha256_pass.bytes, key_hex);
-        LOGE("Users: duplicate SHA-256 lookup key %s while loading user \"%s\"", key_hex, usersUserNameForLog(slot));
-        return false;
-    }
-    if (UNLIKELY(slot->uuid_pass_valid && usersUUIDTableLookupLocked(users, slot->uuid_pass) != NULL))
-    {
-        char key_text[kWwUuidCanonicalStringLen + 1U];
-        wwUuidToCanonicalString(slot->uuid_pass, key_text);
-        LOGE("Users: duplicate UUID credential %s while loading user \"%s\"", key_text, usersUserNameForLog(slot));
-        return false;
-    }
-    if (UNLIKELY(slot->wireguard_publickey_valid &&
-                 usersWireGuardPublicKeyTableLookupLocked(users, slot->wireguard_publickey) != NULL))
-    {
-        LOGE("Users: duplicate WireGuard public key while loading user \"%s\"", usersUserNameForLog(slot));
-        return false;
-    }
-    if (UNLIKELY(usersFindWireGuardAllowedIpsOverlapLocked(users,
-                                                           slot->wireguard_allowed_ips_valid,
-                                                           &slot->wireguard_allowed_ip,
-                                                           &slot->wireguard_allowed_mask,
-                                                           slot->wireguard_allowed_ip_family,
-                                                           NULL) != NULL))
-    {
-        LOGE("Users: overlapping WireGuard allowed IPs \"%s\" while loading user \"%s\"",
-             slot->wireguard_allowed_ips,
-             usersUserNameForLog(slot));
-        return false;
-    }
-    if (UNLIKELY(slot->id != 0 && usersIDTableLookupLocked(users, slot->id) != NULL))
-    {
-        LOGE("Users: duplicate id %" PRIu64 " while loading user \"%s\"", slot->id, usersUserNameForLog(slot));
         return false;
     }
 
@@ -1406,11 +2458,65 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot)
         }
         return false;
     }
+    if (UNLIKELY(! usersNameTableInsertLocked(users, slot)))
+    {
+        if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
+        {
+            LOGF("Users: failed to restore lookup tables after an insertion failure");
+            terminateProgram(1);
+        }
+        return false;
+    }
+    if (UNLIKELY(! usersPointerTableSetLocked(users, slot, users->count)))
+    {
+        if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
+        {
+            LOGF("Users: failed to restore lookup tables after an insertion failure");
+            terminateProgram(1);
+        }
+        return false;
+    }
+    if (UNLIKELY(! usersAllowedIpTableInsertLocked(users, slot)))
+    {
+        if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
+        {
+            LOGF("Users: failed to restore lookup tables after an insertion failure");
+            terminateProgram(1);
+        }
+        return false;
+    }
 
     users->items[users->count] = slot;
     users->count += 1U;
     users->slot_count += 1U;
     return true;
+}
+
+typedef struct users_duplicate_result_s
+{
+    users_add_result_t result;
+    size_t             index;
+    uint8_t            priority;
+    bool               found;
+} users_duplicate_result_t;
+
+static void usersDuplicateResultConsider(const users_t *users, users_duplicate_result_t *best, user_t *owner,
+                                         users_add_result_t result, uint8_t priority)
+{
+    size_t index = SIZE_MAX;
+
+    if (owner == NULL)
+    {
+        return;
+    }
+    (void) usersIndexOfLocked(users, owner, &index);
+    if (! best->found || index < best->index || (index == best->index && priority < best->priority))
+    {
+        best->result   = result;
+        best->index    = index;
+        best->priority = priority;
+        best->found    = true;
+    }
 }
 
 static users_add_result_t usersValidateNewUserNoFatalLocked(const users_t *users, const user_t *user)
@@ -1420,50 +2526,73 @@ static users_add_result_t usersValidateNewUserNoFatalLocked(const users_t *users
     {
         return kUsersAddResultInvalidUser;
     }
-    if (UNLIKELY(user->wireguard_allowed_ips_valid &&
-                 (user->wireguard_allowed_ips == NULL || user->wireguard_allowed_ips[0] == '\0' ||
-                  (user->wireguard_allowed_ip_family != 4U && user->wireguard_allowed_ip_family != 6U) ||
-                  user->wireguard_allowed_ip_count == 0U)))
+    if (UNLIKELY(! usersAllowedIpUserFieldsIndexable(user)))
     {
         return kUsersAddResultInvalidWireGuardAllowedIps;
     }
+    /*
+     * Classify duplicates through the lookup indexes instead of scanning every
+     * existing user. Each index already yields the owning user, so this is
+     * average O(1) per key (O(log M) for the Allowed-IP overlap probe) rather
+     * than O(N), which keeps a full feed average O(N) instead of O(N^2).
+     */
     if (UNLIKELY(usersFindByNameLocked(users, user->name, NULL) != NULL))
     {
         return kUsersAddResultDuplicateName;
     }
 
-    for (size_t i = 0; i < users->count; ++i)
+    bool    range_ok = true;
+    user_t *overlap  = usersFindWireGuardAllowedIpsOverlapLocked(users,
+                                                                user->wireguard_allowed_ips_valid,
+                                                                &user->wireguard_allowed_ip,
+                                                                &user->wireguard_allowed_mask,
+                                                                user->wireguard_allowed_ip_family,
+                                                                NULL,
+                                                                &range_ok);
+    if (UNLIKELY(! range_ok))
     {
-        user_t *existing = usersGetAtLocked(users, i);
+        return kUsersAddResultInvalidWireGuardAllowedIps;
+    }
 
-        if (UNLIKELY(existing->sha224_pass_valid &&
-                     usersSha224Equal(existing->sha224_pass.bytes, user->sha224_pass.bytes)))
-        {
-            return kUsersAddResultDuplicateSHA224;
-        }
-        if (UNLIKELY(existing->sha256_pass_valid &&
-                     usersSha256Equal(existing->sha256_pass.bytes, user->sha256_pass.bytes)))
-        {
-            return kUsersAddResultDuplicateSHA256;
-        }
-        if (UNLIKELY(user->uuid_pass_valid && existing->uuid_pass_valid &&
-                     usersUUIDEqual(existing->uuid_pass, user->uuid_pass)))
-        {
-            return kUsersAddResultDuplicateUUID;
-        }
-        if (UNLIKELY(user->wireguard_publickey_valid && existing->wireguard_publickey_valid &&
-                     usersWireGuardPublicKeyEqual(existing->wireguard_publickey, user->wireguard_publickey)))
-        {
-            return kUsersAddResultDuplicateWireGuardPublicKey;
-        }
-        if (UNLIKELY(usersWireGuardAllowedIpsOverlapUsers(existing, user)))
-        {
-            return kUsersAddResultDuplicateWireGuardAllowedIps;
-        }
-        if (UNLIKELY(user->id != 0 && existing->id == user->id))
-        {
-            return kUsersAddResultDuplicateId;
-        }
+    /*
+     * Preserve the old checked-add compatibility rule without restoring the old
+     * O(N) scan: non-empty duplicate names win first, then the earliest existing
+     * conflicting user wins. If the same existing user conflicts on multiple
+     * keys, keep the former per-user key order.
+     */
+    users_duplicate_result_t duplicate = {0};
+    usersDuplicateResultConsider(users,
+                                 &duplicate,
+                                 usersSHA224TableLookupLocked(users, user->sha224_pass.bytes),
+                                 kUsersAddResultDuplicateSHA224,
+                                 0U);
+    usersDuplicateResultConsider(users,
+                                 &duplicate,
+                                 usersSHA256TableLookupLocked(users, user->sha256_pass.bytes),
+                                 kUsersAddResultDuplicateSHA256,
+                                 1U);
+    if (user->uuid_pass_valid)
+    {
+        usersDuplicateResultConsider(
+            users, &duplicate, usersUUIDTableLookupLocked(users, user->uuid_pass), kUsersAddResultDuplicateUUID, 2U);
+    }
+    if (user->wireguard_publickey_valid)
+    {
+        usersDuplicateResultConsider(users,
+                                     &duplicate,
+                                     usersWireGuardPublicKeyTableLookupLocked(users, user->wireguard_publickey),
+                                     kUsersAddResultDuplicateWireGuardPublicKey,
+                                     3U);
+    }
+    usersDuplicateResultConsider(users, &duplicate, overlap, kUsersAddResultDuplicateWireGuardAllowedIps, 4U);
+    if (user->id != 0)
+    {
+        usersDuplicateResultConsider(
+            users, &duplicate, usersIDTableLookupLocked(users, user->id), kUsersAddResultDuplicateId, 5U);
+    }
+    if (UNLIKELY(duplicate.found))
+    {
+        return duplicate.result;
     }
 
     return kUsersAddResultOk;
@@ -1472,41 +2601,62 @@ static users_add_result_t usersValidateNewUserNoFatalLocked(const users_t *users
 users_add_result_t usersAddUserChecked(users_t *users, const user_t *user)
 {
     user_t            *slot;
+    user_t             user_copy;
     users_add_result_t result;
 
     if (UNLIKELY(users == NULL || user == NULL))
     {
         return kUsersAddResultInvalidArgument;
     }
+    if (UNLIKELY(! user->initialized))
+    {
+        return kUsersAddResultInvalidUser;
+    }
+    memoryZero(&user_copy, sizeof(user_copy));
+    if (UNLIKELY(! userCopy(&user_copy, user)))
+    {
+        return kUsersAddResultAllocationFailed;
+    }
 
     rwlockWriteLock(&users->lock);
 
-    result = usersValidateNewUserNoFatalLocked(users, user);
+    result = usersValidateNewUserNoFatalLocked(users, &user_copy);
     if (UNLIKELY(result != kUsersAddResultOk))
     {
         rwlockWriteUnlock(&users->lock);
+        userDestroy(&user_copy);
         return result;
     }
     if (UNLIKELY(! usersReserveLocked(users, users->count + 1U)))
     {
         rwlockWriteUnlock(&users->lock);
+        userDestroy(&user_copy);
         return kUsersAddResultAllocationFailed;
     }
 
     slot = usersStorageAtLocked(users, users->slot_count);
-    if (UNLIKELY(! userCopy(slot, user)))
+    if (UNLIKELY(! userCopy(slot, &user_copy)))
     {
         rwlockWriteUnlock(&users->lock);
+        userDestroy(&user_copy);
         return kUsersAddResultAllocationFailed;
     }
-    if (UNLIKELY(! usersCommitNewUserLocked(users, slot)))
+    /*
+     * `slot` is an exact copy of the immutable, just-validated snapshot, so
+     * commit skips the redundant revalidation. Its only remaining failure mode
+     * is an index-capacity allocation failure, which is reported as such rather
+     * than collapsed into a generic commit error.
+     */
+    if (UNLIKELY(! usersCommitNewUserLocked(users, slot, true)))
     {
         userDestroy(slot);
         rwlockWriteUnlock(&users->lock);
-        return kUsersAddResultCommitFailed;
+        userDestroy(&user_copy);
+        return kUsersAddResultAllocationFailed;
     }
 
     rwlockWriteUnlock(&users->lock);
+    userDestroy(&user_copy);
     return kUsersAddResultOk;
 }
 
@@ -1591,14 +2741,82 @@ static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *u
         usersPasswordProbeDestroy(&password_probe);
         return kUsersUpdateResultAllocationFailed;
     }
+
+    /* Snapshot the credential keys that are about to be overwritten so they can
+     * be erased from the four credential indexes after the password changes. */
+    sha224_hash_t old_sha224 = user->sha224_pass;
+    sha256_hash_t old_sha256 = user->sha256_pass;
+    uint8_t       old_uuid[kWwUuidBytesLen];
+    uint8_t       old_wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE];
+    bool          old_uuid_valid      = user->uuid_pass_valid;
+    bool          old_wireguard_valid = user->wireguard_publickey_valid;
+    memoryCopy(old_uuid, user->uuid_pass, sizeof(old_uuid));
+    memoryCopy(old_wireguard_publickey, user->wireguard_publickey, sizeof(old_wireguard_publickey));
+
     if (UNLIKELY(! userChangePassword(user, password)))
     {
         usersPasswordProbeDestroy(&password_probe);
         return kUsersUpdateResultPasswordUpdateFailed;
     }
-    if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
+
+    /*
+     * Incrementally update only the four password-derived indexes: erase the old
+     * keys, then insert the new ones. The id/name/Allowed-IP indexes do not
+     * change. Capacity for `count` entries was reserved above and each erase
+     * frees the user's own slot before the matching insert reclaims it, so the
+     * table never grows and the capacity-free entry inserts cannot allocate; an
+     * unexpected failure is an unrecoverable invariant violation that triggers a
+     * rebuild and terminates.
+     */
+    bool ok = true;
+    if (! usersSHA224TableEraseLocked(users, user, old_sha224.bytes))
     {
-        LOGF("Users: failed to rebuild lookup tables after updating user \"%s\"", usersUserNameForLog(user));
+        ok = false;
+    }
+    if (! usersSHA256TableEraseLocked(users, user, old_sha256.bytes))
+    {
+        ok = false;
+    }
+    if (old_uuid_valid && ! usersUUIDTableEraseLocked(users, user, old_uuid))
+    {
+        ok = false;
+    }
+    if (old_wireguard_valid && ! usersWireGuardPublicKeyTableEraseLocked(users, user, old_wireguard_publickey))
+    {
+        ok = false;
+    }
+    if (ok && ! usersSHA224TableInsertEntryLocked(users, user))
+    {
+        ok = false;
+    }
+    if (ok && ! usersSHA256TableInsertEntryLocked(users, user))
+    {
+        ok = false;
+    }
+    if (ok && ! usersUUIDTableInsertEntryLocked(users, user))
+    {
+        ok = false;
+    }
+    if (ok && ! usersWireGuardPublicKeyTableInsertEntryLocked(users, user))
+    {
+        ok = false;
+    }
+
+    memorySecureZero(&old_sha224, sizeof(old_sha224));
+    memorySecureZero(&old_sha256, sizeof(old_sha256));
+    memorySecureZero(old_uuid, sizeof(old_uuid));
+    memoryZero(old_wireguard_publickey, sizeof(old_wireguard_publickey));
+
+    if (UNLIKELY(! ok))
+    {
+        if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
+        {
+            LOGF("Users: failed to rebuild lookup tables after a password index update failure");
+            usersPasswordProbeDestroy(&password_probe);
+            terminateProgram(1);
+        }
+        LOGF("Users: credential index update failed while changing password for user \"%s\"",
+             usersUserNameForLog(user));
         usersPasswordProbeDestroy(&password_probe);
         terminateProgram(1);
     }
@@ -1607,30 +2825,39 @@ static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *u
     return kUsersUpdateResultOk;
 }
 
-static user_t *usersLookupByPasswordLocked(users_t *users, const users_password_probe_t *password_probe,
-                                           const char *password)
+#if defined(USERS_TEST_PASSWORD_LOOKUP_VISIT_COUNTER)
+/*
+ * Test-only instrumentation. Counts how many candidate users the plaintext
+ * lookup path examines with an exact verification. It is never defined in
+ * production builds and exists only so unit tests can prove the fallback scan
+ * over users->count is gone (any value greater than one would be a regression).
+ */
+size_t users_test_password_lookup_visits = 0;
+#endif
+
+static user_t *usersLookupByPasswordLocked(users_t *users, const sha256_hash_t *sha256_key, const char *password)
 {
-    user_t *candidate = NULL;
-
-    if (LIKELY(password_probe->sha256_pass_valid))
+    /*
+     * Average-O(1) plaintext lookup. The SHA-256 table is the canonical password
+     * index: every committed user has a valid SHA-256 key, is inserted into the
+     * SHA-256 table, duplicates are rejected, password changes update the table,
+     * and usersValidate() checks that each user maps back to itself. A miss is
+     * therefore either a genuine miss or an invariant violation, so there is no
+     * full-table fallback scan to hide a corrupted index. The exact plaintext
+     * comparison in userPasswordMatches() is the authoritative collision-safe
+     * check, so a hypothetical SHA-256 collision fails closed.
+     */
+    user_t *candidate = usersSHA256TableLookupLocked(users, sha256_key->bytes);
+    if (candidate == NULL)
     {
-        candidate = usersSHA256TableLookupLocked(users, password_probe->sha256_pass.bytes);
-        if (candidate != NULL && userPasswordMatches(candidate, password))
-        {
-            return candidate;
-        }
+        return NULL;
     }
 
-    for (size_t i = 0; i < users->count; ++i)
-    {
-        candidate = usersGetAtLocked(users, i);
-        if (userPasswordMatches(candidate, password))
-        {
-            return candidate;
-        }
-    }
+#if defined(USERS_TEST_PASSWORD_LOOKUP_VISIT_COUNTER)
+    users_test_password_lookup_visits += 1U;
+#endif
 
-    return NULL;
+    return userPasswordMatches(candidate, password) ? candidate : NULL;
 }
 
 static bool usersRemoveUserLocked(users_t *users, user_t *user)
@@ -1643,21 +2870,45 @@ static bool usersRemoveUserLocked(users_t *users, user_t *user)
     }
 
     user_t *victim = usersGetAtLocked(users, index);
-    userDestroy(victim);
 
-    if (LIKELY(index + 1U < users->count))
+    /*
+     * Incremental removal: erase only the victim's own index entries (its fields
+     * are still valid here), then swap the last active pointer into the freed
+     * slot. No table is rebuilt on the success path. A false return means an
+     * index resolved to a different user, i.e. it is already corrupt.
+     */
+    if (UNLIKELY(! usersEraseAllIndexEntriesLocked(users, victim)))
     {
-        memoryMove(
-            &users->items[index], &users->items[index + 1U], (users->count - index - 1U) * sizeof(*users->items));
-    }
-    users->count -= 1U;
-    users->items[users->count] = NULL;
-    if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
-    {
-        LOGF("Users: failed to rebuild lookup tables after removing a user");
+        if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
+        {
+            LOGF("Users: failed to rebuild lookup tables after a removal index inconsistency");
+            terminateProgram(1);
+        }
         terminateProgram(1);
     }
 
+    size_t last = users->count - 1U;
+    if (index != last)
+    {
+        user_t *moved       = users->items[last];
+        users->items[index] = moved;
+        /* Repoint the moved user at its new active index. This only rewrites an
+         * existing entry's value, so it cannot allocate; a false return means the
+         * moved user was missing from the pointer index, i.e. it is corrupt. */
+        if (UNLIKELY(! usersPointerTableUpdateExistingLocked(users, moved, index)))
+        {
+            LOGF("Users: failed to update the pointer index after a swap-with-last removal");
+            terminateProgram(1);
+        }
+    }
+    users->items[last] = NULL;
+    users->count -= 1U;
+
+    /*
+     * The victim's stable storage slot is intentionally orphaned (not reused)
+     * until usersClear()/usersDestroy(); slot_count stays monotonic.
+     */
+    userDestroy(victim);
     return true;
 }
 
@@ -1676,6 +2927,9 @@ static void usersClearLocked(users_t *users)
     usersUUIDTableClear(users->uuid_table);
     usersWireGuardPublicKeyTableClear(users->wireguard_publickey_table);
     usersIDTableClear(users->id_table);
+    usersNameTableClear(users->name_table);
+    usersPointerTableClear(users->pointer_table);
+    usersAllowedIpTableClear(users->allowed_ip_table);
 }
 
 static void usersRollbackFeedLocked(users_t *users, size_t old_count, size_t old_slot_count)
@@ -1740,7 +2994,7 @@ static bool usersAppendJsonUserLocked(users_t *users, const cJSON *user_json, co
         userDestroy(slot);
         return false;
     }
-    if (LIKELY(usersCommitNewUserLocked(users, slot)))
+    if (LIKELY(usersCommitNewUserLocked(users, slot, false)))
     {
         return true;
     }
@@ -1749,9 +3003,38 @@ static bool usersAppendJsonUserLocked(users_t *users, const cJSON *user_json, co
     return false;
 }
 
+/*
+ * Reserves active-pointer, stable-slot, and all lookup-table capacity for a JSON
+ * container's children in one step, so a bulk feed does not repeatedly grow and
+ * rehash. Append-to-existing semantics are preserved (capacity targets the old
+ * count plus the incoming children); rollback still restores the old counts.
+ */
+static bool usersReserveForFeedLocked(users_t *users, const cJSON *container)
+{
+    int entry_count = cJSON_GetArraySize(container);
+    if (entry_count <= 0)
+    {
+        return true;
+    }
+
+    size_t total = users->count + (size_t) entry_count;
+    if (UNLIKELY(total < users->count))
+    {
+        LOGE("Users: JSON feed size overflow");
+        return false;
+    }
+
+    return usersReserveLocked(users, total) && usersEnsureLookupCapacityLocked(users, total);
+}
+
 static bool usersFeedJsonArrayLocked(users_t *users, const cJSON *array)
 {
     const cJSON *entry = NULL;
+
+    if (UNLIKELY(! usersReserveForFeedLocked(users, array)))
+    {
+        return false;
+    }
 
     cJSON_ArrayForEach(entry, array)
     {
@@ -1767,6 +3050,11 @@ static bool usersFeedJsonArrayLocked(users_t *users, const cJSON *array)
 static bool usersFeedJsonObjectMapLocked(users_t *users, const cJSON *object)
 {
     const cJSON *entry = NULL;
+
+    if (UNLIKELY(! usersReserveForFeedLocked(users, object)))
+    {
+        return false;
+    }
 
     cJSON_ArrayForEach(entry, object)
     {
@@ -1915,71 +3203,136 @@ static bool usersValidateUserLookupKeysLocked(const users_t *users)
             LOGE("Users: id lookup table does not point back to user \"%s\"", usersUserNameForLog(a));
             return false;
         }
-
-        for (size_t j = i + 1U; j < users->count; ++j)
+        if (UNLIKELY(a->name != NULL && a->name[0] != '\0' && usersNameTableLookupLocked(users, a->name) != a))
         {
-            const user_t *b = usersGetAtLocked(users, j);
-            if (UNLIKELY(usersSha224Equal(a->sha224_pass.bytes, b->sha224_pass.bytes)))
+            LOGE("Users: name lookup table does not point back to user \"%s\"", usersUserNameForLog(a));
+            return false;
+        }
+        size_t pointer_index = 0;
+        if (UNLIKELY(! usersPointerTableLookupLocked(users, a, &pointer_index) || pointer_index != i))
+        {
+            LOGE("Users: pointer lookup table does not resolve user \"%s\" to its active index",
+                 usersUserNameForLog(a));
+            return false;
+        }
+        if (a->wireguard_allowed_ips_valid)
+        {
+            users_allowed_ip_key_t   range_key;
+            users_allowed_ip_value_t range_value;
+            if (UNLIKELY(! usersAllowedIpEntryFromUser(a, &range_key, &range_value) || users->allowed_ip_table == NULL))
             {
-                char key_hex[SHA224_DIGEST_SIZE * 2U + 1U];
-                usersSha224ToHex(a->sha224_pass.bytes, key_hex);
-                LOGE("Users: duplicate SHA-224 lookup key %s between users \"%s\" and \"%s\"",
-                     key_hex,
-                     usersUserNameForLog(a),
-                     usersUserNameForLog(b));
+                LOGE("Users: user \"%s\" has an unindexable Allowed-IP range", usersUserNameForLog(a));
                 return false;
             }
-            if (UNLIKELY(usersSha256Equal(a->sha256_pass.bytes, b->sha256_pass.bytes)))
+            users_allowed_ip_map_t_iter it = users_allowed_ip_map_t_find(&users->allowed_ip_table->map, range_key);
+            if (UNLIKELY(it.ref == NULL || it.ref->second.user != a))
             {
-                char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
-                usersSha256ToHex(a->sha256_pass.bytes, key_hex);
-                LOGE("Users: duplicate SHA-256 lookup key %s between users \"%s\" and \"%s\"",
-                     key_hex,
-                     usersUserNameForLog(a),
-                     usersUserNameForLog(b));
+                LOGE("Users: Allowed-IP lookup table does not point back to user \"%s\"", usersUserNameForLog(a));
                 return false;
             }
-            if (UNLIKELY(a->uuid_pass_valid && b->uuid_pass_valid && usersUUIDEqual(a->uuid_pass, b->uuid_pass)))
-            {
-                char key_text[kWwUuidCanonicalStringLen + 1U];
-                wwUuidToCanonicalString(a->uuid_pass, key_text);
-                LOGE("Users: duplicate UUID credential %s between users \"%s\" and \"%s\"",
-                     key_text,
-                     usersUserNameForLog(a),
-                     usersUserNameForLog(b));
-                return false;
-            }
-            if (UNLIKELY(usersWireGuardPublicKeyEqual(a->wireguard_publickey, b->wireguard_publickey)))
-            {
-                LOGE("Users: duplicate WireGuard public key between users \"%s\" and \"%s\"",
-                     usersUserNameForLog(a),
-                     usersUserNameForLog(b));
-                return false;
-            }
-            if (UNLIKELY(usersWireGuardAllowedIpsOverlapUsers(a, b)))
+            /*
+             * Overlap detection (not just exact-key duplication): two distinct
+             * ranges that nest have different end keys, so the size check below
+             * cannot see them. Query the ordered index for any other user whose
+             * range overlaps this one, in O(log M).
+             */
+            const user_t *overlap = usersAllowedIpTableFindOverlapLocked(
+                users, a->wireguard_allowed_ip_family, range_value.start, range_key.end, a);
+            if (UNLIKELY(overlap != NULL))
             {
                 LOGE("Users: overlapping WireGuard allowed IPs \"%s\" and \"%s\" between users \"%s\" and \"%s\"",
                      a->wireguard_allowed_ips,
-                     b->wireguard_allowed_ips,
+                     overlap->wireguard_allowed_ips,
                      usersUserNameForLog(a),
-                     usersUserNameForLog(b));
-                return false;
-            }
-            if (UNLIKELY(a->id != 0 && a->id == b->id))
-            {
-                LOGE("Users: duplicate id %" PRIu64 " between users \"%s\" and \"%s\"",
-                     a->id,
-                     usersUserNameForLog(a),
-                     usersUserNameForLog(b));
-                return false;
-            }
-            if (UNLIKELY(a->name != NULL && a->name[0] != '\0' && b->name != NULL &&
-                         stringCompare(a->name, b->name) == 0))
-            {
-                LOGE("Users: duplicate username \"%s\"", a->name);
+                     usersUserNameForLog(overlap));
                 return false;
             }
         }
+    }
+
+    /*
+     * With every user proven above to map back to itself in each of its indexes,
+     * comparing table sizes to the expected populations rules out duplicates
+     * without any pairwise user comparison: two users sharing a key would leave
+     * the map one entry short of the number of users requiring that key. This
+     * turns full validation from O(N^2) into O(N) (plus O(N log M) for the
+     * Allowed-IP overlap probes above).
+     */
+    size_t named_count  = 0;
+    size_t ranged_count = 0;
+    size_t uuid_count   = 0;
+    size_t id_count     = 0;
+    for (size_t i = 0; i < users->count; ++i)
+    {
+        const user_t *a = usersGetAtLocked(users, i);
+        if (a->name != NULL && a->name[0] != '\0')
+        {
+            named_count += 1U;
+        }
+        if (a->wireguard_allowed_ips_valid)
+        {
+            ranged_count += 1U;
+        }
+        if (a->uuid_pass_valid)
+        {
+            uuid_count += 1U;
+        }
+        if (a->id != 0)
+        {
+            id_count += 1U;
+        }
+    }
+    if (UNLIKELY(users->sha224_table == NULL ||
+                 (size_t) users_sha224_map_t_size(&users->sha224_table->map) != users->count))
+    {
+        LOGE("Users: SHA-224 lookup table size does not match the active user count");
+        return false;
+    }
+    if (UNLIKELY(users->sha256_table == NULL ||
+                 (size_t) users_sha256_map_t_size(&users->sha256_table->map) != users->count))
+    {
+        LOGE("Users: SHA-256 lookup table size does not match the active user count");
+        return false;
+    }
+    if (UNLIKELY(users->wireguard_publickey_table == NULL ||
+                 (size_t) users_wireguard_publickey_map_t_size(&users->wireguard_publickey_table->map) != users->count))
+    {
+        LOGE("Users: WireGuard public key lookup table size does not match the active user count");
+        return false;
+    }
+    if (UNLIKELY(users->pointer_table == NULL ||
+                 (size_t) users_pointer_map_t_size(&users->pointer_table->map) != users->count))
+    {
+        LOGE("Users: pointer lookup table size does not match the active user count");
+        return false;
+    }
+    if (UNLIKELY(users->uuid_table == NULL || (size_t) users_uuid_map_t_size(&users->uuid_table->map) != uuid_count))
+    {
+        LOGE("Users: UUID lookup table size does not match the number of UUID users");
+        return false;
+    }
+    if (UNLIKELY(users->id_table == NULL || (size_t) users_id_map_t_size(&users->id_table->map) != id_count))
+    {
+        LOGE("Users: id lookup table size does not match the number of identified users");
+        return false;
+    }
+    /*
+     * Check the name and Allowed-IP table sizes unconditionally, including the
+     * zero case: a stale final entry left behind by a botched erase would make
+     * the size exceed the expected count, and gating on a nonzero expected count
+     * would let that corruption pass. A borrowed name key that outlives its user
+     * is especially dangerous, so it must be caught here.
+     */
+    if (UNLIKELY(users->name_table == NULL || (size_t) users_name_map_t_size(&users->name_table->map) != named_count))
+    {
+        LOGE("Users: name lookup table size does not match the number of named users");
+        return false;
+    }
+    if (UNLIKELY(users->allowed_ip_table == NULL ||
+                 (size_t) users_allowed_ip_map_t_size(&users->allowed_ip_table->map) != ranged_count))
+    {
+        LOGE("Users: Allowed-IP lookup table size does not match the number of ranged users");
+        return false;
     }
 
     return true;
@@ -1996,13 +3349,17 @@ bool usersCreate(users_t *users)
     rwlockinit(&users->lock);
     if (UNLIKELY(! usersSHA224TableCreateIfNeeded(users) || ! usersSHA256TableCreateIfNeeded(users) ||
                  ! usersUUIDTableCreateIfNeeded(users) || ! usersWireGuardPublicKeyTableCreateIfNeeded(users) ||
-                 ! usersIDTableCreateIfNeeded(users)))
+                 ! usersIDTableCreateIfNeeded(users) || ! usersNameTableCreateIfNeeded(users) ||
+                 ! usersPointerTableCreateIfNeeded(users) || ! usersAllowedIpTableCreateIfNeeded(users)))
     {
         usersSHA224TableDestroy(users->sha224_table);
         usersSHA256TableDestroy(users->sha256_table);
         usersUUIDTableDestroy(users->uuid_table);
         usersWireGuardPublicKeyTableDestroy(users->wireguard_publickey_table);
         usersIDTableDestroy(users->id_table);
+        usersNameTableDestroy(users->name_table);
+        usersPointerTableDestroy(users->pointer_table);
+        usersAllowedIpTableDestroy(users->allowed_ip_table);
         rwlockDestroy(&users->lock);
         memoryZero(users, sizeof(*users));
         return false;
@@ -2031,6 +3388,9 @@ void usersDestroy(users_t *users)
     usersUUIDTableDestroy(users->uuid_table);
     usersWireGuardPublicKeyTableDestroy(users->wireguard_publickey_table);
     usersIDTableDestroy(users->id_table);
+    usersNameTableDestroy(users->name_table);
+    usersPointerTableDestroy(users->pointer_table);
+    usersAllowedIpTableDestroy(users->allowed_ip_table);
 
     rwlockDestroy(&users->lock);
     memoryZero(users, sizeof(*users));
@@ -2059,7 +3419,7 @@ bool usersAddUser(users_t *users, const user_t *user)
         slot = usersStorageAtLocked(users, users->slot_count);
         if (LIKELY(userCopy(slot, &user_copy)))
         {
-            result = usersCommitNewUserLocked(users, slot);
+            result = usersCommitNewUserLocked(users, slot, false);
             if (UNLIKELY(! result))
             {
                 userDestroy(slot);
@@ -2303,16 +3663,27 @@ user_t *usersLookupByWireGuardAllowedIp(users_t *users, const ip_addr_t *ip)
         return NULL;
     }
 
-    rwlockReadLock(&users->lock);
-    for (size_t i = 0; i < users->count; ++i)
+    uint8_t family = 0;
+    uint8_t addr16[16];
+    if (ip->type == IPADDR_TYPE_V4)
     {
-        user_t *candidate = usersGetAtLocked(users, i);
-        if (usersWireGuardAllowedIpContainsUser(candidate, ip))
-        {
-            result = candidate;
-            break;
-        }
+        family = 4U;
     }
+    else if (ip->type == IPADDR_TYPE_V6)
+    {
+        family = 6U;
+    }
+    else
+    {
+        return NULL;
+    }
+    if (UNLIKELY(! usersAllowedIpExtractBytes(ip, family, addr16)))
+    {
+        return NULL;
+    }
+
+    rwlockReadLock(&users->lock);
+    result = usersAllowedIpTableFindContainingLocked(users, family, addr16);
     rwlockReadUnlock(&users->lock);
     return result;
 }
@@ -2407,55 +3778,57 @@ cJSON *usersUserToJsonByIdentifier(const users_t *users, uint64_t id)
 
 cJSON *usersUserToJsonByPassword(const users_t *users, const char *password)
 {
-    users_password_probe_t password_probe;
-    users_t               *self = (users_t *) users;
-    user_t                *user = NULL;
-    cJSON                 *json = NULL;
+    sha256_hash_t sha256_key;
+    users_t      *self = (users_t *) users;
+    user_t       *user = NULL;
+    cJSON        *json = NULL;
 
     if (UNLIKELY(users == NULL || password == NULL))
     {
         return NULL;
     }
 
-    memoryZero(&password_probe, sizeof(password_probe));
-    if (UNLIKELY(! usersPasswordProbeCreate(&password_probe, password, false)))
+    if (UNLIKELY(! usersPasswordLookupKeyCreate(&sha256_key, password)))
     {
         return NULL;
     }
 
+    /*
+     * Keep the table read lock held across serialization so a concurrent removal
+     * cannot invalidate the selected user pointer between lookup and conversion.
+     */
     rwlockReadLock(&self->lock);
-    user = usersLookupByPasswordLocked(self, &password_probe, password);
+    user = usersLookupByPasswordLocked(self, &sha256_key, password);
     if (LIKELY(user != NULL))
     {
         json = userToJson(user);
     }
     rwlockReadUnlock(&self->lock);
 
-    usersPasswordProbeDestroy(&password_probe);
+    memorySecureZero(&sha256_key, sizeof(sha256_key));
     return json;
 }
 
 user_t *usersLookupByPassword(users_t *users, const char *password)
 {
-    users_password_probe_t password_probe;
-    user_t                *result;
+    sha256_hash_t sha256_key;
+    user_t       *result;
 
     if (UNLIKELY(users == NULL || password == NULL))
     {
         return NULL;
     }
 
-    memoryZero(&password_probe, sizeof(password_probe));
-    if (UNLIKELY(! usersPasswordProbeCreate(&password_probe, password, false)))
+    if (UNLIKELY(! usersPasswordLookupKeyCreate(&sha256_key, password)))
     {
         return NULL;
     }
 
     rwlockReadLock(&users->lock);
-    result = usersLookupByPasswordLocked(users, &password_probe, password);
+    result = usersLookupByPasswordLocked(users, &sha256_key, password);
     rwlockReadUnlock(&users->lock);
 
-    usersPasswordProbeDestroy(&password_probe);
+    memorySecureZero(&sha256_key, sizeof(sha256_key));
     return result;
 }
 
@@ -2639,21 +4012,42 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(
             LOGE("Users: duplicate username \"%s\" in update", *name_copy);
             return kUsersUpdateResultDuplicateName;
         }
+        /*
+         * Reserve name-index headroom before any irreversible mutation so the
+         * post-commit insert below cannot fail on a rehash. A rename does not
+         * grow the active user count, but the table may need to rehash.
+         */
+        if (UNLIKELY(! usersNameTableEnsureCapacity(users, users->count + 1U)))
+        {
+            return kUsersUpdateResultAllocationFailed;
+        }
     }
     if ((update->mask & kUserUpdateWireGuardAllowedIps) != 0U)
     {
-        user_t *overlap = usersFindWireGuardAllowedIpsOverlapLocked(users,
+        bool    range_ok = true;
+        user_t *overlap  = usersFindWireGuardAllowedIpsOverlapLocked(users,
                                                                     wireguard_allowed_ips->valid,
                                                                     &wireguard_allowed_ips->ip,
                                                                     &wireguard_allowed_ips->mask,
                                                                     wireguard_allowed_ips->family,
-                                                                    user);
+                                                                    user,
+                                                                    &range_ok);
+        if (UNLIKELY(! range_ok))
+        {
+            LOGE("Users: WireGuard allowed IPs \"%s\" are not indexable in update", wireguard_allowed_ips->copy);
+            return kUsersUpdateResultInvalidWireGuardAllowedIps;
+        }
         if (UNLIKELY(overlap != NULL))
         {
             LOGE("Users: WireGuard allowed IPs \"%s\" overlap with user \"%s\" in update",
                  wireguard_allowed_ips->copy,
                  usersUserNameForLog(overlap));
             return kUsersUpdateResultDuplicateWireGuardAllowedIps;
+        }
+        if (UNLIKELY(! user->wireguard_allowed_ips_valid && wireguard_allowed_ips->valid &&
+                     ! usersAllowedIpTableEnsureOneMoreRange(users)))
+        {
+            return kUsersUpdateResultAllocationFailed;
         }
     }
     if ((update->mask & kUserUpdatePassword) != 0U)
@@ -2663,6 +4057,29 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(
         {
             return result;
         }
+    }
+
+    /*
+     * Erase the old name entry while the old string is still alive, before
+     * usersReplaceStringOwned() frees it. The users_t write lock is held, so
+     * reading user->name outside user->lock is safe here. A false return means
+     * the old name resolved to a different user, i.e. the name index is already
+     * corrupt; that is an unrecoverable invariant violation.
+     */
+    if (UNLIKELY((update->mask & kUserUpdateName) != 0U && ! usersNameTableEraseLocked(users, user, user->name)))
+    {
+        LOGF("Users: name index inconsistency while updating user \"%s\"", usersUserNameForLog(user));
+        terminateProgram(1);
+    }
+    /*
+     * Erase the old Allowed-IP range entry while the user still carries its old
+     * range fields, before they are overwritten below.
+     */
+    if (UNLIKELY((update->mask & kUserUpdateWireGuardAllowedIps) != 0U &&
+                 ! usersAllowedIpTableEraseLocked(users, user)))
+    {
+        LOGF("Users: Allowed-IP index inconsistency while updating user \"%s\"", usersUserNameForLog(user));
+        terminateProgram(1);
     }
 
     rwlockWriteLock(&user->lock);
@@ -2709,6 +4126,29 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(
         user->record_stat_interval_ms = update->record_stat_interval_ms;
     }
     rwlockWriteUnlock(&user->lock);
+
+    /*
+     * Insert the replacement name entry. Capacity was reserved above and the old
+     * entry was erased, so this cannot fail on a rehash; a failure would be an
+     * unrecoverable invariant violation.
+     */
+    if (UNLIKELY((update->mask & kUserUpdateName) != 0U && ! usersNameTableInsertLocked(users, user)))
+    {
+        LOGF("Users: failed to reinsert name index entry while updating user \"%s\"", usersUserNameForLog(user));
+        terminateProgram(1);
+    }
+    /*
+     * Insert the replacement Allowed-IP range. A spare tree node was reserved
+     * before any mutation and the old range's node (if any) was just freed for
+     * reuse, so this cannot fail on an allocation; a failure is an unrecoverable
+     * invariant violation.
+     */
+    if (UNLIKELY((update->mask & kUserUpdateWireGuardAllowedIps) != 0U &&
+                 ! usersAllowedIpTableInsertLocked(users, user)))
+    {
+        LOGF("Users: failed to reinsert Allowed-IP range while updating user \"%s\"", usersUserNameForLog(user));
+        terminateProgram(1);
+    }
 
     if ((update->mask & kUserUpdateStats) != 0U)
     {
@@ -2931,18 +4371,14 @@ users_update_result_t usersAddTrafficByIdentifier(users_t *users, uint64_t id, u
 
 static void usersClearRuntimeStateLocked(user_t *user)
 {
-    if (user->runtime.ip_usages != NULL)
-    {
-        memoryFree(user->runtime.ip_usages);
-    }
-    memoryZero(&user->runtime, sizeof(user->runtime));
+    /* Delegated to user.c so the adaptive IP index is released exactly once. */
+    userRuntimeStateClear(&user->runtime);
 }
 
 static void usersMoveRuntimeStateLocked(user_t *dest, user_t *src)
 {
-    usersClearRuntimeStateLocked(dest);
-    dest->runtime = src->runtime;
-    memoryZero(&src->runtime, sizeof(src->runtime));
+    /* Delegated to user.c so the adaptive IP index moves without a double free. */
+    userRuntimeStateMove(&dest->runtime, &src->runtime);
 }
 
 bool usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src)
@@ -3553,6 +4989,159 @@ bool usersValidate(const users_t *users)
     return result;
 }
 
+/*
+ * Moves every data and index field between two tables, deliberately excluding
+ * the wrwlock_t lock in each (a lock must never be memcpy'd or swapped). Update
+ * this whenever a new stored field or index is added.
+ */
+static void usersSwapContentsLocked(users_t *a, users_t *b)
+{
+#define USERS_SWAP_PTR(field)                                                                                          \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        void *swap_tmp = a->field;                                                                                     \
+        a->field       = b->field;                                                                                     \
+        b->field       = swap_tmp;                                                                                     \
+    } while (0)
+#define USERS_SWAP_SIZE(field)                                                                                         \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        size_t swap_tmp = a->field;                                                                                    \
+        a->field        = b->field;                                                                                    \
+        b->field        = swap_tmp;                                                                                    \
+    } while (0)
+
+    USERS_SWAP_PTR(blocks);
+    USERS_SWAP_PTR(items);
+    USERS_SWAP_SIZE(count);
+    USERS_SWAP_SIZE(capacity);
+    USERS_SWAP_SIZE(slot_count);
+    USERS_SWAP_SIZE(slot_capacity);
+    USERS_SWAP_SIZE(block_count);
+    USERS_SWAP_SIZE(block_capacity);
+    USERS_SWAP_PTR(sha224_table);
+    USERS_SWAP_PTR(sha256_table);
+    USERS_SWAP_PTR(uuid_table);
+    USERS_SWAP_PTR(wireguard_publickey_table);
+    USERS_SWAP_PTR(id_table);
+    USERS_SWAP_PTR(name_table);
+    USERS_SWAP_PTR(pointer_table);
+    USERS_SWAP_PTR(allowed_ip_table);
+
+#undef USERS_SWAP_SIZE
+#undef USERS_SWAP_PTR
+}
+
+/*
+ * Inserts an already-copied user into every index of a freshly built table and
+ * appends it. No duplicate pre-scan and no credential rederivation: the source
+ * table was already valid and userCopy() carried the derived material over. The
+ * per-index insert helpers still fail closed on an unexpected duplicate.
+ */
+static bool usersCommitCopiedUserLocked(users_t *dest, user_t *slot)
+{
+    if (UNLIKELY(! usersSHA224TableInsertLocked(dest, slot) || ! usersSHA256TableInsertLocked(dest, slot) ||
+                 ! usersUUIDTableInsertLocked(dest, slot) || ! usersWireGuardPublicKeyTableInsertLocked(dest, slot) ||
+                 ! usersIDTableInsertLocked(dest, slot) || ! usersNameTableInsertLocked(dest, slot) ||
+                 ! usersPointerTableSetLocked(dest, slot, dest->count) ||
+                 ! usersAllowedIpTableInsertLocked(dest, slot)))
+    {
+        return false;
+    }
+
+    dest->items[dest->count] = slot;
+    dest->count += 1U;
+    dest->slot_count += 1U;
+    return true;
+}
+
+bool usersCopy(users_t *dest, const users_t *src)
+{
+    users_t  temp;
+    users_t *src_mut = (users_t *) src;
+    bool     ok      = true;
+
+    if (UNLIKELY(dest == NULL || src == NULL))
+    {
+        return false;
+    }
+    if (dest == src)
+    {
+        return true;
+    }
+
+    /*
+     * Build a complete copy in an isolated temporary table first, then swap it
+     * into the destination under the destination lock. The source and
+     * destination locks are never held at the same time, so no cross-copy
+     * deadlock or address-ordered locking protocol is needed, and the
+     * destination is untouched until the copy has fully succeeded.
+     */
+    if (UNLIKELY(! usersCreate(&temp)))
+    {
+        return false;
+    }
+
+    rwlockReadLock(&src_mut->lock);
+    size_t src_count        = src->count;
+    size_t src_ranged_count = 0;
+    for (size_t i = 0; i < src_count; ++i)
+    {
+        if (usersGetAtLocked(src_mut, i)->wireguard_allowed_ips_valid)
+        {
+            src_ranged_count += 1U;
+        }
+    }
+    if (UNLIKELY(! usersReserveLocked(&temp, src_count) || ! usersEnsureLookupCapacityLocked(&temp, src_count)))
+    {
+        ok = false;
+    }
+    if (ok && UNLIKELY(! usersAllowedIpTableEnsureCapacity(&temp, src_ranged_count)))
+    {
+        ok = false;
+    }
+    for (size_t i = 0; ok && i < src_count; ++i)
+    {
+        user_t *src_user = usersGetAtLocked(src_mut, i);
+        user_t *slot     = usersStorageAtLocked(&temp, temp.slot_count);
+
+        if (UNLIKELY(! userCopy(slot, src_user)))
+        {
+            ok = false;
+            break;
+        }
+        if (UNLIKELY(! usersCommitCopiedUserLocked(&temp, slot)))
+        {
+            userDestroy(slot);
+            ok = false;
+            break;
+        }
+    }
+    rwlockReadUnlock(&src_mut->lock);
+
+#ifndef NDEBUG
+    if (ok && UNLIKELY(! usersValidateUserLookupKeysLocked(&temp)))
+    {
+        LOGF("Users: internal copy produced an inconsistent table");
+        ok = false;
+    }
+#endif
+
+    if (UNLIKELY(! ok))
+    {
+        usersDestroy(&temp);
+        return false;
+    }
+
+    rwlockWriteLock(&dest->lock);
+    usersSwapContentsLocked(dest, &temp);
+    rwlockWriteUnlock(&dest->lock);
+
+    /* temp now owns the destination's previous contents; destroy frees them. */
+    usersDestroy(&temp);
+    return true;
+}
+
 user_stat_t usersUsageDiff(users_t *users, user_t *base, user_t *current)
 {
     user_stat_t diff = {0};
@@ -3571,6 +5160,13 @@ user_stat_t usersUsageDiff(users_t *users, user_t *base, user_t *current)
     return diff;
 }
 
+/*
+ * Intentionally an O(N) scan. Effective expiry changes when first usage is
+ * recorded or when a client-view expiry is projected, so a maintained expiry
+ * heap would add work to the hot accounting/sync paths for a diagnostic query.
+ * Add an index only if a production caller polls this frequently and a benchmark
+ * shows the scan matters.
+ */
 user_t *usersFindFirstExpired(users_t *users, uint64_t now_ms)
 {
     user_t *result = NULL;
@@ -3599,6 +5195,12 @@ const user_t *usersFindFirstExpiredConst(const users_t *users, uint64_t now_ms)
     return usersFindFirstExpired((users_t *) users, now_ms);
 }
 
+/*
+ * Intentionally an O(N) scan. No AuthenticationClient/Server hot path polls this
+ * today; a maintained "disabled" set would add work to configuration updates to
+ * speed up an unused query. Add an index only when a real caller and a benchmark
+ * justify it.
+ */
 user_t *usersFindFirstDisabled(users_t *users)
 {
     user_t *result = NULL;
@@ -3627,6 +5229,12 @@ const user_t *usersFindFirstDisabledConst(const users_t *users)
     return usersFindFirstDisabled((users_t *) users);
 }
 
+/*
+ * Intentionally an O(N) scan. Limit state depends on frequently changing traffic
+ * statistics and runtime counters, so a maintained "limited" set would add
+ * contention to traffic accounting, which is more performance-critical than this
+ * diagnostic scan.
+ */
 user_t *usersFindFirstLimited(users_t *users)
 {
     user_t *result = NULL;
