@@ -41,6 +41,7 @@ int post_acceptex(wio_t* listenio, woverlapped_t* hovlp) {
 }
 
 int post_recv(wio_t* io, woverlapped_t* hovlp) {
+    const bool allocated_hovlp = hovlp == NULL;
     if (hovlp == NULL) {
         EVENTLOOP_ALLOC_SIZEOF(hovlp);
     }
@@ -90,6 +91,11 @@ int post_recv(wio_t* io, woverlapped_t* hovlp) {
             if (hovlp->sbuf) {
                 bufferpoolReuseBuffer(io->loop->bufpool, hovlp->sbuf);
                 hovlp->sbuf = NULL;
+            }
+            if (allocated_hovlp)
+            {
+                EVENTLOOP_FREE(hovlp->addr);
+                EVENTLOOP_FREE(hovlp);
             }
             return err;
         }
@@ -325,8 +331,20 @@ error:
 }
 
 int wioRead (wio_t* io) {
-    post_recv(io, NULL);
-    return wioAdd(io, wio_handle_events, WW_READ);
+    int add_error = wioAdd(io, wio_handle_events, WW_READ);
+    if (UNLIKELY(add_error != 0))
+    {
+        return add_error;
+    }
+
+    int recv_error = post_recv(io, NULL);
+    if (UNLIKELY(recv_error != 0))
+    {
+        io->error = recv_error;
+        wioClose(io);
+        return recv_error;
+    }
+    return 0;
 }
 
 int wioWriteDatagram(wio_t* io, sbuf_t* buf, const sockaddr_u* peer_addr) {
