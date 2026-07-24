@@ -654,7 +654,8 @@ static bool mi_try_new_handler(bool nothrow) {
 #else
 typedef void (*std_new_handler_t)(void);
 
-#if (defined(__GNUC__) || (defined(__clang__) && !defined(_MSC_VER)))  // exclude clang-cl, see issue #631
+// Exclude Windows targets: weak C++ symbols are not reliably coalesced by COFF linkers.
+#if (defined(__GNUC__) || defined(__clang__)) && ! defined(_WIN32)
 std_new_handler_t __attribute__((weak)) _ZSt15get_new_handlerv(void) {
   return NULL;
 }
