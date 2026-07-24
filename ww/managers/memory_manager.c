@@ -85,7 +85,7 @@ void memorymanagerInit(void)
     // return state;
 
     mi_option_enable(mi_option_allow_large_os_pages);
-    mi_option_enable(mi_option_eager_commit);
+    // mi_option_enable(mi_option_eager_commit); deprecated
     mi_option_enable(mi_option_large_os_pages);
     // mi_option_set(mi_option_reserve_huge_os_pages, 1);
 }
