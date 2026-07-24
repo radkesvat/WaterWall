@@ -446,4 +446,95 @@ stop_instance "$owner_c_pid"
 assert_chain_absent "$owner_b_chain"
 assert_chain_absent "$owner_c_chain"
 
+# A linked chain from an older WaterWall release must block publication for its family,
+# must be reported with exact, ordered cleanup commands, and must never be mutated.
+# Two identical PREROUTING jumps exercise the "delete-jump once per jump" reporting path.
+legacy_linked_chain="WW_0BADF00D_0BADBEEF_4"
+"$real_iptables" -w -t nat -N "$legacy_linked_chain"
+"$real_iptables" -w -t nat -A "$legacy_linked_chain" -p tcp --dport 48000:48001 -j REDIRECT --to-ports 20000
+"$real_iptables" -w -t nat -A PREROUTING -j "$legacy_linked_chain"
+"$real_iptables" -w -t nat -A PREROUTING -j "$legacy_linked_chain"
+legacy_linked_before=$("$real_iptables" -w -t nat -S "$legacy_linked_chain")
+legacy_linked_jump_before=$("$real_iptables" -w -t nat -S PREROUTING | grep -F -- "-j $legacy_linked_chain")
+
+start_instance "legacy-linked" 48000 48001 "iptables" "$active_path"
+legacy_linked_pid=$STARTED_PID
+legacy_linked_log="$temp_dir/legacy-linked/stdout.log"
+for _ in $(seq 1 100); do
+  if grep -F -- "refusing to install ipv4 iptables rules after failed startup recovery" \
+      "$legacy_linked_log" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.1
+done
+grep -F -- "refusing to install ipv4 iptables rules after failed startup recovery" \
+  "$legacy_linked_log" >/dev/null 2>&1 ||
+  fail "linked legacy chain did not fail startup promptly"
+set +e
+wait "$legacy_linked_pid"
+legacy_linked_status=$?
+set -e
+forget_process "$legacy_linked_pid"
+((legacy_linked_status != 0)) || fail "linked legacy chain did not block publication"
+
+# The operator must be told the exact chain name and the safe cleanup commands.
+grep -F -- "$legacy_linked_chain" "$legacy_linked_log" >/dev/null ||
+  fail "legacy blocker report did not name the chain"
+grep -F -- "iptables -w -t nat -D PREROUTING -j $legacy_linked_chain" "$legacy_linked_log" >/dev/null ||
+  fail "legacy blocker report missing the unlink command"
+grep -F -- "iptables -w -t nat -F $legacy_linked_chain" "$legacy_linked_log" >/dev/null ||
+  fail "legacy blocker report missing the flush command"
+grep -F -- "iptables -w -t nat -X $legacy_linked_chain" "$legacy_linked_log" >/dev/null ||
+  fail "legacy blocker report missing the delete command"
+
+# The delete-jump command must be printed once per jump so it runs correctly in order.
+delete_jump_count=$(grep -cF -- "iptables -w -t nat -D PREROUTING -j $legacy_linked_chain" "$legacy_linked_log")
+((delete_jump_count == 2)) ||
+  fail "delete-jump command was not printed once per PREROUTING jump (got $delete_jump_count)"
+
+# Following the printed commands top-to-bottom must succeed: every delete-jump before the
+# flush, and the flush before the delete.
+last_delete_jump_line=$(grep -nF -- "iptables -w -t nat -D PREROUTING -j $legacy_linked_chain" \
+  "$legacy_linked_log" | tail -n 1 | cut -d: -f1)
+flush_report_line=$(grep -nF -- "iptables -w -t nat -F $legacy_linked_chain" \
+  "$legacy_linked_log" | tail -n 1 | cut -d: -f1)
+delete_report_line=$(grep -nF -- "iptables -w -t nat -X $legacy_linked_chain" \
+  "$legacy_linked_log" | tail -n 1 | cut -d: -f1)
+((last_delete_jump_line < flush_report_line && flush_report_line < delete_report_line)) ||
+  fail "legacy cleanup commands were not printed in delete-jump, flush, delete order"
+
+# No new WaterWall chain or PREROUTING jump may be published for the blocked family.
+if "$real_iptables" -w -t nat -S | grep -Eq -- '^-N WW2_[0-9A-F]{16}_4$'; then
+  fail "a new WW2 chain was published despite a linked legacy blocker"
+fi
+if "$real_iptables" -w -t nat -S PREROUTING | grep -Eq -- '-j WW2_[0-9A-F]{16}_4$'; then
+  fail "a new WW2 PREROUTING jump was published despite a linked legacy blocker"
+fi
+
+# The legacy chain and its references must be byte-for-byte unchanged.
+legacy_linked_after=$("$real_iptables" -w -t nat -S "$legacy_linked_chain")
+legacy_linked_jump_after=$("$real_iptables" -w -t nat -S PREROUTING | grep -F -- "-j $legacy_linked_chain")
+[[ "$legacy_linked_before" == "$legacy_linked_after" ]] ||
+  fail "linked legacy chain was mutated during reconciliation"
+[[ "$legacy_linked_jump_before" == "$legacy_linked_jump_after" ]] ||
+  fail "linked legacy PREROUTING jump was mutated during reconciliation"
+
+# Manually unlink (once per jump), flush, and delete the fixture so the test can proceed.
+"$real_iptables" -w -t nat -D PREROUTING -j "$legacy_linked_chain"
+"$real_iptables" -w -t nat -D PREROUTING -j "$legacy_linked_chain"
+"$real_iptables" -w -t nat -F "$legacy_linked_chain"
+"$real_iptables" -w -t nat -X "$legacy_linked_chain"
+
+# An orphan legacy chain (WW_00000001_00000002_4, still present) must never block startup.
+start_instance "legacy-orphan-ok" 49000 49001 "iptables" "$active_path"
+legacy_orphan_pid=$STARTED_PID
+wait_for_chain "$legacy_orphan_pid" "49000:49001"
+legacy_orphan_chain=$FOUND_CHAIN
+assert_chain_active "$legacy_orphan_chain"
+orphan_legacy_still_present=$("$real_iptables" -w -t nat -S WW_00000001_00000002_4)
+[[ "$orphan_legacy_still_present" == "$legacy_after" ]] ||
+  fail "orphan legacy chain was mutated while an unrelated instance published"
+stop_instance "$legacy_orphan_pid"
+assert_chain_absent "$legacy_orphan_chain"
+
 printf 'iptables crash-recovery integration test passed\n'

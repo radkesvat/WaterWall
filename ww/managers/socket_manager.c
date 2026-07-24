@@ -540,6 +540,53 @@ static socket_manager_iptables_lease_probe_result_t probeRecoveryOwnerLease(uint
     return kSocketManagerIptablesLeaseAcquired;
 }
 
+// Print safe, ordered manual cleanup instructions for any linked chain left by an
+// older WaterWall release. WaterWall never mutates these chains; it only tells the
+// operator how to remove them. Chain names have passed the strict legacy parser, so
+// they are safe to interpolate into the printed commands (they are printed, not run).
+static void reportLegacyIptablesBlockers(const socket_manager_iptables_cleanup_plan_t *plan)
+{
+    for (size_t i = 0; i < plan->blocker_count; ++i)
+    {
+        const socket_manager_iptables_legacy_blocker_t *blocker = &plan->blockers[i];
+        const char                                     *tool    = blocker->family == 4 ? "iptables" : "ip6tables";
+
+        LOGE("SocketManager: found a linked iptables chain \"%s\" (family %d) created by an older WaterWall release",
+             blocker->chain_name,
+             blocker->family);
+        LOGE("SocketManager: it was intentionally left unchanged; new ipv%d iptables rules will not be published "
+             "until it is removed",
+             blocker->family);
+
+        if (blocker->unexpected_reference)
+        {
+            LOGE("SocketManager: \"%s\" has references that are not a simple PREROUTING jump; inspect every reference "
+                 "first with:",
+                 blocker->chain_name);
+            LOGE("SocketManager:   %s -w -t nat -S", tool);
+            LOGE("SocketManager: remove every reference to \"%s\" before flushing or deleting it", blocker->chain_name);
+            continue;
+        }
+
+        // A non-unexpected blocker always has at least one exact PREROUTING jump. Print
+        // the delete-jump command once per jump so the commands run correctly in order:
+        // every reference must be removed before the flush and delete can succeed.
+        LOGE("SocketManager: remove it manually with:");
+        if (blocker->prerouting_jumps > 1)
+        {
+            LOGE(
+                "SocketManager: (there are %lu PREROUTING jumps, so the delete-jump command is repeated once per jump)",
+                (unsigned long) blocker->prerouting_jumps);
+        }
+        for (size_t j = 0; j < blocker->prerouting_jumps; ++j)
+        {
+            LOGE("SocketManager:   %s -w -t nat -D PREROUTING -j %s", tool, blocker->chain_name);
+        }
+        LOGE("SocketManager:   %s -w -t nat -F %s", tool, blocker->chain_name);
+        LOGE("SocketManager:   %s -w -t nat -X %s", tool, blocker->chain_name);
+    }
+}
+
 static void reconcileIptablesStartup(void)
 {
     socketmanager_gstate->iptables_reconciliation_attempted = true;
@@ -611,6 +658,9 @@ static void reconcileIptablesStartup(void)
             socketmanager_gstate->iptables_v6_reconciled = v6_ok;
         }
     }
+
+    // Any linked legacy chain fails its family above; tell the operator how to clean it up.
+    reportLegacyIptablesBlockers(&plan);
 
     if (! socketManagerIptablesExecuteCleanupPlan(&plan, runRecoveryCleanupOp, NULL, &v4_ok, &v6_ok))
     {

@@ -4,9 +4,10 @@
 
 enum
 {
-    kSocketManagerIptablesTokenHexLen = 16,
-    kSocketManagerIptablesChainNameLen = 22,
-    kSocketManagerIptablesChainNameBufLen = 32,
+    kSocketManagerIptablesTokenHexLen         = 16,
+    kSocketManagerIptablesChainNameLen        = 22,
+    kSocketManagerIptablesLegacyChainNameLen  = 22,
+    kSocketManagerIptablesChainNameBufLen     = 32,
     kSocketManagerIptablesInspectionMaxOutput = 1024 * 1024
 };
 
@@ -31,11 +32,25 @@ typedef struct socket_manager_iptables_cleanup_op_s
     char chain_name[kSocketManagerIptablesChainNameBufLen];
 } socket_manager_iptables_cleanup_op_t;
 
+// Diagnostic describing a still-linked chain left by an older WaterWall release.
+// Legacy chains have no owner lease, so they are never mutated automatically; a
+// referenced legacy chain simply blocks publication for its own address family.
+typedef struct socket_manager_iptables_legacy_blocker_s
+{
+    int    family;
+    char   chain_name[kSocketManagerIptablesChainNameBufLen];
+    size_t prerouting_jumps;
+    bool   unexpected_reference;
+} socket_manager_iptables_legacy_blocker_t;
+
 typedef struct socket_manager_iptables_cleanup_plan_s
 {
-    socket_manager_iptables_cleanup_op_t *ops;
-    size_t count;
-    size_t capacity;
+    socket_manager_iptables_cleanup_op_t     *ops;
+    size_t                                    count;
+    size_t                                    capacity;
+    socket_manager_iptables_legacy_blocker_t *blockers;
+    size_t                                    blocker_count;
+    size_t                                    blocker_capacity;
 } socket_manager_iptables_cleanup_plan_t;
 
 typedef socket_manager_iptables_lease_probe_result_t (*socket_manager_iptables_probe_owner_fn)(uint64_t token,
@@ -57,6 +72,7 @@ typedef struct socket_manager_iptables_cmd_output_s
 
 bool socketManagerIptablesFormatChainName(uint64_t token, int family, char *out, size_t out_len);
 bool socketManagerIptablesParseChainName(const char *name, uint64_t *token_out, int *family_out);
+bool socketManagerIptablesParseLegacyChainName(const char *name, int *family_out);
 void socketManagerIptablesFormatOwnerLeaseName(uint64_t token, char *out, size_t out_len);
 
 void socketManagerIptablesCleanupPlanInit(socket_manager_iptables_cleanup_plan_t *plan);

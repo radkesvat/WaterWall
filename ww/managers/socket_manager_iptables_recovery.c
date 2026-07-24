@@ -2,13 +2,20 @@
 
 #include "wproc.h"
 
+typedef enum iptables_candidate_kind_e
+{
+    kIptablesCandidateV2,
+    kIptablesCandidateLegacy
+} iptables_candidate_kind_t;
+
 typedef struct iptables_candidate_s
 {
-    uint64_t token;
-    int      family;
-    char     chain_name[kSocketManagerIptablesChainNameBufLen];
-    size_t   prerouting_jumps;
-    bool     unexpected_reference;
+    iptables_candidate_kind_t kind;
+    uint64_t                  token;
+    int                       family;
+    char                      chain_name[kSocketManagerIptablesChainNameBufLen];
+    size_t                    prerouting_jumps;
+    bool                      unexpected_reference;
 } iptables_candidate_t;
 
 typedef struct candidate_list_s
@@ -118,6 +125,53 @@ bool socketManagerIptablesParseChainName(const char *name, uint64_t *token_out, 
     return true;
 }
 
+// Strictly recognize the exact chain names produced by the older WaterWall
+// implementation: WW_<8 uppercase hex PID>_<8 uppercase hex nonce>_<4|6>.
+// This never produces an owner token: legacy chains carry no authenticated
+// lease, and the embedded PID must not be used as a liveness test.
+bool socketManagerIptablesParseLegacyChainName(const char *name, int *family_out)
+{
+    if (name == NULL || stringLength(name) != kSocketManagerIptablesLegacyChainNameLen)
+    {
+        return false;
+    }
+    if (memcmp(name, "WW_", 3) != 0)
+    {
+        return false;
+    }
+    for (size_t i = 0; i < 8; ++i)
+    {
+        if (! isUpperHex(name[3 + i]))
+        {
+            return false;
+        }
+    }
+    if (name[11] != '_')
+    {
+        return false;
+    }
+    for (size_t i = 0; i < 8; ++i)
+    {
+        if (! isUpperHex(name[12 + i]))
+        {
+            return false;
+        }
+    }
+    if (name[20] != '_')
+    {
+        return false;
+    }
+    if (name[21] != '4' && name[21] != '6')
+    {
+        return false;
+    }
+    if (family_out != NULL)
+    {
+        *family_out = name[21] == '4' ? 4 : 6;
+    }
+    return true;
+}
+
 void socketManagerIptablesFormatOwnerLeaseName(uint64_t token, char *out, size_t out_len)
 {
     if (out == NULL || out_len == 0)
@@ -130,9 +184,12 @@ void socketManagerIptablesFormatOwnerLeaseName(uint64_t token, char *out, size_t
 void socketManagerIptablesCleanupPlanInit(socket_manager_iptables_cleanup_plan_t *plan)
 {
     assert(plan != NULL);
-    plan->ops      = NULL;
-    plan->count    = 0;
-    plan->capacity = 0;
+    plan->ops              = NULL;
+    plan->count            = 0;
+    plan->capacity         = 0;
+    plan->blockers         = NULL;
+    plan->blocker_count    = 0;
+    plan->blocker_capacity = 0;
 }
 
 void socketManagerIptablesCleanupPlanDrop(socket_manager_iptables_cleanup_plan_t *plan)
@@ -145,6 +202,10 @@ void socketManagerIptablesCleanupPlanDrop(socket_manager_iptables_cleanup_plan_t
     plan->ops      = NULL;
     plan->count    = 0;
     plan->capacity = 0;
+    memoryFree(plan->blockers);
+    plan->blockers         = NULL;
+    plan->blocker_count    = 0;
+    plan->blocker_capacity = 0;
 }
 
 static bool appendCleanupOp(socket_manager_iptables_cleanup_plan_t *plan,
@@ -170,6 +231,28 @@ static bool appendCleanupOp(socket_manager_iptables_cleanup_plan_t *plan,
     return true;
 }
 
+static bool appendLegacyBlocker(socket_manager_iptables_cleanup_plan_t *plan, const iptables_candidate_t *candidate)
+{
+    if (plan->blocker_count == plan->blocker_capacity)
+    {
+        const size_t new_capacity = plan->blocker_capacity == 0 ? 4 : plan->blocker_capacity * 2U;
+        socket_manager_iptables_legacy_blocker_t *new_blockers =
+            memoryReAllocate(plan->blockers, new_capacity * sizeof(*new_blockers));
+        if (new_blockers == NULL)
+        {
+            return false;
+        }
+        plan->blockers         = new_blockers;
+        plan->blocker_capacity = new_capacity;
+    }
+    socket_manager_iptables_legacy_blocker_t *blocker = &plan->blockers[plan->blocker_count++];
+    blocker->family                                   = candidate->family;
+    blocker->prerouting_jumps                         = candidate->prerouting_jumps;
+    blocker->unexpected_reference                     = candidate->unexpected_reference;
+    snprintf(blocker->chain_name, sizeof(blocker->chain_name), "%s", candidate->chain_name);
+    return true;
+}
+
 static iptables_candidate_t *findCandidate(candidate_list_t *list, const char *chain_name)
 {
     for (size_t i = 0; i < list->count; ++i)
@@ -182,7 +265,8 @@ static iptables_candidate_t *findCandidate(candidate_list_t *list, const char *c
     return NULL;
 }
 
-static bool appendCandidate(candidate_list_t *list, uint64_t token, int family, const char *chain_name)
+static bool appendCandidate(candidate_list_t *list, iptables_candidate_kind_t kind, uint64_t token, int family,
+                            const char *chain_name)
 {
     if (findCandidate(list, chain_name) != NULL)
     {
@@ -190,8 +274,8 @@ static bool appendCandidate(candidate_list_t *list, uint64_t token, int family, 
     }
     if (list->count == list->capacity)
     {
-        const size_t new_capacity = list->capacity == 0 ? 8 : list->capacity * 2U;
-        iptables_candidate_t *new_items = memoryReAllocate(list->items, new_capacity * sizeof(*new_items));
+        const size_t          new_capacity = list->capacity == 0 ? 8 : list->capacity * 2U;
+        iptables_candidate_t *new_items    = memoryReAllocate(list->items, new_capacity * sizeof(*new_items));
         if (new_items == NULL)
         {
             return false;
@@ -201,6 +285,7 @@ static bool appendCandidate(candidate_list_t *list, uint64_t token, int family, 
     }
     iptables_candidate_t *candidate = &list->items[list->count++];
     memoryZero(candidate, sizeof(*candidate));
+    candidate->kind   = kind;
     candidate->token  = token;
     candidate->family = family;
     snprintf(candidate->chain_name, sizeof(candidate->chain_name), "%s", chain_name);
@@ -231,11 +316,15 @@ static bool parseChainDeclarationLine(const char *line, size_t len, int expected
 
     uint64_t token  = 0;
     int      family = 0;
-    if (! socketManagerIptablesParseChainName(chain_name, &token, &family) || family != expected_family)
+    if (socketManagerIptablesParseChainName(chain_name, &token, &family) && family == expected_family)
     {
-        return true;
+        return appendCandidate(candidates, kIptablesCandidateV2, token, family, chain_name);
     }
-    return appendCandidate(candidates, token, family, chain_name);
+    if (socketManagerIptablesParseLegacyChainName(chain_name, &family) && family == expected_family)
+    {
+        return appendCandidate(candidates, kIptablesCandidateLegacy, 0, family, chain_name);
+    }
+    return true;
 }
 
 static bool snapshotHasCompleteLines(const char *snapshot)
@@ -449,6 +538,42 @@ static void markIncludedFamiliesFailed(bool include_v4, bool include_v6, bool *v
     }
 }
 
+// Turn referenced legacy chains into publication blockers without ever touching
+// them. A legacy chain is a blocker when it has at least one exact unconditional
+// PREROUTING jump or any other (conditional/indirect) reference; an orphan legacy
+// chain is left alone. Blockers fail only their own address family. Returns false
+// only on an internal allocation failure so the caller can discard the plan.
+static bool collectLegacyBlockers(socket_manager_iptables_cleanup_plan_t *plan, candidate_list_t *candidates,
+                                  bool include_v4, bool include_v6, bool *v4_ok, bool *v6_ok, bool *result)
+{
+    for (size_t ci = 0; ci < candidates->count; ++ci)
+    {
+        iptables_candidate_t *candidate = &candidates->items[ci];
+        if (candidate->kind != kIptablesCandidateLegacy || ! candidateFamilyIncluded(candidate, include_v4, include_v6))
+        {
+            continue;
+        }
+        if (candidate->prerouting_jumps == 0 && ! candidate->unexpected_reference)
+        {
+            continue;
+        }
+        if (! appendLegacyBlocker(plan, candidate))
+        {
+            return false;
+        }
+        if (candidate->family == 4 && v4_ok != NULL)
+        {
+            *v4_ok = false;
+        }
+        if (candidate->family == 6 && v6_ok != NULL)
+        {
+            *v6_ok = false;
+        }
+        *result = false;
+    }
+    return true;
+}
+
 bool socketManagerIptablesBuildCleanupPlan(const char *snapshot_v4, bool include_v4,
                                            const char *snapshot_v6, bool include_v6,
                                            socket_manager_iptables_probe_owner_fn probe_owner,
@@ -498,8 +623,20 @@ bool socketManagerIptablesBuildCleanupPlan(const char *snapshot_v4, bool include
         goto done;
     }
 
+    // Referenced legacy chains block their family but are never mutated. Collected
+    // before the V2 machinery so an allocation failure here also discards the plan.
+    if (! collectLegacyBlockers(plan, &candidates, include_v4, include_v6, v4_ok, v6_ok, &result))
+    {
+        internal_failure = true;
+        goto done;
+    }
+
     for (size_t i = 0; i < candidates.count; ++i)
     {
+        if (candidates.items[i].kind != kIptablesCandidateV2)
+        {
+            continue;
+        }
         if (! appendToken(&tokens, &token_count, &token_capacity, candidates.items[i].token))
         {
             internal_failure = true;
@@ -522,7 +659,7 @@ bool socketManagerIptablesBuildCleanupPlan(const char *snapshot_v4, bool include
         {
             for (size_t ci = 0; ci < candidates.count; ++ci)
             {
-                if (candidates.items[ci].token == token)
+                if (candidates.items[ci].kind == kIptablesCandidateV2 && candidates.items[ci].token == token)
                 {
                     if (candidates.items[ci].family == 4 && v4_ok != NULL)
                     {
@@ -547,7 +684,8 @@ bool socketManagerIptablesBuildCleanupPlan(const char *snapshot_v4, bool include
         for (size_t ci = 0; ci < candidates.count; ++ci)
         {
             iptables_candidate_t *candidate = &candidates.items[ci];
-            if (candidate->token != token || ! candidateFamilyIncluded(candidate, include_v4, include_v6))
+            if (candidate->kind != kIptablesCandidateV2 || candidate->token != token ||
+                ! candidateFamilyIncluded(candidate, include_v4, include_v6))
             {
                 continue;
             }

@@ -152,6 +152,50 @@ static void testStrictNameRejection(void)
     }
 }
 
+static void testLegacyNameParsing(void)
+{
+    int family = 0;
+    require(socketManagerIptablesParseLegacyChainName("WW_00000001_00000002_4", &family),
+            "legacy v4 name should parse");
+    require(family == 4, "legacy v4 family mismatch");
+
+    family = 0;
+    require(socketManagerIptablesParseLegacyChainName("WW_DEADBEEF_0BADF00D_6", &family),
+            "legacy v6 name should parse");
+    require(family == 6, "legacy v6 family mismatch");
+
+    // The legacy parser and the v2 parser are strictly separate ownership classes.
+    require(! socketManagerIptablesParseChainName("WW_00000001_00000002_4", NULL, NULL),
+            "legacy name must not parse as a v2 chain");
+    require(! socketManagerIptablesParseLegacyChainName("WW2_0123456789ABCDEF_4", NULL),
+            "v2 name must not parse as a legacy chain");
+}
+
+static void testLegacyNameRejection(void)
+{
+    static const char *const invalid[] = {"ww_00000001_00000002_4",       // lowercase prefix
+                                          "WW_0000000a_00000002_4",       // lowercase hex pid
+                                          "WW_00000001_0000000b_4",       // lowercase hex nonce
+                                          "WW_0000001_00000002_4",        // short pid
+                                          "WW_000000001_00000002_4",      // long pid
+                                          "WW_00000001_0000002_4",        // short nonce
+                                          "WW_00000001_000000002_4",      // long nonce
+                                          "WW_00000001-00000002_4",       // bad separator
+                                          "WW_00000001_00000002-4",       // bad family separator
+                                          "WW_00000001_00000002_5",       // bad family
+                                          "WW_0000000G_00000002_4",       // non-hex pid
+                                          "WW_00000001_0000000G_4",       // non-hex nonce
+                                          "WW_00000001_00000002_4_EXTRA", // suffix
+                                          " WW_00000001_00000002_4",      // leading whitespace
+                                          "WW_00000001_00000002_4 ",      // trailing whitespace
+                                          "WW2_0123456789ABCDEF_4"};      // v2 name
+
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
+    {
+        require(! socketManagerIptablesParseLegacyChainName(invalid[i], NULL), "invalid legacy chain name parsed");
+    }
+}
+
 static void requirePlan(const char *v4, bool include_v4, const char *v6, bool include_v6,
                         probe_state_t *probe, socket_manager_iptables_cleanup_plan_t *plan,
                         bool expected_result, bool expected_v4, bool expected_v6)
@@ -303,6 +347,142 @@ static void testLeaseProbeErrorFailsFamily(void)
     socketManagerIptablesCleanupPlanDrop(&plan);
 }
 
+static void testLinkedLegacyIpv4Blocks(void)
+{
+    const char                            *snapshot = "-P PREROUTING ACCEPT\n"
+                                                      "-N WW_00000001_00000002_4\n"
+                                                      "-A WW_00000001_00000002_4 -j REDIRECT --to-ports 41000\n"
+                                                      "-A PREROUTING -j WW_00000001_00000002_4\n";
+    probe_state_t                          probe    = {0};
+    socket_manager_iptables_cleanup_plan_t plan;
+    requirePlan(snapshot, true, NULL, false, &probe, &plan, false, false, true);
+    require(probe.seen_count == 0, "legacy chain must never trigger a v2 owner-lease probe");
+    require(plan.count == 0, "legacy chain must never receive a cleanup operation");
+    require(plan.blocker_count == 1, "linked legacy chain should produce exactly one blocker");
+    requireEqStr(plan.blockers[0].chain_name, "WW_00000001_00000002_4", "legacy blocker name mismatch");
+    require(plan.blockers[0].family == 4, "legacy blocker family mismatch");
+    require(plan.blockers[0].prerouting_jumps == 1, "legacy blocker jump count mismatch");
+    require(! plan.blockers[0].unexpected_reference, "exact PREROUTING jump must not be flagged unexpected");
+    socketManagerIptablesCleanupPlanDrop(&plan);
+}
+
+static void testLinkedLegacyIpv6Blocks(void)
+{
+    const char                            *snapshot = "-N WW_AABBCCDD_11223344_6\n"
+                                                      "-A PREROUTING -j WW_AABBCCDD_11223344_6\n";
+    probe_state_t                          probe    = {0};
+    socket_manager_iptables_cleanup_plan_t plan;
+    requirePlan(NULL, false, snapshot, true, &probe, &plan, false, true, false);
+    require(plan.blocker_count == 1, "linked legacy v6 chain should produce one blocker");
+    require(plan.blockers[0].family == 6, "legacy v6 blocker family mismatch");
+    require(plan.count == 0, "legacy v6 chain must receive no cleanup operation");
+    socketManagerIptablesCleanupPlanDrop(&plan);
+}
+
+static void testOrphanLegacyIgnored(void)
+{
+    const char                            *snapshot = "-N WW_00000001_00000002_4\n"
+                                                      "-A WW_00000001_00000002_4 -j RETURN\n";
+    probe_state_t                          probe    = {0};
+    socket_manager_iptables_cleanup_plan_t plan;
+    requirePlan(snapshot, true, NULL, false, &probe, &plan, true, true, true);
+    require(plan.blocker_count == 0, "orphan legacy chain must not produce a blocker");
+    require(plan.count == 0, "orphan legacy chain must not be cleaned up");
+    require(probe.seen_count == 0, "orphan legacy chain must not be probed");
+    socketManagerIptablesCleanupPlanDrop(&plan);
+}
+
+static void testDuplicateLegacyJumps(void)
+{
+    const char                            *snapshot = "-N WW_0000000A_0000000B_4\n"
+                                                      "-A PREROUTING -j WW_0000000A_0000000B_4\n"
+                                                      "-A PREROUTING -j WW_0000000A_0000000B_4\n";
+    probe_state_t                          probe    = {0};
+    socket_manager_iptables_cleanup_plan_t plan;
+    requirePlan(snapshot, true, NULL, false, &probe, &plan, false, false, true);
+    require(plan.blocker_count == 1, "duplicate exact jumps must collapse into a single blocker");
+    require(plan.blockers[0].prerouting_jumps == 2, "duplicate legacy jump count mismatch");
+    require(! plan.blockers[0].unexpected_reference, "duplicate exact jumps are not unexpected");
+    require(plan.count == 0, "legacy chain must receive no cleanup operation");
+    socketManagerIptablesCleanupPlanDrop(&plan);
+}
+
+static void testLegacyUnexpectedReferences(void)
+{
+    const char                            *snapshot = "-N WW_10000000_20000000_4\n"
+                                                      "-N WW_30000000_40000000_4\n"
+                                                      "-N WW_50000000_60000000_4\n"
+                                                      "-A PREROUTING --jump WW_10000000_20000000_4\n"
+                                                      "-A OTHER -g WW_30000000_40000000_4\n"
+                                                      "-A PREROUTING -p tcp -j WW_50000000_60000000_4\n";
+    probe_state_t                          probe    = {0};
+    socket_manager_iptables_cleanup_plan_t plan;
+    requirePlan(snapshot, true, NULL, false, &probe, &plan, false, false, true);
+    require(probe.seen_count == 0, "legacy chains must never be probed");
+    require(plan.count == 0, "legacy chains must never be cleaned up");
+    require(plan.blocker_count == 3, "each unexpectedly referenced legacy chain should block");
+    for (size_t i = 0; i < plan.blocker_count; ++i)
+    {
+        require(plan.blockers[i].unexpected_reference, "conditional/long-form/indirect references must be unexpected");
+        require(plan.blockers[i].prerouting_jumps == 0, "no exact jump expected for these references");
+    }
+    socketManagerIptablesCleanupPlanDrop(&plan);
+}
+
+static void testLegacyBlockerCoexistsWithStaleV2(void)
+{
+    const char                            *snapshot = "-N WW_00000001_00000002_4\n"
+                                                      "-A PREROUTING -j WW_00000001_00000002_4\n"
+                                                      "-N WW2_0123456789ABCDEF_4\n"
+                                                      "-A PREROUTING -j WW2_0123456789ABCDEF_4\n";
+    probe_state_t                          probe    = {0};
+    socket_manager_iptables_cleanup_plan_t plan;
+    requirePlan(snapshot, true, NULL, false, &probe, &plan, false, false, true);
+    require(probe.seen_count == 1, "only the stale v2 chain should be probed");
+    require(probe.seen_tokens[0] == 0x0123456789ABCDEFULL, "the probed token must be the v2 owner token");
+    require(plan.blocker_count == 1, "the legacy chain should produce one blocker");
+    requireEqStr(plan.blockers[0].chain_name, "WW_00000001_00000002_4", "legacy blocker name mismatch");
+    require(plan.count == 3, "the safely owned stale v2 chain should still get its full cleanup plan");
+    for (size_t i = 0; i < plan.count; ++i)
+    {
+        requireEqStr(plan.ops[i].chain_name, "WW2_0123456789ABCDEF_4", "cleanup op must target only the v2 chain");
+    }
+    require(plan.ops[0].action == kSocketManagerIptablesCleanupDeleteJump, "v2 jump deletion missing");
+    require(plan.ops[1].action == kSocketManagerIptablesCleanupFlushChain, "v2 flush missing");
+    require(plan.ops[2].action == kSocketManagerIptablesCleanupDeleteChain, "v2 delete missing");
+    socketManagerIptablesCleanupPlanDrop(&plan);
+}
+
+static void testLegacyBlockerAllocationFailureIsAtomic(void)
+{
+#if defined(SOCKET_MANAGER_IPTABLES_ALLOC_FAILURE_TEST)
+    char snapshot[2048];
+    snprintf(snapshot,
+             sizeof(snapshot),
+             "-N WW_00000001_00000002_4\n"
+             "-A PREROUTING -j WW_00000001_00000002_4\n"
+             "-N WW2_ACACACACACACACAC_4\n");
+    for (size_t i = 0; i < 15; ++i)
+    {
+        strcat(snapshot, "-A PREROUTING -j WW2_ACACACACACACACAC_4\n");
+    }
+
+    probe_state_t                          probe = {0};
+    socket_manager_iptables_cleanup_plan_t plan;
+    socketManagerIptablesCleanupPlanInit(&plan);
+    bool v4_ok               = true;
+    bool v6_ok               = true;
+    realloc_failure_min_size = 1024;
+    require(! socketManagerIptablesBuildCleanupPlan(snapshot, true, "", true, fakeProbe, &probe, &plan, &v4_ok, &v6_ok),
+            "injected planning allocation failure should be reported");
+    require(! v4_ok && ! v6_ok, "internal planning failure must fail every included family");
+    require(plan.count == 0 && plan.ops == NULL, "internal planning failure must discard the partial cleanup plan");
+    require(plan.blocker_count == 0 && plan.blockers == NULL,
+            "internal planning failure must discard partially built blocker diagnostics");
+    socketManagerIptablesCleanupPlanDrop(&plan);
+#endif
+}
+
 static void testCleanupFailureOrdering(void)
 {
     const char *duplicate_snapshot = "-N WW2_CDCDCDCDCDCDCDCD_4\n"
@@ -435,6 +615,8 @@ int main(void)
 {
     testNameFormattingAndParsing();
     testStrictNameRejection();
+    testLegacyNameParsing();
+    testLegacyNameRejection();
     testOneStaleIpv4Chain();
     testPairedActiveTokenPreservesBothFamilies();
     testDuplicateJumpsAndOrphanChain();
@@ -444,6 +626,13 @@ int main(void)
     testIncompleteSnapshotRejected();
     testLargeSnapshotBeyondOldFixedBuffer();
     testLeaseProbeErrorFailsFamily();
+    testLinkedLegacyIpv4Blocks();
+    testLinkedLegacyIpv6Blocks();
+    testOrphanLegacyIgnored();
+    testDuplicateLegacyJumps();
+    testLegacyUnexpectedReferences();
+    testLegacyBlockerCoexistsWithStaleV2();
+    testLegacyBlockerAllocationFailureIsAtomic();
     testCleanupFailureOrdering();
     testLockAndOwnerLeaseContention();
     testInternalPlanningFailureIsAtomic();
