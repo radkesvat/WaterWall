@@ -41,15 +41,17 @@ we therefore test the API over various inputs. Please add more tests :-)
 // ---------------------------------------------------------------------------
 // Test functions
 // ---------------------------------------------------------------------------
-bool test_heap1(void);
-bool test_heap2(void);
+bool test_theap1(void);
+bool test_theap2(void);
+bool test_theap_arena_destroy(void);
+bool test_theap_arena_delete(void);
 bool test_stl_allocator1(void);
 bool test_stl_allocator2(void);
 
-bool test_stl_heap_allocator1(void);
-bool test_stl_heap_allocator2(void);
-bool test_stl_heap_allocator3(void);
-bool test_stl_heap_allocator4(void);
+bool test_stl_theap_allocator1(void);
+bool test_stl_theap_allocator2(void);
+bool test_stl_theap_allocator3(void);
+bool test_stl_theap_allocator4(void);
 
 bool mem_is_zero(uint8_t* p, size_t size) {
   if (p==NULL) return false;
@@ -72,7 +74,7 @@ int main(void) {
     mi_free(p);
     result = true;
   };
-  
+
 
   // ---------------------------------------------------
   // Malloc
@@ -208,7 +210,7 @@ int main(void) {
   CHECK_BODY("malloc-aligned9") { // test large alignments
     bool ok = true;
     void* p[8];
-    const int max_align_shift = 
+    const int max_align_shift =
       #if SIZE_MAX > UINT32_MAX
       28
       #else
@@ -242,12 +244,12 @@ int main(void) {
     }
     result = ok;
   }
-  CHECK_BODY("malloc_aligned11") {
-    mi_heap_t* heap = mi_heap_new();
-    void* p = mi_heap_malloc_aligned(heap, 33554426, 8);
-    result = mi_heap_contains_block(heap, p);
-    mi_heap_destroy(heap);
-  }
+  //CHECK_BODY("malloc_aligned11") {
+  //  mi_theap_t* theap = mi_theap_new();
+  //  void* p = mi_theap_malloc_aligned(theap, 33554426, 8);
+  //  result = mi_theap_contains_block(theap, p);
+  //  mi_theap_destroy(theap);
+  //}
   CHECK_BODY("mimalloc-aligned12") {
     void* p = mi_malloc_aligned(0x100, 0x100);
     result = (((uintptr_t)p % 0x100) == 0); // #602
@@ -264,7 +266,7 @@ int main(void) {
         }
         for(int i = 0; i < 10 && ok; i++) {
           mi_free(p[i]);
-        }       
+        }
         /*
         if (ok && align <= size && ((size + MI_PADDING_SIZE) & (align-1)) == 0) {
           size_t bsize = mi_good_size(size);
@@ -334,11 +336,47 @@ int main(void) {
     mi_free(p);
   };
 
+  CHECK_BODY("realloc-guarded") {      // issue #1304
+ 	  void* shared_ptr = NULL;
+    for (int iterations = 0; iterations < 64; ++iterations) {
+      for (int i = 0; i < 1024; ++i) {
+        shared_ptr = mi_realloc(shared_ptr, i * 64);
+      }
+    }
+  }
+
+  // ---------------------------------------------------
+  // Returned block sizes
+  // ---------------------------------------------------
+  CHECK_BODY("umalloc1") {
+    for(size_t size = 1; size <= 32*MI_MiB; size *= 2 ) {
+      size_t bsize;
+      void* p = mi_umalloc(size,&bsize);
+      assert(bsize >= size);
+      size_t pre_size;
+      size_t post_size;
+      p = mi_urealloc(p, size + 1024, &pre_size, &post_size);
+      assert(pre_size == bsize);
+      assert(post_size >= size + 1024);
+      size_t fsize;
+      mi_ufree(p,&fsize);
+      assert(fsize == post_size);
+    }
+  }
+
+  #if (MI_INTPTR_SIZE > 4)
+  CHECK_BODY("arena_reserve") {
+    result = (0==mi_reserve_os_memory(16*MI_GiB,false,true));
+  }
+  #endif
+
   // ---------------------------------------------------
   // Heaps
   // ---------------------------------------------------
-  CHECK("heap_destroy", test_heap1());
-  CHECK("heap_delete", test_heap2());
+  //CHECK("theap_destroy", test_theap1());
+  //CHECK("theap_delete", test_theap2());
+  //CHECK("theap_arena_destroy", test_theap_arena_destroy());
+  //CHECK("theap_arena_delete", test_theap_arena_delete());
 
   //mi_stats_print(NULL);
 
@@ -356,10 +394,10 @@ int main(void) {
   CHECK("stl_allocator1", test_stl_allocator1());
   CHECK("stl_allocator2", test_stl_allocator2());
 
-	CHECK("stl_heap_allocator1", test_stl_heap_allocator1());
-	CHECK("stl_heap_allocator2", test_stl_heap_allocator2());
-	CHECK("stl_heap_allocator3", test_stl_heap_allocator3());
-	CHECK("stl_heap_allocator4", test_stl_heap_allocator4());
+	//CHECK("stl_theap_allocator1", test_stl_theap_allocator1());
+	//CHECK("stl_theap_allocator2", test_stl_theap_allocator2());
+	//CHECK("stl_theap_allocator3", test_stl_theap_allocator3());
+	//CHECK("stl_theap_allocator4", test_stl_theap_allocator4());
 
   // ---------------------------------------------------
   // Done
@@ -371,26 +409,53 @@ int main(void) {
 // Larger test functions
 // ---------------------------------------------------
 
-bool test_heap1(void) {
-  mi_heap_t* heap = mi_heap_new();
-  int* p1 = mi_heap_malloc_tp(heap,int);
-  int* p2 = mi_heap_malloc_tp(heap,int);
+/*
+bool test_theap1(void) {
+  mi_theap_t* theap = mi_theap_new();
+  int* p1 = mi_theap_malloc_tp(theap,int);
+  int* p2 = mi_theap_malloc_tp(theap,int);
   *p1 = *p2 = 43;
-  mi_heap_destroy(heap);
+  mi_theap_destroy(theap);
   return true;
 }
 
-bool test_heap2(void) {
-  mi_heap_t* heap = mi_heap_new();
-  int* p1 = mi_heap_malloc_tp(heap,int);
-  int* p2 = mi_heap_malloc_tp(heap,int);
-  mi_heap_delete(heap);
+bool test_theap2(void) {
+  mi_theap_t* theap = mi_theap_new();
+  int* p1 = mi_theap_malloc_tp(theap,int);
+  int* p2 = mi_theap_malloc_tp(theap,int);
+  mi_theap_delete(theap);
   *p1 = 42;
   mi_free(p1);
   mi_free(p2);
   return true;
 }
 
+bool test_theap_arena_destroy(void) {
+  mi_arena_id_t arena_id = NULL;
+  if (mi_reserve_os_memory_ex(64 * 1024 * 1024, true, false, true, &arena_id) != 0) {
+    return false;
+  }
+  mi_theap_t* theap = mi_theap_new_ex(0, true, arena_id);
+  if (theap == NULL) {
+    return false;
+  }
+  mi_theap_destroy(theap);
+  return true;
+}
+
+bool test_theap_arena_delete(void) {
+  mi_arena_id_t arena_id = NULL;
+  if (mi_reserve_os_memory_ex(64 * 1024 * 1024, true, false, true, &arena_id) != 0) {
+    return false;
+  }
+  mi_theap_t* theap = mi_theap_new_ex(0, true, arena_id);
+  if (theap == NULL) {
+    return false;
+  }
+  mi_theap_delete(theap);
+  return true;
+}
+*/
 bool test_stl_allocator1(void) {
 #ifdef __cplusplus
   std::vector<int, mi_stl_allocator<int> > vec;
@@ -415,9 +480,10 @@ bool test_stl_allocator2(void) {
 #endif
 }
 
-bool test_stl_heap_allocator1(void) {
+/*
+bool test_stl_theap_allocator1(void) {
 #ifdef __cplusplus
-  std::vector<some_struct, mi_heap_stl_allocator<some_struct> > vec;
+  std::vector<some_struct, mi_theap_stl_allocator<some_struct> > vec;
   vec.push_back(some_struct());
   vec.pop_back();
   return vec.size() == 0;
@@ -426,9 +492,9 @@ bool test_stl_heap_allocator1(void) {
 #endif
 }
 
-bool test_stl_heap_allocator2(void) {
+bool test_stl_theap_allocator2(void) {
 #ifdef __cplusplus
-  std::vector<some_struct, mi_heap_destroy_stl_allocator<some_struct> > vec;
+  std::vector<some_struct, mi_theap_destroy_stl_allocator<some_struct> > vec;
   vec.push_back(some_struct());
   vec.pop_back();
   return vec.size() == 0;
@@ -437,38 +503,39 @@ bool test_stl_heap_allocator2(void) {
 #endif
 }
 
-bool test_stl_heap_allocator3(void) {
+bool test_stl_theap_allocator3(void) {
 #ifdef __cplusplus
-	mi_heap_t* heap = mi_heap_new();
+	mi_theap_t* theap = mi_theap_new();
 	bool good = false;
 	{
-		mi_heap_stl_allocator<some_struct> myAlloc(heap);
-		std::vector<some_struct, mi_heap_stl_allocator<some_struct> > vec(myAlloc);
+		mi_theap_stl_allocator<some_struct> myAlloc(theap);
+		std::vector<some_struct, mi_theap_stl_allocator<some_struct> > vec(myAlloc);
 		vec.push_back(some_struct());
 		vec.pop_back();
 		good = vec.size() == 0;
 	}
-	mi_heap_delete(heap);
+	mi_theap_delete(theap);
   return good;
 #else
   return true;
 #endif
 }
 
-bool test_stl_heap_allocator4(void) {
+bool test_stl_theap_allocator4(void) {
 #ifdef __cplusplus
-	mi_heap_t* heap = mi_heap_new();
+	mi_theap_t* theap = mi_theap_new();
 	bool good = false;
 	{
-		mi_heap_destroy_stl_allocator<some_struct> myAlloc(heap);
-		std::vector<some_struct, mi_heap_destroy_stl_allocator<some_struct> > vec(myAlloc);
+		mi_theap_destroy_stl_allocator<some_struct> myAlloc(theap);
+		std::vector<some_struct, mi_theap_destroy_stl_allocator<some_struct> > vec(myAlloc);
 		vec.push_back(some_struct());
 		vec.pop_back();
 		good = vec.size() == 0;
 	}
-	mi_heap_destroy(heap);
+	mi_theap_destroy(theap);
   return good;
 #else
   return true;
 #endif
 }
+*/
