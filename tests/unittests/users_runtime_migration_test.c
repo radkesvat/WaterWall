@@ -1,6 +1,6 @@
+#include "loggers/internal_logger.h"
 #include "objects/users.h"
 #include "utils/json_helpers.h"
-
 
 #if defined(WCRYPTO_TEST_LINKER_WRAP)
 typedef enum crypto_failure_injection_e
@@ -66,6 +66,42 @@ wcrypto_status_t __wrap_wCryptoX25519(unsigned char       out[WCRYPTO_X25519_KEY
 }
 #endif
 
+enum
+{
+    kTestLogCaptureCapacity = 4096
+};
+
+static char   test_log_capture[kTestLogCaptureCapacity];
+static size_t test_log_capture_len;
+static bool   test_log_capture_enabled;
+
+static void testLogCaptureHandler(int loglevel, const char *buf, int len)
+{
+    discard loglevel;
+
+    if (! test_log_capture_enabled || buf == NULL || len <= 0 || test_log_capture_len >= sizeof(test_log_capture) - 1U)
+    {
+        return;
+    }
+
+    size_t copy_len = min((size_t) len, sizeof(test_log_capture) - test_log_capture_len - 1U);
+    memoryCopy(test_log_capture + test_log_capture_len, buf, copy_len);
+    test_log_capture_len += copy_len;
+    test_log_capture[test_log_capture_len] = '\0';
+}
+
+static void testLogCaptureBegin(void)
+{
+    memoryZero(test_log_capture, sizeof(test_log_capture));
+    test_log_capture_len     = 0;
+    test_log_capture_enabled = true;
+}
+
+static void testLogCaptureEnd(void)
+{
+    test_log_capture_enabled = false;
+}
+
 static void require(bool condition, const char *message)
 {
     if (! condition)
@@ -73,6 +109,86 @@ static void require(bool condition, const char *message)
         fprintf(stderr, "%s\n", message);
         exit(1);
     }
+}
+
+static void testDuplicateCredentialLogsOmitCredentials(void)
+{
+    static const char duplicate_password[] = "credential-log-regression-password";
+    static const char duplicate_sha_json[] =
+        "{\"users\":["
+        "{\"name\":\"log-first\",\"password\":\"credential-log-regression-password\"},"
+        "{\"name\":\"log-second\",\"password\":\"credential-log-regression-password\"}"
+        "]}";
+    static const char uuid_a[]                                 = "84949cc5-4701-4a84-895b-354c584a981b";
+    static const char uuid_b[]                                 = "7783a3e7-e373-51cd-8642-c83782b807c5";
+    static const char uuid_b_uppercase[]                       = "7783A3E7-E373-51CD-8642-C83782B807C5";
+    sha224_hash_t     sha224                                   = {0};
+    sha256_hash_t     sha256                                   = {0};
+    char              sha224_hex[SHA224_DIGEST_SIZE * 2U + 1U] = {0};
+    char              sha256_hex[SHA256_DIGEST_SIZE * 2U + 1U] = {0};
+    uint8_t           uuid_a_bytes[kWwUuidBytesLen]            = {0};
+    users_t           users;
+    user_t            first_source;
+    user_t            second_source;
+
+    require(wCryptoSHA224(&sha224, (const unsigned char *) duplicate_password, stringLength(duplicate_password)) ==
+                kWCryptoOk,
+            "failed to derive duplicate-log SHA-224 test credential");
+    require(wCryptoSHA256(&sha256, (const unsigned char *) duplicate_password, stringLength(duplicate_password)) ==
+                kWCryptoOk,
+            "failed to derive duplicate-log SHA-256 test credential");
+    asciiHexEncodeBytesLower(sha224.bytes, SHA224_DIGEST_SIZE, (uint8_t *) sha224_hex);
+    asciiHexEncodeBytesLower(sha256.bytes, SHA256_DIGEST_SIZE, (uint8_t *) sha256_hex);
+
+    memoryZero(&users, sizeof(users));
+    require(usersCreate(&users), "failed to create duplicate-log users table");
+
+    cJSON *json = cJSON_Parse(duplicate_sha_json);
+    require(json != NULL, "failed to parse duplicate-log users JSON");
+    testLogCaptureBegin();
+    require(! usersFeedJson(&users, json), "duplicate-log JSON feed unexpectedly worked");
+    testLogCaptureEnd();
+    cJSON_Delete(json);
+
+    require(strstr(test_log_capture, "duplicate SHA-224 lookup key") != NULL,
+            "duplicate SHA-224 load did not produce a diagnostic");
+    require(strstr(test_log_capture, "log-second") != NULL, "duplicate SHA-224 diagnostic omitted the affected user");
+    require(strstr(test_log_capture, duplicate_password) == NULL,
+            "duplicate SHA-224 diagnostic exposed the plaintext password");
+    require(strstr(test_log_capture, sha224_hex) == NULL, "duplicate SHA-224 diagnostic exposed the bearer credential");
+    require(strstr(test_log_capture, sha256_hex) == NULL,
+            "duplicate SHA-224 diagnostic exposed the SHA-256 credential");
+
+    memoryZero(&first_source, sizeof(first_source));
+    memoryZero(&second_source, sizeof(second_source));
+    require(userCreate(&first_source, uuid_a), "failed to create first duplicate-log UUID user");
+    require(userCreate(&second_source, uuid_b), "failed to create second duplicate-log UUID user");
+    require(usersAddUser(&users, &first_source), "failed to add first duplicate-log UUID user");
+    require(usersAddUser(&users, &second_source), "failed to add second duplicate-log UUID user");
+    userDestroy(&second_source);
+    userDestroy(&first_source);
+
+    require(wwUuidParseString(uuid_a, uuid_a_bytes), "failed to parse first duplicate-log UUID");
+    user_t *first = usersLookupByUUID(&users, uuid_a_bytes);
+    require(first != NULL, "failed to look up first duplicate-log UUID user");
+
+    testLogCaptureBegin();
+    require(! usersChangePassword(&users, first, uuid_b_uppercase),
+            "duplicate-log UUID password update unexpectedly worked");
+    testLogCaptureEnd();
+
+    require(strstr(test_log_capture, "duplicate UUID credential while updating user") != NULL,
+            "duplicate UUID update did not produce a diagnostic");
+    require(strstr(test_log_capture, uuid_b) == NULL, "duplicate UUID diagnostic exposed the canonical credential");
+    require(strstr(test_log_capture, uuid_b_uppercase) == NULL,
+            "duplicate UUID diagnostic exposed the submitted credential");
+
+    usersDestroy(&users);
+    memorySecureZero(&sha224, sizeof(sha224));
+    memorySecureZero(&sha256, sizeof(sha256));
+    memorySecureZero(sha224_hex, sizeof(sha224_hex));
+    memorySecureZero(sha256_hex, sizeof(sha256_hex));
+    memorySecureZero(uuid_a_bytes, sizeof(uuid_a_bytes));
 }
 
 static bool testBytesAreZero(const void *bytes, size_t len)
@@ -1072,7 +1188,13 @@ static void testTrafficStatsJsonUsesExactBytes(void)
 
 int main(void)
 {
+    logger_t *test_logger = loggerCreate();
+    require(test_logger != NULL, "failed to create users test logger");
+    loggerSetHandler(test_logger, testLogCaptureHandler);
+    setInternalLogger(test_logger);
+
     require(wCryptoGlobalInit() == kWCryptoOk, "crypto global initialization failed");
+    testDuplicateCredentialLogsOmitCredentials();
     testCryptoFailureDoesNotPublishCredentials();
     testIdentifierLookupAndJsonRoundTrip();
     testSHA224LookupAndHashAlignment();
@@ -1091,5 +1213,6 @@ int main(void)
     testFirstUsagePushRequestFlagIsOneShot();
     testTrafficStatsJsonUsesExactBytes();
     wCryptoGlobalCleanup();
+    internaloggerDestroy();
     return 0;
 }

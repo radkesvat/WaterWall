@@ -1351,10 +1351,7 @@ static bool usersSHA224TableInsertEntryLocked(users_t *users, user_t *user)
     }
     if (UNLIKELY(! result.inserted && result.ref->second != user))
     {
-        char key_hex[SHA224_DIGEST_SIZE * 2U + 1U];
-        usersSha224ToHex(user->sha224_pass.bytes, key_hex);
-        LOGE("Users: duplicate SHA-224 lookup key %s between users \"%s\" and \"%s\"",
-             key_hex,
+        LOGE("Users: duplicate SHA-224 lookup key between users \"%s\" and \"%s\"",
              usersUserNameForLog(result.ref->second),
              usersUserNameForLog(user));
         return false;
@@ -1392,10 +1389,7 @@ static bool usersSHA256TableInsertEntryLocked(users_t *users, user_t *user)
     }
     if (UNLIKELY(! result.inserted && result.ref->second != user))
     {
-        char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
-        usersSha256ToHex(user->sha256_pass.bytes, key_hex);
-        LOGE("Users: duplicate SHA-256 lookup key %s between users \"%s\" and \"%s\"",
-             key_hex,
+        LOGE("Users: duplicate SHA-256 lookup key between users \"%s\" and \"%s\"",
              usersUserNameForLog(result.ref->second),
              usersUserNameForLog(user));
         return false;
@@ -1432,10 +1426,7 @@ static bool usersUUIDTableInsertEntryLocked(users_t *users, user_t *user)
     }
     if (UNLIKELY(! result.inserted && result.ref->second != user))
     {
-        char key_text[kWwUuidCanonicalStringLen + 1U];
-        wwUuidToCanonicalString(user->uuid_pass, key_text);
-        LOGE("Users: duplicate UUID credential %s between users \"%s\" and \"%s\"",
-             key_text,
+        LOGE("Users: duplicate UUID credential between users \"%s\" and \"%s\"",
              usersUserNameForLog(result.ref->second),
              usersUserNameForLog(user));
         return false;
@@ -2357,25 +2348,17 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot, bool prevalid
         }
         if (UNLIKELY(usersSHA224TableLookupLocked(users, slot->sha224_pass.bytes) != NULL))
         {
-            char key_hex[SHA224_DIGEST_SIZE * 2U + 1U];
-            usersSha224ToHex(slot->sha224_pass.bytes, key_hex);
-            LOGE(
-                "Users: duplicate SHA-224 lookup key %s while loading user \"%s\"", key_hex, usersUserNameForLog(slot));
+            LOGE("Users: duplicate SHA-224 lookup key while loading user \"%s\"", usersUserNameForLog(slot));
             return false;
         }
         if (UNLIKELY(usersSHA256TableLookupLocked(users, slot->sha256_pass.bytes) != NULL))
         {
-            char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
-            usersSha256ToHex(slot->sha256_pass.bytes, key_hex);
-            LOGE(
-                "Users: duplicate SHA-256 lookup key %s while loading user \"%s\"", key_hex, usersUserNameForLog(slot));
+            LOGE("Users: duplicate SHA-256 lookup key while loading user \"%s\"", usersUserNameForLog(slot));
             return false;
         }
         if (UNLIKELY(slot->uuid_pass_valid && usersUUIDTableLookupLocked(users, slot->uuid_pass) != NULL))
         {
-            char key_text[kWwUuidCanonicalStringLen + 1U];
-            wwUuidToCanonicalString(slot->uuid_pass, key_text);
-            LOGE("Users: duplicate UUID credential %s while loading user \"%s\"", key_text, usersUserNameForLog(slot));
+            LOGE("Users: duplicate UUID credential while loading user \"%s\"", usersUserNameForLog(slot));
             return false;
         }
         if (UNLIKELY(slot->wireguard_publickey_valid &&
@@ -2698,9 +2681,7 @@ static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *u
         uuid_duplicate = usersUUIDTableLookupLocked(users, password_probe.uuid_pass);
         if (UNLIKELY(uuid_duplicate != NULL && uuid_duplicate != user))
         {
-            char key_text[kWwUuidCanonicalStringLen + 1U];
-            wwUuidToCanonicalString(password_probe.uuid_pass, key_text);
-            LOGE("Users: duplicate UUID credential %s while updating user \"%s\"", key_text, usersUserNameForLog(user));
+            LOGE("Users: duplicate UUID credential while updating user \"%s\"", usersUserNameForLog(user));
             usersPasswordProbeDestroy(&password_probe);
             return kUsersUpdateResultDuplicateUUID;
         }
@@ -2720,9 +2701,7 @@ static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *u
     sha224_duplicate = usersSHA224TableLookupLocked(users, password_probe.sha224_pass.bytes);
     if (UNLIKELY(sha224_duplicate != NULL && sha224_duplicate != user))
     {
-        char key_hex[SHA224_DIGEST_SIZE * 2U + 1U];
-        usersSha224ToHex(password_probe.sha224_pass.bytes, key_hex);
-        LOGE("Users: duplicate SHA-224 lookup key %s while updating user \"%s\"", key_hex, usersUserNameForLog(user));
+        LOGE("Users: duplicate SHA-224 lookup key while updating user \"%s\"", usersUserNameForLog(user));
         usersPasswordProbeDestroy(&password_probe);
         return kUsersUpdateResultPasswordUpdateFailed;
     }
@@ -2730,9 +2709,7 @@ static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *u
     sha256_duplicate = usersSHA256TableLookupLocked(users, password_probe.sha256_pass.bytes);
     if (UNLIKELY(sha256_duplicate != NULL && sha256_duplicate != user))
     {
-        char key_hex[SHA256_DIGEST_SIZE * 2U + 1U];
-        usersSha256ToHex(password_probe.sha256_pass.bytes, key_hex);
-        LOGE("Users: duplicate SHA-256 lookup key %s while updating user \"%s\"", key_hex, usersUserNameForLog(user));
+        LOGE("Users: duplicate SHA-256 lookup key while updating user \"%s\"", usersUserNameForLog(user));
         usersPasswordProbeDestroy(&password_probe);
         return kUsersUpdateResultPasswordUpdateFailed;
     }
