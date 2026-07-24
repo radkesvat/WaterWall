@@ -1,5 +1,5 @@
 <!--
-Documentation version: 107
+Documentation version: 108
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx, and both files must keep the same documentation version.
 -->
 
