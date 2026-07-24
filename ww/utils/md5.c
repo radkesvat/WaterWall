@@ -30,11 +30,11 @@
         a += b; \
     }
 
-static void wwMD5Transform(unsigned int state[4],unsigned char *block);
-static void wwMD5Encode(unsigned char *output,unsigned int *input,unsigned int len);
-static void wwMD5Decode(unsigned int *output,unsigned char *input,unsigned int len);
+static void wwMD5Transform(unsigned int state[4],const unsigned char *block);
+static void wwMD5Encode(unsigned char *output,const unsigned int *input,unsigned int len);
+static void wwMD5Decode(unsigned int *output,const unsigned char *input,unsigned int len);
 
-static unsigned char PADDING[] = {
+static const unsigned char PADDING[] = {
     0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
     0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
     0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -50,10 +50,11 @@ void wwMD5Init(ww_md5_ctx_t *ctx) {
     ctx->state[3] = 0x10325476;
 }
 
-void wwMD5Update(ww_md5_ctx_t *ctx,unsigned char *input,unsigned int inputlen) {
-    unsigned int i = 0,index = 0,partlen = 0;
-    index = (ctx->count[0] >> 3) & 0x3F;
-    partlen = 64 - index;
+void wwMD5Update(ww_md5_ctx_t *ctx,const unsigned char *input,unsigned int inputlen) {
+    unsigned int index = (ctx->count[0] >> 3) & 0x3F;
+    unsigned int partlen = 64 - index;
+    size_t offset = 0;
+
     ctx->count[0] += inputlen << 3;
     if(ctx->count[0] < (inputlen << 3)) {
         ctx->count[1]++;
@@ -61,17 +62,25 @@ void wwMD5Update(ww_md5_ctx_t *ctx,unsigned char *input,unsigned int inputlen) {
     ctx->count[1] += inputlen >> 29;
 
     if(inputlen >= partlen) {
+        // Fill and transform the partial context block, then walk the input in
+        // whole 64-byte blocks using a decreasing remaining count so the loop
+        // condition can never wrap near the 4 GiB input limit.
         memoryCopy(&ctx->buffer[index],input,partlen);
         wwMD5Transform(ctx->state,ctx->buffer);
-        for(i = partlen;i+64 <= inputlen;i+=64) {
-            wwMD5Transform(ctx->state,&input[i]);
+        offset = partlen;
+
+        size_t remaining = (size_t) inputlen - partlen;
+        while(remaining >= 64U) {
+            wwMD5Transform(ctx->state,input + offset);
+            offset += 64U;
+            remaining -= 64U;
         }
+
         index = 0;
-    } else {
-        i = 0;
     }
 
-    memoryCopy(&ctx->buffer[index],&input[i],inputlen-i);
+    // Copy only the final 0..63 unprocessed bytes.
+    memoryCopy(&ctx->buffer[index],input + offset,(size_t) inputlen - offset);
 }
 
 void wwMD5Final(ww_md5_ctx_t *ctx,unsigned char digest[16]) {
@@ -85,7 +94,7 @@ void wwMD5Final(ww_md5_ctx_t *ctx,unsigned char digest[16]) {
     wwMD5Encode(digest,ctx->state,16);
 }
 
-void wwMD5Encode(unsigned char *output,unsigned int *input,unsigned int len) {
+void wwMD5Encode(unsigned char *output,const unsigned int *input,unsigned int len) {
     unsigned int i = 0,j = 0;
     while(j < len) {
         output[j] = input[i] & 0xFF;
@@ -97,7 +106,7 @@ void wwMD5Encode(unsigned char *output,unsigned int *input,unsigned int len) {
     }
 }
 
-void wwMD5Decode(unsigned int *output,unsigned char *input,unsigned int len) {
+void wwMD5Decode(unsigned int *output,const unsigned char *input,unsigned int len) {
     unsigned int i = 0,j = 0;
     while(j < len) {
         output[i] = ((unsigned int)input[j]) | (((unsigned int)input[j+1]) << 8) | (((unsigned int)input[j+2]) << 16) | (((unsigned int)input[j+3]) << 24);
@@ -107,7 +116,7 @@ void wwMD5Decode(unsigned int *output,unsigned char *input,unsigned int len) {
 }
 
 //,unsigned char block[64]
-void wwMD5Transform(unsigned int state[4],unsigned char *block) {
+void wwMD5Transform(unsigned int state[4],const unsigned char *block) {
     unsigned int a = state[0];
     unsigned int b = state[1];
     unsigned int c = state[2];
@@ -190,7 +199,7 @@ void wwMD5Transform(unsigned int state[4],unsigned char *block) {
     state[3] += d;
 }
 
-void wwMD5(unsigned char* input, unsigned int inputlen, unsigned char digest[16]) {
+void wwMD5(const unsigned char* input, unsigned int inputlen, unsigned char digest[16]) {
     ww_md5_ctx_t ctx;
     wwMD5Init(&ctx);
     wwMD5Update(&ctx, input, inputlen);
@@ -205,7 +214,7 @@ static inline char wwmd5_i2hex(unsigned char i) {
     }
 }
 
-void wwMD5Hex(unsigned char* input, unsigned int inputlen, char* output, unsigned int outputlen) {
+void wwMD5Hex(const unsigned char* input, unsigned int inputlen, char* output, unsigned int outputlen) {
     int i;
     unsigned char digest[16];
     if (outputlen < 32) return;

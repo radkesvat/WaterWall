@@ -1,6 +1,10 @@
 #include "private/crypto_backends.h"
 #include "wcrypto.h"
 
+#if defined(WCRYPTO_HAS_SOFTWARE_HASH)
+#include "utils/md5.h"
+#endif
+
 
 
 enum
@@ -319,6 +323,94 @@ static void test_hash_contract(void)
     require(bytes_are_zero(sha3.bytes, sizeof(sha3.bytes)), "unavailable SHA3-256 output was not cleared");
 #endif
 }
+
+#if defined(WCRYPTO_HAS_SOFTWARE_HASH)
+static void test_software_md5(void)
+{
+    const uint8_t abc[]                           = "abc";
+    const uint8_t expected_empty[MD5_DIGEST_SIZE] = {
+        0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04, 0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8, 0x42, 0x7e,
+    };
+    const uint8_t expected_abc[MD5_DIGEST_SIZE] = {
+        0x90, 0x01, 0x50, 0x98, 0x3c, 0xd2, 0x4f, 0xb0, 0xd6, 0x96, 0x3f, 0x7d, 0x28, 0xe1, 0x7f, 0x72,
+    };
+    md5_hash_t software = {0};
+
+    /* 1. Standard MD5 vectors exercised directly through the software backend. */
+    require(wCryptoSoftwareMD5(&software, NULL, 0) == kWCryptoOk, "software MD5 empty input failed");
+    require_bytes_equal(software.bytes, expected_empty, MD5_DIGEST_SIZE, "software MD5 empty vector mismatch");
+    require(wCryptoSoftwareMD5(&software, abc, sizeof(abc) - 1) == kWCryptoOk, "software MD5 \"abc\" failed");
+    require_bytes_equal(software.bytes, expected_abc, MD5_DIGEST_SIZE, "software MD5 \"abc\" vector mismatch");
+
+    /* Deterministic buffer used by the block-boundary and incremental checks. */
+    uint8_t buffer[256];
+    for (size_t i = 0; i < sizeof(buffer); ++i)
+    {
+        buffer[i] = (uint8_t) (i * 31U + 7U);
+    }
+
+    /* 2. Inputs around 64-byte block boundaries. The software digest is
+     * cross-checked against the configured public dispatcher so a boundary
+     * regression is caught even when the reference backend is not software, and
+     * sanitizer runs observe every full-block read for out-of-bounds access. */
+    static const size_t boundary_lengths[] = {55, 56, 63, 64, 65, 127, 128, 129};
+    for (size_t i = 0; i < sizeof(boundary_lengths) / sizeof(boundary_lengths[0]); ++i)
+    {
+        const size_t len       = boundary_lengths[i];
+        md5_hash_t   reference = {0};
+        md5_hash_t   digest    = {0};
+        require(wCryptoMD5(&reference, buffer, len) == kWCryptoOk, "public MD5 boundary oracle failed");
+        require(wCryptoSoftwareMD5(&digest, buffer, len) == kWCryptoOk, "software MD5 boundary length failed");
+        require_bytes_equal(digest.bytes, reference.bytes, MD5_DIGEST_SIZE, "software MD5 boundary vector mismatch");
+    }
+
+    /* 3. Incremental wwMD5Update() calls split before and after a 64-byte
+     * boundary must reproduce the one-shot digest of the same input. */
+    static const unsigned int splits[] = {40, 64, 100};
+    const unsigned int        total    = 130;
+    for (size_t i = 0; i < sizeof(splits) / sizeof(splits[0]); ++i)
+    {
+        const unsigned int split = splits[i];
+        ww_md5_ctx_t       ctx;
+        unsigned char      incremental[MD5_DIGEST_SIZE];
+        md5_hash_t         reference = {0};
+
+        wwMD5Init(&ctx);
+        wwMD5Update(&ctx, buffer, split);
+        wwMD5Update(&ctx, buffer + split, total - split);
+        wwMD5Final(&ctx, incremental);
+
+        require(wCryptoMD5(&reference, buffer, total) == kWCryptoOk, "public MD5 incremental oracle failed");
+        require_bytes_equal(incremental, reference.bytes, MD5_DIGEST_SIZE, "incremental MD5 differs from one-shot");
+    }
+
+    /* 4. RFC 1321 one-million-'a' vector. */
+    {
+        const uint8_t expected_million_a[MD5_DIGEST_SIZE] = {
+            0x77, 0x07, 0xd6, 0xae, 0x4e, 0x02, 0x7c, 0x70, 0xee, 0xa2, 0xa9, 0x35, 0xc2, 0x29, 0x6f, 0x21,
+        };
+        const size_t million     = 1000000U;
+        uint8_t     *ones         = malloc(million);
+        md5_hash_t   million_hash = {0};
+        require(ones != NULL, "failed to allocate one-million-'a' buffer");
+        memset(ones, 'a', million);
+        require(wCryptoSoftwareMD5(&million_hash, ones, million) == kWCryptoOk, "software MD5 one-million-'a' failed");
+        require_bytes_equal(
+            million_hash.bytes, expected_million_a, MD5_DIGEST_SIZE, "software MD5 one-million-'a' vector mismatch");
+        free(ones);
+    }
+
+    /* 5. The public hash validation limit still rejects inputs above UINT32_MAX
+     * before any pointer is dereferenced. */
+#if SIZE_MAX > UINT32_MAX
+    memset(&software, 0xa5, sizeof(software));
+    require(wCryptoSoftwareMD5(&software, (const uint8_t *) (uintptr_t) 1, (size_t) UINT32_MAX + 1) ==
+                kWCryptoInputTooLarge,
+            "oversized MD5 input was not rejected before dereference");
+    require(bytes_are_zero(software.bytes, sizeof(software.bytes)), "oversized MD5 input did not clear output");
+#endif
+}
+#endif
 
 static void test_blake2s_unkeyed(void)
 {
@@ -1291,6 +1383,9 @@ int main(void)
 
     test_hash_vectors();
     test_hash_contract();
+#if defined(WCRYPTO_HAS_SOFTWARE_HASH)
+    test_software_md5();
+#endif
     test_blake2s_unkeyed();
     test_blake2s_keyed();
     test_blake2s_lifecycle();

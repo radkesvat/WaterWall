@@ -26,7 +26,7 @@ wcrypto_status_t wCryptoSoftwareMD5(md5_hash_t *out, const unsigned char *in, si
         return kWCryptoInputTooLarge;
     }
 
-    wwMD5((unsigned char *) softwareMD5SHA1HashNormalizeInput(in), (unsigned int) inlen, out->bytes);
+    wwMD5(softwareMD5SHA1HashNormalizeInput(in), (unsigned int) inlen, out->bytes);
     return kWCryptoOk;
 }
 
