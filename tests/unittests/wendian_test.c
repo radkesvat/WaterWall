@@ -22,6 +22,40 @@ static void require(bool condition, const char *message)
     }
 }
 
+static void testHtonll64(void)
+{
+    static const uint8_t network_order[8] = {
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    };
+    const uint64_t host_value = UINT64_C(0x0102030405060708);
+
+    // 1. htonll() must serialize to the network (big-endian) byte sequence
+    //    regardless of the host byte order.
+    uint64_t converted = htonll(host_value);
+    uint8_t  converted_bytes[8];
+    memoryCopy(converted_bytes, &converted, sizeof(converted));
+    require(memoryEqual(converted_bytes, network_order, sizeof(network_order)),
+            "htonll produced the wrong network byte order");
+
+    // 2. ntohll() must decode a known network-order byte sequence back to the
+    //    host value. The byte checks are required because a round trip alone can
+    //    pass when both functions share the same wrong transformation.
+    uint64_t loaded;
+    memoryCopy(&loaded, network_order, sizeof(loaded));
+    require(ntohll(loaded) == host_value, "ntohll did not decode the network byte order");
+
+    // 3. Round-trip identity across a value with every byte distinct.
+    const uint64_t round_trip = UINT64_C(0xdeadbeefcafef00d);
+    require(ntohll(htonll(round_trip)) == round_trip, "ntohll(htonll(x)) was not the identity");
+    require(htonll(ntohll(round_trip)) == round_trip, "htonll(ntohll(x)) was not the identity");
+
+    // 4. GET_BE64/PUT_BE64 must agree with the same network byte order.
+    uint8_t stored[8];
+    PUT_BE64(stored, host_value);
+    require(memoryEqual(stored, network_order, sizeof(network_order)), "PUT_BE64 stored the wrong byte order");
+    require(GET_BE64(network_order) == host_value, "GET_BE64 decoded the wrong value");
+}
+
 static void testBigEndianUnalignedAccess(void)
 {
     static const uint8_t expected[kWireLength] = {
@@ -100,6 +134,7 @@ static void testLittleEndianUnalignedAccess(void)
 
 int main(void)
 {
+    testHtonll64();
     testBigEndianUnalignedAccess();
     testLittleEndianUnalignedAccess();
     return 0;

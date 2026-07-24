@@ -153,8 +153,15 @@
 
 
         
-    #if __BIG_ENDIAN__
+    // Select htonll/ntohll by comparing the active byte-order value from
+    // wplatform.h. Testing whether a macro merely exists is unreliable because
+    // several system headers define both BIG_ENDIAN and LITTLE_ENDIAN
+    // regardless of the host.
+    #if ! defined(BYTE_ORDER)
+        #error "BYTE_ORDER is not defined"
+    #elif BYTE_ORDER == BIG_ENDIAN
 
+        // Network byte order equals host byte order: identity conversions.
         #ifndef htonll
         #define htonll(x) (x)
         #endif
@@ -162,7 +169,7 @@
         #define ntohll(x) (x)
         #endif
 
-    #else
+    #elif BYTE_ORDER == LITTLE_ENDIAN
 
         #ifndef htonll
 
@@ -185,6 +192,8 @@
         }
         #endif
 
+    #else
+        #error "Unsupported BYTE_ORDER value"
     #endif
 
 
