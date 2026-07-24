@@ -79,6 +79,12 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.wendian_unit wendian_test "unit;libc;endian")
 
+  add_executable(wsocket_validation_test wsocket_validation_test.c)
+  target_link_libraries(wsocket_validation_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests wsocket_validation_test)
+
+  add_waterwall_unit_test(waterwall.wsocket_validation_unit wsocket_validation_test "unit;net;socket;validation")
+
   add_executable(json_helpers_test json_helpers_test.c)
   target_link_libraries(json_helpers_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests json_helpers_test)

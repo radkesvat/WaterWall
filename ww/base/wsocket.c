@@ -562,25 +562,96 @@ error:
 
 bool verifyIPPort(const char *ipp)
 {
-    char *colon = (char *) stringChr(ipp, ':');
-    if (colon == NULL)
+    if (ipp == NULL || ipp[0] == '\0')
     {
-        LOGE("verifyIPPort Error: could not find ':' in ip:port, value was: %s", ipp);
+        LOGE("verifyIPPort Error: ip:port value was empty or null");
         return false;
     }
-    *colon = '\0';
-    if (! addressIsIp(ipp))
+
+    const char *host_begin;
+    const char *host_end; // one past the final host character
+    const char *port_text;
+    bool        is_ipv6;
+
+    if (ipp[0] == '[')
+    {
+        // Bracketed IPv6: [host]:port. Brackets are required so the address
+        // colons are not ambiguous with the port separator.
+        const char *close = stringChr(ipp, ']');
+        if (close == NULL)
+        {
+            LOGE("verifyIPPort Error: missing ']' in bracketed address, value was: %s", ipp);
+            return false;
+        }
+        if (close[1] != ':')
+        {
+            LOGE("verifyIPPort Error: expected ':' after ']', value was: %s", ipp);
+            return false;
+        }
+        host_begin = ipp + 1;
+        host_end   = close;
+        port_text  = close + 2;
+        is_ipv6    = true;
+    }
+    else
+    {
+        // Unbracketed IPv4: host:port with exactly one separator.
+        const char *colon = stringChr(ipp, ':');
+        if (colon == NULL)
+        {
+            LOGE("verifyIPPort Error: could not find ':' in ip:port, value was: %s", ipp);
+            return false;
+        }
+        if (stringChr(colon + 1, ':') != NULL)
+        {
+            LOGE("verifyIPPort Error: unexpected extra ':' in ip:port, value was: %s", ipp);
+            return false;
+        }
+        host_begin = ipp;
+        host_end   = colon;
+        port_text  = colon + 1;
+        is_ipv6    = false;
+    }
+
+    // Copy the host slice into a local buffer; the caller's string is never modified.
+    const size_t host_len = (size_t) (host_end - host_begin);
+    char         host[INET6_ADDRSTRLEN];
+    if (host_len == 0 || host_len >= sizeof(host))
+    {
+        LOGE("verifyIPPort Error: host is empty or too long, value was: %s", ipp);
+        return false;
+    }
+    memoryCopy(host, host_begin, host_len);
+    host[host_len] = '\0';
+
+    if (is_ipv6 ? ! addressIsIp6(host) : ! addressIsIp4(host))
     {
         LOGE("verifyIPPort Error: \"%s\" is not a valid ip address", ipp);
         return false;
     }
-    char *port_part = colon + 1;
-    int   port      = atoi(port_part);
-    if (port < 0 || port > 65535)
+
+    // Strict decimal port parse over the inclusive range 0..65535.
+    if (port_text[0] == '\0')
     {
-        LOGE("verifyIPPort Error: \"%s\" is not a valid port number", port_part);
+        LOGE("verifyIPPort Error: missing port, value was: %s", ipp);
         return false;
     }
+    uint32_t port = 0;
+    for (const char *p = port_text; *p != '\0'; ++p)
+    {
+        if (*p < '0' || *p > '9')
+        {
+            LOGE("verifyIPPort Error: \"%s\" is not a valid port number", ipp);
+            return false;
+        }
+        port = port * 10U + (uint32_t) (*p - '0');
+        if (port > UINT16_MAX)
+        {
+            LOGE("verifyIPPort Error: \"%s\" is not a valid port number", ipp);
+            return false;
+        }
+    }
+
     return true;
 }
 

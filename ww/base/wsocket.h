@@ -1068,7 +1068,16 @@ static inline bool sockaddrToIpAddr(const sockaddr_u *src, ip_addr_t *dest)
 }
 
 /**
- * @brief Validate `ip:port` string format.
+ * @brief Validate an `ip:port` string without modifying the input.
+ *
+ * Accepts exactly two forms:
+ *   - IPv4:port      (e.g. `127.0.0.1:443`)
+ *   - [IPv6]:port    (e.g. `[::1]:443`)
+ *
+ * Brackets are required for IPv6 so its colons are not ambiguous with the port
+ * separator. Hostnames, bracketed IPv4, and unbracketed IPv6 are rejected. The
+ * port must be a complete decimal number in the inclusive range 0..65535. The
+ * input string is only read, never written to.
  *
  * @param ipc Input string to validate.
  * @return `true` when the value is valid.
