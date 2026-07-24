@@ -44,6 +44,16 @@ if(TARGET ww)
     "unit;net;tun;windows;lifetime"
   )
 
+  add_executable(tun_windows_receive_policy_test tun_windows_receive_policy_test.c)
+  target_include_directories(tun_windows_receive_policy_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices/tun)
+  add_dependencies(waterwall_unit_tests tun_windows_receive_policy_test)
+
+  add_waterwall_unit_test(
+    waterwall.tun_windows_receive_policy_unit
+    tun_windows_receive_policy_test
+    "unit;net;tun;windows;receive;drop"
+  )
+
   add_executable(system_load_semantics_test system_load_semantics_test.c)
   target_link_libraries(system_load_semantics_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests system_load_semantics_test)

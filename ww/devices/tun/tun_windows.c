@@ -1,5 +1,6 @@
 #include "tun.h"
 #include "tun_windows_lifetime.h"
+#include "tun_windows_receive_policy.h"
 
 #include "buffer_pool.h"
 #include "global_state.h"
@@ -11,6 +12,7 @@
 #include "wplatform.h"
 #include "wproc.h"
 #include "wthread.h"
+#include "wtime.h"
 #include <ctype.h>
 #include <errno.h>
 #include <iphlpapi.h>
@@ -53,6 +55,10 @@ struct tun_device_s
     uint16_t        mtu;
     atomic_int      packets_queued;
     bool            writer_buffer_channel_closed;
+
+    // Reader-thread-owned accounting for oversized receive packets that are
+    // dropped instead of terminating the process.
+    tun_oversized_read_discard_stats_t oversized_read_discard;
 
     atomic_bool running;
     bool        up;
@@ -552,6 +558,43 @@ static bool tundeviceReaderStopRequested(tun_device_t *tdev, DWORD *routine_resu
     return true;
 }
 
+// Counts one oversized-read drop and emits a rate-limited aggregate warning.
+// Only the reader thread calls this, so the counters need no atomics.
+static void tunWindowsRecordOversizedReadDiscard(tun_device_t *tdev)
+{
+    tun_oversized_read_discard_report_t report =
+        tunWindowsAccountOversizedReadDiscard(&tdev->oversized_read_discard, getTimeOfDayMS());
+
+    if (! report.should_log)
+    {
+        return;
+    }
+
+    LOGW("TunDevice: ReadThread: discarded %llu packet(s) larger than configured MTU %u over %llums (total=%llu)",
+         LLU(report.discarded),
+         (unsigned int) tunDeviceMtu(tdev),
+         LLU(report.elapsed_ms),
+         LLU(report.total));
+}
+
+// Flushes any still-suppressed oversized-read drops once, e.g. on reader exit.
+static void tunWindowsReportPendingOversizedReadDiscards(tun_device_t *tdev)
+{
+    tun_oversized_read_discard_report_t report =
+        tunWindowsAccountPendingOversizedReadDiscards(&tdev->oversized_read_discard);
+
+    if (! report.should_log)
+    {
+        return;
+    }
+
+    LOGW(
+        "TunDevice: ReadThread: discarded %llu packet(s) larger than configured MTU %u before reader exit (total=%llu)",
+        LLU(report.discarded),
+        (unsigned int) tunDeviceMtu(tdev),
+        LLU(report.total));
+}
+
 /**
  * Reader thread routine - reads packets from TUN device
  */
@@ -588,21 +631,14 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 
         if (packet)
         {
-            if (UNLIKELY(packet_size > tunDeviceMtu(tdev)))
+            if (UNLIKELY(tunWindowsReceivePacketExceedsMtu(tunDeviceMtu(tdev), packet_size)))
             {
-                LOGE("TunDevice: ReadThread: read packet size %lu exceeds device MTU %u",
-                     packet_size,
-                     tunDeviceMtu(tdev));
+                // Drop only this oversized packet; valid packets already queued at
+                // bufs[0..queued_count-1] stay queued and the reader keeps running.
                 WintunReleaseReceivePacket(Session, packet);
                 bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
-
-                for (unsigned int i = 0; i < queued_count; i++)
-                {
-                    bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[i]);
-                }
-                LOGF("TunDevice: This is related to the MTU size, please set a correct value for TunDevice "
-                     "'device-mtu'");
-                terminateProgram(1);
+                tunWindowsRecordOversizedReadDiscard(tdev);
+                continue;
             }
 
             sbufSetLength(bufs[queued_count], packet_size);
@@ -691,6 +727,8 @@ cleanup:
     {
         reuseTunReadBuffers(tdev, &bufs[0], queued_count);
     }
+
+    tunWindowsReportPendingOversizedReadDiscards(tdev);
 
     return routine_result;
 }
@@ -1450,6 +1488,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         .write_thread                 = NULL,
         .mtu                          = mtu,
         .packets_queued               = 0,
+        .oversized_read_discard       = {0},
     };
 
     masterpoolInstallCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
