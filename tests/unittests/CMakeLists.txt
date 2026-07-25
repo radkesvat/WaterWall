@@ -288,6 +288,28 @@ if(TARGET ww)
       "unit;base;process;deadline"
     )
 
+    # Capture command wiring. capture_linux.c is compiled directly so the wrap of
+    # the generic runner intercepts Capture's own calls without opening a real
+    # NFQUEUE socket or requiring root.
+    add_executable(capture_linux_command_test
+      capture_linux_command_test.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux.c
+    )
+    set_property(TARGET capture_linux_command_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+    target_compile_options(capture_linux_command_test PRIVATE "-fno-lto")
+    target_link_options(capture_linux_command_test PRIVATE
+      "-Wl,--wrap=procRunArgvWithDeadline"
+      "-Wl,--wrap=procCommandResultDrop"
+    )
+    target_link_libraries(capture_linux_command_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests capture_linux_command_test)
+
+    add_waterwall_unit_test(
+      waterwall.capture_linux_command_unit
+      capture_linux_command_test
+      "unit;net;capture;process;deadline"
+    )
+
     # Wraps send/sendto for a deterministic EAGAIN/EINTR/ENOBUFS seam.
     add_executable(udp_datagram_write_test udp_datagram_write_test.c)
     target_link_libraries(udp_datagram_write_test PRIVATE ww)

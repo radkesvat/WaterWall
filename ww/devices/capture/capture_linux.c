@@ -23,22 +23,29 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
-#include <sys/wait.h>
 #include <unistd.h>
-
-#ifndef useExecCmd
-#define useExecCmd 1
-#endif
 
 enum
 {
     kNetfilterReadBufferSize    = kCaptureLinuxNetfilterReadBufferSize,
     kMaxReadDistributeQueueSize = 512,
     kNetfilterQueueLen          = 64 * 1024,
-    kNetfilterSocketRecvBuffer  = 64 * 1024 * 1024
+    kNetfilterSocketRecvBuffer  = 64 * 1024 * 1024,
+
+    // Two independent timeout layers guard every Capture iptables command. The
+    // numeric xtables lock wait only bounds lock acquisition inside iptables; the
+    // parent-side command deadline is authoritative and also covers a hung
+    // executable or wrapper. The 64 KiB stdout cap is far larger than any normal
+    // sysctl or iptables mutation output while still bounding a broken tool.
+    kCaptureIptablesLockWaitSeconds = 5,
+    kCaptureCommandTimeoutMs        = 7000,
+    kCaptureCommandTerminateGraceMs = 250,
+    kCaptureCommandMaxOutputBytes   = 64 * 1024
 };
 
 static_assert(SMALL_BUFFER_SIZE >= kNetfilterReadBufferSize, "Linux capture requires 4096-byte small buffers");
+static_assert(kCaptureCommandTimeoutMs > kCaptureIptablesLockWaitSeconds * 1000,
+              "the parent command deadline must stay strictly longer than the numeric xtables lock wait");
 static_assert(kMaxAllowedPacketLength <= kNetfilterReadBufferSize, "packet policy must fit in netlink read buffer");
 static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "capture read batch count must fit in msg_event.count");
 
@@ -52,28 +59,28 @@ typedef enum netfilter_packet_result_e
     kNetfilterPacketReady
 } netfilter_packet_result_t;
 
+// Each setting is passed to sysctl as a single argv element after `-w`, so a
+// multi-value setting such as "net.ipv4.tcp_rmem=4096 87380 134217728" arrives
+// as one argument. No shell is involved, so no quoting variant is needed.
 typedef struct capturedevice_sysctl_setting_s
 {
     const char *argv_setting;
-    const char *shell_setting;
 } capturedevice_sysctl_setting_t;
 
-static const capturedevice_sysctl_setting_t sysctl_settings[] = {
-    {"net.core.rmem_max=134217728", "net.core.rmem_max=134217728"},
-    {"net.core.wmem_max=134217728", "net.core.wmem_max=134217728"},
-    {"net.ipv4.tcp_rmem=4096 87380 134217728", "net.ipv4.tcp_rmem='4096 87380 134217728'"},
-    {"net.ipv4.tcp_wmem=4096 65536 134217728", "net.ipv4.tcp_wmem='4096 65536 134217728'"},
-    {"net.core.netdev_max_backlog=250000", "net.core.netdev_max_backlog=250000"},
-    {"net.core.somaxconn=65535", "net.core.somaxconn=65535"},
-    {"net.ipv4.tcp_window_scaling=1", "net.ipv4.tcp_window_scaling=1"},
-    {"net.ipv4.tcp_timestamps=0", "net.ipv4.tcp_timestamps=0"},
-    {"net.ipv4.tcp_sack=1", "net.ipv4.tcp_sack=1"},
-    {"net.ipv4.tcp_no_metrics_save=1", "net.ipv4.tcp_no_metrics_save=1"},
-    {"net.ipv4.tcp_mtu_probing=1", "net.ipv4.tcp_mtu_probing=1"},
-    {"net.ipv4.tcp_tw_reuse=1", "net.ipv4.tcp_tw_reuse=1"},
-    {"net.ipv4.tcp_fin_timeout=15", "net.ipv4.tcp_fin_timeout=15"},
-    {"net.ipv4.ip_local_port_range=10000 65535", "net.ipv4.ip_local_port_range='10000 65535'"}
-};
+static const capturedevice_sysctl_setting_t sysctl_settings[] = {{"net.core.rmem_max=134217728"},
+                                                                 {"net.core.wmem_max=134217728"},
+                                                                 {"net.ipv4.tcp_rmem=4096 87380 134217728"},
+                                                                 {"net.ipv4.tcp_wmem=4096 65536 134217728"},
+                                                                 {"net.core.netdev_max_backlog=250000"},
+                                                                 {"net.core.somaxconn=65535"},
+                                                                 {"net.ipv4.tcp_window_scaling=1"},
+                                                                 {"net.ipv4.tcp_timestamps=0"},
+                                                                 {"net.ipv4.tcp_sack=1"},
+                                                                 {"net.ipv4.tcp_no_metrics_save=1"},
+                                                                 {"net.ipv4.tcp_mtu_probing=1"},
+                                                                 {"net.ipv4.tcp_tw_reuse=1"},
+                                                                 {"net.ipv4.tcp_fin_timeout=15"},
+                                                                 {"net.ipv4.ip_local_port_range=10000 65535"}};
 
 static uint8_t capturedeviceIpv4MaskPrefixLength(const ip_addr_t *mask)
 {
@@ -138,76 +145,78 @@ static void capturedeviceFormatCommand(const char *const argv[], char *dest, siz
     }
 }
 
-static int capturedeviceRunCommand(const char *command_name, const char *const argv[])
+// Thin adapter over the generic deadline-aware process supervisor. The command
+// is executed directly through execvp(); the formatted string built here is a
+// debug diagnostic only and is never handed to a shell. Capture does not consume
+// stdout, but the supervisor keeps draining and retaining it until completion so
+// a descendant that inherited stdout stays visible to the deadline.
+static capturedevice_command_status_t capturedeviceRunCommand(const char *command_name, const char *const argv[])
 {
     char command[512];
     capturedeviceFormatCommand(argv, command, sizeof(command));
     LOGD("CaptureDevice: Running command: %s", command);
 
-#if useExecCmd
-    discard command_name;
-    return execCmd(command).exit_code;
-#else
-    long  open_max = execCmdOpenMax();
-    pid_t childpid = fork();
-    if (childpid < 0)
+    const proc_command_options_t options = {.timeout_ms         = kCaptureCommandTimeoutMs,
+                                            .terminate_grace_ms = kCaptureCommandTerminateGraceMs,
+                                            .max_output_bytes   = kCaptureCommandMaxOutputBytes};
+
+    proc_command_result_t result;
+    const bool            ok = procRunArgvWithDeadline(command_name, argv, &options, &result);
+
+    capturedevice_command_status_t status = kCapturedeviceCommandOk;
+    if (! ok)
     {
-        LOGE("CaptureDevice: failed to fork for %s: %s", command_name, strerror(errno));
-        return -1;
+        if (result.timed_out)
+        {
+            // Logged distinctly from a nonzero exit: this is the status that tells
+            // the caller the command path itself hung.
+            LOGE("CaptureDevice: command %s exceeded its %u ms deadline and was terminated",
+                 command_name,
+                 (unsigned int) kCaptureCommandTimeoutMs);
+            status = kCapturedeviceCommandTimedOut;
+        }
+        else if (result.spawn_failed)
+        {
+            LOGE("CaptureDevice: failed to execute command %s", command_name);
+            status = kCapturedeviceCommandSpawnFailed;
+        }
+        else
+        {
+            status = kCapturedeviceCommandFailed;
+        }
     }
 
-    if (childpid == 0)
-    {
-        execCmdCloseInheritedFds(open_max);
-        execvp(command_name, (char *const *) argv);
-        perror(command_name);
-        _exit(127);
-    }
+    procCommandResultDrop(&result);
+    return status;
+}
 
-    int status = 0;
-    while (waitpid(childpid, &status, 0) < 0)
+static capturedevice_command_status_t capturedeviceSetSysctl(const capturedevice_sysctl_setting_t *setting)
+{
+    const char *const argv[] = {"sysctl", "-w", setting->argv_setting, NULL};
+    return capturedeviceRunCommand("sysctl", argv);
+}
+
+// Best-effort kernel tuning: an ordinary nonzero sysctl exit only warns and the
+// batch continues. A timeout or a parent-side spawn failure stops the remaining
+// attempts instead: the executable or the fork environment is broken, so
+// re-running it for every setting would turn one bounded failure into fourteen.
+// Either way Capture creation continues.
+void capturedeviceApplySysctls(void)
+{
+    for (size_t i = 0; i < sizeof(sysctl_settings) / sizeof(sysctl_settings[0]); ++i)
     {
-        if (errno == EINTR)
+        const capturedevice_command_status_t status = capturedeviceSetSysctl(&sysctl_settings[i]);
+        if (status == kCapturedeviceCommandOk)
         {
             continue;
         }
 
-        LOGE("CaptureDevice: failed to wait for %s: %s", command_name, strerror(errno));
-        return -1;
-    }
-
-    if (WIFEXITED(status))
-    {
-        return WEXITSTATUS(status);
-    }
-
-    if (WIFSIGNALED(status))
-    {
-        LOGE("CaptureDevice: %s terminated by signal %d", command_name, WTERMSIG(status));
-    }
-
-    return -1;
-#endif
-}
-
-static void capturedeviceSetSysctl(const capturedevice_sysctl_setting_t *setting)
-{
-#if useExecCmd
-    char command[256];
-    stringNPrintf(command, sizeof(command), "sysctl -w %s", setting->shell_setting);
-    LOGD("CaptureDevice: Running command: %s", command);
-    discard execCmd(command).exit_code;
-#else
-    const char *const argv[] = {"sysctl", "-w", setting->argv_setting, NULL};
-    discard           capturedeviceRunCommand("sysctl", argv);
-#endif
-}
-
-static void capturedeviceApplySysctls(void)
-{
-    for (size_t i = 0; i < sizeof(sysctl_settings) / sizeof(sysctl_settings[0]); ++i)
-    {
-        capturedeviceSetSysctl(&sysctl_settings[i]);
+        LOGW("CaptureDevice: failed to apply sysctl setting %s", sysctl_settings[i].argv_setting);
+        if (status == kCapturedeviceCommandTimedOut || status == kCapturedeviceCommandSpawnFailed)
+        {
+            LOGW("CaptureDevice: skipping the remaining sysctl tuning after an unusable sysctl command");
+            return;
+        }
     }
 }
 
@@ -225,14 +234,28 @@ static void capturedeviceLogSocketBufferSize(int socket_fd, int option, const ch
     LOGD("CaptureDevice: actual %s is %d bytes", name, actual);
 }
 
-static bool capturedeviceRunIptablesQueueRule(const char *operation, const char *cidr, uint32_t queue_number)
+capturedevice_command_status_t capturedeviceRunIptablesQueueRule(const char *operation, const char *cidr,
+                                                                 uint32_t queue_number)
 {
     char queue_number_arg[16];
     stringNPrintf(queue_number_arg, sizeof(queue_number_arg), "%u", queue_number);
 
-    const char *const argv[] = {
-        "iptables", operation, "INPUT", "-s", cidr, "-j", "NFQUEUE", "--queue-num", queue_number_arg, NULL};
-    return capturedeviceRunCommand("iptables", argv) == 0;
+    char lock_wait_arg[16];
+    stringNPrintf(lock_wait_arg, sizeof(lock_wait_arg), "%d", kCaptureIptablesLockWaitSeconds);
+
+    const char *const argv[] = {"iptables",
+                                "-w",
+                                lock_wait_arg,
+                                operation,
+                                "INPUT",
+                                "-s",
+                                cidr,
+                                "-j",
+                                "NFQUEUE",
+                                "--queue-num",
+                                queue_number_arg,
+                                NULL};
+    return capturedeviceRunCommand("iptables", argv);
 }
 
 static bool capturedeviceRemoveInstalledRules(capture_device_t *cdev, uint32_t installed_count)
@@ -240,10 +263,23 @@ static bool capturedeviceRemoveInstalledRules(capture_device_t *cdev, uint32_t i
     bool result = true;
     for (uint32_t i = 0; i < installed_count; ++i)
     {
-        if (! capturedeviceRunIptablesQueueRule("-D", cdev->capture_cidrs[i], cdev->queue_number))
+        const capturedevice_command_status_t status =
+            capturedeviceRunIptablesQueueRule("-D", cdev->capture_cidrs[i], cdev->queue_number);
+        if (status == kCapturedeviceCommandOk)
         {
-            LOGE("CaptureDevice: failed to remove iptables NFQUEUE rule for %s", cdev->capture_cidrs[i]);
-            result = false;
+            continue;
+        }
+
+        LOGE("CaptureDevice: failed to remove iptables NFQUEUE rule for %s", cdev->capture_cidrs[i]);
+        result = false;
+
+        if (status == kCapturedeviceCommandTimedOut)
+        {
+            // The command path has hung. Spending another full deadline for every
+            // remaining CIDR delays shutdown without adding cleanup value, so stop
+            // deleting rules and let the caller continue the local bring-down.
+            LOGE("CaptureDevice: abandoning the remaining iptables cleanup after a command timeout");
+            break;
         }
     }
     return result;
@@ -1012,7 +1048,8 @@ bool caputredeviceBringUp(capture_device_t *cdev)
 
     for (uint32_t i = 0; i < cdev->capture_range_count; ++i)
     {
-        if (! capturedeviceRunIptablesQueueRule("-I", cdev->capture_cidrs[i], cdev->queue_number))
+        if (capturedeviceRunIptablesQueueRule("-I", cdev->capture_cidrs[i], cdev->queue_number) !=
+            kCapturedeviceCommandOk)
         {
             LOGE("CaptureDevice: failed to install iptables NFQUEUE rule for %s", cdev->capture_cidrs[i]);
             terminateProgram(1);
