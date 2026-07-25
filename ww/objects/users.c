@@ -876,6 +876,39 @@ static void usersPasswordProbeDestroy(users_password_probe_t *probe)
     memoryZero(probe, sizeof(*probe));
 }
 
+#if defined(USERS_TEST_CREDENTIAL_SNAPSHOT_WIPE_COUNTER)
+/*
+ * Test-only instrumentation. Counts how many times the credential-snapshot wipe
+ * helper runs so a unit test can prove every post-snapshot exit of
+ * usersChangePasswordLocked() clears the old secret material. Never defined in
+ * production builds.
+ */
+size_t users_test_credential_snapshot_wipes = 0;
+#endif
+
+/*
+ * Wipes the four password-derived credential snapshots that
+ * usersChangePasswordLocked() captures before a user's password is overwritten.
+ * SHA-224, SHA-256, and the UUID bytes are secret-equivalent and use
+ * non-optimizable secure zeroing; the WireGuard public key is derived public
+ * data and is cleared with a plain zero, matching the rest of this file. Routing
+ * every post-snapshot exit through here keeps the wipe policy in one place so no
+ * old secret is left behind on the stack.
+ */
+static void usersWipeCredentialSnapshot(sha224_hash_t *old_sha224, sha256_hash_t *old_sha256,
+                                        uint8_t old_uuid[kWwUuidBytesLen],
+                                        uint8_t old_wireguard_publickey[USER_WIREGUARD_PUBLICKEY_SIZE])
+{
+    memorySecureZero(old_sha224, sizeof(*old_sha224));
+    memorySecureZero(old_sha256, sizeof(*old_sha256));
+    memorySecureZero(old_uuid, kWwUuidBytesLen);
+    memoryZero(old_wireguard_publickey, USER_WIREGUARD_PUBLICKEY_SIZE);
+
+#if defined(USERS_TEST_CREDENTIAL_SNAPSHOT_WIPE_COUNTER)
+    users_test_credential_snapshot_wipes += 1U;
+#endif
+}
+
 /*
  * Derives only the SHA-256 lookup key for a plaintext password. The hot
  * plaintext-lookup path indexes exclusively by SHA-256, so it must not pay for
@@ -2730,10 +2763,20 @@ static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *u
     memoryCopy(old_uuid, user->uuid_pass, sizeof(old_uuid));
     memoryCopy(old_wireguard_publickey, user->wireguard_publickey, sizeof(old_wireguard_publickey));
 
+    /*
+     * From here on every exit routes through the shared cleanup block below so
+     * the old credential snapshot is always wiped and the password probe is
+     * always destroyed exactly once, whether the password change fails, the
+     * reindex succeeds, or the reindex hits an impossible invariant failure. The
+     * result and index-update status are declared before any jump to cleanup.
+     */
+    users_update_result_t result = kUsersUpdateResultOk;
+    bool                  ok     = true;
+
     if (UNLIKELY(! userChangePassword(user, password)))
     {
-        usersPasswordProbeDestroy(&password_probe);
-        return kUsersUpdateResultPasswordUpdateFailed;
+        result = kUsersUpdateResultPasswordUpdateFailed;
+        goto cleanup_snapshot;
     }
 
     /*
@@ -2745,7 +2788,6 @@ static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *u
      * unexpected failure is an unrecoverable invariant violation that triggers a
      * rebuild and terminates.
      */
-    bool ok = true;
     if (! usersSHA224TableEraseLocked(users, user, old_sha224.bytes))
     {
         ok = false;
@@ -2779,26 +2821,29 @@ static users_update_result_t usersChangePasswordLocked(users_t *users, user_t *u
         ok = false;
     }
 
-    memorySecureZero(&old_sha224, sizeof(old_sha224));
-    memorySecureZero(&old_sha256, sizeof(old_sha256));
-    memorySecureZero(old_uuid, sizeof(old_uuid));
-    memoryZero(old_wireguard_publickey, sizeof(old_wireguard_publickey));
+cleanup_snapshot:
+    /* Wipe the old secret snapshot first, then destroy the probe, for every
+     * post-snapshot path including the fatal index-invariant path below. */
+    usersWipeCredentialSnapshot(&old_sha224, &old_sha256, old_uuid, old_wireguard_publickey);
+    usersPasswordProbeDestroy(&password_probe);
+
+    if (result != kUsersUpdateResultOk)
+    {
+        return result;
+    }
 
     if (UNLIKELY(! ok))
     {
         if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
         {
             LOGF("Users: failed to rebuild lookup tables after a password index update failure");
-            usersPasswordProbeDestroy(&password_probe);
             terminateProgram(1);
         }
         LOGF("Users: credential index update failed while changing password for user \"%s\"",
              usersUserNameForLog(user));
-        usersPasswordProbeDestroy(&password_probe);
         terminateProgram(1);
     }
 
-    usersPasswordProbeDestroy(&password_probe);
     return kUsersUpdateResultOk;
 }
 

@@ -185,6 +185,10 @@ if(TARGET ww)
   )
   target_link_libraries(users_index_test PRIVATE ww)
   target_compile_definitions(users_index_test PRIVATE USERS_TEST_PASSWORD_LOOKUP_VISIT_COUNTER=1)
+  # Test-only counter proving every post-snapshot exit of the password change
+  # wipes the old credential snapshot; the counter is compiled into the directly
+  # built users.c copy and left out of the libww archive copies.
+  target_compile_definitions(users_index_test PRIVATE USERS_TEST_CREDENTIAL_SNAPSHOT_WIPE_COUNTER=1)
   if(LINUX)
     set_property(TARGET users_index_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
     target_compile_options(users_index_test PRIVATE "-fno-lto")
@@ -196,9 +200,11 @@ if(TARGET ww)
       "-Wl,-u,wCryptoSHA224"
       "-Wl,-u,wCryptoSHA256"
       "-Wl,-u,wCryptoX25519"
+      "-Wl,-u,stringDuplicate"
       "-Wl,--wrap=wCryptoSHA224"
       "-Wl,--wrap=wCryptoSHA256"
       "-Wl,--wrap=wCryptoX25519"
+      "-Wl,--wrap=stringDuplicate"
       "-Wl,--wrap=memoryAllocate"
       "-Wl,--wrap=memoryReAllocate"
       "-Wl,--wrap=memoryCalloc"

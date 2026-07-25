@@ -25,6 +25,18 @@ static size_t g_sha224_calls;
 static size_t g_sha256_calls;
 static size_t g_x25519_calls;
 
+/*
+ * Disabled-by-default "fail on call N" control. When g_shaXXX_fail_on_call is
+ * non-zero, the Nth derivation of that primitive returns kWCryptoBackendFailed
+ * instead of computing; every other call passes through. The password-change
+ * path derives each primitive once for the pre-snapshot probe and a second time
+ * inside userChangePassword, so failing call 2 exercises the post-snapshot
+ * cleanup path without disturbing the pre-snapshot derivation.
+ */
+static size_t g_sha224_fail_on_call;
+static size_t g_sha256_fail_on_call;
+static size_t g_x25519_fail_on_call;
+
 /* When enabled, every SHA-256 derivation returns this fixed value, which lets
  * the test synthesize an index collision between two distinct plaintexts. */
 static bool    g_force_sha256_enabled;
@@ -44,12 +56,20 @@ wcrypto_status_t __wrap_wCryptoX25519(unsigned char       out[WCRYPTO_X25519_KEY
 wcrypto_status_t __wrap_wCryptoSHA224(sha224_hash_t *out, const unsigned char *in, size_t inlen)
 {
     g_sha224_calls += 1U;
+    if (g_sha224_fail_on_call != 0U && g_sha224_calls == g_sha224_fail_on_call)
+    {
+        return kWCryptoBackendFailed;
+    }
     return __real_wCryptoSHA224(out, in, inlen);
 }
 
 wcrypto_status_t __wrap_wCryptoSHA256(sha256_hash_t *out, const unsigned char *in, size_t inlen)
 {
     g_sha256_calls += 1U;
+    if (g_sha256_fail_on_call != 0U && g_sha256_calls == g_sha256_fail_on_call)
+    {
+        return kWCryptoBackendFailed;
+    }
     if (g_force_sha256_enabled)
     {
         if (out != NULL)
@@ -66,7 +86,34 @@ wcrypto_status_t __wrap_wCryptoX25519(unsigned char       out[WCRYPTO_X25519_KEY
                                       const unsigned char point[WCRYPTO_X25519_KEY_SIZE])
 {
     g_x25519_calls += 1U;
+    if (g_x25519_fail_on_call != 0U && g_x25519_calls == g_x25519_fail_on_call)
+    {
+        return kWCryptoBackendFailed;
+    }
     return __real_wCryptoX25519(out, scalar, point);
+}
+
+/*
+ * Narrowly scoped stringDuplicate fault injection. userChangePassword() copies
+ * the new plaintext password (via stringDuplicate) only after deriving its
+ * staged hashes, i.e. after usersChangePasswordLocked() has already captured the
+ * old credential snapshot. Arming this flag fails that exact allocation so the
+ * post-snapshot failure/cleanup path can be exercised deterministically. The
+ * wrapper is a strict pass-through unless armed.
+ */
+static bool fail_next_string_duplicate = false;
+
+char *__real_stringDuplicate(const char *src);
+char *__wrap_stringDuplicate(const char *src);
+
+char *__wrap_stringDuplicate(const char *src)
+{
+    if (fail_next_string_duplicate)
+    {
+        fail_next_string_duplicate = false;
+        return NULL;
+    }
+    return __real_stringDuplicate(src);
 }
 #endif
 
@@ -149,6 +196,10 @@ static size_t allocInjectionDisarm(void)
 extern size_t users_test_password_lookup_visits;
 #endif
 
+#if defined(USERS_TEST_CREDENTIAL_SNAPSHOT_WIPE_COUNTER)
+extern size_t users_test_credential_snapshot_wipes;
+#endif
+
 static void require(bool condition, const char *message)
 {
     if (! condition)
@@ -161,9 +212,12 @@ static void require(bool condition, const char *message)
 static void resetCounters(void)
 {
 #if defined(WCRYPTO_TEST_LINKER_WRAP)
-    g_sha224_calls = 0;
-    g_sha256_calls = 0;
-    g_x25519_calls = 0;
+    g_sha224_calls        = 0;
+    g_sha256_calls        = 0;
+    g_x25519_calls        = 0;
+    g_sha224_fail_on_call = 0;
+    g_sha256_fail_on_call = 0;
+    g_x25519_fail_on_call = 0;
 #endif
 #if defined(USERS_TEST_PASSWORD_LOOKUP_VISIT_COUNTER)
     users_test_password_lookup_visits = 0;
@@ -625,6 +679,102 @@ static void testIncrementalPasswordChange(void)
 
     usersDestroy(&users);
 }
+
+#if defined(WCRYPTO_TEST_LINKER_WRAP) && defined(USERS_TEST_CREDENTIAL_SNAPSHOT_WIPE_COUNTER)
+/*
+ * A password update that fails after the old credential snapshot is captured
+ * must still wipe that snapshot and leave the database untouched. This case
+ * fails the plaintext copy inside userChangePassword (an allocation failure that
+ * happens after the staged hashes are derived), which is the first failure that
+ * can occur once usersChangePasswordLocked() holds the old snapshot. The old
+ * password is a UUID string so the SHA, UUID, and WireGuard snapshot paths all
+ * carry meaningful secret material.
+ */
+static void testChangePasswordAllocationFailureWipesSnapshot(void)
+{
+    users_t users;
+    require(usersCreate(&users), "failed to create users table");
+
+    const char *old_uuid_pw = "12345678-1234-1234-1234-1234567890ab";
+    uint8_t     old_uuid_bytes[kWwUuidBytesLen];
+    require(wwUuidParseString(old_uuid_pw, old_uuid_bytes), "failed to parse old UUID password");
+    addUser(&users, 1, old_uuid_pw);
+    user_t *u1 = usersLookupByIdentifier(&users, 1);
+    require(u1 != NULL, "seed user missing");
+    require(usersValidate(&users), "fixture invalid before allocation injection");
+
+    users_test_credential_snapshot_wipes = 0;
+    fail_next_string_duplicate           = true;
+    bool ok                              = usersChangePassword(&users, u1, "proposed-new-password");
+    bool injection_consumed              = ! fail_next_string_duplicate;
+    fail_next_string_duplicate           = false;
+
+    require(! ok, "password update unexpectedly succeeded under an injected allocation failure");
+    require(injection_consumed, "the injected stringDuplicate failure was not consumed");
+    require(users_test_credential_snapshot_wipes == 1U,
+            "a failed password update did not wipe the credential snapshot exactly once");
+
+    require(usersLookupByPassword(&users, old_uuid_pw) == u1, "old password stopped resolving after a failed update");
+    require(usersLookupByUUID(&users, old_uuid_bytes) == u1, "old UUID stopped resolving after a failed update");
+    require(usersLookupByPassword(&users, "proposed-new-password") == NULL,
+            "the proposed new password resolves after a failed update");
+    require(usersValidate(&users), "database invalid after a failed password update");
+
+    usersDestroy(&users);
+}
+
+/*
+ * The password probe derives the credential hashes once before the snapshot and
+ * userChangePassword derives them a second time afterward. Failing SHA-224 on
+ * its second call reaches the snapshot (call 1 succeeds) and then fails the
+ * post-snapshot derivation, proving the same wipe-and-atomicity guarantees hold
+ * for a second-pass crypto failure as for an allocation failure.
+ */
+static void testChangePasswordSecondPassCryptoFailureWipesSnapshot(void)
+{
+    users_t users;
+    require(usersCreate(&users), "failed to create users table");
+
+    const char *old_uuid_pw = "abcdef01-2345-6789-abcd-ef0123456789";
+    uint8_t     old_uuid_bytes[kWwUuidBytesLen];
+    require(wwUuidParseString(old_uuid_pw, old_uuid_bytes), "failed to parse old UUID password");
+    addUser(&users, 1, old_uuid_pw);
+    user_t *u1 = usersLookupByIdentifier(&users, 1);
+    require(u1 != NULL, "seed user missing");
+    require(usersValidate(&users), "fixture invalid before crypto injection");
+
+    /* Reset the crypto call counters immediately before the update, then fail the
+     * second SHA-224 derivation so the first (pre-snapshot) one still succeeds. */
+    g_sha224_calls                       = 0;
+    g_sha256_calls                       = 0;
+    g_x25519_calls                       = 0;
+    g_sha224_fail_on_call                = 2;
+    users_test_credential_snapshot_wipes = 0;
+
+    bool ok = usersChangePassword(&users, u1, "proposed-new-password");
+
+    bool reached_second_derivation = (g_sha224_calls == 2U);
+    g_sha224_fail_on_call          = 0;
+
+    require(! ok, "password update unexpectedly succeeded under an injected second-pass crypto failure");
+    require(reached_second_derivation, "the second SHA-224 derivation was not reached");
+    require(users_test_credential_snapshot_wipes == 1U,
+            "a crypto-failed password update did not wipe the credential snapshot exactly once");
+
+    require(usersLookupByPassword(&users, old_uuid_pw) == u1, "old password stopped resolving after a failed update");
+    require(usersLookupByUUID(&users, old_uuid_bytes) == u1, "old UUID stopped resolving after a failed update");
+    require(usersLookupByPassword(&users, "proposed-new-password") == NULL,
+            "the proposed new password resolves after a failed update");
+    require(usersValidate(&users), "database invalid after a crypto-failed password update");
+
+    /* Reset all failure-injection state before leaving, including on success. */
+    g_sha224_fail_on_call = 0;
+    g_sha256_fail_on_call = 0;
+    g_x25519_fail_on_call = 0;
+
+    usersDestroy(&users);
+}
+#endif
 
 static user_ip_key_t testIpKey(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
 {
@@ -1153,6 +1303,10 @@ int main(void)
     testAllowedIpIndex();
     testValidationAtScaleAndCorruption();
     testIncrementalPasswordChange();
+#if defined(WCRYPTO_TEST_LINKER_WRAP) && defined(USERS_TEST_CREDENTIAL_SNAPSHOT_WIPE_COUNTER)
+    testChangePasswordAllocationFailureWipesSnapshot();
+    testChangePasswordSecondPassCryptoFailureWipesSnapshot();
+#endif
     testNativeCopy();
     testZeroCountIndexesStayEmpty();
     testAdaptiveIpIndex();
