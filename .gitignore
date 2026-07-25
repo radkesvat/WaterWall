@@ -15,7 +15,6 @@ todo.txt
 #compiled bins
 /dist
 *.exe
-wconfig.h
 
 /core/texts
 /cmake

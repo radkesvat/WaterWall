@@ -1,4 +1,4 @@
-#include "wconfig.h"
+#include <wconfig.h>
 
 #include <stdbool.h>
 #include <stdint.h>

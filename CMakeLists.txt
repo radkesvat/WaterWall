@@ -255,6 +255,7 @@ if(WW_USE_STARTUP_GUARD)
   )
 
   target_include_directories(WaterwallStartupGuard PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}/ww
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/ww
   )

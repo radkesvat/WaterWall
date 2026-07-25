@@ -1,7 +1,7 @@
 #ifndef WW_PLATFORM_H_
 #define WW_PLATFORM_H_
 
-#include "wconfig.h"
+#include <wconfig.h>
 
 // OS
 #if defined(__CYGWIN__)

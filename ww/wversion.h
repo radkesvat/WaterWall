@@ -3,7 +3,7 @@
 
 #include "wlibc.h"
 
-#include "wconfig.h"
+#include <wconfig.h>
 
 #define WW_VERSION_STRING STRINGIFY(WW_VERSION_MAJOR) "." STRINGIFY(WW_VERSION_MINOR) "." STRINGIFY(WW_VERSION_PATCH)
 

@@ -165,6 +165,10 @@ set_target_properties(ww PROPERTIES LANGUAGES C)
 ################################################################################
 # Include Directories
 ################################################################################
+set(WW_CONFIG_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(ww BEFORE PUBLIC
+    $<BUILD_INTERFACE:${WW_CONFIG_INCLUDE_DIR}>
+)
 target_include_directories(ww PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/base
@@ -1112,6 +1116,9 @@ include(${LWIP_CONTRIB_DIR}/Filelists.cmake)
 add_library(ww_lwip STATIC ${lwipnoapps_SRCS})
 
 target_compile_definitions(ww_lwip PUBLIC $<$<CONFIG:Debug>:LWIP_DEBUG=1>)
+target_include_directories(ww_lwip BEFORE PUBLIC
+    $<BUILD_INTERFACE:${WW_CONFIG_INCLUDE_DIR}>
+)
 target_include_directories(ww_lwip PUBLIC ${LWIP_INCLUDE_DIRS})
 target_compile_definitions(ww_lwip PUBLIC ${LWIP_DEFINITIONS})
 
@@ -1226,7 +1233,7 @@ if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
 endif()
 
 
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h.in ${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h.in ${WW_CONFIG_INCLUDE_DIR}/wconfig.h)
 message(STATUS "CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
 
 # Build type definitions

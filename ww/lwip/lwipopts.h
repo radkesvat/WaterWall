@@ -32,7 +32,7 @@
 #ifndef LWIP_LWIPOPTS_H
 #define LWIP_LWIPOPTS_H
 
-#include "../wconfig.h"
+#include <wconfig.h>
 
 // remove some duplicate definitions from lwip
 #ifdef TCP_MSS
