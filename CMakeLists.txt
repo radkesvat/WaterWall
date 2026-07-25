@@ -1106,10 +1106,26 @@ endif()
 # so the native IOCP backend registers its own test executable here, and only
 # when that backend is actually selected (windows-iocp preset).
 if(BUILD_TESTING AND WIN32 AND WITH_NATIVE_IOCP)
-  add_executable(iocp_native_test
+  add_executable(iocp_native_test EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/iocp_native_test.c)
+  set_target_properties(iocp_native_test PROPERTIES
+    INTERPROCEDURAL_OPTIMIZATION OFF
+    INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF
+    INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
+    INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF
+    INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF
+  )
   target_link_libraries(iocp_native_test PRIVATE ww ws2_32 mswsock)
-  add_test(NAME waterwall.iocp_native COMMAND iocp_native_test)
+  add_test(
+    NAME waterwall.iocp_native
+    COMMAND
+      "${CMAKE_COMMAND}"
+      "-DUNIT_TEST_TARGET=iocp_native_test"
+      "-DUNIT_TEST_CONFIG=$<CONFIG>"
+      "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE:iocp_native_test>"
+      "-DUNIT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/run_unit_test.cmake"
+  )
   set_tests_properties(waterwall.iocp_native PROPERTIES
     TIMEOUT 120
     LABELS "unit;net;iocp;windows")

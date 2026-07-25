@@ -44,6 +44,11 @@ These tests exercise small library-level behavior without launching the `Waterwa
 
 ## Running Unit Tests
 
+Unit-test executables are excluded from the default project build and compile
+without IPO/LTO. The production libraries and `Waterwall` executable keep the
+optimization policy selected by the active preset. Build tests explicitly with
+one of the targets below.
+
 Build and run only the unit tests:
 
 ```sh

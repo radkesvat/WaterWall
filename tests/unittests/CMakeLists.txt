@@ -1,3 +1,13 @@
+# Unit-test executables are build-time diagnostics rather than production
+# artifacts. Keep IPO disabled in every configuration so linker wrapping and
+# failure-injection seams remain deterministic, while the production libraries
+# and Waterwall executable retain their configured IPO policy.
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF)
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF)
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)
+
 add_custom_target(waterwall_unit_tests)
 
 set(WATERWALL_UNIT_TEST_RUNNER "${CMAKE_CURRENT_SOURCE_DIR}/run_unit_test.cmake")
@@ -158,8 +168,6 @@ if(TARGET ww)
   )
   target_link_libraries(users_runtime_migration_test PRIVATE ww)
   if(LINUX)
-    set_property(TARGET users_runtime_migration_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
-    target_compile_options(users_runtime_migration_test PRIVATE "-fno-lto")
     target_compile_definitions(users_runtime_migration_test PRIVATE WCRYPTO_TEST_LINKER_WRAP=1)
     target_link_options(users_runtime_migration_test PRIVATE
       "-Wl,-u,wCryptoSHA224"
@@ -190,8 +198,6 @@ if(TARGET ww)
   # built users.c copy and left out of the libww archive copies.
   target_compile_definitions(users_index_test PRIVATE USERS_TEST_CREDENTIAL_SNAPSHOT_WIPE_COUNTER=1)
   if(LINUX)
-    set_property(TARGET users_index_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
-    target_compile_options(users_index_test PRIVATE "-fno-lto")
     target_compile_definitions(users_index_test PRIVATE WCRYPTO_TEST_LINKER_WRAP=1)
     # Deterministic allocation-fault injection so the transactional password-change,
     # removal, add, and Allowed-IP-update paths can be swept for failure atomicity.
@@ -226,8 +232,6 @@ if(TARGET ww)
     target_sources(socket_manager_iptables_recovery_test PRIVATE
       ${CMAKE_SOURCE_DIR}/ww/managers/socket_manager_iptables_recovery.c
     )
-    set_property(TARGET socket_manager_iptables_recovery_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
-    target_compile_options(socket_manager_iptables_recovery_test PRIVATE "-fno-lto")
     target_compile_definitions(socket_manager_iptables_recovery_test PRIVATE
       SOCKET_MANAGER_IPTABLES_ALLOC_FAILURE_TEST=1
     )
@@ -276,8 +280,6 @@ if(TARGET ww)
       wproc_deadline_test.c
       ${CMAKE_SOURCE_DIR}/ww/base/wproc.c
     )
-    set_property(TARGET wproc_deadline_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
-    target_compile_options(wproc_deadline_test PRIVATE "-fno-lto")
     target_link_options(wproc_deadline_test PRIVATE "-Wl,--wrap=memoryAllocate")
     target_link_libraries(wproc_deadline_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests wproc_deadline_test)
@@ -295,8 +297,6 @@ if(TARGET ww)
       capture_linux_command_test.c
       ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux.c
     )
-    set_property(TARGET capture_linux_command_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
-    target_compile_options(capture_linux_command_test PRIVATE "-fno-lto")
     target_link_options(capture_linux_command_test PRIVATE
       "-Wl,--wrap=procRunArgvWithDeadline"
       "-Wl,--wrap=procCommandResultDrop"
@@ -313,8 +313,6 @@ if(TARGET ww)
     # Wraps send/sendto for a deterministic EAGAIN/EINTR/ENOBUFS seam.
     add_executable(udp_datagram_write_test udp_datagram_write_test.c)
     target_link_libraries(udp_datagram_write_test PRIVATE ww)
-    set_property(TARGET udp_datagram_write_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
-    target_compile_options(udp_datagram_write_test PRIVATE "-fno-lto")
     target_link_options(udp_datagram_write_test PRIVATE
       "-Wl,--wrap=sendto"
       "-Wl,--wrap=send"
@@ -355,11 +353,6 @@ if(TARGET ww)
       ${CMAKE_SOURCE_DIR}/ww/event/select.c
     )
     target_compile_definitions(select_registration_failure_test PRIVATE EVENT_SELECT=1)
-    set_property(
-      TARGET select_registration_failure_test
-      PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE
-    )
-    target_compile_options(select_registration_failure_test PRIVATE "-fno-lto")
     target_link_options(select_registration_failure_test PRIVATE "-Wl,--wrap=connect" "-Wl,--wrap=eventfd")
     target_link_libraries(select_registration_failure_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests select_registration_failure_test)
@@ -374,11 +367,6 @@ if(TARGET ww)
       signal_manager_registration_failure_test.c
       ${CMAKE_SOURCE_DIR}/ww/managers/signal_manager.c
     )
-    set_property(
-      TARGET signal_manager_registration_failure_test
-      PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE
-    )
-    target_compile_options(signal_manager_registration_failure_test PRIVATE "-fno-lto")
     target_link_options(signal_manager_registration_failure_test PRIVATE "-Wl,--wrap=wRead")
     target_link_libraries(signal_manager_registration_failure_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests signal_manager_registration_failure_test)
@@ -390,11 +378,6 @@ if(TARGET ww)
     )
 
     add_executable(thread_creation_failure_test thread_creation_failure_test.c)
-    set_property(
-      TARGET thread_creation_failure_test
-      PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE
-    )
-    target_compile_options(thread_creation_failure_test PRIVATE "-fno-lto")
     target_link_options(thread_creation_failure_test PRIVATE "-Wl,--wrap=pthread_create")
     target_link_libraries(thread_creation_failure_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests thread_creation_failure_test)
@@ -410,11 +393,6 @@ if(TARGET ww)
         rawsocket_startup_failure_test.c
         ${CMAKE_SOURCE_DIR}/tunnels/RawSocket/instance/start.c
       )
-      set_property(
-        TARGET rawsocket_startup_failure_test
-        PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE
-      )
-      target_compile_options(rawsocket_startup_failure_test PRIVATE "-fno-lto")
       target_include_directories(rawsocket_startup_failure_test PRIVATE
         ${CMAKE_SOURCE_DIR}/tunnels/RawSocket/include
         ${CMAKE_SOURCE_DIR}/tunnels/RawSocket/include/RawSocket
@@ -456,8 +434,6 @@ if(TARGET ww)
       global_crypto_startup_failure_test.c
       ${CMAKE_SOURCE_DIR}/ww/instance/global_state.c
     )
-    set_property(TARGET global_crypto_startup_failure_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
-    target_compile_options(global_crypto_startup_failure_test PRIVATE "-fno-lto")
     target_include_directories(global_crypto_startup_failure_test PRIVATE ${CMAKE_BINARY_DIR}/ww/generated)
     target_link_libraries(global_crypto_startup_failure_test PRIVATE ww)
     if(PROJECT_REQUIRES_OPENSSL AND WCRYPTO_BACKEND_SODIUM)
@@ -482,8 +458,6 @@ if(TARGET ww)
       add_executable(openssl_partial_init_failure_test
         openssl_partial_init_failure_test.c
       )
-      set_property(TARGET openssl_partial_init_failure_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
-      target_compile_options(openssl_partial_init_failure_test PRIVATE "-fno-lto")
       target_link_libraries(openssl_partial_init_failure_test PRIVATE ww)
       target_link_options(openssl_partial_init_failure_test PRIVATE
         "-Wl,--wrap=OPENSSL_init_ssl"
@@ -597,8 +571,6 @@ if(LINUX AND TARGET WireGuardDevice)
     wireguard_crypto_failure_test.c
     ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice/common/wireguard.c
   )
-  set_property(TARGET wireguard_crypto_failure_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
-  target_compile_options(wireguard_crypto_failure_test PRIVATE "-fno-lto")
   target_include_directories(wireguard_crypto_failure_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice/include/WireGuardDevice
     ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice
@@ -630,8 +602,6 @@ if(LINUX AND TARGET EncryptionClient)
     ${CMAKE_SOURCE_DIR}/tunnels/EncryptionClient/common/line_state.c
     ${CMAKE_SOURCE_DIR}/tunnels/EncryptionClient/downstream/payload.c
   )
-  set_property(TARGET encryptionclient_crypto_failure_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
-  target_compile_options(encryptionclient_crypto_failure_test PRIVATE "-fno-lto")
   target_compile_definitions(encryptionclient_crypto_failure_test PRIVATE TEST_ENCRYPTION_CLIENT=1)
   target_include_directories(encryptionclient_crypto_failure_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/EncryptionClient/include
@@ -657,8 +627,6 @@ if(LINUX AND TARGET EncryptionServer)
     ${CMAKE_SOURCE_DIR}/tunnels/EncryptionServer/common/line_state.c
     ${CMAKE_SOURCE_DIR}/tunnels/EncryptionServer/upstream/payload.c
   )
-  set_property(TARGET encryptionserver_crypto_failure_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
-  target_compile_options(encryptionserver_crypto_failure_test PRIVATE "-fno-lto")
   target_compile_definitions(encryptionserver_crypto_failure_test PRIVATE TEST_ENCRYPTION_SERVER=1)
   target_include_directories(encryptionserver_crypto_failure_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/EncryptionServer/include

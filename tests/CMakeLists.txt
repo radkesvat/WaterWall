@@ -7,7 +7,7 @@ option(
   ON
 )
 
-add_subdirectory(unittests)
+add_subdirectory(unittests EXCLUDE_FROM_ALL)
 add_subdirectory(benchmarks)
 
 function(add_waterwall_integration_test_with_timeout test_name case_name timeout_seconds)
