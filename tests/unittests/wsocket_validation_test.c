@@ -81,6 +81,15 @@ static void testInvalidCases(void)
     // More than one separator in the IPv4 form.
     expectInvalid("1.2.3.4:80:90");
 
+    // Non-canonical or partially consumed IP presentation forms. The lenient lwIP
+    // text parsers accept several of these (trailing junk, shorthand, hex); strict
+    // inet_pton() validation must reject them all.
+    expectInvalid("127.0.0.1 junk:80");
+    expectInvalid("127.1:80");
+    expectInvalid("0x7f000001:80");
+    expectInvalid("[2001:db8::1 junk]:80");
+    expectInvalid("[2001:db8::1junk]:80");
+
     // Malformed ports.
     expectInvalid("127.0.0.1:-1");
     expectInvalid("127.0.0.1:+1");

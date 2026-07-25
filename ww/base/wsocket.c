@@ -624,7 +624,16 @@ bool verifyIPPort(const char *ipp)
     memoryCopy(host, host_begin, host_len);
     host[host_len] = '\0';
 
-    if (is_ipv6 ? ! addressIsIp6(host) : ! addressIsIp4(host))
+    // Strict presentation-form validation. inet_pton() accepts only canonical
+    // dotted-quad IPv4 / RFC 4291 IPv6 text and rejects the shorthand, octal,
+    // hexadecimal, and partially consumed forms that the lenient lwIP parsers
+    // (addressIsIp4/addressIsIp6) tolerate. The scratch outputs never escape.
+#ifdef OS_WIN
+    WSAInit();
+#endif
+    struct in_addr  parsed_ipv4;
+    struct in6_addr parsed_ipv6;
+    if (is_ipv6 ? (inet_pton(AF_INET6, host, &parsed_ipv6) != 1) : (inet_pton(AF_INET, host, &parsed_ipv4) != 1))
     {
         LOGE("verifyIPPort Error: \"%s\" is not a valid ip address", ipp);
         return false;
