@@ -49,9 +49,13 @@ original_path=$PATH
 temp_dir=$(mktemp -d)
 trace_path="$temp_dir/iptables.trace"
 failure_path="$temp_dir/fail-delete-jump"
+hang_inspect_path="$temp_dir/hang-inspect"
+hang_descendant_path="$temp_dir/hang-descendant"
+hang_wrapper_path="$temp_dir/hang-wrapper"
 wrapper_dir="$temp_dir/bin"
 disabled_path="$temp_dir/no-iptables"
 mkdir -p "$wrapper_dir" "$disabled_path"
+: >"$hang_inspect_path"
 process_ids=()
 
 cleanup() {
@@ -80,9 +84,22 @@ cat >"$wrapper_dir/iptables" <<'WRAPPER'
 set -u
 printf 'CMD %s\n' "$*" >>"${WATERWALL_IPTABLES_TRACE:?}"
 
+# Hang mode: block forever on the startup inspection, ignore SIGTERM, and keep a
+# SIGTERM-ignoring descendant alive so only a process-group SIGKILL can clear it.
+if [[ -n "${WATERWALL_IPTABLES_HANG_INSPECT_FILE:-}" && -s "${WATERWALL_IPTABLES_HANG_INSPECT_FILE}" &&
+      "$*" == "-w 5 -t nat -S" ]]; then
+  trap '' TERM
+  ( trap '' TERM; while : ; do sleep 1 ; done ) &
+  descendant=$!
+  printf '%s\n' "$descendant" >"${WATERWALL_IPTABLES_HANG_DESCENDANT_FILE:?}"
+  printf '%s\n' "$$" >"${WATERWALL_IPTABLES_HANG_WRAPPER_FILE:?}"
+  printf 'HANG_INSPECT %s\n' "$*" >>"${WATERWALL_IPTABLES_TRACE:?}"
+  while : ; do sleep 1 ; done
+fi
+
 if [[ -s "${WATERWALL_IPTABLES_FAIL_DELETE_JUMP_FILE:?}" ]]; then
   fail_chain=$(<"${WATERWALL_IPTABLES_FAIL_DELETE_JUMP_FILE}")
-  if [[ "$*" == "-w -t nat -D PREROUTING -j $fail_chain" ]]; then
+  if [[ "$*" == "-w 5 -t nat -D PREROUTING -j $fail_chain" ]]; then
     printf 'FORCED_DELETE_JUMP_FAILURE %s\n' "$fail_chain" >>"${WATERWALL_IPTABLES_TRACE:?}"
     exit 4
   fi
@@ -206,6 +223,9 @@ start_instance() {
       PATH="$instance_path" \
       WATERWALL_IPTABLES_TRACE="$trace_path" \
       WATERWALL_IPTABLES_FAIL_DELETE_JUMP_FILE="$failure_path" \
+      WATERWALL_IPTABLES_HANG_INSPECT_FILE="$hang_inspect_path" \
+      WATERWALL_IPTABLES_HANG_DESCENDANT_FILE="$hang_descendant_path" \
+      WATERWALL_IPTABLES_HANG_WRAPPER_FILE="$hang_wrapper_path" \
       WATERWALL_REAL_IPTABLES="$real_iptables" \
       WATERWALL_REAL_IP6TABLES="$real_ip6tables" \
       WATERWALL_TEST_PYTHON="$python_path" \
@@ -290,11 +310,11 @@ trace_line() {
 
 assert_publication_order() {
   local chain=$1
-  trace_line "CMD -w -t nat -N $chain"
+  trace_line "CMD -w 5 -t nat -N $chain"
   local create_line=$TRACE_LINE
-  trace_line "CMD -w -t nat -A $chain "
+  trace_line "CMD -w 5 -t nat -A $chain "
   local populate_line=$TRACE_LINE
-  trace_line "CMD -w -t nat -A PREROUTING -j $chain"
+  trace_line "CMD -w 5 -t nat -A PREROUTING -j $chain"
   local publish_line=$TRACE_LINE
   ((create_line < populate_line && populate_line < publish_line)) ||
     fail "publication order was not create, populate, link for $chain"
@@ -403,11 +423,11 @@ legacy_after=$("$real_iptables" -w -t nat -S WW_00000001_00000002_4)
 
 stop_instance "$owner_d_pid"
 assert_chain_absent "$owner_d_chain"
-trace_line "CMD -w -t nat -D PREROUTING -j $owner_d_chain"
+trace_line "CMD -w 5 -t nat -D PREROUTING -j $owner_d_chain"
 unlink_line=$TRACE_LINE
-trace_line "CMD -w -t nat -F $owner_d_chain"
+trace_line "CMD -w 5 -t nat -F $owner_d_chain"
 flush_line=$TRACE_LINE
-trace_line "CMD -w -t nat -X $owner_d_chain"
+trace_line "CMD -w 5 -t nat -X $owner_d_chain"
 delete_line=$TRACE_LINE
 ((unlink_line < flush_line && flush_line < delete_line)) ||
   fail "shutdown order was not unlink, flush, delete for $owner_d_chain"
@@ -427,8 +447,8 @@ owner_e_after_failure=$("$real_iptables" -w -t nat -S "$owner_e_chain")
   fail "shutdown mutated a chain after jump deletion failed"
 grep -Fx -- "FORCED_DELETE_JUMP_FAILURE $owner_e_chain" "$trace_path" >/dev/null ||
   fail "shutdown jump-deletion failure was not injected"
-if grep -F -- "CMD -w -t nat -F $owner_e_chain" "$trace_path" >/dev/null ||
-   grep -F -- "CMD -w -t nat -X $owner_e_chain" "$trace_path" >/dev/null; then
+if grep -F -- "CMD -w 5 -t nat -F $owner_e_chain" "$trace_path" >/dev/null ||
+   grep -F -- "CMD -w 5 -t nat -X $owner_e_chain" "$trace_path" >/dev/null; then
   fail "shutdown flushed or deleted a chain after jump deletion failed"
 fi
 
@@ -480,25 +500,25 @@ forget_process "$legacy_linked_pid"
 # The operator must be told the exact chain name and the safe cleanup commands.
 grep -F -- "$legacy_linked_chain" "$legacy_linked_log" >/dev/null ||
   fail "legacy blocker report did not name the chain"
-grep -F -- "iptables -w -t nat -D PREROUTING -j $legacy_linked_chain" "$legacy_linked_log" >/dev/null ||
+grep -F -- "iptables -w 5 -t nat -D PREROUTING -j $legacy_linked_chain" "$legacy_linked_log" >/dev/null ||
   fail "legacy blocker report missing the unlink command"
-grep -F -- "iptables -w -t nat -F $legacy_linked_chain" "$legacy_linked_log" >/dev/null ||
+grep -F -- "iptables -w 5 -t nat -F $legacy_linked_chain" "$legacy_linked_log" >/dev/null ||
   fail "legacy blocker report missing the flush command"
-grep -F -- "iptables -w -t nat -X $legacy_linked_chain" "$legacy_linked_log" >/dev/null ||
+grep -F -- "iptables -w 5 -t nat -X $legacy_linked_chain" "$legacy_linked_log" >/dev/null ||
   fail "legacy blocker report missing the delete command"
 
 # The delete-jump command must be printed once per jump so it runs correctly in order.
-delete_jump_count=$(grep -cF -- "iptables -w -t nat -D PREROUTING -j $legacy_linked_chain" "$legacy_linked_log")
+delete_jump_count=$(grep -cF -- "iptables -w 5 -t nat -D PREROUTING -j $legacy_linked_chain" "$legacy_linked_log")
 ((delete_jump_count == 2)) ||
   fail "delete-jump command was not printed once per PREROUTING jump (got $delete_jump_count)"
 
 # Following the printed commands top-to-bottom must succeed: every delete-jump before the
 # flush, and the flush before the delete.
-last_delete_jump_line=$(grep -nF -- "iptables -w -t nat -D PREROUTING -j $legacy_linked_chain" \
+last_delete_jump_line=$(grep -nF -- "iptables -w 5 -t nat -D PREROUTING -j $legacy_linked_chain" \
   "$legacy_linked_log" | tail -n 1 | cut -d: -f1)
-flush_report_line=$(grep -nF -- "iptables -w -t nat -F $legacy_linked_chain" \
+flush_report_line=$(grep -nF -- "iptables -w 5 -t nat -F $legacy_linked_chain" \
   "$legacy_linked_log" | tail -n 1 | cut -d: -f1)
-delete_report_line=$(grep -nF -- "iptables -w -t nat -X $legacy_linked_chain" \
+delete_report_line=$(grep -nF -- "iptables -w 5 -t nat -X $legacy_linked_chain" \
   "$legacy_linked_log" | tail -n 1 | cut -d: -f1)
 ((last_delete_jump_line < flush_report_line && flush_report_line < delete_report_line)) ||
   fail "legacy cleanup commands were not printed in delete-jump, flush, delete order"
@@ -536,5 +556,77 @@ orphan_legacy_still_present=$("$real_iptables" -w -t nat -S WW_00000001_00000002
   fail "orphan legacy chain was mutated while an unrelated instance published"
 stop_instance "$legacy_orphan_pid"
 assert_chain_absent "$legacy_orphan_chain"
+
+# A hanging startup inspection must not stall WaterWall forever. The parent-side
+# deadline must fire, the timeout must be logged, no new WaterWall chain may be
+# published, and the blocking wrapper plus its SIGTERM-ignoring descendant must
+# be terminated with the process group. The wrapper seam keeps this deterministic
+# without depending on the host's real /run/xtables.lock.
+inspect_timeout_before=$("$real_iptables" -w -t nat -S)
+: >"$hang_descendant_path"
+: >"$hang_wrapper_path"
+printf '1\n' >"$hang_inspect_path" # enable hang mode for the next instance only
+
+start_instance "inspect-timeout" 50000 50001 "iptables" "$active_path"
+inspect_timeout_pid=$STARTED_PID
+inspect_timeout_log="$temp_dir/inspect-timeout/stdout.log"
+
+# Bounded outer watchdog: WaterWall must exit on its own well within this window.
+inspect_exited=0
+for _ in $(seq 1 300); do # up to ~30s
+  if ! kill -0 "$inspect_timeout_pid" 2>/dev/null; then
+    inspect_exited=1
+    break
+  fi
+  sleep 0.1
+done
+: >"$hang_inspect_path" # disable hang mode for any later instances
+
+if [[ "$inspect_exited" -ne 1 ]]; then
+  kill -KILL "$inspect_timeout_pid" 2>/dev/null || true
+  wait "$inspect_timeout_pid" 2>/dev/null || true
+  forget_process "$inspect_timeout_pid"
+  fail "WaterWall remained stuck on a hanging iptables inspection"
+fi
+
+set +e
+wait "$inspect_timeout_pid"
+inspect_status=$?
+set -e
+forget_process "$inspect_timeout_pid"
+((inspect_status != 0)) || fail "hanging inspection did not fail WaterWall startup"
+
+grep -F -- "HANG_INSPECT -w 5 -t nat -S" "$trace_path" >/dev/null 2>&1 ||
+  fail "the wrapper did not intercept the startup inspection"
+grep -F -- "ipv4 iptables inspection timed out" "$inspect_timeout_log" >/dev/null 2>&1 ||
+  fail "the inspection timeout was not logged"
+
+if "$real_iptables" -w -t nat -S | grep -Eq -- '^-N WW2_[0-9A-F]{16}_4$'; then
+  fail "a new WW2 chain was published despite an inspection timeout"
+fi
+if "$real_iptables" -w -t nat -S PREROUTING | grep -Eq -- '-j WW2_[0-9A-F]{16}_4$'; then
+  fail "a new WW2 PREROUTING jump was published despite an inspection timeout"
+fi
+
+# The blocking wrapper and its descendant must have been killed with the group.
+hang_wrapper_pid=$(<"$hang_wrapper_path")
+hang_descendant_pid=$(<"$hang_descendant_path")
+[[ -n "$hang_wrapper_pid" && -n "$hang_descendant_pid" ]] ||
+  fail "the hanging wrapper did not record its process ids"
+for hang_target in "$hang_wrapper_pid" "$hang_descendant_pid"; do
+  hang_gone=0
+  for _ in $(seq 1 100); do
+    if ! kill -0 "$hang_target" 2>/dev/null; then
+      hang_gone=1
+      break
+    fi
+    sleep 0.1
+  done
+  ((hang_gone == 1)) || fail "a hanging iptables process ($hang_target) survived the timeout"
+done
+
+inspect_timeout_after=$("$real_iptables" -w -t nat -S)
+[[ "$inspect_timeout_before" == "$inspect_timeout_after" ]] ||
+  fail "the NAT table changed despite an inspection timeout"
 
 printf 'iptables crash-recovery integration test passed\n'
