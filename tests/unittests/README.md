@@ -32,6 +32,10 @@ These tests exercise small library-level behavior without launching the `Waterwa
 - `waterwall.ipmanipulator_tcpbit_unit`
   Verifies `IpManipulator` TCP-bit rewriting handles the full TCP flags byte, including downstream CWR/ECE handling and
   carried original flag restore.
+- `waterwall.ipoverrider_node_gate_unit`
+  Verifies the root-level `IpOverrider` `chance` and `only120` gates control the complete source/destination rewrite
+  action in both directions, including the exact 120-byte boundary, unchanged forwarding, and round-robin cursor
+  behavior when either gate rejects a packet.
 - `waterwall.router_sniffing_unit`
   Verifies Router sniffing config, Host/:authority/SNI classification behavior, protocol bits, HTTP upgrade attributes,
   cleartext HTTP/2 authority sniffing, and protected QUIC/HTTP3 Initial SNI vectors when Router QUIC sniffing is compiled

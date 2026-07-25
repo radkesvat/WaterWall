@@ -103,25 +103,51 @@ static bool ipoverriderParseRule(ipoverrider_rule_t *rule, const cJSON *settings
         return false;
     }
 
-    if (getIntFromJsonObjectOrDefault(&rule->skip_chance, settings, "chance", -1))
-    {
-        if (rule->skip_chance < 0 || rule->skip_chance > 100)
-        {
-            LOGF("JSON Error: %s->chance (int field) : chance is less than 0 or more than 100", json_path);
-            return false;
-        }
-
-        rule->skip_chance = 100 - rule->skip_chance;
-    }
-
-    getBoolFromJsonObjectOrDefault(&rule->only120, settings, "only120", false);
-
     if (! ipoverriderParseRuleAddress(rule, settings, json_path))
     {
         return false;
     }
 
     rule->enabled = true;
+    return true;
+}
+
+static bool ipoverriderParseOnly120(ipoverrider_tstate_t *state, const cJSON *settings)
+{
+    const cJSON *only120 = cJSON_GetObjectItemCaseSensitive(settings, "only120");
+    if (only120 == NULL)
+    {
+        state->only120 = false;
+        return true;
+    }
+
+    if (! cJSON_IsBool(only120))
+    {
+        LOGF("JSON Error: IpOverrider->settings->only120 (boolean field) : only120 must be true or false");
+        return false;
+    }
+
+    state->only120 = cJSON_IsTrue(only120);
+    return true;
+}
+
+static bool ipoverriderParseChance(ipoverrider_tstate_t *state, const cJSON *settings)
+{
+    const cJSON *chance = cJSON_GetObjectItemCaseSensitive(settings, "chance");
+    if (chance == NULL)
+    {
+        state->chance = 100;
+        return true;
+    }
+
+    if (! cJSON_IsNumber(chance) || chance->valuedouble != (double) chance->valueint || chance->valueint < 0 ||
+        chance->valueint > 100)
+    {
+        LOGF("JSON Error: IpOverrider->settings->chance (int field) : chance must be from 0 through 100");
+        return false;
+    }
+
+    state->chance = (int) chance->valueint;
     return true;
 }
 
@@ -184,6 +210,22 @@ static bool ipoverriderParseDirectionalSettings(ipoverrider_tstate_t *state, con
                 continue;
             }
 
+            if (cJSON_GetObjectItemCaseSensitive(rule_settings, "chance") != NULL)
+            {
+                LOGF("JSON Error: %s->chance : chance is a node-level option; move it to "
+                     "IpOverrider->settings->chance",
+                     json_paths[direction_index][mode_index]);
+                return false;
+            }
+
+            if (cJSON_GetObjectItemCaseSensitive(rule_settings, "only120") != NULL)
+            {
+                LOGF("JSON Error: %s->only120 : only120 is a node-level option; move it to "
+                     "IpOverrider->settings->only120",
+                     json_paths[direction_index][mode_index]);
+                return false;
+            }
+
             if (! ipoverriderParseRule(&(state->rules[direction_index][mode_index]),
                                        rule_settings,
                                        json_paths[direction_index][mode_index]))
@@ -222,6 +264,12 @@ tunnel_t *ipoverriderCreate(node_t *node)
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
     {
         LOGF("JSON Error: IpOverrider->settings (object field) : The object was empty or invalid");
+        ipoverriderDestroy(t);
+        return NULL;
+    }
+
+    if (! ipoverriderParseOnly120(state, settings) || ! ipoverriderParseChance(state, settings))
+    {
         ipoverriderDestroy(t);
         return NULL;
     }

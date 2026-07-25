@@ -689,6 +689,22 @@ if(TARGET IpManipulator)
   add_waterwall_unit_test(waterwall.ipmanipulator_tcpbit_unit ipmanipulator_tcpbit_test "unit;tunnels;ipmanipulator")
 endif()
 
+if(TARGET IpOverrider)
+  add_executable(ipoverrider_node_gate_test ipoverrider_node_gate_test.c)
+  target_include_directories(ipoverrider_node_gate_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/IpOverrider/include
+    ${CMAKE_SOURCE_DIR}/tunnels/IpOverrider/include/IpOverrider
+  )
+  target_link_libraries(ipoverrider_node_gate_test PRIVATE IpOverrider ww)
+  add_dependencies(waterwall_unit_tests ipoverrider_node_gate_test)
+
+  add_waterwall_unit_test(
+    waterwall.ipoverrider_node_gate_unit
+    ipoverrider_node_gate_test
+    "unit;tunnels;ipoverrider;chance;only120"
+  )
+endif()
+
 if(TARGET SoftIpLimiter)
   add_executable(softiplimiter_test softiplimiter_test.c)
   target_include_directories(softiplimiter_test PRIVATE

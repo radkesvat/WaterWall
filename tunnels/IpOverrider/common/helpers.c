@@ -2,9 +2,15 @@
 
 #include "loggers/network_logger.h"
 
-static bool ipoverriderShouldSkipRule(const ipoverrider_rule_t *rule)
+static bool ipoverriderShouldApply(const ipoverrider_tstate_t *state, const sbuf_t *buf)
 {
-    return rule->skip_chance != -1 && (fastRand32() % 100) < (uint32_t) rule->skip_chance;
+    const struct ip_hdr *ipheader = (const struct ip_hdr *) sbufGetRawPtr(buf);
+    if (state->only120 && (IPH_V(ipheader) != 4 || lwip_ntohs(IPH_LEN(ipheader)) > 120))
+    {
+        return false;
+    }
+
+    return state->chance >= 100 || (state->chance > 0 && (fastRand32() % 100) < (uint32_t) state->chance);
 }
 
 static uint32_t ipoverriderSelectIpv4(ipoverrider_rule_t *rule)
@@ -20,7 +26,7 @@ static uint32_t ipoverriderSelectIpv4(ipoverrider_rule_t *rule)
 
 static void ipoverriderApplyRule(ipoverrider_rule_t *rule, line_t *l, sbuf_t *buf, bool replace_source)
 {
-    if (! rule->enabled || ipoverriderShouldSkipRule(rule))
+    if (! rule->enabled)
     {
         return;
     }
@@ -29,13 +35,6 @@ static void ipoverriderApplyRule(ipoverrider_rule_t *rule, line_t *l, sbuf_t *bu
 
     if (rule->support4 && IPH_V(ipheader) == 4)
     {
-        uint16_t size = lwip_ntohs(IPH_LEN(ipheader));
-
-        if (rule->only120 && size > 120)
-        {
-            return;
-        }
-
         const uint32_t selected_ipv4 = ipoverriderSelectIpv4(rule);
 
         if (replace_source)
@@ -68,8 +67,11 @@ void ipoverriderApplyUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     ipoverrider_tstate_t *state = tunnelGetState(t);
 
-    ipoverriderApplyRule(&(state->rules[kIpOverriderDirectionUp][kIpOverriderModeSource]), l, buf, true);
-    ipoverriderApplyRule(&(state->rules[kIpOverriderDirectionUp][kIpOverriderModeDest]), l, buf, false);
+    if (ipoverriderShouldApply(state, buf))
+    {
+        ipoverriderApplyRule(&(state->rules[kIpOverriderDirectionUp][kIpOverriderModeSource]), l, buf, true);
+        ipoverriderApplyRule(&(state->rules[kIpOverriderDirectionUp][kIpOverriderModeDest]), l, buf, false);
+    }
 
     tunnelNextUpStreamPayload(t, l, buf);
 }
@@ -78,8 +80,11 @@ void ipoverriderApplyDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     ipoverrider_tstate_t *state = tunnelGetState(t);
 
-    ipoverriderApplyRule(&(state->rules[kIpOverriderDirectionDown][kIpOverriderModeSource]), l, buf, true);
-    ipoverriderApplyRule(&(state->rules[kIpOverriderDirectionDown][kIpOverriderModeDest]), l, buf, false);
+    if (ipoverriderShouldApply(state, buf))
+    {
+        ipoverriderApplyRule(&(state->rules[kIpOverriderDirectionDown][kIpOverriderModeSource]), l, buf, true);
+        ipoverriderApplyRule(&(state->rules[kIpOverriderDirectionDown][kIpOverriderModeDest]), l, buf, false);
+    }
 
     tunnelPrevDownStreamPayload(t, l, buf);
 }

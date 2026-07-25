@@ -35,9 +35,7 @@ typedef struct ipoverrider_rule_s
     uint32_t       *ov_4_list;
     atomic_uint     ov_4_rr_cursor;
     uint32_t        ov_4_count;
-    int             skip_chance;
     bool            enabled;
-    bool            only120;
     bool            support4;
     bool            support6;
 } ipoverrider_rule_t;
@@ -45,6 +43,8 @@ typedef struct ipoverrider_rule_s
 typedef struct ipoverrider_tstate_s
 {
     ipoverrider_rule_t rules[kIpOverriderDirectionCount][kIpOverriderModeCount];
+    int                chance;
+    bool               only120;
 } ipoverrider_tstate_t;
 
 typedef struct ipoverrider_lstate_s

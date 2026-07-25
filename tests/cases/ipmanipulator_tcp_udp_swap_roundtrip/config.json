@@ -21,10 +21,10 @@
       "name": "packet-anchor",
       "type": "IpOverrider",
       "settings": {
+        "chance": 0,
         "up": {
           "source-ip": {
-            "ipv4": "10.83.0.1",
-            "chance": 0
+            "ipv4": "10.83.0.1"
           }
         }
       },
