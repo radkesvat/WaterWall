@@ -628,9 +628,19 @@ static void dispatch_send(wio_t *io, woverlapped_t *record)
     }
     // WW_WRITE is one-shot only after the serialized send stream is empty. A
     // callback may have enqueued the next write, so test both sources of work.
-    if (io->iocp_send_active == NULL && write_queue_empty(&io->write_queue) && (io->events & WW_WRITE))
+    if (io->iocp_send_active == NULL && write_queue_empty(&io->write_queue))
     {
-        wioDel(io, WW_WRITE);
+        if (io->events & WW_WRITE)
+        {
+            wioDel(io, WW_WRITE);
+        }
+        if (io->close)
+        {
+            // A close deferred by wioClose() while payload was still queued.
+            io->close = 0;
+            wioClose(io);
+            return;
+        }
     }
 }
 
@@ -1267,6 +1277,21 @@ int wioWrite(wio_t *io, sbuf_t *buf)
     return nwrite;
 }
 
+static void __close_timeout_cb(wtimer_t *timer)
+{
+    wio_t *io = (wio_t *) timer->privdata;
+    if (io)
+    {
+        char localaddrstr[SOCKADDR_STRLEN] = {0};
+        char peeraddrstr[SOCKADDR_STRLEN]  = {0};
+        wlogw("close timeout [%s] <=> [%s]",
+              SOCKADDR_STR(io->localaddr, localaddrstr),
+              SOCKADDR_STR(io->peeraddr, peeraddrstr));
+        io->error = ETIMEDOUT;
+        wioClose(io);
+    }
+}
+
 int wioClose(wio_t *io)
 {
     if (io->closed)
@@ -1275,6 +1300,24 @@ int wioClose(wio_t *io)
         wioIocpFinalizeDeferred(io);
         return 0;
     }
+
+    /*
+     * Graceful close: an overlapped send in flight or buffers still queued behind
+     * it are real payload. Cancelling now would truncate the stream (wioDone
+     * recycles the queue), so mirror the nio backend and finish the close once the
+     * serialized send stream drains. wioFree()/finalization must never defer.
+     */
+    if ((io->iocp_send_active != NULL || ! write_queue_empty(&io->write_queue)) && io->error == 0 && io->close == 0 &&
+        io->destroy == 0 && ! io->iocp_deferred_finalize)
+    {
+        io->close = 1;
+        wlogd("write_queue not empty, close later.");
+        int timeout_ms            = io->close_timeout ? io->close_timeout : WIO_DEFAULT_CLOSE_TIMEOUT;
+        io->close_timer           = wtimerAdd(io->loop, __close_timeout_cb, (uint32_t) timeout_ms, 1);
+        io->close_timer->privdata = io;
+        return 0;
+    }
+
     io->iocp_close_in_progress = 1;
     io->closed                 = 1;
 
@@ -1293,15 +1336,22 @@ int wioClose(wio_t *io)
     wioIocpRetireCompletedWithoutCallbacks(io);
 
     /*
-     * Preserve the existing close-callback contract: user code runs before the
-     * socket handle is closed. iocp_close_in_progress keeps io out of the pool if
+     * Same teardown as the nio backend (__close_cb): every timer holds
+     * privdata == io and only wtimerDelete() removes it from the loop heap, so a
+     * surviving timer would fire on a pooled/reused wio_t. Delete all six before
+     * user code can free the object.
+     *
+     * The close-callback contract is preserved: user code runs before the socket
+     * handle is closed, and iocp_close_in_progress keeps io out of the pool if
      * that callback calls wioFree().
      */
-    wclose_cb close_cb = io->close_cb;
-    if (close_cb != NULL)
-    {
-        close_cb(io);
-    }
+    wioDelConnectTimer(io);
+    wioDelCloseTimer(io);
+    wioDelReadTimer(io);
+    wioDelWriteTimer(io);
+    wioDelKeepaliveTimer(io);
+    wioDelHeartBeatTimer(io);
+    wioCloseCallBack(io);
 
     if (io->io_type & WIO_TYPE_SOCKET)
     {

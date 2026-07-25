@@ -264,6 +264,21 @@ void wioFinalizeNow(wio_t *io)
     assert(io->iocp_send_active == NULL);
     assert(io->loop == NULL || io->fd < 0 || io->fd >= (int) io->loop->ios.maxsize || io->loop->ios.ptr[io->fd] != io);
 
+    // Last line of defence: a timer surviving into the pool would fire on reused
+    // memory. wioClose()/wioReleaseNoCloseNow() must already have removed them.
+    assert(io->connect_timer == NULL);
+    assert(io->close_timer == NULL);
+    assert(io->read_timer == NULL);
+    assert(io->write_timer == NULL);
+    assert(io->keepalive_timer == NULL);
+    assert(io->heartbeat_timer == NULL);
+    wioDelConnectTimer(io);
+    wioDelCloseTimer(io);
+    wioDelReadTimer(io);
+    wioDelWriteTimer(io);
+    wioDelKeepaliveTimer(io);
+    wioDelHeartBeatTimer(io);
+
     io->iocp_deferred_finalize = 0;
     io->destroy                = 1;
     EVENTLOOP_FREE(io->localaddr);
