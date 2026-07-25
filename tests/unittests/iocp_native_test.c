@@ -607,8 +607,9 @@ static void testConnectCallbackFreeAndFamilies(env_t *env)
 // and require the entire serialized stream to arrive.
 // ---------------------------------------------------------------------------
 
-#define SEND_TEST_CHUNK_SIZE 8192U
-#define SEND_TEST_FOLLOWUPS  8
+#define SEND_TEST_CHUNK_SIZE         8192U
+#define SEND_TEST_FOLLOWUPS          8
+#define SEND_TEST_BACKPRESSURE_BYTES (4U * 1024U * 1024U)
 
 typedef struct send_queue_state_s
 {
@@ -649,6 +650,26 @@ static void sendQueueAccept(wio_t *connio)
                 wioGetFD(connio), SOL_SOCKET, SO_SNDBUF, (const char *) &send_buffer_size, sizeof(send_buffer_size)) ==
                 0,
             "failed to reduce the server send buffer");
+}
+
+static size_t forceQueuedSend(wio_t *conn, buffer_pool_t *pool, char value, size_t minimum_pending)
+{
+    size_t expected_bytes = 0;
+    for (int i = 0; i < 4096; ++i)
+    {
+        int nwrite = wioWrite(conn, makeFilledBuffer(pool, value, SEND_TEST_CHUNK_SIZE));
+        require(nwrite >= 0, "failed while forcing queued IOCP send");
+        expected_bytes += SEND_TEST_CHUNK_SIZE;
+        if (conn->iocp_send_active != NULL && ! write_queue_empty(&conn->write_queue) &&
+            wioGetWriteBufSize(conn) >= minimum_pending)
+        {
+            break;
+        }
+    }
+    require(conn->iocp_send_active != NULL, "test did not force the TCP path into WSASend");
+    require(! write_queue_empty(&conn->write_queue), "test did not leave a buffer behind the active WSASend");
+    require(wioGetWriteBufSize(conn) >= minimum_pending, "test did not create enough pending send backpressure");
+    return expected_bytes;
 }
 
 static void testSerializedSendQueue(env_t *env)
@@ -726,7 +747,309 @@ static void testSerializedSendQueue(env_t *env)
 }
 
 // ---------------------------------------------------------------------------
-// Test 8: a forced WSASend callback can free its wio synchronously.
+// Test 8: graceful close drains active/queued sends and accepts callback writes
+// while the deferral is armed.
+// ---------------------------------------------------------------------------
+
+typedef struct close_drain_state_s
+{
+    buffer_pool_t *pool;
+    wio_t         *conn;
+    size_t         initial_bytes;
+    size_t         expected_bytes;
+    int            write_callbacks;
+    int            closes;
+    bool           followup_enqueued;
+} close_drain_state_t;
+
+static void closeDrainWrite(wio_t *io)
+{
+    close_drain_state_t *st = weventGetUserdata(io);
+    st->write_callbacks++;
+    if (st->followup_enqueued)
+    {
+        return;
+    }
+
+    require(io->close == 1 && io->close_timer != NULL,
+            "close-drain write callback did not run during an armed deferral");
+    st->followup_enqueued = true;
+    for (int i = 0; i < SEND_TEST_FOLLOWUPS; ++i)
+    {
+        int nwrite = wioWrite(io, makeFilledBuffer(st->pool, 'B', SEND_TEST_CHUNK_SIZE));
+        require(nwrite >= 0, "close-drain write callback failed to extend the deferred send stream");
+        st->expected_bytes += SEND_TEST_CHUNK_SIZE;
+    }
+}
+
+static void closeDrainClose(wio_t *io)
+{
+    close_drain_state_t *st = weventGetUserdata(io);
+    st->closes++;
+}
+
+static void closeDrainAccept(wio_t *connio)
+{
+    close_drain_state_t *st = weventGetUserdata(connio);
+    require(st->conn == NULL, "close-drain test accepted more than one connection");
+    st->conn = connio;
+    wioSetCallBackClose(connio, closeDrainClose);
+
+    int send_buffer_size = 1024;
+    require(setsockopt(
+                wioGetFD(connio), SOL_SOCKET, SO_SNDBUF, (const char *) &send_buffer_size, sizeof(send_buffer_size)) ==
+                0,
+            "failed to reduce the close-drain send buffer");
+}
+
+static void testCloseDrainsWriteQueue(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "close-drain loop create failed");
+
+    close_drain_state_t st     = {.pool = env->buffer_pool};
+    wio_t              *server = wloopCreateTcpServer(loop, "127.0.0.1", 0, closeDrainAccept);
+    require(server != NULL, "close-drain server create failed");
+    weventSetUserData(server, &st);
+
+    SOCKET client = connectClient(boundPort(server));
+    for (int i = 0; i < 200 && st.conn == NULL; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(st.conn != NULL, "close-drain connection was not accepted");
+
+    st.initial_bytes  = forceQueuedSend(st.conn, env->buffer_pool, 'A', SEND_TEST_CHUNK_SIZE);
+    st.expected_bytes = st.initial_bytes;
+    wioSetCallBackWrite(st.conn, closeDrainWrite);
+    require(wioClose(st.conn) == 0, "close-drain wioClose failed");
+    require(st.conn->close == 1, "queued graceful close was not marked deferred");
+    require(st.conn->closed == 0, "queued graceful close marked the io closed before draining");
+    require(wioIsOpened(st.conn), "queued graceful close made the io unavailable during drain");
+    require(st.closes == 0, "queued graceful close callback fired before draining");
+    require(! write_queue_empty(&st.conn->write_queue), "queued graceful close discarded the software write queue");
+    require(st.conn->close_timer != NULL, "queued graceful close did not arm its timeout");
+
+    setSocketNonblocking(client);
+    size_t received_bytes = 0;
+    char   received[16384];
+    for (int attempt = 0;
+         attempt < 20000 && (! st.followup_enqueued || received_bytes < st.expected_bytes || st.closes == 0);
+         ++attempt)
+    {
+        wloopProcessEvents(loop, 1);
+        for (;;)
+        {
+            int nread = recv(client, received, sizeof(received), 0);
+            if (nread > 0)
+            {
+                for (int i = 0; i < nread; ++i)
+                {
+                    char expected = received_bytes + (size_t) i < st.initial_bytes ? 'A' : 'B';
+                    require(received[i] == expected, "graceful close reordered or corrupted callback-extended bytes");
+                }
+                received_bytes += (size_t) nread;
+                require(received_bytes <= st.expected_bytes, "graceful close delivered more bytes than were written");
+                continue;
+            }
+            if (nread == 0)
+            {
+                require(received_bytes == st.expected_bytes, "peer closed before the graceful send stream drained");
+                break;
+            }
+            int err = WSAGetLastError();
+            require(err == WSAEWOULDBLOCK ||
+                        (received_bytes == st.expected_bytes && (err == WSAECONNRESET || err == WSAESHUTDOWN)),
+                    "unexpected recv error while draining the graceful close");
+            break;
+        }
+    }
+
+    require(st.followup_enqueued, "write callback did not extend the armed graceful-close deferral");
+    require(st.write_callbacks >= 1, "graceful-close send completion did not invoke write_cb");
+    require(received_bytes == st.expected_bytes, "graceful close lost queued or callback-enqueued data");
+    require(st.closes == 1, "graceful close callback did not run exactly once after drain");
+    require(wioIsClosed(st.conn), "graceful close did not close after the send stream drained");
+    require(st.conn->close_timer == NULL, "graceful close left its close timer armed");
+
+    wioClose(server);
+    closesocket(client);
+    require(pumpUntilLiveOperations(loop, 0, 500), "close-drain operations did not return to baseline");
+    wloopDestroy(&loop);
+}
+
+// ---------------------------------------------------------------------------
+// Test 9: an unread peer eventually forces a deferred close through its timer.
+// ---------------------------------------------------------------------------
+
+static void testCloseTimeoutForcesClose(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "close-timeout loop create failed");
+
+    close_drain_state_t st     = {0};
+    wio_t              *server = wloopCreateTcpServer(loop, "127.0.0.1", 0, closeDrainAccept);
+    require(server != NULL, "close-timeout server create failed");
+    weventSetUserData(server, &st);
+
+    SOCKET client              = connectClient(boundPort(server));
+    int    receive_buffer_size = 1024;
+    require(setsockopt(
+                client, SOL_SOCKET, SO_RCVBUF, (const char *) &receive_buffer_size, sizeof(receive_buffer_size)) == 0,
+            "failed to reduce the close-timeout receive buffer");
+    for (int i = 0; i < 200 && st.conn == NULL; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(st.conn != NULL, "close-timeout connection was not accepted");
+
+    (void) forceQueuedSend(st.conn, env->buffer_pool, 'T', SEND_TEST_BACKPRESSURE_BYTES);
+    wioSetCloseTimeout(st.conn, 200);
+    require(wioClose(st.conn) == 0, "close-timeout wioClose failed");
+    require(st.conn->close == 1 && st.conn->closed == 0, "close-timeout path did not defer the graceful close");
+
+    for (int i = 0; i < 500 && st.closes == 0; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(st.closes == 1, "close timeout did not force the deferred close");
+    require(wioGetError(st.conn) == ETIMEDOUT, "close timeout did not preserve ETIMEDOUT");
+    require(wioIsClosed(st.conn), "close timeout left the io open");
+    require(st.conn->close_timer == NULL, "forced close left the close timer armed");
+
+    wioClose(server);
+    closesocket(client);
+    require(pumpUntilLiveOperations(loop, 0, 500), "close-timeout operations did not return to baseline");
+    wloopDestroy(&loop);
+}
+
+// ---------------------------------------------------------------------------
+// Test 10: hard close deletes every armed per-io timer before callback/reuse.
+// ---------------------------------------------------------------------------
+
+typedef struct timer_close_state_s
+{
+    wio_t *conn;
+    int    closes;
+    int    heartbeats;
+} timer_close_state_t;
+
+static void timerClose(wio_t *io)
+{
+    timer_close_state_t *st = weventGetUserdata(io);
+    st->closes++;
+}
+
+static void timerHeartbeat(wio_t *io)
+{
+    timer_close_state_t *st = weventGetUserdata(io);
+    st->heartbeats++;
+}
+
+static void timerCloseAccept(wio_t *connio)
+{
+    timer_close_state_t *st = weventGetUserdata(connio);
+    require(st->conn == NULL, "timer-close test accepted more than one connection");
+    st->conn = connio;
+    wioSetCallBackClose(connio, timerClose);
+}
+
+static void testCloseDeletesTimers(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "timer-close loop create failed");
+
+    timer_close_state_t st     = {0};
+    wio_t              *server = wloopCreateTcpServer(loop, "127.0.0.1", 0, timerCloseAccept);
+    require(server != NULL, "timer-close server create failed");
+    weventSetUserData(server, &st);
+
+    SOCKET client = connectClient(boundPort(server));
+    for (int i = 0; i < 200 && st.conn == NULL; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(st.conn != NULL, "timer-close connection was not accepted");
+
+    wioSetReadTimeout(st.conn, 50);
+    wiosSetWriteTimeout(st.conn, 60);
+    wioSetKeepaliveTimeout(st.conn, 70);
+    wioSetHeartBeat(st.conn, 80, timerHeartbeat);
+    wioSetCloseTimeout(st.conn, 90);
+    require(st.conn->read_timer != NULL, "read timeout did not arm a timer");
+    require(st.conn->write_timer != NULL, "write timeout did not arm a timer");
+    require(st.conn->keepalive_timer != NULL, "keepalive timeout did not arm a timer");
+    require(st.conn->heartbeat_timer != NULL, "heartbeat interval did not arm a timer");
+
+    // Accepted sockets currently do not set this flag, so make the close-callback
+    // state transition explicit and cover the stale-connected IOCP regression.
+    st.conn->connected = 1;
+    require(wioClose(st.conn) == 0, "timer-close wioClose failed");
+    require(st.closes == 1, "timer-close callback did not run exactly once");
+    require(st.conn->connect_timer == NULL && st.conn->close_timer == NULL && st.conn->read_timer == NULL &&
+                st.conn->write_timer == NULL && st.conn->keepalive_timer == NULL && st.conn->heartbeat_timer == NULL,
+            "hard close left a per-io timer armed");
+    require(st.conn->connected == 0, "hard close did not clear connected before its callback");
+
+    wioFree(st.conn);
+    for (int i = 0; i < 50; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(st.closes == 1, "a deleted timeout fired after the io was freed");
+    require(st.heartbeats == 0, "a deleted heartbeat fired after the io was freed");
+
+    wioClose(server);
+    closesocket(client);
+    require(pumpUntilLiveOperations(loop, 0, 500), "timer-close operations did not return to baseline");
+    wloopDestroy(&loop);
+}
+
+// ---------------------------------------------------------------------------
+// Test 11: wioFree overrides an earlier graceful-close deferral.
+// ---------------------------------------------------------------------------
+
+static void testFreeDuringDeferredClose(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "deferred-free loop create failed");
+
+    close_drain_state_t st     = {0};
+    wio_t              *server = wloopCreateTcpServer(loop, "127.0.0.1", 0, closeDrainAccept);
+    require(server != NULL, "deferred-free server create failed");
+    weventSetUserData(server, &st);
+
+    SOCKET client = connectClient(boundPort(server));
+    for (int i = 0; i < 200 && st.conn == NULL; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(st.conn != NULL, "deferred-free connection was not accepted");
+
+    (void) forceQueuedSend(st.conn, env->buffer_pool, 'F', SEND_TEST_BACKPRESSURE_BYTES);
+    require(wioClose(st.conn) == 0, "deferred-free graceful close failed");
+    require(st.conn->close == 1 && st.conn->close_timer != NULL, "deferred-free close was not initially deferred");
+    require(wioGetIocpLiveRecords(st.conn) > 0, "deferred-free test has no record keeping the io alive");
+
+    int conn_fd = wioGetFD(st.conn);
+    wioFree(st.conn);
+    // The live IOCP record checked above defers pool reuse, so st.conn remains
+    // valid until the cancellation completion is retired by the event loop.
+    require(st.closes == 1, "wioFree did not force the deferred close immediately");
+    require(st.conn->destroy == 1 && st.conn->closed == 1, "wioFree left the deferred io open");
+    require(st.conn->close_timer == NULL, "wioFree left the deferred close timer armed");
+    require(write_queue_empty(&st.conn->write_queue), "wioFree did not recycle the software write queue");
+    require(wioGetWriteBufSize(st.conn) == 0, "wioFree did not reset queued send accounting");
+    require(loop->ios.ptr[conn_fd] == NULL, "wioFree left the deferred io in the descriptor table");
+
+    wioClose(server);
+    closesocket(client);
+    require(pumpUntilLiveOperations(loop, 0, 500), "deferred-free operations did not return to baseline");
+    wloopDestroy(&loop);
+}
+
+// ---------------------------------------------------------------------------
+// Test 12: a forced WSASend callback can free its wio synchronously.
 // ---------------------------------------------------------------------------
 
 typedef struct send_free_state_s
@@ -809,7 +1132,7 @@ static void testWriteCallbackFree(env_t *env)
 }
 
 // ---------------------------------------------------------------------------
-// Test 9: destroying a loop with AcceptEx records still posted drains cleanly.
+// Test 13: destroying a loop with AcceptEx records still posted drains cleanly.
 // ---------------------------------------------------------------------------
 
 static void neverAccept(wio_t *connio)
@@ -851,6 +1174,10 @@ int main(void)
     testPendingFreeAndDescriptorReuse(&env);
     testConnectCallbackFreeAndFamilies(&env);
     testSerializedSendQueue(&env);
+    testCloseDrainsWriteQueue(&env);
+    testCloseTimeoutForcesClose(&env);
+    testCloseDeletesTimers(&env);
+    testFreeDuringDeferredClose(&env);
     testWriteCallbackFree(&env);
     testDestroyWithPending(&env);
 
