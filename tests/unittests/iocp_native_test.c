@@ -9,6 +9,8 @@
 //     freeing memory;
 //   * read-stop suppresses a receive that IOCP already dequeued;
 //   * ConnectEx and callback-driven wioFree keep the pending cursor valid;
+//   * ConnectEx accepts a socket that was already bound to a source address;
+//   * async DNS polls and reads c-ares sockets without IOCP readiness callbacks;
 //   * TCP writes use one active WSASend and preserve queued data across callbacks;
 //   * per-IO and loop-wide operation accounting returns to a clean baseline.
 //
@@ -26,6 +28,7 @@ int main(void)
 }
 #else
 
+#include "async_dns.h"
 #include "buffer_pool.h"
 #include "global_state.h"
 #include "iowatcher.h"
@@ -603,6 +606,290 @@ static void testConnectCallbackFreeAndFamilies(env_t *env)
 }
 
 // ---------------------------------------------------------------------------
+// ConnectEx must accept a socket that a caller already bound to a source IP.
+// ---------------------------------------------------------------------------
+
+typedef struct prebound_connect_state_s
+{
+    wio_t *accepted_io;
+    int    connected;
+    int    closed;
+    int    accepted;
+} prebound_connect_state_t;
+
+static void preboundConnectAccept(wio_t *connio)
+{
+    prebound_connect_state_t *st = weventGetUserdata(connio);
+    require(st->accepted_io == NULL, "pre-bound connect accepted more than one connection");
+    st->accepted_io = connio;
+    st->accepted++;
+}
+
+static void preboundConnectConnected(wio_t *io)
+{
+    prebound_connect_state_t *st = weventGetUserdata(io);
+    st->connected++;
+}
+
+static void preboundConnectClosed(wio_t *io)
+{
+    prebound_connect_state_t *st = weventGetUserdata(io);
+    st->closed++;
+}
+
+static void testConnectWithPreBoundSocket(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "pre-bound connect loop create failed");
+
+    prebound_connect_state_t st     = {0};
+    wio_t                   *server = wloopCreateTcpServer(loop, "127.0.0.1", 0, preboundConnectAccept);
+    require(server != NULL, "pre-bound connect server create failed");
+    weventSetUserData(server, &st);
+
+    SOCKET client_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    require(client_socket != INVALID_SOCKET, "pre-bound connect socket() failed");
+
+    struct sockaddr_in local;
+    memoryZero(&local, sizeof(local));
+    local.sin_family      = AF_INET;
+    local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    require(bind(client_socket, (struct sockaddr *) &local, sizeof(local)) == 0,
+            "pre-bound connect source bind failed");
+
+    wio_t *client = wioGet(loop, (int) client_socket);
+    require(client != NULL && ! wioIsClosed(client), "pre-bound connect wioGet failed");
+
+    struct sockaddr_in peer;
+    memoryZero(&peer, sizeof(peer));
+    peer.sin_family      = AF_INET;
+    peer.sin_port        = htons(boundPort(server));
+    peer.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    wioSetPeerAddr(client, (struct sockaddr *) &peer, sizeof(peer));
+    wioSetCallBackConnect(client, preboundConnectConnected);
+    wioSetCallBackClose(client, preboundConnectClosed);
+    weventSetUserData(client, &st);
+
+    require(wioConnect(client) == 0, "ConnectEx rejected an already-bound socket");
+
+    for (int i = 0; i < 500 && (st.connected == 0 || st.accepted == 0); ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(st.connected == 1, "pre-bound ConnectEx callback did not run exactly once");
+    require(st.accepted == 1, "pre-bound ConnectEx connection was not accepted exactly once");
+
+    wioClose(st.accepted_io);
+    wioClose(client);
+    wioClose(server);
+    require(st.closed == 1, "pre-bound ConnectEx client did not close exactly once");
+    require(pumpUntilLiveOperations(loop, 0, 500), "pre-bound ConnectEx operations did not drain");
+    wloopDestroy(&loop);
+}
+
+// ---------------------------------------------------------------------------
+// Async DNS must poll c-ares sockets because native IOCP has no readiness event.
+// ---------------------------------------------------------------------------
+
+typedef struct asyncdns_test_state_s
+{
+    int    callbacks;
+    int    status;
+    size_t naddrs;
+    bool   found_expected;
+} asyncdns_test_state_t;
+
+static void asyncdnsTestResolved(void *userdata, int status, const char *error, const dns_resolved_addr_t *addrs,
+                                 size_t naddrs)
+{
+    discard error;
+
+    asyncdns_test_state_t *st = userdata;
+    st->callbacks++;
+    st->status = status;
+    st->naddrs = naddrs;
+
+    for (size_t i = 0; i < naddrs; ++i)
+    {
+        if (addrs[i].family != AF_INET || addrs[i].addrlen < (socklen_t) sizeof(struct sockaddr_in))
+        {
+            continue;
+        }
+
+        const struct sockaddr_in *addr = (const struct sockaddr_in *) &addrs[i].addr;
+        if (addr->sin_addr.s_addr == htonl(0x7F000002UL))
+        {
+            st->found_expected = true;
+        }
+    }
+}
+
+static size_t dnsQuestionEnd(const unsigned char *request, size_t request_len)
+{
+    require(request_len >= 12, "fake DNS server received a truncated header");
+
+    size_t pos = 12;
+    for (;;)
+    {
+        require(pos < request_len, "fake DNS server received a truncated name");
+        unsigned int label_len = request[pos++];
+        if (label_len == 0)
+        {
+            break;
+        }
+        require((label_len & 0xC0U) == 0, "fake DNS server received a compressed question name");
+        require(label_len <= 63 && pos + label_len <= request_len, "fake DNS server received an invalid question name");
+        pos += label_len;
+    }
+
+    require(pos + 4 <= request_len, "fake DNS server received a truncated question");
+    return pos + 4;
+}
+
+static uint16_t fakeDnsReply(SOCKET server, const unsigned char *request, size_t request_len,
+                             const struct sockaddr *peer, socklen_t peer_len)
+{
+    unsigned char response[512];
+    size_t        response_len = dnsQuestionEnd(request, request_len);
+    require(response_len + 16 <= sizeof(response), "fake DNS response exceeded its buffer");
+
+    memoryCopy(response, request, response_len);
+    response[2]  = (unsigned char) (0x84U | (request[2] & 0x01U));
+    response[3]  = 0x80;
+    response[6]  = 0;
+    response[7]  = 0;
+    response[8]  = 0;
+    response[9]  = 0;
+    response[10] = 0;
+    response[11] = 0;
+
+    size_t   qtype_offset = response_len - 4;
+    uint16_t qtype        = (uint16_t) (((uint16_t) request[qtype_offset] << 8U) | request[qtype_offset + 1]);
+    if (qtype == 1)
+    {
+        response[7]                  = 1;
+        const unsigned char answer[] = {
+            0xC0,
+            0x0C, // compressed name: original question at offset 12
+            0x00,
+            0x01, // A
+            0x00,
+            0x01, // IN
+            0x00,
+            0x00,
+            0x00,
+            0x3C, // TTL 60
+            0x00,
+            0x04, // four-byte address
+            0x7F,
+            0x00,
+            0x00,
+            0x02, // 127.0.0.2
+        };
+        memoryCopy(response + response_len, answer, sizeof(answer));
+        response_len += sizeof(answer);
+    }
+    else
+    {
+        require(qtype == 28, "fake DNS server received an unexpected query type");
+    }
+
+    require(sendto(server, (const char *) response, (int) response_len, 0, peer, peer_len) == (int) response_len,
+            "fake DNS server failed to send a response");
+    return qtype;
+}
+
+static void testAsyncDnsResolvesUnderIocp(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "async DNS loop create failed");
+
+    SOCKET dns_server = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    require(dns_server != INVALID_SOCKET, "fake DNS server socket() failed");
+
+    struct sockaddr_in server_addr;
+    memoryZero(&server_addr, sizeof(server_addr));
+    server_addr.sin_family      = AF_INET;
+    server_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    require(bind(dns_server, (struct sockaddr *) &server_addr, sizeof(server_addr)) == 0,
+            "fake DNS server bind failed");
+    setSocketNonblocking(dns_server);
+
+    socklen_t server_addr_len = sizeof(server_addr);
+    require(getsockname(dns_server, (struct sockaddr *) &server_addr, &server_addr_len) == 0,
+            "fake DNS server getsockname failed");
+
+    char servers_csv[64];
+    char lookups[] = "b";
+    require(snprintf(servers_csv, sizeof(servers_csv), "127.0.0.1:%u", (unsigned int) ntohs(server_addr.sin_port)) > 0,
+            "fake DNS server address formatting failed");
+
+    asyncdns_options_t options;
+    asyncdnsOptionsSetDefaults(&options);
+    options.servers_csv = servers_csv;
+    options.lookups     = lookups;
+    options.timeout_ms  = 200;
+    options.tries       = 1;
+
+    dns_resolver_t resolver;
+    require(asyncdnsInit(&resolver, loop, &options) == ARES_SUCCESS, "async DNS resolver init failed");
+
+    asyncdns_test_state_t st = {0};
+    require(asyncdnsResolve(&resolver, "test.invalid.", NULL, SOCK_STREAM, asyncdnsTestResolved, &st) == ARES_SUCCESS,
+            "async DNS resolve submission failed");
+    require(resolver.timer != NULL && ((const wtimeout_t *) resolver.timer)->timeout <= 20U,
+            "async DNS IOCP polling timer exceeds 20 ms");
+    require(resolver.watches != NULL, "async DNS query created no c-ares watches");
+    for (dns_watch_t *watch = resolver.watches; watch != NULL; watch = watch->next)
+    {
+        require(watch->io == NULL, "async DNS created a readiness wio under native IOCP");
+    }
+
+    int a_queries    = 0;
+    int aaaa_queries = 0;
+    for (int attempt = 0; attempt < 5000 && st.callbacks == 0; ++attempt)
+    {
+        wloopProcessEvents(loop, 1);
+
+        for (;;)
+        {
+            unsigned char           request[512];
+            struct sockaddr_storage peer;
+            socklen_t               peer_len = sizeof(peer);
+            int                     nread =
+                recvfrom(dns_server, (char *) request, sizeof(request), 0, (struct sockaddr *) &peer, &peer_len);
+            if (nread == SOCKET_ERROR)
+            {
+                require(WSAGetLastError() == WSAEWOULDBLOCK, "fake DNS server recvfrom failed");
+                break;
+            }
+
+            uint16_t qtype =
+                fakeDnsReply(dns_server, request, (size_t) nread, (const struct sockaddr *) &peer, peer_len);
+            if (qtype == 1)
+            {
+                a_queries++;
+            }
+            else
+            {
+                aaaa_queries++;
+            }
+        }
+    }
+
+    require(st.callbacks == 1, "async DNS callback did not run exactly once");
+    require(st.status == ARES_SUCCESS, "async DNS callback did not report success");
+    require(st.naddrs == 1, "async DNS callback returned an unexpected address count");
+    require(st.found_expected, "async DNS callback did not return 127.0.0.2");
+    require(a_queries >= 1, "fake DNS server received no A query");
+    require(aaaa_queries >= 1, "fake DNS server received no AAAA query");
+
+    asyncdnsCleanup(&resolver);
+    closesocket(dns_server);
+    wloopDestroy(&loop);
+}
+
+// ---------------------------------------------------------------------------
 // Test 7: force the TCP send into WSASend, enqueue more writes from write_cb,
 // and require the entire serialized stream to arrive.
 // ---------------------------------------------------------------------------
@@ -1163,6 +1450,7 @@ int main(void)
     require(WSAStartup(MAKEWORD(2, 2), &wsa) == 0, "WSAStartup failed");
 
     require(strcmp(wioGetEngine(), "iocp") == 0, "native IOCP backend not selected");
+    require(ares_library_init(ARES_LIB_INIT_ALL) == ARES_SUCCESS, "c-ares library init failed");
 
     env_t env;
     envSetup(&env);
@@ -1173,6 +1461,8 @@ int main(void)
     testReadStopAfterDequeue(&env);
     testPendingFreeAndDescriptorReuse(&env);
     testConnectCallbackFreeAndFamilies(&env);
+    testConnectWithPreBoundSocket(&env);
+    testAsyncDnsResolvesUnderIocp(&env);
     testSerializedSendQueue(&env);
     testCloseDrainsWriteQueue(&env);
     testCloseTimeoutForcesClose(&env);
@@ -1183,6 +1473,7 @@ int main(void)
 
     envTeardown(&env);
 
+    ares_library_cleanup();
     WSACleanup();
     printf("iocp_native_test: all checks passed\n");
     return 0;

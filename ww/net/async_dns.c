@@ -14,12 +14,14 @@ typedef struct asyncdns_request_s
 
 enum
 {
-    kAsyncDnsQueryCacheMaxTtlSeconds      = 30 * 60,
-    kAsyncDnsInitialTimeoutMs             = 1000,
-    kAsyncDnsMaxTimeoutMs                 = 5000,
-    kAsyncDnsTries                        = 2,
-    kAsyncDnsServerFailoverRetryChance    = 10,
-    kAsyncDnsServerFailoverRetryDelayMs   = 5000
+    kAsyncDnsQueryCacheMaxTtlSeconds    = 30 * 60,
+    kAsyncDnsInitialTimeoutMs           = 1000,
+    kAsyncDnsMaxTimeoutMs               = 5000,
+    kAsyncDnsTries                      = 2,
+    kAsyncDnsServerFailoverRetryChance  = 10,
+    kAsyncDnsServerFailoverRetryDelayMs = 5000,
+    kAsyncDnsIocpPollIntervalMs         = 20,
+    kAsyncDnsMaxPolledFds               = 16
 };
 
 static void asyncdnsTimerCallback(wtimer_t *timer);
@@ -75,6 +77,7 @@ static void asyncdnsReleaseWatch(dns_resolver_t *r, dns_watch_t *watch)
     memoryFree(watch);
 }
 
+#ifndef EVENT_IOCP
 static void asyncdnsProcessFd(dns_resolver_t *r, ares_socket_t fd, unsigned int fd_events)
 {
     if (r->shutting_down || r->channel == NULL)
@@ -83,7 +86,7 @@ static void asyncdnsProcessFd(dns_resolver_t *r, ares_socket_t fd, unsigned int 
     }
 
     ares_fd_events_t ev = {.fd = fd, .events = fd_events};
-    discard ares_process_fds(r->channel, &ev, 1, ARES_PROCESS_FLAG_NONE);
+    discard          ares_process_fds(r->channel, &ev, 1, ARES_PROCESS_FLAG_NONE);
     asyncdnsRefreshTimer(r);
 }
 
@@ -112,6 +115,7 @@ static void asyncdnsIoCallback(wio_t *io)
         asyncdnsProcessFd(watch->resolver, watch->fd, fd_events);
     }
 }
+#endif
 
 static void asyncdnsSockStateCallback(void *data, ares_socket_t fd, int readable, int writable)
 {
@@ -145,6 +149,7 @@ static void asyncdnsSockStateCallback(void *data, ares_socket_t fd, int readable
 
     if (watch == NULL)
     {
+#ifndef EVENT_IOCP
         // wioReady() keeps every socket nonblocking, exactly what c-ares
         // expects; a socket it cannot switch comes back closed and rejected.
         wio_t *io = wioGet(r->loop, fd);
@@ -154,20 +159,32 @@ static void asyncdnsSockStateCallback(void *data, ares_socket_t fd, int readable
             // socket operations and times the query out
             return;
         }
+#endif
         watch  = memoryAllocate(sizeof(*watch));
         *watch = (dns_watch_t) {
-            .fd       = fd,
-            .io       = io,
+            .fd = fd,
+#ifndef EVENT_IOCP
+            .io = io,
+#else
+            // The native IOCP backend has no readiness model: a bare wioAdd()
+            // posts no overlapped operation and therefore never calls back.
+            // asyncdnsTimerCallback() polls these descriptors instead, so no wio
+            // wrapper is created. c-ares opens its own sockets nonblocking.
+            .io = NULL,
+#endif
             .events   = 0,
             .resolver = r,
             .next     = r->watches,
         };
         r->watches = watch;
 
+#ifndef EVENT_IOCP
         watch->io->priority = WEVENT_HIGH_PRIORITY;
         weventSetUserData(watch->io, watch);
+#endif
     }
 
+#ifndef EVENT_IOCP
     int add_events = io_events & ~watch->events;
     int del_events = watch->events & ~io_events;
 
@@ -186,6 +203,7 @@ static void asyncdnsSockStateCallback(void *data, ares_socket_t fd, int readable
             return;
         }
     }
+#endif
 
     watch->events = io_events;
     asyncdnsRefreshTimer(r);
@@ -233,10 +251,20 @@ static void asyncdnsRefreshTimer(dns_resolver_t *r)
     }
 
     uint32_t timeout_ms = asyncdnsTimeoutMs(r);
+#ifdef EVENT_IOCP
+    // Progress is driven by polling, so the tick must be short enough to bound
+    // response latency, and a zero c-ares timeout must not leave the resolver
+    // with no timer at all.
+    if (timeout_ms == 0 || timeout_ms > (uint32_t) kAsyncDnsIocpPollIntervalMs)
+    {
+        timeout_ms = (uint32_t) kAsyncDnsIocpPollIntervalMs;
+    }
+#else
     if (timeout_ms == 0)
     {
         return;
     }
+#endif
 
     if (r->timer == NULL)
     {
@@ -252,6 +280,39 @@ static void asyncdnsRefreshTimer(dns_resolver_t *r)
     }
 }
 
+#ifdef EVENT_IOCP
+// The native IOCP backend delivers completions, not readiness, so c-ares
+// descriptors are polled on the resolver timer. Every c-ares socket is
+// nonblocking, so a read/write on a socket that is not ready is a no-op.
+static void asyncdnsPollWatchedFds(dns_resolver_t *r)
+{
+    ares_fd_events_t events[kAsyncDnsMaxPolledFds];
+    size_t           nevents = 0;
+
+    // Snapshot first: ares_process_fds() re-enters the socket-state callback and
+    // can free watches, so the list must not be walked across that call.
+    for (dns_watch_t *watch = r->watches; watch != NULL && nevents < kAsyncDnsMaxPolledFds; watch = watch->next)
+    {
+        unsigned int fd_events = ARES_FD_EVENT_NONE;
+        if (watch->events & WW_READ)
+        {
+            fd_events |= ARES_FD_EVENT_READ;
+        }
+        if (watch->events & WW_WRITE)
+        {
+            fd_events |= ARES_FD_EVENT_WRITE;
+        }
+        if (fd_events == ARES_FD_EVENT_NONE)
+        {
+            continue;
+        }
+        events[nevents++] = (ares_fd_events_t) {.fd = watch->fd, .events = fd_events};
+    }
+
+    discard ares_process_fds(r->channel, events, nevents, ARES_PROCESS_FLAG_NONE);
+}
+#endif
+
 static void asyncdnsTimerCallback(wtimer_t *timer)
 {
     dns_resolver_t *r = weventGetUserdata(timer);
@@ -260,7 +321,11 @@ static void asyncdnsTimerCallback(wtimer_t *timer)
         return;
     }
 
+#ifdef EVENT_IOCP
+    asyncdnsPollWatchedFds(r);
+#else
     discard ares_process_fds(r->channel, NULL, 0, ARES_PROCESS_FLAG_NONE);
+#endif
     asyncdnsRefreshTimer(r);
 }
 

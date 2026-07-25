@@ -1005,27 +1005,42 @@ int wioConnect(wio_t *io)
         goto error;
     }
 
-    // ConnectEx requires a prior bind to a zero-port wildcard of the same family.
-    // A zeroed sockaddr already encodes the wildcard address (INADDR_ANY /
-    // in6addr_any are all-zero) and port 0, so only the family is set explicitly.
-    sockaddr_u local;
-    socklen_t  local_len;
-    memoryZero(&local, sizeof(local));
-    if (family == AF_INET)
+    // ConnectEx requires the socket to be bound. A caller may already have bound
+    // it to a specific source address (TcpConnector source-ip, or the Windows
+    // interface-name fallback), and Windows rejects a second bind() with
+    // WSAEINVAL. That existing bind already satisfies the prerequisite.
+    sockaddr_u bound;
+    socklen_t  bound_len = sizeof(bound);
+    if (getsockname(io->fd, &bound.sa, &bound_len) != 0)
     {
-        local.sin.sin_family = AF_INET;
-        local_len            = sizeof(struct sockaddr_in);
-    }
-    else
-    {
-        local.sin6.sin6_family = AF_INET6;
-        local_len              = sizeof(struct sockaddr_in6);
-    }
-    if (bind(io->fd, &local.sa, local_len) < 0)
-    {
-        connect_error = socketERRNO();
-        printError("syscall return error , call: bind , value: %d\n", connect_error);
-        goto error;
+        // Not bound yet. A zeroed sockaddr already encodes the wildcard address
+        // (INADDR_ANY / in6addr_any are all-zero) and port 0, so only the family
+        // is set explicitly.
+        sockaddr_u local;
+        socklen_t  local_len;
+        memoryZero(&local, sizeof(local));
+        if (family == AF_INET)
+        {
+            local.sin.sin_family = AF_INET;
+            local_len            = sizeof(struct sockaddr_in);
+        }
+        else
+        {
+            local.sin6.sin6_family = AF_INET6;
+            local_len              = sizeof(struct sockaddr_in6);
+        }
+        if (bind(io->fd, &local.sa, local_len) < 0)
+        {
+            int bind_error = socketERRNO();
+            // WSAEINVAL here means the socket was already bound after all;
+            // anything else is a real failure.
+            if (bind_error != WSAEINVAL)
+            {
+                connect_error = bind_error;
+                printError("syscall return error , call: bind , value: %d\n", connect_error);
+                goto error;
+            }
+        }
     }
 
     LPFN_CONNECTEX ConnectEx     = NULL;

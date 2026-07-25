@@ -39,6 +39,9 @@ int iowatcherCleanUp(wloop_t *loop)
     return 0;
 }
 
+// IOCP delivers completions for posted overlapped operations, not readiness.
+// Associating a bare descriptor without posting an operation will never produce
+// a callback; callers that need readiness must poll it themselves.
 int iowatcherAddEvent(wloop_t *loop, int fd, int events)
 {
     if (loop->iowatcher == NULL)
