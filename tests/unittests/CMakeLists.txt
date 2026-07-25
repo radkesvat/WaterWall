@@ -268,6 +268,24 @@ if(TARGET ww)
       "unit;net;capture;nfqueue"
     )
 
+    # Generic deadline-aware command supervisor. wproc.c is compiled directly so
+    # the linker wrap still intercepts the capture-buffer allocation it performs.
+    add_executable(wproc_deadline_test
+      wproc_deadline_test.c
+      ${CMAKE_SOURCE_DIR}/ww/base/wproc.c
+    )
+    set_property(TARGET wproc_deadline_test PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+    target_compile_options(wproc_deadline_test PRIVATE "-fno-lto")
+    target_link_options(wproc_deadline_test PRIVATE "-Wl,--wrap=memoryAllocate")
+    target_link_libraries(wproc_deadline_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests wproc_deadline_test)
+
+    add_waterwall_unit_test(
+      waterwall.wproc_deadline_unit
+      wproc_deadline_test
+      "unit;base;process;deadline"
+    )
+
     # Wraps send/sendto for a deterministic EAGAIN/EINTR/ENOBUFS seam.
     add_executable(udp_datagram_write_test udp_datagram_write_test.c)
     target_link_libraries(udp_datagram_write_test PRIVATE ww)

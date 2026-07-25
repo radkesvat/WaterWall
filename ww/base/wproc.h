@@ -165,7 +165,7 @@ static inline void execCmdCloseInheritedFds(long open_max)
  */
 static cmd_result_t execCmd(const char *str)
 {
-    cmd_result_t result = (cmd_result_t){{0}, -1};
+    cmd_result_t result = (cmd_result_t) {{0}, -1};
 #if defined(OS_UNIX)
     int output_pipe[2];
     if (pipe(output_pipe) != 0)
@@ -257,7 +257,7 @@ static cmd_result_t execCmd(const char *str)
         printf("Failed to run command \"%s\"\n", str);
         return result;
     }
-    int read = fscanf(fp, "%2047s", result.output);
+    int     read = fscanf(fp, "%2047s", result.output);
     discard read;
     result.exit_code = _pclose(fp);
 #endif
@@ -282,12 +282,81 @@ static bool checkCommandAvailable(const char *app)
 }
 
 /**
-* @brief Attempts to elevate the privileges of the current process.
-*
-* @param app_name The executable name of the application.
-* @param fail_msg The error message to display if elevation fails.
-* @return bool true on success, false otherwise.
-*/
+ * @brief Captured result of a deadline-supervised command.
+ *
+ * `output` is dynamically owned by the result and, when non-NULL, is always
+ * NUL-terminated; `output_len` excludes that NUL. Every result handed back by
+ * procRunArgvWithDeadline() must be released exactly once with
+ * procCommandResultDrop(), including on failure.
+ */
+typedef struct proc_command_result_s
+{
+    char  *output;
+    size_t output_len;
+    /** `-1` until the child is reaped; then WEXITSTATUS, or 128 + signal. */
+    int  exit_code;
+    bool output_too_large;
+    /** Pipe/fork/fcntl/poll/read/allocation failure on the parent side. */
+    bool spawn_failed;
+    /** True only when the monotonic command deadline expired. */
+    bool timed_out;
+} proc_command_result_t;
+
+/**
+ * @brief Policy knobs for procRunArgvWithDeadline().
+ *
+ * `timeout_ms` is the monotonic command deadline covering both stdout draining
+ * and child reaping; zero means an immediate deadline, never "wait forever".
+ * `terminate_grace_ms` is additional cleanup time granted *after* that deadline:
+ * the child process group is sent SIGTERM, observed for this long, then sent
+ * SIGKILL. The total wall-clock call duration is therefore the command deadline
+ * plus, on failure, up to the termination grace and normal scheduler overhead.
+ * `max_output_bytes` is a hard stdout byte limit and must be nonzero; it stops
+ * an always-readable producer from keeping the drain loop busy indefinitely.
+ */
+typedef struct proc_command_options_s
+{
+    uint32_t timeout_ms;
+    uint32_t terminate_grace_ms;
+    size_t   max_output_bytes;
+} proc_command_options_t;
+
+/**
+ * @brief Run `file` with `argv` directly (no shell) under a parent-enforced deadline.
+ *
+ * `argv[0]` is supplied by the caller and `argv` must be NULL-terminated.
+ * Execution uses `execvp()`, so the current `PATH` still resolves bare tool
+ * names. Only stdout is captured; stderr stays inherited unless the caller
+ * explicitly invokes `/bin/sh -c` with its own redirection. An `execvp()`
+ * failure surfaces as a child exit status of `127`, not as a spawn failure.
+ *
+ * The child is placed in its own process group so a timeout terminates the
+ * command and every descendant together. On any failure the group is signalled
+ * and the direct child is reaped before returning; no post-fork return path
+ * leaves a known live or zombie direct child behind.
+ *
+ * @param file    Executable to run (resolved through `PATH` by `execvp`).
+ * @param argv    NULL-terminated argument vector, including `argv[0]`.
+ * @param options Deadline, termination grace, and output cap. Required.
+ * @param out     Result to fill. Required; always safe to drop afterwards.
+ * @return `true` only after pipe EOF and direct-child reaping with a clean zero
+ *         exit and none of `spawn_failed`, `timed_out`, or `output_too_large`.
+ */
+bool procRunArgvWithDeadline(const char *file, const char *const argv[], const proc_command_options_t *options,
+                             proc_command_result_t *out);
+
+/**
+ * @brief Release a command result. Accepts NULL, zeroes the result, idempotent.
+ */
+void procCommandResultDrop(proc_command_result_t *out);
+
+/**
+ * @brief Attempts to elevate the privileges of the current process.
+ *
+ * @param app_name The executable name of the application.
+ * @param fail_msg The error message to display if elevation fails.
+ * @return bool true on success, false otherwise.
+ */
 bool elevatePrivileges(const char *app_name, char *fail_msg);
 
 /**
