@@ -242,7 +242,9 @@ users_update_result_t usersAddTrafficByIdentifier(users_t *users, uint64_t id, u
                                                   uint64_t download_bytes);
 /*
  * Moves process-local runtime enforcement state from matching users in src to
- * dest, keyed by durable id.
+ * dest, keyed by durable id. The function acquires both database write locks
+ * and each matched pair's stats_lock in deterministic address order; callers
+ * must not hold any of those locks.
  */
 bool                  usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src);
 users_update_result_t usersSetFirstUsageIfMissingBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE],

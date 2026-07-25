@@ -4346,16 +4346,27 @@ users_update_result_t usersAddTrafficByIdentifier(users_t *users, uint64_t id, u
     return user != NULL ? kUsersUpdateResultOk : kUsersUpdateResultUserNotFound;
 }
 
-static void usersClearRuntimeStateLocked(user_t *user)
+static void usersMoveRuntimeStateWithStatsLocks(user_t *dest, user_t *src)
 {
-    /* Delegated to user.c so the adaptive IP index is released exactly once. */
-    userRuntimeStateClear(&user->runtime);
-}
+    if (dest == src)
+    {
+        return;
+    }
 
-static void usersMoveRuntimeStateLocked(user_t *dest, user_t *src)
-{
-    /* Delegated to user.c so the adaptive IP index moves without a double free. */
+    user_t *first  = (uintptr_t) dest < (uintptr_t) src ? dest : src;
+    user_t *second = first == dest ? src : dest;
+
+    /*
+     * The caller's users_t write locks pin both user objects and serialize the
+     * database wrapper APIs, but direct userTryAdmitConnection() and
+     * userReleaseConnection() calls synchronize only through stats_lock. Lock
+     * both users in address order before moving/freeing their runtime buffers.
+     */
+    rwlockWriteLock(&first->stats_lock);
+    rwlockWriteLock(&second->stats_lock);
     userRuntimeStateMove(&dest->runtime, &src->runtime);
+    rwlockWriteUnlock(&second->stats_lock);
+    rwlockWriteUnlock(&first->stats_lock);
 }
 
 bool usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src)
@@ -4389,7 +4400,7 @@ bool usersMigrateRuntimeStateByIdentifier(users_t *dest, users_t *src)
             continue;
         }
 
-        usersMoveRuntimeStateLocked(new_user, old_user);
+        usersMoveRuntimeStateWithStatsLocks(new_user, old_user);
     }
 
     rwlockWriteUnlock(&second->lock);

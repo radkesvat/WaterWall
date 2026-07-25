@@ -1,6 +1,7 @@
 #include "loggers/internal_logger.h"
 #include "objects/users.h"
 #include "utils/json_helpers.h"
+#include "wthread.h"
 
 #if defined(WCRYPTO_TEST_LINKER_WRAP)
 typedef enum crypto_failure_injection_e
@@ -68,7 +69,9 @@ wcrypto_status_t __wrap_wCryptoX25519(unsigned char       out[WCRYPTO_X25519_KEY
 
 enum
 {
-    kTestLogCaptureCapacity = 4096
+    kTestLogCaptureCapacity          = 4096,
+    kRuntimeMigrationLockProbeMs     = 200,
+    kRuntimeMigrationLockPollDelayMs = 1
 };
 
 static char   test_log_capture[kTestLogCaptureCapacity];
@@ -906,6 +909,100 @@ static void testRuntimeMigrationPrefersIdentifierAcrossPasswordChange(void)
     usersDestroy(&old_users);
 }
 
+typedef struct runtime_migration_thread_context_s
+{
+    users_t    *dest;
+    users_t    *src;
+    atomic_bool started;
+    atomic_bool finished;
+    bool        migrated;
+} runtime_migration_thread_context_t;
+
+static WTHREAD_ROUTINE(runtimeMigrationThread)
+{
+    runtime_migration_thread_context_t *context = userdata;
+
+    atomic_store(&context->started, true);
+    context->migrated = usersMigrateRuntimeStateByIdentifier(context->dest, context->src);
+    atomic_store(&context->finished, true);
+    return 0;
+}
+
+static void requireRuntimeMigrationWaitsForStatsLock(users_t *dest, users_t *src, user_t *locked_user,
+                                                     const char *blocked_message)
+{
+    runtime_migration_thread_context_t context = {
+        .dest     = dest,
+        .src      = src,
+        .migrated = false,
+    };
+    atomic_init(&context.started, false);
+    atomic_init(&context.finished, false);
+
+    /*
+     * A users_t write lock alone cannot synchronize direct user runtime APIs.
+     * Holding either user's stats_lock must therefore stop the state move.
+     */
+    rwlockWriteLock(&locked_user->stats_lock);
+    wthread_t migration_thread = threadCreate(runtimeMigrationThread, &context);
+    while (! atomic_load(&context.started))
+    {
+        wwSleepMS(kRuntimeMigrationLockPollDelayMs);
+    }
+    wwSleepMS(kRuntimeMigrationLockProbeMs);
+    require(! atomic_load(&context.finished), blocked_message);
+    rwlockWriteUnlock(&locked_user->stats_lock);
+
+    require(threadJoin(migration_thread) == 0, "failed to join runtime migration thread");
+    require(atomic_load(&context.finished), "runtime migration thread did not finish after releasing stats_lock");
+    require(context.migrated, "runtime migration failed after releasing stats_lock");
+}
+
+static void testRuntimeMigrationHonorsPerUserStatsLocks(void)
+{
+    users_t        old_users;
+    users_t        new_users;
+    user_t         source_user;
+    const uint64_t user_id = 9050;
+
+    memoryZero(&old_users, sizeof(old_users));
+    memoryZero(&new_users, sizeof(new_users));
+    memoryZero(&source_user, sizeof(source_user));
+
+    require(usersCreate(&old_users), "failed to create old locking-test users table");
+    require(usersCreate(&new_users), "failed to create new locking-test users table");
+    require(userCreate(&source_user, "runtime-migration-locking-password"),
+            "failed to create locking-test source user");
+    userSetId(&source_user, user_id);
+    source_user.limit.cons_out = 2;
+    require(usersAddUser(&old_users, &source_user), "failed to add old locking-test user");
+    require(usersAddUser(&new_users, &source_user), "failed to add new locking-test user");
+    userDestroy(&source_user);
+
+    user_ip_key_t ip = testIp(10, 5, 0, 1);
+    require(usersTryAdmitConnectionByIdentifier(&old_users, user_id, &ip, 1234) == kUserAdmissionOk,
+            "old locking-test user did not admit a connection");
+
+    user_t *old_user = usersLookupByIdentifier(&old_users, user_id);
+    require(old_user != NULL, "failed to look up old locking-test user");
+
+    requireRuntimeMigrationWaitsForStatsLock(
+        &new_users, &old_users, old_user, "runtime migration ignored the source user's stats_lock");
+    require(old_user->runtime.active_cons_out == 0, "source runtime state remained after locking-test migration");
+
+    /*
+     * Move the state back while locking the same object in its destination
+     * role, proving that migration synchronizes both matched users.
+     */
+    requireRuntimeMigrationWaitsForStatsLock(
+        &old_users, &new_users, old_user, "runtime migration ignored the destination user's stats_lock");
+    require(old_user->runtime.active_cons_out == 1, "destination runtime state was not restored after locking test");
+
+    usersReleaseConnectionByIdentifier(&old_users, user_id, &ip);
+    usersDestroy(&new_users);
+    usersDestroy(&old_users);
+}
+
 static void testIdentifierLookupSurvivesPasswordChange(void)
 {
     users_t        users;
@@ -1205,6 +1302,7 @@ int main(void)
     testWireGuardAllowedIpsJsonValidationAndLookup();
     testRuntimeMigrationPreservesActiveIpByIdentifier();
     testRuntimeMigrationPrefersIdentifierAcrossPasswordChange();
+    testRuntimeMigrationHonorsPerUserStatsLocks();
     testIdentifierLookupSurvivesPasswordChange();
     testFirstUsageSetIfMissingKeepsServerValue();
     testClientViewExpiryOverridesServerTimeFields();
