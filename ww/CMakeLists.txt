@@ -1197,6 +1197,12 @@ set(MI_SECURE OFF)
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/mimalloc)
 
+if(MINGW)
+    # mingw-w64 omits this WinError.h constant, which the Windows mimalloc
+    # backend uses to classify retryable virtual-memory allocation failures.
+    target_compile_definitions(mimalloc-static PRIVATE ERROR_COMMITMENT_MINIMUM=635L)
+endif()
+
 if(NOT MSVC)        
     target_compile_options(mimalloc-static PRIVATE -Wno-attributes -Wno-array-bounds)
     if(MI_USE_CXX)

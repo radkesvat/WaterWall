@@ -4,6 +4,12 @@
 #include "loggers/internal_logger.h"
 #include "wsocket.h"
 
+#if defined(OS_WIN) && ! defined(IP_UNICAST_IF)
+// The MSVC Windows SDK defines both unicast-interface socket options as 31,
+// while mingw-w64 currently exposes only IPV6_UNICAST_IF.
+#define IP_UNICAST_IF 31
+#endif
+
 /*
  * Synchronization note: refs and pin fields are plain globals because node
  * lifecycle set/clear is currently serialized, and fields are immutable while a
