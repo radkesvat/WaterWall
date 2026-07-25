@@ -672,23 +672,30 @@ thread_local wtimer_t *_loop_debug_timer = NULL;
 int wloopRun(wloop_t *loop)
 {
     if (loop == NULL)
-        return -1;
+        return kWLoopRunErrorNull;
     if (loop->status == WLOOP_STATUS_RUNNING)
-        return -2;
+        return kWLoopRunErrorAlreadyRunning;
 
     loop->status = WLOOP_STATUS_RUNNING;
     loop->pid    = getTID();
     // loop->tid = getTID();  tid is taken at wloop_create
     // wlogd("wloopRun tid=%ld", loop->tid);
 
+    int result = kWLoopRunOk;
     if (loop->intern_nevents == 0)
     {
+        int eventfds_result = 0;
         mutexLock(&loop->custom_events_mutex);
         if (loop->eventfds[EVENTFDS_WRITE_INDEX] == -1)
         {
-            wloopCreateEventFDS(loop);
+            eventfds_result = wloopCreateEventFDS(loop);
         }
         mutexUnlock(&loop->custom_events_mutex);
+        if (eventfds_result != 0)
+        {
+            result = kWLoopRunErrorWakeupInit;
+            goto exit_loop;
+        }
 
 #ifdef DEBUG
         _loop_debug_timer = wtimerAdd(loop, wloopStatTimerCallBack, WLOOP_STAT_TIMEOUT, INFINITE);
@@ -716,6 +723,7 @@ int wloopRun(wloop_t *loop)
         }
     }
 
+exit_loop:
     loop->status     = WLOOP_STATUS_STOP;
     loop->end_hrtime = getHRTimeUs();
 
@@ -723,7 +731,7 @@ int wloopRun(wloop_t *loop)
     {
         wloopDestroy(&loop);
     }
-    return 0;
+    return result;
 }
 
 int wloopWakeup(wloop_t *loop)

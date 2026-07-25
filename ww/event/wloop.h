@@ -38,6 +38,14 @@ typedef enum
     WLOOP_STATUS_DESTROY
 } wloop_status_e;
 
+enum
+{
+    kWLoopRunOk                  = 0,
+    kWLoopRunErrorNull           = -1,
+    kWLoopRunErrorAlreadyRunning = -2,
+    kWLoopRunErrorWakeupInit     = -3
+};
+
 typedef enum
 {
     WEVENT_TYPE_NONE    = 0,

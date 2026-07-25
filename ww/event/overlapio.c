@@ -1075,6 +1075,7 @@ int wioRead(wio_t *io)
     int add_error = wioAdd(io, wio_handle_events, WW_READ);
     if (UNLIKELY(add_error != 0))
     {
+        wioClose(io);
         return add_error;
     }
 

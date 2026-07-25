@@ -681,6 +681,11 @@ void signalmanagerStart(void)
 
     // Worker 0 watches the read end at high priority and runs the real shutdown.
     wio_t *io = wRead(loop, signalmanager_gstate->shutdown_pipe[SHUTDOWN_PIPE_READ], worker0ShutdownPipeReadCB);
+    if (io == NULL)
+    {
+        printError("Failed to register shutdown self-pipe with worker 0 event loop\n");
+        _Exit(EXIT_FAILURE);
+    }
     assert(io != NULL);
     weventSetPriority(io, WEVENT_HIGH_PRIORITY);
 
