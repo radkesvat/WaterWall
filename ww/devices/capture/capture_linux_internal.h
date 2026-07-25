@@ -2,6 +2,7 @@
 
 #include "shiftbuffer.h"
 #include "wlibc.h"
+#include "wthread.h"
 
 enum
 {
@@ -50,5 +51,24 @@ typedef enum capturedevice_command_status_e
 capturedevice_command_status_t capturedeviceRunIptablesQueueRule(const char *operation, const char *cidr,
                                                                  uint32_t queue_number);
 void                           capturedeviceApplySysctls(void);
+
+// Stop-pipe lifecycle seams. The pipe lives for the whole lifetime of a
+// capture_device_t, so both BringUp and BringDown must be able to assert that it
+// contains no unread wake token. These are exposed only so the focused lifecycle
+// unit test can drive them without a real NFQUEUE socket or root.
+struct capture_device_s;
+
+// Make the stop pipe's read end nonblocking, preserving its other flags.
+bool capturedeviceMakeStopPipeNonblocking(int read_fd);
+
+// Read the stop pipe until empty. Retries on EINTR, treats EAGAIN/EWOULDBLOCK as
+// successful completion, and reports EOF or any other error as a failure. Never
+// blocks.
+bool capturedeviceDrainStopPipe(struct capture_device_s *cdev);
+
+// The production NFQUEUE reader. Exposed so the lifecycle test can prove that its
+// poll() is bounded and that `running == false` alone terminates it, which is
+// what keeps BringDown's join from deadlocking when the wake write fails.
+WTHREAD_ROUTINE(captureLinuxReadRoutine);
 
 #endif

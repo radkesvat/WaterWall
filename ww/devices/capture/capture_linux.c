@@ -40,7 +40,15 @@ enum
     kCaptureIptablesLockWaitSeconds = 5,
     kCaptureCommandTimeoutMs        = 7000,
     kCaptureCommandTerminateGraceMs = 250,
-    kCaptureCommandMaxOutputBytes   = 64 * 1024
+    kCaptureCommandMaxOutputBytes   = 64 * 1024,
+
+    // The stop pipe is the fast way out of poll(), but it is not a guaranteed
+    // one: BringDown's wake write can fail hard, and then no token ever arrives.
+    // A bounded poll makes `running == false` an independent exit condition, so
+    // BringDown's join always completes and its failure becomes observable
+    // instead of hanging. An idle capture device therefore wakes twice a second,
+    // and a lost wake token costs at most one timeout of shutdown latency.
+    kCaptureReaderPollTimeoutMs = 500
 };
 
 static_assert(SMALL_BUFFER_SIZE >= kNetfilterReadBufferSize, "Linux capture requires 4096-byte small buffers");
@@ -81,6 +89,93 @@ static const capturedevice_sysctl_setting_t sysctl_settings[] = {{"net.core.rmem
                                                                  {"net.ipv4.tcp_tw_reuse=1"},
                                                                  {"net.ipv4.tcp_fin_timeout=15"},
                                                                  {"net.ipv4.ip_local_port_range=10000 65535"}};
+
+// -----------------------------------------------------------------------------
+// Stop-pipe helpers
+// -----------------------------------------------------------------------------
+//
+// The stop pipe lives for the whole lifetime of capture_device_t, so a wake
+// token left behind by one BringDown would be consumed by the *next* BringUp's
+// reader, which would then exit immediately while the device still reported
+// success. Both lifecycle boundaries therefore enforce the same invariant: the
+// pipe is empty. The read end is nonblocking so draining can never block the
+// caller, and the write end stays blocking because the serialized
+// BringUp/BringDown contract keeps at most one small token outstanding.
+
+// Make the stop pipe's read end nonblocking while preserving its other flags.
+bool capturedeviceMakeStopPipeNonblocking(int read_fd)
+{
+    int flags = fcntl(read_fd, F_GETFL, 0);
+    if (flags < 0)
+    {
+        LOGE("CaptureDevice: failed to read stop pipe flags: %s", strerror(errno));
+        return false;
+    }
+    if ((flags & O_NONBLOCK) != 0)
+    {
+        return true;
+    }
+    if (fcntl(read_fd, F_SETFL, flags | O_NONBLOCK) < 0)
+    {
+        LOGE("CaptureDevice: failed to set the stop pipe nonblocking: %s", strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+// Read the stop pipe until it is empty. Never blocks: the read end is
+// nonblocking, so EAGAIN/EWOULDBLOCK is the normal successful terminator. EOF
+// means the write end is gone, which is a lifecycle failure rather than an empty
+// pipe, and is reported as such.
+bool capturedeviceDrainStopPipe(capture_device_t *cdev)
+{
+    for (;;)
+    {
+        char    drain_buffer[64];
+        ssize_t drained = read(cdev->linux_pipe_fds[0], drain_buffer, sizeof(drain_buffer));
+        if (drained > 0)
+        {
+            continue;
+        }
+        if (drained == 0)
+        {
+            LOGE("CaptureDevice: stop pipe reported EOF while draining; its write end is gone");
+            return false;
+        }
+        if (errno == EINTR)
+        {
+            continue;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            return true;
+        }
+        LOGE("CaptureDevice: failed to drain the stop pipe: %d (%s)", errno, strerror(errno));
+        return false;
+    }
+}
+
+// Write exactly one wake token so a reader blocked in poll() leaves its loop.
+static bool capturedeviceWriteStopToken(capture_device_t *cdev)
+{
+    for (;;)
+    {
+        ssize_t written = write(cdev->linux_pipe_fds[1], "x", 1);
+        if (written == 1)
+        {
+            return true;
+        }
+        if (written < 0 && errno == EINTR)
+        {
+            continue;
+        }
+        LOGE("CaptureDevice: failed to wake the reader through the stop pipe: wrote %zd, errno %d (%s)",
+             written,
+             errno,
+             strerror(errno));
+        return false;
+    }
+}
 
 static uint8_t capturedeviceIpv4MaskPrefixLength(const ip_addr_t *mask)
 {
@@ -446,7 +541,8 @@ static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa
     memoryZero(&nl_addr, sizeof(nl_addr));
     nl_addr.nl_family = AF_NETLINK;
 
-    ssize_t send_result = sendto(netfilter_socket, buff, sizeof(buff), 0, (struct sockaddr *) &nl_addr, sizeof(nl_addr));
+    ssize_t send_result =
+        sendto(netfilter_socket, buff, sizeof(buff), 0, (struct sockaddr *) &nl_addr, sizeof(nl_addr));
     if (send_result != (ssize_t) sizeof(buff))
     {
         if (send_result >= 0)
@@ -572,8 +668,8 @@ netfilter_packet_parse_result_t captureLinuxNetfilterParsePacket(uint8_t *messag
         return kNetfilterPacketParseMalformed;
     }
 
-    struct nfattr *nl_attr      = NFM_NFA(NLMSG_DATA(nl_hdr));
-    int            nl_attr_size = (int) ((size_t) nl_hdr->nlmsg_len - attr_offset);
+    struct nfattr *nl_attr       = NFM_NFA(NLMSG_DATA(nl_hdr));
+    int            nl_attr_size  = (int) ((size_t) nl_hdr->nlmsg_len - attr_offset);
     bool           found_payload = false;
 
     while (nl_attr_size > 0)
@@ -602,8 +698,8 @@ netfilter_packet_parse_result_t captureLinuxNetfilterParsePacket(uint8_t *messag
             {
                 return kNetfilterPacketParseMalformed;
             }
-            found_payload       = true;
-            view->payload       = (const uint8_t *) NFA_DATA(nl_attr);
+            found_payload        = true;
+            view->payload        = (const uint8_t *) NFA_DATA(nl_attr);
             view->payload_length = (uint32_t) nl_attr_payload;
             break;
         case NFQA_PACKET_HDR:
@@ -620,8 +716,7 @@ netfilter_packet_parse_result_t captureLinuxNetfilterParsePacket(uint8_t *messag
                        &((const struct nfqnl_msg_packet_hdr *) NFA_DATA(nl_attr))->packet_id,
                        sizeof(view->packet_id));
             break;
-        case NFQA_CAP_LEN:
-        {
+        case NFQA_CAP_LEN: {
             uint32_t raw_capture_length = 0;
             if (view->has_capture_length)
             {
@@ -687,12 +782,12 @@ bool captureLinuxNetfilterTryReadPacketIdFromPrefix(const uint8_t *message, size
         return false;
     }
 
-    size_t nlmsg_limit = (size_t) nl_hdr->nlmsg_len;
-    size_t prefix_limit = copied_len < nlmsg_limit ? copied_len : nlmsg_limit;
+    size_t nlmsg_limit         = (size_t) nl_hdr->nlmsg_len;
+    size_t prefix_limit        = copied_len < nlmsg_limit ? copied_len : nlmsg_limit;
     size_t attr_offset_current = attr_offset;
     while (prefix_limit - attr_offset_current >= sizeof(struct nfattr))
     {
-        const struct nfattr *nl_attr = (const struct nfattr *) (const void *) (message + attr_offset_current);
+        const struct nfattr *nl_attr  = (const struct nfattr *) (const void *) (message + attr_offset_current);
         size_t               attr_len = (size_t) nl_attr->nfa_len;
         if (attr_len < (size_t) NFA_LENGTH(0))
         {
@@ -709,9 +804,8 @@ bool captureLinuxNetfilterTryReadPacketIdFromPrefix(const uint8_t *message, size
             {
                 return false;
             }
-            memoryCopy(packet_id,
-                       &((const struct nfqnl_msg_packet_hdr *) NFA_DATA(nl_attr))->packet_id,
-                       sizeof(*packet_id));
+            memoryCopy(
+                packet_id, &((const struct nfqnl_msg_packet_hdr *) NFA_DATA(nl_attr))->packet_id, sizeof(*packet_id));
             return true;
         }
 
@@ -734,8 +828,8 @@ void captureLinuxNetfilterExposePacket(sbuf_t *buff, const uint8_t *message, con
     assert(view->payload != NULL);
     assert(view->payload >= message);
 
-    uintptr_t payload_addr = (uintptr_t) view->payload;
-    uintptr_t message_addr = (uintptr_t) message;
+    uintptr_t payload_addr   = (uintptr_t) view->payload;
+    uintptr_t message_addr   = (uintptr_t) message;
     uint32_t  payload_offset = (uint32_t) (payload_addr - message_addr);
 
     buff->curpos += payload_offset;
@@ -766,13 +860,10 @@ static netfilter_packet_result_t netfilterGetPacket(int netfilter_socket, uint16
     // Read a message from netlink (non-blocking)
     struct sockaddr_nl nl_addr;
     memoryZero(&nl_addr, sizeof(nl_addr));
-    uint8_t       *message = sbufGetMutablePtr(buff);
-    struct iovec   iov     = {.iov_base = message, .iov_len = kNetfilterReadBufferSize};
-    struct msghdr  msg     = {.msg_name    = &nl_addr,
-                              .msg_namelen = sizeof(nl_addr),
-                              .msg_iov     = &iov,
-                              .msg_iovlen  = 1};
-    ssize_t        result  = recvmsg(netfilter_socket, &msg, MSG_DONTWAIT | MSG_TRUNC);
+    uint8_t      *message = sbufGetMutablePtr(buff);
+    struct iovec  iov     = {.iov_base = message, .iov_len = kNetfilterReadBufferSize};
+    struct msghdr msg     = {.msg_name = &nl_addr, .msg_namelen = sizeof(nl_addr), .msg_iov = &iov, .msg_iovlen = 1};
+    ssize_t       result  = recvmsg(netfilter_socket, &msg, MSG_DONTWAIT | MSG_TRUNC);
 
     if (result < 0)
     {
@@ -794,8 +885,8 @@ static netfilter_packet_result_t netfilterGetPacket(int netfilter_socket, uint16
         return kNetfilterPacketError;
     }
 
-    size_t copied_len = result > (ssize_t) kNetfilterReadBufferSize ? (size_t) kNetfilterReadBufferSize :
-                                                                      (size_t) result;
+    size_t copied_len =
+        result > (ssize_t) kNetfilterReadBufferSize ? (size_t) kNetfilterReadBufferSize : (size_t) result;
     if ((msg.msg_flags & MSG_TRUNC) != 0 || result > (ssize_t) kNetfilterReadBufferSize)
     {
         uint32_t packet_id = 0;
@@ -815,8 +906,7 @@ static netfilter_packet_result_t netfilterGetPacket(int netfilter_socket, uint16
     sbufSetLength(buff, (uint32_t) copied_len);
 
     netfilter_packet_view_t         packet_view;
-    netfilter_packet_parse_result_t parse_result =
-        captureLinuxNetfilterParsePacket(message, copied_len, &packet_view);
+    netfilter_packet_parse_result_t parse_result = captureLinuxNetfilterParsePacket(message, copied_len, &packet_view);
     if (parse_result == kNetfilterPacketParseMalformed)
     {
         if (! packet_view.has_packet_id)
@@ -885,7 +975,7 @@ static void capturedeviceReportPendingNetfilterDiscards(capture_device_t *cdev)
     cdev->netfilter_discarded_suppressed = 0;
 }
 
-static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
+WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
 {
     capture_device_t *cdev = userdata;
 
@@ -897,7 +987,7 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
     {
-        int ret = poll(fds, 2, -1);
+        int ret = poll(fds, 2, kCaptureReaderPollTimeoutMs);
         if (ret < 0)
         {
             if (errno == EINTR)
@@ -910,9 +1000,10 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
         if (ret == 0)
         {
-            // ret == 0, which shouldn't happen with infinite timeout
-            LOGF("CaptureDevice: poll returned 0 with infinite timeout");
-            exit(1);
+            // Bounded-timeout tick. This is the guaranteed exit path: if the wake
+            // token could not be written, `running == false` is still observed
+            // here, so BringDown's join cannot block forever.
+            continue;
         }
 
         if (fds[1].revents & POLLIN)
@@ -948,8 +1039,8 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
             for (uint32_t i = 0; i < RAM_PROFILE && queued_count < kMaxReadDistributeQueueSize; ++i)
             {
                 bool leave_drain_loop = false;
-                bufs[queued_count] = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
-                bufs[queued_count] = sbufReserveSpace(bufs[queued_count], kNetfilterReadBufferSize);
+                bufs[queued_count]    = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
+                bufs[queued_count]    = sbufReserveSpace(bufs[queued_count], kNetfilterReadBufferSize);
 
                 netfilter_packet_result_t packet_result =
                     netfilterGetPacket(cdev->socket, cdev->queue_number, bufs[queued_count]);
@@ -999,8 +1090,7 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
                     return 0;
 
                 case kNetfilterPacketError:
-                default:
-                {
+                default: {
                     int saved_errno = errno;
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     if (queued_count > 0)
@@ -1046,6 +1136,17 @@ bool caputredeviceBringUp(capture_device_t *cdev)
 {
     assert(! cdev->up);
 
+    // Defensive drain before anything observable changes. Every successful
+    // BringDown already leaves the pipe empty, but an abnormal reader exit (or a
+    // device object brought down by an older build) could not. A stale token here
+    // would make the new reader exit immediately while BringUp reported success,
+    // so refuse to come up rather than start a reader that is already doomed.
+    if (! capturedeviceDrainStopPipe(cdev))
+    {
+        LOGE("CaptureDevice: refusing to bring up %s because its stop pipe could not be drained", cdev->name);
+        return false;
+    }
+
     for (uint32_t i = 0; i < cdev->capture_range_count; ++i)
     {
         if (capturedeviceRunIptablesQueueRule("-I", cdev->capture_cidrs[i], cdev->queue_number) !=
@@ -1083,18 +1184,27 @@ bool caputredeviceBringDown(capture_device_t *cdev)
 {
     assert(cdev->up);
 
-    bool result = true;
-
     cdev->running = false;
     cdev->up      = false;
 
     atomicThreadFence(memory_order_release);
 
-    result = capturedeviceRemoveInstalledRules(cdev, cdev->capture_range_count);
+    bool result = capturedeviceRemoveInstalledRules(cdev, cdev->capture_range_count);
 
-    ssize_t write_res = write(cdev->linux_pipe_fds[1], "x", 1);
-    discard write_res;
+    // Rule removal above can be slow, so the reader may already have observed
+    // running == false and exited without consuming this token.
+    result = capturedeviceWriteStopToken(cdev) && result;
+
+    // Safe to join even when the wake write above failed: the reader's poll is
+    // bounded (kCaptureReaderPollTimeoutMs) and re-checks `running`, so it leaves
+    // on its own and the write failure is returned rather than deadlocking here.
     safeThreadJoin(cdev->read_thread);
+
+    // Only after the join does BringDown own the pipe exclusively; draining
+    // earlier would race the reader for the same token. Every successful
+    // BringDown must leave the pipe empty so a later BringUp on this same device
+    // object cannot be terminated by a stale wake byte.
+    result = capturedeviceDrainStopPipe(cdev) && result;
 
     LOGI("CaptureDevice: device %s is now down", cdev->name);
 
@@ -1241,7 +1351,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     *cdev = (capture_device_t) {.name                   = stringDuplicate(name),
                                 .running                = false,
                                 .up                     = false,
-                                .routine_reader         = routineReadFromCapture,
+                                .routine_reader         = captureLinuxReadRoutine,
                                 .socket                 = socket_netfilter,
                                 .queue_number           = queue_number,
                                 .read_event_callback    = cb,
@@ -1254,6 +1364,22 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     if (pipe(cdev->linux_pipe_fds) != 0)
     {
         LOGE("CaptureDevice: failed to create pipe for linux_pipe_fds");
+        memoryFree(cdev->name);
+        capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
+        bufferpoolDestroy(cdev->reader_buffer_pool);
+        masterpoolDestroy(cdev->reader_message_pool);
+        close(cdev->socket);
+        memoryFree(cdev);
+        return NULL;
+    }
+
+    // The read end must be nonblocking so the lifecycle drain can never block.
+    // The write end stays blocking: the serialized BringUp/BringDown contract
+    // keeps at most one small token outstanding.
+    if (! capturedeviceMakeStopPipeNonblocking(cdev->linux_pipe_fds[0]))
+    {
+        close(cdev->linux_pipe_fds[0]);
+        close(cdev->linux_pipe_fds[1]);
         memoryFree(cdev->name);
         capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
         bufferpoolDestroy(cdev->reader_buffer_pool);

@@ -317,6 +317,26 @@ if(TARGET ww)
       "unit;net;capture;process;deadline"
     )
 
+    # Capture stop-pipe lifecycle. capture_linux.c is compiled directly and the
+    # generic runner is wrapped, so BringUp/BringDown run for real while no
+    # iptables rule, sysctl, NFQUEUE socket or root privilege is involved.
+    add_executable(capture_linux_pipe_test
+      capture_linux_pipe_test.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux.c
+    )
+    target_link_options(capture_linux_pipe_test PRIVATE
+      "-Wl,--wrap=procRunArgvWithDeadline"
+      "-Wl,--wrap=procCommandResultDrop"
+    )
+    target_link_libraries(capture_linux_pipe_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests capture_linux_pipe_test)
+
+    add_waterwall_unit_test(
+      waterwall.capture_linux_pipe_unit
+      capture_linux_pipe_test
+      "unit;net;capture;lifecycle;pipe"
+    )
+
     # Wraps send/sendto for a deterministic EAGAIN/EINTR/ENOBUFS seam.
     add_executable(udp_datagram_write_test udp_datagram_write_test.c)
     target_link_libraries(udp_datagram_write_test PRIVATE ww)
