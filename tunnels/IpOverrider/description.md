@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 109
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpOverrider.mdx, and both files must keep the same documentation version.
 -->
 
@@ -15,7 +15,8 @@ This node is a layer-3 packet tunnel. It does not create connections or sockets.
 - Rewrites IPv4 destination addresses on upstream traffic when configured.
 - Rewrites IPv4 source addresses on downstream traffic when configured.
 - Rewrites IPv4 destination addresses on downstream traffic when configured.
-- Applies rule-local filters such as `chance` and `only120`.
+- Applies one node-level `only120` size gate before any configured rewrite.
+- Applies one node-level `chance` gate before any configured rewrite.
 - Marks packets for checksum recalculation after a rewrite.
 
 ## Typical Placement
@@ -40,14 +41,12 @@ Common uses include:
         "ipv4": "10.0.0.10"
       },
       "dest-ip": {
-        "ipv4": "198.51.100.10",
-        "only120": true
+        "ipv4": "198.51.100.10"
       }
     },
     "down": {
       "source-ip": {
-        "ipv4": "203.0.113.10",
-        "chance": 100
+        "ipv4": "203.0.113.10"
       },
       "dest-ip": {
         "ipv4": "10.0.0.20"
@@ -69,9 +68,7 @@ The old single-operation format is still accepted:
   "settings": {
     "direction": "up",
     "mode": "dest-ip",
-    "ipv4": "198.51.100.10",
-    "chance": 100,
-    "only120": false
+    "ipv4": "198.51.100.10"
   }
 }
 ```
@@ -120,22 +117,16 @@ For the legacy format, required fields are:
 
 ## Optional `settings` Fields
 
-Each rule object in the new format, and the top-level legacy rule format, may include:
+The root `settings` object may include:
 
-- `chance` `(integer)`
-  Percentage chance that the rule should be applied.
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `chance` | integer from `0` through `100` | `100` | Percentage chance that the node's complete rewrite action applies to an eligible packet. |
+| `only120` | boolean | `false` | Restricts the complete rewrite action to IPv4 packets whose total IP length is `120` bytes or less. |
 
-  Accepted range: `0` to `100`
-
-  Current implementation detail:
-  - `100` means always apply
-  - `0` means never apply
-  - if omitted, the rule always applies
-
-- `only120` `(boolean)`
-  If `true`, the rule is only applied to IPv4 packets whose total IP length is `120` bytes or less.
-
-  Default: `false`
+Both options belong directly inside `settings` in the new and legacy formats.
+`chance` or `only120` inside a nested source or destination rule is invalid;
+move it to `settings.chance` or `settings.only120`.
 
 ## Detailed Behavior
 
@@ -152,16 +143,77 @@ When a packet flows upstream, only the configured upstream rules are checked. Wh
 
 If both source and destination rules are configured for the same direction, both are applied to the same packet in that direction.
 
-### Rule evaluation
+### `chance`
 
-For each applicable rule:
+`chance` controls how often the complete node action runs. It is evaluated once
+per eligible packet, not separately for each source or destination rule:
 
-- if the rule is not present, nothing happens
-- if `chance` causes the rule to be skipped, nothing happens
-- if `only120` is enabled and the IPv4 packet length is greater than `120`, nothing happens
-- otherwise the selected IP field is replaced and checksum recalculation is requested
+- `100` always applies the configured rules.
+- `0` always forwards the packet unchanged.
+- Values from `1` through `99` are percentages.
 
-Rules are evaluated independently, so one rule in a direction can apply while another one in the same direction is skipped.
+In this example, both upstream fields are rewritten together for approximately
+25 percent of eligible packets; otherwise neither field is changed:
+
+```json
+{
+  "name": "probabilistic-ip-rewrite",
+  "type": "IpOverrider",
+  "settings": {
+    "chance": 25,
+    "up": {
+      "source-ip": {
+        "ipv4": "10.0.0.10"
+      },
+      "dest-ip": {
+        "ipv4": "198.51.100.10"
+      }
+    }
+  },
+  "next": "next-node-name"
+}
+```
+
+### `only120`
+
+`only120` is a size gate for the complete node action. When it is `true`, all
+configured rewrites run together for IPv4 packets whose total IP length is
+`120` bytes or less. Larger IPv4 packets are forwarded unchanged.
+
+```json
+{
+  "name": "small-packet-ip-rewrite",
+  "type": "IpOverrider",
+  "settings": {
+    "only120": true,
+    "up": {
+      "source-ip": {
+        "ipv4": "10.0.0.10"
+      },
+      "dest-ip": {
+        "ipv4": "198.51.100.10"
+      }
+    }
+  },
+  "next": "next-node-name"
+}
+```
+
+### Combining `only120` and `chance`
+
+For every upstream or downstream packet, `IpOverrider` evaluates its root-level
+gates before checking any source or destination rule:
+
+- If `only120` is enabled and the IPv4 total length is greater than `120`, the
+  complete node action is skipped.
+- Otherwise, `settings.chance` is evaluated exactly once for the packet. If the
+  chance does not happen, the complete node action is skipped.
+- When both gates pass, every configured rule for the packet direction is
+  evaluated.
+
+When either gate skips the node action, the packet is forwarded unchanged,
+IPv4 address-array cursors are not advanced, and this node does not request
+checksum recalculation.
 
 ### Packet flow behavior
 
