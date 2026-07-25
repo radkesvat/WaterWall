@@ -535,7 +535,17 @@ tun_loopguard_t *tunLoopGuardStart(uint64_t tun_luid_value)
     }
 
     atomicStoreRelaxed(&guard->running, true);
-    guard->thread = threadCreate(routineLoopGuard, guard);
+    wthread_error_t error = threadCreate(&guard->thread, routineLoopGuard, guard);
+    if (error != kWThreadErrorNone)
+    {
+        LOGE("TunLoopGuard: failed to create guard thread: error %u", error);
+        atomicStoreRelaxed(&guard->running, false);
+        windivertClose(guard->divert_handle);
+        guard->divert_handle = NULL;
+        mutexDestroy(&guard->lock);
+        memoryFree(guard);
+        return NULL;
+    }
 
     char gw4[64] = "none";
     char gw6[64] = "none";

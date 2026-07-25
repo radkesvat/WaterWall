@@ -373,12 +373,11 @@ bool caputredeviceBringUp(capture_device_t *cdev)
     cdev->reader_exit_confirmed = false;
     atomicStoreExplicit(&(cdev->running), true, memory_order_release);
 
-    cdev->read_thread = threadCreate(cdev->routine_reader, cdev);
-    if (cdev->read_thread == NULL)
+    wthread_error_t error = threadCreate(&cdev->read_thread, cdev->routine_reader, cdev);
+    if (error != kWThreadErrorNone)
     {
-        DWORD last_error = GetLastError();
         atomicStoreExplicit(&(cdev->running), false, memory_order_release);
-        LOGE("CaptureDevice: failed to create reader thread: error %lu", last_error);
+        LOGE("CaptureDevice: failed to create reader thread: error %u", error);
 
         if (! captureWindowsLifetimeRollbackOpen(cdev, &capture_lifetime_ops))
         {

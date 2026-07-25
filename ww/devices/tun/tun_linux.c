@@ -950,6 +950,69 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
     return true;
 }
 
+static void tundeviceDrainWriterChannel(tun_device_t *tdev)
+{
+    sbuf_t *buf;
+    while (chanRecv(tdev->writer_buffer_channel, (void *) &buf))
+    {
+        bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
+    }
+}
+
+static void tundeviceCloseDrainFreeWriterChannel(tun_device_t *tdev)
+{
+    if (tdev->writer_buffer_channel == NULL)
+    {
+        return;
+    }
+
+    chanClose(tdev->writer_buffer_channel);
+    tundeviceDrainWriterChannel(tdev);
+    chanFree(tdev->writer_buffer_channel);
+    tdev->writer_buffer_channel = NULL;
+}
+
+static void tundeviceDrainStopPipe(tun_device_t *tdev)
+{
+    struct pollfd fd = {.fd = tdev->linux_pipe_fds[0], .events = POLLIN};
+
+    for (;;)
+    {
+        int ret = poll(&fd, 1, 0);
+        if (ret < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            LOGW("TunDevice: failed to poll stop pipe while draining: %s", strerror(errno));
+            return;
+        }
+
+        if (ret == 0 || ! (fd.revents & POLLIN))
+        {
+            return;
+        }
+
+        char    buf[64];
+        ssize_t read_res = read(tdev->linux_pipe_fds[0], buf, sizeof(buf));
+        if (read_res < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            LOGW("TunDevice: failed to drain stop pipe: %s", strerror(errno));
+            return;
+        }
+
+        if (read_res == 0)
+        {
+            return;
+        }
+    }
+}
+
 // Unassign IP address from TUN device
 bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
 {
@@ -1377,25 +1440,60 @@ bool tundeviceBringUp(tun_device_t *tdev)
     if (! tunSetStateByName(tdev->name, true))
     {
         LOGE("TunDevice: error bringing device %s up", tdev->name);
-        if (tdev->writer_buffer_channel != NULL)
+        tundeviceCloseDrainFreeWriterChannel(tdev);
+        return false;
+    }
+
+    atomicStoreRelaxed(&(tdev->running), true);
+
+    bool reader_started = false;
+    if (tdev->read_event_callback != NULL)
+    {
+        tundeviceDrainStopPipe(tdev);
+        wthread_error_t error = threadCreate(&tdev->read_thread, tdev->routine_reader, tdev);
+        if (UNLIKELY(error != kWThreadErrorNone))
         {
-            chanClose(tdev->writer_buffer_channel);
-            chanFree(tdev->writer_buffer_channel);
+            LOGE("TunDevice: failed to create reader thread: error %u (%s)", error, strerror((int) error));
+            atomicStoreRelaxed(&(tdev->running), false);
+            atomicThreadFence(memory_order_release);
+            if (! tunSetStateByName(tdev->name, false))
+            {
+                LOGE("TunDevice: error restoring %s down after reader-thread startup failure", tdev->name);
+            }
+            tundeviceCloseDrainFreeWriterChannel(tdev);
+            tdev->up = false;
+            return false;
         }
+        reader_started = true;
+    }
+
+    wthread_error_t error = threadCreate(&tdev->write_thread, tdev->routine_writer, tdev);
+    if (UNLIKELY(error != kWThreadErrorNone))
+    {
+        LOGE("TunDevice: failed to create writer thread: error %u (%s)", error, strerror((int) error));
+        atomicStoreRelaxed(&(tdev->running), false);
+        atomicThreadFence(memory_order_release);
+        chanClose(tdev->writer_buffer_channel);
+        tundeviceDrainWriterChannel(tdev);
+        if (reader_started)
+        {
+            ssize_t write_res = write(tdev->linux_pipe_fds[1], "x", 1);
+            discard write_res;
+            safeThreadJoin(tdev->read_thread);
+            tundeviceDrainStopPipe(tdev);
+        }
+        if (! tunSetStateByName(tdev->name, false))
+        {
+            LOGE("TunDevice: error restoring %s down after writer-thread startup failure", tdev->name);
+        }
+        chanFree(tdev->writer_buffer_channel);
         tdev->writer_buffer_channel = NULL;
+        tdev->up                    = false;
         return false;
     }
 
     tdev->up = true;
-    atomicStoreRelaxed(&(tdev->running), true);
-
     LOGI("TunDevice: device %s is now up", tdev->name);
-
-    if (tdev->read_event_callback != NULL)
-    {
-        tdev->read_thread = threadCreate(tdev->routine_reader, tdev);
-    }
-    tdev->write_thread = threadCreate(tdev->routine_writer, tdev);
     return true;
 }
 
@@ -1412,12 +1510,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
     tdev->up = false;
 
     chanClose(tdev->writer_buffer_channel);
-    sbuf_t *buf;
-
-    while (chanRecv(tdev->writer_buffer_channel, (void *) &buf))
-    {
-        bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
-    }
+    tundeviceDrainWriterChannel(tdev);
 
     bool bring_down_ok = true;
 
@@ -1437,6 +1530,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
         discard write_res;
 
         safeThreadJoin(tdev->read_thread);
+        tundeviceDrainStopPipe(tdev);
     }
     safeThreadJoin(tdev->write_thread);
 

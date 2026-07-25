@@ -1000,10 +1000,10 @@ bool tundeviceBringUp(tun_device_t *tdev)
 
     MemoryBarrier();
 
-    tdev->read_thread = threadCreate(tdev->routine_reader, tdev);
-    if (tdev->read_thread == NULL)
+    wthread_error_t error = threadCreate(&tdev->read_thread, tdev->routine_reader, tdev);
+    if (error != kWThreadErrorNone)
     {
-        LOGE("TunDevice: failed to create reader thread, code: %lu", GetLastError());
+        LOGE("TunDevice: failed to create reader thread, code: %u", error);
         if (! tundeviceShutdownSession(tdev))
         {
             LOGF("TunDevice: cannot safely roll back failed reader-thread startup");
@@ -1012,10 +1012,10 @@ bool tundeviceBringUp(tun_device_t *tdev)
         return false;
     }
 
-    tdev->write_thread = threadCreate(tdev->routine_writer, tdev);
-    if (tdev->write_thread == NULL)
+    error = threadCreate(&tdev->write_thread, tdev->routine_writer, tdev);
+    if (error != kWThreadErrorNone)
     {
-        LOGE("TunDevice: failed to create writer thread, code: %lu", GetLastError());
+        LOGE("TunDevice: failed to create writer thread, code: %u", error);
         if (! tundeviceShutdownSession(tdev))
         {
             LOGF("TunDevice: cannot safely roll back failed writer-thread startup");

@@ -126,6 +126,15 @@ bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf)
     return true;
 }
 
+static void rawdeviceDrainWriterChannel(raw_device_t *rdev)
+{
+    sbuf_t *buf;
+    while (chanRecv(rdev->writer_buffer_channel, (void **) &buf))
+    {
+        bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
+    }
+}
+
 bool rawdeviceBringUp(raw_device_t *rdev)
 {
     assert(! rdev->up);
@@ -134,14 +143,27 @@ bool rawdeviceBringUp(raw_device_t *rdev)
                                        bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
-    rdev->up                    = true;
-    rdev->running               = true;
     rdev->writer_buffer_channel = chanOpen(sizeof(void *), kRawWriteChannelQueueMax);
+    rdev->running               = true;
 
-    // rdev->read_thread = threadCreate(rdev->routine_reader, rdev);
+    // wthread_error_t read_error = threadCreate(&rdev->read_thread, rdev->routine_reader, rdev);
+
+    wthread_error_t error = threadCreate(&rdev->write_thread, rdev->routine_writer, rdev);
+    if (UNLIKELY(error != kWThreadErrorNone))
+    {
+        LOGE("RawDevice: failed to create writer thread: error %u", error);
+        rdev->running = false;
+        atomicThreadFence(memory_order_release);
+        chanClose(rdev->writer_buffer_channel);
+        rawdeviceDrainWriterChannel(rdev);
+        chanFree(rdev->writer_buffer_channel);
+        rdev->writer_buffer_channel = NULL;
+        rdev->up                    = false;
+        return false;
+    }
+
+    rdev->up = true;
     LOGI("RawDevice: device %s is now up", rdev->name);
-
-    rdev->write_thread = threadCreate(rdev->routine_writer, rdev);
     return true;
 }
 
@@ -158,11 +180,7 @@ bool rawdeviceBringDown(raw_device_t *rdev)
 
     safeThreadJoin(rdev->write_thread);
 
-    sbuf_t *buf;
-    while (chanRecv(rdev->writer_buffer_channel, (void **) &buf))
-    {
-        bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
-    }
+    rawdeviceDrainWriterChannel(rdev);
 
     chanFree(rdev->writer_buffer_channel);
     rdev->writer_buffer_channel = NULL;

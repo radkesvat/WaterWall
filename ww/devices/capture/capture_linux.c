@@ -235,6 +235,20 @@ static bool capturedeviceRunIptablesQueueRule(const char *operation, const char 
     return capturedeviceRunCommand("iptables", argv) == 0;
 }
 
+static bool capturedeviceRemoveInstalledRules(capture_device_t *cdev, uint32_t installed_count)
+{
+    bool result = true;
+    for (uint32_t i = 0; i < installed_count; ++i)
+    {
+        if (! capturedeviceRunIptablesQueueRule("-D", cdev->capture_cidrs[i], cdev->queue_number))
+        {
+            LOGE("CaptureDevice: failed to remove iptables NFQUEUE rule for %s", cdev->capture_cidrs[i]);
+            result = false;
+        }
+    }
+    return result;
+}
+
 static char *capturedeviceFormatCidrString(const ipmask_t *range)
 {
     char cidr[24];
@@ -1010,12 +1024,21 @@ bool caputredeviceBringUp(capture_device_t *cdev)
                                        bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
-    cdev->up      = true;
     cdev->running = true;
 
-    LOGI("CaptureDevice: device %s is now up", cdev->name);
+    wthread_error_t error = threadCreate(&cdev->read_thread, cdev->routine_reader, cdev);
+    if (UNLIKELY(error != kWThreadErrorNone))
+    {
+        LOGE("CaptureDevice: failed to create reader thread: error %u (%s)", error, strerror((int) error));
+        cdev->running = false;
+        atomicThreadFence(memory_order_release);
+        discard capturedeviceRemoveInstalledRules(cdev, cdev->capture_range_count);
+        cdev->up = false;
+        return false;
+    }
 
-    cdev->read_thread = threadCreate(cdev->routine_reader, cdev);
+    cdev->up = true;
+    LOGI("CaptureDevice: device %s is now up", cdev->name);
     return true;
 }
 
@@ -1030,14 +1053,7 @@ bool caputredeviceBringDown(capture_device_t *cdev)
 
     atomicThreadFence(memory_order_release);
 
-    for (uint32_t i = 0; i < cdev->capture_range_count; ++i)
-    {
-        if (! capturedeviceRunIptablesQueueRule("-D", cdev->capture_cidrs[i], cdev->queue_number))
-        {
-            LOGE("CaptureDevice: failed to remove iptables NFQUEUE rule for %s", cdev->capture_cidrs[i]);
-            result = false;
-        }
-    }
+    result = capturedeviceRemoveInstalledRules(cdev, cdev->capture_range_count);
 
     ssize_t write_res = write(cdev->linux_pipe_fds[1], "x", 1);
     discard write_res;
