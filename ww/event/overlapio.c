@@ -1,34 +1,342 @@
-// WARN: overlapio maybe need MemoryPool to avoid alloc/free
+// Native IOCP overlapped backend.
+//
+// Correctness model (see iocp-implementation-plan.md):
+//   * Every submitted overlapped operation owns one woverlapped_t.
+//   * A record, its buffers, its sbuf and its provisional accepted socket stay
+//     valid until IOCP dequeues that operation's completion.
+//   * Cancellation never returns ownership to the application; canceled records
+//     are retired only after their completion is dequeued.
+//   * A wio_t is kept alive (iocp_live_records) while any record references it,
+//     so closing/freeing from a callback is safe.
 #include "iowatcher.h"
 
 #ifdef EVENT_IOCP
+#include "loggers/internal_logger.h"
 #include "overlapio.h"
+#include "werr.h"
 #include "wevent.h"
 
-#define ACCEPTEX_NUM    10
+#define ACCEPTEX_NUM 10
 
-static void free_buffered_overlapped(wio_t *io, woverlapped_t *hovlp)
+// -----------------------------------------------------------------------------
+// Record bookkeeping helpers
+// -----------------------------------------------------------------------------
+
+static void recordAttach(wio_t *io, woverlapped_t *record, woverlapped_kind_e kind)
 {
-    if (hovlp == NULL)
+    record->io             = io;
+    record->io_id          = io->id;
+    record->kind           = kind;
+    record->cancel_reason  = WOVERLAPPED_NOT_CANCELED;
+    record->posted         = false;
+    record->completed      = false;
+    record->posted_prev    = NULL;
+    record->posted_next    = NULL;
+    record->completed_next = NULL;
+    record->fd             = -1;
+    record->sbuf           = NULL;
+    record->send_buffer    = NULL;
+    record->addr           = NULL;
+    record->addrlen        = 0;
+    record->error          = 0;
+    record->bytes          = 0;
+
+    io->iocp_live_records++;
+    io->loop->iocp_live_operations++;
+}
+
+static void recordMarkPosted(woverlapped_t *record)
+{
+    wio_t *io = record->io;
+    assert(! record->posted);
+    assert(! record->completed);
+    record->posted    = true;
+    record->completed = false;
+
+    record->posted_prev = io->iocp_posted_tail;
+    record->posted_next = NULL;
+    if (io->iocp_posted_tail != NULL)
+    {
+        io->iocp_posted_tail->posted_next = record;
+    }
+    else
+    {
+        io->iocp_posted_head = record;
+    }
+    io->iocp_posted_tail = record;
+
+    io->iocp_posted_count++;
+    io->loop->iocp_posted_operations++;
+}
+
+static void recordUnpost(woverlapped_t *record)
+{
+    wio_t *io = record->io;
+    if (! record->posted)
     {
         return;
     }
-    if (io != NULL && io->hovlp == hovlp)
+    record->posted = false;
+
+    if (record->posted_prev != NULL)
     {
-        io->hovlp = NULL;
+        record->posted_prev->posted_next = record->posted_next;
     }
-    EVENTLOOP_FREE(hovlp->addr);
-    EVENTLOOP_FREE(hovlp->buf.buf);
-    EVENTLOOP_FREE(hovlp);
+    else
+    {
+        io->iocp_posted_head = record->posted_next;
+    }
+    if (record->posted_next != NULL)
+    {
+        record->posted_next->posted_prev = record->posted_prev;
+    }
+    else
+    {
+        io->iocp_posted_tail = record->posted_prev;
+    }
+    record->posted_prev = NULL;
+    record->posted_next = NULL;
+
+    assert(io->iocp_posted_count > 0);
+    io->iocp_posted_count--;
+    assert(io->loop->iocp_posted_operations > 0);
+    io->loop->iocp_posted_operations--;
 }
 
-int post_acceptex(wio_t *listenio, woverlapped_t *hovlp)
+static void recordPushCompleted(wio_t *io, woverlapped_t *record)
 {
+    assert(! record->posted);
+    assert(! record->completed);
+    record->completed      = true;
+    record->completed_next = NULL;
+    if (io->iocp_completed_tail != NULL)
+    {
+        io->iocp_completed_tail->completed_next = record;
+    }
+    else
+    {
+        io->iocp_completed_head = record;
+    }
+    io->iocp_completed_tail = record;
+}
+
+static woverlapped_t *recordPopCompleted(wio_t *io)
+{
+    woverlapped_t *record = io->iocp_completed_head;
+    if (record == NULL)
+    {
+        return NULL;
+    }
+    io->iocp_completed_head = record->completed_next;
+    if (io->iocp_completed_head == NULL)
+    {
+        io->iocp_completed_tail = NULL;
+    }
+    record->completed_next = NULL;
+    record->completed      = false;
+    return record;
+}
+
+// Release only the resources still owned by the record. Called from retire; a
+// record being reposted keeps its accept buffer instead.
+static void recordReleaseResources(woverlapped_t *record)
+{
+    wio_t *io = record->io;
+
+    if (record->sbuf != NULL)
+    {
+        // Receive buffer that was never detached to read_cb.
+        bufferpoolReuseBuffer(io->loop->bufpool, record->sbuf);
+        record->sbuf = NULL;
+    }
+    if (record->addr != NULL)
+    {
+        EVENTLOOP_FREE(record->addr);
+    }
+    if (record->kind == WOVERLAPPED_ACCEPT)
+    {
+        // AcceptEx output buffer. RECV buf.buf points into sbuf (recycled above);
+        // CONNECT has none.
+        EVENTLOOP_FREE(record->buf.buf);
+    }
+    if (record->kind == WOVERLAPPED_SEND)
+    {
+        // buf.buf advances on partial completions, so release the allocation base.
+        EVENTLOOP_FREE(record->send_buffer);
+    }
+    if (record->kind == WOVERLAPPED_ACCEPT && record->fd >= 0)
+    {
+        // Provisional accepted socket whose ownership never transferred.
+        SAFE_CLOSESOCKET(record->fd);
+        record->fd = -1;
+    }
+}
+
+static void wioIocpMaybeFinalize(wio_t *io)
+{
+    if (io->iocp_deferred_finalize && wioIocpCanFinalize(io))
+    {
+        wioFinalizeNow(io);
+    }
+}
+
+// Release a dequeued (unposted) record and drop the live reference it held. May
+// finalize a deferred wio_t; callers iterating io must do so only after the loop.
+static void recordRetire(woverlapped_t *record)
+{
+    wio_t *io = record->io;
+    assert(! record->posted);
+    if (record->kind == WOVERLAPPED_SEND)
+    {
+        assert(io->iocp_send_active == record);
+        io->iocp_send_active = NULL;
+        if (io->write_bufsize >= record->buf.len)
+        {
+            io->write_bufsize -= record->buf.len;
+        }
+        else
+        {
+            // wioDone resets the closed io's aggregate queue accounting before
+            // canceled send completions retire.
+            assert(io->closed);
+            io->write_bufsize = 0;
+        }
+    }
+    recordReleaseResources(record);
+    EVENTLOOP_FREE(record);
+
+    assert(io->iocp_live_records > 0);
+    io->iocp_live_records--;
+    assert(io->loop->iocp_live_operations > 0);
+    io->loop->iocp_live_operations--;
+}
+
+// -----------------------------------------------------------------------------
+// Posting operations
+// -----------------------------------------------------------------------------
+
+// Post a receive. record == NULL allocates a fresh record; otherwise the record
+// is reused (its live reference is retained). On immediate submission failure the
+// record is retired locally because no completion packet will arrive.
+static int post_recv(wio_t *io, woverlapped_t *record)
+{
+    const bool is_new = (record == NULL);
+    if (is_new)
+    {
+        EVENTLOOP_ALLOC_SIZEOF(record);
+        recordAttach(io, record, WOVERLAPPED_RECV);
+    }
+
+    memoryZero(&record->ovlp, sizeof(record->ovlp));
+    record->error         = 0;
+    record->bytes         = 0;
+    record->cancel_reason = WOVERLAPPED_NOT_CANCELED;
+    record->completed     = false;
+    record->fd            = io->fd;
+
+    if (record->sbuf != NULL)
+    {
+        bufferpoolReuseBuffer(io->loop->bufpool, record->sbuf);
+        record->sbuf = NULL;
+    }
+    if (io->io_type == WIO_TYPE_UDP)
+    {
+        record->sbuf = bufferpoolGetLargeBuffer(io->loop->bufpool);
+    }
+    else if (io->io_type == WIO_TYPE_IP)
+    {
+        record->sbuf = bufferpoolGetSmallBuffer(io->loop->bufpool);
+    }
+    else
+    {
+        record->sbuf = bufferpoolGetLargeBuffer(io->loop->bufpool);
+    }
+    record->buf.len = sbufGetMaximumWriteableSize(record->sbuf);
+    record->buf.buf = (CHAR *) sbufGetMutablePtr(record->sbuf);
+
+    DWORD dwbytes = 0;
+    DWORD flags   = 0;
+    int   ret     = 0;
+
+    recordMarkPosted(record);
+    if (io->io_type == WIO_TYPE_TCP)
+    {
+        ret = WSARecv(io->fd, &record->buf, 1, &dwbytes, &flags, &record->ovlp, NULL);
+    }
+    else if (io->io_type == WIO_TYPE_UDP || io->io_type == WIO_TYPE_IP)
+    {
+        if (record->addr == NULL)
+        {
+            EVENTLOOP_ALLOC(record->addr, sizeof(struct sockaddr_in6));
+        }
+        // WSARecvFrom overwrites addrlen with the completed peer length. Restore
+        // the full capacity before every receive (dual-stack IPv4-then-IPv6).
+        record->addrlen = sizeof(struct sockaddr_in6);
+        ret =
+            WSARecvFrom(io->fd, &record->buf, 1, &dwbytes, &flags, record->addr, &record->addrlen, &record->ovlp, NULL);
+    }
+    else
+    {
+        WSASetLastError(WSAEINVAL);
+        ret = -1;
+    }
+
+    if (ret != 0)
+    {
+        int err = WSAGetLastError();
+        if (err != ERROR_IO_PENDING)
+        {
+            printError("WSARecv error: %d\n", err);
+            recordUnpost(record);
+            recordRetire(record);
+            return err;
+        }
+    }
+    return 0;
+}
+
+// Post an AcceptEx. record == NULL allocates a fresh record (with an output
+// buffer sized for the listener family); otherwise the record is reused and its
+// address buffer is retained. On immediate submission failure the record is
+// retired locally.
+static int post_acceptex(wio_t *listenio, woverlapped_t *record)
+{
+    const bool    is_new       = (record == NULL);
+    int           accept_error = 0;
+    int           connfd       = -1;
     LPFN_ACCEPTEX AcceptEx     = NULL;
     GUID          guidAcceptEx = WSAID_ACCEPTEX;
     DWORD         dwbytes      = 0;
-    int           accept_error;
-    int           connfd = -1;
+
+    // Determine the listener family from its bound local address (Phase 5).
+    int family = listenio->localaddr->sa_family;
+    if (family != AF_INET && family != AF_INET6)
+    {
+        sockaddr_u local;
+        socklen_t  local_len = sizeof(local);
+        memoryZero(&local, sizeof(local));
+        if (getsockname(listenio->fd, &local.sa, &local_len) == 0)
+        {
+            family = local.sa.sa_family;
+        }
+    }
+
+    DWORD addr_region;
+    if (family == AF_INET)
+    {
+        addr_region = (DWORD) (sizeof(struct sockaddr_in) + 16);
+    }
+    else if (family == AF_INET6)
+    {
+        addr_region = (DWORD) (sizeof(struct sockaddr_in6) + 16);
+    }
+    else
+    {
+        accept_error = WSAEAFNOSUPPORT;
+        goto error;
+    }
+    DWORD out_buf_len = addr_region * 2;
+
     if (WSAIoctl(listenio->fd,
                  SIO_GET_EXTENSION_FUNCTION_POINTER,
                  &guidAcceptEx,
@@ -42,293 +350,606 @@ int post_acceptex(wio_t *listenio, woverlapped_t *hovlp)
         accept_error = WSAGetLastError();
         goto error;
     }
-    connfd = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
-    if (connfd < 0)
+    connfd = (int) WSASocket(family, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
+    if (connfd == (int) INVALID_SOCKET)
     {
+        connfd       = -1;
         accept_error = WSAGetLastError();
         goto error;
     }
-    if (hovlp == NULL)
+
+    if (is_new)
     {
-        EVENTLOOP_ALLOC_SIZEOF(hovlp);
-        hovlp->buf.len = 20 + sizeof(struct sockaddr_in6) * 2;
-        EVENTLOOP_ALLOC(hovlp->buf.buf, hovlp->buf.len);
+        EVENTLOOP_ALLOC_SIZEOF(record);
+        recordAttach(listenio, record, WOVERLAPPED_ACCEPT);
+        record->accept_family         = family;
+        record->accept_address_length = addr_region;
+        record->accept_buffer_length  = out_buf_len;
+        EVENTLOOP_ALLOC(record->buf.buf, out_buf_len);
+        record->buf.len = out_buf_len;
     }
-    memoryZero(&hovlp->ovlp, sizeof(hovlp->ovlp));
-    hovlp->fd    = connfd;
-    hovlp->event = WW_READ;
-    hovlp->io    = listenio;
+    else
+    {
+        // Reuse must keep the same family so the retained buffer is valid.
+        assert(record->accept_family == family);
+        assert(record->accept_buffer_length == out_buf_len);
+    }
+
+    memoryZero(&record->ovlp, sizeof(record->ovlp));
+    record->error         = 0;
+    record->bytes         = 0;
+    record->cancel_reason = WOVERLAPPED_NOT_CANCELED;
+    record->completed     = false;
+    record->fd            = connfd; // provisional accepted socket
+
+    recordMarkPosted(record);
     if (AcceptEx(listenio->fd,
                  connfd,
-                 hovlp->buf.buf,
+                 record->buf.buf,
                  0,
-                 sizeof(struct sockaddr_in6),
-                 sizeof(struct sockaddr_in6),
+                 record->accept_address_length,
+                 record->accept_address_length,
                  &dwbytes,
-                 &hovlp->ovlp) != TRUE)
+                 &record->ovlp) != TRUE)
     {
         int err = WSAGetLastError();
         if (err != ERROR_IO_PENDING)
         {
             printError("AcceptEx error: %d\n", err);
-            accept_error = err;
-            goto error;
+            recordUnpost(record);
+            recordRetire(record); // closes connfd, frees buffer, drops live ref
+            return err;
         }
     }
     return 0;
+
 error:
-    SAFE_CLOSESOCKET(connfd);
-    free_buffered_overlapped(listenio, hovlp);
+    if (connfd >= 0)
+    {
+        SAFE_CLOSESOCKET(connfd);
+    }
+    if (! is_new)
+    {
+        // Could not repost an existing record: no completion will arrive for it.
+        recordRetire(record);
+    }
     return accept_error;
 }
 
-int post_recv(wio_t* io, woverlapped_t* hovlp) {
-    const bool allocated_hovlp = hovlp == NULL;
-    if (hovlp == NULL) {
-        EVENTLOOP_ALLOC_SIZEOF(hovlp);
-    }
-    memoryZero(&hovlp->ovlp, sizeof(hovlp->ovlp));
-    hovlp->fd = io->fd;
-    hovlp->event = WW_READ;
-    hovlp->io = io;
-    if (hovlp->sbuf != NULL) {
-        bufferpoolReuseBuffer(io->loop->bufpool, hovlp->sbuf);
-        hovlp->sbuf = NULL;
-    }
-    if (io->io_type == WIO_TYPE_UDP) {
-        hovlp->sbuf = bufferpoolGetLargeBuffer(io->loop->bufpool);
-    } else if (io->io_type == WIO_TYPE_IP) {
-        hovlp->sbuf = bufferpoolGetSmallBuffer(io->loop->bufpool);
-    } else {
-        hovlp->sbuf = bufferpoolGetLargeBuffer(io->loop->bufpool);
-    }
-    hovlp->buf.len = sbufGetMaximumWriteableSize(hovlp->sbuf);
-    hovlp->buf.buf = (CHAR*)sbufGetMutablePtr(hovlp->sbuf);
-    //memorySet(hovlp->buf.buf, 0, hovlp->buf.len);
+static int post_send(wio_t *io, woverlapped_t *record)
+{
+    assert(record == io->iocp_send_active);
+    assert(record->kind == WOVERLAPPED_SEND);
+    assert(record->buf.len > 0);
+
+    memoryZero(&record->ovlp, sizeof(record->ovlp));
+    record->error         = 0;
+    record->bytes         = 0;
+    record->cancel_reason = WOVERLAPPED_NOT_CANCELED;
+    record->completed     = false;
+
     DWORD dwbytes = 0;
-    DWORD flags = 0;
-    int ret = 0;
-    if (io->io_type == WIO_TYPE_TCP) {
-        ret = WSARecv(io->fd, &hovlp->buf, 1, &dwbytes, &flags, &hovlp->ovlp, NULL);
-    }
-    else if (io->io_type == WIO_TYPE_UDP ||
-            io->io_type == WIO_TYPE_IP) {
-        if (hovlp->addr == NULL) {
-            EVENTLOOP_ALLOC(hovlp->addr, sizeof(struct sockaddr_in6));
-        }
-        // WSARecvFrom updates addrlen with the completed peer address length.
-        // Restore the full buffer capacity before every receive, especially when
-        // a dual-stack socket receives IPv4 followed by IPv6.
-        hovlp->addrlen = sizeof(struct sockaddr_in6);
-        ret = WSARecvFrom(io->fd, &hovlp->buf, 1, &dwbytes, &flags, hovlp->addr, &hovlp->addrlen, &hovlp->ovlp, NULL);
-    }
-    else {
-        ret = -1;
-    }
-    //printd("WSARecv ret=%d bytes=%u\n", ret, dwbytes);
-    if (ret != 0) {
+    recordMarkPosted(record);
+    int ret = WSASend(io->fd, &record->buf, 1, &dwbytes, 0, &record->ovlp, NULL);
+    if (ret != 0)
+    {
         int err = WSAGetLastError();
-        if (err != ERROR_IO_PENDING) {
-            printError("WSARecv error: %d\n", err);
-            if (hovlp->sbuf) {
-                bufferpoolReuseBuffer(io->loop->bufpool, hovlp->sbuf);
-                hovlp->sbuf = NULL;
-            }
-            if (allocated_hovlp)
-            {
-                EVENTLOOP_FREE(hovlp->addr);
-                EVENTLOOP_FREE(hovlp);
-            }
+        if (err != ERROR_IO_PENDING)
+        {
+            printError("WSASend error: %d\n", err);
+            recordUnpost(record);
             return err;
         }
     }
     return 0;
 }
 
-static void on_acceptex_complete(wio_t* io) {
-    printd("on_acceptex_complete------\n");
-    woverlapped_t* hovlp = (woverlapped_t*)io->hovlp;
-    int listenfd = io->fd;
-    int connfd = hovlp->fd;
-    LPFN_GETACCEPTEXSOCKADDRS GetAcceptExSockaddrs = NULL;
-    GUID guidGetAcceptExSockaddrs = WSAID_GETACCEPTEXSOCKADDRS;
-    DWORD dwbytes = 0;
-    if (WSAIoctl(connfd, SIO_GET_EXTENSION_FUNCTION_POINTER,
-        &guidGetAcceptExSockaddrs, sizeof(guidGetAcceptExSockaddrs),
-        &GetAcceptExSockaddrs, sizeof(GetAcceptExSockaddrs),
-        &dwbytes, NULL, NULL) != 0) {
-        return;
+static int start_next_send(wio_t *io)
+{
+    if (io->iocp_send_active != NULL || write_queue_empty(&io->write_queue))
+    {
+        return 0;
     }
-    struct sockaddr* plocaladdr = NULL;
-    struct sockaddr* ppeeraddr = NULL;
-    socklen_t localaddrlen;
-    socklen_t peeraddrlen;
-    GetAcceptExSockaddrs(hovlp->buf.buf, 0, sizeof(struct sockaddr_in6), sizeof(struct sockaddr_in6),
-        &plocaladdr, &localaddrlen, &ppeeraddr, &peeraddrlen);
-    memoryCopy(io->localaddr, plocaladdr, localaddrlen);
-    memoryCopy(io->peeraddr, ppeeraddr, peeraddrlen);
-    if (io->accept_cb) {
-        setsockopt(connfd, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (const char*)&listenfd, sizeof(int));
-        wio_t* connio = wioGet(io->loop, connfd);
-        if (wioIsClosed(connio)) {
-            // socket init rejected the accepted fd and already closed it
-            post_acceptex(io, hovlp);
-            return;
-        }
-        connio->userdata = io->userdata;
-        memoryCopy(connio->localaddr, io->localaddr, localaddrlen);
-        memoryCopy(connio->peeraddr, io->peeraddr, peeraddrlen);
-        /*
-        char localaddrstr[SOCKADDR_STRLEN] = {0};
-        char peeraddrstr[SOCKADDR_STRLEN] = {0};
-        printd("accept listenfd=%d connfd=%d [%s] <= [%s]\n", listenfd, connfd,
-                SOCKADDR_STR(connio->localaddr, localaddrstr),
-                SOCKADDR_STR(connio->peeraddr, peeraddrstr));
-        */
-        //printd("accept_cb------\n");
-        io->accept_cb(connio);
-        //printd("accept_cb======\n");
+
+    sbuf_t *buf = *write_queue_front(&io->write_queue);
+    write_queue_pop_front(&io->write_queue);
+
+    woverlapped_t *record = NULL;
+    EVENTLOOP_ALLOC_SIZEOF(record);
+    recordAttach(io, record, WOVERLAPPED_SEND);
+    record->fd      = io->fd;
+    record->buf.len = sbufGetLength(buf);
+    EVENTLOOP_ALLOC(record->send_buffer, record->buf.len);
+    memoryCopy(record->send_buffer, sbufGetRawPtr(buf), record->buf.len);
+    record->buf.buf = record->send_buffer;
+    bufferpoolReuseBuffer(io->loop->bufpool, buf);
+
+    io->iocp_send_active = record;
+    int err              = post_send(io, record);
+    if (UNLIKELY(err != 0))
+    {
+        // No completion will arrive after an immediate submission failure.
+        recordRetire(record);
+        return err;
     }
-    post_acceptex(io, hovlp);
+    return 0;
 }
 
-static void on_connectex_complete(wio_t* io) {
-    printd("on_connectex_complete------\n");
-    woverlapped_t* hovlp = (woverlapped_t*)io->hovlp;
-    io->error = hovlp->error;
-    EVENTLOOP_FREE(io->hovlp);
-    if (io->error != 0) {
+static int enqueue_send(wio_t *io, sbuf_t *buf)
+{
+    uint32_t len = sbufGetLength(buf);
+    if (len > io->max_write_bufsize - min(io->write_bufsize, io->max_write_bufsize))
+    {
+        wloge("write bufsize > %u, close it!", io->max_write_bufsize);
+        io->error = WERR_OVER_LIMIT;
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        return WERR_OVER_LIMIT;
+    }
+    if (io->write_queue.maxsize == 0)
+    {
+        write_queue_init(&io->write_queue, 4);
+    }
+    write_queue_push_back(&io->write_queue, &buf);
+    io->write_bufsize += len;
+    if (io->write_bufsize > WRITE_BUFSIZE_HIGH_WATER)
+    {
+        wlogw("write len=%u enqueue %u, bufsize=%u over high water %u",
+              (unsigned int) len,
+              (unsigned int) len,
+              (unsigned int) io->write_bufsize,
+              (unsigned int) WRITE_BUFSIZE_HIGH_WATER);
+    }
+    return 0;
+}
+
+// -----------------------------------------------------------------------------
+// Completion dispatch (one record at a time, re-entrant-close safe)
+// -----------------------------------------------------------------------------
+
+static void dispatch_recv(wio_t *io, woverlapped_t *record)
+{
+    if (record->cancel_reason != WOVERLAPPED_NOT_CANCELED)
+    {
+        // Stop/close/shutdown: recycle the buffer, no callback, no repost, and do
+        // not treat it as a socket failure.
+        recordRetire(record);
+        return;
+    }
+
+    const bool is_dgram = (io->io_type & WIO_TYPE_SOCK_DGRAM) != 0 || (io->io_type & WIO_TYPE_SOCK_RAW) != 0;
+    if (record->error != 0 || (record->bytes == 0 && ! is_dgram))
+    {
+        // Real error or stream EOF.
+        io->error = record->error;
+        recordRetire(record); // recycles the still-attached sbuf
         wioClose(io);
         return;
     }
-    if (io->connect_cb) {
-        setsockopt(io->fd, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL, 0);
-        socklen_t addrlen = sizeof(struct sockaddr_in6);
-        getsockname(io->fd, io->localaddr, &addrlen);
-        addrlen = sizeof(struct sockaddr_in6);
-        getpeername(io->fd, io->peeraddr, &addrlen);
-        /*
-        char localaddrstr[SOCKADDR_STRLEN] = {0};
-        char peeraddrstr[SOCKADDR_STRLEN] = {0};
-        printd("connect connfd=%d [%s] => [%s]\n", io->fd,
-                SOCKADDR_STR(io->localaddr, localaddrstr),
-                SOCKADDR_STR(io->peeraddr, peeraddrstr));
-        */
-        //printd("connect_cb------\n");
+
+    // Detach the buffer: read_cb owns it, the record no longer points at it.
+    sbuf_t *buf  = record->sbuf;
+    record->sbuf = NULL;
+
+    if (io->io_type == WIO_TYPE_UDP || io->io_type == WIO_TYPE_IP)
+    {
+        if (record->addr != NULL && record->addrlen > 0)
+        {
+            wioSetPeerAddr(io, record->addr, record->addrlen);
+        }
+    }
+
+    if (io->read_cb != NULL)
+    {
+        sbufSetLength(buf, (uint32_t) record->bytes);
+        io->last_read_hrtime = io->loop->cur_hrtime;
+        // Common read path so WIO_READ_ONCE and related semantics still apply.
+        wioHandleRead(io, buf);
+        buf = NULL; // callback owns it now; never touch again
+    }
+    else
+    {
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        buf = NULL;
+    }
+
+    // Repost only if still open, same generation, and read is still enabled.
+    if (! io->closed && record->io_id == io->id && (io->events & WW_READ))
+    {
+        int err = post_recv(io, record);
+        if (UNLIKELY(err != 0))
+        {
+            // post_recv already retired the record on immediate failure.
+            io->error = err;
+            wioClose(io);
+        }
+    }
+    else
+    {
+        recordRetire(record);
+    }
+}
+
+static void dispatch_send(wio_t *io, woverlapped_t *record)
+{
+    if (record->cancel_reason != WOVERLAPPED_NOT_CANCELED)
+    {
+        recordRetire(record);
+        return;
+    }
+
+    if (record->error != 0 || record->bytes == 0 || record->bytes > record->buf.len)
+    {
+        io->error = record->error != 0 ? record->error : WSAECONNRESET;
+        recordRetire(record);
+        wioClose(io);
+        return;
+    }
+
+    record->buf.buf += record->bytes;
+    record->buf.len -= record->bytes;
+    assert(io->write_bufsize >= record->bytes);
+    io->write_bufsize -= record->bytes;
+
+    // Keep the sole active send record local through write_cb. A callback that
+    // writes again appends behind it; a callback that frees io sees this record's
+    // live reference and therefore defers pool reuse.
+    if (io->write_cb != NULL)
+    {
+        io->last_write_hrtime = io->loop->cur_hrtime;
+        io->write_cb(io); // may close io synchronously
+    }
+
+    if (io->closed || record->io_id != io->id || (io->events & WW_WRITE) == 0)
+    {
+        recordRetire(record);
+        return;
+    }
+
+    if (record->buf.len > 0)
+    {
+        int err = post_send(io, record);
+        if (UNLIKELY(err != 0))
+        {
+            io->error = err;
+            recordRetire(record);
+            wioClose(io);
+        }
+        return;
+    }
+
+    recordRetire(record);
+
+    int err = start_next_send(io);
+    if (UNLIKELY(err != 0))
+    {
+        io->error = err;
+        wioClose(io);
+        return;
+    }
+    // WW_WRITE is one-shot only after the serialized send stream is empty. A
+    // callback may have enqueued the next write, so test both sources of work.
+    if (io->iocp_send_active == NULL && write_queue_empty(&io->write_queue) && (io->events & WW_WRITE))
+    {
+        wioDel(io, WW_WRITE);
+    }
+}
+
+static void dispatch_connect(wio_t *io, woverlapped_t *record)
+{
+    const bool canceled = (record->cancel_reason != WOVERLAPPED_NOT_CANCELED);
+    const int  err      = record->error;
+
+    // WW_WRITE is one-shot for connect too.
+    io->connect = 0;
+    if (! io->closed)
+    {
+        wioDel(io, WW_WRITE);
+    }
+
+    if (canceled)
+    {
+        recordRetire(record);
+        return;
+    }
+    if (err != 0)
+    {
+        io->error = err;
+        recordRetire(record);
+        wioClose(io);
+        return;
+    }
+
+    // Apply the connect context and resolve addresses before user code.
+    setsockopt(io->fd, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL, 0);
+    socklen_t addrlen = sizeof(sockaddr_u);
+    getsockname(io->fd, io->localaddr, &addrlen);
+    addrlen = sizeof(sockaddr_u);
+    getpeername(io->fd, io->peeraddr, &addrlen);
+
+    wioDelConnectTimer(io);
+    io->connected = 1;
+    if (io->connect_cb != NULL)
+    {
         io->connect_cb(io);
-        //printd("connect_cb======\n");
     }
+    // Keep the operation reference through connect_cb. In particular, wioFree()
+    // from the callback must defer returning io to its pool until the pending
+    // dispatcher has also released its cursor.
+    recordRetire(record);
 }
 
-static void on_wsarecv_complete(wio_t* io) {
-    printd("on_recv_complete------\n");
-    woverlapped_t* hovlp = (woverlapped_t*)io->hovlp;
-    int recv_error;
-    if (hovlp == NULL) {
-        return;
-    }
-    if (hovlp->error != 0 ||
-        (hovlp->bytes == 0 && (io->io_type & WIO_TYPE_SOCK_DGRAM) == 0)) {
-        if (hovlp->sbuf) {
-            bufferpoolReuseBuffer(io->loop->bufpool, hovlp->sbuf);
-            hovlp->sbuf = NULL;
-        }
-        io->error = hovlp->error;
-        wioClose(io);
+static void dispatch_accept(wio_t *io, woverlapped_t *record)
+{
+    if (record->cancel_reason != WOVERLAPPED_NOT_CANCELED)
+    {
+        // Expected cleanup (listener stop/close/shutdown): close the provisional
+        // accepted socket and retire without parsing addresses or reposting.
+        recordRetire(record);
         return;
     }
 
-    if (io->read_cb) {
-        if (io->io_type == WIO_TYPE_UDP || io->io_type == WIO_TYPE_IP) {
-            if (hovlp->addr && hovlp->addrlen) {
-                wioSetPeerAddr(io, hovlp->addr, hovlp->addrlen);
-            }
+    if (record->error != 0)
+    {
+        // Non-cancellation failure while the listener remains active: drop the
+        // provisional socket and replenish the accept slot if still reading.
+        SAFE_CLOSESOCKET(record->fd);
+        record->fd = -1;
+        if (! io->closed && record->io_id == io->id && (io->events & WW_READ))
+        {
+            (void) post_acceptex(io, record);
         }
-        sbufSetLength(hovlp->sbuf, (uint32_t)hovlp->bytes);
-        //printd("read_cb------\n");
-        io->read_cb(io, hovlp->sbuf);
-        //printd("read_cb======\n");
-    } else if (hovlp->sbuf) {
-        bufferpoolReuseBuffer(io->loop->bufpool, hovlp->sbuf);
-    }
-    hovlp->sbuf = NULL;
-
-    if (io->closed || io->hovlp == NULL) {
+        else
+        {
+            recordRetire(record);
+        }
         return;
     }
 
-    // Keep one receive pending for every socket type. UDP and raw-IP receives
-    // complete one datagram at a time, so freeing hovlp here would permanently
-    // stop delivery after the first packet.
-    recv_error = post_recv(io, hovlp);
-    if (UNLIKELY(recv_error != 0)) {
-        io->error = recv_error;
-        wioClose(io);
+    const int                 listenfd             = io->fd;
+    const int                 connfd               = record->fd;
+    LPFN_GETACCEPTEXSOCKADDRS GetAcceptExSockaddrs = NULL;
+    GUID                      guid                 = WSAID_GETACCEPTEXSOCKADDRS;
+    DWORD                     dwbytes              = 0;
+    struct sockaddr          *plocaladdr           = NULL;
+    struct sockaddr          *ppeeraddr            = NULL;
+    int                       localaddrlen         = 0;
+    int                       peeraddrlen          = 0;
+
+    bool parse_ok = (WSAIoctl(connfd,
+                              SIO_GET_EXTENSION_FUNCTION_POINTER,
+                              &guid,
+                              sizeof(guid),
+                              &GetAcceptExSockaddrs,
+                              sizeof(GetAcceptExSockaddrs),
+                              &dwbytes,
+                              NULL,
+                              NULL) == 0);
+    if (parse_ok)
+    {
+        // Parse addresses with exactly the region length stored when posting.
+        GetAcceptExSockaddrs(record->buf.buf,
+                             0,
+                             record->accept_address_length,
+                             record->accept_address_length,
+                             &plocaladdr,
+                             &localaddrlen,
+                             &ppeeraddr,
+                             &peeraddrlen);
+        if (setsockopt(connfd, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (const char *) &listenfd, sizeof(listenfd)) != 0)
+        {
+            parse_ok = false;
+        }
+    }
+
+    if (! parse_ok)
+    {
+        SAFE_CLOSESOCKET(record->fd);
+        record->fd = -1;
+        if (! io->closed && record->io_id == io->id && (io->events & WW_READ))
+        {
+            (void) post_acceptex(io, record);
+        }
+        else
+        {
+            recordRetire(record);
+        }
+        return;
+    }
+
+    // Transfer the accepted socket to its own wio_t and immediately invalidate the
+    // record's socket field so record cleanup cannot close a transferred socket.
+    wio_t *connio = wioGet(io->loop, connfd);
+    record->fd    = -1;
+
+    if (wioIsClosed(connio))
+    {
+        // Socket init rejected the accepted fd and already closed it; replenish.
+        if (! io->closed && record->io_id == io->id && (io->events & WW_READ))
+        {
+            (void) post_acceptex(io, record);
+        }
+        else
+        {
+            recordRetire(record);
+        }
+        return;
+    }
+
+    connio->userdata  = io->userdata;
+    connio->accept_cb = io->accept_cb;
+    if (localaddrlen > 0)
+    {
+        memoryCopy(connio->localaddr, plocaladdr, (size_t) localaddrlen);
+    }
+    if (peeraddrlen > 0)
+    {
+        memoryCopy(connio->peeraddr, ppeeraddr, (size_t) peeraddrlen);
+    }
+
+    if (io->accept_cb != NULL)
+    {
+        // A close of the listener inside accept_cb drains the other posted accept
+        // records without callbacks; this record stays local and safe.
+        io->accept_cb(connio);
+    }
+
+    // Repost only if the listener is still open, the generation matches, and
+    // read/accept interest is still enabled.
+    if (! io->closed && record->io_id == io->id && (io->events & WW_READ))
+    {
+        (void) post_acceptex(io, record);
+    }
+    else
+    {
+        recordRetire(record);
     }
 }
 
-static void on_wsasend_complete(wio_t* io) {
-    printd("on_send_complete------\n");
-    woverlapped_t* hovlp = (woverlapped_t*)io->hovlp;
-    if (hovlp->bytes == 0) {
-        io->error = WSAGetLastError();
-        wioClose(io);
-        goto end;
-    }
-    if (io->write_cb) {
-        if (io->io_type == WIO_TYPE_UDP || io->io_type == WIO_TYPE_IP) {
-            if (hovlp->addr) {
-                wioSetPeerAddr(io, hovlp->addr, hovlp->addrlen);
-            }
+// Drain and dispatch every completed record for an active io. The record is
+// popped into a local variable (holding its live reference) before any user
+// callback, so a re-entrant close/free cannot see or free it.
+static void wioIocpDispatchCompleted(wio_t *io)
+{
+    for (;;)
+    {
+        woverlapped_t *record = recordPopCompleted(io);
+        if (record == NULL)
+        {
+            break;
         }
-        //printd("write_cb------\n");
-        io->write_cb(io);
-        //printd("write_cb======\n");
+        switch (record->kind)
+        {
+        case WOVERLAPPED_ACCEPT:
+            dispatch_accept(io, record);
+            break;
+        case WOVERLAPPED_CONNECT:
+            dispatch_connect(io, record);
+            break;
+        case WOVERLAPPED_RECV:
+            dispatch_recv(io, record);
+            break;
+        case WOVERLAPPED_SEND:
+            dispatch_send(io, record);
+            break;
+        default:
+            recordRetire(record);
+            break;
+        }
     }
-end:
-    if (io->hovlp) {
-        EVENTLOOP_FREE(hovlp->addr);
-        EVENTLOOP_FREE(hovlp->buf.buf);
-        EVENTLOOP_FREE(io->hovlp);
+    wioIocpMaybeFinalize(io);
+}
+
+// io->cb installed by wioAdd; invoked from the pending queue for active io.
+static void wio_handle_events(wio_t *io)
+{
+    assert(! io->iocp_pending_dispatch);
+    io->iocp_pending_dispatch = 1;
+    wioIocpDispatchCompleted(io);
+}
+
+// -----------------------------------------------------------------------------
+// iocp.c <-> overlapio.c plumbing
+// -----------------------------------------------------------------------------
+
+void wioIocpOnDequeued(woverlapped_t *record, DWORD bytes, int error)
+{
+    wio_t *io = record->io;
+    recordUnpost(record);
+    record->bytes = bytes;
+    record->error = error; // 0 on success; never leave a stale value
+    recordPushCompleted(io, record);
+}
+
+void wioIocpRetireCompletedWithoutCallbacks(wio_t *io)
+{
+    for (;;)
+    {
+        woverlapped_t *record = recordPopCompleted(io);
+        if (record == NULL)
+        {
+            break;
+        }
+        recordRetire(record);
+    }
+    wioIocpMaybeFinalize(io);
+}
+
+static bool recordMatchesEvents(const woverlapped_t *record, int event_mask)
+{
+    switch (record->kind)
+    {
+    case WOVERLAPPED_ACCEPT:
+    case WOVERLAPPED_RECV:
+        return (event_mask & WW_READ) != 0;
+    case WOVERLAPPED_CONNECT:
+    case WOVERLAPPED_SEND:
+        return (event_mask & WW_WRITE) != 0;
+    default:
+        return false;
     }
 }
 
-static void wio_handle_events(wio_t* io) {
-    if ((io->events & WW_READ) && (io->revents & WW_READ)) {
-        if (io->accept) {
-            on_acceptex_complete(io);
+void wioIocpCancel(wio_t *io, int event_mask, woverlapped_cancel_reason_e reason)
+{
+    const bool cancel_all = (event_mask & WW_READ) != 0 && (event_mask & WW_WRITE) != 0;
+
+    for (woverlapped_t *record = io->iocp_posted_head; record != NULL; record = record->posted_next)
+    {
+        if (! recordMatchesEvents(record, event_mask))
+        {
+            continue;
         }
-        else {
-            on_wsarecv_complete(io);
+        // First reason wins: wioClose marks CLOSE before wioDel re-enters with STOP.
+        if (record->cancel_reason == WOVERLAPPED_NOT_CANCELED)
+        {
+            record->cancel_reason = reason;
+        }
+        if (! cancel_all)
+        {
+            // Cancel exactly this operation so unrelated read/write/accept/connect
+            // work on the same handle is not disturbed.
+            CancelIoEx((HANDLE) (uintptr_t) io->fd, &record->ovlp);
         }
     }
 
-    if ((io->events & WW_WRITE) && (io->revents & WW_WRITE)) {
-        // NOTE: WW_WRITE just do once
-        // ONESHOT
-        iowatcherDelEvent(io->loop, io->fd, WW_WRITE);
-        io->events &= ~WW_WRITE;
-        if (io->connect) {
-            io->connect = 0;
-
-            on_connectex_complete(io);
-        }
-        else {
-            on_wsasend_complete(io);
+    // A completion may already have left the kernel-owned list but still be
+    // waiting behind timers in the generic pending queue. Stop/close must suppress
+    // that callback just as reliably as cancellation of a posted operation.
+    for (woverlapped_t *record = io->iocp_completed_head; record != NULL; record = record->completed_next)
+    {
+        if (recordMatchesEvents(record, event_mask) && record->cancel_reason == WOVERLAPPED_NOT_CANCELED)
+        {
+            record->cancel_reason = reason;
         }
     }
 
-    io->revents = 0;
+    if (cancel_all && io->iocp_posted_head != NULL)
+    {
+        // Close/shutdown: cancel everything outstanding on the handle at once.
+        CancelIoEx((HANDLE) (uintptr_t) io->fd, NULL);
+    }
 }
+
+bool wioIocpCanFinalize(wio_t *io)
+{
+    return io->closed && io->iocp_completed_head == NULL && io->iocp_send_active == NULL &&
+           io->iocp_posted_count == 0 && io->iocp_live_records == 0 && ! io->pending && ! io->iocp_pending_dispatch &&
+           ! io->iocp_close_in_progress;
+}
+
+void wioIocpFinalizeDeferred(wio_t *io)
+{
+    wioIocpMaybeFinalize(io);
+}
+
+// -----------------------------------------------------------------------------
+// Public wio operations
+// -----------------------------------------------------------------------------
 
 int wioAccept(wio_t *io)
 {
-    int add_error;
-    int posted_count = 0;
-    int accept_error = 0;
-
-    io->accept = 1;
-    add_error  = wioAdd(io, wio_handle_events, WW_READ);
+    io->accept    = 1;
+    int add_error = wioAdd(io, wio_handle_events, WW_READ);
     if (UNLIKELY(add_error != 0))
     {
         io->accept = 0;
@@ -336,6 +957,8 @@ int wioAccept(wio_t *io)
         return add_error;
     }
 
+    int posted_count = 0;
+    int accept_error = 0;
     for (int i = 0; i < ACCEPTEX_NUM; ++i)
     {
         int post_error = post_acceptex(io, NULL);
@@ -348,8 +971,8 @@ int wioAccept(wio_t *io)
             accept_error = post_error;
         }
     }
-    // A partially populated accept queue is usable. Fail startup only when no
-    // AcceptEx request could be posted.
+    // A partially populated accept queue is usable; fail startup only when no
+    // AcceptEx request could be posted at all.
     if (UNLIKELY(posted_count == 0))
     {
         io->accept = 0;
@@ -362,27 +985,42 @@ int wioAccept(wio_t *io)
 
 int wioConnect(wio_t *io)
 {
-    int connect_error;
-    int add_error;
-    // NOTE: ConnectEx must call bind
-    struct sockaddr_in localaddr;
-    socklen_t          addrlen       = sizeof(localaddr);
-    LPFN_CONNECTEX     ConnectEx     = NULL;
-    GUID               guidConnectEx = WSAID_CONNECTEX;
-    DWORD              dwbytes;
-    woverlapped_t     *hovlp = NULL;
+    int connect_error = 0;
 
-    memoryZero(&localaddr, addrlen);
-    localaddr.sin_family      = AF_INET;
-    localaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    localaddr.sin_port        = htons(0);
-    if (bind(io->fd, (struct sockaddr *) &localaddr, addrlen) < 0)
+    // Family from the actual peer address (Phase 6).
+    int family = io->peeraddr->sa_family;
+    if (family != AF_INET && family != AF_INET6)
+    {
+        connect_error = WSAEAFNOSUPPORT;
+        goto error;
+    }
+
+    // ConnectEx requires a prior bind to a zero-port wildcard of the same family.
+    // A zeroed sockaddr already encodes the wildcard address (INADDR_ANY /
+    // in6addr_any are all-zero) and port 0, so only the family is set explicitly.
+    sockaddr_u local;
+    socklen_t  local_len;
+    memoryZero(&local, sizeof(local));
+    if (family == AF_INET)
+    {
+        local.sin.sin_family = AF_INET;
+        local_len            = sizeof(struct sockaddr_in);
+    }
+    else
+    {
+        local.sin6.sin6_family = AF_INET6;
+        local_len              = sizeof(struct sockaddr_in6);
+    }
+    if (bind(io->fd, &local.sa, local_len) < 0)
     {
         connect_error = socketERRNO();
         printError("syscall return error , call: bind , value: %d\n", connect_error);
         goto error;
     }
-    // ConnectEx
+
+    LPFN_CONNECTEX ConnectEx     = NULL;
+    GUID           guidConnectEx = WSAID_CONNECTEX;
+    DWORD          dwbytes       = 0;
     if (WSAIoctl(io->fd,
                  SIO_GET_EXTENSION_FUNCTION_POINTER,
                  &guidConnectEx,
@@ -396,23 +1034,28 @@ int wioConnect(wio_t *io)
         connect_error = WSAGetLastError();
         goto error;
     }
-    add_error = wioAdd(io, wio_handle_events, WW_WRITE);
+
+    int add_error = wioAdd(io, wio_handle_events, WW_WRITE);
     if (UNLIKELY(add_error != 0))
     {
         connect_error = add_error < 0 ? -add_error : add_error;
         goto error;
     }
-    // NOTE: free on_connectex_complete
-    EVENTLOOP_ALLOC_SIZEOF(hovlp);
-    hovlp->fd    = io->fd;
-    hovlp->event = WW_WRITE;
-    hovlp->io    = io;
-    if (ConnectEx(io->fd, io->peeraddr, sizeof(struct sockaddr_in6), NULL, 0, &dwbytes, &hovlp->ovlp) != TRUE)
+
+    woverlapped_t *record = NULL;
+    EVENTLOOP_ALLOC_SIZEOF(record);
+    recordAttach(io, record, WOVERLAPPED_CONNECT);
+    record->fd = io->fd;
+
+    recordMarkPosted(record);
+    if (ConnectEx(io->fd, io->peeraddr, (int) SOCKADDR_LEN(io->peeraddr), NULL, 0, &dwbytes, &record->ovlp) != TRUE)
     {
         int err = WSAGetLastError();
         if (err != ERROR_IO_PENDING)
         {
             printError("ConnectEx error: %d\n", err);
+            recordUnpost(record);
+            recordRetire(record);
             connect_error = err;
             goto error;
         }
@@ -420,14 +1063,15 @@ int wioConnect(wio_t *io)
     io->connectex = 1;
     io->connect   = 1;
     return 0;
+
 error:
-    free_buffered_overlapped(io, hovlp);
     io->error = connect_error;
     wioClose(io);
     return connect_error;
 }
 
-int wioRead (wio_t* io) {
+int wioRead(wio_t *io)
+{
     int add_error = wioAdd(io, wio_handle_events, WW_READ);
     if (UNLIKELY(add_error != 0))
     {
@@ -444,27 +1088,32 @@ int wioRead (wio_t* io) {
     return 0;
 }
 
-int wioWriteDatagram(wio_t* io, sbuf_t* buf, const sockaddr_u* peer_addr) {
-    if (io->closed) {
+int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
+{
+    if (io->closed)
+    {
         io->error = EBADF;
         bufferpoolReuseBuffer(io->loop->bufpool, buf);
         return -1;
     }
-    if ((io->io_type & WIO_TYPE_SOCK_DGRAM) == 0 && (io->io_type & WIO_TYPE_SOCK_RAW) == 0) {
+    if ((io->io_type & WIO_TYPE_SOCK_DGRAM) == 0 && (io->io_type & WIO_TYPE_SOCK_RAW) == 0)
+    {
         io->error = EINVAL;
         bufferpoolReuseBuffer(io->loop->bufpool, buf);
         return -1;
     }
-    // One-shot nonblocking send with the explicit destination. A datagram that
-    // cannot be sent immediately is dropped and recycled; no overlapped retry
-    // is created and io->peeraddr is not read or written.
-    int len = (int)sbufGetLength(buf);
-    int nwrite = sendto(io->fd, (const char*)sbufGetRawPtr(buf), len, 0, &peer_addr->sa, SOCKADDR_LEN(peer_addr));
-    if (nwrite < 0) {
+    // One-shot nonblocking send with an explicit destination. A datagram that
+    // cannot be sent immediately is dropped and recycled; no overlapped retry is
+    // created and io->peeraddr is not read or written.
+    int len    = (int) sbufGetLength(buf);
+    int nwrite = sendto(io->fd, (const char *) sbufGetRawPtr(buf), len, 0, &peer_addr->sa, SOCKADDR_LEN(peer_addr));
+    if (nwrite < 0)
+    {
         int err = socketERRNO();
-        if (err == EAGAIN || err == EINTR || err == WSAENOBUFS) {
-            // Transient pressure: drop without logging, the pressure path must
-            // not amplify overload.
+        if (err == EAGAIN || err == EINTR || err == WSAENOBUFS)
+        {
+            // Transient pressure: drop without logging; the pressure path must not
+            // amplify overload.
             bufferpoolReuseBuffer(io->loop->bufpool, buf);
             return 0;
         }
@@ -473,59 +1122,116 @@ int wioWriteDatagram(wio_t* io, sbuf_t* buf, const sockaddr_u* peer_addr) {
         return -1;
     }
     bufferpoolReuseBuffer(io->loop->bufpool, buf);
-    if (io->write_cb) {
+    if (io->write_cb != NULL)
+    {
         io->write_cb(io);
     }
     return nwrite;
 }
 
-int wioWrite(wio_t* io, sbuf_t* buf) {
-    int nwrite = 0;
-    if ((io->io_type & WIO_TYPE_SOCK_DGRAM) || (io->io_type & WIO_TYPE_SOCK_RAW)) {
+int wioWrite(wio_t *io, sbuf_t *buf)
+{
+    if (io->closed)
+    {
+        io->error = EBADF;
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        return -1;
+    }
+    if ((io->io_type & WIO_TYPE_SOCK_DGRAM) || (io->io_type & WIO_TYPE_SOCK_RAW))
+    {
         // Datagrams never enter the overlapped retry path; snapshot the default
         // peer so a later read cannot redirect this datagram.
         sockaddr_u peer_addr = *io->peeraddr_u;
         return wioWriteDatagram(io, buf, &peer_addr);
     }
-try_send:
-    if (io->io_type == WIO_TYPE_TCP) {
-        nwrite = send(io->fd, sbufGetRawPtr(buf), sbufGetLength(buf), 0);
+    if (io->io_type != WIO_TYPE_TCP)
+    {
+        io->error = EINVAL;
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        return -1;
     }
-    else if (io->io_type == WIO_TYPE_UDP) {
-        nwrite = sendto(io->fd, sbufGetRawPtr(buf), sbufGetLength(buf), 0, io->peeraddr, sizeof(struct sockaddr_in6));
+
+    int len = (int) sbufGetLength(buf);
+    if (len == 0)
+    {
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        wioClose(io);
+        return 0;
     }
-    else if (io->io_type == WIO_TYPE_IP) {
-        goto WSASend;
-    }
-    else {
-        nwrite = -1;
-    }
-    //printd("write retval=%d\n", nwrite);
-    if (nwrite < 0) {
-        if (socketERRNO() == EAGAIN) {
-            nwrite = 0;
-            goto WSASend;
+
+    // Once an overlapped send exists, every later TCP buffer joins the existing
+    // stream queue. This prevents out-of-order concurrent WSASend records.
+    if (io->iocp_send_active != NULL || ! write_queue_empty(&io->write_queue))
+    {
+        int add_error = wioAdd(io, wio_handle_events, WW_WRITE);
+        if (UNLIKELY(add_error != 0))
+        {
+            io->error = add_error < 0 ? -add_error : add_error;
+            bufferpoolReuseBuffer(io->loop->bufpool, buf);
+            wioClose(io);
+            return add_error;
         }
-        else {
+        if (UNLIKELY(enqueue_send(io, buf) != 0))
+        {
+            wioClose(io);
+            return -1;
+        }
+        int send_error = start_next_send(io);
+        if (UNLIKELY(send_error != 0))
+        {
+            io->error = send_error;
+            wioClose(io);
+            return -1;
+        }
+        return 0;
+    }
+
+    bool send_blocked = false;
+    int  nwrite       = send(io->fd, sbufGetRawPtr(buf), len, 0);
+    if (nwrite < 0)
+    {
+        int err = socketERRNO();
+        if (err == EAGAIN || err == EINTR || err == WSAEWOULDBLOCK || err == WSAENOBUFS)
+        {
+            nwrite       = 0;
+            send_blocked = true;
+        }
+        else
+        {
             printError("write");
-            io->error = socketERRNO();
-            goto write_error;
+            io->error = err;
+            bufferpoolReuseBuffer(io->loop->bufpool, buf);
+            wioClose(io);
+            return -1;
         }
     }
-    if (nwrite == 0) {
-        goto disconnect;
+    if (nwrite == 0 && ! send_blocked)
+    {
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        wioClose(io);
+        return 0;
     }
-    if (io->write_cb) {
-        //printd("try_write_cb------\n");
-        io->write_cb(io);
-        //printd("try_write_cb======\n");
-    }
-    if (nwrite == sbufGetLength(buf)) {
-        //goto write_done;
-        bufferpoolReuseBuffer(io->loop->bufpool,buf);
+
+    if (nwrite == len)
+    {
+        // Consume the buffer and update all io state before the callback. The
+        // callback may wioFree(io), so the function returns without touching io.
+        buffer_pool_t *pool   = io->loop->bufpool;
+        wwrite_cb      cb     = io->write_cb;
+        io->last_write_hrtime = io->loop->cur_hrtime;
+        bufferpoolReuseBuffer(pool, buf);
+        if (cb != NULL)
+        {
+            cb(io);
+        }
         return nwrite;
     }
-WSASend: {
+
+    if (nwrite > 0)
+    {
+        sbufShiftRight(buf, (uint32_t) nwrite);
+    }
+
     int add_error = wioAdd(io, wio_handle_events, WW_WRITE);
     if (UNLIKELY(add_error != 0))
     {
@@ -534,97 +1240,81 @@ WSASend: {
         wioClose(io);
         return add_error;
     }
+    if (UNLIKELY(enqueue_send(io, buf) != 0))
+    {
+        wioClose(io);
+        return -1;
+    }
+    int send_error = start_next_send(io);
+    if (UNLIKELY(send_error != 0))
+    {
+        io->error = send_error;
+        wioClose(io);
+        return -1;
+    }
 
-    woverlapped_t *hovlp;
-    EVENTLOOP_ALLOC_SIZEOF(hovlp);
-    hovlp->fd    = io->fd;
-    hovlp->event = WW_WRITE;
-    sbufShiftRight(buf, nwrite);
-    hovlp->buf.len = sbufGetLength(buf);
-    // NOTE: free on_send_complete
-    EVENTLOOP_ALLOC(hovlp->buf.buf, hovlp->buf.len);
-    memoryCopy(hovlp->buf.buf, sbufGetRawPtr(buf), hovlp->buf.len);
-    bufferpoolReuseBuffer(io->loop->bufpool, buf);
-    hovlp->io     = io;
-    DWORD dwbytes = 0;
-    DWORD flags   = 0;
-    int   ret     = 0;
-    if (io->io_type == WIO_TYPE_TCP)
+    if (nwrite > 0)
     {
-        ret = WSASend(io->fd, &hovlp->buf, 1, &dwbytes, flags, &hovlp->ovlp, NULL);
-    }
-    else if (io->io_type == WIO_TYPE_UDP || io->io_type == WIO_TYPE_IP)
-    {
-        ret = WSASendTo(
-            io->fd, &hovlp->buf, 1, &dwbytes, flags, io->peeraddr, sizeof(struct sockaddr_in6), &hovlp->ovlp, NULL);
-    }
-    else
-    {
-        ret = -1;
-    }
-    // printd("WSASend ret=%d bytes=%u\n", ret, dwbytes);
-    if (ret != 0)
-    {
-        int err = WSAGetLastError();
-        if (err != ERROR_IO_PENDING)
+        // The active record holds io alive through a callback-driven wioFree().
+        wwrite_cb cb          = io->write_cb;
+        io->last_write_hrtime = io->loop->cur_hrtime;
+        if (cb != NULL)
         {
-            printError("WSASend error: %d\n", err);
-            io->error = err;
-            free_buffered_overlapped(io, hovlp);
-            wioClose(io);
-            return ret;
+            cb(io);
         }
     }
-    return 0;
-}
-write_error:
-disconnect:
-    bufferpoolReuseBuffer(io->loop->bufpool,buf);
-    wioClose(io);
-    return 0;
+    return nwrite;
 }
 
-int wioClose (wio_t* io) {
-    if (io->closed) return 0;
-    io->closed = 1;
+int wioClose(wio_t *io)
+{
+    if (io->closed)
+    {
+        // wioFree may begin deferred finalization after an earlier close.
+        wioIocpFinalizeDeferred(io);
+        return 0;
+    }
+    io->iocp_close_in_progress = 1;
+    io->closed                 = 1;
+
+    // Mark closed before cancellation so completion handlers/callbacks cannot post
+    // new work, then request cancellation of every outstanding operation. Posted
+    // records and their buffers are NOT freed here; their completion packets still
+    // arrive and retire them.
+    wioIocpCancel(io, WW_RDWR, WOVERLAPPED_CANCEL_CLOSE);
+
+    // Remove loop interest (also flips the io inactive). wioDel re-enters
+    // wioIocpCancel with STOP, but the records are already CLOSE-marked so the
+    // reason is preserved.
     wioDone(io);
-    if (io->hovlp) {
-        woverlapped_t* hovlp = (woverlapped_t*)io->hovlp;
-        if (hovlp->sbuf) {
-            bufferpoolReuseBuffer(io->loop->bufpool, hovlp->sbuf);
-            hovlp->sbuf = NULL;
-        }
-        if (hovlp->event != WW_READ || io->accept) {
-            EVENTLOOP_FREE(hovlp->buf.buf);
-        }
-        EVENTLOOP_FREE(hovlp->addr);
-        EVENTLOOP_FREE(io->hovlp);
+
+    // Drop completions already sitting in the queue without user callbacks.
+    wioIocpRetireCompletedWithoutCallbacks(io);
+
+    /*
+     * Preserve the existing close-callback contract: user code runs before the
+     * socket handle is closed. iocp_close_in_progress keeps io out of the pool if
+     * that callback calls wioFree().
+     */
+    wclose_cb close_cb = io->close_cb;
+    if (close_cb != NULL)
+    {
+        close_cb(io);
     }
-    if (io->close_cb) {
-        //printd("close_cb------\n");
-        io->close_cb(io);
-        //printd("close_cb======\n");
-    }
-    if (io->io_type & WIO_TYPE_SOCKET) {
-#ifdef USE_DISCONNECTEX
-        // DisconnectEx reuse socket
-        if (io->connectex) {
-            io->connectex = 0;
-            LPFN_DISCONNECTEX DisconnectEx = NULL;
-            GUID guidDisconnectEx = WSAID_DISCONNECTEX;
-            DWORD dwbytes;
-            if (WSAIoctl(io->fd, SIO_GET_EXTENSION_FUNCTION_POINTER,
-                &guidDisconnectEx, sizeof(guidDisconnectEx),
-                &DisconnectEx, sizeof(DisconnectEx),
-                &dwbytes, NULL, NULL) != 0) {
-                return -1;
-            }
-            DisconnectEx(io->fd, NULL, 0, 0);
-        }
-#else
+
+    if (io->io_type & WIO_TYPE_SOCKET)
+    {
+        // Closing the handle also forces cancellation of anything still posted; the
+        // aborted completions are dequeued and retired later.
         closesocket(io->fd);
-#endif
     }
+
+    /*
+     * Release the close-stack lifetime reference last. Finalization may return io
+     * to the pool, so this function must not access it after the call.
+     */
+    io->iocp_close_in_progress = 0;
+    wioIocpFinalizeDeferred(io);
     return 0;
 }
 

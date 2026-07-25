@@ -12,6 +12,10 @@
 
 #include "worker.h"
 
+#ifdef EVENT_IOCP
+#include "overlapio.h"
+#endif
+
 #if defined(OS_UNIX) && HAVE_EVENTFD
 #include "sys/eventfd.h"
 #endif
@@ -173,10 +177,29 @@ static int wloopProcessPendings(wloop_t *loop)
                     ++ncbs;
                 }
                 cur->pending = 0;
+#ifdef EVENT_IOCP
+                if (cur->event_type == WEVENT_TYPE_IO)
+                {
+                    ((wio_t *) cur)->iocp_pending_dispatch = 0;
+                }
+#endif
                 // NOTE: Now we can safely delete event marked as destroy.
                 if (cur->destroy)
                 {
-                    EVENT_DEL(cur);
+#ifdef EVENT_IOCP
+                    if (cur->event_type == WEVENT_TYPE_IO && ((wio_t *) cur)->iocp_deferred_finalize)
+                    {
+                        // Completion callbacks may call wioFree(). The local
+                        // operation record kept the object alive through the
+                        // callback; now that this pending cursor is released, the
+                        // last record may safely return it to the wio pool.
+                        wioIocpFinalizeDeferred((wio_t *) cur);
+                    }
+                    else
+#endif
+                    {
+                        EVENT_DEL(cur);
+                    }
                 }
             }
             cur = next;
@@ -246,8 +269,17 @@ process_timers:
         }
     }
     int ncbs = wloopProcessPendings(loop);
-    printd("blocktime=%d nios=%d/%u ntimers=%d/%u nidles=%d/%u nactives=%d npendings=%d ncbs=%d\n", blocktime_ms, nios,
-           loop->nios, ntimers, loop->ntimers, nidles, loop->nidles, loop->nactives, npendings, ncbs);
+    printd("blocktime=%d nios=%d/%u ntimers=%d/%u nidles=%d/%u nactives=%d npendings=%d ncbs=%d\n",
+           blocktime_ms,
+           nios,
+           loop->nios,
+           ntimers,
+           loop->ntimers,
+           nidles,
+           loop->nidles,
+           loop->nactives,
+           npendings,
+           ncbs);
     discard nios;
     return ncbs;
 }
@@ -256,9 +288,15 @@ static void wloopStatTimerCallBack(wtimer_t *timer)
 {
     wloop_t *loop = timer->loop;
     // wlog_set_level(LOG_LEVEL_DEBUG);
-    wlogd("[Eventloop] worker=%ld pid=%ld uptime=%lluus cnt=%llu nactives=%u nios=%u ntimers=%u nidles=%u", loop->wid,
-          loop->pid, (unsigned long long) loop->cur_hrtime - loop->start_hrtime, (unsigned long long) loop->loop_cnt,
-          loop->nactives, loop->nios, loop->ntimers, loop->nidles);
+    wlogd("[Eventloop] worker=%ld pid=%ld uptime=%lluus cnt=%llu nactives=%u nios=%u ntimers=%u nidles=%u",
+          loop->wid,
+          loop->pid,
+          (unsigned long long) loop->cur_hrtime - loop->start_hrtime,
+          (unsigned long long) loop->loop_cnt,
+          loop->nactives,
+          loop->nios,
+          loop->ntimers,
+          loop->nidles);
 }
 
 static void eventFDReadCB(wio_t *io, sbuf_t *buf)
@@ -450,14 +488,74 @@ static void wloopInit(wloop_t *loop)
     wloopRefreshCachedTime(loop);
 }
 
-static void wloopCleanup(wloop_t *loop)
+#ifdef EVENT_IOCP
+// Diagnostic bounds for the native IOCP shutdown drain.
+#define WLOOP_IOCP_SHUTDOWN_POLL_MS    20
+#define WLOOP_IOCP_SHUTDOWN_TIMEOUT_MS 5000
+
+static bool wloopDrainNativeIocp(wloop_t *loop)
+{
+    if (loop->iowatcher == NULL)
+    {
+        return loop->iocp_live_operations == 0;
+    }
+    // Every wio_t has been closed (cancellation requested) but their OVERLAPPED
+    // structures and buffers are still referenced by the kernel. Drain the
+    // (canceled) completions before tearing down the descriptor table and IOCP
+    // handle. iowatcherPollEvents' inactive path retires them without user
+    // callbacks and finalizes deferred wio_t objects as their last record retires.
+    uint64_t deadline = getHRTimeUs() + (uint64_t) WLOOP_IOCP_SHUTDOWN_TIMEOUT_MS * 1000;
+    while (loop->iocp_live_operations > 0)
+    {
+        iowatcherPollEvents(loop, WLOOP_IOCP_SHUTDOWN_POLL_MS);
+        if (getHRTimeUs() >= deadline)
+        {
+            // Prefer a leak-safe shutdown over a use-after-free: the kernel may
+            // still touch these records, so do not free them here.
+            wloge("wloop shutdown: %u native IOCP operations still live (posted=%u) after %d ms; "
+                  "refusing unsafe teardown",
+                  loop->iocp_live_operations,
+                  loop->iocp_posted_operations,
+                  WLOOP_IOCP_SHUTDOWN_TIMEOUT_MS);
+            return false;
+        }
+    }
+    return true;
+}
+#endif
+
+static bool wloopCleanup(wloop_t *loop)
 {
     // pendings
     printd("cleanup pendings...\n");
     for (int i = 0; i < WEVENT_PRIORITY_SIZE; ++i)
     {
+#ifdef EVENT_IOCP
+        /*
+         * Pending membership is a lifetime reference. Shutdown suppresses these
+         * callbacks, but must consume every linked node before an IO can finalize
+         * or the pending array can be discarded.
+         */
+        wevent_t *cur = loop->pendings[i];
+        while (cur != NULL)
+        {
+            wevent_t *next = cur->pending_next;
+            if (cur->pending && cur->loop == loop)
+            {
+                cur->pending = 0;
+                if (cur->event_type == WEVENT_TYPE_IO)
+                {
+                    wio_t *io                 = (wio_t *) cur;
+                    io->iocp_pending_dispatch = 0;
+                    wioIocpRetireCompletedWithoutCallbacks(io);
+                }
+            }
+            cur = next;
+        }
+#endif
         loop->pendings[i] = NULL;
     }
+    loop->npendings = 0;
 
     // ios
     printd("cleanup ios...\n");
@@ -476,6 +574,15 @@ static void wloopCleanup(wloop_t *loop)
             }
         }
     }
+#ifdef EVENT_IOCP
+    // Native IOCP: wioFree above only requested cancellation for ios with
+    // outstanding records (they were detached and deferred). Drain their kernel
+    // completions before freeing the descriptor table and closing the IOCP handle.
+    if (! wloopDrainNativeIocp(loop))
+    {
+        return false;
+    }
+#endif
     io_array_cleanup(&loop->ios);
 
     // idles
@@ -517,6 +624,7 @@ static void wloopCleanup(wloop_t *loop)
     event_queue_cleanup(&loop->custom_events);
     mutexUnlock(&loop->custom_events_mutex);
     mutexDestroy(&loop->custom_events_mutex);
+    return true;
 }
 
 wloop_t *wloopCreate(int flags, buffer_pool_t *swimmingpool, long wid)
@@ -540,7 +648,18 @@ void wloopDestroy(wloop_t **pp)
         return;
     loop->status = WLOOP_STATUS_DESTROY;
     // wlogd("Eventloop shutdown worker=%ld", loop->wid);
-    wloopCleanup(loop);
+    if (! wloopCleanup(loop))
+    {
+        /*
+         * Kernel-owned OVERLAPPED records still reference the loop, IOCP handle,
+         * descriptor array, wio pool, and buffer pool. Continuing cleanup would
+         * turn a bounded shutdown delay into a use-after-free. Terminate without
+         * running further teardown; the operating system reclaims the retained
+         * dependency graph atomically with process exit.
+         */
+        wloge("fatal native IOCP shutdown: dependency graph retained; terminating without further teardown");
+        _Exit(EXIT_FAILURE);
+    }
     EVENTLOOP_FREE(loop);
     *pp = NULL;
 }
@@ -655,9 +774,9 @@ wloop_status_e wloopStatus(wloop_t *loop)
 
 void wloopUpdateTime(wloop_t *loop)
 {
-    loop->cur_hrtime = getHRTimeUs();
+    loop->cur_hrtime    = getHRTimeUs();
     uint64_t elapsed_us = loop->cur_hrtime - loop->start_hrtime;
-    uint64_t now = (loop->start_ms / 1000) + (elapsed_us / 1000000);
+    uint64_t now        = (loop->start_ms / 1000) + (elapsed_us / 1000000);
     if ((time_t) now != time(NULL))
     {
         // systemtime changed, we adjust start_ms
@@ -907,6 +1026,23 @@ const char *wioGetEngine(void)
 #endif
 }
 
+#ifdef EVENT_IOCP
+uint32_t wloopGetIocpLiveOperations(wloop_t *loop)
+{
+    return loop->iocp_live_operations;
+}
+
+uint32_t wloopGetIocpPostedOperations(wloop_t *loop)
+{
+    return loop->iocp_posted_operations;
+}
+
+uint32_t wioGetIocpLiveRecords(wio_t *io)
+{
+    return io->iocp_live_records;
+}
+#endif
+
 static inline wio_t *__wio_get(wloop_t *loop, int fd)
 {
     if (fd >= (int) loop->ios.maxsize)
@@ -921,6 +1057,24 @@ static inline wio_t *__wio_get(wloop_t *loop, int fd)
 wio_t *wioGet(wloop_t *loop, int fd)
 {
     wio_t *io = __wio_get(loop, fd);
+#ifdef EVENT_IOCP
+    if (io != NULL && io->closed)
+    {
+        /*
+         * Never reinitialize a closed native-IOCP object in place. It may still
+         * be linked from the pending list even with zero live operation records.
+         * wioFree detaches it and defers pool reuse until every lifetime reference
+         * is gone; the reused numeric descriptor receives a fresh object.
+         */
+        wio_t *closed_io = io;
+        wioFree(closed_io);
+        if (loop->ios.ptr[fd] == closed_io)
+        {
+            loop->ios.ptr[fd] = NULL;
+        }
+        io = NULL;
+    }
+#endif
     if (io == NULL)
     {
         io = threadsafegenericpoolGetItem(getWorkerWiosPool(loop->wid));
@@ -988,15 +1142,34 @@ static void wioReleaseNoCloseNow(wio_t *io)
     wloop_t *loop = io->loop;
     int      fd   = io->fd;
 
+#ifdef EVENT_IOCP
+    /*
+     * Releasing the wrapper without closing its socket is still a native-IOCP
+     * finalization. Detach before cancellation and keep a stack reference until
+     * timers, queued completions, and write buffers have been retired.
+     */
+    io->destroy                = 1;
+    io->closed                 = 1;
+    io->iocp_deferred_finalize = 1;
+    io->iocp_close_in_progress = 1;
+    if (loop != NULL && fd >= 0 && fd < (int) loop->ios.maxsize && loop->ios.ptr[fd] == io)
+    {
+        loop->ios.ptr[fd] = NULL;
+    }
+    wioIocpCancel(io, WW_RDWR, WOVERLAPPED_CANCEL_STOP);
+#endif
+
     if (io->events != 0)
     {
         wioDel(io, WW_RDWR);
     }
 
+#ifndef EVENT_IOCP
     if (loop != NULL && fd >= 0 && fd < (int) loop->ios.maxsize && loop->ios.ptr[fd] == io)
     {
         loop->ios.ptr[fd] = NULL;
     }
+#endif
 
     wioDelConnectTimer(io);
     wioDelCloseTimer(io);
@@ -1007,10 +1180,16 @@ static void wioReleaseNoCloseNow(wio_t *io)
     wioDone(io);
 
     io->release_no_close = 0;
+#ifdef EVENT_IOCP
+    wioIocpRetireCompletedWithoutCallbacks(io);
+    io->iocp_close_in_progress = 0;
+    wioIocpFinalizeDeferred(io);
+#else
     io->destroy = 1;
     EVENTLOOP_FREE(io->localaddr);
     EVENTLOOP_FREE(io->peeraddr);
     threadsafegenericpoolReuseItem(getWorkerWiosPool(loop->wid), io);
+#endif
 }
 
 static void wioReleaseNoCloseMessageRun(void *worker_arg, void *arg1, void *arg2, void *arg3)
@@ -1054,8 +1233,8 @@ void wioReleaseNoClose(wio_t *io)
         return;
     }
 
-    wloop_t *loop = io->loop;
-    int      fd   = io->fd;
+    wloop_t *loop        = io->loop;
+    int      fd          = io->fd;
     bool     was_pending = io->pending;
 
     assert(loop != NULL);
@@ -1076,18 +1255,15 @@ void wioReleaseNoClose(wio_t *io)
          * the deferred message before it runs.
          */
         /*
-         * wioClose doesnt have to do this because it only has to close the socket, it is not actually freeing a wio_t, 
-         * so no use-after-free issue. But wioReleaseNoClose will free the wio_t, so we need to defer it to avoid use-after-free issue.
+         * wioClose doesnt have to do this because it only has to close the socket, it is not actually freeing a wio_t,
+         * so no use-after-free issue. But wioReleaseNoClose will free the wio_t, so we need to defer it to avoid
+         * use-after-free issue.
          */
         wio_release_no_close_msg_t *msg = memoryAllocate(sizeof(*msg));
-        *msg = (wio_release_no_close_msg_t) {.io = io, .id = io->id};
+        *msg                            = (wio_release_no_close_msg_t) {.io = io, .id = io->id};
 
-        if (sendWorkerMessageForceQueueWithCleanup((wid_t) loop->wid,
-                                                   wioReleaseNoCloseMessageRun,
-                                                   wioReleaseNoCloseMessageCleanup,
-                                                   msg,
-                                                   NULL,
-                                                   NULL))
+        if (sendWorkerMessageForceQueueWithCleanup(
+                (wid_t) loop->wid, wioReleaseNoCloseMessageRun, wioReleaseNoCloseMessageCleanup, msg, NULL, NULL))
         {
             msg->detached = true;
             if (loop != NULL && fd >= 0 && fd < (int) loop->ios.maxsize && loop->ios.ptr[fd] == io)
@@ -1169,7 +1345,16 @@ int wioDel(wio_t *io, int events)
     if (io->events & events)
     {
         // printDebug("wioDel: fd=%x on loop wid %d, real wid %d\n", io->fd, io->loop->wid, getWID());
+#ifdef EVENT_IOCP
+        /*
+         * wioFree detaches the descriptor-table entry before closing. Native
+         * cancellation must therefore use the caller's object directly rather
+         * than looking it up again by a potentially reused numeric descriptor.
+         */
+        wioIocpCancel(io, events, WOVERLAPPED_CANCEL_STOP);
+#else
         iowatcherDelEvent(io->loop, io->fd, events);
+#endif
         io->events &= ~events;
     }
     if (io->events == 0)
@@ -1177,7 +1362,18 @@ int wioDel(wio_t *io, int events)
         io->loop->nios--;
         // NOTE: not EVENT_DEL, avoid free
         EVENT_INACTIVE(io);
+#ifndef EVENT_IOCP
         EVENT_UNPENDING(io);
+#endif
+#ifdef EVENT_IOCP
+        /*
+         * A matching completion may already have been dequeued before read/write
+         * stop. Retire it without callbacks, but leave any generic pending-list
+         * node linked and flagged. The normal pending pass owns that node and is
+         * the only path allowed to release its lifetime reference.
+         */
+        wioIocpRetireCompletedWithoutCallbacks(io);
+#endif
     }
     return 0;
 }
@@ -1340,7 +1536,7 @@ wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio
         return NULL;
     sockaddr_u addr;
     memoryZero(&addr, sizeof(addr));
-    int ret =  sockaddrSetIpAddressPort(&addr, host, port);
+    int ret = sockaddrSetIpAddressPort(&addr, host, port);
 
     if (ret != 0)
     {
@@ -1446,10 +1642,11 @@ wio_t *wloopCreateUdpServer(wloop_t *loop, const char *host, int port)
     return wloopCreateUdpServerWithOptions(loop, host, port, NULL, -1);
 }
 
-wio_t *wloopCreateUdpServerWithOptions(wloop_t *loop, const char *host, int port, const char *interface_name, int fwmark)
+wio_t *wloopCreateUdpServerWithOptions(wloop_t *loop, const char *host, int port, const char *interface_name,
+                                       int fwmark)
 {
-    return wloopCreateUdpServerWithBufferOptions(loop, host, port, interface_name, fwmark,
-                                                 kDefaultLargeSocketBufferSize, kDefaultLargeSocketBufferSize);
+    return wloopCreateUdpServerWithBufferOptions(
+        loop, host, port, interface_name, fwmark, kDefaultLargeSocketBufferSize, kDefaultLargeSocketBufferSize);
 }
 
 wio_t *wloopCreateUdpServerWithBufferOptions(wloop_t *loop, const char *host, int port, const char *interface_name,

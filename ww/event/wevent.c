@@ -4,6 +4,9 @@
 #include "watomic.h"
 #include "werr.h"
 #include "wsocket.h"
+#ifdef EVENT_IOCP
+#include "overlapio.h"
+#endif
 // todo (invesitage) how a dynamic node can have these?
 uint64_t wloopGetNextEventID(void)
 {
@@ -91,7 +94,7 @@ static void wioSocketInit(wio_t *io)
     }
     socklen_t addrlen = sizeof(sockaddr_u);
     int       ret     = getsockname(io->fd, io->localaddr, &addrlen);
-    discard ret;
+    discard   ret;
     printd("getsockname fd=%d ret=%d errno=%d\n", io->fd, ret, socketERRNO());
     // NOTE: udp peeraddr set by recvfrom/sendto
     if (io->io_type & WIO_TYPE_SOCK_STREAM)
@@ -171,8 +174,19 @@ void wioReady(wio_t *io)
     io->event_index[0] = io->event_index[1] = -1;
 #endif
 #ifdef EVENT_IOCP
-    io->hovlp = NULL;
-
+    // Native IOCP record tracking. Deferred reuse (see wioGet/wioFree) guarantees
+    // this object has no live records when it reaches wioReady, so a plain reset
+    // is safe.
+    assert(io->iocp_live_records == 0);
+    assert(io->iocp_posted_count == 0);
+    io->iocp_posted_head = io->iocp_posted_tail = NULL;
+    io->iocp_completed_head = io->iocp_completed_tail = NULL;
+    io->iocp_send_active                              = NULL;
+    io->iocp_live_records                             = 0;
+    io->iocp_posted_count                             = 0;
+    io->iocp_deferred_finalize                        = 0;
+    io->iocp_pending_dispatch                         = 0;
+    io->iocp_close_in_progress                        = 0;
 #endif
 
     // io_type
@@ -202,18 +216,61 @@ void wioDone(wio_t *io)
     }
     write_queue_cleanup(&io->write_queue);
     io->write_queue.ptr = NULL;
+    io->write_bufsize   = 0;
 }
 
 void wioFree(wio_t *io)
 {
     if (io == NULL || io->destroy)
         return;
+#ifdef EVENT_IOCP
+    /*
+     * A pending-list node, a dequeued completion, or wioClose itself may still
+     * hold this address even when no operation record is live. Detach first so
+     * descriptor reuse cannot discover the same object, then route every native
+     * IOCP free through the common finalization predicate.
+     */
+    io->destroy                = 1;
+    io->iocp_deferred_finalize = 1;
+    if (io->loop != NULL && io->fd >= 0 && io->fd < (int) io->loop->ios.maxsize && io->loop->ios.ptr[io->fd] == io)
+    {
+        io->loop->ios.ptr[io->fd] = NULL;
+    }
+    wioClose(io);
+    return;
+#else
     io->destroy = 1;
     wioClose(io);
     EVENTLOOP_FREE(io->localaddr);
     EVENTLOOP_FREE(io->peeraddr);
     threadsafegenericpoolReuseItem(getWorkerWiosPool(io->loop->wid), io);
+#endif
 }
+
+#ifdef EVENT_IOCP
+void wioFinalizeNow(wio_t *io)
+{
+    // Called from the native IOCP retire path once the last operation record for a
+    // deferred-finalized wio_t has been released. At this point the socket is
+    // closed, the object is detached from loop->ios, and no kernel reference
+    // remains, so it is safe to return it to the worker pool.
+    assert(io->iocp_deferred_finalize);
+    assert(! io->pending);
+    assert(! io->iocp_pending_dispatch);
+    assert(! io->iocp_close_in_progress);
+    assert(io->iocp_posted_count == 0);
+    assert(io->iocp_live_records == 0);
+    assert(io->iocp_completed_head == NULL);
+    assert(io->iocp_send_active == NULL);
+    assert(io->loop == NULL || io->fd < 0 || io->fd >= (int) io->loop->ios.maxsize || io->loop->ios.ptr[io->fd] != io);
+
+    io->iocp_deferred_finalize = 0;
+    io->destroy                = 1;
+    EVENTLOOP_FREE(io->localaddr);
+    EVENTLOOP_FREE(io->peeraddr);
+    threadsafegenericpoolReuseItem(getWorkerWiosPool(io->loop->wid), io);
+}
+#endif
 
 bool wioIsOpened(wio_t *io)
 {
@@ -523,7 +580,8 @@ static void __read_timeout_cb(wtimer_t *timer)
         {
             char localaddrstr[SOCKADDR_STRLEN] = {0};
             char peeraddrstr[SOCKADDR_STRLEN]  = {0};
-            wlogw("read timeout [%s] <=> [%s]", SOCKADDR_STR(io->localaddr, localaddrstr),
+            wlogw("read timeout [%s] <=> [%s]",
+                  SOCKADDR_STR(io->localaddr, localaddrstr),
                   SOCKADDR_STR(io->peeraddr, peeraddrstr));
         }
         io->error = ETIMEDOUT;
@@ -568,7 +626,8 @@ static void __write_timeout_cb(wtimer_t *timer)
         {
             char localaddrstr[SOCKADDR_STRLEN] = {0};
             char peeraddrstr[SOCKADDR_STRLEN]  = {0};
-            wlogw("write timeout [%s] <=> [%s]", SOCKADDR_STR(io->localaddr, localaddrstr),
+            wlogw("write timeout [%s] <=> [%s]",
+                  SOCKADDR_STR(io->localaddr, localaddrstr),
                   SOCKADDR_STR(io->peeraddr, peeraddrstr));
         }
         io->error = ETIMEDOUT;
@@ -614,7 +673,8 @@ static void __keepalive_timeout_cb(wtimer_t *timer)
         {
             char localaddrstr[SOCKADDR_STRLEN] = {0};
             char peeraddrstr[SOCKADDR_STRLEN]  = {0};
-            wlogd("keepalive timeout [%s] <=> [%s]", SOCKADDR_STR(io->localaddr, localaddrstr),
+            wlogd("keepalive timeout [%s] <=> [%s]",
+                  SOCKADDR_STR(io->localaddr, localaddrstr),
                   SOCKADDR_STR(io->peeraddr, peeraddrstr));
         }
         io->error = ETIMEDOUT;
