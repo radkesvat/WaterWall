@@ -1101,4 +1101,17 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPI
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 endif()
 
+# Native-IOCP-only tests. The Linux tests/ subdirectory is not added on Windows,
+# so the native IOCP backend registers its own test executable here, and only
+# when that backend is actually selected (windows-iocp preset).
+if(BUILD_TESTING AND WIN32 AND WITH_NATIVE_IOCP)
+  add_executable(iocp_native_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/iocp_native_test.c)
+  target_link_libraries(iocp_native_test PRIVATE ww ws2_32 mswsock)
+  add_test(NAME waterwall.iocp_native COMMAND iocp_native_test)
+  set_tests_properties(waterwall.iocp_native PROPERTIES
+    TIMEOUT 120
+    LABELS "unit;net;iocp;windows")
+endif()
+
 message(STATUS "Waterwall version: ${Waterwall_VERSION}")

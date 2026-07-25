@@ -26,6 +26,21 @@
             ]
         },
         {
+            "name": "windows-iocp",
+            "inherits": [
+                "host-windows",
+                "target-windows",
+                "vs2026",
+                "ccache",
+                "unity",
+                "default"
+            ],
+            "cacheVariables": {
+                "WITH_NATIVE_IOCP": true,
+                "WITH_WEPOLL": false
+            }
+        },
+        {
             "name": "windows-arm32",
             "inherits": [
                 "host-windows",
@@ -123,6 +138,29 @@
         {
             "name": "windows",
             "configurePreset": "windows",
+            "inherits": [
+                "host-windows"
+            ]
+        },
+        {
+            "name": "windows-iocp",
+            "configurePreset": "windows-iocp",
+            "inherits": [
+                "host-windows"
+            ]
+        },
+        {
+            "name": "windows-iocp-debug",
+            "configurePreset": "windows-iocp",
+            "configuration": "Debug",
+            "inherits": [
+                "host-windows"
+            ]
+        },
+        {
+            "name": "windows-iocp-rwd",
+            "configurePreset": "windows-iocp",
+            "configuration": "RelWithDebInfo",
             "inherits": [
                 "host-windows"
             ]
@@ -287,6 +325,14 @@
         {
             "name": "windows",
             "configurePreset": "windows",
+            "inherits": [
+                "host-windows",
+                "options"
+            ]
+        },
+        {
+            "name": "windows-iocp",
+            "configurePreset": "windows-iocp",
             "inherits": [
                 "host-windows",
                 "options"

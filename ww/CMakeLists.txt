@@ -30,7 +30,27 @@ mark_as_advanced(WCRYPTO_BACKEND_SOFTWARE)
 # Windows-specific options
 if(WIN32)
     option(WITH_WEPOLL "Use wepoll (IOCP wrapper)" ON)
+    # Advanced, off by default: the native overlapped IOCP backend. wepoll stays
+    # the default Windows backend; select this only through the windows-iocp
+    # preset (or an explicit -DWITH_NATIVE_IOCP=ON -DWITH_WEPOLL=OFF).
+    option(WITH_NATIVE_IOCP "Use the native IOCP overlapped backend instead of wepoll" OFF)
+    mark_as_advanced(WITH_NATIVE_IOCP)
     option(ENABLE_WINDUMP "Enable Windows MiniDumpWriteDump" OFF)
+
+    if(WITH_NATIVE_IOCP AND WITH_WEPOLL)
+        message(FATAL_ERROR
+            "WITH_NATIVE_IOCP and WITH_WEPOLL are mutually exclusive. "
+            "To build the native IOCP backend configure with "
+            "-DWITH_NATIVE_IOCP=ON -DWITH_WEPOLL=OFF (see the windows-iocp preset).")
+    endif()
+
+    if(WITH_NATIVE_IOCP)
+        message(STATUS "Windows event backend: native IOCP (EVENT_IOCP)")
+    elseif(WITH_WEPOLL)
+        message(STATUS "Windows event backend: wepoll (EVENT_EPOLL)")
+    else()
+        message(STATUS "Windows event backend: WSAPoll (EVENT_POLL)")
+    endif()
 endif()
 
 # Validate required variables
@@ -576,9 +596,16 @@ elseif(WIN32)
     
     target_sources(ww PRIVATE devices/tun/tun_windows.c)
 
-    # WEPoll configuration
-    set(WITH_WEPOLL 1)
-    if(WITH_WEPOLL)
+    # Event backend configuration
+    # NOTE: the earlier unconditional `set(WITH_WEPOLL 1)` that forced wepoll on
+    # regardless of the cache value has been removed so WITH_WEPOLL/WITH_NATIVE_IOCP
+    # actually select the backend.
+    if(WITH_NATIVE_IOCP)
+        # Native overlapped IOCP backend: iocp.c + overlapio.c. Do not compile or
+        # link the wepoll object. EVENT_IOCP short-circuits the auto-selection in
+        # iowatcher.h and switches nio.c off (it is guarded by #ifndef EVENT_IOCP).
+        target_compile_definitions(ww PUBLIC EVENT_IOCP)
+    elseif(WITH_WEPOLL)
         target_include_directories(ww PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/event/wepoll)
 
         add_library(ww_wepoll OBJECT event/wepoll/wepoll.c)
