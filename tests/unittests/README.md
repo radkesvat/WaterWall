@@ -63,9 +63,9 @@ cmake --build --preset linux-gcc-x64 --target waterwall_unit_tests
 ctest --preset linux-gcc --output-on-failure -L unit
 ```
 
-The unit CTest entries run through `run_unit_test.cmake`, which builds the requested unit executable for the active CTest
-configuration if it is missing. This keeps IDE test runners from failing just because they selected `Debug` while only
-`Release` unit executables had been built.
+The unit CTest entries run through `run_unit_test.cmake`, which brings the requested unit executable up to date for the
+active CTest configuration before running it. This keeps direct CTest and IDE runs correct when sources changed or when
+they select `Debug` while only `Release` unit executables had previously been built.
 
 ## Adding A Unit Test
 
