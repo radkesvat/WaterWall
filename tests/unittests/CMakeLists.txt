@@ -311,7 +311,7 @@ if(TARGET ww)
       PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE
     )
     target_compile_options(select_registration_failure_test PRIVATE "-fno-lto")
-    target_link_options(select_registration_failure_test PRIVATE "-Wl,--wrap=connect")
+    target_link_options(select_registration_failure_test PRIVATE "-Wl,--wrap=connect" "-Wl,--wrap=eventfd")
     target_link_libraries(select_registration_failure_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests select_registration_failure_test)
 
@@ -320,6 +320,74 @@ if(TARGET ww)
       select_registration_failure_test
       "unit;event;select;registration;lifetime"
     )
+
+    add_executable(signal_manager_registration_failure_test
+      signal_manager_registration_failure_test.c
+      ${CMAKE_SOURCE_DIR}/ww/managers/signal_manager.c
+    )
+    set_property(
+      TARGET signal_manager_registration_failure_test
+      PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE
+    )
+    target_compile_options(signal_manager_registration_failure_test PRIVATE "-fno-lto")
+    target_link_options(signal_manager_registration_failure_test PRIVATE "-Wl,--wrap=wRead")
+    target_link_libraries(signal_manager_registration_failure_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests signal_manager_registration_failure_test)
+
+    add_waterwall_unit_test(
+      waterwall.signal_manager_registration_failure_unit
+      signal_manager_registration_failure_test
+      "unit;signal-manager;startup;failure"
+    )
+
+    add_executable(thread_creation_failure_test thread_creation_failure_test.c)
+    set_property(
+      TARGET thread_creation_failure_test
+      PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE
+    )
+    target_compile_options(thread_creation_failure_test PRIVATE "-fno-lto")
+    target_link_options(thread_creation_failure_test PRIVATE "-Wl,--wrap=pthread_create")
+    target_link_libraries(thread_creation_failure_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests thread_creation_failure_test)
+
+    add_waterwall_unit_test(
+      waterwall.thread_creation_failure_unit
+      thread_creation_failure_test
+      "unit;thread;startup;failure"
+    )
+
+    if(TARGET RawSocket)
+      add_executable(rawsocket_startup_failure_test
+        rawsocket_startup_failure_test.c
+        ${CMAKE_SOURCE_DIR}/tunnels/RawSocket/instance/start.c
+      )
+      set_property(
+        TARGET rawsocket_startup_failure_test
+        PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE
+      )
+      target_compile_options(rawsocket_startup_failure_test PRIVATE "-fno-lto")
+      target_include_directories(rawsocket_startup_failure_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/tunnels/RawSocket/include
+        ${CMAKE_SOURCE_DIR}/tunnels/RawSocket/include/RawSocket
+      )
+      target_link_options(rawsocket_startup_failure_test PRIVATE
+        "-Wl,--wrap=caputredeviceCreate"
+        "-Wl,--wrap=caputredeviceBringUp"
+        "-Wl,--wrap=caputredeviceBringDown"
+        "-Wl,--wrap=capturedeviceDestroy"
+        "-Wl,--wrap=rawdeviceCreate"
+        "-Wl,--wrap=rawdeviceBringUp"
+        "-Wl,--wrap=rawdeviceDestroy"
+      )
+      target_link_libraries(rawsocket_startup_failure_test PRIVATE ww)
+      add_dependencies(waterwall_unit_tests rawsocket_startup_failure_test)
+
+      add_waterwall_unit_test(
+        waterwall.rawsocket_startup_failure_unit
+        rawsocket_startup_failure_test
+        "unit;net;rawsocket;startup;failure"
+      )
+    endif()
 
     add_executable(os_helpers_bbr_test
       os_helpers_bbr_test.c

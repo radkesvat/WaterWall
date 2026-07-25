@@ -11,10 +11,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/resource.h>
+#include <unistd.h>
 
-static int close_callback_count;
+static int  close_callback_count;
+static bool force_high_eventfd;
+static int  wrapped_eventfd_fd = -1;
 
 int __wrap_connect(int socket_fd, const struct sockaddr *address, socklen_t address_len);
+int __real_eventfd(unsigned int initval, int flags);
+int __wrap_eventfd(unsigned int initval, int flags);
 
 int __wrap_connect(int socket_fd, const struct sockaddr *address, socklen_t address_len)
 {
@@ -24,6 +29,20 @@ int __wrap_connect(int socket_fd, const struct sockaddr *address, socklen_t addr
 
     errno = EINPROGRESS;
     return -1;
+}
+
+int __wrap_eventfd(unsigned int initval, int flags)
+{
+    int fd = __real_eventfd(initval, flags);
+    if (fd < 0 || ! force_high_eventfd)
+    {
+        return fd;
+    }
+
+    int high_fd = fcntl(fd, F_DUPFD, FD_SETSIZE);
+    close(fd);
+    wrapped_eventfd_fd = high_fd;
+    return high_fd;
 }
 
 static void require(bool condition, const char *message)
@@ -122,6 +141,23 @@ int main(void)
     require(fcntl(high_level_fd, F_GETFD) == -1 && errno == EBADF,
             "high-level read did not close its rejected descriptor");
 
+    wloopDestroy(&loop);
+
+    loop = wloopCreate(WLOOP_FLAG_RUN_ONCE, buffer_pool, 0);
+    require(loop != NULL, "failed to create event loop for wakeup registration failure");
+
+    force_high_eventfd = true;
+    int run_result     = wloopRun(loop);
+    force_high_eventfd = false;
+
+    require(run_result == kWLoopRunErrorWakeupInit, "event loop did not report wakeup registration failure");
+    require(wloopStatus(loop) == WLOOP_STATUS_STOP, "failed event loop did not return to STOP status");
+    require(loop->loop_cnt == 0, "failed event loop still entered its processing loop");
+    require(loop->intern_nevents == 0, "failed event loop counted an unregistered internal wakeup event");
+    require(loop->eventfds[0] == -1 && loop->eventfds[1] == -1, "failed event loop retained wakeup descriptors");
+    require(wrapped_eventfd_fd >= FD_SETSIZE, "eventfd wrapper did not return a high descriptor");
+    require(fcntl(wrapped_eventfd_fd, F_GETFD) == -1 && errno == EBADF,
+            "rejected eventfd wakeup descriptor remained open");
     wloopDestroy(&loop);
     GSTATE.shortcut_wios_pools = NULL;
 
