@@ -231,8 +231,10 @@ if(TARGET ww)
     target_compile_definitions(socket_manager_iptables_recovery_test PRIVATE
       SOCKET_MANAGER_IPTABLES_ALLOC_FAILURE_TEST=1
     )
+    # Only the planner's reallocation and the lease cleanup close() are injected
+    # here. The command supervisor's own allocation failure moved to
+    # wproc_deadline_test.c along with the supervisor itself.
     target_link_options(socket_manager_iptables_recovery_test PRIVATE
-      "-Wl,--wrap=memoryAllocate"
       "-Wl,--wrap=memoryReAllocate"
       "-Wl,--wrap=close"
     )

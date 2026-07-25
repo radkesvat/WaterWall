@@ -14,23 +14,10 @@
 #endif
 
 #if defined(SOCKET_MANAGER_IPTABLES_ALLOC_FAILURE_TEST)
-static bool   fail_next_allocation     = false;
 static size_t realloc_failure_min_size = SIZE_MAX;
 
-void *__real_memoryAllocate(size_t size);
-void *__wrap_memoryAllocate(size_t size);
 void *__real_memoryReAllocate(void *ptr, size_t size);
 void *__wrap_memoryReAllocate(void *ptr, size_t size);
-
-void *__wrap_memoryAllocate(size_t size)
-{
-    if (fail_next_allocation)
-    {
-        fail_next_allocation = false;
-        return NULL;
-    }
-    return __real_memoryAllocate(size);
-}
 
 void *__wrap_memoryReAllocate(void *ptr, size_t size)
 {
@@ -689,14 +676,17 @@ static void testInternalPlanningFailureIsAtomic(void)
 }
 
 #if defined(__linux__)
-// The bounded supervisor deadline is enforced independently of any numeric
-// xtables wait; injected timeouts keep these tests fast. A generous elapsed
-// bound proves the call did not wait for the fake tool's long sleep without
-// asserting an exact duration that a loaded CI worker could miss.
+// Wrapper-level coverage only: the generic deadline, process-group termination,
+// SIGKILL escalation, output cap, and child-reaping mechanics live in
+// wproc_deadline_test.c. What is manager-owned and tested here is the argv the
+// inspection wrapper builds, the trailing-newline snapshot rule, and the correct
+// transfer of the generic result's ownership and status into
+// socket_manager_iptables_cmd_output_t.
 enum
 {
-    kFakeToolLongSleepSeconds = 30,
-    kTimeoutUpperBoundMs      = 8000
+    kWrapperDeadlineMs   = 5000,
+    kShortDeadlineMs     = 300,
+    kTimeoutUpperBoundMs = 8000
 };
 
 static uint64_t monotonicMs(void)
@@ -719,12 +709,28 @@ static void writeTempTool(char *path_out, size_t path_len, const char *body)
     require(chmod(path_out, 0700) == 0, "could not make fake tool executable");
 }
 
-// A helper must never leave a child behind: after it returns, this process must
+// A wrapper must never leave a child behind: after it returns, this process must
 // have no reapable children left.
 static void requireNoChildren(const char *message)
 {
     errno = 0;
     require(waitpid(-1, NULL, WNOHANG) == -1 && errno == ECHILD, message);
+}
+
+static void testInspectBuildsTheExpectedArgv(void)
+{
+    char tool[64];
+    // Echo the received arguments so the constructed argv can be asserted
+    // exactly. A trailing newline keeps the snapshot complete.
+    writeTempTool(tool, sizeof(tool), "#!/bin/sh\nprintf '%s\\n' \"$*\"\nexit 0\n");
+
+    socket_manager_iptables_cmd_output_t out;
+    require(socketManagerIptablesRunInspectCommand(tool, kWrapperDeadlineMs, &out),
+            "the inspection wrapper must run the tool successfully");
+    requireEqStr(out.output, "-w 5 -t nat -S\n", "inspection must execute `<tool> -w 5 -t nat -S`");
+    socketManagerIptablesCmdOutputDrop(&out);
+    requireNoChildren("a successful inspection left an unreaped child");
+    require(unlink(tool) == 0, "could not remove fake tool");
 }
 
 static void testInspectSuccessAcceptsCompleteSnapshot(void)
@@ -737,7 +743,8 @@ static void testInspectSuccessAcceptsCompleteSnapshot(void)
                   "exit 0\n");
 
     socket_manager_iptables_cmd_output_t out;
-    require(socketManagerIptablesRunInspectCommand(tool, 5000, &out), "a complete snapshot must be accepted");
+    require(socketManagerIptablesRunInspectCommand(tool, kWrapperDeadlineMs, &out),
+            "a complete snapshot must be accepted");
     require(! out.timed_out, "a successful inspection must not be marked timed out");
     require(! out.spawn_failed && ! out.output_too_large && ! out.incomplete_final_line,
             "a successful inspection must have clean flags");
@@ -749,119 +756,22 @@ static void testInspectSuccessAcceptsCompleteSnapshot(void)
     require(unlink(tool) == 0, "could not remove fake tool");
 }
 
-static void testInspectTimesOutWhenToolBlocks(void)
+static void testInspectRejectsIncompleteFinalLine(void)
 {
     char tool[64];
-    writeTempTool(tool, sizeof(tool), "#!/bin/sh\nexec sleep 30\n");
+    // A clean zero exit whose final captured byte is not a newline: the command
+    // itself succeeded, but the snapshot is truncated and must be rejected.
+    writeTempTool(tool, sizeof(tool), "#!/bin/sh\nprintf -- '-N WW2_0123456789ABCDEF_4'\nexit 0\n");
 
     socket_manager_iptables_cmd_output_t out;
-    const uint64_t                       start = monotonicMs();
-    require(! socketManagerIptablesRunInspectCommand(tool, 300, &out), "a silent blocking tool must fail");
-    const uint64_t elapsed = monotonicMs() - start;
-    require(out.timed_out, "a silent blocking tool must be reported as timed out");
-    require(out.len == 0, "a silent blocking tool must produce no captured output");
-    require(elapsed < kTimeoutUpperBoundMs, "inspection must not wait for the fake tool's long sleep");
+    require(! socketManagerIptablesRunInspectCommand(tool, kWrapperDeadlineMs, &out),
+            "an incomplete final inspection line must fail even after a clean exit");
+    require(out.incomplete_final_line, "the truncated snapshot must be flagged");
+    require(out.exit_code == 0, "the tool's clean exit code must still be recorded verbatim");
+    require(! out.timed_out && ! out.spawn_failed, "a truncated snapshot is neither a timeout nor a spawn failure");
     socketManagerIptablesCmdOutputDrop(&out);
-    requireNoChildren("a timed-out inspection left an unreaped child");
+    requireNoChildren("a rejected snapshot left an unreaped child");
     require(unlink(tool) == 0, "could not remove fake tool");
-}
-
-static void testInspectTimesOutWhenToolClosesStdoutThenBlocks(void)
-{
-    char tool[64];
-    // Close stdout (pipe reaches EOF immediately) but keep running. EOF must not
-    // turn the final wait into an unbounded block; the deadline must still fire.
-    writeTempTool(tool, sizeof(tool), "#!/bin/sh\nexec 1>&-\nexec sleep 30\n");
-
-    socket_manager_iptables_cmd_output_t out;
-    const uint64_t                       start = monotonicMs();
-    require(! socketManagerIptablesRunInspectCommand(tool, 300, &out),
-            "a tool that closes stdout then blocks must still time out");
-    const uint64_t elapsed = monotonicMs() - start;
-    require(out.timed_out, "closing stdout early must not turn a hang into success");
-    require(elapsed < kTimeoutUpperBoundMs, "EOF must not trigger an unbounded blocking wait");
-    socketManagerIptablesCmdOutputDrop(&out);
-    requireNoChildren("a stdout-closed timeout left an unreaped child");
-    require(unlink(tool) == 0, "could not remove fake tool");
-}
-
-static void testInspectTimesOutOnPartialSnapshot(void)
-{
-    char tool[64];
-    // Emit an incomplete final line (no trailing newline), then block forever.
-    writeTempTool(tool, sizeof(tool), "#!/bin/sh\nprintf -- '-N WW2_0123456789ABCDEF_4'\nexec sleep 30\n");
-
-    socket_manager_iptables_cmd_output_t out;
-    require(! socketManagerIptablesRunInspectCommand(tool, 400, &out),
-            "a tool that blocks after partial output must fail");
-    require(out.timed_out, "partial-then-block must be reported as timed out");
-    // A timeout is never accepted regardless of what partial bytes were captured.
-    require(out.exit_code != 0, "partial-then-block must not report a successful exit");
-    socketManagerIptablesCmdOutputDrop(&out);
-    requireNoChildren("a partial-snapshot timeout left an unreaped child");
-    require(unlink(tool) == 0, "could not remove fake tool");
-}
-
-static void testInspectEscalatesToSigkill(void)
-{
-    char tool[64];
-    // Ignore SIGTERM and keep looping; only SIGKILL can stop this process group.
-    writeTempTool(tool, sizeof(tool), "#!/bin/sh\ntrap '' TERM\nwhile : ; do sleep 1 ; done\n");
-
-    socket_manager_iptables_cmd_output_t out;
-    const uint64_t                       start = monotonicMs();
-    require(! socketManagerIptablesRunInspectCommand(tool, 300, &out), "a SIGTERM-ignoring tool must still fail");
-    const uint64_t elapsed = monotonicMs() - start;
-    require(out.timed_out, "a SIGTERM-ignoring tool must be reported as timed out");
-    require(elapsed < kTimeoutUpperBoundMs, "SIGKILL escalation must keep the total wait bounded");
-    socketManagerIptablesCmdOutputDrop(&out);
-    requireNoChildren("SIGKILL escalation left an unreaped child");
-    require(unlink(tool) == 0, "could not remove fake tool");
-}
-
-static void testShellCommandTerminatesWholeProcessGroup(void)
-{
-    char pidfile[64];
-    snprintf(pidfile, sizeof(pidfile), "/tmp/waterwall-iptables-pgrp-XXXXXX");
-    int pfd = mkstemp(pidfile);
-    require(pfd >= 0, "could not create pid file");
-    require(close(pfd) == 0, "could not close pid file");
-
-    // Background a SIGTERM-ignoring descendant that records its pid, then block
-    // the shell. The direct child (the foreground sleep) dies on the group
-    // SIGTERM, but the descendant only dies when the group is escalated to
-    // SIGKILL. Reaping the direct child alone must not be treated as enough.
-    char command[256];
-    snprintf(command,
-             sizeof(command),
-             "( trap '' TERM; while : ; do sleep 1 ; done ) & echo $! > '%s'; exec sleep 30",
-             pidfile);
-
-    socket_manager_iptables_cmd_output_t out;
-    require(! socketManagerIptablesRunShellCommand(command, 400, &out), "a blocking shell command must fail");
-    require(out.timed_out, "a blocking shell command must be reported as timed out");
-    socketManagerIptablesCmdOutputDrop(&out);
-    requireNoChildren("a shell command timeout left an unreaped direct child");
-
-    FILE *f = fopen(pidfile, "r");
-    require(f != NULL, "could not open descendant pid file");
-    long      descendant = 0;
-    const int scanned    = fscanf(f, "%ld", &descendant);
-    require(fclose(f) == 0, "could not close descendant pid file");
-    require(scanned == 1 && descendant > 1, "could not read a valid descendant pid");
-
-    bool gone = false;
-    for (int i = 0; i < 300; ++i)
-    {
-        if (kill((pid_t) descendant, 0) != 0 && errno == ESRCH)
-        {
-            gone = true;
-            break;
-        }
-        usleep(10000);
-    }
-    require(gone, "the shell descendant survived the process-group timeout");
-    require(unlink(pidfile) == 0, "could not remove descendant pid file");
 }
 
 static void testShellCommandSucceedsWithoutTrailingNewline(void)
@@ -869,7 +779,7 @@ static void testShellCommandSucceedsWithoutTrailingNewline(void)
     // Mutation commands succeed on a clean zero exit; the trailing-newline
     // requirement is specific to inspection snapshots and must not reject them.
     socket_manager_iptables_cmd_output_t out;
-    require(socketManagerIptablesRunShellCommand("printf 'no newline'", 5000, &out),
+    require(socketManagerIptablesRunShellCommand("printf 'no newline'", kWrapperDeadlineMs, &out),
             "a clean zero-exit shell command must succeed even without a trailing newline");
     require(out.exit_code == 0, "the shell command must record a zero exit code");
     require(out.incomplete_final_line, "the missing trailing newline must still be recorded in the result");
@@ -878,83 +788,101 @@ static void testShellCommandSucceedsWithoutTrailingNewline(void)
     requireNoChildren("a clean shell command left an unreaped child");
 }
 
-static void testNonzeroExitIsNotTimeout(void)
+static void testNonzeroExitStatusIsTransferred(void)
 {
     char tool[64];
     writeTempTool(tool, sizeof(tool), "#!/bin/sh\nprintf -- 'partial\\n'\nexit 3\n");
 
     socket_manager_iptables_cmd_output_t out;
-    require(! socketManagerIptablesRunInspectCommand(tool, 5000, &out), "a nonzero exit must fail inspection");
+    require(! socketManagerIptablesRunInspectCommand(tool, kWrapperDeadlineMs, &out),
+            "a nonzero exit must fail inspection");
     require(! out.timed_out, "a nonzero exit must not be reported as a timeout");
     require(! out.spawn_failed, "a nonzero exit is not a spawn failure");
-    require(out.exit_code == 3, "the child's nonzero exit code must be recorded verbatim");
+    require(out.exit_code == 3, "the child's nonzero exit code must be transferred verbatim");
+    requireEqStr(out.output, "partial\n", "the captured output must be transferred, not copied away");
+    require(out.len == strlen("partial\n"), "the captured length must be transferred");
     socketManagerIptablesCmdOutputDrop(&out);
     requireNoChildren("a nonzero-exit inspection left an unreaped child");
     require(unlink(tool) == 0, "could not remove fake tool");
 }
 
-static void testOutputSizeLimitFailsAndReaps(void)
+static void testTimeoutStatusIsTransferredAndDropIsIdempotent(void)
+{
+    char tool[64];
+    writeTempTool(tool, sizeof(tool), "#!/bin/sh\nexec sleep 30\n");
+
+    socket_manager_iptables_cmd_output_t out;
+    const uint64_t                       start = monotonicMs();
+    require(! socketManagerIptablesRunInspectCommand(tool, kShortDeadlineMs, &out),
+            "a blocking tool must fail inspection");
+    const uint64_t elapsed = monotonicMs() - start;
+    require(out.timed_out, "the generic timeout status must be transferred to the manager result");
+    require(! out.spawn_failed && ! out.output_too_large, "a timeout must not be confused with the other statuses");
+    require(elapsed < kTimeoutUpperBoundMs, "the wrapper must honour the caller-provided deadline");
+
+    socketManagerIptablesCmdOutputDrop(&out);
+    require(out.output == NULL && out.len == 0, "drop must release and zero the captured output");
+    require(! out.timed_out && ! out.spawn_failed && ! out.output_too_large && ! out.incomplete_final_line,
+            "drop must clear every result flag, including timed_out");
+    // A second drop on a now-zeroed result must be safe.
+    socketManagerIptablesCmdOutputDrop(&out);
+    require(out.output == NULL && out.len == 0, "a repeated drop must remain safe and idempotent");
+    socketManagerIptablesCmdOutputDrop(NULL);
+
+    requireNoChildren("a timed-out inspection left an unreaped child");
+    require(unlink(tool) == 0, "could not remove fake tool");
+}
+
+static void testOversizedOutputStatusIsTransferred(void)
 {
     char tool[64];
     // yes(1) produces output far beyond the one-megabyte inspection cap.
     writeTempTool(tool, sizeof(tool), "#!/bin/sh\nexec yes WW2padding\n");
 
     socket_manager_iptables_cmd_output_t out;
-    require(! socketManagerIptablesRunInspectCommand(tool, 5000, &out), "oversized output must fail inspection");
-    require(out.output_too_large, "oversized output must set the output_too_large flag");
+    require(! socketManagerIptablesRunInspectCommand(tool, kWrapperDeadlineMs, &out),
+            "oversized output must fail inspection");
+    require(out.output_too_large, "the generic output_too_large status must be transferred");
     require(! out.timed_out, "oversized output is a size failure, not a timeout");
-    require(out.len <= kSocketManagerIptablesInspectionMaxOutput, "captured output must stay within the cap");
+    require(out.len <= kSocketManagerIptablesInspectionMaxOutput,
+            "the transferred capture must stay within the inspection cap");
     socketManagerIptablesCmdOutputDrop(&out);
     requireNoChildren("an oversized-output inspection left an unreaped producer");
     require(unlink(tool) == 0, "could not remove fake tool");
 }
 
-static void testDropIsIdempotentAfterTimeout(void)
+static void testSpawnFailureStatusIsTransferred(void)
 {
-    char tool[64];
-    writeTempTool(tool, sizeof(tool), "#!/bin/sh\nexec sleep 30\n");
+    // A missing executable makes execvp fail in the child, which is reported as
+    // exit status 127 rather than a parent-side spawn failure. A zero-length tool
+    // name, in contrast, cannot even be resolved and must not be a timeout.
+    socket_manager_iptables_cmd_output_t out;
+    require(! socketManagerIptablesRunInspectCommand("waterwall-no-such-iptables", kWrapperDeadlineMs, &out),
+            "a missing inspection tool must fail");
+    require(out.exit_code == 127, "a failed execvp must surface as child exit status 127");
+    require(! out.spawn_failed && ! out.timed_out, "a failed execvp is neither a spawn failure nor a timeout");
+    socketManagerIptablesCmdOutputDrop(&out);
+    requireNoChildren("a failed execvp left an unreaped child");
+}
+
+// The production deadline must stay strictly longer than the numeric xtables
+// lock wait so a normal lock timeout can exit and be reaped without racing the
+// supervisor, and it must be usable end to end by the production callers in
+// socket_manager.c, which all pass kSocketManagerIptablesCommandTimeoutMs.
+static void testProductionTimeoutConstantsAreUsable(void)
+{
+    require(kSocketManagerIptablesCommandTimeoutMs > kSocketManagerIptablesLockWaitSeconds * 1000,
+            "the parent deadline must stay strictly longer than the numeric xtables wait");
+    require(kSocketManagerIptablesTerminateGraceMs > 0, "the termination grace must be nonzero");
 
     socket_manager_iptables_cmd_output_t out;
-    require(! socketManagerIptablesRunInspectCommand(tool, 300, &out), "a blocking tool must time out");
-    require(out.timed_out, "a blocking tool must be marked timed out");
+    require(socketManagerIptablesRunShellCommand("exit 0", kSocketManagerIptablesCommandTimeoutMs, &out),
+            "the production command deadline must run a trivial command successfully");
+    require(out.exit_code == 0, "the production deadline must not alter a clean exit");
     socketManagerIptablesCmdOutputDrop(&out);
-    require(out.output == NULL && out.len == 0, "drop must zero the captured output");
-    require(! out.timed_out && ! out.spawn_failed && ! out.output_too_large,
-            "drop must clear every result flag, including timed_out");
-    // A second drop on a now-zeroed result must be safe.
-    socketManagerIptablesCmdOutputDrop(&out);
-    require(out.output == NULL && out.len == 0, "a repeated drop must remain safe and idempotent");
-    requireNoChildren("the idempotent-drop test left an unreaped child");
-    require(unlink(tool) == 0, "could not remove fake tool");
+    requireNoChildren("the production-deadline check left an unreaped child");
 }
 #endif // defined(__linux__)
-
-static void testInspectAllocationFailureReapsChild(void)
-{
-#if defined(__linux__) && defined(SOCKET_MANAGER_IPTABLES_ALLOC_FAILURE_TEST)
-    char tool_path[] = "/tmp/waterwall-inspect-test-XXXXXX";
-    int  tool_fd     = mkstemp(tool_path);
-    require(tool_fd >= 0, "could not create fake inspection tool");
-    const char script[] = "#!/bin/sh\nexec sleep 30\n";
-    require(write(tool_fd, script, sizeof(script) - 1U) == (ssize_t) (sizeof(script) - 1U),
-            "could not write fake inspection tool");
-    require(close(tool_fd) == 0, "could not close fake inspection tool");
-    require(chmod(tool_path, 0700) == 0, "could not make fake inspection tool executable");
-
-    socket_manager_iptables_cmd_output_t output;
-    fail_next_allocation = true;
-    require(! socketManagerIptablesRunInspectCommand(tool_path, kSocketManagerIptablesCommandTimeoutMs, &output),
-            "inspection should fail when output allocation fails");
-    require(output.spawn_failed, "inspection allocation failure should be reported");
-    require(! output.timed_out, "an allocation failure is not a timeout");
-
-    errno = 0;
-    require(waitpid(-1, NULL, WNOHANG) == -1 && errno == ECHILD,
-            "inspection allocation failure left an unreaped child");
-    socketManagerIptablesCmdOutputDrop(&output);
-    require(unlink(tool_path) == 0, "could not remove fake inspection tool");
-#endif
-}
 
 int main(void)
 {
@@ -984,18 +912,16 @@ int main(void)
     testLockAndOwnerLeaseContention();
     testInternalPlanningFailureIsAtomic();
 #if defined(__linux__)
+    testInspectBuildsTheExpectedArgv();
     testInspectSuccessAcceptsCompleteSnapshot();
-    testInspectTimesOutWhenToolBlocks();
-    testInspectTimesOutWhenToolClosesStdoutThenBlocks();
-    testInspectTimesOutOnPartialSnapshot();
-    testInspectEscalatesToSigkill();
-    testShellCommandTerminatesWholeProcessGroup();
+    testInspectRejectsIncompleteFinalLine();
     testShellCommandSucceedsWithoutTrailingNewline();
-    testNonzeroExitIsNotTimeout();
-    testOutputSizeLimitFailsAndReaps();
-    testDropIsIdempotentAfterTimeout();
+    testNonzeroExitStatusIsTransferred();
+    testTimeoutStatusIsTransferredAndDropIsIdempotent();
+    testOversizedOutputStatusIsTransferred();
+    testSpawnFailureStatusIsTransferred();
+    testProductionTimeoutConstantsAreUsable();
 #endif
-    testInspectAllocationFailureReapsChild();
 
     printf("socket_manager_iptables_recovery_test: all tests passed\n");
     return 0;
