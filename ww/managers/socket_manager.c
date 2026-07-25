@@ -12,16 +12,16 @@
 #include "threadsafe_generic_pool.h"
 #include "tunnel.h"
 #include "wevent.h"
+#include "wfrand.h"
 #include "widle_table.h"
 #include "wloop.h"
 #include "wmutex.h"
 #include "wproc.h"
-#include "wfrand.h"
 #include "wthread.h"
 
 #define i_type balancegroup_registry_t // NOLINT
 #define i_key  hash_t                  // NOLINT
-#define i_val  idle_table_t  *         // NOLINT
+#define i_val  idle_table_t *          // NOLINT
 
 #include "stc/hmap.h"
 
@@ -40,15 +40,15 @@ typedef struct socket_filter_s
     bool                   v6_dualstack;
 
     // Effective bind endpoint used for listen-aware dispatch and endpoint sharing.
-    ip_addr_t bind_addr;          // meaningful only when !bind_is_wildcard
-    uint8_t   bind_family;        // AF_INET / AF_INET6
-    bool      bind_is_wildcard;   // true for 0.0.0.0 / :: / empty host
+    ip_addr_t bind_addr;           // meaningful only when !bind_is_wildcard
+    uint8_t   bind_family;         // AF_INET / AF_INET6
+    bool      bind_is_wildcard;    // true for 0.0.0.0 / :: / empty host
     bool      bind_endpoint_ready; // computed lazily during listen setup
 
 } socket_filter_t;
 
 #define i_type    filters_t         // NOLINT
-#define i_key     socket_filter_t     *// NOLINT
+#define i_key     socket_filter_t * // NOLINT
 #define i_use_cmp                   // NOLINT
 #include "stc/vec.h"
 
@@ -64,9 +64,9 @@ typedef struct listener_endpoint_s
     wio_t      *listen_io;       // shared listener socket (for exact-duplicate reuse)
     udpsock_t  *udp_socket;      // shared udp side-data (for exact-duplicate reuse)
     // UDP sharers inherit these options from the physical socket.
-    int         fwmark;
-    int         send_buffer_size;
-    int         recv_buffer_size;
+    int fwmark;
+    int send_buffer_size;
+    int recv_buffer_size;
 } listener_endpoint_t;
 
 #define i_type endpoint_registry_t, listener_endpoint_t // NOLINT
@@ -75,16 +75,16 @@ typedef struct listener_endpoint_s
 // NAT redirect rule queued during listener setup and installed after sorting.
 typedef struct pending_iptables_rule_s
 {
-    uint8_t     protocol;    // IPPROTO_TCP / IPPROTO_UDP
-    uint8_t     family;      // AF_INET / AF_INET6
-    bool        has_dest;    // emit -d <ip> (never for wildcard)
-    bool        dual_stack;  // AF_INET6 wildcard (::) that also accepts IPv4-mapped traffic
-    char        dest[64];    // destination address text when has_dest
-    const char *iface_name;  // emit -i <iface> when set
+    uint8_t     protocol;   // IPPROTO_TCP / IPPROTO_UDP
+    uint8_t     family;     // AF_INET / AF_INET6
+    bool        has_dest;   // emit -d <ip> (never for wildcard)
+    bool        dual_stack; // AF_INET6 wildcard (::) that also accepts IPv4-mapped traffic
+    char        dest[64];   // destination address text when has_dest
+    const char *iface_name; // emit -i <iface> when set
     uint16_t    port_min;
     uint16_t    port_max;
     uint16_t    to_port;
-    int         sort_rank;   // lower installs first (specific+iface < specific < wildcard+iface < wildcard)
+    int         sort_rank; // lower installs first (specific+iface < specific < wildcard+iface < wildcard)
 } pending_iptables_rule_t;
 
 #define i_type pending_rules_t, pending_iptables_rule_t // NOLINT
@@ -268,22 +268,25 @@ int socketManagerComputeRedirectRuleRank(bool has_specific_dest, bool has_interf
 void socketManagerBuildOwnedChainCommand(char *out, size_t out_len, const char *tool,
                                          socket_manager_iptables_chain_action_t action, const char *chain_name)
 {
+    // Every generated command carries a numeric xtables-lock wait so iptables
+    // never blocks indefinitely; the parent-side deadline remains authoritative.
+    const int wait = kSocketManagerIptablesLockWaitSeconds;
     switch (action)
     {
     case kSocketManagerIptablesCreateChain:
-        snprintf(out, out_len, "%s -w -t nat -N %s", tool, chain_name);
+        snprintf(out, out_len, "%s -w %d -t nat -N %s", tool, wait, chain_name);
         return;
     case kSocketManagerIptablesAddJump:
-        snprintf(out, out_len, "%s -w -t nat -A PREROUTING -j %s", tool, chain_name);
+        snprintf(out, out_len, "%s -w %d -t nat -A PREROUTING -j %s", tool, wait, chain_name);
         return;
     case kSocketManagerIptablesDeleteJump:
-        snprintf(out, out_len, "%s -w -t nat -D PREROUTING -j %s", tool, chain_name);
+        snprintf(out, out_len, "%s -w %d -t nat -D PREROUTING -j %s", tool, wait, chain_name);
         return;
     case kSocketManagerIptablesFlushChain:
-        snprintf(out, out_len, "%s -w -t nat -F %s", tool, chain_name);
+        snprintf(out, out_len, "%s -w %d -t nat -F %s", tool, wait, chain_name);
         return;
     case kSocketManagerIptablesDeleteChain:
-        snprintf(out, out_len, "%s -w -t nat -X %s", tool, chain_name);
+        snprintf(out, out_len, "%s -w %d -t nat -X %s", tool, wait, chain_name);
         return;
     }
 
@@ -322,8 +325,9 @@ void socketManagerBuildRedirectCommand(char *out, size_t out_len, const char *to
 
     snprintf(out,
              out_len,
-             "%s -w -t nat -A %s -p %s%s%s --dport %s -j REDIRECT --to-port %u",
+             "%s -w %d -t nat -A %s -p %s%s%s --dport %s -j REDIRECT --to-port %u",
              tool,
+             kSocketManagerIptablesLockWaitSeconds,
              chain_name,
              proto_token,
              iface_part,
@@ -352,14 +356,47 @@ static void buildIptablesCommand(char *out, size_t outlen, const char *tool, con
 }
 
 /**
+ * @brief Run one iptables/ip6tables mutation command through the bounded, deadline-aware supervisor.
+ *
+ * Returns true only for a clean zero exit. A timeout is logged distinctly from a normal nonzero
+ * exit (which the caller reports) and surfaced via @p timed_out; the captured result is always freed.
+ */
+static bool runBoundedIptablesShellCommand(const char *command, bool *timed_out)
+{
+    socket_manager_iptables_cmd_output_t out;
+    const bool ok = socketManagerIptablesRunShellCommand(command, kSocketManagerIptablesCommandTimeoutMs, &out);
+    if (timed_out != NULL)
+    {
+        *timed_out = out.timed_out;
+    }
+    if (! ok && out.timed_out)
+    {
+        LOGE("SocketManager: iptables command timed out after %dms: %s",
+             kSocketManagerIptablesCommandTimeoutMs,
+             command);
+    }
+    socketManagerIptablesCmdOutputDrop(&out);
+    return ok;
+}
+
+/**
+ * @brief Execute one lifecycle operation for a socket-manager-owned chain, reporting a timeout.
+ */
+static bool runOwnedChainCommandEx(const char *tool, socket_manager_iptables_chain_action_t action,
+                                   const owned_iptables_chain_t *chain, bool *timed_out)
+{
+    char command[128];
+    socketManagerBuildOwnedChainCommand(command, sizeof(command), tool, action, chain->name);
+    return runBoundedIptablesShellCommand(command, timed_out);
+}
+
+/**
  * @brief Execute one lifecycle operation for a socket-manager-owned chain.
  */
 static bool runOwnedChainCommand(const char *tool, socket_manager_iptables_chain_action_t action,
                                  const owned_iptables_chain_t *chain)
 {
-    char command[128];
-    socketManagerBuildOwnedChainCommand(command, sizeof(command), tool, action, chain->name);
-    return execCmd(command).exit_code == 0;
+    return runOwnedChainCommandEx(tool, action, chain, NULL);
 }
 
 /**
@@ -445,7 +482,7 @@ static bool cleanupOwnedIptablesChains(bool safe_mode)
     {
         const char msg[] = "SocketManager: removing owned iptables nat rules\n";
         ssize_t    n     = write(STDOUT_FILENO, msg, sizeof(msg) - 1);
-        discard n;
+        discard    n;
     }
     else
     {
@@ -474,10 +511,29 @@ static bool cleanupOwnedIptablesChainsWithReconcileLock(bool safe_mode)
     return result;
 }
 
+// Per-pass state for stale-chain cleanup. Once a cleanup command for a family
+// times out, its iptables tooling is treated as stuck for the rest of the pass
+// so later operations for that family fail without spawning another child that
+// would just time out again. The other family is handled independently.
+typedef struct recovery_cleanup_ctx_s
+{
+    bool v4_unavailable;
+    bool v6_unavailable;
+} recovery_cleanup_ctx_t;
+
 static bool runRecoveryCleanupOp(const socket_manager_iptables_cleanup_op_t *op, void *userdata)
 {
-    discard userdata;
-    const char *tool = op->family == 4 ? "iptables" : "ip6tables";
+    recovery_cleanup_ctx_t *ctx  = userdata;
+    const char             *tool = op->family == 4 ? "iptables" : "ip6tables";
+
+    if (ctx != NULL && ((op->family == 4 && ctx->v4_unavailable) || (op->family == 6 && ctx->v6_unavailable)))
+    {
+        LOGE("SocketManager: skipping stale iptables cleanup action %d for %s after a prior family timeout",
+             (int) op->action,
+             op->chain_name);
+        return false;
+    }
+
     socket_manager_iptables_chain_action_t action = kSocketManagerIptablesDeleteChain;
     switch (op->action)
     {
@@ -495,12 +551,22 @@ static bool runRecoveryCleanupOp(const socket_manager_iptables_cleanup_op_t *op,
     owned_iptables_chain_t chain;
     memoryZero(&chain, sizeof(chain));
     snprintf(chain.name, sizeof(chain.name), "%s", op->chain_name);
-    const bool ok = runOwnedChainCommand(tool, action, &chain);
+    bool       timed_out = false;
+    const bool ok        = runOwnedChainCommandEx(tool, action, &chain, &timed_out);
     if (! ok)
     {
-        LOGE("SocketManager: failed stale iptables cleanup action %d for %s",
-             (int) op->action,
-             op->chain_name);
+        LOGE("SocketManager: failed stale iptables cleanup action %d for %s", (int) op->action, op->chain_name);
+        if (timed_out && ctx != NULL)
+        {
+            if (op->family == 4)
+            {
+                ctx->v4_unavailable = true;
+            }
+            else if (op->family == 6)
+            {
+                ctx->v6_unavailable = true;
+            }
+        }
     }
     return ok;
 }
@@ -523,8 +589,8 @@ static void releaseRecoveryProbeLeases(recovery_probe_leases_t *leases)
 static socket_manager_iptables_lease_probe_result_t probeRecoveryOwnerLease(uint64_t token, int *held_fd,
                                                                             void *userdata)
 {
-    recovery_probe_leases_t *leases = userdata;
-    int fd = -1;
+    recovery_probe_leases_t                     *leases = userdata;
+    int                                          fd     = -1;
     socket_manager_iptables_lease_probe_result_t result = socketManagerIptablesAcquireOwnerLease(token, &fd);
     if (result != kSocketManagerIptablesLeaseAcquired)
     {
@@ -536,7 +602,7 @@ static socket_manager_iptables_lease_probe_result_t probeRecoveryOwnerLease(uint
         return kSocketManagerIptablesLeaseError;
     }
     leases->fds[leases->count++] = fd;
-    *held_fd = -1;
+    *held_fd                     = -1;
     return kSocketManagerIptablesLeaseAcquired;
 }
 
@@ -563,7 +629,7 @@ static void reportLegacyIptablesBlockers(const socket_manager_iptables_cleanup_p
             LOGE("SocketManager: \"%s\" has references that are not a simple PREROUTING jump; inspect every reference "
                  "first with:",
                  blocker->chain_name);
-            LOGE("SocketManager:   %s -w -t nat -S", tool);
+            LOGE("SocketManager:   %s -w %d -t nat -S", tool, kSocketManagerIptablesLockWaitSeconds);
             LOGE("SocketManager: remove every reference to \"%s\" before flushing or deleting it", blocker->chain_name);
             continue;
         }
@@ -580,10 +646,15 @@ static void reportLegacyIptablesBlockers(const socket_manager_iptables_cleanup_p
         }
         for (size_t j = 0; j < blocker->prerouting_jumps; ++j)
         {
-            LOGE("SocketManager:   %s -w -t nat -D PREROUTING -j %s", tool, blocker->chain_name);
+            LOGE("SocketManager:   %s -w %d -t nat -D PREROUTING -j %s",
+                 tool,
+                 kSocketManagerIptablesLockWaitSeconds,
+                 blocker->chain_name);
         }
-        LOGE("SocketManager:   %s -w -t nat -F %s", tool, blocker->chain_name);
-        LOGE("SocketManager:   %s -w -t nat -X %s", tool, blocker->chain_name);
+        LOGE(
+            "SocketManager:   %s -w %d -t nat -F %s", tool, kSocketManagerIptablesLockWaitSeconds, blocker->chain_name);
+        LOGE(
+            "SocketManager:   %s -w %d -t nat -X %s", tool, kSocketManagerIptablesLockWaitSeconds, blocker->chain_name);
     }
 }
 
@@ -616,20 +687,38 @@ static void reconcileIptablesStartup(void)
     bool include_v6 = false;
     if (do_v4)
     {
-        include_v4 = socketManagerIptablesRunInspectCommand("iptables", &v4_snapshot);
+        include_v4 =
+            socketManagerIptablesRunInspectCommand("iptables", kSocketManagerIptablesCommandTimeoutMs, &v4_snapshot);
         socketmanager_gstate->iptables_v4_reconciled = include_v4;
         if (! include_v4)
         {
-            LOGW("SocketManager: could not inspect ipv4 iptables nat table for stale WaterWall chains");
+            if (v4_snapshot.timed_out)
+            {
+                LOGE("SocketManager: ipv4 iptables inspection timed out after %dms; recovery for this family failed",
+                     kSocketManagerIptablesCommandTimeoutMs);
+            }
+            else
+            {
+                LOGW("SocketManager: could not inspect ipv4 iptables nat table for stale WaterWall chains");
+            }
         }
     }
     if (do_v6)
     {
-        include_v6 = socketManagerIptablesRunInspectCommand("ip6tables", &v6_snapshot);
+        include_v6 =
+            socketManagerIptablesRunInspectCommand("ip6tables", kSocketManagerIptablesCommandTimeoutMs, &v6_snapshot);
         socketmanager_gstate->iptables_v6_reconciled = include_v6;
         if (! include_v6)
         {
-            LOGW("SocketManager: could not inspect ipv6 iptables nat table for stale WaterWall chains");
+            if (v6_snapshot.timed_out)
+            {
+                LOGE("SocketManager: ipv6 iptables inspection timed out after %dms; recovery for this family failed",
+                     kSocketManagerIptablesCommandTimeoutMs);
+            }
+            else
+            {
+                LOGW("SocketManager: could not inspect ipv6 iptables nat table for stale WaterWall chains");
+            }
         }
     }
 
@@ -662,7 +751,9 @@ static void reconcileIptablesStartup(void)
     // Any linked legacy chain fails its family above; tell the operator how to clean it up.
     reportLegacyIptablesBlockers(&plan);
 
-    if (! socketManagerIptablesExecuteCleanupPlan(&plan, runRecoveryCleanupOp, NULL, &v4_ok, &v6_ok))
+    recovery_cleanup_ctx_t cleanup_ctx;
+    memoryZero(&cleanup_ctx, sizeof(cleanup_ctx));
+    if (! socketManagerIptablesExecuteCleanupPlan(&plan, runRecoveryCleanupOp, &cleanup_ctx, &v4_ok, &v6_ok))
     {
         if (include_v4)
         {
@@ -692,7 +783,7 @@ static bool isSafeIptablesToken(const char *s)
     }
     for (const char *p = s; *p != '\0'; ++p)
     {
-        const char c = *p;
+        const char c  = *p;
         const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' ||
                         c == ':' || c == '/' || c == '-' || c == '_' || c == '%';
         if (! ok)
@@ -711,14 +802,10 @@ static bool generateIptablesOwnerToken(void)
         return false;
     }
     socketmanager_gstate->iptables_owner_token = token;
-    socketManagerIptablesFormatChainName(token,
-                                         4,
-                                         socketmanager_gstate->iptables_v4_chain.name,
-                                         sizeof(socketmanager_gstate->iptables_v4_chain.name));
-    socketManagerIptablesFormatChainName(token,
-                                         6,
-                                         socketmanager_gstate->iptables_v6_chain.name,
-                                         sizeof(socketmanager_gstate->iptables_v6_chain.name));
+    socketManagerIptablesFormatChainName(
+        token, 4, socketmanager_gstate->iptables_v4_chain.name, sizeof(socketmanager_gstate->iptables_v4_chain.name));
+    socketManagerIptablesFormatChainName(
+        token, 6, socketmanager_gstate->iptables_v6_chain.name, sizeof(socketmanager_gstate->iptables_v6_chain.name));
     return true;
 }
 
@@ -737,7 +824,7 @@ static bool acquireIptablesOwnerLease(void)
             return false;
         }
 
-        int fd = -1;
+        int                                          fd = -1;
         socket_manager_iptables_lease_probe_result_t lease =
             socketManagerIptablesAcquireOwnerLease(socketmanager_gstate->iptables_owner_token, &fd);
         if (lease == kSocketManagerIptablesLeaseAcquired)
@@ -808,9 +895,9 @@ static void queueIptablesRule(uint8_t protocol, socket_filter_t *filter, uint16_
     rule.to_port  = to_port;
     // Dual-stack IPv6 wildcard listeners also need an IPv4 redirect rule.
     rule.dual_stack = (filter->bind_family == AF_INET6 && filter->bind_is_wildcard);
-    rule.iface_name =
-        (filter->option.interface_name != NULL && filter->option.interface_name[0] != '\0') ? filter->option.interface_name
-                                                                                             : NULL;
+    rule.iface_name = (filter->option.interface_name != NULL && filter->option.interface_name[0] != '\0')
+                          ? filter->option.interface_name
+                          : NULL;
 
     if (rule.iface_name != NULL && ! isSafeIptablesToken(rule.iface_name))
     {
@@ -851,7 +938,7 @@ static bool installOnePendingRule(const pending_iptables_rule_t *rule)
     {
         owned_iptables_chain_t *chain = &socketmanager_gstate->iptables_v4_chain;
         buildIptablesCommand(command, sizeof(command), "iptables", proto_token, chain->name, rule);
-        return execCmd(command).exit_code == 0;
+        return runBoundedIptablesShellCommand(command, NULL);
     }
 
 #if SUPPORT_V6
@@ -863,7 +950,7 @@ static bool installOnePendingRule(const pending_iptables_rule_t *rule)
         {
             owned_iptables_chain_t *chain = &socketmanager_gstate->iptables_v4_chain;
             buildIptablesCommand(command, sizeof(command), "iptables", proto_token, chain->name, rule);
-            result = execCmd(command).exit_code == 0;
+            result = runBoundedIptablesShellCommand(command, NULL);
         }
 
         if (! socketmanager_gstate->ip6tables_installed)
@@ -878,7 +965,7 @@ static bool installOnePendingRule(const pending_iptables_rule_t *rule)
 
         owned_iptables_chain_t *chain = &socketmanager_gstate->iptables_v6_chain;
         buildIptablesCommand(command, sizeof(command), "ip6tables", proto_token, chain->name, rule);
-        return execCmd(command).exit_code == 0;
+        return runBoundedIptablesShellCommand(command, NULL);
     }
 #endif
     return false;
@@ -1257,9 +1344,9 @@ static bool applyAcceptedTcpSocketOptions(wio_t *io, const socket_filter_option_
     // Shared listeners may accept for a filter with a different mark; normalize only when marks are in use.
     if (socketmanager_gstate->any_fwmark)
     {
-        const int effective_mark = option->fwmark >= 0 ? option->fwmark : 0;
-        int       current_mark   = 0;
-        const bool have_current  = socketOptionGetFwMark(wioGetFD(io), &current_mark);
+        const int  effective_mark = option->fwmark >= 0 ? option->fwmark : 0;
+        int        current_mark   = 0;
+        const bool have_current   = socketOptionGetFwMark(wioGetFD(io), &current_mark);
         if (! have_current || current_mark != effective_mark)
         {
             if (socketOptionSetFwMark(wioGetFD(io), effective_mark) != 0)
@@ -1388,8 +1475,8 @@ static bool handleBalancedFilter(socket_filter_t *filter, const socket_filter_op
 
     if (! *src_hashed)
     {
-        *src_hash   = socketManagerCombineBalanceLocalHash(ipaddrCalcHashNoPort(paddr), local_addr, local_port,
-                                                           match_tier);
+        *src_hash =
+            socketManagerCombineBalanceLocalHash(ipaddrCalcHashNoPort(paddr), local_addr, local_port, match_tier);
         *src_hashed = true;
     }
 
@@ -1493,9 +1580,7 @@ static bool addrMatchesFilter(const socket_filter_t *filter, const ip_addr_t *lo
         return false;
     }
 
-    return socketManagerWildcardMatchesTier(filter->bind_family == AF_INET6,
-                                            local_addr->type == IPADDR_TYPE_V4,
-                                            tier);
+    return socketManagerWildcardMatchesTier(filter->bind_family == AF_INET6, local_addr->type == IPADDR_TYPE_V4, tier);
 }
 
 /**
@@ -1540,8 +1625,8 @@ static bool processFilterMatch(const socket_filter_option_t option, uint16_t loc
 /**
  * @brief Try to dispatch an accepted TCP socket at one specificity tier.
  */
-static bool distributeTcpSocketPass(wio_t *io, uint16_t local_port, const ip_addr_t *local_addr,
-                                    const ip_addr_t paddr, int match_tier)
+static bool distributeTcpSocketPass(wio_t *io, uint16_t local_port, const ip_addr_t *local_addr, const ip_addr_t paddr,
+                                    int match_tier)
 {
     socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
     uint8_t          balance_selection_filters_length = 0;
@@ -1595,8 +1680,8 @@ static bool distributeTcpSocketPass(wio_t *io, uint16_t local_port, const ip_add
         }
     }
 
-    return finalizeTcpDistribution(balance_selection_filters, balance_selection_filters_length, io, local_port,
-                                   src_hash);
+    return finalizeTcpDistribution(
+        balance_selection_filters, balance_selection_filters_length, io, local_port, src_hash);
 }
 
 /**
@@ -1802,8 +1887,8 @@ static bool interfaceScopeEquals(const char *a, const char *b)
 /**
  * @brief Find a bound endpoint with the same protocol, bind address, port, and scope.
  */
-static listener_endpoint_t *endpointRegistryFind(endpoint_registry_t *reg, uint8_t protocol,
-                                                 socket_filter_t *filter, uint16_t port)
+static listener_endpoint_t *endpointRegistryFind(endpoint_registry_t *reg, uint8_t protocol, socket_filter_t *filter,
+                                                 uint16_t port)
 {
     computeFilterBindEndpoint(filter);
     const char *iface = filterInterfaceScope(filter);
@@ -1842,24 +1927,24 @@ static listener_endpoint_t *endpointRegistryFind(endpoint_registry_t *reg, uint8
 /**
  * @brief Record a successfully bound endpoint in the registry.
  */
-static void endpointRegistryReserve(endpoint_registry_t *reg, uint8_t protocol, socket_filter_t *filter,
-                                    uint16_t port, wio_t *io, udpsock_t *udp)
+static void endpointRegistryReserve(endpoint_registry_t *reg, uint8_t protocol, socket_filter_t *filter, uint16_t port,
+                                    wio_t *io, udpsock_t *udp)
 {
     computeFilterBindEndpoint(filter);
 
     listener_endpoint_t ep;
     memoryZero(&ep, sizeof(ep));
-    ep.protocol        = protocol;
-    ep.family          = filter->bind_family;
-    ep.is_wildcard     = filter->bind_is_wildcard;
-    ep.bind_addr       = filter->bind_addr;
-    ep.port            = port;
-    ep.interface_scope   = filterInterfaceScope(filter);
-    ep.listen_io         = io;
-    ep.udp_socket        = udp;
-    ep.fwmark            = filter->option.fwmark;
-    ep.send_buffer_size  = filter->option.send_buffer_size;
-    ep.recv_buffer_size  = filter->option.recv_buffer_size;
+    ep.protocol         = protocol;
+    ep.family           = filter->bind_family;
+    ep.is_wildcard      = filter->bind_is_wildcard;
+    ep.bind_addr        = filter->bind_addr;
+    ep.port             = port;
+    ep.interface_scope  = filterInterfaceScope(filter);
+    ep.listen_io        = io;
+    ep.udp_socket       = udp;
+    ep.fwmark           = filter->option.fwmark;
+    ep.send_buffer_size = filter->option.send_buffer_size;
+    ep.recv_buffer_size = filter->option.recv_buffer_size;
 
     endpoint_registry_t_push(reg, ep);
 }
@@ -1976,12 +2061,12 @@ static wio_t *createUdpServerWithSocketOptions(wloop_t *loop, socket_filter_t *f
     char        host_if[INET_ADDRSTRLEN] = {0};
     const char *bind_host                = getSocketBindHost(filter, host, host_if);
     wio_t      *io                       = wloopCreateUdpServerWithBufferOptions(loop,
-                                                                                 bind_host,
-                                                                                 port,
-                                                                                 filter->option.interface_name,
-                                                                                 filter->option.fwmark,
-                                                                                 filter->option.send_buffer_size,
-                                                                                 filter->option.recv_buffer_size);
+                                                      bind_host,
+                                                      port,
+                                                      filter->option.interface_name,
+                                                      filter->option.fwmark,
+                                                      filter->option.send_buffer_size,
+                                                      filter->option.recv_buffer_size);
 
     if (io == NULL)
     {
@@ -2112,7 +2197,7 @@ static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
 {
     const int length   = (int) (port_max - port_min + 1);
     filter->listen_ios = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
-    int i = 0;
+    int i              = 0;
 
     for (uint32_t p = port_min; p <= port_max; ++p)
     {
@@ -2155,7 +2240,7 @@ static void listenTcpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
 {
     const isize length = vec_listener_port_t_size(ports);
     filter->listen_ios = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
-    int i = 0;
+    int i              = 0;
 
     for (isize pi = 0; pi < length; ++pi)
     {
@@ -2415,16 +2500,16 @@ static bool handleUdpBalancedFilter(socket_filter_t *filter, const socket_filter
 
     if (! *src_hashed)
     {
-        *src_hash   = socketManagerCombineBalanceLocalHash(ipaddrCalcHashNoPort(paddr), local_addr,
-                                                           pl.real_localport, match_tier);
+        *src_hash = socketManagerCombineBalanceLocalHash(
+            ipaddrCalcHashNoPort(paddr), local_addr, pl.real_localport, match_tier);
         *src_hashed = true;
     }
 
     idle_item_t *idle_item =
         idletableGetIdleItemByHash(socketmanager_gstate->wid, option.shared_balance_table, *src_hash);
 
-    if (idle_item && balanceTargetStillMatches(idle_item->userdata, pl.real_localport, paddr, local_addr, match_tier,
-                                               true))
+    if (idle_item &&
+        balanceTargetStillMatches(idle_item->userdata, pl.real_localport, paddr, local_addr, match_tier, true))
     {
         socket_filter_t *target_filter = idle_item->userdata;
         idletableKeepIdleItemForAtleast(option.shared_balance_table,
@@ -2733,10 +2818,10 @@ static void listenUdpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
 static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port_min,
                                       endpoint_registry_t *reg, uint16_t port_max)
 {
-    const int length   = (int) (port_max - port_min + 1);
-    filter->listen_ios = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
+    const int length           = (int) (port_max - port_min + 1);
+    filter->listen_ios         = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
     filter->listen_udp_sockets = (udpsock_t **) memoryAllocateZero(sizeof(udpsock_t *) * (size_t) length);
-    int i = 0;
+    int i                      = 0;
 
     for (uint32_t p = port_min; p <= port_max; ++p)
     {
@@ -2783,10 +2868,10 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
 static void listenUdpPortListSockets(wloop_t *loop, socket_filter_t *filter, char *host, endpoint_registry_t *reg,
                                      const vec_listener_port_t *ports)
 {
-    const isize length = vec_listener_port_t_size(ports);
-    filter->listen_ios = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
+    const isize length         = vec_listener_port_t_size(ports);
+    filter->listen_ios         = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
     filter->listen_udp_sockets = (udpsock_t **) memoryAllocateZero(sizeof(udpsock_t *) * (size_t) length);
-    int i = 0;
+    int i                      = 0;
 
     for (isize pi = 0; pi < length; ++pi)
     {
@@ -3295,7 +3380,7 @@ void socketmanagerDestroy(void)
         {
             const char msg[] = "SocketManager: failed to fully remove owned iptables nat rules\n";
             ssize_t    n     = write(STDOUT_FILENO, msg, sizeof(msg) - 1);
-            discard n;
+            discard    n;
         }
     }
     socketManagerIptablesReleaseLease(&socketmanager_gstate->iptables_owner_lease_fd);

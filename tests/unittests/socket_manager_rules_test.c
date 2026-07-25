@@ -22,6 +22,17 @@ static void requireEqStr(const char *got, const char *expected, const char *mess
     }
 }
 
+// Every generated iptables/ip6tables command must carry exactly one numeric
+// xtables-lock wait "-w 5" positioned immediately before "-t nat", and must
+// never use a bare "-w" that could wait indefinitely for the xtables lock.
+static void requireSingleNumericWait(const char *cmd, const char *message)
+{
+    const char *wait = strstr(cmd, " -w 5 -t nat ");
+    require(wait != NULL, message);
+    require(strstr(wait + 1, " -w 5 -t nat ") == NULL, message);
+    require(strstr(cmd, " -w -t ") == NULL, message);
+}
+
 // Rule ranks must order specific-before-wildcard, with interface-scoped rules first inside each tier so that
 // a wildcard listener never steals traffic before a more specific listener's redirect rule is installed.
 static void testRuleRanks(void)
@@ -48,8 +59,9 @@ static void testSpecificSinglePort(void)
     socketManagerBuildRedirectCommand(
         cmd, sizeof(cmd), "iptables", "WW_TEST_4", "TCP", true, "10.0.0.1", NULL, 443, 443, 12345);
     requireEqStr(cmd,
-                 "iptables -w -t nat -A WW_TEST_4 -p TCP -d 10.0.0.1 --dport 443 -j REDIRECT --to-port 12345",
+                 "iptables -w 5 -t nat -A WW_TEST_4 -p TCP -d 10.0.0.1 --dport 443 -j REDIRECT --to-port 12345",
                  "specific single-port TCP command mismatch");
+    requireSingleNumericWait(cmd, "specific single-port command must carry exactly one -w 5 before -t nat");
     require(strstr(cmd, "-A PREROUTING") == NULL, "redirect rules must not be installed directly in PREROUTING");
 }
 
@@ -60,8 +72,9 @@ static void testWildcardRange(void)
     socketManagerBuildRedirectCommand(
         cmd, sizeof(cmd), "iptables", "WW_TEST_4", "UDP", false, "0.0.0.0", NULL, 1000, 2000, 500);
     requireEqStr(cmd,
-                 "iptables -w -t nat -A WW_TEST_4 -p UDP --dport 1000:2000 -j REDIRECT --to-port 500",
+                 "iptables -w 5 -t nat -A WW_TEST_4 -p UDP --dport 1000:2000 -j REDIRECT --to-port 500",
                  "wildcard range UDP command mismatch");
+    requireSingleNumericWait(cmd, "wildcard range command must carry exactly one -w 5 before -t nat");
     require(strstr(cmd, "-d ") == NULL, "wildcard command must not contain a -d match");
 }
 
@@ -71,8 +84,9 @@ static void testSpecificWithInterface(void)
     socketManagerBuildRedirectCommand(
         cmd, sizeof(cmd), "iptables", "WW_TEST_4", "TCP", true, "10.0.0.1", "eth0", 80, 80, 8080);
     requireEqStr(cmd,
-                 "iptables -w -t nat -A WW_TEST_4 -p TCP -i eth0 -d 10.0.0.1 --dport 80 -j REDIRECT --to-port 8080",
+                 "iptables -w 5 -t nat -A WW_TEST_4 -p TCP -i eth0 -d 10.0.0.1 --dport 80 -j REDIRECT --to-port 8080",
                  "specific+interface TCP command mismatch");
+    requireSingleNumericWait(cmd, "specific+interface command must carry exactly one -w 5 before -t nat");
 }
 
 static void testWildcardWithInterface(void)
@@ -81,8 +95,9 @@ static void testWildcardWithInterface(void)
     socketManagerBuildRedirectCommand(
         cmd, sizeof(cmd), "iptables", "WW_TEST_4", "UDP", false, NULL, "wg0", 53, 53, 5300);
     requireEqStr(cmd,
-                 "iptables -w -t nat -A WW_TEST_4 -p UDP -i wg0 --dport 53 -j REDIRECT --to-port 5300",
+                 "iptables -w 5 -t nat -A WW_TEST_4 -p UDP -i wg0 --dport 53 -j REDIRECT --to-port 5300",
                  "wildcard+interface UDP command mismatch");
+    requireSingleNumericWait(cmd, "wildcard+interface command must carry exactly one -w 5 before -t nat");
     require(strstr(cmd, "-d ") == NULL, "wildcard+interface command must not contain a -d match");
     require(strstr(cmd, "-i wg0") != NULL, "wildcard+interface command must contain -i match");
 }
@@ -93,8 +108,9 @@ static void testIpv6Tool(void)
     socketManagerBuildRedirectCommand(
         cmd, sizeof(cmd), "ip6tables", "WW_TEST_6", "TCP", true, "fd00::1", NULL, 443, 443, 9);
     requireEqStr(cmd,
-                 "ip6tables -w -t nat -A WW_TEST_6 -p TCP -d fd00::1 --dport 443 -j REDIRECT --to-port 9",
+                 "ip6tables -w 5 -t nat -A WW_TEST_6 -p TCP -d fd00::1 --dport 443 -j REDIRECT --to-port 9",
                  "ipv6 specific TCP command mismatch");
+    requireSingleNumericWait(cmd, "ipv6 redirect command must carry exactly one -w 5 before -t nat");
 }
 
 static void testEmptyDestTreatedAsWildcard(void)
@@ -103,8 +119,9 @@ static void testEmptyDestTreatedAsWildcard(void)
     // has_dest true but empty string must still omit -d (defensive).
     socketManagerBuildRedirectCommand(cmd, sizeof(cmd), "iptables", "WW_TEST_4", "TCP", true, "", NULL, 22, 22, 2200);
     requireEqStr(cmd,
-                 "iptables -w -t nat -A WW_TEST_4 -p TCP --dport 22 -j REDIRECT --to-port 2200",
+                 "iptables -w 5 -t nat -A WW_TEST_4 -p TCP --dport 22 -j REDIRECT --to-port 2200",
                  "empty-dest command should omit -d");
+    requireSingleNumericWait(cmd, "empty-dest command must carry exactly one -w 5 before -t nat");
 }
 
 static void testOwnedChainCommands(void)
@@ -112,19 +129,24 @@ static void testOwnedChainCommands(void)
     char cmd[256];
 
     socketManagerBuildOwnedChainCommand(cmd, sizeof(cmd), "iptables", kSocketManagerIptablesCreateChain, "WW_TEST_4");
-    requireEqStr(cmd, "iptables -w -t nat -N WW_TEST_4", "owned chain create command mismatch");
+    requireEqStr(cmd, "iptables -w 5 -t nat -N WW_TEST_4", "owned chain create command mismatch");
+    requireSingleNumericWait(cmd, "owned chain create command must carry exactly one -w 5 before -t nat");
 
     socketManagerBuildOwnedChainCommand(cmd, sizeof(cmd), "iptables", kSocketManagerIptablesAddJump, "WW_TEST_4");
-    requireEqStr(cmd, "iptables -w -t nat -A PREROUTING -j WW_TEST_4", "owned chain jump command mismatch");
+    requireEqStr(cmd, "iptables -w 5 -t nat -A PREROUTING -j WW_TEST_4", "owned chain jump command mismatch");
+    requireSingleNumericWait(cmd, "owned chain jump command must carry exactly one -w 5 before -t nat");
 
     socketManagerBuildOwnedChainCommand(cmd, sizeof(cmd), "iptables", kSocketManagerIptablesDeleteJump, "WW_TEST_4");
-    requireEqStr(cmd, "iptables -w -t nat -D PREROUTING -j WW_TEST_4", "owned chain jump deletion mismatch");
+    requireEqStr(cmd, "iptables -w 5 -t nat -D PREROUTING -j WW_TEST_4", "owned chain jump deletion mismatch");
+    requireSingleNumericWait(cmd, "owned chain jump deletion must carry exactly one -w 5 before -t nat");
 
     socketManagerBuildOwnedChainCommand(cmd, sizeof(cmd), "iptables", kSocketManagerIptablesFlushChain, "WW_TEST_4");
-    requireEqStr(cmd, "iptables -w -t nat -F WW_TEST_4", "owned chain flush must name only WaterWall's chain");
+    requireEqStr(cmd, "iptables -w 5 -t nat -F WW_TEST_4", "owned chain flush must name only WaterWall's chain");
+    requireSingleNumericWait(cmd, "owned chain flush command must carry exactly one -w 5 before -t nat");
 
     socketManagerBuildOwnedChainCommand(cmd, sizeof(cmd), "iptables", kSocketManagerIptablesDeleteChain, "WW_TEST_4");
-    requireEqStr(cmd, "iptables -w -t nat -X WW_TEST_4", "owned chain deletion must name only WaterWall's chain");
+    requireEqStr(cmd, "iptables -w 5 -t nat -X WW_TEST_4", "owned chain deletion must name only WaterWall's chain");
+    requireSingleNumericWait(cmd, "owned chain deletion command must carry exactly one -w 5 before -t nat");
 }
 
 static ip_addr_t ipv4Addr(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
