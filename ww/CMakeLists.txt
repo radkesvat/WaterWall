@@ -1372,6 +1372,7 @@ if(BUILD_TESTING)
         # define the same symbols a second time.
         base/wproc.c
         instance/global_state.c
+        managers/signal_manager.c
         managers/socket_manager_iptables_recovery.c
         objects/user.c
         objects/users.c

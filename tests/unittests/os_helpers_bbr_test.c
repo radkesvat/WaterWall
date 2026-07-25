@@ -76,7 +76,7 @@ static void resetScenario(void)
 {
     unlink(log_path);
 
-    char marker_path[PATH_MAX];
+    char marker_path[PATH_MAX + sizeof("/bbr-enabled")];
     snprintf(marker_path, sizeof(marker_path), "%s/bbr-enabled", state_path);
     unlink(marker_path);
     snprintf(marker_path, sizeof(marker_path), "%s/fq-enabled", state_path);
