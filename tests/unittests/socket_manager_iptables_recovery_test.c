@@ -43,6 +43,29 @@ void *__wrap_memoryReAllocate(void *ptr, size_t size)
 }
 #endif
 
+#if defined(__linux__)
+// Disabled-by-default close() fault injection. When armed, the next close() still
+// releases the descriptor (so the test never leaks one) but then reports EIO,
+// modeling a close() that fails during cleanup of a failed bind(). This proves
+// bindAbstractSocketName() preserves the original bind() errno across cleanup.
+static bool fail_next_close = false;
+
+int __real_close(int fd);
+int __wrap_close(int fd);
+
+int __wrap_close(int fd)
+{
+    if (fail_next_close)
+    {
+        fail_next_close = false;
+        (void) __real_close(fd); // release the descriptor first so nothing leaks
+        errno = EIO;
+        return -1;
+    }
+    return __real_close(fd);
+}
+#endif
+
 typedef struct probe_state_s
 {
     uint64_t active_tokens[8];
@@ -616,6 +639,24 @@ static void testLockAndOwnerLeaseContention(void)
             "could not acquire owner lease");
     require(socketManagerIptablesAcquireOwnerLease(token, &second_owner) == kSocketManagerIptablesLeaseInUse,
             "contending owner lease should report active ownership");
+
+    // A cleanup close() that fails after a contended bind() must not overwrite the
+    // bind() EADDRINUSE: the contention must still be classified as LeaseInUse and
+    // not as LeaseError, so reconciliation-lock retry decisions still see the busy
+    // name.
+    fail_next_close = true;
+    errno           = 0;
+    socket_manager_iptables_lease_probe_result_t contended =
+        socketManagerIptablesAcquireOwnerLease(token, &second_owner);
+    const int  contended_errno    = errno;
+    const bool injection_consumed = ! fail_next_close;
+    fail_next_close               = false;
+    require(contended == kSocketManagerIptablesLeaseInUse,
+            "a live owner lease must stay LeaseInUse even when the cleanup close() fails");
+    require(injection_consumed, "the injected close failure was not consumed by lease cleanup");
+    require(contended_errno == EADDRINUSE, "the bind() EADDRINUSE must survive a failing cleanup close()");
+    require(second_owner == -1, "a contended lease must not hand back a descriptor");
+
     socketManagerIptablesReleaseLease(&first_owner);
     require(socketManagerIptablesAcquireOwnerLease(token, &second_owner) == kSocketManagerIptablesLeaseAcquired,
             "owner lease should be reusable after release");

@@ -234,6 +234,7 @@ if(TARGET ww)
     target_link_options(socket_manager_iptables_recovery_test PRIVATE
       "-Wl,--wrap=memoryAllocate"
       "-Wl,--wrap=memoryReAllocate"
+      "-Wl,--wrap=close"
     )
   endif()
   add_dependencies(waterwall_unit_tests socket_manager_iptables_recovery_test)

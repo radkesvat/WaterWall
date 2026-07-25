@@ -1228,7 +1228,12 @@ static bool bindAbstractSocketName(const char *name, int *fd_out)
     const socklen_t addr_len = (socklen_t) (offsetof(struct sockaddr_un, sun_path) + 1U + name_len);
     if (bind(fd, (const struct sockaddr *) &addr, addr_len) != 0)
     {
+        // Preserve the bind() error across cleanup: close() may set its own errno
+        // (and must not be retried on Linux, where the descriptor may already have
+        // been released and reused), so callers still observe the bind() failure.
+        const int saved_errno = errno;
         close(fd);
+        errno = saved_errno;
         return false;
     }
     *fd_out = fd;
