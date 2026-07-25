@@ -305,6 +305,70 @@ static void testIgnoresUnrelatedAndLookalikes(void)
     socketManagerIptablesCleanupPlanDrop(&plan);
 }
 
+static void testCrossFamilyChainNameCollisionIsolated(void)
+{
+    // A stale IPv4 V2 chain with its exact PREROUTING jump, alongside an IPv6
+    // snapshot that declares and *conditionally* references the exact same textual
+    // _4 chain name. iptables and ip6tables have separate namespaces, so the
+    // wrong-family IPv6 declaration and reference must be ignored and the IPv4
+    // candidate must still be cleaned up normally. Before family isolation the
+    // IPv6 conditional reference corrupted the IPv4 candidate and blocked its
+    // cleanup (result == false, v4_ok == false, empty plan).
+    const char                            *v4    = "-P PREROUTING ACCEPT\n"
+                                                   "-N WW2_0123456789ABCDEF_4\n"
+                                                   "-A PREROUTING -j WW2_0123456789ABCDEF_4\n";
+    const char                            *v6    = "-N WW2_0123456789ABCDEF_4\n"
+                                                   "-A PREROUTING -p tcp -j WW2_0123456789ABCDEF_4\n";
+    probe_state_t                          probe = {0};
+    socket_manager_iptables_cleanup_plan_t plan;
+    requirePlan(v4, true, v6, true, &probe, &plan, true, true, true);
+    require(probe.seen_count == 1, "the shared owner token should be probed exactly once");
+    require(probe.seen_tokens[0] == 0x0123456789ABCDEFULL, "the probed token must be the IPv4 owner token");
+    require(plan.count == 3, "the IPv4 chain should still receive its full three-operation cleanup");
+    for (size_t i = 0; i < plan.count; ++i)
+    {
+        require(plan.ops[i].family == 4, "cross-family collision must not schedule an IPv6 operation");
+        requireEqStr(plan.ops[i].chain_name, "WW2_0123456789ABCDEF_4", "cleanup op must target only the IPv4 chain");
+    }
+    require(plan.ops[0].action == kSocketManagerIptablesCleanupDeleteJump, "IPv4 jump deletion missing");
+    require(plan.ops[1].action == kSocketManagerIptablesCleanupFlushChain, "IPv4 flush missing");
+    require(plan.ops[2].action == kSocketManagerIptablesCleanupDeleteChain, "IPv4 delete missing");
+    socketManagerIptablesCleanupPlanDrop(&plan);
+}
+
+static void testOverlongIpv6RuleContainedToFamily(void)
+{
+    // A normal stale IPv4 chain and a normal stale IPv6 chain, plus an IPv6 rule
+    // with more than 128 whitespace-delimited tokens. Tokenization overflow is
+    // handled conservatively by marking candidates unexpected, but that must be
+    // contained to the overflowing rule's own (IPv6) family: the IPv4 chain still
+    // gets its full cleanup. Before family isolation the overflow blocked both
+    // families.
+    const char *v4 = "-N WW2_1111111111111111_4\n-A PREROUTING -j WW2_1111111111111111_4\n";
+
+    char v6[2400];
+    snprintf(v6, sizeof(v6), "-N WW2_2222222222222222_6\n-A PREROUTING -j WW2_2222222222222222_6\n-A PREROUTING");
+    for (int i = 0; i < 200; ++i)
+    {
+        strcat(v6, " x");
+    }
+    strcat(v6, "\n");
+
+    probe_state_t                          probe = {0};
+    socket_manager_iptables_cleanup_plan_t plan;
+    requirePlan(v4, true, v6, true, &probe, &plan, false, true, false);
+    require(plan.count == 3, "conservative IPv6 failure must not remove the valid IPv4 cleanup plan");
+    for (size_t i = 0; i < plan.count; ++i)
+    {
+        require(plan.ops[i].family == 4, "overlong IPv6 rule must neither schedule nor block IPv4 cleanup");
+        requireEqStr(plan.ops[i].chain_name, "WW2_1111111111111111_4", "cleanup op must target only the IPv4 chain");
+    }
+    require(plan.ops[0].action == kSocketManagerIptablesCleanupDeleteJump, "IPv4 jump deletion missing");
+    require(plan.ops[1].action == kSocketManagerIptablesCleanupFlushChain, "IPv4 flush missing");
+    require(plan.ops[2].action == kSocketManagerIptablesCleanupDeleteChain, "IPv4 delete missing");
+    socketManagerIptablesCleanupPlanDrop(&plan);
+}
+
 static void testIncompleteSnapshotRejected(void)
 {
     const char   *snapshot = "-N WW2_9999999999999999_4\n-A PREROUTING -j WW2_9999999999999999_4";
@@ -863,6 +927,8 @@ int main(void)
     testUnexpectedReferencesBlockCandidate();
     testAllJumpAndGotoReferencesAreDetected();
     testIgnoresUnrelatedAndLookalikes();
+    testCrossFamilyChainNameCollisionIsolated();
+    testOverlongIpv6RuleContainedToFamily();
     testIncompleteSnapshotRejected();
     testLargeSnapshotBeyondOldFixedBuffer();
     testLeaseProbeErrorFailsFamily();

@@ -255,11 +255,16 @@ static bool appendLegacyBlocker(socket_manager_iptables_cleanup_plan_t *plan, co
     return true;
 }
 
-static iptables_candidate_t *findCandidate(candidate_list_t *list, const char *chain_name)
+// Candidates are isolated by address family: iptables and ip6tables have
+// separate chain namespaces and may legally contain identically spelled (or
+// deliberately wrong-suffix) chain names, so the explicit family field, not the
+// name suffix, is the isolation boundary. A candidate matches only when both its
+// family and its chain name equal the request.
+static iptables_candidate_t *findCandidate(candidate_list_t *list, int family, const char *chain_name)
 {
     for (size_t i = 0; i < list->count; ++i)
     {
-        if (strcmp(list->items[i].chain_name, chain_name) == 0)
+        if (list->items[i].family == family && strcmp(list->items[i].chain_name, chain_name) == 0)
         {
             return &list->items[i];
         }
@@ -270,7 +275,7 @@ static iptables_candidate_t *findCandidate(candidate_list_t *list, const char *c
 static bool appendCandidate(candidate_list_t *list, iptables_candidate_kind_t kind, uint64_t token, int family,
                             const char *chain_name)
 {
-    if (findCandidate(list, chain_name) != NULL)
+    if (findCandidate(list, family, chain_name) != NULL)
     {
         return true;
     }
@@ -392,15 +397,21 @@ static int tokenizeLine(char *line, char **tokens, int max_tokens)
     return count;
 }
 
-static void markAllCandidatesUnexpected(candidate_list_t *candidates)
+// Conservative overflow handling is scoped to the snapshot's own family: an
+// over-token-limit rule marks only candidates in that family unexpected and must
+// not affect the other family's candidates.
+static void markFamilyCandidatesUnexpected(candidate_list_t *candidates, int family)
 {
     for (size_t i = 0; i < candidates->count; ++i)
     {
-        candidates->items[i].unexpected_reference = true;
+        if (candidates->items[i].family == family)
+        {
+            candidates->items[i].unexpected_reference = true;
+        }
     }
 }
 
-static bool analyzeRuleLine(const char *line, size_t len, candidate_list_t *candidates)
+static bool analyzeRuleLine(const char *line, size_t len, int family, candidate_list_t *candidates)
 {
     if (len <= 3 || memcmp(line, "-A ", 3) != 0)
     {
@@ -418,7 +429,7 @@ static bool analyzeRuleLine(const char *line, size_t len, candidate_list_t *cand
     int   count = tokenizeLine(copy, tokens, 128);
     if (count < 0)
     {
-        markAllCandidatesUnexpected(candidates);
+        markFamilyCandidatesUnexpected(candidates, family);
         memoryFree(copy);
         return true;
     }
@@ -431,7 +442,7 @@ static bool analyzeRuleLine(const char *line, size_t len, candidate_list_t *cand
         {
             continue;
         }
-        iptables_candidate_t *candidate = findCandidate(candidates, tokens[i + 1]);
+        iptables_candidate_t *candidate = findCandidate(candidates, family, tokens[i + 1]);
         if (candidate == NULL)
         {
             continue;
@@ -451,7 +462,7 @@ static bool analyzeRuleLine(const char *line, size_t len, candidate_list_t *cand
     return true;
 }
 
-static bool analyzeReferences(const char *snapshot, candidate_list_t *candidates, bool *internal_failure)
+static bool analyzeReferences(const char *snapshot, int family, candidate_list_t *candidates, bool *internal_failure)
 {
     const char *line = snapshot;
     while (*line != '\0')
@@ -461,7 +472,7 @@ static bool analyzeReferences(const char *snapshot, candidate_list_t *candidates
         {
             return false;
         }
-        if (! analyzeRuleLine(line, (size_t) (end - line), candidates))
+        if (! analyzeRuleLine(line, (size_t) (end - line), family, candidates))
         {
             *internal_failure = true;
             return false;
@@ -486,7 +497,7 @@ static bool parseSnapshot(const char *snapshot, bool include, int family, candid
     {
         return false;
     }
-    return analyzeReferences(snapshot, candidates, internal_failure);
+    return analyzeReferences(snapshot, family, candidates, internal_failure);
 }
 
 static bool tokenWasSeen(const uint64_t *tokens, size_t count, uint64_t token)
