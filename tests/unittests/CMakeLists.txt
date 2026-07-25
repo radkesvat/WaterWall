@@ -8,6 +8,13 @@ set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)
 
+# Clang still needs its ThinLTO driver flag at the final Release link to load
+# LLVM bitcode from production libraries. This is link-only: unit-test sources
+# continue to compile without IPO.
+if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+  add_link_options($<$<CONFIG:Release>:-flto=thin>)
+endif()
+
 add_custom_target(waterwall_unit_tests)
 
 set(WATERWALL_UNIT_TEST_RUNNER "${CMAKE_CURRENT_SOURCE_DIR}/run_unit_test.cmake")
