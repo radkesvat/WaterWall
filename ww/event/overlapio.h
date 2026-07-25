@@ -94,6 +94,16 @@ bool wioIocpCanFinalize(wio_t *io);
 // have released it. May return io to its pool; callers must not touch io after.
 void wioIocpFinalizeDeferred(wio_t *io);
 
+#if defined(WATERWALL_IOCP_TEST_HOOKS)
+// --- test-only AcceptEx fault injection ----------------------------------------
+// Make the next `count` AcceptEx submissions fail immediately with `error`
+// (0 selects WSAENOBUFS), exercising the same unpost/retire path as a real
+// immediate failure. Arm this only after listener startup so the initial slots
+// are real. Never compiled into production builds.
+void     wioIocpTestForceAcceptExFailures(uint32_t count, int error);
+uint32_t wioIocpTestPendingAcceptExFailures(void);
+#endif
+
 #endif
 
 #endif // WW_OVERLAPPED_H_

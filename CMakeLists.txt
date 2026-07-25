@@ -1106,6 +1106,11 @@ endif()
 # so the native IOCP backend registers its own test executable here, and only
 # when that backend is actually selected (windows-iocp preset).
 if(BUILD_TESTING AND WIN32 AND WITH_NATIVE_IOCP)
+  # Narrow AcceptEx fault-injection seam. PUBLIC so the ww static library and the
+  # test executable agree on the declaration; it stays out of production builds
+  # because this block only runs for a testing-enabled native IOCP configuration.
+  target_compile_definitions(ww PUBLIC WATERWALL_IOCP_TEST_HOOKS=1)
+
   add_executable(iocp_native_test EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/iocp_native_test.c)
   set_target_properties(iocp_native_test PROPERTIES

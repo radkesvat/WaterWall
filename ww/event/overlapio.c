@@ -18,6 +18,16 @@
 
 #define ACCEPTEX_NUM 10
 
+// AcceptEx replenishment policy. A transient immediate submission failure (for
+// example WSAENOBUFS under resource pressure) must not permanently cost the
+// listener one of its accept slots, so a bounded exponential backoff restores
+// the missing slots instead. A listener that cannot hold a single slot after the
+// whole budget is spent closes with the last submission error rather than
+// staying active and accepting nothing.
+#define ACCEPTEX_RETRY_MIN_DELAY_MS  25
+#define ACCEPTEX_RETRY_MAX_DELAY_MS  1000
+#define ACCEPTEX_RETRY_ZERO_SLOT_MAX 8
+
 // -----------------------------------------------------------------------------
 // Record bookkeeping helpers
 // -----------------------------------------------------------------------------
@@ -43,6 +53,14 @@ static void recordAttach(wio_t *io, woverlapped_t *record, woverlapped_kind_e ki
 
     io->iocp_live_records++;
     io->loop->iocp_live_operations++;
+    if (kind == WOVERLAPPED_ACCEPT)
+    {
+        // Listener capacity is counted per accept record in every state (posted,
+        // completed, locally dispatching). Reposting an existing record does not
+        // pass through here, so the count only moves on attach and retire.
+        io->iocp_accept_records++;
+        assert(io->iocp_accept_records <= ACCEPTEX_NUM);
+    }
 }
 
 static void recordMarkPosted(woverlapped_t *record)
@@ -202,6 +220,11 @@ static void recordRetire(woverlapped_t *record)
             io->write_bufsize = 0;
         }
     }
+    if (record->kind == WOVERLAPPED_ACCEPT)
+    {
+        assert(io->iocp_accept_records > 0);
+        io->iocp_accept_records--;
+    }
     recordReleaseResources(record);
     EVENTLOOP_FREE(record);
 
@@ -209,6 +232,44 @@ static void recordRetire(woverlapped_t *record)
     io->iocp_live_records--;
     assert(io->loop->iocp_live_operations > 0);
     io->loop->iocp_live_operations--;
+}
+
+// Count the receives that still represent a live *logical* read for this io:
+// records of the current generation, owned by the kernel or already dequeued but
+// not yet dispatched, that were not canceled.
+//
+// Canceled records are deliberately excluded. A valid wioReadStop() immediately
+// followed by wioReadStart() leaves the canceled kernel operation draining while
+// its replacement is posted, and that replacement must not be suppressed.
+static uint32_t countUncancelledReceives(const wio_t *io)
+{
+    uint32_t count = 0;
+    for (const woverlapped_t *record = io->iocp_posted_head; record != NULL; record = record->posted_next)
+    {
+        if (record->kind == WOVERLAPPED_RECV && record->io_id == io->id &&
+            record->cancel_reason == WOVERLAPPED_NOT_CANCELED)
+        {
+            count++;
+        }
+    }
+    for (const woverlapped_t *record = io->iocp_completed_head; record != NULL; record = record->completed_next)
+    {
+        if (record->kind == WOVERLAPPED_RECV && record->io_id == io->id &&
+            record->cancel_reason == WOVERLAPPED_NOT_CANCELED)
+        {
+            count++;
+        }
+    }
+    return count;
+}
+
+// True when an uncancelled receive is already posted or waiting for dispatch.
+// NOTE: a record popped off the completed queue and currently being dispatched is
+// intentionally invisible here, so dispatch_recv must consult this *after* its
+// user callback to learn whether the callback posted a replacement.
+static bool hasUncancelledReceive(const wio_t *io)
+{
+    return countUncancelledReceives(io) > 0;
 }
 
 // -----------------------------------------------------------------------------
@@ -292,8 +353,41 @@ static int post_recv(wio_t *io, woverlapped_t *record)
             return err;
         }
     }
+    // Exactly one uncancelled logical receive per wio_t: the one just posted.
+    assert(countUncancelledReceives(io) == 1);
     return 0;
 }
+
+#if defined(WATERWALL_IOCP_TEST_HOOKS)
+// Test-only AcceptEx fault injection. The unit test arms it after listener
+// startup, so the initial slots are always real submissions, and each armed
+// count makes exactly one later submission fail immediately with a
+// representative transient error. Not compiled into production builds.
+static uint32_t g_iocp_acceptex_forced_failures = 0;
+static int      g_iocp_acceptex_forced_error    = WSAENOBUFS;
+
+void wioIocpTestForceAcceptExFailures(uint32_t count, int error)
+{
+    g_iocp_acceptex_forced_failures = count;
+    g_iocp_acceptex_forced_error    = (error != 0) ? error : WSAENOBUFS;
+}
+
+uint32_t wioIocpTestPendingAcceptExFailures(void)
+{
+    return g_iocp_acceptex_forced_failures;
+}
+
+static bool iocpTestConsumeAcceptExFailure(int *error)
+{
+    if (g_iocp_acceptex_forced_failures == 0)
+    {
+        return false;
+    }
+    g_iocp_acceptex_forced_failures--;
+    *error = g_iocp_acceptex_forced_error;
+    return true;
+}
+#endif
 
 // Post an AcceptEx. record == NULL allocates a fresh record (with an output
 // buffer sized for the listener family); otherwise the record is reused and its
@@ -383,6 +477,18 @@ static int post_acceptex(wio_t *listenio, woverlapped_t *record)
     record->fd            = connfd; // provisional accepted socket
 
     recordMarkPosted(record);
+#if defined(WATERWALL_IOCP_TEST_HOOKS)
+    int forced_error = 0;
+    if (UNLIKELY(iocpTestConsumeAcceptExFailure(&forced_error)))
+    {
+        // Same unpost/retire path as a real immediate AcceptEx failure, without
+        // having to exhaust real Windows socket resources in a unit test.
+        printError("AcceptEx error (injected): %d\n", forced_error);
+        recordUnpost(record);
+        recordRetire(record); // closes connfd, frees buffer, drops live ref
+        return forced_error;
+    }
+#endif
     if (AcceptEx(listenio->fd,
                  connfd,
                  record->buf.buf,
@@ -414,6 +520,152 @@ error:
         recordRetire(record);
     }
     return accept_error;
+}
+
+// -----------------------------------------------------------------------------
+// AcceptEx capacity replenishment
+// -----------------------------------------------------------------------------
+
+static void acceptRetryTimerCb(wtimer_t *timer);
+
+// Drop any scheduled replenishment and reset its backoff. Idempotent, and safe
+// to call from inside the retry callback (the callback clears its own pointer
+// first, so this can never delete a timer the loop is about to free).
+static void cancelAcceptExRetry(wio_t *io)
+{
+    if (io->iocp_accept_retry_timer != NULL)
+    {
+        wtimerDelete(io->iocp_accept_retry_timer);
+        io->iocp_accept_retry_timer = NULL;
+    }
+    io->iocp_accept_retry_attempts = 0;
+}
+
+// Exponential backoff bounded by ACCEPTEX_RETRY_MAX_DELAY_MS.
+static uint32_t acceptExRetryDelayMs(uint32_t attempts)
+{
+    uint32_t delay = ACCEPTEX_RETRY_MIN_DELAY_MS;
+    for (uint32_t i = 0; i < attempts && delay < ACCEPTEX_RETRY_MAX_DELAY_MS; ++i)
+    {
+        delay *= 2;
+    }
+    return delay > (uint32_t) ACCEPTEX_RETRY_MAX_DELAY_MS ? (uint32_t) ACCEPTEX_RETRY_MAX_DELAY_MS : delay;
+}
+
+// Schedule one listener-level replenishment round. Idempotent: an already
+// scheduled retry is kept so a burst of failures cannot stack timers.
+static void scheduleAcceptExRetry(wio_t *io, int submission_error)
+{
+    if (submission_error != 0)
+    {
+        io->iocp_accept_last_error = submission_error;
+    }
+    if (io->iocp_accept_retry_timer != NULL)
+    {
+        return;
+    }
+    if (io->closed || io->destroy || ! io->accept || (io->events & WW_READ) == 0)
+    {
+        // Accept interest is gone: capacity no longer matters and a timer here
+        // could outlive the listener.
+        return;
+    }
+
+    wtimer_t *timer = wtimerAdd(io->loop, acceptRetryTimerCb, acceptExRetryDelayMs(io->iocp_accept_retry_attempts), 1);
+    if (UNLIKELY(timer == NULL))
+    {
+        return;
+    }
+    // The generation stored alongside io lets the callback reject a pooled and
+    // re-issued wio_t even in the (already guarded) case of a surviving timer.
+    timer->privdata             = io;
+    timer->userdata             = (void *) (uintptr_t) io->id;
+    io->iocp_accept_retry_timer = timer;
+}
+
+static void acceptRetryTimerCb(wtimer_t *timer)
+{
+    wio_t *io = (wio_t *) timer->privdata;
+    if (io == NULL)
+    {
+        return;
+    }
+    const uint32_t listener_id = (uint32_t) (uintptr_t) timer->userdata;
+
+    // One-shot: the loop frees this timer once the callback returns, and
+    // everything below may close io. Release the reference before either.
+    io->iocp_accept_retry_timer = NULL;
+
+    if (io->closed || io->destroy || io->id != listener_id || ! io->accept || (io->events & WW_READ) == 0)
+    {
+        io->iocp_accept_retry_attempts = 0;
+        return;
+    }
+
+    int last_error = 0;
+    while (io->iocp_accept_records < ACCEPTEX_NUM)
+    {
+        int post_error = post_acceptex(io, NULL);
+        if (post_error != 0)
+        {
+            // Stop at the first failure: retrying in a tight loop would amplify
+            // the very resource exhaustion that caused it.
+            last_error = post_error;
+            break;
+        }
+    }
+
+    if (last_error == 0)
+    {
+        // Target capacity restored.
+        io->iocp_accept_retry_attempts = 0;
+        io->iocp_accept_last_error     = 0;
+        return;
+    }
+
+    io->iocp_accept_last_error = last_error;
+    io->iocp_accept_retry_attempts++;
+
+    if (io->iocp_accept_records == 0 && io->iocp_accept_retry_attempts >= ACCEPTEX_RETRY_ZERO_SLOT_MAX)
+    {
+        // Persistent total failure: a listener with zero slots accepts nothing,
+        // so surface it instead of leaving a zombie behind. All retry state is
+        // cleared before the close, which may finalize io.
+        const int fatal_error = io->iocp_accept_last_error;
+        wloge("AcceptEx replenishment failed %d times with no accept slot left, closing listener (error %d)",
+              ACCEPTEX_RETRY_ZERO_SLOT_MAX,
+              fatal_error);
+        io->iocp_accept_retry_attempts = 0;
+        io->iocp_accept_last_error     = 0;
+        io->error                      = fatal_error;
+        wioClose(io);
+        return;
+    }
+
+    scheduleAcceptExRetry(io, last_error);
+}
+
+// Single funnel for every dispatch_accept repost site. On immediate failure
+// post_acceptex has already retired the dead record, so the listener is one slot
+// short and a bounded replenishment round is scheduled instead of silently
+// shrinking its capacity forever.
+static void repostAcceptOrScheduleRetry(wio_t *io, woverlapped_t *record)
+{
+    if (io->closed || record->io_id != io->id || (io->events & WW_READ) == 0)
+    {
+        recordRetire(record);
+        return;
+    }
+
+    int post_error = post_acceptex(io, record);
+    if (post_error == 0)
+    {
+        io->iocp_accept_retry_attempts = 0;
+        io->iocp_accept_last_error     = 0;
+        return;
+    }
+    // record is dead here; post_acceptex retired it.
+    scheduleAcceptExRetry(io, post_error);
 }
 
 static int post_send(wio_t *io, woverlapped_t *record)
@@ -555,6 +807,16 @@ static void dispatch_recv(wio_t *io, woverlapped_t *record)
     // Repost only if still open, same generation, and read is still enabled.
     if (! io->closed && record->io_id == io->id && (io->events & WW_READ))
     {
+        if (hasUncancelledReceive(io))
+        {
+            // The callback restarted reading (typically wioReadOnce from inside a
+            // one-shot read callback) and already posted a replacement receive.
+            // Reposting this completed record too would leave two uncancelled
+            // WSARecv operations racing for the same stream. The successful
+            // receive buffer was detached above, so retiring cannot recycle it.
+            recordRetire(record);
+            return;
+        }
         int err = post_recv(io, record);
         if (UNLIKELY(err != 0))
         {
@@ -704,14 +966,7 @@ static void dispatch_accept(wio_t *io, woverlapped_t *record)
         // provisional socket and replenish the accept slot if still reading.
         SAFE_CLOSESOCKET(record->fd);
         record->fd = -1;
-        if (! io->closed && record->io_id == io->id && (io->events & WW_READ))
-        {
-            (void) post_acceptex(io, record);
-        }
-        else
-        {
-            recordRetire(record);
-        }
+        repostAcceptOrScheduleRetry(io, record);
         return;
     }
 
@@ -755,14 +1010,7 @@ static void dispatch_accept(wio_t *io, woverlapped_t *record)
     {
         SAFE_CLOSESOCKET(record->fd);
         record->fd = -1;
-        if (! io->closed && record->io_id == io->id && (io->events & WW_READ))
-        {
-            (void) post_acceptex(io, record);
-        }
-        else
-        {
-            recordRetire(record);
-        }
+        repostAcceptOrScheduleRetry(io, record);
         return;
     }
 
@@ -774,14 +1022,7 @@ static void dispatch_accept(wio_t *io, woverlapped_t *record)
     if (wioIsClosed(connio))
     {
         // Socket init rejected the accepted fd and already closed it; replenish.
-        if (! io->closed && record->io_id == io->id && (io->events & WW_READ))
-        {
-            (void) post_acceptex(io, record);
-        }
-        else
-        {
-            recordRetire(record);
-        }
+        repostAcceptOrScheduleRetry(io, record);
         return;
     }
 
@@ -805,14 +1046,7 @@ static void dispatch_accept(wio_t *io, woverlapped_t *record)
 
     // Repost only if the listener is still open, the generation matches, and
     // read/accept interest is still enabled.
-    if (! io->closed && record->io_id == io->id && (io->events & WW_READ))
-    {
-        (void) post_acceptex(io, record);
-    }
-    else
-    {
-        recordRetire(record);
-    }
+    repostAcceptOrScheduleRetry(io, record);
 }
 
 // Drain and dispatch every completed record for an active io. The record is
@@ -903,6 +1137,14 @@ void wioIocpCancel(wio_t *io, int event_mask, woverlapped_cancel_reason_e reason
 {
     const bool cancel_all = (event_mask & WW_READ) != 0 && (event_mask & WW_WRITE) != 0;
 
+    if ((event_mask & WW_READ) != 0)
+    {
+        // Read/accept interest is being withdrawn (read stop, close,
+        // release-no-close, loop shutdown). A scheduled AcceptEx replenishment
+        // must not outlive it, or it would fire on a pooled wio_t.
+        cancelAcceptExRetry(io);
+    }
+
     for (woverlapped_t *record = io->iocp_posted_head; record != NULL; record = record->posted_next)
     {
         if (! recordMatchesEvents(record, event_mask))
@@ -942,9 +1184,12 @@ void wioIocpCancel(wio_t *io, int event_mask, woverlapped_cancel_reason_e reason
 
 bool wioIocpCanFinalize(wio_t *io)
 {
+    // A live AcceptEx retry timer still holds a pointer to io, so it counts as a
+    // lifetime reference exactly like an outstanding record. Deferring is always
+    // preferable to letting a timer reach pooled memory.
     return io->closed && io->iocp_completed_head == NULL && io->iocp_send_active == NULL &&
-           io->iocp_posted_count == 0 && io->iocp_live_records == 0 && ! io->pending && ! io->iocp_pending_dispatch &&
-           ! io->iocp_close_in_progress;
+           io->iocp_posted_count == 0 && io->iocp_live_records == 0 && io->iocp_accept_retry_timer == NULL &&
+           ! io->pending && ! io->iocp_pending_dispatch && ! io->iocp_close_in_progress;
 }
 
 void wioIocpFinalizeDeferred(wio_t *io)
@@ -990,7 +1235,32 @@ int wioAccept(wio_t *io)
         wioClose(io);
         return accept_error;
     }
+    if (UNLIKELY(posted_count < ACCEPTEX_NUM))
+    {
+        // Startup succeeded but under target. Restore the missing slots through
+        // the same bounded backoff used for later repost failures.
+        scheduleAcceptExRetry(io, accept_error);
+    }
     return 0;
+}
+
+// Mirrors the normal backend's connect timeout (nio.c __connect_timeout_cb).
+// Armed only after a successful ConnectEx submission, so an immediate submission
+// failure never leaves a timer behind. wioClose() may finalize io, so this
+// function must not touch io afterwards.
+static void __connect_timeout_cb(wtimer_t *timer)
+{
+    wio_t *io = (wio_t *) timer->privdata;
+    if (io)
+    {
+        char localaddrstr[SOCKADDR_STRLEN] = {0};
+        char peeraddrstr[SOCKADDR_STRLEN]  = {0};
+        wlogw("connect timeout [%s] <=> [%s]",
+              SOCKADDR_STR(io->localaddr, localaddrstr),
+              SOCKADDR_STR(io->peeraddr, peeraddrstr));
+        io->error = ETIMEDOUT;
+        wioClose(io);
+    }
 }
 
 int wioConnect(wio_t *io)
@@ -1087,6 +1357,24 @@ int wioConnect(wio_t *io)
     }
     io->connectex = 1;
     io->connect   = 1;
+
+    /*
+     * Arm the public connect timeout only now: registration, record attachment
+     * and the ConnectEx submission (including the normal ERROR_IO_PENDING) have
+     * all succeeded, so exactly one completion is guaranteed to arrive and every
+     * teardown path (dispatch_connect success, connect error, explicit close,
+     * wioFree, loop shutdown) deletes the timer again.
+     */
+    int connect_timeout_ms = io->connect_timeout ? io->connect_timeout : WIO_DEFAULT_CONNECT_TIMEOUT;
+    assert(io->connect_timer == NULL);
+    if (UNLIKELY(io->connect_timer != NULL))
+    {
+        // Defensive: never stack two timers on one wio_t. wioDelConnectTimer also
+        // clears io->connect_timeout, so the effective value is read above.
+        wioDelConnectTimer(io);
+    }
+    io->connect_timer           = wtimerAdd(io->loop, __connect_timeout_cb, (uint32_t) connect_timeout_ms, 1);
+    io->connect_timer->privdata = io;
     return 0;
 
 error:
@@ -1097,11 +1385,21 @@ error:
 
 int wioRead(wio_t *io)
 {
+    // Restore read interest first so a restart re-enables the one-shot/stopped
+    // read even when an uncancelled receive is still live.
     int add_error = wioAdd(io, wio_handle_events, WW_READ);
     if (UNLIKELY(add_error != 0))
     {
         wioClose(io);
         return add_error;
+    }
+
+    // Idempotent, like the readiness backend: repeated wioReadStart() calls (and
+    // a restart issued from inside a read callback) must not create a second
+    // uncancelled WSARecv.
+    if (hasUncancelledReceive(io))
+    {
+        return 0;
     }
 
     int recv_error = post_recv(io, NULL);

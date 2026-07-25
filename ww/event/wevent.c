@@ -179,11 +179,19 @@ void wioReady(wio_t *io)
     // is safe.
     assert(io->iocp_live_records == 0);
     assert(io->iocp_posted_count == 0);
+    // A replenishment timer or a live accept slot must never survive into a
+    // reused object; both are released by close/release before pool reuse.
+    assert(io->iocp_accept_retry_timer == NULL);
+    assert(io->iocp_accept_records == 0);
     io->iocp_posted_head = io->iocp_posted_tail = NULL;
     io->iocp_completed_head = io->iocp_completed_tail = NULL;
     io->iocp_send_active                              = NULL;
     io->iocp_live_records                             = 0;
     io->iocp_posted_count                             = 0;
+    io->iocp_accept_records                           = 0;
+    io->iocp_accept_retry_timer                       = NULL;
+    io->iocp_accept_retry_attempts                    = 0;
+    io->iocp_accept_last_error                        = 0;
     io->iocp_deferred_finalize                        = 0;
     io->iocp_pending_dispatch                         = 0;
     io->iocp_close_in_progress                        = 0;
@@ -262,6 +270,10 @@ void wioFinalizeNow(wio_t *io)
     assert(io->iocp_live_records == 0);
     assert(io->iocp_completed_head == NULL);
     assert(io->iocp_send_active == NULL);
+    // A surviving AcceptEx replenishment timer would fire on pooled memory, and a
+    // stale live-slot count would corrupt the next listener's capacity math.
+    assert(io->iocp_accept_retry_timer == NULL);
+    assert(io->iocp_accept_records == 0);
     assert(io->loop == NULL || io->fd < 0 || io->fd >= (int) io->loop->ios.maxsize || io->loop->ios.ptr[io->fd] != io);
 
     // Last line of defence: a timer surviving into the pool would fire on reused

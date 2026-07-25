@@ -33,6 +33,7 @@ int main(void)
 #include "global_state.h"
 #include "iowatcher.h"
 #include "master_pool.h"
+#include "overlapio.h"
 #include "threadsafe_generic_pool.h"
 #include "wevent.h"
 #include "wloop.h"
@@ -148,6 +149,29 @@ static void setSocketNonblocking(SOCKET socket)
 {
     u_long enabled = 1;
     require(ioctlsocket(socket, FIONBIO, &enabled) == 0, "ioctlsocket(FIONBIO) failed");
+}
+
+// Count the receives that represent a live logical read: not canceled, still
+// owned by the kernel or waiting for dispatch. Mirrors the backend's own
+// invariant so the tests below can assert it directly.
+static uint32_t liveUncancelledReceives(const wio_t *io)
+{
+    uint32_t count = 0;
+    for (const woverlapped_t *record = io->iocp_posted_head; record != NULL; record = record->posted_next)
+    {
+        if (record->kind == WOVERLAPPED_RECV && record->cancel_reason == WOVERLAPPED_NOT_CANCELED)
+        {
+            count++;
+        }
+    }
+    for (const woverlapped_t *record = io->iocp_completed_head; record != NULL; record = record->completed_next)
+    {
+        if (record->kind == WOVERLAPPED_RECV && record->cancel_reason == WOVERLAPPED_NOT_CANCELED)
+        {
+            count++;
+        }
+    }
+    return count;
 }
 
 // ---------------------------------------------------------------------------
@@ -1419,6 +1443,388 @@ static void testWriteCallbackFree(env_t *env)
 }
 
 // ---------------------------------------------------------------------------
+// Test 14: ConnectEx installs the public connect timeout, and every completion
+// path removes it again.
+// ---------------------------------------------------------------------------
+
+enum
+{
+    // Distinctive value: neither the default nor any other timeout in this file.
+    CONNECT_TIMER_CUSTOM_TIMEOUT_MS = 4321
+};
+
+typedef struct connect_timer_state_s
+{
+    int connected;
+    int closed;
+    int accepted;
+} connect_timer_state_t;
+
+static void connectTimerAccept(wio_t *connio)
+{
+    connect_timer_state_t *st = weventGetUserdata(connio);
+    st->accepted++;
+}
+
+static void connectTimerConnected(wio_t *io)
+{
+    connect_timer_state_t *st = weventGetUserdata(io);
+    st->connected++;
+}
+
+static void connectTimerClosed(wio_t *io)
+{
+    connect_timer_state_t *st = weventGetUserdata(io);
+    st->closed++;
+}
+
+static void testConnectTimerLifecycle(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "connect-timer loop create failed");
+
+    connect_timer_state_t st     = {0};
+    wio_t                *server = wloopCreateTcpServer(loop, "127.0.0.1", 0, connectTimerAccept);
+    require(server != NULL, "connect-timer server create failed");
+    weventSetUserData(server, &st);
+    require(loop->ntimers == 0, "listener startup unexpectedly armed a timer");
+
+    uint16_t port = boundPort(server);
+
+    // A custom timeout must be honored exactly like the readiness backend does.
+    wio_t *client = wioCreateSocket(loop, "127.0.0.1", port, WIO_TYPE_TCP, WIO_CLIENT_SIDE);
+    require(client != NULL, "connect-timer client create failed");
+    weventSetUserData(client, &st);
+    wioSetCallBackConnect(client, connectTimerConnected);
+    wioSetCallBackClose(client, connectTimerClosed);
+    wioSetConnectTimeout(client, CONNECT_TIMER_CUSTOM_TIMEOUT_MS);
+
+    require(wioConnect(client) == 0, "connect-timer wioConnect failed");
+    require(client->connect_timer != NULL, "ConnectEx did not arm a connect timeout");
+    require(((wtimeout_t *) client->connect_timer)->timeout == CONNECT_TIMER_CUSTOM_TIMEOUT_MS,
+            "ConnectEx ignored the custom wioSetConnectTimeout value");
+    require(loop->ntimers == 1, "ConnectEx did not register its connect timer with the loop");
+
+    for (int i = 0; i < 500 && (st.connected == 0 || st.accepted == 0); ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(st.connected == 1, "connect-timer callback did not run exactly once");
+    require(client->connect_timer == NULL, "a completed ConnectEx left its connect timer armed");
+    require(loop->ntimers == 0, "a completed ConnectEx left its timer in the loop timer heap");
+
+    wioClose(client);
+    require(st.closed == 1, "connect-timer client did not close exactly once");
+    for (int i = 0; i < 60; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(st.closed == 1, "a deleted connect timer fired after the connection closed");
+
+    // Without an explicit timeout the public default applies.
+    wio_t *defaulted = wioCreateSocket(loop, "127.0.0.1", port, WIO_TYPE_TCP, WIO_CLIENT_SIDE);
+    require(defaulted != NULL, "default-timeout client create failed");
+    weventSetUserData(defaulted, &st);
+    require(wioConnect(defaulted) == 0, "default-timeout wioConnect failed");
+    require(defaulted->connect_timer != NULL, "ConnectEx did not arm the default connect timeout");
+    require(((wtimeout_t *) defaulted->connect_timer)->timeout == WIO_DEFAULT_CONNECT_TIMEOUT,
+            "ConnectEx did not fall back to WIO_DEFAULT_CONNECT_TIMEOUT");
+
+    // Freeing before the connect completes must not leave a timer pointing at an
+    // object that can return to its pool.
+    wioFree(defaulted);
+    require(loop->ntimers == 0, "wioFree left the connect timer armed");
+
+    wioClose(server);
+    require(pumpUntilLiveOperations(loop, 0, 500), "connect-timer operations did not drain");
+    require(loop->ntimers == 0, "connect-timer test leaked a timer");
+    wloopDestroy(&loop);
+}
+
+// ---------------------------------------------------------------------------
+// Test 15: restarting a one-shot read from inside its callback must never leave
+// two uncancelled WSARecv operations on one connection.
+// ---------------------------------------------------------------------------
+
+enum
+{
+    READ_RESTART_EXPECTED_READS = 3
+};
+
+typedef struct read_restart_state_s
+{
+    wio_t *conn;
+    int    reads;
+    int    surplus_receives;
+    char   bytes[READ_RESTART_EXPECTED_READS + 1];
+} read_restart_state_t;
+
+static void readRestartRead(wio_t *io, sbuf_t *buf)
+{
+    read_restart_state_t *st = weventGetUserdata(io);
+    require(st->reads < READ_RESTART_EXPECTED_READS, "read-restart received more callbacks than bytes were sent");
+    st->bytes[st->reads] = *(const char *) sbufGetRawPtr(buf);
+    st->reads++;
+    bufferpoolReuseBuffer(io->loop->bufpool, buf);
+
+    if (st->reads < READ_RESTART_EXPECTED_READS)
+    {
+        // wioReadCallBack already stopped the one-shot read; restarting here must
+        // post exactly one replacement receive.
+        require(wioReadOnce(io) == 0, "read-restart could not restart the one-shot read");
+        if (liveUncancelledReceives(io) != 1)
+        {
+            st->surplus_receives++;
+        }
+    }
+}
+
+static void readRestartAccept(wio_t *connio)
+{
+    read_restart_state_t *st = weventGetUserdata(connio);
+    require(st->conn == NULL, "read-restart test accepted more than one connection");
+    st->conn = connio;
+    wioSetCallBackRead(connio, readRestartRead);
+    require(wioReadOnce(connio) == 0, "read-restart could not start the one-shot read");
+}
+
+static void testReadRestartFromCallback(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "read-restart loop create failed");
+
+    read_restart_state_t st     = {0};
+    wio_t               *server = wloopCreateTcpServer(loop, "127.0.0.1", 0, readRestartAccept);
+    require(server != NULL, "read-restart server create failed");
+    weventSetUserData(server, &st);
+
+    SOCKET client = connectClient(boundPort(server));
+    for (int i = 0; i < 200 && st.conn == NULL; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(st.conn != NULL, "read-restart connection was not accepted");
+
+    // Repeated read starts must be idempotent, matching the readiness backend.
+    require(liveUncancelledReceives(st.conn) == 1, "the one-shot start did not post exactly one receive");
+    require(wioReadStart(st.conn) == 0, "a repeated wioReadStart failed");
+    require(liveUncancelledReceives(st.conn) == 1, "a repeated wioReadStart posted a second WSARecv");
+    require(wioGetIocpLiveRecords(st.conn) == 1, "a repeated wioReadStart allocated a second receive record");
+
+    for (int i = 0; i < READ_RESTART_EXPECTED_READS; ++i)
+    {
+        const char payload = (char) ('1' + i);
+        const int  before  = st.reads;
+        require(send(client, &payload, 1, 0) == 1, "read-restart send failed");
+        for (int spin = 0; spin < 500 && st.reads == before; ++spin)
+        {
+            wloopProcessEvents(loop, 10);
+        }
+        require(st.reads == before + 1, "read-restart callback did not run for every byte");
+
+        if (i + 1 < READ_RESTART_EXPECTED_READS)
+        {
+            require(liveUncancelledReceives(st.conn) == 1,
+                    "a callback-driven read restart left more than one uncancelled receive");
+            require(wioGetIocpLiveRecords(st.conn) == 1, "the completed receive record was reposted as well");
+            require(wioIsOpened(st.conn), "read-restart closed the connection");
+        }
+    }
+
+    require(st.reads == READ_RESTART_EXPECTED_READS, "read-restart ran the wrong number of callbacks");
+    require(st.surplus_receives == 0, "a callback-posted receive coexisted with another uncancelled receive");
+    require(strncmp(st.bytes, "123", READ_RESTART_EXPECTED_READS) == 0,
+            "read-restart bytes were lost, duplicated or reordered");
+    require(liveUncancelledReceives(st.conn) == 0, "the final one-shot read left a receive posted");
+    require(wioGetIocpLiveRecords(st.conn) == 0, "the final one-shot read left a receive record live");
+
+    wioClose(st.conn);
+    wioClose(server);
+    closesocket(client);
+    require(pumpUntilLiveOperations(loop, 0, 500), "read-restart operations did not drain");
+    wloopDestroy(&loop);
+}
+
+// ---------------------------------------------------------------------------
+// Tests 16-18: AcceptEx capacity survives transient repost failures, its retry
+// never outlives the listener, and a persistent total failure closes visibly.
+// ---------------------------------------------------------------------------
+
+enum
+{
+    // Duplicated from ACCEPTEX_NUM in overlapio.c so the test fails if the
+    // production target drifts without anyone noticing.
+    ACCEPTEX_TARGET_SLOTS = 10,
+    // Duplicated from ACCEPTEX_RETRY_ZERO_SLOT_MAX.
+    ACCEPTEX_ZERO_SLOT_BUDGET = 8
+};
+
+typedef struct accept_recovery_state_s
+{
+    int accepted;
+    int listener_closes;
+} accept_recovery_state_t;
+
+static void acceptRecoveryAccept(wio_t *connio)
+{
+    accept_recovery_state_t *st = weventGetUserdata(connio);
+    st->accepted++;
+    wioClose(connio);
+}
+
+static void acceptRecoveryListenerClose(wio_t *io)
+{
+    accept_recovery_state_t *st = weventGetUserdata(io);
+    st->listener_closes++;
+}
+
+static void testAcceptExSlotRecovery(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "accept-recovery loop create failed");
+
+    accept_recovery_state_t st     = {0};
+    wio_t                  *server = wloopCreateTcpServer(loop, "127.0.0.1", 0, acceptRecoveryAccept);
+    require(server != NULL, "accept-recovery server create failed");
+    weventSetUserData(server, &st);
+    require(server->iocp_accept_records == ACCEPTEX_TARGET_SLOTS, "listener did not start with ten live accept slots");
+    require(server->iocp_accept_retry_timer == NULL, "a healthy listener startup scheduled a replenishment retry");
+
+    // Fail exactly the repost that follows the first successful accept.
+    wioIocpTestForceAcceptExFailures(1, WSAENOBUFS);
+
+    SOCKET client = connectClient(boundPort(server));
+    for (int i = 0; i < 500 && st.accepted == 0; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(st.accepted == 1, "accept-recovery listener did not accept the first client");
+    require(wioIocpTestPendingAcceptExFailures() == 0, "the injected AcceptEx failure was never consumed");
+    require(server->iocp_accept_records == ACCEPTEX_TARGET_SLOTS - 1,
+            "a failed repost did not cost exactly one live accept slot");
+    require(server->iocp_accept_retry_timer != NULL, "a failed repost did not schedule a replenishment retry");
+
+    // Let the backoff fire and restore the missing slot.
+    for (int i = 0; i < 400 && server->iocp_accept_records < ACCEPTEX_TARGET_SLOTS; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(server->iocp_accept_records == ACCEPTEX_TARGET_SLOTS,
+            "the replenishment retry did not restore the listener to ten slots");
+    require(server->iocp_accept_retry_timer == NULL, "a successful replenishment left a retry scheduled");
+
+    // The listener must still accept normally afterwards.
+    SOCKET second = connectClient(boundPort(server));
+    for (int i = 0; i < 500 && st.accepted < 2; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(st.accepted == 2, "the recovered listener stopped accepting connections");
+
+    closesocket(client);
+    closesocket(second);
+    wioClose(server);
+    require(pumpUntilLiveOperations(loop, 0, 500), "accept-recovery operations did not drain");
+    require(server->iocp_accept_records == 0, "accept records leaked after the listener closed");
+    wloopDestroy(&loop);
+}
+
+static void testAcceptExRetryCancellation(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "retry-cancel loop create failed");
+
+    accept_recovery_state_t st     = {0};
+    wio_t                  *server = wloopCreateTcpServer(loop, "127.0.0.1", 0, acceptRecoveryAccept);
+    require(server != NULL, "retry-cancel server create failed");
+    weventSetUserData(server, &st);
+    wioSetCallBackClose(server, acceptRecoveryListenerClose);
+
+    wioIocpTestForceAcceptExFailures(1, WSAENOBUFS);
+
+    SOCKET client = connectClient(boundPort(server));
+    for (int i = 0; i < 500 && st.accepted == 0; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    // The retry is scheduled during the same pass that dispatched the accept, and
+    // a freshly armed timer cannot fire before the next pass, so it is observable.
+    require(st.accepted == 1, "retry-cancel listener did not accept its client");
+    require(server->iocp_accept_retry_timer != NULL, "no replenishment retry was scheduled after the failed repost");
+    require(loop->ntimers == 1, "the replenishment retry was not registered with the loop");
+
+    // Close the listener before the retry fires.
+    wioClose(server);
+    require(st.listener_closes == 1, "retry-cancel listener did not close exactly once");
+    require(server->iocp_accept_retry_timer == NULL, "closing the listener left a replenishment retry scheduled");
+    require(loop->ntimers == 0, "closing the listener left its retry timer in the loop timer heap");
+
+    closesocket(client);
+    require(pumpUntilLiveOperations(loop, 0, 500), "retry-cancel operations did not drain");
+    require(server->iocp_accept_records == 0, "retry-cancel leaked live accept records");
+
+    // Well past the retry delay: a stale callback or a re-armed timer would show
+    // up here, potentially on a recycled descriptor generation.
+    for (int i = 0; i < 60; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+    require(loop->ntimers == 0, "a stale replenishment retry reappeared after the listener closed");
+    require(st.listener_closes == 1, "a stale replenishment retry closed the listener again");
+    wloopDestroy(&loop);
+}
+
+static void testAcceptExPersistentFailureCloses(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "zero-slot loop create failed");
+
+    accept_recovery_state_t st     = {0};
+    wio_t                  *server = wloopCreateTcpServer(loop, "127.0.0.1", 0, acceptRecoveryAccept);
+    require(server != NULL, "zero-slot server create failed");
+    weventSetUserData(server, &st);
+    wioSetCallBackClose(server, acceptRecoveryListenerClose);
+
+    const uint16_t port = boundPort(server);
+
+    // Fail every AcceptEx submission from now on: each accept costs one slot that
+    // can never be replaced, and once the listener has none left the bounded
+    // zero-slot retry budget must turn the failure into a visible close.
+    wioIocpTestForceAcceptExFailures(4096, WSAENOBUFS);
+
+    SOCKET clients[ACCEPTEX_TARGET_SLOTS];
+    for (int i = 0; i < ACCEPTEX_TARGET_SLOTS; ++i)
+    {
+        clients[i] = connectClient(port);
+    }
+
+    // The whole budget is 25+50+100+200+400+800+1000+1000 ms of backoff, so allow
+    // a generous margin before declaring the listener stuck.
+    for (int i = 0; i < 2000 && st.listener_closes == 0; ++i)
+    {
+        wloopProcessEvents(loop, 10);
+    }
+
+    require(st.accepted == ACCEPTEX_TARGET_SLOTS, "every initially posted accept slot should have accepted once");
+    require(st.listener_closes == 1, "a listener that lost every accept slot did not close exactly once");
+    require(wioIsClosed(server), "the exhausted listener stayed open");
+    require(wioGetError(server) == WSAENOBUFS, "the exhausted listener did not publish the submission error");
+    require(server->iocp_accept_retry_timer == NULL, "the closed listener left a replenishment retry scheduled");
+    require(server->iocp_accept_records == 0, "the closed listener left live accept records behind");
+    require(loop->ntimers == 0, "the closed listener left a timer in the loop timer heap");
+
+    // Disarm so later tests submit real AcceptEx requests again.
+    wioIocpTestForceAcceptExFailures(0, 0);
+
+    for (int i = 0; i < ACCEPTEX_TARGET_SLOTS; ++i)
+    {
+        closesocket(clients[i]);
+    }
+    require(pumpUntilLiveOperations(loop, 0, 500), "zero-slot operations did not drain");
+    wloopDestroy(&loop);
+}
+
+// ---------------------------------------------------------------------------
 // Test 13: destroying a loop with AcceptEx records still posted drains cleanly.
 // ---------------------------------------------------------------------------
 
@@ -1469,6 +1875,11 @@ int main(void)
     testCloseDeletesTimers(&env);
     testFreeDuringDeferredClose(&env);
     testWriteCallbackFree(&env);
+    testConnectTimerLifecycle(&env);
+    testReadRestartFromCallback(&env);
+    testAcceptExSlotRecovery(&env);
+    testAcceptExRetryCancellation(&env);
+    testAcceptExPersistentFailureCloses(&env);
     testDestroyWithPending(&env);
 
     envTeardown(&env);

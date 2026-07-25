@@ -201,12 +201,21 @@ struct wio_s
     struct woverlapped_s *iocp_posted_tail;
     struct woverlapped_s *iocp_completed_head; // FIFO: dequeued, awaiting dispatch
     struct woverlapped_s *iocp_completed_tail;
-    struct woverlapped_s *iocp_send_active;           // sole TCP send, posted or locally dispatching
-    uint32_t              iocp_live_records;          // records holding this wio_t alive
-    uint32_t              iocp_posted_count;          // records currently posted to the kernel
-    unsigned              iocp_deferred_finalize : 1; // return to pool once records retire
-    unsigned              iocp_pending_dispatch : 1;  // generic pending loop still holds its cursor
-    unsigned              iocp_close_in_progress : 1; // wioClose still owns a stack reference
+    struct woverlapped_s *iocp_send_active;  // sole TCP send, posted or locally dispatching
+    uint32_t              iocp_live_records; // records holding this wio_t alive
+    uint32_t              iocp_posted_count; // records currently posted to the kernel
+    // Listener-private AcceptEx capacity tracking. A transient immediate AcceptEx
+    // failure must not permanently retire one of the listener's accept slots, so
+    // the live slot count is tracked separately from the loop-wide record
+    // counters (which also cover connect/receive/send work) and a bounded backoff
+    // timer replenishes whatever is missing.
+    uint32_t  iocp_accept_records;        // live AcceptEx records: posted, completed or dispatching
+    wtimer_t *iocp_accept_retry_timer;    // one-shot replenishment timer, NULL when none is scheduled
+    uint32_t  iocp_accept_retry_attempts; // consecutive failed replenishment rounds (backoff/budget)
+    int       iocp_accept_last_error;     // last AcceptEx submission error, published on fatal failure
+    unsigned  iocp_deferred_finalize : 1; // return to pool once records retire
+    unsigned  iocp_pending_dispatch : 1;  // generic pending loop still holds its cursor
+    unsigned  iocp_close_in_progress : 1; // wioClose still owns a stack reference
 #endif
 };
 /*
