@@ -944,7 +944,9 @@ static void requireRuntimeMigrationWaitsForStatsLock(users_t *dest, users_t *src
      * Holding either user's stats_lock must therefore stop the state move.
      */
     rwlockWriteLock(&locked_user->stats_lock);
-    wthread_t migration_thread = threadCreate(runtimeMigrationThread, &context);
+    wthread_t       migration_thread;
+    wthread_error_t thread_error = threadCreate(&migration_thread, runtimeMigrationThread, &context);
+    require(thread_error == kWThreadErrorNone, "failed to create runtime migration thread");
     while (! atomic_load(&context.started))
     {
         wwSleepMS(kRuntimeMigrationLockPollDelayMs);

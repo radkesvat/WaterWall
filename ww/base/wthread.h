@@ -11,7 +11,13 @@
 
 #include "wlibc.h"
 
-typedef long tid_t;
+typedef long     tid_t;
+typedef uint32_t wthread_error_t;
+
+enum
+{
+    kWThreadErrorNone = 0
+};
 
 #if defined(OS_WIN) && ! HAVE_SYS_TYPES_H
 typedef int pid_t;
@@ -60,7 +66,10 @@ WTHREAD_ROUTINE(thread_demo) {
 }
 
 int main() {
-    wthread_t th = threadCreate(thread_demo, NULL);
+    wthread_t th;
+    if (threadCreate(&th, thread_demo, NULL) != kWThreadErrorNone) {
+        return 1;
+    }
     threadJoin(th);
     return 0;
 }
@@ -77,13 +86,22 @@ typedef DWORD(WINAPI *wthread_routine)(void *);
 /**
  * @brief Create a thread.
  *
+ * @param out Receives the native thread handle on success.
  * @param fn Entry routine.
  * @param userdata Pointer passed to the entry routine.
- * @return Native thread handle.
+ * @return `kWThreadErrorNone` on success, otherwise a nonzero Windows error.
  */
-static inline wthread_t threadCreate(wthread_routine fn, void *userdata)
+static inline wthread_error_t threadCreate(wthread_t *out, wthread_routine fn, void *userdata)
 {
-    return CreateThread(NULL, 0, fn, userdata, 0, NULL);
+    assert(out != NULL);
+    HANDLE thread = CreateThread(NULL, 0, fn, userdata, 0, NULL);
+    if (thread == NULL)
+    {
+        DWORD error = GetLastError();
+        return error == ERROR_SUCCESS ? ERROR_GEN_FAILURE : (wthread_error_t) error;
+    }
+    *out = thread;
+    return kWThreadErrorNone;
 }
 
 /**
@@ -125,20 +143,27 @@ typedef pthread_t wthread_t;
  * @brief POSIX thread entry routine signature.
  */
 typedef void *(*wthread_routine)(void *);
-#define HTHREAD_RETTYPE        void *
-#define WTHREAD_ROUTINE(fname) void *fname(void *userdata)
+#define HTHREAD_RETTYPE          void *
+#define WTHREAD_ROUTINE(fname)   void *fname(void *userdata)
 /**
  * @brief Create a POSIX thread.
  *
+ * @param out Receives the native thread handle on success.
  * @param fn Entry routine.
  * @param userdata Pointer passed to the entry routine.
- * @return Created `pthread_t`.
+ * @return `kWThreadErrorNone` on success, otherwise `pthread_create`'s error code.
  */
-static inline wthread_t threadCreate(wthread_routine fn, void *userdata)
+static inline wthread_error_t threadCreate(wthread_t *out, wthread_routine fn, void *userdata)
 {
+    assert(out != NULL);
     pthread_t th;
-    pthread_create(&th, NULL, fn, userdata);
-    return th;
+    int       error = pthread_create(&th, NULL, fn, userdata);
+    if (error != 0)
+    {
+        return (wthread_error_t) error;
+    }
+    *out = th;
+    return kWThreadErrorNone;
 }
 
 /**

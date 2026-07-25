@@ -81,10 +81,10 @@ void workerFinish(worker_t *worker)
 
 void workerJoin(worker_t *worker)
 {
-    if (worker->thread != (wthread_t) 0)
+    if (worker->thread_valid)
     {
         safeThreadJoin(worker->thread);
-        worker->thread = (wthread_t) 0;
+        worker->thread_valid = false;
     }
 }
 
@@ -153,7 +153,12 @@ void workerRun(worker_t *worker)
         wwSleepMS(10);
     }
 
-    wloopRun(worker->loop);
+    int loop_result = wloopRun(worker->loop);
+    if (UNLIKELY(loop_result != kWLoopRunOk && ! isApplicationTerminating()))
+    {
+        LOGF("Worker %d event loop exited with error %d", wid, loop_result);
+        terminateProgram(1);
+    }
 
     workerDestroyResources(worker);
 
@@ -201,7 +206,13 @@ static WTHREAD_ROUTINE(worker_thread) // NOLINT
  *
  * @param worker Pointer to the worker to run.
  */
-void workerSpawn(worker_t *worker)
+wthread_error_t workerSpawn(worker_t *worker)
 {
-    worker->thread = threadCreate(worker_thread, worker);
+    assert(! worker->thread_valid);
+    wthread_error_t error = threadCreate(&worker->thread, worker_thread, worker);
+    if (error == kWThreadErrorNone)
+    {
+        worker->thread_valid = true;
+    }
+    return error;
 }

@@ -28,6 +28,7 @@ typedef struct worker_s
     generic_pool_t         *context_pool;  // Generic pool for managing context objects.
     worker_message_queue_t *message_queue; // Worker-owned queued/timed messages.
     wthread_t               thread;        // Thread associated with the worker.
+    bool                    thread_valid;  // True only after native thread handle creation succeeds.
     tid_t                   tid;           // Os Thread Id
     wid_t                   wid;           // Worker ID.
 
@@ -52,8 +53,9 @@ void workerRun(worker_t *worker);
 /**
  * @brief Runs the worker in a new thread.
  * @param worker Pointer to the worker to run.
+ * @return `kWThreadErrorNone` on success, otherwise native thread-creation error.
  */
-void workerSpawn(worker_t *worker);
+wthread_error_t workerSpawn(worker_t *worker);
 
 /**
  * @brief Resolves a domain on the current worker's async DNS channel.

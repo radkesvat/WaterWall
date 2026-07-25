@@ -18,6 +18,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 #endif
+#if defined(OS_UNIX)
+#include <string.h>
+#endif
 
 #include "crypto/wcrypto.h"
 
@@ -405,7 +408,8 @@ void createGlobalState(const ww_construction_data_t init_data)
 #else
         worker->thread = pthread_self();
 #endif
-        worker->tid = getTID();
+        worker->thread_valid = true;
+        worker->tid          = getTID();
 
         // Block graceful (shutdown-routed) signals on the main thread before
         // spawning workers, so the workers inherit the blocked mask; the main
@@ -416,7 +420,16 @@ void createGlobalState(const ww_construction_data_t init_data)
         // lwip worker dose not need spawn, it runs its own eventloop
         for (unsigned int i = 1; i < WORKERS_COUNT - WORKER_ADDITIONS; ++i)
         {
-            workerSpawn(&WORKERS[i]);
+            wthread_error_t error = workerSpawn(&WORKERS[i]);
+            if (UNLIKELY(error != kWThreadErrorNone))
+            {
+#ifdef OS_WIN
+                LOGF("Failed to create worker %u thread: error %u", i, error);
+#else
+                LOGF("Failed to create worker %u thread: error %u (%s)", i, error, strerror((int) error));
+#endif
+                terminateProgram(1);
+            }
         }
     }
 
