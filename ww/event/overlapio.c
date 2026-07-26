@@ -444,13 +444,13 @@ static int post_acceptex(wio_t *listenio, woverlapped_t *record)
         accept_error = WSAGetLastError();
         goto error;
     }
-    connfd = (int) WSASocket(family, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
-    if (connfd == (int) INVALID_SOCKET)
+    const SOCKET accepted = WSASocket(family, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
+    if (accepted == INVALID_SOCKET)
     {
-        connfd       = -1;
         accept_error = WSAGetLastError();
         goto error;
     }
+    connfd = (int) accepted;
 
     if (is_new)
     {
@@ -970,7 +970,11 @@ static void dispatch_accept(wio_t *io, woverlapped_t *record)
         return;
     }
 
-    const int                 listenfd             = io->fd;
+    // SO_UPDATE_ACCEPT_CONTEXT takes a SOCKET, which is 8 bytes on Win64. Keeping
+    // this as int would pass sizeof(int) == 4 as the option length. Widening here
+    // (rather than at wio_t.fd) keeps the change local: handle values fit in 32
+    // bits, so this conversion is lossless.
+    const SOCKET              listenfd             = (SOCKET) io->fd;
     const int                 connfd               = record->fd;
     LPFN_GETACCEPTEXSOCKADDRS GetAcceptExSockaddrs = NULL;
     GUID                      guid                 = WSAID_GETACCEPTEXSOCKADDRS;
