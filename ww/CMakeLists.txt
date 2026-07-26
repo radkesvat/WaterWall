@@ -77,6 +77,9 @@ add_library(ww STATIC
     base/wsocket.c
     base/wsysinfo.c
     base/wproc.c
+
+    # Device lifetime primitives
+    devices/device_lifetime.c
     
     # Buffer I/O
     bufio/buffer_pool.c

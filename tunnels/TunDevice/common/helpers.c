@@ -115,7 +115,13 @@ void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         l->recalculate_checksum = false;
     }
 
-    if (UNLIKELY(! tundeviceIsUp(state->tdev)))
+    if (UNLIKELY(isApplicationTerminating()))
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
+
+    if (UNLIKELY(! tundeviceIsUp(tdev)))
     {
         lineReuseBuffer(l, buf);
         LOGW("TunDevice: device is down, cannot write packet");
