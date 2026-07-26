@@ -61,7 +61,7 @@ static_assert(SMALL_BUFFER_SIZE >= kNetfilterReadBufferSize, "Linux capture requ
 static_assert(kCaptureCommandTimeoutMs > kCaptureIptablesLockWaitSeconds * 1000,
               "the parent command deadline must stay strictly longer than the numeric xtables lock wait");
 static_assert(kMaxAllowedPacketLength <= kNetfilterReadBufferSize, "packet policy must fit in netlink read buffer");
-static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "capture read batch count must fit in msg_event.count");
+static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "capture read batch count must fit in the reader session");
 
 typedef enum netfilter_packet_result_e
 {
@@ -695,106 +695,10 @@ static void capturedeviceFreeCidrs(char **cidrs, uint32_t count)
     memoryFree(cidrs);
 }
 
-/**
- * Event message structure for TUN device communication
- */
-struct msg_event
+static void captureDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
 {
-    capture_device_t *cdev;
-    sbuf_t           *bufs[kMaxReadDistributeQueueSize];
-    uint16_t          count;
-};
-static pool_item_t *allocCaptureMsgPoolHandle(void *userdata)
-{
-    discard userdata;
-    return memoryAllocate(sizeof(struct msg_event));
-}
-
-static void destroyCaptureMsgPoolHandle(master_pool_item_t *item)
-{
-    memoryFree(item);
-}
-
-static void reuseCaptureBuffers(capture_device_t *cdev, sbuf_t **bufs, unsigned int count)
-{
-    for (unsigned int i = 0; i < count; i++)
-    {
-        bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[i]);
-    }
-}
-
-static void cleanupCaptureMessage(struct msg_event *msg)
-{
-    if (msg == NULL)
-    {
-        return;
-    }
-
-    for (unsigned int i = 0; i < msg->count; i++)
-    {
-        sbufDestroy(msg->bufs[i]);
-    }
-    masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1);
-}
-
-static void cleanupPostedCaptureMessage(void *arg1, void *arg2, void *arg3)
-{
-    struct msg_event *msg = arg1;
-    discard           arg2;
-    discard           arg3;
-
-    cleanupCaptureMessage(msg);
-}
-
-/**
- * Handles events received on the local thread
- * @param worker Worker receiving message
- * @param arg1 Message data
- */
-static void localThreadMessageReceived(void *worker, void *arg1, void *arg2, void *arg3)
-{
-    struct msg_event *msg = arg1;
-    wid_t             wid = ((worker_t *) worker)->wid;
-    discard           arg2;
-    discard           arg3;
-
-    for (unsigned int i = 0; i < msg->count; i++)
-    {
-        msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->bufs[i], wid);
-    }
-
-    masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1);
-}
-
-/**
- * Distributes a packet payload to the target worker thread
- * @param cdev Capture device handle
- * @param target_wid Target thread ID
- * @param buf Buffer containing packet data
- */
-static void distributePacketPayloads(capture_device_t *cdev, wid_t target_wid, sbuf_t **buf, unsigned int queued_count)
-{
-    assert(queued_count <= kMaxReadDistributeQueueSize);
-    assert(queued_count <= UINT16_MAX);
-
-    if (UNLIKELY(isApplicationTerminating() || GSTATE.shortcut_loops == NULL))
-    {
-        reuseCaptureBuffers(cdev, buf, queued_count);
-        return;
-    }
-
-    struct msg_event *msg;
-    masterpoolGetItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
-
-    msg->cdev  = cdev;
-    msg->count = (uint16_t) queued_count;
-    for (unsigned int i = 0; i < queued_count; i++)
-    {
-        msg->bufs[i] = buf[i];
-    }
-
-    sendWorkerMessageForceQueueWithCleanup(
-        target_wid, localThreadMessageReceived, cleanupPostedCaptureMessage, msg, NULL, NULL);
+    capture_device_t *cdev = device;
+    cdev->read_event_callback(cdev, cdev->userdata, buf, wid);
 }
 
 /*
@@ -1459,7 +1363,7 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     if (queued_count > 0)
                     {
-                        distributePacketPayloads(cdev, getNextDistributionWID(), bufs, queued_count);
+                        deviceReaderSessionPost(cdev->reader_session, getNextDistributionWID(), bufs, queued_count);
                         queued_count = 0;
                     }
                     leave_drain_loop = true;
@@ -1469,7 +1373,7 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     if (queued_count > 0)
                     {
-                        distributePacketPayloads(cdev, getNextDistributionWID(), bufs, queued_count);
+                        deviceReaderSessionPost(cdev->reader_session, getNextDistributionWID(), bufs, queued_count);
                         queued_count = 0;
                     }
                     capturedeviceReportPendingNetfilterDiscards(cdev);
@@ -1482,7 +1386,7 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     if (queued_count > 0)
                     {
-                        distributePacketPayloads(cdev, getNextDistributionWID(), bufs, queued_count);
+                        deviceReaderSessionPost(cdev->reader_session, getNextDistributionWID(), bufs, queued_count);
                         queued_count = 0;
                     }
                     LOGW("CaptureDevice: failed to read a packet from netfilter socket, errno is %d (%s)",
@@ -1502,7 +1406,7 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
             // Distribute all accumulated packets in one batch
             if (queued_count > 0)
             {
-                distributePacketPayloads(cdev, getNextDistributionWID(), bufs, queued_count);
+                deviceReaderSessionPost(cdev->reader_session, getNextDistributionWID(), bufs, queued_count);
             }
             continue;
         }
@@ -1523,6 +1427,7 @@ static void capturedeviceDeactivate(capture_device_t *cdev)
 {
     atomicStoreExplicit(&cdev->capture_active, false, memory_order_release);
     atomicStoreExplicit(&cdev->up, false, memory_order_release);
+    deviceReaderSessionEnd(cdev->reader_session);
 }
 
 static bool capturedeviceStopReader(capture_device_t *cdev)
@@ -1608,12 +1513,14 @@ static bool capturedeviceStartReader(capture_device_t *cdev)
     cdev->close_queue_on_reader_exit = false;
     pthread_mutex_unlock(&cdev->reader_state_mutex);
 
+    deviceReaderSessionBegin(cdev->reader_session);
     atomicStoreExplicit(&cdev->running, true, memory_order_release);
     wthread_error_t error = threadCreate(&cdev->read_thread, capturedeviceReaderThreadMain, cdev);
     if (UNLIKELY(error != kWThreadErrorNone))
     {
         LOGE("CaptureDevice: failed to create reader thread: error %u (%s)", error, strerror((int) error));
         atomicStoreExplicit(&cdev->running, false, memory_order_release);
+        capturedeviceDeactivate(cdev);
         return false;
     }
 
@@ -1643,6 +1550,7 @@ static bool capturedeviceStartReader(capture_device_t *cdev)
         LOGE("CaptureDevice: reader failed or did not become ready within %u ms",
              (unsigned int) kCaptureReaderReadyTimeoutMs);
         discard capturedeviceStopReader(cdev);
+        capturedeviceDeactivate(cdev);
         capturedeviceDisableQueue(cdev, "reader readiness failure");
         return false;
     }
@@ -1962,7 +1870,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
                                 .queue_number           = queue_number,
                                 .read_event_callback    = cb,
                                 .userdata               = userdata,
-                                .reader_message_pool    = masterpoolCreateWithCapacity(RAM_PROFILE * 2),
+                                .reader_session         = NULL,
                                 .netfilter_queue_number = queue_number,
                                 .capture_cidrs          = capture_cidrs,
                                 .capture_range_count    = capture_range_count,
@@ -1977,7 +1885,6 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
         memoryFree(cdev->rule_states);
         bufferpoolDestroy(cdev->reader_buffer_pool);
-        masterpoolDestroy(cdev->reader_message_pool);
         close(cdev->socket);
         memoryFree(cdev);
         return NULL;
@@ -1990,7 +1897,6 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
         memoryFree(cdev->rule_states);
         bufferpoolDestroy(cdev->reader_buffer_pool);
-        masterpoolDestroy(cdev->reader_message_pool);
         close(cdev->socket);
         memoryFree(cdev);
         return NULL;
@@ -2004,7 +1910,6 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
         memoryFree(cdev->rule_states);
         bufferpoolDestroy(cdev->reader_buffer_pool);
-        masterpoolDestroy(cdev->reader_message_pool);
         close(cdev->socket);
         memoryFree(cdev);
         return NULL;
@@ -2023,13 +1928,13 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
         memoryFree(cdev->rule_states);
         bufferpoolDestroy(cdev->reader_buffer_pool);
-        masterpoolDestroy(cdev->reader_message_pool);
         close(cdev->socket);
         memoryFree(cdev);
         return NULL;
     }
 
-    masterpoolInstallCallBacks(cdev->reader_message_pool, allocCaptureMsgPoolHandle, destroyCaptureMsgPoolHandle);
+    cdev->reader_session = deviceReaderSessionCreate(
+        RAM_PROFILE * 2, kMaxReadDistributeQueueSize, cdev, captureDeliverPacket, reader_bpool);
 
     return cdev;
 }
@@ -2039,6 +1944,7 @@ void capturedeviceDestroy(capture_device_t *cdev)
     pthread_mutex_lock(&cdev->reader_state_mutex);
     const bool reader_joinable = cdev->reader_thread_joinable;
     pthread_mutex_unlock(&cdev->reader_state_mutex);
+    deviceReaderSessionEnd(cdev->reader_session);
     if (atomicLoadExplicit(&cdev->up, memory_order_acquire) || reader_joinable)
     {
         discard caputredeviceBringDown(cdev);
@@ -2073,8 +1979,7 @@ void capturedeviceDestroy(capture_device_t *cdev)
     capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
     memoryFree(cdev->rule_states);
     bufferpoolDestroy(cdev->reader_buffer_pool);
-    masterpoolMakeEmpty(cdev->reader_message_pool);
-    masterpoolDestroy(cdev->reader_message_pool);
+    deviceReaderSessionUnref(cdev->reader_session, NULL, NULL);
     close(cdev->linux_pipe_fds[0]);
     close(cdev->linux_pipe_fds[1]);
     pthread_cond_destroy(&cdev->reader_state_changed);

@@ -5,9 +5,9 @@
  */
 
 #include "loggers/internal_logger.h"
-#include "master_pool.h"
 #include "watomic.h"
 #include "wmutex.h"
+#include "wtime.h"
 
 typedef struct device_lifetime_gate_s
 {
@@ -21,7 +21,7 @@ enum
 {
     kDeviceLifetimeGateWarningWaitMs          = 2000,
     kDeviceLifetimeGateWarningCheckYieldCount = 256,
-    kDeviceLifetimeTrackedGatesPerThread      = 4
+    kDeviceLifetimeTrackedGatesPerThread      = 8
 };
 
 typedef struct device_lifetime_thread_entry_s
@@ -67,9 +67,12 @@ static inline void deviceLifetimeTrackThreadEnter(device_lifetime_gate_t *gate)
     }
 
     /*
-     * Real device paths nest at most the delivery and writer gates. Conservatively
-     * treat an unexpectedly deeper nesting as self-owned during quiesce.
+     * Conservatively treat unexpectedly deeper nesting as self-owned during
+     * quiesce. This fails open, so make the loss of exact gate identity visible.
      */
+    LOGE("Device lifetime gate nesting exceeded %u tracked gates on one thread; quiesce will conservatively treat "
+         "that thread as inside every gate",
+         (unsigned int) kDeviceLifetimeTrackedGatesPerThread);
     device_lifetime_thread_entries.overflow_depth++;
 }
 
@@ -221,83 +224,4 @@ static inline void deviceLifetimeGateCloseAndQuiesce(device_lifetime_gate_t *gat
             warned = true;
         }
     }
-}
-
-typedef struct device_reader_session_s
-{
-    atomic_uint            refcount;
-    atomic_uint            generation;
-    device_lifetime_gate_t delivery_gate;
-    master_pool_t         *message_pool;
-} device_reader_session_t;
-
-typedef void (*DeviceReaderSessionDestroyHook)(device_reader_session_t *session, void *context);
-
-static inline device_reader_session_t *deviceReaderSessionCreate(uint32_t                    message_pool_capacity,
-                                                                 MasterPoolItemCreateHandle  create_item_handle,
-                                                                 MasterPoolItemDestroyHandle destroy_item_handle)
-{
-    device_reader_session_t *session = memoryAllocate(sizeof(*session));
-    *session                         = (device_reader_session_t) {
-                                .refcount     = 1,
-                                .generation   = 0,
-                                .message_pool = masterpoolCreateWithCapacity(message_pool_capacity),
-    };
-    deviceLifetimeGateInit(&session->delivery_gate);
-    masterpoolInstallCallBacks(session->message_pool, create_item_handle, destroy_item_handle);
-    return session;
-}
-
-static inline void deviceReaderSessionRef(device_reader_session_t *session)
-{
-    unsigned int previous = atomicAddExplicit(&session->refcount, 1, memory_order_relaxed);
-    assert(previous > 0 && previous != UINT_MAX);
-    discard previous;
-}
-
-static inline void deviceReaderSessionDestroy(device_reader_session_t *session)
-{
-    masterpoolMakeEmpty(session->message_pool);
-    masterpoolDestroy(session->message_pool);
-    memoryFree(session);
-}
-
-/*
- * A non-NULL destroy hook owns the final destruction of both the session and
- * its message pool. Tests use this to verify last-reference behavior.
- */
-static inline void deviceReaderSessionUnref(device_reader_session_t       *session,
-                                            DeviceReaderSessionDestroyHook destroy_hook, void *destroy_context)
-{
-    unsigned int previous = atomicSubExplicit(&session->refcount, 1, memory_order_acq_rel);
-    assert(previous > 0);
-    if (previous != 1)
-    {
-        return;
-    }
-
-    if (destroy_hook != NULL)
-    {
-        destroy_hook(session, destroy_context);
-        return;
-    }
-
-    deviceReaderSessionDestroy(session);
-}
-
-static inline uint32_t deviceReaderSessionBegin(device_reader_session_t *session)
-{
-    uint32_t generation = (uint32_t) atomicAddExplicit(&session->generation, 1, memory_order_acq_rel) + UINT32_C(1);
-    deviceLifetimeGateOpen(&session->delivery_gate);
-    return generation;
-}
-
-static inline uint32_t deviceReaderSessionGeneration(const device_reader_session_t *session)
-{
-    return (uint32_t) atomicLoadExplicit(&session->generation, memory_order_acquire);
-}
-
-static inline bool deviceReaderSessionMatchesGeneration(const device_reader_session_t *session, uint32_t generation)
-{
-    return generation == deviceReaderSessionGeneration(session);
 }

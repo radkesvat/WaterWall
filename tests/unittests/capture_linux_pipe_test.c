@@ -585,6 +585,12 @@ static void envTeardown(test_env_t *env)
 
 // Build only the fields BringUp/BringDown touch. caputredeviceCreate() itself
 // needs a real netlink socket, which this test deliberately avoids.
+static void testDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
+{
+    discard device;
+    bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+}
+
 static void deviceSetup(capture_device_t *cdev, test_env_t *env, reader_probe_t *probe)
 {
     memset(cdev, 0, sizeof(*cdev));
@@ -616,10 +622,13 @@ static void deviceSetup(capture_device_t *cdev, test_env_t *env, reader_probe_t 
     require(pthread_mutex_init(&cdev->reader_state_mutex, NULL) == 0, "failed to initialize the reader-state mutex");
     require(pthread_cond_init(&cdev->reader_state_changed, NULL) == 0,
             "failed to initialize the reader-state condition variable");
+    cdev->reader_session = deviceReaderSessionCreate(16, 512, cdev, testDeliverPacket, cdev->reader_buffer_pool);
 }
 
 static void deviceTeardown(capture_device_t *cdev)
 {
+    deviceReaderSessionEnd(cdev->reader_session);
+    deviceReaderSessionUnref(cdev->reader_session, NULL, NULL);
     if (cdev->socket >= 0)
     {
         close(cdev->socket);
@@ -642,8 +651,9 @@ static capture_device_t *ownedDeviceCreate(test_env_t *env, reader_probe_t *prob
 {
     capture_device_t *cdev = memoryAllocate(sizeof(*cdev));
     deviceSetup(cdev, env, probe);
-    cdev->reader_buffer_pool  = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
-    cdev->reader_message_pool = masterpoolCreateWithCapacity(16);
+    deviceReaderSessionUnref(cdev->reader_session, NULL, NULL);
+    cdev->reader_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
+    cdev->reader_session     = deviceReaderSessionCreate(16, 512, cdev, testDeliverPacket, cdev->reader_buffer_pool);
     return cdev;
 }
 

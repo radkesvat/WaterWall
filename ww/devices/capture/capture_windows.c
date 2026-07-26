@@ -11,48 +11,6 @@
 
 #include "loggers/internal_logger.h"
 
-enum
-{
-    kCaptureWriteChannelQueueMax = 128
-};
-
-struct msg_event
-{
-    capture_device_t *cdev;
-    sbuf_t           *buf;
-};
-
-static pool_item_t *allocCaptureMsgPoolHandle(void *userdata)
-{
-    discard userdata;
-    return memoryAllocate(sizeof(struct msg_event));
-}
-
-static void destroyCaptureMsgPoolHandle(master_pool_item_t *item)
-{
-    memoryFree(item);
-}
-
-static void cleanupCaptureMessage(struct msg_event *msg)
-{
-    if (msg == NULL)
-    {
-        return;
-    }
-
-    sbufDestroy(msg->buf);
-    masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1);
-}
-
-static void cleanupPostedCaptureMessage(void *arg1, void *arg2, void *arg3)
-{
-    struct msg_event *msg = arg1;
-    discard           arg2;
-    discard           arg3;
-
-    cleanupCaptureMessage(msg);
-}
-
 static uint8_t capturedeviceIpv4MaskPrefixLength(const ip_addr_t *mask)
 {
     uint32_t mask_host = lwip_ntohl(mask->u_addr.ip4.addr);
@@ -126,33 +84,15 @@ static char *capturedeviceBuildWinDivertFilter(const ipmask_t *ranges, uint32_t 
     return filter;
 }
 
-static void localThreadMessageReceived(void *worker, void *arg1, void *arg2, void *arg3)
+static void captureDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
 {
-    struct msg_event *msg = arg1;
-    wid_t             wid = ((worker_t *) worker)->wid;
-    discard           arg2;
-    discard           arg3;
-
-    msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->buf, wid);
-
-    masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1);
+    capture_device_t *cdev = device;
+    cdev->read_event_callback(cdev, cdev->userdata, buf, wid);
 }
 
 static void distributePacketPayload(capture_device_t *cdev, wid_t target_wid, sbuf_t *buf)
 {
-    if (UNLIKELY(isApplicationTerminating() || GSTATE.shortcut_loops == NULL))
-    {
-        bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
-        return;
-    }
-
-    struct msg_event *msg;
-    masterpoolGetItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
-
-    *msg = (struct msg_event) {.cdev = cdev, .buf = buf};
-
-    sendWorkerMessageForceQueueWithCleanup(
-        target_wid, localThreadMessageReceived, cleanupPostedCaptureMessage, msg, NULL, NULL);
+    deviceReaderSessionPost(cdev->reader_session, target_wid, &buf, 1);
 }
 static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 {
@@ -251,6 +191,7 @@ static void capturedeviceBeginShutdown(void *context)
 
     atomicStoreExplicit(&(cdev->running), false, memory_order_release);
     atomicStoreExplicit(&(cdev->up), false, memory_order_relaxed);
+    deviceReaderSessionEnd(cdev->reader_session);
 }
 
 static bool capturedeviceShutdownHandle(void *context)
@@ -371,12 +312,14 @@ bool caputredeviceBringUp(capture_device_t *cdev)
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
     cdev->reader_exit_confirmed = false;
+    deviceReaderSessionBegin(cdev->reader_session);
     atomicStoreExplicit(&(cdev->running), true, memory_order_release);
 
     wthread_error_t error = threadCreate(&cdev->read_thread, cdev->routine_reader, cdev);
     if (error != kWThreadErrorNone)
     {
         atomicStoreExplicit(&(cdev->running), false, memory_order_release);
+        deviceReaderSessionEnd(cdev->reader_session);
         LOGE("CaptureDevice: failed to create reader thread: error %u", error);
 
         if (! captureWindowsLifetimeRollbackOpen(cdev, &capture_lifetime_ops))
@@ -441,12 +384,11 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
                                 .reader_exit_confirmed = false,
                                 .read_event_callback   = cb,
                                 .userdata              = userdata,
-                                .reader_message_pool   = masterpoolCreateWithCapacity(RAM_PROFILE * 2),
+                                .reader_session        = NULL,
                                 .reader_buffer_pool    = reader_bpool};
 
-    cdev->filter = capturedeviceBuildWinDivertFilter(capture_ranges, capture_range_count);
-
-    masterpoolInstallCallBacks(cdev->reader_message_pool, allocCaptureMsgPoolHandle, destroyCaptureMsgPoolHandle);
+    cdev->filter         = capturedeviceBuildWinDivertFilter(capture_ranges, capture_range_count);
+    cdev->reader_session = deviceReaderSessionCreate(RAM_PROFILE * 2, 1, cdev, captureDeliverPacket, reader_bpool);
 
     return cdev;
 }
@@ -465,12 +407,12 @@ void capturedeviceDestroy(capture_device_t *cdev)
     assert(! capturedeviceHasHandle(cdev));
     assert(cdev->read_thread == NULL);
     assert(! cdev->reader_exit_confirmed);
+    deviceReaderSessionEnd(cdev->reader_session);
 
     memoryFree(cdev->name);
     memoryFree(cdev->filter);
     bufferpoolDestroy(cdev->reader_buffer_pool);
-    masterpoolMakeEmpty(cdev->reader_message_pool);
-    masterpoolDestroy(cdev->reader_message_pool);
+    deviceReaderSessionUnref(cdev->reader_session, NULL, NULL);
 
     memoryFree(cdev);
 }

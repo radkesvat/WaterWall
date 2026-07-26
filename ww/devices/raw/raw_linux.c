@@ -100,10 +100,7 @@ static void rawdeviceReportPendingDiscards(raw_device_t *rdev)
     rdev->discarded_packet_suppressed = 0;
 }
 
-static bool rawdevicePrepareSendMessage(raw_device_t       *rdev,
-                                        sbuf_t             *buf,
-                                        struct mmsghdr     *msg,
-                                        struct iovec       *iov,
+static bool rawdevicePrepareSendMessage(raw_device_t *rdev, sbuf_t *buf, struct mmsghdr *msg, struct iovec *iov,
                                         struct sockaddr_in *addr)
 {
     uint32_t packet_len = sbufGetLength(buf);
@@ -151,7 +148,7 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 
     while (atomicLoadExplicit(&(rdev->running), memory_order_relaxed))
     {
-        if (! chanRecv(rdev->writer_buffer_channel, (void **) &buf))
+        if (! chanRecv(rdev->writer_channel.channel, (void **) &buf))
         {
             LOGD("RawDevice: routine write will exit due to channel closed");
             break;
@@ -168,7 +165,7 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
         {
             sbuf_t *b2     = NULL;
             bool    closed = false;
-            if (! chanTryRecv(rdev->writer_buffer_channel, (void **) &b2, &closed))
+            if (! chanTryRecv(rdev->writer_channel.channel, (void **) &b2, &closed))
             {
                 if (closed)
                 {
@@ -247,41 +244,42 @@ bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf)
 {
     assert(sbufGetLength(buf) > sizeof(struct iphdr));
 
-    bool closed = false;
-    if (! chanTrySend(rdev->writer_buffer_channel, &buf, &closed))
+    switch (deviceWriterChannelTrySend(&rdev->writer_channel, buf))
     {
-        if (closed)
-        {
-            LOGE("RawDevice: write failed, channel was closed");
-        }
-        else
-        {
-            LOGE("RawDevice: write failed, ring is full");
-        }
+    case kDeviceWriterSendOk:
+        return true;
+    case kDeviceWriterSendDown:
+        LOGE("RawDevice: write failed, device is down");
+        return false;
+    case kDeviceWriterSendClosed:
+        LOGE("RawDevice: write failed, channel was closed");
+        return false;
+    case kDeviceWriterSendFull:
+        LOGE("RawDevice: write failed, ring is full");
         return false;
     }
-    return true;
-}
 
-static void rawdeviceDrainWriterChannel(raw_device_t *rdev)
-{
-    sbuf_t *buf;
-    while (chanRecv(rdev->writer_buffer_channel, (void **) &buf))
-    {
-        bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
-    }
+    return false;
 }
 
 bool rawdeviceBringUp(raw_device_t *rdev)
 {
-    assert(! rdev->up);
+    if (atomicLoadExplicit(&rdev->up, memory_order_acquire))
+    {
+        LOGE("RawDevice: device is already up");
+        return false;
+    }
 
     bufferpoolUpdateAllocationPaddings(rdev->writer_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
-    rdev->writer_buffer_channel = chanOpen(sizeof(void *), kRawWriteChannelQueueMax);
-    rdev->running               = true;
+    if (! deviceWriterChannelOpen(&rdev->writer_channel, kRawWriteChannelQueueMax))
+    {
+        LOGE("RawDevice: failed to open writer channel");
+        return false;
+    }
+    atomicStoreExplicit(&rdev->running, true, memory_order_release);
 
     // wthread_error_t read_error = threadCreate(&rdev->read_thread, rdev->routine_reader, rdev);
 
@@ -289,38 +287,37 @@ bool rawdeviceBringUp(raw_device_t *rdev)
     if (UNLIKELY(error != kWThreadErrorNone))
     {
         LOGE("RawDevice: failed to create writer thread: error %u (%s)", error, strerror((int) error));
-        rdev->running = false;
+        atomicStoreExplicit(&rdev->running, false, memory_order_release);
         atomicThreadFence(memory_order_release);
-        chanClose(rdev->writer_buffer_channel);
-        rawdeviceDrainWriterChannel(rdev);
-        chanFree(rdev->writer_buffer_channel);
-        rdev->writer_buffer_channel = NULL;
-        rdev->up                    = false;
+        deviceWriterChannelCloseAndQuiesce(&rdev->writer_channel);
+        deviceWriterChannelFree(&rdev->writer_channel);
+        atomicStoreExplicit(&rdev->up, false, memory_order_release);
         return false;
     }
 
-    rdev->up = true;
+    atomicStoreExplicit(&rdev->up, true, memory_order_release);
     LOGD("RawDevice: device %s is now up", rdev->name);
     return true;
 }
 
 bool rawdeviceBringDown(raw_device_t *rdev)
 {
-    assert(rdev->up);
+    if (! atomicLoadExplicit(&rdev->up, memory_order_acquire))
+    {
+        LOGE("RawDevice: device is already down");
+        return true;
+    }
 
-    rdev->running = false;
-    rdev->up      = false;
+    atomicStoreExplicit(&rdev->running, false, memory_order_release);
+    atomicStoreExplicit(&rdev->up, false, memory_order_release);
 
     atomicThreadFence(memory_order_release);
 
-    chanClose(rdev->writer_buffer_channel);
+    deviceWriterChannelCloseAndQuiesce(&rdev->writer_channel);
 
     safeThreadJoin(rdev->write_thread);
 
-    rawdeviceDrainWriterChannel(rdev);
-
-    chanFree(rdev->writer_buffer_channel);
-    rdev->writer_buffer_channel = NULL;
+    deviceWriterChannelFree(&rdev->writer_channel);
 
     LOGD("RawDevice: device %s is now down", rdev->name);
 
@@ -383,15 +380,15 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
 
     );
 
-    *rdev = (raw_device_t) {.name                  = stringDuplicate(name),
-                            .running               = false,
-                            .up                    = false,
-                            .routine_writer        = routineWriteToRaw,
-                            .socket                = rsocket,
-                            .mark                  = mark,
-                            .userdata              = userdata,
-                            .writer_buffer_channel = NULL,
-                            .writer_buffer_pool    = writer_bpool};
+    *rdev = (raw_device_t) {.name               = stringDuplicate(name),
+                            .running            = false,
+                            .up                 = false,
+                            .routine_writer     = routineWriteToRaw,
+                            .socket             = rsocket,
+                            .mark               = mark,
+                            .userdata           = userdata,
+                            .writer_buffer_pool = writer_bpool};
+    deviceWriterChannelInit(&rdev->writer_channel, writer_bpool);
 
     return rdev;
 }
@@ -399,7 +396,7 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
 void rawdeviceDestroy(raw_device_t *rdev)
 {
 
-    if (rdev->up)
+    if (atomicLoadExplicit(&rdev->up, memory_order_acquire))
     {
         rawdeviceBringDown(rdev);
     }

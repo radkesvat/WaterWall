@@ -3,7 +3,7 @@
 #include "wlibc.h"
 
 #include "buffer_pool.h"
-#include "master_pool.h"
+#include "devices/device_reader_session.h"
 #include "wmutex.h"
 #include "worker.h"
 #include "wthread.h"
@@ -66,8 +66,8 @@ typedef struct capture_device_s
 
     wthread_routine routine_reader;
 
-    master_pool_t *reader_message_pool;
-    buffer_pool_t *reader_buffer_pool;
+    device_reader_session_t *reader_session;
+    buffer_pool_t           *reader_buffer_pool;
 
     CaptureReadEventHandle read_event_callback;
 

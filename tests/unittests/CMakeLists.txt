@@ -72,6 +72,40 @@ if(TARGET ww)
     "unit;net;device;lifetime"
   )
 
+  if(LINUX)
+    add_executable(device_reader_session_test
+      device_reader_session_test.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_session.c
+    )
+    target_link_options(device_reader_session_test PRIVATE
+      "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
+      "-Wl,--wrap=memoryFree"
+      "-Wl,--wrap=masterpoolDestroy"
+      "-Wl,--wrap=bufferpoolReuseBuffer"
+    )
+    target_link_libraries(device_reader_session_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests device_reader_session_test)
+
+    add_waterwall_unit_test(
+      waterwall.device_reader_session_unit
+      device_reader_session_test
+      "unit;net;device;lifetime;reader"
+    )
+
+    add_executable(device_writer_channel_test
+      device_writer_channel_test.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/device_writer_channel.c
+    )
+    target_link_libraries(device_writer_channel_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests device_writer_channel_test)
+
+    add_waterwall_unit_test(
+      waterwall.device_writer_channel_unit
+      device_writer_channel_test
+      "unit;net;device;lifetime;writer"
+    )
+  endif()
+
   add_executable(tun_windows_receive_policy_test tun_windows_receive_policy_test.c)
   target_include_directories(tun_windows_receive_policy_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices/tun)
   add_dependencies(waterwall_unit_tests tun_windows_receive_policy_test)
@@ -357,6 +391,7 @@ if(TARGET ww)
     # lifecycle and message paths run without root or /dev/net/tun.
     add_executable(tun_linux_message_lifetime_test
       tun_linux_message_lifetime_test.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_session.c
       ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux.c
     )
     target_link_options(tun_linux_message_lifetime_test PRIVATE
@@ -383,6 +418,41 @@ if(TARGET ww)
       waterwall.tun_linux_message_lifetime_unit
       tun_linux_message_lifetime_test
       "unit;net;tun;linux;lifetime"
+    )
+
+    add_executable(capture_linux_message_lifetime_test
+      capture_linux_message_lifetime_test.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_session.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/capture/capture_linux.c
+    )
+    target_link_options(capture_linux_message_lifetime_test PRIVATE
+      "-Wl,--wrap=procRunArgvWithDeadline"
+      "-Wl,--wrap=procCommandResultDrop"
+      "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
+      "-Wl,--wrap=memoryFree"
+      "-Wl,--wrap=masterpoolDestroy"
+    )
+    target_link_libraries(capture_linux_message_lifetime_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests capture_linux_message_lifetime_test)
+
+    add_waterwall_unit_test(
+      waterwall.capture_linux_message_lifetime_unit
+      capture_linux_message_lifetime_test
+      "unit;net;capture;linux;lifetime"
+    )
+
+    add_executable(raw_linux_writer_test
+      raw_linux_writer_test.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/device_writer_channel.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/raw/raw_linux.c
+    )
+    target_link_libraries(raw_linux_writer_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests raw_linux_writer_test)
+
+    add_waterwall_unit_test(
+      waterwall.raw_linux_writer_unit
+      raw_linux_writer_test
+      "unit;net;raw;linux;lifetime;writer"
     )
 
     # Wraps send/sendto for a deterministic EAGAIN/EINTR/ENOBUFS seam.

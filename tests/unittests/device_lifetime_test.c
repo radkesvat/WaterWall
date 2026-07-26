@@ -1,4 +1,4 @@
-#include "device_lifetime.h"
+#include "device_reader_session.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,15 +24,11 @@ static void require(bool condition, const char *message)
     }
 }
 
-static master_pool_item_t *createTestPoolItem(void *userdata)
+static void testDeliver(void *device, sbuf_t *buf, wid_t wid)
 {
-    discard userdata;
-    return memoryAllocate(1);
-}
-
-static void destroyTestPoolItem(master_pool_item_t *item)
-{
-    memoryFree(item);
+    discard device;
+    discard buf;
+    discard wid;
 }
 
 static void probeYield(void *context)
@@ -61,7 +57,8 @@ static void probeSessionDestroy(device_reader_session_t *session, void *context)
 
 static device_reader_session_t *createTestSession(void)
 {
-    return deviceReaderSessionCreate(4, createTestPoolItem, destroyTestPoolItem);
+    static int test_device;
+    return deviceReaderSessionCreate(4, 1, &test_device, testDeliver, (buffer_pool_t *) (void *) &test_device);
 }
 
 static void testGateOpenEnterAndClose(void)
@@ -126,6 +123,42 @@ static void testClosedQuiesceIsNoOp(void)
     require(yields == 0, "an already-closed gate yielded");
 }
 
+static void testTracksEightNestedGatesAndBalancesOverflow(void)
+{
+    device_lifetime_gate_t gates[kDeviceLifetimeTrackedGatesPerThread + 1];
+    for (unsigned int i = 0; i < ARRAY_SIZE(gates); i++)
+    {
+        deviceLifetimeGateInit(&gates[i]);
+        deviceLifetimeGateOpen(&gates[i]);
+        require(deviceLifetimeGateEnter(&gates[i]), "failed to enter a nested lifetime gate");
+    }
+
+    require(device_lifetime_thread_entries.overflow_depth == 1,
+            "the ninth distinct nested gate did not use overflow tracking");
+    for (unsigned int i = ARRAY_SIZE(gates); i > 0; i--)
+    {
+        deviceLifetimeGateLeave(&gates[i - 1]);
+    }
+    require(device_lifetime_thread_entries.overflow_depth == 0, "leaving nested gates did not balance overflow state");
+
+    for (unsigned int i = 0; i < kDeviceLifetimeTrackedGatesPerThread; i++)
+    {
+        require(device_lifetime_thread_entries.entries[i].gate == NULL,
+                "leaving nested gates retained a thread-local gate entry");
+    }
+}
+
+static void testUnbalancedOverflowLeaveDoesNotUnderflow(void)
+{
+#ifdef NDEBUG
+    device_lifetime_gate_t untracked_gate;
+    deviceLifetimeGateInit(&untracked_gate);
+    device_lifetime_thread_entries.overflow_depth = 0;
+    deviceLifetimeTrackThreadLeave(&untracked_gate);
+    require(device_lifetime_thread_entries.overflow_depth == 0, "an unbalanced leave underflowed overflow tracking");
+#endif
+}
+
 static void testSessionReferenceLifetime(void)
 {
     device_reader_session_t *session = createTestSession();
@@ -176,6 +209,8 @@ int main(void)
     testCloseWaitsForLastLeave();
     testSelfQuiesceDoesNotDeadlock();
     testClosedQuiesceIsNoOp();
+    testTracksEightNestedGatesAndBalancesOverflow();
+    testUnbalancedOverflowLeaveDoesNotUnderflow();
     testSessionReferenceLifetime();
     testSessionGenerationRejectsStaleStamp();
     puts("device lifetime tests passed");

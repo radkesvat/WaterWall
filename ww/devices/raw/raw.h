@@ -3,6 +3,7 @@
 #include "wlibc.h"
 
 #include "buffer_pool.h"
+#include "devices/device_writer_channel.h"
 #include "wthread.h"
 
 struct raw_device_s;
@@ -31,10 +32,10 @@ typedef struct raw_device_s
 
     wthread_routine routine_writer;
 
-    buffer_pool_t  *writer_buffer_pool;
-    struct wchan_s *writer_buffer_channel;
-    atomic_bool     running;
-    atomic_bool     up;
+    buffer_pool_t          *writer_buffer_pool;
+    device_writer_channel_t writer_channel;
+    atomic_bool             running;
+    atomic_bool             up;
 
 } raw_device_t;
 

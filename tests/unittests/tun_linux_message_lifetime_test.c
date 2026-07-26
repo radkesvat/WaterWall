@@ -330,11 +330,11 @@ static tun_device_t *createRunningReaderDevice(void)
 static void postOne(tun_device_t *tdev, sbuf_t *buf)
 {
     unsigned int before = captured_message_count;
-    distributePacketPayloads(tdev, 0, &buf, 1);
+    deviceReaderSessionPost(tunLinuxReaderSession(tdev), 0, &buf, 1);
     require(captured_message_count == before + 1, "production distribution did not post one message");
-    require(captured_messages[before].callback == localThreadMessageReceived,
+    require(captured_messages[before].callback == deviceReaderSessionMessageReceived,
             "production distribution installed the wrong delivery callback");
-    require(captured_messages[before].cleanup == cleanupPostedTunMessage,
+    require(captured_messages[before].cleanup == deviceReaderSessionCleanupPostedMessage,
             "production distribution installed the wrong cleanup callback");
 }
 

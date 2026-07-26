@@ -1,4 +1,5 @@
-#include "devices/device_lifetime.h"
+#include "devices/device_reader_session.h"
+#include "devices/device_writer_channel.h"
 #include "generic_pool.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
@@ -33,7 +34,7 @@ enum
     kMaxReadDistributeQueueSize = 128
 };
 
-static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "TUN read batch count must fit in msg_event.count");
+static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "TUN read batch count must fit in the reader session");
 
 struct tun_device_s
 {
@@ -54,21 +55,11 @@ struct tun_device_s
 
     TunReadEventHandle read_event_callback;
 
-    struct wchan_s        *writer_buffer_channel;
-    device_lifetime_gate_t writer_gate;
-    uint16_t               mtu;
+    device_writer_channel_t writer_channel;
+    uint16_t                mtu;
 
     atomic_bool running;
     atomic_bool up;
-};
-
-struct msg_event
-{
-    tun_device_t            *tdev;
-    device_reader_session_t *session;
-    uint32_t                 generation;
-    sbuf_t                  *bufs[kMaxReadDistributeQueueSize];
-    uint16_t                 count;
 };
 
 static inline uint16_t tunDeviceMtu(const tun_device_t *tdev)
@@ -222,112 +213,10 @@ static bool routeTableIsMain(const char *route_table)
     return route_table == NULL || stringCompare(route_table, "main") == 0 || stringCompare(route_table, "auto") == 0;
 }
 
-static pool_item_t *allocTunMsgPoolHandle(void *userdata)
+static void tunDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
 {
-    discard userdata;
-    return memoryAllocate(sizeof(struct msg_event));
-}
-
-static void destroyTunMsgPoolHandle(master_pool_item_t *item)
-{
-    memoryFree(item);
-}
-
-static void reuseTunReadBuffers(tun_device_t *tdev, sbuf_t **bufs, unsigned int count)
-{
-    for (unsigned int i = 0; i < count; i++)
-    {
-        bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[i]);
-    }
-}
-
-static void cleanupTunMessage(struct msg_event *msg)
-{
-    if (msg == NULL)
-    {
-        return;
-    }
-
-    device_reader_session_t *session = msg->session;
-    for (unsigned int i = 0; i < msg->count; i++)
-    {
-        sbufDestroy(msg->bufs[i]);
-    }
-    masterpoolReuseItems(session->message_pool, (void **) &msg, 1);
-    deviceReaderSessionUnref(session, NULL, NULL);
-}
-
-static void cleanupPostedTunMessage(void *arg1, void *arg2, void *arg3)
-{
-    struct msg_event *msg = arg1;
-    discard           arg2;
-    discard           arg3;
-
-    cleanupTunMessage(msg);
-}
-
-static void localThreadMessageReceived(void *worker, void *arg1, void *arg2, void *arg3)
-{
-    struct msg_event        *msg        = arg1;
-    device_reader_session_t *session    = msg->session;
-    uint32_t                 generation = msg->generation;
-    wid_t                    wid        = ((worker_t *) worker)->wid;
-    discard                  arg2;
-    discard                  arg3;
-
-    bool entered = deviceLifetimeGateEnter(&session->delivery_gate);
-    if (entered && deviceReaderSessionMatchesGeneration(session, generation))
-    {
-        tun_device_t *tdev = msg->tdev;
-        for (unsigned int i = 0; i < msg->count; i++)
-        {
-            tdev->read_event_callback(tdev, tdev->userdata, msg->bufs[i], wid);
-        }
-        deviceLifetimeGateLeave(&session->delivery_gate);
-    }
-    else
-    {
-        if (entered)
-        {
-            deviceLifetimeGateLeave(&session->delivery_gate);
-        }
-        for (unsigned int i = 0; i < msg->count; i++)
-        {
-            bufferpoolReuseBuffer(getWorkerBufferPool(wid), msg->bufs[i]);
-        }
-    }
-
-    masterpoolReuseItems(session->message_pool, (void **) &msg, 1);
-    deviceReaderSessionUnref(session, NULL, NULL);
-}
-
-static void distributePacketPayloads(tun_device_t *tdev, wid_t target_wid, sbuf_t **buf, unsigned int queued_count)
-{
-    assert(queued_count <= kMaxReadDistributeQueueSize);
-    assert(queued_count <= UINT16_MAX);
-
-    if (UNLIKELY(isApplicationTerminating() || GSTATE.shortcut_loops == NULL))
-    {
-        reuseTunReadBuffers(tdev, buf, queued_count);
-        return;
-    }
-
-    device_reader_session_t *session = tdev->reader_session;
-    struct msg_event        *msg;
-    masterpoolGetItems(session->message_pool, (const void **) &(msg), 1, tdev);
-
-    msg->tdev       = tdev;
-    msg->session    = session;
-    msg->generation = deviceReaderSessionGeneration(session);
-    msg->count      = (uint16_t) queued_count;
-    for (unsigned int i = 0; i < queued_count; i++)
-    {
-        msg->bufs[i] = buf[i];
-    }
-
-    deviceReaderSessionRef(session);
-    sendWorkerMessageForceQueueWithCleanup(
-        target_wid, localThreadMessageReceived, cleanupPostedTunMessage, msg, NULL, NULL);
+    tun_device_t *tdev = device;
+    tdev->read_event_callback(tdev, tdev->userdata, buf, wid);
 }
 
 static int tunDrainPackets(tun_device_t *tdev)
@@ -357,7 +246,7 @@ static int tunDrainPackets(tun_device_t *tdev)
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
             if (queued_count > 0)
             {
-                distributePacketPayloads(tdev, getNextDistributionWID(), bufs, queued_count);
+                deviceReaderSessionPost(tdev->reader_session, getNextDistributionWID(), bufs, queued_count);
             }
             return 0;
         }
@@ -368,7 +257,7 @@ static int tunDrainPackets(tun_device_t *tdev)
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
             if (queued_count > 0)
             {
-                distributePacketPayloads(tdev, getNextDistributionWID(), bufs, queued_count);
+                deviceReaderSessionPost(tdev->reader_session, getNextDistributionWID(), bufs, queued_count);
             }
 
             if (saved_errno == EAGAIN || saved_errno == EWOULDBLOCK)
@@ -406,7 +295,7 @@ static int tunDrainPackets(tun_device_t *tdev)
 
     if (queued_count > 0)
     {
-        distributePacketPayloads(tdev, getNextDistributionWID(), bufs, queued_count);
+        deviceReaderSessionPost(tdev->reader_session, getNextDistributionWID(), bufs, queued_count);
     }
 
     return 1;
@@ -481,7 +370,7 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
-        if (! chanRecv(tdev->writer_buffer_channel, (void *) &buf))
+        if (! chanRecv(tdev->writer_channel.channel, (void *) &buf))
         {
             LOGD("TunDevice: routine write will exit due to channel closed");
             return 0;
@@ -583,64 +472,28 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
     assert(sbufGetLength(buf) > 0);
 
-    if (UNLIKELY(! deviceLifetimeGateEnter(&tdev->writer_gate)))
+    switch (deviceWriterChannelTrySend(&tdev->writer_channel, buf))
     {
+    case kDeviceWriterSendOk:
+        return true;
+    case kDeviceWriterSendDown:
         LOGE("TunDevice: write failed, device is down");
         return false;
-    }
-
-    struct wchan_s *writer_buffer_channel = tdev->writer_buffer_channel;
-    if (UNLIKELY(writer_buffer_channel == NULL))
-    {
-        deviceLifetimeGateLeave(&tdev->writer_gate);
-        LOGE("TunDevice: write failed, device is down");
+    case kDeviceWriterSendClosed:
+        LOGE("TunDevice: write failed, channel was closed");
+        return false;
+    case kDeviceWriterSendFull:
+        LOGE("TunDevice: write failed, ring is full");
         return false;
     }
 
-    bool closed = false;
-    bool sent   = chanTrySend(writer_buffer_channel, (void *) &buf, &closed);
-    deviceLifetimeGateLeave(&tdev->writer_gate);
-    if (! sent)
-    {
-        if (closed)
-        {
-            LOGE("TunDevice: write failed, channel was closed");
-        }
-        else
-        {
-            LOGE("TunDevice: write failed, ring is full");
-        }
-        return false;
-    }
-    return true;
-}
-
-static void tundeviceDrainWriterChannel(tun_device_t *tdev)
-{
-    sbuf_t *buf;
-    while (chanRecv(tdev->writer_buffer_channel, (void *) &buf))
-    {
-        bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
-    }
-}
-
-static void tundeviceCloseDrainFreeWriterChannel(tun_device_t *tdev)
-{
-    if (tdev->writer_buffer_channel == NULL)
-    {
-        return;
-    }
-
-    chanClose(tdev->writer_buffer_channel);
-    tundeviceDrainWriterChannel(tdev);
-    chanFree(tdev->writer_buffer_channel);
-    tdev->writer_buffer_channel = NULL;
+    return false;
 }
 
 static void tundeviceCloseLifetimeGates(tun_device_t *tdev)
 {
-    deviceLifetimeGateCloseAndQuiesce(&tdev->writer_gate, deviceLifetimeYieldThread, NULL);
-    deviceLifetimeGateCloseAndQuiesce(&tdev->reader_session->delivery_gate, deviceLifetimeYieldThread, NULL);
+    deviceWriterChannelCloseAndQuiesce(&tdev->writer_channel);
+    deviceReaderSessionEnd(tdev->reader_session);
 }
 
 static void tundeviceDrainStopPipe(tun_device_t *tdev)
@@ -931,15 +784,18 @@ bool tundeviceBringUp(tun_device_t *tdev)
                                        bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
-    tdev->writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax);
-    deviceLifetimeGateOpen(&tdev->writer_gate);
+    if (! deviceWriterChannelOpen(&tdev->writer_channel, kTunWriteChannelQueueMax))
+    {
+        LOGE("TunDevice: failed to open writer channel");
+        return false;
+    }
     deviceReaderSessionBegin(tdev->reader_session);
 
     if (! tunSetStateByName(tdev->name, true))
     {
         LOGE("TunDevice: error bringing device %s up", tdev->name);
         tundeviceCloseLifetimeGates(tdev);
-        tundeviceCloseDrainFreeWriterChannel(tdev);
+        deviceWriterChannelFree(&tdev->writer_channel);
         return false;
     }
 
@@ -961,7 +817,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
             {
                 LOGE("TunDevice: error restoring %s down after reader-thread startup failure", tdev->name);
             }
-            tundeviceCloseDrainFreeWriterChannel(tdev);
+            deviceWriterChannelFree(&tdev->writer_channel);
             return false;
         }
         reader_started = true;
@@ -975,8 +831,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
         atomicThreadFence(memory_order_release);
         atomicStoreExplicit(&tdev->up, false, memory_order_release);
         tundeviceCloseLifetimeGates(tdev);
-        chanClose(tdev->writer_buffer_channel);
-        tundeviceDrainWriterChannel(tdev);
+        deviceWriterChannelDrain(&tdev->writer_channel);
         if (reader_started)
         {
             ssize_t write_res = write(tdev->linux_pipe_fds[1], "x", 1);
@@ -988,9 +843,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
         {
             LOGE("TunDevice: error restoring %s down after writer-thread startup failure", tdev->name);
         }
-        tundeviceDrainWriterChannel(tdev);
-        chanFree(tdev->writer_buffer_channel);
-        tdev->writer_buffer_channel = NULL;
+        deviceWriterChannelFree(&tdev->writer_channel);
         return false;
     }
 
@@ -1011,8 +864,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
     atomicStoreExplicit(&tdev->up, false, memory_order_release);
     tundeviceCloseLifetimeGates(tdev);
 
-    chanClose(tdev->writer_buffer_channel);
-    tundeviceDrainWriterChannel(tdev);
+    deviceWriterChannelDrain(&tdev->writer_channel);
 
     bool bring_down_ok = true;
     if (! tunSetStateByName(tdev->name, false))
@@ -1035,9 +887,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
     }
     safeThreadJoin(tdev->write_thread);
 
-    tundeviceDrainWriterChannel(tdev);
-    chanFree(tdev->writer_buffer_channel);
-    tdev->writer_buffer_channel = NULL;
+    deviceWriterChannelFree(&tdev->writer_channel);
 
     return bring_down_ok;
 }
@@ -1138,23 +988,22 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
                                                    worker_large_buffer_size,
                                                    worker_small_buffer_size);
 
-    device_reader_session_t *reader_session =
-        deviceReaderSessionCreate(RAM_PROFILE * 2, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
-    *tdev              = (tun_device_t) {.name                  = stringDuplicate(actual_name),
-                                         .running               = false,
-                                         .up                    = false,
-                                         .routine_reader        = routineReadFromTun,
-                                         .routine_writer        = routineWriteToTun,
-                                         .handle                = fd,
-                                         .read_event_callback   = cb,
-                                         .userdata              = userdata,
-                                         .writer_buffer_channel = NULL,
-                                         .reader_session        = reader_session,
-                                         .reader_buffer_pool    = reader_bpool,
-                                         .writer_buffer_pool    = writer_bpool,
-                                         .mtu                   = mtu};
-    deviceLifetimeGateInit(&tdev->writer_gate);
+    *tdev              = (tun_device_t) {.name                = stringDuplicate(actual_name),
+                                         .running             = false,
+                                         .up                  = false,
+                                         .routine_reader      = routineReadFromTun,
+                                         .routine_writer      = routineWriteToTun,
+                                         .handle              = fd,
+                                         .read_event_callback = cb,
+                                         .userdata            = userdata,
+                                         .reader_session      = NULL,
+                                         .reader_buffer_pool  = reader_bpool,
+                                         .writer_buffer_pool  = writer_bpool,
+                                         .mtu                 = mtu};
+    deviceWriterChannelInit(&tdev->writer_channel, writer_bpool);
+    tdev->reader_session =
+        deviceReaderSessionCreate(RAM_PROFILE * 2, kMaxReadDistributeQueueSize, tdev, tunDeliverPacket, reader_bpool);
 
     if (pipe(tdev->linux_pipe_fds) != 0)
     {

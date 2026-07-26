@@ -80,6 +80,8 @@ add_library(ww STATIC
 
     # Device lifetime primitives
     devices/device_lifetime.c
+    devices/device_reader_session.c
+    devices/device_writer_channel.c
     
     # Buffer I/O
     bufio/buffer_pool.c
