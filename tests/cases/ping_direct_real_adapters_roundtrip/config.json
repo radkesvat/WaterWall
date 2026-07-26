@@ -1,0 +1,40 @@
+{
+  "name": "ping-direct-real-adapters-roundtrip",
+  "nodes": [
+    {
+      "name": "raw-in-out",
+      "type": "RawSocket",
+      "settings": {
+        "capture-device-name": "ping-direct-capture",
+        "raw-device-name": "ping-direct-raw",
+        "capture-filter-mode": "source-ip",
+        "capture-ips": [
+          "127.0.0.2"
+        ]
+      },
+      "next": "ping-server"
+    },
+    {
+      "name": "ping-server",
+      "type": "PingServer",
+      "settings": {
+        "strategy": "wrap-in-new-ip-and-icmp-header",
+        "identifier": 4660,
+        "check-identifier": true,
+        "source": "127.0.0.1",
+        "dest": "127.0.0.2"
+      },
+      "next": "server-tun"
+    },
+    {
+      "name": "server-tun",
+      "type": "TunDevice",
+      "settings": {
+        "device-name": "wwpingdirect0",
+        "device-ip": "10.252.30.1/24",
+        "device-mtu": 1400,
+        "route-table": "off"
+      }
+    }
+  ]
+}

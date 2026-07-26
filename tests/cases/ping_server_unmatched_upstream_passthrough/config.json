@@ -1,11 +1,12 @@
 {
-  "name": "ping-protocol-swap-roundtrip",
+  "name": "ping-server-unmatched-upstream-passthrough",
   "nodes": [
     {
       "name": "tester-client",
       "type": "TesterClient",
       "settings": {
         "packet-mode": true,
+        "chunk-count": 5,
         "packet-ipv4": {
           "source-ip": "10.82.0.1",
           "dest-ip": "10.82.0.2",
@@ -13,22 +14,23 @@
           "ttl": 64
         }
       },
-      "next": "ping-client"
+      "next": "ping-server"
     },
     {
-      "name": "ping-client",
-      "type": "PingClient",
+      "name": "ping-server",
+      "type": "PingServer",
       "settings": {
         "strategy": "change-only-ipv4-protocol-number",
-        "swap-protocol": 253
+        "swap-protocol": 252
       },
-      "next": "ping-server"
+      "next": "tester-server"
     },
     {
       "name": "tester-server",
       "type": "TesterServer",
       "settings": {
         "packet-mode": true,
+        "chunk-count": 5,
         "packet-ipv4": {
           "source-ip": "10.82.0.1",
           "dest-ip": "10.82.0.2",
@@ -36,15 +38,6 @@
           "ttl": 64
         }
       }
-    },
-    {
-      "name": "ping-server",
-      "type": "PingServer",
-      "settings": {
-        "strategy": "change-only-ipv4-protocol-number",
-        "swap-protocol": 253
-      },
-      "next": "tester-server"
     }
   ]
 }

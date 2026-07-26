@@ -338,17 +338,38 @@ Practical rule:
   Verifies the stream-mode full-payload corpus through `UdpListener` with the socket multiport backend and an
   integer connector destination port inside the listener's port range.
 - `ping_new_ip_icmp_roundtrip`
-  Verifies `PingClient` and `PingServer` through a paired `Bridge`, including outer IPv4/ICMP wrapping, ICMP payload
-  XOR, roundup padding, and PingServer's downstream decapsulation direction.
+  Verifies a direct `TesterClient -> PingClient -> PingServer -> TesterServer` packet chain in both directions,
+  including outer IPv4/ICMP wrapping, ICMP payload XOR, roundup padding, PingServer upstream restoration, and
+  PingServer downstream response wrapping.
 - `ping_reuse_ipv4_addresses_roundtrip`
-  Verifies the bridged `wrap-in-icmp-header-and-reuse-ipv4-addresses` path, including reuse of the original IPv4 header
-  and restoration of the tester packet's original IPv4 protocol. This case waits for the Bridge/PingServer downstream
-  `Est` path instead of using packet immediate-start.
+  Verifies the direct `wrap-in-icmp-header-and-reuse-ipv4-addresses` request and response paths, including reuse of the
+  original IPv4 header and restoration of the tester packet's original IPv4 protocol. The normal direct-chain
+  `Init`/`Est` handshake initializes the persistent packet line.
 - `ping_only_icmp_roundtrip`
-  Verifies the bridged `wrap-in-only-icmp-header` path using raw packet-mode bytes rather than synthetic IPv4 packets.
+  Verifies the direct bidirectional `wrap-in-only-icmp-header` path using raw packet-mode bytes rather than synthetic
+  IPv4 packets.
 - `ping_protocol_swap_roundtrip`
-  Verifies the bridged `change-only-ipv4-protocol-number` path over the full packet IPv4 corpus because this strategy
-  does not add bytes to packets.
+  Verifies the direct bidirectional `change-only-ipv4-protocol-number` path over the full packet IPv4 corpus because
+  this strategy does not add bytes to packets.
+- `ping_identifier_check_disabled_roundtrip`
+  Verifies direct bidirectional reuse-header flow when PingClient and PingServer intentionally use different ICMP
+  identifiers and both disable identifier checking.
+- `ping_server_unmatched_upstream_passthrough`
+  Sends IPv4 packets that do not match PingServer's configured protocol-swap value and verifies that unmatched upstream
+  packets pass through unchanged.
+- `ping_server_drops_malformed_roundup`
+  Intentionally mismatches the peers' roundup-size setting and requires PingServer's exact malformed upstream metadata
+  diagnostic, covering the drop path rather than accepting an unrelated test failure.
+- `ping_client_rejects_numeric_overflow` / `ping_server_rejects_numeric_overflow`
+  Verify each node emits its exact out-of-range `ttl` diagnostic before chain startup in the smallest direct Ping
+  topology.
+- `packet_analysis_ping_roundtrip`
+  Preserves the one-way `PacketSender -> PingClient -> PacketReceiver` wire-format check so the direct-pair change
+  cannot silently alter PingClient's encoded IPv4/ICMP output.
+- `ping_direct_real_adapters_roundtrip`
+  On privileged Linux hosts, injects a wrapped ICMP request through the real
+  `RawSocket -> PingServer -> TunDevice` server topology and verifies the kernel-generated response returns through
+  PingServer's downstream encoder and RawSocket's raw injector.
 - `ipmanipulator_tcp_udp_swap_roundtrip`
   Verifies that `IpManipulator` can rewrite IPv4 TCP protocol numbers to UDP and restore the response path.
 - `ipmanipulator_udp_tcp_swap_roundtrip`

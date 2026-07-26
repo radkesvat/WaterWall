@@ -390,8 +390,28 @@ add_waterwall_integration_test(waterwall.ping_reuse_ipv4_addresses_roundtrip pin
 add_waterwall_integration_test(waterwall.ping_only_icmp_roundtrip ping_only_icmp_roundtrip)
 add_waterwall_integration_test(waterwall.ping_protocol_swap_roundtrip ping_protocol_swap_roundtrip)
 add_waterwall_integration_test(waterwall.ping_identifier_check_disabled_roundtrip ping_identifier_check_disabled_roundtrip)
-add_waterwall_negative_integration_test(waterwall.ping_client_rejects_numeric_overflow ping_client_rejects_numeric_overflow)
-add_waterwall_negative_integration_test(waterwall.ping_server_rejects_numeric_overflow ping_server_rejects_numeric_overflow)
+add_waterwall_integration_test(waterwall.ping_server_unmatched_upstream_passthrough ping_server_unmatched_upstream_passthrough)
+add_waterwall_expected_failure_integration_test(
+  waterwall.ping_server_drops_malformed_roundup
+  ping_server_drops_malformed_roundup
+  "PingServer: dropping malformed upstream packet because roundup-size payload length exceeds ICMP payload"
+)
+add_waterwall_expected_failure_integration_test(
+  waterwall.ping_client_rejects_numeric_overflow
+  ping_client_rejects_numeric_overflow
+  "JSON Error: PingClient->settings->ttl (int field) : expected a whole number between 0 and 255"
+)
+add_waterwall_expected_failure_integration_test(
+  waterwall.ping_server_rejects_numeric_overflow
+  ping_server_rejects_numeric_overflow
+  "JSON Error: PingServer->settings->ttl (int field) : expected a whole number between 0 and 255"
+)
+add_waterwall_privileged_probe_integration_test(waterwall.ping_direct_real_adapters_roundtrip ping_direct_real_adapters_roundtrip 15)
+set_tests_properties(
+  waterwall.ping_direct_real_adapters_roundtrip
+  PROPERTIES
+    LABELS "integration;tunnels;probe;privileged;ping"
+)
 add_waterwall_integration_test(waterwall.ipmanipulator_tcp_udp_swap_roundtrip ipmanipulator_tcp_udp_swap_roundtrip)
 add_waterwall_integration_test(waterwall.ipmanipulator_udp_tcp_swap_roundtrip ipmanipulator_udp_tcp_swap_roundtrip)
 add_waterwall_integration_test(waterwall.ipmanipulator_tcp_udp_tcp_transport_roundtrip ipmanipulator_tcp_udp_tcp_transport_roundtrip)
