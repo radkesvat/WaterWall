@@ -1586,6 +1586,8 @@ void tundeviceDestroy(tun_device_t *tdev)
     memoryFree(tdev);
 }
 
+#if defined(OS_LINUX)
+
 device_reader_session_t *tunLinuxReaderSession(tun_device_t *tdev)
 {
     return tdev->reader_session;
@@ -1595,3 +1597,5 @@ buffer_pool_t *tunLinuxWriterBufferPool(tun_device_t *tdev)
 {
     return tdev->writer_buffer_pool;
 }
+
+#endif
