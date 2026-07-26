@@ -20,8 +20,7 @@ enum
     kAsyncDnsTries                      = 2,
     kAsyncDnsServerFailoverRetryChance  = 10,
     kAsyncDnsServerFailoverRetryDelayMs = 5000,
-    kAsyncDnsIocpPollIntervalMs         = 20,
-    kAsyncDnsMaxPolledFds               = 16
+    kAsyncDnsIocpPollIntervalMs         = 20
 };
 
 static void asyncdnsTimerCallback(wtimer_t *timer);
@@ -281,36 +280,168 @@ static void asyncdnsRefreshTimer(dns_resolver_t *r)
 }
 
 #ifdef EVENT_IOCP
-// The native IOCP backend delivers completions, not readiness, so c-ares
-// descriptors are polled on the resolver timer. Every c-ares socket is
-// nonblocking, so a read/write on a socket that is not ready is a no-op.
-static void asyncdnsPollWatchedFds(dns_resolver_t *r)
+// Grow the reusable readiness scratch buffer to at least `needed` entries.
+static bool asyncdnsReservePollEvents(dns_resolver_t *r, size_t needed)
 {
-    ares_fd_events_t events[kAsyncDnsMaxPolledFds];
-    size_t           nevents = 0;
-
-    // Snapshot first: ares_process_fds() re-enters the socket-state callback and
-    // can free watches, so the list must not be walked across that call.
-    for (dns_watch_t *watch = r->watches; watch != NULL && nevents < kAsyncDnsMaxPolledFds; watch = watch->next)
+    if (r->poll_capacity >= needed)
     {
-        unsigned int fd_events = ARES_FD_EVENT_NONE;
+        return true;
+    }
+
+    if (needed > SIZE_MAX / sizeof(*r->poll_events))
+    {
+        return false;
+    }
+
+    size_t capacity = r->poll_capacity == 0 ? 16 : r->poll_capacity;
+    while (capacity < needed)
+    {
+        if (capacity > SIZE_MAX / 2U)
+        {
+            capacity = needed;
+            break;
+        }
+        capacity *= 2U;
+    }
+
+    ares_fd_events_t *grown = memoryReAllocate(r->poll_events, capacity * sizeof(*grown));
+    if (grown == NULL)
+    {
+        return false;
+    }
+
+    r->poll_events   = grown;
+    r->poll_capacity = capacity;
+    return true;
+}
+
+// The native IOCP backend delivers completions, not readiness, so c-ares
+// descriptors are probed on the resolver timer.
+//
+// The probe must report what is actually ready, never what was merely requested.
+// c-ares treats a write event as proof that a pending TCP connect completed: it
+// sets ARES_CONN_STATE_CONNECTED and thereby clears its own "don't write before
+// connected" guard before flushing. Reporting bare interest therefore makes it
+// send() on a still-connecting socket, which Winsock fails with WSAENOTCONN;
+// c-ares maps that to a hard connection error and tears the connection down.
+//
+// select() rather than WSAPoll(): WSAPoll() does not report a failed nonblocking
+// connect (no POLLERR/POLLHUP), so a refused DNS server would hang until the
+// query timed out. select()'s exceptfds does report it.
+static size_t asyncdnsPollWatchedFds(dns_resolver_t *r)
+{
+    // Pass 1 - snapshot. ares_process_fds() re-enters the socket-state callback
+    // and can free watches, so the list must not be walked across that call.
+    // The snapshot holds requested interest here; pass 3 overwrites it with
+    // the readiness actually observed.
+    size_t nwatched = 0;
+    for (dns_watch_t *watch = r->watches; watch != NULL; watch = watch->next)
+    {
+        unsigned int interest = ARES_FD_EVENT_NONE;
         if (watch->events & WW_READ)
         {
-            fd_events |= ARES_FD_EVENT_READ;
+            interest |= ARES_FD_EVENT_READ;
         }
         if (watch->events & WW_WRITE)
         {
-            fd_events |= ARES_FD_EVENT_WRITE;
+            interest |= ARES_FD_EVENT_WRITE;
         }
-        if (fd_events == ARES_FD_EVENT_NONE)
+        if (interest == ARES_FD_EVENT_NONE)
         {
             continue;
         }
-        events[nevents++] = (ares_fd_events_t) {.fd = watch->fd, .events = fd_events};
+        if (! asyncdnsReservePollEvents(r, nwatched + 1U))
+        {
+            break; // Out of memory: probe what fits; the rest retries next tick.
+        }
+        r->poll_events[nwatched++] = (ares_fd_events_t) {.fd = watch->fd, .events = interest};
     }
 
-    discard ares_process_fds(r->channel, events, nevents, ARES_PROCESS_FLAG_NONE);
+    // Pass 2/3 - probe in FD_SETSIZE batches and compact the observed readiness
+    // in place. nready <= i always holds, so the rewrite never outruns the read.
+    size_t nready = 0;
+    for (size_t base = 0; base < nwatched; base += FD_SETSIZE)
+    {
+        size_t end = base + FD_SETSIZE;
+        if (end > nwatched)
+        {
+            end = nwatched;
+        }
+
+        fd_set readfds;
+        fd_set writefds;
+        fd_set exceptfds;
+        FD_ZERO(&readfds);
+        FD_ZERO(&writefds);
+        FD_ZERO(&exceptfds);
+
+        for (size_t i = base; i < end; ++i)
+        {
+            if (r->poll_events[i].events & ARES_FD_EVENT_READ)
+            {
+                FD_SET(r->poll_events[i].fd, &readfds);
+            }
+            if (r->poll_events[i].events & ARES_FD_EVENT_WRITE)
+            {
+                FD_SET(r->poll_events[i].fd, &writefds);
+            }
+            // Always: a failed connect surfaces only here, and it is the case
+            // that matters most for TCP DNS.
+            FD_SET(r->poll_events[i].fd, &exceptfds);
+        }
+
+        // The first argument is ignored by Winsock.
+        struct timeval immediate = {.tv_sec = 0, .tv_usec = 0};
+        const int      ready     = select(0, &readfds, &writefds, &exceptfds, &immediate);
+        if (ready <= 0)
+        {
+            // 0: nothing ready in this batch. SOCKET_ERROR: leave the batch
+            // alone and let the c-ares timeout path handle it below.
+            continue;
+        }
+
+        for (size_t i = base; i < end; ++i)
+        {
+            const ares_socket_t fd        = r->poll_events[i].fd;
+            unsigned int        fd_events = ARES_FD_EVENT_NONE;
+
+            if (FD_ISSET(fd, &readfds))
+            {
+                fd_events |= ARES_FD_EVENT_READ;
+            }
+            if (FD_ISSET(fd, &writefds))
+            {
+                fd_events |= ARES_FD_EVENT_WRITE;
+            }
+            // ARES_FD_EVENT_READ is documented as covering disconnect/error, so
+            // an exceptional socket routes into process_read(), which surfaces
+            // the error. Reporting WRITE would be read as connect success and
+            // reintroduce the defect this function exists to avoid.
+            if (FD_ISSET(fd, &exceptfds))
+            {
+                fd_events |= ARES_FD_EVENT_READ;
+            }
+
+            if (fd_events != ARES_FD_EVENT_NONE)
+            {
+                r->poll_events[nready++] = (ares_fd_events_t) {.fd = fd, .events = fd_events};
+            }
+        }
+    }
+
+    // Unconditional: with nready == 0 this is what runs process_timeouts() and
+    // ares_check_cleanup_conns(). Returning early when nothing is ready would
+    // stop queries from ever timing out.
+    discard ares_process_fds(r->channel, r->poll_events, nready, ARES_PROCESS_FLAG_NONE);
+    return nready;
 }
+
+#if defined(WATERWALL_IOCP_TEST_HOOKS)
+size_t asyncdnsTestPollWatchedFds(dns_resolver_t *r)
+{
+    return asyncdnsPollWatchedFds(r);
+}
+#endif
 #endif
 
 static void asyncdnsTimerCallback(wtimer_t *timer)
@@ -322,7 +453,7 @@ static void asyncdnsTimerCallback(wtimer_t *timer)
     }
 
 #ifdef EVENT_IOCP
-    asyncdnsPollWatchedFds(r);
+    discard asyncdnsPollWatchedFds(r);
 #else
     discard ares_process_fds(r->channel, NULL, 0, ARES_PROCESS_FLAG_NONE);
 #endif
@@ -606,6 +737,12 @@ void asyncdnsCleanup(dns_resolver_t *r)
     {
         asyncdnsReleaseWatch(r, r->watches);
     }
+
+#ifdef EVENT_IOCP
+    memoryFree(r->poll_events);
+    r->poll_events   = NULL;
+    r->poll_capacity = 0;
+#endif
 
     memoryZero(r, sizeof(*r));
 }

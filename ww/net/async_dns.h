@@ -84,6 +84,12 @@ struct dns_resolver_s
     wtimer_t       *timer;
     dns_watch_t    *watches;
     int             shutting_down;
+#ifdef EVENT_IOCP
+    // Reused across polls so the 50 Hz readiness probe does not allocate per
+    // tick. Grows to the watch count and is never shrunk.
+    ares_fd_events_t *poll_events;
+    size_t            poll_capacity;
+#endif
 };
 
 void asyncdnsOptionsSetDefaults(asyncdns_options_t *options);
@@ -105,3 +111,8 @@ static inline bool asyncdnsStatusIsShutdown(int status)
  */
 int asyncdnsResolve(dns_resolver_t *r, const char *host, const char *service, int socktype, dns_resolve_cb cb,
                     void *userdata);
+
+#if defined(EVENT_IOCP) && defined(WATERWALL_IOCP_TEST_HOOKS)
+// Drive one native-IOCP readiness poll and return its observed-ready count.
+size_t asyncdnsTestPollWatchedFds(dns_resolver_t *r);
+#endif

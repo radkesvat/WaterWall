@@ -771,14 +771,18 @@ static size_t dnsQuestionEnd(const unsigned char *request, size_t request_len)
 }
 
 static uint16_t fakeDnsReply(SOCKET server, const unsigned char *request, size_t request_len,
-                             const struct sockaddr *peer, socklen_t peer_len)
+                             const struct sockaddr *peer, socklen_t peer_len, bool truncated)
 {
     unsigned char response[512];
     size_t        response_len = dnsQuestionEnd(request, request_len);
     require(response_len + 16 <= sizeof(response), "fake DNS response exceeded its buffer");
 
     memoryCopy(response, request, response_len);
-    response[2]  = (unsigned char) (0x84U | (request[2] & 0x01U));
+    response[2] = (unsigned char) (0x84U | (request[2] & 0x01U));
+    if (truncated)
+    {
+        response[2] |= 0x02U;
+    }
     response[3]  = 0x80;
     response[6]  = 0;
     response[7]  = 0;
@@ -789,7 +793,7 @@ static uint16_t fakeDnsReply(SOCKET server, const unsigned char *request, size_t
 
     size_t   qtype_offset = response_len - 4;
     uint16_t qtype        = (uint16_t) (((uint16_t) request[qtype_offset] << 8U) | request[qtype_offset + 1]);
-    if (qtype == 1)
+    if (qtype == 1 && ! truncated)
     {
         response[7]                  = 1;
         const unsigned char answer[] = {
@@ -815,7 +819,7 @@ static uint16_t fakeDnsReply(SOCKET server, const unsigned char *request, size_t
     }
     else
     {
-        require(qtype == 28, "fake DNS server received an unexpected query type");
+        require(qtype == 1 || qtype == 28, "fake DNS server received an unexpected query type");
     }
 
     require(sendto(server, (const char *) response, (int) response_len, 0, peer, peer_len) == (int) response_len,
@@ -889,7 +893,7 @@ static void testAsyncDnsResolvesUnderIocp(env_t *env)
             }
 
             uint16_t qtype =
-                fakeDnsReply(dns_server, request, (size_t) nread, (const struct sockaddr *) &peer, peer_len);
+                fakeDnsReply(dns_server, request, (size_t) nread, (const struct sockaddr *) &peer, peer_len, false);
             if (qtype == 1)
             {
                 a_queries++;
@@ -910,6 +914,321 @@ static void testAsyncDnsResolvesUnderIocp(env_t *env)
 
     asyncdnsCleanup(&resolver);
     closesocket(dns_server);
+    wloopDestroy(&loop);
+}
+
+typedef struct pending_dns_socket_state_s
+{
+    int tcp_sockets;
+    int tcp_send_attempts;
+} pending_dns_socket_state_t;
+
+static int socketType(SOCKET fd)
+{
+    int type     = 0;
+    int type_len = sizeof(type);
+    require(getsockopt(fd, SOL_SOCKET, SO_TYPE, (char *) &type, &type_len) == 0,
+            "pending DNS socket getsockopt failed");
+    return type;
+}
+
+static ares_socket_t pendingDnsSocket(int domain, int type, int protocol, void *userdata)
+{
+    pending_dns_socket_state_t *st = userdata;
+    SOCKET                      fd = socket(domain, type, protocol);
+    if (fd == INVALID_SOCKET)
+    {
+        return ARES_SOCKET_BAD;
+    }
+    setSocketNonblocking(fd);
+
+    if (type == SOCK_STREAM)
+    {
+        // A quiet listening socket is neither writable nor exceptional. Returning
+        // WSAEWOULDBLOCK from connect below makes c-ares treat this descriptor as
+        // a deterministic, indefinitely pending TCP connect.
+        struct sockaddr_in addr;
+        memoryZero(&addr, sizeof(addr));
+        addr.sin_family      = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) != 0 || listen(fd, 1) != 0)
+        {
+            int error = WSAGetLastError();
+            closesocket(fd);
+            WSASetLastError(error);
+            return ARES_SOCKET_BAD;
+        }
+        st->tcp_sockets++;
+    }
+
+    return fd;
+}
+
+static int pendingDnsClose(ares_socket_t fd, void *userdata)
+{
+    discard userdata;
+    return closesocket(fd);
+}
+
+static int pendingDnsSetSocketOption(ares_socket_t fd, ares_socket_opt_t option, const void *value,
+                                     ares_socklen_t value_size, void *userdata)
+{
+    discard value_size;
+    discard userdata;
+    switch (option)
+    {
+    case ARES_SOCKET_OPT_SENDBUF_SIZE:
+        return setsockopt(fd, SOL_SOCKET, SO_SNDBUF, value, sizeof(int));
+    case ARES_SOCKET_OPT_RECVBUF_SIZE:
+        return setsockopt(fd, SOL_SOCKET, SO_RCVBUF, value, sizeof(int));
+    default:
+        WSASetLastError(WSAEOPNOTSUPP);
+        return SOCKET_ERROR;
+    }
+}
+
+static int pendingDnsConnect(ares_socket_t fd, const struct sockaddr *address, ares_socklen_t address_len,
+                             unsigned int flags, void *userdata)
+{
+    discard flags;
+    discard userdata;
+    if (socketType(fd) == SOCK_STREAM)
+    {
+        WSASetLastError(WSAEWOULDBLOCK);
+        return SOCKET_ERROR;
+    }
+    return connect(fd, address, address_len);
+}
+
+static ares_ssize_t pendingDnsRecvfrom(ares_socket_t fd, void *buffer, size_t length, int flags,
+                                       struct sockaddr *address, ares_socklen_t *address_len, void *userdata)
+{
+    discard userdata;
+    require(length <= INT_MAX, "pending DNS receive length exceeded Winsock limit");
+    return recvfrom(fd, buffer, (int) length, flags, address, address_len);
+}
+
+static ares_ssize_t pendingDnsSendto(ares_socket_t fd, const void *buffer, size_t length, int flags,
+                                     const struct sockaddr *address, ares_socklen_t address_len, void *userdata)
+{
+    pending_dns_socket_state_t *st = userdata;
+    require(length <= INT_MAX, "pending DNS send length exceeded Winsock limit");
+    if (socketType(fd) == SOCK_STREAM)
+    {
+        st->tcp_send_attempts++;
+    }
+    if (address != NULL)
+    {
+        return sendto(fd, buffer, (int) length, flags, address, address_len);
+    }
+    return send(fd, buffer, (int) length, flags);
+}
+
+static const struct ares_socket_functions_ex kPendingDnsSocketFunctions = {
+    .version     = 1,
+    .flags       = ARES_SOCKFUNC_FLAG_NONBLOCKING,
+    .asocket     = pendingDnsSocket,
+    .aclose      = pendingDnsClose,
+    .asetsockopt = pendingDnsSetSocketOption,
+    .aconnect    = pendingDnsConnect,
+    .arecvfrom   = pendingDnsRecvfrom,
+    .asendto     = pendingDnsSendto,
+};
+
+static bool socketHasNoConnectCompletion(SOCKET fd)
+{
+    fd_set writefds;
+    fd_set exceptfds;
+    FD_ZERO(&writefds);
+    FD_ZERO(&exceptfds);
+    FD_SET(fd, &writefds);
+    FD_SET(fd, &exceptfds);
+
+    struct timeval immediate = {.tv_sec = 0, .tv_usec = 0};
+    int            ready     = select(0, NULL, &writefds, &exceptfds, &immediate);
+    require(ready != SOCKET_ERROR, "select on pending DNS socket failed");
+    return ready == 0;
+}
+
+static void closeSocketArray(SOCKET *sockets, size_t count)
+{
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (sockets[i] != INVALID_SOCKET)
+        {
+            closesocket(sockets[i]);
+            sockets[i] = INVALID_SOCKET;
+        }
+    }
+}
+
+static void testAsyncDnsTcpConnectWaitsForReadiness(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "TCP async DNS loop create failed");
+
+    SOCKET udp_server = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    require(udp_server != INVALID_SOCKET, "truncated fake DNS server socket() failed");
+    struct sockaddr_in server_addr;
+    memoryZero(&server_addr, sizeof(server_addr));
+    server_addr.sin_family      = AF_INET;
+    server_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    require(bind(udp_server, (struct sockaddr *) &server_addr, sizeof(server_addr)) == 0,
+            "truncated fake DNS server bind failed");
+    setSocketNonblocking(udp_server);
+
+    socklen_t server_addr_len = sizeof(server_addr);
+    require(getsockname(udp_server, (struct sockaddr *) &server_addr, &server_addr_len) == 0,
+            "truncated fake DNS server getsockname failed");
+
+    char servers_csv[64];
+    char lookups[] = "b";
+    require(snprintf(servers_csv, sizeof(servers_csv), "127.0.0.1:%u", (unsigned int) ntohs(server_addr.sin_port)) > 0,
+            "TCP fake DNS server address formatting failed");
+
+    asyncdns_options_t options;
+    asyncdnsOptionsSetDefaults(&options);
+    options.servers_csv    = servers_csv;
+    options.lookups        = lookups;
+    options.timeout_ms     = 2000;
+    options.max_timeout_ms = 2000;
+    options.tries          = 1;
+
+    dns_resolver_t resolver;
+    require(asyncdnsInit(&resolver, loop, &options) == ARES_SUCCESS, "TCP async DNS resolver init failed");
+
+    pending_dns_socket_state_t socket_state = {0};
+    require(ares_set_socket_functions_ex(resolver.channel, &kPendingDnsSocketFunctions, &socket_state) == ARES_SUCCESS,
+            "installing pending DNS socket functions failed");
+
+    asyncdns_test_state_t st = {0};
+    require(asyncdnsResolve(&resolver, "tcp.test.invalid.", NULL, SOCK_STREAM, asyncdnsTestResolved, &st) ==
+                ARES_SUCCESS,
+            "TCP async DNS resolve submission failed");
+
+    int       truncated_replies = 0;
+    bool      saw_pending_tcp   = false;
+    ULONGLONG deadline          = GetTickCount64() + 300U;
+    while (GetTickCount64() < deadline && st.callbacks == 0)
+    {
+        wloopProcessEvents(loop, 1);
+
+        for (;;)
+        {
+            unsigned char           request[512];
+            struct sockaddr_storage peer;
+            socklen_t               peer_len = sizeof(peer);
+            int                     nread =
+                recvfrom(udp_server, (char *) request, sizeof(request), 0, (struct sockaddr *) &peer, &peer_len);
+            if (nread == SOCKET_ERROR)
+            {
+                require(WSAGetLastError() == WSAEWOULDBLOCK, "truncated fake DNS server recvfrom failed");
+                break;
+            }
+
+            discard fakeDnsReply(udp_server, request, (size_t) nread, (const struct sockaddr *) &peer, peer_len, true);
+            truncated_replies++;
+        }
+
+        for (dns_watch_t *watch = resolver.watches; watch != NULL && ! saw_pending_tcp; watch = watch->next)
+        {
+            if (socketType(watch->fd) == SOCK_STREAM)
+            {
+                require(socketHasNoConnectCompletion(watch->fd),
+                        "TCP DNS regression socket unexpectedly reported connect completion");
+                saw_pending_tcp = true;
+            }
+        }
+    }
+
+    require(truncated_replies >= 1, "fake DNS server received no query to truncate");
+    require(socket_state.tcp_sockets >= 1, "truncated DNS response created no TCP socket");
+    require(saw_pending_tcp, "truncated DNS response did not create a pending TCP watch");
+    // Reporting mere WRITE interest as readiness makes c-ares flush into the
+    // synthetic pending socket and fail long before this deadline.
+    require(socket_state.tcp_send_attempts == 0, "TCP DNS wrote before the connect became ready");
+    require(st.callbacks == 0, "TCP DNS connect was torn down while the connect was still pending");
+
+    asyncdnsCleanup(&resolver);
+    closesocket(udp_server);
+    wloopDestroy(&loop);
+}
+
+#define DNS_WATCH_TEST_COUNT (FD_SETSIZE + 1U)
+
+static void testAsyncDnsPollsEveryWatchedSocket(env_t *env)
+{
+    wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
+    require(loop != NULL, "many-watch async DNS loop create failed");
+
+    asyncdns_options_t options;
+    asyncdnsOptionsSetDefaults(&options);
+
+    dns_resolver_t resolver;
+    require(asyncdnsInit(&resolver, loop, &options) == ARES_SUCCESS, "many-watch async DNS resolver init failed");
+
+    SOCKET sender = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    require(sender != INVALID_SOCKET, "many-watch sender socket() failed");
+
+    SOCKET receivers[DNS_WATCH_TEST_COUNT];
+    for (size_t i = 0; i < DNS_WATCH_TEST_COUNT; ++i)
+    {
+        receivers[i] = INVALID_SOCKET;
+    }
+
+    for (size_t i = 0; i < DNS_WATCH_TEST_COUNT; ++i)
+    {
+        receivers[i] = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        require(receivers[i] != INVALID_SOCKET, "many-watch receiver socket() failed");
+
+        struct sockaddr_in addr;
+        memoryZero(&addr, sizeof(addr));
+        addr.sin_family      = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        require(bind(receivers[i], (struct sockaddr *) &addr, sizeof(addr)) == 0, "many-watch receiver bind failed");
+
+        socklen_t addr_len = sizeof(addr);
+        require(getsockname(receivers[i], (struct sockaddr *) &addr, &addr_len) == 0,
+                "many-watch receiver getsockname failed");
+
+        const char byte = 'R';
+        require(sendto(sender, &byte, 1, 0, (const struct sockaddr *) &addr, addr_len) == 1,
+                "many-watch sender sendto failed");
+
+        dns_watch_t *watch = memoryAllocate(sizeof(*watch));
+        require(watch != NULL, "many-watch allocation failed");
+        *watch = (dns_watch_t) {
+            .fd       = receivers[i],
+            .io       = NULL,
+            .events   = WW_READ,
+            .resolver = &resolver,
+            .next     = resolver.watches,
+        };
+        resolver.watches = watch;
+    }
+
+    const size_t nready = asyncdnsTestPollWatchedFds(&resolver);
+    require(resolver.poll_capacity >= DNS_WATCH_TEST_COUNT, "async DNS readiness snapshot still has a fixed ceiling");
+    require(nready == DNS_WATCH_TEST_COUNT, "async DNS readiness probe skipped a watched socket");
+
+    for (size_t i = 0; i < DNS_WATCH_TEST_COUNT; ++i)
+    {
+        bool found = false;
+        for (size_t j = 0; j < nready; ++j)
+        {
+            if (resolver.poll_events[j].fd == receivers[i] &&
+                (resolver.poll_events[j].events & ARES_FD_EVENT_READ) != 0)
+            {
+                found = true;
+                break;
+            }
+        }
+        require(found, "async DNS readiness probe skipped a watched socket");
+    }
+
+    asyncdnsCleanup(&resolver);
+    closeSocketArray(receivers, DNS_WATCH_TEST_COUNT);
+    closesocket(sender);
     wloopDestroy(&loop);
 }
 
@@ -1869,6 +2188,8 @@ int main(void)
     testConnectCallbackFreeAndFamilies(&env);
     testConnectWithPreBoundSocket(&env);
     testAsyncDnsResolvesUnderIocp(&env);
+    testAsyncDnsTcpConnectWaitsForReadiness(&env);
+    testAsyncDnsPollsEveryWatchedSocket(&env);
     testSerializedSendQueue(&env);
     testCloseDrainsWriteQueue(&env);
     testCloseTimeoutForcesClose(&env);
