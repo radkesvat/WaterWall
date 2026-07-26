@@ -1,7 +1,8 @@
 // Focused coverage for the generic deadline-aware command supervisor in
-// ww/base/wproc.c. Every case uses a short injected deadline plus a generous
-// elapsed upper bound so a loaded CI worker cannot flake, and every case ends by
-// proving the process has no reapable children left.
+// ww/base/wproc.c. Most cases use a short injected deadline plus a generous
+// elapsed upper bound so a loaded CI worker cannot flake; the continuous-output
+// regression repeats its timing check to distinguish the bounded drain pass.
+// Every case ends by proving the process has no reapable children left.
 
 #include "wproc.h"
 
@@ -20,13 +21,16 @@ enum
 {
     // The fake tools sleep far longer than any deadline used here, so a helper
     // that waited for them would blow straight past the upper bound.
-    kFakeToolLongSleepSeconds = 30,
-    kShortDeadlineMs          = 300,
-    kPartialDeadlineMs        = 400,
-    kGenerousDeadlineMs       = 5000,
-    kTerminateGraceMs         = 250,
-    kTimeoutUpperBoundMs      = 8000,
-    kDefaultMaxOutput         = 1024 * 1024
+    kFakeToolLongSleepSeconds   = 30,
+    kShortDeadlineMs            = 300,
+    kPartialDeadlineMs          = 400,
+    kGenerousDeadlineMs         = 5000,
+    kTerminateGraceMs           = 250,
+    kTimeoutUpperBoundMs        = 8000,
+    kDefaultMaxOutput           = 1024 * 1024,
+    kContinuousOutputRuns       = 5,
+    kContinuousOutputDeadlineMs = 100,
+    kContinuousOutputSlackMs    = 100
 };
 
 static bool fail_next_allocation = false;
@@ -373,6 +377,52 @@ static void testOutputSizeLimitFailsAndTerminatesProducer(void)
     require(unlink(tool) == 0, "could not remove fake tool");
 }
 
+// Regression: a producer that keeps the pipe continuously non-empty may not yield
+// EAGAIN, so an unbounded drain pass can run far past the deadline. A single
+// unfixed run can still finish promptly when it happens to yield, so repeat the
+// command and constrain the worst case. The bounded pass returns to the deadline
+// check after at most 128 KiB on every run.
+static void testContinuousOutputStillHonoursTheDeadline(void)
+{
+    char tool[64];
+    writeTempTool(tool, sizeof(tool), "#!/bin/sh\nexec yes WWpadding\n");
+
+    // A cap far larger than anything the deadline allows reading: the run must
+    // end on the deadline, not on the cap.
+    const size_t           huge_cap    = (size_t) 1024 * 1024 * 1024;
+    const char *const      argv[]      = {tool, NULL};
+    proc_command_options_t options     = makeOptions(kContinuousOutputDeadlineMs, huge_cap);
+    uint64_t               max_elapsed = 0;
+
+    for (int run = 0; run < kContinuousOutputRuns; ++run)
+    {
+        proc_command_result_t result;
+        const uint64_t        start = monotonicMs();
+        require(! procRunArgvWithDeadline(tool, argv, &options, &result), "a continuous producer must not succeed");
+        const uint64_t elapsed = monotonicMs() - start;
+        if (elapsed > max_elapsed)
+        {
+            max_elapsed = elapsed;
+        }
+
+        require(result.timed_out, "a continuous producer under a large cap must be reported as timed out");
+        require(! result.output_too_large, "the run must end on the deadline, not on the output cap");
+        procCommandResultDrop(&result);
+        requireNoChildren("the continuous-producer command left an unreaped child");
+    }
+
+    require(unlink(tool) == 0, "could not remove fake tool");
+    const uint64_t elapsed_limit = (uint64_t) kContinuousOutputDeadlineMs + kContinuousOutputSlackMs;
+    if (max_elapsed >= elapsed_limit)
+    {
+        fprintf(stderr,
+                "FAIL: the drain loop ran far past the deadline (max=%llu ms, limit=%llu ms)\n",
+                (unsigned long long) max_elapsed,
+                (unsigned long long) elapsed_limit);
+        exit(1);
+    }
+}
+
 static void testZeroOutputCapIsRejected(void)
 {
     const char *const      argv[]  = {"/bin/true", NULL};
@@ -457,6 +507,7 @@ int main(void)
     testNonzeroExitIsNotTimeoutOrSpawnFailure();
     testExecFailureIsReportedAsExit127();
     testOutputSizeLimitFailsAndTerminatesProducer();
+    testContinuousOutputStillHonoursTheDeadline();
     testZeroOutputCapIsRejected();
     testAllocationFailureAfterForkReapsChild();
     testDropIsSafeAndIdempotent();

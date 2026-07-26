@@ -152,7 +152,12 @@ enum
     kProcCommandInitialCapacity = 4096,
     // Polling interval used while waiting for a child that has closed stdout, and
     // while observing the direct child during the post-SIGTERM grace period.
-    kProcCommandChildPollUs = 2000
+    kProcCommandChildPollUs = 2000,
+    // Reads per drain pass. A producer that keeps the pipe continuously non-empty
+    // never yields EAGAIN, so an unbounded pass can hold the loop past the
+    // deadline. 32 * 4096 is two pipe buffers, so an ordinary burst still drains
+    // in a single pass.
+    kProcCommandMaxReadsPerPoll = 32
 };
 
 // Signal the child's own process group (pgid == child pid), tolerating a child
@@ -468,9 +473,12 @@ bool procRunArgvWithDeadline(const char *file, const char *const argv[], const p
                 break;
             }
 
-            // Drain everything currently available after POLLIN/POLLHUP.
+            // Drain what is currently available after POLLIN/POLLHUP, bounded so
+            // control returns to the deadline check. Stopping early loses nothing:
+            // the read end is non-blocking and poll() reports POLLIN again
+            // immediately while data is still pending.
             bool drain_error = false;
-            for (;;)
+            for (int reads = 0; reads < kProcCommandMaxReadsPerPoll; ++reads)
             {
                 char    buf[4096];
                 ssize_t nread = read(output_pipe[0], buf, sizeof(buf));
