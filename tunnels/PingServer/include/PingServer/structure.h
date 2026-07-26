@@ -83,5 +83,5 @@ void pingserverDownStreamResume(tunnel_t *t, line_t *l);
 void pingserverLinestateInitialize(pingserver_lstate_t *ls);
 void pingserverLinestateDestroy(pingserver_lstate_t *ls);
 
-void pingserverHandleOutboundPacket(tunnel_t *t, line_t *l, sbuf_t *buf);
-void pingserverHandleInboundPacket(tunnel_t *t, line_t *l, sbuf_t *buf);
+void pingserverHandleUpstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf);
+void pingserverHandleDownstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf);

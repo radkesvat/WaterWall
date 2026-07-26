@@ -4,6 +4,6 @@
 
 void pingserverUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    // Server-side outbound response path: plain packets from prev are wrapped toward next.
-    pingserverHandleOutboundPacket(t, l, buf);
+    // Wrapped requests from PingClient are restored toward PingServer's next node.
+    pingserverHandleUpstreamPacket(t, l, buf);
 }
