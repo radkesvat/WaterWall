@@ -327,6 +327,10 @@ if(TARGET ww)
     target_link_options(capture_linux_pipe_test PRIVATE
       "-Wl,--wrap=procRunArgvWithDeadline"
       "-Wl,--wrap=procCommandResultDrop"
+      "-Wl,--wrap=pthread_create"
+      "-Wl,--wrap=pthread_join"
+      "-Wl,--wrap=recvmsg"
+      "-Wl,--wrap=sendto"
     )
     target_link_libraries(capture_linux_pipe_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests capture_linux_pipe_test)
@@ -431,6 +435,7 @@ if(TARGET ww)
         "-Wl,--wrap=capturedeviceDestroy"
         "-Wl,--wrap=rawdeviceCreate"
         "-Wl,--wrap=rawdeviceBringUp"
+        "-Wl,--wrap=rawdeviceBringDown"
         "-Wl,--wrap=rawdeviceDestroy"
       )
       target_link_libraries(rawsocket_startup_failure_test PRIVATE ww)

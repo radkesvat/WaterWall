@@ -3,6 +3,7 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -17,6 +18,7 @@ raw_device_t     *__wrap_rawdeviceCreate(const char *name, uint32_t mark, void *
 bool              __wrap_caputredeviceBringUp(capture_device_t *cdev);
 bool              __wrap_rawdeviceBringUp(raw_device_t *rdev);
 bool              __wrap_caputredeviceBringDown(capture_device_t *cdev);
+bool              __wrap_rawdeviceBringDown(raw_device_t *rdev);
 void              __wrap_capturedeviceDestroy(capture_device_t *cdev);
 void              __wrap_rawdeviceDestroy(raw_device_t *rdev);
 
@@ -81,22 +83,32 @@ raw_device_t *__wrap_rawdeviceCreate(const char *name, uint32_t mark, void *user
 bool __wrap_caputredeviceBringUp(capture_device_t *cdev)
 {
     require(cdev == &fake_capture_device, "RawSocket brought up an unexpected capture device");
-    atomic_store(&cdev->up, true);
-    return true;
+    require(atomic_load(&fake_raw_device.up), "RawSocket activated capture before the raw writer was ready");
+    notifyCleanup('c');
+    return false;
 }
 
 bool __wrap_rawdeviceBringUp(raw_device_t *rdev)
 {
     require(rdev == &fake_raw_device, "RawSocket brought up an unexpected raw device");
+    atomic_store(&rdev->up, true);
     notifyCleanup('u');
-    return false;
+    return true;
 }
 
 bool __wrap_caputredeviceBringDown(capture_device_t *cdev)
 {
     require(cdev == &fake_capture_device, "RawSocket brought down an unexpected capture device");
-    require(atomic_load(&cdev->up), "RawSocket brought down a capture device that was not up");
     atomic_store(&cdev->up, false);
+    notifyCleanup('b');
+    return true;
+}
+
+bool __wrap_rawdeviceBringDown(raw_device_t *rdev)
+{
+    require(rdev == &fake_raw_device, "RawSocket brought down an unexpected raw device");
+    require(atomic_load(&rdev->up), "RawSocket brought down a raw device that was not up");
+    atomic_store(&rdev->up, false);
     notifyCleanup('d');
     return true;
 }
@@ -105,17 +117,18 @@ void __wrap_capturedeviceDestroy(capture_device_t *cdev)
 {
     require(cdev == &fake_capture_device, "RawSocket destroyed an unexpected capture device");
     require(! atomic_load(&cdev->up), "RawSocket destroyed the capture device while it was still up");
-    notifyCleanup('c');
+    notifyCleanup('x');
 }
 
 void __wrap_rawdeviceDestroy(raw_device_t *rdev)
 {
     require(rdev == &fake_raw_device, "RawSocket destroyed an unexpected raw device");
     require(! atomic_load(&fake_capture_device.up), "RawSocket destroyed raw device before capture was down");
+    require(! atomic_load(&rdev->up), "RawSocket destroyed raw device while its writer was still up");
     notifyCleanup('r');
 }
 
-static void runRawSocketStartWithRawBringupFailure(int write_fd)
+static void runRawSocketStartWithCaptureBringupFailure(int write_fd)
 {
     notify_fd = write_fd;
 
@@ -156,7 +169,7 @@ int main(void)
     if (child == 0)
     {
         close(pipe_fds[0]);
-        runRawSocketStartWithRawBringupFailure(pipe_fds[1]);
+        runRawSocketStartWithCaptureBringupFailure(pipe_fds[1]);
     }
 
     close(pipe_fds[1]);
@@ -186,9 +199,9 @@ int main(void)
 
     close(pipe_fds[0]);
 
-    require(event_count == 2, "RawSocket startup failure eagerly destroyed devices after capture start");
-    require(events[0] == 'u', "RawSocket did not attempt raw device bring-up");
-    require(events[1] == 'd', "RawSocket did not bring down the started capture device");
+    require(event_count == 6, "RawSocket startup failure used an incomplete or unexpected cleanup sequence");
+    require(memcmp(events, "ucbdxr", 6) == 0,
+            "RawSocket did not ready raw output before capture or clean up in fail-open order");
 
     return 0;
 }
