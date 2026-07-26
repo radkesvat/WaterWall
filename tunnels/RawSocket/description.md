@@ -1,5 +1,5 @@
 <!--
-Documentation version: 107
+Documentation version: 112
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx, and both files must keep the same documentation version.
 -->
 
@@ -135,6 +135,25 @@ Current implementation behavior:
 - on Windows, the capture filter is built from equivalent `ip.SrcAddr` equality or inclusive range checks
 - on Linux, one netfilter queue rule is created for each configured IPv4 address or CIDR range
 - `capture-filter-mode` is parsed, but only the `source-ip` path is currently implemented
+
+On Linux, the NFQUEUE rules use `--queue-bypass`. If WaterWall is not listening
+on the queue, matching packets continue through the host firewall instead of
+being dropped by an absent queue. This is a fail-open availability policy:
+packets are not captured or transformed while no listener exists. It does not
+make queue overflow fail-open while WaterWall remains bound to the queue.
+WaterWall avoids queue numbers already referenced by existing INPUT rules. A
+terminal capture startup or rule-cleanup failure closes the queue promptly and
+makes that capture-device object non-restartable, activating `--queue-bypass`
+for any rule that could not be removed. The queue reader must report ready
+before the first rule is installed and remains running throughout rule
+insertion, rollback, and bring-down cleanup. Until every rule is installed and
+the raw output device is ready, packets receive `NF_ACCEPT` and are not
+dispatched into the chain. Capture then switches to drop-and-dispatch. Shutdown
+deactivates capture before removing rules. An unexpected reader exit
+deactivates capture and closes the queue immediately so remaining rules fail
+open. While a reader thread is joinable, it owns the queue descriptor;
+terminal cleanup requests closure, and the reader wrapper closes the queue only
+after the routine has stopped using that descriptor.
 
 ### Checksum behavior
 
