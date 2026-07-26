@@ -296,6 +296,27 @@ static bool ensureCaptureCapacity(proc_command_result_t *out, size_t *capacity, 
     return true;
 }
 
+// Move a pipe end above the standard descriptors. When the process was started
+// with fd 0 and/or fd 1 closed, pipe() hands back {0,1}: the write end already
+// is stdout, the child's dup2 is skipped, and FD_CLOEXEC survives to exec and
+// closes the child's only stdout. Relocating both ends first guarantees the
+// child's dup2 path always runs and keeps the read end from aliasing stdin.
+static bool relocatePipeEndAboveStdio(int *fd)
+{
+    if (*fd > STDERR_FILENO)
+    {
+        return true;
+    }
+    const int relocated = fcntl(*fd, F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
+    if (relocated < 0)
+    {
+        return false;
+    }
+    close(*fd);
+    *fd = relocated;
+    return true;
+}
+
 bool procRunArgvWithDeadline(const char *file, const char *const argv[], const proc_command_options_t *options,
                              proc_command_result_t *out)
 {
@@ -324,9 +345,18 @@ bool procRunArgvWithDeadline(const char *file, const char *const argv[], const p
     }
     // Keep both pipe ends close-on-exec. The child re-creates stdout via dup2,
     // which clears FD_CLOEXEC on the duplicate, so only the inherited copies
-    // are closed at exec.
+    // are closed at exec. That only holds while the write end is not already
+    // stdout, which the relocation below guarantees.
     (void) fcntl(output_pipe[0], F_SETFD, FD_CLOEXEC);
     (void) fcntl(output_pipe[1], F_SETFD, FD_CLOEXEC);
+
+    if (! relocatePipeEndAboveStdio(&output_pipe[0]) || ! relocatePipeEndAboveStdio(&output_pipe[1]))
+    {
+        close(output_pipe[0]);
+        close(output_pipe[1]);
+        out->spawn_failed = true;
+        return false;
+    }
 
     const long open_max = execCmdOpenMax();
 
@@ -352,6 +382,18 @@ bool procRunArgvWithDeadline(const char *file, const char *const argv[], const p
                 _exit(127);
             }
             close(output_pipe[1]);
+        }
+        else
+        {
+            // Unreachable while the parent relocates both ends above the standard
+            // descriptors, and kept correct so the child never depends on that.
+            // There is no dup2 here to clear FD_CLOEXEC, so drop it explicitly or
+            // exec closes the child's only stdout and the capture returns empty.
+            const int fd_flags = fcntl(STDOUT_FILENO, F_GETFD, 0);
+            if (fd_flags < 0 || fcntl(STDOUT_FILENO, F_SETFD, fd_flags & ~FD_CLOEXEC) < 0)
+            {
+                _exit(127);
+            }
         }
         execCmdCloseInheritedFds(open_max);
         execvp(file, (char *const *) argv);

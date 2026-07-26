@@ -6,6 +6,7 @@
 #include "wproc.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -104,6 +105,66 @@ static void testDirectArgvSuccessCapturesStdout(void)
     require(result.output_len == strlen("hello world\n"), "output_len must exclude the terminating NUL");
     procCommandResultDrop(&result);
     requireNoChildren("a successful command left an unreaped child");
+    require(unlink(tool) == 0, "could not remove fake tool");
+}
+
+static int saveStandardDescriptor(int fd, int open_flags, int minimum)
+{
+    int saved = fcntl(fd, F_DUPFD_CLOEXEC, minimum);
+    if (saved >= 0)
+    {
+        return saved;
+    }
+
+    const int fallback = open("/dev/null", open_flags | O_CLOEXEC);
+    if (fallback < 0)
+    {
+        return -1;
+    }
+    saved = fcntl(fallback, F_DUPFD_CLOEXEC, minimum);
+    close(fallback);
+    return saved;
+}
+
+// Regression: started with fds 0 and 1 closed, pipe() returns {0,1} and the pipe
+// write end already is stdout. The child's dup2 is then skipped, so nothing
+// clears FD_CLOEXEC and exec used to close the child's only stdout, yielding a
+// silent empty capture with a clean exit code.
+static void testClosedStdinAndStdoutStillCapturesStdout(void)
+{
+    char tool[64];
+    writeTempTool(tool, sizeof(tool), "#!/bin/sh\nprintf 'captured\\n'\nexit 0\n");
+
+    // Save the real descriptors before closing them. If the harness was itself
+    // started with one closed, use a duplicate of /dev/null so the restore below
+    // still produces a valid descriptor above the standard-descriptor range.
+    const int saved_stdin  = saveStandardDescriptor(STDIN_FILENO, O_RDONLY, 20);
+    const int saved_stdout = saveStandardDescriptor(STDOUT_FILENO, O_WRONLY, 21);
+    require(saved_stdin >= 0 && saved_stdout >= 0, "could not save the standard descriptors");
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+
+    const char *const      argv[]  = {tool, NULL};
+    proc_command_options_t options = makeOptions(kGenerousDeadlineMs, kDefaultMaxOutput);
+    proc_command_result_t  result;
+    const bool             ok = procRunArgvWithDeadline(tool, argv, &options, &result);
+
+    // Restore before asserting: require() on failure prints and exits, and every
+    // later test needs real standard descriptors back.
+    const bool stdin_restored  = dup2(saved_stdin, STDIN_FILENO) == STDIN_FILENO;
+    const bool stdout_restored = dup2(saved_stdout, STDOUT_FILENO) == STDOUT_FILENO;
+    close(saved_stdin);
+    close(saved_stdout);
+    require(stdin_restored && stdout_restored, "could not restore the standard descriptors");
+
+    require(ok, "a command started with fds 0 and 1 closed must still succeed");
+    require(result.exit_code == 0, "the command must record a zero exit code");
+    require(! result.timed_out && ! result.spawn_failed && ! result.output_too_large,
+            "a clean command must have clean status flags");
+    require(result.output != NULL && strcmp(result.output, "captured\n") == 0,
+            "stdout must be captured even when the pipe write end lands on fd 1");
+    procCommandResultDrop(&result);
+    requireNoChildren("the closed-stdio command left an unreaped child");
     require(unlink(tool) == 0, "could not remove fake tool");
 }
 
@@ -386,6 +447,7 @@ static void testDropIsSafeAndIdempotent(void)
 int main(void)
 {
     testDirectArgvSuccessCapturesStdout();
+    testClosedStdinAndStdoutStillCapturesStdout();
     testSilentBlockingToolTimesOut();
     testClosedStdoutThenBlockStillTimesOut();
     testPartialOutputThenBlockTimesOut();

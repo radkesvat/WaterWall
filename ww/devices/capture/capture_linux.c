@@ -395,8 +395,21 @@ capturedevice_command_status_t capturedeviceReadIptablesInputRules(char **input_
     char lock_wait_arg[16];
     stringNPrintf(lock_wait_arg, sizeof(lock_wait_arg), "%d", kCaptureIptablesLockWaitSeconds);
 
-    const char *const argv[] = {"iptables", "-w", lock_wait_arg, "-S", "INPUT", NULL};
-    return capturedeviceRunCommandCapture("iptables", argv, kCaptureInspectionMaxOutputBytes, input_rules);
+    const char *const                    argv[] = {"iptables", "-w", lock_wait_arg, "-S", "INPUT", NULL};
+    const capturedevice_command_status_t status =
+        capturedeviceRunCommandCapture("iptables", argv, kCaptureInspectionMaxOutputBytes, input_rules);
+
+    // `iptables -S INPUT` always prints at least the chain policy line, so an
+    // empty snapshot after a clean exit means the output was lost. Accepting it
+    // would make every NFQUEUE number look unused.
+    if (status == kCapturedeviceCommandOk && (*input_rules == NULL || **input_rules == '\0'))
+    {
+        memoryFree(*input_rules);
+        *input_rules = NULL;
+        return kCapturedeviceCommandFailed;
+    }
+
+    return status;
 }
 
 static const char *capturedeviceCommandStatusName(capturedevice_command_status_t status)

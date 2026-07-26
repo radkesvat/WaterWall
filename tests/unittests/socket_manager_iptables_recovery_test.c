@@ -774,6 +774,26 @@ static void testInspectRejectsIncompleteFinalLine(void)
     require(unlink(tool) == 0, "could not remove fake tool");
 }
 
+static void testInspectRejectsEmptySnapshot(void)
+{
+    char tool[64];
+    // A clean zero exit that printed nothing. `iptables -S -t nat` always emits
+    // the built-in chain policies, so an empty capture means the output was lost
+    // and must not be mistaken for an empty nat table.
+    writeTempTool(tool, sizeof(tool), "#!/bin/sh\nexit 0\n");
+
+    socket_manager_iptables_cmd_output_t out;
+    require(! socketManagerIptablesRunInspectCommand(tool, kWrapperDeadlineMs, &out),
+            "an empty snapshot must be rejected even after a clean exit");
+    require(out.len == 0, "the empty snapshot must be recorded as zero length");
+    require(! out.incomplete_final_line, "an empty snapshot is not an incomplete final line");
+    require(out.exit_code == 0, "the tool's clean exit code must still be recorded verbatim");
+    require(! out.timed_out && ! out.spawn_failed, "an empty snapshot is neither a timeout nor a spawn failure");
+    socketManagerIptablesCmdOutputDrop(&out);
+    requireNoChildren("a rejected empty snapshot left an unreaped child");
+    require(unlink(tool) == 0, "could not remove fake tool");
+}
+
 static void testShellCommandSucceedsWithoutTrailingNewline(void)
 {
     // Mutation commands succeed on a clean zero exit; the trailing-newline
@@ -915,6 +935,7 @@ int main(void)
     testInspectBuildsTheExpectedArgv();
     testInspectSuccessAcceptsCompleteSnapshot();
     testInspectRejectsIncompleteFinalLine();
+    testInspectRejectsEmptySnapshot();
     testShellCommandSucceedsWithoutTrailingNewline();
     testNonzeroExitStatusIsTransferred();
     testTimeoutStatusIsTransferredAndDropIsIdempotent();

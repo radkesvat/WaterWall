@@ -841,8 +841,11 @@ bool socketManagerIptablesRunInspectCommand(const char *tool, uint32_t timeout_m
     adoptProcCommandResult(out, &result);
 
     // Inspection snapshots must be complete: reject a non-empty snapshot whose
-    // final byte is not a newline even when the command itself exited cleanly.
-    return ok && ! out->incomplete_final_line;
+    // final byte is not a newline even when the command itself exited cleanly,
+    // and reject an empty one outright. `iptables -S -t nat` always prints the
+    // built-in chain policies, so a zero-length capture means the output was
+    // lost, not that the table is empty.
+    return ok && out->len > 0 && ! out->incomplete_final_line;
 }
 
 bool socketManagerIptablesRunShellCommand(const char *command, uint32_t timeout_ms,

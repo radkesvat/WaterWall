@@ -100,6 +100,8 @@ bool socketManagerIptablesExecuteCleanupPlan(const socket_manager_iptables_clean
 // Run `<tool> -w 5 -t nat -S` directly (no shell) under a parent-enforced
 // deadline. `timeout_ms` is injectable so tests need not wait for the
 // production deadline; production callers pass kSocketManagerIptablesCommandTimeoutMs.
+// Returns false unless the snapshot is complete: a clean exit with empty output,
+// or with no trailing newline, is rejected as a lost capture.
 bool socketManagerIptablesRunInspectCommand(const char *tool, uint32_t timeout_ms,
                                             socket_manager_iptables_cmd_output_t *out);
 

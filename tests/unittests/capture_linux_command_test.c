@@ -302,6 +302,21 @@ static void testInputInspectionUsesLargeSnapshotCap(void)
     fake_success_output_len = 0;
 }
 
+static void testInputInspectionRejectsEmptySnapshot(void)
+{
+    resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
+    fake_success_output     = "";
+    fake_success_output_len = 0;
+
+    char *captured = NULL;
+    require(capturedeviceReadIptablesInputRules(&captured) == kCapturedeviceCommandFailed,
+            "a clean empty INPUT snapshot must be rejected as lost output");
+    require(captured == NULL, "a rejected empty INPUT snapshot must not transfer ownership");
+    require(recorded_call_count == 1, "empty INPUT inspection must run exactly one command");
+    requireInspectionOptions(&recorded_calls[0], "empty INPUT inspection must retain the inspection output cap");
+    require(dropped_result_count == 1, "empty INPUT inspection must drop its command result exactly once");
+}
+
 static void testQueueSelectionAvoidsReferencedNumbers(void)
 {
     const char *snapshot = "-A INPUT -j NFQUEUE --queue-num 7 --queue-bypass\n"
@@ -390,6 +405,7 @@ int main(void)
     testDeleteBuildsExactArgv();
     testIptablesTimeoutIsDistinctFromNonzeroExit();
     testInputInspectionUsesLargeSnapshotCap();
+    testInputInspectionRejectsEmptySnapshot();
     testQueueSelectionAvoidsReferencedNumbers();
     testSysctlUsesDirectArgvWithGroupedValues();
     testSysctlNonzeroExitStaysBestEffort();
