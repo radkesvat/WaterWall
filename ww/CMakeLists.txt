@@ -1382,9 +1382,16 @@ if(BUILD_TESTING)
         # production objects separate so extracting ww's Unity object does not
         # define the same symbols a second time.
         base/wproc.c
+        libc/wfrand.c
         instance/global_state.c
         managers/signal_manager.c
         managers/socket_manager_iptables_recovery.c
+        devices/device_reader_session.c
+        devices/device_writer_channel.c
+        devices/device_lifetime.c
+        devices/tun/tun_linux.c
+        devices/capture/capture_linux.c
+        devices/raw/raw_linux.c
         objects/user.c
         objects/users.c
         PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
