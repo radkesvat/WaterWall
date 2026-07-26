@@ -1,5 +1,5 @@
 <!--
-Documentation version: 108
+Documentation version: 109
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx, and both files must keep the same documentation version.
 -->
 
@@ -478,7 +478,11 @@ Supported values are:
   - both directions have actions: both back up and rewrite; neither restores
   - neither direction has actions: no backup or restoration occurs
 
-  Because this adds one byte to rewritten packets, reduce `misc.mtu` in `core.json` by `1` when your current MTU is already `1500` or the maximum value supported by the network card/path.
+  **MTU warning:** Every rewrite operation appends exactly one byte. This trick does not compare the enlarged packet with `misc.mtu`, `GLOBAL_MTU_SIZE`, `kMaxAllowedPacketLength`, or the path MTU, and it does not fragment packets or reduce TCP MSS. It checks only whether the current buffer has room for the added byte. A packet is dropped if that buffer has no room; otherwise the enlarged packet is forwarded and may be rejected by a later adapter or the physical path.
+
+  For each rewrite direction, keep the maximum input packet size at or below the smallest output/path packet limit minus one byte. For upstream-only actions in a direct `TunDevice -> IpManipulator -> RawSocket` path limited to 1500 bytes, use a TUN input MTU of at most `1499`. `misc.mtu = 1499` controls that input only when `TunDevice.settings.device-mtu` is omitted; an explicit `device-mtu` must also be `1499` or lower.
+
+  Downstream and bidirectional actions require a separate budget for packets entering those rewrite directions. Lowering the local TUN MTU does not constrain packets arriving from `RawSocket`. Subtract any other size-growing tunnel overhead as well.
 
 ### Port ghost settings
 
