@@ -1,5 +1,5 @@
 <!--
-Documentation version: 107
+Documentation version: 108
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PingClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -134,6 +134,46 @@ The paired `PingServer` is intentionally opposite on the client-to-server ingres
 - `swap-protocol` `(string or integer)`
   Required only when `strategy` is `change-only-ipv4-protocol-number`.
   Numeric range: `0..255`
+
+## MTU And Packet-Size Limits
+
+**Warning:** `PingClient` does not fragment packets, discover the path MTU, or
+reduce an upstream TCP MSS. Its size checks use the compile-time
+`kMaxAllowedPacketLength`, currently `1500` bytes; they do not use `misc.mtu`.
+`misc.mtu` only becomes relevant here when another node, such as `TunDevice`,
+uses it as an input MTU default.
+
+At the current 1500-byte Ping limit, the largest input that each strategy can
+transform is:
+
+| Strategy | Minimum added bytes | Maximum input, `roundup-size=false` | Maximum input, `roundup-size=true` |
+| --- | ---: | ---: | ---: |
+| `wrap-in-new-ip-and-icmp-header` | 28-byte outer IPv4 + ICMP headers | 1472 | 1470 |
+| `wrap-in-icmp-header-and-reuse-ipv4-addresses` | 8-byte ICMP header + 5-byte trailer | 1487 | 1487 |
+| `wrap-in-only-icmp-header` | 8-byte ICMP header | 1492 | 1490 |
+| `change-only-ipv4-protocol-number` | 0 | 1500 | not applicable |
+
+The ICMP-only row measures its raw input and output frame; this strategy does
+not emit an IP header.
+
+When a valid input exceeds the applicable limit, the current ICMP envelope
+strategies normally forward the original packet unchanged instead of
+fragmenting or wrapping it. This is not a safe substitute for MTU planning: the
+packet is no longer disguised as the configured ICMP envelope and may be
+filtered or routed differently.
+
+For a common `TunDevice -> PingClient -> RawSocket` path whose real packet MTU
+is 1500, configure `TunDevice.settings.device-mtu` no higher than the applicable
+table value. Setting both `misc.mtu` and `device-mtu` to `1400` is a simple
+conservative choice when the Ping strategy may change, but it is not required
+when the exact overhead is known.
+
+`roundup-size` can pad an accepted packet all the way to the 1500-byte Ping
+limit. Consequently, a 1400-byte input is safe for a direct 1500-byte output
+path, but roundup may consume the remaining space; it does not necessarily
+leave 100 bytes for another encapsulation layer after `PingClient`. Account for
+every later header as well, and use the smaller of the real path MTU and every
+downstream node's packet limit.
 
 ## Example
 
