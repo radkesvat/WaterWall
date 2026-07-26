@@ -521,7 +521,7 @@ jobs:
         # - bsd
         # - ios
         - linux
-        # - macos
+        - macos
         - msys2
         - windows
 
