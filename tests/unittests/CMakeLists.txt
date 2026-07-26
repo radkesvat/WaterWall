@@ -157,6 +157,16 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.wsocket_validation_unit wsocket_validation_test "unit;net;socket;validation")
 
+  add_executable(wsocket_windows_interface_test wsocket_windows_interface_test.c)
+  target_link_libraries(wsocket_windows_interface_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests wsocket_windows_interface_test)
+
+  add_waterwall_unit_test(
+    waterwall.wsocket_windows_interface_unit
+    wsocket_windows_interface_test
+    "unit;net;socket;windows;interface"
+  )
+
   add_executable(json_helpers_test json_helpers_test.c)
   target_link_libraries(json_helpers_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests json_helpers_test)

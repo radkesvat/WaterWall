@@ -1102,6 +1102,35 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPI
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 endif()
 
+# Windows does not add the tests/ subtree, so register the focused interface-name
+# test here as well. The test remains build-on-demand through its CTest runner.
+if(BUILD_TESTING AND WIN32)
+  add_executable(wsocket_windows_interface_test EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/wsocket_windows_interface_test.c)
+  set_target_properties(wsocket_windows_interface_test PROPERTIES
+    INTERPROCEDURAL_OPTIMIZATION OFF
+    INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF
+    INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
+    INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF
+    INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF
+  )
+  target_link_libraries(wsocket_windows_interface_test PRIVATE ww)
+  add_test(
+    NAME waterwall.wsocket_windows_interface_unit
+    COMMAND
+      "${CMAKE_COMMAND}"
+      "-DUNIT_TEST_TARGET=wsocket_windows_interface_test"
+      "-DUNIT_TEST_CONFIG=$<CONFIG>"
+      "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE:wsocket_windows_interface_test>"
+      "-DUNIT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/run_unit_test.cmake"
+  )
+  set_tests_properties(waterwall.wsocket_windows_interface_unit PROPERTIES
+    TIMEOUT 120
+    LABELS "unit;net;socket;windows;interface"
+    RESOURCE_LOCK waterwall_unit_test_build)
+endif()
+
 # Native-IOCP-only tests. The Linux tests/ subdirectory is not added on Windows,
 # so the native IOCP backend registers its own test executable here, and only
 # when that backend is actually selected (windows-iocp preset).
@@ -1133,7 +1162,8 @@ if(BUILD_TESTING AND WIN32 AND WITH_NATIVE_IOCP)
   )
   set_tests_properties(waterwall.iocp_native PROPERTIES
     TIMEOUT 120
-    LABELS "unit;net;iocp;windows")
+    LABELS "unit;net;iocp;windows"
+    RESOURCE_LOCK waterwall_unit_test_build)
 endif()
 
 message(STATUS "Waterwall version: ${Waterwall_VERSION}")

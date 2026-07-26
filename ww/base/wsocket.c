@@ -695,26 +695,56 @@ bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
     PIP_ADAPTER_ADDRESSES adapters = NULL;
     ULONG                 size     = 0;
 
-    if (GetAdaptersAddresses(family, flags, NULL, adapters, &size) == ERROR_BUFFER_OVERFLOW)
+    // Size, then fetch. The adapter set can grow between the two calls, so retry
+    // a bounded number of times instead of failing on a racing overflow.
+    ULONG result = GetAdaptersAddresses(family, flags, NULL, NULL, &size);
+    for (int attempt = 0; attempt < 3 && result == ERROR_BUFFER_OVERFLOW; ++attempt)
     {
+        free(adapters);
         adapters = (PIP_ADAPTER_ADDRESSES) malloc(size);
-        if (! adapters)
+        if (adapters == NULL)
         {
             return false;
         }
+        result = GetAdaptersAddresses(family, flags, NULL, adapters, &size);
     }
 
-    if (GetAdaptersAddresses(family, flags, NULL, adapters, &size) != NO_ERROR)
+    if (result != NO_ERROR)
     {
         free(adapters);
         return false;
+    }
+
+    // FriendlyName is UTF-16; the configured name is narrow UTF-8. Casting the
+    // narrow pointer to wchar_t* reinterprets bytes instead of converting them,
+    // so it never matches a real adapter name and can read past the terminator.
+    // Convert once here and compare the converted string below.
+    wchar_t  *if_name_w = NULL;
+    const int wide_len  = MultiByteToWideChar(CP_UTF8, 0, if_name, -1, NULL, 0);
+    if (wide_len > 0)
+    {
+        if_name_w = (wchar_t *) malloc((size_t) wide_len * sizeof(wchar_t));
+        if (if_name_w != NULL && MultiByteToWideChar(CP_UTF8, 0, if_name, -1, if_name_w, wide_len) <= 0)
+        {
+            free(if_name_w);
+            if_name_w = NULL;
+        }
+    }
+    if (if_name_w == NULL)
+    {
+        // Not fatal: GUID matching still works. Log it, because the caller
+        // terminates the program when no adapter matches.
+        LOGW("getInterfaceIp: could not convert interface name \"%s\" to UTF-16; "
+             "only adapter GUID matching is available",
+             if_name);
     }
 
     PIP_ADAPTER_ADDRESSES adapter = adapters;
     for (; adapter; adapter = adapter->Next)
     {
         if (strcmp(adapter->AdapterName, if_name) == 0 ||
-            (adapter->FriendlyName && wcscmp(adapter->FriendlyName, (const wchar_t *) if_name) == 0))
+            (if_name_w != NULL && adapter->FriendlyName != NULL &&
+             CompareStringOrdinal(adapter->FriendlyName, -1, if_name_w, -1, TRUE) == CSTR_EQUAL))
         {
             PIP_ADAPTER_UNICAST_ADDRESS ua = adapter->FirstUnicastAddress;
             for (; ua; ua = ua->Next)
@@ -723,6 +753,7 @@ bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
                 if (sa->sin_family == AF_INET)
                 {
                     ip4AddrSetU32(ip_buffer, sa->sin_addr.S_un.S_addr);
+                    free(if_name_w);
                     free(adapters);
                     return true;
                 }
@@ -730,6 +761,7 @@ bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
         }
     }
 
+    free(if_name_w);
     free(adapters);
     return false;
 
