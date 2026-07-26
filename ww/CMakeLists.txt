@@ -1095,7 +1095,13 @@ endif()
 set(WPDPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/)
 set(LWIPOPTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lwip)
 set(LWIP_CONTRIB_DIR ${LWIPOPTS_DIR}/contrib)
+# lwipopts.h includes <wconfig.h>, so the generated config directory is part of
+# lwip's configuration include set and must reach every target Filelists.cmake
+# creates -- not just ww_lwip. Listing it here rather than patching individual
+# targets keeps a future lwip upgrade from silently reintroducing the gap.
+# BUILD_INTERFACE keeps the absolute build path out of any exported interface.
 set(LWIP_INCLUDE_DIRS
+    "$<BUILD_INTERFACE:${WW_CONFIG_INCLUDE_DIR}>"
     "${LWIP_DIR}/src/include"
     "${LWIP_DIR}/contrib"
     "${LWIPOPTS_DIR}"
@@ -1121,9 +1127,9 @@ include(${LWIP_CONTRIB_DIR}/Filelists.cmake)
 add_library(ww_lwip STATIC ${lwipnoapps_SRCS})
 
 target_compile_definitions(ww_lwip PUBLIC $<$<CONFIG:Debug>:LWIP_DEBUG=1>)
-target_include_directories(ww_lwip BEFORE PUBLIC
-    $<BUILD_INTERFACE:${WW_CONFIG_INCLUDE_DIR}>
-)
+# The config directory arrives first via LWIP_INCLUDE_DIRS, so ww_lwip resolves
+# <wconfig.h> exactly the way every other lwip target does. Keeping a separate
+# copy here is what let ww_lwip build while the upstream targets did not.
 target_include_directories(ww_lwip PUBLIC ${LWIP_INCLUDE_DIRS})
 target_compile_definitions(ww_lwip PUBLIC ${LWIP_DEFINITIONS})
 
