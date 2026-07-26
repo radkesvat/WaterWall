@@ -77,7 +77,7 @@ A correct tunnel is never "just" a parser or encoder. It must preserve callback
 | Stateful protocol wrapping, clean finish w/ final bytes | `TlsClient`, `EncryptionClient` |
 | Internal line ownership, re-entrant safety | `MuxClient` |
 | Packet/stream bridges | `PacketsToStream`, `StreamToPackets`, `PacketsToConnection` |
-| Paired packet tunnels (opposite directions) | `PingClient`, `PingServer` |
+| Direct paired packet transforms | `PingClient`, `PingServer` |
 | Minimal skeleton | `template` |
 
 ---
@@ -246,9 +246,11 @@ to rely on — and mandatory to obey:
 - **Packet-line bridges** are normal `tunnelCreate()` tunnels that anchor
   worker-local bridge state on the packet line (`PacketsToStream`, `StreamToPackets`,
   `PacketsToConnection`, `PacketSplitStream`).
-- **Direction:** draw the packet flow first. `PingClient` encapsulates on **upstream**
-  payload; `PingServer` decapsulates on **downstream** payload. Do not copy the
-  client's direction into the server. Add a test that fails if direction is reversed.
+- **Direction:** draw the packet flow first and keep transform role separate from
+  callback forwarding direction. In a direct `PingClient -> PingServer` pair,
+  PingClient encodes upstream and PingServer decodes upstream; both forward with
+  `tunnelNextUpStreamPayload()`. PingServer encodes downstream and PingClient
+  decodes downstream; both forward with `tunnelPrevDownStreamPayload()`
 
 ---
 
