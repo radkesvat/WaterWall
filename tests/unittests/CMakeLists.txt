@@ -61,6 +61,17 @@ if(TARGET ww)
     "unit;net;tun;windows;lifetime"
   )
 
+  add_executable(device_lifetime_test device_lifetime_test.c)
+  target_include_directories(device_lifetime_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices)
+  target_link_libraries(device_lifetime_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests device_lifetime_test)
+
+  add_waterwall_unit_test(
+    waterwall.device_lifetime_unit
+    device_lifetime_test
+    "unit;net;device;lifetime"
+  )
+
   add_executable(tun_windows_receive_policy_test tun_windows_receive_policy_test.c)
   target_include_directories(tun_windows_receive_policy_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices/tun)
   add_dependencies(waterwall_unit_tests tun_windows_receive_policy_test)
@@ -339,6 +350,39 @@ if(TARGET ww)
       waterwall.capture_linux_pipe_unit
       capture_linux_pipe_test
       "unit;net;capture;lifecycle;pipe"
+    )
+
+    # Linux TUN queued-message lifetime. tun_linux.c is compiled directly and
+    # privileged syscalls/thread creation are wrapped so the real device
+    # lifecycle and message paths run without root or /dev/net/tun.
+    add_executable(tun_linux_message_lifetime_test
+      tun_linux_message_lifetime_test.c
+      ${CMAKE_SOURCE_DIR}/ww/devices/tun/tun_linux.c
+    )
+    target_link_options(tun_linux_message_lifetime_test PRIVATE
+      "-Wl,--wrap=open"
+      "-Wl,--wrap=ioctl"
+      "-Wl,--wrap=socket"
+      "-Wl,--wrap=read"
+      "-Wl,--wrap=write"
+      "-Wl,--wrap=poll"
+      "-Wl,--wrap=pthread_create"
+      "-Wl,--wrap=pthread_join"
+      "-Wl,--wrap=fork"
+      "-Wl,--wrap=execvp"
+      "-Wl,--wrap=waitpid"
+      "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
+      "-Wl,--wrap=memoryFree"
+      "-Wl,--wrap=masterpoolDestroy"
+      "-Wl,--wrap=bufferpoolReuseBuffer"
+    )
+    target_link_libraries(tun_linux_message_lifetime_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests tun_linux_message_lifetime_test)
+
+    add_waterwall_unit_test(
+      waterwall.tun_linux_message_lifetime_unit
+      tun_linux_message_lifetime_test
+      "unit;net;tun;linux;lifetime"
     )
 
     # Wraps send/sendto for a deterministic EAGAIN/EINTR/ENOBUFS seam.
