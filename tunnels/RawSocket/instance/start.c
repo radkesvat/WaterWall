@@ -2,29 +2,30 @@
 
 #include "loggers/network_logger.h"
 
-static void rawsocketStopStartupCapture(rawsocket_tstate_t *state)
+static void rawsocketStopStartupDevices(rawsocket_tstate_t *state)
 {
-    if (state->capture_device != NULL)
+    if (state->capture_device != NULL && ! caputredeviceBringDown(state->capture_device))
     {
-        if (state->capture_device->up && ! caputredeviceBringDown(state->capture_device))
-        {
-            LOGW("RawSocket: capture device bring down completed with cleanup errors");
-        }
+        LOGW("RawSocket: capture device bring down completed with cleanup errors");
+    }
+    if (state->raw_device != NULL && state->raw_device->up)
+    {
+        rawdeviceBringDown(state->raw_device);
     }
 }
 
-static void rawsocketDestroyStartupDevicesBeforeCaptureStart(rawsocket_tstate_t *state)
+static void rawsocketDestroyStartupDevices(rawsocket_tstate_t *state)
 {
-    if (state->raw_device != NULL)
-    {
-        rawdeviceDestroy(state->raw_device);
-        state->raw_device = NULL;
-    }
-
     if (state->capture_device != NULL)
     {
         capturedeviceDestroy(state->capture_device);
         state->capture_device = NULL;
+    }
+
+    if (state->raw_device != NULL)
+    {
+        rawdeviceDestroy(state->raw_device);
+        state->raw_device = NULL;
     }
 }
 
@@ -56,21 +57,25 @@ void rawsocketOnStart(tunnel_t *t)
     state->raw_device = rawdeviceCreate(state->raw_device_name, state->firewall_mark, t);
     if (state->raw_device == NULL)
     {
-        rawsocketDestroyStartupDevicesBeforeCaptureStart(state);
+        rawsocketDestroyStartupDevices(state);
         LOGF("RawDevice: could not create device");
         terminateProgram(1);
     }
 
-    if (! caputredeviceBringUp(state->capture_device))
-    {
-        rawsocketDestroyStartupDevicesBeforeCaptureStart(state);
-        LOGF("CaptureDevice: could not bring device up");
-        terminateProgram(1);
-    }
+    // The writer must be operational before any NFQUEUE rule can become active.
+    // Capture's reader accepts packets during rule installation and switches to
+    // drop-and-dispatch only after this raw device is ready.
     if (! rawdeviceBringUp(state->raw_device))
     {
-        rawsocketStopStartupCapture(state);
+        rawsocketDestroyStartupDevices(state);
         LOGF("RawDevice: could not bring device up");
+        terminateProgram(1);
+    }
+    if (! caputredeviceBringUp(state->capture_device))
+    {
+        rawsocketStopStartupDevices(state);
+        rawsocketDestroyStartupDevices(state);
+        LOGF("CaptureDevice: could not bring device up");
         terminateProgram(1);
     }
 }

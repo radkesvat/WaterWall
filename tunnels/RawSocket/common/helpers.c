@@ -14,7 +14,7 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
     // packet is correctly filtered based on src/dest ip since we told net filter system
     tunnel_t *t = userdata;
 
-    if (UNLIKELY(isApplicationTerminating() || cdev->up == false))
+    if (UNLIKELY(isApplicationTerminating() || ! atomicLoadExplicit(&cdev->up, memory_order_acquire)))
     {
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
         return;

@@ -33,24 +33,32 @@ void captureLinuxNetfilterExposePacket(sbuf_t *buff, const uint8_t *message, con
 
 #if defined(OS_LINUX)
 
-// Outcome of one supervised Capture command. A timeout is deliberately distinct
-// from an ordinary nonzero exit: it is the only status that means the command
-// path itself has hung, and both Capture batches use it to stop early instead of
-// spending another full deadline per remaining item.
+// Outcome of one supervised Capture command. Timeout, parent-side execution
+// failure, and output-limit termination are distinct from an ordinary nonzero
+// exit because an iptables mutation may already have committed before the
+// supervisor terminated or lost control of the child.
 typedef enum capturedevice_command_status_e
 {
     kCapturedeviceCommandOk = 0,
     kCapturedeviceCommandFailed,
     kCapturedeviceCommandSpawnFailed,
-    kCapturedeviceCommandTimedOut
+    kCapturedeviceCommandTimedOut,
+    kCapturedeviceCommandOutputTooLarge
 } capturedevice_command_status_t;
 
 // Command-layer seams. These are internal to the Linux capture device and are
 // exposed only so the command-wiring unit test can drive them without opening a
 // real NFQUEUE socket or requiring root.
 capturedevice_command_status_t capturedeviceRunIptablesQueueRule(const char *operation, const char *cidr,
-                                                                 uint32_t queue_number);
+                                                                 uint32_t queue_number, const char *rule_comment);
+capturedevice_command_status_t capturedeviceReadIptablesInputRules(char **input_rules);
 void                           capturedeviceApplySysctls(void);
+
+// Select the first queue at or after `start` (with uint16_t wraparound) that is
+// not referenced by an existing `--queue-num` or `--queue-balance` rule in an
+// `iptables -S INPUT` snapshot. This prevents an old fail-open rule from
+// becoming active again merely because a later process reused its queue number.
+bool capturedeviceSelectUnusedQueueNumber(const char *input_rules, uint16_t start, uint16_t *selected);
 
 // Stop-pipe lifecycle seams. The pipe lives for the whole lifetime of a
 // capture_device_t, so both BringUp and BringDown must be able to assert that it
@@ -70,5 +78,9 @@ bool capturedeviceDrainStopPipe(struct capture_device_s *cdev);
 // poll() is bounded and that `running == false` alone terminates it, which is
 // what keeps BringDown's join from deadlocking when the wake write fails.
 WTHREAD_ROUTINE(captureLinuxReadRoutine);
+
+// Publish the readiness handshake after a reader has taken a stable queue-socket
+// reference and is about to enter its poll loop. Test readers use the same seam.
+bool captureLinuxReaderPublishReady(struct capture_device_s *cdev, int *reader_socket);
 
 #endif

@@ -4,7 +4,7 @@
 
 static void rawsocketStopDevices(rawsocket_tstate_t *state)
 {
-    if (state->capture_device && state->capture_device->up)
+    if (state->capture_device)
     {
         if (! caputredeviceBringDown(state->capture_device))
         {

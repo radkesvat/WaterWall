@@ -4,6 +4,7 @@
 
 #include "buffer_pool.h"
 #include "master_pool.h"
+#include "wmutex.h"
 #include "worker.h"
 #include "wthread.h"
 
@@ -11,7 +12,14 @@ struct capture_device_s;
 
 typedef void (*CaptureReadEventHandle)(struct capture_device_s *cdev, void *userdata, sbuf_t *buf, wid_t tid);
 
-
+#if defined(OS_LINUX)
+typedef enum capture_rule_state_e
+{
+    kCaptureRuleAbsent = 0,
+    kCaptureRuleInstalled,
+    kCaptureRuleOutcomeUnknown
+} capture_rule_state_t;
+#endif
 
 typedef struct capture_device_s
 {
@@ -27,9 +35,29 @@ typedef struct capture_device_s
     uint32_t queue_number;
     char   **capture_cidrs;
     uint32_t capture_range_count;
-    int      netfilter_queue_number;
-    uint64_t netfilter_discarded_total;
-    uint64_t netfilter_discarded_suppressed;
+    // Serialized Linux lifecycle state, independent of `up`. Each CIDR rule is
+    // tracked explicitly because a timed-out iptables mutation may have
+    // committed before its command was terminated.
+    capture_rule_state_t *rule_states;
+    uint64_t              rule_token;
+    // Cleared when a terminal lifecycle failure closes the NFQUEUE socket.
+    // Such an object may retry rule cleanup, but must never bind or start again.
+    bool queue_restartable;
+    // Reader state and queue-socket ownership are synchronized by this mutex.
+    // A successfully created thread remains joinable even after it exits.
+    pthread_mutex_t reader_state_mutex;
+    pthread_cond_t  reader_state_changed;
+    bool            reader_thread_joinable;
+    bool            reader_ready;
+    bool            reader_failed;
+    // Set by terminal lifecycle cleanup while a reader owns `socket`. The
+    // reader wrapper closes it only after the routine has stopped using its
+    // copied descriptor.
+    bool               close_queue_on_reader_exit;
+    atomic_bool        capture_active;
+    int                netfilter_queue_number;
+    uint64_t           netfilter_discarded_total;
+    uint64_t           netfilter_discarded_suppressed;
     unsigned long long netfilter_discard_last_report_ms;
 #endif
     bool      drop_captured_packet;
@@ -51,7 +79,7 @@ typedef struct capture_device_s
 bool caputredeviceBringUp(capture_device_t *cdev);
 bool caputredeviceBringDown(capture_device_t *cdev);
 
-capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
-                                      uint32_t capture_range_count, void *userdata, CaptureReadEventHandle cb);
+capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,
+                                      void *userdata, CaptureReadEventHandle cb);
 
 void capturedeviceDestroy(capture_device_t *cdev);
