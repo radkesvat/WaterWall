@@ -1,5 +1,5 @@
 <!--
-Documentation version: 107
+Documentation version: 108
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TesterClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -105,8 +105,10 @@ Stream mode is usually placed at the start of a synthetic end-to-end test chain,
 
 Packet mode is for packet-layer test chains where worker packet lines already exist, for example:
 
-- `TesterClient(packet-mode=true) -> PingClient -> Bridge`, paired with
-  `TesterServer(packet-mode=true) -> PingServer -> Bridge`
+- `TesterClient(packet-mode=true) -> PingClient -> PingServer -> TesterServer(packet-mode=true)`
+
+In that direct Ping chain, the normal packet-line `Init`/`Est` handshake starts
+the test; `packet-start-immediately` is not a Bridge workaround.
 
 `TesterClient` must be the chain head.
 

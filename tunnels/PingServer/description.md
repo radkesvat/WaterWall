@@ -1,35 +1,51 @@
 <!--
-Documentation version: 108
+Documentation version: 110
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PingServer.mdx, and both files must keep the same documentation version.
 -->
 
 # PingServer Node
 
-`PingServer` is the server-side peer for `PingClient`. Wrapped traffic from the client side is expected to arrive through the downstream path, where PingServer restores it and forwards plain packets back toward the previous node. Plain server-side packets sent upstream are wrapped toward the next node for the response path.
+`PingServer` is the server-side peer for `PingClient`. Wrapped requests arrive
+upstream from the previous node, are restored, and continue toward the next node.
+Plain responses arrive downstream from the next node, are wrapped, and continue
+toward the previous node.
 
 It is a pure packet tunnel created with `packettunnelCreate()`, so it runs on the chain's worker packet lines and does not add per-line state.
 
 ## Direction Model
 
-PingServer is intentionally not a mirror of PingClient's request-side direction:
+Direct `PingClient -> PingServer` adjacency is the canonical pair:
 
-- client-to-server wrapped packets must enter PingServer through downstream `Payload`
-- PingServer decapsulates that downstream traffic and forwards with `tunnelPrevDownStreamPayload()`
-- server-to-client response packets may enter PingServer through upstream `Payload`
-- PingServer encapsulates those outbound responses and forwards with `tunnelNextUpStreamPayload()`
+- PingClient wraps client-to-server requests upstream
+- PingServer restores those requests upstream and forwards with `tunnelNextUpStreamPayload()`
+- PingServer wraps server-to-client responses downstream
+- PingClient restores those responses downstream; both nodes forward downstream with `tunnelPrevDownStreamPayload()`
 
-A Bridge-style topology should preserve that callback flow:
+The direct test and deployment topologies are:
 
 ```text
-TesterClient -> PingClient -> Bridge
-TesterServer -> PingServer -> Bridge
+TesterClient -> PingClient -> PingServer -> TesterServer
+RawSocket -> PingServer -> TunDevice
 ```
+
+## Compatibility And Migration
+
+This direction change is intentionally breaking. Change an existing
+`TunDevice -> PingServer -> RawSocket` server chain to
+`RawSocket -> PingServer -> TunDevice`, replace paired-Bridge Ping layouts with
+direct `PingClient -> PingServer` adjacency, and deploy that topology together
+with the new PingServer binary. An old PingServer must keep the old server
+topology. PingClient's implementation, settings, and wire format are unchanged,
+so an older PingClient remains wire-compatible with the new PingServer when
+their settings match. A coordinated peer upgrade may be operationally simpler,
+but it is not a protocol requirement. MTU requirements remain
+strategy-dependent.
 
 ## What It Does
 
-- downstream is the server inbound path: it applies the reverse transform for ICMP packets coming from the client side and forwards unmatched packets unchanged
-- upstream is the server outbound path: it applies the configured forward transform to plain response packets before forwarding next
-- downstream drops matching ICMP envelopes with malformed recovery metadata and logs the reason
+- upstream restores wrapped requests from PingClient and forwards unmatched packets unchanged toward the next node
+- downstream applies the configured forward transform to plain response packets before forwarding toward the previous node
+- upstream drops matching ICMP envelopes with malformed recovery metadata and logs the reason
 - IPv4 packet strategies support IPv4 only
 - any packet that an IPv4 packet strategy cannot safely rewrite is forwarded unchanged
 - `xor-byte` and `roundup-size` only affect the ICMP envelope modes
@@ -40,9 +56,9 @@ TesterServer -> PingServer -> Bridge
 
 ### `wrap-in-new-ip-and-icmp-header`
 
-- downstream expects client-side wrapped traffic:
+- upstream expects client-side wrapped traffic:
   `outer IPv4 header -> ICMP echo header -> original IPv4 packet`
-- upstream creates that envelope only for outbound server-side response packets
+- downstream creates that envelope only for server-side response packets
 - `source` and `dest` are optional in `settings`
 - uses configured IPv4 addresses for the outer packet when provided
 - when `source` or `dest` is omitted, that outer address is copied from the inner IPv4 packet
@@ -79,8 +95,8 @@ TesterServer -> PingServer -> Bridge
 - does not add an ICMP header and does not prepend a new IPv4 header
 - only swaps the IPv4 protocol number in place
 - requires `swap-protocol`
-- downstream changes matching inbound `ICMP` packets back to `swap-protocol`
-- upstream changes outbound packets whose current IPv4 protocol matches `swap-protocol` into `ICMP`
+- upstream changes matching request `ICMP` packets back to `swap-protocol`
+- downstream changes response packets whose current IPv4 protocol matches `swap-protocol` into `ICMP`
 - recalculates the IPv4 header checksum immediately and leaves transport bytes unchanged
 - this mode does not use `identifier`, `sequence-start`, `ipv4-id-start`, `xor-byte`, or `roundup-size`
 
@@ -103,7 +119,7 @@ TesterServer -> PingServer -> Bridge
   Default: `44975` (`0xAFAF`)
 
 - `check-identifier` `(boolean)`
-  Requires downstream ICMP envelope packets to match `identifier`.
+  Requires upstream ICMP envelope packets to match `identifier`.
   Set to `false` only when the peer intentionally uses a different ICMP identifier.
   Default: `true`
 
@@ -176,24 +192,26 @@ fragmenting or wrapping it. This is not a safe substitute for MTU planning: the
 packet is no longer disguised as the configured ICMP envelope and may be
 filtered or routed differently.
 
-For a common `TunDevice -> PingServer -> RawSocket` path whose real packet MTU
-is 1500, configure `TunDevice.settings.device-mtu` no higher than the applicable
-table value. Setting both `misc.mtu` and `device-mtu` to `1400` is a simple
-conservative choice when the Ping strategy may change, but it is not required
-when the exact overhead is known.
+For a common `RawSocket -> PingServer -> TunDevice` server path whose real packet
+MTU is 1500, plain responses arrive from `TunDevice` on PingServer's next side
+and are encoded downstream toward `RawSocket`. Configure
+`TunDevice.settings.device-mtu` no higher than the applicable table value.
+Setting both `misc.mtu` and `device-mtu` to `1400` is a simple conservative
+choice when the Ping strategy may change, but it is not required when the exact
+overhead is known.
 
 `roundup-size` can pad an accepted packet all the way to the 1500-byte Ping
 limit. Consequently, a 1400-byte input is safe for a direct 1500-byte output
 path, but roundup may consume the remaining space; it does not necessarily
 leave 100 bytes for another encapsulation layer after `PingServer`. Account for
-every later header as well, and use the smaller of the real path MTU and every
-downstream node's packet limit.
+every additional header as well, and use the smaller of the real path MTU and
+every adjacent node's packet limit.
 
 ## Example
 
 ```json
 {
-  "name": "icmp-server",
+  "name": "ping-server",
   "type": "PingServer",
   "settings": {
     "strategy": "wrap-in-new-ip-and-icmp-header",
@@ -205,7 +223,7 @@ downstream node's packet limit.
     "sequence-start": 0,
     "ttl": 64
   },
-  "next": "raw-out"
+  "next": "tun-in"
 }
 ```
 

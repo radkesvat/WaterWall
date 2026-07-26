@@ -1,5 +1,5 @@
 <!--
-Documentation version: 108
+Documentation version: 110
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PingClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -9,7 +9,31 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 It is a pure packet tunnel created with `packettunnelCreate()`, so it does not create per-connection line state and it works on the worker packet lines supplied by the chain.
 
-The paired `PingServer` is intentionally opposite on the client-to-server ingress path: traffic wrapped by PingClient's upstream payload must reach PingServer's downstream payload, where it is restored toward the plain packet side.
+Direct `PingClient -> PingServer` adjacency is the canonical pair. PingClient wraps
+the upstream request and PingServer restores it in its upstream callback before
+continuing to the next node. On the return path, PingServer wraps the downstream
+response and PingClient restores it in its downstream callback.
+
+Typical deployment order is:
+
+```text
+TunDevice -> PingClient -> RawSocket
+RawSocket -> PingServer -> TunDevice
+```
+
+## Compatibility And Migration
+
+This direction change is intentionally breaking for old PingServer topologies.
+The client order above is unchanged, but an existing
+`TunDevice -> PingServer -> RawSocket` server chain must become
+`RawSocket -> PingServer -> TunDevice`. Replace paired-Bridge Ping layouts with
+direct `PingClient -> PingServer` adjacency. The PingClient implementation,
+settings, and wire format are unchanged, so an older PingClient remains
+wire-compatible with the new PingServer when their settings match. The strict
+requirement is to deploy the new PingServer binary together with the new server
+topology; an old PingServer needs the old server topology. Upgrading both peers
+together can still simplify operations, but it is not required by the protocol.
+MTU requirements remain strategy-dependent.
 
 ## What It Does
 

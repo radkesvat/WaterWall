@@ -1,5 +1,5 @@
 <!--
-Documentation version: 112
+Documentation version: 113
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx, and both files must keep the same documentation version.
 -->
 
@@ -28,12 +28,16 @@ This node is a layer-3 adapter rather than a connection-oriented tunnel.
 
 Payload reaching `RawSocket` from upstream or downstream is treated as an IP packet and injected through the raw device.
 
-With PingClient/PingServer packet disguise, put the raw transport edge on PingServer's next side so wrapped peer traffic reaches PingServer through downstream callbacks:
+With PingClient/PingServer packet disguise, use these edge orders:
 
 ```text
 TunDevice -> PingClient -> RawSocket
-TunDevice -> PingServer -> RawSocket
+RawSocket -> PingServer -> TunDevice
 ```
+
+In first position, RawSocket forwards captured wrapped packets upstream into
+PingServer. PingServer restores them toward TunDevice; plain packets captured by
+TunDevice return downstream through PingServer for wrapping and raw injection.
 
 ## Configuration Example
 

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TesterServer.mdx, and both files must keep the same documentation version.
 -->
 
@@ -93,11 +93,13 @@ these sizes:
 `TesterServer` belongs at the end of a synthetic validation chain, for example:
 
 - `TesterClient -> EncryptionClient -> EncryptionServer -> TesterServer`
-- `TesterClient(packet-mode=true) -> PingClient -> Bridge`, paired with
-  `TesterServer(packet-mode=true) -> PingServer -> Bridge`
+- `TesterClient(packet-mode=true) -> PingClient -> PingServer -> TesterServer(packet-mode=true)`
 
-`TesterServer` is normally the chain end. In `packet-mode`, it can also sit before another packet tunnel and receive
-request packets through downstream callbacks, which is useful with `Bridge` pairs that intentionally invert direction.
+`TesterServer` is normally the chain end. In the direct Ping chain, it receives
+requests upstream and returns responses downstream after the normal packet-line
+`Init`/`Est` handshake. In `packet-mode`, it can also sit before another packet
+tunnel and receive request packets through downstream callbacks for other
+topologies.
 
 ## Configuration Example
 
