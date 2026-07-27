@@ -887,7 +887,6 @@ bool tundeviceBringUp(tun_device_t *tdev)
         atomicThreadFence(memory_order_release);
         atomicStoreExplicit(&tdev->up, false, memory_order_release);
         tundeviceCloseLifetimeGates(tdev);
-        deviceWriterChannelDrain(&tdev->writer_channel);
         if (reader_started)
         {
             ssize_t write_res = write(tdev->linux_pipe_fds[1], "x", 1);
@@ -924,8 +923,6 @@ bool tundeviceBringDown(tun_device_t *tdev)
     atomicStoreRelaxed(&(tdev->running), false);
     atomicStoreExplicit(&tdev->up, false, memory_order_release);
     tundeviceCloseLifetimeGates(tdev);
-
-    deviceWriterChannelDrain(&tdev->writer_channel);
 
     bool bring_down_ok = true;
     if (! tunSetStateByName(tdev->name, false))
@@ -1067,7 +1064,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
                                          .reader_buffer_pool  = reader_bpool,
                                          .writer_buffer_pool  = writer_bpool,
                                          .mtu                 = mtu};
-    deviceWriterChannelInit(&tdev->writer_channel, writer_bpool);
+    deviceWriterChannelInit(&tdev->writer_channel);
     tdev->reader_session =
         deviceReaderSessionCreate(RAM_PROFILE * 2, kMaxReadDistributeQueueSize, tdev, tunDeliverPacket, reader_bpool);
 

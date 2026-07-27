@@ -2,12 +2,11 @@
 
 #include "wchan.h"
 
-void deviceWriterChannelInit(device_writer_channel_t *writer_channel, buffer_pool_t *buffer_pool)
+void deviceWriterChannelInit(device_writer_channel_t *writer_channel)
 {
     *writer_channel = (device_writer_channel_t) {
-        .channel     = NULL,
-        .buffer_pool = buffer_pool,
-        .closed      = false,
+        .channel = NULL,
+        .closed  = false,
     };
     deviceLifetimeGateInit(&writer_channel->gate);
 }
@@ -85,7 +84,9 @@ void deviceWriterChannelDrain(device_writer_channel_t *writer_channel)
     sbuf_t *buf;
     while (chanRecv(writer_channel->channel, &buf))
     {
-        bufferpoolReuseBuffer(writer_channel->buffer_pool, buf);
+        // Not bufferpoolReuseBuffer(): the writer pool belongs to the writer
+        // thread, and this runs on the lifetime owner's.
+        sbufDestroy(buf);
     }
 }
 

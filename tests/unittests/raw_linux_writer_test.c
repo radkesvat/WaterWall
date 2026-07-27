@@ -132,7 +132,7 @@ static void testRawBringDownQuiescesConcurrentWriters(test_env_t *env)
     rdev.writer_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
     rdev.routine_writer     = testWriterRoutine;
     rdev.userdata           = &consumer;
-    deviceWriterChannelInit(&rdev.writer_channel, rdev.writer_buffer_pool);
+    deviceWriterChannelInit(&rdev.writer_channel);
 
     require(rawdeviceBringUp(&rdev), "production rawdeviceBringUp failed");
 

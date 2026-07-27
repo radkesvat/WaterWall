@@ -388,7 +388,7 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
                             .mark               = mark,
                             .userdata           = userdata,
                             .writer_buffer_pool = writer_bpool};
-    deviceWriterChannelInit(&rdev->writer_channel, writer_bpool);
+    deviceWriterChannelInit(&rdev->writer_channel);
 
     return rdev;
 }

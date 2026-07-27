@@ -54,7 +54,7 @@ static void envTeardown(test_env_t *env)
 static void testAllSendResultsAndIdempotentClose(test_env_t *env)
 {
     device_writer_channel_t writer_channel;
-    deviceWriterChannelInit(&writer_channel, env->buffer_pool);
+    deviceWriterChannelInit(&writer_channel);
 
     sbuf_t *down_buf = bufferpoolGetSmallBuffer(env->buffer_pool);
     require(deviceWriterChannelTrySend(&writer_channel, down_buf) == kDeviceWriterSendDown,
@@ -121,7 +121,7 @@ static void testConcurrentSendersQuiesceBeforeFree(test_env_t *env)
     };
 
     device_writer_channel_t writer_channel;
-    deviceWriterChannelInit(&writer_channel, env->buffer_pool);
+    deviceWriterChannelInit(&writer_channel);
     require(deviceWriterChannelOpen(&writer_channel, 64), "failed to open the concurrent writer channel");
 
     sbuf_t *buffers[kSenderBuffers];

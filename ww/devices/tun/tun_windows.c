@@ -1432,7 +1432,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         .oversized_read_discard = {0},
     };
 
-    deviceWriterChannelInit(&tdev->writer_channel, writer_bpool);
+    deviceWriterChannelInit(&tdev->writer_channel);
     tdev->reader_session =
         deviceReaderSessionCreate(RAM_PROFILE * 2, kMaxReadDistributeQueueSize, tdev, tunDeliverPacket, reader_bpool);
 

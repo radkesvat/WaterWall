@@ -600,6 +600,56 @@ static void testWriterGateQuiescesConcurrentSenders(void)
     tundeviceDestroy(tdev);
 }
 
+typedef struct pool_claim_probe_s
+{
+    buffer_pool_t *pool;
+    sbuf_t        *buf;
+} pool_claim_probe_t;
+
+// Stands in for the production writer thread, which claims writer_buffer_pool
+// the first time it recycles a packet it has written to the device.
+static void *writerPoolClaimRoutine(void *userdata)
+{
+    pool_claim_probe_t *probe = userdata;
+    bufferpoolReuseBuffer(probe->pool, probe->buf);
+    return NULL;
+}
+
+static void testBringDownReleasesQueuedWritesOffTheWriterThread(void)
+{
+    enum
+    {
+        kQueuedWrites = 4
+    };
+
+    resetFakeThreads(0);
+    tun_device_t *tdev = createRunningDevice();
+
+    // Bind writer_buffer_pool to a thread that is not the one running teardown,
+    // exactly as the real writer thread does on its first recycled packet.
+    pool_claim_probe_t probe = {.pool = tunLinuxWriterBufferPool(tdev),
+                                .buf  = bufferpoolGetSmallBuffer(getWorkerBufferPool(0))};
+    pthread_t          claimer;
+    require(__real_pthread_create(&claimer, NULL, writerPoolClaimRoutine, &probe) == 0,
+            "failed to start the writer-pool claim thread");
+    require(__real_pthread_join(claimer, NULL) == 0, "failed to join the writer-pool claim thread");
+
+    // Leave packets in the ring, as workers do when a device stops under load.
+    for (unsigned int i = 0; i < kQueuedWrites; i++)
+    {
+        sbuf_t *buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
+        sbufSetLength(buf, 64);
+        require(tundeviceWrite(tdev, buf), "queuing a write before bring-down failed");
+    }
+
+    // Pre-fix this drained on the owner's thread into the writer thread's pool,
+    // which aborts the process on the buffer-pool thread check.
+    require(tundeviceBringDown(tdev), "bring-down with a non-empty writer channel failed");
+    require(! tundeviceIsUp(tdev), "device stayed up after bring-down");
+
+    tundeviceDestroy(tdev);
+}
+
 int main(void)
 {
     test_env_t env;
@@ -609,6 +659,7 @@ int main(void)
     testBringUpRollsBackThreadCreationFailures();
     testUnexpectedThreadExitTakesTheDeviceDown();
     testWriterGateQuiescesConcurrentSenders();
+    testBringDownReleasesQueuedWritesOffTheWriterThread();
     envTeardown(&env);
     puts("Linux TUN message lifetime tests passed");
     return 0;
