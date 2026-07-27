@@ -8,12 +8,12 @@
 // c11
 #include <stdatomic.h>
 
-#elif defined(OS_WIN)
+typedef int w_atomic_int_value_t;
 
+#elif defined(OS_WIN)
 
 #include <stddef.h>
 #include <stdint.h>
-
 
 #define ATOMIC_FLAG_INIT 0
 
@@ -41,6 +41,7 @@ typedef intptr_t atomic_uchar;
 typedef intptr_t atomic_short;
 typedef intptr_t atomic_ushort;
 typedef intptr_t atomic_int;
+typedef intptr_t w_atomic_int_value_t;
 typedef intptr_t atomic_uint;
 typedef intptr_t atomic_long;
 typedef intptr_t atomic_ulong;
@@ -174,11 +175,11 @@ static inline int atomic_compare_exchange_strong(intptr_t *object, intptr_t *exp
 #define atomicFlagTestAndSet atomic_flag_test_and_set
 #define atomicFlagClear      atomic_flag_clear
 
-#define atomicThreadFence(x) atomic_thread_fence(x)
-#define atomicLoadRelaxed(x) atomic_load_explicit((x), memory_order_relaxed)
-#define atomicStoreRelaxed(x,y) atomic_store_explicit((x),(y), memory_order_relaxed)
-#define atomicIncRelaxed(x) atomicIncExplicit((x), memory_order_relaxed)
-#define atomicDecRelaxed(x) atomicDecExplicit((x), memory_order_relaxed)
-#define atomicExchangeExplicit(x,y,z) atomic_exchange_explicit(x,y,z) 
+#define atomicThreadFence(x)            atomic_thread_fence(x)
+#define atomicLoadRelaxed(x)            atomic_load_explicit((x), memory_order_relaxed)
+#define atomicStoreRelaxed(x, y)        atomic_store_explicit((x), (y), memory_order_relaxed)
+#define atomicIncRelaxed(x)             atomicIncExplicit((x), memory_order_relaxed)
+#define atomicDecRelaxed(x)             atomicDecExplicit((x), memory_order_relaxed)
+#define atomicExchangeExplicit(x, y, z) atomic_exchange_explicit(x, y, z)
 
 #endif // WW_ATOMIC_H_

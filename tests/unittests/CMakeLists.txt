@@ -61,6 +61,17 @@ if(TARGET ww)
     "unit;net;tun;windows;lifetime"
   )
 
+  add_executable(tun_lifecycle_test tun_lifecycle_test.c)
+  target_include_directories(tun_lifecycle_test PRIVATE ${CMAKE_SOURCE_DIR}/ww)
+  target_link_libraries(tun_lifecycle_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests tun_lifecycle_test)
+
+  add_waterwall_unit_test(
+    waterwall.tun_lifecycle_unit
+    tun_lifecycle_test
+    "unit;net;tun;lifecycle"
+  )
+
   add_executable(device_lifetime_test device_lifetime_test.c)
   target_include_directories(device_lifetime_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices)
   target_link_libraries(device_lifetime_test PRIVATE ww)

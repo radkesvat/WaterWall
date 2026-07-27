@@ -3,6 +3,7 @@
 #include "tun_windows_receive_policy.h"
 
 #include "buffer_pool.h"
+#include "devices/tun/tun_lifecycle.h"
 #include "global_state.h"
 #include "managers/signal_manager.h"
 #include "master_pool.h"
@@ -63,7 +64,7 @@ struct tun_device_s
     tun_oversized_read_discard_stats_t oversized_read_discard;
 
     atomic_bool running;
-    atomic_bool up;
+    atomic_int  lifecycle;
 
     // Set by the thread wrappers when a routine returns while `running` is still
     // set -- nobody asked it to stop, so the device hit a real error such as a
@@ -102,7 +103,7 @@ static inline uint16_t tunDeviceMtu(const tun_device_t *tdev)
 
 bool tundeviceIsUp(const tun_device_t *tdev)
 {
-    return tdev != NULL && atomicLoadExplicit(&tdev->up, memory_order_acquire);
+    return tdev != NULL && atomicLoadExplicit(&tdev->lifecycle, memory_order_acquire) == kTunLifecycleUp;
 }
 
 static bool tunWindowsSetMtu(tun_device_t *tdev)
@@ -761,8 +762,8 @@ static void tundeviceBeginSessionShutdown(void *context)
 {
     tun_device_t *tdev = context;
 
+    tunLifecycleTransitionToStopping(&tdev->lifecycle);
     atomicStoreRelaxed(&(tdev->running), false);
-    atomicStoreExplicit(&tdev->up, false, memory_order_release);
     MemoryBarrier();
 
     tundeviceCloseLifetimeGates(tdev);
@@ -844,18 +845,15 @@ static bool tundeviceShutdownSession(tun_device_t *tdev)
 // loop as well and the device fails as a unit rather than half-working.
 static void tundeviceNoteUnexpectedThreadExit(tun_device_t *tdev, atomic_bool *failed_flag, const char *which)
 {
-    if (! atomicLoadExplicit(&tdev->running, memory_order_acquire))
+    if (tunLifecycleTransitionToFailed(&tdev->lifecycle))
     {
-        return; // Orderly stop requested by bring-down.
+        atomicStoreExplicit(failed_flag, true, memory_order_release);
+        atomicStoreExplicit(&tdev->running, false, memory_order_release);
+
+        LOGE("TunDevice: %s thread for device %s exited unexpectedly; the device is no longer usable",
+             which,
+             tdev->name);
     }
-
-    atomicStoreExplicit(failed_flag, true, memory_order_release);
-    atomicStoreExplicit(&tdev->up, false, memory_order_release);
-    atomicStoreExplicit(&tdev->running, false, memory_order_release);
-
-    LOGE("TunDevice: %s thread for device %s exited unexpectedly; the device is no longer usable",
-         which,
-         tdev->name);
 }
 
 static WTHREAD_ROUTINE(tundeviceReaderThreadMain) // NOLINT
@@ -876,15 +874,15 @@ static WTHREAD_ROUTINE(tundeviceWriterThreadMain) // NOLINT
 
 bool tundeviceBringUp(tun_device_t *tdev)
 {
-    if (tundeviceIsUp(tdev))
-    {
-        LOGE("TunDevice: Device is already up");
-        return false;
-    }
     if (tdev->session_handle != NULL || tdev->writer_channel.channel != NULL || tdev->read_thread != NULL ||
         tdev->write_thread != NULL)
     {
         LOGE("TunDevice: Device shutdown is incomplete");
+        return false;
+    }
+    if (! tunLifecycleTransitionDownToStarting(&tdev->lifecycle))
+    {
+        LOGE("TunDevice: device cannot be started in current lifecycle state");
         return false;
     }
 
@@ -899,18 +897,21 @@ bool tundeviceBringUp(tun_device_t *tdev)
     if (! tunWindowsSetMtu(tdev))
     {
         LOGE("TunDevice: error setting MTU size");
+        tunLifecycleTransitionStoppingToDown(&tdev->lifecycle);
         return false;
     }
 
     if (! ResetEvent(tdev->stop_event))
     {
         LOGE("TunDevice: failed to reset stop event, code: %lu", GetLastError());
+        tunLifecycleTransitionStoppingToDown(&tdev->lifecycle);
         return false;
     }
 
     if (! deviceWriterChannelOpen(&tdev->writer_channel, kTunWriteChannelQueueMax))
     {
         LOGE("TunDevice: failed to open writer channel");
+        tunLifecycleTransitionStoppingToDown(&tdev->lifecycle);
         return false;
     }
     deviceReaderSessionBegin(tdev->reader_session);
@@ -924,6 +925,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
         LOGE("TunDevice: Failed to start session, code: %lu", lastError);
         tundeviceCloseLifetimeGates(tdev);
         deviceWriterChannelFree(&tdev->writer_channel);
+        tunLifecycleTransitionStoppingToDown(&tdev->lifecycle);
         return false;
     }
 
@@ -940,33 +942,39 @@ bool tundeviceBringUp(tun_device_t *tdev)
     if (error != kWThreadErrorNone)
     {
         LOGE("TunDevice: failed to create reader thread, code: %u", error);
-        if (! tundeviceShutdownSession(tdev))
-        {
-            LOGF("TunDevice: cannot safely roll back failed reader-thread startup");
-            terminateProgram(1);
-        }
-        return false;
+        goto rollback;
+    }
+
+    if (tunLifecycleLoad(&tdev->lifecycle) == kTunLifecycleFailed)
+    {
+        goto rollback;
     }
 
     error = threadCreate(&tdev->write_thread, tundeviceWriterThreadMain, tdev);
     if (error != kWThreadErrorNone)
     {
         LOGE("TunDevice: failed to create writer thread, code: %u", error);
-        if (! tundeviceShutdownSession(tdev))
-        {
-            LOGF("TunDevice: cannot safely roll back failed writer-thread startup");
-            terminateProgram(1);
-        }
-        return false;
+        goto rollback;
     }
 
-    /*
-     * Publish readiness only after both I/O threads exist. The reader may drop
-     * packets during this startup window, matching Linux/Darwin and preventing
-     * writes from targeting a partially initialized session.
-     */
-    atomicStoreExplicit(&tdev->up, true, memory_order_release);
+    if (! tunLifecycleTransitionStartingToUp(&tdev->lifecycle))
+    {
+        LOGE("TunDevice: an I/O thread failed during startup");
+        goto rollback;
+    }
+
     return true;
+
+rollback:
+    if (tundeviceShutdownSession(tdev))
+    {
+        tunLifecycleTransitionStoppingToDown(&tdev->lifecycle);
+    }
+    else
+    {
+        LOGE("TunDevice: thread-startup rollback is incomplete; retained resources require a shutdown retry");
+    }
+    return false;
 }
 
 bool tundeviceBringDown(tun_device_t *tdev)
@@ -978,7 +986,12 @@ bool tundeviceBringDown(tun_device_t *tdev)
         return true;
     }
 
-    return tundeviceShutdownSession(tdev);
+    bool res = tundeviceShutdownSession(tdev);
+    if (res)
+    {
+        tunLifecycleTransitionStoppingToDown(&tdev->lifecycle);
+    }
+    return res;
 }
 
 bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
@@ -1415,7 +1428,6 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
     *tdev = (tun_device_t) {
         .name                   = stringDuplicate(name),
         .running                = false,
-        .up                     = false,
         .routine_reader         = routineReadFromTun,
         .routine_writer         = routineWriteToTun,
         .read_event_callback    = cb,
@@ -1431,6 +1443,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         .mtu                    = mtu,
         .oversized_read_discard = {0},
     };
+    atomic_init(&tdev->lifecycle, kTunLifecycleDown);
 
     deviceWriterChannelInit(&tdev->writer_channel);
     tdev->reader_session =
@@ -1488,8 +1501,8 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
 void tundeviceDestroy(tun_device_t *tdev)
 {
 
-    if (tundeviceIsUp(tdev) || tdev->session_handle != NULL || tdev->writer_channel.channel != NULL ||
-        tdev->read_thread != NULL || tdev->write_thread != NULL)
+    if (tunLifecycleLoad(&tdev->lifecycle) != kTunLifecycleDown || tdev->session_handle != NULL ||
+        tdev->writer_channel.channel != NULL || tdev->read_thread != NULL || tdev->write_thread != NULL)
     {
         if (! tundeviceBringDown(tdev))
         {

@@ -47,14 +47,17 @@ typedef struct test_env_s
     wloop_t       *loops[1];
 } test_env_t;
 
-static captured_message_t       captured_messages[kMaxCapturedMessages];
-static unsigned int             captured_message_count;
-static unsigned int             callback_count;
-static unsigned int             next_fake_thread = 1;
-static unsigned int             fake_thread_create_calls;
-static unsigned int             fake_thread_join_calls;
-static unsigned int             fail_fake_thread_create_on_call;
-static void                  *(*captured_first_thread_routine)(void *);
+static captured_message_t captured_messages[kMaxCapturedMessages];
+static unsigned int       captured_message_count;
+static unsigned int       callback_count;
+static unsigned int       next_fake_thread = 1;
+static unsigned int       fake_thread_create_calls;
+static unsigned int       fake_thread_join_calls;
+static unsigned int       fail_fake_thread_create_on_call;
+static unsigned int       run_fake_thread_on_create_call;
+static unsigned int       fail_interface_down_calls;
+static unsigned int       interface_down_attempts;
+static void *(*captured_first_thread_routine)(void *);
 static void                    *captured_first_thread_arg;
 static sbuf_t                  *expected_reused_buffer;
 static buffer_pool_t           *expected_reuse_pool;
@@ -144,6 +147,20 @@ int __wrap_ioctl(int fd, unsigned long request, ...)
         struct ifreq *ifr = argument;
         ifr->ifr_flags    = 0;
     }
+    else if (request == SIOCSIFFLAGS)
+    {
+        struct ifreq *ifr = argument;
+        if ((ifr->ifr_flags & IFF_UP) == 0)
+        {
+            interface_down_attempts++;
+            if (fail_interface_down_calls > 0)
+            {
+                fail_interface_down_calls--;
+                errno = EIO;
+                return -1;
+            }
+        }
+    }
     return 0;
 }
 
@@ -177,12 +194,16 @@ int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(
     }
     // Record the thread body so a test can run it inline and observe what the
     // device does when a routine returns on its own. Nothing is spawned here.
+    *thread = (pthread_t) next_fake_thread++;
     if (fake_thread_create_calls == 1)
     {
         captured_first_thread_routine = routine;
         captured_first_thread_arg     = arg;
     }
-    *thread = (pthread_t) next_fake_thread++;
+    if (fake_thread_create_calls == run_fake_thread_on_create_call)
+    {
+        discard routine(arg);
+    }
     return 0;
 }
 
@@ -308,6 +329,7 @@ static void resetFakeThreads(unsigned int fail_on_call)
     fake_thread_create_calls        = 0;
     fake_thread_join_calls          = 0;
     fail_fake_thread_create_on_call = fail_on_call;
+    run_fake_thread_on_create_call  = 0;
     captured_first_thread_routine   = NULL;
     captured_first_thread_arg       = NULL;
 }
@@ -458,13 +480,61 @@ static void testBringUpRollsBackThreadCreationFailures(void)
     }
 }
 
-// The reader stub stands in for a routine that hit a real device error -- a poll
-// failure, EOF, an unexpected revents -- and returned while `running` was still
-// set. Every one of those paths simply returns; none of them used to tell anyone.
-static WTHREAD_ROUTINE(failingReaderRoutine) // NOLINT
+// This stub stands in for an I/O routine that hit a real device error and
+// returned while `running` was still set.
+static WTHREAD_ROUTINE(failingIoRoutine) // NOLINT
 {
     discard userdata;
     return 0;
+}
+
+static void testThreadExitDuringStartupRollsBack(unsigned int exit_on_create_call)
+{
+    resetFakeThreads(0);
+    run_fake_thread_on_create_call = exit_on_create_call;
+
+    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback);
+    require(tdev != NULL, "startup-exit device create failed");
+
+    if (exit_on_create_call == 1)
+    {
+        tunLinuxSetReaderRoutine(tdev, failingIoRoutine);
+    }
+    else
+    {
+        require(exit_on_create_call == 2, "invalid startup-exit injection point");
+        tunLinuxSetWriterRoutine(tdev, failingIoRoutine);
+    }
+
+    device_reader_session_t *session           = tunLinuxReaderSession(tdev);
+    uint32_t                 failed_generation = deviceReaderSessionGeneration(session) + 1;
+
+    require(! tundeviceBringUp(tdev), "bring-up survived an I/O thread exiting during startup");
+    require(fake_thread_create_calls == exit_on_create_call, "startup rollback created an unexpected thread");
+    require(fake_thread_join_calls == exit_on_create_call, "startup rollback did not join every created thread");
+    require(! tundeviceIsUp(tdev), "startup rollback left the device advertised as up");
+    require(tunLinuxLifecycleState(tdev) == kTunLifecycleDown, "startup rollback did not publish final DOWN");
+    require(! deviceLifetimeGateIsActive(&session->delivery_gate), "startup rollback left the delivery gate open");
+    require(atomicLoadExplicit(&session->refcount, memory_order_acquire) == 1,
+            "startup rollback leaked a reader-session reference");
+    require(deviceReaderSessionGeneration(session) == failed_generation,
+            "startup rollback did not stamp exactly one reader generation");
+
+    sbuf_t *buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
+    sbufSetLength(buf, 64);
+    require(! tundeviceWrite(tdev, buf), "startup rollback left the writer gate open");
+    bufferpoolReuseBuffer(getWorkerBufferPool(0), buf);
+
+    resetFakeThreads(0);
+    require(tundeviceBringUp(tdev), "device could not restart after an I/O thread startup exit");
+    require(tundeviceBringDown(tdev), "restart after an I/O thread startup exit did not shut down");
+    tundeviceDestroy(tdev);
+}
+
+static void testThreadExitsDuringStartupAreNotPublishedAsUp(void)
+{
+    testThreadExitDuringStartupRollsBack(1);
+    testThreadExitDuringStartupRollsBack(2);
 }
 
 // Regression: a reader/writer routine that dies on a device error left `up` set,
@@ -478,7 +548,7 @@ static void testUnexpectedThreadExitTakesTheDeviceDown(void)
     require(tdev != NULL, "unexpected-exit device create failed");
 
     // Return immediately from the reader body instead of running the real loop.
-    tunLinuxSetReaderRoutine(tdev, failingReaderRoutine);
+    tunLinuxSetReaderRoutine(tdev, failingIoRoutine);
     require(tundeviceBringUp(tdev), "unexpected-exit device bring-up failed");
     require(tundeviceIsUp(tdev), "bring-up did not publish the device as up");
     require(captured_first_thread_routine != NULL, "the reader thread body was not captured");
@@ -496,6 +566,28 @@ static void testUnexpectedThreadExitTakesTheDeviceDown(void)
     require(fake_thread_join_calls == joins_before + 2, "bring-down after a thread failure skipped its joins");
     require(tundeviceBringDown(tdev), "a second bring-down must stay a successful no-op");
     require(fake_thread_join_calls == joins_before + 2, "the no-op bring-down joined an already-joined thread");
+
+    tundeviceDestroy(tdev);
+}
+
+static void testInterfaceDownFailureRemainsRetryable(void)
+{
+    resetFakeThreads(0);
+    tun_device_t *tdev = createRunningReaderDevice();
+
+    fail_interface_down_calls = 1;
+    interface_down_attempts   = 0;
+
+    require(! tundeviceBringDown(tdev), "interface-down failure reported successful cleanup");
+    require(tunLinuxLifecycleState(tdev) == kTunLifecycleStopping, "interface-down failure did not retain STOPPING");
+    require(fake_thread_join_calls == 2, "interface-down failure skipped owned thread joins");
+    require(interface_down_attempts == 1, "interface-down failure did not attempt interface cleanup");
+    require(! tundeviceBringUp(tdev), "bring-up was accepted while interface cleanup remained incomplete");
+
+    require(tundeviceBringDown(tdev), "interface-down cleanup retry failed");
+    require(tunLinuxLifecycleState(tdev) == kTunLifecycleDown, "successful interface-down retry did not publish DOWN");
+    require(interface_down_attempts == 2, "cleanup retry did not retry the interface-down operation");
+    require(fake_thread_join_calls == 2, "cleanup retry rejoined already released threads");
 
     tundeviceDestroy(tdev);
 }
@@ -657,7 +749,9 @@ int main(void)
     testQueuedCleanupOutlivesDevice();
     testClosedAndStaleDeliveriesDoNotTouchDevice();
     testBringUpRollsBackThreadCreationFailures();
+    testThreadExitsDuringStartupAreNotPublishedAsUp();
     testUnexpectedThreadExitTakesTheDeviceDown();
+    testInterfaceDownFailureRemainsRetryable();
     testWriterGateQuiescesConcurrentSenders();
     testBringDownReleasesQueuedWritesOffTheWriterThread();
     envTeardown(&env);
