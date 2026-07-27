@@ -790,8 +790,12 @@ static void testStaleTokenDoesNotKillTheNextReader(test_env_t *env)
     require(caputredeviceBringDown(&cdev), "the first bring-down must succeed");
     waitForReaderExits(&probe, 1);
 
-    require(atomicLoadExplicit(&probe.pipe_events, memory_order_relaxed) == 1,
-            "the first reader did not observe the deliberate stop event");
+    // Whether the reader observed the token is a race, not an invariant: stop
+    // clears `running` before writing the token, so a reader that has published
+    // readiness but not yet re-checked `running` leaves without polling. Either
+    // way the token went unconsumed, which is the case this test is about.
+    const int events_after_first = atomicLoadExplicit(&probe.pipe_events, memory_order_relaxed);
+    require(events_after_first <= 1, "the first reader observed more stop events than were written");
     require(! pipeHasReadableData(&cdev), "bring-down left an unread wake token in the stop pipe");
 
     // Same device object, second cycle: this reader must stay alive.
@@ -800,15 +804,15 @@ static void testStaleTokenDoesNotKillTheNextReader(test_env_t *env)
 
     // Well past several poll intervals: a stale token would have ended it here.
     usleep(120000);
-    require(atomicLoadExplicit(&probe.pipe_events, memory_order_relaxed) == 1,
+    require(atomicLoadExplicit(&probe.pipe_events, memory_order_relaxed) == events_after_first,
             "the second reader saw a stale stop-pipe event");
     require(atomicLoadExplicit(&probe.exited, memory_order_relaxed) == 1,
             "the second reader exited before the test brought the device down");
 
     require(caputredeviceBringDown(&cdev), "the second bring-down must succeed");
     waitForReaderExits(&probe, 2);
-    require(atomicLoadExplicit(&probe.pipe_events, memory_order_relaxed) == 2,
-            "the second reader did not observe exactly one deliberate stop event");
+    require(atomicLoadExplicit(&probe.pipe_events, memory_order_relaxed) <= events_after_first + 1,
+            "the second reader observed more stop events than were written");
     require(! pipeHasReadableData(&cdev), "the second bring-down left a token in the stop pipe");
     require(! cdev.up, "the device is still marked up after bring-down");
 
