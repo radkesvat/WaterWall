@@ -387,3 +387,4 @@ The full Developer Guide (source-grounded, with code excerpts and worked example
 4. [Part 4 — Packet Lines & Packet Tunnels](WaterWall-Docs/docs/05-devguides/part4-packet-tunnels.mdx)
 5. [Part 5 — Anatomy of a Tunnel & Workflow](WaterWall-Docs/docs/05-devguides/part5-tunnel-anatomy.mdx)
 6. [Part 6 — Building, Testing & Reviewing](WaterWall-Docs/docs/05-devguides/part6-build-test-review.mdx)
+7. [Part 7 — Shutdown & Signals](WaterWall-Docs/docs/05-devguides/part7-shutdown-and-signals.mdx)
