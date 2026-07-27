@@ -1443,6 +1443,71 @@ static void capturedeviceDeactivate(capture_device_t *cdev)
     deviceReaderSessionEnd(cdev->reader_session);
 }
 
+// Return every packet the kernel still holds for this queue to the host stack.
+//
+// Removing the last iptables rule stops new packets from being enqueued, but
+// anything the kernel queued just before that is still waiting for a verdict.
+// The reader cannot be relied on to have taken it: its drain is bounded per
+// wakeup, and the stop pipe is handled before the queue socket, so it can exit
+// with the socket still readable. On the successful-cleanup path the queue
+// socket is then left open, so those packets would sit unverdicted until the
+// device is destroyed or brought back up.
+//
+// Called only after the reader thread has been joined, so this owner has
+// exclusive use of the descriptor and no synchronization is needed.
+// `capture_active` is already false by then, so netfilterGetPacket() issues
+// NF_ACCEPT for each packet on its own.
+static void capturedeviceDrainResidualQueue(capture_device_t *cdev, int socket_fd)
+{
+    // A standalone buffer rather than one from cdev->reader_buffer_pool: that
+    // pool is bound to the reader thread on first use, and this runs on the
+    // lifecycle owner's thread. Nothing here is dispatched, so one buffer is
+    // reused for the whole drain and released on the way out.
+    sbuf_t *buf = sbufCreate(kNetfilterReadBufferSize);
+    if (buf == NULL)
+    {
+        LOGE("CaptureDevice: could not allocate a drain buffer for residual queue %u packets", cdev->queue_number);
+        return;
+    }
+
+    // The kernel cannot hold more than the queue length configured at bring-up,
+    // so that is the natural bound. It only guards a queue that keeps producing;
+    // an ordinary bring-down reaches EAGAIN after a handful of packets.
+    for (uint32_t drained = 0; drained < (uint32_t) kNetfilterQueueLen; ++drained)
+    {
+        sbufReset(buf);
+        buf = sbufReserveSpace(buf, kNetfilterReadBufferSize);
+
+        const netfilter_packet_result_t packet_result =
+            netfilterGetPacket(cdev, socket_fd, cdev->queue_number, buf);
+
+        // The drain never dispatches: the reader session is already ended, and a
+        // verdict was sent for every result except WouldBlock/Eof/Error.
+        if (packet_result == kNetfilterPacketWouldBlock || packet_result == kNetfilterPacketEof)
+        {
+            // The queue is empty: every packet it still held has been verdicted.
+            sbufDestroy(buf);
+            return;
+        }
+
+        if (packet_result == kNetfilterPacketError)
+        {
+            // The rules are gone and the reader is stopped, so nothing can
+            // recover the remainder. Report it instead of spinning on the error.
+            LOGW("CaptureDevice: stopped draining residual packets from queue %u: %s",
+                 cdev->queue_number,
+                 strerror(errno));
+            sbufDestroy(buf);
+            return;
+        }
+    }
+
+    sbufDestroy(buf);
+    LOGW("CaptureDevice: residual drain of queue %u stopped at its %d-packet bound",
+         cdev->queue_number,
+         kNetfilterQueueLen);
+}
+
 static bool capturedeviceStopReader(capture_device_t *cdev)
 {
     const bool was_running = atomicExchangeExplicit(&cdev->running, false, memory_order_acq_rel);
@@ -1470,6 +1535,9 @@ static bool capturedeviceStopReader(capture_device_t *cdev)
             pthread_mutex_lock(&cdev->reader_state_mutex);
             cdev->reader_thread_joinable = false;
             cdev->reader_ready           = false;
+            // Captured before the pending-close branch below can clear it, so the
+            // drain runs on both paths: the queue socket is still open either way.
+            const int drain_fd = cdev->socket;
             // Defensive fallback: every lifecycle-created reader runs through
             // the wrapper above, but after join it is safe for this owner to
             // finish any still-pending close without risking descriptor reuse.
@@ -1481,6 +1549,14 @@ static bool capturedeviceStopReader(capture_device_t *cdev)
                 cdev->close_queue_on_reader_exit = false;
             }
             pthread_mutex_unlock(&cdev->reader_state_mutex);
+
+            // Must precede the close below: closing the queue socket makes the
+            // kernel drop whatever is still enqueued.
+            if (drain_fd >= 0)
+            {
+                capturedeviceDrainResidualQueue(cdev, drain_fd);
+            }
+
             if (socket_fd >= 0 && close(socket_fd) != 0)
             {
                 LOGE("CaptureDevice: failed to close NFQUEUE socket after joining queue %u reader: %s",

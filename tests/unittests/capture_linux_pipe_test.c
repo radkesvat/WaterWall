@@ -927,6 +927,50 @@ static void testPacketDuringInsertionIsAcceptedWithoutDispatch(test_env_t *env)
     deviceTeardown(&cdev);
 }
 
+// Regression: removing the last iptables rule stops new packets from being
+// enqueued, but anything the kernel queued just before that is still awaiting a
+// verdict. The reader cannot be relied on to have taken it -- its drain is
+// bounded per wakeup and the stop pipe is handled before the queue socket -- and
+// on the successful-cleanup path the queue socket is left open, so those packets
+// used to sit unverdicted until the device was destroyed or brought back up.
+//
+// probeReader never reads the queue socket, so the injected packet is guaranteed
+// to still be pending when the reader is stopped. BringDown must return only
+// after it has been accepted back to the host stack.
+static void testPendingQueuePacketIsAcceptedDuringBringDown(test_env_t *env)
+{
+    commandScriptReset();
+    scriptSuccessfulInsertions();
+    scriptSuccessfulDeletions();
+
+    capture_device_t cdev;
+    reader_probe_t   probe;
+    deviceSetup(&cdev, env, &probe);
+    int queue_pair[2];
+    attachQueueSocket(&cdev, queue_pair);
+    cdev.read_event_callback = injectedCaptureCallback;
+
+    require(caputredeviceBringUp(&cdev), "bring-up before the pending-packet drain failed");
+
+    // Queue a packet the reader will never consume. The wake byte is what
+    // __wrap_recvmsg consumes when it hands the injected packet over.
+    injected_packet_peer_fd = queue_pair[1];
+    atomicStoreExplicit(&injected_recv_pending, true, memory_order_release);
+    require(send(queue_pair[1], "p", 1, 0) == 1, "failed to queue the pending NFQUEUE packet");
+
+    require(caputredeviceBringDown(&cdev), "bring-down with a pending queue packet failed");
+
+    require(atomicLoadExplicit(&injected_verdict_seen, memory_order_acquire),
+            "a packet still queued at reader stop was left without a verdict");
+    require(injected_verdict == NF_ACCEPT, "a packet stranded by bring-down was not accepted back to the host stack");
+    require(atomicLoadExplicit(&injected_callback_count, memory_order_relaxed) == 0,
+            "a residual packet drained during bring-down was dispatched to the capture callback");
+
+    close(queue_pair[1]);
+    requireCommandScriptConsumed("the pending-packet drain changed the firewall lifecycle command sequence");
+    deviceTeardown(&cdev);
+}
+
 static void testPartialInsertionRollsBackConfirmedPrefix(test_env_t *env)
 {
     commandScriptReset();
@@ -1490,6 +1534,7 @@ int main(void)
     testDrainFailurePreventsStartup(&env);
     testReaderExitBeforeReadinessPreventsInsertion(&env);
     testPacketDuringInsertionIsAcceptedWithoutDispatch(&env);
+    testPendingQueuePacketIsAcceptedDuringBringDown(&env);
     testPartialInsertionRollsBackConfirmedPrefix(&env);
     testPartialRollbackFailureIsRetriedByDestroy(&env);
     testReverseDeletionPreservesPerRuleState(&env);
