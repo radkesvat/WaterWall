@@ -16,7 +16,7 @@ static master_pool_item_t *defaultCreateHandle(void *userdata)
 {
     discard userdata;
     printError("MasterPool CallBack is not set. this is a bug");
-    terminateProgram(1);
+    abortProgramNow(1);
 }
 
 /**
@@ -29,7 +29,7 @@ static void defaultDestroyHandle(master_pool_item_t *item)
 {
     discard item;
     printError("MasterPool CallBack is not set. this is a bug");
-    terminateProgram(1);
+    abortProgramNow(1);
 }
 
 /**
@@ -47,7 +47,7 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t capacity)
     if (items_size64 > ((uint64_t) SIZE_MAX) || next_size64 > ((uint64_t) SIZE_MAX))
     {
         printError("buffer size out of range");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     const size_t items_size = (size_t) items_size64;
     const size_t next_size  = (size_t) next_size64;
@@ -55,14 +55,14 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t capacity)
     if (items_size > (SIZE_MAX - sizeof(master_pool_t)))
     {
         printError("buffer size out of range");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     const size_t first_sum = sizeof(master_pool_t) + items_size;
 
     if (next_size > (SIZE_MAX - first_sum))
     {
         printError("buffer size out of range");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     const size_t required_size = first_sum + next_size;
 
@@ -71,7 +71,7 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t capacity)
     if (pool == NULL)
     {
         printError("buffer size out of range");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     // Initialize the pool structure
@@ -148,7 +148,7 @@ void masterpoolDestroy(master_pool_t *pool)
     if (atomicLoad(&pool->count) != 0)
     {
         printError("MasterPool: Destroying pool with items in it, this is a bug");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     // Free the pool memory

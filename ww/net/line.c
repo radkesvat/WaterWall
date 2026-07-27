@@ -40,7 +40,7 @@ static void lineEnsureAuthCapacity(const line_t *const line, uint8_t needed)
     }
 
     LOGF("Line: too many users added to line; maximum is %u", (unsigned int) kLineMaxUsers);
-    terminateProgram(1);
+    abortProgramNow(1);
 }
 
 static void lineAddAuthEntry(line_t *const line, const user_handle_t *user_handle, bool add_handle,
@@ -121,7 +121,7 @@ void lineCopyUsers(line_t *const dest, const line_t *const src)
     if (UNLIKELY(dest->user_count != 0))
     {
         LOGF("Line: attempted to copy users into a line that already has user markers or credentials");
-        terminateProgram(1);
+        abortProgramNow(1);
         return;
     }
 
@@ -276,7 +276,7 @@ static void lineCheckScheduledTaskWorker(worker_t *worker, const line_t *line)
         LOGF("Worker thread mismatch when running scheduled line task. Expected WID: %u, actual WID: %u",
              lineGetWID(line),
              worker->wid);
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 }
 
@@ -456,7 +456,7 @@ void lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t 
     if (getWID() != lineGetWID(line))
     {
         LOGF("Attempted to schedule a delayed task on a line from a different worker thread");
-        terminateProgram(1);
+        abortProgramNow(1);
         return;
     }
 
@@ -480,7 +480,7 @@ void lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, 
     if (getWID() != lineGetWID(line))
     {
         LOGF("Attempted to schedule a delayed task on a line from a different worker thread");
-        terminateProgram(1);
+        abortProgramNow(1);
         return;
     }
 

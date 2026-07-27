@@ -2443,7 +2443,7 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot, bool prevalid
         if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
         {
             LOGF("Users: failed to restore lookup tables after an insertion failure");
-            terminateProgram(1);
+            abortProgramNow(1);
         }
         return false;
     }
@@ -2452,7 +2452,7 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot, bool prevalid
         if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
         {
             LOGF("Users: failed to restore lookup tables after an insertion failure");
-            terminateProgram(1);
+            abortProgramNow(1);
         }
         return false;
     }
@@ -2461,7 +2461,7 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot, bool prevalid
         if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
         {
             LOGF("Users: failed to restore lookup tables after an insertion failure");
-            terminateProgram(1);
+            abortProgramNow(1);
         }
         return false;
     }
@@ -2470,7 +2470,7 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot, bool prevalid
         if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
         {
             LOGF("Users: failed to restore lookup tables after an insertion failure");
-            terminateProgram(1);
+            abortProgramNow(1);
         }
         return false;
     }
@@ -2479,7 +2479,7 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot, bool prevalid
         if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
         {
             LOGF("Users: failed to restore lookup tables after an insertion failure");
-            terminateProgram(1);
+            abortProgramNow(1);
         }
         return false;
     }
@@ -2488,7 +2488,7 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot, bool prevalid
         if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
         {
             LOGF("Users: failed to restore lookup tables after an insertion failure");
-            terminateProgram(1);
+            abortProgramNow(1);
         }
         return false;
     }
@@ -2497,7 +2497,7 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot, bool prevalid
         if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
         {
             LOGF("Users: failed to restore lookup tables after an insertion failure");
-            terminateProgram(1);
+            abortProgramNow(1);
         }
         return false;
     }
@@ -2837,11 +2837,11 @@ cleanup_snapshot:
         if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
         {
             LOGF("Users: failed to rebuild lookup tables after a password index update failure");
-            terminateProgram(1);
+            abortProgramNow(1);
         }
         LOGF("Users: credential index update failed while changing password for user \"%s\"",
              usersUserNameForLog(user));
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     return kUsersUpdateResultOk;
@@ -2904,9 +2904,9 @@ static bool usersRemoveUserLocked(users_t *users, user_t *user)
         if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
         {
             LOGF("Users: failed to rebuild lookup tables after a removal index inconsistency");
-            terminateProgram(1);
+            abortProgramNow(1);
         }
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     size_t last = users->count - 1U;
@@ -2920,7 +2920,7 @@ static bool usersRemoveUserLocked(users_t *users, user_t *user)
         if (UNLIKELY(! usersPointerTableUpdateExistingLocked(users, moved, index)))
         {
             LOGF("Users: failed to update the pointer index after a swap-with-last removal");
-            terminateProgram(1);
+            abortProgramNow(1);
         }
     }
     users->items[last] = NULL;
@@ -2968,7 +2968,7 @@ static void usersRollbackFeedLocked(users_t *users, size_t old_count, size_t old
     if (UNLIKELY(! usersRebuildLookupTablesLocked(users)))
     {
         LOGF("Users: failed to rebuild lookup tables while rolling back a failed JSON load");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 }
 
@@ -4091,7 +4091,7 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(
     if (UNLIKELY((update->mask & kUserUpdateName) != 0U && ! usersNameTableEraseLocked(users, user, user->name)))
     {
         LOGF("Users: name index inconsistency while updating user \"%s\"", usersUserNameForLog(user));
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     /*
      * Erase the old Allowed-IP range entry while the user still carries its old
@@ -4101,7 +4101,7 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(
                  ! usersAllowedIpTableEraseLocked(users, user)))
     {
         LOGF("Users: Allowed-IP index inconsistency while updating user \"%s\"", usersUserNameForLog(user));
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     rwlockWriteLock(&user->lock);
@@ -4157,7 +4157,7 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(
     if (UNLIKELY((update->mask & kUserUpdateName) != 0U && ! usersNameTableInsertLocked(users, user)))
     {
         LOGF("Users: failed to reinsert name index entry while updating user \"%s\"", usersUserNameForLog(user));
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     /*
      * Insert the replacement Allowed-IP range. A spare tree node was reserved
@@ -4169,7 +4169,7 @@ static users_update_result_t usersApplyUpdateToExistingUserLocked(
                  ! usersAllowedIpTableInsertLocked(users, user)))
     {
         LOGF("Users: failed to reinsert Allowed-IP range while updating user \"%s\"", usersUserNameForLog(user));
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     if ((update->mask & kUserUpdateStats) != 0U)

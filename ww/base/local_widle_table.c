@@ -19,7 +19,7 @@ static uint64_t localIdleItemGetExpireAt(const local_idle_item_t *item);
 #define i_key                          local_idle_item_t *
 #define i_cmp                          -c_default_cmp
 #define localidletable_less_func(x, y) (localIdleItemGetExpireAt(*(x)) > localIdleItemGetExpireAt(*(y))) // NOLINT
-#define i_less                         localidletable_less_func                                           // NOLINT
+#define i_less                         localidletable_less_func                                          // NOLINT
 #include "stc/pqueue.h"
 
 #define i_type local_hmap_idles_t
@@ -29,11 +29,11 @@ static uint64_t localIdleItemGetExpireAt(const local_idle_item_t *item);
 
 typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct local_idle_table_s
 {
-    wloop_t             *loop;
-    wtimer_t            *idle_handle;
-    local_heapq_idles_t  hqueue;
-    local_hmap_idles_t   hmap;
-    wid_t                wid;
+    wloop_t            *loop;
+    wtimer_t           *idle_handle;
+    local_heapq_idles_t hqueue;
+    local_hmap_idles_t  hmap;
+    wid_t               wid;
 
 } GNU_ATTR_ALIGNED_LINE_CACHE local_idle_table_t;
 
@@ -134,7 +134,7 @@ local_idle_table_t *localIdleTableCreate(wloop_t *loop)
     if (newtable == NULL)
     {
         printError("LocalIdleTable: failed to allocate local idle table");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     *newtable = (local_idle_table_t) {.loop   = loop,
@@ -149,7 +149,7 @@ local_idle_table_t *localIdleTableCreate(wloop_t *loop)
         local_hmap_idles_t_drop(&(newtable->hmap));
         memoryFreeAligned(newtable);
         printError("LocalIdleTable: failed to create idle timer");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     localidletableAssertOwner(newtable);
@@ -166,7 +166,7 @@ local_idle_item_t *localidletableCreateItem(local_idle_table_t *self, hash_t key
     if (UNLIKELY(item == NULL))
     {
         printError("LocalIdleTable: failed to allocate local idle item");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     *item = (local_idle_item_t) {.expire_at_ms = wloopNowMS(self->loop) + age_ms,
@@ -213,7 +213,7 @@ void localidletableKeepIdleItemForAtleast(local_idle_table_t *self, local_idle_i
     if (UNLIKELY(item->table != self || localIdleItemIsRemoved(item)))
     {
         printError("LocalIdleTable: attempt to keep an already removed idle item alive");
-        terminateProgram(1);
+        abortProgramNow(1);
         return;
     }
 
@@ -300,9 +300,8 @@ static void localIdleCallBack(wtimer_t *timer)
         }
 
         const uint64_t new_expire_at_ms = localIdleItemGetExpireAt(item);
-        const bool keep_alive = ! localIdleItemIsRemoved(item) && item->table == self &&
-                                old_expire_at_ms != new_expire_at_ms &&
-                                new_expire_at_ms > wloopNowMS(self->loop);
+        const bool     keep_alive       = ! localIdleItemIsRemoved(item) && item->table == self &&
+                                old_expire_at_ms != new_expire_at_ms && new_expire_at_ms > wloopNowMS(self->loop);
 
         if (keep_alive)
         {

@@ -18,7 +18,7 @@ static inline void bufferstreamCheckSbufByteCount(size_t bytes, const char *oper
     if (UNLIKELY(bytes > UINT32_MAX))
     {
         printError("BufferStream: %s exceeds sbuf_t 32-bit limit (%zu bytes)", operation, bytes);
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 }
 
@@ -82,14 +82,14 @@ void bufferstreamDestroy(buffer_stream_t *self)
 void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
 {
     assert(self != NULL && buf != NULL);
-    
+
     size_t buf_len = sbufGetLength(buf);
     bufferstreamCheckSbufByteCount(buf_len, "push");
 
     if (UNLIKELY(self->size > (size_t) UINT32_MAX - buf_len))
     {
         printError("BufferStream: buffered data exceeds sbuf_t 32-bit limit");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     // Check for potential overflow

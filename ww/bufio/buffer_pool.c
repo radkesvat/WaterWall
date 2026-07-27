@@ -50,7 +50,7 @@ static inline void bufferpoolDebugCheckThreadAccess(buffer_pool_t *pool)
     if (UNLIKELY(pool->tid != getTID()))
     {
         printError("BufferPool: Access from wrong thread %d, expected %d", getTID(), pool->tid);
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 }
 #else

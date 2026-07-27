@@ -126,7 +126,7 @@ write(STDERR_FILENO, buf, buflen);
 // ----------------------------------------------------------------------------
 // misc utils
 
-#define is_power_of_two(intval) (intval) && (0 == ((intval) & ((intval) -1)))
+#define is_power_of_two(intval) (intval) && (0 == ((intval) & ((intval) - 1)))
 
 // is_aligned checks if passed in pointer is aligned on a specific border.
 // bool is_aligned<T>(T* pointer, uintptr_t alignment)
@@ -245,8 +245,8 @@ inline static void atomicStoreVoidPtr(_Atomic(void *) *p, void *v, memory_order 
 typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct wchan_s
 {
     // These fields don't change after wchan_Open
-    size_t    elemsize; // size in bytes of elements sent on the channel
-    uint32_t  qcap;     // size of the circular queue buf (immutable)
+    size_t   elemsize; // size in bytes of elements sent on the channel
+    uint32_t qcap;     // size of the circular queue buf (immutable)
 
     // These fields are frequently accessed and stored to.
     // There's a perf opportunity here with a different more cache-efficient layout.
@@ -423,7 +423,7 @@ inline static bool chan_send(wchan_t *c, void *srcelemptr, bool *closed)
         if (block)
         {
             printError("send on closed channel");
-            terminateProgram(1);
+            abortProgramNow(1);
         }
         else
         {
@@ -675,14 +675,14 @@ wchan_t *chanOpen(size_t elemsize, uint32_t cap)
     if (elemsize != 0 && (size_t) cap > (SIZE_MAX / elemsize))
     {
         printError("buffer size out of range");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     const size_t buffer_size = ((size_t) cap) * elemsize;
 
     if (buffer_size > (SIZE_MAX - sizeof(wchan_t)))
     {
         printError("buffer size out of range");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     const size_t required_size = sizeof(wchan_t) + buffer_size;
 
@@ -691,7 +691,7 @@ wchan_t *chanOpen(size_t elemsize, uint32_t cap)
     if (c == NULL)
     {
         printError("buffer size out of range");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     c->elemsize = elemsize;
@@ -716,7 +716,7 @@ void chanClose(wchan_t *c)
     if (atomicExchangeExplicit(&c->closed, 1, memory_order_acquire) != 0)
     {
         printError("close of closed channel");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     atomic_thread_fence(memory_order_seq_cst);
 

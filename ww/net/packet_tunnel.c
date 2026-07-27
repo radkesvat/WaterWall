@@ -13,7 +13,7 @@ static void packettunnelDefaultUpStreamPayload(tunnel_t *self, line_t *line, sbu
     discard line;
     discard payload;
     LOGF("Unexpected call to default up stream payload for a packet tunnel, this function must be overridden");
-    terminateProgram(1);
+    abortProgramNow(1);
 }
 
 // Default downstream payload function
@@ -23,7 +23,7 @@ static void packettunnelDefaultDownStreamPayload(tunnel_t *self, line_t *line, s
     discard line;
     discard payload;
     LOGF("Unexpected call to default down stream payload for a packet tunnel, this function must be overridden");
-    terminateProgram(1);
+    abortProgramNow(1);
 }
 
 tunnel_t *packettunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size)

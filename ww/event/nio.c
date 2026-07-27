@@ -19,7 +19,8 @@ static void __connect_timeout_cb(wtimer_t *timer)
     {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
-        wlogw("connect timeout [%s] <=> [%s]", SOCKADDR_STR(io->localaddr, localaddrstr),
+        wlogw("connect timeout [%s] <=> [%s]",
+              SOCKADDR_STR(io->localaddr, localaddrstr),
               SOCKADDR_STR(io->peeraddr, peeraddrstr));
         io->error = ETIMEDOUT;
         wioClose(io);
@@ -33,7 +34,8 @@ static void __close_timeout_cb(wtimer_t *timer)
     {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
-        wlogw("close timeout [%s] <=> [%s]", SOCKADDR_STR(io->localaddr, localaddrstr),
+        wlogw("close timeout [%s] <=> [%s]",
+              SOCKADDR_STR(io->localaddr, localaddrstr),
               SOCKADDR_STR(io->peeraddr, peeraddrstr));
         io->error = ETIMEDOUT;
         wioClose(io);
@@ -50,7 +52,7 @@ static void __close_pending_cb(wevent_t *ev)
         if (ev->loop->ios.ptr[fd] && ev->loop->ios.ptr[fd]->pending)
         {
             LOGE("__close_pending_cb: pending io fd=%d !\n", fd);
-            terminateProgram(1);
+            abortProgramNow(1);
         }
     }
 
@@ -193,11 +195,8 @@ static int nio_connect_async(wio_t *io)
 static int __nio_read_udp(wio_t *io, void *buf, unsigned int len)
 {
 #if defined(OS_LINUX) && defined(MSG_TRUNC)
-    struct iovec iov = {.iov_base = buf, .iov_len = (size_t) len};
-    struct msghdr msg = {.msg_name = io->peeraddr,
-                         .msg_namelen = sizeof(sockaddr_u),
-                         .msg_iov = &iov,
-                         .msg_iovlen = 1};
+    struct iovec  iov = {.iov_base = buf, .iov_len = (size_t) len};
+    struct msghdr msg = {.msg_name = io->peeraddr, .msg_namelen = sizeof(sockaddr_u), .msg_iov = &iov, .msg_iovlen = 1};
 
     ssize_t nread = recvmsg(io->fd, &msg, MSG_TRUNC);
     if (nread < 0)
@@ -497,7 +496,7 @@ static void wio_handle_events(wio_t *io)
 
 int wioAccept(wio_t *io)
 {
-    io->accept = 1;
+    io->accept    = 1;
     int add_error = wioAdd(io, wio_handle_events, WW_READ);
     if (UNLIKELY(add_error != 0))
     {
@@ -719,8 +718,10 @@ int wioWrite(wio_t *io, sbuf_t *buf)
         io->write_bufsize += sbufGetLength(buf);
         if (io->write_bufsize > WRITE_BUFSIZE_HIGH_WATER)
         {
-            wlogw("write len=%u enqueue %u, bufsize=%u over high water %u", (unsigned int) len,
-                  (unsigned int) (sbufGetLength(buf)), (unsigned int) io->write_bufsize,
+            wlogw("write len=%u enqueue %u, bufsize=%u over high water %u",
+                  (unsigned int) len,
+                  (unsigned int) (sbufGetLength(buf)),
+                  (unsigned int) io->write_bufsize,
                   (unsigned int) WRITE_BUFSIZE_HIGH_WATER);
         }
     }

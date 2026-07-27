@@ -14,7 +14,7 @@ static master_pool_item_t *defaultCreateHandle(void *userdata)
 {
     discard userdata;
     printError("MasterPool CallBack is not set. this is a bug");
-    terminateProgram(1);
+    abortProgramNow(1);
 }
 
 /**
@@ -27,7 +27,7 @@ static void defaultDestroyHandle(master_pool_item_t *item)
 {
     discard item;
     printError("MasterPool CallBack is not set. this is a bug");
-    terminateProgram(1);
+    abortProgramNow(1);
 }
 
 master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
@@ -42,14 +42,14 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
     if (container_len64 > ((uint64_t) SIZE_MAX))
     {
         printError("buffer size out of range");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     const size_t container_len = (size_t) container_len64;
 
     if (container_len > (SIZE_MAX - sizeof(master_pool_t)))
     {
         printError("buffer size out of range");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     const size_t required_size = sizeof(master_pool_t) + container_len;
 
@@ -58,7 +58,7 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
     if (pool_ptr == NULL)
     {
         printError("buffer size out of range");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
 #ifdef DEBUG
@@ -106,7 +106,7 @@ void masterpoolDestroy(master_pool_t *pool)
         // wmutex_t* wbs = NULL; some bullshit code that was used to debug
         // mutexUnlock(wbs);
         printError("MasterPool: Destroying pool with items in it, this is a bug");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     mutexUnlock(&(pool->mutex));
 

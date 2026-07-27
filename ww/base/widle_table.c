@@ -103,20 +103,17 @@ static bool idleItemCompareExchangeExpireAt(idle_item_t *item, uint64_t *expecte
 #if HAVE_STDATOMIC_H
     unsigned long long expected_value = (unsigned long long) *expected;
     const bool         exchanged      = atomic_compare_exchange_weak_explicit(&(item->expire_at_ms),
-                                                                         &expected_value,
-                                                                         (unsigned long long) desired,
-                                                                         memory_order_acq_rel,
-                                                                         memory_order_acquire);
+                                                                 &expected_value,
+                                                                 (unsigned long long) desired,
+                                                                 memory_order_acq_rel,
+                                                                 memory_order_acquire);
     *expected                         = (uint64_t) expected_value;
     return exchanged;
 #else
     intptr_t   expected_value = (intptr_t) *expected;
-    const bool exchanged      = atomic_compare_exchange_weak_explicit(&(item->expire_at_ms),
-                                                                 &expected_value,
-                                                                 (intptr_t) desired,
-                                                                 memory_order_acq_rel,
-                                                                 memory_order_acquire);
-    *expected                 = (uint64_t) expected_value;
+    const bool exchanged      = atomic_compare_exchange_weak_explicit(
+        &(item->expire_at_ms), &expected_value, (intptr_t) desired, memory_order_acq_rel, memory_order_acquire);
+    *expected = (uint64_t) expected_value;
     return exchanged;
 #endif
 }
@@ -143,7 +140,7 @@ idle_table_t *idleTableCreate(wloop_t *loop)
     if (newtable == NULL)
     {
         printError("buffer size out of range");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     *newtable = (idle_table_t) {.loop   = loop,
@@ -159,7 +156,7 @@ idle_table_t *idleTableCreate(wloop_t *loop)
         hmap_idles_t_drop(&(newtable->hmap));
         memoryFreeAligned(newtable);
         printError("IdleTable: failed to create idle timer");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     weventSetUserData(newtable->idle_handle, newtable);
@@ -204,7 +201,7 @@ void idletableKeepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint
     if (UNLIKELY(idleItemGetTable(item) != self || idleItemIsRemoved(item)))
     {
         printError("IdleTable: Attempt to keep an already removed idle item alive");
-        terminateProgram(1);
+        abortProgramNow(1);
         return;
     }
 

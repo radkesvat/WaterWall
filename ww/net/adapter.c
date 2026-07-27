@@ -46,7 +46,7 @@ static void disabledPayloadRoutine(tunnel_t *t, line_t *line, sbuf_t *payload)
     discard payload;
     LOGF("Illegal call to payload routine on Adapter %s", t->node->name);
     assert(false); // print stack trace in debug mode, and terminate in release mode
-    terminateProgram(1);
+    abortProgramNow(1);
 }
 
 /**
@@ -61,7 +61,7 @@ static void disabledRoutine(tunnel_t *t, line_t *line)
     discard line;
     LOGF("Illegal call to routine on Adapter %s", t->node->name);
     assert(false); // print stack trace in debug mode, and terminate in release mode
-    terminateProgram(1);
+    abortProgramNow(1);
 }
 
 tunnel_t *adapterCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size, bool up_end)

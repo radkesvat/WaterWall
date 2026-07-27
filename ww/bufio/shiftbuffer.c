@@ -12,7 +12,7 @@ uint16_t sbufAlignLeftPadding(uint16_t pad_left)
     if (aligned_pad > UINT16_MAX)
     {
         printError("sbuf: left padding overflow after alignment");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     return (uint16_t) aligned_pad;
@@ -77,7 +77,8 @@ void sbufDuplicateTo(sbuf_t *b, sbuf_t *dest)
 
     if (b->curpos >= sbufGetTotalCapacity(dest))
     {
-        printError("Buffer duplication failed: source buffer's current position exceeds destination buffer's total capacity.");
+        printError(
+            "Buffer duplication failed: source buffer's current position exceeds destination buffer's total capacity.");
         return;
     }
 
@@ -104,7 +105,7 @@ sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict const buf)
     if (UNLIKELY(root_length > UINT32_MAX - append_length))
     {
         printError("sbuf: concat overflow (root=%u, append=%u)", root_length, append_length);
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     root = sbufReserveSpace(root, root_length + append_length);
