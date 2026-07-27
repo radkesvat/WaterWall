@@ -280,6 +280,26 @@ static void asyncdnsRefreshTimer(dns_resolver_t *r)
 }
 
 #ifdef EVENT_IOCP
+#if defined(WATERWALL_IOCP_TEST_HOOKS)
+static asyncdns_test_select_cb g_asyncdns_test_select_cb = NULL;
+
+void asyncdnsTestSetSelectCallback(asyncdns_test_select_cb cb)
+{
+    g_asyncdns_test_select_cb = cb;
+}
+#endif
+
+static int asyncdnsSelect(fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout)
+{
+#if defined(WATERWALL_IOCP_TEST_HOOKS)
+    if (g_asyncdns_test_select_cb != NULL)
+    {
+        return g_asyncdns_test_select_cb(0, readfds, writefds, exceptfds, timeout);
+    }
+#endif
+    return select(0, readfds, writefds, exceptfds, timeout);
+}
+
 // Grow the reusable readiness scratch buffer to at least `needed` entries.
 static bool asyncdnsReservePollEvents(dns_resolver_t *r, size_t needed)
 {
@@ -357,17 +377,14 @@ static size_t asyncdnsPollWatchedFds(dns_resolver_t *r)
         r->poll_events[nwatched++] = (ares_fd_events_t) {.fd = watch->fd, .events = interest};
     }
 
-    // Pass 2/3 - probe in FD_SETSIZE batches and compact the observed readiness
-    // in place. nready <= i always holds, so the rewrite never outruns the read.
+    // Pass 2/3 - probe each socket separately and compact the observed readiness
+    // in place. Winsock requires every socket in a select() call to have the same
+    // provider ID. A singleton probe satisfies that contract without provider
+    // discovery or grouping. nready <= i always holds, so the rewrite never
+    // outruns the read.
     size_t nready = 0;
-    for (size_t base = 0; base < nwatched; base += FD_SETSIZE)
+    for (size_t i = 0; i < nwatched; ++i)
     {
-        size_t end = base + FD_SETSIZE;
-        if (end > nwatched)
-        {
-            end = nwatched;
-        }
-
         fd_set readfds;
         fd_set writefds;
         fd_set exceptfds;
@@ -375,57 +392,55 @@ static size_t asyncdnsPollWatchedFds(dns_resolver_t *r)
         FD_ZERO(&writefds);
         FD_ZERO(&exceptfds);
 
-        for (size_t i = base; i < end; ++i)
+        const ares_socket_t fd       = r->poll_events[i].fd;
+        const unsigned int  interest = r->poll_events[i].events;
+        if (interest & ARES_FD_EVENT_READ)
         {
-            if (r->poll_events[i].events & ARES_FD_EVENT_READ)
-            {
-                FD_SET(r->poll_events[i].fd, &readfds);
-            }
-            if (r->poll_events[i].events & ARES_FD_EVENT_WRITE)
-            {
-                FD_SET(r->poll_events[i].fd, &writefds);
-            }
-            // Always: a failed connect surfaces only here, and it is the case
-            // that matters most for TCP DNS.
-            FD_SET(r->poll_events[i].fd, &exceptfds);
+            FD_SET(fd, &readfds);
         }
+        if (interest & ARES_FD_EVENT_WRITE)
+        {
+            FD_SET(fd, &writefds);
+        }
+        // Always: a failed connect surfaces only here, and it is the case that
+        // matters most for TCP DNS.
+        FD_SET(fd, &exceptfds);
 
         // The first argument is ignored by Winsock.
         struct timeval immediate = {.tv_sec = 0, .tv_usec = 0};
-        const int      ready     = select(0, &readfds, &writefds, &exceptfds, &immediate);
-        if (ready <= 0)
+        const int      ready     = asyncdnsSelect(&readfds, &writefds, &exceptfds, &immediate);
+        if (ready == SOCKET_ERROR)
         {
-            // 0: nothing ready in this batch. SOCKET_ERROR: leave the batch
-            // alone and let the c-ares timeout path handle it below.
+            // This socket's provider failed the probe. Keep other watches
+            // progressing and let c-ares apply its timeout policy to this one.
+            continue;
+        }
+        if (ready == 0)
+        {
             continue;
         }
 
-        for (size_t i = base; i < end; ++i)
+        unsigned int fd_events = ARES_FD_EVENT_NONE;
+        if (FD_ISSET(fd, &readfds))
         {
-            const ares_socket_t fd        = r->poll_events[i].fd;
-            unsigned int        fd_events = ARES_FD_EVENT_NONE;
+            fd_events |= ARES_FD_EVENT_READ;
+        }
+        if (FD_ISSET(fd, &writefds))
+        {
+            fd_events |= ARES_FD_EVENT_WRITE;
+        }
+        // ARES_FD_EVENT_READ is documented as covering disconnect/error, so
+        // an exceptional socket routes into process_read(), which surfaces
+        // the error. Reporting WRITE would be read as connect success and
+        // reintroduce the defect this function exists to avoid.
+        if (FD_ISSET(fd, &exceptfds))
+        {
+            fd_events |= ARES_FD_EVENT_READ;
+        }
 
-            if (FD_ISSET(fd, &readfds))
-            {
-                fd_events |= ARES_FD_EVENT_READ;
-            }
-            if (FD_ISSET(fd, &writefds))
-            {
-                fd_events |= ARES_FD_EVENT_WRITE;
-            }
-            // ARES_FD_EVENT_READ is documented as covering disconnect/error, so
-            // an exceptional socket routes into process_read(), which surfaces
-            // the error. Reporting WRITE would be read as connect success and
-            // reintroduce the defect this function exists to avoid.
-            if (FD_ISSET(fd, &exceptfds))
-            {
-                fd_events |= ARES_FD_EVENT_READ;
-            }
-
-            if (fd_events != ARES_FD_EVENT_NONE)
-            {
-                r->poll_events[nready++] = (ares_fd_events_t) {.fd = fd, .events = fd_events};
-            }
+        if (fd_events != ARES_FD_EVENT_NONE)
+        {
+            r->poll_events[nready++] = (ares_fd_events_t) {.fd = fd, .events = fd_events};
         }
     }
 

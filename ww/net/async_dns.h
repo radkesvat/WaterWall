@@ -113,6 +113,11 @@ int asyncdnsResolve(dns_resolver_t *r, const char *host, const char *service, in
                     void *userdata);
 
 #if defined(EVENT_IOCP) && defined(WATERWALL_IOCP_TEST_HOOKS)
+typedef int(WSAAPI *asyncdns_test_select_cb)(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
+                                             struct timeval *timeout);
+
 // Drive one native-IOCP readiness poll and return its observed-ready count.
 size_t asyncdnsTestPollWatchedFds(dns_resolver_t *r);
+// Override select() for deterministic provider-isolation tests; NULL restores it.
+void asyncdnsTestSetSelectCallback(asyncdns_test_select_cb cb);
 #endif

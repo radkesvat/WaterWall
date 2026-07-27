@@ -1062,6 +1062,49 @@ static void closeSocketArray(SOCKET *sockets, size_t count)
     }
 }
 
+static size_t socketSetUnionCount(const fd_set *readfds, const fd_set *writefds, const fd_set *exceptfds)
+{
+    SOCKET        first_socket = INVALID_SOCKET;
+    size_t        nsockets     = 0;
+    const fd_set *sets[]       = {readfds, writefds, exceptfds};
+
+    for (size_t set_index = 0; set_index < ARRAY_SIZE(sets); ++set_index)
+    {
+        const fd_set *set = sets[set_index];
+        if (set == NULL)
+        {
+            continue;
+        }
+
+        for (u_int fd_index = 0; fd_index < set->fd_count; ++fd_index)
+        {
+            const SOCKET fd = set->fd_array[fd_index];
+            if (nsockets == 0)
+            {
+                first_socket = fd;
+                nsockets     = 1;
+            }
+            else if (fd != first_socket)
+            {
+                return 2;
+            }
+        }
+    }
+
+    return nsockets;
+}
+
+static int WSAAPI providerRestrictedSelect(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
+                                           struct timeval *timeout)
+{
+    if (socketSetUnionCount(readfds, writefds, exceptfds) > 1)
+    {
+        WSASetLastError(WSAEINVAL);
+        return SOCKET_ERROR;
+    }
+    return select(nfds, readfds, writefds, exceptfds, timeout);
+}
+
 static void testAsyncDnsTcpConnectWaitsForReadiness(env_t *env)
 {
     wloop_t *loop = wloopCreate(0, env->buffer_pool, 0);
@@ -1207,7 +1250,12 @@ static void testAsyncDnsPollsEveryWatchedSocket(env_t *env)
         resolver.watches = watch;
     }
 
+    // Model the Winsock provider restriction deterministically: any select()
+    // containing more than one distinct socket fails. Singleton polling must
+    // still observe every ready watch.
+    asyncdnsTestSetSelectCallback(providerRestrictedSelect);
     const size_t nready = asyncdnsTestPollWatchedFds(&resolver);
+    asyncdnsTestSetSelectCallback(NULL);
     require(resolver.poll_capacity >= DNS_WATCH_TEST_COUNT, "async DNS readiness snapshot still has a fixed ceiling");
     require(nready == DNS_WATCH_TEST_COUNT, "async DNS readiness probe skipped a watched socket");
 
