@@ -103,7 +103,7 @@ static void nio_accept(wio_t *io)
     while (accept_cnt++ < 3)
     {
         addrlen = sizeof(sockaddr_u);
-        connfd  = accept(io->fd, io->peeraddr, &addrlen);
+        connfd  = socketToFd(accept(io->fd, io->peeraddr, &addrlen));
         if (connfd < 0)
         {
             err = socketERRNO();
@@ -121,9 +121,14 @@ static void nio_accept(wio_t *io)
         addrlen = sizeof(sockaddr_u);
         getsockname(connfd, io->localaddr, &addrlen);
         connio = wioGet(io->loop, connfd);
-        if (UNLIKELY(wioIsClosed(connio)))
+        if (UNLIKELY(connio == NULL || wioIsClosed(connio)))
         {
-            // socket init rejected the accepted fd and already closed it
+            if (connio == NULL)
+            {
+                // No event io took ownership of the accepted socket.
+                closesocket(connfd);
+            }
+            // A closed event io already released the socket.
             continue;
         }
         // NOTE: inherit from listenio

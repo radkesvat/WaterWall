@@ -89,7 +89,7 @@ static int createAndBindSocket(int family, const udpconnector_tstate_t *ts)
         return -1;
     }
 
-    int sockfd = socket(family, SOCK_DGRAM, 0);
+    int sockfd = socketToFd(socket(family, SOCK_DGRAM, 0));
     if (sockfd < 0)
     {
         LOGE("UdpConnector: socket fd < 0");
@@ -234,9 +234,14 @@ static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_
 
     wloop_t *loop = getWorkerLoop(getWID());
     wio_t   *io   = wioGet(loop, sockfd);
-    if (UNLIKELY(wioIsClosed(io)))
+    if (UNLIKELY(io == NULL || wioIsClosed(io)))
     {
-        // socket init rejected the fd and already closed it
+        if (io == NULL)
+        {
+            // No event io took ownership of the socket, so release the fd here.
+            closesocket(sockfd);
+        }
+        // A closed event io already released the socket.
         goto fail;
     }
 

@@ -236,7 +236,7 @@ static int sockaddrBind(sockaddr_u *localaddr, int type)
 #ifdef SOCK_CLOEXEC
     type |= SOCK_CLOEXEC;
 #endif
-    int sockfd = (int) socket(localaddr->sa.sa_family, type, 0);
+    int sockfd = socketToFd(socket(localaddr->sa.sa_family, type, 0));
     if (sockfd < 0)
     {
         printError("syscall return error, call: socket , value: %d\n", sockfd);
@@ -273,7 +273,7 @@ static int sockaddrConnect(sockaddr_u *peeraddr, int nonblock)
 {
     // socket -> nonblocking -> connect
     int ret    = 0;
-    int connfd = (int) socket(peeraddr->sa.sa_family, SOCK_STREAM, 0);
+    int connfd = socketToFd(socket(peeraddr->sa.sa_family, SOCK_STREAM, 0));
     if (connfd < 0)
     {
         printError("socket");
@@ -499,7 +499,7 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
     localaddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     localaddr.sin_port        = 0;
     // listener
-    listenfd = socket(AF_INET, SOCK_STREAM, 0);
+    listenfd = socketToFd(socket(AF_INET, SOCK_STREAM, 0));
     if (listenfd < 0)
     {
         printError("syscall return error , call: socket , value: %d\n", (int) listenfd);
@@ -521,7 +521,7 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
         goto error;
     }
     // connector
-    connfd = (int) socket(AF_INET, SOCK_STREAM, 0);
+    connfd = socketToFd(socket(AF_INET, SOCK_STREAM, 0));
     if (connfd < 0)
     {
         printError("socket");
@@ -533,7 +533,7 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
         goto error;
     }
     // acceptor
-    acceptfd = (int) accept(listenfd, (struct sockaddr *) &localaddr, &addrlen);
+    acceptfd = socketToFd(accept(listenfd, (struct sockaddr *) &localaddr, &addrlen));
     if (acceptfd < 0)
     {
         printError("accept");

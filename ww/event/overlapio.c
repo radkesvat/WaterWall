@@ -450,7 +450,12 @@ static int post_acceptex(wio_t *listenio, woverlapped_t *record)
         accept_error = WSAGetLastError();
         goto error;
     }
-    connfd = (int) accepted;
+    connfd = socketToFd(accepted);
+    if (connfd < 0)
+    {
+        accept_error = WSAGetLastError();
+        goto error;
+    }
 
     if (is_new)
     {
@@ -972,8 +977,7 @@ static void dispatch_accept(wio_t *io, woverlapped_t *record)
 
     // SO_UPDATE_ACCEPT_CONTEXT takes a SOCKET, which is 8 bytes on Win64. Keeping
     // this as int would pass sizeof(int) == 4 as the option length. Widening here
-    // (rather than at wio_t.fd) keeps the change local: handle values fit in 32
-    // bits, so this conversion is lossless.
+    // (rather than at wio_t.fd) keeps the change local.
     const SOCKET              listenfd             = (SOCKET) io->fd;
     const int                 connfd               = record->fd;
     LPFN_GETACCEPTEXSOCKADDRS GetAcceptExSockaddrs = NULL;
@@ -1023,9 +1027,14 @@ static void dispatch_accept(wio_t *io, woverlapped_t *record)
     wio_t *connio = wioGet(io->loop, connfd);
     record->fd    = -1;
 
-    if (wioIsClosed(connio))
+    if (connio == NULL || wioIsClosed(connio))
     {
-        // Socket init rejected the accepted fd and already closed it; replenish.
+        if (connio == NULL)
+        {
+            // No event io took ownership of the accepted socket.
+            closesocket(connfd);
+        }
+        // A closed event io already released the socket; replenish the slot.
         repostAcceptOrScheduleRetry(io, record);
         return;
     }

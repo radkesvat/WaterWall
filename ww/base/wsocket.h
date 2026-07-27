@@ -10,6 +10,7 @@
  */
 
 #include "wlibc.h"
+#include <limits.h>
 
 #ifdef ENABLE_UDS
 #ifdef OS_WIN
@@ -153,6 +154,42 @@ WW_INLINE int closesocket(int sockfd)
             (fd) = -1;                                                                                                 \
         }                                                                                                              \
     } while (0)
+#endif
+
+/**
+ * @brief Narrow a platform socket handle to the int fd this codebase stores.
+ *
+ * The event layer keeps descriptors in `int` and uses them as dense-array
+ * indexes, so a handle that cannot become a non-negative int is unusable.
+ * Windows sockets are unsigned and are only documented to fit 32 bits -- not
+ * the positive signed range -- so validate before narrowing. An out-of-range
+ * handle is closed here rather than leaked, and reported as a socket failure.
+ *
+ * @param s Raw handle from socket()/accept()/WSASocket().
+ * @return `-1` on failure or an unusable handle, otherwise `0..INT_MAX`.
+ */
+#ifdef OS_WIN
+WW_INLINE int socketToFd(SOCKET s)
+{
+    if (s == INVALID_SOCKET)
+    {
+        // Preserve the caller's error code: nio_accept() inspects socketERRNO()
+        // immediately after to distinguish WSAEWOULDBLOCK from a real failure.
+        return -1;
+    }
+    if (s > (SOCKET) INT_MAX)
+    {
+        closesocket(s);
+        WSASetLastError(WSAEMFILE); // set *after* closesocket, which clobbers it
+        return -1;
+    }
+    return (int) s;
+}
+#else
+WW_INLINE int socketToFd(int s)
+{
+    return s; // POSIX fds are already small non-negative ints, bounded by RLIMIT_NOFILE
+}
 #endif
 
 //-----------------------------sockaddr_u----------------------------------------------

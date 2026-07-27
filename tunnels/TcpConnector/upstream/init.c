@@ -178,7 +178,7 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
     assert(dest_ctx->ip_address.type == IPADDR_TYPE_V4 || dest_ctx->ip_address.type == IPADDR_TYPE_V6);
     int addr_type = dest_ctx->ip_address.type == IPADDR_TYPE_V4 ? AF_INET : AF_INET6;
 
-    sockfd = (int) socket(addr_type, SOCK_STREAM, 0);
+    sockfd = socketToFd(socket(addr_type, SOCK_STREAM, 0));
 
     if (sockfd < 0)
     {
@@ -238,13 +238,18 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
     }
 
     wio_t *io = wioGet(loop, sockfd);
-    assert(io != NULL);
-    sockfd = -1;
+    if (UNLIKELY(io == NULL))
+    {
+        // No event io took ownership of the socket, so fail still owns it.
+        goto fail;
+    }
     if (UNLIKELY(wioIsClosed(io)))
     {
         // socket init rejected the fd and already closed it
+        sockfd = -1;
         goto fail;
     }
+    sockfd = -1;
 
     sockaddr_u addr = addresscontextToSockAddr(dest_ctx);
 

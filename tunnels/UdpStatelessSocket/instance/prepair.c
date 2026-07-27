@@ -11,7 +11,7 @@ static wio_t *udpstatelesssocketCreateUdpServer(udpstatelesssocket_tstate_t *sta
         return NULL;
     }
 
-    int sockfd = socket(addr.sa.sa_family, SOCK_DGRAM, 0);
+    int sockfd = socketToFd(socket(addr.sa.sa_family, SOCK_DGRAM, 0));
     if (sockfd < 0)
     {
         LOGE("UdpStatelessSocket: socket fd < 0");
