@@ -54,6 +54,8 @@ static unsigned int             next_fake_thread = 1;
 static unsigned int             fake_thread_create_calls;
 static unsigned int             fake_thread_join_calls;
 static unsigned int             fail_fake_thread_create_on_call;
+static void                  *(*captured_first_thread_routine)(void *);
+static void                    *captured_first_thread_arg;
 static sbuf_t                  *expected_reused_buffer;
 static buffer_pool_t           *expected_reuse_pool;
 static unsigned int             expected_reuse_count;
@@ -168,12 +170,17 @@ int __wrap_poll(struct pollfd *fds, nfds_t nfds, int timeout)
 int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*routine)(void *), void *arg)
 {
     discard attr;
-    discard routine;
-    discard arg;
     fake_thread_create_calls++;
     if (fake_thread_create_calls == fail_fake_thread_create_on_call)
     {
         return EAGAIN;
+    }
+    // Record the thread body so a test can run it inline and observe what the
+    // device does when a routine returns on its own. Nothing is spawned here.
+    if (fake_thread_create_calls == 1)
+    {
+        captured_first_thread_routine = routine;
+        captured_first_thread_arg     = arg;
     }
     *thread = (pthread_t) next_fake_thread++;
     return 0;
@@ -301,6 +308,8 @@ static void resetFakeThreads(unsigned int fail_on_call)
     fake_thread_create_calls        = 0;
     fake_thread_join_calls          = 0;
     fail_fake_thread_create_on_call = fail_on_call;
+    captured_first_thread_routine   = NULL;
+    captured_first_thread_arg       = NULL;
 }
 
 static tun_device_t *createRunningDevice(void)
@@ -449,6 +458,48 @@ static void testBringUpRollsBackThreadCreationFailures(void)
     }
 }
 
+// The reader stub stands in for a routine that hit a real device error -- a poll
+// failure, EOF, an unexpected revents -- and returned while `running` was still
+// set. Every one of those paths simply returns; none of them used to tell anyone.
+static WTHREAD_ROUTINE(failingReaderRoutine) // NOLINT
+{
+    discard userdata;
+    return 0;
+}
+
+// Regression: a reader/writer routine that dies on a device error left `up` set,
+// so tundeviceIsUp() kept advertising a device whose reads had silently stopped
+// and whose writes only piled into a channel nobody drains. Bring-down then had
+// to stay reachable, which is why it can no longer gate on `up` alone.
+static void testUnexpectedThreadExitTakesTheDeviceDown(void)
+{
+    resetFakeThreads(0);
+    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback);
+    require(tdev != NULL, "unexpected-exit device create failed");
+
+    // Return immediately from the reader body instead of running the real loop.
+    tunLinuxSetReaderRoutine(tdev, failingReaderRoutine);
+    require(tundeviceBringUp(tdev), "unexpected-exit device bring-up failed");
+    require(tundeviceIsUp(tdev), "bring-up did not publish the device as up");
+    require(captured_first_thread_routine != NULL, "the reader thread body was not captured");
+
+    // Run the captured thread body inline: the wrapper sees `running` still set
+    // and must treat the return as a device failure.
+    captured_first_thread_routine(captured_first_thread_arg);
+
+    require(! tundeviceIsUp(tdev), "an unexpected reader-thread exit left the device advertised as up");
+
+    // The teardown must still run: `up` is now false, so a bring-down gated on it
+    // would skip both joins and leave the writer channel allocated.
+    const unsigned int joins_before = fake_thread_join_calls;
+    require(tundeviceBringDown(tdev), "bring-down after an unexpected reader exit failed");
+    require(fake_thread_join_calls == joins_before + 2, "bring-down after a thread failure skipped its joins");
+    require(tundeviceBringDown(tdev), "a second bring-down must stay a successful no-op");
+    require(fake_thread_join_calls == joins_before + 2, "the no-op bring-down joined an already-joined thread");
+
+    tundeviceDestroy(tdev);
+}
+
 typedef struct writer_race_probe_s
 {
     tun_device_t *tdev;
@@ -556,6 +607,7 @@ int main(void)
     testQueuedCleanupOutlivesDevice();
     testClosedAndStaleDeliveriesDoNotTouchDevice();
     testBringUpRollsBackThreadCreationFailures();
+    testUnexpectedThreadExitTakesTheDeviceDown();
     testWriterGateQuiescesConcurrentSenders();
     envTeardown(&env);
     puts("Linux TUN message lifetime tests passed");

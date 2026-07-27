@@ -64,6 +64,15 @@ struct tun_device_s
 
     atomic_bool running;
     atomic_bool up;
+
+    // Set by the thread wrappers when a routine returns while `running` is still
+    // set -- nobody asked it to stop, so the device hit a real error such as a
+    // Wintun receive failure. The wrapper also clears `up`, which is what stops
+    // tundeviceIsUp() from advertising a device whose I/O has silently died.
+    // Bring-down already gates on owned resources here, so no joinable flags are
+    // needed: read_thread/write_thread are the authority and are nulled on join.
+    atomic_bool reader_failed;
+    atomic_bool writer_failed;
 };
 
 // External variables
@@ -825,6 +834,46 @@ static bool tundeviceShutdownSession(tun_device_t *tdev)
     return tunWindowsLifetimeShutdown(tdev, &ops);
 }
 
+// A device I/O routine that returns while `running` is still set was not asked
+// to stop: it hit a real error (a Wintun receive failure, a failed wait). Those
+// exits used to leave `up` set, so the device kept advertising itself as healthy
+// while reads had silently stopped and writes piled into a channel nobody drains.
+//
+// Clear the published state here so tundeviceIsUp() tells the truth, and record
+// which side died. `running` is cleared too, so the surviving thread leaves its
+// loop as well and the device fails as a unit rather than half-working.
+static void tundeviceNoteUnexpectedThreadExit(tun_device_t *tdev, atomic_bool *failed_flag, const char *which)
+{
+    if (! atomicLoadExplicit(&tdev->running, memory_order_acquire))
+    {
+        return; // Orderly stop requested by bring-down.
+    }
+
+    atomicStoreExplicit(failed_flag, true, memory_order_release);
+    atomicStoreExplicit(&tdev->up, false, memory_order_release);
+    atomicStoreExplicit(&tdev->running, false, memory_order_release);
+
+    LOGE("TunDevice: %s thread for device %s exited unexpectedly; the device is no longer usable",
+         which,
+         tdev->name);
+}
+
+static WTHREAD_ROUTINE(tundeviceReaderThreadMain) // NOLINT
+{
+    tun_device_t *tdev = userdata;
+    discard       tdev->routine_reader(tdev);
+    tundeviceNoteUnexpectedThreadExit(tdev, &tdev->reader_failed, "reader");
+    return 0;
+}
+
+static WTHREAD_ROUTINE(tundeviceWriterThreadMain) // NOLINT
+{
+    tun_device_t *tdev = userdata;
+    discard       tdev->routine_writer(tdev);
+    tundeviceNoteUnexpectedThreadExit(tdev, &tdev->writer_failed, "writer");
+    return 0;
+}
+
 bool tundeviceBringUp(tun_device_t *tdev)
 {
     if (tundeviceIsUp(tdev))
@@ -879,13 +928,15 @@ bool tundeviceBringUp(tun_device_t *tdev)
     }
 
     atomicStoreRelaxed(&(tdev->running), true);
+    atomicStoreExplicit(&tdev->reader_failed, false, memory_order_relaxed);
+    atomicStoreExplicit(&tdev->writer_failed, false, memory_order_relaxed);
     tdev->session_handle = Session;
     tdev->read_thread    = NULL;
     tdev->write_thread   = NULL;
 
     MemoryBarrier();
 
-    wthread_error_t error = threadCreate(&tdev->read_thread, tdev->routine_reader, tdev);
+    wthread_error_t error = threadCreate(&tdev->read_thread, tundeviceReaderThreadMain, tdev);
     if (error != kWThreadErrorNone)
     {
         LOGE("TunDevice: failed to create reader thread, code: %u", error);
@@ -897,7 +948,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
         return false;
     }
 
-    error = threadCreate(&tdev->write_thread, tdev->routine_writer, tdev);
+    error = threadCreate(&tdev->write_thread, tundeviceWriterThreadMain, tdev);
     if (error != kWThreadErrorNone)
     {
         LOGE("TunDevice: failed to create writer thread, code: %u", error);
