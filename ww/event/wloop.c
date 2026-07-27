@@ -1053,6 +1053,10 @@ uint32_t wioGetIocpLiveRecords(wio_t *io)
 
 static inline wio_t *__wio_get(wloop_t *loop, int fd)
 {
+    if (UNLIKELY(fd < 0 || fd > WIO_MAX_FD))
+    {
+        return NULL;
+    }
     if (fd >= (int) loop->ios.maxsize)
     {
         int newsize = (int) ceil2e((unsigned int) fd);
@@ -1064,6 +1068,10 @@ static inline wio_t *__wio_get(wloop_t *loop, int fd)
 
 wio_t *wioGet(wloop_t *loop, int fd)
 {
+    if (UNLIKELY(fd < 0 || fd > WIO_MAX_FD))
+    {
+        return NULL;
+    }
     wio_t *io = __wio_get(loop, fd);
 #ifdef EVENT_IOCP
     if (io != NULL && io->closed)
@@ -1127,6 +1135,13 @@ void wioAttach(wloop_t *loop, wio_t *io)
     }
 
     int fd = io->fd;
+    if (UNLIKELY(fd < 0 || fd > WIO_MAX_FD))
+    {
+        wloge("wioAttach rejected fd=%d outside supported range 0..%d", fd, WIO_MAX_FD);
+        // No array slot was acquired; io remains detached and caller-owned.
+        return;
+    }
+
     // NOTE: wio was not freed for reused when closed, but attached wio can't be reused,
     // so we need to free it if fd exists to avoid memory leak.
     wio_t *preio = __wio_get(loop, fd);
@@ -1293,7 +1308,7 @@ void wioReleaseNoClose(wio_t *io)
 
 bool wioExists(wloop_t *loop, int fd)
 {
-    if (fd >= (int) loop->ios.maxsize)
+    if (UNLIKELY(fd < 0 || fd > WIO_MAX_FD || fd >= (int) loop->ios.maxsize))
     {
         return false;
     }
@@ -1410,7 +1425,8 @@ int wioCloseAsync(wio_t *io)
 wio_t *wRead(wloop_t *loop, int fd, wread_cb read_cb)
 {
     wio_t *io = wioGet(loop, fd);
-    assert(io != NULL);
+    if (io == NULL)
+        return NULL;
     if (read_cb)
     {
         io->read_cb = read_cb;
@@ -1423,7 +1439,8 @@ wio_t *wRead(wloop_t *loop, int fd, wread_cb read_cb)
 wio_t *wWrite(wloop_t *loop, int fd, sbuf_t *buf, wwrite_cb write_cb)
 {
     wio_t *io = wioGet(loop, fd);
-    assert(io != NULL);
+    if (io == NULL)
+        return NULL;
     if (write_cb)
     {
         io->write_cb = write_cb;
@@ -1435,10 +1452,10 @@ wio_t *wWrite(wloop_t *loop, int fd, sbuf_t *buf, wwrite_cb write_cb)
 wio_t *waccept(wloop_t *loop, int listenfd, waccept_cb accept_cb)
 {
     wio_t *io = wioGet(loop, listenfd);
-    assert(io != NULL);
-    if (wioIsClosed(io))
+    if (io == NULL || wioIsClosed(io))
     {
-        // socket init rejected the fd and already closed it
+        // Invalid indexes remain caller-owned; an initialized rejected socket
+        // has already been closed.
         return NULL;
     }
     if (accept_cb)
@@ -1453,10 +1470,10 @@ wio_t *waccept(wloop_t *loop, int listenfd, waccept_cb accept_cb)
 wio_t *wconnect(wloop_t *loop, int connfd, wconnect_cb connect_cb)
 {
     wio_t *io = wioGet(loop, connfd);
-    assert(io != NULL);
-    if (wioIsClosed(io))
+    if (io == NULL || wioIsClosed(io))
     {
-        // socket init rejected the fd and already closed it
+        // Invalid indexes remain caller-owned; an initialized rejected socket
+        // has already been closed.
         return NULL;
     }
     if (connect_cb)
@@ -1471,7 +1488,8 @@ wio_t *wconnect(wloop_t *loop, int connfd, wconnect_cb connect_cb)
 void wClose(wloop_t *loop, int fd)
 {
     wio_t *io = wioGet(loop, fd);
-    assert(io != NULL);
+    if (io == NULL)
+        return;
     wioClose(io);
 }
 
@@ -1551,7 +1569,7 @@ wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio
         // printError("unknown host: %s\n", host);
         return NULL;
     }
-    int sockfd = (int) socket(addr.sa.sa_family, sock_type, 0);
+    int sockfd = socketToFd(socket(addr.sa.sa_family, sock_type, 0));
 
     if (sockfd < 0)
     {
@@ -1591,11 +1609,14 @@ wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio
         }
     }
     io = wioGet(loop, sockfd);
-    assert(io != NULL);
-    if (wioIsClosed(io))
+    if (io == NULL || wioIsClosed(io))
     {
-        // socket init rejected the fd (e.g. it could not be made nonblocking)
-        // and already closed it.
+        if (io == NULL)
+        {
+            // No event io took ownership of the socket.
+            closesocket(sockfd);
+        }
+        // A closed event io already released the socket.
         return NULL;
     }
     io->io_type = type;

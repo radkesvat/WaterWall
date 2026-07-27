@@ -138,11 +138,13 @@ struct wio_s
     // public:
     wio_type_e io_type;
     uint32_t   id; // fd cannot be used as unique identifier, so we provide an id
-    // Windows socket handles are guaranteed to fit in 32 bits (that is what makes
-    // 32/64-bit handle interop safe), so an int holds any SOCKET the OS produces
-    // and storing one here is not a truncation bug. Widen to SOCKET explicitly at
-    // any call that takes the handle *by address* -- see SO_UPDATE_ACCEPT_CONTEXT
-    // in overlapio.c, where the option length is derived from the value's type.
+    // Descriptors are stored as int and used as dense-array indexes. Windows
+    // SOCKET is unsigned and only documented to fit 32 bits -- not the positive
+    // signed range -- so socketToFd() validates the signed range and wioGet()
+    // rejects values above WIO_MAX_FD before storing or indexing them. Widen
+    // back to SOCKET explicitly at any call taking the handle *by address* --
+    // see SO_UPDATE_ACCEPT_CONTEXT in overlapio.c, where the option length is
+    // derived from the value's type.
     int fd;
     // #if defined(OS_LINUX) && defined(HAVE_PIPE)
     //     int         pfd_r; // pipe read file descriptor for splice, (empty by default)

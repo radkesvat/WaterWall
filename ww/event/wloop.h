@@ -8,6 +8,11 @@
 #include "buffer_pool.h"
 #include "wsocket.h"
 
+// Upper bound on any fd used as a dense-array index. Bounds loop->ios at
+// ~64 MB worst-case on 64-bit and keeps `2 * fd` below INT_MAX. Must exceed
+// the process fd limit (`ulimit -n`); raise it if a deployment runs a higher one.
+#define WIO_MAX_FD (1 << 22) // 4,194,304
+
 typedef struct wloop_s  wloop_t;
 typedef struct wevent_s wevent_t;
 
@@ -258,10 +263,11 @@ WW_EXPORT uint32_t wloopGetIocpPostedOperations(wloop_t *loop);
 WW_EXPORT uint32_t wioGetIocpLiveRecords(wio_t *io);
 #endif
 
-// NOTE: wioGet never returns NULL, but if socket initialization rejects the fd
-// (e.g. it cannot be switched to nonblocking) the returned io is already closed
-// and its fd released — callers must check wioIsClosed() before treating it as
-// usable. wioCreateSocket*() returns NULL in that case.
+// NOTE: wioGet returns NULL when fd cannot be used as an array index; in that
+// case it has not taken ownership of fd. If socket initialization later rejects
+// the fd (e.g. it cannot be switched to nonblocking), the returned io is already
+// closed and its fd released. Callers must handle both cases before treating the
+// io as usable. wioCreateSocket*() returns NULL in either case.
 WW_EXPORT wio_t *wioGet(wloop_t *loop, int fd);
 WW_EXPORT int    wioAdd(wio_t *io, wio_cb cb, int events DEFAULT(WW_READ));
 WW_EXPORT int    wioDel(wio_t *io, int events DEFAULT(WW_RDWR));

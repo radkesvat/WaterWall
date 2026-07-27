@@ -149,10 +149,15 @@ static void asyncdnsSockStateCallback(void *data, ares_socket_t fd, int readable
     if (watch == NULL)
     {
 #ifndef EVENT_IOCP
-        // wioReady() keeps every socket nonblocking, exactly what c-ares
-        // expects; a socket it cannot switch comes back closed and rejected.
-        wio_t *io = wioGet(r->loop, fd);
-        if (UNLIKELY(wioIsClosed(io)))
+        // c-ares owns this socket; we may not close it. If it cannot become a
+        // valid array index we simply do not watch it -- c-ares observes the
+        // failure through its own socket operations and times the query out.
+        if (UNLIKELY((uintptr_t) fd > (uintptr_t) WIO_MAX_FD))
+        {
+            return;
+        }
+        wio_t *io = wioGet(r->loop, (int) fd);
+        if (UNLIKELY(io == NULL || wioIsClosed(io)))
         {
             // nothing to watch; c-ares observes the failure on its own
             // socket operations and times the query out

@@ -178,6 +178,16 @@ if(TARGET ww)
     "unit;net;socket;windows;interface"
   )
 
+  add_executable(socket_narrowing_test socket_narrowing_test.c)
+  target_link_libraries(socket_narrowing_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests socket_narrowing_test)
+
+  add_waterwall_unit_test(
+    waterwall.socket_narrowing_unit
+    socket_narrowing_test
+    "unit;net;socket;narrowing;bounds"
+  )
+
   add_executable(json_helpers_test json_helpers_test.c)
   target_link_libraries(json_helpers_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests json_helpers_test)
