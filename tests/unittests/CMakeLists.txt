@@ -553,6 +553,50 @@ if(TARGET ww)
       "unit;signal-manager;startup;failure"
     )
 
+    add_executable(wloop_stop_request_test wloop_stop_request_test.c)
+    target_link_libraries(wloop_stop_request_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests wloop_stop_request_test)
+
+    add_waterwall_unit_test(
+      waterwall.wloop_stop_request_unit
+      wloop_stop_request_test
+      "unit;event;shutdown;worker;lifetime"
+    )
+
+    if(UNIX)
+      add_executable(shutdown_manager_test shutdown_manager_test.c)
+      target_link_libraries(shutdown_manager_test PRIVATE ww)
+      add_dependencies(waterwall_unit_tests shutdown_manager_test)
+
+      add_waterwall_unit_test(
+        waterwall.shutdown_manager_unit
+        shutdown_manager_test
+        "unit;signal-manager;shutdown;worker;lifetime"
+      )
+
+      add_executable(shutdown_signal_test shutdown_signal_test.c)
+      target_link_libraries(shutdown_signal_test PRIVATE ww)
+      add_dependencies(waterwall_unit_tests shutdown_signal_test)
+
+      add_waterwall_unit_test(
+        waterwall.shutdown_signal_unit
+        shutdown_signal_test
+        "unit;signal-manager;shutdown;signals"
+      )
+
+      add_executable(node_manager_stop_once_test
+        node_manager_stop_once_test.c
+      )
+      target_link_libraries(node_manager_stop_once_test PRIVATE ww)
+      add_dependencies(waterwall_unit_tests node_manager_stop_once_test)
+
+      add_waterwall_unit_test(
+        waterwall.node_manager_stop_once_unit
+        node_manager_stop_once_test
+        "unit;node-manager;shutdown;lifetime"
+      )
+    endif()
+
     add_executable(thread_creation_failure_test thread_creation_failure_test.c)
     target_link_options(thread_creation_failure_test PRIVATE "-Wl,--wrap=pthread_create")
     target_link_libraries(thread_creation_failure_test PRIVATE ww)
