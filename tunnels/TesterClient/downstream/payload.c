@@ -4,7 +4,7 @@
 
 static bool testerclientInferPacketChunkIndex(tunnel_t *t, sbuf_t *buf, uint8_t *chunk_index_out)
 {
-    const uint8_t chunk_count = testerclientGetChunkCount(t);
+    const uint8_t  chunk_count = testerclientGetChunkCount(t);
     const uint32_t payload_len = sbufGetLength(buf);
 
     for (uint8_t i = 0; i < chunk_count; ++i)
@@ -21,10 +21,10 @@ static bool testerclientInferPacketChunkIndex(tunnel_t *t, sbuf_t *buf, uint8_t 
 
 static void testerclientTunnelDownStreamPayloadStateless(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    testerclient_lstate_t *ls = lineGetState(l, t);
-    uint32_t               bad_offset = 0;
-    uint8_t                expected = 0;
-    uint8_t                actual = 0;
+    testerclient_lstate_t *ls          = lineGetState(l, t);
+    uint32_t               bad_offset  = 0;
+    uint8_t                expected    = 0;
+    uint8_t                actual      = 0;
     uint8_t                chunk_index = 0;
     const uint8_t          chunk_count = testerclientGetChunkCount(t);
 
@@ -56,16 +56,25 @@ static void testerclientTunnelDownStreamPayloadStateless(tunnel_t *t, line_t *l,
         return;
     }
 
-    if (! testerclientVerifyChunk(t, l, buf, chunk_index, kTesterClientDirectionResponse, &bad_offset, &expected,
-                                  &actual))
+    if (! testerclientVerifyChunk(
+            t, l, buf, chunk_index, kTesterClientDirectionResponse, &bad_offset, &expected, &actual))
     {
         LOGE("TesterClient: worker %u packet response chunk %u mismatch (size=%u expected_size=%u bad_offset=%u "
              "expected=0x%02x actual=0x%02x)",
-             (unsigned int) lineGetWID(l), (unsigned int) chunk_index, (unsigned int) sbufGetLength(buf),
-             (unsigned int) testerclientGetChunkSize(t, chunk_index), (unsigned int) bad_offset,
-             (unsigned int) expected, (unsigned int) actual);
+             (unsigned int) lineGetWID(l),
+             (unsigned int) chunk_index,
+             (unsigned int) sbufGetLength(buf),
+             (unsigned int) testerclientGetChunkSize(t, chunk_index),
+             (unsigned int) bad_offset,
+             (unsigned int) expected,
+             (unsigned int) actual);
         lineReuseBuffer(l, buf);
-        terminateProgram(1);
+        // Category B: the buffer is already recycled, so unwind normally after
+        // requesting the orderly shutdown.
+        if (! requestProgramShutdown(1))
+        {
+            abortProgramNow(1);
+        }
         return;
     }
 
@@ -100,9 +109,9 @@ void testerclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
-        uint32_t bad_offset = 0;
-        uint8_t  expected   = 0;
-        uint8_t  actual     = 0;
+        uint32_t bad_offset  = 0;
+        uint8_t  expected    = 0;
+        uint8_t  actual      = 0;
         uint8_t  chunk_count = testerclientGetChunkCount(t);
 
         if (! ls->request_complete)
@@ -126,16 +135,25 @@ void testerclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
-        if (! testerclientVerifyChunk(t, l, buf, ls->response_rx_index, kTesterClientDirectionResponse, &bad_offset,
-                                      &expected, &actual))
+        if (! testerclientVerifyChunk(
+                t, l, buf, ls->response_rx_index, kTesterClientDirectionResponse, &bad_offset, &expected, &actual))
         {
             LOGE("TesterClient: worker %u packet response chunk %u mismatch (size=%u expected_size=%u bad_offset=%u "
                  "expected=0x%02x actual=0x%02x)",
-                 (unsigned int) lineGetWID(l), (unsigned int) ls->response_rx_index, (unsigned int) sbufGetLength(buf),
-                 (unsigned int) testerclientGetChunkSize(t, ls->response_rx_index), (unsigned int) bad_offset,
-                 (unsigned int) expected, (unsigned int) actual);
+                 (unsigned int) lineGetWID(l),
+                 (unsigned int) ls->response_rx_index,
+                 (unsigned int) sbufGetLength(buf),
+                 (unsigned int) testerclientGetChunkSize(t, ls->response_rx_index),
+                 (unsigned int) bad_offset,
+                 (unsigned int) expected,
+                 (unsigned int) actual);
             lineReuseBuffer(l, buf);
-            terminateProgram(1);
+            // Category B: the buffer is already recycled, so unwind normally
+            // after requesting the orderly shutdown.
+            if (! requestProgramShutdown(1))
+            {
+                abortProgramNow(1);
+            }
             return;
         }
 
@@ -177,19 +195,34 @@ void testerclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     while (ls->response_rx_index < chunk_count &&
            bufferstreamGetBufLen(&ls->read_stream) >= testerclientGetChunkSize(t, ls->response_rx_index))
     {
-        uint32_t bad_offset   = 0;
-        uint8_t  expected     = 0;
-        uint8_t  actual       = 0;
-        sbuf_t  *chunk_buffer = bufferstreamReadExact(&ls->read_stream, testerclientGetChunkSize(t, ls->response_rx_index));
+        uint32_t bad_offset = 0;
+        uint8_t  expected   = 0;
+        uint8_t  actual     = 0;
+        sbuf_t  *chunk_buffer =
+            bufferstreamReadExact(&ls->read_stream, testerclientGetChunkSize(t, ls->response_rx_index));
 
-        if (! testerclientVerifyChunk(t, l, chunk_buffer, ls->response_rx_index, kTesterClientDirectionResponse,
-                                      &bad_offset, &expected, &actual))
+        if (! testerclientVerifyChunk(t,
+                                      l,
+                                      chunk_buffer,
+                                      ls->response_rx_index,
+                                      kTesterClientDirectionResponse,
+                                      &bad_offset,
+                                      &expected,
+                                      &actual))
         {
             lineReuseBuffer(l, chunk_buffer);
             LOGE("TesterClient: worker %u response chunk %u mismatch at byte %u (expected=0x%02x actual=0x%02x)",
-                 (unsigned int) lineGetWID(l), (unsigned int) ls->response_rx_index, (unsigned int) bad_offset,
-                 (unsigned int) expected, (unsigned int) actual);
-            terminateProgram(1);
+                 (unsigned int) lineGetWID(l),
+                 (unsigned int) ls->response_rx_index,
+                 (unsigned int) bad_offset,
+                 (unsigned int) expected,
+                 (unsigned int) actual);
+            // Category B: the chunk buffer is already recycled, so unwind
+            // normally after requesting the orderly shutdown.
+            if (! requestProgramShutdown(1))
+            {
+                abortProgramNow(1);
+            }
             return;
         }
 

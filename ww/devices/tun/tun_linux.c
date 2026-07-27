@@ -691,7 +691,25 @@ static int tunDrainPackets(tun_device_t *tdev)
                  read_size);
             LOGF("TunDevice: This is related to the MTU size, please set a correct value for TunDevice 'device-mtu'");
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
-            terminateProgram(1);
+
+            /*
+             * Category B: a misconfigured MTU is fatal for the process, but this
+             * runs on the device reader thread. Release everything this thread
+             * owns (the oversized buffer above, plus the batch accumulated so
+             * far), request an orderly shutdown, and report end-of-stream so the
+             * read routine leaves through its normal exit path. The thread
+             * wrapper then marks the device failed and worker 0 performs the
+             * real teardown, including route/DNS cleanup.
+             */
+            if (queued_count > 0)
+            {
+                deviceReaderSessionPost(tdev->reader_session, getNextDistributionWID(), bufs, queued_count);
+            }
+            if (! requestProgramShutdown(1))
+            {
+                abortProgramNow(1);
+            }
+            return 0;
         }
 
         queued_count++;
@@ -733,9 +751,11 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 
         if (ret == 0)
         {
-            // ret == 0, which shouldn't happen with infinite timeout
+            // Category D: poll() must not time out with an infinite timeout, so
+            // the kernel/loop invariant is broken. Hard-abort instead of exit(),
+            // which would run C runtime teardown from this device thread.
             LOGF("TunDevice: poll returned 0 with infinite timeout");
-            exit(1);
+            abortProgramNow(1);
         }
 
         if (fds[1].revents & POLLIN)
@@ -829,7 +849,17 @@ static WTHREAD_ROUTINE(routineWriteToTun)
             {
                 LOGF("TunDevice: This is related to the MTU size, please set a correct value for TunDevice "
                      "'device-mtu'");
-                terminateProgram(1);
+                /*
+                 * Category B: the buffer was already recycled above and this
+                 * thread holds nothing else, so request an orderly shutdown and
+                 * leave the write routine through its normal exit. The thread
+                 * wrapper marks the device failed; worker 0 tears it down.
+                 */
+                if (! requestProgramShutdown(1))
+                {
+                    abortProgramNow(1);
+                }
+                return 0;
             }
             continue;
         }
@@ -1662,8 +1692,14 @@ void tundeviceDestroy(tun_device_t *tdev)
     // on readiness would skip cleanup after a thread died on its own.
     if (! tundeviceBringDown(tdev))
     {
+        /*
+         * Category D: interface cleanup did not complete, so the validity of the
+         * remaining device state is unknown and continuing to free it would be a
+         * use-after-free risk. Hard-abort with an explicit diagnostic rather than
+         * trying to run more cleanup.
+         */
         LOGF("TunDevice: refusing to destroy device while interface cleanup is incomplete");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     memoryFree(tdev->name);
     bufferpoolDestroy(tdev->reader_buffer_pool);

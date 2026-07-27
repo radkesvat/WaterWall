@@ -12,8 +12,13 @@ enum
 
 static void packetreceiverFormatIpv4(char *dest, size_t size, uint32_t host_addr)
 {
-    stringNPrintf(dest, size, "%u.%u.%u.%u", (host_addr >> 24U) & 0xFFU, (host_addr >> 16U) & 0xFFU,
-                  (host_addr >> 8U) & 0xFFU, host_addr & 0xFFU);
+    stringNPrintf(dest,
+                  size,
+                  "%u.%u.%u.%u",
+                  (host_addr >> 24U) & 0xFFU,
+                  (host_addr >> 16U) & 0xFFU,
+                  (host_addr >> 8U) & 0xFFU,
+                  host_addr & 0xFFU);
 }
 
 static bool packetreceiverWriteFormat(FILE *file, const char *fmt, ...)
@@ -35,8 +40,8 @@ static bool packetreceiverResolveSourceIndex(const packetreceiver_tstate_t *stat
 
     for (uint32_t ri = 0; ri < state->source_range_count; ++ri)
     {
-        const packetreceiver_source_range_t *range = &state->source_ranges[ri];
-        const uint64_t range_end = (uint64_t) range->base_host + range->count;
+        const packetreceiver_source_range_t *range     = &state->source_ranges[ri];
+        const uint64_t                       range_end = (uint64_t) range->base_host + range->count;
 
         if ((uint64_t) src_addr_host >= (uint64_t) range->base_host && (uint64_t) src_addr_host < range_end)
         {
@@ -57,8 +62,8 @@ static void packetreceiverBuildHistogramBar(char *bar, size_t bar_size, uint64_t
         return;
     }
 
-    const size_t width = (kPacketReceiverHistogramWidth < (bar_size - 1U)) ? kPacketReceiverHistogramWidth
-                                                                           : (bar_size - 1U);
+    const size_t width =
+        (kPacketReceiverHistogramWidth < (bar_size - 1U)) ? kPacketReceiverHistogramWidth : (bar_size - 1U);
     size_t filled = 0;
 
     if (width == 0)
@@ -125,19 +130,19 @@ static bool packetreceiverWriteReport(tunnel_t *t)
     state->total_lost_packets     = total_lost;
 
     bool ok = true;
-    ok = ok && packetreceiverWriteFormat(file, "PacketReceiver report\n");
-    ok = ok && packetreceiverWriteFormat(file, "output-file: %s\n", state->output_file);
+    ok      = ok && packetreceiverWriteFormat(file, "PacketReceiver report\n");
+    ok      = ok && packetreceiverWriteFormat(file, "output-file: %s\n", state->output_file);
     ok = ok && packetreceiverWriteFormat(file, "source-ip-count: %llu\n", (unsigned long long) state->source_count);
-    ok = ok && packetreceiverWriteFormat(file, "expected-packets-per-ip: %u\n",
-                                         (unsigned int) state->expected_packets_per_ip);
-    ok = ok && packetreceiverWriteFormat(file, "expected-total-packets: %llu\n",
-                                         (unsigned long long) state->total_expected_packets);
-    ok = ok && packetreceiverWriteFormat(file, "received-total-packets: %llu\n",
-                                         (unsigned long long) state->total_received_packets);
-    ok = ok && packetreceiverWriteFormat(file, "lost-total-packets: %llu\n",
-                                         (unsigned long long) state->total_lost_packets);
-    ok = ok && packetreceiverWriteFormat(file, "unexpected-packets: %llu\n",
-                                         (unsigned long long) state->unexpected_packets);
+    ok = ok && packetreceiverWriteFormat(
+                   file, "expected-packets-per-ip: %u\n", (unsigned int) state->expected_packets_per_ip);
+    ok = ok && packetreceiverWriteFormat(
+                   file, "expected-total-packets: %llu\n", (unsigned long long) state->total_expected_packets);
+    ok = ok && packetreceiverWriteFormat(
+                   file, "received-total-packets: %llu\n", (unsigned long long) state->total_received_packets);
+    ok = ok &&
+         packetreceiverWriteFormat(file, "lost-total-packets: %llu\n", (unsigned long long) state->total_lost_packets);
+    ok = ok &&
+         packetreceiverWriteFormat(file, "unexpected-packets: %llu\n", (unsigned long long) state->unexpected_packets);
     ok = ok && packetreceiverWriteFormat(file, "\nsource-ip | expected | received | lost | loss-percent | histogram\n");
 
     index = 0;
@@ -158,17 +163,22 @@ static bool packetreceiverWriteReport(tunnel_t *t)
             packetreceiverFormatIpv4(ipbuf, sizeof(ipbuf), range->base_host + (uint32_t) i);
             packetreceiverBuildHistogramBar(bar, sizeof(bar), expected, received);
 
-            ok = packetreceiverWriteFormat(file, "%s | %llu | %llu | %llu | %.2f%% | [%s]\n", ipbuf,
-                                           (unsigned long long) expected, (unsigned long long) received,
-                                           (unsigned long long) lost, loss_percent, bar);
+            ok = packetreceiverWriteFormat(file,
+                                           "%s | %llu | %llu | %llu | %.2f%% | [%s]\n",
+                                           ipbuf,
+                                           (unsigned long long) expected,
+                                           (unsigned long long) received,
+                                           (unsigned long long) lost,
+                                           loss_percent,
+                                           bar);
         }
     }
 
     ok = ok && packetreceiverWriteFormat(file, "\nsummary\n");
     ok = ok && packetreceiverWriteFormat(file, "received-total-packets: %llu\n", (unsigned long long) total_received);
     ok = ok && packetreceiverWriteFormat(file, "lost-total-packets: %llu\n", (unsigned long long) total_lost);
-    ok = ok && packetreceiverWriteFormat(file, "expected-total-packets: %llu\n",
-                                         (unsigned long long) state->total_expected_packets);
+    ok = ok && packetreceiverWriteFormat(
+                   file, "expected-total-packets: %llu\n", (unsigned long long) state->total_expected_packets);
 
     if (fclose(file) != 0)
     {
@@ -217,8 +227,8 @@ void packetreceiverPrepareRuntime(tunnel_t *t)
 
 void packetreceiverHandlePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    packetreceiver_tstate_t *state = tunnelGetState(t);
-    bool                     match  = false;
+    packetreceiver_tstate_t *state        = tunnelGetState(t);
+    bool                     match        = false;
     uint64_t                 source_index = 0;
 
     if (sbufGetLength(buf) >= sizeof(struct ip_hdr))
@@ -227,7 +237,7 @@ void packetreceiverHandlePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
         if ((raw[0] >> 4U) == 4U)
         {
             const struct ip_hdr *ipheader = (const struct ip_hdr *) raw;
-            match = packetreceiverResolveSourceIndex(state, ipheader->src.addr, &source_index);
+            match                         = packetreceiverResolveSourceIndex(state, ipheader->src.addr, &source_index);
         }
     }
 
@@ -251,7 +261,7 @@ void packetreceiverHandlePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 void packetreceiverFinalizeReport(tunnel_t *t, bool terminate_after_write)
 {
-    packetreceiver_tstate_t *state = tunnelGetState(t);
+    packetreceiver_tstate_t *state        = tunnelGetState(t);
     bool                     should_write = false;
 
     if (state->received_counts == NULL)
@@ -262,9 +272,9 @@ void packetreceiverFinalizeReport(tunnel_t *t, bool terminate_after_write)
     mutexLock(&state->state_mutex);
     if (! state->report_written)
     {
-        state->report_written      = true;
+        state->report_written     = true;
         state->report_in_progress = true;
-        should_write               = true;
+        should_write              = true;
     }
     mutexUnlock(&state->state_mutex);
 
@@ -282,7 +292,12 @@ void packetreceiverFinalizeReport(tunnel_t *t, bool terminate_after_write)
     if (! write_ok)
     {
         LOGF("PacketReceiver: failed to write report to \"%s\"", state->output_file);
-        terminateProgram(1);
+        // Category B: report_in_progress is cleared and state_mutex is released
+        // above, so this thread owns nothing that shutdown needs.
+        if (! requestProgramShutdown(1))
+        {
+            abortProgramNow(1);
+        }
         return;
     }
 
@@ -290,7 +305,17 @@ void packetreceiverFinalizeReport(tunnel_t *t, bool terminate_after_write)
 
     if (terminate_after_write)
     {
-        terminateProgram(0);
+        /*
+         * Category A (expected successful completion). The report is fully
+         * written and closed before the request, and this runs on whichever
+         * worker observed the last packet - which is exactly the case that used
+         * to _Exit() off-main and skip route/DNS/iptables cleanup.
+         */
+        if (! requestProgramShutdown(0))
+        {
+            abortProgramNow(1);
+        }
+        return;
     }
 }
 

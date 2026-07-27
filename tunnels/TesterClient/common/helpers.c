@@ -406,11 +406,22 @@ static bool testerclientDecodePacketIpv4(tunnel_t *t, sbuf_t *buf, testerclient_
     return true;
 }
 
+/*
+ * Category B (orderly runtime failure): the test driver has reached a verdict,
+ * so the process must end, but this runs on an arbitrary worker with the caller
+ * still owning its callback frame. Request an orderly shutdown and return; every
+ * caller returns immediately afterwards, and worker 0 performs the real
+ * teardown.
+ */
 void testerclientFail(tunnel_t *t, line_t *l, const char *reason)
 {
     LOGE("TesterClient: worker %u failed: %s", (unsigned int) lineGetWID(l), reason);
     discard t;
-    terminateProgram(1);
+
+    if (! requestProgramShutdown(1))
+    {
+        abortProgramNow(1);
+    }
 }
 
 uint8_t testerclientGetChunkCount(tunnel_t *t)
@@ -685,7 +696,14 @@ void testerclientWatchdogTask(tunnel_t *t, line_t *l)
              (unsigned int) kTesterClientWatchdogMs,
              (int) ls->request_complete,
              (unsigned int) ls->response_rx_index);
-        terminateProgram(1);
+
+        // Category B: the watchdog verdict is final, but this task runs on a
+        // worker. Request shutdown and let the task return normally.
+        if (! requestProgramShutdown(1))
+        {
+            abortProgramNow(1);
+        }
+        return;
     }
 }
 
@@ -751,7 +769,19 @@ void testerclientCloseCompletedStreamTask(tunnel_t *t, line_t *l)
     {
         LOGI("TesterClient: all %u worker lines closed successfully", (unsigned int) tc->workers_count);
         LOGI("TesterClient: all %u worker lines completed successfully", (unsigned int) tc->workers_count);
-        terminateProgram(0);
+
+        /*
+         * Category A (expected successful completion). The success markers above
+         * are fully committed and the line is already destroyed, so request an
+         * orderly shutdown with status 0 and return. This is the case the old
+         * off-main _Exit() broke: the last completion frequently happens on a
+         * non-zero worker, which skipped every registered cleanup callback.
+         */
+        if (! requestProgramShutdown(0))
+        {
+            abortProgramNow(1);
+        }
+        return;
     }
 }
 
@@ -786,6 +816,13 @@ void testerclientMarkWorkerComplete(tunnel_t *t, line_t *l)
         }
 
         LOGI("TesterClient: all %u worker lines completed successfully", (unsigned int) tc->workers_count);
-        terminateProgram(0);
+
+        // Category A: completion markers are committed; request an orderly
+        // shutdown and return so the calling worker callback can unwind.
+        if (! requestProgramShutdown(0))
+        {
+            abortProgramNow(1);
+        }
+        return;
     }
 }

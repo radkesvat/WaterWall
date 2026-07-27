@@ -293,15 +293,15 @@ static bool speedtestclientSendHello(tunnel_t *t, line_t *l, speedtestclient_lst
     speedtestclient_tstate_t *state = tunnelGetState(t);
     const uint16_t            flags = speedtestclientBaseFlags(state);
     sbuf_t                   *buf   = speedtestclientCreateFrame(t,
-                                                                 l,
-                                                                 kSpeedTestClientFrameHello,
-                                                                 flags,
-                                                                 ls->stream_id,
-                                                                 state->connection_count,
-                                                                 kSpeedTestClientHelloSize,
-                                                                 speedtestclientNowUs(),
-                                                                 state->duration_ms,
-                                                                 state->target_bandwidth_bps);
+                                             l,
+                                             kSpeedTestClientFrameHello,
+                                             flags,
+                                             ls->stream_id,
+                                             state->connection_count,
+                                             kSpeedTestClientHelloSize,
+                                             speedtestclientNowUs(),
+                                             state->duration_ms,
+                                             state->target_bandwidth_bps);
     if (buf == NULL)
     {
         speedtestclientFailLine(t, l, "failed to allocate hello frame");
@@ -378,7 +378,7 @@ static void speedtestclientSendEnd(tunnel_t *t, line_t *l, speedtestclient_lstat
 {
     speedtestclient_tstate_t *state   = tunnelGetState(t);
     uint16_t                  flags   = (uint16_t) ((speedtestclientBaseFlags(state) | kSpeedTestClientFlagUpload) &
-                                                    (uint16_t) ~kSpeedTestClientFlagDownload);
+                                 (uint16_t) ~kSpeedTestClientFlagDownload);
     const int                 repeats = (state->mode == kSpeedTestClientModeUdp) ? kSpeedTestClientUdpFinalRepeats : 1;
 
     if (ls->sender_finished)
@@ -503,7 +503,7 @@ void speedtestclientSendTask(tunnel_t *t, line_t *l)
 
         const uint32_t payload_size = speedtestclientPayloadSizeForNextFrame(t, l);
         uint16_t       flags        = (uint16_t) ((speedtestclientBaseFlags(state) | kSpeedTestClientFlagUpload) &
-                                                  (uint16_t) ~kSpeedTestClientFlagDownload);
+                                     (uint16_t) ~kSpeedTestClientFlagDownload);
         uint64_t       sequence;
 
         if (warmup)
@@ -770,7 +770,7 @@ static void speedtestclientHandleReport(tunnel_t *t, line_t *l, const speedtestc
 static void speedtestclientHandleFrame(tunnel_t *t, line_t *l, const speedtestclient_frame_t *frame)
 {
     speedtestclient_tstate_t *state = tunnelGetState(t);
-    speedtestclient_lstate_t *ls = lineGetState(l, t);
+    speedtestclient_lstate_t *ls    = lineGetState(l, t);
 
     if (frame->stream_id != ls->stream_id)
     {
@@ -1002,7 +1002,19 @@ static void speedtestclientFinishLine(tunnel_t *t, line_t *l, bool success, bool
         speedtestclientLogAggregate(t, final_success);
         if (state->terminate_on_complete && ! isApplicationTerminating())
         {
-            terminateProgram(final_success ? 0 : 1);
+            /*
+             * Category A (expected test-driver completion). The last stream can
+             * finish on any worker, so terminating here used to skip every
+             * registered cleanup callback. The aggregate report is committed,
+             * aggregate_mutex is released and the line is destroyed and unlocked
+             * above, so this thread owns nothing: request an orderly shutdown
+             * and unwind.
+             */
+            if (! requestProgramShutdown(final_success ? 0 : 1))
+            {
+                abortProgramNow(1);
+            }
+            return;
         }
     }
 }
