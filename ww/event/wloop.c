@@ -395,13 +395,36 @@ static void wloopDestroyEventFDS(wloop_t *loop)
     loop->eventfds[0] = loop->eventfds[1] = -1;
 }
 
-bool wloopPostEvent(wloop_t *loop, wevent_t *ev)
+/**
+ * @brief Write one wakeup byte to the loop's poller.
+ *
+ * Must be called with custom_events_mutex held. Does not enqueue anything: a
+ * spurious wakeup only makes eventFDReadCB find an empty queue.
+ */
+static bool wloopWriteWakeupLocked(wloop_t *loop)
 {
-    if (UNLIKELY(isApplicationTerminating()))
-    {
-        return false;
-    }
+    int nwrite = 0;
 
+    if (loop->eventfds[EVENTFDS_WRITE_INDEX] == -1)
+    {
+        if (wloopCreateEventFDS(loop) != 0)
+        {
+            return false;
+        }
+    }
+#if defined(OS_UNIX) && HAVE_EVENTFD
+    uint64_t count = 1;
+    nwrite         = (int) write(loop->eventfds[EVENTFDS_WRITE_INDEX], &count, sizeof(count));
+#elif defined(OS_UNIX) && HAVE_PIPE
+    nwrite = (int) write(loop->eventfds[EVENTFDS_WRITE_INDEX], "e", 1);
+#else
+    nwrite = send(loop->eventfds[EVENTFDS_WRITE_INDEX], "e", 1, 0);
+#endif
+    return nwrite > 0;
+}
+
+bool wloopPostControlEvent(wloop_t *loop, wevent_t *ev)
+{
     if (ev->loop == NULL)
     {
         ev->loop = loop;
@@ -416,24 +439,8 @@ bool wloopPostEvent(wloop_t *loop, wevent_t *ev)
     }
 
     bool success = false;
-    int  nwrite  = 0;
     mutexLock(&loop->custom_events_mutex);
-    if (loop->eventfds[EVENTFDS_WRITE_INDEX] == -1)
-    {
-        if (wloopCreateEventFDS(loop) != 0)
-        {
-            goto unlock;
-        }
-    }
-#if defined(OS_UNIX) && HAVE_EVENTFD
-    uint64_t count = 1;
-    nwrite         = (int) write(loop->eventfds[EVENTFDS_WRITE_INDEX], &count, sizeof(count));
-#elif defined(OS_UNIX) && HAVE_PIPE
-    nwrite = (int) write(loop->eventfds[EVENTFDS_WRITE_INDEX], "e", 1);
-#else
-    nwrite = send(loop->eventfds[EVENTFDS_WRITE_INDEX], "e", 1, 0);
-#endif
-    if (nwrite <= 0)
+    if (! wloopWriteWakeupLocked(loop))
     {
         wloge("wloopPostEvent failed!");
         goto unlock;
@@ -442,11 +449,26 @@ bool wloopPostEvent(wloop_t *loop, wevent_t *ev)
     {
         event_queue_init(&loop->custom_events, CUSTOM_EVENT_QUEUE_INIT_SIZE);
     }
+    // Ownership contract: the queue stores a copy of *ev, so the caller may pass
+    // a stack object and does not need to keep it alive after this returns.
     event_queue_push_back(&loop->custom_events, ev);
     success = true;
 unlock:
     mutexUnlock(&loop->custom_events_mutex);
     return success;
+}
+
+bool wloopPostEvent(wloop_t *loop, wevent_t *ev)
+{
+    // Ordinary application work is rejected once shutdown began. Shutdown
+    // control traffic must not go through here; it uses wloopPostControlEvent()
+    // or wloopRequestStop() instead.
+    if (UNLIKELY(isApplicationTerminating()))
+    {
+        return false;
+    }
+
+    return wloopPostControlEvent(loop, ev);
 }
 
 static void wloopInit(wloop_t *loop)
@@ -705,6 +727,13 @@ int wloopRun(wloop_t *loop)
 
     while (loop->status != WLOOP_STATUS_STOP)
     {
+        // Shutdown-control stop request, checked with acquire ordering before
+        // every iteration so a request issued before the loop started running is
+        // honored immediately.
+        if (atomicLoadExplicit(&loop->stop_requested, memory_order_acquire))
+        {
+            break;
+        }
         if (loop->status == WLOOP_STATUS_PAUSE)
         {
             wwSleepMS(WLOOP_PAUSE_TIME);
@@ -717,6 +746,12 @@ int wloopRun(wloop_t *loop)
             break;
         }
         wloopProcessEvents(loop, WLOOP_MAX_BLOCK_TIME);
+        // The poller may have been woken by wloopRequestStop(); re-check before
+        // blocking again.
+        if (atomicLoadExplicit(&loop->stop_requested, memory_order_acquire))
+        {
+            break;
+        }
         if (loop->flags & WLOOP_FLAG_RUN_ONCE)
         {
             break;
@@ -740,6 +775,39 @@ int wloopWakeup(wloop_t *loop)
     memoryZero(&ev, sizeof(ev));
     wloopPostEvent(loop, &ev);
     return 0;
+}
+
+bool wloopRequestStop(wloop_t *loop)
+{
+    if (loop == NULL)
+    {
+        return false;
+    }
+
+    atomicStoreExplicit(&loop->stop_requested, true, memory_order_release);
+
+    /*
+     * Always wake the poller. Skipping the wakeup when the caller looks like the
+     * loop thread would mean reading loop->pid, which the loop thread writes
+     * without synchronization in wloopRun() - and a stale read there costs a
+     * full poll interval of shutdown latency. A redundant wakeup is cheap: it
+     * only makes eventFDReadCB find an empty queue.
+     *
+     * This deliberately does not enqueue an application callback and does not
+     * allocate a custom-event object, so it stays available while the
+     * application is stopping and cannot be rejected by the normal
+     * event-admission gate.
+     */
+    mutexLock(&loop->custom_events_mutex);
+    const bool woken = wloopWriteWakeupLocked(loop);
+    mutexUnlock(&loop->custom_events_mutex);
+
+    return woken;
+}
+
+bool wloopStopRequested(wloop_t *loop)
+{
+    return loop != NULL && atomicLoadExplicit(&loop->stop_requested, memory_order_acquire);
 }
 
 int wloopStop(wloop_t *loop)
@@ -1131,7 +1199,9 @@ void wioAttach(wloop_t *loop, wio_t *io)
     {
         printError("wioAttach: loop wid %ld != current wid %ld", loop->wid, getWID());
         assert(false);
-        terminateProgram(1);
+        // Category D: attaching an io to a loop owned by another worker is a
+        // lifecycle-corruption bug; unwinding from here is not provably safe.
+        abortProgramNow(1);
     }
 
     int fd = io->fd;

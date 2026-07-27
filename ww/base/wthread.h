@@ -143,10 +143,52 @@ typedef pthread_t wthread_t;
  * @brief POSIX thread entry routine signature.
  */
 typedef void *(*wthread_routine)(void *);
-#define HTHREAD_RETTYPE          void *
-#define WTHREAD_ROUTINE(fname)   void *fname(void *userdata)
+#define HTHREAD_RETTYPE        void *
+#define WTHREAD_ROUTINE(fname) void *fname(void *userdata)
 /**
  * @brief Create a POSIX thread.
+ *
+ * @param out Receives the native thread handle on success.
+ * @param fn Entry routine.
+ * @param userdata Pointer passed to the entry routine.
+ * @return `kWThreadErrorNone` on success, otherwise `pthread_create`'s error code.
+ */
+/**
+ * @brief Build the set of async stop signals WaterWall routes to the main thread.
+ *
+ * Deliberately self-contained (no signal-manager dependency): these are the
+ * signals the shutdown design requires to be delivered on the main thread only.
+ * Blocking one that the signal manager does not handle is harmless — it simply
+ * gets delivered to the main thread and keeps its default disposition there.
+ */
+static inline void buildThreadBlockedStopSignalSet(sigset_t *set)
+{
+    sigemptyset(set);
+#ifdef SIGINT
+    sigaddset(set, SIGINT);
+#endif
+#ifdef SIGTERM
+    sigaddset(set, SIGTERM);
+#endif
+#ifdef SIGQUIT
+    sigaddset(set, SIGQUIT);
+#endif
+#ifdef SIGHUP
+    sigaddset(set, SIGHUP);
+#endif
+#ifdef SIGALRM
+    sigaddset(set, SIGALRM);
+#endif
+}
+
+/**
+ * @brief Create a POSIX thread with the graceful stop signals blocked.
+ *
+ * Shutdown policy: only the main thread has the handled stop signals unblocked;
+ * every application-owned thread keeps them blocked. Blocking them in the
+ * parent around pthread_create() makes the new thread inherit that mask with no
+ * delivery window, and covers threads spawned after signalmanagerStart() (later
+ * device threads, lwIP, TUN/raw/capture) without each of them opting in.
  *
  * @param out Receives the native thread handle on success.
  * @param fn Entry routine.
@@ -156,8 +198,20 @@ typedef void *(*wthread_routine)(void *);
 static inline wthread_error_t threadCreate(wthread_t *out, wthread_routine fn, void *userdata)
 {
     assert(out != NULL);
+
+    sigset_t blocked;
+    sigset_t previous;
+    buildThreadBlockedStopSignalSet(&blocked);
+    const bool mask_saved = (pthread_sigmask(SIG_BLOCK, &blocked, &previous) == 0);
+
     pthread_t th;
     int       error = pthread_create(&th, NULL, fn, userdata);
+
+    if (mask_saved)
+    {
+        pthread_sigmask(SIG_SETMASK, &previous, NULL);
+    }
+
     if (error != 0)
     {
         return (wthread_error_t) error;

@@ -163,6 +163,28 @@ WW_EXPORT int            wloopResume(wloop_t *loop);
 WW_EXPORT int            wloopWakeup(wloop_t *loop);
 WW_EXPORT wloop_status_e wloopStatus(wloop_t *loop);
 
+/**
+ * @brief Dedicated shutdown-control stop request. Thread-safe.
+ *
+ * Sets the loop's atomic stop_requested flag with release ordering and wakes the
+ * poller through the loop's eventfd/pipe/socketpair. It does not enqueue an
+ * application callback, does not allocate, does not wait, and is not subject to
+ * the event-admission gate that rejects normal work during shutdown, so it stays
+ * usable while the application is stopping.
+ *
+ * The loop checks the flag with acquire ordering before starting another
+ * iteration, which makes a request issued before wloopRun() started equally
+ * effective. Repeated requests are idempotent.
+ *
+ * @return false only when the poller could not be woken.
+ */
+WW_EXPORT bool wloopRequestStop(wloop_t *loop);
+
+/**
+ * @brief Whether a shutdown-control stop was requested for this loop.
+ */
+WW_EXPORT bool wloopStopRequested(wloop_t *loop);
+
 WW_EXPORT void     wloopUpdateTime(wloop_t *loop);
 WW_EXPORT uint64_t wloopNow(wloop_t *loop);            // s
 WW_EXPORT uint64_t wloopNowMS(wloop_t *loop);          // ms
@@ -205,7 +227,18 @@ WW_EXPORT void *wloopGetUserData(wloop_t *loop);
  * wloopPostEvent(loop, &ev);
  */
 // NOTE: wloopPostEvent is thread-safe, used to post event from other thread to loop thread.
+// It rejects new work once the application is stopping.
 WW_EXPORT bool wloopPostEvent(wloop_t *loop, wevent_t *ev);
+
+/**
+ * @brief Post a shutdown-control event, bypassing the stopping-state gate.
+ *
+ * Same thread-safety and ownership contract as wloopPostEvent (the event is
+ * copied into the loop's queue, so a stack object is fine), but it is admitted
+ * even after normal application event posting has been closed. Reserved for
+ * shutdown-control traffic that must not be discarded during teardown.
+ */
+WW_EXPORT bool wloopPostControlEvent(wloop_t *loop, wevent_t *ev);
 
 // idle
 WW_EXPORT widle_t *widleAdd(wloop_t *loop, widle_cb cb, uint32_t repeat DEFAULT(INFINITE));

@@ -18,14 +18,31 @@
 #include "wmath.h"
 #include "wtime.h"
 
-
-
 #include "ww_lwip.h"
 
 void initWLibc(void);
 
-_Noreturn void terminateProgram(int exit_code); // in signal_manager.c
-bool           isApplicationTerminating(void);  // in signal_manager.c
+/*
+ * Process shutdown APIs (implemented in signal_manager.c).
+ *
+ * requestProgramShutdown() is the thread-safe orderly request: it records the
+ * exit status, schedules the once-only shutdown sequence on worker 0 and
+ * returns. The caller must unwind normally right after it and must not assume
+ * teardown finished.
+ *
+ * abortProgramNow() is the immediate hard abort. It skips every registered
+ * cleanup callback and is only for corrupted state or failures reached while
+ * arbitrary locks may still be held.
+ *
+ * terminateProgram() is the legacy compatibility entry. It performs orderly
+ * shutdown only on the main thread; an off-main call is still a hard abort that
+ * skips registered cleanup. New code should use requestProgramShutdown() or
+ * abortProgramNow() instead.
+ */
+bool           requestProgramShutdown(int exit_code); // in signal_manager.c
+_Noreturn void abortProgramNow(int exit_code);        // in signal_manager.c
+_Noreturn void terminateProgram(int exit_code);       // in signal_manager.c
+bool           isApplicationTerminating(void);        // in signal_manager.c
 
 //--------------------Memory-------------------------------
 

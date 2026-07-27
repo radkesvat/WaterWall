@@ -13,6 +13,22 @@ typedef _Atomic(wid_t) atomic_wid_t;
 typedef struct worker_message_queue_s worker_message_queue_t;
 
 /**
+ * @brief Worker lifecycle state, stored atomically and only ever advanced.
+ *
+ * The states are ordered so a transition is a monotonic "advance to at least
+ * this state". That makes a stop request racing a worker's own exit safe in
+ * both orderings, and prevents double destruction.
+ */
+typedef enum
+{
+    kWorkerLifecycleInitialized = 0, // resources created, thread not running yet
+    kWorkerLifecycleRunning,         // worker routine entered
+    kWorkerLifecycleStopRequested,   // a stop was requested (possibly before running)
+    kWorkerLifecycleExited,          // loop returned and own resources destroyed
+    kWorkerLifecycleJoined           // OS thread joined
+} worker_lifecycle_e;
+
+/**
  * @brief Structure representing a worker.
  */
 typedef struct worker_s
@@ -28,9 +44,19 @@ typedef struct worker_s
     generic_pool_t         *context_pool;  // Generic pool for managing context objects.
     worker_message_queue_t *message_queue; // Worker-owned queued/timed messages.
     wthread_t               thread;        // Thread associated with the worker.
-    bool                    thread_valid;  // True only after native thread handle creation succeeds.
-    tid_t                   tid;           // Os Thread Id
-    wid_t                   wid;           // Worker ID.
+    // Serializes a remote workerRequestStop() against this worker detaching its
+    // own loop in workerDestroyOwnResources(), so a stop request can never touch
+    // a loop that is being destroyed.
+    wmutex_t    control_mutex;
+    atomic_int  lifecycle;           // worker_lifecycle_e
+    atomic_bool resources_destroyed; // guards one-shot own-resource teardown
+    bool        thread_valid;        // True only after native thread handle creation succeeds.
+    // True when this worker owns an event loop. Pseudo-workers (currently the
+    // lwIP worker) do not, and must be identified by this flag rather than by a
+    // null `loop`, which a normal worker also clears while tearing down.
+    bool  has_event_loop;
+    tid_t tid; // Os Thread Id
+    wid_t wid; // Worker ID.
 
 } worker_t;
 
@@ -84,29 +110,69 @@ static inline wid_t getWID(void)
 }
 
 /**
- * @brief Tells a worker that it should stop immediately
+ * @brief Ask a worker to stop. Thread-safe, never waits, never destroys.
  *
- * Signals the worker's event loop to finish , but dose not woit (join theard)
- * if it is our own thread, it also frees resources
+ * Advances the lifecycle to kWorkerLifecycleStopRequested and wakes the worker's
+ * event loop through the shutdown-control path. Safe before the loop starts
+ * running, safe while it is blocked in the poller, safe when the worker already
+ * exited, and safe to repeat.
+ *
+ * The caller must not assume the worker stopped when this returns; use
+ * workerJoin() for that. Requesting every worker to stop before joining the
+ * first one is what keeps shutdown from serializing on one slow worker.
+ *
+ * @param worker Pointer to the worker structure.
+ * @return false only when the loop could not be woken.
+ */
+bool workerRequestStop(worker_t *worker);
+
+/**
+ * @brief Whether this worker has been asked to stop.
+ */
+bool workerStopRequested(const worker_t *worker);
+
+/**
+ * @brief Post a shutdown-control event to a worker's loop. Thread-safe.
+ *
+ * Resolves the target loop under the worker's control mutex, so the event can
+ * never be posted through a loop pointer that the owning thread is concurrently
+ * detaching and destroying. The event is admitted even after normal application
+ * event posting has been closed, and it is copied into the loop's queue, so a
+ * stack-allocated wevent_t is fine.
+ *
+ * @return false when the worker has no event loop, or its loop is already gone.
+ */
+bool workerPostControlEvent(worker_t *worker, wevent_t *ev);
+
+/**
+ * @brief Destroy the worker's own event-loop-local resources. Runs at most once.
+ *
+ * Ownership rules:
+ *   - a worker thread calls this for itself after its loop returned;
+ *   - worker 0 calls it for itself, on worker 0;
+ *   - a pseudo-worker (no event loop, no spawned thread) is cleaned up by the
+ *     shutdown thread through this same entry point.
+ * It must never be called for another worker that owns a running event loop.
+ *
  * @param worker Pointer to the worker structure.
  */
-void workerFinish(worker_t *worker);
+void workerDestroyOwnResources(worker_t *worker);
 
 /**
  * @brief Waits for a worker's spawned OS thread to exit.
  *
- * Does not signal the worker to stop. Use after workerFinish() when multiple workers
- * should be notified before joining.
+ * Does not signal the worker to stop. Use after workerRequestStop() when
+ * multiple workers should be notified before joining.
  *
  * @param worker Pointer to the worker structure.
  */
 void workerJoin(worker_t *worker);
 
 /**
- * @brief Cleanly exits a worker.
+ * @brief Request stop and then join, for a single worker.
  *
- * Signals the worker's event loop to run once, waits for the worker thread to finish,
- * and destroys allocated resource pools. (if its our own thread, otherwise other worker dose that it self)
+ * Convenience wrapper; prefer requesting every worker to stop before joining any
+ * of them.
  *
  * @param worker Pointer to the worker structure.
  */

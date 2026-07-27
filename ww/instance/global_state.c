@@ -70,38 +70,46 @@ static void initializeShortCuts(void)
     }
 }
 
+/*
+ * Global-state shutdown callback. Registered first, so the LIFO registry runs it
+ * last, after every other subsystem callback has had the workers available.
+ *
+ * It always runs on worker 0 / the main thread: the shutdown manager guarantees
+ * the callback traversal happens there, which is what makes joining the other
+ * workers safe (a worker can never end up joining itself or waiting for a lock
+ * it holds).
+ */
 static void exitHandle(void *userdata, int signum)
 {
     discard signum;
     discard userdata;
 
+    assert((uint64_t) getTID() == GSTATE.main_thread_id);
+
+    // Node stop hooks, external cleanup scripts and device shutdown run exactly
+    // once; nodemanagerStop() is idempotent and this is its only normal caller.
     nodemanagerStop();
 
-    // notify all worker threads that were spawned via workerSpawn() before joining any of them
+    // Ask every spawned worker to stop before joining the first one, so shutdown
+    // does not serialize on one slow worker.
     for (unsigned int wid = 1; wid < WORKERS_COUNT - WORKER_ADDITIONS; ++wid)
     {
-        workerFinish(getWorker(wid));
+        discard workerRequestStop(getWorker(wid));
     }
-    // join only worker threads that were spawned via workerSpawn()
+    // join only worker threads that were spawned via workerSpawn(); each of them
+    // destroyed its own event-loop-local resources before returning.
     for (unsigned int wid = 1; wid < WORKERS_COUNT - WORKER_ADDITIONS; ++wid)
     {
         workerJoin(getWorker(wid));
     }
-    // lwip pseudo-worker has no spawned OS thread, but it still owns pools
-    workerFinish(getWorker(getTotalWorkersCount() - 1));
+    // lwip pseudo-worker has no spawned OS thread and no event loop, but it
+    // still owns pools; the shutdown thread cleans it up explicitly.
+    workerDestroyOwnResources(getWorker(getTotalWorkersCount() - 1));
 
-    if (getTID() == getWorker(0)->tid)
-    {
-        // we are in the main thread, so we can finish the worker and tear down the global state
-        workerFinish(getWorker(0));
-        finishGlobalState();
-    }
-    else
-    {
-        // when main thread finishes it will tear down the global state
-        workerFinish(getWorker(0));
-        workerJoin(getWorker(0));
-    }
+    // Worker 0 destroys its own worker-local resources, on worker 0.
+    workerDestroyOwnResources(getWorker(0));
+
+    finishGlobalState();
 }
 
 static void tcpipInitDone(void *arg)
@@ -452,24 +460,35 @@ void runMainThread(void)
 
     workerRun(getWorker(0));
 
-    finishGlobalState();
+    /*
+     * Worker 0's loop returned without the shutdown executor terminating the
+     * process. That is the unexpected path (the normal one exits from inside the
+     * worker-0 shutdown callback), so run the once-only main-thread shutdown
+     * here rather than skipping the registered cleanup. It normally does not
+     * return; finishGlobalState() below only covers a shutdown pass that was
+     * already claimed.
+     */
+    signalmanagerRunShutdownOnMainThread();
 
-    // if we return right here the main thread exits and program finishes
-    // but the thread that requested our exit may still have work to do
-    // wwSleepMS(2000);
-    // LOGD("MainThread Returned");
+    finishGlobalState();
 }
 
 /*!
  * @brief destroys global state and ends the program
  *
+ * Runs on the main thread at the end of the shutdown sequence, once every other
+ * worker has been stopped and joined.
  */
 void finishGlobalState(void)
 {
     // its not important which thread called this, at this point only 1 thread is running
     assert(isApplicationTerminating());
+
+    // Node stop hooks already ran in the shutdown callback; nodemanagerStop() is
+    // deliberately not called a second time here.
+    signalmanagerEnterFinalizing();
+
     const int exit_code = signalmanagerGetExitCode();
-    nodemanagerStop();
     atomicThreadFence(memory_order_seq_cst);
     destroyGlobalState();
 
@@ -520,6 +539,15 @@ WW_EXPORT void destroyGlobalState(void)
     GSTATE.shortcut_wios_pools    = NULL;
     GSTATE.shortcut_context_pools = NULL;
 
+    if (WORKERS != NULL)
+    {
+        // Every worker has been stopped and joined by now, so no thread can
+        // still take a worker control mutex.
+        for (wid_t wi = 0; wi < getTotalWorkersCount(); wi++)
+        {
+            mutexDestroy(&getWorker(wi)->control_mutex);
+        }
+    }
     memoryFree(WORKERS);
     WORKERS = NULL;
 

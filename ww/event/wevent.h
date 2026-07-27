@@ -36,17 +36,22 @@ struct wloop_s
 {
     uint32_t       flags;
     wloop_status_e status;
-    uint64_t       start_ms;     // ms
-    uint64_t       start_hrtime; // us
-    uint64_t       end_hrtime;
-    uint64_t       cur_hrtime;
-    uint64_t       cur_time;    // s
-    uint64_t       cur_time_ms; // ms
-    uint64_t       cur_time_us; // us
-    uint64_t       loop_cnt;
-    long           pid;
-    long           wid;
-    void          *userdata;
+    // Shutdown-control stop request. Written by any thread through
+    // wloopRequestStop() with release ordering and read by the loop thread with
+    // acquire ordering; it replaces the cross-thread non-atomic writes to
+    // `flags` that the worker teardown used to perform.
+    atomic_bool stop_requested;
+    uint64_t    start_ms;     // ms
+    uint64_t    start_hrtime; // us
+    uint64_t    end_hrtime;
+    uint64_t    cur_hrtime;
+    uint64_t    cur_time;    // s
+    uint64_t    cur_time_ms; // ms
+    uint64_t    cur_time_us; // us
+    uint64_t    loop_cnt;
+    long        pid;
+    long        wid;
+    void       *userdata;
     // private:
     //  events
     uint32_t intern_nevents;

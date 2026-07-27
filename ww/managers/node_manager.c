@@ -17,11 +17,11 @@ enum
 
 #define i_type map_node_t // NOLINT
 #define i_key  hash_t     // NOLINT
-#define i_val  node_t  *  // NOLINT
+#define i_val  node_t *   // NOLINT
 #include "stc/hmap.h"
 
 #define i_type vec_chains_t     // NOLINT
-#define i_key  tunnel_chain_t  *// NOLINT
+#define i_key  tunnel_chain_t * // NOLINT
 #include "stc/vec.h"
 
 typedef struct node_manager_config_s
@@ -33,12 +33,15 @@ typedef struct node_manager_config_s
 } node_manager_config_t;
 
 #define i_type vec_configs_t           // NOLINT
-#define i_key  node_manager_config_t  *// NOLINT
+#define i_key  node_manager_config_t * // NOLINT
 #include "stc/vec.h"
 
 typedef struct node_manager_s
 {
     vec_configs_t configs;
+    // Guarantees node onStop hooks, external cleanup scripts and device shutdown
+    // run at most once even if a second stop request reaches the manager.
+    atomic_bool stop_started;
 } node_manager_t;
 
 static node_manager_t *nodemanager_gstate;
@@ -106,8 +109,8 @@ static void finalizeTunnelChains(node_manager_config_t *cfg, tunnel_t **t_array,
 {
     for (int i = 0; i < tunnels_count; i++)
     {
-        tunnel_t *tunnel = t_array[i];
-        tunnel_chain_t *chain = tunnelGetChain(tunnel);
+        tunnel_t       *tunnel = t_array[i];
+        tunnel_chain_t *chain  = tunnelGetChain(tunnel);
         if (chain == NULL)
         {
             continue;
@@ -632,7 +635,7 @@ static node_manager_config_t *createNodeManagerConfig(config_file_t *config_file
 {
     node_manager_config_t *cfg = memoryAllocate(sizeof(node_manager_config_t));
     *cfg                       = (node_manager_config_t) {
-        .config_file = config_file, .node_map = map_node_t_with_capacity(kNodeMapCap), .chains = vec_chains_t_init()};
+                              .config_file = config_file, .node_map = map_node_t_with_capacity(kNodeMapCap), .chains = vec_chains_t_init()};
     return cfg;
 }
 
@@ -677,6 +680,17 @@ void nodemanagerStopConfig(node_manager_config_t *cfg)
 void nodemanagerStop(void)
 {
     if (nodemanager_gstate == NULL)
+    {
+        return;
+    }
+
+    /*
+     * Defensive stop-once guard. The call graph should still contain exactly one
+     * normal invocation (the global-state shutdown callback); this only makes a
+     * duplicate harmless instead of running node onStop hooks, external cleanup
+     * scripts and device shutdown twice.
+     */
+    if (atomicExchangeExplicit(&nodemanager_gstate->stop_started, true, memory_order_acq_rel))
     {
         return;
     }
@@ -729,6 +743,7 @@ node_manager_t *nodemanagerCreate(void)
     nodemanager_gstate = memoryAllocateZero(sizeof(node_manager_t));
 
     nodemanager_gstate->configs = vec_configs_t_with_capacity(kNmConfigsVectorCap);
+    atomicStoreRelaxed(&nodemanager_gstate->stop_started, false);
 
     return nodemanager_gstate;
 }
