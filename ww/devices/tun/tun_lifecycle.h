@@ -35,9 +35,27 @@ static inline bool tunLifecycleTransitionStartingToUp(atomic_int *lifecycle)
         lifecycle, &expected, kTunLifecycleUp, memory_order_acq_rel, memory_order_acquire);
 }
 
-// Attempts to transition from an active state (STARTING or UP) to FAILED.
-// Returns true if this thread successfully transitioned it.
-static inline bool tunLifecycleTransitionToFailed(atomic_int *lifecycle)
+/*
+ * Attempts to transition from an active state (STARTING or UP) to FAILED.
+ * Returns true only for the single caller that performs the transition.
+ *
+ * On success, *failed_from receives the exact state the successful
+ * compare/exchange replaced, so the caller can distinguish:
+ *   - kTunLifecycleStarting: bring-up is still in progress and will observe the
+ *     failed publication, roll back, and decide what to do on the main thread;
+ *   - kTunLifecycleUp: an already published device lost a required I/O thread at
+ *     runtime, which is process-fatal.
+ * The source state must come from the CAS itself: a separate load followed by a
+ * transition can observe STARTING and then lose to a concurrent STARTING -> UP,
+ * misreporting a runtime failure as a startup failure.
+ *
+ * On failure, *failed_from is left unchanged and must not be used. STOPPING,
+ * DOWN and an already FAILED state are never overwritten.
+ *
+ * @param lifecycle Device lifecycle state.
+ * @param failed_from Optional out-parameter; may be NULL.
+ */
+static inline bool tunLifecycleTransitionToFailed(atomic_int *lifecycle, tun_lifecycle_state_t *failed_from)
 {
     w_atomic_int_value_t expected = atomicLoadExplicit(lifecycle, memory_order_acquire);
     while (expected == kTunLifecycleStarting || expected == kTunLifecycleUp)
@@ -45,6 +63,10 @@ static inline bool tunLifecycleTransitionToFailed(atomic_int *lifecycle)
         if (atomicCompareExchangeExplicit(
                 lifecycle, &expected, kTunLifecycleFailed, memory_order_acq_rel, memory_order_acquire))
         {
+            if (failed_from != NULL)
+            {
+                *failed_from = (tun_lifecycle_state_t) expected;
+            }
             return true;
         }
     }

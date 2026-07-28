@@ -34,6 +34,12 @@ enum
 
 static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "TUN read batch count must fit in the reader session");
 
+// tun_windows_receive_policy.h is included before <windows.h> and is compiled on
+// non-Windows hosts for its unit test, so it restates this value. Pin it here,
+// where the real Win32 macro is visible.
+static_assert(kTunWintunErrorNoMoreItems == ERROR_NO_MORE_ITEMS,
+              "the Wintun receive policy's ERROR_NO_MORE_ITEMS value drifted from the Win32 definition");
+
 struct tun_device_s
 {
     char                    *name;
@@ -66,14 +72,8 @@ struct tun_device_s
     atomic_bool running;
     atomic_int  lifecycle;
 
-    // Set by the thread wrappers when a routine returns while `running` is still
-    // set -- nobody asked it to stop, so the device hit a real error such as a
-    // Wintun receive failure. The wrapper also clears `up`, which is what stops
-    // tundeviceIsUp() from advertising a device whose I/O has silently died.
-    // Bring-down already gates on owned resources here, so no joinable flags are
-    // needed: read_thread/write_thread are the authority and are nulled on join.
-    atomic_bool reader_failed;
-    atomic_bool writer_failed;
+    // Bring-down gates on owned resources here, so no joinable flags are needed:
+    // read_thread/write_thread are the authority and are nulled on join.
 };
 
 // External variables
@@ -589,59 +589,66 @@ static WTHREAD_ROUTINE(routineReadFromTun)
         }
         else
         {
+            // The thread-local last error is only meaningful right here:
+            // recycling the buffer below runs arbitrary code that can overwrite
+            // it, which would misclassify a real device loss as a transient.
+            DWORD last_error = GetLastError();
 
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
 
-            DWORD last_error = GetLastError();
-            switch (last_error)
+            if (tunWindowsClassifyReceiveError(last_error) == kTunWindowsReceiveTerminal)
             {
-            // i dont know why it can happen when debugging with gdb
-            case ERROR_ENVVAR_NOT_FOUND:
-                continue;
-                break;
-            // case ERROR_NO_MORE_ITEMS:
-            case ERROR_NO_MORE_ITEMS:
-                if (queued_count > 0)
-                {
-                    if (tundeviceReaderStopRequested(tdev, &routine_result))
-                    {
-                        goto cleanup;
-                    }
-                    deviceReaderSessionPost(tdev->reader_session, getNextDistributionWID(), &bufs[0], queued_count);
-                    queued_count = 0;
-                    continue;
-                }
-                DWORD wait_result = WaitForMultipleObjects(2, wait_handles, FALSE, kTunReaderStopFallbackWaitMs);
-                if (wait_result == WAIT_OBJECT_0)
-                {
-                    continue;
-                }
-                if (wait_result == WAIT_OBJECT_0 + 1)
-                {
-                    goto cleanup;
-                }
-                if (wait_result == WAIT_TIMEOUT)
-                {
-                    if (! atomicLoadRelaxed(&(tdev->running)))
-                    {
-                        goto cleanup;
-                    }
-                    continue;
-                }
-                if (wait_result == WAIT_FAILED)
-                {
-                    routine_result = GetLastError();
-                    LOGE("TunDevice: ReadThread: wait failed, code: %lu", routine_result);
-                    goto cleanup;
-                }
-                LOGE("TunDevice: ReadThread: unexpected wait result: %lu", wait_result);
-                goto cleanup;
-            default:
+                /*
+                 * Anything but an exhausted ring means this session is finished,
+                 * including ERROR_HANDLE_EOF and ERROR_INVALID_DATA. Returning
+                 * is what lets the thread wrapper publish FAILED and request the
+                 * orderly shutdown; swallowing it would leave a dead adapter
+                 * advertised as up while the reader spins.
+                 */
                 LOGE("TunDevice: ReadThread: Packet read failed: error %lu", last_error);
                 LOGE("TunDevice: ReadThread: Terminating");
                 routine_result = last_error;
                 goto cleanup;
             }
+
+            // ERROR_NO_MORE_ITEMS: the ring is empty, so flush what is queued and
+            // then wait for the session to signal more data.
+            if (queued_count > 0)
+            {
+                if (tundeviceReaderStopRequested(tdev, &routine_result))
+                {
+                    goto cleanup;
+                }
+                deviceReaderSessionPost(tdev->reader_session, getNextDistributionWID(), &bufs[0], queued_count);
+                queued_count = 0;
+                continue;
+            }
+
+            DWORD wait_result = WaitForMultipleObjects(2, wait_handles, FALSE, kTunReaderStopFallbackWaitMs);
+            if (wait_result == WAIT_OBJECT_0)
+            {
+                continue;
+            }
+            if (wait_result == WAIT_OBJECT_0 + 1)
+            {
+                goto cleanup;
+            }
+            if (wait_result == WAIT_TIMEOUT)
+            {
+                if (! atomicLoadRelaxed(&(tdev->running)))
+                {
+                    goto cleanup;
+                }
+                continue;
+            }
+            if (wait_result == WAIT_FAILED)
+            {
+                routine_result = GetLastError();
+                LOGE("TunDevice: ReadThread: wait failed, code: %lu", routine_result);
+                goto cleanup;
+            }
+            LOGE("TunDevice: ReadThread: unexpected wait result: %lu", wait_result);
+            goto cleanup;
         }
     }
     LOGD("TunDevice: ReadThread: Terminating due to not running");
@@ -835,24 +842,55 @@ static bool tundeviceShutdownSession(tun_device_t *tdev)
     return tunWindowsLifetimeShutdown(tdev, &ops);
 }
 
-// A device I/O routine that returns while `running` is still set was not asked
-// to stop: it hit a real error (a Wintun receive failure, a failed wait). Those
-// exits used to leave `up` set, so the device kept advertising itself as healthy
-// while reads had silently stopped and writes piled into a channel nobody drains.
-//
-// Clear the published state here so tundeviceIsUp() tells the truth, and record
-// which side died. `running` is cleared too, so the surviving thread leaves its
-// loop as well and the device fails as a unit rather than half-working.
-static void tundeviceNoteUnexpectedThreadExit(tun_device_t *tdev, atomic_bool *failed_flag, const char *which)
+/*
+ * Single place where an unexpected TUN I/O thread exit becomes process policy.
+ * Keep this behaviorally identical to the tun_linux.c and tun_darwin.c copies.
+ *
+ * A device I/O routine that returns while `running` is still set was not asked
+ * to stop: it hit a real error (a Wintun receive failure, a failed wait). Such exits used to leave the device
+ * published as healthy while reads had silently stopped and writes piled into a
+ * channel nobody drains.
+ *
+ * The routine has already returned, so it has released or transferred every
+ * buffer it owned, and this wrapper owns no locks. That is what makes it the
+ * correct point to request shutdown: requestProgramShutdown() returns, the
+ * wrapper returns, and worker 0 is then free to join this thread.
+ *
+ * Deliberately NOT done here: closing channels, waking the peer,
+ * tundeviceBringDown(), pre-down scripts, route/DNS restoration, or joining
+ * threads. A device thread that did any of those would eventually join itself.
+ * Worker 0 reaches all of it through nodemanagerStop() and TunDevice::onStop.
+ */
+static void tundeviceNoteUnexpectedThreadExit(tun_device_t *tdev, const char *which)
 {
-    if (tunLifecycleTransitionToFailed(&tdev->lifecycle))
+    tun_lifecycle_state_t failed_from;
+    if (! tunLifecycleTransitionToFailed(&tdev->lifecycle, &failed_from))
     {
-        atomicStoreExplicit(failed_flag, true, memory_order_release);
-        atomicStoreExplicit(&tdev->running, false, memory_order_release);
+        // Either normal teardown already moved the device to STOPPING (this
+        // routine returned because it was asked to), or the peer thread already
+        // published the failure. Neither case logs or requests again.
+        return;
+    }
 
-        LOGE("TunDevice: %s thread for device %s exited unexpectedly; the device is no longer usable",
-             which,
-             tdev->name);
+    // `running` is cleared too, so the surviving thread leaves its loop as well
+    // and the device fails as a unit rather than half-working.
+    atomicStoreExplicit(&tdev->running, false, memory_order_release);
+
+    LOGE("TunDevice: %s thread for device %s exited unexpectedly; the device is no longer usable", which, tdev->name);
+
+    /*
+     * STARTING -> FAILED is a startup failure: tundeviceBringUp() observes the
+     * failed publication, rolls back what it owns and returns false, and the
+     * main-thread TunDevice::onStart path decides what happens next. Requesting
+     * shutdown from here would race that synchronous rollback.
+     *
+     * UP -> FAILED is an already published device losing a required I/O thread
+     * at runtime. The packet chain cannot continue correctly, so this is
+     * process-fatal: request the orderly, worker-0-owned shutdown.
+     */
+    if (failed_from == kTunLifecycleUp && ! requestProgramShutdown(1))
+    {
+        abortProgramNow(1);
     }
 }
 
@@ -860,7 +898,7 @@ static WTHREAD_ROUTINE(tundeviceReaderThreadMain) // NOLINT
 {
     tun_device_t *tdev = userdata;
     discard       tdev->routine_reader(tdev);
-    tundeviceNoteUnexpectedThreadExit(tdev, &tdev->reader_failed, "reader");
+    tundeviceNoteUnexpectedThreadExit(tdev, "reader");
     return 0;
 }
 
@@ -868,7 +906,7 @@ static WTHREAD_ROUTINE(tundeviceWriterThreadMain) // NOLINT
 {
     tun_device_t *tdev = userdata;
     discard       tdev->routine_writer(tdev);
-    tundeviceNoteUnexpectedThreadExit(tdev, &tdev->writer_failed, "writer");
+    tundeviceNoteUnexpectedThreadExit(tdev, "writer");
     return 0;
 }
 
@@ -930,8 +968,6 @@ bool tundeviceBringUp(tun_device_t *tdev)
     }
 
     atomicStoreRelaxed(&(tdev->running), true);
-    atomicStoreExplicit(&tdev->reader_failed, false, memory_order_relaxed);
-    atomicStoreExplicit(&tdev->writer_failed, false, memory_order_relaxed);
     tdev->session_handle = Session;
     tdev->read_thread    = NULL;
     tdev->write_thread   = NULL;
@@ -1506,8 +1542,14 @@ void tundeviceDestroy(tun_device_t *tdev)
     {
         if (! tundeviceBringDown(tdev))
         {
+            /*
+             * I/O resources may still be live, so the validity of the remaining
+             * device state is unknown and continuing to free it would be a
+             * use-after-free risk. Hard-abort with an explicit diagnostic rather
+             * than trying to run more cleanup. Mirrors tun_linux.c.
+             */
             LOGF("TunDevice: refusing to destroy device while I/O threads may still be running");
-            terminateProgram(1);
+            abortProgramNow(1);
         }
     }
 

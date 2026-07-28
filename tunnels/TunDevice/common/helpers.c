@@ -84,8 +84,10 @@ void tundeviceOnIPPacketReceived(tun_device_t *tdev, void *userdata, sbuf_t *buf
 #ifdef DEBUG
     if (! lineIsAlive(l))
     {
+        // Invariant violation reached while this thread still holds the line
+        // lock (lineUnlock is below), so unwinding is not provably safe.
         LOGF("TunDevice: line is not alive, rule of packet tunnels is violated");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     lineUnlock(l);

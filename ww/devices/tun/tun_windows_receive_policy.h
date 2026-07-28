@@ -20,6 +20,48 @@ enum
     kTunOversizedReadDiscardReportIntervalMs = 1000
 };
 
+/*
+ * Wintun receive-error policy.
+ *
+ * WintunReceivePacket() lists three possible failures (ww/vendor/wintun/wintun.h):
+ *
+ *   ERROR_NO_MORE_ITEMS   the ring is exhausted   -> recoverable, wait for data
+ *   ERROR_HANDLE_EOF      the adapter is terminating
+ *   ERROR_INVALID_DATA    the ring is corrupt
+ *
+ * Only the first is recoverable. Every other value - documented or not - means
+ * the session will not produce packets again, so the reader must leave its loop
+ * and let tundeviceNoteUnexpectedThreadExit() publish the failure. Treating an
+ * unrecognised error as recoverable is what produces the silent blackhole: the
+ * reader spins forever while the device is still advertised as up.
+ *
+ * The numeric value is restated here because this header is included before
+ * <windows.h> and is compiled on non-Windows hosts for unit tests. tun_windows.c
+ * static-asserts it against the real Win32 macro, so the two cannot drift.
+ */
+enum
+{
+    kTunWintunErrorNoMoreItems = 259 // ERROR_NO_MORE_ITEMS
+};
+
+typedef enum tun_windows_receive_action_e
+{
+    kTunWindowsReceiveWaitForData = 0, // Ring empty; the session is healthy.
+    kTunWindowsReceiveTerminal         // The session is lost; leave the reader loop.
+} tun_windows_receive_action_t;
+
+// Classifies the last error reported by a failed WintunReceivePacket() call. The
+// caller must read that error immediately after the call: releasing the reserved
+// buffer first runs arbitrary code that can overwrite the thread's last error.
+static inline tun_windows_receive_action_t tunWindowsClassifyReceiveError(unsigned long last_error)
+{
+    if (last_error == (unsigned long) kTunWintunErrorNoMoreItems)
+    {
+        return kTunWindowsReceiveWaitForData;
+    }
+    return kTunWindowsReceiveTerminal;
+}
+
 typedef struct tun_oversized_read_discard_stats_s
 {
     uint64_t           total;          // lifetime count of dropped oversized packets

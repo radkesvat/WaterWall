@@ -7,6 +7,7 @@ void tundeviceTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     // using tunnel / adapter default handle for this action
     discard t;
     discard chain;
+    // Invariant stub: this callback must never be reached.
     LOGF("This Function is disabled, using the default Tunnel instead");
-    terminateProgram(1);
+    abortProgramNow(1);
 }

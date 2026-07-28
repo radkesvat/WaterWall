@@ -441,6 +441,10 @@ if(TARGET ww)
       "-Wl,--wrap=memoryFree"
       "-Wl,--wrap=masterpoolDestroy"
       "-Wl,--wrap=bufferpoolReuseBuffer"
+      # tun_linux.c is compiled into this test, so its process-shutdown request
+      # is intercepted instead of tearing the test process down.
+      "-Wl,--wrap=requestProgramShutdown"
+      "-Wl,--wrap=abortProgramNow"
     )
     target_link_libraries(tun_linux_message_lifetime_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests tun_linux_message_lifetime_test)

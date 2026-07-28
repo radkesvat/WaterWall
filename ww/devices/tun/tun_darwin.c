@@ -1,5 +1,6 @@
 #include "devices/device_reader_session.h"
 #include "devices/device_writer_channel.h"
+#include "devices/tun/tun_io_error.h"
 #include "devices/tun/tun_lifecycle.h"
 #include "generic_pool.h"
 #include "global_state.h"
@@ -61,13 +62,6 @@ struct tun_device_s
 
     atomic_bool running;
     atomic_int  lifecycle;
-
-    // Set by the thread wrappers when a routine returns while `running` is still
-    // set -- nobody asked it to stop, so the device hit a real error. The wrapper
-    // also clears `up`, which is what stops tundeviceIsUp() from advertising a
-    // device whose I/O has silently died.
-    atomic_bool reader_failed;
-    atomic_bool writer_failed;
 
     // Whether read_thread / write_thread hold a started, unjoined thread. These
     // -- not `up` -- decide what bring-down must join, so a device whose thread
@@ -233,7 +227,20 @@ static void tunDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
     tdev->read_event_callback(tdev, tdev->userdata, buf, wid);
 }
 
-static int tunDrainPackets(tun_device_t *tdev)
+// Hands whatever the drain cycle has already read to the reader session. Every
+// exit from tunDrainPackets() goes through this, so a device error never
+// strands packets that were read successfully before it.
+static void tunFlushReadBatch(tun_device_t *tdev, sbuf_t **bufs, uint16_t queued_count)
+{
+    if (queued_count > 0)
+    {
+        deviceReaderSessionPost(tdev->reader_session, getNextDistributionWID(), bufs, queued_count);
+    }
+}
+
+// Drains packets from the TUN device after POLLIN. Every accumulated buffer is
+// handed to the reader session before returning, on every path.
+static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
 {
     uint8_t  queued_count = 0;
     sbuf_t  *bufs[kMaxReadDistributeQueueSize];
@@ -258,30 +265,36 @@ static int tunDrainPackets(tun_device_t *tdev)
         if (nread == 0)
         {
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
-            if (queued_count > 0)
-            {
-                deviceReaderSessionPost(tdev->reader_session, getNextDistributionWID(), bufs, queued_count);
-            }
-            return 0;
+            tunFlushReadBatch(tdev, bufs, queued_count);
+            return kTunDrainEndOfStream;
         }
 
         if (nread < 0)
         {
-            int saved_errno = errno;
+            // errno is only meaningful right here: recycling the buffer and the
+            // loggers below can both overwrite it.
+            const int saved_errno = errno;
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
-            if (queued_count > 0)
+            tunFlushReadBatch(tdev, bufs, queued_count);
+
+            if (tunIoErrnoIsTransient(saved_errno))
             {
-                deviceReaderSessionPost(tdev->reader_session, getNextDistributionWID(), bufs, queued_count);
+                // No more packets for now; end this cycle and go back to poll().
+                return kTunDrainAgain;
             }
 
-            if (saved_errno == EAGAIN || saved_errno == EWOULDBLOCK)
-            {
-                return 1;
-            }
-            LOGW("TunDevice: failed to read a packet from TUN device, errno is %d (%s), retrying...",
+            /*
+             * Anything else (EIO, EBADF, ENODEV, ENXIO, ...) means this handle
+             * will not produce packets again. Returning "keep polling" here made
+             * the reader spin on a permanently readable dead fd while every
+             * packet vanished, so the loss is reported instead. Mirrors
+             * tun_linux.c.
+             */
+            LOGE("TunDevice: unrecoverable read error on device %s, errno is %d (%s)",
+                 tdev->name,
                  saved_errno,
                  strerror(saved_errno));
-            return -1;
+            return kTunDrainDeviceError;
         }
 
         if (nread <= (int) sizeof(uint32_t))
@@ -301,18 +314,25 @@ static int tunDrainPackets(tun_device_t *tdev)
                  tunDeviceMtu(tdev));
             LOGF("TunDevice: This is related to the MTU size, please set a correct value for TunDevice 'device-mtu'");
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
-            terminateProgram(1);
+
+            /*
+             * A misconfigured MTU is fatal for the process, but this runs on the
+             * device reader thread. Release everything this thread owns - the
+             * oversized buffer above, plus the batch accumulated so far - and
+             * report the loss so the read routine leaves through its normal exit
+             * path. tundeviceNoteUnexpectedThreadExit() then publishes the
+             * failure and owns the shutdown decision. Mirrors tun_linux.c.
+             */
+            tunFlushReadBatch(tdev, bufs, queued_count);
+            return kTunDrainDeviceError;
         }
 
         queued_count++;
     }
 
-    if (queued_count > 0)
-    {
-        deviceReaderSessionPost(tdev->reader_session, getNextDistributionWID(), bufs, queued_count);
-    }
+    tunFlushReadBatch(tdev, bufs, queued_count);
 
-    return 1;
+    return kTunDrainAgain;
 }
 
 static WTHREAD_ROUTINE(routineReadFromTun)
@@ -359,10 +379,13 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 
         if (fds[0].revents & POLLIN)
         {
-            int drain_res = tunDrainPackets(tdev);
-            if (drain_res == 0)
+            const tun_drain_result_t drain_res = tunDrainPackets(tdev);
+            if (drain_res != kTunDrainAgain)
             {
-                LOGE("TunDevice: Exit read routine due to End Of File");
+                // The device is gone. Leaving the loop is what lets the thread
+                // wrapper publish FAILED and request the orderly shutdown.
+                LOGE("TunDevice: Exit read routine due to %s",
+                     drain_res == kTunDrainEndOfStream ? "End Of File" : "an unrecoverable device read error");
                 return 0;
             }
             continue;
@@ -428,8 +451,11 @@ static WTHREAD_ROUTINE(routineWriteToTun)
         iov[1].iov_base = (void *) sbufGetRawPtr(buf);
         iov[1].iov_len  = sbufGetLength(buf);
 
-        ssize_t nwrite   = writev(tdev->handle, iov, 2);
-        ssize_t expected = (ssize_t) (sizeof(family) + sbufGetLength(buf));
+        ssize_t nwrite = writev(tdev->handle, iov, 2);
+        // errno is only meaningful right here. Recycling the buffer and every
+        // logger below may overwrite it, so classification must read this copy.
+        const int write_errno = (nwrite < 0) ? errno : 0;
+        ssize_t   expected    = (ssize_t) (sizeof(family) + sbufGetLength(buf));
         bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
 
         if (nwrite == 0)
@@ -440,19 +466,35 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 
         if (nwrite < 0)
         {
-            LOGW("TunDevice: writing a packet to TUN device failed: %s", strerror(errno));
-            if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+            if (tunIoErrnoIsTransient(write_errno) || tunWriteErrnoIsPacketLocal(write_errno))
             {
+                LOGW("TunDevice: discarded a packet, writing to device %s failed with errno %d (%s)",
+                     tdev->name,
+                     write_errno,
+                     strerror(write_errno));
                 continue;
             }
 
-            if (errno == EMSGSIZE)
+            if (write_errno == EMSGSIZE)
             {
                 LOGF("TunDevice: This is related to the MTU size, please set a correct value for TunDevice "
                      "'device-mtu'");
-                terminateProgram(1);
             }
-            continue;
+
+            /*
+             * The device will not accept packets again. The buffer was already
+             * recycled above and this thread holds nothing else, so just leave
+             * the write routine through its normal exit.
+             * tundeviceNoteUnexpectedThreadExit() publishes the failure and owns
+             * the shutdown decision. Returning to the loop instead would discard
+             * every packet from here on while the device still looked usable.
+             * Mirrors tun_linux.c.
+             */
+            LOGE("TunDevice: Exit write routine due to an unrecoverable write error on device %s, errno %d (%s)",
+                 tdev->name,
+                 write_errno,
+                 strerror(write_errno));
+            return 0;
         }
 
         if (UNLIKELY(nwrite != expected))
@@ -782,24 +824,55 @@ bool tundeviceClearDnsServers(tun_device_t *tdev)
     return false;
 }
 
-// A device I/O routine that returns while `running` is still set was not asked
-// to stop: it hit a real error (poll failure, EOF, an unrecoverable write). Those
-// exits used to leave `up` set, so the device kept advertising itself as healthy
-// while reads had silently stopped and writes piled into a channel nobody drains.
-//
-// Clear the published state here so tundeviceIsUp() tells the truth, and record
-// which side died. `running` is cleared too, so the surviving thread leaves its
-// loop as well and the device fails as a unit rather than half-working.
-static void tundeviceNoteUnexpectedThreadExit(tun_device_t *tdev, atomic_bool *failed_flag, const char *which)
+/*
+ * Single place where an unexpected TUN I/O thread exit becomes process policy.
+ * Keep this behaviorally identical to the tun_linux.c and tun_windows.c copies.
+ *
+ * A device I/O routine that returns while `running` is still set was not asked
+ * to stop: it hit a real error (poll failure, EOF, an unrecoverable write). Such exits used to leave the device
+ * published as healthy while reads had silently stopped and writes piled into a
+ * channel nobody drains.
+ *
+ * The routine has already returned, so it has released or transferred every
+ * buffer it owned, and this wrapper owns no locks. That is what makes it the
+ * correct point to request shutdown: requestProgramShutdown() returns, the
+ * wrapper returns, and worker 0 is then free to join this thread.
+ *
+ * Deliberately NOT done here: closing channels, waking the peer,
+ * tundeviceBringDown(), pre-down scripts, route/DNS restoration, or joining
+ * threads. A device thread that did any of those would eventually join itself.
+ * Worker 0 reaches all of it through nodemanagerStop() and TunDevice::onStop.
+ */
+static void tundeviceNoteUnexpectedThreadExit(tun_device_t *tdev, const char *which)
 {
-    if (tunLifecycleTransitionToFailed(&tdev->lifecycle))
+    tun_lifecycle_state_t failed_from;
+    if (! tunLifecycleTransitionToFailed(&tdev->lifecycle, &failed_from))
     {
-        atomicStoreExplicit(failed_flag, true, memory_order_release);
-        atomicStoreExplicit(&tdev->running, false, memory_order_release);
+        // Either normal teardown already moved the device to STOPPING (this
+        // routine returned because it was asked to), or the peer thread already
+        // published the failure. Neither case logs or requests again.
+        return;
+    }
 
-        LOGE("TunDevice: %s thread for device %s exited unexpectedly; the device is no longer usable",
-             which,
-             tdev->name);
+    // `running` is cleared too, so the surviving thread leaves its loop as well
+    // and the device fails as a unit rather than half-working.
+    atomicStoreExplicit(&tdev->running, false, memory_order_release);
+
+    LOGE("TunDevice: %s thread for device %s exited unexpectedly; the device is no longer usable", which, tdev->name);
+
+    /*
+     * STARTING -> FAILED is a startup failure: tundeviceBringUp() observes the
+     * failed publication, rolls back what it owns and returns false, and the
+     * main-thread TunDevice::onStart path decides what happens next. Requesting
+     * shutdown from here would race that synchronous rollback.
+     *
+     * UP -> FAILED is an already published device losing a required I/O thread
+     * at runtime. The packet chain cannot continue correctly, so this is
+     * process-fatal: request the orderly, worker-0-owned shutdown.
+     */
+    if (failed_from == kTunLifecycleUp && ! requestProgramShutdown(1))
+    {
+        abortProgramNow(1);
     }
 }
 
@@ -807,7 +880,7 @@ static WTHREAD_ROUTINE(tundeviceReaderThreadMain) // NOLINT
 {
     tun_device_t *tdev = userdata;
     discard       tdev->routine_reader(tdev);
-    tundeviceNoteUnexpectedThreadExit(tdev, &tdev->reader_failed, "reader");
+    tundeviceNoteUnexpectedThreadExit(tdev, "reader");
     return 0;
 }
 
@@ -815,7 +888,7 @@ static WTHREAD_ROUTINE(tundeviceWriterThreadMain) // NOLINT
 {
     tun_device_t *tdev = userdata;
     discard       tdev->routine_writer(tdev);
-    tundeviceNoteUnexpectedThreadExit(tdev, &tdev->writer_failed, "writer");
+    tundeviceNoteUnexpectedThreadExit(tdev, "writer");
     return 0;
 }
 
@@ -853,8 +926,6 @@ bool tundeviceBringUp(tun_device_t *tdev)
     }
 
     atomicStoreRelaxed(&(tdev->running), true);
-    atomicStoreExplicit(&tdev->reader_failed, false, memory_order_relaxed);
-    atomicStoreExplicit(&tdev->writer_failed, false, memory_order_relaxed);
 
     if (tdev->read_event_callback != NULL)
     {
@@ -1112,8 +1183,14 @@ void tundeviceDestroy(tun_device_t *tdev)
     // on readiness would skip cleanup after a thread died on its own.
     if (! tundeviceBringDown(tdev))
     {
+        /*
+         * Interface cleanup did not complete, so the validity of the remaining
+         * device state is unknown and continuing to free it would be a
+         * use-after-free risk. Hard-abort with an explicit diagnostic rather
+         * than trying to run more cleanup. Mirrors tun_linux.c.
+         */
         LOGF("TunDevice: refusing to destroy device while interface cleanup is incomplete");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     memoryFree(tdev->name);
     bufferpoolDestroy(tdev->reader_buffer_pool);

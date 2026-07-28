@@ -57,8 +57,17 @@ static unsigned int       fail_fake_thread_create_on_call;
 static unsigned int       run_fake_thread_on_create_call;
 static unsigned int       fail_interface_down_calls;
 static unsigned int       interface_down_attempts;
-static void *(*captured_first_thread_routine)(void *);
-static void                    *captured_first_thread_arg;
+// Reader is created first, writer second, so index 0 is the reader body and
+// index 1 the writer body. Capturing both lets a test invoke either wrapper
+// independently.
+enum
+{
+    kCapturedReaderThread = 0,
+    kCapturedWriterThread = 1,
+    kMaxCapturedThreads   = 2
+};
+static void *(*captured_thread_routines[kMaxCapturedThreads])(void *);
+static void                    *captured_thread_args[kMaxCapturedThreads];
 static sbuf_t                  *expected_reused_buffer;
 static buffer_pool_t           *expected_reuse_pool;
 static unsigned int             expected_reuse_count;
@@ -82,8 +91,10 @@ int     __real_pthread_create(pthread_t *thread, const pthread_attr_t *attr, voi
 int     __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*routine)(void *), void *arg);
 int     __real_pthread_join(pthread_t thread, void **retval);
 int     __wrap_pthread_join(pthread_t thread, void **retval);
+pid_t   __real_fork(void);
 pid_t   __wrap_fork(void);
 int     __wrap_execvp(const char *file, char *const argv[]);
+pid_t   __real_waitpid(pid_t pid, int *status, int options);
 pid_t   __wrap_waitpid(pid_t pid, int *status, int options);
 bool    __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback callback,
                                                       WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
@@ -95,6 +106,62 @@ void    __wrap_masterpoolDestroy(master_pool_t *pool);
 void    __real_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
 void    __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
 
+/*
+ * tun_linux.c is compiled directly into this test, so its shutdown request is
+ * intercepted here instead of running the real process shutdown. The worker-0
+ * executor half of the composition is covered by shutdown_manager_test.
+ */
+bool           __wrap_requestProgramShutdown(int exit_code);
+_Noreturn void __wrap_abortProgramNow(int exit_code);
+
+enum
+{
+    // Exit status a child uses when the documented hard fallback is reached.
+    kFallbackAbortExitStatus = 77
+};
+
+static unsigned int shutdown_request_calls;
+static int          shutdown_request_last_code;
+static bool         shutdown_request_accepts = true;
+// Set only by the forked child that deliberately exercises the hard fallback, so
+// its diagnostic does not read like a failure in CI output.
+static bool hard_abort_is_expected;
+
+/*
+ * Device I/O error injection.
+ *
+ * The routines under test are the production routineReadFromTun and
+ * routineWriteToTun, driven through the wrapped read()/write()/poll() against
+ * the fake handle. Each test arms exactly the number of device operations the
+ * correct implementation should perform and queues one more unit of work than
+ * that, so an implementation that swallows a permanent error runs off the end
+ * of the armed sequence and fails loudly instead of hanging.
+ */
+enum
+{
+    kMaxInjectedIoResults = 8
+};
+
+typedef struct injected_io_result_s
+{
+    ssize_t result; // Bytes to report; 0 for end of stream, -1 for an error.
+    int     error;  // errno to publish when result is -1.
+} injected_io_result_t;
+
+static int                  tun_handle_fd = -1;
+static injected_io_result_t injected_reads[kMaxInjectedIoResults];
+static unsigned int         injected_read_count;
+static unsigned int         observed_read_calls;
+static injected_io_result_t injected_writes[kMaxInjectedIoResults];
+static unsigned int         injected_write_count;
+static unsigned int         observed_write_calls;
+static bool                 inject_reader_pollin;
+// Observed from inside the I/O loop, before the routine has returned, so a
+// recoverable error can be checked while the device is still meant to be up.
+static tun_device_t *in_flight_device;
+static unsigned int  in_flight_check_call;
+static unsigned int  in_flight_checks_run;
+
 static void require(bool condition, const char *message)
 {
     if (! condition)
@@ -102,6 +169,30 @@ static void require(bool condition, const char *message)
         fprintf(stderr, "FAIL: %s\n", message);
         exit(1);
     }
+}
+
+// A recoverable error must leave the device usable: the routine keeps running,
+// the lifecycle stays UP, and nothing has asked the process to shut down.
+static void checkInFlightExpectations(unsigned int call_number)
+{
+    if (in_flight_device == NULL || call_number != in_flight_check_call)
+    {
+        return;
+    }
+    in_flight_checks_run++;
+    require(tunLinuxLifecycleState(in_flight_device) == kTunLifecycleUp,
+            "a recoverable device I/O error took the device out of UP");
+    require(shutdown_request_calls == 0, "a recoverable device I/O error requested process shutdown");
+}
+
+static ssize_t applyInjectedIoResult(const injected_io_result_t *entry)
+{
+    if (entry->result < 0)
+    {
+        errno = entry->error;
+        return -1;
+    }
+    return entry->result;
 }
 
 int __wrap_open(const char *path, int flags, ...)
@@ -117,7 +208,10 @@ int __wrap_open(const char *path, int flags, ...)
 
     if (strcmp(path, "/dev/net/tun") == 0)
     {
-        return __real_open("/dev/null", O_RDWR);
+        // Remembered so error injection can target the device handle only, and
+        // never the stop pipe the reader also read()s from.
+        tun_handle_fd = __real_open("/dev/null", O_RDWR);
+        return tun_handle_fd;
     }
 
     if ((flags & O_CREAT) != 0)
@@ -171,16 +265,40 @@ int __wrap_socket(int domain, int type, int protocol)
 
 ssize_t __wrap_read(int fd, void *buf, size_t count)
 {
+    if (fd == tun_handle_fd && injected_read_count > 0)
+    {
+        require(observed_read_calls < injected_read_count,
+                "the reader kept reading a device that reported a permanent error");
+        const unsigned int index = observed_read_calls++;
+        checkInFlightExpectations(index + 1);
+        return applyInjectedIoResult(&injected_reads[index]);
+    }
     return __real_read(fd, buf, count);
 }
 
 ssize_t __wrap_write(int fd, const void *buf, size_t count)
 {
+    if (fd == tun_handle_fd && injected_write_count > 0)
+    {
+        require(observed_write_calls < injected_write_count,
+                "the writer kept writing to a device that reported a permanent error");
+        const unsigned int index = observed_write_calls++;
+        checkInFlightExpectations(index + 1);
+        return applyInjectedIoResult(&injected_writes[index]);
+    }
     return __real_write(fd, buf, count);
 }
 
 int __wrap_poll(struct pollfd *fds, nfds_t nfds, int timeout)
 {
+    if (inject_reader_pollin && nfds == 2)
+    {
+        // Report the device readable and the stop pipe idle, so the reader loop
+        // is driven purely by the armed read results.
+        fds[0].revents = POLLIN;
+        fds[1].revents = 0;
+        return 1;
+    }
     return __real_poll(fds, nfds, timeout);
 }
 
@@ -195,10 +313,10 @@ int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(
     // Record the thread body so a test can run it inline and observe what the
     // device does when a routine returns on its own. Nothing is spawned here.
     *thread = (pthread_t) next_fake_thread++;
-    if (fake_thread_create_calls == 1)
+    if (fake_thread_create_calls <= kMaxCapturedThreads)
     {
-        captured_first_thread_routine = routine;
-        captured_first_thread_arg     = arg;
+        captured_thread_routines[fake_thread_create_calls - 1] = routine;
+        captured_thread_args[fake_thread_create_calls - 1]     = arg;
     }
     if (fake_thread_create_calls == run_fake_thread_on_create_call)
     {
@@ -282,6 +400,78 @@ void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
         expected_reuse_count++;
     }
     __real_bufferpoolReuseBuffer(pool, buf);
+
+    /*
+     * Recycling a buffer runs arbitrary code, which is free to leave any errno
+     * behind. The I/O routines recycle between the failing syscall and their
+     * error classification, so they must classify a copy captured immediately
+     * after the syscall. Clobbering with a transient value here means any
+     * routine that re-reads errno afterwards sees "retry" and keeps going, which
+     * every injected-error case below detects.
+     */
+    if (injected_read_count > 0 || injected_write_count > 0)
+    {
+        errno = EAGAIN;
+    }
+}
+
+bool __wrap_requestProgramShutdown(int exit_code)
+{
+    shutdown_request_calls++;
+    shutdown_request_last_code = exit_code;
+    return shutdown_request_accepts;
+}
+
+_Noreturn void __wrap_abortProgramNow(int exit_code)
+{
+    /*
+     * Any hard abort the test did not deliberately provoke is a failure: the
+     * whole point of this change is that a structured device I/O failure goes
+     * through the orderly request path. Cases that do exercise the documented
+     * fallback run in a forked child and check for this exit status.
+     */
+    fprintf(stderr,
+            "%s: abortProgramNow(%d) was reached\n",
+            hard_abort_is_expected ? "expected hard fallback" : "FAIL",
+            exit_code);
+    _Exit(kFallbackAbortExitStatus);
+}
+
+static void resetShutdownRequests(void)
+{
+    shutdown_request_calls     = 0;
+    shutdown_request_last_code = 0;
+    shutdown_request_accepts   = true;
+}
+
+static void resetIoInjection(void)
+{
+    memoryZero(injected_reads, sizeof(injected_reads));
+    memoryZero(injected_writes, sizeof(injected_writes));
+    injected_read_count  = 0;
+    observed_read_calls  = 0;
+    injected_write_count = 0;
+    observed_write_calls = 0;
+    inject_reader_pollin = false;
+    in_flight_device     = NULL;
+    in_flight_check_call = 0;
+    in_flight_checks_run = 0;
+}
+
+static void armDeviceReads(const injected_io_result_t *results, unsigned int count)
+{
+    require(count <= kMaxInjectedIoResults, "too many injected read results");
+    memoryCopy(injected_reads, results, count * sizeof(results[0]));
+    injected_read_count = count;
+    observed_read_calls = 0;
+}
+
+static void armDeviceWrites(const injected_io_result_t *results, unsigned int count)
+{
+    require(count <= kMaxInjectedIoResults, "too many injected write results");
+    memoryCopy(injected_writes, results, count * sizeof(results[0]));
+    injected_write_count = count;
+    observed_write_calls = 0;
 }
 
 static void envSetup(test_env_t *env)
@@ -330,8 +520,18 @@ static void resetFakeThreads(unsigned int fail_on_call)
     fake_thread_join_calls          = 0;
     fail_fake_thread_create_on_call = fail_on_call;
     run_fake_thread_on_create_call  = 0;
-    captured_first_thread_routine   = NULL;
-    captured_first_thread_arg       = NULL;
+    memoryZero(captured_thread_routines, sizeof(captured_thread_routines));
+    memoryZero(captured_thread_args, sizeof(captured_thread_args));
+}
+
+// Runs one captured device I/O thread body inline, exactly as the OS thread
+// would: the routine returns and the production wrapper then decides whether the
+// exit was expected.
+static void runCapturedThreadBody(unsigned int index)
+{
+    require(index < kMaxCapturedThreads, "invalid captured thread index");
+    require(captured_thread_routines[index] != NULL, "the requested thread body was not captured");
+    discard captured_thread_routines[index](captured_thread_args[index]);
 }
 
 static tun_device_t *createRunningDevice(void)
@@ -491,6 +691,7 @@ static WTHREAD_ROUTINE(failingIoRoutine) // NOLINT
 static void testThreadExitDuringStartupRollsBack(unsigned int exit_on_create_call)
 {
     resetFakeThreads(0);
+    resetShutdownRequests();
     run_fake_thread_on_create_call = exit_on_create_call;
 
     tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback);
@@ -519,6 +720,12 @@ static void testThreadExitDuringStartupRollsBack(unsigned int exit_on_create_cal
             "startup rollback leaked a reader-session reference");
     require(deviceReaderSessionGeneration(session) == failed_generation,
             "startup rollback did not stamp exactly one reader generation");
+    /*
+     * STARTING -> FAILED must stay a synchronous bring-up rollback. Requesting
+     * process shutdown from the device thread here would race the rollback and
+     * take the decision away from the main-thread TunDevice::onStart path.
+     */
+    require(shutdown_request_calls == 0, "an I/O thread exit during startup requested process shutdown");
 
     sbuf_t *buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
     sbufSetLength(buf, 64);
@@ -528,6 +735,7 @@ static void testThreadExitDuringStartupRollsBack(unsigned int exit_on_create_cal
     resetFakeThreads(0);
     require(tundeviceBringUp(tdev), "device could not restart after an I/O thread startup exit");
     require(tundeviceBringDown(tdev), "restart after an I/O thread startup exit did not shut down");
+    require(shutdown_request_calls == 0, "restarting after a startup exit requested process shutdown");
     tundeviceDestroy(tdev);
 }
 
@@ -541,33 +749,273 @@ static void testThreadExitsDuringStartupAreNotPublishedAsUp(void)
 // so tundeviceIsUp() kept advertising a device whose reads had silently stopped
 // and whose writes only piled into a channel nobody drains. Bring-down then had
 // to stay reachable, which is why it can no longer gate on `up` alone.
-static void testUnexpectedThreadExitTakesTheDeviceDown(void)
+//
+// A published device that loses either I/O thread is also process-fatal, so the
+// wrapper must request exactly one orderly shutdown and then return so worker 0
+// can join it. @p which selects the reader or the writer body.
+static void testUnexpectedThreadExitTakesTheDeviceDown(unsigned int which)
 {
+    const char *side = (which == kCapturedReaderThread) ? "reader" : "writer";
+    discard     side;
+
     resetFakeThreads(0);
+    resetShutdownRequests();
     tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback);
     require(tdev != NULL, "unexpected-exit device create failed");
 
-    // Return immediately from the reader body instead of running the real loop.
-    tunLinuxSetReaderRoutine(tdev, failingIoRoutine);
+    // Return immediately from the selected body instead of running the real loop.
+    if (which == kCapturedReaderThread)
+    {
+        tunLinuxSetReaderRoutine(tdev, failingIoRoutine);
+    }
+    else
+    {
+        tunLinuxSetWriterRoutine(tdev, failingIoRoutine);
+    }
+
     require(tundeviceBringUp(tdev), "unexpected-exit device bring-up failed");
     require(tundeviceIsUp(tdev), "bring-up did not publish the device as up");
-    require(captured_first_thread_routine != NULL, "the reader thread body was not captured");
 
     // Run the captured thread body inline: the wrapper sees `running` still set
     // and must treat the return as a device failure.
-    captured_first_thread_routine(captured_first_thread_arg);
+    runCapturedThreadBody(which);
 
-    require(! tundeviceIsUp(tdev), "an unexpected reader-thread exit left the device advertised as up");
+    require(! tundeviceIsUp(tdev), "an unexpected I/O thread exit left the device advertised as up");
+    require(tunLinuxLifecycleState(tdev) == kTunLifecycleFailed,
+            "an unexpected I/O thread exit did not publish FAILED");
+    require(shutdown_request_calls == 1, "an unexpected exit from a published device did not request shutdown once");
+    require(shutdown_request_last_code == 1, "the device failure shutdown request used the wrong exit code");
+
+    // The peer thread returning afterwards observes an already FAILED device and
+    // must not request a second shutdown.
+    runCapturedThreadBody(which == kCapturedReaderThread ? kCapturedWriterThread : kCapturedReaderThread);
+    require(shutdown_request_calls == 1, "the peer I/O thread requested a duplicate shutdown");
 
     // The teardown must still run: `up` is now false, so a bring-down gated on it
     // would skip both joins and leave the writer channel allocated.
     const unsigned int joins_before = fake_thread_join_calls;
-    require(tundeviceBringDown(tdev), "bring-down after an unexpected reader exit failed");
+    require(tundeviceBringDown(tdev), "bring-down after an unexpected I/O exit failed");
     require(fake_thread_join_calls == joins_before + 2, "bring-down after a thread failure skipped its joins");
     require(tundeviceBringDown(tdev), "a second bring-down must stay a successful no-op");
     require(fake_thread_join_calls == joins_before + 2, "the no-op bring-down joined an already-joined thread");
+    require(shutdown_request_calls == 1, "teardown after a device failure requested shutdown again");
 
     tundeviceDestroy(tdev);
+}
+
+static void testUnexpectedThreadExitsRequestShutdownOnce(void)
+{
+    testUnexpectedThreadExitTakesTheDeviceDown(kCapturedReaderThread);
+    testUnexpectedThreadExitTakesTheDeviceDown(kCapturedWriterThread);
+}
+
+// A routine that returns because normal teardown closed/woke it is not a
+// failure: the lifecycle has already left the active states, so the wrapper must
+// neither publish FAILED nor request shutdown.
+static void testNormalStopDoesNotRequestShutdown(void)
+{
+    resetFakeThreads(0);
+    resetShutdownRequests();
+
+    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback);
+    require(tdev != NULL, "normal-stop device create failed");
+
+    // Capture both bodies without running them, so they can return after the
+    // owner path has already taken the device down.
+    tunLinuxSetReaderRoutine(tdev, failingIoRoutine);
+    tunLinuxSetWriterRoutine(tdev, failingIoRoutine);
+    require(tundeviceBringUp(tdev), "normal-stop device bring-up failed");
+    require(tundeviceIsUp(tdev), "bring-up did not publish the device as up");
+
+    require(tundeviceBringDown(tdev), "normal bring-down failed");
+    require(tunLinuxLifecycleState(tdev) == kTunLifecycleDown, "normal bring-down did not publish DOWN");
+
+    runCapturedThreadBody(kCapturedReaderThread);
+    runCapturedThreadBody(kCapturedWriterThread);
+
+    require(tunLinuxLifecycleState(tdev) == kTunLifecycleDown,
+            "a routine returning after a normal stop published FAILED");
+    require(shutdown_request_calls == 0, "a routine returning after a normal stop requested process shutdown");
+
+    tundeviceDestroy(tdev);
+}
+
+/*
+ * A permanent read error must end the read routine so the thread wrapper can
+ * publish FAILED and request the orderly shutdown.
+ *
+ * Before this, the drain helper reported "other error" and the reader loop
+ * ignored it: on a dead-but-readable handle that became an unbounded spin that
+ * discarded every packet while tundeviceIsUp() still advertised the device.
+ */
+static void testPermanentReadErrorFailsTheDevice(int io_errno, const char *label)
+{
+    discard label;
+
+    resetFakeThreads(0);
+    resetShutdownRequests();
+    resetIoInjection();
+
+    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback);
+    require(tdev != NULL, "read-error device create failed");
+    require(tundeviceBringUp(tdev), "read-error device bring-up failed");
+    require(tundeviceIsUp(tdev), "bring-up did not publish the device as up");
+
+    // Exactly one device read is expected. A reader that swallows the error
+    // asks for a second one and trips the wrap's own assertion.
+    const injected_io_result_t reads[] = {{.result = -1, .error = io_errno}};
+    inject_reader_pollin               = true;
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+
+    runCapturedThreadBody(kCapturedReaderThread);
+
+    require(observed_read_calls == 1, "a permanent read error did not end the read routine immediately");
+    require(! tundeviceIsUp(tdev), "a permanent read error left the device advertised as up");
+    require(tunLinuxLifecycleState(tdev) == kTunLifecycleFailed, "a permanent read error did not publish FAILED");
+    require(shutdown_request_calls == 1, "a permanent read error did not request exactly one shutdown");
+    require(shutdown_request_last_code == 1, "a permanent read error requested the wrong exit code");
+
+    resetIoInjection();
+    require(tundeviceBringDown(tdev), "bring-down after a permanent read error failed");
+    tundeviceDestroy(tdev);
+}
+
+// EAGAIN means "nothing to read right now", so the reader must go back to
+// poll() with the device still up, and only the following permanent error ends
+// it. The in-flight check runs on read #2, before the routine has returned.
+static void testTransientReadErrorKeepsTheDeviceUp(void)
+{
+    resetFakeThreads(0);
+    resetShutdownRequests();
+    resetIoInjection();
+
+    tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback);
+    require(tdev != NULL, "transient-read device create failed");
+    require(tundeviceBringUp(tdev), "transient-read device bring-up failed");
+
+    const injected_io_result_t reads[] = {
+        {.result = -1, .error = EAGAIN},
+        {.result = -1, .error = EIO},
+    };
+    inject_reader_pollin = true;
+    armDeviceReads(reads, ARRAY_SIZE(reads));
+    in_flight_device     = tdev;
+    in_flight_check_call = 2;
+
+    runCapturedThreadBody(kCapturedReaderThread);
+
+    require(observed_read_calls == 2, "EAGAIN did not send the reader back to poll()");
+    require(in_flight_checks_run == 1, "the in-flight recoverable-error check never ran");
+    require(tunLinuxLifecycleState(tdev) == kTunLifecycleFailed,
+            "the permanent read error after EAGAIN did not publish FAILED");
+    require(shutdown_request_calls == 1, "the permanent read error after EAGAIN did not request one shutdown");
+
+    resetIoInjection();
+    require(tundeviceBringDown(tdev), "bring-down after a transient read error failed");
+    tundeviceDestroy(tdev);
+}
+
+// Queues @p count packets for the writer thread to consume.
+static void queuePacketsForWriter(tun_device_t *tdev, unsigned int count)
+{
+    for (unsigned int i = 0; i < count; i++)
+    {
+        sbuf_t *buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
+        sbufSetLength(buf, 64);
+        require(tundeviceWrite(tdev, buf), "queuing a packet for the writer failed");
+    }
+}
+
+/*
+ * A permanent write error must end the write routine.
+ *
+ * Before this, only a small transient whitelist and EMSGSIZE were handled and
+ * everything else fell through to `continue`, so EIO/EBADF/ENODEV silently
+ * discarded every packet forever on a device that still looked usable.
+ */
+static void testPermanentWriteErrorFailsTheDevice(int io_errno, const char *label)
+{
+    discard label;
+
+    resetFakeThreads(0);
+    resetShutdownRequests();
+    resetIoInjection();
+
+    // A read callback is required: without one, bring-up creates no reader
+    // thread and the writer body would land at the reader's captured index.
+    tun_device_t *tdev = createRunningReaderDevice();
+    require(tundeviceIsUp(tdev), "bring-up did not publish the device as up");
+
+    // One armed write, two queued packets: a writer that swallows the error
+    // reaches for the second packet and trips the wrap's own assertion.
+    const injected_io_result_t writes[] = {{.result = -1, .error = io_errno}};
+    armDeviceWrites(writes, ARRAY_SIZE(writes));
+    queuePacketsForWriter(tdev, 2);
+
+    runCapturedThreadBody(kCapturedWriterThread);
+
+    require(observed_write_calls == 1, "a permanent write error did not end the write routine immediately");
+    require(! tundeviceIsUp(tdev), "a permanent write error left the device advertised as up");
+    require(tunLinuxLifecycleState(tdev) == kTunLifecycleFailed, "a permanent write error did not publish FAILED");
+    require(shutdown_request_calls == 1, "a permanent write error did not request exactly one shutdown");
+    require(shutdown_request_last_code == 1, "a permanent write error requested the wrong exit code");
+
+    resetIoInjection();
+    require(tundeviceBringDown(tdev), "bring-down after a permanent write error failed");
+    tundeviceDestroy(tdev);
+}
+
+/*
+ * EINVAL condemns one packet, not the device: the kernel rejects a malformed
+ * frame that way, and those frames arrive from remote peers. Making it fatal
+ * would hand any peer a one-packet process kill, so the writer must drop it and
+ * keep going. EAGAIN is likewise recoverable. Only the trailing EIO ends the
+ * routine, and the in-flight check proves the device was still up before it.
+ */
+static void testRecoverableWriteErrorsKeepTheDeviceUp(void)
+{
+    resetFakeThreads(0);
+    resetShutdownRequests();
+    resetIoInjection();
+
+    tun_device_t *tdev = createRunningReaderDevice();
+
+    const injected_io_result_t writes[] = {
+        {.result = -1, .error = EAGAIN},
+        {.result = -1, .error = EINVAL},
+        {.result = -1, .error = EIO},
+    };
+    armDeviceWrites(writes, ARRAY_SIZE(writes));
+    in_flight_device     = tdev;
+    in_flight_check_call = 3;
+    queuePacketsForWriter(tdev, ARRAY_SIZE(writes) + 1);
+
+    runCapturedThreadBody(kCapturedWriterThread);
+
+    require(observed_write_calls == 3, "a recoverable write error ended the write routine");
+    require(in_flight_checks_run == 1, "the in-flight recoverable-error check never ran");
+    require(tunLinuxLifecycleState(tdev) == kTunLifecycleFailed,
+            "the permanent write error after the recoverable ones did not publish FAILED");
+    require(shutdown_request_calls == 1, "the permanent write error did not request exactly one shutdown");
+
+    resetIoInjection();
+    require(tundeviceBringDown(tdev), "bring-down after recoverable write errors failed");
+    tundeviceDestroy(tdev);
+}
+
+static void testPermanentIoErrorsReachTheShutdownWrapper(void)
+{
+    testPermanentReadErrorFailsTheDevice(EIO, "EIO");
+    testPermanentReadErrorFailsTheDevice(EBADF, "EBADF");
+    testTransientReadErrorKeepsTheDeviceUp();
+
+    // EMSGSIZE only reaches write() when the configured MTU exceeds the real
+    // device MTU, because oversized packets are dropped before the syscall. That
+    // is an operator misconfiguration that never recovers, so it is terminal.
+    testPermanentWriteErrorFailsTheDevice(EMSGSIZE, "EMSGSIZE");
+    testPermanentWriteErrorFailsTheDevice(EIO, "EIO");
+    testPermanentWriteErrorFailsTheDevice(EBADF, "EBADF");
+    testRecoverableWriteErrorsKeepTheDeviceUp();
 }
 
 static void testInterfaceDownFailureRemainsRetryable(void)
@@ -742,6 +1190,49 @@ static void testBringDownReleasesQueuedWritesOffTheWriterThread(void)
     tundeviceDestroy(tdev);
 }
 
+/*
+ * When the worker-0 handoff is unavailable, the documented fallback is the hard
+ * abort. abortProgramNow() is _Noreturn, so this runs in a forked child and the
+ * parent checks the status the wrap function exits with.
+ */
+static void testHandoffFailureFallsBackToHardAbort(void)
+{
+    // fork()/waitpid() are wrapped for the device's script-running paths, so
+    // this test must reach the real ones to actually spawn a child.
+    pid_t child = __real_fork();
+    require(child >= 0, "failed to fork the TUN handoff-failure child");
+
+    if (child == 0)
+    {
+        resetFakeThreads(0);
+        resetShutdownRequests();
+        shutdown_request_accepts = false;
+        hard_abort_is_expected   = true;
+
+        tun_device_t *tdev = tundeviceCreate("ww-lifetime-test", false, 1500, NULL, observeReadCallback);
+        if (tdev == NULL)
+        {
+            _Exit(70);
+        }
+        tunLinuxSetReaderRoutine(tdev, failingIoRoutine);
+        if (! tundeviceBringUp(tdev))
+        {
+            _Exit(71);
+        }
+
+        // The wrapper requests shutdown, is refused, and must hard-abort rather
+        // than let the process keep running with a dead TUN device.
+        runCapturedThreadBody(kCapturedReaderThread);
+        _Exit(72); // must not be reached
+    }
+
+    int status = 0;
+    require(__real_waitpid(child, &status, 0) == child, "failed to wait for the TUN handoff-failure child");
+    require(WIFEXITED(status), "the TUN handoff-failure child did not exit normally");
+    require(WEXITSTATUS(status) == kFallbackAbortExitStatus,
+            "a refused shutdown request did not fall back to the hard abort");
+}
+
 int main(void)
 {
     test_env_t env;
@@ -750,7 +1241,10 @@ int main(void)
     testClosedAndStaleDeliveriesDoNotTouchDevice();
     testBringUpRollsBackThreadCreationFailures();
     testThreadExitsDuringStartupAreNotPublishedAsUp();
-    testUnexpectedThreadExitTakesTheDeviceDown();
+    testUnexpectedThreadExitsRequestShutdownOnce();
+    testNormalStopDoesNotRequestShutdown();
+    testPermanentIoErrorsReachTheShutdownWrapper();
+    testHandoffFailureFallsBackToHardAbort();
     testInterfaceDownFailureRemainsRetryable();
     testWriterGateQuiescesConcurrentSenders();
     testBringDownReleasesQueuedWritesOffTheWriterThread();
