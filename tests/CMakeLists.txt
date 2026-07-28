@@ -319,6 +319,19 @@ set_tests_properties(
     TIMEOUT 120
     LABELS "unit;tunnels;policy;abort"
 )
+add_test(
+  NAME waterwall.tunnels_orderly_shutdown_policy_test
+  COMMAND
+    "${PYTHON3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tunnels_orderly_shutdown_policy_test.py"
+    "--mutation-test"
+)
+set_tests_properties(
+  waterwall.tunnels_orderly_shutdown_policy_test
+  PROPERTIES
+    TIMEOUT 120
+    LABELS "unit;tunnels;policy;shutdown"
+)
 add_waterwall_integration_test(waterwall.connection_fisher_roundtrip connection_fisher_roundtrip)
 add_waterwall_integration_test(waterwall.connection_fisher_encryption_roundtrip connection_fisher_encryption_roundtrip)
 add_waterwall_integration_test(waterwall.sniffrouter_non_http_tcp_loopback sniffrouter_non_http_tcp_loopback)

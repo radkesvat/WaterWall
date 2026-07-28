@@ -69,6 +69,14 @@ static void twfRequireEqualText(const char *actual, const char *expected, const 
 // ---------------------------------------------------------------------------
 // process API guard
 // ---------------------------------------------------------------------------
+//
+// A Category-C failure belongs to one line, so reaching any process API is a
+// test failure. A Category-B test proves the opposite policy - that a runtime
+// failure does request an orderly shutdown - so it defines
+// TWF_CUSTOM_PROCESS_API_WRAPS and supplies recording wrappers of its own
+// (tunnel_orderly_shutdown_harness.h). Everything else here is shared.
+
+#ifndef TWF_CUSTOM_PROCESS_API_WRAPS
 
 _Noreturn void __wrap_terminateProgram(int exit_code);
 _Noreturn void __wrap_abortProgramNow(int exit_code);
@@ -94,6 +102,8 @@ bool __wrap_requestProgramShutdown(int exit_code)
     fflush(stderr);
     _Exit(1);
 }
+
+#endif // TWF_CUSTOM_PROCESS_API_WRAPS
 
 // ---------------------------------------------------------------------------
 // buffer accounting
@@ -440,14 +450,22 @@ typedef struct twf_worker_env_s
     wloop_t       *loop_shortcut[1];
 } twf_worker_env_t;
 
+enum
+{
+    kTwfDefaultSmallBufferSize = 1024
+};
+
 /**
  * Publish a single-worker environment: one buffer pool and one real event loop, both reachable through the
  * GSTATE shortcuts that lineGetBufferPool() and getWorkerLoop() use.
  *
  * @param left_padding left padding every pooled buffer must reserve, mirroring what the chain would have summed
  *                     from the nodes' required_padding_left. Tunnels that prepend headers need it.
+ * @param small_buffer_size small-buffer size. Packet-side tunnels validate this against
+ *                          kMaxAllowedPacketLength, so they need more than the default.
  */
-static void twfWorkerEnvSetup(twf_worker_env_t *env, uint32_t large_buffer_size, uint16_t left_padding)
+static void twfWorkerEnvSetupWithSmallBuffers(twf_worker_env_t *env, uint32_t large_buffer_size,
+                                              uint32_t small_buffer_size, uint16_t left_padding)
 {
     memoryZero(env, sizeof(*env));
 
@@ -457,7 +475,7 @@ static void twfWorkerEnvSetup(twf_worker_env_t *env, uint32_t large_buffer_size,
     env->small_master = masterpoolCreateWithCapacity(8);
     twfRequire(env->large_master != NULL && env->small_master != NULL, "failed to create the test master pools");
 
-    env->pool = bufferpoolCreate(env->large_master, env->small_master, 4, large_buffer_size, 1024);
+    env->pool = bufferpoolCreate(env->large_master, env->small_master, 4, large_buffer_size, small_buffer_size);
     twfRequire(env->pool != NULL, "failed to create the test buffer pool");
 
     // Must happen before any buffer leaves the pool, exactly like the runtime does it during chain finalization.
@@ -473,6 +491,11 @@ static void twfWorkerEnvSetup(twf_worker_env_t *env, uint32_t large_buffer_size,
     GSTATE.shortcut_loops = env->loop_shortcut;
 
     twfBufferLedgerReset();
+}
+
+static void twfWorkerEnvSetup(twf_worker_env_t *env, uint32_t large_buffer_size, uint16_t left_padding)
+{
+    twfWorkerEnvSetupWithSmallBuffers(env, large_buffer_size, kTwfDefaultSmallBufferSize, left_padding);
 }
 
 // ---------------------------------------------------------------------------

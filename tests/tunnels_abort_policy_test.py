@@ -27,7 +27,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 234
+EXPECTED_TOTAL_ABORTS = 251
 
 
 # ---------------------------------------------------------------------------
@@ -827,9 +827,10 @@ MANIFEST = [
     ("tunnels/TcpUdpListener/common/helpers.c", "tcpudplistenerSelectDownStreamTunnel", 1,
      ("TcpUdpListener: line has ambiguous or missing source protocol flags (tcp=%u, udp=%u)",),
      "helper/line-state invariant: TcpUdpListener helpers protocol flags"),
-    ("tunnels/TesterServer/common/helpers.c", "testerserverResponseSendTask", 1,
-     ("TesterServer: packet line died during packet-mode response send",),
-     "helper/line-state invariant: TesterServer helpers packet line died"),
+    ("tunnels/TesterServer/common/helpers.c", "testerserverResponseSendTask", 2,
+     ("TesterServer: packet line died during packet-mode response send",
+      "TesterServer: large buffer pool reports zero writable payload capacity"),
+     "helper/line-state invariant: TesterServer helpers packet line died and zero writable capacity"),
     ("tunnels/UdpConnector/common/helpers.c", "udpconnectorOnClose", 1,
      ("UdpConnector: failed to remove idle item for FD:%x",),
      "helper/line-state invariant: UdpConnector helpers remove idle table"),
@@ -867,6 +868,53 @@ MANIFEST = [
     ("tunnels/UdpStatelessSocket/instance/destroy.c", "udpstatelesssocketTunnelDestroy", 1,
      ("UdpStatelessSocket: destroying with active worker-local idle table for worker %u",),
      "internal API / unsafe destruction: UdpStatelessSocket destroy active idle tables"),
+    # ------------------------------------------------------------------
+    # Tester internal invariants. A failed integrity test is a runtime verdict
+    # that requests an orderly shutdown (see EXCLUSIONS), but a payload
+    # generator asked for an impossible payload, a pool with no writable
+    # capacity, a close scheduled before verification and a Finish on a
+    # persistent worker packet line are all broken internal state. They must
+    # hard-abort and must never reach the orderly verdict helper.
+    # ------------------------------------------------------------------
+    ("tunnels/TesterClient/common/helpers.c", "testerclientCreatePayload", 4,
+     ("TesterClient: packet-mode payload generation attempted to split a packet chunk",
+      "TesterClient: packet-mode requires enough small-buffer capacity for the maximum packet length",
+      "TesterClient: stream-mode payload generation exceeded large buffer size",
+      "TesterClient: packet-ipv4 chunk size is smaller than the configured packet headers"),
+     "tester invariant: TesterClient impossible payload-generator states"),
+    ("tunnels/TesterClient/common/helpers.c", "testerclientRequestSendTask", 1,
+     ("TesterClient: large buffer pool reports zero writable payload capacity",),
+     "tester invariant: TesterClient zero writable large-buffer capacity"),
+    ("tunnels/TesterClient/common/helpers.c", "testerclientCloseCompletedStreamTask", 1,
+     ("TesterClient: scheduled close before response verification completed",),
+     "tester invariant: TesterClient close scheduled before verification"),
+    ("tunnels/TesterClient/downstream/payload.c", "testerclientTunnelDownStreamPayloadStateless", 1,
+     ("TesterClient: packet-mode stateless response count reached completion with missing chunks",),
+     "tester invariant: TesterClient stateless response count/mask disagreement"),
+    ("tunnels/TesterClient/downstream/fin.c", "testerclientTunnelDownStreamFinish", 1,
+     ("TesterClient: packet-mode received unexpected finish on worker packet line",),
+     "tester invariant: TesterClient Finish on a persistent packet line"),
+    ("tunnels/TesterServer/common/helpers.c", "testerserverCreatePayload", 4,
+     ("TesterServer: packet-mode payload generation attempted to split a packet chunk",
+      "TesterServer: packet-mode response exceeded small buffer size",
+      "TesterServer: stream-mode payload generation exceeded large buffer size",
+      "TesterServer: packet-ipv4 chunk size is smaller than the configured packet headers"),
+     "tester invariant: TesterServer impossible payload-generator states"),
+    ("tunnels/TesterServer/upstream/fin.c", "testerserverTunnelUpStreamFinish", 1,
+     ("TesterServer: packet-mode received unexpected finish on worker packet line",),
+     "tester invariant: TesterServer Finish on a persistent packet line"),
+    ("tunnels/TesterServer/downstream/fin.c", "testerserverTunnelDownStreamFinish", 2,
+     ("TesterServer: packet-mode received unexpected downstream finish on worker packet line",
+      "TesterServer: downStreamFinish disabled"),
+     "tester invariant: TesterServer packet-line Finish and disabled stream-mode callback"),
+    # ------------------------------------------------------------------
+    # Worker-dispatch packet-line invariant outside tunnels/. A persistent
+    # worker packet line is process-lifetime state, so its death during chain
+    # initialization invalidates the assumptions orderly teardown relies on.
+    # ------------------------------------------------------------------
+    ("ww/managers/node_manager.c", "initializeLineOnTargetWorker", 1,
+     ("NodeManager: node startup failure: line initialization failed for node (\\\"%s\\\") on worker %d",),
+     "worker-task invariant: NodeManager persistent packet line died during chain init"),
 ]
 
 
@@ -893,32 +941,39 @@ EXCLUSIONS = [
      {"terminateProgram": 0, "abortProgramNow": 1, "requestProgramShutdown": 1},
      ("TesterClient: worker %u failed: %s",),
      "orderly runtime shutdown request from an arbitrary worker"),
+    ("tunnels/TesterServer/common/helpers.c", "testerserverFail",
+     {"terminateProgram": 0, "abortProgramNow": 1, "requestProgramShutdown": 1},
+     ("TesterServer: worker %u failed: %s",),
+     "orderly runtime shutdown request from an arbitrary worker"),
+    ("tunnels/TesterClient/common/helpers.c", "testerclientRequestSuccessfulShutdown",
+     {"terminateProgram": 0, "abortProgramNow": 1, "requestProgramShutdown": 1},
+     ("TesterClient: all %u worker lines completed successfully",),
+     "Category-A successful completion, isolated from every invariant abort"),
     # ------------------------------------------------------------------
     # Category-C: one line or one request failed. These functions must not
     # terminate, abort, or request a shutdown of the process; they clean up and
     # close only the affected line. Every one of them is pinned at zero calls to
     # all three process APIs.
     # ------------------------------------------------------------------
+    # The per-tunnel Mux encoders were consolidated into MuxCommon, and the
+    # "closing this child" verdict now lives in the two callers, so the encoder
+    # and both callers are pinned where the code actually is.
     ("tunnels/Internals/MuxCommon/src/mux_wire.c", "muxEncodeChildPayload",
      {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
-     ("cannot be encoded into MUX frames, closing this child",),
+     (),
      "Category-C: oversized valid Mux payload is fragmented, never fatal"),
-    ("tunnels/MuxClient/common/helpers.c", "muxclientEncodeChildPayload",
+    ("tunnels/Internals/MuxCommon/src/mux_wire.c", "muxMakeMuxFrame",
      {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
      (),
-     "Category-C: oversized valid MuxClient payload is fragmented, never fatal"),
-    ("tunnels/MuxServer/common/helpers.c", "muxserverEncodeChildPayload",
+     "Category-C: Mux frame encoder must not police payload size fatally"),
+    ("tunnels/MuxClient/upstream/payload.c", "muxclientTunnelUpStreamPayload",
      {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
-     (),
-     "Category-C: oversized valid MuxServer payload is fragmented, never fatal"),
-    ("tunnels/MuxClient/common/helpers.c", "muxclientMakeMuxFrame",
+     ("MuxClient: cid %u payload of %u bytes cannot be encoded into MUX frames, closing this child",),
+     "Category-C: oversized valid MuxClient payload closes one child only"),
+    ("tunnels/MuxServer/downstream/payload.c", "muxserverTunnelDownStreamPayload",
      {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
-     (),
-     "Category-C: MuxClient frame encoder must not police payload size fatally"),
-    ("tunnels/MuxServer/common/helpers.c", "muxserverMakeMuxFrame",
-     {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
-     (),
-     "Category-C: MuxServer frame encoder must not police payload size fatally"),
+     ("MuxServer: cid %u payload of %u bytes cannot be encoded into MUX frames, closing this child",),
+     "Category-C: oversized valid MuxServer payload closes one child only"),
     ("tunnels/TlsClient/common/line_state.c", "tlsclientLinestateInitialize",
      {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
      ("Failed to allocate TlsClient BoringSSL line state",),
@@ -955,13 +1010,11 @@ EXCLUSIONS = [
 # audit deliberately left it there. Every such call is listed here with its
 # exact expected count; every other candidate function must have none.
 #
-# authenticationclientStartOnWorker0() converted its worker-ID invariant to a
-# hard abort but deliberately kept the ping-timer creation failure as an
-# orderly terminateProgram(), so both calls are pinned.
-RETAINED_NON_ABORT_CALLS = {
-    ("tunnels/AuthenticationClient/instance/start.c", "authenticationclientStartOnWorker0"):
-        {"terminateProgram": 1},
-}
+# This is currently empty: authenticationclientStartOnWorker0() used to retain a
+# ping-timer terminateProgram(), but that timer failure is a Category-B runtime
+# failure and now lives in authenticationclientStartPingTimer(), which
+# tests/tunnels_orderly_shutdown_policy_test.py pins.
+RETAINED_NON_ABORT_CALLS = {}
 
 
 # Removals the previous line-proximity checker silently accepted. They are

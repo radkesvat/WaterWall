@@ -1373,6 +1373,46 @@ foreach(mux_side Client Server)
   endif()
 endforeach()
 
+# Category-B orderly-shutdown failure injection. One executable per tunnel so
+# that only one tunnel's structure.h is ever visible in a translation unit.
+# wtimerAdd is wrapped alongside the process APIs wherever the injected failure
+# is a timer that cannot be created.
+foreach(orderly_case IN ITEMS
+  "TesterClient|testerclient_orderly_shutdown_test|testerclient|OFF"
+  "TesterServer|testerserver_orderly_shutdown_test|testerserver|OFF"
+  "PacketsToStream|packetstostream_orderly_shutdown_test|packetstostream|ON"
+  "PacketSender|packetsender_orderly_shutdown_test|packetsender|ON"
+  "AuthenticationClient|authenticationclient_orderly_shutdown_test|authenticationclient|ON"
+  "KeepAliveClient|keepaliveclient_orderly_shutdown_test|keepaliveclient|ON"
+  "WireGuardDevice|wireguarddevice_orderly_shutdown_test|wireguarddevice|OFF"
+)
+  string(REPLACE "|" ";" orderly_fields "${orderly_case}")
+  list(GET orderly_fields 0 orderly_tunnel)
+  list(GET orderly_fields 1 orderly_test)
+  list(GET orderly_fields 2 orderly_label)
+  list(GET orderly_fields 3 orderly_wraps_timer)
+
+  if(TARGET ${orderly_tunnel})
+    add_executable(${orderly_test}
+      ${orderly_test}.c
+      ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+    )
+    waterwall_line_failure_test_use_tunnel(${orderly_test} ${orderly_tunnel})
+    target_link_options(${orderly_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+    if(orderly_wraps_timer)
+      target_link_options(${orderly_test} PRIVATE "-Wl,--wrap=wtimerAdd")
+    endif()
+    target_link_libraries(${orderly_test} PRIVATE ww)
+    add_dependencies(waterwall_unit_tests ${orderly_test})
+
+    add_waterwall_unit_test(
+      waterwall.${orderly_test}_unit
+      ${orderly_test}
+      "unit;tunnels;${orderly_label};failure;shutdown"
+    )
+  endif()
+endforeach()
+
 # Tunnel hard-abort runtime cases. The registration is shared with the native
 # Windows/macOS test configurations, which do not add the tests/ subtree.
 include("${CMAKE_CURRENT_SOURCE_DIR}/tunnels_abort_runtime_test.cmake")
