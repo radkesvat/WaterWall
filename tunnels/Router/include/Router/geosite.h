@@ -89,7 +89,10 @@ bool     routerGeositeNormalizeHost(const uint8_t *host, uint32_t host_len, char
 void     routerGeositeHostCachePrepare(router_geosite_host_cache_t *cache, const uint8_t *host, uint32_t host_len);
 uint32_t routerGeositeBuildSuffixOffsets(const char *host, uint32_t host_len, uint8_t *offsets,
                                          uint32_t offsets_capacity);
-bool     routerGeositeCompiledListMatches(const router_geosite_compiled_list_t *list, const char *host,
-                                          uint32_t host_len);
-bool     routerGeositeCompiledListMatchesPrepared(const router_geosite_compiled_list_t *list,
-                                                  const router_geosite_host_cache_t    *host);
+bool routerGeositeCompiledListMatches(const router_geosite_compiled_list_t *list, const char *host, uint32_t host_len);
+/**
+ * @param out_evaluation_failed optional; set to true when the regex engine failed at runtime. The return value is
+ *                              then meaningless and must not be read as "did not match".
+ */
+bool routerGeositeCompiledListMatchesPrepared(const router_geosite_compiled_list_t *list,
+                                              const router_geosite_host_cache_t *host, bool *out_evaluation_failed);

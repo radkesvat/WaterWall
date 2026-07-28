@@ -1,15 +1,7 @@
 #pragma once
 
+#include "MuxCommon/mux_wire.h"
 #include "wwapi.h"
-
-/*
-    This part is shared with the MuxServer
-*/
-// if you change this structure, you must also change the kMuxFrameLength value
-// in the enum below, this is used for left padding in node.c
-typedef uint16_t mux_length_t;
-typedef uint32_t cid_t;
-#define CID_MAX 0xFFFFFFFFU
 
 typedef struct muxclient_tstate_s
 {
@@ -39,7 +31,7 @@ typedef struct muxclient_lstate_s
     buffer_queue_t             pending_child_data; // child-destined data queued while the child write side is paused
     size_t                     pending_child_data_len; // parent: total queued child-destined bytes
     uint64_t                   creation_epoch; // epoch of the connection creation, used for concurrency mode timer
-    cid_t                      connection_id;  // unique connection id, used for multiplexing
+    mux_cid_t                  connection_id;  // unique connection id, used for multiplexing
     uint32_t children_count;          // number of children in the parent connection, used for concurrency mode counter
     uint32_t parent_read_pause_count; // parent: child queues currently pausing parent reads
     bool     is_child : 1;            // if this connection is muxed into a parent connection
@@ -68,46 +60,6 @@ enum
     kMuxMainLineStatsLogIntervalMs        = 5000,
 };
 
-/*
-    This part is shared with the MuxServer
-*/
-#ifdef COMPILER_MSVC
-#pragma pack(push, 1)
-#define ATTR_PACKED
-#else
-#define ATTR_PACKED __attribute__((__packed__))
-
-#endif
-
-// if you change this structure, you must also change the kMuxFrameLength value
-// in the enum below, this is used for left padding in node.c
-// and MuxServer
-typedef struct
-{
-    mux_length_t length;
-    uint8_t      flags;
-    uint8_t      _pad1; // padding for alignment
-    cid_t        cid;
-
-    char data[];
-
-} ATTR_PACKED mux_frame_t;
-
-#ifdef COMPILER_MSVC
-#pragma pack(pop)
-#endif
-
-enum
-{
-    kMuxFlagOpen       = 0,
-    kMuxFlagClose      = 1,
-    kMuxFlagFlowPause  = 2,
-    kMuxFlagFlowResume = 3,
-    kMuxFlagData       = 4,
-    kMuxFrameLength =
-        sizeof(mux_frame_t), // This value must be 8 and this value is hard coded in node.c for left padding
-};
-
 WW_EXPORT void         muxclientTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *muxclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t muxclientTunnelApi(tunnel_t *instance, sbuf_t *message);
@@ -132,7 +84,7 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void muxclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void muxclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_child, cid_t connection_id);
+void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_child, mux_cid_t connection_id);
 void muxclientLinestateDestroy(muxclient_lstate_t *ls);
 
 bool    muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstate_t *ls);
@@ -143,11 +95,27 @@ void    muxclientScheduleParentStatsLog(tunnel_t *t, line_t *parent_l);
 void muxclientJoinConnection(muxclient_lstate_t *parent, muxclient_lstate_t *child);
 void muxclientLeaveConnection(muxclient_lstate_t *child);
 
-void muxclientMakeMuxFrame(sbuf_t *buf, cid_t cid, uint8_t flag);
-void muxclientMakeMuxOpenDataFrames(sbuf_t *buf, cid_t cid);
-void muxclientMakeMuxOpenCloseFrames(sbuf_t *buf, cid_t cid);
-bool muxclientSendControlFrame(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l, cid_t cid,
-                               uint8_t flag);
+/**
+ * Finish and release a parent line that this node owns and that has no children left.
+ */
+void muxclientCloseIdleExhaustedParentLine(tunnel_t *t, muxclient_tstate_t *ts, wid_t wid, line_t *parent_l,
+                                           muxclient_lstate_t *parent_ls);
+
+/**
+ * Close one child of a still-live parent connection: unlink it, release its flow control, emit the Close frame
+ * (preceded by an Open frame when the peer never saw this cid) and destroy the child line state.
+ *
+ * MuxClient does not own the child line, so it never calls lineDestroy() on it.
+ *
+ * @param notify_child_prev send Finish to the child's previous side. Must be false when this close is the reaction
+ *                          to a Finish received from that same side.
+ *
+ * The caller must return immediately: both the parent line and the child line may be dead afterwards.
+ */
+void muxclientCloseChildKeepParent(tunnel_t *t, muxclient_tstate_t *ts, line_t *parent_l, muxclient_lstate_t *parent_ls,
+                                   muxclient_lstate_t *child_ls, bool notify_child_prev);
+bool muxclientSendControlFrame(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l,
+                               mux_cid_t cid, uint8_t flag);
 bool muxclientSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l,
                                  muxclient_lstate_t *child_ls);
 bool muxclientMaybeSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts,

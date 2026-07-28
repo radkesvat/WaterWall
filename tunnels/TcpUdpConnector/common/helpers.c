@@ -24,7 +24,7 @@ static tunnel_t *tcpudpconnectorSelectFromContext(tcpudpconnector_tstate_t *ts, 
 
 static void tcpudpconnectorLogUnsupportedContext(const char *label, const address_context_t *ctx)
 {
-    LOGF("TcpUdpConnector: line has unsupported or ambiguous %s protocol flags "
+    LOGE("TcpUdpConnector: line has unsupported or ambiguous %s protocol flags "
          "(tcp=%u, udp=%u, icmp=%u, packet=%u)",
          label,
          (unsigned int) ctx->proto_tcp,
@@ -48,8 +48,8 @@ tunnel_t *tcpudpconnectorSelectUpStreamTunnel(tunnel_t *t, line_t *l)
             return connector;
         }
 
+        // metadata of a single line, the caller rejects only that line
         tcpudpconnectorLogUnsupportedContext("destination", dest_ctx);
-        terminateProgram(1);
         return NULL;
     }
 
@@ -65,9 +65,9 @@ tunnel_t *tcpudpconnectorSelectUpStreamTunnel(tunnel_t *t, line_t *l)
     }
     else
     {
-        LOGF("TcpUdpConnector: line has no TCP/UDP protocol flags in destination or source context");
+        LOGE("TcpUdpConnector: line has no TCP/UDP protocol flags in destination or source context");
     }
-    terminateProgram(1);
+
     return NULL;
 }
 

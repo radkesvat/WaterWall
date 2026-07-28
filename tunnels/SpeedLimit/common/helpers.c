@@ -284,7 +284,7 @@ uint32_t speedlimitGetRetryDelayMs(tunnel_t *t, line_t *l)
     return (uint32_t) wait_ms;
 }
 
-void speedlimitScheduleUpstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms)
+bool speedlimitScheduleUpstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms)
 {
     if (delay_ms == 0)
     {
@@ -294,19 +294,23 @@ void speedlimitScheduleUpstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms)
     if (ls->up_timer != NULL)
     {
         wtimerReset(ls->up_timer, delay_ms);
-        return;
+        return true;
     }
 
-    ls->up_timer = wtimerAdd(getWorkerLoop(lineGetWID(ls->line)), speedlimitUpstreamDrainTimerCallback, delay_ms, 1);
-    if (ls->up_timer == NULL)
+    wtimer_t *timer = wtimerAdd(getWorkerLoop(lineGetWID(ls->line)), speedlimitUpstreamDrainTimerCallback, delay_ms, 1);
+    if (timer == NULL)
     {
-        LOGF("SpeedLimit: failed to create upstream drain timer");
-        terminateProgram(1);
+        // the queue can never be drained again on this line, the caller closes it
+        LOGE("SpeedLimit: failed to create the upstream drain timer for this line");
+        return false;
     }
-    weventSetUserData(ls->up_timer, ls);
+
+    ls->up_timer = timer;
+    weventSetUserData(timer, ls);
+    return true;
 }
 
-void speedlimitScheduleDownstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms)
+bool speedlimitScheduleDownstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms)
 {
     if (delay_ms == 0)
     {
@@ -316,15 +320,46 @@ void speedlimitScheduleDownstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_m
     if (ls->down_timer != NULL)
     {
         wtimerReset(ls->down_timer, delay_ms);
-        return;
+        return true;
     }
 
-    ls->down_timer =
+    wtimer_t *timer =
         wtimerAdd(getWorkerLoop(lineGetWID(ls->line)), speedlimitDownstreamDrainTimerCallback, delay_ms, 1);
-    if (ls->down_timer == NULL)
+    if (timer == NULL)
     {
-        LOGF("SpeedLimit: failed to create downstream drain timer");
-        terminateProgram(1);
+        // the queue can never be drained again on this line, the caller closes it
+        LOGE("SpeedLimit: failed to create the downstream drain timer for this line");
+        return false;
     }
-    weventSetUserData(ls->down_timer, ls);
+
+    ls->down_timer = timer;
+    weventSetUserData(timer, ls);
+    return true;
+}
+
+void speedlimitCloseLineOnDrainFailure(speedlimit_lstate_t *ls, sbuf_t *detached_buf)
+{
+    tunnel_t *t = ls->tunnel;
+    line_t   *l = ls->line;
+
+    // both sides of this line are initialized and the close below may destroy the line re-entrantly
+    lineLock(l);
+
+    if (detached_buf != NULL)
+    {
+        // this buffer was already removed from its queue and will never be forwarded
+        lineReuseBuffer(l, detached_buf);
+    }
+
+    // recycles both queues and deletes both timers
+    speedlimitLinestateDestroy(ls);
+
+    tunnelNextUpStreamFinish(t, l);
+
+    if (lineIsAlive(l))
+    {
+        tunnelPrevDownStreamFinish(t, l);
+    }
+
+    lineUnlock(l);
 }

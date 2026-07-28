@@ -113,7 +113,7 @@ router_field_parse_t routerNetworkParse(router_rule_t *rule, const cJSON *rule_j
     return kRouterFieldPresent;
 }
 
-bool routerNetworkMatch(const router_rule_t *rule, const router_match_ctx_t *mctx)
+bool routerNetworkMatch(const router_rule_t *rule, router_match_ctx_t *mctx)
 {
     if (! rule->network.present)
     {

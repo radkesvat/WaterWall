@@ -3,27 +3,6 @@
 #include "loggers/network_logger.h"
 #include "pipe_tunnel.h"
 
-static bool strEqualsAnyIgnoreCase(const char *value, const char *a, const char *b, const char *c, const char *d)
-{
-    if (value == NULL)
-    {
-        return false;
-    }
-
-    char *tmp = stringDuplicate(value);
-    stringLowerCase(tmp);
-
-    bool ret = false;
-    if ((a != NULL && stringCompare(tmp, a) == 0) || (b != NULL && stringCompare(tmp, b) == 0) ||
-        (c != NULL && stringCompare(tmp, c) == 0) || (d != NULL && stringCompare(tmp, d) == 0))
-    {
-        ret = true;
-    }
-
-    memoryFree(tmp);
-    return ret;
-}
-
 static bool parseSplitPlacement(const char *value, httpserver_split_placement_t *out, const char *field_name)
 {
     if (value == NULL || out == NULL)
@@ -31,22 +10,27 @@ static bool parseSplitPlacement(const char *value, httpserver_split_placement_t 
         return false;
     }
 
-    if (strEqualsAnyIgnoreCase(value, "query", "query-parameter", "query-param", "param"))
+    static const char *const query_aliases[]  = {"query", "query-parameter", "query-param", "param"};
+    static const char *const header_aliases[] = {"header", "http-header"};
+    static const char *const cookie_aliases[] = {"cookie", "cookies"};
+    static const char *const path_aliases[]   = {"path", "path-segment", "path-template"};
+
+    if (stringAsciiCaseEqualsAny(value, query_aliases, ARRAY_SIZE(query_aliases)))
     {
         *out = kHttpServerSplitPlacementQuery;
         return true;
     }
-    if (strEqualsAnyIgnoreCase(value, "header", "http-header", NULL, NULL))
+    if (stringAsciiCaseEqualsAny(value, header_aliases, ARRAY_SIZE(header_aliases)))
     {
         *out = kHttpServerSplitPlacementHeader;
         return true;
     }
-    if (strEqualsAnyIgnoreCase(value, "cookie", "cookies", NULL, NULL))
+    if (stringAsciiCaseEqualsAny(value, cookie_aliases, ARRAY_SIZE(cookie_aliases)))
     {
         *out = kHttpServerSplitPlacementCookie;
         return true;
     }
-    if (strEqualsAnyIgnoreCase(value, "path", "path-segment", "path-template", NULL))
+    if (stringAsciiCaseEqualsAny(value, path_aliases, ARRAY_SIZE(path_aliases)))
     {
         *out = kHttpServerSplitPlacementPath;
         return true;
@@ -79,17 +63,21 @@ static bool parseHttpVersionMode(httpserver_tstate_t *ts, const cJSON *settings)
 
     if (cJSON_IsString(hv) && hv->valuestring != NULL)
     {
-        if (strEqualsAnyIgnoreCase(hv->valuestring, "1.1", "http1", "http1.1", "1"))
+        static const char *const h1_aliases[]   = {"1.1", "http1", "http1.1", "1"};
+        static const char *const h2_aliases[]   = {"2", "2.0", "http2", "h2"};
+        static const char *const both_aliases[] = {"both", "any", "auto", "1.1+2"};
+
+        if (stringAsciiCaseEqualsAny(hv->valuestring, h1_aliases, ARRAY_SIZE(h1_aliases)))
         {
             ts->version_mode = kHttpServerVersionModeHttp1;
             return true;
         }
-        if (strEqualsAnyIgnoreCase(hv->valuestring, "2", "2.0", "http2", "h2"))
+        if (stringAsciiCaseEqualsAny(hv->valuestring, h2_aliases, ARRAY_SIZE(h2_aliases)))
         {
             ts->version_mode = kHttpServerVersionModeHttp2;
             return true;
         }
-        if (strEqualsAnyIgnoreCase(hv->valuestring, "both", "any", "auto", "1.1+2"))
+        if (stringAsciiCaseEqualsAny(hv->valuestring, both_aliases, ARRAY_SIZE(both_aliases)))
         {
             ts->version_mode = kHttpServerVersionModeBoth;
             return true;
@@ -118,13 +106,16 @@ static bool parseHttp1TransportMode(httpserver_tstate_t *ts, const cJSON *settin
         return true;
     }
 
-    if (strEqualsAnyIgnoreCase(mode->valuestring, "single", "classic", "full-duplex", "legacy"))
+    static const char *const single_aliases[] = {"single", "classic", "full-duplex", "legacy"};
+    static const char *const split_aliases[]  = {"split", "half-duplex", "dual", "dual-connection"};
+
+    if (stringAsciiCaseEqualsAny(mode->valuestring, single_aliases, ARRAY_SIZE(single_aliases)))
     {
         ts->h1_transport_mode = kHttpServerH1TransportSingle;
         return true;
     }
 
-    if (strEqualsAnyIgnoreCase(mode->valuestring, "split", "half-duplex", "dual", "dual-connection"))
+    if (stringAsciiCaseEqualsAny(mode->valuestring, split_aliases, ARRAY_SIZE(split_aliases)))
     {
         ts->h1_transport_mode = kHttpServerH1TransportSplit;
         return true;

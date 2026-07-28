@@ -32,22 +32,30 @@ sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
 {
     pad_left = sbufAlignLeftPadding(pad_left);
 
-    if (minimum_capacity != 0 && minimum_capacity % kCpuLineCacheSize != 0)
-    {
-        minimum_capacity =
-            (max(kCpuLineCacheSize, minimum_capacity) + kCpuLineCacheSizeMin1) & (~kCpuLineCacheSizeMin1);
-    }
-
-    if (minimum_capacity > UINT32_MAX - pad_left)
+    /*
+     * The rounding and the padding are both applied in 64-bit arithmetic by the
+     * helper. Doing the cache-line round-up in 32-bit arithmetic first, as this
+     * did, wraps for any request above UINT32_MAX - kCpuLineCacheSizeMin1: the
+     * capacity collapsed to 0 and the "capacity overflow" check below it could
+     * never fire, handing back a buffer of only pad_left bytes.
+     *
+     * Reaching this abort means a caller committed to a size that cannot exist.
+     * There is no return value to fail through, and the request is already
+     * nonsensical, so this is Category D. Callers holding an untrusted length
+     * must pre-validate with sbufTryComputeCapacity() and fail locally instead.
+     */
+    uint32_t real_cap = 0;
+    if (! sbufTryComputeCapacity(minimum_capacity, pad_left, &real_cap))
     {
         printError("sbuf: capacity overflow (minimum_capacity + pad_left)");
-        exit(1);
+        abortProgramNow(1);
     }
 
-    uint32_t real_cap = minimum_capacity + pad_left;
-
+    // Cannot wrap, and memoryAllocateAligned() cannot reject this for size: the
+    // helper above accounted for the header and the alignment over-allocation,
+    // which are the binding limits on 32-bit targets.
     size_t  total_size = sizeof(sbuf_t) + (size_t) real_cap;
-    sbuf_t *b          = memoryAllocateAligned(total_size, 32);
+    sbuf_t *b          = memoryAllocateAligned(total_size, kSbufAllocationAlignment);
     if (b == NULL)
     {
         printError("sbuf: allocation failed");

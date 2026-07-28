@@ -199,7 +199,8 @@ static bool parseTargetPort(trojanclient_tstate_t *ts, const cJSON *settings)
         return false;
     }
 
-    if (! cJSON_IsNumber(port_json) || port_json->valueint <= 0 || port_json->valueint > UINT16_MAX)
+    int64_t val = 0;
+    if (! jsonGetIntegerInRange(port_json, 1, UINT16_MAX, &val))
     {
         LOGF("JSON Error: TrojanClient->settings->port must be a valid number in range [1, %u] or "
              "\"dest_context->port\"",
@@ -208,7 +209,7 @@ static bool parseTargetPort(trojanclient_tstate_t *ts, const cJSON *settings)
     }
 
     ts->target_port_source = kDvsConstant;
-    addresscontextSetPort(&ts->target_addr, (uint16_t) port_json->valueint);
+    addresscontextSetPort(&ts->target_addr, (uint16_t) val);
     return true;
 }
 

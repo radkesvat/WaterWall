@@ -1,15 +1,7 @@
 #pragma once
 
+#include "MuxCommon/mux_wire.h"
 #include "wwapi.h"
-
-/*
-    This part is shared with the MuxServer
-*/
-// if you change this structure, you must also change the kMuxFrameLength value
-// in the enum below, this is used for left padding in node.c
-typedef uint16_t mux_length_t;
-typedef uint32_t cid_t;
-#define CID_MAX 0xFFFFFFFFU
 
 typedef struct muxserver_tstate_s
 {
@@ -29,7 +21,7 @@ typedef struct muxserver_lstate_s
     buffer_stream_t            read_stream;        // stream for reading data from the parent connection
     buffer_queue_t             pending_child_data; // child-destined data queued while the child write side is paused
     size_t                     pending_child_data_len; // parent: total queued child-destined bytes
-    cid_t                      connection_id;          // unique connection id, used for multiplexing
+    mux_cid_t                  connection_id;          // unique connection id, used for multiplexing
     uint32_t children_count;          // number of children in the parent connection, used for concurrency mode counter
     uint32_t parent_read_pause_count; // parent: child queues currently pausing parent reads
     bool     is_child : 1;            // if this connection is muxed into a parent connection
@@ -56,46 +48,6 @@ enum
     kMuxMainLineStatsLogIntervalMs       = 5000,
 };
 
-/*
-    This part is shared with the MuxServer
-*/
-#ifdef COMPILER_MSVC
-#pragma pack(push, 1)
-#define ATTR_PACKED
-#else
-#define ATTR_PACKED __attribute__((__packed__))
-
-#endif
-
-// if you change this structure, you must also change the kMuxFrameLength value
-// in the enum below, this is used for left padding in node.c
-// and MuxServer
-typedef struct
-{
-    mux_length_t length;
-    uint8_t      flags;
-    uint8_t      _pad1; // padding for alignment
-    cid_t        cid;
-
-    char data[];
-
-} ATTR_PACKED mux_frame_t;
-
-#ifdef COMPILER_MSVC
-#pragma pack(pop)
-#endif
-
-enum
-{
-    kMuxFlagOpen       = 0,
-    kMuxFlagClose      = 1,
-    kMuxFlagFlowPause  = 2,
-    kMuxFlagFlowResume = 3,
-    kMuxFlagData       = 4,
-    kMuxFrameLength =
-        sizeof(mux_frame_t), // This value must be 8 and this value is hard coded in node.c for left padding
-};
-
 WW_EXPORT void         muxserverTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *muxserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t muxserverTunnelApi(tunnel_t *instance, sbuf_t *message);
@@ -120,7 +72,7 @@ void muxserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void muxserverTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void muxserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void muxserverLinestateInitialize(muxserver_lstate_t *ls, line_t *l, bool is_child, cid_t connection_id);
+void muxserverLinestateInitialize(muxserver_lstate_t *ls, line_t *l, bool is_child, mux_cid_t connection_id);
 void muxserverLinestateDestroy(muxserver_lstate_t *ls);
 void muxserverScheduleParentStatsLog(tunnel_t *t, line_t *parent_l);
 
@@ -129,9 +81,21 @@ bool muxserverCheckConnectionIsExhausted(muxserver_tstate_t *ts, muxserver_lstat
 void muxserverJoinConnection(muxserver_lstate_t *parent, muxserver_lstate_t *child);
 void muxserverLeaveConnection(muxserver_lstate_t *child);
 
-void muxserverMakeMuxFrame(sbuf_t *buf, cid_t cid, uint8_t flag);
-bool muxserverSendControlFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, line_t *child_l, cid_t cid,
-                               uint8_t flag);
+/**
+ * Close one child of a still-live parent connection: unlink it, release its flow control, emit the Close frame,
+ * destroy the child line state and destroy the child line.
+ *
+ * MuxServer creates its child lines, so it is also the node that destroys them.
+ *
+ * @param notify_child_next send Finish to the child's next side. Must be false when this close is the reaction to
+ *                          a Finish received from that same side.
+ *
+ * The caller must return immediately: the parent line may be dead afterwards.
+ */
+void muxserverCloseChildKeepParent(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
+                                   muxserver_lstate_t *child_ls, bool notify_child_next);
+bool muxserverSendControlFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, line_t *child_l,
+                               mux_cid_t cid, uint8_t flag);
 bool muxserverSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, line_t *child_l,
                                  muxserver_lstate_t *child_ls);
 bool muxserverMaybeSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,

@@ -17,12 +17,12 @@ struct sbuf_s
     uint32_t curpos;
     uint32_t len;
     uint32_t capacity;
-    uint16_t l_pad;        // constant when created, indicates how much bytes are available for switching left at the beginning
-                           // something like leave-room in lwip pbuf
+    uint16_t l_pad; // constant when created, indicates how much bytes are available for switching left at the beginning
+                    // something like leave-room in lwip pbuf
 
-    bool     is_temporary; // if true, this buffer will not be freed or reused in pools (like stack buffer)
-    
-    uint8_t  _padding1;    // padding to align to 8 bytes
+    bool is_temporary; // if true, this buffer will not be freed or reused in pools (like stack buffer)
+
+    uint8_t _padding1; // padding to align to 8 bytes
 
     MSVC_ATTR_ALIGNED_32 uint8_t buf[] GNU_ATTR_ALIGNED_32;
 };
@@ -32,6 +32,126 @@ typedef struct sbuf_s sbuf_t;
 #define SIZEOF_STRUCT_SBUF (sizeof(struct sbuf_s))
 
 static_assert(SIZEOF_STRUCT_SBUF == 32, "sbuf_s size should be 32 bytes, buf array is flexible");
+
+enum
+{
+    // Alignment sbufCreateWithPadding() requests so AVX copies can use aligned
+    // loads and stores. memoryAllocateAligned() over-allocates by exactly this
+    // much to place the aligned pointer and its back-pointer, so it is part of
+    // the real allocation size and must be accounted for in the limit checks.
+    kSbufAllocationAlignment = 32
+};
+
+/**
+ * @brief sbufTryComputeCapacity() against an explicit allocation-size ceiling.
+ *
+ * Split out from sbufTryComputeCapacity() only so the size_t boundary can be
+ * exercised on any host: the real ceiling is SIZE_MAX, which on a 64-bit build
+ * is unreachable, leaving the 32-bit-target behaviour untestable otherwise.
+ * Production code should call sbufTryComputeCapacity().
+ *
+ * @param minimum_capacity Requested writable capacity. Deliberately uint64_t so
+ *                         an already-overflowing computation can be handed
+ *                         straight in without a lossy narrowing first.
+ * @param pad_left Requested left padding, before alignment.
+ * @param size_max Largest byte count the target's size_t can represent.
+ * @param out_capacity Receives the total allocation capacity on success.
+ * @return true when the request is representable; false otherwise, leaving
+ *         *out_capacity untouched.
+ */
+static inline bool sbufTryComputeCapacityWithin(uint64_t minimum_capacity, uint16_t pad_left, uint64_t size_max,
+                                                uint32_t *out_capacity)
+{
+    const uint64_t aligned_pad = (((uint64_t) pad_left) + 31U) & ~UINT64_C(31);
+    if (aligned_pad > (uint64_t) UINT16_MAX)
+    {
+        return false;
+    }
+
+    /*
+     * Range-check *before* rounding, not after. Rounding up first is the whole
+     * bug: for any value within kCpuLineCacheSizeMin1 of the type's maximum, the
+     * round-up wraps back to a small number and every later check passes. That
+     * is true in 64-bit arithmetic just as it was in 32-bit, so widening the
+     * type alone would only have moved the boundary.
+     */
+    if (minimum_capacity > (uint64_t) UINT32_MAX)
+    {
+        return false;
+    }
+
+    // Bounded above by UINT32_MAX, so the round-up below cannot wrap a uint64_t.
+    uint64_t capacity = minimum_capacity;
+    if (capacity != 0 && (capacity % (uint64_t) kCpuLineCacheSize) != 0)
+    {
+        if (capacity < (uint64_t) kCpuLineCacheSize)
+        {
+            capacity = (uint64_t) kCpuLineCacheSize;
+        }
+        capacity = (capacity + (uint64_t) kCpuLineCacheSizeMin1) & ~(uint64_t) kCpuLineCacheSizeMin1;
+    }
+
+    const uint64_t total = capacity + aligned_pad;
+    if (total > (uint64_t) UINT32_MAX)
+    {
+        return false;
+    }
+
+    /*
+     * The real allocation is larger than the capacity in two ways: it carries
+     * the sbuf_t header, and memoryAllocateAligned() over-allocates by
+     * kSbufAllocationAlignment. size_t is 32 bits on the supported 32-bit
+     * targets (Windows x86/ARM32, Android x86/ARM32), so all three have to fit
+     * there or a request this helper accepted still fails inside the allocator.
+     *
+     * Both parts matter. Omitting the header let the largest aligned capacity
+     * plus 32 bytes of padding reach exactly 2^32, allocating zero bytes while
+     * reporting a 4 GiB capacity. Omitting the alignment left a narrower window
+     * where memoryAllocateAligned() returns NULL instead, which is not a
+     * silent corruption but still turns a locally-recoverable rejection into a
+     * process-wide failure - the caller was told the request was satisfiable.
+     */
+    const uint64_t allocation_overhead = (uint64_t) sizeof(sbuf_t) + (uint64_t) kSbufAllocationAlignment;
+    if (size_max < allocation_overhead || total > size_max - allocation_overhead)
+    {
+        return false;
+    }
+
+    *out_capacity = (uint32_t) total;
+    return true;
+}
+
+/**
+ * @brief Compute the real allocation capacity sbufCreateWithPadding() would use.
+ *
+ * The allocator rounds the requested capacity up to a cache line, adds the
+ * aligned left padding, and then allocates that plus the sbuf_t header and the
+ * aligned-allocation overhead. Every step is range-checked here in 64-bit
+ * arithmetic, so a request that cannot be represented is *rejected* rather than
+ * wrapping. A true result means sbufCreateWithPadding() can satisfy it.
+ *
+ * Neither wrap is theoretical. Rounding UINT32_MAX up to a 64-byte boundary in
+ * 32-bit arithmetic yields 0, and on a 32-bit target the header pushes the
+ * largest accepted capacity to exactly 2^32. Both produced a near-empty
+ * allocation whose reported capacity then satisfied every later bounds check.
+ *
+ * Callers that size a buffer from an attacker-influenced length must call this
+ * *before* committing to sbufSetLength(), and fail locally when it returns
+ * false. sbufCreateWithPadding() itself treats a false result as unsatisfiable
+ * and aborts, because by then there is no way to report failure to the caller.
+ *
+ * @param minimum_capacity Requested writable capacity. Deliberately uint64_t so
+ *                         an already-overflowing computation can be handed
+ *                         straight in without a lossy narrowing first.
+ * @param pad_left Requested left padding, before alignment.
+ * @param out_capacity Receives the total allocation capacity on success.
+ * @return true when the request is representable; false otherwise, leaving
+ *         *out_capacity untouched.
+ */
+static inline bool sbufTryComputeCapacity(uint64_t minimum_capacity, uint16_t pad_left, uint32_t *out_capacity)
+{
+    return sbufTryComputeCapacityWithin(minimum_capacity, pad_left, (uint64_t) SIZE_MAX, out_capacity);
+}
 
 /**
  * @brief Copy a small byte range without relying on aligned copy routines.
@@ -137,7 +257,6 @@ sbuf_t *sbufDuplicate(sbuf_t *b);
  * @param dest Destination buffer.
  */
 void sbufDuplicateTo(sbuf_t *b, sbuf_t *dest);
-
 
 /**
  * Gets total capacity of the buffer. (Total capacity is a constant value that will not change)
@@ -305,7 +424,7 @@ static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const uint32_t bytes)
     if (sbufGetMaximumWriteableSize(b) < bytes)
     {
         uint32_t needed_writable = max(current_length, bytes);
-        sbuf_t *bigger_buf       = sbufCreateWithPadding(needed_writable, b->l_pad);
+        sbuf_t  *bigger_buf      = sbufCreateWithPadding(needed_writable, b->l_pad);
         sbufSetLength(bigger_buf, current_length);
         sbufWriteBuf(bigger_buf, b, current_length);
         sbufDestroy(b);

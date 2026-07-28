@@ -5,16 +5,16 @@
 void muxclientTunnelUpStreamInit(tunnel_t *t, line_t *child_l)
 {
     muxclient_lstate_t *child_ls = lineGetState(child_l, t);
-    line_t             *parent_l  = muxclientGetParentLineForNewChild(t, child_l);
+    line_t             *parent_l = muxclientGetParentLineForNewChild(t, child_l);
     if (parent_l == NULL)
     {
         tunnelPrevDownStreamFinish(t, child_l);
         return;
     }
     muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
-    assert(parent_ls->connection_id < CID_MAX);
+    assert(parent_ls->connection_id < kMuxCidMax);
 
-    cid_t new_cid = parent_ls->connection_id + 1;
+    mux_cid_t new_cid = parent_ls->connection_id + 1;
 
     muxclientLinestateInitialize(child_ls, child_l, true, new_cid);
     muxclientJoinConnection(parent_ls, child_ls);

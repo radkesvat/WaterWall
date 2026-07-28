@@ -8,8 +8,15 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     tlsclient_lstate_t *ls          = lineGetState(l, t);
     sbuf_t             *ech_payload = NULL;
 
-    tlsclientLinestateInitialize(
-        ls, ts->threadlocal_ssl_contexts[lineGetWID(l)], lineGetBufferPool(l), ts->alpn_wire, ts->alpn_wire_len);
+    if (! tlsclientLinestateInitialize(
+            ls, ts->threadlocal_ssl_contexts[lineGetWID(l)], lineGetBufferPool(l), ts->alpn_wire, ts->alpn_wire_len))
+    {
+        // there is no SSL object to print a state for, and the line state is already released and zeroed;
+        // the next tunnel never received Init for this line, so only the downstream side may be closed here
+        LOGW("TlsClient: upstream init failed: boringssl line state could not be allocated");
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
 
     if (! tlsclientCreateEchGreaseInnerClientHello(ts, lineGetWID(l), &ech_payload))
     {

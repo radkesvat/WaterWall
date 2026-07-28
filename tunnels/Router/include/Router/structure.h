@@ -42,7 +42,9 @@ enum router_classify_result_e
 {
     kRouterClassifyNeedMore = 0,
     kRouterClassifyDefault  = 1,
-    kRouterClassifyTarget   = 2
+    kRouterClassifyTarget   = 2,
+    // a matcher hit a runtime evaluation error (MaxMind / regex); no route may be selected for this line
+    kRouterClassifyError = 3
 };
 
 typedef struct router_tstate_s
@@ -83,6 +85,9 @@ typedef struct router_match_ctx_s
     const uint8_t              *payload;
     uint32_t                    payload_len;
     router_geosite_host_cache_t geosite_host;
+    // set by a matcher when evaluating a condition failed at runtime. This is not "the rule did not match":
+    // classification stops immediately and the line is closed instead of falling through to another route.
+    bool evaluation_failed;
 } router_match_ctx_t;
 
 typedef struct router_match_s
@@ -101,8 +106,14 @@ void           routerRuleTableDestroy(router_tstate_t *ts);
 router_match_t routerClassify(router_tstate_t *ts, router_match_ctx_t *mctx);
 
 // --- geoip / geosite helpers that need router_tstate_t ---
+/**
+ * Match one address against a rule's geoip codes.
+ *
+ * @param out_evaluation_failed set to true when the MaxMind lookup itself failed; the return value is then
+ *                              meaningless and the caller must not treat it as "did not match".
+ */
 bool routerGeoipCodesMatch(router_tstate_t *ts, const address_context_t *ctx, const router_geoip_code_t *codes,
-                           uint32_t count);
+                           uint32_t count, bool *out_evaluation_failed);
 bool routerRuleTableNeedsGeoip(const router_tstate_t *ts);
 bool routerGeoipOpenIfNeeded(router_tstate_t *ts, const cJSON *settings);
 void routerGeoipClose(router_tstate_t *ts);
@@ -113,7 +124,7 @@ void routerGeositeClose(router_tstate_t *ts);
 // --- matcher dispatcher (modules/matchers.c) ---
 bool routerRuleParseConditions(router_rule_t *rule, const cJSON *rule_json, uint32_t rule_index,
                                uint32_t *out_present_count);
-bool routerRuleMatches(const router_rule_t *rule, const router_match_ctx_t *mctx);
+bool routerRuleMatches(const router_rule_t *rule, router_match_ctx_t *mctx);
 void routerRuleDestroyConditions(router_rule_t *rule);
 bool routerIsKnownConditionKey(const char *key);
 

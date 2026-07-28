@@ -13,7 +13,7 @@ void authenticationclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     if (ts->verbose)
     {
-        LOGD("AuthenticationClient: downstream transport finished; reconnect=%s", should_reconnect ? "true" : "false");
+        LOGD("AuthenticationClient: downstream transport finished; reconnect=%s", boolToTrueFalse(should_reconnect));
     }
 
     authenticationclientCloseControlLine(t, l, false);

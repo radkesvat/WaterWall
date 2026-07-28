@@ -20,7 +20,15 @@ void tlsserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    tlsserverArmHandshakeDeadline(t, l, ls);
+    if (! tlsserverArmHandshakeDeadline(t, l, ls))
+    {
+        // neither the protected nor the fallback branch has been initialized yet, so only the previous side
+        // may be closed here
+        LOGE("TlsServer: failed to arm the handshake deadline, closing this line");
+        tlsserverLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
 
     if (ts->verbose)
     {

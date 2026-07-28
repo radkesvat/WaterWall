@@ -354,6 +354,29 @@ void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buff
     pool->small_buffer_left_padding = s_new_max;
 }
 
+/*
+ * Rounds a requested pool buffer size the same way sbufCreateWithPadding() will.
+ *
+ * This used to be open-coded here as a second copy of the cache-line round-up,
+ * and that copy wrapped: a size within kCpuLineCacheSizeMin1 of UINT32_MAX
+ * rounded to 0 and silently produced a pool of empty buffers. Every caller
+ * currently passes a small constant, so it was not reachable, but a duplicate of
+ * arithmetic that has already been wrong once does not need to stay.
+ *
+ * There is no failure channel out of bufferpoolCreate() and no valid smaller
+ * answer, so an unrepresentable geometry is Category D.
+ */
+static uint32_t bufferpoolRoundBufferSize(uint32_t requested)
+{
+    uint32_t rounded = 0;
+    if (! sbufTryComputeCapacity(requested, 0, &rounded))
+    {
+        printError("BufferPool: buffer size %u cannot be represented", requested);
+        abortProgramNow(1);
+    }
+    return rounded;
+}
+
 buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small, uint32_t bufcount,
                                 uint32_t large_buffer_size, uint32_t small_buffer_size)
 {
@@ -363,17 +386,8 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small
 
     bufcount = 2 * bufcount;
 
-    if (large_buffer_size != 0 && large_buffer_size % kCpuLineCacheSize != 0)
-    {
-        large_buffer_size =
-            (max(kCpuLineCacheSize, large_buffer_size) + kCpuLineCacheSizeMin1) & (~kCpuLineCacheSizeMin1);
-    }
-
-    if (small_buffer_size != 0 && small_buffer_size % kCpuLineCacheSize != 0)
-    {
-        small_buffer_size =
-            (max(kCpuLineCacheSize, small_buffer_size) + kCpuLineCacheSizeMin1) & (~kCpuLineCacheSizeMin1);
-    }
+    large_buffer_size = bufferpoolRoundBufferSize(large_buffer_size);
+    small_buffer_size = bufferpoolRoundBufferSize(small_buffer_size);
 
 #ifdef DEBUG
     sbuf_t *test_large_buf = sbufCreateWithPadding(large_buffer_size, 0);

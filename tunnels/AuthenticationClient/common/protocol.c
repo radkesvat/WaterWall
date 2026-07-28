@@ -554,7 +554,7 @@ static void authenticationclientAcknowledgePendingPushUsers(tunnel_t *t, bool re
     {
         LOGD("AuthenticationClient: acknowledged PushUserStats response revisions-current=%s config-revision=%" PRIu64
              " stats-revision=%" PRIu64 " local-generation=%" PRIu64,
-             revisions_current ? "true" : "false",
+             boolToTrueFalse(revisions_current),
              config_revision,
              stats_revision,
              revision_generation);
@@ -581,11 +581,11 @@ static bool authenticationclientSendRequestWithSnapshot(tunnel_t *t, uint8_t req
             LOGD("AuthenticationClient: not sending %s request; started=%s stopping=%s connected=%s "
                  "authenticated=%s write-paused=%s control-line=%s",
                  authenticationclientRequestTypeName(request_type),
-                 ts->started ? "true" : "false",
-                 ts->stopping ? "true" : "false",
-                 ts->connected ? "true" : "false",
-                 ts->authenticated ? "true" : "false",
-                 ts->write_paused ? "true" : "false",
+                 boolToTrueFalse(ts->started),
+                 boolToTrueFalse(ts->stopping),
+                 boolToTrueFalse(ts->connected),
+                 boolToTrueFalse(ts->authenticated),
+                 boolToTrueFalse(ts->write_paused),
                  ts->control_line != NULL ? "present" : "none");
         }
         mutexUnlock(&ts->control_mutex);
@@ -1520,8 +1520,8 @@ void authenticationclientOpenControlLine(tunnel_t *t)
         if (ts->verbose)
         {
             LOGD("AuthenticationClient: skipped opening control line stopping=%s existing-line=%s",
-                 ts->stopping ? "true" : "false",
-                 ts->control_line != NULL ? "true" : "false");
+                 boolToTrueFalse(ts->stopping),
+                 boolToTrueFalse(ts->control_line != NULL));
         }
         mutexUnlock(&ts->control_mutex);
         return;
@@ -1584,7 +1584,7 @@ void authenticationclientCloseControlLine(tunnel_t *t, line_t *l, bool propagate
 
     if (verbose)
     {
-        LOGD("AuthenticationClient: closing control line propagate-finish=%s", propagate_finish ? "true" : "false");
+        LOGD("AuthenticationClient: closing control line propagate-finish=%s", boolToTrueFalse(propagate_finish));
     }
 
     authenticationclient_lstate_t *ls = lineGetState(l, t);
@@ -1706,8 +1706,8 @@ void authenticationclientPingTimerCallback(wtimer_t *timer)
     if (ts->verbose)
     {
         LOGD("AuthenticationClient: ping timer tick connected=%s authenticated=%s",
-             connected ? "true" : "false",
-             authenticated ? "true" : "false");
+             boolToTrueFalse(connected),
+             boolToTrueFalse(authenticated));
     }
 
     if (UNLIKELY(! connected))
@@ -1821,8 +1821,8 @@ void authenticationclientSyncTimerCallback(wtimer_t *timer)
     if (ts->verbose)
     {
         LOGD("AuthenticationClient: sync timer tick push-due=%s pull-due=%s",
-             push_due ? "true" : "false",
-             pull_due ? "true" : "false");
+             boolToTrueFalse(push_due),
+             boolToTrueFalse(pull_due));
     }
 
     if (push_due)
@@ -1838,7 +1838,7 @@ void authenticationclientSyncTimerCallback(wtimer_t *timer)
     const bool should_pull = authenticationclientShouldSendGetAllUsers(t, pull_due);
     if (ts->verbose)
     {
-        LOGD("AuthenticationClient: sync timer pull decision send=%s", should_pull ? "true" : "false");
+        LOGD("AuthenticationClient: sync timer pull decision send=%s", boolToTrueFalse(should_pull));
     }
 
     if (! should_pull)

@@ -21,13 +21,13 @@ static void failInvalidPortValue(const char *field_name, int index)
 
 static uint16_t parsePortNumber(const cJSON *port_json, const char *field_name, int index)
 {
-    if (! cJSON_IsNumber(port_json) || port_json->valuedouble != (double) port_json->valueint ||
-        port_json->valueint <= 0 || port_json->valueint > UINT16_MAX)
+    int64_t val = 0;
+    if (! jsonGetIntegerInRange(port_json, 1, UINT16_MAX, &val))
     {
         failInvalidPortValue(field_name, index);
     }
 
-    return (uint16_t) port_json->valueint;
+    return (uint16_t) val;
 }
 
 static bool listenerPortListContains(const vec_listener_port_t *ports, uint16_t port)

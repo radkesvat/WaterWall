@@ -6,8 +6,7 @@ static muxserver_lstate_t *findChildByConnectionId(muxserver_lstate_t *parent_ls
 
 static bool muxserverCloseOwnedChildLineFromUpstreamPayload(tunnel_t *t, line_t *parent_l,
                                                             muxserver_lstate_t *parent_ls, line_t *child_l,
-                                                            muxserver_lstate_t *child_ls,
-                                                            bool release_parent_input)
+                                                            muxserver_lstate_t *child_ls, bool release_parent_input)
 {
     muxserverLeaveConnection(child_ls);
     bool parent_alive = true;
@@ -23,30 +22,6 @@ static bool muxserverCloseOwnedChildLineFromUpstreamPayload(tunnel_t *t, line_t 
         lineDestroy(child_l);
     }
     return parent_alive && (! release_parent_input || lineIsAlive(parent_l));
-}
-
-static sbuf_t *tryReadCompleteFrame(muxserver_lstate_t *parent_ls, mux_frame_t *frame)
-{
-    if (bufferstreamGetBufLen(&(parent_ls->read_stream)) < kMuxFrameLength)
-    {
-        return NULL;
-    }
-
-    bufferstreamViewBytesAt(&(parent_ls->read_stream), 0, (uint8_t *) frame, kMuxFrameLength);
-
-    mux_length_t payload_length = be16toh(frame->length);
-    cid_t        cid            = be32toh(frame->cid);
-
-    size_t total_frame_size = (size_t) payload_length + (size_t) kMuxFrameLength;
-    if (total_frame_size > bufferstreamGetBufLen(&(parent_ls->read_stream)))
-    {
-        return NULL;
-    }
-
-    frame->length = payload_length;
-    frame->cid    = cid;
-
-    return bufferstreamReadExact(&(parent_ls->read_stream), total_frame_size);
 }
 
 static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, mux_frame_t *frame,
@@ -68,7 +43,7 @@ static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
 
     lineLock(parent_l);
     discard withLineLocked(child_l, tunnelNextUpStreamInit, t);
-    bool parent_alive = lineIsAlive(parent_l);
+    bool    parent_alive = lineIsAlive(parent_l);
     lineUnlock(parent_l);
     return parent_alive;
 }
@@ -113,8 +88,7 @@ static void moveChildToFront(muxserver_lstate_t *parent_ls, muxserver_lstate_t *
 }
 
 static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, sbuf_t *frame_buffer,
-                                 muxserver_tstate_t *ts, muxserver_lstate_t *parent_ls,
-                                 muxserver_lstate_t *child_ls)
+                                 muxserver_tstate_t *ts, muxserver_lstate_t *parent_ls, muxserver_lstate_t *child_ls)
 {
     line_t *child_l = child_ls->l;
 
@@ -179,7 +153,8 @@ static bool isOverFlow(buffer_stream_t *read_stream)
 {
     if (bufferstreamGetBufLen(read_stream) > kMaxMainChannelBufferSize)
     {
-        LOGW("MuxServer: UpStreamPayload: Read stream overflow, size: %zu, limit: %zu", bufferstreamGetBufLen(read_stream),
+        LOGW("MuxServer: UpStreamPayload: Read stream overflow, size: %zu, limit: %zu",
+             bufferstreamGetBufLen(read_stream),
              kMaxMainChannelBufferSize);
         return true;
     }
@@ -213,16 +188,10 @@ void muxserverTunnelUpStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
 
     bufferstreamPush(&(parent_ls->read_stream), buf);
 
-    if (isOverFlow(&(parent_ls->read_stream)))
-    {
-        handleOverFlow(t, parent_l);
-        return;
-    }
-
     while (true)
     {
         mux_frame_t frame        = {0};
-        sbuf_t     *frame_buffer = tryReadCompleteFrame(parent_ls, &frame);
+        sbuf_t     *frame_buffer = muxReadCompleteFrame(&parent_ls->read_stream, &frame);
 
         if (! frame_buffer)
         {
@@ -265,5 +234,12 @@ void muxserverTunnelUpStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
             return;
         }
         lineUnlock(parent_l);
+    }
+
+    // Only the incomplete remainder counts toward the limit. A single batch may legally carry far more than
+    // kMaxMainChannelBufferSize bytes of complete frames, and those must be drained rather than judged an overflow.
+    if (isOverFlow(&(parent_ls->read_stream)))
+    {
+        handleOverFlow(t, parent_l);
     }
 }

@@ -938,7 +938,7 @@ static void speedtestclientLogAggregate(tunnel_t *t, bool success)
         LOGI("SpeedTestClient: json-summary "
              "{\"success\":%s,\"streams\":%u,\"failed\":%u,\"sent_bytes\":%llu,\"received_bytes\":%llu,\"lost_"
              "packets\":%llu,\"validation_errors\":%llu}",
-             success ? "true" : "false",
+             boolToTrueFalse(success),
              (unsigned int) state->connection_count,
              (unsigned int) atomicLoadRelaxed(&state->failed_streams),
              (unsigned long long) state->aggregate_sender.bytes,

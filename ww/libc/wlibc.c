@@ -1,7 +1,7 @@
 #include "wlibc.h"
 
-#include "wchecksum.h"
 #include "managers/memory_manager.h"
+#include "wchecksum.h"
 
 void initWLibc(void)
 {
@@ -230,6 +230,37 @@ char *stringNewWithoutSpace(const char *str)
     return result;
 }
 
+bool stringAppendFormatV(char *buffer, size_t capacity, size_t *offset, const char *format, va_list args)
+{
+    if (buffer == NULL || offset == NULL || format == NULL || *offset >= capacity)
+    {
+        return false;
+    }
+
+    size_t  avail = capacity - *offset;
+    va_list args_copy;
+    va_copy(args_copy, args);
+    int written = vsnprintf(buffer + *offset, avail, format, args_copy);
+    va_end(args_copy);
+
+    if (written < 0 || (size_t) written >= avail)
+    {
+        return false;
+    }
+
+    *offset += (size_t) written;
+    return true;
+}
+
+bool stringAppendFormat(char *buffer, size_t capacity, size_t *offset, const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    bool result = stringAppendFormatV(buffer, capacity, offset, format, args);
+    va_end(args);
+    return result;
+}
+
 //--------------------file-------------------------------
 
 char *readFile(const char *const path)
@@ -251,7 +282,7 @@ char *readFile(const char *const path)
         return NULL;
     }
 
-    char  *string = memoryAllocate((size_t) (fsize + 1));
+    char *string = memoryAllocate((size_t) (fsize + 1));
     if (string == NULL)
     {
         fclose(f);

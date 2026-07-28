@@ -26,7 +26,11 @@ static void speedlimitDrainDownstream(speedlimit_lstate_t *ls)
     size_t grant_bytes = speedlimitGrantBytes(t, l, sbufGetLength(front), true);
     if (grant_bytes == 0)
     {
-        speedlimitScheduleDownstreamDrain(ls, speedlimitGetRetryDelayMs(t, l));
+        if (! speedlimitScheduleDownstreamDrain(ls, speedlimitGetRetryDelayMs(t, l)))
+        {
+            // every byte is still queued, speedlimitLinestateDestroy() recycles all of them
+            speedlimitCloseLineOnDrainFailure(ls, NULL);
+        }
         return;
     }
 
@@ -43,11 +47,20 @@ static void speedlimitDrainDownstream(speedlimit_lstate_t *ls)
         uint32_t delay_ms = (speedlimitPeekAvailableUnits(t, l) >= kSpeedLimitUnitsPerByte)
                                 ? kSpeedLimitImmediateMs
                                 : speedlimitGetRetryDelayMs(t, l);
-        speedlimitScheduleDownstreamDrain(ls, delay_ms);
+        if (! speedlimitScheduleDownstreamDrain(ls, delay_ms))
+        {
+            // send_buf is detached from the queue and must not be forwarded after the close decision
+            speedlimitCloseLineOnDrainFailure(ls, send_buf);
+            return;
+        }
     }
     else if (ls->next_side_locally_paused)
     {
-        speedlimitScheduleDownstreamDrain(ls, kSpeedLimitImmediateMs);
+        if (! speedlimitScheduleDownstreamDrain(ls, kSpeedLimitImmediateMs))
+        {
+            speedlimitCloseLineOnDrainFailure(ls, send_buf);
+            return;
+        }
     }
 
     tunnelPrevDownStreamPayload(t, l, send_buf);
@@ -101,7 +114,12 @@ void speedlimitTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         uint32_t delay_ms = (speedlimitPeekAvailableUnits(t, l) >= kSpeedLimitUnitsPerByte)
                                 ? kSpeedLimitImmediateMs
                                 : speedlimitGetRetryDelayMs(t, l);
-        speedlimitScheduleDownstreamDrain(ls, delay_ms);
+        if (! speedlimitScheduleDownstreamDrain(ls, delay_ms))
+        {
+            // buf is owned by the queue now, speedlimitLinestateDestroy() recycles it; no Pause may follow
+            speedlimitCloseLineOnDrainFailure(ls, NULL);
+            return;
+        }
     }
 
     if (! ls->next_side_locally_paused)

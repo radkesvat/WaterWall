@@ -211,7 +211,7 @@ static bool authenticationserverSendOrQueueResponse(tunnel_t *t, line_t *l, auth
         {
             LOGD("AuthenticationServer: queueing response message bytes=%u paused=%s queued=%u",
                  (unsigned int) sbufGetLength(response),
-                 ls->response_paused ? "true" : "false",
+                 boolToTrueFalse(ls->response_paused),
                  (unsigned int) bufferqueueGetBufCount(&ls->response_queue));
         }
         bufferqueuePushBack(&ls->response_queue, response);

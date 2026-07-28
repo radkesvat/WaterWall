@@ -114,8 +114,8 @@ void tlsclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void tlsclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 bool tlsclientParseAlpnSetting(tlsclient_tstate_t *ts, const cJSON *settings);
-void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_pool_t *pool,
-                                  const uint8_t *alpn_wire, size_t alpn_wire_len);
+bool tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_pool_t *pool, const uint8_t *alpn_wire,
+                                  size_t alpn_wire_len);
 void tlsclientLinestateDestroy(tlsclient_lstate_t *ls);
 void tlsclientLinestateRelease(tlsclient_lstate_t *ls);
 void tlsclientCloseLineBidirectional(tunnel_t *t, line_t *l);

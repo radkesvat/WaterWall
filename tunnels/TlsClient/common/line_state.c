@@ -42,8 +42,24 @@ static bool tlsclientAddConfiguredApplicationSettings(SSL *ssl, const uint8_t *a
     return true;
 }
 
-void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_pool_t *pool,
-                                  const uint8_t *alpn_wire, size_t alpn_wire_len)
+/**
+ * Release a line state that failed somewhere inside tlsclientLinestateInitialize().
+ *
+ * SSL_set_bio() has not run yet at that point, so the SSL object does not own the detached BIOs and the normal
+ * tlsclientLinestateRelease() path would leak them. Each object is therefore freed by its current owner.
+ */
+static void tlsclientLinestateReleasePartial(tlsclient_lstate_t *ls)
+{
+    SSL_free(ls->ssl);
+    BIO_free(ls->rbio);
+    BIO_free(ls->wbio);
+    bufferqueueDestroy(&(ls->bq));
+    bufferstreamDestroy(&(ls->takeover_stream));
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tlsclient_lstate_t)));
+}
+
+bool tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_pool_t *pool, const uint8_t *alpn_wire,
+                                  size_t alpn_wire_len)
 {
     assert(alpn_wire != NULL || alpn_wire_len == 0);
 
@@ -61,29 +77,17 @@ void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_
 
     if (ls->rbio == NULL || ls->wbio == NULL || ls->ssl == NULL)
     {
-        LOGF("Failed to allocate TlsClient BoringSSL line state");
-        SSL_free(ls->ssl);
-        BIO_free(ls->rbio);
-        BIO_free(ls->wbio);
-        bufferqueueDestroy(&(ls->bq));
-        bufferstreamDestroy(&(ls->takeover_stream));
-        memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tlsclient_lstate_t)));
-        terminateProgram(1);
-        return;
+        LOGE("Failed to allocate TlsClient BoringSSL line state");
+        tlsclientLinestateReleasePartial(ls);
+        return false;
     }
 
     // Register Chrome-like ALPS values only for matching protocols in the configured ALPN offer.
     if (! tlsclientAddConfiguredApplicationSettings(ls->ssl, alpn_wire, alpn_wire_len))
     {
-        LOGF("Failed to add configured ALPS values (part of matching Chrome)");
-        SSL_free(ls->ssl);
-        BIO_free(ls->rbio);
-        BIO_free(ls->wbio);
-        bufferqueueDestroy(&(ls->bq));
-        bufferstreamDestroy(&(ls->takeover_stream));
-        memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tlsclient_lstate_t)));
-        terminateProgram(1);
-        return;
+        LOGE("Failed to add configured ALPS values (part of matching Chrome)");
+        tlsclientLinestateReleasePartial(ls);
+        return false;
     }
 
     // Enable ECH GREASE to match Chrome's behavior
@@ -97,6 +101,8 @@ void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_
 
     // Enable Signed Certificate Timestamp extension
     SSL_enable_signed_cert_timestamps(ls->ssl);
+
+    return true;
 }
 
 void tlsclientLinestateRelease(tlsclient_lstate_t *ls)

@@ -25,8 +25,12 @@ void httpclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     if (ts->verbose)
     {
-        LOGD("HttpClient: line init version-mode=%d websocket=%s upgrade=%s host=%s path=%s", ts->version_mode,
-             ts->websocket_enabled ? "true" : "false", ts->enable_upgrade ? "true" : "false", ts->host, ts->path);
+        LOGD("HttpClient: line init version-mode=%d websocket=%s upgrade=%s host=%s path=%s",
+             ts->version_mode,
+             boolToTrueFalse(ts->websocket_enabled),
+             boolToTrueFalse(ts->enable_upgrade),
+             ts->host,
+             ts->path);
     }
 
     lineLock(l);
@@ -39,7 +43,7 @@ void httpclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     if (ts->websocket_enabled && ts->version_mode == kHttpClientVersionModeBoth && ts->enable_upgrade)
     {
-        ls->runtime_proto              = kHttpClientRuntimeHttp1;
+        ls->runtime_proto               = kHttpClientRuntimeHttp1;
         ls->websocket_waiting_handshake = true;
         if (ts->verbose)
         {
@@ -55,7 +59,7 @@ void httpclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     if (ts->version_mode == kHttpClientVersionModeHttp1)
     {
-        ls->runtime_proto = kHttpClientRuntimeHttp1;
+        ls->runtime_proto               = kHttpClientRuntimeHttp1;
         ls->websocket_waiting_handshake = ts->websocket_enabled;
         if (! httpclientTransportSendHttp1RequestHeaders(t, l, false))
         {
@@ -67,7 +71,7 @@ void httpclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     if (ts->version_mode == kHttpClientVersionModeHttp2)
     {
-        ls->runtime_proto = kHttpClientRuntimeHttp2;
+        ls->runtime_proto               = kHttpClientRuntimeHttp2;
         ls->websocket_waiting_handshake = ts->websocket_enabled;
         if (! httpclientTransportEnsureHttp2Session(t, l, ls))
         {
@@ -88,7 +92,7 @@ void httpclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    ls->runtime_proto = kHttpClientRuntimeHttp2;
+    ls->runtime_proto               = kHttpClientRuntimeHttp2;
     ls->websocket_waiting_handshake = ts->websocket_enabled;
     if (! httpclientTransportEnsureHttp2Session(t, l, ls))
     {

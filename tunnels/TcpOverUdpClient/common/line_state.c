@@ -9,15 +9,19 @@ static void kcpPrintLog(const char *log, struct IKCPCB *kcp, void *user)
     LOGD("TcpOverUdpClient -> KCP[%d]: %s", kcp->conv, log);
 }
 
-void tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *l, tunnel_t *t)
+bool tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *l, tunnel_t *t)
 {
     tcpoverudpclient_tstate_t *ts = tunnelGetState(t);
+
+    // every resource is built in a local until all of them succeeded; a failing line therefore leaves the line state
+    // zeroed, which is the same terminal shape tcpoverudpclientLinestateDestroy() produces.
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tcpoverudpclient_lstate_t)));
 
     ikcpcb *k_handle = ikcp_create(0, ls);
     if (k_handle == NULL)
     {
-        LOGF("TcpOverUdpClient: failed to create KCP handle");
-        terminateProgram(1);
+        LOGE("TcpOverUdpClient: failed to create the KCP handle for this line");
+        return false;
     }
 
     /* configuring the high-efficiency KCP settings */
@@ -29,11 +33,23 @@ void tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *
 
     ikcp_wndsize(k_handle, ts->kcp_send_window, ts->kcp_recv_window);
 
-    if (ikcp_setmtu(k_handle, tcpoverudpclientGetKcpMtu(ts)) != 0)
+    const int kcp_mtu       = tcpoverudpclientGetKcpMtu(ts);
+    const int setmtu_result = ikcp_setmtu(k_handle, kcp_mtu);
+
+    if (setmtu_result == -2)
     {
+        // allocation failure of the KCP frame buffer, this is a per-line resource failure
         ikcp_release(k_handle);
-        LOGF("TcpOverUdpClient: failed to set KCP MTU");
-        terminateProgram(1);
+        LOGE("TcpOverUdpClient: failed to allocate the KCP frame buffer for MTU %d", kcp_mtu);
+        return false;
+    }
+
+    if (setmtu_result != 0)
+    {
+        // tunnel creation already rejected every MTU that KCP can refuse, so reaching this branch means the validated
+        // tunnel state was corrupted or the KCP contract changed under us
+        LOGF("TcpOverUdpClient: KCP rejected the validated MTU %d (result %d)", kcp_mtu, setmtu_result);
+        abortProgramNow(1);
     }
 
     k_handle->cwnd = (IUINT32) ts->kcp_initial_cwnd;
@@ -48,7 +64,12 @@ void tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *
                                   (uint32_t) ts->kcp_interval_ms,
                                   INFINITE);
 
-    weventSetUserData(k_timer, ls);
+    if (k_timer == NULL)
+    {
+        ikcp_release(k_handle);
+        LOGE("TcpOverUdpClient: failed to create the KCP interval timer for this line");
+        return false;
+    }
 
     tcpoverudp_fec_encoder_t *fec_encoder = NULL;
     tcpoverudp_fec_decoder_t *fec_decoder = NULL;
@@ -65,8 +86,8 @@ void tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *
             weventSetUserData(k_timer, NULL);
             wtimerDelete(k_timer);
             ikcp_release(k_handle);
-            LOGF("TcpOverUdpClient: failed to initialize FEC state");
-            terminateProgram(1);
+            LOGE("TcpOverUdpClient: failed to initialize the FEC state for this line");
+            return false;
         }
     }
 
@@ -83,9 +104,14 @@ void tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *
                                        .can_downstream = true,
                                        .ping_sent      = true};
 
+    // published only after the line state is committed, so the timer callback can never observe a partial state
+    weventSetUserData(k_timer, ls);
+
     uint8_t ping_buf[kFrameHeaderLength] = {kFrameFlagPing};
     ikcp_send(ls->k_handle, (const char *) ping_buf, (int) sizeof(ping_buf));
     // ikcp_update(k_handle, wloopNowMS(getWorkerLoop(lineGetWID(l))));
+
+    return true;
 }
 
 void tcpoverudpclientLinestateDestroy(tcpoverudpclient_lstate_t *ls)

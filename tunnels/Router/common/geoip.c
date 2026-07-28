@@ -100,7 +100,15 @@ static bool routerGeoipContextToSockaddr(const address_context_t *ctx, sockaddr_
     return false;
 }
 
-static bool routerGeoipReadIsoCode(MMDB_entry_s *entry, const char *map_name, char out_code[3])
+/**
+ * Read a two-letter ISO country code out of one MaxMind map.
+ *
+ * A missing entry is a normal no-match. Any MaxMind access error, or an ISO code with an unexpected type or size,
+ * is a request-local evaluation failure: it is reported through @p out_evaluation_failed so the caller can refuse
+ * to route the line instead of silently falling through to a later rule.
+ */
+static bool routerGeoipReadIsoCode(MMDB_entry_s *entry, const char *map_name, char out_code[3],
+                                   bool *out_evaluation_failed)
 {
     MMDB_entry_data_s data   = {0};
     int               status = MMDB_get_value(entry, &data, map_name, "iso_code", NULL);
@@ -112,8 +120,8 @@ static bool routerGeoipReadIsoCode(MMDB_entry_s *entry, const char *map_name, ch
 
     if (UNLIKELY(status != MMDB_SUCCESS))
     {
-        LOGF("Router: MaxMind lookup failed at %s.iso_code: %s", map_name, MMDB_strerror(status));
-        terminateProgram(1);
+        LOGE("Router: MaxMind lookup failed at %s.iso_code: %s", map_name, MMDB_strerror(status));
+        *out_evaluation_failed = true;
         return false;
     }
 
@@ -124,8 +132,8 @@ static bool routerGeoipReadIsoCode(MMDB_entry_s *entry, const char *map_name, ch
 
     if (UNLIKELY(data.type != MMDB_DATA_TYPE_UTF8_STRING || data.data_size != 2U))
     {
-        LOGF("Router: MaxMind %s.iso_code is not a two-letter string", map_name);
-        terminateProgram(1);
+        LOGE("Router: MaxMind %s.iso_code is not a two-letter string", map_name);
+        *out_evaluation_failed = true;
         return false;
     }
 
@@ -135,13 +143,15 @@ static bool routerGeoipReadIsoCode(MMDB_entry_s *entry, const char *map_name, ch
     return true;
 }
 
-static bool routerGeoipLookupCountry(router_tstate_t *ts, const address_context_t *ctx, char out_code[3])
+static bool routerGeoipLookupCountry(router_tstate_t *ts, const address_context_t *ctx, char out_code[3],
+                                     bool *out_evaluation_failed)
 {
     if (UNLIKELY(ts == NULL || ! ts->geoip_db_opened))
     {
+        // startup refuses to run a geoip rule table without opening the database, so this is a lifecycle
+        // invariant violation and not something a peer address can provoke
         LOGF("Router: GeoIP rule evaluated without an open MaxMind database");
-        terminateProgram(1);
-        return false;
+        abortProgramNow(1);
     }
 
     sockaddr_u addr = {0};
@@ -155,13 +165,14 @@ static bool routerGeoipLookupCountry(router_tstate_t *ts, const address_context_
 
     if (mmdb_error == MMDB_IPV6_LOOKUP_IN_IPV4_DATABASE_ERROR)
     {
+        // an IPv6 address looked up in an IPv4-only database is a normal no-match
         return false;
     }
 
     if (UNLIKELY(mmdb_error != MMDB_SUCCESS))
     {
-        LOGF("Router: MaxMind IP lookup failed: %s", MMDB_strerror(mmdb_error));
-        terminateProgram(1);
+        LOGE("Router: MaxMind IP lookup failed: %s", MMDB_strerror(mmdb_error));
+        *out_evaluation_failed = true;
         return false;
     }
 
@@ -170,16 +181,21 @@ static bool routerGeoipLookupCountry(router_tstate_t *ts, const address_context_
         return false;
     }
 
-    if (routerGeoipReadIsoCode(&result.entry, "country", out_code))
+    if (routerGeoipReadIsoCode(&result.entry, "country", out_code, out_evaluation_failed))
     {
         return true;
     }
 
-    return routerGeoipReadIsoCode(&result.entry, "registered_country", out_code);
+    if (*out_evaluation_failed)
+    {
+        return false;
+    }
+
+    return routerGeoipReadIsoCode(&result.entry, "registered_country", out_code, out_evaluation_failed);
 }
 
 bool routerGeoipCodesMatch(router_tstate_t *ts, const address_context_t *ctx, const router_geoip_code_t *codes,
-                           uint32_t count)
+                           uint32_t count, bool *out_evaluation_failed)
 {
     if (count == 0)
     {
@@ -187,7 +203,7 @@ bool routerGeoipCodesMatch(router_tstate_t *ts, const address_context_t *ctx, co
     }
 
     char country_code[3] = {0};
-    if (! routerGeoipLookupCountry(ts, ctx, country_code))
+    if (! routerGeoipLookupCountry(ts, ctx, country_code, out_evaluation_failed))
     {
         return false;
     }

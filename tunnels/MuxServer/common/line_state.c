@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-void muxserverLinestateInitialize(muxserver_lstate_t *ls, line_t *l, bool is_child, cid_t connection_id)
+void muxserverLinestateInitialize(muxserver_lstate_t *ls, line_t *l, bool is_child, mux_cid_t connection_id)
 {
     wid_t wid = lineGetWID(l);
     *ls       = (muxserver_lstate_t) {.l                      = l,

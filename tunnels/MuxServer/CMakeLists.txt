@@ -31,7 +31,7 @@ add_library(MuxServer STATIC
 target_include_directories(MuxServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(MuxServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/MuxServer)
 
-target_link_libraries(MuxServer ww)
+target_link_libraries(MuxServer PRIVATE ww MuxCommon)
 if(NOT APPLE)
     target_precompile_headers(MuxServer REUSE_FROM ww)
 endif()

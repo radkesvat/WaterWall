@@ -5,16 +5,20 @@
 static bool testerclientLoadUint8Setting(uint8_t *dest, const cJSON *settings, const char *key, int default_value,
                                          const char *json_path)
 {
-    int value = default_value;
-    getIntFromJsonObjectOrDefault(&value, settings, key, default_value);
-
-    if (value < 0 || value > UINT8_MAX)
+    int64_t             val    = 0;
+    json_value_status_t status = jsonGetObjectIntegerInRange(settings, key, 0, UINT8_MAX, &val);
+    if (status == kJsonValueMissing)
+    {
+        *dest = (uint8_t) default_value;
+        return true;
+    }
+    if (status == kJsonValueInvalid)
     {
         LOGF("JSON Error: %s (int field) : expected a value between 0 and %u", json_path, (unsigned int) UINT8_MAX);
         return false;
     }
 
-    *dest = (uint8_t) value;
+    *dest = (uint8_t) val;
     return true;
 }
 
@@ -311,10 +315,10 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     t->onStop    = &testerclientTunnelOnStop;
     t->onDestroy = &testerclientTunnelDestroy;
 
-    testerclient_tstate_t *ts                    = tunnelGetState(t);
-    const cJSON           *settings              = node->node_settings_json;
-    int                    packet_start_delay_ms = 0;
-    int                    chunk_count           = kTesterClientChunkCount;
+    testerclient_tstate_t *ts                     = tunnelGetState(t);
+    const cJSON           *settings               = node->node_settings_json;
+    int                    packet_start_delay_ms  = 0;
+    int                    chunk_count            = kTesterClientChunkCount;
     int                    max_payload_size       = 0;
     int                    split_payload_delay_ms = kTesterClientSplitPayloadDelayMs;
     int                    split_payload_burst    = kTesterClientSplitPayloadBurst;
@@ -328,8 +332,8 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     getIntFromJsonObjectOrDefault(&max_payload_size, settings, "max-payload-size", 0);
     getIntFromJsonObjectOrDefault(
         &split_payload_delay_ms, settings, "split-payload-delay-ms", kTesterClientSplitPayloadDelayMs);
-    getIntFromJsonObjectOrDefault(&split_payload_burst, settings, "split-payload-burst",
-                                  kTesterClientSplitPayloadBurst);
+    getIntFromJsonObjectOrDefault(
+        &split_payload_burst, settings, "split-payload-burst", kTesterClientSplitPayloadBurst);
 
     if (packet_start_delay_ms < 0)
     {

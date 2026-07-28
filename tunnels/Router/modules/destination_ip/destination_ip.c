@@ -37,7 +37,7 @@ router_field_parse_t routerDestinationIpParse(router_rule_t *rule, const cJSON *
     return kRouterFieldPresent;
 }
 
-bool routerDestinationIpMatch(const router_rule_t *rule, const router_match_ctx_t *mctx)
+bool routerDestinationIpMatch(const router_rule_t *rule, router_match_ctx_t *mctx)
 {
     if (! rule->destination_ip.present)
     {
@@ -46,8 +46,11 @@ bool routerDestinationIpMatch(const router_rule_t *rule, const router_match_ctx_
 
     const address_context_t *dest = lineGetDestinationAddressContext(mctx->line);
     return routerIpRangesMatch(dest, rule->destination_ip.ranges, rule->destination_ip.ranges_count) ||
-           routerGeoipCodesMatch(
-               mctx->router_state, dest, rule->destination_ip.geoip_codes, rule->destination_ip.geoip_codes_count);
+           routerGeoipCodesMatch(mctx->router_state,
+                                 dest,
+                                 rule->destination_ip.geoip_codes,
+                                 rule->destination_ip.geoip_codes_count,
+                                 &mctx->evaluation_failed);
 }
 
 void routerDestinationIpDestroy(router_rule_t *rule)

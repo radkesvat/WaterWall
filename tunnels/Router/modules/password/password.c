@@ -21,7 +21,7 @@ router_field_parse_t routerPasswordParse(router_rule_t *rule, const cJSON *rule_
     return kRouterFieldPresent;
 }
 
-bool routerPasswordMatch(const router_rule_t *rule, const router_match_ctx_t *mctx)
+bool routerPasswordMatch(const router_rule_t *rule, router_match_ctx_t *mctx)
 {
     if (! rule->password.present)
     {

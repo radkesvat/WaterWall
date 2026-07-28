@@ -147,6 +147,6 @@ bool tlsserverSendCloseNotify(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool tlsserverStartProtectedBranch(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls, sbuf_t *buf);
-void tlsserverArmHandshakeDeadline(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
+bool tlsserverArmHandshakeDeadline(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 void tlsserverDisarmHandshakeDeadline(tlsserver_lstate_t *ls);
 void tlsserverCloseLineFatal(tunnel_t *t, line_t *l);

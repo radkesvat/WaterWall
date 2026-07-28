@@ -1,5 +1,7 @@
 #include "structure.h"
 
+#include "loggers/network_logger.h"
+
 static void routerBufferPendingPayload(line_t *l, router_lstate_t *ls, sbuf_t *buf)
 {
     if (ls->pending == NULL)
@@ -85,6 +87,16 @@ void routerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (match.result == kRouterClassifyNeedMore)
     {
         // A future content-based matcher may ask for more bytes; keep buffering.
+        return;
+    }
+
+    if (match.result == kRouterClassifyError)
+    {
+        // No route was committed, so the selected/default branch never received Init and only the previous side
+        // may be closed. routerLinestateDestroy() recycles the pending payload.
+        LOGE("Router: rule evaluation failed at runtime, closing this line");
+        routerLinestateDestroy(l, ls);
+        tunnelPrevDownStreamFinish(t, l);
         return;
     }
 

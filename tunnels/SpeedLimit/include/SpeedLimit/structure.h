@@ -94,8 +94,16 @@ void speedlimitLinestateDestroy(speedlimit_lstate_t *ls);
 uint64_t speedlimitPeekAvailableUnits(tunnel_t *t, line_t *l);
 size_t   speedlimitGrantBytes(tunnel_t *t, line_t *l, size_t requested_bytes, bool allow_partial);
 uint32_t speedlimitGetRetryDelayMs(tunnel_t *t, line_t *l);
-void     speedlimitScheduleUpstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms);
-void     speedlimitScheduleDownstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms);
+bool     speedlimitScheduleUpstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms);
+bool     speedlimitScheduleDownstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms);
+
+/**
+ * Close an already fully initialized line after a drain timer could not be armed.
+ *
+ * @param ls           line state of the failing line, destroyed by this call.
+ * @param detached_buf buffer that was removed from a queue but never forwarded, or NULL.
+ */
+void speedlimitCloseLineOnDrainFailure(speedlimit_lstate_t *ls, sbuf_t *detached_buf);
 
 void speedlimitUpstreamDrainTimerCallback(wtimer_t *timer);
 void speedlimitDownstreamDrainTimerCallback(wtimer_t *timer);

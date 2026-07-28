@@ -524,13 +524,16 @@ Every matcher implements the same interface over its own slice of
 
 ```c
 router_field_parse_t  <field>Parse  (router_rule_t *rule, const cJSON *rule_json, uint32_t rule_index);
-bool                  <field>Match  (const router_rule_t *rule, const router_match_ctx_t *mctx);
+bool                  <field>Match  (const router_rule_t *rule, router_match_ctx_t *mctx);
 void                  <field>Destroy(router_rule_t *rule);
 ```
 
 `router_match_ctx_t` carries the `line_t` (for routing metadata: source/destination
 address, ports, network type, optional detected protocols, and authenticated user)
 plus the buffered first-payload window used by sniffing before the matcher table
-runs. `modules/matchers.c` is the single registry of matchers; adding a condition
+runs. It is passed non-const because a matcher that hits a *runtime evaluation
+error* (a MaxMind lookup failure, a regex engine failure) must set
+`mctx->evaluation_failed` instead of reporting "did not match": a failed
+evaluation may not fall through to a later rule or to the default route. `modules/matchers.c` is the single registry of matchers; adding a condition
 type is: create `modules/<field>/`, then add one row to the `kRouterMatchers`
 table.

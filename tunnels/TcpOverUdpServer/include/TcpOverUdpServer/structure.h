@@ -51,6 +51,8 @@ enum
     kFrameFlagClose                         = 0xFF,
     kTcpOverUdpServerFecDefaultDataShards   = 10,
     kTcpOverUdpServerFecDefaultParityShards = 3,
+    // the smallest MTU ikcp_setmtu() accepts; anything below it is rejected with -1
+    kTcpOverUdpServerKcpMinimumMtu = 50,
 };
 
 enum tcpoverudpserver_kcpsettings_e
@@ -122,7 +124,7 @@ void tcpoverudpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 void tcpoverudpserverTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void tcpoverudpserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void tcpoverudpserverLinestateInitialize(tcpoverudpserver_lstate_t *ls, line_t *l, tunnel_t *t);
+bool tcpoverudpserverLinestateInitialize(tcpoverudpserver_lstate_t *ls, line_t *l, tunnel_t *t);
 void tcpoverudpserverLinestateDestroy(tcpoverudpserver_lstate_t *ls);
 
 int  tcpoverudpserverKUdpOutput(const char *data, int len, ikcpcb *kcp, void *user);

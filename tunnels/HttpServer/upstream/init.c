@@ -25,8 +25,10 @@ void httpserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     if (ts->verbose)
     {
-        LOGD("HttpServer: line init version-mode=%d websocket=%s upgrade=%s", ts->version_mode,
-             ts->websocket_enabled ? "true" : "false", ts->enable_upgrade ? "true" : "false");
+        LOGD("HttpServer: line init version-mode=%d websocket=%s upgrade=%s",
+             ts->version_mode,
+             boolToTrueFalse(ts->websocket_enabled),
+             boolToTrueFalse(ts->enable_upgrade));
     }
 
     lineLock(l);

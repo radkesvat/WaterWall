@@ -37,7 +37,7 @@ router_field_parse_t routerSourceIpsParse(router_rule_t *rule, const cJSON *rule
     return kRouterFieldPresent;
 }
 
-bool routerSourceIpsMatch(const router_rule_t *rule, const router_match_ctx_t *mctx)
+bool routerSourceIpsMatch(const router_rule_t *rule, router_match_ctx_t *mctx)
 {
     // A condition that is not configured does not constrain the rule.
     if (! rule->source_ips.present)
@@ -47,8 +47,11 @@ bool routerSourceIpsMatch(const router_rule_t *rule, const router_match_ctx_t *m
 
     const address_context_t *src = lineGetSourceAddressContext(mctx->line);
     return routerIpRangesMatch(src, rule->source_ips.ranges, rule->source_ips.ranges_count) ||
-           routerGeoipCodesMatch(
-               mctx->router_state, src, rule->source_ips.geoip_codes, rule->source_ips.geoip_codes_count);
+           routerGeoipCodesMatch(mctx->router_state,
+                                 src,
+                                 rule->source_ips.geoip_codes,
+                                 rule->source_ips.geoip_codes_count,
+                                 &mctx->evaluation_failed);
 }
 
 void routerSourceIpsDestroy(router_rule_t *rule)

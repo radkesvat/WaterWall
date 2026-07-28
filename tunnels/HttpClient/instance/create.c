@@ -1,80 +1,7 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-
-static size_t base64UrlEncode(const uint8_t *src, size_t len, char *dst, size_t cap)
-{
-    static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-    if (src == NULL || dst == NULL)
-    {
-        return 0;
-    }
-
-    size_t out_len = 0;
-    size_t i       = 0;
-
-    while (i + 3 <= len)
-    {
-        uint32_t v = ((uint32_t) src[i] << 16) | ((uint32_t) src[i + 1] << 8) | ((uint32_t) src[i + 2]);
-        if (out_len + 4 >= cap)
-        {
-            return 0;
-        }
-        dst[out_len++] = table[(v >> 18) & 0x3F];
-        dst[out_len++] = table[(v >> 12) & 0x3F];
-        dst[out_len++] = table[(v >> 6) & 0x3F];
-        dst[out_len++] = table[v & 0x3F];
-        i += 3;
-    }
-
-    size_t rem = len - i;
-    if (rem == 1)
-    {
-        uint32_t v = ((uint32_t) src[i] << 16);
-        if (out_len + 2 >= cap)
-        {
-            return 0;
-        }
-        dst[out_len++] = table[(v >> 18) & 0x3F];
-        dst[out_len++] = table[(v >> 12) & 0x3F];
-    }
-    else if (rem == 2)
-    {
-        uint32_t v = ((uint32_t) src[i] << 16) | ((uint32_t) src[i + 1] << 8);
-        if (out_len + 3 >= cap)
-        {
-            return 0;
-        }
-        dst[out_len++] = table[(v >> 18) & 0x3F];
-        dst[out_len++] = table[(v >> 12) & 0x3F];
-        dst[out_len++] = table[(v >> 6) & 0x3F];
-    }
-
-    dst[out_len] = '\0';
-    return out_len;
-}
-
-static bool strEqualsAnyIgnoreCase(const char *value, const char *a, const char *b, const char *c, const char *d)
-{
-    if (value == NULL)
-    {
-        return false;
-    }
-
-    char *tmp = stringDuplicate(value);
-    stringLowerCase(tmp);
-
-    bool ret = false;
-    if ((a != NULL && stringCompare(tmp, a) == 0) || (b != NULL && stringCompare(tmp, b) == 0) ||
-        (c != NULL && stringCompare(tmp, c) == 0) || (d != NULL && stringCompare(tmp, d) == 0))
-    {
-        ret = true;
-    }
-
-    memoryFree(tmp);
-    return ret;
-}
+#include "utils/base64.h"
 
 static bool parseSplitPlacement(const char *value, httpclient_split_placement_t *out, const char *field_name)
 {
@@ -83,22 +10,27 @@ static bool parseSplitPlacement(const char *value, httpclient_split_placement_t 
         return false;
     }
 
-    if (strEqualsAnyIgnoreCase(value, "query", "query-parameter", "query-param", "param"))
+    static const char *const query_aliases[]  = {"query", "query-parameter", "query-param", "param"};
+    static const char *const header_aliases[] = {"header", "http-header"};
+    static const char *const cookie_aliases[] = {"cookie", "cookies"};
+    static const char *const path_aliases[]   = {"path", "path-segment", "path-template"};
+
+    if (stringAsciiCaseEqualsAny(value, query_aliases, ARRAY_SIZE(query_aliases)))
     {
         *out = kHttpClientSplitPlacementQuery;
         return true;
     }
-    if (strEqualsAnyIgnoreCase(value, "header", "http-header", NULL, NULL))
+    if (stringAsciiCaseEqualsAny(value, header_aliases, ARRAY_SIZE(header_aliases)))
     {
         *out = kHttpClientSplitPlacementHeader;
         return true;
     }
-    if (strEqualsAnyIgnoreCase(value, "cookie", "cookies", NULL, NULL))
+    if (stringAsciiCaseEqualsAny(value, cookie_aliases, ARRAY_SIZE(cookie_aliases)))
     {
         *out = kHttpClientSplitPlacementCookie;
         return true;
     }
-    if (strEqualsAnyIgnoreCase(value, "path", "path-segment", "path-template", NULL))
+    if (stringAsciiCaseEqualsAny(value, path_aliases, ARRAY_SIZE(path_aliases)))
     {
         *out = kHttpClientSplitPlacementPath;
         return true;
@@ -131,17 +63,21 @@ static bool parseHttpVersionMode(httpclient_tstate_t *ts, const cJSON *settings)
 
     if (cJSON_IsString(hv) && hv->valuestring != NULL)
     {
-        if (strEqualsAnyIgnoreCase(hv->valuestring, "1.1", "http1", "http1.1", "1"))
+        static const char *const h1_aliases[]   = {"1.1", "http1", "http1.1", "1"};
+        static const char *const h2_aliases[]   = {"2", "2.0", "http2", "h2"};
+        static const char *const both_aliases[] = {"both", "any", "auto", "1.1+2"};
+
+        if (stringAsciiCaseEqualsAny(hv->valuestring, h1_aliases, ARRAY_SIZE(h1_aliases)))
         {
             ts->version_mode = kHttpClientVersionModeHttp1;
             return true;
         }
-        if (strEqualsAnyIgnoreCase(hv->valuestring, "2", "2.0", "http2", "h2"))
+        if (stringAsciiCaseEqualsAny(hv->valuestring, h2_aliases, ARRAY_SIZE(h2_aliases)))
         {
             ts->version_mode = kHttpClientVersionModeHttp2;
             return true;
         }
-        if (strEqualsAnyIgnoreCase(hv->valuestring, "both", "any", "auto", "1.1+2"))
+        if (stringAsciiCaseEqualsAny(hv->valuestring, both_aliases, ARRAY_SIZE(both_aliases)))
         {
             ts->version_mode = kHttpClientVersionModeBoth;
             return true;
@@ -170,13 +106,16 @@ static bool parseHttp1TransportMode(httpclient_tstate_t *ts, const cJSON *settin
         return true;
     }
 
-    if (strEqualsAnyIgnoreCase(mode->valuestring, "single", "classic", "full-duplex", "legacy"))
+    static const char *const single_aliases[] = {"single", "classic", "full-duplex", "legacy"};
+    static const char *const split_aliases[]  = {"split", "half-duplex", "dual", "dual-connection"};
+
+    if (stringAsciiCaseEqualsAny(mode->valuestring, single_aliases, ARRAY_SIZE(single_aliases)))
     {
         ts->h1_transport_mode = kHttpClientH1TransportSingle;
         return true;
     }
 
-    if (strEqualsAnyIgnoreCase(mode->valuestring, "split", "half-duplex", "dual", "dual-connection"))
+    if (stringAsciiCaseEqualsAny(mode->valuestring, split_aliases, ARRAY_SIZE(split_aliases)))
     {
         ts->h1_transport_mode = kHttpClientH1TransportSplit;
         return true;
@@ -386,8 +325,10 @@ static void parsePortAndUpgrade(httpclient_tstate_t *ts, const cJSON *settings)
 {
     if (! getIntFromJsonObject(&ts->host_port, settings, "port"))
     {
-        ts->host_port = strEqualsAnyIgnoreCase(ts->scheme, "https", NULL, NULL, NULL) ? kHttpClientDefaultHttpsPort
-                                                                                      : kHttpClientDefaultHttp1Port;
+        static const char *const https_aliases[] = {"https"};
+        ts->host_port = stringAsciiCaseEqualsAny(ts->scheme, https_aliases, ARRAY_SIZE(https_aliases))
+                            ? kHttpClientDefaultHttpsPort
+                            : kHttpClientDefaultHttp1Port;
     }
 
     bool default_upgrade = (ts->version_mode == kHttpClientVersionModeBoth);
@@ -466,9 +407,13 @@ static bool buildUpgradeSettings(httpclient_tstate_t *ts)
 
     size_t b64_cap           = ((ts->upgrade_settings_payload_len + 2U) / 3U) * 4U + 2U;
     ts->upgrade_settings_b64 = memoryAllocate(b64_cap);
-    size_t b64_len           = base64UrlEncode(
-        ts->upgrade_settings_payload, ts->upgrade_settings_payload_len, ts->upgrade_settings_b64, b64_cap);
-    if (b64_len == 0)
+    size_t b64_len           = 0;
+    if (! wwBase64UrlEncodeNoPadding(ts->upgrade_settings_payload,
+                                     ts->upgrade_settings_payload_len,
+                                     ts->upgrade_settings_b64,
+                                     b64_cap,
+                                     &b64_len) ||
+        b64_len == 0)
     {
         LOGF("HttpClient: HTTP2-Settings encoding failed");
         return false;

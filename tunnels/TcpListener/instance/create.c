@@ -21,13 +21,13 @@ static void failInvalidPortValue(const char *field_name, int index)
 
 static uint16_t parsePortNumber(const cJSON *port_json, const char *field_name, int index)
 {
-    if (! cJSON_IsNumber(port_json) || port_json->valuedouble != (double) port_json->valueint ||
-        port_json->valueint <= 0 || port_json->valueint > UINT16_MAX)
+    int64_t val = 0;
+    if (! jsonGetIntegerInRange(port_json, 1, UINT16_MAX, &val))
     {
         failInvalidPortValue(field_name, index);
     }
 
-    return (uint16_t) port_json->valueint;
+    return (uint16_t) val;
 }
 
 static bool listenerPortListContains(const vec_listener_port_t *ports, uint16_t port)
@@ -158,11 +158,11 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->fnPauseD   = &tcplistenerTunnelDownStreamPause;
     t->fnResumeD  = &tcplistenerTunnelDownStreamResume;
 
-    t->onPrepare = &tcplistenerTunnelOnPrepair;
-    t->onStart   = &tcplistenerTunnelOnStart;
-    t->onStop    = &tcplistenerTunnelOnStop;
+    t->onPrepare    = &tcplistenerTunnelOnPrepair;
+    t->onStart      = &tcplistenerTunnelOnStart;
+    t->onStop       = &tcplistenerTunnelOnStop;
     t->onWorkerStop = &tcplistenerTunnelOnWorkerStop;
-    t->onDestroy = &tcplistenerTunnelDestroy;
+    t->onDestroy    = &tcplistenerTunnelDestroy;
 }
 
 static bool parseBasicSettings(tcplistener_tstate_t *state, const cJSON *settings)
@@ -223,14 +223,10 @@ static bool parseIdleTimeoutMs(uint64_t *dest, const cJSON *settings, const char
 
 static bool parseIdleTimeoutSettings(tcplistener_tstate_t *state, const cJSON *settings)
 {
-    return parseIdleTimeoutMs(&state->initial_idle_timeout_ms,
-                              settings,
-                              "initial-idle-timeout-ms",
-                              kDefaultKeepAliveTimeOutMs) &&
-           parseIdleTimeoutMs(&state->active_idle_timeout_ms,
-                              settings,
-                              "active-idle-timeout-ms",
-                              kEstablishedKeepAliveTimeOutMs);
+    return parseIdleTimeoutMs(
+               &state->initial_idle_timeout_ms, settings, "initial-idle-timeout-ms", kDefaultKeepAliveTimeOutMs) &&
+           parseIdleTimeoutMs(
+               &state->active_idle_timeout_ms, settings, "active-idle-timeout-ms", kEstablishedKeepAliveTimeOutMs);
 }
 
 static void configureMultiportBackend(socket_filter_option_t *filter_opt, tcplistener_tstate_t *state,

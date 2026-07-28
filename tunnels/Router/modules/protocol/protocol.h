@@ -23,5 +23,5 @@ const router_protocol_descriptor_t *routerProtocolDescriptors(uint32_t *out_coun
 const router_protocol_descriptor_t *routerProtocolFindDescriptorByName(const char *name);
 
 router_field_parse_t routerProtocolParse(router_rule_t *rule, const cJSON *rule_json, uint32_t rule_index);
-bool                 routerProtocolMatch(const router_rule_t *rule, const router_match_ctx_t *mctx);
+bool                 routerProtocolMatch(const router_rule_t *rule, router_match_ctx_t *mctx);
 void                 routerProtocolDestroy(router_rule_t *rule);

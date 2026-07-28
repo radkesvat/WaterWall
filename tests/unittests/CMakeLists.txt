@@ -127,6 +127,16 @@ if(TARGET ww)
     "unit;net;tun;windows;receive;drop"
   )
 
+  add_executable(sbuf_capacity_test sbuf_capacity_test.c)
+  target_link_libraries(sbuf_capacity_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests sbuf_capacity_test)
+
+  add_waterwall_unit_test(
+    waterwall.sbuf_capacity_unit
+    sbuf_capacity_test
+    "unit;bufio;sbuf;bufferpool;capacity;overflow"
+  )
+
   add_executable(system_load_semantics_test system_load_semantics_test.c)
   target_link_libraries(system_load_semantics_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests system_load_semantics_test)
@@ -193,6 +203,41 @@ if(TARGET ww)
   add_dependencies(waterwall_unit_tests json_helpers_test)
 
   add_waterwall_unit_test(waterwall.json_helpers_unit json_helpers_test "unit;utils;json")
+
+  add_executable(wlibc_helpers_test wlibc_helpers_test.c)
+  target_link_libraries(wlibc_helpers_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests wlibc_helpers_test)
+  add_waterwall_unit_test(waterwall.wlibc_helpers_unit wlibc_helpers_test "unit;libc;helpers")
+
+  add_executable(base64_test base64_test.c)
+  target_link_libraries(base64_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests base64_test)
+  add_waterwall_unit_test(waterwall.base64_unit base64_test "unit;utils;base64")
+
+  if(TARGET HttpServer)
+    add_executable(httpserver_base64_compat_test
+      httpserver_base64_compat_test.c
+      ${CMAKE_SOURCE_DIR}/tunnels/HttpServer/common/http_base64.c
+    )
+    target_include_directories(httpserver_base64_compat_test PRIVATE
+      ${CMAKE_SOURCE_DIR}/tunnels/HttpServer/include
+      ${CMAKE_SOURCE_DIR}/tunnels/HttpServer/include/HttpServer
+    )
+    target_link_libraries(httpserver_base64_compat_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests httpserver_base64_compat_test)
+    add_waterwall_unit_test(
+      waterwall.httpserver_base64_compat_unit
+      httpserver_base64_compat_test
+      "unit;tunnels;httpserver;base64;compatibility"
+    )
+  endif()
+
+  if(TARGET MuxCommon)
+    add_executable(muxcommon_wire_test muxcommon_wire_test.c)
+    target_link_libraries(muxcommon_wire_test PRIVATE MuxCommon ww)
+    add_dependencies(waterwall_unit_tests muxcommon_wire_test)
+    add_waterwall_unit_test(waterwall.muxcommon_wire_unit muxcommon_wire_test "unit;mux;wire")
+  endif()
 
   add_executable(wfrand_test wfrand_test.c)
   target_link_libraries(wfrand_test PRIVATE ww)
@@ -1075,6 +1120,258 @@ if(TARGET Router)
 
   add_waterwall_unit_test(waterwall.router_sniffing_unit router_sniffing_test "unit;tunnels;router;sniffing")
 endif()
+
+# ---------------------------------------------------------------------------
+# Category-C per-line failure injection.
+#
+# Each tunnel gets its own executable on purpose: several tunnels ship a header
+# named structure.h, so one translation unit must only ever see the include tree
+# of the tunnel it is testing.
+#
+# Every one of these links against tunnel_line_failure_harness.h, which wraps the
+# three process APIs (so a line-local failure that terminates the process fails
+# the test immediately) and the buffer pool (so a leaked or twice-recycled buffer
+# is a hard error).
+# ---------------------------------------------------------------------------
+# ww is an IPO library in Release, and a wrapped symbol whose caller is inside that same LTO unit is resolved by
+# the plugin before --wrap is applied. The two bufio translation units that recycle buffers on the tunnels' behalf
+# are therefore compiled into the test as well; the linker satisfies them from these objects and never pulls the
+# library members, so the buffer ledger sees every acquire and every recycle in every configuration.
+set(WATERWALL_LINE_FAILURE_WW_SOURCES
+  ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_queue.c
+  ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_stream.c
+)
+
+set(WATERWALL_LINE_FAILURE_WRAPS
+  "-Wl,--wrap=terminateProgram"
+  "-Wl,--wrap=abortProgramNow"
+  "-Wl,--wrap=requestProgramShutdown"
+  "-Wl,--wrap=bufferpoolGetLargeBuffer"
+  "-Wl,--wrap=bufferpoolGetSmallBuffer"
+  "-Wl,--wrap=bufferpoolReuseBuffer"
+  "-Wl,--wrap=sbufDestroy"
+)
+
+
+# Linker --wrap only intercepts references that survive as real relocations. The production tunnel libraries are
+# built with IPO in Release, where the compiler may inline a wrapped call before the linker ever sees it, so the
+# tunnel under test is compiled straight into the (never-IPO) test executable instead of being linked as a
+# library. This mirrors what the capture and device tests already do for the ww sources they inject faults into.
+function(waterwall_line_failure_test_use_tunnel test_target tunnel_target)
+  get_target_property(tunnel_dir "${tunnel_target}" SOURCE_DIR)
+  get_target_property(tunnel_srcs "${tunnel_target}" SOURCES)
+  get_target_property(tunnel_incs "${tunnel_target}" INCLUDE_DIRECTORIES)
+  get_target_property(tunnel_interface_incs "${tunnel_target}" INTERFACE_INCLUDE_DIRECTORIES)
+  get_target_property(tunnel_defs "${tunnel_target}" COMPILE_DEFINITIONS)
+  get_target_property(tunnel_interface_defs "${tunnel_target}" INTERFACE_COMPILE_DEFINITIONS)
+  get_target_property(tunnel_links "${tunnel_target}" LINK_LIBRARIES)
+  get_target_property(tunnel_interface_links "${tunnel_target}" INTERFACE_LINK_LIBRARIES)
+
+  set(resolved_sources "")
+  foreach(source IN LISTS tunnel_srcs)
+    if(IS_ABSOLUTE "${source}" OR source MATCHES "^\\$<")
+      list(APPEND resolved_sources "${source}")
+    else()
+      list(APPEND resolved_sources "${tunnel_dir}/${source}")
+    endif()
+  endforeach()
+
+  target_sources("${test_target}" PRIVATE ${resolved_sources})
+
+  foreach(entry IN ITEMS tunnel_incs tunnel_interface_incs)
+    if(${entry})
+      target_include_directories("${test_target}" PRIVATE ${${entry}})
+    endif()
+  endforeach()
+
+  foreach(entry IN ITEMS tunnel_defs tunnel_interface_defs)
+    if(${entry})
+      target_compile_definitions("${test_target}" PRIVATE ${${entry}})
+    endif()
+  endforeach()
+
+  foreach(entry IN ITEMS tunnel_links tunnel_interface_links)
+    if(${entry})
+      target_link_libraries("${test_target}" PRIVATE ${${entry}})
+    endif()
+  endforeach()
+endfunction()
+
+if(TARGET SpeedLimit)
+  add_executable(speedlimit_line_failure_test
+    speedlimit_line_failure_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(speedlimit_line_failure_test SpeedLimit)
+  target_link_options(speedlimit_line_failure_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=wtimerAdd"
+  )
+  target_link_libraries(speedlimit_line_failure_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests speedlimit_line_failure_test)
+
+  add_waterwall_unit_test(
+    waterwall.speedlimit_line_failure_unit
+    speedlimit_line_failure_test
+    "unit;tunnels;speedlimit;failure;line"
+  )
+endif()
+
+if(TARGET TlsServer)
+  add_executable(tlsserver_line_failure_test
+    tlsserver_line_failure_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(tlsserver_line_failure_test TlsServer)
+  target_link_options(tlsserver_line_failure_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=wtimerAdd"
+  )
+  target_link_libraries(tlsserver_line_failure_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests tlsserver_line_failure_test)
+
+  add_waterwall_unit_test(
+    waterwall.tlsserver_line_failure_unit
+    tlsserver_line_failure_test
+    "unit;tunnels;tlsserver;failure;line"
+  )
+endif()
+
+if(TARGET TlsClient)
+  add_executable(tlsclient_line_failure_test
+    tlsclient_line_failure_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(tlsclient_line_failure_test TlsClient)
+  target_include_directories(tlsclient_line_failure_test BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
+    ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
+  )
+  target_compile_definitions(tlsclient_line_failure_test PRIVATE BORINGSSL_PREFIX=WW_BSSL)
+  target_link_options(tlsclient_line_failure_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=WW_BSSL_BIO_new"
+    "-Wl,--wrap=WW_BSSL_SSL_new"
+    "-Wl,--wrap=WW_BSSL_SSL_add_application_settings"
+  )
+  target_link_libraries(tlsclient_line_failure_test PRIVATE ww ssl crypto)
+  add_dependencies(waterwall_unit_tests tlsclient_line_failure_test)
+
+  add_waterwall_unit_test(
+    waterwall.tlsclient_line_failure_unit
+    tlsclient_line_failure_test
+    "unit;tunnels;tlsclient;failure;line"
+  )
+endif()
+
+if(TARGET TcpUdpConnector AND TARGET TcpConnector AND TARGET UdpConnector)
+  add_executable(tcpudpconnector_selection_failure_test
+    tcpudpconnector_selection_failure_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(tcpudpconnector_selection_failure_test TcpUdpConnector)
+  target_link_options(tcpudpconnector_selection_failure_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(tcpudpconnector_selection_failure_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests tcpudpconnector_selection_failure_test)
+
+  add_waterwall_unit_test(
+    waterwall.tcpudpconnector_selection_failure_unit
+    tcpudpconnector_selection_failure_test
+    "unit;tunnels;tcpudpconnector;failure;line"
+  )
+endif()
+
+if(TARGET Router)
+  add_executable(router_evaluation_failure_test
+    router_evaluation_failure_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(router_evaluation_failure_test Router)
+  # Per-source properties are directory scoped, so Router's own relaxation for the STC regex implementation unit
+  # has to be repeated where the source is compiled.
+  if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    set_source_files_properties(${CMAKE_SOURCE_DIR}/tunnels/Router/common/stc_regex.c
+      PROPERTIES COMPILE_OPTIONS "-Wno-nested-externs")
+  endif()
+  target_link_options(router_evaluation_failure_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=MMDB_lookup_sockaddr"
+    "-Wl,--wrap=MMDB_get_value"
+    # cregex_match_sv() is a macro; cregex_match_opt() is the symbol it actually links against.
+    "-Wl,--wrap=cregex_match_opt"
+  )
+  target_link_libraries(router_evaluation_failure_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests router_evaluation_failure_test)
+
+  add_waterwall_unit_test(
+    waterwall.router_evaluation_failure_unit
+    router_evaluation_failure_test
+    "unit;tunnels;router;failure;line"
+  )
+endif()
+
+foreach(tcpoverudp_side Client Server)
+  string(TOLOWER "${tcpoverudp_side}" tcpoverudp_side_lower)
+  set(tcpoverudp_target "TcpOverUdp${tcpoverudp_side}")
+  set(tcpoverudp_test "tcpoverudp${tcpoverudp_side_lower}_line_failure_test")
+
+  if(TARGET ${tcpoverudp_target})
+    add_executable(${tcpoverudp_test}
+      ${tcpoverudp_test}.c
+      ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+    )
+    waterwall_line_failure_test_use_tunnel(${tcpoverudp_test} ${tcpoverudp_target})
+    # ikcp.h and ww_fec.h are private to the tunnel target but reachable from its public structure.h.
+    target_include_directories(${tcpoverudp_test} PRIVATE
+      ${CMAKE_SOURCE_DIR}/tunnels/${tcpoverudp_target}/kcp
+      ${CMAKE_SOURCE_DIR}/tunnels/TcpOverUdpClient/fec
+    )
+    target_link_options(${tcpoverudp_test} PRIVATE
+      ${WATERWALL_LINE_FAILURE_WRAPS}
+      "-Wl,--wrap=wtimerAdd"
+      "-Wl,--wrap=wtimerDelete"
+      "-Wl,--wrap=ikcp_create"
+      "-Wl,--wrap=ikcp_release"
+      "-Wl,--wrap=ikcp_setmtu"
+      "-Wl,--wrap=tcpoverudpFecEncoderCreate"
+      "-Wl,--wrap=tcpoverudpFecDecoderCreate"
+      "-Wl,--wrap=tcpoverudpFecEncoderDestroy"
+      "-Wl,--wrap=tcpoverudpFecDecoderDestroy"
+    )
+    target_link_libraries(${tcpoverudp_test} PRIVATE ww)
+    add_dependencies(waterwall_unit_tests ${tcpoverudp_test})
+
+    add_waterwall_unit_test(
+      waterwall.${tcpoverudp_test}_unit
+      ${tcpoverudp_test}
+      "unit;tunnels;tcpoverudp;failure;line"
+    )
+  endif()
+endforeach()
+
+foreach(mux_side Client Server)
+  string(TOLOWER "${mux_side}" mux_side_lower)
+  set(mux_target "Mux${mux_side}")
+  set(mux_test "mux${mux_side_lower}_frame_encoding_test")
+
+  if(TARGET ${mux_target})
+    add_executable(${mux_test}
+      ${mux_test}.c
+      ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+      ${CMAKE_SOURCE_DIR}/tunnels/Internals/MuxCommon/src/mux_wire.c
+    )
+    waterwall_line_failure_test_use_tunnel(${mux_test} ${mux_target})
+    target_link_options(${mux_test} PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+    target_link_libraries(${mux_test} PRIVATE ww)
+    add_dependencies(waterwall_unit_tests ${mux_test})
+
+    add_waterwall_unit_test(
+      waterwall.${mux_test}_unit
+      ${mux_test}
+      "unit;tunnels;mux;framing"
+    )
+  endif()
+endforeach()
 
 # Tunnel hard-abort runtime cases. The registration is shared with the native
 # Windows/macOS test configurations, which do not add the tests/ subtree.

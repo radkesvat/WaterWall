@@ -24,7 +24,6 @@ typedef struct env_s
     master_pool_t             *large_master;
     master_pool_t             *small_master;
     master_pool_t             *wio_master;
-    buffer_pool_t             *buffer_pool;
     threadsafe_generic_pool_t *wio_pool;
     threadsafe_generic_pool_t *wio_pools[1];
 } env_t;
@@ -43,7 +42,6 @@ static void envSetup(env_t *env)
     env->large_master = masterpoolCreateWithCapacity(64);
     env->small_master = masterpoolCreateWithCapacity(64);
     env->wio_master   = masterpoolCreateWithCapacity(64);
-    env->buffer_pool  = bufferpoolCreate(env->large_master, env->small_master, 64, 8192, 1024);
     env->wio_pool     = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wio_master, sizeof(wio_t), 64);
     env->wio_pools[0] = env->wio_pool;
 
@@ -55,7 +53,6 @@ static void envTeardown(env_t *env)
 {
     GSTATE.shortcut_wios_pools = NULL;
     threadsafegenericpoolDestroy(env->wio_pool);
-    bufferpoolDestroy(env->buffer_pool);
     masterpoolMakeEmpty(env->wio_master);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
@@ -66,10 +63,12 @@ static void envTeardown(env_t *env)
 
 typedef struct loop_runner_s
 {
-    wloop_t    *loop;
-    atomic_bool running;
-    atomic_bool finished;
-    int         result;
+    wloop_t       *loop;
+    buffer_pool_t *pool;
+    wthread_t      thread;
+    atomic_bool    running;
+    atomic_bool    finished;
+    int            result;
 } loop_runner_t;
 
 static WTHREAD_ROUTINE(loopRunnerMain) // NOLINT
@@ -81,6 +80,45 @@ static WTHREAD_ROUTINE(loopRunnerMain) // NOLINT
     runner->result = wloopRun(runner->loop);
     atomicStoreExplicit(&runner->finished, true, memory_order_release);
     return 0;
+}
+
+/*
+ * A buffer_pool_t belongs to exactly one thread: it claims whichever thread
+ * performs the first buffer operation on it and aborts on any access from
+ * another (POOL_THREAD_CHECK, debug builds). Every case here runs its loop on a
+ * fresh thread, and wloopRun() takes buffers from the loop's pool, so each
+ * runner needs its own pool - sharing one across cases made the second thread
+ * trip the check.
+ *
+ * Creating the pool here on the main thread is safe: nothing touches it until
+ * the runner thread's first buffer operation, so the runner is the claimant.
+ */
+static void runnerCreate(loop_runner_t *runner, env_t *env)
+{
+    memoryZero(runner, sizeof(*runner));
+    runner->pool = bufferpoolCreate(env->large_master, env->small_master, 64, 8192, 1024);
+    runner->loop = wloopCreate(0, runner->pool, 0);
+    require(runner->loop != NULL, "failed to create the event loop");
+}
+
+static void runnerStart(loop_runner_t *runner)
+{
+    require(threadCreate(&runner->thread, loopRunnerMain, runner) == kWThreadErrorNone,
+            "failed to spawn the loop thread");
+}
+
+static void runnerJoin(loop_runner_t *runner)
+{
+    threadJoin(runner->thread);
+}
+
+// Must run only after runnerJoin(): the pool is released once its owning thread
+// is gone, and bufferpoolDestroy() is the one operation that does not claim it.
+static void runnerDestroy(loop_runner_t *runner)
+{
+    wloopDestroy(&runner->loop);
+    bufferpoolDestroy(runner->pool);
+    runner->pool = NULL;
 }
 
 /* Wait up to `timeout_ms` for `flag` to be published. */
@@ -104,12 +142,9 @@ static bool waitForFlag(atomic_bool *flag, unsigned int timeout_ms)
  */
 static void testStopWakesBlockedLoop(env_t *env)
 {
-    loop_runner_t runner = {0};
-    runner.loop          = wloopCreate(0, env->buffer_pool, 0);
-    require(runner.loop != NULL, "failed to create the event loop");
-
-    wthread_t thread;
-    require(threadCreate(&thread, loopRunnerMain, &runner) == kWThreadErrorNone, "failed to spawn the loop thread");
+    loop_runner_t runner;
+    runnerCreate(&runner, env);
+    runnerStart(&runner);
     require(waitForFlag(&runner.running, 2000), "the loop thread did not start");
 
     // Give the loop time to reach its blocking poll before requesting the stop.
@@ -120,10 +155,10 @@ static void testStopWakesBlockedLoop(env_t *env)
     require(wloopStopRequested(runner.loop), "wloopRequestStop() did not publish the stop request");
 
     require(waitForFlag(&runner.finished, 2000), "a blocked loop did not stop after a stop request");
-    threadJoin(thread);
+    runnerJoin(&runner);
 
     require(runner.result == kWLoopRunOk, "the stopped loop reported a run error");
-    wloopDestroy(&runner.loop);
+    runnerDestroy(&runner);
 }
 
 /*
@@ -133,30 +168,25 @@ static void testStopWakesBlockedLoop(env_t *env)
  */
 static void testStopBeforeRunIsHonored(env_t *env)
 {
-    loop_runner_t runner = {0};
-    runner.loop          = wloopCreate(0, env->buffer_pool, 0);
-    require(runner.loop != NULL, "failed to create the event loop");
+    loop_runner_t runner;
+    runnerCreate(&runner, env);
 
     require(wloopRequestStop(runner.loop), "wloopRequestStop() failed before the loop started");
 
-    wthread_t thread;
-    require(threadCreate(&thread, loopRunnerMain, &runner) == kWThreadErrorNone, "failed to spawn the loop thread");
+    runnerStart(&runner);
 
     require(waitForFlag(&runner.finished, 2000), "a loop started after a stop request kept running");
-    threadJoin(thread);
+    runnerJoin(&runner);
 
-    wloopDestroy(&runner.loop);
+    runnerDestroy(&runner);
 }
 
 /* Repeated requests must coalesce rather than corrupt the loop state. */
 static void testRepeatedStopRequests(env_t *env)
 {
-    loop_runner_t runner = {0};
-    runner.loop          = wloopCreate(0, env->buffer_pool, 0);
-    require(runner.loop != NULL, "failed to create the event loop");
-
-    wthread_t thread;
-    require(threadCreate(&thread, loopRunnerMain, &runner) == kWThreadErrorNone, "failed to spawn the loop thread");
+    loop_runner_t runner;
+    runnerCreate(&runner, env);
+    runnerStart(&runner);
     require(waitForFlag(&runner.running, 2000), "the loop thread did not start");
     wwSleepMS(50);
 
@@ -166,14 +196,14 @@ static void testRepeatedStopRequests(env_t *env)
     }
 
     require(waitForFlag(&runner.finished, 2000), "the loop did not stop after repeated stop requests");
-    threadJoin(thread);
+    runnerJoin(&runner);
 
     // Requesting a stop on an already stopped (but not yet destroyed) loop stays
     // safe; this is the shutdown ordering where a worker exits on its own just
     // as worker 0 asks it to stop.
     require(wloopRequestStop(runner.loop), "wloopRequestStop() failed on an already stopped loop");
 
-    wloopDestroy(&runner.loop);
+    runnerDestroy(&runner);
 }
 
 /* A stop request racing the loop thread's own exit must be safe both ways. */
@@ -181,12 +211,10 @@ static void testStopRacingSelfExit(env_t *env)
 {
     for (int attempt = 0; attempt < 32; ++attempt)
     {
-        loop_runner_t runner = {0};
-        runner.loop          = wloopCreate(0, env->buffer_pool, 0);
-        require(runner.loop != NULL, "failed to create the event loop");
-
-        wthread_t thread;
-        require(threadCreate(&thread, loopRunnerMain, &runner) == kWThreadErrorNone, "failed to spawn the loop thread");
+        // Each attempt is a new thread, so each attempt gets its own pool.
+        loop_runner_t runner;
+        runnerCreate(&runner, env);
+        runnerStart(&runner);
         require(waitForFlag(&runner.running, 2000), "the loop thread did not start");
 
         // No settling delay: the request lands anywhere between "not yet in the
@@ -194,8 +222,8 @@ static void testStopRacingSelfExit(env_t *env)
         require(wloopRequestStop(runner.loop), "wloopRequestStop() failed while racing the loop thread");
 
         require(waitForFlag(&runner.finished, 2000), "the loop did not stop while racing its own exit");
-        threadJoin(thread);
-        wloopDestroy(&runner.loop);
+        runnerJoin(&runner);
+        runnerDestroy(&runner);
     }
 }
 

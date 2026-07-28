@@ -47,6 +47,15 @@ router_match_t routerClassify(router_tstate_t *ts, router_match_ctx_t *mctx)
             match.target = rule->target_tunnel;
             return match;
         }
+
+        if (UNLIKELY(mctx->evaluation_failed))
+        {
+            // stop at the first evaluation error: neither a later rule nor the default route may be selected
+            // on facts we could not establish
+            match.result = kRouterClassifyError;
+            match.target = NULL;
+            return match;
+        }
     }
 
     return match;

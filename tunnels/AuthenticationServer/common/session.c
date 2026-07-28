@@ -253,9 +253,9 @@ authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, c
         LOGD("AuthenticationServer: session for auth client \"%s\" permissions stats-push=%s user-pull=%s "
              "user-write=%s idle-timeout-ms=%u",
              client->name,
-             client->allow_stats_push ? "true" : "false",
-             client->allow_user_pull ? "true" : "false",
-             client->allow_user_write ? "true" : "false",
+             boolToTrueFalse(client->allow_stats_push),
+             boolToTrueFalse(client->allow_user_pull),
+             boolToTrueFalse(client->allow_user_write),
              (unsigned int) client->session_idle_timeout_ms);
     }
     LOGI("AuthenticationServer: authenticated auth client \"%s\"", client->name);

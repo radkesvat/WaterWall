@@ -59,6 +59,51 @@ if(TARGET ww)
     list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_UDPSTATELESSSOCKET=1)
     list(APPEND tunnels_abort_runtime_cases udpstatelesssocket_active_worker_idle_table_destroy)
   endif()
+
+  if(TARGET TcpOverUdpClient)
+    list(APPEND tunnels_abort_runtime_sources
+      "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_tcpoverudpclient_case.c"
+    )
+    list(APPEND tunnels_abort_runtime_libraries TcpOverUdpClient)
+    # ikcp.h and ww_fec.h are private to the tunnel target but reachable from its structure.h. Both TcpOverUdp
+    # tunnels share the FEC sources and carry byte-identical copies of ikcp.h, so one pair of directories serves
+    # both fixtures.
+    list(APPEND tunnels_abort_runtime_includes
+      ${CMAKE_SOURCE_DIR}/tunnels/TcpOverUdpClient/kcp
+      ${CMAKE_SOURCE_DIR}/tunnels/TcpOverUdpClient/fec
+    )
+    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_TCPOVERUDPCLIENT=1)
+    list(APPEND tunnels_abort_runtime_cases tcpoverudpclient_impossible_kcp_mtu_rejection)
+  endif()
+
+  if(TARGET TcpOverUdpServer)
+    list(APPEND tunnels_abort_runtime_sources
+      "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_tcpoverudpserver_case.c"
+    )
+    list(APPEND tunnels_abort_runtime_libraries TcpOverUdpServer)
+    list(APPEND tunnels_abort_runtime_includes
+      ${CMAKE_SOURCE_DIR}/tunnels/TcpOverUdpClient/kcp
+      ${CMAKE_SOURCE_DIR}/tunnels/TcpOverUdpClient/fec
+    )
+    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_TCPOVERUDPSERVER=1)
+    list(APPEND tunnels_abort_runtime_cases tcpoverudpserver_impossible_kcp_mtu_rejection)
+  endif()
+
+  if(TARGET Router)
+    list(APPEND tunnels_abort_runtime_sources
+      "${WATERWALL_ABORT_RUNTIME_DIR}/tunnels_abort_router_case.c"
+    )
+    list(APPEND tunnels_abort_runtime_libraries Router)
+    # tunnels/Router itself resolves the "common/..." includes Router's public headers reach for. Its inner
+    # include/Router directory is deliberately left out so no bare structure.h joins the search path next to the
+    # other tunnels' fixtures.
+    list(APPEND tunnels_abort_runtime_includes
+      ${CMAKE_SOURCE_DIR}/tunnels/Router/include
+      ${CMAKE_SOURCE_DIR}/tunnels/Router
+    )
+    list(APPEND tunnels_abort_runtime_cases router_geoip_rule_without_open_database)
+    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_ROUTER=1)
+  endif()
 endif()
 
 if(TARGET ww AND tunnels_abort_runtime_cases)

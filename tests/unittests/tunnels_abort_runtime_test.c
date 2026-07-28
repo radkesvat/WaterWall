@@ -21,7 +21,8 @@
 
 #if ! defined(WATERWALL_ABORT_TEST_HAS_AUTHENTICATIONCLIENT) && ! defined(WATERWALL_ABORT_TEST_HAS_PINGCLIENT) &&      \
     ! defined(WATERWALL_ABORT_TEST_HAS_RAWSOCKET) && ! defined(WATERWALL_ABORT_TEST_HAS_REVERSECLIENT) &&              \
-    ! defined(WATERWALL_ABORT_TEST_HAS_UDPSTATELESSSOCKET)
+    ! defined(WATERWALL_ABORT_TEST_HAS_UDPSTATELESSSOCKET) && ! defined(WATERWALL_ABORT_TEST_HAS_TCPOVERUDPCLIENT) &&  \
+    ! defined(WATERWALL_ABORT_TEST_HAS_TCPOVERUDPSERVER) && ! defined(WATERWALL_ABORT_TEST_HAS_ROUTER)
 #error "tunnels_abort_runtime_test needs at least one enabled tunnel case"
 #endif
 
@@ -93,6 +94,15 @@ static const abort_case_t kAbortCases[] = {
 #endif
 #if defined(WATERWALL_ABORT_TEST_HAS_UDPSTATELESSSOCKET)
     {"udpstatelesssocket_active_worker_idle_table_destroy", tunnelsAbortUdpStatelessSocketDestroyCase},
+#endif
+#if defined(WATERWALL_ABORT_TEST_HAS_TCPOVERUDPCLIENT)
+    {"tcpoverudpclient_impossible_kcp_mtu_rejection", tunnelsAbortTcpOverUdpClientMtuCase},
+#endif
+#if defined(WATERWALL_ABORT_TEST_HAS_TCPOVERUDPSERVER)
+    {"tcpoverudpserver_impossible_kcp_mtu_rejection", tunnelsAbortTcpOverUdpServerMtuCase},
+#endif
+#if defined(WATERWALL_ABORT_TEST_HAS_ROUTER)
+    {"router_geoip_rule_without_open_database", tunnelsAbortRouterGeoipUnopenedDatabaseCase},
 #endif
 };
 

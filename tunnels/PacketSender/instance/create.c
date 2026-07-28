@@ -254,21 +254,22 @@ static bool packetsenderLoadDestPort(packetsender_tstate_t *state, const cJSON *
         return true;
     }
 
-    if (! cJSON_IsNumber(item) || item->valueint < 0 || item->valueint > UINT16_MAX)
+    int64_t val = 0;
+    if (! jsonGetIntegerInRange(item, 0, UINT16_MAX, &val))
     {
         LOGF("JSON Error: PacketSender->settings->dest-port (int field) : expected a value between 0 and %u",
              (unsigned int) UINT16_MAX);
         return false;
     }
 
-    if (required && item->valueint == 0)
+    if (required && val == 0)
     {
         LOGF("JSON Error: PacketSender->settings->dest-port (int field) : expected a non-zero port for TCP, UDP, or "
              "ALL");
         return false;
     }
 
-    state->dest_port = (uint16_t) item->valueint;
+    state->dest_port = (uint16_t) val;
     return true;
 }
 
@@ -304,14 +305,15 @@ static bool packetsenderLoadSrcPort(packetsender_tstate_t *state, const cJSON *s
         return false;
     }
 
-    if (! cJSON_IsNumber(item) || item->valueint < 0 || item->valueint > UINT16_MAX)
+    int64_t val = 0;
+    if (! jsonGetIntegerInRange(item, 0, UINT16_MAX, &val))
     {
         LOGF("JSON Error: PacketSender->settings->src-port (int-or-string field) : expected a value between 0 and %u",
              (unsigned int) UINT16_MAX);
         return false;
     }
 
-    if (required && item->valueint == 0)
+    if (required && val == 0)
     {
         LOGF("JSON Error: PacketSender->settings->src-port (int-or-string field) : expected a non-zero port or "
              "\"random\" for TCP, UDP, or ALL");
@@ -319,7 +321,7 @@ static bool packetsenderLoadSrcPort(packetsender_tstate_t *state, const cJSON *s
     }
 
     state->src_port_random = false;
-    state->src_port        = (uint16_t) item->valueint;
+    state->src_port        = (uint16_t) val;
     return true;
 }
 

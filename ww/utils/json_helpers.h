@@ -1,11 +1,9 @@
 #pragma once
 #include "wlibc.h"
 
-
 #include "cJSON.h"
 #include "net/address_context.h"
 #include "objects/dynamic_value.h"
-
 
 /* Parse a base-10 unsigned 64-bit integer from a string, rejecting empty input,
  * a negative sign, and any trailing non-space characters. */
@@ -131,6 +129,57 @@ static inline bool getBoolFromJsonObjectOrDefault(bool *dest, const cJSON *json_
     }
     *dest = def;
     return false;
+}
+
+typedef enum json_value_status_e
+{
+    kJsonValueMissing,
+    kJsonValueInvalid,
+    kJsonValuePresent
+} json_value_status_t;
+
+static inline bool jsonGetIntegerInRange(const cJSON *item, int64_t minimum, int64_t maximum, int64_t *value_out)
+{
+    if (item == NULL || ! cJSON_IsNumber(item) || value_out == NULL)
+    {
+        return false;
+    }
+
+    if (item->valuedouble != (double) item->valueint)
+    {
+        return false;
+    }
+
+    int64_t val = (int64_t) item->valueint;
+    if (val < minimum || val > maximum)
+    {
+        return false;
+    }
+
+    *value_out = val;
+    return true;
+}
+
+static inline json_value_status_t jsonGetObjectIntegerInRange(const cJSON *object, const char *key, int64_t minimum,
+                                                              int64_t maximum, int64_t *value_out)
+{
+    if (object == NULL || key == NULL)
+    {
+        return kJsonValueMissing;
+    }
+
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, key);
+    if (item == NULL)
+    {
+        return kJsonValueMissing;
+    }
+
+    if (jsonGetIntegerInRange(item, minimum, maximum, value_out))
+    {
+        return kJsonValuePresent;
+    }
+
+    return kJsonValueInvalid;
 }
 
 static inline bool getIntFromJsonObject(int *dest, const cJSON *json_obj, const char *key)
@@ -296,8 +345,8 @@ static inline const cJSON *getJsonObjectItemByKeys(const cJSON *json_obj, const 
     return NULL;
 }
 
-static inline bool getStringFromJsonObjectByKeys(char **dest, const cJSON *json_obj, const char *key1,
-                                                 const char *key2, const char *key3)
+static inline bool getStringFromJsonObjectByKeys(char **dest, const cJSON *json_obj, const char *key1, const char *key2,
+                                                 const char *key3)
 {
     assert(dest != NULL);
 

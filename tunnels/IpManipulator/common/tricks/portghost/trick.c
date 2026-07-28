@@ -1,6 +1,7 @@
 #include "trick.h"
 
 #include "loggers/network_logger.h"
+#include "wmath.h"
 
 enum
 {
@@ -18,11 +19,6 @@ static uint32_t mixGhostPortSeed(uint32_t value)
     value *= 0x846CA68BU;
     value ^= value >> 16;
     return value;
-}
-
-static uint32_t rotateLeft32(uint32_t value, uint8_t bits)
-{
-    return (value << bits) | (value >> (32U - bits));
 }
 
 static uint8_t resolveTransportProtocol(const ipmanipulator_tstate_t *state, uint8_t packet_protocol)
@@ -47,7 +43,7 @@ static uint16_t ghostPortFromTuple(uint16_t original_port, uint16_t peer_port, u
     uint32_t seed = ((uint32_t) original_port << 16) | peer_port;
 
     seed ^= lwip_ntohl(src_addr);
-    seed ^= rotateLeft32(lwip_ntohl(dst_addr), 7);
+    seed ^= wwRotateLeft32(lwip_ntohl(dst_addr), 7);
     seed ^= ((uint32_t) protocol << 24) ^ ((uint32_t) salt << 8);
 
     uint16_t ghost_port = (uint16_t) (kGhostedPortMin + (mixGhostPortSeed(seed) % kGhostedPortSpan));
@@ -107,7 +103,8 @@ static bool appendGhostBytes(line_t *l, sbuf_t **buf_ptr, struct ip_hdr **iphead
     uint32_t new_len = (uint32_t) ip_total_len + tail_len;
     if (sbufGetMaximumWriteableSize(buf) < new_len)
     {
-        LOGW("portghosttrick: dropping packet because source/dest-port-ghost needs %u extra bytes but the buffer has no room",
+        LOGW("portghosttrick: dropping packet because source/dest-port-ghost needs %u extra bytes but the buffer has "
+             "no room",
              (unsigned int) tail_len);
         return dropGhostedPacket(l, buf_ptr);
     }
@@ -180,7 +177,7 @@ bool portghosttrickApply(tunnel_t *t, line_t *l, sbuf_t **buf_ptr)
             return false;
         }
 
-        struct tcp_hdr *tcp_header = (struct tcp_hdr *) (packet + iphdr_len);
+        struct tcp_hdr *tcp_header        = (struct tcp_hdr *) (packet + iphdr_len);
         uint8_t         tcp_hdr_len_words = TCPH_HDRLEN(tcp_header);
         if (tcp_hdr_len_words < 5 || tcp_hdr_len_words > 15)
         {
@@ -211,16 +208,24 @@ bool portghosttrickApply(tunnel_t *t, line_t *l, sbuf_t **buf_ptr)
         {
             PUT_BE16(tail, original_src_port);
             tail += sizeof(uint16_t);
-            tcp_header->src = lwip_htons(ghostPortFromTuple(original_src_port, original_dst_port, ipheader->src.addr,
-                                                            ipheader->dest.addr, IPPROTO_TCP, kGhostSaltSource));
+            tcp_header->src = lwip_htons(ghostPortFromTuple(original_src_port,
+                                                            original_dst_port,
+                                                            ipheader->src.addr,
+                                                            ipheader->dest.addr,
+                                                            IPPROTO_TCP,
+                                                            kGhostSaltSource));
         }
 
         if (state->trick_dest_port_ghost)
         {
             PUT_BE16(tail, original_dst_port);
             tail += sizeof(uint16_t);
-            tcp_header->dest = lwip_htons(ghostPortFromTuple(original_dst_port, original_src_port, ipheader->src.addr,
-                                                             ipheader->dest.addr, IPPROTO_TCP, kGhostSaltDest));
+            tcp_header->dest = lwip_htons(ghostPortFromTuple(original_dst_port,
+                                                             original_src_port,
+                                                             ipheader->src.addr,
+                                                             ipheader->dest.addr,
+                                                             IPPROTO_TCP,
+                                                             kGhostSaltDest));
         }
 
         return true;
@@ -233,7 +238,7 @@ bool portghosttrickApply(tunnel_t *t, line_t *l, sbuf_t **buf_ptr)
             return false;
         }
 
-        struct udp_hdr *udp_header = (struct udp_hdr *) (packet + iphdr_len);
+        struct udp_hdr *udp_header    = (struct udp_hdr *) (packet + iphdr_len);
         uint16_t        udp_len       = lwip_ntohs(udp_header->len);
         uint16_t        transport_len = (uint16_t) (ip_total_len - iphdr_len);
 
@@ -259,16 +264,24 @@ bool portghosttrickApply(tunnel_t *t, line_t *l, sbuf_t **buf_ptr)
         {
             PUT_BE16(tail, original_src_port);
             tail += sizeof(uint16_t);
-            udp_header->src = lwip_htons(ghostPortFromTuple(original_src_port, original_dst_port, ipheader->src.addr,
-                                                            ipheader->dest.addr, IPPROTO_UDP, kGhostSaltSource));
+            udp_header->src = lwip_htons(ghostPortFromTuple(original_src_port,
+                                                            original_dst_port,
+                                                            ipheader->src.addr,
+                                                            ipheader->dest.addr,
+                                                            IPPROTO_UDP,
+                                                            kGhostSaltSource));
         }
 
         if (state->trick_dest_port_ghost)
         {
             PUT_BE16(tail, original_dst_port);
             tail += sizeof(uint16_t);
-            udp_header->dest = lwip_htons(ghostPortFromTuple(original_dst_port, original_src_port, ipheader->src.addr,
-                                                             ipheader->dest.addr, IPPROTO_UDP, kGhostSaltDest));
+            udp_header->dest = lwip_htons(ghostPortFromTuple(original_dst_port,
+                                                             original_src_port,
+                                                             ipheader->src.addr,
+                                                             ipheader->dest.addr,
+                                                             IPPROTO_UDP,
+                                                             kGhostSaltDest));
         }
 
         udp_header->len = lwip_htons((uint16_t) (udp_len + tail_len));
@@ -358,7 +371,7 @@ bool portghosttrickRestore(tunnel_t *t, line_t *l, sbuf_t **buf_ptr)
             return false;
         }
 
-        struct tcp_hdr *tcp_header = (struct tcp_hdr *) (packet + iphdr_len);
+        struct tcp_hdr *tcp_header        = (struct tcp_hdr *) (packet + iphdr_len);
         uint8_t         tcp_hdr_len_words = TCPH_HDRLEN(tcp_header);
         if (tcp_hdr_len_words < 5 || tcp_hdr_len_words > 15)
         {
@@ -372,21 +385,23 @@ bool portghosttrickRestore(tunnel_t *t, line_t *l, sbuf_t **buf_ptr)
             return false;
         }
 
-        uint16_t current_src = lwip_ntohs(tcp_header->src);
-        uint16_t current_dst = lwip_ntohs(tcp_header->dest);
+        uint16_t current_src  = lwip_ntohs(tcp_header->src);
+        uint16_t current_dst  = lwip_ntohs(tcp_header->dest);
         uint16_t original_src = state->trick_source_port_ghost ? tail_src : current_src;
         uint16_t original_dst = state->trick_dest_port_ghost ? tail_dest : current_dst;
 
         if (state->trick_source_port_ghost &&
-            current_src != ghostPortFromTuple(original_src, original_dst, ipheader->src.addr, ipheader->dest.addr,
-                                              IPPROTO_TCP, kGhostSaltSource))
+            current_src !=
+                ghostPortFromTuple(
+                    original_src, original_dst, ipheader->src.addr, ipheader->dest.addr, IPPROTO_TCP, kGhostSaltSource))
         {
             return false;
         }
 
         if (state->trick_dest_port_ghost &&
-            current_dst != ghostPortFromTuple(original_dst, original_src, ipheader->src.addr, ipheader->dest.addr,
-                                              IPPROTO_TCP, kGhostSaltDest))
+            current_dst !=
+                ghostPortFromTuple(
+                    original_dst, original_src, ipheader->src.addr, ipheader->dest.addr, IPPROTO_TCP, kGhostSaltDest))
         {
             return false;
         }
@@ -411,21 +426,23 @@ bool portghosttrickRestore(tunnel_t *t, line_t *l, sbuf_t **buf_ptr)
             return false;
         }
 
-        uint16_t current_src = lwip_ntohs(udp_header->src);
-        uint16_t current_dst = lwip_ntohs(udp_header->dest);
+        uint16_t current_src  = lwip_ntohs(udp_header->src);
+        uint16_t current_dst  = lwip_ntohs(udp_header->dest);
         uint16_t original_src = state->trick_source_port_ghost ? tail_src : current_src;
         uint16_t original_dst = state->trick_dest_port_ghost ? tail_dest : current_dst;
 
         if (state->trick_source_port_ghost &&
-            current_src != ghostPortFromTuple(original_src, original_dst, ipheader->src.addr, ipheader->dest.addr,
-                                              IPPROTO_UDP, kGhostSaltSource))
+            current_src !=
+                ghostPortFromTuple(
+                    original_src, original_dst, ipheader->src.addr, ipheader->dest.addr, IPPROTO_UDP, kGhostSaltSource))
         {
             return false;
         }
 
         if (state->trick_dest_port_ghost &&
-            current_dst != ghostPortFromTuple(original_dst, original_src, ipheader->src.addr, ipheader->dest.addr,
-                                              IPPROTO_UDP, kGhostSaltDest))
+            current_dst !=
+                ghostPortFromTuple(
+                    original_dst, original_src, ipheader->src.addr, ipheader->dest.addr, IPPROTO_UDP, kGhostSaltDest))
         {
             return false;
         }

@@ -22,7 +22,7 @@
 
 typedef router_field_parse_t (*router_matcher_parse_fn)(router_rule_t *rule, const cJSON *rule_json,
                                                         uint32_t rule_index);
-typedef bool (*router_matcher_match_fn)(const router_rule_t *rule, const router_match_ctx_t *mctx);
+typedef bool (*router_matcher_match_fn)(const router_rule_t *rule, router_match_ctx_t *mctx);
 typedef void (*router_matcher_destroy_fn)(router_rule_t *rule);
 
 typedef struct router_matcher_s
@@ -88,7 +88,7 @@ bool routerRuleParseConditions(router_rule_t *rule, const cJSON *rule_json, uint
     return true;
 }
 
-bool routerRuleMatches(const router_rule_t *rule, const router_match_ctx_t *mctx)
+bool routerRuleMatches(const router_rule_t *rule, router_match_ctx_t *mctx)
 {
     // AND across every configured condition. Matchers for fields that are not
     // present in this rule return true and therefore do not constrain it.
@@ -105,7 +105,16 @@ bool routerRuleMatches(const router_rule_t *rule, const router_match_ctx_t *mctx
             credentials_pair_checked = true;
         }
 
-        if (! kRouterMatchers[i].match(rule, mctx))
+        const bool matched = kRouterMatchers[i].match(rule, mctx);
+
+        if (UNLIKELY(mctx->evaluation_failed))
+        {
+            // evaluating this condition failed at runtime; the remaining conditions of this rule are not
+            // evaluated and the caller must not fall through to another rule
+            return false;
+        }
+
+        if (! matched)
         {
             return false;
         }

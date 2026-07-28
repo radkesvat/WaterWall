@@ -800,6 +800,34 @@ static inline bool stringAsciiCaseEquals(const char *a, const char *b)
     return *a == '\0' && *b == '\0';
 }
 
+static inline bool stringAsciiCaseEqualsAny(const char *value, const char *const candidates[], size_t candidate_count)
+{
+    if (value == NULL || candidates == NULL || candidate_count == 0)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < candidate_count; ++i)
+    {
+        if (candidates[i] != NULL && stringAsciiCaseEquals(value, candidates[i]))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static inline const char *boolToTrueFalse(bool value)
+{
+    return value ? "true" : "false";
+}
+
+static inline const char *boolToYesNo(bool value)
+{
+    return value ? "yes" : "no";
+}
+
 static inline bool stringAsciiCaseContains(const char *haystack, const char *needle)
 {
     if (haystack == NULL || needle == NULL || *needle == '\0')
@@ -897,6 +925,10 @@ static inline bool stringFormatFits(int written, size_t buf_len)
 {
     return written > 0 && (size_t) written < buf_len;
 }
+
+WW_EXPORT bool stringAppendFormatV(char *buffer, size_t capacity, size_t *offset, const char *format, va_list args);
+
+WW_EXPORT bool stringAppendFormat(char *buffer, size_t capacity, size_t *offset, const char *format, ...);
 
 //--------------------file-------------------------------
 

@@ -120,7 +120,9 @@ static bool tcpoverudpclientParseSettings(tcpoverudpclient_tstate_t *ts, node_t 
         ts->fec_parity_shards = (uint8_t) parity_shards;
     }
 
-    if (tcpoverudpclientGetKcpMtu(ts) <= 0 || tcpoverudpclientGetKcpWriteMtu(ts) <= 0)
+    // the KCP MTU must clear ikcp_setmtu()'s own minimum here, so a runtime rejection can only ever mean the
+    // validated tunnel state was corrupted
+    if (tcpoverudpclientGetKcpMtu(ts) < kTcpOverUdpClientKcpMinimumMtu || tcpoverudpclientGetKcpWriteMtu(ts) <= 0)
     {
         LOGF("TcpOverUdpClient: GLOBAL_MTU_SIZE is too small for KCP + FEC overhead");
         return false;

@@ -7,34 +7,20 @@ static bool pingclientLoadIntSetting(int *dest, const cJSON *settings, const cha
 {
     assert(default_value >= min_value && default_value <= max_value);
 
-    const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, key);
-    if (item == NULL)
+    int64_t             val    = 0;
+    json_value_status_t status = jsonGetObjectIntegerInRange(settings, key, min_value, max_value, &val);
+    if (status == kJsonValueMissing)
     {
         *dest = default_value;
         return true;
     }
-
-    if (! cJSON_IsNumber(item))
+    if (status == kJsonValueInvalid)
     {
         LOGF("JSON Error: %s (int field) : expected a whole number between %d and %d", json_path, min_value, max_value);
         return false;
     }
 
-    const double value = item->valuedouble;
-    if (! (value >= (double) min_value && value <= (double) max_value))
-    {
-        LOGF("JSON Error: %s (int field) : expected a whole number between %d and %d", json_path, min_value, max_value);
-        return false;
-    }
-
-    const int int_value = (int) value;
-    if ((double) int_value < value || (double) int_value > value)
-    {
-        LOGF("JSON Error: %s (int field) : expected a whole number between %d and %d", json_path, min_value, max_value);
-        return false;
-    }
-
-    *dest = int_value;
+    *dest = (int) val;
     return true;
 }
 

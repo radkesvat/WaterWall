@@ -1007,6 +1007,10 @@ if(INCLUDE_BGP4_CLIENT)
   target_link_libraries(Waterwall Bgp4Client)
 endif()
 
+if(INCLUDE_MUX_SERVER OR INCLUDE_MUX_CLIENT)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/MuxCommon)
+endif()
+
 #mux server
 if(INCLUDE_MUX_SERVER)
   target_compile_definitions(Waterwall PUBLIC INCLUDE_MUX_SERVER=1)
@@ -1107,7 +1111,7 @@ elseif(BUILD_TESTING)
   # and macOS keep the same abort coverage.
   #
   # Python is REQUIRED rather than optional: silently dropping the policy test
-  # would leave the 231 Category-D candidates unchecked on this platform, so a
+  # would leave the 234 Category-D candidates unchecked on this platform, so a
   # missing interpreter must fail configuration instead of failing open.
   find_program(WATERWALL_POLICY_TEST_PYTHON NAMES python3 python REQUIRED)
 

@@ -29,3 +29,6 @@ enum
  */
 int tunnelsAbortReverseClientLinestateCase(void);
 int tunnelsAbortUdpStatelessSocketDestroyCase(void);
+int tunnelsAbortTcpOverUdpClientMtuCase(void);
+int tunnelsAbortTcpOverUdpServerMtuCase(void);
+int tunnelsAbortRouterGeoipUnopenedDatabaseCase(void);

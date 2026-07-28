@@ -4,21 +4,14 @@
 
 static bool headerserverParsePort(uint16_t *out, const cJSON *value, const char *json_path)
 {
-    if (! cJSON_IsNumber(value))
-    {
-        LOGF("HeaderServer: %s must be a port number, \"dest_context->port\", or "
-             "\"proxy-protocol->source-fields\"",
-             json_path);
-        return false;
-    }
-
-    if (value->valueint <= 0 || value->valueint > UINT16_MAX)
+    int64_t val = 0;
+    if (! jsonGetIntegerInRange(value, 1, UINT16_MAX, &val))
     {
         LOGF("HeaderServer: %s must be in range [1, %u]", json_path, (unsigned int) UINT16_MAX);
         return false;
     }
 
-    *out = (uint16_t) value->valueint;
+    *out = (uint16_t) val;
     return true;
 }
 

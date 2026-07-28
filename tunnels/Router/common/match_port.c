@@ -4,14 +4,14 @@
 
 static bool routerParsePortNumber(const cJSON *item, uint16_t *out, const char *json_path)
 {
-    if (! cJSON_IsNumber(item) || item->valueint < 0 || item->valueint > UINT16_MAX ||
-        item->valuedouble != (double) item->valueint)
+    int64_t val = 0;
+    if (! jsonGetIntegerInRange(item, 0, UINT16_MAX, &val))
     {
         LOGF("JSON Error: %s : expected a port integer in range 0-65535", json_path);
         return false;
     }
 
-    *out = (uint16_t) item->valueint;
+    *out = (uint16_t) val;
     return true;
 }
 
@@ -127,14 +127,14 @@ bool routerPortRangesParse(const cJSON *ports_json, const cJSON *range_json, rou
     *out_ranges = NULL;
     *out_count  = 0;
 
-    router_port_range_t *ports      = NULL;
+    router_port_range_t *ports       = NULL;
     uint32_t             ports_count = 0;
     if (ports_json != NULL && ! routerExactPortsParse(ports_json, &ports, &ports_count, ports_json_path))
     {
         return false;
     }
 
-    router_port_range_t *range      = NULL;
+    router_port_range_t *range       = NULL;
     uint32_t             range_count = 0;
     if (range_json != NULL && ! routerInclusivePortRangeParse(range_json, &range, &range_count, range_json_path))
     {

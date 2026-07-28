@@ -27,7 +27,7 @@ router_field_parse_t routerSourcePortParse(router_rule_t *rule, const cJSON *rul
     return kRouterFieldPresent;
 }
 
-bool routerSourcePortMatch(const router_rule_t *rule, const router_match_ctx_t *mctx)
+bool routerSourcePortMatch(const router_rule_t *rule, router_match_ctx_t *mctx)
 {
     if (! rule->source_port.present)
     {

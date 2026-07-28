@@ -2,46 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-static void muxclientCloseOwnedParentLineFromDownstreamPayload(tunnel_t *t, muxclient_tstate_t *ts, line_t *parent_l,
-                                                               muxclient_lstate_t *parent_ls)
-{
-    wid_t wid = lineGetWID(parent_l);
-
-    muxclientForgetParentLine(ts, wid, parent_l);
-
-    muxclientLinestateDestroy(parent_ls);
-    tunnelNextUpStreamFinish(t, parent_l);
-
-    if (lineIsAlive(parent_l))
-    {
-        lineDestroy(parent_l);
-    }
-}
-
-static sbuf_t *tryReadCompleteFrame(muxclient_lstate_t *parent_ls, mux_frame_t *frame)
-{
-    if (bufferstreamGetBufLen(&(parent_ls->read_stream)) < kMuxFrameLength)
-    {
-        return NULL;
-    }
-
-    bufferstreamViewBytesAt(&(parent_ls->read_stream), 0, (uint8_t *) frame, kMuxFrameLength);
-
-    mux_length_t payload_length = be16toh(frame->length);
-    cid_t        cid            = be32toh(frame->cid);
-
-    size_t total_frame_size = (size_t) payload_length + (size_t) kMuxFrameLength;
-    if (total_frame_size > bufferstreamGetBufLen(&(parent_ls->read_stream)))
-    {
-        return NULL;
-    }
-
-    frame->length = payload_length;
-    frame->cid    = cid;
-
-    return bufferstreamReadExact(&(parent_ls->read_stream), total_frame_size);
-}
-
 static muxclient_lstate_t *findChildByConnectionId(muxclient_lstate_t *parent_ls, uint32_t cid)
 {
     muxclient_lstate_t *child_ls = parent_ls->child_next;
@@ -109,7 +69,7 @@ static bool handleCloseFrame(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, 
 
     if (muxclientCheckConnectionIsExhausted(ts, parent_ls) && parent_ls->children_count == 0)
     {
-        muxclientCloseOwnedParentLineFromDownstreamPayload(t, ts, parent_l, parent_ls);
+        muxclientCloseIdleExhaustedParentLine(t, ts, lineGetWID(parent_l), parent_l, parent_ls);
         return false;
     }
     return true;
@@ -179,7 +139,8 @@ static bool isOverFlow(buffer_stream_t *read_stream)
 {
     if (bufferstreamGetBufLen(read_stream) > kMaxMainChannelBufferSize)
     {
-        LOGW("MuxClient: DownStreamPayload: Read stream overflow, size: %zu, limit: %zu", bufferstreamGetBufLen(read_stream),
+        LOGW("MuxClient: DownStreamPayload: Read stream overflow, size: %zu, limit: %zu",
+             bufferstreamGetBufLen(read_stream),
              kMaxMainChannelBufferSize);
         return true;
     }
@@ -205,7 +166,7 @@ static void handleOverFlow(tunnel_t *t, line_t *parent_l)
         child_ls = temp;
     }
 
-    muxclientCloseOwnedParentLineFromDownstreamPayload(t, ts, parent_l, parent_ls);
+    muxclientCloseIdleExhaustedParentLine(t, ts, lineGetWID(parent_l), parent_l, parent_ls);
 }
 
 void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
@@ -215,16 +176,10 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf
 
     bufferstreamPush(&(parent_ls->read_stream), buf);
 
-    if (isOverFlow(&(parent_ls->read_stream)))
-    {
-        handleOverFlow(t, parent_l);
-        return;
-    }
-
     while (true)
     {
         mux_frame_t frame        = {0};
-        sbuf_t     *frame_buffer = tryReadCompleteFrame(parent_ls, &frame);
+        sbuf_t     *frame_buffer = muxReadCompleteFrame(&parent_ls->read_stream, &frame);
 
         if (! frame_buffer)
         {
@@ -255,5 +210,12 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf
             return;
         }
         lineUnlock(parent_l);
+    }
+
+    // Only the incomplete remainder counts toward the limit. A single batch may legally carry far more than
+    // kMaxMainChannelBufferSize bytes of complete frames, and those must be drained rather than judged an overflow.
+    if (isOverFlow(&(parent_ls->read_stream)))
+    {
+        handleOverFlow(t, parent_l);
     }
 }

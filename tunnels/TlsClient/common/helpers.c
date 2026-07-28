@@ -579,7 +579,11 @@ bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
 
     STACK_ALLOCATE_ALIGNED(tlsclient_lstate_t, ls, 32);
     memoryZero(ls, sizeof(*ls));
-    tlsclientLinestateInitialize(ls, ssl_ctx, getWorkerBufferPool(wid), alpn_wire, alpn_wire_len);
+    if (! tlsclientLinestateInitialize(ls, ssl_ctx, getWorkerBufferPool(wid), alpn_wire, alpn_wire_len))
+    {
+        // the temporary line state released itself already, *out stays NULL
+        return false;
+    }
 
     if (! tlsclientConfigureSslForConnect(
             ls->ssl, ls->rbio, ls->wbio, sni, ech_grease_override_payload, ech_grease_override_payload_len))

@@ -10,5 +10,5 @@
  * returns true.
  */
 router_field_parse_t routerNetworkParse(router_rule_t *rule, const cJSON *rule_json, uint32_t rule_index);
-bool                 routerNetworkMatch(const router_rule_t *rule, const router_match_ctx_t *mctx);
+bool                 routerNetworkMatch(const router_rule_t *rule, router_match_ctx_t *mctx);
 void                 routerNetworkDestroy(router_rule_t *rule);

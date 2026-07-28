@@ -84,7 +84,7 @@ router_field_parse_t routerDestinationDomainParse(router_rule_t *rule, const cJS
     return kRouterFieldPresent;
 }
 
-bool routerDestinationDomainMatch(const router_rule_t *rule, const router_match_ctx_t *mctx)
+bool routerDestinationDomainMatch(const router_rule_t *rule, router_match_ctx_t *mctx)
 {
     if (! rule->destination_domain.present)
     {
@@ -125,9 +125,17 @@ bool routerDestinationDomainMatch(const router_rule_t *rule, const router_match_
 
     for (uint32_t i = 0; i < rule->destination_domain.geosite_lists_count; ++i)
     {
-        if (routerGeositeCompiledListMatchesPrepared(rule->destination_domain.geosite_lists[i], geosite_host))
+        if (routerGeositeCompiledListMatchesPrepared(
+                rule->destination_domain.geosite_lists[i], geosite_host, &mctx->evaluation_failed))
         {
             return true;
+        }
+
+        if (UNLIKELY(mctx->evaluation_failed))
+        {
+            // a regex engine failure must not be reported as "this list did not match", and no later list may
+            // be evaluated for this line
+            return false;
         }
     }
 

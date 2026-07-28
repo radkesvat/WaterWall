@@ -1401,7 +1401,7 @@ static bool geositeDomainSetContains(const router_geosite_domain_set_t *set, con
 }
 
 static bool geositeRegexPatternsMatch(const router_geosite_compiled_list_t *list,
-                                      const router_geosite_host_cache_t    *host)
+                                      const router_geosite_host_cache_t *host, bool *out_evaluation_failed)
 {
     csview host_view = {
         .buf  = host->host,
@@ -1417,10 +1417,15 @@ static bool geositeRegexPatternsMatch(const router_geosite_compiled_list_t *list
         }
         if (UNLIKELY(rc != CREG_NOMATCH))
         {
-            LOGF("Router: GeoSite regex matcher failed at runtime for list \"%s\" (STC cregex error %d)",
+            // the regex engine can exhaust its runtime list on peer-controlled input, so this must never become a
+            // process-wide kill primitive; the failing request is refused instead
+            LOGE("Router: GeoSite regex matcher failed at runtime for list \"%s\" (STC cregex error %d)",
                  list->name,
                  rc);
-            terminateProgram(1);
+            if (out_evaluation_failed != NULL)
+            {
+                *out_evaluation_failed = true;
+            }
             return false;
         }
     }
@@ -1429,7 +1434,7 @@ static bool geositeRegexPatternsMatch(const router_geosite_compiled_list_t *list
 }
 
 bool routerGeositeCompiledListMatchesPrepared(const router_geosite_compiled_list_t *list,
-                                              const router_geosite_host_cache_t    *host)
+                                              const router_geosite_host_cache_t *host, bool *out_evaluation_failed)
 {
     if (list == NULL || host == NULL || ! host->valid)
     {
@@ -1463,7 +1468,7 @@ bool routerGeositeCompiledListMatchesPrepared(const router_geosite_compiled_list
         }
     }
 
-    if (geositeRegexPatternsMatch(list, host))
+    if (geositeRegexPatternsMatch(list, host, out_evaluation_failed))
     {
         return true;
     }
@@ -1475,7 +1480,7 @@ bool routerGeositeCompiledListMatches(const router_geosite_compiled_list_t *list
 {
     router_geosite_host_cache_t cache = {0};
     routerGeositeHostCachePrepare(&cache, (const uint8_t *) host, host_len);
-    return routerGeositeCompiledListMatchesPrepared(list, &cache);
+    return routerGeositeCompiledListMatchesPrepared(list, &cache, NULL);
 }
 
 bool routerRuleTableNeedsGeosite(const router_tstate_t *ts)

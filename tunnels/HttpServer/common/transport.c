@@ -1,5 +1,6 @@
 #include "structure.h"
 
+#include "http_base64.h"
 #include "loggers/network_logger.h"
 #include "utils/sha1.h"
 
@@ -38,12 +39,12 @@ typedef struct httpserver_h1_request_info_s
 enum
 {
     kHttpServerNghttp2RecvChunkBytes = 16U * 1024U,
-    kWebSocketOpcodeContinuation = 0x0,
-    kWebSocketOpcodeText         = 0x1,
-    kWebSocketOpcodeBinary       = 0x2,
-    kWebSocketOpcodeClose        = 0x8,
-    kWebSocketOpcodePing         = 0x9,
-    kWebSocketOpcodePong         = 0xA
+    kWebSocketOpcodeContinuation     = 0x0,
+    kWebSocketOpcodeText             = 0x1,
+    kWebSocketOpcodeBinary           = 0x2,
+    kWebSocketOpcodeClose            = 0x8,
+    kWebSocketOpcodePing             = 0x9,
+    kWebSocketOpcodePong             = 0xA
 };
 
 static const char *kWebSocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -103,8 +104,8 @@ static bool parseContentLength(const char *value, int64_t *out)
         return false;
     }
 
-    char               *endp = NULL;
-    unsigned long long  v    = strtoull(value, &endp, 10);
+    char              *endp = NULL;
+    unsigned long long v    = strtoull(value, &endp, 10);
     if (endp == value)
     {
         return false;
@@ -126,141 +127,6 @@ static bool parseContentLength(const char *value, int64_t *out)
     }
 
     *out = (int64_t) v;
-    return true;
-}
-
-static bool base64UrlDecode(const char *src, uint8_t *dst, size_t dst_cap, size_t *out_len)
-{
-    if (src == NULL || dst == NULL || out_len == NULL)
-    {
-        return false;
-    }
-
-    size_t src_len = strlen(src);
-    char  *cleaned = memoryAllocate(src_len + 1);
-    size_t clean_len = 0;
-
-    bool seen_padding = false;
-    for (size_t i = 0; i < src_len; ++i)
-    {
-        char c = src[i];
-        if (c == ' ' || c == '\t')
-        {
-            continue;
-        }
-
-        if (c == '=')
-        {
-            seen_padding = true;
-            continue;
-        }
-
-        if (seen_padding)
-        {
-            memoryFree(cleaned);
-            return false;
-        }
-
-        cleaned[clean_len++] = c;
-    }
-    cleaned[clean_len] = '\0';
-
-    size_t i = 0;
-    size_t o = 0;
-
-    while (i < clean_len)
-    {
-        uint8_t in[4] = {0};
-        size_t  in_len = 0;
-
-        while (i < clean_len && in_len < 4)
-        {
-            char c = cleaned[i++];
-
-            if (c >= 'A' && c <= 'Z')
-            {
-                in[in_len++] = (uint8_t) (c - 'A');
-            }
-            else if (c >= 'a' && c <= 'z')
-            {
-                in[in_len++] = (uint8_t) (26 + (c - 'a'));
-            }
-            else if (c >= '0' && c <= '9')
-            {
-                in[in_len++] = (uint8_t) (52 + (c - '0'));
-            }
-            else if (c == '-')
-            {
-                in[in_len++] = 62;
-            }
-            else if (c == '_')
-            {
-                in[in_len++] = 63;
-            }
-            else
-            {
-                memoryFree(cleaned);
-                return false;
-            }
-        }
-
-        if (in_len == 0)
-        {
-            break;
-        }
-
-        if (in_len == 1)
-        {
-            memoryFree(cleaned);
-            return false;
-        }
-
-        if (o + (in_len - 1) > dst_cap)
-        {
-            memoryFree(cleaned);
-            return false;
-        }
-
-        uint32_t v = ((uint32_t) in[0] << 18) | ((uint32_t) in[1] << 12) | ((uint32_t) in[2] << 6) | (uint32_t) in[3];
-        dst[o++]   = (uint8_t) ((v >> 16) & 0xFF);
-        if (in_len >= 3)
-        {
-            dst[o++] = (uint8_t) ((v >> 8) & 0xFF);
-        }
-        if (in_len == 4)
-        {
-            dst[o++] = (uint8_t) (v & 0xFF);
-        }
-    }
-
-    memoryFree(cleaned);
-    *out_len = o;
-    return true;
-}
-
-static bool appendHeaderFmt(char *buf, size_t cap, int *offset, const char *fmt, ...)
-{
-    if (buf == NULL || offset == NULL || fmt == NULL || *offset < 0 || (size_t) *offset >= cap)
-    {
-        return false;
-    }
-
-    va_list args;
-    va_start(args, fmt);
-    int written = vsnprintf(buf + *offset, cap - (size_t) *offset, fmt, args);
-    va_end(args);
-
-    if (written < 0)
-    {
-        return false;
-    }
-
-    if ((size_t) written >= cap - (size_t) *offset)
-    {
-        return false;
-    }
-
-    *offset += written;
     return true;
 }
 
@@ -557,7 +423,7 @@ static size_t httpserverBuildWebSocketHeader(uint8_t *header, size_t cap, uint8_
         return 0;
     }
 
-    size_t off   = 0;
+    size_t off    = 0;
     header[off++] = (uint8_t) (0x80U | (opcode & 0x0FU));
 
     if (payload_len <= 125U)
@@ -666,13 +532,17 @@ bool httpserverTransportSendHttp1ResponseHeaders(tunnel_t *t, line_t *l)
         LOGD("HttpServer: sending HTTP/1.1 response status=%d websocket=false", ts->status_code);
     }
 
-    char *header_buf = memoryAllocate(kHttpServerMaxHeaderBytes);
-    int  offset = 0;
+    char  *header_buf = memoryAllocate(kHttpServerMaxHeaderBytes);
+    size_t offset     = 0;
 
-    if (! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "HTTP/1.1 %d %s\r\n", ts->status_code,
-                          statusReasonPhrase(ts->status_code)) ||
-        ! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset,
-                          "Connection: close\r\nTransfer-Encoding: chunked\r\n"))
+    if (! stringAppendFormat(header_buf,
+                             kHttpServerMaxHeaderBytes,
+                             &offset,
+                             "HTTP/1.1 %d %s\r\n",
+                             ts->status_code,
+                             statusReasonPhrase(ts->status_code)) ||
+        ! stringAppendFormat(
+            header_buf, kHttpServerMaxHeaderBytes, &offset, "Connection: close\r\nTransfer-Encoding: chunked\r\n"))
     {
         LOGE("HttpServer: response headers are too large");
         memoryFree(header_buf);
@@ -681,8 +551,11 @@ bool httpserverTransportSendHttp1ResponseHeaders(tunnel_t *t, line_t *l)
 
     if (ts->content_type != kContentTypeNone && ts->content_type != kContentTypeUndefined)
     {
-        if (! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "Content-Type: %s\r\n",
-                              httpContentTypeStr(ts->content_type)))
+        if (! stringAppendFormat(header_buf,
+                                 kHttpServerMaxHeaderBytes,
+                                 &offset,
+                                 "Content-Type: %s\r\n",
+                                 httpContentTypeStr(ts->content_type)))
         {
             LOGE("HttpServer: response headers are too large");
             memoryFree(header_buf);
@@ -705,8 +578,8 @@ bool httpserverTransportSendHttp1ResponseHeaders(tunnel_t *t, line_t *l)
                 continue;
             }
 
-            if (! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "%s: %s\r\n", header->string,
-                                  header->valuestring))
+            if (! stringAppendFormat(
+                    header_buf, kHttpServerMaxHeaderBytes, &offset, "%s: %s\r\n", header->string, header->valuestring))
             {
                 LOGE("HttpServer: response headers are too large");
                 memoryFree(header_buf);
@@ -715,7 +588,7 @@ bool httpserverTransportSendHttp1ResponseHeaders(tunnel_t *t, line_t *l)
         }
     }
 
-    if (! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "\r\n"))
+    if (! stringAppendFormat(header_buf, kHttpServerMaxHeaderBytes, &offset, "\r\n"))
     {
         LOGE("HttpServer: response headers are too large");
         memoryFree(header_buf);
@@ -730,9 +603,9 @@ bool httpserverTransportSendHttp1ResponseHeaders(tunnel_t *t, line_t *l)
 static bool httpserverTransportSendHttp1WebSocketResponseHeaders(tunnel_t *t, line_t *l,
                                                                  const httpserver_h1_request_info_t *info)
 {
-    httpserver_tstate_t *ts = tunnelGetState(t);
+    httpserver_tstate_t *ts         = tunnelGetState(t);
     char                *header_buf = memoryAllocate(kHttpServerMaxHeaderBytes);
-    int                  offset     = 0;
+    size_t               offset     = 0;
     char                 accept[128];
 
     httpserverBuildWebSocketAccept(info->sec_websocket_key, accept, sizeof(accept));
@@ -744,22 +617,26 @@ static bool httpserverTransportSendHttp1WebSocketResponseHeaders(tunnel_t *t, li
 
     if (ts->verbose)
     {
-        LOGD("HttpServer: accepting websocket HTTP/1.1 upgrade path=%s host=%s protocol=%s", info->path, info->host,
+        LOGD("HttpServer: accepting websocket HTTP/1.1 upgrade path=%s host=%s protocol=%s",
+             info->path,
+             info->host,
              ts->websocket_subprotocol != NULL ? ts->websocket_subprotocol : "<none>");
     }
 
-    if (! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "HTTP/1.1 101 Switching Protocols\r\n") ||
-        ! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "Connection: Upgrade\r\n") ||
-        ! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "Upgrade: websocket\r\n") ||
-        ! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "Sec-WebSocket-Accept: %s\r\n", accept))
+    if (! stringAppendFormat(header_buf, kHttpServerMaxHeaderBytes, &offset, "HTTP/1.1 101 Switching Protocols\r\n") ||
+        ! stringAppendFormat(header_buf, kHttpServerMaxHeaderBytes, &offset, "Connection: Upgrade\r\n") ||
+        ! stringAppendFormat(header_buf, kHttpServerMaxHeaderBytes, &offset, "Upgrade: websocket\r\n") ||
+        ! stringAppendFormat(header_buf, kHttpServerMaxHeaderBytes, &offset, "Sec-WebSocket-Accept: %s\r\n", accept))
     {
         memoryFree(header_buf);
         return false;
     }
 
-    if (ts->websocket_subprotocol != NULL &&
-        ! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "Sec-WebSocket-Protocol: %s\r\n",
-                          ts->websocket_subprotocol))
+    if (ts->websocket_subprotocol != NULL && ! stringAppendFormat(header_buf,
+                                                                  kHttpServerMaxHeaderBytes,
+                                                                  &offset,
+                                                                  "Sec-WebSocket-Protocol: %s\r\n",
+                                                                  ts->websocket_subprotocol))
     {
         memoryFree(header_buf);
         return false;
@@ -780,8 +657,8 @@ static bool httpserverTransportSendHttp1WebSocketResponseHeaders(tunnel_t *t, li
                 continue;
             }
 
-            if (! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "%s: %s\r\n", header->string,
-                                  header->valuestring))
+            if (! stringAppendFormat(
+                    header_buf, kHttpServerMaxHeaderBytes, &offset, "%s: %s\r\n", header->string, header->valuestring))
             {
                 memoryFree(header_buf);
                 return false;
@@ -789,7 +666,7 @@ static bool httpserverTransportSendHttp1WebSocketResponseHeaders(tunnel_t *t, li
         }
     }
 
-    if (! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "\r\n"))
+    if (! stringAppendFormat(header_buf, kHttpServerMaxHeaderBytes, &offset, "\r\n"))
     {
         memoryFree(header_buf);
         return false;
@@ -814,12 +691,12 @@ static bool httpserverTransportSendHttp1UpgradeResponseHeaders(tunnel_t *t, line
         LOGD("HttpServer: accepting HTTP/1.1 upgrade protocol=%s", protocol);
     }
 
-    char *header_buf = memoryAllocate(kHttpServerMaxHeaderBytes);
-    int   offset     = 0;
+    char  *header_buf = memoryAllocate(kHttpServerMaxHeaderBytes);
+    size_t offset     = 0;
 
-    if (! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "HTTP/1.1 101 Switching Protocols\r\n") ||
-        ! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "Connection: Upgrade\r\n") ||
-        ! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "Upgrade: %s\r\n", protocol))
+    if (! stringAppendFormat(header_buf, kHttpServerMaxHeaderBytes, &offset, "HTTP/1.1 101 Switching Protocols\r\n") ||
+        ! stringAppendFormat(header_buf, kHttpServerMaxHeaderBytes, &offset, "Connection: Upgrade\r\n") ||
+        ! stringAppendFormat(header_buf, kHttpServerMaxHeaderBytes, &offset, "Upgrade: %s\r\n", protocol))
     {
         memoryFree(header_buf);
         return false;
@@ -840,8 +717,8 @@ static bool httpserverTransportSendHttp1UpgradeResponseHeaders(tunnel_t *t, line
                 continue;
             }
 
-            if (! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "%s: %s\r\n", header->string,
-                                  header->valuestring))
+            if (! stringAppendFormat(
+                    header_buf, kHttpServerMaxHeaderBytes, &offset, "%s: %s\r\n", header->string, header->valuestring))
             {
                 memoryFree(header_buf);
                 return false;
@@ -849,7 +726,7 @@ static bool httpserverTransportSendHttp1UpgradeResponseHeaders(tunnel_t *t, line
         }
     }
 
-    if (! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "\r\n"))
+    if (! stringAppendFormat(header_buf, kHttpServerMaxHeaderBytes, &offset, "\r\n"))
     {
         memoryFree(header_buf);
         return false;
@@ -965,7 +842,7 @@ static bool parseHttp1RequestHeaders(const char *headers, httpserver_h1_request_
         return false;
     }
 
-    *info = (httpserver_h1_request_info_t){0};
+    *info = (httpserver_h1_request_info_t) {0};
 
     char *tmp = stringDuplicate(headers);
 
@@ -1009,7 +886,7 @@ static bool parseHttp1RequestHeaders(const char *headers, httpserver_h1_request_
         char *colon = strchr(line, ':');
         if (colon != NULL)
         {
-            *colon = '\0';
+            *colon      = '\0';
             char *key   = line;
             char *value = colon + 1;
 
@@ -1039,8 +916,7 @@ static bool parseHttp1RequestHeaders(const char *headers, httpserver_h1_request_
                 snprintf(info->upgrade_value, sizeof(info->upgrade_value), "%s", value);
                 info->upgrade_h2c = true;
             }
-            else if (stringAsciiCaseEquals(key, "Upgrade") &&
-                     stringAsciiCaseContainsToken(value, "websocket"))
+            else if (stringAsciiCaseEquals(key, "Upgrade") && stringAsciiCaseContainsToken(value, "websocket"))
             {
                 info->has_upgrade_header = true;
                 snprintf(info->upgrade_value, sizeof(info->upgrade_value), "%s", value);
@@ -1117,7 +993,8 @@ static bool parseHttp1RequestHeaders(const char *headers, httpserver_h1_request_
 
 static bool validateHttp1Request(const httpserver_tstate_t *ts, const httpserver_h1_request_info_t *info)
 {
-    if (ts->expected_method != NULL && ts->expected_method[0] != '\0' && ! stringAsciiCaseEquals(ts->expected_method, info->method))
+    if (ts->expected_method != NULL && ts->expected_method[0] != '\0' &&
+        ! stringAsciiCaseEquals(ts->expected_method, info->method))
     {
         LOGW("HttpServer: method mismatch, expected=%s got=%s", ts->expected_method, info->method);
         return false;
@@ -1167,8 +1044,10 @@ static bool validateWebSocketHttp1Request(const httpserver_tstate_t *ts, const h
 
     if (info->transfer_chunked || (info->has_content_length && info->content_length > 0))
     {
-        LOGW("HttpServer: websocket HTTP/1.1 upgrade request must not carry a body transfer-chunked=%s content-length=%" PRId64,
-             info->transfer_chunked ? "true" : "false", info->content_length);
+        LOGW("HttpServer: websocket HTTP/1.1 upgrade request must not carry a body transfer-chunked=%s "
+             "content-length=%" PRId64,
+             boolToTrueFalse(info->transfer_chunked),
+             info->content_length);
         return false;
     }
 
@@ -1207,7 +1086,7 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
     while (true)
     {
         const uint8_t *data = NULL;
-        nghttp2_ssize   len  = nghttp2_session_mem_send2(ls->session, &data);
+        nghttp2_ssize  len  = nghttp2_session_mem_send2(ls->session, &data);
 
         if (len < 0)
         {
@@ -1237,8 +1116,8 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
             return false;
         }
 
-        uint32_t        rem = (uint32_t) len;
-        const uint8_t  *ptr = data;
+        uint32_t       rem = (uint32_t) len;
+        const uint8_t *ptr = data;
         while (rem > 0)
         {
             uint32_t chunk = min(rem, max_chunk);
@@ -1262,13 +1141,8 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 static httpserver_h2_data_item_t *httpserverH2DataItemCreate(sbuf_t *payload, bool end_stream)
 {
     httpserver_h2_data_item_t *item = memoryAllocate(sizeof(*item));
-    *item = (httpserver_h2_data_item_t) {
-        .payload    = payload,
-        .offset     = 0,
-        .end_stream = end_stream,
-        .complete   = false,
-        .next       = NULL
-    };
+    *item                           = (httpserver_h2_data_item_t) {
+                                  .payload = payload, .offset = 0, .end_stream = end_stream, .complete = false, .next = NULL};
     return item;
 }
 
@@ -1299,7 +1173,7 @@ static void httpserverH2DataQueuePush(httpserver_lstate_t *ls, httpserver_h2_dat
 
 static void httpserverH2DataQueuePushFront(httpserver_lstate_t *ls, httpserver_h2_data_item_t *item)
 {
-    item->next = ls->h2_data_head;
+    item->next       = ls->h2_data_head;
     ls->h2_data_head = item;
     if (ls->h2_data_tail == NULL)
     {
@@ -1368,7 +1242,7 @@ static bool httpserverSubmitNextHttp2Data(tunnel_t *t, line_t *l, httpserver_lst
         return true;
     }
 
-    httpserver_h2_data_item_t *item = httpserverH2DataQueuePop(ls);
+    httpserver_h2_data_item_t *item     = httpserverH2DataQueuePop(ls);
     nghttp2_data_provider      provider = {
              .source        = {.ptr = item},
              .read_callback = httpserverH2DataReadCallback,
@@ -1414,12 +1288,10 @@ static bool httpserverTransportEnsureHttp2SessionInternal(tunnel_t *t, line_t *l
         return false;
     }
 
-    nghttp2_settings_entry settings[] = {
-        {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 1},
-        {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, (1U << 20)},
-        {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, (uint32_t) kHttpServerHttp2FrameBytes},
-        {NGHTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL, ts->websocket_enabled ? 1U : 0U}
-    };
+    nghttp2_settings_entry settings[] = {{NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 1},
+                                         {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, (1U << 20)},
+                                         {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, (uint32_t) kHttpServerHttp2FrameBytes},
+                                         {NGHTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL, ts->websocket_enabled ? 1U : 0U}};
 
     if (nghttp2_submit_settings(ls->session, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings)) != 0)
     {
@@ -1432,7 +1304,8 @@ static bool httpserverTransportEnsureHttp2SessionInternal(tunnel_t *t, line_t *l
     if (ts->verbose)
     {
         LOGD("HttpServer: initialized HTTP/2 server session websocket=%s flush-outbound=%s",
-             ts->websocket_enabled ? "true" : "false", flush_outbound ? "true" : "false");
+             boolToTrueFalse(ts->websocket_enabled),
+             boolToTrueFalse(flush_outbound));
     }
 
     return flush_outbound ? sendNghttp2Outbound(t, l, ls) : true;
@@ -1476,7 +1349,8 @@ static bool validateHttp2Request(const httpserver_tstate_t *ts, const httpserver
     if (ts->expected_method != NULL && ts->expected_method[0] != '\0' &&
         (! ls->websocket_h2_method_seen || ! stringAsciiCaseEquals(ts->expected_method, ls->websocket_h2_method)))
     {
-        LOGW("HttpServer: HTTP/2 method mismatch, expected=%s got=%s", ts->expected_method,
+        LOGW("HttpServer: HTTP/2 method mismatch, expected=%s got=%s",
+             ts->expected_method,
              ls->websocket_h2_method_seen ? ls->websocket_h2_method : "<missing>");
         return false;
     }
@@ -1484,15 +1358,16 @@ static bool validateHttp2Request(const httpserver_tstate_t *ts, const httpserver
     if (ts->expected_path != NULL && ts->expected_path[0] != '\0' &&
         (! ls->websocket_h2_path_seen || stringCompare(ts->expected_path, ls->websocket_h2_path) != 0))
     {
-        LOGW("HttpServer: HTTP/2 path mismatch, expected=%s got=%s", ts->expected_path,
+        LOGW("HttpServer: HTTP/2 path mismatch, expected=%s got=%s",
+             ts->expected_path,
              ls->websocket_h2_path_seen ? ls->websocket_h2_path : "<missing>");
         return false;
     }
 
-    if (! hostMatchesExpected(ts->expected_host,
-                              ls->websocket_h2_authority_seen ? ls->websocket_h2_authority : ""))
+    if (! hostMatchesExpected(ts->expected_host, ls->websocket_h2_authority_seen ? ls->websocket_h2_authority : ""))
     {
-        LOGW("HttpServer: HTTP/2 authority mismatch, expected=%s got=%s", ts->expected_host,
+        LOGW("HttpServer: HTTP/2 authority mismatch, expected=%s got=%s",
+             ts->expected_host,
              ls->websocket_h2_authority_seen ? ls->websocket_h2_authority : "<missing>");
         return false;
     }
@@ -1676,7 +1551,8 @@ static int httpserverOnFrameRecvCallback(nghttp2_session *session, const nghttp2
         httpserver_tstate_t *ts = tunnelGetState(ls->tunnel);
         if (ts->verbose)
         {
-            LOGD("HttpServer: received HTTP/2 request headers stream_id=%d flags=0x%02x", frame->hd.stream_id,
+            LOGD("HttpServer: received HTTP/2 request headers stream_id=%d flags=0x%02x",
+                 frame->hd.stream_id,
                  frame->hd.flags);
         }
         if (ts->websocket_enabled)
@@ -1685,7 +1561,9 @@ static int httpserverOnFrameRecvCallback(nghttp2_session *session, const nghttp2
             if (ls->websocket_active && ts->verbose)
             {
                 LOGD("HttpServer: websocket HTTP/2 handshake accepted stream_id=%d authority=%s path=%s protocol=%s",
-                     ls->h2_stream_id, ls->websocket_h2_authority, ls->websocket_h2_path,
+                     ls->h2_stream_id,
+                     ls->websocket_h2_authority,
+                     ls->websocket_h2_path,
                      ls->websocket_h2_subprotocol_seen ? ls->websocket_h2_subprotocol : "<none>");
             }
         }
@@ -1698,13 +1576,16 @@ static int httpserverOnFrameRecvCallback(nghttp2_session *session, const nghttp2
     }
 
     if ((frame->hd.type == NGHTTP2_DATA || frame->hd.type == NGHTTP2_HEADERS) && frame->hd.stream_id > 0 &&
-        (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) == NGHTTP2_FLAG_END_STREAM && frame->hd.stream_id == ls->h2_stream_id)
+        (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) == NGHTTP2_FLAG_END_STREAM &&
+        frame->hd.stream_id == ls->h2_stream_id)
     {
         httpserver_tstate_t *ts = tunnelGetState(ls->tunnel);
         if (ts->verbose)
         {
             LOGD("HttpServer: received HTTP/2 END_STREAM stream_id=%d websocket=%s full-duplex=%s",
-                 frame->hd.stream_id, ts->websocket_enabled ? "true" : "false", ts->full_duplex ? "true" : "false");
+                 frame->hd.stream_id,
+                 boolToTrueFalse(ts->websocket_enabled),
+                 boolToTrueFalse(ts->full_duplex));
         }
         if (! ls->h2_request_finished)
         {
@@ -1794,7 +1675,7 @@ static bool httpserverTransportApplyUpgradeSettingsAndOpenStream(tunnel_t *t, li
     uint8_t settings_payload[256];
     size_t  settings_len = 0;
 
-    if (! base64UrlDecode(h2_settings_value, settings_payload, sizeof(settings_payload), &settings_len))
+    if (! httpserverBase64UrlDecodeCompat(h2_settings_value, settings_payload, sizeof(settings_payload), &settings_len))
     {
         LOGE("HttpServer: invalid HTTP2-Settings header");
         return false;
@@ -1838,35 +1719,38 @@ bool httpserverTransportSubmitHttp2ResponseHeaders(tunnel_t *t, line_t *l, https
     if (ts->verbose)
     {
         LOGD("HttpServer: sending HTTP/2 response headers stream_id=%d status=%s websocket=%s end_stream=%s",
-             ls->h2_stream_id, status_buf, ts->websocket_enabled ? "true" : "false", end_stream ? "true" : "false");
+             ls->h2_stream_id,
+             status_buf,
+             boolToTrueFalse(ts->websocket_enabled),
+             boolToTrueFalse(end_stream));
     }
 
     nghttp2_nv nvs[24];
     int        nvlen = 0;
 
-    nvs[nvlen++] = (nghttp2_nv) {.name = (uint8_t *) ":status",
-                                 .value = (uint8_t *) status_buf,
-                                 .namelen = 7,
+    nvs[nvlen++] = (nghttp2_nv) {.name     = (uint8_t *) ":status",
+                                 .value    = (uint8_t *) status_buf,
+                                 .namelen  = 7,
                                  .valuelen = stringLength(status_buf),
-                                 .flags = NGHTTP2_NV_FLAG_NONE};
+                                 .flags    = NGHTTP2_NV_FLAG_NONE};
 
     if (! ts->websocket_enabled && ts->content_type != kContentTypeNone && ts->content_type != kContentTypeUndefined)
     {
         const char *ctype = httpContentTypeStr(ts->content_type);
-        nvs[nvlen++]      = (nghttp2_nv) {.name = (uint8_t *) "content-type",
-                                          .value = (uint8_t *) ctype,
-                                          .namelen = 12,
+        nvs[nvlen++]      = (nghttp2_nv) {.name     = (uint8_t *) "content-type",
+                                          .value    = (uint8_t *) ctype,
+                                          .namelen  = 12,
                                           .valuelen = stringLength(ctype),
-                                          .flags = NGHTTP2_NV_FLAG_NONE};
+                                          .flags    = NGHTTP2_NV_FLAG_NONE};
     }
 
     if (ts->websocket_enabled && ts->websocket_subprotocol != NULL)
     {
-        nvs[nvlen++] = (nghttp2_nv) {.name = (uint8_t *) "sec-websocket-protocol",
-                                     .value = (uint8_t *) ts->websocket_subprotocol,
-                                     .namelen = 22,
+        nvs[nvlen++] = (nghttp2_nv) {.name     = (uint8_t *) "sec-websocket-protocol",
+                                     .value    = (uint8_t *) ts->websocket_subprotocol,
+                                     .namelen  = 22,
                                      .valuelen = stringLength(ts->websocket_subprotocol),
-                                     .flags = NGHTTP2_NV_FLAG_NONE};
+                                     .flags    = NGHTTP2_NV_FLAG_NONE};
     }
 
     if (cJSON_IsObject(ts->headers))
@@ -1889,11 +1773,11 @@ bool httpserverTransportSubmitHttp2ResponseHeaders(tunnel_t *t, line_t *l, https
                 break;
             }
 
-            nvs[nvlen++] = (nghttp2_nv) {.name = (uint8_t *) header->string,
-                                          .value = (uint8_t *) header->valuestring,
-                                          .namelen = stringLength(header->string),
-                                          .valuelen = stringLength(header->valuestring),
-                                          .flags = NGHTTP2_NV_FLAG_NONE};
+            nvs[nvlen++] = (nghttp2_nv) {.name     = (uint8_t *) header->string,
+                                         .value    = (uint8_t *) header->valuestring,
+                                         .namelen  = stringLength(header->string),
+                                         .valuelen = stringLength(header->valuestring),
+                                         .flags    = NGHTTP2_NV_FLAG_NONE};
         }
     }
 
@@ -1936,8 +1820,10 @@ bool httpserverTransportSendHttp2DataFrame(tunnel_t *t, line_t *l, httpserver_ls
 
     if (httpserverVerboseEnabled(t))
     {
-        LOGD("HttpServer: queueing HTTP/2 DATA stream_id=%d payload_len=%u end_stream=%s", ls->h2_stream_id,
-             payload_len, end_stream ? "true" : "false");
+        LOGD("HttpServer: queueing HTTP/2 DATA stream_id=%d payload_len=%u end_stream=%s",
+             ls->h2_stream_id,
+             payload_len,
+             boolToTrueFalse(end_stream));
     }
 
     httpserverH2DataQueuePush(ls, httpserverH2DataItemCreate(payload, end_stream));
@@ -2015,7 +1901,8 @@ bool httpserverTransportDrainWebSocketUp(tunnel_t *t, line_t *l, httpserver_lsta
         if (! masked)
         {
             LOGE("HttpServer: client websocket frames must be masked opcode=%s payload_len=%" PRIu64,
-                 httpserverWebSocketOpcodeName(opcode), payload_len);
+                 httpserverWebSocketOpcodeName(opcode),
+                 payload_len);
             return false;
         }
 
@@ -2052,14 +1939,17 @@ bool httpserverTransportDrainWebSocketUp(tunnel_t *t, line_t *l, httpserver_lsta
         if ((opcode & 0x08U) != 0 && (! fin || payload_len > 125U))
         {
             LOGE("HttpServer: invalid websocket control frame opcode=%s fin=%s payload_len=%" PRIu64,
-                 httpserverWebSocketOpcodeName(opcode), fin ? "true" : "false", payload_len);
+                 httpserverWebSocketOpcodeName(opcode),
+                 boolToTrueFalse(fin),
+                 payload_len);
             return false;
         }
 
         if (payload_len > UINT32_MAX)
         {
             LOGE("HttpServer: websocket frame exceeds buffer limits opcode=%s payload_len=%" PRIu64,
-                 httpserverWebSocketOpcodeName(opcode), payload_len);
+                 httpserverWebSocketOpcodeName(opcode),
+                 payload_len);
             return false;
         }
 
@@ -2072,7 +1962,7 @@ bool httpserverTransportDrainWebSocketUp(tunnel_t *t, line_t *l, httpserver_lsta
         sbuf_t *payload = NULL;
         if (payload_len > 0)
         {
-            payload = bufferstreamReadExact(&ls->in_stream, (size_t) payload_len);
+            payload      = bufferstreamReadExact(&ls->in_stream, (size_t) payload_len);
             uint8_t *ptr = (uint8_t *) sbufGetMutablePtr(payload);
             for (uint32_t i = 0; i < sbufGetLength(payload); ++i)
             {
@@ -2084,12 +1974,12 @@ bool httpserverTransportDrainWebSocketUp(tunnel_t *t, line_t *l, httpserver_lsta
         {
             if (httpserverVerboseEnabled(t))
             {
-                LOGD("HttpServer: received websocket ping payload_len=%u", payload == NULL ? 0U : sbufGetLength(payload));
+                LOGD("HttpServer: received websocket ping payload_len=%u",
+                     payload == NULL ? 0U : sbufGetLength(payload));
             }
             const void *pong_data = (payload == NULL) ? NULL : sbufGetRawPtr(payload);
             uint32_t    pong_len  = (payload == NULL) ? 0U : sbufGetLength(payload);
-            bool        ok        = httpserverSendWebSocketControlFrame(t, l, ls, kWebSocketOpcodePong, pong_data,
-                                                                        pong_len);
+            bool        ok = httpserverSendWebSocketControlFrame(t, l, ls, kWebSocketOpcodePong, pong_data, pong_len);
             if (payload != NULL)
             {
                 lineReuseBuffer(l, payload);
@@ -2105,7 +1995,8 @@ bool httpserverTransportDrainWebSocketUp(tunnel_t *t, line_t *l, httpserver_lsta
         {
             if (httpserverVerboseEnabled(t))
             {
-                LOGD("HttpServer: received websocket pong payload_len=%u", payload == NULL ? 0U : sbufGetLength(payload));
+                LOGD("HttpServer: received websocket pong payload_len=%u",
+                     payload == NULL ? 0U : sbufGetLength(payload));
             }
             if (payload != NULL)
             {
@@ -2119,7 +2010,8 @@ bool httpserverTransportDrainWebSocketUp(tunnel_t *t, line_t *l, httpserver_lsta
             if (httpserverVerboseEnabled(t))
             {
                 LOGD("HttpServer: received websocket close payload_len=%u close_sent=%s",
-                     payload == NULL ? 0U : sbufGetLength(payload), ls->websocket_close_sent ? "true" : "false");
+                     payload == NULL ? 0U : sbufGetLength(payload),
+                     boolToTrueFalse(ls->websocket_close_sent));
             }
 
             if (! ls->websocket_close_sent)
@@ -2342,7 +2234,8 @@ bool httpserverTransportFeedHttp2Input(tunnel_t *t, line_t *l, httpserver_lstate
     {
         if (ls->h2_stream_id > 0 && ! ls->websocket_active)
         {
-            LOGE("HttpServer: websocket HTTP/2 handshake failed method=%s protocol=%s path=%s authority=%s version=%s origin=%s subprotocol=%s",
+            LOGE("HttpServer: websocket HTTP/2 handshake failed method=%s protocol=%s path=%s authority=%s version=%s "
+                 "origin=%s subprotocol=%s",
                  ls->websocket_h2_method_seen ? ls->websocket_h2_method : "<missing>",
                  ls->websocket_h2_protocol_seen ? ls->websocket_h2_protocol : "<missing>",
                  ls->websocket_h2_path_seen ? ls->websocket_h2_path : "<missing>",
@@ -2481,10 +2374,15 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
     {
         if (ts->verbose)
         {
-            LOGD("HttpServer: parsed websocket HTTP/1.1 request method=%s path=%s host=%s origin=%s subprotocol=%s transfer-chunked=%s content-length=%" PRId64,
-                 info.method, info.path, info.host, info.has_origin ? info.origin : "<none>",
+            LOGD("HttpServer: parsed websocket HTTP/1.1 request method=%s path=%s host=%s origin=%s subprotocol=%s "
+                 "transfer-chunked=%s content-length=%" PRId64,
+                 info.method,
+                 info.path,
+                 info.host,
+                 info.has_origin ? info.origin : "<none>",
                  info.has_sec_websocket_protocol ? info.sec_websocket_protocol : "<none>",
-                 info.transfer_chunked ? "true" : "false", info.content_length);
+                 boolToTrueFalse(info.transfer_chunked),
+                 info.content_length);
         }
 
         if (! validateWebSocketHttp1Request(ts, &info))
@@ -2524,8 +2422,11 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
     if (ts->verbose)
     {
         LOGD("HttpServer: parsed HTTP/1.1 request method=%s path=%s host=%s transfer-chunked=%s content-length=%s",
-             info.method, info.path, info.host, info.transfer_chunked ? "true" : "false",
-             info.has_content_length ? "true" : "false");
+             info.method,
+             info.path,
+             info.host,
+             boolToTrueFalse(info.transfer_chunked),
+             boolToTrueFalse(info.has_content_length));
     }
 
     if (ts->version_mode == kHttpServerVersionModeBoth && ts->enable_upgrade && info.connection_upgrade)
@@ -2538,7 +2439,8 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
         {
             if (request_has_body)
             {
-                LOGW("HttpServer: ignoring upgrade request protocol=%s because the original HTTP/1.1 request carries a body",
+                LOGW("HttpServer: ignoring upgrade request protocol=%s because the original HTTP/1.1 request carries a "
+                     "body",
                      httpserverUpgradeProtocol(ts));
             }
             else
@@ -2569,8 +2471,7 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
         }
 
         if (httpserverUpgradeIsH2C(ts) && info.connection_http2_settings && info.upgrade_h2c &&
-            info.has_http2_settings &&
-            httpserverValidateRequiredHeaders(header_text, ts->upgrade_request_headers))
+            info.has_http2_settings && httpserverValidateRequiredHeaders(header_text, ts->upgrade_request_headers))
         {
             if (request_has_body)
             {
@@ -2639,7 +2540,7 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
     }
     else
     {
-        ls->h1_body_mode = kHttpServerH1BodyNone;
+        ls->h1_body_mode        = kHttpServerH1BodyNone;
         ls->h1_request_finished = true;
         if (! ts->full_duplex && ! ls->next_finished)
         {
@@ -2673,7 +2574,7 @@ static bool parseChunkSizeLine(sbuf_t *line_buf, uint64_t *chunk_len)
         *semi = '\0';
     }
 
-    char *endp                = NULL;
+    char              *endp   = NULL;
     unsigned long long parsed = strtoull(line, &endp, 16);
     while (endp != NULL && (*endp == ' ' || *endp == '\t'))
     {
@@ -2844,8 +2745,8 @@ static void httpserverTransportCloseDirections(tunnel_t *t, line_t *l, httpserve
 {
     lineLock(l);
 
-    bool send_next = close_next && ! ls->next_finished;
-    bool send_prev = close_prev && ! ls->prev_finished;
+    bool    send_next   = close_next && ! ls->next_finished;
+    bool    send_prev   = close_prev && ! ls->prev_finished;
     line_t *next_target = send_next ? httpserverUpstreamTargetLine(ls, l) : NULL;
 
     ls->next_finished = true;

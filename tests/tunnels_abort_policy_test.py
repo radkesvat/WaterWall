@@ -27,7 +27,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 231
+EXPECTED_TOTAL_ABORTS = 234
 
 
 # ---------------------------------------------------------------------------
@@ -851,6 +851,15 @@ MANIFEST = [
     ("tunnels/WireGuardDevice/instance/start.c", "wireguarddeviceQueueWorkerPacketInit", 1,
      ("WireGuardDevice: worker packet line died during packet-side init",),
      "worker-task invariant: WireGuardDevice start packet line died"),
+    ("tunnels/TcpOverUdpClient/common/line_state.c", "tcpoverudpclientLinestateInitialize", 1,
+     ("TcpOverUdpClient: KCP rejected the validated MTU %d (result %d)",),
+     "per-line initialization invariant: TcpOverUdpClient impossible MTU rejection"),
+    ("tunnels/TcpOverUdpServer/common/line_state.c", "tcpoverudpserverLinestateInitialize", 1,
+     ("TcpOverUdpServer: KCP rejected the validated MTU %d (result %d)",),
+     "per-line initialization invariant: TcpOverUdpServer impossible MTU rejection"),
+    ("tunnels/Router/common/geoip.c", "routerGeoipLookupCountry", 1,
+     ("Router: GeoIP rule evaluated without an open MaxMind database",),
+     "per-request evaluation invariant: Router GeoIP database was never opened"),
     ("tunnels/Internals/DomainResolver/instance/api.c", "domainresolverTunnelSetPrepareHook", 2,
      ("DomainResolver: prepare hook must be configured before chaining",
       "DomainResolver: prepare hook line state is too large"),
@@ -884,14 +893,61 @@ EXCLUSIONS = [
      {"terminateProgram": 0, "abortProgramNow": 1, "requestProgramShutdown": 1},
      ("TesterClient: worker %u failed: %s",),
      "orderly runtime shutdown request from an arbitrary worker"),
+    # ------------------------------------------------------------------
+    # Category-C: one line or one request failed. These functions must not
+    # terminate, abort, or request a shutdown of the process; they clean up and
+    # close only the affected line. Every one of them is pinned at zero calls to
+    # all three process APIs.
+    # ------------------------------------------------------------------
+    ("tunnels/Internals/MuxCommon/src/mux_wire.c", "muxEncodeChildPayload",
+     {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     ("cannot be encoded into MUX frames, closing this child",),
+     "Category-C: oversized valid Mux payload is fragmented, never fatal"),
+    ("tunnels/MuxClient/common/helpers.c", "muxclientEncodeChildPayload",
+     {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     (),
+     "Category-C: oversized valid MuxClient payload is fragmented, never fatal"),
+    ("tunnels/MuxServer/common/helpers.c", "muxserverEncodeChildPayload",
+     {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     (),
+     "Category-C: oversized valid MuxServer payload is fragmented, never fatal"),
+    ("tunnels/MuxClient/common/helpers.c", "muxclientMakeMuxFrame",
+     {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     (),
+     "Category-C: MuxClient frame encoder must not police payload size fatally"),
+    ("tunnels/MuxServer/common/helpers.c", "muxserverMakeMuxFrame",
+     {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     (),
+     "Category-C: MuxServer frame encoder must not police payload size fatally"),
     ("tunnels/TlsClient/common/line_state.c", "tlsclientLinestateInitialize",
-     {"terminateProgram": 2, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
      ("Failed to allocate TlsClient BoringSSL line state",),
-     "per-line error intentionally excluded from the migration"),
-    ("tunnels/Router/common/geoip.c", "routerGeoipLookupCountry",
-     {"terminateProgram": 2, "abortProgramNow": 0, "requestProgramShutdown": 0},
-     ("Router: GeoIP rule evaluated without an open MaxMind database",),
-     "per-request error intentionally excluded from the migration"),
+     "Category-C: TlsClient per-line BoringSSL allocation failure closes one line"),
+    ("tunnels/TlsServer/common/helpers.c", "tlsserverArmHandshakeDeadline",
+     {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     ("TlsServer: failed to create the TLS handshake deadline timer for this line",),
+     "Category-C: TlsServer per-line timer allocation failure closes one line"),
+    ("tunnels/SpeedLimit/common/helpers.c", "speedlimitScheduleUpstreamDrain",
+     {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     ("SpeedLimit: failed to create the upstream drain timer for this line",),
+     "Category-C: SpeedLimit per-line timer allocation failure closes one line"),
+    ("tunnels/SpeedLimit/common/helpers.c", "speedlimitScheduleDownstreamDrain",
+     {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     ("SpeedLimit: failed to create the downstream drain timer for this line",),
+     "Category-C: SpeedLimit per-line timer allocation failure closes one line"),
+    ("tunnels/TcpUdpConnector/common/helpers.c", "tcpudpconnectorSelectUpStreamTunnel",
+     {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     ("TcpUdpConnector: line has no TCP/UDP protocol flags in destination or source context",),
+     "Category-C: TcpUdpConnector rejects one line instead of terminating"),
+    ("tunnels/Router/common/geoip.c", "routerGeoipReadIsoCode",
+     {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     ("Router: MaxMind lookup failed at %s.iso_code: %s",
+      "Router: MaxMind %s.iso_code is not a two-letter string"),
+     "Category-C: Router MaxMind read errors propagate as evaluation failures"),
+    ("tunnels/Router/common/geosite_db.c", "geositeRegexPatternsMatch",
+     {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     (r'Router: GeoSite regex matcher failed at runtime for list \"%s\" (STC cregex error %d)',),
+     "Category-C: peer-reachable regex failure must never be a process-kill primitive"),
 ]
 
 
@@ -1106,6 +1162,14 @@ def mutate_exclusion_to_hard_abort(content, function, call_name):
     return content[:start] + "abortProgramNow" + content[start + len(call_name):]
 
 
+def mutate_insert_call(content, function, snippet):
+    """Insert ``snippet`` right after the opening brace of ``function``'s body."""
+    _masked, definitions = analyze(content)
+    body_start = definitions[function][0][0]
+    insert_at = body_start + 1
+    return content[:insert_at] + "\n    " + snippet + content[insert_at:]
+
+
 class MutationRunner:
     def __init__(self):
         self.applied = 0
@@ -1178,6 +1242,20 @@ def run_mutation_tests():
             label = "exclusion %s::%s %s() -> abortProgramNow()" % (rel_path, function, call_name)
             runner.expect_failure(
                 label, rel_path, mutate_exclusion_to_hard_abort(content, function, call_name)
+            )
+
+    # 8: a Category-C function pinned at zero calls must reject every process API that is
+    #    smuggled back into it. Removing a call cannot be mutated there, so the inverse is
+    #    exercised instead: inject one and require the checker to catch it.
+    for rel_path, function, expected_calls, _anchors, reason in EXCLUSIONS:
+        content = read_source(rel_path, None)
+        for call_name, expected_count in sorted(expected_calls.items()):
+            if expected_count != 0:
+                continue
+            snippet = "%s(1);" % call_name
+            label = "exclusion %s::%s gained %s" % (rel_path, function, snippet)
+            runner.expect_failure(
+                label, rel_path, mutate_insert_call(content, function, snippet)
             )
 
     missing_regressions = [

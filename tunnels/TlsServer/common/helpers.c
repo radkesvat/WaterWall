@@ -433,30 +433,37 @@ void tlsserverDisarmHandshakeDeadline(tlsserver_lstate_t *ls)
     ls->handshake_deadline_timer = NULL;
 }
 
-void tlsserverArmHandshakeDeadline(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
+bool tlsserverArmHandshakeDeadline(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
     tlsserver_tstate_t *ts = tunnelGetState(t);
 
     if (ts->handshake_timeout_ms == 0)
     {
-        return;
+        // no deadline is configured, there is nothing to arm
+        return true;
     }
 
     tlsserverDisarmHandshakeDeadline(ls);
 
-    ls->tunnel                    = t;
-    ls->line                      = l;
-    ls->handshake_deadline_armed  = true;
-    ls->handshake_deadline_timer =
+    ls->tunnel = t;
+    ls->line   = l;
+
+    wtimer_t *timer =
         wtimerAdd(getWorkerLoop(lineGetWID(l)), tlsserverHandshakeDeadlineTimerCallback, ts->handshake_timeout_ms, 1);
 
-    if (ls->handshake_deadline_timer == NULL)
+    if (timer == NULL)
     {
-        LOGF("TlsServer: failed to create TLS handshake deadline timer");
-        terminateProgram(1);
+        // the deadline stays disarmed and no userdata is published; the caller closes this line
+        LOGE("TlsServer: failed to create the TLS handshake deadline timer for this line");
+        return false;
     }
 
-    weventSetUserData(ls->handshake_deadline_timer, ls);
+    ls->handshake_deadline_timer = timer;
+    ls->handshake_deadline_armed = true;
+
+    weventSetUserData(timer, ls);
+
+    return true;
 }
 
 bool tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)

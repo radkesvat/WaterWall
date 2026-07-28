@@ -57,11 +57,6 @@ typedef struct muxserver_parent_stats_s
     uint32_t child_write_paused;
 } muxserver_parent_stats_t;
 
-static const char *muxserverBoolText(bool value)
-{
-    return value ? "yes" : "no";
-}
-
 static void muxserverCollectParentStats(muxserver_lstate_t *parent_ls, muxserver_parent_stats_t *stats)
 {
     memoryZero(stats, sizeof(*stats));
@@ -98,9 +93,12 @@ static void muxserverParentStatsLogTask(tunnel_t *t, line_t *parent_l)
 
     LOGI("MuxServer: main line stats wid=%u parent-line-write-paused=%s parent-line-read-paused=%s "
          "children-count=%u childs-read-paused=%u childs-write-paused=%u",
-         (unsigned int) lineGetWID(parent_l), muxserverBoolText(stats.parent_write_paused > 0),
-         muxserverBoolText(parent_ls->parent_read_pause_count > 0), parent_ls->children_count,
-         stats.child_read_paused, stats.child_write_paused);
+         (unsigned int) lineGetWID(parent_l),
+         boolToYesNo(stats.parent_write_paused > 0),
+         boolToYesNo(parent_ls->parent_read_pause_count > 0),
+         parent_ls->children_count,
+         stats.child_read_paused,
+         stats.child_write_paused);
 
     if (! parent_ls->parent_finishing)
     {
@@ -120,22 +118,48 @@ void muxserverScheduleParentStatsLog(tunnel_t *t, line_t *parent_l)
     lineScheduleDelayedTask(parent_l, muxserverParentStatsLogTask, kMuxMainLineStatsLogIntervalMs, t);
 }
 
-void muxserverMakeMuxFrame(sbuf_t *buf, cid_t cid, uint8_t flag)
+void muxserverCloseChildKeepParent(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
+                                   muxserver_lstate_t *child_ls, bool notify_child_next)
 {
-    if (sbufGetLength(buf) > 0xFFFF - kMuxFrameLength)
+    line_t         *child_l = child_ls->l;
+    const mux_cid_t cid     = child_ls->connection_id;
+
+    muxserverLeaveConnection(child_ls);
+
+    const bool parent_alive = muxserverReleaseParentInputForChildClose(t, parent_l, parent_ls, child_ls);
+
+    if (! parent_alive || parent_ls->parent_finishing)
     {
-        LOGF("MuxServer: Buffer length exceeds maximum allowed size for MUX frame: %zu", sbufGetLength(buf));
-        terminateProgram(1);
+        // no Close frame can be written; the peer learns about the close from the dying parent connection
+        muxserverLinestateDestroy(child_ls);
+        if (notify_child_next)
+        {
+            tunnelNextUpStreamFinish(t, child_l);
+        }
+        if (lineIsAlive(child_l))
+        {
+            lineDestroy(child_l);
+        }
+        return;
     }
 
-    mux_frame_t frame = {.length = sbufGetLength(buf),
-                         .cid    = cid, // will be set later
-                         .flags  = flag,
-                         ._pad1  = 0};
-    frame.length = htobe16(frame.length);
-    frame.cid    = htobe32(frame.cid);
-    sbufShiftLeft(buf, kMuxFrameLength);
-    sbufWrite(buf, &frame, kMuxFrameLength);
+    sbuf_t *finishpacket_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(child_l));
+    muxMakeMuxFrame(finishpacket_buf, cid, kMuxFlagClose);
+
+    muxserverLinestateDestroy(child_ls);
+
+    if (notify_child_next)
+    {
+        tunnelNextUpStreamFinish(t, child_l);
+    }
+
+    // MuxServer created this child line, so MuxServer destroys it
+    if (lineIsAlive(child_l))
+    {
+        lineDestroy(child_l);
+    }
+
+    tunnelPrevDownStreamPayload(t, parent_l, finishpacket_buf);
 }
 
 static size_t muxserverChildResumeThreshold(muxserver_tstate_t *ts)
@@ -171,7 +195,7 @@ static void muxserverReleaseChildPendingBytes(muxserver_lstate_t *parent_ls, mux
 }
 
 bool muxserverSendControlFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, line_t *child_l,
-                               cid_t cid, uint8_t flag)
+                               mux_cid_t cid, uint8_t flag)
 {
     if (parent_ls->parent_finishing)
     {
@@ -179,7 +203,7 @@ bool muxserverSendControlFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t
     }
 
     sbuf_t *control_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(parent_l));
-    muxserverMakeMuxFrame(control_buf, cid, flag);
+    muxMakeMuxFrame(control_buf, cid, flag);
 
     lineLock(parent_l);
     parent_ls->last_writer = child_l;
@@ -195,8 +219,7 @@ bool muxserverSendControlFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t
 }
 
 bool muxserverMaybeSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
-                                      muxserver_lstate_t *parent_ls, line_t *child_l,
-                                      muxserver_lstate_t *child_ls)
+                                      muxserver_lstate_t *parent_ls, line_t *child_l, muxserver_lstate_t *child_ls)
 {
     if (bufferqueueGetBufLen(&child_ls->pending_child_data) < ts->child_buffer_pause_tolerance)
     {
@@ -374,8 +397,8 @@ bool muxserverResumeChildSource(tunnel_t *t, line_t *parent_l, muxserver_lstate_
 static bool muxserverCloseChildForBufferLimit(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,
                                               muxserver_lstate_t *child_ls)
 {
-    line_t *child_l = child_ls->l;
-    cid_t   cid     = child_ls->connection_id;
+    line_t   *child_l = child_ls->l;
+    mux_cid_t cid     = child_ls->connection_id;
 
     LOGW("MuxServer: closing child cid %u because queued child data reached limit", cid);
 
@@ -395,8 +418,8 @@ static bool muxserverCloseChildForBufferLimit(tunnel_t *t, line_t *parent_l, mux
     return parent_alive && lineIsAlive(parent_l);
 }
 
-bool muxserverQueueChildPayload(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
-                                muxserver_lstate_t *parent_ls, muxserver_lstate_t *child_ls, sbuf_t *buf)
+bool muxserverQueueChildPayload(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts, muxserver_lstate_t *parent_ls,
+                                muxserver_lstate_t *child_ls, sbuf_t *buf)
 {
     size_t buf_len = sbufGetLength(buf);
 
@@ -433,8 +456,7 @@ static bool muxserverHandleChildBufferAfterDrain(tunnel_t *t, line_t *parent_l, 
     if (! child_ls->paused && child_ls->flow_paused_sent && pending_bytes < muxserverChildResumeThreshold(ts))
     {
         child_ls->flow_paused_sent = false;
-        if (! muxserverSendControlFrame(t, parent_l, parent_ls, child_l, child_ls->connection_id,
-                                        kMuxFlagFlowResume))
+        if (! muxserverSendControlFrame(t, parent_l, parent_ls, child_l, child_ls->connection_id, kMuxFlagFlowResume))
         {
             return false;
         }
