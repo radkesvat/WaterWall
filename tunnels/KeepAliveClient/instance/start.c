@@ -20,7 +20,16 @@ static void keepaliveclientStartWorkerTimer(void *worker_ptr, void *arg1, void *
     if (timer == NULL)
     {
         LOGF("KeepAliveClient: failed to create periodic keepalive timer on worker %u", (unsigned int) worker->wid);
-        terminateProgram(1);
+        /*
+         * Category B: this task was enqueued by onStart but runs on a worker
+         * event loop, so it must not tear anything down itself. The timer slot
+         * stays NULL; timers other workers already published are deleted by
+         * their own onWorkerStop during the orderly shutdown.
+         */
+        if (! requestProgramShutdown(1))
+        {
+            abortProgramNow(1);
+        }
         return;
     }
 

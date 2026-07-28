@@ -464,6 +464,13 @@ uint64_t testerclientGetRemainingBytes(tunnel_t *t, uint8_t index)
     return remaining;
 }
 
+/*
+ * Category D (invariant): every failure below means the generator was asked for
+ * a payload that its own validated configuration and scheduling can never
+ * produce, so none of them is a peer-selectable runtime verdict. They hard-abort
+ * rather than request an orderly shutdown, which makes this function
+ * non-nullable: callers may use the returned buffer without a NULL check.
+ */
 sbuf_t *testerclientCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, uint32_t chunk_offset,
                                   uint32_t payload_len, testerclient_direction_e direction)
 {
@@ -475,14 +482,14 @@ sbuf_t *testerclientCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, u
     {
         if (payload_len != testerclientGetChunkSize(t, chunk_index))
         {
-            testerclientFail(t, l, "packet-mode payload generation attempted to split a packet chunk");
-            return NULL;
+            LOGF("TesterClient: packet-mode payload generation attempted to split a packet chunk");
+            abortProgramNow(1);
         }
 
         if (bufferpoolGetSmallBufferSize(pool) < kMaxAllowedPacketLength)
         {
-            testerclientFail(t, l, "packet-mode requires enough small-buffer capacity for the maximum packet length");
-            return NULL;
+            LOGF("TesterClient: packet-mode requires enough small-buffer capacity for the maximum packet length");
+            abortProgramNow(1);
         }
 
         buf = bufferpoolGetSmallBuffer(pool);
@@ -497,8 +504,8 @@ sbuf_t *testerclientCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, u
     }
     else
     {
-        testerclientFail(t, l, "stream-mode payload generation exceeded large buffer size");
-        return NULL;
+        LOGF("TesterClient: stream-mode payload generation exceeded large buffer size");
+        abortProgramNow(1);
     }
 
     sbufSetLength(buf, payload_len);
@@ -509,8 +516,8 @@ sbuf_t *testerclientCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, u
 
         if (payload_len <= payload_offset)
         {
-            testerclientFail(t, l, "packet-ipv4 chunk size is smaller than the configured packet headers");
-            return NULL;
+            LOGF("TesterClient: packet-ipv4 chunk size is smaller than the configured packet headers");
+            abortProgramNow(1);
         }
 
         testerclientWritePacketIpv4Header(ts, buf, direction);
@@ -632,18 +639,15 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
 
         if (max_len == 0)
         {
-            testerclientFail(t, l, "large buffer pool reports zero writable payload capacity");
-            return;
+            // Category D: a buffer pool that cannot hold a single payload byte
+            // is broken validated state, not a test verdict.
+            LOGF("TesterClient: large buffer pool reports zero writable payload capacity");
+            abortProgramNow(1);
         }
 
         uint32_t payload_len = (remaining < max_len) ? remaining : max_len;
         sbuf_t  *buf         = testerclientCreatePayload(
             t, l, ls->request_tx_index, ls->request_tx_offset, payload_len, kTesterClientDirectionRequest);
-
-        if (buf == NULL)
-        {
-            return;
-        }
 
         ls->request_tx_offset += payload_len;
         if (ls->request_tx_offset == chunk_size)
@@ -687,8 +691,6 @@ void testerclientWatchdogTask(tunnel_t *t, line_t *l)
 {
     testerclient_lstate_t *ls = lineGetState(l, t);
 
-    discard t;
-
     if (! ls->response_complete)
     {
         LOGE("TesterClient: worker %u timed out after %u ms (request_complete=%d, response_index=%u)",
@@ -697,12 +699,7 @@ void testerclientWatchdogTask(tunnel_t *t, line_t *l)
              (int) ls->request_complete,
              (unsigned int) ls->response_rx_index);
 
-        // Category B: the watchdog verdict is final, but this task runs on a
-        // worker. Request shutdown and let the task return normally.
-        if (! requestProgramShutdown(1))
-        {
-            abortProgramNow(1);
-        }
+        testerclientFail(t, l, "watchdog expired before response verification completed");
         return;
     }
 }
@@ -728,6 +725,23 @@ static bool testerclientShouldCloseCompletedStreams(tunnel_t *t)
     return t->next != NULL && t->next->node != NULL && stringCompare(t->next->node->type, "TcpOverUdpClient") == 0;
 }
 
+/*
+ * Category A (expected successful completion). Kept separate from its callers so
+ * no function mixes a success-path shutdown with an invariant hard abort: the
+ * last completion frequently happens on a non-zero worker, which is exactly the
+ * case the old off-main _Exit() broke by skipping every registered cleanup
+ * callback. Callers commit their success markers first and return right after.
+ */
+static void testerclientRequestSuccessfulShutdown(tunnel_chain_t *tc)
+{
+    LOGI("TesterClient: all %u worker lines completed successfully", (unsigned int) tc->workers_count);
+
+    if (! requestProgramShutdown(0))
+    {
+        abortProgramNow(1);
+    }
+}
+
 void testerclientCloseCompletedStreamTask(tunnel_t *t, line_t *l)
 {
     testerclient_tstate_t       *ts   = tunnelGetState(t);
@@ -742,8 +756,10 @@ void testerclientCloseCompletedStreamTask(tunnel_t *t, line_t *l)
 
     if (! ls->response_complete)
     {
-        testerclientFail(t, l, "scheduled close before response verification completed");
-        return;
+        // Category D: this task is only ever scheduled for a completed worker,
+        // so reaching it unverified is a scheduler-logic violation.
+        LOGF("TesterClient: scheduled close before response verification completed");
+        abortProgramNow(1);
     }
 
     if (! ls->request_complete)
@@ -768,19 +784,7 @@ void testerclientCloseCompletedStreamTask(tunnel_t *t, line_t *l)
     if (closed == (unsigned int) tc->workers_count)
     {
         LOGI("TesterClient: all %u worker lines closed successfully", (unsigned int) tc->workers_count);
-        LOGI("TesterClient: all %u worker lines completed successfully", (unsigned int) tc->workers_count);
-
-        /*
-         * Category A (expected successful completion). The success markers above
-         * are fully committed and the line is already destroyed, so request an
-         * orderly shutdown with status 0 and return. This is the case the old
-         * off-main _Exit() broke: the last completion frequently happens on a
-         * non-zero worker, which skipped every registered cleanup callback.
-         */
-        if (! requestProgramShutdown(0))
-        {
-            abortProgramNow(1);
-        }
+        testerclientRequestSuccessfulShutdown(tc);
         return;
     }
 }
@@ -815,14 +819,7 @@ void testerclientMarkWorkerComplete(tunnel_t *t, line_t *l)
             return;
         }
 
-        LOGI("TesterClient: all %u worker lines completed successfully", (unsigned int) tc->workers_count);
-
-        // Category A: completion markers are committed; request an orderly
-        // shutdown and return so the calling worker callback can unwind.
-        if (! requestProgramShutdown(0))
-        {
-            abortProgramNow(1);
-        }
+        testerclientRequestSuccessfulShutdown(tc);
         return;
     }
 }

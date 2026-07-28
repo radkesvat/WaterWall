@@ -410,11 +410,22 @@ static bool testerserverDecodePacketIpv4(tunnel_t *t, sbuf_t *buf, testerserver_
     return true;
 }
 
+/*
+ * Category B (orderly runtime failure): the test driver has reached a verdict,
+ * so the process must end, but this runs on an arbitrary worker with the caller
+ * still owning its callback frame. Request an orderly shutdown and return; every
+ * caller returns immediately afterwards, and worker 0 performs the real
+ * teardown. Impossible internal states must not come here - they hard-abort.
+ */
 void testerserverFail(tunnel_t *t, line_t *l, const char *reason)
 {
     LOGE("TesterServer: worker %u failed: %s", (unsigned int) lineGetWID(l), reason);
     discard t;
-    terminateProgram(1);
+
+    if (! requestProgramShutdown(1))
+    {
+        abortProgramNow(1);
+    }
 }
 
 uint8_t testerserverGetChunkCount(tunnel_t *t)
@@ -457,6 +468,13 @@ uint64_t testerserverGetRemainingBytes(tunnel_t *t, uint8_t index)
     return remaining;
 }
 
+/*
+ * Category D (invariant): every failure below means the generator was asked for
+ * a payload that its own validated configuration and scheduling can never
+ * produce, so none of them is a peer-selectable runtime verdict. They hard-abort
+ * rather than request an orderly shutdown, which makes this function
+ * non-nullable: callers may use the returned buffer without a NULL check.
+ */
 sbuf_t *testerserverCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, uint32_t chunk_offset,
                                   uint32_t payload_len, testerserver_direction_e direction)
 {
@@ -468,19 +486,17 @@ sbuf_t *testerserverCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, u
     {
         if (payload_len != testerserverGetChunkSize(t, chunk_index))
         {
-            testerserverFail(t, l, "packet-mode payload generation attempted to split a packet chunk");
-            return NULL;
+            LOGF("TesterServer: packet-mode payload generation attempted to split a packet chunk");
+            abortProgramNow(1);
         }
 
-        if (payload_len <= bufferpoolGetSmallBufferSize(pool))
+        if (payload_len > bufferpoolGetSmallBufferSize(pool))
         {
-            buf = bufferpoolGetSmallBuffer(pool);
+            LOGF("TesterServer: packet-mode response exceeded small buffer size");
+            abortProgramNow(1);
         }
-        else
-        {
-            testerserverFail(t, l, "packet-mode response exceeded small buffer size");
-            return NULL;
-        }
+
+        buf = bufferpoolGetSmallBuffer(pool);
     }
     else if (payload_len <= bufferpoolGetSmallBufferSize(pool))
     {
@@ -492,8 +508,8 @@ sbuf_t *testerserverCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, u
     }
     else
     {
-        testerserverFail(t, l, "stream-mode payload generation exceeded large buffer size");
-        return NULL;
+        LOGF("TesterServer: stream-mode payload generation exceeded large buffer size");
+        abortProgramNow(1);
     }
 
     sbufSetLength(buf, payload_len);
@@ -504,8 +520,8 @@ sbuf_t *testerserverCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, u
 
         if (payload_len <= payload_offset)
         {
-            testerserverFail(t, l, "packet-ipv4 chunk size is smaller than the configured packet headers");
-            return NULL;
+            LOGF("TesterServer: packet-ipv4 chunk size is smaller than the configured packet headers");
+            abortProgramNow(1);
         }
 
         testerserverWritePacketIpv4Header(ts, buf, direction);
@@ -627,7 +643,7 @@ void testerserverHandlePacketRequestPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
              (unsigned int) expected,
              (unsigned int) actual);
         lineReuseBuffer(l, buf);
-        terminateProgram(1);
+        testerserverFail(t, l, "packet-mode request chunk did not match the expected pattern");
         return;
     }
 
@@ -714,7 +730,7 @@ void testerserverHandlePacketStatelessRequestPayload(tunnel_t *t, line_t *l, sbu
              (unsigned int) expected,
              (unsigned int) actual);
         lineReuseBuffer(l, buf);
-        terminateProgram(1);
+        testerserverFail(t, l, "packet-mode stateless request chunk did not match the expected pattern");
         return;
     }
 
@@ -811,18 +827,15 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
 
         if (max_len == 0)
         {
-            testerserverFail(t, l, "large buffer pool reports zero writable payload capacity");
-            return;
+            // Category D: a buffer pool that cannot hold a single payload byte
+            // is broken validated state, not a test verdict.
+            LOGF("TesterServer: large buffer pool reports zero writable payload capacity");
+            abortProgramNow(1);
         }
 
         uint32_t payload_len = (remaining < max_len) ? remaining : max_len;
         sbuf_t  *buf         = testerserverCreatePayload(
             t, l, ls->response_tx_index, ls->response_tx_offset, payload_len, kTesterServerDirectionResponse);
-
-        if (buf == NULL)
-        {
-            return;
-        }
 
         ls->response_tx_offset += payload_len;
         if (ls->response_tx_offset == chunk_size)

@@ -1648,7 +1648,12 @@ void authenticationclientScheduleReconnect(tunnel_t *t)
     if (UNLIKELY(ts->reconnect_timer == NULL))
     {
         LOGF("AuthenticationClient: failed to create reconnect timer");
-        terminateProgram(1);
+        // Category B: control_mutex is already released above and this worker-0
+        // callback owns nothing else, so request shutdown and unwind.
+        if (! requestProgramShutdown(1))
+        {
+            abortProgramNow(1);
+        }
         return;
     }
     weventSetUserData(ts->reconnect_timer, t);
@@ -1770,14 +1775,20 @@ static bool authenticationclientUsersLoaded(tunnel_t *t)
     return users_loaded;
 }
 
-void authenticationclientStartSyncTimer(tunnel_t *t)
+/*
+ * Category B (orderly runtime failure). Called from the worker-0 startup task,
+ * which is a runtime worker context: the sync timer is required whenever a sync
+ * interval is configured, so a failed allocation ends the process. The caller
+ * must stop its startup sequence when this returns false.
+ */
+bool authenticationclientStartSyncTimer(tunnel_t *t)
 {
     authenticationclient_tstate_t *ts               = tunnelGetState(t);
     const uint32_t                 sync_interval_ms = authenticationclientSyncInterval(ts);
 
     if (sync_interval_ms == 0 || ts->sync_timer != NULL)
     {
-        return;
+        return true;
     }
 
     const uint32_t now_ms = getTickMS();
@@ -1788,8 +1799,11 @@ void authenticationclientStartSyncTimer(tunnel_t *t)
     if (UNLIKELY(ts->sync_timer == NULL))
     {
         LOGF("AuthenticationClient: failed to create sync timer");
-        terminateProgram(1);
-        return;
+        if (! requestProgramShutdown(1))
+        {
+            abortProgramNow(1);
+        }
+        return false;
     }
     weventSetUserData(ts->sync_timer, t);
 
@@ -1797,6 +1811,8 @@ void authenticationclientStartSyncTimer(tunnel_t *t)
     {
         LOGD("AuthenticationClient: sync timer enabled every %u ms", (unsigned int) sync_interval_ms);
     }
+
+    return true;
 }
 
 void authenticationclientSyncTimerCallback(wtimer_t *timer)

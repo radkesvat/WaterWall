@@ -41,19 +41,29 @@ void testerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     while (ls->request_rx_index < chunk_count &&
            bufferstreamGetBufLen(&ls->read_stream) >= testerserverGetChunkSize(t, ls->request_rx_index))
     {
-        uint32_t bad_offset   = 0;
-        uint8_t  expected     = 0;
-        uint8_t  actual       = 0;
-        sbuf_t  *chunk_buffer = bufferstreamReadExact(&ls->read_stream, testerserverGetChunkSize(t, ls->request_rx_index));
+        uint32_t bad_offset = 0;
+        uint8_t  expected   = 0;
+        uint8_t  actual     = 0;
+        sbuf_t  *chunk_buffer =
+            bufferstreamReadExact(&ls->read_stream, testerserverGetChunkSize(t, ls->request_rx_index));
 
-        if (! testerserverVerifyChunk(t, l, chunk_buffer, ls->request_rx_index, kTesterServerDirectionRequest,
-                                      &bad_offset, &expected, &actual))
+        if (! testerserverVerifyChunk(t,
+                                      l,
+                                      chunk_buffer,
+                                      ls->request_rx_index,
+                                      kTesterServerDirectionRequest,
+                                      &bad_offset,
+                                      &expected,
+                                      &actual))
         {
             lineReuseBuffer(l, chunk_buffer);
             LOGE("TesterServer: worker %u request chunk %u mismatch at byte %u (expected=0x%02x actual=0x%02x)",
-                 (unsigned int) lineGetWID(l), (unsigned int) ls->request_rx_index, (unsigned int) bad_offset,
-                 (unsigned int) expected, (unsigned int) actual);
-            terminateProgram(1);
+                 (unsigned int) lineGetWID(l),
+                 (unsigned int) ls->request_rx_index,
+                 (unsigned int) bad_offset,
+                 (unsigned int) expected,
+                 (unsigned int) actual);
+            testerserverFail(t, l, "request chunk did not match the expected pattern");
             return;
         }
 

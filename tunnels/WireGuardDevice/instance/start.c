@@ -48,10 +48,16 @@ static void wireguarddeviceQueueWorkerTransportLineInit(void *worker, void *arg1
     tunnel_t     *t     = arg1;
     wgd_tstate_t *state = tunnelGetState(t);
 
+    /*
+     * Not a process-wide failure: this is an ordinary transport line, and a
+     * neighbouring connector may reject this one line for an operational
+     * reason. The slot stays NULL, the output paths treat that as ERR_CONN, and
+     * wireguarddeviceEnsureTransportLine() retries on a later output.
+     */
     if (wireguarddeviceEnsureTransportLine(state, getWID()) == NULL)
     {
-        LOGF("WireGuardDevice: failed to initialize worker transport line");
-        terminateProgram(1);
+        LOGW("WireGuardDevice: worker transport line was rejected at startup; it will be retried on demand");
+        return;
     }
 }
 

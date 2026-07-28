@@ -150,7 +150,7 @@ void authenticationclientCloseControlLine(tunnel_t *t, line_t *l, bool propagate
 void authenticationclientScheduleReconnect(tunnel_t *t);
 void authenticationclientReconnectTimerCallback(wtimer_t *timer);
 void authenticationclientPingTimerCallback(wtimer_t *timer);
-void authenticationclientStartSyncTimer(tunnel_t *t);
+bool authenticationclientStartSyncTimer(tunnel_t *t);
 void authenticationclientSyncTimerCallback(wtimer_t *timer);
 
 bool authenticationclientSendAuthenticate(tunnel_t *t);

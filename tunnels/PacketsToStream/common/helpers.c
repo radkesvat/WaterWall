@@ -35,7 +35,12 @@ static sbuf_t *packetstostreamCreateHeartbeatPacket(line_t *packet_line, uint8_t
     return buf;
 }
 
-static void packetstostreamArmTimeoutTimer(tunnel_t *t, wid_t wid)
+/*
+ * Reports the failure instead of requesting shutdown itself: the caller still
+ * owns the heartbeat buffer it built for this ping, and that buffer must be
+ * recycled before any shutdown request.
+ */
+static bool packetstostreamArmTimeoutTimer(tunnel_t *t, wid_t wid)
 {
     packetstostream_tstate_t *ts         = tunnelGetState(t);
     wtimer_t                **timer_slot = &ts->worker_timeout_timers[wid];
@@ -43,18 +48,18 @@ static void packetstostreamArmTimeoutTimer(tunnel_t *t, wid_t wid)
     if (*timer_slot != NULL)
     {
         wtimerReset(*timer_slot, ts->tolerance_ms);
-        return;
+        return true;
     }
 
     *timer_slot = wtimerAdd(getWorkerLoop(wid), packetstostreamTimeoutTimerCallback, ts->tolerance_ms, 1);
     if (*timer_slot == NULL)
     {
         LOGF("PacketsToStream: failed to create sensitive-mode timeout timer on worker %u", (unsigned int) wid);
-        terminateProgram(1);
-        return;
+        return false;
     }
 
     weventSetUserData(*timer_slot, t);
+    return true;
 }
 
 static void packetstostreamDisarmTimeoutTimer(tunnel_t *t, wid_t wid)
@@ -89,10 +94,25 @@ static bool packetstostreamSendSensitivePing(tunnel_t *t, line_t *packet_line, p
         return true;
     }
 
+    if (! packetstostreamArmTimeoutTimer(t, lineGetWID(packet_line)))
+    {
+        /*
+         * Category B: an unsupervised ping would leave this worker waiting for a
+         * pong forever. The heartbeat has not been forwarded yet, so this frame
+         * still owns it: recycle it, leave the timer slot NULL and the pong
+         * state untouched, then request an orderly shutdown and return.
+         */
+        lineReuseBuffer(packet_line, buf);
+        if (! requestProgramShutdown(1))
+        {
+            abortProgramNow(1);
+        }
+        return false;
+    }
+
     ls->awaiting_pong    = true;
     ls->ping_sent_at_ms  = now;
     ls->pong_deadline_ms = now + ts->tolerance_ms;
-    packetstostreamArmTimeoutTimer(t, lineGetWID(packet_line));
 
     if (withLineLockedWithBuf(stream_line, tunnelNextUpStreamPayload, t, buf))
     {
@@ -423,8 +443,8 @@ void packetstostreamRecalculateChecksumIfRequested(line_t *l, sbuf_t *buf)
 static inline bool packetstostreamIpv4HeaderLooksValid(const uint8_t *header, uint16_t *total_len_out)
 {
     const uint8_t  version    = (uint8_t) (header[0] >> 4);
-    const uint8_t  header_len  = (uint8_t) ((header[0] & 0x0FU) * 4U);
-    const uint16_t total_len   = (uint16_t) (((uint16_t) header[2] << 8) | (uint16_t) header[3]);
+    const uint8_t  header_len = (uint8_t) ((header[0] & 0x0FU) * 4U);
+    const uint16_t total_len  = (uint16_t) (((uint16_t) header[2] << 8) | (uint16_t) header[3]);
 
     *total_len_out = total_len;
 
@@ -660,6 +680,8 @@ void packetstostreamHeartbeatTimerCallback(wtimer_t *timer)
         return;
     }
 
+    // A false result means the attempt was fully cleaned up by the callee, which
+    // either scheduled output-line recreation or already requested shutdown.
     discard packetstostreamSendSensitivePing(t, packet_line, ls, stream_line);
 }
 

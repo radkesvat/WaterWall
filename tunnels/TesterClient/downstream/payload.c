@@ -69,12 +69,7 @@ static void testerclientTunnelDownStreamPayloadStateless(tunnel_t *t, line_t *l,
              (unsigned int) expected,
              (unsigned int) actual);
         lineReuseBuffer(l, buf);
-        // Category B: the buffer is already recycled, so unwind normally after
-        // requesting the orderly shutdown.
-        if (! requestProgramShutdown(1))
-        {
-            abortProgramNow(1);
-        }
+        testerclientFail(t, l, "packet-mode stateless response chunk did not match the expected pattern");
         return;
     }
 
@@ -87,8 +82,13 @@ static void testerclientTunnelDownStreamPayloadStateless(tunnel_t *t, line_t *l,
         const uint32_t complete_mask = (1U << chunk_count) - 1U;
         if ((ls->packet_stateless_response_mask & complete_mask) != complete_mask)
         {
-            testerclientFail(t, l, "packet-mode stateless response count reached completion with missing chunks");
-            return;
+            /*
+             * Category D: the counter and the mask are updated together on the
+             * single path above, and duplicates are rejected before either is
+             * touched, so they cannot disagree unless this state is corrupt.
+             */
+            LOGF("TesterClient: packet-mode stateless response count reached completion with missing chunks");
+            abortProgramNow(1);
         }
 
         ls->response_complete = true;
@@ -148,12 +148,7 @@ void testerclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                  (unsigned int) expected,
                  (unsigned int) actual);
             lineReuseBuffer(l, buf);
-            // Category B: the buffer is already recycled, so unwind normally
-            // after requesting the orderly shutdown.
-            if (! requestProgramShutdown(1))
-            {
-                abortProgramNow(1);
-            }
+            testerclientFail(t, l, "packet-mode response chunk did not match the expected pattern");
             return;
         }
 
@@ -217,12 +212,7 @@ void testerclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                  (unsigned int) bad_offset,
                  (unsigned int) expected,
                  (unsigned int) actual);
-            // Category B: the chunk buffer is already recycled, so unwind
-            // normally after requesting the orderly shutdown.
-            if (! requestProgramShutdown(1))
-            {
-                abortProgramNow(1);
-            }
+            testerclientFail(t, l, "response chunk did not match the expected pattern");
             return;
         }
 

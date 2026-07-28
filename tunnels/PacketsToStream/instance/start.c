@@ -20,7 +20,15 @@ static void packetstostreamStartWorkerTimer(void *worker_ptr, void *arg1, void *
     if (timer == NULL)
     {
         LOGF("PacketsToStream: failed to create sensitive-mode timer on worker %u", (unsigned int) worker->wid);
-        terminateProgram(1);
+        /*
+         * Category B: this task was enqueued by onStart but runs on a worker
+         * event loop. A partial set of published worker timers is valid during
+         * shutdown because each worker deletes its own slot.
+         */
+        if (! requestProgramShutdown(1))
+        {
+            abortProgramNow(1);
+        }
         return;
     }
 

@@ -9,8 +9,10 @@ void testerclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     if (ts->packet_mode)
     {
-        testerclientFail(t, l, "packet-mode received unexpected finish on worker packet line");
-        return;
+        // Category D: a worker packet line lives for the whole process, so a
+        // Finish on it is a packet-line contract violation, not a test verdict.
+        LOGF("TesterClient: packet-mode received unexpected finish on worker packet line");
+        abortProgramNow(1);
     }
 
     if (! ls->response_complete)

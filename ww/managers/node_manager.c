@@ -262,10 +262,17 @@ static void initializeLineOnTargetWorker(void *worker, void *_tunnel, void *_lin
     tunnelNextUpStreamInit(tunnel, line);
     if (! lineIsAlive(line))
     {
+        /*
+         * Category D: a persistent worker packet line is process-lifetime state
+         * that may not die at runtime. Once that contract is violated, orderly
+         * teardown can no longer assume line state is structurally valid, so
+         * this runs on a worker but must still hard-abort.
+         */
         LOGF("NodeManager: node startup failure: line initialization failed for node (\"%s\") on worker %d",
              tunnel->node->name,
              getWID());
-        terminateProgram(1);
+        abortProgramNow(1);
+        return;
     }
 }
 

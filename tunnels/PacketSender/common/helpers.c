@@ -364,7 +364,13 @@ static void packetsenderMarkWorkerComplete(packetsender_worker_state_t *slot)
     }
 }
 
-static void packetsenderArmWorkerTimer(packetsender_worker_state_t *slot, uint32_t delay_ms)
+/*
+ * Category B: without its deadline timer this worker can neither pace nor
+ * resume the remaining packets. Nothing is owned at this point - no packet
+ * buffer has been allocated for the pending index - so request an orderly
+ * shutdown, leave slot->timer NULL and report the failure to the send loop.
+ */
+static bool packetsenderArmWorkerTimer(packetsender_worker_state_t *slot, uint32_t delay_ms)
 {
     assert(delay_ms > 0);
 
@@ -374,18 +380,30 @@ static void packetsenderArmWorkerTimer(packetsender_worker_state_t *slot, uint32
         if (slot->timer == NULL)
         {
             LOGF("PacketSender: failed to create worker timer on worker %u", (unsigned int) slot->wid);
-            terminateProgram(1);
-            return;
+            if (! requestProgramShutdown(1))
+            {
+                abortProgramNow(1);
+            }
+            return false;
         }
 
         weventSetUserData(slot->timer, slot);
-        return;
+        return true;
     }
 
     wtimerReset(slot->timer, delay_ms);
+    return true;
 }
 
-static bool packetsenderWaitUntilDeadline(packetsender_worker_state_t *slot, uint32_t deadline_ms)
+typedef enum
+{
+    kPacketSenderDeadlineReady,            // the deadline has passed, send now
+    kPacketSenderDeadlineWaiting,          // the timer will resume this worker
+    kPacketSenderDeadlineShutdownRequested // the timer failed, stop sending
+} packetsender_deadline_result_t;
+
+static packetsender_deadline_result_t packetsenderWaitUntilDeadline(packetsender_worker_state_t *slot,
+                                                                    uint32_t                     deadline_ms)
 {
     packetsender_tstate_t *state      = tunnelGetState(slot->tunnel);
     const uint64_t         now_ms     = packetsenderNowMs();
@@ -393,7 +411,7 @@ static bool packetsenderWaitUntilDeadline(packetsender_worker_state_t *slot, uin
 
     if (deadline_ms <= elapsed_ms)
     {
-        return false;
+        return kPacketSenderDeadlineReady;
     }
 
     const uint64_t remaining_ms_u64 = (uint64_t) deadline_ms - elapsed_ms;
@@ -404,8 +422,12 @@ static bool packetsenderWaitUntilDeadline(packetsender_worker_state_t *slot, uin
      * schedule. Re-arm the same one-shot timer against the shared monotonic
      * start time so all workers stay aligned to the requested duration.
      */
-    packetsenderArmWorkerTimer(slot, (remaining_ms == 0U) ? 1U : remaining_ms);
-    return true;
+    if (! packetsenderArmWorkerTimer(slot, (remaining_ms == 0U) ? 1U : remaining_ms))
+    {
+        return kPacketSenderDeadlineShutdownRequested;
+    }
+
+    return kPacketSenderDeadlineWaiting;
 }
 
 static void packetsenderSendReadyPackets(packetsender_worker_state_t *slot)
@@ -422,7 +444,9 @@ static void packetsenderSendReadyPackets(packetsender_worker_state_t *slot)
         uint32_t       src_addr_host       = 0;
         uint8_t        protocol            = 0;
 
-        if (packetsenderWaitUntilDeadline(slot, current_deadline_ms))
+        // Both "waiting" and "shutdown requested" must stop this loop: only a
+        // reached deadline may resolve a packet view or advance the index.
+        if (packetsenderWaitUntilDeadline(slot, current_deadline_ms) != kPacketSenderDeadlineReady)
         {
             return;
         }
