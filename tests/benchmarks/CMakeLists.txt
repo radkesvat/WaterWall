@@ -9,6 +9,9 @@
 # and are intentionally not registered as CTest pass/fail thresholds.
 
 if(TARGET ww AND UNIX)
+  add_executable(device_writer_channel_benchmark EXCLUDE_FROM_ALL device_writer_channel_benchmark.c)
+  target_link_libraries(device_writer_channel_benchmark PRIVATE ww)
+
   add_executable(users_benchmark EXCLUDE_FROM_ALL users_benchmark.c)
   target_link_libraries(users_benchmark PRIVATE ww)
 endif()
