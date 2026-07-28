@@ -1,0 +1,1225 @@
+#!/usr/bin/env python3
+"""Category-D hard-abort source policy checker for tunnels/.
+
+Every Category-D site is identified by (relative source path, exact function
+name) and never by a line number: line proximity let a neighbouring abort
+satisfy a candidate whose own abort had been deleted.
+
+Function bodies are extracted with a small lexical C scanner (standard library
+only) that blanks comments, string literals and character literals before any
+call is counted, so none of the following can satisfy a candidate:
+
+    abortProgramNow(0);
+    abortProgramNow(code);
+    // abortProgramNow(1);
+    "abortProgramNow(1)";
+    void abortProgramNow(int);
+
+Usage:
+    python3 tests/tunnels_abort_policy_test.py [--mutation-test|-m]
+"""
+import os
+import re
+import sys
+
+# Root repository directory
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+# Total number of audited Category-D conversions. The manifest must account for
+# every one of them.
+EXPECTED_TOTAL_ABORTS = 231
+
+
+# ---------------------------------------------------------------------------
+# Lexical C scanning
+# ---------------------------------------------------------------------------
+
+def mask_source(src):
+    """Blank out comments, string literals and character literals.
+
+    The result has exactly the same length as ``src`` and keeps every newline,
+    so offsets and line numbers computed on the masked text remain valid for
+    the original text.
+    """
+    out = list(src)
+    i = 0
+    n = len(src)
+    while i < n:
+        c = src[i]
+        if c == "/" and i + 1 < n and src[i + 1] == "/":
+            while i < n and src[i] != "\n":
+                out[i] = " "
+                i += 1
+        elif c == "/" and i + 1 < n and src[i + 1] == "*":
+            out[i] = " "
+            out[i + 1] = " "
+            i += 2
+            while i < n and not (src[i] == "*" and i + 1 < n and src[i + 1] == "/"):
+                if src[i] != "\n":
+                    out[i] = " "
+                i += 1
+            if i < n:
+                out[i] = " "
+                if i + 1 < n:
+                    out[i + 1] = " "
+                i += 2
+        elif c == '"' or c == "'":
+            quote = c
+            out[i] = " "
+            i += 1
+            while i < n and src[i] != quote:
+                if src[i] == "\\" and i + 1 < n:
+                    out[i] = " "
+                    if src[i + 1] != "\n":
+                        out[i + 1] = " "
+                    i += 2
+                    continue
+                if src[i] != "\n":
+                    out[i] = " "
+                i += 1
+            if i < n:
+                out[i] = " "
+                i += 1
+        else:
+            i += 1
+    return "".join(out)
+
+
+def _brace_depths(masked):
+    depths = [0] * (len(masked) + 1)
+    depth = 0
+    for i, c in enumerate(masked):
+        depths[i] = depth
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+    depths[len(masked)] = depth
+    return depths
+
+
+def _match_pair(masked, start, open_char, close_char):
+    depth = 0
+    for i in range(start, len(masked)):
+        if masked[i] == open_char:
+            depth += 1
+        elif masked[i] == close_char:
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+_IDENT_CALL_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_CONTROL_KEYWORDS = frozenset(
+    ("if", "for", "while", "switch", "return", "sizeof", "defined", "do", "else", "case")
+)
+
+
+def find_function_definitions(masked):
+    """Map every file-scope function definition name to its body span(s).
+
+    A body span is the half-open ``(start, end)`` offset pair covering the
+    outermost ``{ ... }`` block, so the returned spans can be used directly to
+    slice either the masked or the original source.
+    """
+    depths = _brace_depths(masked)
+    definitions = {}
+    for match in _IDENT_CALL_RE.finditer(masked):
+        name = match.group(1)
+        if name in _CONTROL_KEYWORDS:
+            continue
+        if depths[match.start()] != 0:
+            continue
+        close_paren = _match_pair(masked, match.end() - 1, "(", ")")
+        if close_paren < 0:
+            continue
+        cursor = close_paren + 1
+        while cursor < len(masked) and masked[cursor].isspace():
+            cursor += 1
+        if cursor >= len(masked) or masked[cursor] != "{":
+            continue
+        body_end = _match_pair(masked, cursor, "{", "}")
+        if body_end < 0:
+            continue
+        definitions.setdefault(name, []).append((cursor, body_end + 1))
+    return definitions
+
+
+def line_of(src, offset):
+    return src.count("\n", 0, offset) + 1
+
+
+def _call_re(name):
+    return re.compile(r"\b%s\s*\(" % re.escape(name))
+
+
+_ABORT_ANY_RE = _call_re("abortProgramNow")
+_ABORT_HARD_RE = re.compile(r"\babortProgramNow\s*\(\s*1\s*\)\s*;")
+_TERMINATE_RE = _call_re("terminateProgram")
+_REQUEST_SHUTDOWN_RE = _call_re("requestProgramShutdown")
+
+_CALL_PATTERNS = {
+    "abortProgramNow": _ABORT_ANY_RE,
+    "terminateProgram": _TERMINATE_RE,
+    "requestProgramShutdown": _REQUEST_SHUTDOWN_RE,
+}
+
+
+# ---------------------------------------------------------------------------
+# Manifest
+# ---------------------------------------------------------------------------
+#
+# Each entry is:
+#   (relative path,
+#    exact function name,
+#    number of abortProgramNow(1) calls expected in that function,
+#    stable diagnostic anchors identifying the intended invariant branches,
+#    short classification description)
+#
+# Candidates that share one function are aggregated into a single entry, so the
+# expected count is the authority on how many aborts that function must keep.
+
+MANIFEST = [
+    ("tunnels/AuthenticationClient/downstream/init.c", "authenticationclientTunnelDownStreamInit", 1,
+     ("AuthenticationClient: DownStreamInit is disabled",),
+     "impossible flow-callback stub: AuthenticationClient downstream/init.c"),
+    ("tunnels/AuthenticationClient/upstream/init.c", "authenticationclientTunnelUpStreamInit", 1,
+     ("AuthenticationClient: UpStreamInit is disabled; this node owns its control line",),
+     "impossible flow-callback stub: AuthenticationClient upstream/init.c"),
+    ("tunnels/AuthenticationClient/upstream/est.c", "authenticationclientTunnelUpStreamEst", 1,
+     ("AuthenticationClient: UpStreamEst is disabled",),
+     "impossible flow-callback stub: AuthenticationClient upstream/est.c"),
+    ("tunnels/AuthenticationClient/upstream/payload.c", "authenticationclientTunnelUpStreamPayload", 1,
+     ("AuthenticationClient: UpStreamPayload is disabled",),
+     "impossible flow-callback stub: AuthenticationClient upstream/payload.c"),
+    ("tunnels/AuthenticationClient/upstream/pause.c", "authenticationclientTunnelUpStreamPause", 1,
+     ("AuthenticationClient: UpStreamPause is disabled",),
+     "impossible flow-callback stub: AuthenticationClient upstream/pause.c"),
+    ("tunnels/AuthenticationClient/upstream/resume.c", "authenticationclientTunnelUpStreamResume", 1,
+     ("AuthenticationClient: UpStreamResume is disabled",),
+     "impossible flow-callback stub: AuthenticationClient upstream/resume.c"),
+    ("tunnels/AuthenticationClient/upstream/fin.c", "authenticationclientTunnelUpStreamFinish", 1,
+     ("AuthenticationClient: UpStreamFinish is disabled",),
+     "impossible flow-callback stub: AuthenticationClient upstream/fin.c"),
+    ("tunnels/AuthenticationServer/upstream/est.c", "authenticationserverTunnelUpStreamEst", 1,
+     ("AuthenticationServer: UpStreamEst is disabled",),
+     "impossible flow-callback stub: AuthenticationServer upstream/est.c"),
+    ("tunnels/AuthenticationServer/downstream/init.c", "authenticationserverTunnelDownStreamInit", 1,
+     ("AuthenticationServer: DownStreamInit is disabled",),
+     "impossible flow-callback stub: AuthenticationServer downstream/init.c"),
+    ("tunnels/AuthenticationServer/downstream/est.c", "authenticationserverTunnelDownStreamEst", 1,
+     ("AuthenticationServer: DownStreamEst is disabled",),
+     "impossible flow-callback stub: AuthenticationServer downstream/est.c"),
+    ("tunnels/AuthenticationServer/downstream/payload.c", "authenticationserverTunnelDownStreamPayload", 1,
+     ("AuthenticationServer: DownStreamPayload is disabled",),
+     "impossible flow-callback stub: AuthenticationServer downstream/payload.c"),
+    ("tunnels/AuthenticationServer/downstream/pause.c", "authenticationserverTunnelDownStreamPause", 1,
+     ("AuthenticationServer: DownStreamPause is disabled",),
+     "impossible flow-callback stub: AuthenticationServer downstream/pause.c"),
+    ("tunnels/AuthenticationServer/downstream/resume.c", "authenticationserverTunnelDownStreamResume", 1,
+     ("AuthenticationServer: DownStreamResume is disabled",),
+     "impossible flow-callback stub: AuthenticationServer downstream/resume.c"),
+    ("tunnels/AuthenticationServer/downstream/fin.c", "authenticationserverTunnelDownStreamFinish", 1,
+     ("AuthenticationServer: DownStreamFinish is disabled",),
+     "impossible flow-callback stub: AuthenticationServer downstream/fin.c"),
+    ("tunnels/Bgp4Client/downstream/init.c", "bgp4clientTunnelDownStreamInit", 1,
+     ("Bgp4Client: DownStreamInit is disabled",),
+     "impossible flow-callback stub: Bgp4Client downstream/init.c"),
+    ("tunnels/Bgp4Client/upstream/est.c", "bgp4clientTunnelUpStreamEst", 1,
+     ("Bgp4Client: UpStreamEst is disabled",),
+     "impossible flow-callback stub: Bgp4Client upstream/est.c"),
+    ("tunnels/Bgp4Server/downstream/init.c", "bgp4serverTunnelDownStreamInit", 1,
+     ("Bgp4Server: DownStreamInit is disabled",),
+     "impossible flow-callback stub: Bgp4Server downstream/init.c"),
+    ("tunnels/Bgp4Server/upstream/est.c", "bgp4serverTunnelUpStreamEst", 1,
+     ("Bgp4Server: UpStreamEst is disabled",),
+     "impossible flow-callback stub: Bgp4Server upstream/est.c"),
+    ("tunnels/ConnectionFisherClient/downstream/init.c", "connectionfisherclientTunnelDownStreamInit", 1,
+     ("ConnectionFisherClient: downstream init disabled",),
+     "impossible flow-callback stub: ConnectionFisherClient downstream/init.c"),
+    ("tunnels/ConnectionFisherClient/upstream/est.c", "connectionfisherclientTunnelUpStreamEst", 1,
+     ("ConnectionFisherClient: upstream est disabled",),
+     "impossible flow-callback stub: ConnectionFisherClient upstream/est.c"),
+    ("tunnels/ConnectionFisherServer/downstream/init.c", "connectionfisherserverTunnelDownStreamInit", 1,
+     ("ConnectionFisherServer: downstream init disabled",),
+     "impossible flow-callback stub: ConnectionFisherServer downstream/init.c"),
+    ("tunnels/ConnectionFisherServer/upstream/est.c", "connectionfisherserverTunnelUpStreamEst", 1,
+     ("ConnectionFisherServer: upstream est disabled",),
+     "impossible flow-callback stub: ConnectionFisherServer upstream/est.c"),
+    ("tunnels/EncryptionClient/downstream/init.c", "encryptionclientTunnelDownStreamInit", 1,
+     ("EncryptionClient: DownStreamInit is disabled",),
+     "impossible flow-callback stub: EncryptionClient downstream/init.c"),
+    ("tunnels/EncryptionClient/upstream/est.c", "encryptionclientTunnelUpStreamEst", 1,
+     ("EncryptionClient: UpstreamEst is disabled",),
+     "impossible flow-callback stub: EncryptionClient upstream/est.c"),
+    ("tunnels/EncryptionServer/downstream/init.c", "encryptionserverTunnelDownStreamInit", 1,
+     ("EncryptionServer: DownStreamInit is disabled",),
+     "impossible flow-callback stub: EncryptionServer downstream/init.c"),
+    ("tunnels/EncryptionServer/upstream/est.c", "encryptionserverTunnelUpStreamEst", 1,
+     ("EncryptionServer: UpstreamEst is disabled",),
+     "impossible flow-callback stub: EncryptionServer upstream/est.c"),
+    ("tunnels/HalfDuplexClient/downstream/init.c", "halfduplexclientTunnelDownStreamInit", 1,
+     ("HalfDuplexClient will not receive a backward init",),
+     "impossible flow-callback stub: HalfDuplexClient downstream/init.c"),
+    ("tunnels/HalfDuplexClient/upstream/est.c", "halfduplexclientTunnelUpStreamEst", 1,
+     ("HalfDuplexClient will not receive a upstream est",),
+     "impossible flow-callback stub: HalfDuplexClient upstream/est.c"),
+    ("tunnels/HalfDuplexServer/downstream/init.c", "halfduplexserverTunnelDownStreamInit", 1,
+     ("HalfDuplexServer is not supposed to receive downstream init",),
+     "impossible flow-callback stub: HalfDuplexServer downstream/init.c"),
+    ("tunnels/HalfDuplexServer/upstream/est.c", "halfduplexserverTunnelUpStreamEst", 1,
+     ("HalfDuplexServer is not supposed to receive upstream EST",),
+     "impossible flow-callback stub: HalfDuplexServer upstream/est.c"),
+    ("tunnels/HeaderClient/downstream/init.c", "headerclientTunnelDownStreamInit", 1,
+     ("HeaderClient: DownStreamInit is disabled",),
+     "impossible flow-callback stub: HeaderClient downstream/init.c"),
+    ("tunnels/HeaderClient/upstream/est.c", "headerclientTunnelUpStreamEst", 1,
+     ("HeaderClient: UpStreamEst is disabled",),
+     "impossible flow-callback stub: HeaderClient upstream/est.c"),
+    ("tunnels/HeaderServer/downstream/init.c", "headerserverTunnelDownStreamInit", 1,
+     ("HeaderServer: DownStreamInit is disabled",),
+     "impossible flow-callback stub: HeaderServer downstream/init.c"),
+    ("tunnels/HeaderServer/upstream/est.c", "headerserverTunnelUpStreamEst", 1,
+     ("HeaderServer: UpStreamEst is disabled",),
+     "impossible flow-callback stub: HeaderServer upstream/est.c"),
+    ("tunnels/IpManipulator/upstream/est.c", "ipmanipulatorUpStreamEst", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpManipulator)",),
+     "impossible flow-callback stub: IpManipulator upstream/est.c"),
+    ("tunnels/IpManipulator/upstream/fin.c", "ipmanipulatorUpStreamFinish", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpManipulator)",),
+     "impossible flow-callback stub: IpManipulator upstream/fin.c"),
+    ("tunnels/IpManipulator/upstream/pause.c", "ipmanipulatorUpStreamPause", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpManipulator)",),
+     "impossible flow-callback stub: IpManipulator upstream/pause.c"),
+    ("tunnels/IpManipulator/upstream/resume.c", "ipmanipulatorUpStreamResume", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpManipulator)",),
+     "impossible flow-callback stub: IpManipulator upstream/resume.c"),
+    ("tunnels/IpManipulator/downstream/est.c", "ipmanipulatorDownStreamEst", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpManipulator)",),
+     "impossible flow-callback stub: IpManipulator downstream/est.c"),
+    ("tunnels/IpManipulator/downstream/fin.c", "ipmanipulatorDownStreamFinish", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpManipulator)",),
+     "impossible flow-callback stub: IpManipulator downstream/fin.c"),
+    ("tunnels/IpManipulator/downstream/pause.c", "ipmanipulatorDownStreamPause", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpManipulator)",),
+     "impossible flow-callback stub: IpManipulator downstream/pause.c"),
+    ("tunnels/IpManipulator/downstream/resume.c", "ipmanipulatorDownStreamResume", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpManipulator)",),
+     "impossible flow-callback stub: IpManipulator downstream/resume.c"),
+    ("tunnels/IpOverrider/upstream/init.c", "ipoverriderUpStreamInit", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpOverrider)",),
+     "impossible flow-callback stub: IpOverrider upstream/init.c"),
+    ("tunnels/IpOverrider/upstream/est.c", "ipoverriderUpStreamEst", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpOverrider)",),
+     "impossible flow-callback stub: IpOverrider upstream/est.c"),
+    ("tunnels/IpOverrider/upstream/fin.c", "ipoverriderUpStreamFinish", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpOverrider)",),
+     "impossible flow-callback stub: IpOverrider upstream/fin.c"),
+    ("tunnels/IpOverrider/upstream/pause.c", "ipoverriderUpStreamPause", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpOverrider)",),
+     "impossible flow-callback stub: IpOverrider upstream/pause.c"),
+    ("tunnels/IpOverrider/upstream/resume.c", "ipoverriderUpStreamResume", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpOverrider)",),
+     "impossible flow-callback stub: IpOverrider upstream/resume.c"),
+    ("tunnels/IpOverrider/downstream/est.c", "ipoverriderDownStreamEst", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpOverrider)",),
+     "impossible flow-callback stub: IpOverrider downstream/est.c"),
+    ("tunnels/IpOverrider/downstream/fin.c", "ipoverriderDownStreamFinish", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpOverrider)",),
+     "impossible flow-callback stub: IpOverrider downstream/fin.c"),
+    ("tunnels/IpOverrider/downstream/pause.c", "ipoverriderDownStreamPause", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpOverrider)",),
+     "impossible flow-callback stub: IpOverrider downstream/pause.c"),
+    ("tunnels/IpOverrider/downstream/resume.c", "ipoverriderDownStreamResume", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (IpOverrider)",),
+     "impossible flow-callback stub: IpOverrider downstream/resume.c"),
+    ("tunnels/KeepAliveClient/downstream/init.c", "keepaliveclientTunnelDownStreamInit", 1,
+     ("KeepAliveClient: DownStreamInit is disabled",),
+     "impossible flow-callback stub: KeepAliveClient downstream/init.c"),
+    ("tunnels/KeepAliveServer/downstream/init.c", "keepaliveserverTunnelDownStreamInit", 1,
+     ("KeepAliveServer: DownStreamInit is disabled",),
+     "impossible flow-callback stub: KeepAliveServer downstream/init.c"),
+    ("tunnels/MuxClient/downstream/init.c", "muxclientTunnelDownStreamInit", 1,
+     ("MuxClient: DownStreamInit is disabled",),
+     "impossible flow-callback stub: MuxClient downstream/init.c"),
+    ("tunnels/MuxClient/upstream/est.c", "muxclientTunnelUpStreamEst", 1,
+     ("MuxClient: UpStreamEst is disabled",),
+     "impossible flow-callback stub: MuxClient upstream/est.c"),
+    ("tunnels/MuxServer/downstream/init.c", "muxserverTunnelDownStreamInit", 1,
+     ("MuxServer: DownStreamInit is disabled",),
+     "impossible flow-callback stub: MuxServer downstream/init.c"),
+    ("tunnels/MuxServer/upstream/est.c", "muxserverTunnelUpStreamEst", 1,
+     ("MuxServer: UpStreamEst is disabled",),
+     "impossible flow-callback stub: MuxServer upstream/est.c"),
+    ("tunnels/PacketSender/upstream/init.c", "packetsenderTunnelUpStreamInit", 1,
+     ("PacketSender: upStreamInit disabled",),
+     "impossible flow-callback stub: PacketSender upstream/init.c"),
+    ("tunnels/PacketSender/upstream/est.c", "packetsenderTunnelUpStreamEst", 1,
+     ("PacketSender: upStreamEst disabled",),
+     "impossible flow-callback stub: PacketSender upstream/est.c"),
+    ("tunnels/PacketSender/upstream/payload.c", "packetsenderTunnelUpStreamPayload", 1,
+     ("PacketSender: upStreamPayload disabled",),
+     "impossible flow-callback stub: PacketSender upstream/payload.c"),
+    ("tunnels/PacketSender/upstream/pause.c", "packetsenderTunnelUpStreamPause", 1,
+     ("PacketSender: upStreamPause disabled",),
+     "impossible flow-callback stub: PacketSender upstream/pause.c"),
+    ("tunnels/PacketSender/upstream/resume.c", "packetsenderTunnelUpStreamResume", 1,
+     ("PacketSender: upStreamResume disabled",),
+     "impossible flow-callback stub: PacketSender upstream/resume.c"),
+    ("tunnels/PacketSender/upstream/fin.c", "packetsenderTunnelUpStreamFinish", 1,
+     ("PacketSender: upStreamFinish disabled",),
+     "impossible flow-callback stub: PacketSender upstream/fin.c"),
+    ("tunnels/PacketSplitStream/upstream/fin.c", "packetsplitstreamTunnelUpStreamFinish", 1,
+     ("packetsplitstreamTunnelUpStreamFinish is not supposed to be called",),
+     "impossible flow-callback stub: PacketSplitStream upstream/fin.c"),
+    ("tunnels/PacketSplitStream/downstream/fin.c", "packetsplitstreamTunnelDownStreamFinish", 1,
+     ("packetsplitstreamTunnelDownStreamFinish is not supposed to be called",),
+     "impossible flow-callback stub: PacketSplitStream downstream/fin.c"),
+    ("tunnels/PacketsToConnection/downstream/init.c", "ptcTunnelDownStreamInit", 1,
+     ("Impossible call",),
+     "impossible flow-callback stub: PacketsToConnection downstream/init.c"),
+    ("tunnels/PacketsToConnection/upstream/est.c", "ptcTunnelUpStreamEst", 1,
+     ("PacketsToConnection: unexpected upstream Est on the packet line",),
+     "impossible flow-callback stub: PacketsToConnection upstream/est.c"),
+    ("tunnels/PacketsToConnection/upstream/fin.c", "ptcTunnelUpStreamFinish", 1,
+     ("PacketsToConnection: unexpected upstream Finish on the packet line",),
+     "impossible flow-callback stub: PacketsToConnection upstream/fin.c"),
+    ("tunnels/PacketsToConnection/upstream/pause.c", "ptcTunnelUpStreamPause", 1,
+     ("PacketsToConnection: unexpected upstream Pause on the packet line",),
+     "impossible flow-callback stub: PacketsToConnection upstream/pause.c"),
+    ("tunnels/PacketsToConnection/upstream/resume.c", "ptcTunnelUpStreamResume", 1,
+     ("PacketsToConnection: unexpected upstream Resume on the packet line",),
+     "impossible flow-callback stub: PacketsToConnection upstream/resume.c"),
+    ("tunnels/PacketsToStream/upstream/fin.c", "packetstostreamTunnelUpStreamFinish", 1,
+     ("PacketsToStream: not supposed to receive upstream fin",),
+     "impossible flow-callback stub: PacketsToStream upstream/fin.c"),
+    ("tunnels/PingClient/upstream/init.c", "pingclientUpStreamInit", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (PingClient)",),
+     "impossible flow-callback stub: PingClient upstream/init.c"),
+    ("tunnels/PingClient/upstream/est.c", "pingclientUpStreamEst", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (PingClient)",),
+     "impossible flow-callback stub: PingClient upstream/est.c"),
+    ("tunnels/PingClient/upstream/fin.c", "pingclientUpStreamFinish", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (PingClient)",),
+     "impossible flow-callback stub: PingClient upstream/fin.c"),
+    ("tunnels/PingClient/upstream/pause.c", "pingclientUpStreamPause", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (PingClient)",),
+     "impossible flow-callback stub: PingClient upstream/pause.c"),
+    ("tunnels/PingClient/upstream/resume.c", "pingclientUpStreamResume", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (PingClient)",),
+     "impossible flow-callback stub: PingClient upstream/resume.c"),
+    ("tunnels/PingClient/downstream/est.c", "pingclientDownStreamEst", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (PingClient)",),
+     "impossible flow-callback stub: PingClient downstream/est.c"),
+    ("tunnels/PingClient/downstream/fin.c", "pingclientDownStreamFinish", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (PingClient)",),
+     "impossible flow-callback stub: PingClient downstream/fin.c"),
+    ("tunnels/PingClient/downstream/pause.c", "pingclientDownStreamPause", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (PingClient)",),
+     "impossible flow-callback stub: PingClient downstream/pause.c"),
+    ("tunnels/PingClient/downstream/resume.c", "pingclientDownStreamResume", 1,
+     ("This Function is not supposed to be called, used packet-tunnel interface instead (PingClient)",),
+     "impossible flow-callback stub: PingClient downstream/resume.c"),
+    ("tunnels/ReverseClient/downstream/init.c", "reverseclientTunnelDownStreamInit", 1,
+     ("ReverseClient: DownStreamInit is disabled, this should not be called",),
+     "impossible flow-callback stub: ReverseClient downstream/init.c"),
+    ("tunnels/ReverseClient/upstream/init.c", "reverseclientTunnelUpStreamInit", 1,
+     ("ReverseClient: UpStream Init is disabled",),
+     "impossible flow-callback stub: ReverseClient upstream/init.c"),
+    ("tunnels/ReverseServer/downstream/est.c", "reverseserverTunnelDownStreamEst", 1,
+     ("ReverseServer: Downstream Est is disabled",),
+     "impossible flow-callback stub: ReverseServer downstream/est.c"),
+    ("tunnels/ReverseServer/upstream/est.c", "reverseserverTunnelUpStreamEst", 1,
+     ("reverseserverTunnelUpStreamEst: Upstream Est is disabled",),
+     "impossible flow-callback stub: ReverseServer upstream/est.c"),
+    ("tunnels/Socks5Client/upstream/est.c", "socks5clientTunnelUpStreamEst", 1,
+     ("Socks5Client: UpStreamEst is disabled",),
+     "impossible flow-callback stub: Socks5Client upstream/est.c"),
+    ("tunnels/Socks5Server/upstream/est.c", "socks5serverTunnelUpStreamEst", 1,
+     ("Socks5Server: UpStreamEst is disabled",),
+     "impossible flow-callback stub: Socks5Server upstream/est.c"),
+    ("tunnels/SoftIpLimiter/downstream/init.c", "softiplimiterTunnelDownStreamInit", 1,
+     ("SoftIpLimiter: downstream init disabled",),
+     "impossible flow-callback stub: SoftIpLimiter downstream/init.c"),
+    ("tunnels/SpeedTestClient/downstream/init.c", "speedtestclientTunnelDownStreamInit", 1,
+     ("SpeedTestClient: downstream Init is disabled",),
+     "impossible flow-callback stub: SpeedTestClient downstream/init.c"),
+    ("tunnels/SpeedTestClient/upstream/init.c", "speedtestclientTunnelUpStreamInit", 1,
+     ("SpeedTestClient: upstream Init is disabled",),
+     "impossible flow-callback stub: SpeedTestClient upstream/init.c"),
+    ("tunnels/SpeedTestClient/upstream/est.c", "speedtestclientTunnelUpStreamEst", 1,
+     ("SpeedTestClient: upstream Est is disabled",),
+     "impossible flow-callback stub: SpeedTestClient upstream/est.c"),
+    ("tunnels/SpeedTestClient/upstream/payload.c", "speedtestclientTunnelUpStreamPayload", 1,
+     ("SpeedTestClient: upstream Payload is disabled",),
+     "impossible flow-callback stub: SpeedTestClient upstream/payload.c"),
+    ("tunnels/SpeedTestClient/upstream/pause.c", "speedtestclientTunnelUpStreamPause", 1,
+     ("SpeedTestClient: upstream Pause is disabled",),
+     "impossible flow-callback stub: SpeedTestClient upstream/pause.c"),
+    ("tunnels/SpeedTestClient/upstream/resume.c", "speedtestclientTunnelUpStreamResume", 1,
+     ("SpeedTestClient: upstream Resume is disabled",),
+     "impossible flow-callback stub: SpeedTestClient upstream/resume.c"),
+    ("tunnels/SpeedTestClient/upstream/fin.c", "speedtestclientTunnelUpStreamFinish", 1,
+     ("SpeedTestClient: upstream Finish is disabled",),
+     "impossible flow-callback stub: SpeedTestClient upstream/fin.c"),
+    ("tunnels/SpeedTestServer/upstream/est.c", "speedtestserverTunnelUpStreamEst", 1,
+     ("SpeedTestServer: upstream Est is disabled",),
+     "impossible flow-callback stub: SpeedTestServer upstream/est.c"),
+    ("tunnels/SpeedTestServer/downstream/init.c", "speedtestserverTunnelDownStreamInit", 1,
+     ("SpeedTestServer: downstream Init is disabled",),
+     "impossible flow-callback stub: SpeedTestServer downstream/init.c"),
+    ("tunnels/SpeedTestServer/downstream/est.c", "speedtestserverTunnelDownStreamEst", 1,
+     ("SpeedTestServer: downstream Est is disabled",),
+     "impossible flow-callback stub: SpeedTestServer downstream/est.c"),
+    ("tunnels/SpeedTestServer/downstream/payload.c", "speedtestserverTunnelDownStreamPayload", 1,
+     ("SpeedTestServer: downstream Payload is disabled",),
+     "impossible flow-callback stub: SpeedTestServer downstream/payload.c"),
+    ("tunnels/SpeedTestServer/downstream/pause.c", "speedtestserverTunnelDownStreamPause", 1,
+     ("SpeedTestServer: downstream Pause is disabled",),
+     "impossible flow-callback stub: SpeedTestServer downstream/pause.c"),
+    ("tunnels/SpeedTestServer/downstream/resume.c", "speedtestserverTunnelDownStreamResume", 1,
+     ("SpeedTestServer: downstream Resume is disabled",),
+     "impossible flow-callback stub: SpeedTestServer downstream/resume.c"),
+    ("tunnels/SpeedTestServer/downstream/fin.c", "speedtestserverTunnelDownStreamFinish", 1,
+     ("SpeedTestServer: downstream Finish is disabled",),
+     "impossible flow-callback stub: SpeedTestServer downstream/fin.c"),
+    ("tunnels/StreamToPackets/downstream/fin.c", "streamtopacketsTunnelDownStreamFinish", 1,
+     ("StreamToPackets: not supposed to receive downstream fin",),
+     "impossible flow-callback stub: StreamToPackets downstream/fin.c"),
+    ("tunnels/TcpConnector/upstream/est.c", "tcpconnectorTunnelUpStreamEst", 1,
+     ("TcpConnector: upStreamEst is not supposed to be called",),
+     "impossible flow-callback stub: TcpConnector upstream/est.c"),
+    ("tunnels/TcpListener/upstream/init.c", "tcplistenerTunnelUpStreamInit", 1,
+     ("TcpListener: upStreamInit disabled",),
+     "impossible flow-callback stub: TcpListener upstream/init.c"),
+    ("tunnels/TcpListener/upstream/est.c", "tcplistenerTunnelUpStreamEst", 1,
+     ("TcpListener: upStreamEst disabled",),
+     "impossible flow-callback stub: TcpListener upstream/est.c"),
+    ("tunnels/TcpListener/upstream/payload.c", "tcplistenerTunnelUpStreamPayload", 1,
+     ("TcpListener: upStreamPayload disabled",),
+     "impossible flow-callback stub: TcpListener upstream/payload.c"),
+    ("tunnels/TcpListener/upstream/pause.c", "tcplistenerTunnelUpStreamPause", 1,
+     ("TcpListener: upStreamPause disabled",),
+     "impossible flow-callback stub: TcpListener upstream/pause.c"),
+    ("tunnels/TcpListener/upstream/resume.c", "tcplistenerTunnelUpStreamResume", 1,
+     ("TcpListener: upStreamResume disabled",),
+     "impossible flow-callback stub: TcpListener upstream/resume.c"),
+    ("tunnels/TcpListener/upstream/fin.c", "tcplistenerTunnelUpStreamFinish", 1,
+     ("TcpListener: upStreamFinish disabled",),
+     "impossible flow-callback stub: TcpListener upstream/fin.c"),
+    ("tunnels/TcpOverUdpClient/downstream/init.c", "tcpoverudpclientTunnelDownStreamInit", 1,
+     ("TcpOverUdpClient: DownStreamInit is disabled",),
+     "impossible flow-callback stub: TcpOverUdpClient downstream/init.c"),
+    ("tunnels/TcpOverUdpClient/upstream/est.c", "tcpoverudpclientTunnelUpStreamEst", 1,
+     ("TcpOverUdpClient: UpstreamEst is disabled",),
+     "impossible flow-callback stub: TcpOverUdpClient upstream/est.c"),
+    ("tunnels/TcpOverUdpServer/downstream/init.c", "tcpoverudpserverTunnelDownStreamInit", 1,
+     ("TcpOverUdpServer: DownStreamInit is disabled",),
+     "impossible flow-callback stub: TcpOverUdpServer downstream/init.c"),
+    ("tunnels/TcpOverUdpServer/upstream/est.c", "tcpoverudpserverTunnelUpStreamEst", 1,
+     ("TcpOverUdpServer: UpstreamEst is disabled",),
+     "impossible flow-callback stub: TcpOverUdpServer upstream/est.c"),
+    ("tunnels/TlsClient/downstream/init.c", "tlsclientTunnelDownStreamInit", 1,
+     ("TlsClient: downstream init is disabled",),
+     "impossible flow-callback stub: TlsClient downstream/init.c"),
+    ("tunnels/TrojanClient/upstream/est.c", "trojanclientTunnelUpStreamEst", 1,
+     ("TrojanClient: UpStreamEst is disabled",),
+     "impossible flow-callback stub: TrojanClient upstream/est.c"),
+    ("tunnels/TrojanServer/upstream/est.c", "trojanserverTunnelUpStreamEst", 1,
+     ("TrojanServer: UpStreamEst is disabled",),
+     "impossible flow-callback stub: TrojanServer upstream/est.c"),
+    ("tunnels/UdpConnector/downstream/init.c", "udpconnectorTunnelDownStreamInit", 1,
+     ("UdpConnector: DownStream Init is disabled",),
+     "impossible flow-callback stub: UdpConnector downstream/init.c"),
+    ("tunnels/UdpConnector/downstream/est.c", "udpconnectorTunnelDownStreamEst", 1,
+     ("UdpConnector: DownStream Est is disabled",),
+     "impossible flow-callback stub: UdpConnector downstream/est.c"),
+    ("tunnels/UdpConnector/downstream/payload.c", "udpconnectorTunnelDownStreamPayload", 1,
+     ("UdpConnector: DownStream Payload is disabled",),
+     "impossible flow-callback stub: UdpConnector downstream/payload.c"),
+    ("tunnels/UdpConnector/downstream/pause.c", "udpconnectorTunnelDownStreamPause", 1,
+     ("UdpConnector: DownStream Pause is disabled",),
+     "impossible flow-callback stub: UdpConnector downstream/pause.c"),
+    ("tunnels/UdpConnector/downstream/resume.c", "udpconnectorTunnelDownStreamResume", 1,
+     ("UdpConnector: DownStream Resume is disabled",),
+     "impossible flow-callback stub: UdpConnector downstream/resume.c"),
+    ("tunnels/UdpConnector/downstream/fin.c", "udpconnectorTunnelDownStreamFinish", 1,
+     ("UdpConnector: DownStream Finish is disabled",),
+     "impossible flow-callback stub: UdpConnector downstream/fin.c"),
+    ("tunnels/UdpConnector/upstream/est.c", "udpconnectorTunnelUpStreamEst", 1,
+     ("UdpConnector: UpStream Est is disabled",),
+     "impossible flow-callback stub: UdpConnector upstream/est.c"),
+    ("tunnels/UdpListener/downstream/init.c", "udplistenerTunnelDownStreamInit", 1,
+     ("UdpListener: DownStream Init is disabled",),
+     "impossible flow-callback stub: UdpListener downstream/init.c"),
+    ("tunnels/UdpListener/upstream/init.c", "udplistenerTunnelUpStreamInit", 1,
+     ("UdpListener: upStreamInit disabled",),
+     "impossible flow-callback stub: UdpListener upstream/init.c"),
+    ("tunnels/UdpListener/upstream/est.c", "udplistenerTunnelUpStreamEst", 1,
+     ("UdpListener: upStreamEst disabled",),
+     "impossible flow-callback stub: UdpListener upstream/est.c"),
+    ("tunnels/UdpListener/upstream/payload.c", "udplistenerTunnelUpStreamPayload", 1,
+     ("UdpListener: upStreamPayload disabled",),
+     "impossible flow-callback stub: UdpListener upstream/payload.c"),
+    ("tunnels/UdpListener/upstream/pause.c", "udplistenerTunnelUpStreamPause", 1,
+     ("UdpListener: upStreamPause disabled",),
+     "impossible flow-callback stub: UdpListener upstream/pause.c"),
+    ("tunnels/UdpListener/upstream/resume.c", "udplistenerTunnelUpStreamResume", 1,
+     ("UdpListener: upStreamResume disabled",),
+     "impossible flow-callback stub: UdpListener upstream/resume.c"),
+    ("tunnels/UdpListener/upstream/fin.c", "udplistenerTunnelUpStreamFinish", 1,
+     ("UdpListener: upStreamFinish disabled",),
+     "impossible flow-callback stub: UdpListener upstream/fin.c"),
+    ("tunnels/UdpOverTcpClient/downstream/init.c", "udpovertcpclientTunnelDownStreamInit", 1,
+     ("UdpOverTcpClient: DownStreamInit is disabled",),
+     "impossible flow-callback stub: UdpOverTcpClient downstream/init.c"),
+    ("tunnels/UdpOverTcpClient/upstream/est.c", "udpovertcpclientTunnelUpStreamEst", 1,
+     ("UdpOverTcpClient: UpstreamEst is disabled",),
+     "impossible flow-callback stub: UdpOverTcpClient upstream/est.c"),
+    ("tunnels/UdpOverTcpServer/downstream/init.c", "udpovertcpserverTunnelDownStreamInit", 1,
+     ("UdpOverTcpServer: DownStreamInit is disabled",),
+     "impossible flow-callback stub: UdpOverTcpServer downstream/init.c"),
+    ("tunnels/UdpOverTcpServer/upstream/est.c", "udpovertcpserverTunnelUpStreamEst", 1,
+     ("UdpOverTcpServer: UpstreamEst is disabled",),
+     "impossible flow-callback stub: UdpOverTcpServer upstream/est.c"),
+    ("tunnels/VlessClient/upstream/est.c", "vlessclientTunnelUpStreamEst", 1,
+     ("VlessClient: UpStreamEst is disabled",),
+     "impossible flow-callback stub: VlessClient upstream/est.c"),
+    ("tunnels/VlessServer/upstream/est.c", "vlessserverTunnelUpStreamEst", 1,
+     ("VlessServer: UpStreamEst is disabled",),
+     "impossible flow-callback stub: VlessServer upstream/est.c"),
+    ("tunnels/IpManipulator/upstream/init.c", "ipmanipulatorUpStreamInit", 1,
+     ("IpManipulator: next packet line died during upstream init",),
+     "runtime flow-callback invariant: IpManipulator upstream init packet line died"),
+    ("tunnels/RawSocket/upstream/fin.c", "rawsocketUpStreamFinish", 1,
+     ("RawSocket: unexpected upstream Finish on worker packet line %u",),
+     "runtime flow-callback invariant: RawSocket upstream fin worker packet line"),
+    ("tunnels/RawSocket/downstream/fin.c", "rawsocketDownStreamFinish", 1,
+     ("RawSocket: unexpected downstream Finish on worker packet line %u",),
+     "runtime flow-callback invariant: RawSocket downstream fin worker packet line"),
+    ("tunnels/ReverseClient/downstream/fin.c", "reverseclientTunnelDownStreamFinish", 2,
+     ("ReverseClient: finishing a non-paired line with NULL idle_handle, wid: %d",
+      "ReverseClient: failed to remove idle item while closing unpaired connection"),
+     "runtime flow-callback invariant: ReverseClient downstream fin idle-handle and idle-table removal"),
+    ("tunnels/ReverseClient/downstream/payload.c", "reverseclientTunnelDownStreamPayload", 1,
+     ("ReverseClient: failed to remove idle item while pairing connection",),
+     "runtime flow-callback invariant: ReverseClient downstream payload remove starved table"),
+    ("tunnels/TcpConnector/upstream/fin.c", "tcpconnectorTunnelUpStreamFinish", 1,
+     ("TcpConnector: failed to remove idle item for FD:%x",),
+     "runtime flow-callback invariant: TcpConnector upstream fin remove idle table"),
+    ("tunnels/TcpConnector/upstream/init.c", "tcpconnectorTunnelUpStreamInit", 1,
+     ("TcpConnector: internal DomainResolver prepare state is missing",),
+     "runtime flow-callback invariant: TcpConnector upstream init missing domain resolver"),
+    ("tunnels/TcpConnector/upstream/payload.c", "handleQueueOverflow", 1,
+     ("TcpConnector: failed to remove idle item for FD:%x",),
+     "runtime flow-callback invariant: TcpConnector upstream payload remove idle table"),
+    ("tunnels/TcpListener/downstream/fin.c", "tcplistenerTunnelDownStreamFinish", 1,
+     ("TcpListener: failed to remove idle item for FD:%x",),
+     "runtime flow-callback invariant: TcpListener downstream fin remove idle table"),
+    ("tunnels/TcpListener/downstream/payload.c", "handleQueueOverflow", 1,
+     ("TcpListener: failed to remove idle item for FD:%x",),
+     "runtime flow-callback invariant: TcpListener downstream payload remove idle table"),
+    ("tunnels/TlsClient/upstream/init.c", "tlsclientTunnelUpStreamInit", 1,
+     ("TlsClient: unreachable",),
+     "runtime flow-callback invariant: TlsClient upstream init unreachable branch"),
+    ("tunnels/UdpConnector/upstream/fin.c", "udpconnectorTunnelUpStreamFinish", 1,
+     ("UdpConnector: failed to remove idle item for FD:%x",),
+     "runtime flow-callback invariant: UdpConnector upstream fin remove idle table"),
+    ("tunnels/UdpConnector/upstream/init.c", "udpconnectorTunnelUpStreamInit", 1,
+     ("UdpConnector: internal DomainResolver prepare state is missing",),
+     "runtime flow-callback invariant: UdpConnector upstream init missing domain resolver"),
+    ("tunnels/UdpConnector/upstream/payload.c", "closeLine", 1,
+     ("UdpConnector: failed to remove idle item for FD:%x",),
+     "runtime flow-callback invariant: UdpConnector upstream payload remove idle table"),
+    ("tunnels/UdpConnector/upstream/payload.c", "udpconnectorTunnelUpStreamPayload", 1,
+     ("UdpConnector: UpStream Payload is called on closed wio. This should not happen",),
+     "runtime flow-callback invariant: UdpConnector upstream payload closed wio"),
+    ("tunnels/UdpListener/downstream/fin.c", "udplistenerTunnelDownStreamFinish", 1,
+     ("UdpListener: Failed to remove idle item for UDP listener on FD:%x",),
+     "runtime flow-callback invariant: UdpListener downstream fin remove idle table"),
+    ("tunnels/UdpOverTcpClient/upstream/payload.c", "udpovertcpclientTunnelUpStreamPayload", 1,
+     ("UdpOverTcpClient: Received empty payload, this is a bug, our eventloop logic dose not allow read of size",),
+     "runtime flow-callback invariant: UdpOverTcpClient upstream payload empty event loop payload"),
+    ("tunnels/UdpOverTcpServer/downstream/payload.c", "udpovertcpserverTunnelDownStreamPayload", 1,
+     ("UdpOverTcpServer: Received empty payload, this is a bug, our eventloop logic dose not allow read of size",),
+     "runtime flow-callback invariant: UdpOverTcpServer downstream payload empty event loop payload"),
+    ("tunnels/AuthenticationServer/instance/chain.c", "authenticationserverTunnelOnChain", 1,
+     ("AuthenticationServer: onChain override is disabled, use the default tunnel chaining",),
+     "disabled lifecycle callback stub: AuthenticationServer onChain"),
+    ("tunnels/Disturber/instance/chain.c", "disturberTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: Disturber onChain"),
+    ("tunnels/EncryptionClient/instance/chain.c", "encryptionclientTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: EncryptionClient onChain"),
+    ("tunnels/EncryptionServer/instance/chain.c", "encryptionserverTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: EncryptionServer onChain"),
+    ("tunnels/HalfDuplexClient/instance/chain.c", "halfduplexclientTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: HalfDuplexClient onChain"),
+    ("tunnels/HalfDuplexServer/instance/chain.c", "halfduplexserverTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: HalfDuplexServer onChain"),
+    ("tunnels/HttpClient/instance/chain.c", "httpclientTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: HttpClient onChain"),
+    ("tunnels/HttpServer/instance/chain.c", "httpserverTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: HttpServer onChain"),
+    ("tunnels/IpOverrider/instance/chain.c", "ipoverriderOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: IpOverrider onChain"),
+    ("tunnels/KeepAliveClient/instance/chain.c", "keepaliveclientTunnelOnChain", 1,
+     ("KeepAliveClient: onChain override should not be used",),
+     "disabled lifecycle callback stub: KeepAliveClient onChain"),
+    ("tunnels/KeepAliveServer/instance/chain.c", "keepaliveserverTunnelOnChain", 1,
+     ("KeepAliveServer: onChain override should not be used",),
+     "disabled lifecycle callback stub: KeepAliveServer onChain"),
+    ("tunnels/MuxClient/instance/chain.c", "muxclientTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: MuxClient onChain"),
+    ("tunnels/MuxServer/instance/chain.c", "muxserverTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: MuxServer onChain"),
+    ("tunnels/ObfuscatorClient/instance/chain.c", "obfuscatorclientTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: ObfuscatorClient onChain"),
+    ("tunnels/ObfuscatorServer/instance/chain.c", "obfuscatorserverTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: ObfuscatorServer onChain"),
+    ("tunnels/PacketSender/instance/chain.c", "packetsenderTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: PacketSender onChain"),
+    ("tunnels/PacketsToConnection/instance/chain.c", "ptcTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: PacketsToConnection onChain"),
+    ("tunnels/PacketsToStream/instance/chain.c", "packetstostreamTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: PacketsToStream onChain"),
+    ("tunnels/PingClient/instance/chain.c", "pingclientOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: PingClient onChain"),
+    ("tunnels/PingServer/instance/chain.c", "pingserverOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: PingServer onChain"),
+    ("tunnels/RawSocket/instance/chain.c", "rawsocketOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: RawSocket onChain"),
+    ("tunnels/ReverseClient/instance/chain.c", "reverseclientTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: ReverseClient onChain"),
+    ("tunnels/ReverseServer/instance/chain.c", "reverseserverTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: ReverseServer onChain"),
+    ("tunnels/StreamToPackets/instance/chain.c", "streamtopacketsTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: StreamToPackets onChain"),
+    ("tunnels/TcpListener/instance/chain.c", "tcplistenerTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: TcpListener onChain"),
+    ("tunnels/TcpOverUdpClient/instance/chain.c", "tcpoverudpclientTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: TcpOverUdpClient onChain"),
+    ("tunnels/TcpOverUdpServer/instance/chain.c", "tcpoverudpserverTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: TcpOverUdpServer onChain"),
+    ("tunnels/TesterClient/instance/chain.c", "testerclientTunnelOnChain", 1,
+     ("TesterClient: explicit onChain is disabled, use the default tunnel chaining",),
+     "disabled lifecycle callback stub: TesterClient onChain"),
+    ("tunnels/TesterServer/instance/chain.c", "testerserverTunnelOnChain", 1,
+     ("TesterServer: explicit onChain is disabled, use the default tunnel chaining",),
+     "disabled lifecycle callback stub: TesterServer onChain"),
+    ("tunnels/TlsClient/instance/chain.c", "tlsclientTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: TlsClient onChain"),
+    ("tunnels/UdpListener/instance/chain.c", "udplistenerTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: UdpListener onChain"),
+    ("tunnels/UdpOverTcpClient/instance/chain.c", "udpovertcpclientTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: UdpOverTcpClient onChain"),
+    ("tunnels/UdpOverTcpServer/instance/chain.c", "udpovertcpserverTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: UdpOverTcpServer onChain"),
+    ("tunnels/UdpStatelessSocket/instance/chain.c", "udpstatelesssocketTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: UdpStatelessSocket onChain"),
+    ("tunnels/template/instance/chain.c", "templateTunnelOnChain", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: template onChain"),
+    ("tunnels/TcpConnector/instance/index.c", "tcpconnectorTunnelOnIndex", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: TcpConnector onIndex"),
+    ("tunnels/TcpListener/instance/index.c", "tcplistenerTunnelOnIndex", 1,
+     ("This Function is disabled, using the default Tunnel instead",),
+     "disabled lifecycle callback stub: TcpListener onIndex"),
+    ("tunnels/WireGuardDevice/instance/index.c", "wireguarddeviceTunnelOnIndex", 1,
+     ("This Function is disabled, using the default PacketTunnel instead",),
+     "disabled lifecycle callback stub: WireGuardDevice onIndex"),
+    ("tunnels/AuthenticationClient/common/protocol.c", "authenticationclientOpenControlLine", 1,
+     ("AuthenticationClient: control line must be opened on worker 0",),
+     "helper/line-state invariant: AuthClient protocol worker not 0"),
+    ("tunnels/AuthenticationClient/common/users_api.c", "authenticationclientAssertProfileEmpty", 1,
+     ("AuthenticationClient: %s received a non-empty user profile output; clear it before reuse",),
+     "helper/line-state invariant: AuthClient users_api profile contract"),
+    ("tunnels/IpManipulator/common/tricks/smugglefin/trick.c", "smugglefintrickQueuePacketOrDieLocked", 1,
+     ("IpManipulator: smuggle-fin failed to grow the paused packet queue",),
+     "helper/line-state invariant: IpManipulator trick queue growth"),
+    ("tunnels/IpManipulator/common/tricks/smugglefin/trick.c", "smugglefintrickFlushQueuedPackets", 1,
+     ("IpManipulator: worker packet line died while replaying smuggle-fin queued packets",),
+     "helper/line-state invariant: IpManipulator trick packet line died 1"),
+    ("tunnels/IpManipulator/common/tricks/smugglefin/trick.c", "smugglefintrickUpStreamPayload", 1,
+     ("IpManipulator: worker packet line died during smuggle-fin send",),
+     "helper/line-state invariant: IpManipulator trick packet line died 2"),
+    ("tunnels/MuxClient/common/line_state.c", "muxclientLinestateDestroy", 4,
+     ("MuxClient: Trying to destroy parent line state with %u children still attached",
+      "MuxClient: Trying to destroy parent line state with child links still present",
+      "MuxClient: Trying to destroy child line state while still linked to parent",
+      "MuxClient: Trying to destroy child line state while still linked to siblings"),
+     "helper/line-state invariant: MuxClient line-state parent/child/sibling link integrity"),
+    ("tunnels/MuxServer/common/line_state.c", "muxserverLinestateDestroy", 4,
+     ("MuxServer: Trying to destroy parent line state with %u children still attached",
+      "MuxServer: Trying to destroy parent line state with child links still present",
+      "MuxServer: Trying to destroy child line state while still linked to parent",
+      "MuxServer: Trying to destroy child line state while still linked to siblings"),
+     "helper/line-state invariant: MuxServer line-state parent/child/sibling link integrity"),
+    ("tunnels/PacketSender/common/helpers.c", "packetsenderGetSingleProtocolNumber", 1,
+     ("PacketSender: internal error, invalid single-protocol mode %u",),
+     "helper/line-state invariant: PacketSender helpers default enum"),
+    ("tunnels/PacketSender/common/helpers.c", "packetsenderResolveSourceAddress", 1,
+     ("PacketSender: internal error, source index %llu is out of range",),
+     "helper/line-state invariant: PacketSender helpers computed index range"),
+    ("tunnels/PacketSender/common/helpers.c", "packetsenderSendReadyPackets", 1,
+     ("PacketSender: worker packet line died during payload send",),
+     "helper/line-state invariant: PacketSender helpers packet line died 1"),
+    ("tunnels/PacketSender/common/helpers.c", "packetsenderStartWorker", 1,
+     ("PacketSender: worker %u packet line is not available",),
+     "helper/line-state invariant: PacketSender helpers packet line died 2"),
+    ("tunnels/PacketsToConnection/common/fake_dns.c", "ptcFakeDnsHandleIpv4UdpPacket", 1,
+     ("PacketsToConnection: packet line died while sending fake DNS response",),
+     "helper/line-state invariant: PacketsToConn fake_dns packet line died"),
+    ("tunnels/PacketsToConnection/common/helpers.c", "ptcEmitPacketBuffer", 1,
+     ("PacketsToConnection: packet line died during runtime, packet tunnel contract was violated",),
+     "helper/line-state invariant: PacketsToConn helpers packet line died"),
+    ("tunnels/ReverseClient/common/helpers.c", "reverseclientOnStarvedConnectionExpire", 1,
+     ("ReverseClient: onStarvedConnectionExpire called with NULL idle_handle",),
+     "helper/line-state invariant: ReverseClient helpers no idle handle"),
+    ("tunnels/ReverseClient/common/line_state.c", "reverseclientLinestateDestroy", 1,
+     ("ReverseClient: LinestateDestroy called with non NULL idle_handle",),
+     "helper/line-state invariant: ReverseClient line_state live idle handle"),
+    ("tunnels/TcpConnector/common/helpers.c", "tcpconnectorOnClose", 1,
+     ("TcpConnector: failed to remove idle item for FD:%x",),
+     "helper/line-state invariant: TcpConnector helpers remove idle table"),
+    ("tunnels/TcpConnector/common/line_state.c", "tcpconnectorLinestateDestroy", 1,
+     ("TcpConnector: idle item still exists for FD:%x",),
+     "helper/line-state invariant: TcpConnector line_state live idle entry"),
+    ("tunnels/TcpListener/common/helpers.c", "onClose", 1,
+     ("TcpListener: failed to remove idle item for FD:%x",),
+     "helper/line-state invariant: TcpListener helpers remove idle table"),
+    ("tunnels/TcpListener/common/line_state.c", "tcplistenerLinestateDestroy", 1,
+     ("TcpListener: idle item still exists for FD:%x",),
+     "helper/line-state invariant: TcpListener line_state live idle entry"),
+    ("tunnels/TcpUdpConnector/common/helpers.c", "tcpudpconnectorGetSelectedUpStreamTunnel", 1,
+     ("TcpUdpConnector: upstream callback received before init selected a connector",),
+     "helper/line-state invariant: TcpUdpConnector helpers internal connector"),
+    ("tunnels/TcpUdpListener/common/helpers.c", "tcpudplistenerSelectDownStreamTunnel", 1,
+     ("TcpUdpListener: line has ambiguous or missing source protocol flags (tcp=%u, udp=%u)",),
+     "helper/line-state invariant: TcpUdpListener helpers protocol flags"),
+    ("tunnels/TesterServer/common/helpers.c", "testerserverResponseSendTask", 1,
+     ("TesterServer: packet line died during packet-mode response send",),
+     "helper/line-state invariant: TesterServer helpers packet line died"),
+    ("tunnels/UdpConnector/common/helpers.c", "udpconnectorOnClose", 1,
+     ("UdpConnector: failed to remove idle item for FD:%x",),
+     "helper/line-state invariant: UdpConnector helpers remove idle table"),
+    ("tunnels/UdpConnector/common/line_state.c", "udpconnectorLinestateDestroy", 1,
+     ("UdpConnector: idle item still exists for FD:%x",),
+     "helper/line-state invariant: UdpConnector line_state live idle entry"),
+    ("tunnels/UdpStatelessSocket/common/helpers.c", "udpstatelesssocketCloseOwnedLineFromAdjacent", 1,
+     ("UdpStatelessSocket: failed to remove idle item for peer line",),
+     "helper/line-state invariant: UdpStatelessSocket helpers worker idle entry"),
+    ("tunnels/UdpStatelessSocket/common/line_state.c", "udpstatelesssocketLinestateDestroy", 1,
+     ("UdpStatelessSocket: idle item still exists while destroying peer line state",),
+     "helper/line-state invariant: UdpStatelessSocket line_state live idle entry"),
+    ("tunnels/AuthenticationClient/instance/start.c", "authenticationclientStartOnWorker0", 1,
+     ("AuthenticationClient: startup control task ran on worker %u",),
+     "worker-task invariant: AuthClient start worker 0"),
+    ("tunnels/TesterClient/instance/start.c", "testerclientStartWorker", 1,
+     ("TesterClient: packet line died during packet-mode init",),
+     "worker-task invariant: TesterClient start packet line died"),
+    ("tunnels/WireGuardDevice/instance/start.c", "wireguarddeviceQueueWorkerPacketInit", 1,
+     ("WireGuardDevice: worker packet line died during packet-side init",),
+     "worker-task invariant: WireGuardDevice start packet line died"),
+    ("tunnels/Internals/DomainResolver/instance/api.c", "domainresolverTunnelSetPrepareHook", 2,
+     ("DomainResolver: prepare hook must be configured before chaining",
+      "DomainResolver: prepare hook line state is too large"),
+     "internal API / unsafe destruction: DomainResolver prepare-hook order and line-state arithmetic"),
+    ("tunnels/UdpStatelessSocket/instance/destroy.c", "udpstatelesssocketTunnelDestroy", 1,
+     ("UdpStatelessSocket: destroying with active worker-local idle table for worker %u",),
+     "internal API / unsafe destruction: UdpStatelessSocket destroy active idle tables"),
+]
+
+
+# Function-level exclusions. These are call sites that must NOT become
+# Category-D hard aborts. Each entry pins the intended termination policy in one
+# exact function, so an unrelated terminateProgram() elsewhere in the same file
+# can no longer satisfy the check.
+#
+#   (relative path, function name, {call name: expected count}, anchors, why)
+#
+# This remains an allowlist policy: terminateProgram() under tunnels/ is not
+# banned in general, only in the audited Category-D functions above.
+
+EXCLUSIONS = [
+    ("tunnels/TcpListener/instance/create.c", "failInvalidPortValue",
+     {"terminateProgram": 1, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     ("JSON Error: TcpListener->settings->%s (positive-integer port field) : The data was empty or invalid",),
+     "main-thread startup configuration failure"),
+    ("tunnels/TcpConnector/instance/create.c", "parseDestinationArray",
+     {"terminateProgram": 3, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     ("JSON Error: TcpConnector->settings->addresses (array field) : The value was empty or invalid",),
+     "main-thread startup configuration failure"),
+    ("tunnels/TesterClient/common/helpers.c", "testerclientFail",
+     {"terminateProgram": 0, "abortProgramNow": 1, "requestProgramShutdown": 1},
+     ("TesterClient: worker %u failed: %s",),
+     "orderly runtime shutdown request from an arbitrary worker"),
+    ("tunnels/TlsClient/common/line_state.c", "tlsclientLinestateInitialize",
+     {"terminateProgram": 2, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     ("Failed to allocate TlsClient BoringSSL line state",),
+     "per-line error intentionally excluded from the migration"),
+    ("tunnels/Router/common/geoip.c", "routerGeoipLookupCountry",
+     {"terminateProgram": 2, "abortProgramNow": 0, "requestProgramShutdown": 0},
+     ("Router: GeoIP rule evaluated without an open MaxMind database",),
+     "per-request error intentionally excluded from the migration"),
+]
+
+
+# A candidate function may only keep a non-Category-D termination call when the
+# audit deliberately left it there. Every such call is listed here with its
+# exact expected count; every other candidate function must have none.
+#
+# authenticationclientStartOnWorker0() converted its worker-ID invariant to a
+# hard abort but deliberately kept the ping-timer creation failure as an
+# orderly terminateProgram(), so both calls are pinned.
+RETAINED_NON_ABORT_CALLS = {
+    ("tunnels/AuthenticationClient/instance/start.c", "authenticationclientStartOnWorker0"):
+        {"terminateProgram": 1},
+}
+
+
+# Removals the previous line-proximity checker silently accepted. They are
+# re-exercised by name so the regression cannot come back unnoticed.
+MANDATORY_REGRESSION_MUTATIONS = [
+    ("tunnels/ReverseClient/downstream/fin.c", "reverseclientTunnelDownStreamFinish"),
+    ("tunnels/MuxClient/common/line_state.c", "muxclientLinestateDestroy"),
+    ("tunnels/MuxServer/common/line_state.c", "muxserverLinestateDestroy"),
+    ("tunnels/Internals/DomainResolver/instance/api.c", "domainresolverTunnelSetPrepareHook"),
+]
+
+
+# ---------------------------------------------------------------------------
+# Source access and analysis caches
+# ---------------------------------------------------------------------------
+
+_FILE_CACHE = {}
+_ANALYSIS_CACHE = {}
+
+
+def read_source(rel_path, source_overrides):
+    if source_overrides and rel_path in source_overrides:
+        return source_overrides[rel_path]
+    if rel_path not in _FILE_CACHE:
+        full_path = os.path.join(ROOT, rel_path)
+        if not os.path.exists(full_path):
+            return None
+        with open(full_path, "r", encoding="utf-8") as handle:
+            _FILE_CACHE[rel_path] = handle.read()
+    return _FILE_CACHE[rel_path]
+
+
+def analyze(content):
+    """Return (masked_source, {function name: [body span, ...]}) for content."""
+    cached = _ANALYSIS_CACHE.get(content)
+    if cached is None:
+        masked = mask_source(content)
+        cached = (masked, find_function_definitions(masked))
+        _ANALYSIS_CACHE[content] = cached
+    return cached
+
+
+def resolve_function(content, rel_path, function, label, errors):
+    """Return the single body span of ``function``, or None after reporting."""
+    masked, definitions = analyze(content)
+    spans = definitions.get(function, [])
+    if not spans:
+        errors.append("[%s] %s: no definition of %s()" % (label, rel_path, function))
+        return None
+    if len(spans) > 1:
+        lines = [line_of(content, span[0]) for span in spans]
+        errors.append(
+            "[%s] %s: %s() is defined %d times (lines %s); a candidate must name exactly one function"
+            % (label, rel_path, function, len(spans), lines)
+        )
+        return None
+    return spans[0]
+
+
+def count_calls(masked, span, call_name):
+    return len(_CALL_PATTERNS[call_name].findall(masked, span[0], span[1]))
+
+
+# ---------------------------------------------------------------------------
+# Policy verification
+# ---------------------------------------------------------------------------
+
+def verify_policy(source_overrides=None):
+    errors = []
+    checked_functions = 0
+    checked_aborts = 0
+
+    expected_total = sum(entry[2] for entry in MANIFEST)
+    if expected_total != EXPECTED_TOTAL_ABORTS:
+        errors.append(
+            "Manifest accounts for %d aborts, expected exactly %d"
+            % (expected_total, EXPECTED_TOTAL_ABORTS)
+        )
+
+    seen_keys = set()
+    for rel_path, function, expected, anchors, description in MANIFEST:
+        key = (rel_path, function)
+        if key in seen_keys:
+            errors.append("Duplicate manifest entry for %s::%s" % (rel_path, function))
+            continue
+        seen_keys.add(key)
+
+        content = read_source(rel_path, source_overrides)
+        if content is None:
+            errors.append("[%s] Candidate file missing: %s" % (description, rel_path))
+            continue
+
+        span = resolve_function(content, rel_path, function, description, errors)
+        if span is None:
+            continue
+
+        checked_functions += 1
+        checked_aborts += expected
+
+        masked, _ = analyze(content)
+        body_masked = masked[span[0]:span[1]]
+        body_source = content[span[0]:span[1]]
+        body_line = line_of(content, span[0])
+
+        total_aborts = len(_ABORT_ANY_RE.findall(body_masked))
+        hard_aborts = len(_ABORT_HARD_RE.findall(body_masked))
+
+        if hard_aborts != expected:
+            errors.append(
+                "[%s] %s::%s (line %d) has %d abortProgramNow(1); call(s), expected %d"
+                % (description, rel_path, function, body_line, hard_aborts, expected)
+            )
+        if total_aborts != hard_aborts:
+            errors.append(
+                "[%s] %s::%s (line %d) has %d abortProgramNow() call(s) but only %d use exit code 1"
+                % (description, rel_path, function, body_line, total_aborts, hard_aborts)
+            )
+
+        retained = RETAINED_NON_ABORT_CALLS.get(key, {})
+
+        expected_terminate = retained.get("terminateProgram", 0)
+        reintroduced = count_calls(masked, span, "terminateProgram")
+        if reintroduced != expected_terminate:
+            errors.append(
+                "[%s] %s::%s (line %d) has %d terminateProgram() call(s), expected %d"
+                % (description, rel_path, function, body_line, reintroduced, expected_terminate)
+            )
+
+        expected_request = retained.get("requestProgramShutdown", 0)
+        requested = count_calls(masked, span, "requestProgramShutdown")
+        if requested != expected_request:
+            errors.append(
+                "[%s] %s::%s (line %d) has %d requestProgramShutdown() call(s), expected %d; "
+                "this site must abort immediately"
+                % (description, rel_path, function, body_line, requested, expected_request)
+            )
+
+        for anchor in anchors:
+            if anchor not in body_source:
+                errors.append(
+                    "[%s] %s::%s (line %d) lost the invariant diagnostic %r"
+                    % (description, rel_path, function, body_line, anchor)
+                )
+
+    for rel_path, function, expected_calls, anchors, reason in EXCLUSIONS:
+        content = read_source(rel_path, source_overrides)
+        if content is None:
+            errors.append("[exclusion: %s] Excluded file missing: %s" % (reason, rel_path))
+            continue
+
+        label = "exclusion: %s" % reason
+        span = resolve_function(content, rel_path, function, label, errors)
+        if span is None:
+            continue
+
+        masked, _ = analyze(content)
+        body_source = content[span[0]:span[1]]
+        body_line = line_of(content, span[0])
+
+        for call_name, expected_count in sorted(expected_calls.items()):
+            actual = count_calls(masked, span, call_name)
+            if actual != expected_count:
+                errors.append(
+                    "[%s] %s::%s (line %d) has %d %s() call(s), expected %d"
+                    % (label, rel_path, function, body_line, actual, call_name, expected_count)
+                )
+
+        for anchor in anchors:
+            if anchor not in body_source:
+                errors.append(
+                    "[%s] %s::%s (line %d) lost the diagnostic %r"
+                    % (label, rel_path, function, body_line, anchor)
+                )
+
+    return errors, checked_functions, checked_aborts
+
+
+# ---------------------------------------------------------------------------
+# Mutation testing
+# ---------------------------------------------------------------------------
+
+def abort_call_spans(content, function):
+    masked, definitions = analyze(content)
+    span = definitions[function][0]
+    return [match.span() for match in _ABORT_HARD_RE.finditer(masked, span[0], span[1])]
+
+
+def mutate_abort(content, function, index, replacement):
+    start, end = abort_call_spans(content, function)[index]
+    return content[:start] + replacement + content[end:]
+
+
+def mutate_exclusion_to_hard_abort(content, function, call_name):
+    masked, definitions = analyze(content)
+    span = definitions[function][0]
+    match = _CALL_PATTERNS[call_name].search(masked, span[0], span[1])
+    start = match.start()
+    return content[:start] + "abortProgramNow" + content[start + len(call_name):]
+
+
+class MutationRunner:
+    def __init__(self):
+        self.applied = 0
+        self.escaped = []
+
+    def expect_failure(self, label, rel_path, mutated):
+        self.applied += 1
+        errors, _, _ = verify_policy({rel_path: mutated})
+        if not errors:
+            self.escaped.append(label)
+            return False
+        return True
+
+
+def run_mutation_tests():
+    print("Running mutation tests on the policy checker...")
+    runner = MutationRunner()
+
+    replacements = [
+        ("terminateProgram", "terminateProgram(1);"),
+        ("requestProgramShutdown", "requestProgramShutdown(1);"),
+        ("exit code 0", "abortProgramNow(0);"),
+        ("commented out", "// abortProgramNow(1);"),
+        ("string literal", '(void) "abortProgramNow(1);";'),
+        ("declaration only", "void abortProgramNow(int);"),
+    ]
+
+    covered_regressions = set()
+
+    for rel_path, function, expected, _anchors, _description in MANIFEST:
+        content = read_source(rel_path, None)
+        spans = abort_call_spans(content, function)
+        if len(spans) != expected:
+            runner.escaped.append(
+                "%s::%s: found %d mutable abort call(s), manifest expects %d"
+                % (rel_path, function, len(spans), expected)
+            )
+            continue
+
+        # 1 & 2: every required abort must be individually load-bearing.
+        for index in range(expected):
+            label = "%s::%s remove abort #%d" % (rel_path, function, index + 1)
+            runner.expect_failure(label, rel_path, mutate_abort(content, function, index, ""))
+
+        # 3 - 6: lookalikes must never satisfy a candidate.
+        for name, replacement in replacements:
+            label = "%s::%s abort #1 -> %s" % (rel_path, function, name)
+            runner.expect_failure(
+                label, rel_path, mutate_abort(content, function, 0, replacement)
+            )
+
+        if (rel_path, function) in MANDATORY_REGRESSION_MUTATIONS:
+            covered_regressions.add((rel_path, function))
+
+    # Deliberately retained non-Category-D calls must not drift either.
+    for (rel_path, function), retained in sorted(RETAINED_NON_ABORT_CALLS.items()):
+        content = read_source(rel_path, None)
+        for call_name in sorted(retained):
+            label = "retained %s::%s %s() -> abortProgramNow()" % (rel_path, function, call_name)
+            runner.expect_failure(
+                label, rel_path, mutate_exclusion_to_hard_abort(content, function, call_name)
+            )
+
+    # 7: exclusions must not drift toward a Category-D hard abort.
+    for rel_path, function, expected_calls, _anchors, reason in EXCLUSIONS:
+        content = read_source(rel_path, None)
+        for call_name, expected_count in sorted(expected_calls.items()):
+            if call_name == "abortProgramNow" or expected_count == 0:
+                continue
+            label = "exclusion %s::%s %s() -> abortProgramNow()" % (rel_path, function, call_name)
+            runner.expect_failure(
+                label, rel_path, mutate_exclusion_to_hard_abort(content, function, call_name)
+            )
+
+    missing_regressions = [
+        entry for entry in MANDATORY_REGRESSION_MUTATIONS if entry not in covered_regressions
+    ]
+    for rel_path, function in missing_regressions:
+        runner.escaped.append(
+            "mandatory regression mutation never ran for %s::%s" % (rel_path, function)
+        )
+
+    if runner.escaped:
+        print("Mutation testing FAILED: %d mutation(s) were not detected:" % len(runner.escaped))
+        for label in runner.escaped:
+            print("  - %s" % label)
+        return False
+
+    print(
+        "  %d mutations applied, all detected (including the %d previously missed removals)."
+        % (runner.applied, sum(entry[2] for entry in MANIFEST if (entry[0], entry[1]) in MANDATORY_REGRESSION_MUTATIONS))
+    )
+    return True
+
+
+def main():
+    errors, checked_functions, checked_aborts = verify_policy()
+
+    if errors:
+        print("Policy Check FAILED with %d error(s):" % len(errors))
+        for error in errors:
+            print("  - %s" % error)
+        sys.exit(1)
+
+    print(
+        "Policy Check PASSED: %d Category-D abortProgramNow(1) call(s) across %d function(s), "
+        "%d function-level exclusion(s) intact."
+        % (checked_aborts, checked_functions, len(EXCLUSIONS))
+    )
+
+    if "--mutation-test" in sys.argv or "-m" in sys.argv:
+        if not run_mutation_tests():
+            sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

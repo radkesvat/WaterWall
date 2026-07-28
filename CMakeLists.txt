@@ -1100,6 +1100,32 @@ target_compile_definitions(Waterwall PUBLIC WATERWALL_VERSION=${Waterwall_VERSIO
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
   target_compile_definitions(Waterwall PRIVATE WATERWALL_TEST_HOOKS=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
+elseif(BUILD_TESTING)
+  # The tests/ subtree above is Linux-only, but neither tunnel hard-abort test
+  # depends on it: the policy check is a pure source scan and the runtime cases
+  # use no POSIX-only header or process API. Both are registered here so Windows
+  # and macOS keep the same abort coverage.
+  #
+  # Python is REQUIRED rather than optional: silently dropping the policy test
+  # would leave the 231 Category-D candidates unchecked on this platform, so a
+  # missing interpreter must fail configuration instead of failing open.
+  find_program(WATERWALL_POLICY_TEST_PYTHON NAMES python3 python REQUIRED)
+
+  add_test(
+    NAME waterwall.tunnels_abort_policy_test
+    COMMAND
+      "${WATERWALL_POLICY_TEST_PYTHON}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/tunnels_abort_policy_test.py"
+      "--mutation-test"
+  )
+  set_tests_properties(
+    waterwall.tunnels_abort_policy_test
+    PROPERTIES
+      TIMEOUT 120
+      LABELS "unit;tunnels;policy;abort"
+  )
+
+  include("${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/tunnels_abort_runtime_test.cmake")
 endif()
 
 # Windows does not add the tests/ subtree, so register the focused interface-name

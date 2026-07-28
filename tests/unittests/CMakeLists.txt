@@ -1076,6 +1076,10 @@ if(TARGET Router)
   add_waterwall_unit_test(waterwall.router_sniffing_unit router_sniffing_test "unit;tunnels;router;sniffing")
 endif()
 
+# Tunnel hard-abort runtime cases. The registration is shared with the native
+# Windows/macOS test configurations, which do not add the tests/ subtree.
+include("${CMAKE_CURRENT_SOURCE_DIR}/tunnels_abort_runtime_test.cmake")
+
 add_custom_target(check_waterwall_unit_tests
   COMMAND
     "${CMAKE_CTEST_COMMAND}"
