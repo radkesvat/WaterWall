@@ -8,7 +8,7 @@ typedef struct tun_windows_lifetime_ops_s
     bool (*signal_reader)(void *context);
     bool (*join_reader)(void *context);
     bool (*join_writer)(void *context);
-    void (*release_writer)(void *context);
+    bool (*release_writer)(void *context);
     void (*end_session)(void *context);
 } tun_windows_lifetime_ops_t;
 
@@ -26,7 +26,10 @@ static inline bool tunWindowsLifetimeShutdown(void *context, const tun_windows_l
         return false;
     }
 
-    ops->release_writer(context);
+    if (! ops->release_writer(context))
+    {
+        return false;
+    }
     ops->end_session(context);
     return true;
 }

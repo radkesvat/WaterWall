@@ -105,7 +105,8 @@ static WTHREAD_ROUTINE(benchmarkConsumer)
         YIELD_CPU();
     }
 
-    while (chanRecv(shared->writer_channel.channel, &buf))
+    struct wchan_s *channel = deviceWriterChannelGetConsumerChannel(&shared->writer_channel);
+    while (chanRecv(channel, &buf))
     {
         discard buf;
         if (shared->saturated)
@@ -167,7 +168,7 @@ static void benchmarkRunCase(unsigned int producer_count, bool saturated, unsign
     atomicStoreRelaxed(&shared.start, true);
     wwSleepMS(duration_ms);
 
-    deviceWriterChannelCloseAndQuiesce(&shared.writer_channel);
+    deviceWriterChannelClose(&shared.writer_channel);
     wwSleepMS(kClosedObservationMs);
     atomicStoreRelaxed(&shared.stop, true);
 
@@ -200,7 +201,12 @@ static void benchmarkRunCase(unsigned int producer_count, bool saturated, unsign
         full += probes[i].full;
     }
 
-    deviceWriterChannelFree(&shared.writer_channel);
+    if (! deviceWriterChannelRetireCurrent(&shared.writer_channel) ||
+        ! deviceWriterChannelDestroy(&shared.writer_channel))
+    {
+        fprintf(stderr, "device_writer_channel_benchmark: failed to destroy writer channel\n");
+        exit(1);
+    }
     free(producer_threads);
     free(probes);
 

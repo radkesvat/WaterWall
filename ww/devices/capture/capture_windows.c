@@ -189,8 +189,10 @@ static void capturedeviceBeginShutdown(void *context)
 {
     capture_device_t *cdev = context;
 
-    atomicStoreExplicit(&(cdev->running), false, memory_order_release);
-    atomicStoreExplicit(&(cdev->up), false, memory_order_relaxed);
+    // These atomics carry loop/status values only. Thread creation/join and the
+    // reader-session gate publish and reclaim the associated resources.
+    atomicStoreRelaxed(&cdev->running, false);
+    atomicStoreRelaxed(&cdev->up, false);
     deviceReaderSessionEnd(cdev->reader_session);
 }
 
@@ -312,13 +314,18 @@ bool caputredeviceBringUp(capture_device_t *cdev)
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
     cdev->reader_exit_confirmed = false;
-    deviceReaderSessionBegin(cdev->reader_session);
-    atomicStoreExplicit(&(cdev->running), true, memory_order_release);
+    if (deviceReaderSessionBegin(cdev->reader_session) == 0)
+    {
+        LOGE("CaptureDevice: failed to open reader delivery generation");
+        discard captureWindowsLifetimeRollbackOpen(cdev, &capture_lifetime_ops);
+        return false;
+    }
+    atomicStoreRelaxed(&cdev->running, true);
 
     wthread_error_t error = threadCreate(&cdev->read_thread, cdev->routine_reader, cdev);
     if (error != kWThreadErrorNone)
     {
-        atomicStoreExplicit(&(cdev->running), false, memory_order_release);
+        atomicStoreRelaxed(&cdev->running, false);
         deviceReaderSessionEnd(cdev->reader_session);
         LOGE("CaptureDevice: failed to create reader thread: error %u", error);
 
@@ -329,7 +336,7 @@ bool caputredeviceBringUp(capture_device_t *cdev)
         return false;
     }
 
-    atomicStoreExplicit(&(cdev->up), true, memory_order_release);
+    atomicStoreRelaxed(&cdev->up, true);
     LOGI("CaptureDevice: device %s is now up", cdev->name);
     return true;
 }
@@ -400,7 +407,7 @@ void capturedeviceDestroy(capture_device_t *cdev)
         if (! caputredeviceBringDown(cdev))
         {
             LOGF("CaptureDevice: refusing to destroy device while the reader may still own resources");
-            terminateProgram(1);
+            abortProgramNow(1);
         }
     }
 
@@ -412,7 +419,7 @@ void capturedeviceDestroy(capture_device_t *cdev)
     memoryFree(cdev->name);
     memoryFree(cdev->filter);
     bufferpoolDestroy(cdev->reader_buffer_pool);
-    deviceReaderSessionUnref(cdev->reader_session, NULL, NULL);
+    deviceReaderSessionUnref(cdev->reader_session);
 
     memoryFree(cdev);
 }

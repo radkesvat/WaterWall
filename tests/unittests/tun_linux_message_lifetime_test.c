@@ -54,6 +54,7 @@ static unsigned int       next_fake_thread = 1;
 static unsigned int       fake_thread_create_calls;
 static unsigned int       fake_thread_join_calls;
 static unsigned int       fail_fake_thread_create_on_call;
+static unsigned int       fail_fake_thread_join_on_call;
 static unsigned int       run_fake_thread_on_create_call;
 static unsigned int       fail_interface_down_calls;
 static unsigned int       interface_down_attempts;
@@ -329,6 +330,10 @@ int __wrap_pthread_join(pthread_t thread, void **retval)
 {
     discard thread;
     fake_thread_join_calls++;
+    if (fake_thread_join_calls == fail_fake_thread_join_on_call)
+    {
+        return EBUSY;
+    }
     if (retval != NULL)
     {
         *retval = NULL;
@@ -519,6 +524,7 @@ static void resetFakeThreads(unsigned int fail_on_call)
     fake_thread_create_calls        = 0;
     fake_thread_join_calls          = 0;
     fail_fake_thread_create_on_call = fail_on_call;
+    fail_fake_thread_join_on_call   = 0;
     run_fake_thread_on_create_call  = 0;
     memoryZero(captured_thread_routines, sizeof(captured_thread_routines));
     memoryZero(captured_thread_args, sizeof(captured_thread_args));
@@ -1040,6 +1046,25 @@ static void testInterfaceDownFailureRemainsRetryable(void)
     tundeviceDestroy(tdev);
 }
 
+static void testJoinFailureRetainsOwnershipForRetry(void)
+{
+    resetFakeThreads(0);
+    tun_device_t *tdev = createRunningReaderDevice();
+
+    fail_fake_thread_join_on_call = 1;
+    require(! tundeviceBringDown(tdev), "reader join failure reported successful cleanup");
+    require(tunLinuxLifecycleState(tdev) == kTunLifecycleStopping,
+            "join failure published DOWN while thread ownership remained");
+    require(! tundeviceBringUp(tdev), "restart succeeded while failed-join ownership remained");
+
+    fail_fake_thread_join_on_call = 0;
+    require(tundeviceBringDown(tdev), "join retry did not complete retained teardown");
+    require(tunLinuxLifecycleState(tdev) == kTunLifecycleDown, "join retry did not publish DOWN");
+    require(fake_thread_join_calls == 3, "join retry did not target only the retained reader");
+
+    tundeviceDestroy(tdev);
+}
+
 typedef struct writer_race_probe_s
 {
     tun_device_t *tdev;
@@ -1246,6 +1271,7 @@ int main(void)
     testPermanentIoErrorsReachTheShutdownWrapper();
     testHandoffFailureFallsBackToHardAbort();
     testInterfaceDownFailureRemainsRetryable();
+    testJoinFailureRetainsOwnershipForRetry();
     testWriterGateQuiescesConcurrentSenders();
     testBringDownReleasesQueuedWritesOffTheWriterThread();
     envTeardown(&env);

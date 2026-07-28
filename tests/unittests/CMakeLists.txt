@@ -74,6 +74,7 @@ if(TARGET ww)
 
   add_executable(device_lifetime_test device_lifetime_test.c)
   target_include_directories(device_lifetime_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices)
+  target_compile_definitions(device_lifetime_test PRIVATE DEVICE_LIFETIME_TEST_HOOKS=1)
   target_link_libraries(device_lifetime_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests device_lifetime_test)
 
@@ -107,6 +108,7 @@ if(TARGET ww)
       device_writer_channel_test.c
       ${CMAKE_SOURCE_DIR}/ww/devices/device_writer_channel.c
     )
+    target_compile_definitions(device_writer_channel_test PRIVATE DEVICE_WRITER_CHANNEL_TEST_HOOKS=1)
     target_link_libraries(device_writer_channel_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests device_writer_channel_test)
 
@@ -526,6 +528,7 @@ if(TARGET ww)
       ${CMAKE_SOURCE_DIR}/ww/devices/device_writer_channel.c
       ${CMAKE_SOURCE_DIR}/ww/devices/raw/raw_linux.c
     )
+    target_link_options(raw_linux_writer_test PRIVATE "-Wl,--wrap=pthread_join")
     target_link_libraries(raw_linux_writer_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests raw_linux_writer_test)
 

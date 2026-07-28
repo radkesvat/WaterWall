@@ -123,13 +123,6 @@ void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (UNLIKELY(! tundeviceIsUp(tdev)))
-    {
-        lineReuseBuffer(l, buf);
-        LOGW("TunDevice: device is down, cannot write packet");
-        return;
-    }
-
     if (! tundeviceWrite(tdev, buf))
     {
         LOGW("TunDevice: Write failed! worker %d ", lineGetWID(l));

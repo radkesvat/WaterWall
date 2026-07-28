@@ -3,6 +3,7 @@
 #include "global_state.h"
 #include "wchan.h"
 
+#include <errno.h>
 #include <netinet/ip.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -34,6 +35,20 @@ typedef struct consumer_probe_s
     unsigned int buffer_capacity;
     atomic_uint  buffer_count;
 } consumer_probe_t;
+
+static bool fail_next_thread_join;
+
+int __real_pthread_join(pthread_t thread, void **retval);
+int __wrap_pthread_join(pthread_t thread, void **retval);
+int __wrap_pthread_join(pthread_t thread, void **retval)
+{
+    if (fail_next_thread_join)
+    {
+        fail_next_thread_join = false;
+        return EBUSY;
+    }
+    return __real_pthread_join(thread, retval);
+}
 
 static void require(bool condition, const char *message)
 {
@@ -71,10 +86,11 @@ static WTHREAD_ROUTINE(testWriterRoutine)
     raw_device_t     *rdev  = userdata;
     consumer_probe_t *probe = rdev->userdata;
     sbuf_t           *buf;
+    struct wchan_s   *writer_channel = deviceWriterChannelGetConsumerChannel(&rdev->writer_channel);
 
-    while (atomicLoadExplicit(&rdev->running, memory_order_acquire))
+    while (atomicLoadRelaxed(&rdev->running))
     {
-        if (! chanRecv(rdev->writer_channel.channel, &buf))
+        if (! chanRecv(writer_channel, &buf))
         {
             break;
         }
@@ -191,6 +207,40 @@ static void testRawBringDownQuiescesConcurrentWriters(test_env_t *env)
         bufferpoolReuseBuffer(rdev.writer_buffer_pool, consumed_buffers[i]);
     }
 
+    require(deviceWriterChannelDestroy(&rdev.writer_channel), "failed to destroy retired raw writer generations");
+    memoryFree(rdev.name);
+    bufferpoolDestroy(rdev.writer_buffer_pool);
+}
+
+static void testRawJoinFailureRetainsOwnership(test_env_t *env)
+{
+    raw_device_t rdev;
+    memoryZero(&rdev, sizeof(rdev));
+    sbuf_t          *consumed_buffers[1];
+    consumer_probe_t consumer = {
+        .buffers         = consumed_buffers,
+        .buffer_capacity = ARRAY_SIZE(consumed_buffers),
+    };
+    rdev.name               = stringDuplicate("raw-join-retry-test");
+    rdev.writer_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
+    rdev.routine_writer     = testWriterRoutine;
+    rdev.userdata           = &consumer;
+    deviceWriterChannelInit(&rdev.writer_channel);
+
+    require(rawdeviceBringUp(&rdev), "raw join-retry bring-up failed");
+    fail_next_thread_join = true;
+    require(! rawdeviceBringDown(&rdev), "injected raw writer join failure reported success");
+    require(rdev.writer_joinable, "raw writer join failure discarded thread ownership");
+    require(deviceWriterChannelHasCurrent(&rdev.writer_channel),
+            "raw writer join failure retired a generation still owned by the thread");
+    require(! rawdeviceBringUp(&rdev), "raw writer restarted while failed-join ownership remained");
+
+    require(rawdeviceBringDown(&rdev), "raw writer join retry failed");
+    require(! rdev.writer_joinable, "raw writer join retry retained thread ownership");
+    require(! deviceWriterChannelHasCurrent(&rdev.writer_channel),
+            "raw writer join retry did not retire its closed generation");
+
+    require(deviceWriterChannelDestroy(&rdev.writer_channel), "failed to destroy raw join-retry generations");
     memoryFree(rdev.name);
     bufferpoolDestroy(rdev.writer_buffer_pool);
 }
@@ -200,6 +250,7 @@ int main(void)
     test_env_t env;
     envSetup(&env);
     testRawBringDownQuiescesConcurrentWriters(&env);
+    testRawJoinFailureRetainsOwnership(&env);
     envTeardown(&env);
     puts("Linux raw writer lifetime tests passed");
     return 0;

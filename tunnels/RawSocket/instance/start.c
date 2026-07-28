@@ -8,7 +8,7 @@ static void rawsocketStopStartupDevices(rawsocket_tstate_t *state)
     {
         LOGW("RawSocket: capture device bring down completed with cleanup errors");
     }
-    if (state->raw_device != NULL && state->raw_device->up)
+    if (state->raw_device != NULL && atomicLoadRelaxed(&state->raw_device->up))
     {
         rawdeviceBringDown(state->raw_device);
     }

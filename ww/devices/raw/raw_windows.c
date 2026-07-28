@@ -69,17 +69,18 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 {
     raw_device_t     *rdev = userdata;
     sbuf_t           *buf;
-    WINDIVERT_ADDRESS addr = {
-        .Layer       = WINDIVERT_LAYER_NETWORK,
-        .Outbound    = 1,
-        .IPChecksum  = 1,
-        .TCPChecksum = 1,
-        .UDPChecksum = 1,
+    struct wchan_s   *writer_channel = deviceWriterChannelGetConsumerChannel(&rdev->writer_channel);
+    WINDIVERT_ADDRESS addr           = {
+                  .Layer       = WINDIVERT_LAYER_NETWORK,
+                  .Outbound    = 1,
+                  .IPChecksum  = 1,
+                  .TCPChecksum = 1,
+                  .UDPChecksum = 1,
     };
 
     while (atomicLoadExplicit(&(rdev->running), memory_order_relaxed))
     {
-        if (! chanRecv(rdev->writer_channel.channel, (void **) &buf))
+        if (! chanRecv(writer_channel, (void **) &buf))
         {
             LOGD("RawDevice: routine write will exit due to channel closed");
             break;
@@ -130,9 +131,14 @@ bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf)
 
 bool rawdeviceBringUp(raw_device_t *rdev)
 {
-    if (atomicLoadExplicit(&rdev->up, memory_order_acquire))
+    if (atomicLoadRelaxed(&rdev->up))
     {
         LOGE("RawDevice: device is already up");
+        return false;
+    }
+    if (rdev->writer_joinable || deviceWriterChannelHasCurrent(&rdev->writer_channel))
+    {
+        LOGE("RawDevice: previous writer ownership has not been released");
         return false;
     }
 
@@ -145,7 +151,9 @@ bool rawdeviceBringUp(raw_device_t *rdev)
         LOGE("RawDevice: failed to open writer channel");
         return false;
     }
-    atomicStoreExplicit(&rdev->running, true, memory_order_release);
+    // These atomics carry only stop/status values; queue publication and thread
+    // creation provide the resource-publication edges.
+    atomicStoreRelaxed(&rdev->running, true);
 
     // wthread_error_t read_error = threadCreate(&rdev->read_thread, rdev->routine_reader, rdev);
 
@@ -153,37 +161,44 @@ bool rawdeviceBringUp(raw_device_t *rdev)
     if (UNLIKELY(error != kWThreadErrorNone))
     {
         LOGE("RawDevice: failed to create writer thread: error %u", error);
-        atomicStoreExplicit(&rdev->running, false, memory_order_release);
-        atomicThreadFence(memory_order_release);
-        deviceWriterChannelCloseAndQuiesce(&rdev->writer_channel);
-        deviceWriterChannelFree(&rdev->writer_channel);
-        atomicStoreExplicit(&rdev->up, false, memory_order_release);
+        atomicStoreRelaxed(&rdev->running, false);
+        deviceWriterChannelClose(&rdev->writer_channel);
+        discard deviceWriterChannelRetireCurrent(&rdev->writer_channel);
+        atomicStoreRelaxed(&rdev->up, false);
         return false;
     }
 
-    atomicStoreExplicit(&rdev->up, true, memory_order_release);
+    rdev->writer_joinable = true;
+    atomicStoreRelaxed(&rdev->up, true);
     LOGI("RawDevice: device %s is now up", rdev->name);
     return true;
 }
 
 bool rawdeviceBringDown(raw_device_t *rdev)
 {
-    if (! atomicLoadExplicit(&rdev->up, memory_order_acquire))
+    const bool was_up = atomicExchangeExplicit(&rdev->up, false, memory_order_relaxed);
+    if (! was_up && ! rdev->writer_joinable && ! deviceWriterChannelHasCurrent(&rdev->writer_channel))
     {
         LOGE("RawDevice: device is already down");
         return true;
     }
 
-    atomicStoreExplicit(&rdev->running, false, memory_order_release);
-    atomicStoreExplicit(&rdev->up, false, memory_order_release);
+    atomicStoreRelaxed(&rdev->running, false);
+    deviceWriterChannelClose(&rdev->writer_channel);
 
-    atomicThreadFence(memory_order_release);
-
-    deviceWriterChannelCloseAndQuiesce(&rdev->writer_channel);
-
-    safeThreadJoin(rdev->write_thread);
-
-    deviceWriterChannelFree(&rdev->writer_channel);
+    if (rdev->writer_joinable)
+    {
+        if (UNLIKELY(! safeThreadJoin(rdev->write_thread)))
+        {
+            LOGE("RawDevice: failed to join writer thread; retaining writer resources");
+            return false;
+        }
+        rdev->writer_joinable = false;
+    }
+    if (! deviceWriterChannelRetireCurrent(&rdev->writer_channel))
+    {
+        return false;
+    }
 
     LOGI("RawDevice: device %s is now down", rdev->name);
 
@@ -223,7 +238,8 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
                             .handle             = handle,
                             .mark               = mark,
                             .userdata           = userdata,
-                            .writer_buffer_pool = writer_bpool};
+                            .writer_buffer_pool = writer_bpool,
+                            .writer_joinable    = false};
     deviceWriterChannelInit(&rdev->writer_channel);
 
     return rdev;
@@ -232,9 +248,22 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
 void rawdeviceDestroy(raw_device_t *rdev)
 {
 
-    if (atomicLoadExplicit(&rdev->up, memory_order_acquire))
+    if (atomicLoadRelaxed(&rdev->up) || rdev->writer_joinable || deviceWriterChannelHasCurrent(&rdev->writer_channel))
     {
-        rawdeviceBringDown(rdev);
+        if (! rawdeviceBringDown(rdev))
+        {
+            LOGF("RawDevice: refusing to destroy device while writer ownership remains");
+            abortProgramNow(1);
+        }
+    }
+    /*
+     * Node destruction runs after all worker and lwIP producer contexts have
+     * stopped, so retired queue generations can finally be reclaimed.
+     */
+    if (! deviceWriterChannelDestroy(&rdev->writer_channel))
+    {
+        LOGF("RawDevice: refusing to destroy a published writer generation");
+        abortProgramNow(1);
     }
     memoryFree(rdev->name);
     bufferpoolDestroy(rdev->writer_buffer_pool);

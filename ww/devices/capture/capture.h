@@ -50,6 +50,7 @@ typedef struct capture_device_s
     bool            reader_thread_joinable;
     bool            reader_ready;
     bool            reader_failed;
+    bool            reader_stop_requested;
     // Set by terminal lifecycle cleanup while a reader owns `socket`. The
     // reader wrapper closes it only after the routine has stopped using its
     // copied descriptor.

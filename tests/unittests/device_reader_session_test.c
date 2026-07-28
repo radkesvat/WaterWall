@@ -3,6 +3,7 @@
 #include "global_state.h"
 #include "worker_messages.h"
 
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -23,7 +24,17 @@ typedef struct captured_message_s
 typedef struct reader_probe_s
 {
     unsigned int delivered;
+    atomic_bool  block_delivery;
+    atomic_bool  delivery_entered;
+    atomic_bool  release_delivery;
 } reader_probe_t;
+
+typedef struct end_probe_s
+{
+    device_reader_session_t *session;
+    atomic_bool              started;
+    atomic_bool              completed;
+} end_probe_t;
 
 typedef struct test_env_s
 {
@@ -116,6 +127,16 @@ static void deliverPacket(void *device, sbuf_t *buf, wid_t wid)
 {
     reader_probe_t *probe = device;
     probe->delivered++;
+    if (atomicLoadRelaxed(&probe->block_delivery))
+    {
+        atomicStoreRelaxed(&probe->delivery_entered, true);
+        while (! atomicLoadRelaxed(&probe->release_delivery))
+        {
+            YIELD_THREAD();
+        }
+        sbufDestroy(buf);
+        return;
+    }
     bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
 }
 
@@ -177,6 +198,22 @@ static void cleanupMessage(unsigned int index)
     message->cleanup(message->arg1, message->arg2, message->arg3);
 }
 
+static void *deliverFirstMessageRoutine(void *userdata)
+{
+    discard userdata;
+    deliverMessage(0);
+    return NULL;
+}
+
+static void *endSessionRoutine(void *userdata)
+{
+    end_probe_t *probe = userdata;
+    atomicStoreRelaxed(&probe->started, true);
+    deviceReaderSessionEnd(probe->session);
+    atomicStoreRelaxed(&probe->completed, true);
+    return NULL;
+}
+
 static void testQueuedCleanupOutlivesDeviceReference(test_env_t *env)
 {
     resetCapturedMessages();
@@ -196,7 +233,7 @@ static void testQueuedCleanupOutlivesDeviceReference(test_env_t *env)
             "posting did not retain the reader session");
 
     deviceReaderSessionEnd(session);
-    deviceReaderSessionUnref(session, NULL, NULL);
+    deviceReaderSessionUnref(session);
     require(tracked_session_free_count == 0 && tracked_pool_destroy_count == 0,
             "dropping the device reference destroyed a queued-message session");
 
@@ -229,7 +266,7 @@ static void testClosedAndStaleDeliveriesAreDropped(test_env_t *env)
     require(probe.delivered == 0, "a stale-generation message reached the device");
 
     deviceReaderSessionEnd(session);
-    deviceReaderSessionUnref(session, NULL, NULL);
+    deviceReaderSessionUnref(session);
 }
 
 static void testSingleAndBatchedMessagesRoundTrip(test_env_t *env)
@@ -255,7 +292,7 @@ static void testSingleAndBatchedMessagesRoundTrip(test_env_t *env)
         require(probe.delivered == capacity, "round-trip delivery lost a single or batched buffer");
 
         deviceReaderSessionEnd(session);
-        deviceReaderSessionUnref(session, NULL, NULL);
+        deviceReaderSessionUnref(session);
     }
 }
 
@@ -274,7 +311,7 @@ static void testFailedPostBalancesReference(test_env_t *env)
             "a failed post leaked or over-released its session reference");
 
     deviceReaderSessionEnd(session);
-    deviceReaderSessionUnref(session, NULL, NULL);
+    deviceReaderSessionUnref(session);
     fail_post = false;
 }
 
@@ -300,7 +337,53 @@ static void testOversizedBatchIsRejectedAndRecycled(test_env_t *env)
             "an oversized batch changed the reader-session reference count");
 
     deviceReaderSessionEnd(session);
-    deviceReaderSessionUnref(session, NULL, NULL);
+    deviceReaderSessionUnref(session);
+}
+
+static void testEndWaitsForEnteredDelivery(test_env_t *env)
+{
+    resetCapturedMessages();
+    reader_probe_t probe = {
+        .block_delivery = true,
+    };
+    device_reader_session_t *session = createSession(env, &probe, 1);
+    require(deviceReaderSessionBegin(session) != 0, "failed to begin blocking reader session");
+
+    sbuf_t *buf = bufferpoolGetSmallBuffer(env->worker_buffer_pool);
+    deviceReaderSessionPost(session, 0, &buf, 1);
+
+    pthread_t delivery_thread;
+    require(pthread_create(&delivery_thread, NULL, deliverFirstMessageRoutine, NULL) == 0,
+            "failed to create blocking delivery thread");
+    while (! atomicLoadRelaxed(&probe.delivery_entered))
+    {
+        YIELD_THREAD();
+    }
+
+    end_probe_t end_probe = {
+        .session   = session,
+        .started   = false,
+        .completed = false,
+    };
+    pthread_t end_thread;
+    require(pthread_create(&end_thread, NULL, endSessionRoutine, &end_probe) == 0,
+            "failed to create reader-session end thread");
+    while (! atomicLoadRelaxed(&end_probe.started))
+    {
+        YIELD_THREAD();
+    }
+    for (unsigned int i = 0; i < 1000; i++)
+    {
+        require(! atomicLoadRelaxed(&end_probe.completed), "reader-session End returned during active delivery");
+        YIELD_THREAD();
+    }
+
+    atomicStoreRelaxed(&probe.release_delivery, true);
+    require(pthread_join(delivery_thread, NULL) == 0, "failed to join blocking delivery thread");
+    require(pthread_join(end_thread, NULL) == 0, "failed to join reader-session end thread");
+    require(atomicLoadRelaxed(&end_probe.completed), "reader-session End did not complete after delivery left");
+
+    deviceReaderSessionUnref(session);
 }
 
 int main(void)
@@ -312,6 +395,7 @@ int main(void)
     testSingleAndBatchedMessagesRoundTrip(&env);
     testFailedPostBalancesReference(&env);
     testOversizedBatchIsRejectedAndRecycled(&env);
+    testEndWaitsForEnteredDelivery(&env);
     envTeardown(&env);
     puts("device reader session tests passed");
     return 0;

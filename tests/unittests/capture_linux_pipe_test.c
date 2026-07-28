@@ -628,7 +628,7 @@ static void deviceSetup(capture_device_t *cdev, test_env_t *env, reader_probe_t 
 static void deviceTeardown(capture_device_t *cdev)
 {
     deviceReaderSessionEnd(cdev->reader_session);
-    deviceReaderSessionUnref(cdev->reader_session, NULL, NULL);
+    deviceReaderSessionUnref(cdev->reader_session);
     if (cdev->socket >= 0)
     {
         close(cdev->socket);
@@ -651,7 +651,7 @@ static capture_device_t *ownedDeviceCreate(test_env_t *env, reader_probe_t *prob
 {
     capture_device_t *cdev = memoryAllocate(sizeof(*cdev));
     deviceSetup(cdev, env, probe);
-    deviceReaderSessionUnref(cdev->reader_session, NULL, NULL);
+    deviceReaderSessionUnref(cdev->reader_session);
     cdev->reader_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
     cdev->reader_session     = deviceReaderSessionCreate(16, 512, cdev, testDeliverPacket, cdev->reader_buffer_pool);
     return cdev;
@@ -786,9 +786,11 @@ static void testStaleTokenDoesNotKillTheNextReader(test_env_t *env)
     atomicStoreExplicit(&probe.consume_token, false, memory_order_relaxed);
     require(caputredeviceBringUp(&cdev), "the first bring-up must succeed");
     require(cdev.up, "the first bring-up did not mark the device up");
+    require(! cdev.reader_stop_requested, "bring-up inherited an old reader stop request");
 
     require(caputredeviceBringDown(&cdev), "the first bring-down must succeed");
     waitForReaderExits(&probe, 1);
+    require(cdev.reader_stop_requested, "bring-down did not classify the reader exit as requested");
 
     // Whether the reader observed the token is a race, not an invariant: stop
     // clears `running` before writing the token, so a reader that has published
@@ -801,6 +803,7 @@ static void testStaleTokenDoesNotKillTheNextReader(test_env_t *env)
     // Same device object, second cycle: this reader must stay alive.
     atomicStoreExplicit(&probe.consume_token, true, memory_order_relaxed);
     require(caputredeviceBringUp(&cdev), "the second bring-up on the same device must succeed");
+    require(! cdev.reader_stop_requested, "restart did not clear the prior reader stop request");
 
     // Well past several poll intervals: a stale token would have ended it here.
     usleep(120000);
@@ -1193,6 +1196,7 @@ static void testReaderDeathFailsOpenAndDestroyJoins(test_env_t *env)
     const bool reader_joinable = cdev->reader_thread_joinable;
     pthread_mutex_unlock(&cdev->reader_state_mutex);
     require(reader_failed && ! reader_ready, "unexpected reader exit did not publish failed/not-ready state");
+    require(! cdev->reader_stop_requested, "unexpected reader exit was misclassified as a requested stop");
     require(reader_joinable, "an exited reader stopped being joinable before lifecycle teardown");
     require(! atomicLoadExplicit(&cdev->running, memory_order_acquire) &&
                 ! atomicLoadExplicit(&cdev->up, memory_order_acquire) &&

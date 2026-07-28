@@ -14,7 +14,7 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
     // packet is correctly filtered based on src/dest ip since we told net filter system
     tunnel_t *t = userdata;
 
-    if (UNLIKELY(isApplicationTerminating() || ! atomicLoadExplicit(&cdev->up, memory_order_acquire)))
+    if (UNLIKELY(isApplicationTerminating() || ! atomicLoadRelaxed(&cdev->up)))
     {
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
         return;
@@ -48,13 +48,6 @@ void rawsocketWriteStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
         l->recalculate_checksum = false;
-    }
-
-    if (UNLIKELY(state->raw_device->up == false))
-    {
-        lineReuseBuffer(l, buf);
-        LOGW("RawSocket: device is down, cannot write packet");
-        return;
     }
 
     if (! rawdeviceWrite(state->raw_device, buf))

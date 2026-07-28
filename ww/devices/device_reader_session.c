@@ -44,7 +44,7 @@ static void deviceReaderSessionCleanupMessage(device_reader_message_t *message)
         sbufDestroy(message->bufs[i]);
     }
     masterpoolReuseItems(session->message_pool, (void **) &message, 1);
-    deviceReaderSessionUnref(session, NULL, NULL);
+    deviceReaderSessionUnref(session);
 }
 
 device_reader_session_t *deviceReaderSessionCreate(uint32_t pool_capacity, uint16_t batch_capacity, void *device,
@@ -72,41 +72,57 @@ device_reader_session_t *deviceReaderSessionCreate(uint32_t pool_capacity, uint1
 
 void deviceReaderSessionRef(device_reader_session_t *session)
 {
-    unsigned int previous = atomicAddExplicit(&session->refcount, 1, memory_order_relaxed);
-    assert(previous > 0 && previous != UINT_MAX);
+    const w_atomic_uint_value_t previous = atomicAddExplicit(&session->refcount, 1, memory_order_relaxed);
+    assert(previous > 0);
     discard previous;
 }
 
-void deviceReaderSessionDestroy(device_reader_session_t *session)
+static void deviceReaderSessionDestroyInternal(device_reader_session_t *session)
 {
     masterpoolMakeEmpty(session->message_pool);
     masterpoolDestroy(session->message_pool);
     memoryFree(session);
 }
 
-void deviceReaderSessionUnref(device_reader_session_t *session, DeviceReaderSessionDestroyHook destroy_hook,
-                              void *destroy_context)
+void deviceReaderSessionUnref(device_reader_session_t *session)
 {
-    unsigned int previous = atomicSubExplicit(&session->refcount, 1, memory_order_acq_rel);
+    // Release publishes all work performed through this reference.
+    const w_atomic_uint_value_t previous = atomicSubExplicit(&session->refcount, 1, memory_order_release);
     assert(previous > 0);
     if (previous != 1)
     {
         return;
     }
 
-    if (destroy_hook != NULL)
-    {
-        destroy_hook(session, destroy_context);
-        return;
-    }
-
-    deviceReaderSessionDestroy(session);
+    // Pairs with prior reference releases before final destruction.
+    atomicThreadFence(memory_order_acquire);
+    deviceReaderSessionDestroyInternal(session);
 }
 
 uint32_t deviceReaderSessionBegin(device_reader_session_t *session)
 {
-    uint32_t generation = (uint32_t) atomicAddExplicit(&session->generation, 1, memory_order_acq_rel) + UINT32_C(1);
-    deviceLifetimeGateOpen(&session->delivery_gate);
+    if (UNLIKELY(! deviceLifetimeGateIsClosedAndQuiesced(&session->delivery_gate)))
+    {
+        LOGE("DeviceReaderSession: begin requires the previous generation to be closed and quiesced");
+        return 0;
+    }
+
+    const uint32_t previous = (uint32_t) atomicLoadRelaxed(&session->generation);
+    if (UNLIKELY(previous == UINT32_MAX))
+    {
+        LOGE("DeviceReaderSession: generation space exhausted; refusing to reopen delivery");
+        return 0;
+    }
+
+    const uint32_t generation = previous + UINT32_C(1);
+    atomicStoreRelaxed(&session->generation, (w_atomic_uint_value_t) generation);
+    if (UNLIKELY(! deviceLifetimeGateOpen(&session->delivery_gate)))
+    {
+        // One lifecycle owner makes rollback safe; no entrant could pass a gate
+        // whose Open CAS failed.
+        atomicStoreRelaxed(&session->generation, (w_atomic_uint_value_t) previous);
+        return 0;
+    }
     return generation;
 }
 
@@ -117,7 +133,8 @@ void deviceReaderSessionEnd(device_reader_session_t *session)
 
 uint32_t deviceReaderSessionGeneration(const device_reader_session_t *session)
 {
-    return (uint32_t) atomicLoadExplicit(&session->generation, memory_order_acquire);
+    // The generation is only a tag; the delivery gate publishes session fields.
+    return (uint32_t) atomicLoadRelaxed(&session->generation);
 }
 
 bool deviceReaderSessionMatchesGeneration(const device_reader_session_t *session, uint32_t generation)
@@ -156,7 +173,7 @@ void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *arg2, vo
     }
 
     masterpoolReuseItems(session->message_pool, (void **) &message, 1);
-    deviceReaderSessionUnref(session, NULL, NULL);
+    deviceReaderSessionUnref(session);
 }
 
 void deviceReaderSessionCleanupPostedMessage(void *arg1, void *arg2, void *arg3)

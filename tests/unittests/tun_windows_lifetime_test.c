@@ -19,6 +19,7 @@ typedef struct lifetime_probe_s
     bool         signal_succeeds;
     bool         reader_join_succeeds;
     bool         writer_join_succeeds;
+    bool         writer_release_succeeds;
     bool         reader_thread_live;
     bool         writer_thread_live;
     bool         writer_resources_live;
@@ -87,15 +88,20 @@ static bool probeJoinWriter(void *context)
     return true;
 }
 
-static void probeReleaseWriter(void *context)
+static bool probeReleaseWriter(void *context)
 {
     lifetime_probe_t *probe    = context;
     probe->writer_release_step = nextStep(probe);
+    if (! probe->writer_release_succeeds)
+    {
+        return false;
+    }
     if (probe->writer_resources_live)
     {
         probe->writer_release_calls++;
         probe->writer_resources_live = false;
     }
+    return true;
 }
 
 static void probeEndSession(void *context)
@@ -121,13 +127,14 @@ static const tun_windows_lifetime_ops_t probe_ops = {
 static lifetime_probe_t newProbe(void)
 {
     return (lifetime_probe_t) {
-        .signal_succeeds       = true,
-        .reader_join_succeeds  = true,
-        .writer_join_succeeds  = true,
-        .reader_thread_live    = true,
-        .writer_thread_live    = true,
-        .writer_resources_live = true,
-        .session_live          = true,
+        .signal_succeeds         = true,
+        .reader_join_succeeds    = true,
+        .writer_join_succeeds    = true,
+        .writer_release_succeeds = true,
+        .reader_thread_live      = true,
+        .writer_thread_live      = true,
+        .writer_resources_live   = true,
+        .session_live            = true,
     };
 }
 
@@ -192,6 +199,20 @@ static void testPartialThreadStartup(void)
             "writer-startup rollback ended session before joins");
 }
 
+static void testWriterReleaseFailurePreservesSession(void)
+{
+    lifetime_probe_t probe        = newProbe();
+    probe.writer_release_succeeds = false;
+
+    require(! tunWindowsLifetimeShutdown(&probe, &probe_ops), "writer release failure reported success");
+    require(probe.session_end_calls == 0, "session ended after writer release failed");
+
+    probe.writer_release_succeeds = true;
+    require(tunWindowsLifetimeShutdown(&probe, &probe_ops), "writer release retry failed");
+    require(probe.writer_release_calls == 1, "writer release retry did not release resources");
+    require(probe.session_end_calls == 1, "writer release retry did not end session");
+}
+
 static void testRepeatedShutdownIsIdempotent(void)
 {
     lifetime_probe_t probe = newProbe();
@@ -208,6 +229,7 @@ int main(void)
     testSignalFailureUsesJoinFallback();
     testJoinFailurePreservesResources();
     testPartialThreadStartup();
+    testWriterReleaseFailurePreservesSession();
     testRepeatedShutdownIsIdempotent();
     return 0;
 }

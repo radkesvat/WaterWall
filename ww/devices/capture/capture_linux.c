@@ -1104,7 +1104,7 @@ static netfilter_packet_result_t netfilterGetPacket(capture_device_t *cdev, int 
             errno = EBADMSG;
             return kNetfilterPacketError;
         }
-        const bool active = atomicLoadExplicit(&cdev->capture_active, memory_order_acquire);
+        const bool active = atomicLoadRelaxed(&cdev->capture_active);
         if (! netfilterSendVerdict(netfilter_socket, qnumber, packet_id, active ? NF_DROP : NF_ACCEPT))
         {
             return kNetfilterPacketError;
@@ -1123,7 +1123,7 @@ static netfilter_packet_result_t netfilterGetPacket(capture_device_t *cdev, int 
             errno = EBADMSG;
             return kNetfilterPacketError;
         }
-        const bool active = atomicLoadExplicit(&cdev->capture_active, memory_order_acquire);
+        const bool active = atomicLoadRelaxed(&cdev->capture_active);
         if (! netfilterSendVerdict(netfilter_socket, qnumber, packet_view.packet_id, active ? NF_DROP : NF_ACCEPT))
         {
             return kNetfilterPacketError;
@@ -1131,7 +1131,7 @@ static netfilter_packet_result_t netfilterGetPacket(capture_device_t *cdev, int 
         return active ? kNetfilterPacketMalformedDiscarded : kNetfilterPacketAccepted;
     }
 
-    const bool active = atomicLoadExplicit(&cdev->capture_active, memory_order_acquire);
+    const bool active = atomicLoadRelaxed(&cdev->capture_active);
     if (! netfilterSendVerdict(netfilter_socket, qnumber, packet_view.packet_id, active ? NF_DROP : NF_ACCEPT))
     {
         return kNetfilterPacketError;
@@ -1198,8 +1198,8 @@ bool captureLinuxReaderPublishReady(capture_device_t *cdev, int *reader_socket)
     }
 
     pthread_mutex_lock(&cdev->reader_state_mutex);
-    const bool ready =
-        atomicLoadExplicit(&cdev->running, memory_order_acquire) && ! cdev->reader_failed && cdev->socket >= 0;
+    const bool ready = ! cdev->reader_stop_requested && atomicLoadRelaxed(&cdev->running) && ! cdev->reader_failed &&
+                       cdev->socket >= 0;
     if (ready)
     {
         *reader_socket     = cdev->socket;
@@ -1215,21 +1215,22 @@ static WTHREAD_ROUTINE(capturedeviceReaderThreadMain) // NOLINT
     capture_device_t *cdev = userdata;
     discard           cdev->routine_reader(cdev);
 
-    const bool unexpected_exit = atomicLoadExplicit(&cdev->running, memory_order_acquire);
-    if (unexpected_exit)
-    {
-        atomicStoreExplicit(&cdev->capture_active, false, memory_order_release);
-        atomicStoreExplicit(&cdev->up, false, memory_order_release);
-        atomicStoreExplicit(&cdev->running, false, memory_order_release);
-    }
-
     pthread_mutex_lock(&cdev->reader_state_mutex);
-    cdev->reader_ready = false;
+    /*
+     * The mutex acquisition order decides whether Stop or reader exit won.
+     * `running` is only a loop hint and cannot provide a "fresh" classification
+     * of an exit racing the lifecycle owner.
+     */
+    const bool unexpected_exit = ! cdev->reader_stop_requested;
+    cdev->reader_ready         = false;
     if (unexpected_exit)
     {
         cdev->reader_failed              = true;
         cdev->queue_restartable          = false;
         cdev->close_queue_on_reader_exit = cdev->socket >= 0;
+        atomicStoreRelaxed(&cdev->capture_active, false);
+        atomicStoreRelaxed(&cdev->up, false);
+        atomicStoreRelaxed(&cdev->running, false);
     }
 
     const bool close_queue = cdev->close_queue_on_reader_exit;
@@ -1438,8 +1439,10 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
 
 static void capturedeviceDeactivate(capture_device_t *cdev)
 {
-    atomicStoreExplicit(&cdev->capture_active, false, memory_order_release);
-    atomicStoreExplicit(&cdev->up, false, memory_order_release);
+    // These atomics carry mode/status values only; the reader mutex owns the
+    // reader lifecycle and descriptor publication.
+    atomicStoreRelaxed(&cdev->capture_active, false);
+    atomicStoreRelaxed(&cdev->up, false);
     deviceReaderSessionEnd(cdev->reader_session);
 }
 
@@ -1478,8 +1481,7 @@ static void capturedeviceDrainResidualQueue(capture_device_t *cdev, int socket_f
         sbufReset(buf);
         buf = sbufReserveSpace(buf, kNetfilterReadBufferSize);
 
-        const netfilter_packet_result_t packet_result =
-            netfilterGetPacket(cdev, socket_fd, cdev->queue_number, buf);
+        const netfilter_packet_result_t packet_result = netfilterGetPacket(cdev, socket_fd, cdev->queue_number, buf);
 
         // The drain never dispatches: the reader session is already ended, and a
         // verdict was sent for every result except WouldBlock/Eof/Error.
@@ -1510,12 +1512,13 @@ static void capturedeviceDrainResidualQueue(capture_device_t *cdev, int socket_f
 
 static bool capturedeviceStopReader(capture_device_t *cdev)
 {
-    const bool was_running = atomicExchangeExplicit(&cdev->running, false, memory_order_acq_rel);
-
     pthread_mutex_lock(&cdev->reader_state_mutex);
-    const bool      joinable = cdev->reader_thread_joinable;
-    const wthread_t thread   = cdev->read_thread;
+    cdev->reader_stop_requested = true;
+    const bool      joinable    = cdev->reader_thread_joinable;
+    const wthread_t thread      = cdev->read_thread;
     pthread_mutex_unlock(&cdev->reader_state_mutex);
+
+    const bool was_running = atomicExchangeExplicit(&cdev->running, false, memory_order_relaxed);
 
     bool result = true;
     if (joinable)
@@ -1582,8 +1585,8 @@ static bool capturedeviceReaderOperational(capture_device_t *cdev)
 {
     pthread_mutex_lock(&cdev->reader_state_mutex);
     const bool operational = cdev->reader_thread_joinable && cdev->reader_ready && ! cdev->reader_failed &&
-                             cdev->queue_restartable && cdev->socket >= 0 &&
-                             atomicLoadExplicit(&cdev->running, memory_order_acquire);
+                             ! cdev->reader_stop_requested && cdev->queue_restartable && cdev->socket >= 0 &&
+                             atomicLoadRelaxed(&cdev->running);
     pthread_mutex_unlock(&cdev->reader_state_mutex);
     return operational;
 }
@@ -1599,16 +1602,21 @@ static bool capturedeviceStartReader(capture_device_t *cdev)
     assert(! cdev->reader_thread_joinable);
     cdev->reader_ready               = false;
     cdev->reader_failed              = false;
+    cdev->reader_stop_requested      = false;
     cdev->close_queue_on_reader_exit = false;
     pthread_mutex_unlock(&cdev->reader_state_mutex);
 
-    deviceReaderSessionBegin(cdev->reader_session);
-    atomicStoreExplicit(&cdev->running, true, memory_order_release);
+    if (deviceReaderSessionBegin(cdev->reader_session) == 0)
+    {
+        LOGE("CaptureDevice: failed to open reader delivery generation");
+        return false;
+    }
+    atomicStoreRelaxed(&cdev->running, true);
     wthread_error_t error = threadCreate(&cdev->read_thread, capturedeviceReaderThreadMain, cdev);
     if (UNLIKELY(error != kWThreadErrorNone))
     {
         LOGE("CaptureDevice: failed to create reader thread: error %u (%s)", error, strerror((int) error));
-        atomicStoreExplicit(&cdev->running, false, memory_order_release);
+        atomicStoreRelaxed(&cdev->running, false);
         capturedeviceDeactivate(cdev);
         return false;
     }
@@ -1651,12 +1659,12 @@ static bool capturedeviceActivate(capture_device_t *cdev)
 {
     pthread_mutex_lock(&cdev->reader_state_mutex);
     const bool can_activate = cdev->reader_thread_joinable && cdev->reader_ready && ! cdev->reader_failed &&
-                              cdev->queue_restartable && cdev->socket >= 0 &&
-                              atomicLoadExplicit(&cdev->running, memory_order_acquire);
+                              ! cdev->reader_stop_requested && cdev->queue_restartable && cdev->socket >= 0 &&
+                              atomicLoadRelaxed(&cdev->running);
     if (can_activate)
     {
-        atomicStoreExplicit(&cdev->up, true, memory_order_release);
-        atomicStoreExplicit(&cdev->capture_active, true, memory_order_release);
+        atomicStoreRelaxed(&cdev->up, true);
+        atomicStoreRelaxed(&cdev->capture_active, true);
     }
     pthread_mutex_unlock(&cdev->reader_state_mutex);
     return can_activate;
@@ -2034,9 +2042,18 @@ void capturedeviceDestroy(capture_device_t *cdev)
     const bool reader_joinable = cdev->reader_thread_joinable;
     pthread_mutex_unlock(&cdev->reader_state_mutex);
     deviceReaderSessionEnd(cdev->reader_session);
-    if (atomicLoadExplicit(&cdev->up, memory_order_acquire) || reader_joinable)
+    if (atomicLoadRelaxed(&cdev->up) || reader_joinable)
     {
         discard caputredeviceBringDown(cdev);
+    }
+
+    pthread_mutex_lock(&cdev->reader_state_mutex);
+    const bool reader_still_joinable = cdev->reader_thread_joinable;
+    pthread_mutex_unlock(&cdev->reader_state_mutex);
+    if (reader_still_joinable)
+    {
+        LOGF("CaptureDevice: refusing to destroy device while reader ownership remains");
+        abortProgramNow(1);
     }
 
     if (capturedevicePendingRuleCount(cdev) != 0)
@@ -2068,7 +2085,7 @@ void capturedeviceDestroy(capture_device_t *cdev)
     capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
     memoryFree(cdev->rule_states);
     bufferpoolDestroy(cdev->reader_buffer_pool);
-    deviceReaderSessionUnref(cdev->reader_session, NULL, NULL);
+    deviceReaderSessionUnref(cdev->reader_session);
     close(cdev->linux_pipe_fds[0]);
     close(cdev->linux_pipe_fds[1]);
     pthread_cond_destroy(&cdev->reader_state_changed);

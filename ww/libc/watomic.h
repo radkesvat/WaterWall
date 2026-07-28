@@ -8,7 +8,9 @@
 // c11
 #include <stdatomic.h>
 
-typedef int w_atomic_int_value_t;
+typedef int          w_atomic_int_value_t;
+typedef unsigned int w_atomic_uint_value_t;
+#define W_ATOMIC_UINT_VALUE_SIGNED 0
 
 #elif defined(OS_WIN)
 
@@ -31,7 +33,7 @@ typedef int w_atomic_int_value_t;
 
 #define atomic_signal_fence(order) ((void) 0)
 
-#define atomic_is_lock_free(obj) 0
+#define atomic_is_lock_free(obj)   0
 
 typedef intptr_t atomic_flag;
 typedef intptr_t atomic_bool;
@@ -43,6 +45,8 @@ typedef intptr_t atomic_ushort;
 typedef intptr_t atomic_int;
 typedef intptr_t w_atomic_int_value_t;
 typedef intptr_t atomic_uint;
+typedef intptr_t w_atomic_uint_value_t;
+#define W_ATOMIC_UINT_VALUE_SIGNED 1
 typedef intptr_t atomic_long;
 typedef intptr_t atomic_ulong;
 typedef intptr_t atomic_llong;

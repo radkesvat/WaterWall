@@ -36,6 +36,7 @@ typedef struct raw_device_s
     device_writer_channel_t writer_channel;
     atomic_bool             running;
     atomic_bool             up;
+    bool                    writer_joinable;
 
 } raw_device_t;
 
