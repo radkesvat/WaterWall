@@ -35,10 +35,10 @@ static void tcpudpconnectorLogUnsupportedContext(const char *label, const addres
 
 tunnel_t *tcpudpconnectorSelectUpStreamTunnel(tunnel_t *t, line_t *l)
 {
-    tcpudpconnector_tstate_t *ts       = tunnelGetState(t);
-    const address_context_t *dest_ctx  = lineGetDestinationAddressContext(l);
-    const address_context_t *src_ctx   = lineGetSourceAddressContext(l);
-    tunnel_t                *connector = NULL;
+    tcpudpconnector_tstate_t *ts        = tunnelGetState(t);
+    const address_context_t  *dest_ctx  = lineGetDestinationAddressContext(l);
+    const address_context_t  *src_ctx   = lineGetSourceAddressContext(l);
+    tunnel_t                 *connector = NULL;
 
     if (tcpudpconnectorContextHasAnyProtocol(dest_ctx))
     {
@@ -78,7 +78,7 @@ tunnel_t *tcpudpconnectorGetSelectedUpStreamTunnel(tunnel_t *t, line_t *l)
     if (ls->selected_connector == NULL)
     {
         LOGF("TcpUdpConnector: upstream callback received before init selected a connector");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     return ls->selected_connector;

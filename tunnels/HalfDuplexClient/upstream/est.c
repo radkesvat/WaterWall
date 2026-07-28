@@ -8,5 +8,5 @@ void halfduplexclientTunnelUpStreamEst(tunnel_t *t, line_t *l)
     discard l;
 
     LOGF("HalfDuplexClient will not receive a upstream est");
-    terminateProgram(1);    
+    abortProgramNow(1);
 }

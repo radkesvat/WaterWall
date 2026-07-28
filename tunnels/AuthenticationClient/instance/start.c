@@ -17,7 +17,7 @@ static void authenticationclientStartOnWorker0(void *worker_ptr, void *arg1, voi
     if (UNLIKELY(worker->wid != 0))
     {
         LOGF("AuthenticationClient: startup control task ran on worker %u", (unsigned int) worker->wid);
-        terminateProgram(1);
+        abortProgramNow(1);
         return;
     }
 

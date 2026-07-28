@@ -15,8 +15,10 @@ void reverseclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     if (uls->pair_connected)
     {
         atomicDecRelaxed((&(ts->reverse_cons)));
-        LOGD("ReverseClient: disconnected, wid: %d unused: %u active: %d", wid,
-             ts->threadlocal_pool[wid].unused_cons_count, atomicLoadRelaxed(&(ts->reverse_cons)));
+        LOGD("ReverseClient: disconnected, wid: %d unused: %u active: %d",
+             wid,
+             ts->threadlocal_pool[wid].unused_cons_count,
+             atomicLoadRelaxed(&(ts->reverse_cons)));
 
         reverseclientLinestateDestroy(uls);
         lineDestroy(ul);
@@ -32,14 +34,16 @@ void reverseclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         if (uls->idle_handle == NULL)
         {
             LOGF("ReverseClient: finishing a non-paired line with NULL idle_handle, wid: %d", wid);
-            terminateProgram(1);
+            abortProgramNow(1);
         }
 
         if (lineIsEstablished(l))
         {
             ts->threadlocal_pool[wid].unused_cons_count -= 1;
-            LOGD("ReverseClient: disconnected, wid: %d unused: %u active: %d", wid,
-                 ts->threadlocal_pool[wid].unused_cons_count, atomicLoadRelaxed(&(ts->reverse_cons)));
+            LOGD("ReverseClient: disconnected, wid: %d unused: %u active: %d",
+                 wid,
+                 ts->threadlocal_pool[wid].unused_cons_count,
+                 atomicLoadRelaxed(&(ts->reverse_cons)));
         }
         else
         {
@@ -50,7 +54,7 @@ void reverseclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         if (! removed)
         {
             LOGF("ReverseClient: failed to remove idle item while closing unpaired connection");
-            terminateProgram(1);
+            abortProgramNow(1);
             return;
         }
         uls->idle_handle = NULL;

@@ -7,5 +7,5 @@ void connectionfisherclientTunnelDownStreamInit(tunnel_t *t, line_t *l)
     discard t;
     discard l;
     LOGF("ConnectionFisherClient: downstream init disabled");
-    terminateProgram(1);
+    abortProgramNow(1);
 }

@@ -21,12 +21,11 @@ void reverseclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         reverseclientInitiateConnectOnWorker(t, wid, false);
 
         assert(uls->idle_handle);
-        bool removed =
-            idletableRemoveIdleItemByHash(uls->u->wid, ts->starved_connections, (hash_t) (uintptr_t) (uls));
+        bool removed = idletableRemoveIdleItemByHash(uls->u->wid, ts->starved_connections, (hash_t) (uintptr_t) (uls));
         if (! removed)
         {
             LOGF("ReverseClient: failed to remove idle item while pairing connection");
-            terminateProgram(1);
+            abortProgramNow(1);
             return;
         }
         uls->idle_handle = NULL;

@@ -8,5 +8,5 @@ void reverseserverTunnelDownStreamEst(tunnel_t *t, line_t *u)
     discard u;
 
     LOGF("ReverseServer: Downstream Est is disabled");
-    terminateProgram(1);
+    abortProgramNow(1);
 }

@@ -340,17 +340,17 @@ bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
     discard resolver;
     discard direction;
 
-    udpconnector_tstate_t                 *ts                 = tunnelGetState(connector);
-    udpconnector_domain_resolver_lstate_t *ls                 = user_lstate;
-    address_context_t                     *dest_ctx           = lineGetDestinationAddressContext(l);
-    address_context_t                     *src_ctx            = lineGetSourceAddressContext(l);
-    const dynamic_value_t                 *dest_addr_selected = &ts->dest_addr_selected;
-    const dynamic_value_t                 *dest_port_selected = &ts->dest_port_selected;
-    const address_context_t               *constant_dest_addr = &ts->constant_dest_addr;
-    uint16_t                               random_dest_port_x = ts->random_dest_port_x;
-    uint16_t                               random_dest_port_y = ts->random_dest_port_y;
-    uint32_t selected_destination_index = udpconnectorSelectWeightedDestinationIndex(ts);
-    const udpconnector_destination_t *selected_destination =
+    udpconnector_tstate_t                 *ts                         = tunnelGetState(connector);
+    udpconnector_domain_resolver_lstate_t *ls                         = user_lstate;
+    address_context_t                     *dest_ctx                   = lineGetDestinationAddressContext(l);
+    address_context_t                     *src_ctx                    = lineGetSourceAddressContext(l);
+    const dynamic_value_t                 *dest_addr_selected         = &ts->dest_addr_selected;
+    const dynamic_value_t                 *dest_port_selected         = &ts->dest_port_selected;
+    const address_context_t               *constant_dest_addr         = &ts->constant_dest_addr;
+    uint16_t                               random_dest_port_x         = ts->random_dest_port_x;
+    uint16_t                               random_dest_port_y         = ts->random_dest_port_y;
+    uint32_t                               selected_destination_index = udpconnectorSelectWeightedDestinationIndex(ts);
+    const udpconnector_destination_t      *selected_destination =
         ts->destinations_count > 0 ? &ts->destinations[selected_destination_index] : NULL;
 
     if (ts->balance_mode == kUdpConnectorBalanceModePacket)
@@ -405,8 +405,8 @@ void udpconnectorDomainResolverUserStateDestroy(tunnel_t *resolver, tunnel_t *co
 
 void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
-    udpconnector_tstate_t                 *ts       = tunnelGetState(t);
-    udpconnector_lstate_t                 *ls       = lineGetState(l, t);
+    udpconnector_tstate_t                 *ts = tunnelGetState(t);
+    udpconnector_lstate_t                 *ls = lineGetState(l, t);
     udpconnector_domain_resolver_lstate_t *resolver_ls =
         domainresolverTunnelGetUserLineState(ts->domain_resolver_tunnel, l);
     address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
@@ -415,7 +415,7 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     if (UNLIKELY(resolver_ls == NULL))
     {
         LOGF("UdpConnector: internal DomainResolver prepare state is missing");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     if (ts->balance_mode == kUdpConnectorBalanceModePacket)

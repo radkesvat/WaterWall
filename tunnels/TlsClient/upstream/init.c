@@ -4,28 +4,24 @@
 
 void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
-    tlsclient_tstate_t *ts = tunnelGetState(t);
-    tlsclient_lstate_t *ls = lineGetState(l, t);
+    tlsclient_tstate_t *ts          = tunnelGetState(t);
+    tlsclient_lstate_t *ls          = lineGetState(l, t);
     sbuf_t             *ech_payload = NULL;
 
-    tlsclientLinestateInitialize(ls,
-                                ts->threadlocal_ssl_contexts[lineGetWID(l)],
-                                lineGetBufferPool(l),
-                                ts->alpn_wire,
-                                ts->alpn_wire_len);
+    tlsclientLinestateInitialize(
+        ls, ts->threadlocal_ssl_contexts[lineGetWID(l)], lineGetBufferPool(l), ts->alpn_wire, ts->alpn_wire_len);
 
     if (! tlsclientCreateEchGreaseInnerClientHello(ts, lineGetWID(l), &ech_payload))
     {
         goto failed_before_next_init;
     }
 
-    if (! tlsclientConfigureSslForConnect(
-            ls->ssl,
-            ls->rbio,
-            ls->wbio,
-            ts->sni,
-            ech_payload != NULL ? (const uint8_t *) sbufGetRawPtr(ech_payload) : NULL,
-            ech_payload != NULL ? sbufGetLength(ech_payload) : 0))
+    if (! tlsclientConfigureSslForConnect(ls->ssl,
+                                          ls->rbio,
+                                          ls->wbio,
+                                          ts->sni,
+                                          ech_payload != NULL ? (const uint8_t *) sbufGetRawPtr(ech_payload) : NULL,
+                                          ech_payload != NULL ? sbufGetLength(ech_payload) : 0))
     {
         goto failed_before_next_init;
     }
@@ -89,7 +85,7 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     }
 
     LOGF("TlsClient: unreachable");
-    terminateProgram(1);
+    abortProgramNow(1);
 
 failed:
     LOGW("TlsClient: upstream init failed: boringssl state is printed below");

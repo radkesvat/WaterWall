@@ -115,7 +115,7 @@ void udpconnectorOnClose(wio_t *io)
         if (! removed)
         {
             LOGF("UdpConnector: failed to remove idle item for FD:%x ", wioGetFD(io));
-            terminateProgram(1);
+            abortProgramNow(1);
         }
         ls->idle_handle = NULL; // mark as removed
 

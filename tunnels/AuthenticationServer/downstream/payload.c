@@ -7,5 +7,5 @@ void authenticationserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
     discard t;
     lineReuseBuffer(l, buf);
     LOGF("AuthenticationServer: DownStreamPayload is disabled");
-    terminateProgram(1);
+    abortProgramNow(1);
 }

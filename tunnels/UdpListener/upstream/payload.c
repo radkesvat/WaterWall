@@ -9,5 +9,5 @@ void udplistenerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     discard buf;
     LOGF("UdpListener: upStreamPayload disabled");
     lineReuseBuffer(l, buf);
-    terminateProgram(1);
+    abortProgramNow(1);
 }

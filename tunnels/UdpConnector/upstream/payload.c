@@ -19,7 +19,7 @@ static void closeLine(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconn
         if (! removed)
         {
             LOGF("UdpConnector: failed to remove idle item for FD:%x ", wioGetFD(ls->io));
-            terminateProgram(1);
+            abortProgramNow(1);
         }
 
         ls->idle_handle = NULL;
@@ -486,7 +486,7 @@ void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         lineReuseBuffer(l, buf);
         // tunnelPrevDownStreamFinish(t, l);
         assert(false);
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     // LOGD("writing %d bytes", sbufGetLength(buf));
 

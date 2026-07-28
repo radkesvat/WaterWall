@@ -22,20 +22,22 @@ static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg
     reverseclientLinestateInitialize(uls, t, ul, dl);
     reverseclientLinestateInitialize(dls, t, ul, dl);
 
-    uls->idle_handle = idletableCreateItem(ts->starved_connections, (hash_t) (uintptr_t) (uls), uls,
-                                           reverseclientOnStarvedConnectionExpire, wid,
+    uls->idle_handle = idletableCreateItem(ts->starved_connections,
+                                           (hash_t) (uintptr_t) (uls),
+                                           uls,
+                                           reverseclientOnStarvedConnectionExpire,
+                                           wid,
                                            ((uint64_t) (kConnectionStarvationTimeOutSec) * 1000));
 
     if (! withLineLocked(ul, tunnelNextUpStreamInit, t))
     {
         // decrement in finish path for non-established lines
-        // ts->threadlocal_pool[wid].connecting_cons_count -= 1; 
+        // ts->threadlocal_pool[wid].connecting_cons_count -= 1;
         return;
     }
 
-
     sbuf_t *handshakebuf = bufferpoolGetLargeBuffer(lineGetBufferPool(ul));
-    handshakebuf = sbufReserveSpace(handshakebuf, ts->handshake_length);
+    handshakebuf         = sbufReserveSpace(handshakebuf, ts->handshake_length);
     memoryCopy(sbufGetMutablePtr(handshakebuf), ts->handshake_bytes, ts->handshake_length);
     sbufSetLength(handshakebuf, ts->handshake_length);
 
@@ -68,7 +70,7 @@ void reverseclientOnStarvedConnectionExpire(idle_item_t *idle_con)
     if (ls->idle_handle == NULL)
     {
         LOGF("ReverseClient: onStarvedConnectionExpire called with NULL idle_handle");
-        terminateProgram(1);
+        abortProgramNow(1);
         return;
     }
     ls->idle_handle = NULL;

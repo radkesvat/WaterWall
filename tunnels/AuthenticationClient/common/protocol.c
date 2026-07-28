@@ -1510,7 +1510,7 @@ void authenticationclientOpenControlLine(tunnel_t *t)
     if (UNLIKELY(getWID() != 0))
     {
         LOGF("AuthenticationClient: control line must be opened on worker 0");
-        terminateProgram(1);
+        abortProgramNow(1);
         return;
     }
 

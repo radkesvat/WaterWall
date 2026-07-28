@@ -29,7 +29,7 @@ static uint8_t packetsenderGetSingleProtocolNumber(const packetsender_tstate_t *
         return IP_PROTO_ICMP;
     default:
         LOGF("PacketSender: internal error, invalid single-protocol mode %u", (unsigned int) state->protocol_mode);
-        terminateProgram(1);
+        abortProgramNow(1);
         return 0;
     }
 }
@@ -70,7 +70,7 @@ static void packetsenderResolveSourceAddress(const packetsender_tstate_t *state,
     }
 
     LOGF("PacketSender: internal error, source index %llu is out of range", (unsigned long long) source_index);
-    terminateProgram(1);
+    abortProgramNow(1);
 }
 
 static uint16_t packetsenderSelectSourcePort(const packetsender_tstate_t *state, uint32_t src_addr_host,
@@ -439,7 +439,7 @@ static void packetsenderSendReadyPackets(packetsender_worker_state_t *slot)
         if (! withLineLockedWithBuf(slot->line, tunnelNextUpStreamPayload, slot->tunnel, buf))
         {
             LOGF("PacketSender: worker packet line died during payload send");
-            terminateProgram(1);
+            abortProgramNow(1);
             return;
         }
 
@@ -644,7 +644,7 @@ void packetsenderStartWorker(void *worker_ptr, void *arg1, void *arg2, void *arg
     if (slot->line == NULL || ! lineIsAlive(slot->line))
     {
         LOGF("PacketSender: worker %u packet line is not available", (unsigned int) worker->wid);
-        terminateProgram(1);
+        abortProgramNow(1);
         return;
     }
 

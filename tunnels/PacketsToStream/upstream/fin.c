@@ -9,5 +9,5 @@ void packetstostreamTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     discard l;
 
     LOGF("PacketsToStream: not supposed to receive upstream fin");
-    terminateProgram(1);
+    abortProgramNow(1);
 }

@@ -7,18 +7,21 @@ void udpovertcpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     uint32_t packet_length = sbufGetLength(buf);
 
 #ifdef DEBUG
-    if(sbufGetLength(buf) <= 0)
+    if (sbufGetLength(buf) <= 0)
     {
-        LOGF("UdpOverTcpClient: Received empty payload, this is a bug, our eventloop logic dose not allow read of size 0");
+        LOGF("UdpOverTcpClient: Received empty payload, this is a bug, our eventloop logic dose not allow read of size "
+             "0");
         lineReuseBuffer(l, buf);
-        terminateProgram(1);
+        abortProgramNow(1);
         return;
     }
 #endif
 
-    if(packet_length > kMaxAllowedUDPPacketLength)
+    if (packet_length > kMaxAllowedUDPPacketLength)
     {
-        LOGW("UdpOverTcpClient: Packet length exceeds maximum allowed size: %u > %u , dropped", packet_length, kMaxAllowedUDPPacketLength);
+        LOGW("UdpOverTcpClient: Packet length exceeds maximum allowed size: %u > %u , dropped",
+             packet_length,
+             kMaxAllowedUDPPacketLength);
         lineReuseBuffer(l, buf);
         return;
     }

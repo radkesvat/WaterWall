@@ -7,5 +7,5 @@ void udplistenerTunnelUpStreamInit(tunnel_t *t, line_t *l)
     discard t;
     discard l;
     LOGF("UdpListener: upStreamInit disabled");
-    terminateProgram(1);
+    abortProgramNow(1);
 }

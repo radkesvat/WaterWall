@@ -13,7 +13,7 @@ void reverseclientLinestateDestroy(reverseclient_lstate_t *ls)
     if (ls->idle_handle != NULL)
     {
         LOGF("ReverseClient: LinestateDestroy called with non NULL idle_handle");
-        terminateProgram(1);
+        abortProgramNow(1);
         return;
     }
 

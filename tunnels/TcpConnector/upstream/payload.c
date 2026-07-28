@@ -15,7 +15,7 @@ static void handleQueueOverflow(tunnel_t *t, line_t *l, tcpconnector_tstate_t *t
         if (! removed)
         {
             LOGF("TcpConnector: failed to remove idle item for FD:%x ", wioGetFD(ls->io));
-            terminateProgram(1);
+            abortProgramNow(1);
         }
 
         ls->idle_handle = NULL;

@@ -19,7 +19,7 @@ void udplistenerTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     if (! deleted)
     {
         LOGE("UdpListener: Failed to remove idle item for UDP listener on FD:%x", lstate->listener_fd);
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     LOGD("UdpListener: Finished down stream for 1 connection on FD:%x", lstate->listener_fd);
 

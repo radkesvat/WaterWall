@@ -25,7 +25,8 @@ static udpstatelesssocket_send_request_t *udpstatelesssocketSendRequestCreate(ud
     threadsafe_generic_pool_t *pool = state->send_request_pools[state->io_wid];
     assert(pool != NULL);
 
-    udpstatelesssocket_send_request_t *request = (udpstatelesssocket_send_request_t *) threadsafegenericpoolGetItem(pool);
+    udpstatelesssocket_send_request_t *request =
+        (udpstatelesssocket_send_request_t *) threadsafegenericpoolGetItem(pool);
     *request = (udpstatelesssocket_send_request_t) {
         .pool = pool,
     };
@@ -112,7 +113,7 @@ static void udpstatelesssocketForwardPeerInit(tunnel_t *t, line_t *l, bool is_ch
 
 static void udpstatelesssocketForwardPeerPayload(tunnel_t *t, udpstatelesssocket_lstate_t *ls, sbuf_t *buf)
 {
-    line_t *line             = ls->line;
+    line_t *line         = ls->line;
     bool    is_chain_end = ((udpstatelesssocket_tstate_t *) tunnelGetState(t))->is_chain_end;
 
     if (is_chain_end)
@@ -170,7 +171,7 @@ void udpstatelesssocketCloseOwnedLineFromAdjacent(tunnel_t *t, line_t *l, bool i
         if (! deleted)
         {
             LOGE("UdpStatelessSocket: failed to remove idle item for peer line");
-            terminateProgram(1);
+            abortProgramNow(1);
         }
         idle->userdata  = NULL;
         ls->idle_handle = NULL;
@@ -355,8 +356,8 @@ void udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf)
     }
 
     const bool          is_chain_end = state->is_chain_end;
-    local_idle_table_t *table            = udpstatelesssocketGetWorkerIdleTable(state);
-    hash_t              idle_key         = udpstatelesssocketPeerIdleKey(t, &peer_addr, &local_addr);
+    local_idle_table_t *table        = udpstatelesssocketGetWorkerIdleTable(state);
+    hash_t              idle_key     = udpstatelesssocketPeerIdleKey(t, &peer_addr, &local_addr);
 
     local_idle_item_t *idle = localidletableGetIdleItemByHash(table, idle_key);
     if (idle != NULL)
@@ -426,9 +427,9 @@ void udpstatelesssocketLocalThreadSocketUpStream(void *worker, void *arg1, void 
     discard arg3;
 
     udpstatelesssocket_send_request_t *request = (udpstatelesssocket_send_request_t *) arg1;
-    tunnel_t                    *t     = request->tunnel;
-    sbuf_t                      *buf   = request->buf;
-    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    tunnel_t                          *t       = request->tunnel;
+    sbuf_t                            *buf     = request->buf;
+    udpstatelesssocket_tstate_t       *state   = tunnelGetState(t);
 
     if (UNLIKELY(isApplicationTerminating() || state->socket.io == NULL))
     {

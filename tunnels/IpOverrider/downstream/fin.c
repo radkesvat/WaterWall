@@ -7,5 +7,5 @@ void ipoverriderDownStreamFinish(tunnel_t *t, line_t *l)
     discard t;
     discard l;
     LOGF("This Function is not supposed to be called, used packet-tunnel interface instead (IpOverrider)");
-    terminateProgram(1);
+    abortProgramNow(1);
 }

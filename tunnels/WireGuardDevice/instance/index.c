@@ -10,5 +10,5 @@ void wireguarddeviceTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_off
     discard index;
     discard mem_offset;
     LOGF("This Function is disabled, using the default PacketTunnel instead");
-    terminateProgram(1);
+    abortProgramNow(1);
 }

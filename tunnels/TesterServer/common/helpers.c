@@ -232,11 +232,11 @@ static void testerserverWritePacketIpv4Header(testerserver_tstate_t *ts, sbuf_t 
 static void testerserverWritePacketIpv4Transport(testerserver_tstate_t *ts, sbuf_t *buf, uint8_t chunk_index,
                                                  testerserver_direction_e direction)
 {
-    uint8_t  *packet        = sbufGetMutablePtr(buf);
-    uint8_t  *transport     = packet + testerserverPacketIpv4HeaderLength();
-    uint16_t  transport_len = (uint16_t) (sbufGetLength(buf) - testerserverPacketIpv4HeaderLength());
-    uint16_t  src_port      = 0;
-    uint16_t  dest_port     = 0;
+    uint8_t *packet        = sbufGetMutablePtr(buf);
+    uint8_t *transport     = packet + testerserverPacketIpv4HeaderLength();
+    uint16_t transport_len = (uint16_t) (sbufGetLength(buf) - testerserverPacketIpv4HeaderLength());
+    uint16_t src_port      = 0;
+    uint16_t dest_port     = 0;
 
     testerserverPacketIpv4DirectionPorts(direction, &src_port, &dest_port);
 
@@ -282,12 +282,12 @@ static void testerserverWritePacketIpv4Transport(testerserver_tstate_t *ts, sbuf
 static bool testerserverVerifyPacketIpv4Transport(testerserver_tstate_t *ts, sbuf_t *buf, uint8_t chunk_index,
                                                   testerserver_direction_e direction)
 {
-    uint8_t       *packet        = sbufGetMutablePtr(buf);
-    struct ip_hdr *ipheader      = (struct ip_hdr *) packet;
-    uint8_t       *transport     = packet + testerserverPacketIpv4HeaderLength();
-    uint16_t       transport_len = (uint16_t) (sbufGetLength(buf) - testerserverPacketIpv4HeaderLength());
-    uint16_t       src_port      = 0;
-    uint16_t       dest_port     = 0;
+    uint8_t       *packet             = sbufGetMutablePtr(buf);
+    struct ip_hdr *ipheader           = (struct ip_hdr *) packet;
+    uint8_t       *transport          = packet + testerserverPacketIpv4HeaderLength();
+    uint16_t       transport_len      = (uint16_t) (sbufGetLength(buf) - testerserverPacketIpv4HeaderLength());
+    uint16_t       src_port           = 0;
+    uint16_t       dest_port          = 0;
     uint16_t       transport_checksum = 0;
 
     if (ts->packet_ipv4_transport == kTesterServerPacketIpv4TransportNone)
@@ -303,8 +303,7 @@ static bool testerserverVerifyPacketIpv4Transport(testerserver_tstate_t *ts, sbu
         struct tcp_hdr *tcpheader = (struct tcp_hdr *) transport;
 
         if (transport_len < sizeof(*tcpheader) || tcpheader->src != lwip_htons(src_port) ||
-            tcpheader->dest != lwip_htons(dest_port) ||
-            TCPH_HDRLEN_BYTES(tcpheader) != sizeof(*tcpheader) ||
+            tcpheader->dest != lwip_htons(dest_port) || TCPH_HDRLEN_BYTES(tcpheader) != sizeof(*tcpheader) ||
             TCPH_FLAGS(tcpheader) != (TCP_ACK | TCP_PSH) ||
             tcpheader->seqno != lwip_htonl(0x10203040U + (uint32_t) chunk_index) ||
             tcpheader->ackno != lwip_htonl(0x50607080U + (uint32_t) chunk_index) ||
@@ -327,7 +326,7 @@ static bool testerserverVerifyPacketIpv4Transport(testerserver_tstate_t *ts, sbu
         break;
     }
     case kTesterServerPacketIpv4TransportIcmp: {
-        struct icmp_echo_hdr *icmpheader = (struct icmp_echo_hdr *) transport;
+        struct icmp_echo_hdr *icmpheader    = (struct icmp_echo_hdr *) transport;
         uint8_t               expected_type = direction == kTesterServerDirectionRequest ? ICMP_ECHO : ICMP_ER;
 
         if (transport_len < sizeof(*icmpheader) || icmpheader->type != expected_type || icmpheader->code != 0 ||
@@ -366,9 +365,9 @@ static bool testerserverVerifyPacketIpv4Transport(testerserver_tstate_t *ts, sbu
 static bool testerserverDecodePacketIpv4(tunnel_t *t, sbuf_t *buf, testerserver_direction_e direction,
                                          uint8_t chunk_index, uint8_t **payload_ptr, uint32_t *payload_len)
 {
-    testerserver_tstate_t *ts         = tunnelGetState(t);
-    const uint32_t         packet_len = sbufGetLength(buf);
-    const uint16_t         header_len = testerserverPacketIpv4HeaderLength();
+    testerserver_tstate_t *ts             = tunnelGetState(t);
+    const uint32_t         packet_len     = sbufGetLength(buf);
+    const uint16_t         header_len     = testerserverPacketIpv4HeaderLength();
     const uint16_t         payload_offset = testerserverPacketIpv4PayloadOffset(ts);
 
     if (packet_len < payload_offset)
@@ -445,7 +444,7 @@ uint32_t testerserverGetChunkSize(tunnel_t *t, uint8_t index)
 
 uint64_t testerserverGetRemainingBytes(tunnel_t *t, uint8_t index)
 {
-    uint64_t remaining = 0;
+    uint64_t        remaining   = 0;
     const uint32_t *chunk_sizes = testerserverGetChunkTable(t);
 
     const uint8_t chunk_count = testerserverGetChunkCount(t);
@@ -461,9 +460,9 @@ uint64_t testerserverGetRemainingBytes(tunnel_t *t, uint8_t index)
 sbuf_t *testerserverCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, uint32_t chunk_offset,
                                   uint32_t payload_len, testerserver_direction_e direction)
 {
-    buffer_pool_t *pool        = lineGetBufferPool(l);
-    testerserver_tstate_t *ts  = tunnelGetState(t);
-    sbuf_t        *buf         = NULL;
+    buffer_pool_t         *pool = lineGetBufferPool(l);
+    testerserver_tstate_t *ts   = tunnelGetState(t);
+    sbuf_t                *buf  = NULL;
 
     if (ts->packet_mode)
     {
@@ -511,8 +510,12 @@ sbuf_t *testerserverCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, u
 
         testerserverWritePacketIpv4Header(ts, buf, direction);
         testerserverWritePacketIpv4Transport(ts, buf, chunk_index, direction);
-        testerserverFillBytesForFlow(testerserverGetFlowId(t, l), sbufGetMutablePtr(buf) + payload_offset,
-                                     payload_len - payload_offset, chunk_index, chunk_offset, direction);
+        testerserverFillBytesForFlow(testerserverGetFlowId(t, l),
+                                     sbufGetMutablePtr(buf) + payload_offset,
+                                     payload_len - payload_offset,
+                                     chunk_index,
+                                     chunk_offset,
+                                     direction);
         calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
         return buf;
     }
@@ -522,8 +525,9 @@ sbuf_t *testerserverCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, u
     return buf;
 }
 
-bool testerserverVerifyChunk(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_t chunk_index, testerserver_direction_e direction,
-                             uint32_t *bad_offset, uint8_t *expected, uint8_t *actual)
+bool testerserverVerifyChunk(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_t chunk_index,
+                             testerserver_direction_e direction, uint32_t *bad_offset, uint8_t *expected,
+                             uint8_t *actual)
 {
     testerserver_tstate_t *ts          = tunnelGetState(t);
     testerserver_lstate_t *ls          = lineGetState(l, t);
@@ -610,20 +614,27 @@ void testerserverHandlePacketRequestPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (! testerserverVerifyChunk(t, l, buf, ls->request_rx_index, kTesterServerDirectionRequest, &bad_offset,
-                                  &expected, &actual))
+    if (! testerserverVerifyChunk(
+            t, l, buf, ls->request_rx_index, kTesterServerDirectionRequest, &bad_offset, &expected, &actual))
     {
         LOGE("TesterServer: worker %u packet request chunk %u mismatch (size=%u expected_size=%u bad_offset=%u "
              "expected=0x%02x actual=0x%02x)",
-             (unsigned int) lineGetWID(l), (unsigned int) ls->request_rx_index, (unsigned int) sbufGetLength(buf),
-             (unsigned int) testerserverGetChunkSize(t, ls->request_rx_index), (unsigned int) bad_offset,
-             (unsigned int) expected, (unsigned int) actual);
+             (unsigned int) lineGetWID(l),
+             (unsigned int) ls->request_rx_index,
+             (unsigned int) sbufGetLength(buf),
+             (unsigned int) testerserverGetChunkSize(t, ls->request_rx_index),
+             (unsigned int) bad_offset,
+             (unsigned int) expected,
+             (unsigned int) actual);
         lineReuseBuffer(l, buf);
         terminateProgram(1);
         return;
     }
 
-    sbuf_t *response_buf = testerserverCreatePayload(t, l, ls->request_rx_index, 0,
+    sbuf_t *response_buf = testerserverCreatePayload(t,
+                                                     l,
+                                                     ls->request_rx_index,
+                                                     0,
                                                      testerserverGetChunkSize(t, ls->request_rx_index),
                                                      kTesterServerDirectionResponse);
 
@@ -653,20 +664,20 @@ static bool testerserverInferPacketChunkIndex(tunnel_t *t, sbuf_t *buf, uint8_t 
 static bool testerserverVerifyStatelessPacketChunk(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_t chunk_index,
                                                    uint32_t *bad_offset, uint8_t *expected, uint8_t *actual)
 {
-    testerserver_lstate_t *ls = lineGetState(l, t);
+    testerserver_lstate_t *ls               = lineGetState(l, t);
     uint8_t                original_flow_id = ls->flow_id;
 
     if (chunk_index == 0)
     {
-        return testerserverVerifyChunk(t, l, buf, chunk_index, kTesterServerDirectionRequest, bad_offset, expected,
-                                       actual);
+        return testerserverVerifyChunk(
+            t, l, buf, chunk_index, kTesterServerDirectionRequest, bad_offset, expected, actual);
     }
 
     for (uint16_t flow_id = 0; flow_id < 254U; ++flow_id)
     {
         ls->flow_id = (uint8_t) flow_id;
-        if (testerserverVerifyChunk(t, l, buf, chunk_index, kTesterServerDirectionRequest, bad_offset, expected,
-                                    actual))
+        if (testerserverVerifyChunk(
+                t, l, buf, chunk_index, kTesterServerDirectionRequest, bad_offset, expected, actual))
         {
             return true;
         }
@@ -678,10 +689,10 @@ static bool testerserverVerifyStatelessPacketChunk(tunnel_t *t, line_t *l, sbuf_
 
 void testerserverHandlePacketStatelessRequestPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    testerserver_lstate_t *ls = lineGetState(l, t);
-    uint32_t               bad_offset = 0;
-    uint8_t                expected = 0;
-    uint8_t                actual = 0;
+    testerserver_lstate_t *ls          = lineGetState(l, t);
+    uint32_t               bad_offset  = 0;
+    uint8_t                expected    = 0;
+    uint8_t                actual      = 0;
     uint8_t                chunk_index = 0;
 
     if (! testerserverInferPacketChunkIndex(t, buf, &chunk_index))
@@ -695,17 +706,20 @@ void testerserverHandlePacketStatelessRequestPayload(tunnel_t *t, line_t *l, sbu
     {
         LOGE("TesterServer: worker %u packet request chunk %u mismatch (size=%u expected_size=%u bad_offset=%u "
              "expected=0x%02x actual=0x%02x)",
-             (unsigned int) lineGetWID(l), (unsigned int) chunk_index, (unsigned int) sbufGetLength(buf),
-             (unsigned int) testerserverGetChunkSize(t, chunk_index), (unsigned int) bad_offset,
-             (unsigned int) expected, (unsigned int) actual);
+             (unsigned int) lineGetWID(l),
+             (unsigned int) chunk_index,
+             (unsigned int) sbufGetLength(buf),
+             (unsigned int) testerserverGetChunkSize(t, chunk_index),
+             (unsigned int) bad_offset,
+             (unsigned int) expected,
+             (unsigned int) actual);
         lineReuseBuffer(l, buf);
         terminateProgram(1);
         return;
     }
 
-    sbuf_t *response_buf =
-        testerserverCreatePayload(t, l, chunk_index, 0, testerserverGetChunkSize(t, chunk_index),
-                                  kTesterServerDirectionResponse);
+    sbuf_t *response_buf = testerserverCreatePayload(
+        t, l, chunk_index, 0, testerserverGetChunkSize(t, chunk_index), kTesterServerDirectionResponse);
 
     lineReuseBuffer(l, buf);
     ls->request_rx_index += 1;
@@ -731,7 +745,8 @@ void testerserverScheduleResponseSend(tunnel_t *t, line_t *l, testerserver_lstat
     }
     else
     {
-        uint8_t response_limit = ts->streaming_response ? ls->request_rx_index : (ls->response_ready ? testerserverGetChunkCount(t) : 0);
+        uint8_t response_limit =
+            ts->streaming_response ? ls->request_rx_index : (ls->response_ready ? testerserverGetChunkCount(t) : 0);
 
         if (ls->response_paused || ls->response_tx_index >= response_limit)
         {
@@ -745,8 +760,8 @@ void testerserverScheduleResponseSend(tunnel_t *t, line_t *l, testerserver_lstat
 
 void testerserverResponseSendTask(tunnel_t *t, line_t *l)
 {
-    testerserver_lstate_t *ls = lineGetState(l, t);
-    testerserver_tstate_t *ts = tunnelGetState(t);
+    testerserver_lstate_t *ls   = lineGetState(l, t);
+    testerserver_tstate_t *ts   = tunnelGetState(t);
     buffer_pool_t         *pool = lineGetBufferPool(l);
 
     ls->response_send_scheduled = false;
@@ -763,7 +778,7 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
             if (! withLineLockedWithBuf(l, send_response, t, buf))
             {
                 LOGF("TesterServer: packet line died during packet-mode response send");
-                terminateProgram(1);
+                abortProgramNow(1);
                 return;
             }
         }
@@ -779,9 +794,9 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
         return;
     }
 
-    const uint8_t chunk_count         = testerserverGetChunkCount(t);
-    uint8_t       response_limit      = ts->streaming_response ? ls->request_rx_index : (ls->response_ready ? chunk_count : 0);
-    uint32_t      split_payloads_sent = 0;
+    const uint8_t chunk_count = testerserverGetChunkCount(t);
+    uint8_t  response_limit   = ts->streaming_response ? ls->request_rx_index : (ls->response_ready ? chunk_count : 0);
+    uint32_t split_payloads_sent = 0;
 
     while (! ls->response_paused && ls->response_tx_index < response_limit)
     {
@@ -801,8 +816,8 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
         }
 
         uint32_t payload_len = (remaining < max_len) ? remaining : max_len;
-        sbuf_t *buf = testerserverCreatePayload(t, l, ls->response_tx_index, ls->response_tx_offset, payload_len,
-                                                kTesterServerDirectionResponse);
+        sbuf_t  *buf         = testerserverCreatePayload(
+            t, l, ls->response_tx_index, ls->response_tx_offset, payload_len, kTesterServerDirectionResponse);
 
         if (buf == NULL)
         {

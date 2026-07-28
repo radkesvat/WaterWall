@@ -278,7 +278,7 @@ static bool smugglefintrickQueuePacketOrDieLocked(ipmanipulator_smuggle_fin_work
     }
 
     LOGF("IpManipulator: smuggle-fin failed to grow the paused packet queue");
-    terminateProgram(1);
+    abortProgramNow(1);
     return false;
 }
 
@@ -347,7 +347,7 @@ static void smugglefintrickFlushQueuedPackets(tunnel_t *t, line_t *l,
         if (! lineIsAlive(l))
         {
             LOGF("IpManipulator: worker packet line died while replaying smuggle-fin queued packets");
-            terminateProgram(1);
+            abortProgramNow(1);
         }
 
         mutexLock(&state->smuggle_fin_mutex);
@@ -555,7 +555,7 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         lineUnlock(l);
         LOGF("IpManipulator: worker packet line died during smuggle-fin send");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     lineSetRecalculateChecksum(l, original_recalculate_checksum);

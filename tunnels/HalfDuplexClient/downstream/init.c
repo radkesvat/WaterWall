@@ -8,5 +8,5 @@ void halfduplexclientTunnelDownStreamInit(tunnel_t *t, line_t *l)
     discard l;
 
     LOGF("HalfDuplexClient will not receive a backward init");
-    terminateProgram(1);    
+    abortProgramNow(1);
 }

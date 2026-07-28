@@ -13,7 +13,7 @@ void tcplistenerTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     if (! removed)
     {
         LOGF("TcpListener: failed to remove idle item for FD:%x ", wioGetFD(ls->io));
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     ls->idle_handle = NULL; // mark as removed
     weventSetUserData(ls->io, NULL);

@@ -33,7 +33,7 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
         if (ts->packet_mode)
         {
             LOGF("TesterClient: packet line died during packet-mode init");
-            terminateProgram(1);
+            abortProgramNow(1);
         }
         return;
     }

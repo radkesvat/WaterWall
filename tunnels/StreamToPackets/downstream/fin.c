@@ -8,5 +8,5 @@ void streamtopacketsTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     discard l;
 
     LOGF("StreamToPackets: not supposed to receive downstream fin");
-    terminateProgram(1);
+    abortProgramNow(1);
 }

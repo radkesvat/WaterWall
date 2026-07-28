@@ -8,5 +8,5 @@ void encryptionserverTunnelDownStreamInit(tunnel_t *t, line_t *l)
     discard l;
     LOGF("EncryptionServer: DownStreamInit is disabled");
 
-    terminateProgram(1);
+    abortProgramNow(1);
 }

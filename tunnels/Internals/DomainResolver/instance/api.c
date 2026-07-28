@@ -29,7 +29,7 @@ void domainresolverTunnelSetPrepareHook(tunnel_t *t, tunnel_t *owner, uint32_t u
     if (UNLIKELY(t->chain != NULL))
     {
         LOGF("DomainResolver: prepare hook must be configured before chaining");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     domainresolver_tstate_t *ts = tunnelGetState(t);
@@ -39,7 +39,7 @@ void domainresolverTunnelSetPrepareHook(tunnel_t *t, tunnel_t *owner, uint32_t u
                  UINT32_MAX - tunnelGetCorrectAlignedLineStateSize(sizeof(domainresolver_lstate_t))))
     {
         LOGF("DomainResolver: prepare hook line state is too large");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     ts->prepare_owner       = owner;

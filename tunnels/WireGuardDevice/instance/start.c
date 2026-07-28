@@ -35,7 +35,7 @@ static void wireguarddeviceQueueWorkerPacketInit(void *worker, void *arg1, void 
     if (! lineIsAlive(l))
     {
         LOGF("WireGuardDevice: worker packet line died during packet-side init");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 }
 

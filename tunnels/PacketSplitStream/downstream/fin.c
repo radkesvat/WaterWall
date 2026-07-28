@@ -7,5 +7,5 @@ void packetsplitstreamTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     discard t;
     discard l;
     LOGF("packetsplitstreamTunnelDownStreamFinish is not supposed to be called");
-    terminateProgram(1);
+    abortProgramNow(1);
 }

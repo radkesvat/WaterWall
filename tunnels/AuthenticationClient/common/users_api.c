@@ -136,7 +136,7 @@ static void authenticationclientAssertProfileEmpty(authenticationclient_user_pro
     if (UNLIKELY(profile->name != NULL || profile->password != NULL))
     {
         LOGF("AuthenticationClient: %s received a non-empty user profile output; clear it before reuse", fn_name);
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 }
 

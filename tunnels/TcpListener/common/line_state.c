@@ -19,7 +19,7 @@ void tcplistenerLinestateDestroy(tcplistener_lstate_t *ls)
     if (ls->idle_handle)
     {
         LOGF("TcpListener: idle item still exists for FD:%x ", wioGetFD(ls->io));
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tcplistener_lstate_t)));
 }

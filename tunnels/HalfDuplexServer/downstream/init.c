@@ -8,5 +8,5 @@ void halfduplexserverTunnelDownStreamInit(tunnel_t *t, line_t *l)
     discard l;
 
     LOGF("HalfDuplexServer is not supposed to receive downstream init");
-    terminateProgram(1);
+    abortProgramNow(1);
 }

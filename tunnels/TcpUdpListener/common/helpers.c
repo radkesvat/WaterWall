@@ -20,6 +20,6 @@ tunnel_t *tcpudplistenerSelectDownStreamTunnel(tunnel_t *t, line_t *l)
     LOGF("TcpUdpListener: line has ambiguous or missing source protocol flags (tcp=%u, udp=%u)",
          (unsigned int) src_ctx->proto_tcp,
          (unsigned int) src_ctx->proto_udp);
-    terminateProgram(1);
+    abortProgramNow(1);
     return NULL;
 }

@@ -8,5 +8,5 @@ void udpovertcpserverTunnelDownStreamInit(tunnel_t *t, line_t *l)
     discard l;
     LOGF("UdpOverTcpServer: DownStreamInit is disabled");
 
-    terminateProgram(1);
+    abortProgramNow(1);
 }

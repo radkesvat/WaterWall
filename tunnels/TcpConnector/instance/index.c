@@ -10,5 +10,5 @@ void tcpconnectorTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset
     discard index;
     discard mem_offset;
     LOGF("This Function is disabled, using the default Tunnel instead");
-    terminateProgram(1);
+    abortProgramNow(1);
 }

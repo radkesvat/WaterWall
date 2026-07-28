@@ -612,7 +612,7 @@ bool ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_line, sbuf_t *buf
     if (! lineIsAlive(packet_line))
     {
         LOGF("PacketsToConnection: packet line died while sending fake DNS response");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     lineUnlock(packet_line);
 #endif

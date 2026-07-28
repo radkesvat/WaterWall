@@ -42,9 +42,8 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     tcplistener_lstate_t *ls = lineGetState(l, t);
     tcplistener_tstate_t *ts = tunnelGetState(t);
 
-    localidletableKeepIdleItemForAtleast(tcplistenerGetLineIdleTable(ts, l),
-                                         ls->idle_handle,
-                                         ts->active_idle_timeout_ms);
+    localidletableKeepIdleItemForAtleast(
+        tcplistenerGetLineIdleTable(ts, l), ls->idle_handle, ts->active_idle_timeout_ms);
 
     tunnelNextUpStreamPayload(t, l, buf);
 }
@@ -64,7 +63,7 @@ static void onClose(wio_t *io)
         if (! removed)
         {
             LOGF("TcpListener: failed to remove idle item for FD:%x ", wioGetFD(io));
-            terminateProgram(1);
+            abortProgramNow(1);
         }
         ls->idle_handle = NULL; // mark as removed
 
@@ -121,7 +120,9 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
         struct sockaddr log_localaddr = *wioGetLocaladdr(io);
         sockaddrSetPort((sockaddr_u *) &(log_localaddr), data->real_localport);
 
-        LOGD("TcpListener: Accepted FD:%x  [%s] <= [%s]", wioGetFD(io), SOCKADDR_STR(&log_localaddr, localaddrstr),
+        LOGD("TcpListener: Accepted FD:%x  [%s] <= [%s]",
+             wioGetFD(io),
+             SOCKADDR_STR(&log_localaddr, localaddrstr),
              SOCKADDR_STR(wioGetPeerAddr(io), peeraddrstr));
     }
 

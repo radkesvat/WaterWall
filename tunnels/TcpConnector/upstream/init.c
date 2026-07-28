@@ -342,17 +342,17 @@ bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
 
 void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
-    tcpconnector_tstate_t              *ts       = tunnelGetState(t);
-    tcpconnector_lstate_t              *ls       = lineGetState(l, t);
+    tcpconnector_tstate_t                 *ts = tunnelGetState(t);
+    tcpconnector_lstate_t                 *ls = lineGetState(l, t);
     tcpconnector_domain_resolver_lstate_t *resolver_ls =
         domainresolverTunnelGetUserLineState(ts->domain_resolver_tunnel, l);
-    address_context_t                  *dest_ctx = lineGetDestinationAddressContext(l);
+    address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
 
     tcpconnectorLinestateInitialize(ls);
     if (UNLIKELY(resolver_ls == NULL))
     {
         LOGF("TcpConnector: internal DomainResolver prepare state is missing");
-        terminateProgram(1);
+        abortProgramNow(1);
     }
 
     ls->tunnel            = t;

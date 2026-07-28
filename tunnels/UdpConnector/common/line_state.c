@@ -80,7 +80,7 @@ void udpconnectorLinestateDestroy(udpconnector_lstate_t *ls)
     if (ls->idle_handle != NULL)
     {
         LOGF("UdpConnector: idle item still exists for FD:%x ", ls->io ? wioGetFD(ls->io) : -1);
-        terminateProgram(1);
+        abortProgramNow(1);
     }
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(udpconnector_lstate_t)));
 }

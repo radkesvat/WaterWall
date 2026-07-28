@@ -14,7 +14,7 @@ void udpstatelesssocketTunnelDestroy(tunnel_t *t)
             {
                 LOGF("UdpStatelessSocket: destroying with active worker-local idle table for worker %u",
                      (unsigned int) wid);
-                terminateProgram(1);
+                abortProgramNow(1);
             }
         }
         memoryFree(state->socket.idle_tables);
