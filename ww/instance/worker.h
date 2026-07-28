@@ -165,8 +165,9 @@ void workerDestroyOwnResources(worker_t *worker);
  * multiple workers should be notified before joining.
  *
  * @param worker Pointer to the worker structure.
+ * @return true after a confirmed join, false while thread ownership remains.
  */
-void workerJoin(worker_t *worker);
+bool workerJoin(worker_t *worker);
 
 /**
  * @brief Request stop and then join, for a single worker.
@@ -175,5 +176,6 @@ void workerJoin(worker_t *worker);
  * of them.
  *
  * @param worker Pointer to the worker structure.
+ * @return true after a confirmed join, false while thread ownership remains.
  */
-void workerExitJoin(worker_t *worker);
+bool workerExitJoin(worker_t *worker);

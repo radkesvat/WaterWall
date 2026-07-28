@@ -108,12 +108,21 @@ static inline wthread_error_t threadCreate(wthread_t *out, wthread_routine fn, v
  * @brief Join a thread and release its handle.
  *
  * @param th Thread handle to join.
- * @return Always `0`.
+ * @return `0` on success, otherwise a nonzero Windows error.
  */
 static int threadJoin(wthread_t th)
 {
-    WaitForSingleObject(th, INFINITE);
-    CloseHandle(th);
+    const DWORD wait_result = WaitForSingleObject(th, INFINITE);
+    if (wait_result != WAIT_OBJECT_0)
+    {
+        const DWORD error = GetLastError();
+        return (int) (error == ERROR_SUCCESS ? ERROR_GEN_FAILURE : error);
+    }
+    if (! CloseHandle(th))
+    {
+        const DWORD error = GetLastError();
+        return (int) (error == ERROR_SUCCESS ? ERROR_GEN_FAILURE : error);
+    }
     return 0;
 }
 
@@ -121,17 +130,16 @@ static int threadJoin(wthread_t th)
  * @brief Join a thread unless it is the current thread.
  *
  * @param th Thread handle to join.
- * @return `true` if joined, `false` when self-join was avoided.
+ * @return `true` if joined, `false` on self-join or a native join/close error.
  */
 static bool safeThreadJoin(wthread_t th)
 {
-    if (GetCurrentThreadId() == GetThreadId(th))
+    const DWORD thread_id = GetThreadId(th);
+    if (thread_id == 0 || GetCurrentThreadId() == thread_id)
     {
         return false;
     }
-    WaitForSingleObject(th, INFINITE);
-    CloseHandle(th);
-    return true;
+    return threadJoin(th) == 0;
 }
 
 #define terminateCurrentThread() ExitThread(0)
@@ -235,16 +243,15 @@ static int threadJoin(wthread_t th)
  * @brief Join a POSIX thread unless it is the caller thread.
  *
  * @param th Thread id to join.
- * @return `true` if joined, `false` when self-join was avoided.
+ * @return `true` if joined, `false` on self-join or a native join error.
  */
 static bool safeThreadJoin(wthread_t th)
 {
-    if (pthread_self() == th)
+    if (pthread_equal(pthread_self(), th))
     {
         return false;
     }
-    pthread_join(th, NULL);
-    return true;
+    return threadJoin(th) == 0;
 }
 
 // NOTE: was previously `pthread_exit()` (missing the required void* argument),

@@ -100,7 +100,17 @@ static void exitHandle(void *userdata, int signum)
     // destroyed its own event-loop-local resources before returning.
     for (unsigned int wid = 1; wid < WORKERS_COUNT - WORKER_ADDITIONS; ++wid)
     {
-        workerJoin(getWorker(wid));
+        if (UNLIKELY(! workerJoin(getWorker(wid))))
+        {
+            /*
+             * A possibly-live worker still owns worker-local and global
+             * resources. Continuing into pool/manager destruction would turn a
+             * join failure into use-after-free, so terminal shutdown must stop
+             * here instead of pretending ownership transferred.
+             */
+            LOGF("Failed to join worker %u during terminal shutdown", wid);
+            abortProgramNow(1);
+        }
     }
     // lwip pseudo-worker has no spawned OS thread and no event loop, but it
     // still owns pools; the shutdown thread cleans it up explicitly.
@@ -456,6 +466,7 @@ void runMainThread(void)
 {
     assert(GSTATE.flag_initialized);
 
+    // Publishes fully initialized global/worker state before spawned loops run.
     atomicStoreExplicit(&GSTATE.workers_run_flag, true, memory_order_release);
 
     workerRun(getWorker(0));

@@ -167,21 +167,24 @@ void workerDestroyOwnResources(worker_t *worker)
     workerLifecycleAdvance(worker, kWorkerLifecycleExited);
 }
 
-void workerJoin(worker_t *worker)
+bool workerJoin(worker_t *worker)
 {
     if (worker->thread_valid)
     {
-        safeThreadJoin(worker->thread);
+        if (! safeThreadJoin(worker->thread))
+        {
+            return false;
+        }
         worker->thread_valid = false;
     }
     workerLifecycleAdvance(worker, kWorkerLifecycleJoined);
+    return true;
 }
 
-void workerExitJoin(worker_t *worker)
+bool workerExitJoin(worker_t *worker)
 {
-
     discard workerRequestStop(worker);
-    workerJoin(worker);
+    return workerJoin(worker);
 }
 
 void workerInit(worker_t *worker, wid_t wid, bool eventloop)
@@ -236,6 +239,7 @@ void workerRun(worker_t *worker)
 
     workerLifecycleAdvance(worker, kWorkerLifecycleRunning);
 
+    // Consumes global/worker state published by runMainThread().
     while (atomicLoadExplicit(&GSTATE.workers_run_flag, memory_order_acquire) == false)
     {
         if (UNLIKELY(workerStopRequested(worker) || isApplicationTerminating()))
