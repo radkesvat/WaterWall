@@ -704,6 +704,13 @@ static bool splitPair(tunnel_t *t, line_t *upload_line, line_t *download_line)
         return false;
     }
 
+    // Init can re-enter and close both transports. Callers hold a lock on the waiting peer, so
+    // both lines stay readable here, but their line states may already have been destroyed.
+    if (! lineIsAlive(upload_line) || ! lineIsAlive(download_line))
+    {
+        return false;
+    }
+
     return httpserverTransportDrainHttp1RequestBody(t, upload_line, uls);
 }
 
@@ -769,15 +776,18 @@ static bool splitInsertOrPairUpload(tunnel_t *t, line_t *l, size_t header_end,
             return splitPipeCurrentLineToWorker(t, l, ls, download_wid);
         }
         hmap_httpserver_split_t_erase_at(&ts->split_download_map, it);
+        // splitPair() re-enters the chain and can close this peer down to its last reference. A
+        // lock is a reference, not a claim that the line is alive, so it keeps the allocation
+        // readable for the liveness check below instead of letting it return to the pool.
+        lineLock(download_line);
         splitApplyParsedHeader(l, ls, header_end, info, kHttpServerSplitRoleUpload, hash);
         splitUnlockMaps(ts);
         bool ok = splitPair(t, l, download_line);
-        if (! ok && download_line != NULL && lineIsAlive(download_line))
+        if (! ok && lineIsAlive(download_line))
         {
-            lineLock(download_line);
             splitCloseTransport(t, download_line, true);
-            lineUnlock(download_line);
         }
+        lineUnlock(download_line);
         return ok;
     }
 
@@ -818,15 +828,18 @@ static bool splitInsertOrPairDownload(tunnel_t *t, line_t *l, size_t header_end,
             return splitPipeCurrentLineToWorker(t, l, ls, upload_wid);
         }
         hmap_httpserver_split_t_erase_at(&ts->split_upload_map, it);
+        // splitPair() re-enters the chain and can close this peer down to its last reference. A
+        // lock is a reference, not a claim that the line is alive, so it keeps the allocation
+        // readable for the liveness check below instead of letting it return to the pool.
+        lineLock(upload_line);
         splitApplyParsedHeader(l, ls, header_end, info, kHttpServerSplitRoleDownload, hash);
         splitUnlockMaps(ts);
         bool ok = splitPair(t, upload_line, l);
-        if (! ok && upload_line != NULL && lineIsAlive(upload_line))
+        if (! ok && lineIsAlive(upload_line))
         {
-            lineLock(upload_line);
             splitCloseTransport(t, upload_line, true);
-            lineUnlock(upload_line);
         }
+        lineUnlock(upload_line);
         return ok;
     }
 
