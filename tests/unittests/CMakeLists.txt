@@ -1295,6 +1295,26 @@ if(TARGET HttpServer)
   )
 endif()
 
+if(TARGET HalfDuplexServer)
+  add_executable(halfduplexserver_reentrant_init_test
+    halfduplexserver_reentrant_init_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(halfduplexserver_reentrant_init_test HalfDuplexServer)
+  target_link_options(halfduplexserver_reentrant_init_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=lineScheduleTask"
+  )
+  target_link_libraries(halfduplexserver_reentrant_init_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests halfduplexserver_reentrant_init_test)
+
+  add_waterwall_unit_test(
+    waterwall.halfduplexserver_reentrant_init_unit
+    halfduplexserver_reentrant_init_test
+    "unit;tunnels;halfduplexserver;reentrant;init;line"
+  )
+endif()
+
 if(TARGET SpeedLimit)
   add_executable(speedlimit_line_failure_test
     speedlimit_line_failure_test.c

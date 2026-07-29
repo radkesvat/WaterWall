@@ -182,6 +182,10 @@ CREATION_SITES = [
      "caseSuccessfulDownstreamFinishClosesBeforeSweep",
      TEST_ONLY,
      "two worker-owned lines used to reproduce a completed-line Finish before the final sweep"),
+    ("tests/unittests/halfduplexserver_reentrant_init_test.c", "transportOwnerDownstreamFinish", TEST_ONLY,
+     "a replacement fixture line used to prove the finished transport allocation remains retained"),
+    ("tests/unittests/halfduplexserver_reentrant_init_test.c", "createTransportLine", TEST_ONLY,
+     "the borrowed upload and download transport fixture lines"),
 ]
 
 # How many lines a site creates, where that is not one. Losing one of a pair is a
@@ -462,6 +466,13 @@ REQUIRED_CONTRACT_TESTS = [
      ((UNIT_CMAKE, "add_executable(httpserver_reentrant_finish_test"),
       (UNIT_CMAKE, "waterwall.httpserver_reentrant_finish_unit")),
      "HttpServer stops a multi-part final send after re-entrant upstream Finish"),
+    ("tests/unittests/halfduplexserver_reentrant_init_test.c",
+     ("runRejectedPairingCase",
+      "rejectMainLineInit",
+      "transportOwnerDownstreamFinish"),
+     ((UNIT_CMAKE, "add_executable(halfduplexserver_reentrant_init_test"),
+      (UNIT_CMAKE, "waterwall.halfduplexserver_reentrant_init_unit")),
+     "HalfDuplexServer retains both transports when main Init is rejected re-entrantly"),
     ("tests/unittests/packetsender_orderly_shutdown_test.c",
      ("caseDownstreamFinishCancelsPendingTimer",
       "caseReentrantFinishStopsReadyBatch",

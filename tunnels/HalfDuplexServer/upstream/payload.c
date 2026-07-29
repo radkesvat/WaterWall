@@ -110,11 +110,21 @@ static bool handleUploadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, hal
 
     line_t *main_line = createAndInitializeMainLine(t, l, download_line, ls, download_line_ls);
 
-    if (! initializeMainLineConnection(t, main_line))
+    buffer_pool_t *buffer_pool = lineGetBufferPool(l);
+    lineLock(l);
+    lineLock(download_line);
+
+    bool initialized = initializeMainLineConnection(t, main_line);
+    if (! initialized)
     {
-        lineReuseBuffer(l, buf);
+        bufferpoolReuseBuffer(buffer_pool, buf);
+        lineUnlock(download_line);
+        lineUnlock(l);
         return true;
     }
+
+    lineUnlock(download_line);
+    lineUnlock(l);
 
     sbufShiftRight(buf, sizeof(uint64_t));
     if (sbufGetLength(buf) > 0)
@@ -122,7 +132,7 @@ static bool handleUploadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, hal
         tunnelNextUpStreamPayload(t, main_line, buf);
         return true;
     }
-    lineReuseBuffer(l, buf);
+    bufferpoolReuseBuffer(buffer_pool, buf);
     return true;
 }
 
@@ -166,21 +176,32 @@ static bool handleDownloadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, h
     lineReuseBuffer(l, buf);
 
     ls->state                     = kCsDownloadDirect;
-    ls->upload_line               = upload_line_ls->upload_line;
+    line_t *upload_line           = upload_line_ls->upload_line;
+    ls->upload_line               = upload_line;
     upload_line_ls->state         = kCsUploadDirect;
     upload_line_ls->download_line = l;
 
-    line_t *main_line = createAndInitializeMainLine(t, ls->upload_line, l, upload_line_ls, ls);
+    line_t *main_line = createAndInitializeMainLine(t, upload_line, l, upload_line_ls, ls);
 
     assert(upload_line_ls->buffering);
     sbuf_t *buf_upline        = upload_line_ls->buffering;
     upload_line_ls->buffering = NULL;
 
-    if (! initializeMainLineConnection(t, main_line))
+    buffer_pool_t *buffer_pool = lineGetBufferPool(l);
+    lineLock(upload_line);
+    lineLock(l);
+
+    bool initialized = initializeMainLineConnection(t, main_line);
+    if (! initialized)
     {
-        lineReuseBuffer(l, buf_upline);
+        bufferpoolReuseBuffer(buffer_pool, buf_upline);
+        lineUnlock(l);
+        lineUnlock(upload_line);
         return true;
     }
+
+    lineUnlock(l);
+    lineUnlock(upload_line);
 
     if (sbufGetLength(buf_upline) > 0)
     {
@@ -189,7 +210,7 @@ static bool handleDownloadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, h
     }
     else
     {
-        lineReuseBuffer(l, buf_upline);
+        bufferpoolReuseBuffer(buffer_pool, buf_upline);
     }
     return true;
 }
