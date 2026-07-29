@@ -558,7 +558,7 @@ static inline bool hybridmutexTryLock(whybrid_mutex_t *m)
  */
 static inline void hybridmutexUnlock(whybrid_mutex_t *m)
 {
-    atomic_exchange(&m->flag, false);
+    (void) atomic_exchange(&m->flag, false);
     if (atomic_load(&m->nwait) != 0)
     {
         // at least one thread waiting on a semaphore signal -- wake one thread

@@ -412,7 +412,7 @@ inline static bool chan_send(wchan_t *c, void *srcelemptr, bool *closed)
     // channel wasn't closed during the first observation. However, nothing here
     // guarantees forward progress. We rely on the side effects of lock release in
     // chan_recv() and wchan_Close() to update this thread's view of c.closed and chan_full().
-    if (! block && ! c->closed && chan_full(c))
+    if (! block && ! atomicLoadExplicit(&c->closed, memory_order_relaxed) && chan_full(c))
         return false;
 
     chan_lock(&c->lock);
