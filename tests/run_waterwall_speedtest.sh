@@ -23,6 +23,7 @@ timeout_seconds=$3
 
 source "$(dirname "$(realpath "$0")")/case_run_dir.lib.sh"
 
+trap remove_case_run_dir EXIT
 prepare_case_run_dir "$speedtest_dir"
 run_dir=$case_run_dir
 generated_core_json="$run_dir/core.json"
@@ -78,14 +79,21 @@ cleanup() {
 
 trap cleanup EXIT
 
-# Stage the shared fixtures into the private run directory. A speedtest that
-# ships its own copy of a fixture keeps it.
+# Stage the shared fixtures into the private run directory. Certificates beside
+# a speedtest are ignored generated artifacts from older in-place runs, so the
+# canonical shared certificate and key always replace them. Other fixture names
+# may still be overridden by the speedtest.
 shared_dir="$speedtest_dir/../_shared"
 if [[ -d "$shared_dir" ]]; then
   for shared_path in "$shared_dir"/*; do
     [[ -e "$shared_path" ]] || continue
-    if [[ ! -e "$run_dir/$(basename "$shared_path")" ]]; then
-      cp -R "$shared_path" "$run_dir/$(basename "$shared_path")"
+    shared_name=$(basename "$shared_path")
+    run_shared_path="$run_dir/$shared_name"
+    if [[ "$shared_name" == "server.crt" || "$shared_name" == "server.key" ]]; then
+      rm -f -- "$run_shared_path"
+    fi
+    if [[ ! -e "$run_shared_path" ]]; then
+      cp -R "$shared_path" "$run_shared_path"
     fi
   done
 fi

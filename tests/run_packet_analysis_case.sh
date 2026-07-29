@@ -14,6 +14,7 @@ timeout_seconds=$3
 
 source "$(dirname "$(realpath "$0")")/case_run_dir.lib.sh"
 
+trap remove_case_run_dir EXIT
 prepare_case_run_dir "$case_dir"
 run_dir=$case_run_dir
 generated_core_json="$run_dir/core.json"

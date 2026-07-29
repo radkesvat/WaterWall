@@ -139,6 +139,24 @@ set_tests_properties(
 )
 
 add_test(
+  NAME waterwall.test_runner_edge_cases
+  COMMAND
+    "${BASH_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_runner_edge_cases_test.sh"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_case.sh"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_speedtest.sh"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_probe_case.sh"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_packet_analysis_case.sh"
+    "${CMAKE_CURRENT_SOURCE_DIR}/case_run_dir.lib.sh"
+)
+set_tests_properties(
+  waterwall.test_runner_edge_cases
+  PROPERTIES
+    TIMEOUT 15
+    LABELS "test-harness"
+)
+
+add_test(
   NAME waterwall.lwip_shutdown_order_policy
   COMMAND
     "${PYTHON3_EXECUTABLE}"

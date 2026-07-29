@@ -22,15 +22,18 @@
 #
 # Usage:
 #   source "$(dirname "$0")/case_run_dir.lib.sh"
+#   trap remove_case_run_dir EXIT
 #   prepare_case_run_dir "$case_dir"
 #   run_dir=$case_run_dir
-#   # call remove_case_run_dir from the runner's EXIT trap, after any log dump
+#   # replace the early trap with the runner's full cleanup trap after setup
 #
 # prepare_case_run_dir publishes its result through case_run_dir rather than
 # stdout on purpose: command substitution would run it in a subshell and the
 # run root needed for cleanup would never reach the caller.
 #
-# Set WATERWALL_TEST_KEEP_RUN_DIR=1 to keep the run directory for inspection.
+# The early trap must be installed before prepare_case_run_dir: setup failures
+# after mktemp must still remove the private directory. Set
+# WATERWALL_TEST_KEEP_RUN_DIR=1 to keep the run directory for inspection.
 
 case_run_root=""
 case_run_dir=""

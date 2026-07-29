@@ -6,6 +6,9 @@ shopt -s nullglob
 readonly DEFAULT_TEST_WORKERS=1
 readonly TEST_RAM_PROFILE='client'
 readonly SIGTERM_EXIT_STATUS=$((128 + 15))
+readonly TEST_TIMEOUT_EXIT_STATUS=124
+readonly CHILD_TERMINATION_GRACE_CHECKS=10
+readonly CHILD_TERMINATION_GRACE_POLL_SECONDS=0.05
 
 if [[ $# -lt 4 ]]; then
   echo "usage: $0 <waterwall-binary> <case-dir> <timeout-seconds> <python3>" >&2
@@ -19,10 +22,12 @@ python_path=$4
 
 source "$(dirname "$(realpath "$0")")/case_run_dir.lib.sh"
 
+trap remove_case_run_dir EXIT
 prepare_case_run_dir "$case_dir"
 run_dir=$case_run_dir
 generated_core_json="$run_dir/core.json"
 pid=""
+probe_pid=""
 
 dump_logs() {
   local path
@@ -42,10 +47,35 @@ dump_logs() {
   done
 }
 
+terminate_child() {
+  local child_pid=$1
+  local i
+
+  if kill -0 "$child_pid" 2>/dev/null; then
+    kill -TERM "$child_pid" 2>/dev/null || true
+    for ((i = 0; i < CHILD_TERMINATION_GRACE_CHECKS; i++)); do
+      if ! kill -0 "$child_pid" 2>/dev/null; then
+        break
+      fi
+      sleep "$CHILD_TERMINATION_GRACE_POLL_SECONDS"
+    done
+    if kill -0 "$child_pid" 2>/dev/null; then
+      kill -KILL "$child_pid" 2>/dev/null || true
+    fi
+  fi
+
+  wait "$child_pid" 2>/dev/null || true
+}
+
 cleanup() {
-  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-    kill -TERM "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
+  if [[ -n "$probe_pid" ]]; then
+    terminate_child "$probe_pid"
+    probe_pid=""
+  fi
+
+  if [[ -n "$pid" ]]; then
+    terminate_child "$pid"
+    pid=""
   fi
 
   # Generated core.json, logs and fixtures live in the private run directory,
@@ -98,13 +128,41 @@ EOF
 ) &
 pid=$!
 
-set +e
+deadline=$((SECONDS + timeout_seconds))
+
 (
   cd "$run_dir"
-  "$python_path" "$run_dir/probe.py"
-)
+  exec "$python_path" "$run_dir/probe.py"
+) &
+probe_pid=$!
+
+while kill -0 "$probe_pid" 2>/dev/null; do
+  if ! kill -0 "$pid" 2>/dev/null; then
+    set +e
+    wait "$pid"
+    status=$?
+    set -e
+    pid=""
+
+    echo "Waterwall exited before probe completion (exit=$status)." >&2
+    dump_logs
+    exit 1
+  fi
+
+  if ((SECONDS >= deadline)); then
+    echo "Timed out after ${timeout_seconds}s waiting for probe completion." >&2
+    dump_logs
+    exit "$TEST_TIMEOUT_EXIT_STATUS"
+  fi
+
+  sleep 0.2
+done
+
+set +e
+wait "$probe_pid"
 probe_status=$?
 set -e
+probe_pid=""
 
 if [[ $probe_status -ne 0 ]]; then
   echo "Probe script failed with status=$probe_status" >&2
