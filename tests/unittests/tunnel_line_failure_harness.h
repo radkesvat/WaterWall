@@ -541,3 +541,106 @@ static void twfRequireLineStateZeroed(const line_t *l, const tunnel_t *t, const 
         twfRequire(state[i] == 0, message);
     }
 }
+
+// ---------------------------------------------------------------------------
+// pool-backed lines
+// ---------------------------------------------------------------------------
+//
+// twfLineCreate() hands out a bare allocation, which is enough for a test that
+// only drives callbacks. A test of the owner Finish postcondition cannot use it:
+// lineDestroy() returns the line to line->pools[wid], so the line has to come
+// from a real generic pool the same way the runtime's does.
+
+typedef struct twf_line_pool_s
+{
+    master_pool_t  *master;
+    generic_pool_t *pools[1];
+} twf_line_pool_t;
+
+/**
+ * Publish a single-worker line pool sized for one tunnel's line state.
+ *
+ * @param lstate_size the tunnel's lstate_size; the tests drive callbacks directly, so no chain indexing runs and
+ *                    the tunnel under test keeps line-state offset zero.
+ */
+static void twfLinePoolSetup(twf_line_pool_t *lp, uint32_t lstate_size, uint32_t capacity)
+{
+    memoryZero(lp, sizeof(*lp));
+
+    lp->master = masterpoolCreateWithCapacity(2 * capacity);
+    twfRequire(lp->master != NULL, "failed to create the test line master pool");
+
+    lp->pools[0] = genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(
+        lp->master, sizeof(line_t) + lstate_size, capacity);
+    twfRequire(lp->pools[0] != NULL, "failed to create the test line pool");
+}
+
+static line_t *twfLinePoolCreateLine(twf_line_pool_t *lp)
+{
+    line_t *l = lineCreateForWorker(0, lp->pools, 0);
+    twfRequire(l != NULL, "failed to create a pooled test line");
+    return l;
+}
+
+/**
+ * Release the pool. Every line taken from it must already have been reclaimed, which for a line the test still
+ * holds means lineDestroy() plus the matching lineUnlock().
+ */
+static void twfLinePoolTeardown(twf_line_pool_t *lp)
+{
+    genericpoolDestroy(lp->pools[0]);
+    masterpoolDestroy(lp->master);
+}
+
+// ---------------------------------------------------------------------------
+// the owner Finish postcondition
+// ---------------------------------------------------------------------------
+
+typedef void (*TwfOwnerFinishFn)(tunnel_t *t, line_t *l);
+
+/**
+ * Run an owner's Finish handler the way a re-entrant caller does, and require the postcondition:
+ *
+ *     lineLock(line); owner_finish(owner, line); assert(! lineIsAlive(line)); lineUnlock(line);
+ *
+ * The outer lock is what makes the assertion legal at all - it keeps the allocation present past the owner's
+ * lineDestroy(), which is exactly the frame the contract exists to protect. The caller still owns that reference
+ * afterwards and releases it with twfRequireOwnedLineReclaimed().
+ *
+ * @param t the owner tunnel, used to check that its line state was destroyed too.
+ */
+static void twfRunOwnerFinish(tunnel_t *t, line_t *l, TwfOwnerFinishFn finish, const char *what)
+{
+    char message[192];
+
+    twfRequire(lineIsAlive(l), "the line must be alive before the owner's Finish handler runs");
+    lineLock(l);
+
+    finish(t, l);
+
+    snprintf(message, sizeof(message), "%s returned with its owned line still alive", what);
+    twfRequire(! lineIsAlive(l), message);
+
+    snprintf(message, sizeof(message), "%s left its own line state behind", what);
+    twfRequireLineStateZeroed(l, t, message);
+}
+
+/**
+ * Drop the reference twfRunOwnerFinish() took and require that it was the last one, which is what proves the
+ * owner dropped the creator's reference exactly once.
+ *
+ * The line goes back to its pool here, so @p l is dangling on return. A caller that keeps the pointer in a
+ * fixture must clear it before any teardown that would inspect it.
+ */
+static void twfRequireOwnedLineReclaimed(line_t *l, const char *what)
+{
+    char message[192];
+
+    snprintf(message,
+             sizeof(message),
+             "%s did not leave exactly the caller's reference; a duplicate or missing lineDestroy()",
+             what);
+    twfRequireEqualU32(twfLineRefCount(l), 1, message);
+
+    lineUnlock(l);
+}

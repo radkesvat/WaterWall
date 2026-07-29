@@ -1396,6 +1396,45 @@ foreach(mux_side Client Server)
   endif()
 endforeach()
 
+# Owned-line Finish postcondition. One executable per tunnel, for the same reason
+# as every other block here, and one tunnel per ownership shape: an endpoint owner
+# that registers its lines in a lookup table, and an internal owner that owns its
+# children while borrowing their parent.
+if(TARGET UdpStatelessSocket)
+  add_executable(owned_line_finish_udpstatelesssocket_test
+    owned_line_finish_udpstatelesssocket_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(owned_line_finish_udpstatelesssocket_test UdpStatelessSocket)
+  target_link_options(owned_line_finish_udpstatelesssocket_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(owned_line_finish_udpstatelesssocket_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests owned_line_finish_udpstatelesssocket_test)
+
+  add_waterwall_unit_test(
+    waterwall.owned_line_finish_udpstatelesssocket_unit
+    owned_line_finish_udpstatelesssocket_test
+    "unit;tunnels;udpstatelesssocket;line;ownership;lifetime"
+  )
+endif()
+
+if(TARGET MuxServer)
+  add_executable(owned_line_finish_muxserver_test
+    owned_line_finish_muxserver_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+    ${CMAKE_SOURCE_DIR}/tunnels/Internals/MuxCommon/src/mux_wire.c
+  )
+  waterwall_line_failure_test_use_tunnel(owned_line_finish_muxserver_test MuxServer)
+  target_link_options(owned_line_finish_muxserver_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(owned_line_finish_muxserver_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests owned_line_finish_muxserver_test)
+
+  add_waterwall_unit_test(
+    waterwall.owned_line_finish_muxserver_unit
+    owned_line_finish_muxserver_test
+    "unit;tunnels;mux;line;ownership;lifetime"
+  )
+endif()
+
 # Category-B orderly-shutdown failure injection. One executable per tunnel so
 # that only one tunnel's structure.h is ever visible in a translation unit.
 # wtimerAdd is wrapped alongside the process APIs wherever the injected failure

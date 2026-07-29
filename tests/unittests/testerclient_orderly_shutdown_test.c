@@ -20,12 +20,14 @@ enum
     // Packet mode validates the small-buffer size against the maximum packet
     // length before it hands out any buffer.
     kTestSmallBufferSize = kMaxAllowedPacketLength,
-    kTestChunkCount      = 3
+    kTestChunkCount      = 3,
+    kTestLinePoolItems   = 4
 };
 
 typedef struct testerclient_fixture_s
 {
     twf_worker_env_t env;
+    twf_line_pool_t  lines;
     twf_trace_t      trace;
     tunnel_t        *prev;
     tunnel_t        *tester;
@@ -51,18 +53,36 @@ static void fixtureSetup(testerclient_fixture_t *fixture, bool packet_mode)
     ts->packet_mode           = packet_mode;
     ts->split_payload_burst   = kTesterClientSplitPayloadBurst;
 
-    fixture->line = twfLineCreate(fixture->tester->lstate_size);
+    // A pooled line, because the owned-line failure path really does lineDestroy()
+    // and that returns the line to line->pools[wid].
+    twfLinePoolSetup(&fixture->lines, fixture->tester->lstate_size, kTestLinePoolItems);
+    fixture->line = twfLinePoolCreateLine(&fixture->lines);
+
+    // In stream mode the driver publishes its line in the worker slot; the
+    // terminal failure path has to detach it again.
+    ts->workers[lineGetWID(fixture->line)].line = packet_mode ? NULL : fixture->line;
 
     testerclient_lstate_t *ls = lineGetState(fixture->line, fixture->tester);
     testerclientLinestateInitialize(ls, lineGetBufferPool(fixture->line));
     ls->request_complete = true;
 }
 
+/**
+ * Release whatever the case left alive. A case that already drove the owner's own
+ * close finds the line dead and only returns the pool; one that also dropped the
+ * last reference clears the pointer first, because the allocation is back in the
+ * pool by then and reading lineIsAlive() through it would be a use-after-free.
+ */
 static void fixtureTeardown(testerclient_fixture_t *fixture)
 {
-    testerclient_lstate_t *ls = lineGetState(fixture->line, fixture->tester);
-    testerclientLinestateDestroy(ls);
-    twfLineDestroy(fixture->line);
+    if (fixture->line != NULL && lineIsAlive(fixture->line))
+    {
+        testerclient_lstate_t *ls = lineGetState(fixture->line, fixture->tester);
+        testerclientLinestateDestroy(ls);
+        lineDestroy(fixture->line);
+    }
+
+    twfLinePoolTeardown(&fixture->lines);
 }
 
 /**
@@ -176,6 +196,83 @@ static void caseRefusedHandoffAborts(void)
 }
 
 // ---------------------------------------------------------------------------
+// Category B: a terminal verdict inside the owner's own Finish handler
+// ---------------------------------------------------------------------------
+//
+// requestProgramShutdown() only schedules worker 0's teardown; this callback
+// still returns and unwinds through every frame above it, and those frames keep
+// reading lineIsAlive(). So the verdict does not release TesterClient from the
+// owner postcondition for the line it created.
+
+static void caseTerminalDownstreamFinishClosesOwnedLine(void)
+{
+    twfSetCase("testerclient terminal downstream Finish closes its owned line");
+    tosResetProcessApi(true);
+
+    testerclient_fixture_t fixture;
+    fixtureSetup(&fixture, false);
+
+    testerclient_tstate_t *ts = tunnelGetState(fixture.tester);
+    testerclient_lstate_t *ls = lineGetState(fixture.line, fixture.tester);
+
+    // The peer closed before the response was fully verified: a real verdict.
+    ls->response_complete = false;
+
+    twfRunOwnerFinish(
+        fixture.tester, fixture.line, testerclientTunnelDownStreamFinish, "testerclientTunnelDownStreamFinish");
+
+    tosRequireAcceptedRequest(1);
+
+    // Detached before the destroy: the completion sweep schedules close tasks
+    // straight off this slot.
+    twfRequire(ts->workers[0].line == NULL, "the terminal failure must detach the worker slot");
+    twfRequire(ts->workers[0].closed, "the terminal failure must mark the worker line closed");
+
+    // next finished us, so nothing may go back that way.
+    twfRequireEqualU32(fixture.trace.next_finish, 0, "a received downstream Finish must not be reflected upstream");
+    twfRequireEqualU32(fixture.trace.next_payload, 0, "a failed verdict must not forward a payload");
+    twfRequireEqualU32(fixture.trace.prev_payload, 0, "a failed verdict must not answer downstream");
+    twfRequireNoLeakedBuffers();
+
+    // That was the caller's last reference, so the allocation is back in the pool
+    // and the fixture pointer is no longer readable.
+    twfRequireOwnedLineReclaimed(fixture.line, "testerclientTunnelDownStreamFinish");
+    fixture.line = NULL;
+
+    fixtureTeardown(&fixture);
+}
+
+// ---------------------------------------------------------------------------
+// Category D: the same Finish on a persistent worker packet line
+// ---------------------------------------------------------------------------
+
+static void packetModeFinishBody(void *argument)
+{
+    discard argument;
+
+    testerclient_fixture_t fixture;
+    fixtureSetup(&fixture, true);
+
+    testerclient_lstate_t *ls = lineGetState(fixture.line, fixture.tester);
+    ls->response_complete     = false;
+
+    testerclientTunnelDownStreamFinish(fixture.tester, fixture.line);
+}
+
+static void casePacketModeFinishAborts(void)
+{
+    twfSetCase("testerclient packet-mode Finish is a packet-line contract violation");
+
+    // A packet line lives for the whole process, so this branch must never reach
+    // the orderly helper and must never destroy the line. The handoff is
+    // available, so landing on the direct abort proves it was not consulted.
+    tosResetProcessApi(true);
+    tosRequireChildExit("the packet-mode Finish", packetModeFinishBody, NULL, kTosChildDirectAbort);
+
+    tosResetProcessApi(true);
+}
+
+// ---------------------------------------------------------------------------
 // Category D: an impossible payload-generator state
 // ---------------------------------------------------------------------------
 
@@ -210,6 +307,8 @@ int main(void)
     casePacketResponseMismatch();
     caseStreamResponseMismatch();
     caseRefusedHandoffAborts();
+    caseTerminalDownstreamFinishClosesOwnedLine();
+    casePacketModeFinishAborts();
     casePayloadGeneratorInvariantAborts();
 
     printf("testerclient_orderly_shutdown_test: all cases passed\n");

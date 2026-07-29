@@ -27,6 +27,7 @@ typedef struct wireguarddevice_fixture_s
     tunnel_t       *next;
     tunnel_chain_t *chain;
     line_t         *transport_line_slots[1];
+    line_t         *packet_line_slots[1];
     master_pool_t  *line_master;
 } wireguarddevice_fixture_t;
 
@@ -77,6 +78,13 @@ static void fixtureSetup(wireguarddevice_fixture_t *fixture)
         fixture->line_master, sizeof(line_t) + fixture->wgd->lstate_size, kTestLinePoolItems);
     fixture->wgd->chain = fixture->chain;
 
+    // WireGuardDevice is dual-role: it also sits on the chain's persistent worker
+    // packet line, which is what makes the role check in its Finish handler
+    // load-bearing.
+    fixture->chain->contains_packet_node = true;
+    fixture->packet_line_slots[0]        = lineCreateForWorker(0, fixture->chain->line_pools, 0);
+    fixture->chain->packet_lines         = fixture->packet_line_slots;
+
     wgd_tstate_t *state           = tunnelGetState(fixture->wgd);
     state->tunnel                 = fixture->wgd;
     state->transport_side_is_next = true;
@@ -91,6 +99,9 @@ static void fixtureTeardown(wireguarddevice_fixture_t *fixture)
     wireguarddeviceCloseTransportLine(fixture->wgd, 0);
     discard tosSetCurrentWorker(previous_wid);
     twfRequire(fixture->transport_line_slots[0] == NULL, "teardown must close the accepted transport line");
+
+    // tunnelchainDestroy() is the only place a packet line may ever be released.
+    lineDestroy(fixture->packet_line_slots[0]);
 
     genericpoolDestroy(fixture->chain->line_pools[0]);
     masterpoolDestroy(fixture->line_master);
@@ -143,9 +154,75 @@ static void caseRejectionIsRetriedSuccessfully(void)
     fixtureTeardown(&fixture);
 }
 
+// ---------------------------------------------------------------------------
+// The same handler, on the persistent worker packet line
+// ---------------------------------------------------------------------------
+//
+// A transport line is an ordinary owned line and dies on Finish; the packet line
+// belongs to the chain and is destroyed only by tunnelchainDestroy(). One handler
+// serves both, so a Finish arriving on the packet line is a neighbour breaking
+// the packet-line contract, not a close - it must abort rather than return, and
+// it must never destroy the line.
+
+static void packetLineFinishBody(void *argument)
+{
+    discard argument;
+
+    wireguarddevice_fixture_t fixture;
+    fixtureSetup(&fixture);
+
+    const wid_t previous_wid = tosSetCurrentWorker(0);
+    wireguarddeviceHandleTransportLineFinish(fixture.wgd, fixture.packet_line_slots[0]);
+    discard tosSetCurrentWorker(previous_wid);
+}
+
+static void casePacketLineFinishAborts(void)
+{
+    twfSetCase("wireguarddevice Finish on the worker packet line");
+
+    // The handoff would be accepted, so landing on the direct abort proves this
+    // branch never treats a packet line as an orderly runtime failure.
+    tosResetProcessApi(true);
+    tosRequireChildExit("the packet-line Finish", packetLineFinishBody, NULL, kTosChildDirectAbort);
+
+    tosResetProcessApi(true);
+}
+
+// ---------------------------------------------------------------------------
+// An owned transport line, finished by its neighbour
+// ---------------------------------------------------------------------------
+
+static void caseTransportLineFinishKillsLine(void)
+{
+    twfSetCase("wireguarddevice Finish on an owned transport line");
+    tosResetProcessApi(true);
+
+    wireguarddevice_fixture_t fixture;
+    fixtureSetup(&fixture);
+
+    g_next_accepts_init      = true;
+    const wid_t previous_wid = tosSetCurrentWorker(0);
+    line_t     *transport    = wireguarddeviceEnsureTransportLine(tunnelGetState(fixture.wgd), 0);
+    twfRequire(transport != NULL, "the fixture must create a transport line");
+
+    twfRunOwnerFinish(
+        fixture.wgd, transport, wireguarddeviceTunnelDownStreamFinish, "wireguarddeviceTunnelDownStreamFinish");
+
+    tosRequireNoProcessApiCall();
+    twfRequire(fixture.transport_line_slots[0] == NULL, "the closed transport line must be detached from its slot");
+    twfRequire(lineIsAlive(fixture.packet_line_slots[0]), "closing a transport line must not touch the packet line");
+
+    twfRequireOwnedLineReclaimed(transport, "wireguarddeviceTunnelDownStreamFinish");
+    discard tosSetCurrentWorker(previous_wid);
+
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     caseRejectionIsRetriedSuccessfully();
+    caseTransportLineFinishKillsLine();
+    casePacketLineFinishAborts();
 
     printf("wireguarddevice_orderly_shutdown_test: all cases passed\n");
     return 0;
