@@ -7,5 +7,5 @@ void testerclientTunnelUpStreamResume(tunnel_t *t, line_t *l)
     discard t;
     discard l;
     LOGF("TesterClient: upStreamResume disabled");
-    assert(false);
+    abortProgramNow(1);
 }

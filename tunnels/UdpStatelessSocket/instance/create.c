@@ -4,7 +4,8 @@
 
 tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
 {
-    tunnel_t *t = adapterCreate(node, sizeof(udpstatelesssocket_tstate_t), sizeof(udpstatelesssocket_lstate_t), true);
+    tunnel_t *t =
+        adapterCreate(node, sizeof(udpstatelesssocket_tstate_t), sizeof(udpstatelesssocket_lstate_t), kAdapterChainEnd);
 
     t->fnInitU    = &udpstatelesssocketTunnelUpStreamInit;
     t->fnEstU     = &udpstatelesssocketTunnelUpStreamEst;

@@ -143,7 +143,6 @@ WW_EXPORT void         udpconnectorTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *udpconnectorTunnelCreate(node_t *node);
 WW_EXPORT api_result_t udpconnectorTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void udpconnectorTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void udpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void udpconnectorTunnelOnPrepair(tunnel_t *t);
 void udpconnectorTunnelOnStart(tunnel_t *t);
@@ -157,12 +156,6 @@ void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void udpconnectorTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void udpconnectorTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void udpconnectorTunnelDownStreamInit(tunnel_t *t, line_t *l);
-void udpconnectorTunnelDownStreamEst(tunnel_t *t, line_t *l);
-void udpconnectorTunnelDownStreamFinish(tunnel_t *t, line_t *l);
-void udpconnectorTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void udpconnectorTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void udpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
 bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l,
                                        domainresolver_direction_t direction, void *user_lstate);
 void udpconnectorDomainResolverUserStateDestroy(tunnel_t *resolver, tunnel_t *connector, line_t *l,

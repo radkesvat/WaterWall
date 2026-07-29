@@ -99,19 +99,10 @@ WW_EXPORT void         packetsenderTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *packetsenderTunnelCreate(node_t *node);
 WW_EXPORT api_result_t packetsenderTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void packetsenderTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void packetsenderTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void packetsenderTunnelOnPrepair(tunnel_t *t);
 void packetsenderTunnelOnStart(tunnel_t *t);
 void packetsenderTunnelOnStop(tunnel_t *t);
 void packetsenderTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
-
-void packetsenderTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void packetsenderTunnelUpStreamEst(tunnel_t *t, line_t *l);
-void packetsenderTunnelUpStreamFinish(tunnel_t *t, line_t *l);
-void packetsenderTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void packetsenderTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void packetsenderTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 void packetsenderTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void packetsenderTunnelDownStreamEst(tunnel_t *t, line_t *l);

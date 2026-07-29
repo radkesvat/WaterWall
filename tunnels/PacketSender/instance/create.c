@@ -327,7 +327,7 @@ static bool packetsenderLoadSrcPort(packetsender_tstate_t *state, const cJSON *s
 
 tunnel_t *packetsenderTunnelCreate(node_t *node)
 {
-    tunnel_t *t = adapterCreate(node, sizeof(packetsender_tstate_t), 0, false);
+    tunnel_t *t = adapterCreate(node, sizeof(packetsender_tstate_t), 0, kAdapterChainHead);
 
     t->fnInitD    = &packetsenderTunnelDownStreamInit;
     t->fnEstD     = &packetsenderTunnelDownStreamEst;

@@ -13,13 +13,6 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->fnPauseU   = &udpconnectorTunnelUpStreamPause;
     t->fnResumeU  = &udpconnectorTunnelUpStreamResume;
 
-    t->fnInitD    = &udpconnectorTunnelDownStreamInit;
-    t->fnEstD     = &udpconnectorTunnelDownStreamEst;
-    t->fnFinD     = &udpconnectorTunnelDownStreamFinish;
-    t->fnPayloadD = &udpconnectorTunnelDownStreamPayload;
-    t->fnPauseD   = &udpconnectorTunnelDownStreamPause;
-    t->fnResumeD  = &udpconnectorTunnelDownStreamResume;
-
     t->onPrepare    = &udpconnectorTunnelOnPrepair;
     t->onChain      = &udpconnectorTunnelOnChain;
     t->onStart      = &udpconnectorTunnelOnStart;
@@ -432,7 +425,7 @@ static bool parseDestinationArray(udpconnector_tstate_t *state, const cJSON *set
 
 tunnel_t *udpconnectorTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(udpconnector_tstate_t), sizeof(udpconnector_lstate_t));
+    tunnel_t *t = adapterCreate(node, sizeof(udpconnector_tstate_t), sizeof(udpconnector_lstate_t), kAdapterChainEnd);
 
     initializeTunnelCallbacks(t);
 

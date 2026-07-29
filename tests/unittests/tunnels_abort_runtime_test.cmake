@@ -20,7 +20,12 @@ if(TARGET ww)
   set(tunnels_abort_runtime_libraries "")
   set(tunnels_abort_runtime_includes "")
   set(tunnels_abort_runtime_definitions "")
-  set(tunnels_abort_runtime_cases "")
+  set(tunnels_abort_runtime_cases
+    adapter_chain_head_finish
+    adapter_chain_head_payload
+    adapter_chain_end_finish
+    adapter_chain_end_payload
+  )
 
   if(TARGET AuthenticationClient)
     list(APPEND tunnels_abort_runtime_libraries AuthenticationClient)
@@ -38,6 +43,12 @@ if(TARGET ww)
     list(APPEND tunnels_abort_runtime_libraries RawSocket)
     list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_RAWSOCKET=1)
     list(APPEND tunnels_abort_runtime_cases rawsocket_worker_packet_line_upstream_finish)
+  endif()
+
+  if(TARGET TesterClient)
+    list(APPEND tunnels_abort_runtime_libraries TesterClient)
+    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_TESTERCLIENT=1)
+    list(APPEND tunnels_abort_runtime_cases testerclient_disabled_upstream_finish)
   endif()
 
   if(TARGET ReverseClient)

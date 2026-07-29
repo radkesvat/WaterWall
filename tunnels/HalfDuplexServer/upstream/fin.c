@@ -38,7 +38,7 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         if (! found)
         {
             LOGF("HalfDuplexServer: Thread safety is done incorrectly  [%s:%d]", __FILENAME__, __LINE__);
-            exit(1);
+            abortProgramNow(1);
         }
         hmap_cons_t_erase_at(&(ts->upload_line_map), f_iter);
 
@@ -60,7 +60,7 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         if (! found)
         {
             LOGF("HalfDuplexServer: Thread safety is done incorrectly  [%s:%d]", __FILENAME__, __LINE__);
-            exit(1);
+            abortProgramNow(1);
         }
         hmap_cons_t_erase_at(&(ts->download_line_map), f_iter);
 
@@ -128,7 +128,6 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
             ls_download_line->main_line                 = NULL;
             ls_download_line->upload_line               = NULL;
 
-           
             lineScheduleTask(download_line, localAsyncCloseLineUpStream, t);
         }
 
@@ -138,7 +137,7 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     default:
         LOGF("HalfDuplexServer: Unexpected  [%s:%d]", __FILENAME__, __LINE__);
-        exit(1);
+        abortProgramNow(1);
         break;
     }
 }

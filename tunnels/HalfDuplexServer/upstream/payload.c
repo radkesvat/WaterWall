@@ -293,7 +293,7 @@ static void handleUploadInTable(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexs
         {
             mutexUnlock(&(ts->upload_line_map_mutex));
             LOGF("HalfDuplexServer: Thread safety is done incorrectly  [%s:%d]", __FILENAME__, __LINE__);
-            exit(1);
+            abortProgramNow(1);
         }
         hmap_cons_t_erase_at(&(ts->upload_line_map), f_iter);
         mutexUnlock(&(ts->upload_line_map_mutex));

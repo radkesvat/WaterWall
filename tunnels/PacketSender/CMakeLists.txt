@@ -6,16 +6,8 @@ add_library(PacketSender STATIC
                     instance/prepair.c
                     instance/start.c
                     instance/stop.c
-                    instance/chain.c
-                    instance/index.c
                     common/helpers.c
                     common/line_state.c
-                    upstream/init.c
-                    upstream/est.c
-                    upstream/fin.c
-                    upstream/payload.c
-                    upstream/pause.c
-                    upstream/resume.c
                     downstream/init.c
                     downstream/est.c
                     downstream/fin.c
@@ -31,4 +23,3 @@ target_link_libraries(PacketSender ww)
 if(NOT APPLE)
     target_precompile_headers(PacketSender REUSE_FROM ww)
 endif()
-

@@ -463,7 +463,7 @@ static bool parseDestinationArray(tcpconnector_tstate_t *state, const cJSON *set
 
 tunnel_t *tcpconnectorTunnelCreate(node_t *node)
 {
-    tunnel_t *t = adapterCreate(node, sizeof(tcpconnector_tstate_t), sizeof(tcpconnector_lstate_t), true);
+    tunnel_t *t = adapterCreate(node, sizeof(tcpconnector_tstate_t), sizeof(tcpconnector_lstate_t), kAdapterChainEnd);
 
     initializeTunnelCallbacks(t);
 

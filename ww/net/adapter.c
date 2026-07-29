@@ -8,24 +8,24 @@
 #include "loggers/internal_logger.h"
 #include "managers/node_manager.h"
 
-void adapterDefaultOnChainUpEnd(tunnel_t *t, tunnel_chain_t *tc)
+void adapterDefaultOnChainHead(tunnel_t *t, tunnel_chain_t *tc)
 {
     tunnelDefaultOnChain(t, tc);
 }
 
-void adapterDefaultOnChainDownEnd(tunnel_t *t, tunnel_chain_t *tc)
+void adapterDefaultOnChainEnd(tunnel_t *t, tunnel_chain_t *tc)
 {
     tunnelDefaultOnChain(t, tc);
 }
 
-void adapterDefaultOnIndexUpEnd(tunnel_t *t, uint16_t index, uint32_t *mem_offset)
+void adapterDefaultOnIndexChainHead(tunnel_t *t, uint16_t index, uint32_t *mem_offset)
 {
     t->chain_index   = index;
     t->lstate_offset = *mem_offset;
     *mem_offset += t->lstate_size;
 }
 
-void adapterDefaultOnIndexDownEnd(tunnel_t *t, uint16_t index, uint32_t *mem_offset)
+void adapterDefaultOnIndexChainEnd(tunnel_t *t, uint16_t index, uint32_t *mem_offset)
 {
     t->chain_index   = index;
     t->lstate_offset = *mem_offset;
@@ -64,26 +64,15 @@ static void disabledRoutine(tunnel_t *t, line_t *line)
     abortProgramNow(1);
 }
 
-tunnel_t *adapterCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size, bool up_end)
+tunnel_t *adapterCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size, adapter_edge_t edge)
 {
     tunnel_t *t = tunnelCreate(node, tstate_size, lstate_size);
 
-    if (up_end)
+    switch (edge)
     {
-        t->onChain = adapterDefaultOnChainUpEnd;
-        t->onIndex = adapterDefaultOnIndexUpEnd;
-
-        t->fnPauseD   = disabledRoutine;
-        t->fnResumeD  = disabledRoutine;
-        t->fnInitD    = disabledRoutine;
-        t->fnEstD     = disabledRoutine;
-        t->fnFinD     = disabledRoutine;
-        t->fnPayloadD = disabledPayloadRoutine;
-    }
-    else
-    {
-        t->onChain = adapterDefaultOnChainDownEnd;
-        t->onIndex = adapterDefaultOnIndexDownEnd;
+    case kAdapterChainHead:
+        t->onChain = adapterDefaultOnChainHead;
+        t->onIndex = adapterDefaultOnIndexChainHead;
 
         t->fnPauseU   = disabledRoutine;
         t->fnResumeU  = disabledRoutine;
@@ -91,6 +80,24 @@ tunnel_t *adapterCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size
         t->fnEstU     = disabledRoutine;
         t->fnFinU     = disabledRoutine;
         t->fnPayloadU = disabledPayloadRoutine;
+        break;
+
+    case kAdapterChainEnd:
+        t->onChain = adapterDefaultOnChainEnd;
+        t->onIndex = adapterDefaultOnIndexChainEnd;
+
+        t->fnPauseD   = disabledRoutine;
+        t->fnResumeD  = disabledRoutine;
+        t->fnInitD    = disabledRoutine;
+        t->fnEstD     = disabledRoutine;
+        t->fnFinD     = disabledRoutine;
+        t->fnPayloadD = disabledPayloadRoutine;
+        break;
+
+    default:
+        LOGF("adapterCreate received invalid edge value %d", (int) edge);
+        abortProgramNow(1);
     }
+
     return t;
 }

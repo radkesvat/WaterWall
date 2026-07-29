@@ -36,12 +36,5 @@ void blackholeTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void blackholeTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void blackholeTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void blackholeTunnelDownStreamInit(tunnel_t *t, line_t *l);
-void blackholeTunnelDownStreamEst(tunnel_t *t, line_t *l);
-void blackholeTunnelDownStreamFinish(tunnel_t *t, line_t *l);
-void blackholeTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void blackholeTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void blackholeTunnelDownStreamResume(tunnel_t *t, line_t *l);
-
 void blackholeLinestateInitialize(blackhole_lstate_t *ls);
 void blackholeLinestateDestroy(blackhole_lstate_t *ls);

@@ -8,5 +8,5 @@ void testerclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     discard l;
     discard buf;
     LOGF("TesterClient: upStreamPayload disabled");
-    assert(false);
+    abortProgramNow(1);
 }

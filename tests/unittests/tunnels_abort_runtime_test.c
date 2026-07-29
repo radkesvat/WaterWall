@@ -12,19 +12,13 @@
  */
 #include "tunnels_abort_runtime_cases.h"
 
+#include "adapter.h"
 #include "global_state.h"
 #include "line.h"
 #include "tunnel.h"
 
 #include <stdio.h>
 #include <string.h>
-
-#if ! defined(WATERWALL_ABORT_TEST_HAS_AUTHENTICATIONCLIENT) && ! defined(WATERWALL_ABORT_TEST_HAS_PINGCLIENT) &&      \
-    ! defined(WATERWALL_ABORT_TEST_HAS_RAWSOCKET) && ! defined(WATERWALL_ABORT_TEST_HAS_REVERSECLIENT) &&              \
-    ! defined(WATERWALL_ABORT_TEST_HAS_UDPSTATELESSSOCKET) && ! defined(WATERWALL_ABORT_TEST_HAS_TCPOVERUDPCLIENT) &&  \
-    ! defined(WATERWALL_ABORT_TEST_HAS_TCPOVERUDPSERVER) && ! defined(WATERWALL_ABORT_TEST_HAS_ROUTER)
-#error "tunnels_abort_runtime_test needs at least one enabled tunnel case"
-#endif
 
 // Category-D callbacks under test. They are declared here rather than pulled in
 // through their owning tunnel's structure.h so this translation unit stays free
@@ -38,6 +32,50 @@ void pingclientUpStreamInit(tunnel_t *t, line_t *l);
 #if defined(WATERWALL_ABORT_TEST_HAS_RAWSOCKET)
 void rawsocketUpStreamFinish(tunnel_t *t, line_t *l);
 #endif
+#if defined(WATERWALL_ABORT_TEST_HAS_TESTERCLIENT)
+void testerclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
+#endif
+
+static tunnel_t *createGuardedAdapter(node_t *node, adapter_edge_t edge)
+{
+    static char adapter_name[] = "AdapterGuardTest";
+
+    memset(node, 0, sizeof(*node));
+    node->name = adapter_name;
+    return adapterCreate(node, 0, 0, edge);
+}
+
+static int caseAdapterChainHeadFinish(void)
+{
+    node_t    node;
+    tunnel_t *adapter = createGuardedAdapter(&node, kAdapterChainHead);
+    adapter->fnFinU(adapter, NULL);
+    return 0;
+}
+
+static int caseAdapterChainHeadPayload(void)
+{
+    node_t    node;
+    tunnel_t *adapter = createGuardedAdapter(&node, kAdapterChainHead);
+    adapter->fnPayloadU(adapter, NULL, NULL);
+    return 0;
+}
+
+static int caseAdapterChainEndFinish(void)
+{
+    node_t    node;
+    tunnel_t *adapter = createGuardedAdapter(&node, kAdapterChainEnd);
+    adapter->fnFinD(adapter, NULL);
+    return 0;
+}
+
+static int caseAdapterChainEndPayload(void)
+{
+    node_t    node;
+    tunnel_t *adapter = createGuardedAdapter(&node, kAdapterChainEnd);
+    adapter->fnPayloadD(adapter, NULL, NULL);
+    return 0;
+}
 
 #if defined(WATERWALL_ABORT_TEST_HAS_AUTHENTICATIONCLIENT)
 // The callback discards both arguments before aborting, so NULL is intentional.
@@ -72,6 +110,16 @@ static int caseRawSocketWorkerPacketLineUpstreamFinish(void)
 }
 #endif
 
+#if defined(WATERWALL_ABORT_TEST_HAS_TESTERCLIENT)
+// TesterClient is a chain head, so no previous tunnel can invoke this callback.
+// The callback discards both arguments before aborting.
+static int caseTesterClientDisabledUpstreamFinish(void)
+{
+    testerclientTunnelUpStreamFinish(NULL, NULL);
+    return 0;
+}
+#endif
+
 typedef struct abort_case_s
 {
     const char *name;
@@ -80,6 +128,10 @@ typedef struct abort_case_s
 } abort_case_t;
 
 static const abort_case_t kAbortCases[] = {
+    {"adapter_chain_head_finish", caseAdapterChainHeadFinish},
+    {"adapter_chain_head_payload", caseAdapterChainHeadPayload},
+    {"adapter_chain_end_finish", caseAdapterChainEndFinish},
+    {"adapter_chain_end_payload", caseAdapterChainEndPayload},
 #if defined(WATERWALL_ABORT_TEST_HAS_AUTHENTICATIONCLIENT)
     {"authenticationclient_disabled_downstream_init", caseAuthenticationClientDisabledDownstreamInit},
 #endif
@@ -88,6 +140,9 @@ static const abort_case_t kAbortCases[] = {
 #endif
 #if defined(WATERWALL_ABORT_TEST_HAS_RAWSOCKET)
     {"rawsocket_worker_packet_line_upstream_finish", caseRawSocketWorkerPacketLineUpstreamFinish},
+#endif
+#if defined(WATERWALL_ABORT_TEST_HAS_TESTERCLIENT)
+    {"testerclient_disabled_upstream_finish", caseTesterClientDisabledUpstreamFinish},
 #endif
 #if defined(WATERWALL_ABORT_TEST_HAS_REVERSECLIENT)
     {"reverseclient_live_idle_handle_linestate_destroy", tunnelsAbortReverseClientLinestateCase},

@@ -42,18 +42,9 @@ WW_EXPORT void         udplistenerTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *udplistenerTunnelCreate(node_t *node);
 WW_EXPORT api_result_t udplistenerTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void udplistenerTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void udplistenerTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void udplistenerTunnelOnPrepair(tunnel_t *t);
 void udplistenerTunnelOnStart(tunnel_t *t);
 void udplistenerTunnelOnStop(tunnel_t *t);
-
-void udplistenerTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void udplistenerTunnelUpStreamEst(tunnel_t *t, line_t *l);
-void udplistenerTunnelUpStreamFinish(tunnel_t *t, line_t *l);
-void udplistenerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void udplistenerTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void udplistenerTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 void udplistenerTunnelDownStreamInit(tunnel_t *t, line_t *l);
 void udplistenerTunnelDownStreamEst(tunnel_t *t, line_t *l);

@@ -11,12 +11,6 @@ add_library(BlackHole STATIC
                     upstream/payload.c
                     upstream/pause.c
                     upstream/resume.c
-                    downstream/init.c
-                    downstream/est.c
-                    downstream/fin.c
-                    downstream/payload.c
-                    downstream/pause.c
-                    downstream/resume.c
 )
 
 target_include_directories(BlackHole PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

@@ -134,7 +134,6 @@ WW_EXPORT void         tcpconnectorTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *tcpconnectorTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tcpconnectorTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void tcpconnectorTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
 void tcpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tcpconnectorTunnelOnPrepair(tunnel_t *t);
 void tcpconnectorTunnelOnStart(tunnel_t *t);
@@ -148,12 +147,6 @@ void tcpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void tcpconnectorTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void tcpconnectorTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-void tcpconnectorTunnelDownStreamInit(tunnel_t *t, line_t *l);
-void tcpconnectorTunnelDownStreamEst(tunnel_t *t, line_t *l);
-void tcpconnectorTunnelDownStreamFinish(tunnel_t *t, line_t *l);
-void tcpconnectorTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void tcpconnectorTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void tcpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
 bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, line_t *l,
                                        domainresolver_direction_t direction, void *user_lstate);
 

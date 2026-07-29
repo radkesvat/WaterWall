@@ -7,5 +7,5 @@ void testerclientTunnelDownStreamInit(tunnel_t *t, line_t *l)
     discard t;
     discard l;
     LOGF("TesterClient: downStreamInit disabled");
-    assert(false);
+    abortProgramNow(1);
 }

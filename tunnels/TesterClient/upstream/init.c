@@ -7,5 +7,5 @@ void testerclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     discard t;
     discard l;
     LOGF("TesterClient: upStreamInit disabled");
-    assert(false);
+    abortProgramNow(1);
 }

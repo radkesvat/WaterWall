@@ -151,13 +151,6 @@ static bool hasMultiplePorts(const udplistener_tstate_t *state, const socket_fil
 
 static void setupTunnelCallbacks(tunnel_t *t)
 {
-    t->fnInitU    = &udplistenerTunnelUpStreamInit;
-    t->fnEstU     = &udplistenerTunnelUpStreamEst;
-    t->fnFinU     = &udplistenerTunnelUpStreamFinish;
-    t->fnPayloadU = &udplistenerTunnelUpStreamPayload;
-    t->fnPauseU   = &udplistenerTunnelUpStreamPause;
-    t->fnResumeU  = &udplistenerTunnelUpStreamResume;
-
     t->fnInitD    = &udplistenerTunnelDownStreamInit;
     t->fnEstD     = &udplistenerTunnelDownStreamEst;
     t->fnFinD     = &udplistenerTunnelDownStreamFinish;
@@ -313,7 +306,7 @@ static void setupFilterOptions(socket_filter_option_t *filter_opt, udplistener_t
 
 tunnel_t *udplistenerTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(udplistener_tstate_t), sizeof(udplistener_lstate_t));
+    tunnel_t *t = adapterCreate(node, sizeof(udplistener_tstate_t), sizeof(udplistener_lstate_t), kAdapterChainHead);
     setupTunnelCallbacks(t);
 
     const cJSON          *settings = node->node_settings_json;

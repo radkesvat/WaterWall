@@ -269,10 +269,11 @@ OWNER_DESTROY_COUNTS = {
 # Manifest: fatal packet-lifecycle anchoring Finish handlers
 # ---------------------------------------------------------------------------
 #
-# Each entry is an exact handler role and direction where a runtime Finish on the
-# persistent packet line is a contract violation. Transparent middle handlers
-# forward Finish, while intentional terminal absorbers are registered separately
-# in SILENT_FINISH_ALLOWED. Entries are (path, function, diagnostic anchor,
+# Each entry is an exact handler, or the shared adapter edge guard installed for
+# that handler role, where a runtime Finish on the persistent packet line is a
+# contract violation. Transparent middle handlers forward Finish, while
+# intentional terminal absorbers are registered separately in
+# SILENT_FINISH_ALLOWED. Entries are (path, function, diagnostic anchor,
 # description). The anchor pins which abort is the packet-line one, so a handler
 # cannot pass by aborting for an unrelated reason.
 #
@@ -299,8 +300,9 @@ PACKET_LINE_FINISH = [
      "is not supposed to be called", "packet split, packet side only"),
     ("tunnels/PacketSplitStream/downstream/fin.c", "packetsplitstreamTunnelDownStreamFinish",
      "is not supposed to be called", "packet split, packet side only"),
-    ("tunnels/PacketSender/upstream/fin.c", "packetsenderTunnelUpStreamFinish",
-     "upStreamFinish disabled", "the packet-chain head has no prev that could finish it"),
+    ("ww/net/adapter.c", "disabledRoutine",
+     "Illegal call to routine on Adapter",
+     "shared edge guard, including PacketSender upstream Finish where no prev exists"),
     ("tunnels/TesterServer/upstream/fin.c", "testerserverTunnelUpStreamFinish",
      "packet-mode received unexpected finish on worker packet line", "packet mode of the tester server"),
     ("tunnels/TesterServer/downstream/fin.c", "testerserverTunnelDownStreamFinish",
@@ -413,6 +415,7 @@ DESTINATION_GUARD_CONTRACTS = [
 
 UNIT_CMAKE = "tests/unittests/CMakeLists.txt"
 SUITE_CMAKE = "tests/CMakeLists.txt"
+ABORT_RUNTIME_CMAKE = "tests/unittests/tunnels_abort_runtime_test.cmake"
 
 REQUIRED_CONTRACT_TESTS = [
     ("tests/unittests/tunnel_line_failure_harness.h",
@@ -479,6 +482,24 @@ REQUIRED_CONTRACT_TESTS = [
       "packetsenderTunnelDownStreamFinish"),
      ((UNIT_CMAKE, '"PacketSender|packetsender_orderly_shutdown_test|packetsender|ON"'),),
      "PacketSender stops its worker producer after downstream Finish"),
+    ("tests/unittests/tunnels_abort_runtime_test.c",
+     ("caseTesterClientDisabledUpstreamFinish",
+      "testerclient_disabled_upstream_finish"),
+     ((ABORT_RUNTIME_CMAKE, "WATERWALL_ABORT_TEST_HAS_TESTERCLIENT"),
+      (ABORT_RUNTIME_CMAKE, "testerclient_disabled_upstream_finish"),
+      (ABORT_RUNTIME_CMAKE, "waterwall.tunnels_abort_runtime_unit")),
+     "TesterClient's impossible upstream Finish exits through abortProgramNow(1) in Release"),
+    ("tests/unittests/tunnels_abort_runtime_test.c",
+     ("caseAdapterChainHeadFinish",
+      "caseAdapterChainHeadPayload",
+      "caseAdapterChainEndFinish",
+      "caseAdapterChainEndPayload"),
+     ((ABORT_RUNTIME_CMAKE, "adapter_chain_head_finish"),
+      (ABORT_RUNTIME_CMAKE, "adapter_chain_head_payload"),
+      (ABORT_RUNTIME_CMAKE, "adapter_chain_end_finish"),
+      (ABORT_RUNTIME_CMAKE, "adapter_chain_end_payload"),
+      (ABORT_RUNTIME_CMAKE, "waterwall.tunnels_abort_runtime_unit")),
+     "shared adapter guards exit through abortProgramNow(1) for both edge directions in Release"),
     ("tests/line_ownership_policy_test.py",
      ("PACKET_LINE_FINISH",
       "SILENT_FINISH_ALLOWED",
@@ -1055,7 +1076,7 @@ def run_mutation_tests():
             {rel_path: mutate_add_unclassified_creation(content, function)})
 
     # 4: a borrowing tunnel that starts destroying lines.
-    for rel_path, function in (("tunnels/TcpConnector/downstream/fin.c", "tcpconnectorTunnelDownStreamFinish"),
+    for rel_path, function in (("tunnels/TcpConnector/upstream/fin.c", "tcpconnectorTunnelUpStreamFinish"),
                                ("tunnels/TlsClient/upstream/fin.c", "tlsclientTunnelUpStreamFinish")):
         content = read_source(rel_path, None)
         if content is None:
@@ -1099,7 +1120,7 @@ def run_mutation_tests():
 
     # 8: a Finish handler quietly reduced to "return", losing a propagation, an
     #    owner's close, or a packet-line abort with nobody having to say so.
-    for rel_path, function in (("tunnels/TcpConnector/downstream/fin.c", "tcpconnectorTunnelDownStreamFinish"),
+    for rel_path, function in (("tunnels/TcpConnector/upstream/fin.c", "tcpconnectorTunnelUpStreamFinish"),
                                ("tunnels/TunDevice/upstream/fin.c", "tundeviceTunnelUpStreamFinish"),
                                ("tunnels/UdpListener/downstream/fin.c", "udplistenerTunnelDownStreamFinish")):
         content = read_source(rel_path, None)
