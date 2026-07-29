@@ -35,7 +35,14 @@ yarn-error.log*
 pnpm-debug.log*
 .vscode/
 
-# Generated test runner artifacts
+# CTest scratch output, created wherever ctest runs outside a build directory
+Testing/
+
+# Generated test runner artifacts.
+# The case runners now build these inside a private run directory under TMPDIR,
+# so a normal `ctest` run leaves the source tree untouched. These entries still
+# cover older in-place leftovers and runners that write beside their inputs;
+# `tests/cleanup_generated_outputs.sh` removes them.
 /tests/cases/*/core.json
 /tests/cases/*/stdout.log
 /tests/cases/*/log/
