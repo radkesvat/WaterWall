@@ -415,7 +415,9 @@ static inline uint64_t atomicAddU64Explicit(atomic_ullong *object, uint64_t oper
 static inline uint64_t atomicSubU64Explicit(atomic_ullong *object, uint64_t operand, memory_order order)
 {
     (void) order;
-    return (uint64_t) InterlockedExchangeAdd64((LONG64 volatile *) object, -(LONG64) operand);
+    // negated as unsigned: -(LONG64) operand is signed overflow when operand is 2^63, and the
+    // C11 branch subtracts modularly for every operand, so this keeps the two branches agreeing
+    return (uint64_t) InterlockedExchangeAdd64((LONG64 volatile *) object, (LONG64) (0ULL - operand));
 }
 
 static inline bool atomicCompareExchangeU64Explicit(atomic_ullong *object, uint64_t *expected, uint64_t desired,
