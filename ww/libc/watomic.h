@@ -136,17 +136,36 @@ typedef intptr_t atomic_uintmax_t;
  * wrong side of the access.
  */
 
+/*
+ * Every generic operation below is an Interlocked*Pointer call, so the widest
+ * object it can carry indivisibly is one pointer. Applying one to something
+ * wider would half-write and half-read it, and the resulting value would not
+ * even be the surviving low half -- the load returns a signed intptr_t, so it
+ * sign-extends. Reject that at compile time on the targets where it is wrong
+ * (32-bit Windows) instead of shipping a silent data corruption; on 64-bit
+ * Windows a pointer is 64 bits and the generic set is correct for every type
+ * here, so the check simply passes.
+ */
+#define W_ATOMIC_REQUIRE_PTR_WIDTH(object)                                                                             \
+    ((void) sizeof(struct {                                                                                            \
+        int object_is_wider_than_a_pointer_use_the_u64_api : ((sizeof *(object)) <= sizeof(intptr_t)) ? 1 : -1;         \
+    }))
+
 #define atomic_store(object, desired)                                                                                  \
-    ((void) InterlockedExchangePointer((PVOID volatile *) (object), (PVOID) (intptr_t) (desired)))
+    (W_ATOMIC_REQUIRE_PTR_WIDTH(object),                                                                               \
+     (void) InterlockedExchangePointer((PVOID volatile *) (object), (PVOID) (intptr_t) (desired)))
 
 #define atomic_store_explicit(object, desired, order) atomic_store(object, desired)
 
-#define atomic_load(object) ((intptr_t) InterlockedCompareExchangePointer((PVOID volatile *) (object), NULL, NULL))
+#define atomic_load(object)                                                                                            \
+    (W_ATOMIC_REQUIRE_PTR_WIDTH(object),                                                                               \
+     (intptr_t) InterlockedCompareExchangePointer((PVOID volatile *) (object), NULL, NULL))
 
 #define atomic_load_explicit(object, order) atomic_load(object)
 
 #define atomic_exchange(object, desired)                                                                               \
-    ((intptr_t) InterlockedExchangePointer((PVOID volatile *) (object), (PVOID) (intptr_t) (desired)))
+    (W_ATOMIC_REQUIRE_PTR_WIDTH(object),                                                                               \
+     (intptr_t) InterlockedExchangePointer((PVOID volatile *) (object), (PVOID) (intptr_t) (desired)))
 
 #define atomic_exchange_explicit(object, desired, order) atomic_exchange(object, desired)
 
@@ -169,26 +188,28 @@ static inline int atomic_compare_exchange_strong(intptr_t *object, intptr_t *exp
 
 #ifdef _WIN64
 
-#define atomic_fetch_add(object, operand) InterlockedExchangeAdd64(object, operand)
+#define atomic_fetch_add(object, operand) (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedExchangeAdd64(object, operand))
 
-#define atomic_fetch_sub(object, operand) InterlockedExchangeAdd64(object, -(operand))
+#define atomic_fetch_sub(object, operand)                                                                              \
+    (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedExchangeAdd64(object, -(operand)))
 
-#define atomic_fetch_or(object, operand) InterlockedOr64(object, operand)
+#define atomic_fetch_or(object, operand) (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedOr64(object, operand))
 
-#define atomic_fetch_xor(object, operand) InterlockedXor64(object, operand)
+#define atomic_fetch_xor(object, operand) (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedXor64(object, operand))
 
-#define atomic_fetch_and(object, operand) InterlockedAnd64(object, operand)
+#define atomic_fetch_and(object, operand) (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedAnd64(object, operand))
 #else
 
-#define atomic_fetch_add(object, operand) InterlockedExchangeAdd(object, operand)
+#define atomic_fetch_add(object, operand) (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedExchangeAdd(object, operand))
 
-#define atomic_fetch_sub(object, operand) InterlockedExchangeAdd(object, -(operand))
+#define atomic_fetch_sub(object, operand)                                                                              \
+    (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedExchangeAdd(object, -(operand)))
 
-#define atomic_fetch_or(object, operand) InterlockedOr(object, operand)
+#define atomic_fetch_or(object, operand) (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedOr(object, operand))
 
-#define atomic_fetch_xor(object, operand) InterlockedXor(object, operand)
+#define atomic_fetch_xor(object, operand) (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedXor(object, operand))
 
-#define atomic_fetch_and(object, operand) InterlockedAnd(object, operand)
+#define atomic_fetch_and(object, operand) (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedAnd(object, operand))
 
 #endif /* _WIN64 */
 
@@ -279,6 +300,11 @@ static inline int atomic_compare_exchange_strong(intptr_t *object, intptr_t *exp
  * an ordinary 64-bit store, which is two stores on a 32-bit target and is only
  * safe because nothing else can see it yet. Once the object is published, every
  * access goes through the API.
+ *
+ * The generic operations reject an atomic_ullong at compile time on 32-bit
+ * Windows (see W_ATOMIC_REQUIRE_PTR_WIDTH). Elsewhere they would compile and
+ * behave correctly, so the mistake surfaces on the Windows CI leg rather than
+ * on a developer's machine.
  */
 _Static_assert(sizeof(atomic_ullong) == sizeof(uint64_t),
                "atomic_ullong must be real 64-bit storage on every target, see the comment above");
