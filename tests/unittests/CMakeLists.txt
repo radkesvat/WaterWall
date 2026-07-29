@@ -279,6 +279,15 @@ if(TARGET ww)
       httpserver_base64_compat_test
       "unit;tunnels;httpserver;base64;compatibility"
     )
+
+    add_executable(httpserver_authority_test httpserver_authority_test.c)
+    target_link_libraries(httpserver_authority_test PRIVATE HttpServer ww)
+    add_dependencies(waterwall_unit_tests httpserver_authority_test)
+    add_waterwall_unit_test(
+      waterwall.httpserver_authority_unit
+      httpserver_authority_test
+      "unit;tunnels;httpserver;authority;ipv6"
+    )
   endif()
 
   if(TARGET MuxCommon)

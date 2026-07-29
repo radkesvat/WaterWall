@@ -849,48 +849,6 @@ bool httpserverTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
     return true;
 }
 
-static bool hostMatchesExpected(const char *expected, const char *actual)
-{
-    if (expected == NULL || expected[0] == '\0')
-    {
-        return true;
-    }
-
-    if (actual == NULL || actual[0] == '\0')
-    {
-        return false;
-    }
-
-    if (stringAsciiCaseEquals(expected, actual))
-    {
-        return true;
-    }
-
-    const char *colon = strchr(actual, ':');
-    if (colon == NULL)
-    {
-        return false;
-    }
-
-    size_t host_len = (size_t) (colon - actual);
-    size_t exp_len  = strlen(expected);
-
-    if (host_len != exp_len)
-    {
-        return false;
-    }
-
-    for (size_t i = 0; i < host_len; i++)
-    {
-        if (! asciiCaseEqual((uint8_t) actual[i], (uint8_t) expected[i]))
-        {
-            return false;
-        }
-    }
-
-    return true;
-}
-
 static bool parseHttp1RequestHeaders(const char *headers, httpserver_h1_request_info_t *info)
 {
     if (headers == NULL || info == NULL)
@@ -1062,7 +1020,7 @@ static bool validateHttp1Request(const httpserver_tstate_t *ts, const httpserver
         return false;
     }
 
-    if (! hostMatchesExpected(ts->expected_host, info->host))
+    if (! httpserverAuthorityMatchesExpectedHost(ts->expected_host, info->host))
     {
         LOGW("HttpServer: host mismatch, expected=%s got=%s", ts->expected_host, info->host);
         return false;
@@ -1085,7 +1043,7 @@ static bool validateWebSocketHttp1Request(const httpserver_tstate_t *ts, const h
         return false;
     }
 
-    if (! hostMatchesExpected(ts->expected_host, info->host))
+    if (! httpserverAuthorityMatchesExpectedHost(ts->expected_host, info->host))
     {
         LOGW("HttpServer: websocket host mismatch expected=%s got=%s", ts->expected_host, info->host);
         return false;
@@ -1394,7 +1352,7 @@ static bool validateWebSocketHttp2Request(const httpserver_tstate_t *ts, const h
     if (! stringAsciiCaseEquals(ls->websocket_h2_method, "CONNECT") ||
         ! stringAsciiCaseEquals(ls->websocket_h2_protocol, "websocket") ||
         stringCompare(ls->websocket_h2_path, ts->expected_path) != 0 ||
-        ! hostMatchesExpected(ts->expected_host, ls->websocket_h2_authority) ||
+        ! httpserverAuthorityMatchesExpectedHost(ts->expected_host, ls->websocket_h2_authority) ||
         stringCompare(ls->websocket_h2_version, "13") != 0)
     {
         return false;
@@ -1436,7 +1394,8 @@ static bool validateHttp2Request(const httpserver_tstate_t *ts, const httpserver
         return false;
     }
 
-    if (! hostMatchesExpected(ts->expected_host, ls->websocket_h2_authority_seen ? ls->websocket_h2_authority : ""))
+    if (! httpserverAuthorityMatchesExpectedHost(ts->expected_host,
+                                                 ls->websocket_h2_authority_seen ? ls->websocket_h2_authority : ""))
     {
         LOGW("HttpServer: HTTP/2 authority mismatch, expected=%s got=%s",
              ts->expected_host,

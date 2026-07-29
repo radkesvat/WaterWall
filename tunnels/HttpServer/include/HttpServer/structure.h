@@ -226,6 +226,7 @@ void httpserverLinestateDestroy(httpserver_lstate_t *ls);
 void httpserverH2DataQueueDestroy(httpserver_lstate_t *ls);
 
 sbuf_t *httpserverAllocBufferForLength(line_t *l, uint32_t len);
+bool    httpserverAuthorityMatchesExpectedHost(const char *expected, const char *actual);
 
 bool httpserverTransportSendHttp1ResponseHeaders(tunnel_t *t, line_t *l);
 bool httpserverTransportSendHttp1FinalChunk(tunnel_t *t, line_t *l);

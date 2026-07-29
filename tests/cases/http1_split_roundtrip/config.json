@@ -13,10 +13,10 @@
       "name": "http-client",
       "type": "HttpClient",
       "settings": {
-        "host": "split.example.test",
+        "host": "[::1]",
         "path": "/ww/split",
         "scheme": "http",
-        "port": 80,
+        "port": 8443,
         "method": "POST",
         "http-version": "1.1",
         "http1-mode": "split",
@@ -54,7 +54,7 @@
       "settings": {
         "http-version": "1.1",
         "http1-mode": "split",
-        "host": "split.example.test",
+        "host": "[::1]",
         "path": "/ww/split",
         "method": "POST",
         "status": 200,

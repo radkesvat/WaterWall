@@ -366,40 +366,6 @@ static bool splitExtractPlacedValue(httpserver_split_placement_t placement, cons
     return false;
 }
 
-static bool splitHostMatches(const char *expected, const char *actual)
-{
-    if (expected == NULL || expected[0] == '\0')
-    {
-        return true;
-    }
-    if (actual == NULL || actual[0] == '\0')
-    {
-        return false;
-    }
-    if (stringAsciiCaseEquals(expected, actual))
-    {
-        return true;
-    }
-    const char *colon = strchr(actual, ':');
-    if (colon == NULL)
-    {
-        return false;
-    }
-    size_t host_len = (size_t) (colon - actual);
-    if (strlen(expected) != host_len)
-    {
-        return false;
-    }
-    for (size_t i = 0; i < host_len; ++i)
-    {
-        if (! asciiCaseEqual((uint8_t) expected[i], (uint8_t) actual[i]))
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
 static httpserver_split_role_t splitDetermineRole(httpserver_tstate_t *ts, const httpserver_split_request_t *info,
                                                   const char *headers)
 {
@@ -464,7 +430,7 @@ static bool splitValidateRequest(tunnel_t *t, line_t *l, const httpserver_split_
         return false;
     }
 
-    if (! splitHostMatches(ts->expected_host, info->host))
+    if (! httpserverAuthorityMatchesExpectedHost(ts->expected_host, info->host))
     {
         LOGW("HttpServer: split HTTP/1.1 host mismatch expected=%s got=%s", ts->expected_host, info->host);
         return false;

@@ -13,10 +13,10 @@
       "name": "http-client",
       "type": "HttpClient",
       "settings": {
-        "host": "h2.example.test",
+        "host": "[::1]",
         "path": "/ww/h2",
         "scheme": "http",
-        "port": 80,
+        "port": 8443,
         "method": "POST",
         "http-version": "2",
         "full-duplex": true
@@ -28,7 +28,7 @@
       "type": "HttpServer",
       "settings": {
         "http-version": "2",
-        "host": "h2.example.test",
+        "host": "[::1]",
         "path": "/ww/h2",
         "method": "POST",
         "status": 200,
