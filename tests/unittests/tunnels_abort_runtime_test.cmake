@@ -109,9 +109,13 @@ endif()
 if(TARGET ww AND tunnels_abort_runtime_cases)
   add_executable(tunnels_abort_runtime_test EXCLUDE_FROM_ALL ${tunnels_abort_runtime_sources})
 
-  # Stated on the target rather than inherited from a directory scope, so the
-  # non-Linux inclusion point gets the same non-IPO build as the Linux one.
+  # Each fixture includes a different tunnel's structure.h, whose file-local
+  # naming conventions intentionally overlap. Keep the fixtures in separate
+  # translation units even when the selected preset enables Unity builds.
+  # State the non-IPO policy here as well so the non-Linux inclusion point gets
+  # the same test build as the Linux one.
   set_target_properties(tunnels_abort_runtime_test PROPERTIES
+    UNITY_BUILD OFF
     INTERPROCEDURAL_OPTIMIZATION OFF
     INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF
     INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
