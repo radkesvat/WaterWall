@@ -13,6 +13,11 @@ case "${1:-}" in
     echo "expected diagnostic"
     exit 139
     ;;
+  fake-hard-abort)
+    echo "expected diagnostic"
+    echo "SignalManager: aborting immediately, registered cleanup is SKIPPED" >&2
+    exit 1
+    ;;
   fake-timeout)
     echo "expected diagnostic"
     exit 124
@@ -44,9 +49,17 @@ if ! bash "$expected_failure_runner" "$0" fake-timeout unused 1 "expected diagno
   exit 1
 fi
 
-for rejected_mode in fake-signal fake-timeout fake-clean fake-wrong-diagnostic; do
+for rejected_mode in fake-signal fake-hard-abort fake-timeout fake-clean fake-wrong-diagnostic; do
   if bash "$expected_failure_runner" "$0" "$rejected_mode" unused 1 "expected diagnostic" >/dev/null 2>&1; then
     echo "Expected-failure runner accepted invalid result: $rejected_mode" >&2
+    exit 1
+  fi
+done
+
+for reserved_status in 125 126 127; do
+  if bash "$expected_failure_runner" "$0" fake-expected unused 1 "expected diagnostic" "$reserved_status" \
+    >/dev/null 2>&1; then
+    echo "Expected-failure runner accepted reserved expected status: $reserved_status" >&2
     exit 1
   fi
 done
