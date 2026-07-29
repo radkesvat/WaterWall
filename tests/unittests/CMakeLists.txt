@@ -51,6 +51,17 @@ if(TARGET ww)
     "unit;net;capture;windows;lifetime"
   )
 
+  add_executable(capture_lifecycle_test capture_lifecycle_test.c)
+  target_include_directories(capture_lifecycle_test PRIVATE ${CMAKE_SOURCE_DIR}/ww)
+  target_link_libraries(capture_lifecycle_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests capture_lifecycle_test)
+
+  add_waterwall_unit_test(
+    waterwall.capture_lifecycle_unit
+    capture_lifecycle_test
+    "unit;net;capture;lifecycle"
+  )
+
   add_executable(tun_windows_lifetime_test tun_windows_lifetime_test.c)
   target_include_directories(tun_windows_lifetime_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices/tun)
   add_dependencies(waterwall_unit_tests tun_windows_lifetime_test)
@@ -484,6 +495,8 @@ if(TARGET ww)
       "-Wl,--wrap=pthread_join"
       "-Wl,--wrap=recvmsg"
       "-Wl,--wrap=sendto"
+      "-Wl,--wrap=requestProgramShutdown"
+      "-Wl,--wrap=abortProgramNow"
     )
     target_link_libraries(capture_linux_pipe_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests capture_linux_pipe_test)

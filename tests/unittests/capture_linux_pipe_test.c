@@ -99,6 +99,8 @@ static atomic_bool        inject_packet_on_next_insert;
 static atomic_bool        injected_recv_pending;
 static atomic_bool        injected_verdict_seen;
 static atomic_int         injected_callback_count;
+static atomic_uint        shutdown_request_calls;
+static atomic_int         shutdown_request_last_code;
 static int                injected_packet_peer_fd = -1;
 static uint32_t           injected_verdict        = UINT32_MAX;
 
@@ -110,12 +112,14 @@ int  __real_pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *
 int  __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*routine)(void *), void *arg);
 int  __real_pthread_join(pthread_t thread, void **retval);
 int  __wrap_pthread_join(pthread_t thread, void **retval);
-ssize_t __real_recvmsg(int sockfd, struct msghdr *msg, int flags);
-ssize_t __wrap_recvmsg(int sockfd, struct msghdr *msg, int flags);
-ssize_t __real_sendto(int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr,
-                      socklen_t addrlen);
-ssize_t __wrap_sendto(int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr,
-                      socklen_t addrlen);
+ssize_t        __real_recvmsg(int sockfd, struct msghdr *msg, int flags);
+ssize_t        __wrap_recvmsg(int sockfd, struct msghdr *msg, int flags);
+ssize_t        __real_sendto(int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr,
+                             socklen_t addrlen);
+ssize_t        __wrap_sendto(int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr,
+                             socklen_t addrlen);
+bool           __wrap_requestProgramShutdown(int exit_code);
+_Noreturn void __wrap_abortProgramNow(int exit_code);
 
 static void require(bool condition, const char *message)
 {
@@ -124,6 +128,19 @@ static void require(bool condition, const char *message)
         fprintf(stderr, "FAIL: %s\n", message);
         exit(1);
     }
+}
+
+bool __wrap_requestProgramShutdown(int exit_code)
+{
+    atomicAddExplicit(&shutdown_request_calls, 1, memory_order_relaxed);
+    atomicStoreRelaxed(&shutdown_request_last_code, exit_code);
+    return true;
+}
+
+_Noreturn void __wrap_abortProgramNow(int exit_code)
+{
+    fprintf(stderr, "FAIL: Capture reached abortProgramNow(%d)\n", exit_code);
+    _Exit(77);
 }
 
 static void commandScriptReset(void)
@@ -141,6 +158,8 @@ static void commandScriptReset(void)
     atomicStoreExplicit(&injected_recv_pending, false, memory_order_relaxed);
     atomicStoreExplicit(&injected_verdict_seen, false, memory_order_relaxed);
     atomicStoreExplicit(&injected_callback_count, 0, memory_order_relaxed);
+    atomicStoreExplicit(&shutdown_request_calls, 0, memory_order_relaxed);
+    atomicStoreExplicit(&shutdown_request_last_code, 0, memory_order_relaxed);
     injected_packet_peer_fd = -1;
     injected_verdict        = UINT32_MAX;
     memset(fake_rule_present, 0, sizeof(fake_rule_present));
@@ -621,6 +640,7 @@ static void deviceSetup(capture_device_t *cdev, test_env_t *env, reader_probe_t 
     cdev->userdata           = probe;
     cdev->running            = false;
     cdev->up                 = false;
+    atomic_init(&cdev->lifecycle, kCaptureLifecycleDown);
 
     require(pipe(cdev->linux_pipe_fds) == 0, "test pipe creation failed");
     require(capturedeviceMakeStopPipeNonblocking(cdev->linux_pipe_fds[0]),
@@ -902,6 +922,9 @@ static void testReaderExitBeforeReadinessPreventsInsertion(test_env_t *env)
             "pre-readiness reader failure left capture operational");
     require(! cdev.reader_thread_joinable, "pre-readiness reader failure left its thread unjoined");
     require(cdev.reader_failed, "pre-readiness reader failure was not recorded");
+    require(captureLifecycleLoad(&cdev.lifecycle) == kCaptureLifecycleDown,
+            "pre-readiness reader failure did not return the lifecycle to DOWN");
+    require(atomicLoadRelaxed(&shutdown_request_calls) == 0, "pre-readiness reader failure requested process shutdown");
     requireQueueSocketClosed(&cdev, queue_socket);
     require(atomicLoadExplicit(&probe.started, memory_order_relaxed) == 1 &&
                 atomicLoadExplicit(&probe.exited, memory_order_relaxed) == 1,
@@ -1192,7 +1215,7 @@ static void testReaderDeathFailsOpenAndDestroyJoins(test_env_t *env)
         pthread_mutex_lock(&cdev->reader_state_mutex);
         const bool failed = cdev->reader_failed;
         pthread_mutex_unlock(&cdev->reader_state_mutex);
-        if (failed)
+        if (failed && atomicLoadRelaxed(&shutdown_request_calls) > 0)
         {
             break;
         }
@@ -1213,6 +1236,12 @@ static void testReaderDeathFailsOpenAndDestroyJoins(test_env_t *env)
             "unexpected reader exit left capture operational");
     requireAllRulesInState(cdev, kCaptureRuleInstalled, "unexpected reader exit changed installed-rule accounting");
     requireQueueSocketClosed(cdev, queue_pair[0]);
+    require(captureLifecycleLoad(&cdev->lifecycle) == kCaptureLifecycleFailed,
+            "unexpected runtime reader exit did not publish FAILED");
+    require(atomicLoadRelaxed(&shutdown_request_calls) == 1,
+            "unexpected runtime reader exit did not request exactly one shutdown");
+    require(atomicLoadRelaxed(&shutdown_request_last_code) == 1,
+            "unexpected runtime reader exit requested the wrong exit code");
     require(atomicLoadExplicit(&observed_capture_thread_joins, memory_order_relaxed) == 0,
             "the reader was joined before destruction took lifecycle ownership");
 
@@ -1421,6 +1450,7 @@ static void testProductionReaderLeavesPollWithoutWakeToken(test_env_t *env)
     cdev.socket = pair[0];
 
     atomicStoreExplicit(&production_reader_returned, 0, memory_order_relaxed);
+    atomicStoreRelaxed(&cdev.lifecycle, kCaptureLifecycleStarting);
     cdev.running = true;
     atomicThreadFence(memory_order_release);
 

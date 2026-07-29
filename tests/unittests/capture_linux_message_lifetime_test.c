@@ -242,6 +242,7 @@ static capture_device_t *createDevice(test_env_t *env)
     cdev->queue_restartable   = true;
     cdev->routine_reader      = testCaptureReader;
     cdev->reader_buffer_pool  = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
+    atomic_init(&cdev->lifecycle, kCaptureLifecycleDown);
     require(cdev->socket >= 0, "failed to create the queue-socket stand-in");
 
     for (uint32_t i = 0; i < kCaptureRangeCount; i++)
