@@ -52,6 +52,8 @@ typedef struct packetsender_fixture_s
     line_t                     *packet_line;
     line_t                     *packet_line_slot[1];
     packetsender_worker_state_t worker_slots[1];
+    packetsender_source_range_t source_ranges[1];
+    uint8_t                     packet_bytes[2];
     worker_t                    worker;
 } packetsender_fixture_t;
 
@@ -74,12 +76,21 @@ static void fixtureSetup(packetsender_fixture_t *fixture)
     fixture->packet_line_slot[0] = fixture->packet_line;
     fixture->chain->packet_lines = fixture->packet_line_slot;
 
-    packetsender_tstate_t *state = tunnelGetState(fixture->sender);
-    state->duration_ms           = kTestDurationMs;
-    state->total_packets         = 2;
-    state->workers_count         = 1;
-    state->active_workers        = 1;
-    state->workers               = fixture->worker_slots;
+    packetsender_tstate_t *state   = tunnelGetState(fixture->sender);
+    state->duration_ms             = kTestDurationMs;
+    state->total_packets           = 2;
+    state->source_ranges           = fixture->source_ranges;
+    state->source_range_count      = 1;
+    state->source_count            = 1;
+    state->packets_per_ip          = 2;
+    state->protocol_mode           = kPacketSenderProtocolIcmp;
+    state->fixed_packet_length     = 1;
+    state->bytes_per_source        = sizeof(fixture->packet_bytes);
+    state->bytes_per_source_repeat = 1;
+    state->packet_bytes            = fixture->packet_bytes;
+    state->workers_count           = 1;
+    state->active_workers          = 1;
+    state->workers                 = fixture->worker_slots;
     // Same monotonic base packetsenderPrepareRuntime publishes, so no time has
     // elapsed against the schedule yet.
     state->schedule_start_ms = getHRTimeUs() / 1000U;
@@ -95,6 +106,9 @@ static void fixtureSetup(packetsender_fixture_t *fixture)
 
     fixture->worker.wid  = 0;
     fixture->worker.loop = getWorkerLoop(0);
+
+    fixture->source_ranges[0].base_host = UINT32_C(0xC6336401);
+    fixture->source_ranges[0].count     = 1;
 }
 
 static void fixtureTeardown(packetsender_fixture_t *fixture)
@@ -124,6 +138,92 @@ static void caseHealthyWorkerArmsTheTimer(void)
     weventSetUserData(fixture.worker_slots[0].timer, NULL);
     wtimerDelete(fixture.worker_slots[0].timer);
     fixture.worker_slots[0].timer = NULL;
+
+    fixtureTeardown(&fixture);
+}
+
+// ---------------------------------------------------------------------------
+// Downstream Finish must stop a pending timer
+// ---------------------------------------------------------------------------
+
+static void caseDownstreamFinishCancelsPendingTimer(void)
+{
+    twfSetCase("packetsender downstream Finish cancels a pending timer");
+    tosResetProcessApi(true);
+
+    packetsender_fixture_t fixture;
+    fixtureSetup(&fixture);
+
+    packetsenderStartWorker(&fixture.worker, fixture.sender, NULL, NULL);
+
+    packetsender_worker_state_t *slot = &fixture.worker_slots[0];
+    twfRequire(slot->timer != NULL, "the pending packet must have armed its timer");
+    twfRequireEqualU32((uint32_t) fixture.env.loop->ntimers, 1, "the worker loop must own the pending timer");
+
+    packetsenderTunnelDownStreamFinish(fixture.sender, fixture.packet_line);
+
+    tosRequireNoProcessApiCall();
+    twfRequire(slot->stopped, "downstream Finish must stop this worker");
+    twfRequire(slot->timer == NULL, "downstream Finish must clear the worker timer slot");
+    twfRequireEqualU32((uint32_t) fixture.env.loop->ntimers, 0, "downstream Finish must delete the pending timer");
+    twfRequire(lineIsAlive(fixture.packet_line), "PacketSender must not destroy the chain-owned packet line");
+
+    packetsenderStartWorker(&fixture.worker, fixture.sender, NULL, NULL);
+    twfRequireEqualU32(fixture.trace.next_payload, 0, "a stopped worker must not restart sending");
+    twfRequire(slot->timer == NULL, "a stopped worker must not re-arm its timer");
+    twfRequireNoLeakedBuffers();
+
+    fixtureTeardown(&fixture);
+}
+
+// ---------------------------------------------------------------------------
+// A payload may emit Finish re-entrantly
+// ---------------------------------------------------------------------------
+
+static tunnel_t *g_reentrant_finish_sender = NULL;
+
+static void finishSenderDuringPayload(tunnel_t *next, line_t *l, sbuf_t *buf)
+{
+    twfNextPayload(next, l, buf);
+    packetsenderTunnelDownStreamFinish(g_reentrant_finish_sender, l);
+}
+
+static void caseReentrantFinishStopsReadyBatch(void)
+{
+    twfSetCase("packetsender re-entrant downstream Finish stops a ready batch");
+    tosResetProcessApi(true);
+
+    packetsender_fixture_t fixture;
+    fixtureSetup(&fixture);
+
+    packetsender_tstate_t       *state = tunnelGetState(fixture.sender);
+    packetsender_worker_state_t *slot  = &fixture.worker_slots[0];
+
+    const uint64_t now_ms    = getHRTimeUs() / 1000U;
+    state->duration_ms       = 1;
+    state->schedule_start_ms = (now_ms > 2U) ? (now_ms - 2U) : 0;
+    slot->packet_index_begin = 0;
+    slot->packet_index_end   = 2;
+    slot->next_packet_index  = 0;
+
+    g_reentrant_finish_sender = fixture.sender;
+    fixture.next->fnPayloadU  = finishSenderDuringPayload;
+
+    packetsenderStartWorker(&fixture.worker, fixture.sender, NULL, NULL);
+
+    g_reentrant_finish_sender = NULL;
+
+    tosRequireNoProcessApiCall();
+    twfRequireEqualU32(fixture.trace.next_payload, 1, "no payload may follow the re-entrant Finish");
+    twfRequire(slot->stopped, "the re-entrant Finish must stop this worker");
+    twfRequireEqualU32(
+        (uint32_t) slot->next_packet_index, 1, "the payload accepted before Finish must be counted exactly once");
+    twfRequire(slot->timer == NULL, "the stopped worker must not retain or arm a timer");
+    twfRequire(lineIsAlive(fixture.packet_line), "PacketSender must leave the worker packet line alive");
+    twfRequireEqualU32((uint32_t) atomicLoadRelaxed(&state->completed_workers),
+                       0,
+                       "a stopped worker must not be reported as fully transmitted");
+    twfRequireNoLeakedBuffers();
 
     fixtureTeardown(&fixture);
 }
@@ -192,6 +292,8 @@ static void caseRefusedHandoffAborts(void)
 int main(void)
 {
     caseHealthyWorkerArmsTheTimer();
+    caseDownstreamFinishCancelsPendingTimer();
+    caseReentrantFinishStopsReadyBatch();
     caseDeadlineTimerFailure();
     caseRefusedHandoffAborts();
 

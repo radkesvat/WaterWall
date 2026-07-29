@@ -1,5 +1,5 @@
 <!--
-Documentation version: 107
+Documentation version: 108
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketSender.mdx, and both files must keep the same documentation version.
 -->
 
@@ -17,6 +17,7 @@ packet lines during the configured duration.
 - source ranges are processed in order and are not interleaved
 - prebuilt packet storage is capped at `8 GiB` and also must fit in the platform `size_t` address space
 - does not close or finish worker packet lines after sending
+- stops a worker's timer and send loop if the downstream side finishes that worker packet line
 
 ## Example
 

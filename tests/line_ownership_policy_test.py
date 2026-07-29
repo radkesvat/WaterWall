@@ -331,9 +331,6 @@ SILENT_FINISH_ALLOWED = {
         "a chain-end counter: owns no state, has no next node, and reports by timer and file",
     ("tunnels/PacketReceiver/downstream/fin.c", "packetreceiverTunnelDownStreamFinish"):
         "the same node placed at the head of a chain",
-    ("tunnels/PacketSender/downstream/fin.c", "packetsenderTunnelDownStreamFinish"):
-        "a packet-chain head: a borrowing adapter such as UdpConnector legitimately finishes "
-        "the worker packet line when its flow expires, and the head owns no state and has no prev",
 }
 
 # ---------------------------------------------------------------------------
@@ -460,6 +457,12 @@ REQUIRED_CONTRACT_TESTS = [
      ((UNIT_CMAKE, "add_executable(httpserver_reentrant_finish_test"),
       (UNIT_CMAKE, "waterwall.httpserver_reentrant_finish_unit")),
      "HttpServer stops a multi-part final send after re-entrant upstream Finish"),
+    ("tests/unittests/packetsender_orderly_shutdown_test.c",
+     ("caseDownstreamFinishCancelsPendingTimer",
+      "caseReentrantFinishStopsReadyBatch",
+      "packetsenderTunnelDownStreamFinish"),
+     ((UNIT_CMAKE, '"PacketSender|packetsender_orderly_shutdown_test|packetsender|ON"'),),
+     "PacketSender stops its worker producer after downstream Finish"),
     ("tests/line_ownership_policy_test.py",
      ("PACKET_LINE_FINISH",
       "SILENT_FINISH_ALLOWED",

@@ -364,6 +364,21 @@ static void packetsenderMarkWorkerComplete(packetsender_worker_state_t *slot)
     }
 }
 
+void packetsenderStopWorker(packetsender_worker_state_t *slot)
+{
+    assert(slot->wid == getWID());
+
+    slot->stopped = true;
+
+    wtimer_t *timer = slot->timer;
+    slot->timer     = NULL;
+    if (timer != NULL)
+    {
+        weventSetUserData(timer, NULL);
+        wtimerDelete(timer);
+    }
+}
+
 /*
  * Category B: without its deadline timer this worker can neither pace nor
  * resume the remaining packets. Nothing is owned at this point - no packet
@@ -373,6 +388,11 @@ static void packetsenderMarkWorkerComplete(packetsender_worker_state_t *slot)
 static bool packetsenderArmWorkerTimer(packetsender_worker_state_t *slot, uint32_t delay_ms)
 {
     assert(delay_ms > 0);
+
+    if (slot->stopped)
+    {
+        return false;
+    }
 
     if (slot->timer == NULL)
     {
@@ -399,6 +419,7 @@ typedef enum
 {
     kPacketSenderDeadlineReady,            // the deadline has passed, send now
     kPacketSenderDeadlineWaiting,          // the timer will resume this worker
+    kPacketSenderDeadlineStopped,          // downstream closed, never send again
     kPacketSenderDeadlineShutdownRequested // the timer failed, stop sending
 } packetsender_deadline_result_t;
 
@@ -408,6 +429,11 @@ static packetsender_deadline_result_t packetsenderWaitUntilDeadline(packetsender
     packetsender_tstate_t *state      = tunnelGetState(slot->tunnel);
     const uint64_t         now_ms     = packetsenderNowMs();
     const uint64_t         elapsed_ms = (now_ms >= state->schedule_start_ms) ? (now_ms - state->schedule_start_ms) : 0;
+
+    if (slot->stopped)
+    {
+        return kPacketSenderDeadlineStopped;
+    }
 
     if (deadline_ms <= elapsed_ms)
     {
@@ -424,6 +450,10 @@ static packetsender_deadline_result_t packetsenderWaitUntilDeadline(packetsender
      */
     if (! packetsenderArmWorkerTimer(slot, (remaining_ms == 0U) ? 1U : remaining_ms))
     {
+        if (slot->stopped)
+        {
+            return kPacketSenderDeadlineStopped;
+        }
         return kPacketSenderDeadlineShutdownRequested;
     }
 
@@ -434,7 +464,7 @@ static void packetsenderSendReadyPackets(packetsender_worker_state_t *slot)
 {
     packetsender_tstate_t *state = tunnelGetState(slot->tunnel);
 
-    while (slot->next_packet_index < slot->packet_index_end)
+    while (! slot->stopped && slot->next_packet_index < slot->packet_index_end)
     {
         const uint64_t current_index       = slot->next_packet_index;
         const uint32_t current_deadline_ms = packetsenderGlobalDeadlineMs(state, current_index);
@@ -468,6 +498,15 @@ static void packetsenderSendReadyPackets(packetsender_worker_state_t *slot)
         }
 
         slot->next_packet_index = current_index + 1U;
+        if (slot->stopped)
+        {
+            return;
+        }
+    }
+
+    if (slot->stopped)
+    {
+        return;
     }
 
     slot->timer = NULL;
@@ -659,7 +698,7 @@ void packetsenderStartWorker(void *worker_ptr, void *arg1, void *arg2, void *arg
     discard arg2;
     discard arg3;
 
-    if (UNLIKELY(isApplicationTerminating()))
+    if (UNLIKELY(isApplicationTerminating()) || slot->stopped)
     {
         return;
     }
@@ -685,7 +724,7 @@ void packetsenderStartWorker(void *worker_ptr, void *arg1, void *arg2, void *arg
 void packetsenderWorkerTimerCallback(wtimer_t *timer)
 {
     packetsender_worker_state_t *slot = weventGetUserdata(timer);
-    if (slot == NULL || isApplicationTerminating())
+    if (slot == NULL || slot->stopped || isApplicationTerminating())
     {
         return;
     }

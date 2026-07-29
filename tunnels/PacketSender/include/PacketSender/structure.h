@@ -15,6 +15,7 @@ typedef struct packetsender_worker_state_s
     uint64_t  packet_index_end;
     uint64_t  next_packet_index;
     wid_t     wid;
+    bool      stopped;
 } packetsender_worker_state_t;
 
 typedef struct packetsender_source_range_s
@@ -123,6 +124,7 @@ void packetsenderLinestateInitialize(packetsender_lstate_t *ls);
 void packetsenderLinestateDestroy(packetsender_lstate_t *ls);
 
 void packetsenderPrepareRuntime(tunnel_t *t);
+void packetsenderStopWorker(packetsender_worker_state_t *slot);
 void packetsenderStartWorker(void *worker_ptr, void *arg1, void *arg2, void *arg3);
 void packetsenderWorkerTimerCallback(wtimer_t *timer);
 void packetsenderHandleUnexpectedDownstreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

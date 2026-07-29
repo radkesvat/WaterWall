@@ -4,16 +4,33 @@
 
 void packetsenderTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 {
-    discard t;
-    // Absorbing this is the whole job, and it is a normal event rather than a
-    // contract violation: a stream adapter may sit at the far end of the packet
-    // line and close its own side for its own reasons. `PacketSender -> UdpConnector`
-    // does exactly that when a UDP flow expires, and the Finish travels back down
-    // the worker packet line to here.
-    //
-    // PacketSender owns no per-line state, has no prev to forward to, and does not
-    // use Finish as a completion signal - the send loop is timer-driven. The packet
-    // line itself belongs to the chain and is destroyed only by tunnelchainDestroy(),
-    // so there is nothing to release and nothing to destroy.
-    discard l;
+    packetsender_tstate_t *state = tunnelGetState(t);
+    tunnel_chain_t        *chain = tunnelGetChain(t);
+    const wid_t            wid   = lineGetWID(l);
+
+    if (! tunnelchainIsWorkerPacketLine(chain, l) || state->workers == NULL || wid >= state->workers_count)
+    {
+        LOGF("PacketSender: downstream Finish did not target a configured worker packet line");
+        abortProgramNow(1);
+        return;
+    }
+
+    packetsender_worker_state_t *slot = &state->workers[wid];
+    if (slot->line != NULL && slot->line != l)
+    {
+        LOGF("PacketSender: downstream Finish targeted the wrong packet line for worker %u", (unsigned int) wid);
+        abortProgramNow(1);
+        return;
+    }
+
+    /*
+     * UdpConnector legitimately finishes its borrowed packet-line side when
+     * its socket expires or closes. Mark this producer stopped before deleting
+     * its timer: Finish permanently closes the upstream direction, including
+     * when it is emitted re-entrantly from a payload send.
+     *
+     * PacketSender has no prev to notify and does not own the packet line, so
+     * the Finish is absorbed after local producer teardown.
+     */
+    packetsenderStopWorker(slot);
 }

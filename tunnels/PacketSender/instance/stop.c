@@ -18,12 +18,5 @@ void packetsenderTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
     }
 
     packetsender_worker_state_t *slot = &state->workers[wid];
-    if (slot->timer == NULL)
-    {
-        return;
-    }
-
-    weventSetUserData(slot->timer, NULL);
-    wtimerDelete(slot->timer);
-    slot->timer = NULL;
+    packetsenderStopWorker(slot);
 }
