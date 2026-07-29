@@ -6,6 +6,7 @@
       "type": "TesterClient",
       "settings": {
         "max-payload-size": 22000,
+        "chunk-count": 9,
         "split-payload-burst": 1
       },
       "next": "outer-udp-connector"
@@ -79,6 +80,7 @@
       "type": "TesterServer",
       "settings": {
         "max-payload-size": 22000,
+        "chunk-count": 9,
         "split-payload-burst": 1
       }
     }

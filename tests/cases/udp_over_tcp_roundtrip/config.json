@@ -4,6 +4,9 @@
     {
       "name": "tester-client",
       "type": "TesterClient",
+      "settings": {
+        "chunk-count": 9
+      },
       "next": "uot-client"
     },
     {
@@ -18,7 +21,10 @@
     },
     {
       "name": "tester-server",
-      "type": "TesterServer"
+      "type": "TesterServer",
+      "settings": {
+        "chunk-count": 9
+      }
     }
   ]
 }
