@@ -191,11 +191,11 @@ Practical rule:
   during the first fatal finish suppresses the second finish, and handshake-takeover release remains payload-free.
 - `reality_v2_aes_gcm_roundtrip`
   Verifies multi-record bidirectional Reality v2 operation with the `aes-gcm` record-protection algorithm.
-- `reality_v2_cross_connection_replay_rejected`, `reality_v2_direct_record_replay_rejected`, and
-  `reality_v2_wrong_direction_rejected`
-  Run a byte-blind recording relay that first proves a valid protected roundtrip, then reflects the captured downstream
+- `reality_v2_replay_protection`
+  Runs a byte-blind recording relay that first proves a valid protected roundtrip, then reflects the captured downstream
   record upstream, sends a captured client record without a handshake, and substitutes that old record after a fresh
-  TLS handshake. The protected sink must observe exactly the one original request.
+  TLS handshake. The protected sink must observe exactly the one original request, which is what rejects all three
+  replays at once.
 - `reality_visitor_plaintext_probe`
   Verifies that non-TLS first bytes reaching `RealityServer` are immediately treated as visitor traffic instead of being
   held in the Reality sniff buffer.

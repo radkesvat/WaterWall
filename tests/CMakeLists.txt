@@ -321,9 +321,12 @@ add_waterwall_probe_integration_test(waterwall.reality_v2_tls12_cbc_wire_camoufl
 add_waterwall_probe_integration_test(waterwall.reality_v2_tls12_chacha_wire_camouflage reality_v2_tls12_chacha_wire_probe 20)
 add_waterwall_probe_integration_test(waterwall.reality_v2_tls13_wire_camouflage reality_v2_tls13_wire_probe 20)
 add_waterwall_probe_integration_test(waterwall.reality_v2_tls13_wire_handoff reality_v2_tls13_wire_handoff 30)
-add_waterwall_probe_integration_test(waterwall.reality_v2_cross_connection_replay_rejected reality_v2_replay_protection_probe 15)
-add_waterwall_probe_integration_test(waterwall.reality_v2_direct_record_replay_rejected reality_v2_replay_protection_probe 15)
-add_waterwall_probe_integration_test(waterwall.reality_v2_wrong_direction_rejected reality_v2_replay_protection_probe 15)
+# One probe run drives the whole replay-protection sequence: it captures Reality
+# records from an original connection, then replays them in the wrong direction,
+# directly against the server, and across a fresh connection. The closing
+# assertion (the protected chain was opened exactly once) covers all three at
+# once, so this is a single test rather than three names for the same command.
+add_waterwall_probe_integration_test(waterwall.reality_v2_replay_protection reality_v2_replay_protection_probe 15)
 add_waterwall_integration_test(waterwall.reality_visitor_plaintext_probe reality_visitor_plaintext_probe)
 add_waterwall_probe_integration_test(
   waterwall.reality_visitor_short_prefix_probe
