@@ -9,7 +9,7 @@
  * between POSIX and Windows.
  */
 
-#include "wlibc.h"
+#include "wplatform.h"
 
 typedef long     tid_t;
 typedef uint32_t wthread_error_t;

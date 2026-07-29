@@ -46,15 +46,17 @@
  */
 #define _GNU_SOURCE /* pull in pthread_setname_np() on Linux */
 
+#include "wthread.h"
+
 #include "lwip/debug.h"
 
+#include <errno.h>
+#include <pthread.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 #include <sys/types.h>
-#include <stdlib.h>
 #include <unistd.h>
-#include <pthread.h>
-#include <errno.h>
 
 #include "lwip/def.h"
 
@@ -187,39 +189,35 @@ thread_wrapper(void *arg)
   return NULL;
 }
 
-sys_thread_t
-sys_thread_new(const char *name, lwip_thread_fn function, void *arg, int stacksize, int prio)
+sys_thread_t sys_thread_new(const char *name, lwip_thread_fn function, void *arg, int stacksize, int prio)
 {
-  int code;
-  pthread_t tmp;
-  struct sys_thread *st = NULL;
-  struct thread_wrapper_data *thread_data;
-  LWIP_UNUSED_ARG(name);
-  LWIP_UNUSED_ARG(stacksize);
-  LWIP_UNUSED_ARG(prio);
+    int                         code;
+    pthread_t                   tmp;
+    struct sys_thread          *st = NULL;
+    struct thread_wrapper_data *thread_data;
+    LWIP_UNUSED_ARG(name);
+    LWIP_UNUSED_ARG(stacksize);
+    LWIP_UNUSED_ARG(prio);
 
-  thread_data = (struct thread_wrapper_data *)malloc(sizeof(struct thread_wrapper_data));
-  thread_data->arg = arg;
-  thread_data->function = function;
-  code = pthread_create(&tmp,
-                        NULL,
-                        thread_wrapper,
-                        thread_data);
+    thread_data           = (struct thread_wrapper_data *) malloc(sizeof(struct thread_wrapper_data));
+    thread_data->arg      = arg;
+    thread_data->function = function;
+    code                  = (int) threadCreate(&tmp, thread_wrapper, thread_data);
 
+    if (0 == code)
+    {
 #ifdef LWIP_UNIX_LINUX
-  pthread_setname_np(tmp, name);
+        pthread_setname_np(tmp, name);
 #endif
+        st = introduce_thread(tmp);
+    }
 
-  if (0 == code) {
-    st = introduce_thread(tmp);
-  }
-
-  if (NULL == st) {
-    LWIP_DEBUGF(SYS_DEBUG, ("sys_thread_new: pthread_create %d, st = 0x%lx\n",
-                       code, (unsigned long)st));
-    abort();
-  }
-  return st;
+    if (NULL == st)
+    {
+        LWIP_DEBUGF(SYS_DEBUG, ("sys_thread_new: pthread_create %d, st = 0x%lx\n", code, (unsigned long) st));
+        abort();
+    }
+    return st;
 }
 
 int sys_thread_join(sys_thread_t thread)

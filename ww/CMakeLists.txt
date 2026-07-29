@@ -1163,6 +1163,12 @@ set_source_files_properties(
 
 if(UNIX)
     target_sources(ww_lwip PRIVATE ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c)
+    # sys_arch routes lwIP thread creation through WaterWall's managed-signal
+    # wrapper. Keep these implementation-only includes out of lwIP's interface.
+    target_include_directories(ww_lwip PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/base
+        ${CMAKE_CURRENT_SOURCE_DIR}/libc
+    )
 else()
     target_sources(ww_lwip PRIVATE ${LWIP_CONTRIB_DIR}/ports/win32/sys_arch.c)
 endif()

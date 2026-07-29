@@ -2,6 +2,7 @@
 
 #include "lwip/memp.h"
 #include "lwip/priv/tcp_priv.h"
+#include "wthread.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +14,8 @@ typedef struct retained_pbuf_s
 } retained_pbuf_t;
 
 static atomic_bool  initialized;
+static sigset_t     tcpip_thread_mask;
+static bool         tcpip_thread_mask_known;
 static unsigned int retained_pbuf_free_count;
 
 static void require(bool condition, const char *message)
@@ -24,9 +27,29 @@ static void require(bool condition, const char *message)
     }
 }
 
+static void requireManagedSignalsMasked(const sigset_t *mask, bool expected_blocked, const char *context)
+{
+    const int managed_signals[] = {SIGHUP, SIGINT, SIGQUIT, SIGALRM, SIGTERM};
+
+    for (size_t i = 0; i < ARRAY_SIZE(managed_signals); ++i)
+    {
+        const int membership = sigismember(mask, managed_signals[i]);
+        if (membership < 0 || (membership == 1) != expected_blocked)
+        {
+            fprintf(stderr,
+                    "FAIL: managed signal %d was %s in %s\n",
+                    managed_signals[i],
+                    membership == 1 ? "blocked" : "unblocked",
+                    context);
+            exit(1);
+        }
+    }
+}
+
 static void initDone(void *arg)
 {
     discard arg;
+    tcpip_thread_mask_known = pthread_sigmask(SIG_BLOCK, NULL, &tcpip_thread_mask) == 0;
     atomicStoreExplicit(&initialized, true, memory_order_release);
 }
 
@@ -60,12 +83,26 @@ static void installRetainedOoseqPbuf(void *userdata)
 int main(void)
 {
     retained_pbuf_t retained = {0};
+    sigset_t        managed_signals;
+    sigset_t        original_mask;
+
+    buildThreadBlockedStopSignalSet(&managed_signals);
+    require(pthread_sigmask(SIG_UNBLOCK, &managed_signals, &original_mask) == 0,
+            "failed to unblock managed signals before lwIP thread creation");
 
     tcpip_init(initDone, NULL);
     while (! atomicLoadExplicit(&initialized, memory_order_acquire))
     {
         YIELD_THREAD();
     }
+
+    require(tcpip_thread_mask_known, "failed to read the lwIP thread signal mask");
+    requireManagedSignalsMasked(&tcpip_thread_mask, true, "the lwIP thread");
+
+    sigset_t caller_mask;
+    require(pthread_sigmask(SIG_BLOCK, NULL, &caller_mask) == 0, "failed to read the caller signal mask");
+    requireManagedSignalsMasked(&caller_mask, false, "the caller after lwIP thread creation");
+    require(pthread_sigmask(SIG_SETMASK, &original_mask, NULL) == 0, "failed to restore the original signal mask");
 
     /*
      * Queue state creation rather than doing it under the core lock here.
