@@ -89,6 +89,20 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
     tc->finalized = true;
 }
 
+bool tunnelchainIsWorkerPacketLine(tunnel_chain_t *tc, const line_t *l)
+{
+    if (tc == NULL || l == NULL || tc->packet_lines == NULL)
+    {
+        return false;
+    }
+
+    // The owning worker is the only slot a packet line can occupy, so this is an
+    // exact identity check and not a scan.
+    wid_t wid = lineGetWID(l);
+
+    return wid < tc->workers_count && tc->packet_lines[wid] == l;
+}
+
 void tunnelchainDestroy(tunnel_chain_t *tc)
 {
     for (uint32_t i = 0; i < tc->workers_count; i++)

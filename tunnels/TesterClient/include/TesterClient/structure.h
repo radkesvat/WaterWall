@@ -112,6 +112,7 @@ void testerclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void     testerclientLinestateInitialize(testerclient_lstate_t *ls, buffer_pool_t *pool);
 void     testerclientLinestateDestroy(testerclient_lstate_t *ls);
 void     testerclientFail(tunnel_t *t, line_t *l, const char *reason);
+void     testerclientFailOwnedLine(tunnel_t *t, line_t *l, const char *reason);
 uint8_t  testerclientGetChunkCount(tunnel_t *t);
 uint32_t testerclientGetChunkSize(tunnel_t *t, uint8_t index);
 uint64_t testerclientGetRemainingBytes(tunnel_t *t, uint8_t index);

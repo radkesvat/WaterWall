@@ -17,7 +17,11 @@ void testerclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     if (! ls->response_complete)
     {
-        testerclientFail(t, l, "received finish before full response verification");
+        // This line is a normal line TesterClient created, so the verdict does not
+        // release us from the owner postcondition: requesting the shutdown only
+        // schedules worker 0's teardown, and every frame we return through keeps
+        // observing lineIsAlive(l). The owned-line helper closes it first.
+        testerclientFailOwnedLine(t, l, "received finish before full response verification");
         return;
     }
 

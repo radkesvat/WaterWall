@@ -135,6 +135,21 @@ static inline line_t *tunnelchainGetWorkerPacketLine(tunnel_chain_t *tc, wid_t w
 }
 
 /**
+ * @brief Check whether a line is one of this chain's persistent worker packet lines.
+ *
+ * Packet lines are owned by the chain and destroyed only by tunnelchainDestroy(),
+ * so they are excluded from the owned-normal-line Finish postcondition. A handler
+ * that can receive both a packet line and a normal line must branch on this
+ * before any cleanup.
+ *
+ * @param tc Chain instance, may be NULL.
+ * @param l Line to classify, may be NULL.
+ * @return true The line is one of this chain's worker packet lines.
+ * @return false The line is a normal line, or the chain has no packet lines.
+ */
+bool tunnelchainIsWorkerPacketLine(tunnel_chain_t *tc, const line_t *l);
+
+/**
  * @brief Check whether chain finalization is complete.
  *
  * @param tc Chain instance.

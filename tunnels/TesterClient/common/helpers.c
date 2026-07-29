@@ -412,6 +412,12 @@ static bool testerclientDecodePacketIpv4(tunnel_t *t, sbuf_t *buf, testerclient_
  * still owning its callback frame. Request an orderly shutdown and return; every
  * caller returns immediately afterwards, and worker 0 performs the real
  * teardown.
+ *
+ * This reports the verdict and closes nothing, so it is only correct where the
+ * callback is not the one responsible for the line's closure: the payload
+ * verifiers, the watchdog, and packet mode, whose line is the process-lifetime
+ * worker packet line. A verdict reached inside a Finish handler for a normal line
+ * this tunnel created must go through testerclientFailOwnedLine() instead.
  */
 void testerclientFail(tunnel_t *t, line_t *l, const char *reason)
 {
@@ -422,6 +428,51 @@ void testerclientFail(tunnel_t *t, line_t *l, const char *reason)
     {
         abortProgramNow(1);
     }
+}
+
+/*
+ * The same Category-B verdict, reached while holding a normal line this tunnel
+ * created. requestProgramShutdown() only schedules worker 0's teardown: this
+ * callback still returns and unwinds through every suspended frame above it, and
+ * those frames keep reading lineIsAlive(). So the owner postcondition applies
+ * unchanged - detach the worker slot, destroy the line state and mark the line
+ * dead, then report the verdict.
+ *
+ * Never call this for packet mode: that line belongs to the chain and outlives
+ * every verdict.
+ */
+void testerclientFailOwnedLine(tunnel_t *t, line_t *l, const char *reason)
+{
+    testerclient_tstate_t       *ts   = tunnelGetState(t);
+    testerclient_worker_state_t *slot = &ts->workers[lineGetWID(l)];
+    testerclient_lstate_t       *ls   = lineGetState(l, t);
+
+    assert(! ts->packet_mode);
+
+    // lineDestroy() below can drop the last reference. A lock is a reference, not
+    // a claim that the line is alive, so holding one keeps the allocation readable
+    // long enough for the verdict helper to still name its worker.
+    lineLock(l);
+
+    // Detach before destroying: the completion sweep schedules close tasks
+    // straight off this slot, and it must not find a line that is about to die.
+    if (slot->line == l)
+    {
+        slot->line = NULL;
+    }
+    slot->close_scheduled = true;
+    slot->closed          = true;
+
+    testerclientLinestateDestroy(ls);
+
+    if (lineIsAlive(l))
+    {
+        lineDestroy(l);
+    }
+
+    testerclientFail(t, l, reason);
+
+    lineUnlock(l);
 }
 
 uint8_t testerclientGetChunkCount(tunnel_t *t)

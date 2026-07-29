@@ -167,13 +167,34 @@ void wireguarddeviceCloseTransportLine(tunnel_t *t, wid_t wid)
     lineUnlock(line);
 }
 
+/*
+ * WireGuardDevice is a dual-role node: it sits on the chain's persistent worker
+ * packet line and it creates one normal transport line per worker for its
+ * encrypted side. Both roles reach this handler, so the exact role decides what a
+ * Finish means before any cleanup runs.
+ */
 void wireguarddeviceHandleTransportLineFinish(tunnel_t *t, line_t *line)
 {
     wgd_tstate_t   *state = tunnelGetState(t);
     tunnel_chain_t *chain = tunnelGetChain(t);
     wid_t           wid;
 
-    if (line == NULL || chain == NULL || state->transport_lines == NULL)
+    if (line == NULL || chain == NULL)
+    {
+        return;
+    }
+
+    if (tunnelchainIsWorkerPacketLine(chain, line))
+    {
+        // A packet line lives for the whole process and is destroyed only by
+        // tunnelchainDestroy(). Finishing one at runtime is a neighbour breaking
+        // the packet-line contract, not a connection close: the owner
+        // postcondition does not apply and this must never lineDestroy().
+        LOGF("WireGuardDevice: unexpected Finish on worker packet line %u", (unsigned int) lineGetWID(line));
+        abortProgramNow(1);
+    }
+
+    if (state->transport_lines == NULL)
     {
         return;
     }
@@ -184,6 +205,7 @@ void wireguarddeviceHandleTransportLineFinish(tunnel_t *t, line_t *line)
         return;
     }
 
+    // A normal line this tunnel created: detach the slot, then leave it dead.
     state->transport_lines[wid] = NULL;
     if (lineIsAlive(line))
     {
