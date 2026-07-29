@@ -30,6 +30,8 @@ readonly TEST_RAM_PROFILE='client'
 readonly DEFAULT_SUCCESS_EXIT_GRACE_SECONDS=0.5
 readonly SUCCESS_EXIT_GRACE_POLL_SECONDS=0.05
 readonly SIGTERM_EXIT_STATUS=$((128 + 15))
+readonly TEST_TIMEOUT_EXIT_STATUS=124
+readonly TEST_RUNNER_FAILURE_EXIT_STATUS=125
 
 if [[ $# -lt 3 ]]; then
   echo "usage: $0 <waterwall-binary> <case-dir> <timeout-seconds>" >&2
@@ -114,7 +116,7 @@ finish_after_success_exit_status() {
 
   echo "Waterwall exited after the success marker with non-zero status=$status." >&2
   dump_logs
-  exit 1
+  exit "$status"
 }
 
 wait_for_success_graceful_exit() {
@@ -264,18 +266,23 @@ while true; do
     if [[ $success_seen -eq 1 ]]; then
       echo "Waterwall exited after the success marker with non-zero status=$status." >&2
       dump_logs
-      exit 1
+      exit "$status"
     fi
 
     echo "Waterwall exited before the expected success marker was observed (exit=$status)." >&2
     dump_logs
-    exit 1
+    if [[ $status -eq 0 ]]; then
+      # Distinguish a clean but semantically incomplete run from Waterwall's
+      # own failure status so expected-failure tests cannot accept it.
+      exit "$TEST_RUNNER_FAILURE_EXIT_STATUS"
+    fi
+    exit "$status"
   fi
 
   if (( SECONDS >= deadline )); then
     echo "Timed out after ${timeout_seconds}s waiting for tester success marker matching: $TESTER_SUCCESS_REGEX" >&2
     dump_logs
-    exit 1
+    exit "$TEST_TIMEOUT_EXIT_STATUS"
   fi
 
   sleep 0.2

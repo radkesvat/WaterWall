@@ -4,8 +4,10 @@
 
 set -euo pipefail
 
-if [[ $# -ne 5 ]]; then
-  echo "usage: $0 <case-runner> <waterwall-binary> <case-dir> <timeout-seconds> <expected-output>" >&2
+readonly MIN_SIGNAL_EXIT_STATUS=128
+
+if [[ $# -lt 5 || $# -gt 6 ]]; then
+  echo "usage: $0 <case-runner> <waterwall-binary> <case-dir> <timeout-seconds> <expected-output> [expected-status]" >&2
   exit 2
 fi
 
@@ -14,7 +16,14 @@ binary_path=$2
 case_dir=$3
 timeout_seconds=$4
 expected_output=$5
+expected_failure_exit_status=${6:-1}
 captured_output=$(mktemp)
+
+if [[ ! "$expected_failure_exit_status" =~ ^[1-9][0-9]*$ ||
+      $expected_failure_exit_status -ge $MIN_SIGNAL_EXIT_STATUS ]]; then
+  echo "Expected status must be between 1 and $((MIN_SIGNAL_EXIT_STATUS - 1))." >&2
+  exit 2
+fi
 
 cleanup() {
   rm -f "$captured_output"
@@ -30,6 +39,16 @@ cat "$captured_output"
 
 if [[ $status -eq 0 ]]; then
   echo "Expected Waterwall case to fail, but it succeeded." >&2
+  exit 1
+fi
+
+if [[ $status -ge $MIN_SIGNAL_EXIT_STATUS ]]; then
+  echo "Waterwall terminated by a signal or exception (status=$status)." >&2
+  exit 1
+fi
+
+if [[ $status -ne $expected_failure_exit_status ]]; then
+  echo "Waterwall case exited with unexpected status=$status; expected $expected_failure_exit_status." >&2
   exit 1
 fi
 

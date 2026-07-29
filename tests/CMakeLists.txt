@@ -79,17 +79,13 @@ function(add_waterwall_skipped_integration_test test_name skip_message)
   )
 endfunction()
 
-function(add_waterwall_negative_integration_test test_name case_name)
-  add_waterwall_integration_test_with_timeout(${test_name} ${case_name} 10)
-  set_tests_properties(
-    ${test_name}
-    PROPERTIES
-      WILL_FAIL TRUE
-  )
-endfunction()
-
 function(add_waterwall_expected_failure_integration_test test_name case_name expected_output)
   set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
+  if(ARGC GREATER 3)
+    set(expected_status "${ARGV3}")
+  else()
+    set(expected_status "1")
+  endif()
 
   add_test(
     NAME ${test_name}
@@ -101,6 +97,7 @@ function(add_waterwall_expected_failure_integration_test test_name case_name exp
       "${case_dir}"
       "10"
       "${expected_output}"
+      "${expected_status}"
   )
 
   set_tests_properties(
@@ -110,6 +107,20 @@ function(add_waterwall_expected_failure_integration_test test_name case_name exp
       LABELS "integration;tunnels;negative"
   )
 endfunction()
+
+add_test(
+  NAME waterwall.expected_failure_runner
+  COMMAND
+    "${BASH_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_expected_failure_case_test.sh"
+    "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_expected_failure_case.sh"
+)
+set_tests_properties(
+  waterwall.expected_failure_runner
+  PROPERTIES
+    TIMEOUT 10
+    LABELS "test-harness;negative"
+)
 
 function(add_waterwall_probe_integration_test test_name case_name timeout_seconds)
   set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
@@ -255,7 +266,11 @@ add_waterwall_integration_test(waterwall.tls_fallback_connector_target_tcp_loopb
 add_waterwall_probe_integration_test(waterwall.tls_handshake_timeout_slow_drip tls_handshake_timeout_slow_drip 10)
 add_waterwall_probe_integration_test(waterwall.tls_tlslike_invalid_probe_does_not_fallback tls_tlslike_invalid_probe_does_not_fallback 10)
 add_waterwall_probe_integration_test(waterwall.tls_tlslike_oversized_probe_does_not_fallback tls_tlslike_oversized_probe_does_not_fallback 10)
-add_waterwall_negative_integration_test(waterwall.tls_fallback_rejects_sni_gate tls_fallback_rejects_sni_gate)
+add_waterwall_expected_failure_integration_test(
+  waterwall.tls_fallback_rejects_sni_gate
+  tls_fallback_rejects_sni_gate
+  "TlsServer: fallback-node-name/fallback-node/fallback cannot be combined with sni"
+)
 add_waterwall_integration_test(waterwall.reality_google_roundtrip reality_google_roundtrip)
 add_waterwall_integration_test(waterwall.reality_v2_roundtrip reality_v2_roundtrip)
 add_waterwall_probe_integration_test(waterwall.reality_v2_tls13_post_handshake reality_v2_tls13_post_handshake 20)
@@ -346,7 +361,11 @@ add_waterwall_integration_test(waterwall.socks5_noauth_dest_protocol_udp_loopbac
 add_waterwall_integration_test(waterwall.socks5_noauth_dest_protocol_fallback_tcp_loopback socks5_noauth_dest_protocol_fallback_tcp_loopback)
 add_waterwall_integration_test(waterwall.trojan_password_tcp_loopback trojan_password_tcp_loopback)
 add_waterwall_integration_test(waterwall.trojan_local_password_router_tcp_loopback trojan_local_password_router_tcp_loopback)
-add_waterwall_negative_integration_test(waterwall.trojan_local_password_router_rejects_wrong_password trojan_local_password_router_rejects_wrong_password)
+add_waterwall_expected_failure_integration_test(
+  waterwall.trojan_local_password_router_rejects_wrong_password
+  trojan_local_password_router_rejects_wrong_password
+  "received finish before full response verification"
+)
 add_waterwall_integration_test(waterwall.trojan_fallback_invalid_probe_tcp_loopback trojan_fallback_invalid_probe_tcp_loopback)
 add_waterwall_integration_test(waterwall.trojan_sha224_dest_protocol_tcp_loopback trojan_sha224_dest_protocol_tcp_loopback)
 add_waterwall_integration_test(waterwall.trojan_dest_context_domain_resolve_tcp_loopback trojan_dest_context_domain_resolve_tcp_loopback)
@@ -356,7 +375,11 @@ add_waterwall_integration_test(waterwall.vless_uuid_tcp_loopback vless_uuid_tcp_
 add_waterwall_integration_test(waterwall.vless_uuid_domain_tcp_loopback vless_uuid_domain_tcp_loopback)
 add_waterwall_integration_test(waterwall.vless_dest_context_domain_resolve_tcp_loopback vless_dest_context_domain_resolve_tcp_loopback)
 add_waterwall_integration_test(waterwall.vless_local_username_router_tcp_loopback vless_local_username_router_tcp_loopback)
-add_waterwall_negative_integration_test(waterwall.vless_local_username_router_rejects_wrong_password vless_local_username_router_rejects_wrong_password)
+add_waterwall_expected_failure_integration_test(
+  waterwall.vless_local_username_router_rejects_wrong_password
+  vless_local_username_router_rejects_wrong_password
+  "received finish before full response verification"
+)
 add_waterwall_integration_test(waterwall.vless_fallback_invalid_probe_tcp_loopback vless_fallback_invalid_probe_tcp_loopback)
 add_waterwall_integration_test(waterwall.vless_uuid_udp_loopback vless_uuid_udp_loopback)
 add_waterwall_integration_test(waterwall.vless_auth_tcp_loopback vless_auth_tcp_loopback)
@@ -381,7 +404,11 @@ add_waterwall_integration_test(waterwall.http2_bidirectional_roundtrip http2_bid
 add_waterwall_integration_test(waterwall.http2_bidirectional_tcp_loopback http2_bidirectional_tcp_loopback)
 add_waterwall_integration_test(waterwall.http_upgrade_h2c_bidirectional_roundtrip http_upgrade_h2c_bidirectional_roundtrip)
 add_waterwall_integration_test(waterwall.http_upgrade_h2c_bidirectional_tcp_loopback http_upgrade_h2c_bidirectional_tcp_loopback)
-add_waterwall_negative_integration_test(waterwall.http2_request_validation_rejects_mismatch http2_request_validation_rejects_mismatch)
+add_waterwall_expected_failure_integration_test(
+  waterwall.http2_request_validation_rejects_mismatch
+  http2_request_validation_rejects_mismatch
+  "HttpServer: HTTP/2 method mismatch"
+)
 add_waterwall_integration_test(waterwall.http_websocket_bidirectional_roundtrip http_websocket_bidirectional_roundtrip)
 add_waterwall_integration_test(waterwall.http_websocket_bidirectional_tcp_loopback http_websocket_bidirectional_tcp_loopback)
 add_waterwall_integration_test(waterwall.http_upgrade_custom_bidirectional_roundtrip http_upgrade_custom_bidirectional_roundtrip)
@@ -421,6 +448,7 @@ add_waterwall_expected_failure_integration_test(
   waterwall.ping_server_drops_malformed_roundup
   ping_server_drops_malformed_roundup
   "PingServer: dropping malformed upstream packet because roundup-size payload length exceeds ICMP payload"
+  124
 )
 add_waterwall_expected_failure_integration_test(
   waterwall.ping_client_rejects_numeric_overflow
