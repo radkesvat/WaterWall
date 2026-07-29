@@ -150,8 +150,9 @@ bool workerPostControlEvent(worker_t *worker, wevent_t *ev);
  * Ownership rules:
  *   - a worker thread calls this for itself after its loop returned;
  *   - worker 0 calls it for itself, on worker 0;
- *   - a pseudo-worker (no event loop, no spawned thread) is cleaned up by the
- *     shutdown thread through this same entry point.
+ *   - a pseudo-worker has no WaterWall event loop or workerSpawn() thread and
+ *     is cleaned up by the shutdown thread only after any external thread that
+ *     uses its resources (such as lwIP's tcpip_thread) has been joined.
  * It must never be called for another worker that owns a running event loop.
  *
  * @param worker Pointer to the worker structure.

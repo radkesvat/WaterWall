@@ -144,6 +144,7 @@ typedef struct ptc_tstate_s
     uint32_t                  udp_idle_timeout_ms;
     uint32_t                  ipv4_identification;
     ptc_fake_dns_t            fake_dns;
+    bool                      lwip_resources_destroyed;
 } ptc_tstate_t;
 
 typedef struct ptc_lstate_s
@@ -178,6 +179,8 @@ typedef struct my_custom_pbuf
 {
     struct pbuf_custom p;
     sbuf_t            *sbuf;
+    buffer_pool_t     *origin_pool;
+    wid_t              origin_wid;
 } my_custom_pbuf_t;
 
 LWIP_MEMPOOL_PROTOTYPE(RX_POOL);
@@ -239,6 +242,7 @@ err_t ptcEnsureUdpListener(interface_route_context_t *route_ctx, tunnel_t *t, co
                            uint16_t dest_port);
 interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t packet_wid, const ip4_addr_t *dest_ip);
 void                       ptcDestroyRouteContexts(interface_route_context_t *root);
+void                       ptcDestroyLwipResources(tunnel_t *t);
 
 // Error callback: called when something goes wrong on the connection.
 void lwipThreadPtcTcpConnectionErrorCallback(void *arg, err_t err);

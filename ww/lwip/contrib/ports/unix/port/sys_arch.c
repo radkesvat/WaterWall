@@ -222,6 +222,38 @@ sys_thread_new(const char *name, lwip_thread_fn function, void *arg, int stacksi
   return st;
 }
 
+int sys_thread_join(sys_thread_t thread)
+{
+    struct sys_thread **cursor;
+    int                 code;
+
+    if ((thread == NULL) || pthread_equal(pthread_self(), thread->pthread))
+    {
+        return 0;
+    }
+
+    code = pthread_join(thread->pthread, NULL);
+    if (code != 0)
+    {
+        return 0;
+    }
+
+    pthread_mutex_lock(&threads_mutex);
+    cursor = &threads;
+    while ((*cursor != NULL) && (*cursor != thread))
+    {
+        cursor = &(*cursor)->next;
+    }
+    if (*cursor == thread)
+    {
+        *cursor = thread->next;
+    }
+    pthread_mutex_unlock(&threads_mutex);
+
+    free(thread);
+    return 1;
+}
+
 #if LWIP_TCPIP_CORE_LOCKING
 static pthread_t lwip_core_lock_holder_thread_id;
 void sys_lock_tcpip_core(void)

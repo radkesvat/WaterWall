@@ -90,6 +90,22 @@ static void exitHandle(void *userdata, int signum)
     // once; nodemanagerStop() is idempotent and this is its only normal caller.
     nodemanagerStop();
 
+    /*
+     * tcpip_init() owns a real OS thread even though WaterWall models its pools
+     * as a pseudo-worker. Stop and join that thread before asking normal
+     * workers to exit: workerRun() destroys each worker's pools before join
+     * returns, and lwIP can release retained custom pbufs into those pools.
+     */
+    if (GSTATE.flag_lwip_initialized)
+    {
+        if (UNLIKELY(! wwLwipShutdown()))
+        {
+            LOGF("Failed to quiesce and join the lwIP tcpip thread");
+            abortProgramNow(1);
+        }
+        GSTATE.flag_lwip_initialized = 0;
+    }
+
     // Ask every spawned worker to stop before joining the first one, so shutdown
     // does not serialize on one slow worker.
     for (unsigned int wid = 1; wid < WORKERS_COUNT - WORKER_ADDITIONS; ++wid)
@@ -112,8 +128,8 @@ static void exitHandle(void *userdata, int signum)
             abortProgramNow(1);
         }
     }
-    // lwip pseudo-worker has no spawned OS thread and no event loop, but it
-    // still owns pools; the shutdown thread cleans it up explicitly.
+    // The joined lwIP thread has no WaterWall event loop. Its pseudo-worker
+    // pools can now be destroyed explicitly without a late pbuf callback.
     workerDestroyOwnResources(getWorker(getTotalWorkersCount() - 1));
 
     // Worker 0 destroys its own worker-local resources, on worker 0.

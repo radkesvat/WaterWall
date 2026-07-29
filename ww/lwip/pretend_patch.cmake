@@ -388,4 +388,109 @@ udp_sendfrom(struct udp_pcb *pcb, struct pbuf *p,
         [=[done:
   pcb->local_port = port;
   mib2_udp_bind(pcb);]=])
+
+    # Upstream lwIP 2.2 has no threaded shutdown API. WaterWall must stop and
+    # join tcpip_thread before destroying the pseudo-worker pools that its
+    # callbacks can still reach.
+    ww_lwip_replace_once(
+        "${lwip_dir}/src/include/lwip/tcpip.h"
+        [=[void   tcpip_init(tcpip_init_done_fn tcpip_init_done, void *arg);
+
+err_t  tcpip_inpkt]=]
+        [=[void   tcpip_init(tcpip_init_done_fn tcpip_init_done, void *arg);
+err_t  tcpip_shutdown(tcpip_callback_fn shutdown_fn, void *ctx);
+
+err_t  tcpip_inpkt]=])
+
+    ww_lwip_replace_once(
+        "${lwip_dir}/src/api/tcpip.c"
+        [=[static void *tcpip_init_done_arg;
+static sys_mbox_t tcpip_mbox;]=]
+        [=[static void *tcpip_init_done_arg;
+static sys_mbox_t tcpip_mbox;
+static sys_thread_t tcpip_thread_handle;
+static u8_t tcpip_shutdown_requested;
+static u8_t tcpip_shutdown_posted;
+static tcpip_callback_fn tcpip_shutdown_fn;
+static void *tcpip_shutdown_ctx;]=])
+
+    ww_lwip_replace_once(
+        "${lwip_dir}/src/api/tcpip.c"
+        [=[    tcpip_thread_handle_msg(msg);
+  }
+}]=]
+        [=[    tcpip_thread_handle_msg(msg);
+    if (tcpip_shutdown_requested) {
+      break;
+    }
+  }
+  UNLOCK_TCPIP_CORE();
+}]=])
+
+    ww_lwip_replace_once(
+        "${lwip_dir}/src/api/tcpip.c"
+        [=[  sys_thread_new(TCPIP_THREAD_NAME, tcpip_thread, NULL, TCPIP_THREAD_STACKSIZE, TCPIP_THREAD_PRIO);
+}
+
+/**
+ * Simple callback function used with tcpip_callback to free a pbuf]=]
+        [=[  tcpip_shutdown_requested = 0;
+  tcpip_shutdown_posted = 0;
+  tcpip_shutdown_fn = NULL;
+  tcpip_shutdown_ctx = NULL;
+  tcpip_thread_handle =
+    sys_thread_new(TCPIP_THREAD_NAME, tcpip_thread, NULL, TCPIP_THREAD_STACKSIZE, TCPIP_THREAD_PRIO);
+}
+
+static void
+tcpip_request_shutdown(void *ctx)
+{
+  LWIP_UNUSED_ARG(ctx);
+  if (tcpip_shutdown_fn != NULL) {
+    tcpip_shutdown_fn(tcpip_shutdown_ctx);
+  }
+  tcpip_shutdown_requested = 1;
+}
+
+/**
+ * Cooperatively stop and join tcpip_thread after all application users have
+ * detached and released their protocol state.
+ */
+err_t
+tcpip_shutdown(tcpip_callback_fn shutdown_fn, void *ctx)
+{
+  err_t err;
+
+  if (tcpip_thread_handle == NULL) {
+    return ERR_OK;
+  }
+
+  if (!tcpip_shutdown_posted) {
+    tcpip_shutdown_fn = shutdown_fn;
+    tcpip_shutdown_ctx = ctx;
+    err = tcpip_callback(tcpip_request_shutdown, NULL);
+    if (err != ERR_OK) {
+      tcpip_shutdown_fn = NULL;
+      tcpip_shutdown_ctx = NULL;
+      return err;
+    }
+    tcpip_shutdown_posted = 1;
+  }
+  if (!sys_thread_join(tcpip_thread_handle)) {
+    return ERR_IF;
+  }
+
+  tcpip_thread_handle = NULL;
+  tcpip_shutdown_posted = 0;
+  tcpip_shutdown_fn = NULL;
+  tcpip_shutdown_ctx = NULL;
+  sys_mbox_free(&tcpip_mbox);
+#if LWIP_TCPIP_CORE_LOCKING
+  sys_mutex_free(&lock_tcpip_core);
+#endif
+  return ERR_OK;
+}
+
+/**
+ * Simple callback function used with tcpip_callback to free a pbuf]=])
 endfunction()

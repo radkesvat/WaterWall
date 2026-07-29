@@ -8,27 +8,45 @@ static void my_pbuf_free_custom(struct pbuf *p)
 {
     my_custom_pbuf_t *custombuf = (my_custom_pbuf_t *) p;
 
-    bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), custombuf->sbuf);
+    /*
+     * TCP may retain this pbuf in its out-of-order queue and release it later
+     * from the lwIP timer thread. Never infer ownership from the freeing
+     * thread: that would return the buffer to the pseudo-worker's pool. A
+     * foreign thread also cannot mutate the originating worker-local pool, so
+     * it destroys the standalone allocation instead.
+     */
+    if (getWID() == custombuf->origin_wid)
+    {
+        bufferpoolReuseBuffer(custombuf->origin_pool, custombuf->sbuf);
+    }
+    else
+    {
+        sbufDestroy(custombuf->sbuf);
+    }
     LWIP_MEMPOOL_FREE(RX_POOL, custombuf);
 }
 
 static void passToTcpIp(sbuf_t *buf, struct netif *inp)
 {
-    my_custom_pbuf_t *custombuf = (my_custom_pbuf_t *) LWIP_MEMPOOL_ALLOC(RX_POOL);
+    const wid_t       origin_wid  = getWID();
+    buffer_pool_t    *origin_pool = getWorkerBufferPool(origin_wid);
+    my_custom_pbuf_t *custombuf   = (my_custom_pbuf_t *) LWIP_MEMPOOL_ALLOC(RX_POOL);
     if (custombuf == NULL)
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        bufferpoolReuseBuffer(origin_pool, buf);
         return;
     }
 
     custombuf->p.custom_free_function = my_pbuf_free_custom;
     custombuf->sbuf                   = buf;
+    custombuf->origin_pool            = origin_pool;
+    custombuf->origin_wid             = origin_wid;
 
     struct pbuf *p = pbuf_alloced_custom(
         PBUF_RAW, sbufGetLength(buf), PBUF_REF, &custombuf->p, sbufGetMutablePtr(buf), sbufGetLength(buf));
     if (p == NULL)
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        bufferpoolReuseBuffer(origin_pool, buf);
         LWIP_MEMPOOL_FREE(RX_POOL, custombuf);
         return;
     }

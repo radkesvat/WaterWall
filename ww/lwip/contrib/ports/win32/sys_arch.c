@@ -232,6 +232,7 @@ sys_init(void)
 struct threadlist {
   lwip_thread_fn function;
   void *arg;
+  HANDLE             handle;
   DWORD id;
   struct threadlist *next;
 };
@@ -463,19 +464,62 @@ sys_thread_new(const char *name, lwip_thread_fn function, void *arg, int stacksi
     new_thread->function = function;
     new_thread->arg = arg;
     SYS_ARCH_PROTECT(lev);
-    new_thread->next = lwip_win32_threads;
-    lwip_win32_threads = new_thread;
 
     h = CreateThread(0, 0, sys_thread_function, new_thread, 0, &(new_thread->id));
     LWIP_ASSERT("h != 0", h != 0);
     LWIP_ASSERT("h != -1", h != INVALID_HANDLE_VALUE);
-    LWIP_UNUSED_ARG(h);
+    if ((h == 0) || (h == INVALID_HANDLE_VALUE))
+    {
+        SYS_ARCH_UNPROTECT(lev);
+        free(new_thread);
+        return NULL;
+    }
+    new_thread->handle = h;
+    new_thread->next   = lwip_win32_threads;
+    lwip_win32_threads = new_thread;
     SetThreadName(new_thread->id, name);
 
     SYS_ARCH_UNPROTECT(lev);
-    return new_thread->id;
+    return new_thread;
   }
-  return 0;
+  return NULL;
+}
+
+int sys_thread_join(sys_thread_t thread)
+{
+    struct threadlist **cursor;
+    DWORD               wait_result;
+    SYS_ARCH_DECL_PROTECT(lev);
+
+    if ((thread == NULL) || (GetCurrentThreadId() == thread->id))
+    {
+        return 0;
+    }
+
+    wait_result = WaitForSingleObject(thread->handle, INFINITE);
+    if (wait_result != WAIT_OBJECT_0)
+    {
+        return 0;
+    }
+    if (! CloseHandle(thread->handle))
+    {
+        return 0;
+    }
+
+    SYS_ARCH_PROTECT(lev);
+    cursor = &lwip_win32_threads;
+    while ((*cursor != NULL) && (*cursor != thread))
+    {
+        cursor = &(*cursor)->next;
+    }
+    if (*cursor == thread)
+    {
+        *cursor = thread->next;
+    }
+    SYS_ARCH_UNPROTECT(lev);
+
+    free(thread);
+    return 1;
 }
 
 #if !NO_SYS

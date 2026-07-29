@@ -62,6 +62,7 @@ typedef struct sys_mbox * sys_mbox_t;
 
 struct sys_thread;
 typedef struct sys_thread * sys_thread_t;
+int                         sys_thread_join(sys_thread_t thread);
 
 #if LWIP_NETCONN_SEM_PER_THREAD
 sys_sem_t* sys_arch_netconn_sem_get(void);

@@ -64,8 +64,10 @@ typedef struct lwip_mbox sys_mbox_t;
 #define sys_mbox_valid(mbox) ((mbox != NULL) && sys_mbox_valid_val(*(mbox)))
 #define sys_mbox_set_invalid(mbox) ((mbox)->sem = NULL)
 
-/* DWORD (thread id) is used for sys_thread_t but we won't include windows.h */
-typedef u32_t sys_thread_t;
+/* Keep the native handle so tcpip_thread can be truthfully joined at shutdown. */
+struct threadlist;
+typedef struct threadlist *sys_thread_t;
+int                        sys_thread_join(sys_thread_t thread);
 
 sys_sem_t* sys_arch_netconn_sem_get(void);
 void sys_arch_netconn_sem_alloc(void);

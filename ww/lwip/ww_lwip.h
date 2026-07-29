@@ -91,6 +91,14 @@ typedef struct
 // ------------------------------------------------------------------------
 #define tcpipInit tcpip_init
 
+/*
+ * Releases retained transport state and detaches netifs, then cooperatively
+ * stops and joins lwIP's real tcpip thread. Call only after node Stop has
+ * detached application callbacks and before any worker-local pools or tunnel
+ * state are destroyed.
+ */
+bool wwLwipShutdown(void);
+
 // ------------------------------------------------------------------------
 // Packet Buffer Function Macros
 // ------------------------------------------------------------------------

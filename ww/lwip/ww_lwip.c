@@ -1,6 +1,7 @@
 #include "ww_lwip.h"
 
 #include "loggers/network_logger.h"
+#include "lwip/priv/tcp_priv.h"
 
 #define IP_PROTO_STR(proto)                                                                                            \
     (((proto) == IP_PROTO_TCP)    ? "TCP"                                                                              \
@@ -10,6 +11,69 @@
      : ((proto) == 0)             ? "Hop-by-Hop"                                                                       \
      : ((proto) == IP_PROTO_IGMP) ? "IGMP"                                                                             \
                                   : "UNKNOWN")
+
+static void wwLwipAbandonTcpPcb(struct tcp_pcb *pcb)
+{
+    /*
+     * tcp_abandon() releases segment queues but not data retained after an
+     * application receive callback returned ERR_MEM.
+     */
+    if (pcb->refused_data != NULL)
+    {
+        pbuf_free(pcb->refused_data);
+        pcb->refused_data = NULL;
+    }
+    tcp_abandon(pcb, 0);
+}
+
+static void wwLwipReleaseProtocolState(void *userdata)
+{
+    discard userdata;
+    LWIP_ASSERT_CORE_LOCKED();
+    assert(tcp_input_pcb == NULL);
+
+    /*
+     * tcp_abandon(reset=0) releases queued segments, including custom pbufs in
+     * TCP out-of-order queues, without trying to emit reset packets through
+     * netifs that node Stop has already detached.
+     */
+    while (tcp_active_pcbs != NULL)
+    {
+        wwLwipAbandonTcpPcb(tcp_active_pcbs);
+    }
+    while (tcp_tw_pcbs != NULL)
+    {
+        wwLwipAbandonTcpPcb(tcp_tw_pcbs);
+    }
+    while (tcp_bound_pcbs != NULL)
+    {
+        wwLwipAbandonTcpPcb(tcp_bound_pcbs);
+    }
+    while (tcp_listen_pcbs.pcbs != NULL)
+    {
+        err_t close_result = tcp_close(tcp_listen_pcbs.pcbs);
+        assert(close_result == ERR_OK);
+        discard close_result;
+    }
+    while (udp_pcbs != NULL)
+    {
+        udp_remove(udp_pcbs);
+    }
+    while (netif_list != NULL)
+    {
+        netif_remove(netif_list);
+    }
+}
+
+bool wwLwipShutdown(void)
+{
+    /*
+     * Cleanup runs from the shutdown callback after all previously queued work.
+     * That closes the last window in which packet input could recreate retained
+     * protocol state after it had already been released.
+     */
+    return tcpip_shutdown(wwLwipReleaseProtocolState, NULL) == ERR_OK;
+}
 
 void printIPPacketInfo(const char *prefix, const unsigned char *buffer)
 {
