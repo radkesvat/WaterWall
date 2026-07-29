@@ -26,6 +26,8 @@ env:
 
 jobs:
   android:
+    env:
+      ANDROID_NDK_VERSION: "28.2.13676358" # NDK r28c
     strategy:
       fail-fast: false
       matrix:
@@ -60,6 +62,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build ccache
 
+      - name: Install Android NDK
+        run: |
+          sdkmanager "ndk;$ANDROID_NDK_VERSION"
+          echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+
       - name: Reset ccache statistics
         run: ccache --zero-stats
 
@@ -92,7 +99,7 @@ jobs:
         include:
           - preset: freebsd
             version: "14.2"
-            install: sudo pkg install -y cmake perl5 git ninja ccache
+            install: sudo pkg install -y cmake perl5 git ninja ccache python3
           # - preset: netbsd
           #   version: "10.1"
           #   install: sudo pkgin -y install cmake perl git ninja ccache
@@ -440,6 +447,7 @@ jobs:
             make:p
             nasm:p
             ninja:p
+            python:p
       
       - name: Reset ccache statistics
         run: ccache --zero-stats
