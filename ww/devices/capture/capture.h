@@ -3,6 +3,7 @@
 #include "wlibc.h"
 
 #include "buffer_pool.h"
+#include "devices/capture/capture_lifecycle.h"
 #include "devices/device_reader_session.h"
 #include "wmutex.h"
 #include "worker.h"
@@ -35,8 +36,8 @@ typedef struct capture_device_s
     uint32_t queue_number;
     char   **capture_cidrs;
     uint32_t capture_range_count;
-    // Serialized Linux lifecycle state, independent of `up`. Each CIDR rule is
-    // tracked explicitly because a timed-out iptables mutation may have
+    // Serialized Linux rule/resource state, independent of `up`. Each CIDR rule
+    // is tracked explicitly because a timed-out iptables mutation may have
     // committed before its command was terminated.
     capture_rule_state_t *rule_states;
     uint64_t              rule_token;
@@ -72,6 +73,7 @@ typedef struct capture_device_s
 
     CaptureReadEventHandle read_event_callback;
 
+    atomic_int  lifecycle;
     atomic_bool running;
     atomic_bool up;
 

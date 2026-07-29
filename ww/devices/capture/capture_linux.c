@@ -1198,8 +1198,9 @@ bool captureLinuxReaderPublishReady(capture_device_t *cdev, int *reader_socket)
     }
 
     pthread_mutex_lock(&cdev->reader_state_mutex);
-    const bool ready = ! cdev->reader_stop_requested && atomicLoadRelaxed(&cdev->running) && ! cdev->reader_failed &&
-                       cdev->socket >= 0;
+    const bool ready = ! cdev->reader_stop_requested &&
+                       captureLifecycleIsActive(captureLifecycleLoad(&cdev->lifecycle)) &&
+                       atomicLoadRelaxed(&cdev->running) && ! cdev->reader_failed && cdev->socket >= 0;
     if (ready)
     {
         *reader_socket     = cdev->socket;
@@ -1215,6 +1216,8 @@ static WTHREAD_ROUTINE(capturedeviceReaderThreadMain) // NOLINT
     capture_device_t *cdev = userdata;
     discard           cdev->routine_reader(cdev);
 
+    capture_lifecycle_state_t failed_from      = kCaptureLifecycleDown;
+    bool                      lifecycle_failed = false;
     pthread_mutex_lock(&cdev->reader_state_mutex);
     /*
      * The mutex acquisition order decides whether Stop or reader exit won.
@@ -1225,6 +1228,7 @@ static WTHREAD_ROUTINE(capturedeviceReaderThreadMain) // NOLINT
     cdev->reader_ready         = false;
     if (unexpected_exit)
     {
+        lifecycle_failed                 = captureLifecycleTransitionToFailed(&cdev->lifecycle, &failed_from);
         cdev->reader_failed              = true;
         cdev->queue_restartable          = false;
         cdev->close_queue_on_reader_exit = cdev->socket >= 0;
@@ -1261,6 +1265,10 @@ static WTHREAD_ROUTINE(capturedeviceReaderThreadMain) // NOLINT
     {
         LOGE("CaptureDevice: reader exited unexpectedly; queue %u was closed to make remaining rules fail-open",
              cdev->queue_number);
+    }
+    if (lifecycle_failed && failed_from == kCaptureLifecycleUp && ! requestProgramShutdown(1))
+    {
+        abortProgramNow(1);
     }
     return 0;
 }
@@ -1512,6 +1520,8 @@ static void capturedeviceDrainResidualQueue(capture_device_t *cdev, int socket_f
 
 static bool capturedeviceStopReader(capture_device_t *cdev)
 {
+    captureLifecycleTransitionToStopping(&cdev->lifecycle);
+
     pthread_mutex_lock(&cdev->reader_state_mutex);
     cdev->reader_stop_requested = true;
     const bool      joinable    = cdev->reader_thread_joinable;
@@ -1586,7 +1596,8 @@ static bool capturedeviceStopReader(capture_device_t *cdev)
 static bool capturedeviceReaderOperational(capture_device_t *cdev)
 {
     pthread_mutex_lock(&cdev->reader_state_mutex);
-    const bool operational = cdev->reader_thread_joinable && cdev->reader_ready && ! cdev->reader_failed &&
+    const bool operational = captureLifecycleIsActive(captureLifecycleLoad(&cdev->lifecycle)) &&
+                             cdev->reader_thread_joinable && cdev->reader_ready && ! cdev->reader_failed &&
                              ! cdev->reader_stop_requested && cdev->queue_restartable && cdev->socket >= 0 &&
                              atomicLoadRelaxed(&cdev->running);
     pthread_mutex_unlock(&cdev->reader_state_mutex);
@@ -1662,7 +1673,8 @@ static bool capturedeviceActivate(capture_device_t *cdev)
     pthread_mutex_lock(&cdev->reader_state_mutex);
     const bool can_activate = cdev->reader_thread_joinable && cdev->reader_ready && ! cdev->reader_failed &&
                               ! cdev->reader_stop_requested && cdev->queue_restartable && cdev->socket >= 0 &&
-                              atomicLoadRelaxed(&cdev->running);
+                              atomicLoadRelaxed(&cdev->running) &&
+                              captureLifecycleTransitionStartingToUp(&cdev->lifecycle);
     if (can_activate)
     {
         atomicStoreRelaxed(&cdev->up, true);
@@ -1674,6 +1686,7 @@ static bool capturedeviceActivate(capture_device_t *cdev)
 
 static void capturedeviceRollbackStartup(capture_device_t *cdev)
 {
+    captureLifecycleTransitionToStopping(&cdev->lifecycle);
     capturedeviceDeactivate(cdev);
     const bool cleanup_complete = capturedeviceRemoveInstalledRules(cdev);
     if (! cleanup_complete)
@@ -1688,9 +1701,17 @@ static void capturedeviceRollbackStartup(capture_device_t *cdev)
         // close()+descriptor-reuse race.
         capturedeviceDisableQueue(cdev, "unresolved startup rollback");
     }
-    if (! capturedeviceStopReader(cdev))
+    const bool reader_stop_ok = capturedeviceStopReader(cdev);
+    pthread_mutex_lock(&cdev->reader_state_mutex);
+    const bool reader_joinable = cdev->reader_thread_joinable;
+    pthread_mutex_unlock(&cdev->reader_state_mutex);
+    if (! reader_stop_ok)
     {
         LOGE("CaptureDevice: reader shutdown during startup rollback was incomplete");
+    }
+    if (! reader_joinable)
+    {
+        captureLifecycleTransitionStoppingToDown(&cdev->lifecycle);
     }
 }
 
@@ -1729,8 +1750,22 @@ bool caputredeviceBringUp(capture_device_t *cdev)
         return false;
     }
 
+    if (! captureLifecycleTransitionDownToStarting(&cdev->lifecycle))
+    {
+        LOGE("CaptureDevice: device cannot be started in current lifecycle state");
+        return false;
+    }
+
     if (! capturedeviceStartReader(cdev))
     {
+        captureLifecycleTransitionToStopping(&cdev->lifecycle);
+        pthread_mutex_lock(&cdev->reader_state_mutex);
+        const bool reader_joinable = cdev->reader_thread_joinable;
+        pthread_mutex_unlock(&cdev->reader_state_mutex);
+        if (! reader_joinable)
+        {
+            captureLifecycleTransitionStoppingToDown(&cdev->lifecycle);
+        }
         return false;
     }
 
@@ -1784,6 +1819,8 @@ bool caputredeviceBringUp(capture_device_t *cdev)
 
 bool caputredeviceBringDown(capture_device_t *cdev)
 {
+    captureLifecycleTransitionToStopping(&cdev->lifecycle);
+
     // From this point every newly received packet is accepted back to the host
     // stack while rules are removed. The raw writer may remain up until this
     // function returns.
@@ -1800,9 +1837,17 @@ bool caputredeviceBringDown(capture_device_t *cdev)
         result = false;
     }
 
-    result = capturedeviceStopReader(cdev) && result;
+    const bool reader_stop_ok = capturedeviceStopReader(cdev);
+    result                    = reader_stop_ok && result;
 
-    LOGI("CaptureDevice: device %s is now down", cdev->name);
+    pthread_mutex_lock(&cdev->reader_state_mutex);
+    const bool reader_joinable = cdev->reader_thread_joinable;
+    pthread_mutex_unlock(&cdev->reader_state_mutex);
+    if (! reader_joinable)
+    {
+        captureLifecycleTransitionStoppingToDown(&cdev->lifecycle);
+        LOGI("CaptureDevice: device %s is now down", cdev->name);
+    }
 
     return result;
 }
@@ -1977,6 +2022,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
                                 .rule_token             = rule_token,
                                 .queue_restartable      = true,
                                 .reader_buffer_pool     = reader_bpool};
+    atomic_init(&cdev->lifecycle, kCaptureLifecycleDown);
     if (pthread_mutex_init(&cdev->reader_state_mutex, NULL) != 0)
     {
         LOGE("CaptureDevice: failed to initialize reader state mutex");
@@ -2044,7 +2090,8 @@ void capturedeviceDestroy(capture_device_t *cdev)
     const bool reader_joinable = cdev->reader_thread_joinable;
     pthread_mutex_unlock(&cdev->reader_state_mutex);
     deviceReaderSessionEnd(cdev->reader_session);
-    if (atomicLoadRelaxed(&cdev->up) || reader_joinable)
+    if (captureLifecycleLoad(&cdev->lifecycle) != kCaptureLifecycleDown || atomicLoadRelaxed(&cdev->up) ||
+        reader_joinable)
     {
         discard caputredeviceBringDown(cdev);
     }

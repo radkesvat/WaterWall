@@ -103,7 +103,7 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
     assert(handle != NULL && handle != INVALID_HANDLE_VALUE);
 
-    while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
+    while (captureLifecycleIsActive(captureLifecycleLoad(&cdev->lifecycle)))
     {
         buf = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
 
@@ -120,16 +120,16 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
                 break;
             }
 
-            if (! atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
+            if (! captureLifecycleIsActive(captureLifecycleLoad(&cdev->lifecycle)))
             {
                 break;
             }
 
-            LOGE("CaptureDevice: failed to read packet from capture device: error %lu", recv_error);
-            continue;
+            LOGE("CaptureDevice: terminal packet read failure on device %s: error %lu", cdev->name, recv_error);
+            break;
         }
 
-        if (! atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
+        if (! captureLifecycleIsActive(captureLifecycleLoad(&cdev->lifecycle)))
         {
             bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
             break;
@@ -161,6 +161,32 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
     return 0;
 }
 
+static void capturedeviceNoteUnexpectedReaderExit(capture_device_t *cdev)
+{
+    capture_lifecycle_state_t failed_from;
+    if (! captureLifecycleTransitionToFailed(&cdev->lifecycle, &failed_from))
+    {
+        return;
+    }
+
+    atomicStoreRelaxed(&cdev->running, false);
+    atomicStoreRelaxed(&cdev->up, false);
+    LOGE("CaptureDevice: reader thread for device %s exited unexpectedly; the device is no longer usable", cdev->name);
+
+    if (failed_from == kCaptureLifecycleUp && ! requestProgramShutdown(1))
+    {
+        abortProgramNow(1);
+    }
+}
+
+static WTHREAD_ROUTINE(capturedeviceReaderThreadMain) // NOLINT
+{
+    capture_device_t *cdev = userdata;
+    discard           cdev->routine_reader(cdev);
+    capturedeviceNoteUnexpectedReaderExit(cdev);
+    return 0;
+}
+
 static bool capturedeviceHasHandle(const void *context)
 {
     const capture_device_t *cdev = context;
@@ -181,13 +207,16 @@ static bool capturedeviceHasReader(const void *context)
 
 static bool capturedeviceHasLiveResources(const capture_device_t *cdev)
 {
-    return atomicLoadExplicit(&(cdev->up), memory_order_relaxed) || capturedeviceHasHandle(cdev) ||
+    return captureLifecycleLoad(&cdev->lifecycle) != kCaptureLifecycleDown ||
+           atomicLoadExplicit(&(cdev->up), memory_order_relaxed) || capturedeviceHasHandle(cdev) ||
            capturedeviceHasReader(cdev);
 }
 
 static void capturedeviceBeginShutdown(void *context)
 {
     capture_device_t *cdev = context;
+
+    captureLifecycleTransitionToStopping(&cdev->lifecycle);
 
     // These atomics carry loop/status values only. Thread creation/join and the
     // reader-session gate publish and reclaim the associated resources.
@@ -300,12 +329,18 @@ bool caputredeviceBringUp(capture_device_t *cdev)
         LOGE("CaptureDevice: device is already up or shutdown is incomplete");
         return false;
     }
+    if (! captureLifecycleTransitionDownToStarting(&cdev->lifecycle))
+    {
+        LOGE("CaptureDevice: device cannot be started in current lifecycle state");
+        return false;
+    }
 
     HANDLE handle = windivertOpen(cdev->filter, WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_RECV_ONLY);
     if (handle == NULL || handle == INVALID_HANDLE_VALUE)
     {
         DWORD last_error = GetLastError();
         LOGE("CaptureDevice: Failed to open WinDivert handle: error %lu", last_error);
+        captureLifecycleTransitionStoppingToDown(&cdev->lifecycle);
         return false;
     }
     cdev->handle = handle;
@@ -318,26 +353,56 @@ bool caputredeviceBringUp(capture_device_t *cdev)
     if (deviceReaderSessionBegin(cdev->reader_session) == 0)
     {
         LOGE("CaptureDevice: failed to open reader delivery generation");
-        discard captureWindowsLifetimeRollbackOpen(cdev, &capture_lifetime_ops);
+        captureLifecycleTransitionToStopping(&cdev->lifecycle);
+        if (captureWindowsLifetimeRollbackOpen(cdev, &capture_lifetime_ops))
+        {
+            captureLifecycleTransitionStoppingToDown(&cdev->lifecycle);
+        }
         return false;
     }
     atomicStoreRelaxed(&cdev->running, true);
 
-    wthread_error_t error = threadCreate(&cdev->read_thread, cdev->routine_reader, cdev);
+    wthread_error_t error = threadCreate(&cdev->read_thread, capturedeviceReaderThreadMain, cdev);
     if (error != kWThreadErrorNone)
     {
         atomicStoreRelaxed(&cdev->running, false);
         deviceReaderSessionEnd(cdev->reader_session);
+        captureLifecycleTransitionToStopping(&cdev->lifecycle);
         LOGE("CaptureDevice: failed to create reader thread: error %u", error);
 
-        if (! captureWindowsLifetimeRollbackOpen(cdev, &capture_lifetime_ops))
+        if (captureWindowsLifetimeRollbackOpen(cdev, &capture_lifetime_ops))
+        {
+            captureLifecycleTransitionStoppingToDown(&cdev->lifecycle);
+        }
+        else
         {
             LOGE("CaptureDevice: failed to roll back WinDivert handle after reader-thread creation failure");
         }
         return false;
     }
 
+    /*
+     * Publish the compatibility status before the lifecycle CAS. If the reader
+     * wins STARTING -> FAILED, both it and this rollback clear `up`; if this CAS
+     * wins, any later UP -> FAILED reader exit clears it after publication.
+     */
     atomicStoreRelaxed(&cdev->up, true);
+    if (! captureLifecycleTransitionStartingToUp(&cdev->lifecycle))
+    {
+        atomicStoreRelaxed(&cdev->up, false);
+        LOGE("CaptureDevice: reader thread failed during startup");
+        captureLifecycleTransitionToStopping(&cdev->lifecycle);
+        if (captureWindowsLifetimeShutdown(cdev, &capture_lifetime_ops))
+        {
+            captureLifecycleTransitionStoppingToDown(&cdev->lifecycle);
+        }
+        else
+        {
+            LOGE("CaptureDevice: reader-startup rollback is incomplete; retained resources require a shutdown retry");
+        }
+        return false;
+    }
+
     LOGI("CaptureDevice: device %s is now up", cdev->name);
     return true;
 }
@@ -349,11 +414,13 @@ bool caputredeviceBringDown(capture_device_t *cdev)
         return true;
     }
 
+    captureLifecycleTransitionToStopping(&cdev->lifecycle);
     if (! captureWindowsLifetimeShutdown(cdev, &capture_lifetime_ops))
     {
         return false;
     }
 
+    captureLifecycleTransitionStoppingToDown(&cdev->lifecycle);
     LOGI("CaptureDevice: device %s is now down", cdev->name);
     return true;
 }
@@ -394,6 +461,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
                                 .userdata              = userdata,
                                 .reader_session        = NULL,
                                 .reader_buffer_pool    = reader_bpool};
+    atomic_init(&cdev->lifecycle, kCaptureLifecycleDown);
 
     cdev->filter         = capturedeviceBuildWinDivertFilter(capture_ranges, capture_range_count);
     cdev->reader_session = deviceReaderSessionCreate(RAM_PROFILE * 2, 1, cdev, captureDeliverPacket, reader_bpool);
@@ -415,6 +483,7 @@ void capturedeviceDestroy(capture_device_t *cdev)
     assert(! capturedeviceHasHandle(cdev));
     assert(cdev->read_thread == NULL);
     assert(! cdev->reader_exit_confirmed);
+    assert(captureLifecycleLoad(&cdev->lifecycle) == kCaptureLifecycleDown);
     deviceReaderSessionEnd(cdev->reader_session);
 
     memoryFree(cdev->name);
