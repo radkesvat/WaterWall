@@ -192,7 +192,7 @@ static void testTouchRefreshKeepsRowAlive(void)
 
     const softiplimiter_identity_entry_t *entry = findEntry(&table, id);
     require(entry != NULL && entry->ip_count == 1, "refresh: row should remain alive after refreshes");
-    require(atomicLoadRelaxed(&entry->ips[0].last_seen_ms) == 124, "refresh: last_seen should track the latest touch");
+    require(atomicLoadU64Relaxed(&entry->ips[0].last_seen_ms) == 124, "refresh: last_seen should track the latest touch");
 
     // Stop refreshing: once now advances past last_seen + tolerance the row expires.
     require(! softiplimiterTableTouch(&table, id, &ip, 1, 10, 200, &result), "refresh: stale row should expire");

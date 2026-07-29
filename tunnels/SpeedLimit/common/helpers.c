@@ -64,7 +64,7 @@ static void speedlimitRefillAtomicBucket(const speedlimit_tstate_t *ts, speedlim
 {
     while (true)
     {
-        uint64_t last_refill_ms = atomicLoadRelaxed(&bucket->last_refill_ms);
+        uint64_t last_refill_ms = atomicLoadU64Relaxed(&bucket->last_refill_ms);
         if (last_refill_ms == 0)
         {
             uint64_t expected = 0;
@@ -106,7 +106,7 @@ static void speedlimitRefillAtomicBucket(const speedlimit_tstate_t *ts, speedlim
 
         while (true)
         {
-            uint64_t old_units = atomicLoadRelaxed(&bucket->tokens_units);
+            uint64_t old_units = atomicLoadU64Relaxed(&bucket->tokens_units);
             uint64_t new_units = old_units;
 
             if (old_units < ts->bucket_capacity_units)
@@ -144,7 +144,7 @@ uint64_t speedlimitPeekAvailableUnits(tunnel_t *t, line_t *l)
     }
     case kSpeedLimitLimitModeAllLines:
         speedlimitRefillAtomicBucket(ts, &ts->global_bucket, now_ms);
-        return atomicLoadRelaxed(&ts->global_bucket.tokens_units);
+        return atomicLoadU64Relaxed(&ts->global_bucket.tokens_units);
     case kSpeedLimitLimitModePerLine:
     default: {
         speedlimit_lstate_t *ls = lineGetState(l, t);
@@ -163,7 +163,7 @@ static uint64_t speedlimitPeekLastRefillMs(tunnel_t *t, line_t *l)
     case kSpeedLimitLimitModePerWorker:
         return speedlimitGetWorkerBucket(ts, l)->last_refill_ms;
     case kSpeedLimitLimitModeAllLines:
-        return atomicLoadRelaxed(&ts->global_bucket.last_refill_ms);
+        return atomicLoadU64Relaxed(&ts->global_bucket.last_refill_ms);
     case kSpeedLimitLimitModePerLine:
     default:
         return ((speedlimit_lstate_t *) lineGetState(l, t))->line_bucket.last_refill_ms;
@@ -186,7 +186,7 @@ size_t speedlimitGrantBytes(tunnel_t *t, line_t *l, size_t requested_bytes, bool
 
         while (true)
         {
-            uint64_t old_units       = atomicLoadRelaxed(&ts->global_bucket.tokens_units);
+            uint64_t old_units       = atomicLoadU64Relaxed(&ts->global_bucket.tokens_units);
             uint64_t available_bytes = old_units / kSpeedLimitUnitsPerByte;
             size_t   grant_bytes     = 0;
 

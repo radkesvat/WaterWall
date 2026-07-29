@@ -267,7 +267,7 @@ softiplimiter_extract_result_t softiplimiterTryExtractIdentifierFromStream(softi
 
 static bool softiplimiterRowExpired(const softiplimiter_ip_row_t *row, uint64_t tolerance_ms, uint64_t now_ms)
 {
-    uint64_t last_seen = atomicLoadRelaxed(&row->last_seen_ms);
+    uint64_t last_seen = atomicLoadU64Relaxed(&row->last_seen_ms);
     return now_ms > last_seen && now_ms - last_seen > tolerance_ms;
 }
 
@@ -351,7 +351,7 @@ bool softiplimiterTableAdmit(softiplimiter_identity_map_t *table, hash_t identif
     {
         softiplimiter_ip_row_t *row = &entry->ips[row_index];
         row->refs += 1U;
-        atomicStoreRelaxed(&row->last_seen_ms, now_ms);
+        atomicStoreU64Relaxed(&row->last_seen_ms, now_ms);
         softiplimiterTableResultSet(result, kSoftIpLimiterTableOk, entry->ip_count, limit);
         return true;
     }
@@ -365,7 +365,7 @@ bool softiplimiterTableAdmit(softiplimiter_identity_map_t *table, hash_t identif
     softiplimiter_ip_row_t *row = &entry->ips[entry->ip_count];
     row->ip_key = *ip_key;
     row->refs   = 1;
-    atomicStoreRelaxed(&row->last_seen_ms, now_ms);
+    atomicStoreU64Relaxed(&row->last_seen_ms, now_ms);
     entry->ip_count += 1U;
     softiplimiterTableResultSet(result, kSoftIpLimiterTableOk, entry->ip_count, limit);
     return true;
@@ -397,7 +397,7 @@ bool softiplimiterTableTouch(softiplimiter_identity_map_t *table, hash_t identif
         return false;
     }
 
-    atomicStoreRelaxed(&entry->ips[row_index].last_seen_ms, now_ms);
+    atomicStoreU64Relaxed(&entry->ips[row_index].last_seen_ms, now_ms);
     softiplimiterTableResultSet(result, kSoftIpLimiterTableOk, entry->ip_count, limit);
     return true;
 }
@@ -426,7 +426,7 @@ static bool softiplimiterTableTouchShared(softiplimiter_identity_map_t *table, h
             {
                 return false; // expired: exclusive path prunes the row and closes the line
             }
-            atomicStoreRelaxed(&entry->ips[i].last_seen_ms, now_ms);
+            atomicStoreU64Relaxed(&entry->ips[i].last_seen_ms, now_ms);
             return true;
         }
     }

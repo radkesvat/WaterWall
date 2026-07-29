@@ -3,6 +3,20 @@
 
 #include "wplatform.h" // for HAVE_STDATOMIC_H
 
+/*
+ * This header exposes two atomic APIs and they are not interchangeable:
+ *
+ *   atomic_ullong objects -> the u64 API:      atomicLoadU64, atomicStoreU64, atomicAddU64,
+ *                                              atomicIncU64, atomicCompareExchangeU64, ...
+ *   everything else       -> the generic API:  atomicLoad, atomicStore, atomicAdd,
+ *                                              atomicInc, atomicCompareExchange, ...
+ *
+ * The generic API is pointer-width, which is not 64 bits everywhere this project
+ * builds. The "64-bit atomics" section at the bottom of this file explains what
+ * that costs and why the second API had to exist; read it before adding a new
+ * atomic_ullong field or reaching for a generic operation on an existing one.
+ */
+
 #if HAVE_STDATOMIC_H
 
 // c11
@@ -67,10 +81,27 @@ typedef intptr_t w_atomic_uint_value_t;
 #define W_ATOMIC_UINT_VALUE_SIGNED 1
 typedef intptr_t atomic_long;
 typedef intptr_t atomic_ulong;
+/*
+ * atomic_llong stays pointer-width on purpose: its only user is the lightweight
+ * semaphore count in wmutex.h, which is bounded by the worker count and can
+ * never need more than a pointer. atomic_ullong cannot make that promise -- see
+ * the 64-bit atomics section at the bottom of this file.
+ */
 typedef intptr_t atomic_llong;
-typedef intptr_t atomic_ullong;
-typedef intptr_t w_atomic_ullong_value_t;
-typedef intptr_t atomic_wchar_t;
+/*
+ * Interlocked*64 requires its operand to be 8-byte aligned, and on a 32-bit
+ * target that is more than the C alignment rules promise for an 8-byte integer.
+ * Every Windows ABI happens to align long long to 8 anyway, but the requirement
+ * is stated here rather than inherited, so a target that does not is a build
+ * failure at the assertion below instead of a torn read at runtime.
+ */
+#if defined(_MSC_VER)
+typedef __declspec(align(8)) unsigned long long atomic_ullong;
+#else
+typedef __attribute__((aligned(8))) unsigned long long atomic_ullong;
+#endif
+typedef unsigned long long w_atomic_ullong_value_t;
+typedef intptr_t           atomic_wchar_t;
 typedef intptr_t atomic_int_least8_t;
 typedef intptr_t atomic_uint_least8_t;
 typedef intptr_t atomic_int_least16_t;
@@ -104,6 +135,7 @@ typedef intptr_t atomic_uintmax_t;
  * store-then-barrier or barrier-then-load sequence would put the barrier on the
  * wrong side of the access.
  */
+
 #define atomic_store(object, desired)                                                                                  \
     ((void) InterlockedExchangePointer((PVOID volatile *) (object), (PVOID) (intptr_t) (desired)))
 
@@ -202,26 +234,98 @@ static inline int atomic_compare_exchange_strong(intptr_t *object, intptr_t *exp
 #define atomicCompareExchangeExplicit atomic_compare_exchange_strong_explicit
 
 /*
- * Compare/exchange helpers for atomic_ullong storage.
+ * ---------------------------------------------------------------------------
+ * 64-bit atomics
+ * ---------------------------------------------------------------------------
  *
- * The two branches above disagree on the value type a compare/exchange expects
- * for atomic_ullong: C11 wants unsigned long long, the Windows fallback wants
- * intptr_t. Call sites that spell the expected value out themselves therefore
- * need an #if of their own, so these wrappers own the difference once and let
- * callers stay in plain uint64_t.
+ * Everything above operates on pointer-width objects. Use it for flags,
+ * counters, indices, enums, sizes and pointers -- anything that fits in an
+ * intptr_t. Use the u64 API below, and only the u64 API, on atomic_ullong.
  *
- * Note the fallback still stores atomic_ullong in a pointer-width slot, so
- * these truncate on 32-bit Windows targets. That is a property of the fallback
- * storage, not of the wrappers.
+ * The split is not stylistic, and it is not about range. The Windows fallback
+ * in the middle of this file is not a real C11 implementation: it emulates
+ * every operation with an Interlocked primitive, and the only width
+ * Interlocked*Pointer offers is the width of a pointer. On a 64-bit target that
+ * is 64 bits and nobody notices, but this project also builds windows-x86 and
+ * windows-arm32, where a pointer is four bytes.
+ *
+ * What that does to a 64-bit value is worse than dropping the high word. The
+ * generic load returns a signed intptr_t, so a value that does not fit is
+ * truncated on the way in and then sign-extended on the way out: it comes back
+ * as a completely different number rather than as its own low half. Storing
+ * 3000000000 through the generic API on a 32-bit target reads back as
+ * 18446744072414584320.
+ *
+ * Every atomic_ullong in this codebase holds a value that cannot fit in 32
+ * bits. widle_table and SoftIpLimiter store absolute epoch-millisecond
+ * timestamps, which passed 2^32 in 1970 and are around 1.8e12 today. SpeedLimit
+ * stores token counts scaled by kSpeedLimitUnitsPerByte, which overflows a
+ * signed 32-bit slot at roughly 2.15 MB/s. On the generic API those produced
+ * idle items that never expired (or expired instantly, depending on which side
+ * of the sign boundary the clock's low 32 bits were on) and an all-connections
+ * bandwidth limit that stopped limiting -- silently, on release builds, with no
+ * diagnostic anywhere.
+ *
+ * So atomic_ullong is real 64-bit storage on every target, and the helpers
+ * below are the only way to operate on it. They lower to Interlocked*64, which
+ * is cmpxchg8b on x86 and ldrexd/strexd on ARM32; winnt.h supplies the variants
+ * that have no single instruction as compare-exchange loops. Those primitives
+ * require 8-byte-aligned storage, which the natural alignment of unsigned long
+ * long already provides on every Windows ABI -- the assertions below keep it
+ * that way.
+ *
+ * Plain assignment to an atomic_ullong is still fine while the object is being
+ * constructed and is not yet reachable by another thread; on the fallback it is
+ * an ordinary 64-bit store, which is two stores on a 32-bit target and is only
+ * safe because nothing else can see it yet. Once the object is published, every
+ * access goes through the API.
  */
+_Static_assert(sizeof(atomic_ullong) == sizeof(uint64_t),
+               "atomic_ullong must be real 64-bit storage on every target, see the comment above");
 _Static_assert(sizeof(atomic_ullong) == sizeof(w_atomic_ullong_value_t),
                "atomic_ullong compare/exchange value type must match its storage");
 
-static inline bool atomicCompareExchangeU64(atomic_ullong *object, uint64_t *expected, uint64_t desired)
+#if HAVE_STDATOMIC_H
+
+/*
+ * uint64_t and unsigned long long are distinct types on LP64, and the C11
+ * compare/exchange takes a pointer to the atomic's own value type. That is what
+ * w_atomic_ullong_value_t is for: it keeps the conversion in one place so call
+ * sites can stay in plain uint64_t.
+ */
+
+static inline uint64_t atomicLoadU64Explicit(const atomic_ullong *object, memory_order order)
+{
+    return (uint64_t) atomic_load_explicit(object, order);
+}
+
+static inline void atomicStoreU64Explicit(atomic_ullong *object, uint64_t desired, memory_order order)
+{
+    atomic_store_explicit(object, (w_atomic_ullong_value_t) desired, order);
+}
+
+static inline uint64_t atomicExchangeU64Explicit(atomic_ullong *object, uint64_t desired, memory_order order)
+{
+    return (uint64_t) atomic_exchange_explicit(object, (w_atomic_ullong_value_t) desired, order);
+}
+
+static inline uint64_t atomicAddU64Explicit(atomic_ullong *object, uint64_t operand, memory_order order)
+{
+    return (uint64_t) atomic_fetch_add_explicit(object, (w_atomic_ullong_value_t) operand, order);
+}
+
+static inline uint64_t atomicSubU64Explicit(atomic_ullong *object, uint64_t operand, memory_order order)
+{
+    return (uint64_t) atomic_fetch_sub_explicit(object, (w_atomic_ullong_value_t) operand, order);
+}
+
+static inline bool atomicCompareExchangeU64Explicit(atomic_ullong *object, uint64_t *expected, uint64_t desired,
+                                                    memory_order success, memory_order failure)
 {
     w_atomic_ullong_value_t expected_value = (w_atomic_ullong_value_t) *expected;
-    const bool exchanged = atomicCompareExchange(object, &expected_value, (w_atomic_ullong_value_t) desired);
-    *expected            = (uint64_t) expected_value;
+    const bool              exchanged      = atomic_compare_exchange_strong_explicit(
+        object, &expected_value, (w_atomic_ullong_value_t) desired, success, failure);
+    *expected = (uint64_t) expected_value;
     return exchanged;
 }
 
@@ -234,6 +338,89 @@ static inline bool atomicCompareExchangeWeakU64Explicit(atomic_ullong *object, u
     *expected = (uint64_t) expected_value;
     return exchanged;
 }
+
+#else
+
+_Static_assert(_Alignof(atomic_ullong) >= 8, "Interlocked*64 requires 8 byte aligned storage");
+
+/*
+ * As with the generic operations above, the full barrier of the Interlocked
+ * primitive is what makes the requested memory order correct on Windows ARM, so
+ * the order arguments are API markers rather than code-generation inputs.
+ * Interlocked*64 is available on 32-bit Windows too: winnt.h defines the
+ * operations that x86 and ARM32 lack as compare-exchange loops over
+ * InterlockedCompareExchange64.
+ */
+
+static inline uint64_t atomicLoadU64Explicit(const atomic_ullong *object, memory_order order)
+{
+    (void) order;
+    return (uint64_t) InterlockedCompareExchange64((LONG64 volatile *) object, 0, 0);
+}
+
+static inline void atomicStoreU64Explicit(atomic_ullong *object, uint64_t desired, memory_order order)
+{
+    (void) order;
+    (void) InterlockedExchange64((LONG64 volatile *) object, (LONG64) desired);
+}
+
+static inline uint64_t atomicExchangeU64Explicit(atomic_ullong *object, uint64_t desired, memory_order order)
+{
+    (void) order;
+    return (uint64_t) InterlockedExchange64((LONG64 volatile *) object, (LONG64) desired);
+}
+
+static inline uint64_t atomicAddU64Explicit(atomic_ullong *object, uint64_t operand, memory_order order)
+{
+    (void) order;
+    return (uint64_t) InterlockedExchangeAdd64((LONG64 volatile *) object, (LONG64) operand);
+}
+
+static inline uint64_t atomicSubU64Explicit(atomic_ullong *object, uint64_t operand, memory_order order)
+{
+    (void) order;
+    return (uint64_t) InterlockedExchangeAdd64((LONG64 volatile *) object, -(LONG64) operand);
+}
+
+static inline bool atomicCompareExchangeU64Explicit(atomic_ullong *object, uint64_t *expected, uint64_t desired,
+                                                    memory_order success, memory_order failure)
+{
+    (void) success;
+    (void) failure;
+    const uint64_t old      = *expected;
+    const uint64_t previous =
+        (uint64_t) InterlockedCompareExchange64((LONG64 volatile *) object, (LONG64) desired, (LONG64) old);
+    *expected = previous;
+    return previous == old;
+}
+
+static inline bool atomicCompareExchangeWeakU64Explicit(atomic_ullong *object, uint64_t *expected, uint64_t desired,
+                                                        memory_order success, memory_order failure)
+{
+    // InterlockedCompareExchange64 never fails spuriously, so weak is strong here
+    return atomicCompareExchangeU64Explicit(object, expected, desired, success, failure);
+}
+
+#endif
+
+#define atomicLoadU64(x)            atomicLoadU64Explicit((x), memory_order_seq_cst)
+#define atomicStoreU64(x, y)        atomicStoreU64Explicit((x), (y), memory_order_seq_cst)
+#define atomicExchangeU64(x, y)     atomicExchangeU64Explicit((x), (y), memory_order_seq_cst)
+#define atomicAddU64(x, y)          atomicAddU64Explicit((x), (y), memory_order_seq_cst)
+#define atomicSubU64(x, y)          atomicSubU64Explicit((x), (y), memory_order_seq_cst)
+#define atomicIncU64(x)             atomicAddU64((x), 1)
+#define atomicDecU64(x)             atomicSubU64((x), 1)
+
+#define atomicIncU64Explicit(x, y)  atomicAddU64Explicit((x), 1, (y))
+#define atomicDecU64Explicit(x, y)  atomicSubU64Explicit((x), 1, (y))
+
+#define atomicLoadU64Relaxed(x)     atomicLoadU64Explicit((x), memory_order_relaxed)
+#define atomicStoreU64Relaxed(x, y) atomicStoreU64Explicit((x), (y), memory_order_relaxed)
+#define atomicIncU64Relaxed(x)      atomicIncU64Explicit((x), memory_order_relaxed)
+#define atomicDecU64Relaxed(x)      atomicDecU64Explicit((x), memory_order_relaxed)
+
+#define atomicCompareExchangeU64(x, expected, desired)                                                                 \
+    atomicCompareExchangeU64Explicit((x), (expected), (desired), memory_order_seq_cst, memory_order_seq_cst)
 
 #define atomicFlagTestAndSet atomic_flag_test_and_set
 #define atomicFlagClear      atomic_flag_clear

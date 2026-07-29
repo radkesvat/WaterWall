@@ -93,8 +93,8 @@ static tunnel_t *createSpeedLimitTunnel(void)
     ts->limit_mode            = kSpeedLimitLimitModePerLine;
     ts->work_mode             = kSpeedLimitWorkModePause;
 
-    atomicStoreRelaxed(&ts->global_bucket.tokens_units, ts->bucket_capacity_units);
-    atomicStoreRelaxed(&ts->global_bucket.last_refill_ms, 0);
+    atomicStoreU64Relaxed(&ts->global_bucket.tokens_units, ts->bucket_capacity_units);
+    atomicStoreU64Relaxed(&ts->global_bucket.last_refill_ms, 0);
     ts->worker_buckets[0].tokens_units   = ts->bucket_capacity_units;
     ts->worker_buckets[0].last_refill_ms = 0;
 

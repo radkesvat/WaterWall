@@ -90,12 +90,12 @@ static void idleItemSetWorkerMessagePending(idle_item_t *item, bool pending)
 
 static uint64_t idleItemGetExpireAt(const idle_item_t *item)
 {
-    return (uint64_t) atomicLoadExplicit(&(item->expire_at_ms), memory_order_acquire);
+    return atomicLoadU64Explicit(&(item->expire_at_ms), memory_order_acquire);
 }
 
 static void idleItemSetExpireAt(idle_item_t *item, uint64_t expire_at_ms)
 {
-    atomicStoreExplicit(&(item->expire_at_ms), expire_at_ms, memory_order_release);
+    atomicStoreU64Explicit(&(item->expire_at_ms), expire_at_ms, memory_order_release);
 }
 
 static bool idleItemCompareExchangeExpireAt(idle_item_t *item, uint64_t *expected, uint64_t desired)

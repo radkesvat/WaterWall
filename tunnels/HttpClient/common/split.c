@@ -13,7 +13,7 @@ bool httpclientSplitIsEnabled(tunnel_t *t)
 static void httpclientSplitGenerateId(tunnel_t *t, char out[48])
 {
     httpclient_tstate_t *ts  = tunnelGetState(t);
-    uint64_t             seq = atomicIncRelaxed(&ts->split_identifier);
+    uint64_t             seq = atomicIncU64Relaxed(&ts->split_identifier);
     uint64_t             rnd = fastRand64();
     snprintf(out, 48, "%016" PRIx64 "%016" PRIx64, seq, rnd);
 }

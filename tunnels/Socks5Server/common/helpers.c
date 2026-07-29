@@ -430,10 +430,10 @@ static socks5server_assoc_shard_t *socks5serverGetAssocShard(tunnel_t *t, hash_t
 static uint64_t socks5serverNextAssociationToken(tunnel_t *t)
 {
     socks5server_tstate_t *ts = tunnelGetState(t);
-    uint64_t token = (uint64_t) atomicAddExplicit(&ts->next_association_token, 1ULL, memory_order_relaxed) + 1ULL;
+    uint64_t token = atomicAddU64Explicit(&ts->next_association_token, 1ULL, memory_order_relaxed) + 1ULL;
     if (UNLIKELY(token == 0))
     {
-        token = (uint64_t) atomicAddExplicit(&ts->next_association_token, 1ULL, memory_order_relaxed) + 1ULL;
+        token = atomicAddU64Explicit(&ts->next_association_token, 1ULL, memory_order_relaxed) + 1ULL;
     }
     return token;
 }

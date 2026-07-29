@@ -166,8 +166,8 @@ static bool finalizeRateMath(speedlimit_tstate_t *state, int workers_count)
     state->bucket_capacity_units = state->bytes_per_sec * kSpeedLimitUnitsPerByte;
     state->refill_units_per_step = state->bytes_per_sec * state->recharge_interval_ms;
 
-    atomicStoreRelaxed(&state->global_bucket.tokens_units, state->bucket_capacity_units);
-    atomicStoreRelaxed(&state->global_bucket.last_refill_ms, 0);
+    atomicStoreU64Relaxed(&state->global_bucket.tokens_units, state->bucket_capacity_units);
+    atomicStoreU64Relaxed(&state->global_bucket.last_refill_ms, 0);
 
     for (int wi = 0; wi < workers_count; ++wi)
     {

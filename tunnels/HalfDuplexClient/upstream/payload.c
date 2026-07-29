@@ -52,7 +52,7 @@ static void handleFirstPacket(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexcli
 {
     halfduplexclient_tstate_t *state = tunnelGetState(t);
     
-    uint64_t identifier = atomicIncRelaxed(&state->identifier);
+    uint64_t identifier = atomicIncU64Relaxed(&state->identifier);
     uint32_t cids[2] = {0};
     uint8_t *cid_bytes = (uint8_t *)&(cids[0]);
     
