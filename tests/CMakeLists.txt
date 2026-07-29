@@ -10,6 +10,19 @@ option(
 add_subdirectory(unittests EXCLUDE_FROM_ALL)
 add_subdirectory(benchmarks)
 
+# Every runner now copies its case directory into a private run directory, so
+# generated files can no longer collide. The listener ports inside config.json
+# are still a shared resource though: distinct cases pick distinct ports, but
+# several tests may point at the same case directory. Locking on the case name
+# keeps those siblings off each other's ports under `ctest -j` while unrelated
+# cases stay fully parallel.
+function(add_waterwall_case_resource_lock test_name case_name)
+  set_property(
+    TEST ${test_name}
+    APPEND PROPERTY RESOURCE_LOCK "waterwall_case_${case_name}"
+  )
+endfunction()
+
 function(add_waterwall_integration_test_with_timeout test_name case_name timeout_seconds)
   set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
 
@@ -29,6 +42,7 @@ function(add_waterwall_integration_test_with_timeout test_name case_name timeout
       TIMEOUT 120
       LABELS "integration;tunnels"
   )
+  add_waterwall_case_resource_lock(${test_name} ${case_name})
 endfunction()
 
 function(add_waterwall_integration_test test_name case_name)
@@ -57,6 +71,7 @@ function(add_waterwall_wireguard_cookie_test test_name case_name)
       LABELS "integration;tunnels;wireguard;cookies;overload"
       RESOURCE_LOCK waterwall_wireguard_cookie_ports
   )
+  add_waterwall_case_resource_lock(${test_name} ${case_name})
 endfunction()
 
 function(add_waterwall_skipped_integration_test test_name skip_message)
@@ -106,6 +121,7 @@ function(add_waterwall_expected_failure_integration_test test_name case_name exp
       TIMEOUT 120
       LABELS "integration;tunnels;negative"
   )
+  add_waterwall_case_resource_lock(${test_name} ${case_name})
 endfunction()
 
 add_test(
@@ -155,6 +171,7 @@ function(add_waterwall_probe_integration_test test_name case_name timeout_second
       TIMEOUT 120
       LABELS "integration;tunnels;probe"
   )
+  add_waterwall_case_resource_lock(${test_name} ${case_name})
 endfunction()
 
 function(add_waterwall_privileged_probe_integration_test test_name case_name timeout_seconds)
@@ -179,6 +196,7 @@ function(add_waterwall_privileged_probe_integration_test test_name case_name tim
         LABELS "integration;tunnels;probe;privileged;socket-manager"
         SKIP_RETURN_CODE 77
     )
+    add_waterwall_case_resource_lock(${test_name} ${case_name})
   else()
     add_waterwall_skipped_integration_test(
       ${test_name}
@@ -242,6 +260,7 @@ function(add_waterwall_packet_analysis_test test_name case_name)
       TIMEOUT 120
       LABELS "integration;tunnels;packet-analysis"
   )
+  add_waterwall_case_resource_lock(${test_name} ${case_name})
 endfunction()
 
 function(add_waterwall_speedtest test_name speedtest_name)
@@ -263,6 +282,7 @@ function(add_waterwall_speedtest test_name speedtest_name)
       TIMEOUT 120
       LABELS "integration;tunnels;speedtest"
   )
+  add_waterwall_case_resource_lock(${test_name} "speedtest_${speedtest_name}")
 endfunction()
 
 add_waterwall_integration_test(waterwall.disturber_passthrough disturber_passthrough)
