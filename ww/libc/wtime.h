@@ -59,18 +59,45 @@ WW_INLINE int getTimeOfDay(struct timeval *tv, struct timezone *tz)
 #define getTimeOfDay gettimeofday
 #endif
 
+#if defined(OS_WIN)
+WW_INLINE unsigned long long wwWindowsFileTimeToUnix100ns(const FILETIME *ft)
+{
+    const unsigned long long windows_to_unix_epoch_100ns = 116444736000000000ULL;
+    ULARGE_INTEGER           filetime;
+
+    filetime.LowPart  = ft->dwLowDateTime;
+    filetime.HighPart = ft->dwHighDateTime;
+    return filetime.QuadPart - windows_to_unix_epoch_100ns;
+}
+
+WW_INLINE unsigned long long wwWindowsTimeOfDay100ns(void)
+{
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    return wwWindowsFileTimeToUnix100ns(&ft);
+}
+#endif
+
 WW_EXPORT unsigned int       getTickMS(void);
 WW_INLINE unsigned long long getTimeOfDayMS(void)
 {
+#if defined(OS_WIN)
+    return wwWindowsTimeOfDay100ns() / 10000ULL;
+#else
     struct timeval tv;
     getTimeOfDay(&tv, NULL);
-    return (unsigned long long)((tv.tv_sec * 1000) + (tv.tv_usec / 1000));
+    return ((unsigned long long) tv.tv_sec * 1000ULL) + ((unsigned long long) tv.tv_usec / 1000ULL);
+#endif
 }
 WW_INLINE unsigned long long getTimeOfDayUS(void)
 {
+#if defined(OS_WIN)
+    return wwWindowsTimeOfDay100ns() / 10ULL;
+#else
     struct timeval tv;
     getTimeOfDay(&tv, NULL);
-    return (unsigned long long) ((tv.tv_sec * 1000000) + tv.tv_usec);
+    return ((unsigned long long) tv.tv_sec * 1000000ULL) + (unsigned long long) tv.tv_usec;
+#endif
 }
 WW_EXPORT unsigned long long getHRTimeUs(void);
 
@@ -153,10 +180,7 @@ static inline void getTAI64N(tai64n_t *timestamp)
 // Function to convert FILETIME to Unix timestamp
 static int64_t filetimeToUnix(const FILETIME *ft)
 {
-    // FILETIME is in 100-nanosecond intervals since January 1, 1601
-    const uint64_t EPOCH_DIFF = 116444736000000000ULL; // Difference in 100-ns units
-    uint64_t       filetime   = ((uint64_t) ft->dwHighDateTime << 32) | ft->dwLowDateTime;
-    return (int64_t) ((filetime - EPOCH_DIFF) / 10000000); // Convert to seconds
+    return (int64_t) (wwWindowsFileTimeToUnix100ns(ft) / 10000000ULL);
 }
 
 // Function to get TAI64N timestamp

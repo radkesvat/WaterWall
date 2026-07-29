@@ -215,6 +215,12 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.wendian_unit wendian_test "unit;libc;endian")
 
+  add_executable(wtime_epoch_test wtime_epoch_test.c)
+  target_link_libraries(wtime_epoch_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests wtime_epoch_test)
+
+  add_waterwall_unit_test(waterwall.wtime_epoch_unit wtime_epoch_test "unit;libc;time;epoch;overflow")
+
   add_executable(wsocket_validation_test wsocket_validation_test.c)
   target_link_libraries(wsocket_validation_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests wsocket_validation_test)

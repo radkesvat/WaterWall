@@ -1135,6 +1135,31 @@ endif()
 # Windows does not add the tests/ subtree, so register the focused interface-name
 # test here as well. The test remains build-on-demand through its CTest runner.
 if(BUILD_TESTING AND WIN32)
+  add_executable(wtime_epoch_test EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/wtime_epoch_test.c)
+  set_target_properties(wtime_epoch_test PROPERTIES
+    INTERPROCEDURAL_OPTIMIZATION OFF
+    INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF
+    INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
+    INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF
+    INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF
+  )
+  target_link_libraries(wtime_epoch_test PRIVATE ww)
+  add_test(
+    NAME waterwall.wtime_epoch_unit
+    COMMAND
+      "${CMAKE_COMMAND}"
+      "-DUNIT_TEST_TARGET=wtime_epoch_test"
+      "-DUNIT_TEST_CONFIG=$<CONFIG>"
+      "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE:wtime_epoch_test>"
+      "-DUNIT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/run_unit_test.cmake"
+  )
+  set_tests_properties(waterwall.wtime_epoch_unit PROPERTIES
+    TIMEOUT 120
+    LABELS "unit;libc;time;epoch;overflow;windows"
+    RESOURCE_LOCK waterwall_unit_test_build)
+
   add_executable(wsocket_windows_interface_test EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/wsocket_windows_interface_test.c)
   set_target_properties(wsocket_windows_interface_test PROPERTIES
