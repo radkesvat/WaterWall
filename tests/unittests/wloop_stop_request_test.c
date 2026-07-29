@@ -6,7 +6,8 @@
  * contract it has to satisfy for worker shutdown to be reliable:
  *   - a request from another thread wakes a loop blocked in the poller promptly;
  *   - a request issued before wloopRun() started is still honored;
- *   - repeated requests are idempotent;
+ *   - large and concurrent repeated request sets coalesce without blocking;
+ *   - an existing custom-event wake also covers a stop request;
  *   - a request racing the loop's own exit is safe.
  */
 
@@ -18,6 +19,10 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+#define LARGE_STOP_REQUEST_SET 100000U
+#define STOP_REQUEST_THREADS   4U
+#define STOPS_PER_THREAD       25000U
 
 typedef struct env_s
 {
@@ -172,11 +177,20 @@ static void testStopBeforeRunIsHonored(env_t *env)
     runnerCreate(&runner, env);
 
     require(wloopRequestStop(runner.loop), "wloopRequestStop() failed before the loop started");
+    for (size_t i = 1; i < LARGE_STOP_REQUEST_SET; ++i)
+    {
+        require(wloopRequestStop(runner.loop), "a coalesced pre-start stop request failed");
+    }
 
     runnerStart(&runner);
 
     require(waitForFlag(&runner.finished, 2000), "a loop started after a stop request kept running");
     runnerJoin(&runner);
+
+    for (size_t i = 0; i < LARGE_STOP_REQUEST_SET; ++i)
+    {
+        require(wloopRequestStop(runner.loop), "a coalesced post-exit stop request failed");
+    }
 
     runnerDestroy(&runner);
 }
@@ -190,7 +204,7 @@ static void testRepeatedStopRequests(env_t *env)
     require(waitForFlag(&runner.running, 2000), "the loop thread did not start");
     wwSleepMS(50);
 
-    for (int i = 0; i < 16; ++i)
+    for (size_t i = 0; i < LARGE_STOP_REQUEST_SET; ++i)
     {
         require(wloopRequestStop(runner.loop), "a repeated wloopRequestStop() failed");
     }
@@ -203,6 +217,66 @@ static void testRepeatedStopRequests(env_t *env)
     // as worker 0 asks it to stop.
     require(wloopRequestStop(runner.loop), "wloopRequestStop() failed on an already stopped loop");
 
+    runnerDestroy(&runner);
+}
+
+typedef struct stop_requester_s
+{
+    wloop_t  *loop;
+    wthread_t thread;
+} stop_requester_t;
+
+static WTHREAD_ROUTINE(stopRequesterMain) // NOLINT
+{
+    stop_requester_t *requester = userdata;
+
+    tl_wid = 0;
+    for (size_t i = 0; i < STOPS_PER_THREAD; ++i)
+    {
+        require(wloopRequestStop(requester->loop), "a concurrent repeated stop request failed");
+    }
+    return 0;
+}
+
+static void testConcurrentRepeatedStopRequests(env_t *env)
+{
+    loop_runner_t    runner;
+    stop_requester_t requesters[STOP_REQUEST_THREADS];
+    runnerCreate(&runner, env);
+    runnerStart(&runner);
+    require(waitForFlag(&runner.running, 2000), "the loop thread did not start");
+    wwSleepMS(50);
+
+    for (size_t i = 0; i < STOP_REQUEST_THREADS; ++i)
+    {
+        requesters[i].loop = runner.loop;
+        require(threadCreate(&requesters[i].thread, stopRequesterMain, &requesters[i]) == kWThreadErrorNone,
+                "failed to spawn a stop-request thread");
+    }
+    for (size_t i = 0; i < STOP_REQUEST_THREADS; ++i)
+    {
+        threadJoin(requesters[i].thread);
+    }
+
+    require(waitForFlag(&runner.finished, 2000), "the loop did not stop after concurrent repeated requests");
+    runnerJoin(&runner);
+    runnerDestroy(&runner);
+}
+
+static void testStopCoveredByExistingEventWake(env_t *env)
+{
+    loop_runner_t runner;
+    runnerCreate(&runner, env);
+
+    wevent_t event;
+    memoryZero(&event, sizeof(event));
+    require(wloopPostControlEvent(runner.loop, &event), "failed to queue the event that arms the shared wake");
+    require(runner.loop->wakeup_pending, "custom event did not arm the shared wake");
+    require(wloopRequestStop(runner.loop), "existing custom-event wake did not cover the stop request");
+
+    runnerStart(&runner);
+    require(waitForFlag(&runner.finished, 2000), "stop covered by an existing event wake was not honored");
+    runnerJoin(&runner);
     runnerDestroy(&runner);
 }
 
@@ -243,6 +317,8 @@ int main(void)
     testStopWakesBlockedLoop(&env);
     testStopBeforeRunIsHonored(&env);
     testRepeatedStopRequests(&env);
+    testConcurrentRepeatedStopRequests(&env);
+    testStopCoveredByExistingEventWake(&env);
     testStopRacingSelfExit(&env);
 
     envTeardown(&env);

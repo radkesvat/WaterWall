@@ -670,6 +670,37 @@ if(TARGET ww)
       "unit;event;shutdown;worker;lifetime"
     )
 
+    foreach(wloop_wakeup_backend IN ITEMS pipe socketpair)
+      set(wloop_wakeup_target "wloop_wakeup_${wloop_wakeup_backend}_test")
+      add_executable(${wloop_wakeup_target}
+        wloop_wakeup_coalescing_test.c
+        ${CMAKE_SOURCE_DIR}/ww/event/wloop.c
+        ${CMAKE_SOURCE_DIR}/ww/event/nio.c
+        ${CMAKE_SOURCE_DIR}/ww/event/select.c
+      )
+      target_compile_definitions(${wloop_wakeup_target} PRIVATE
+        EVENT_SELECT=1
+        HAVE_EVENTFD=0
+        WATERWALL_WLOOP_TEST_HOOKS=1
+      )
+      if(wloop_wakeup_backend STREQUAL "pipe")
+        target_compile_definitions(${wloop_wakeup_target} PRIVATE
+          HAVE_PIPE=1
+          WLOOP_TEST_PIPE_BACKEND=1
+        )
+      else()
+        target_compile_definitions(${wloop_wakeup_target} PRIVATE HAVE_PIPE=0)
+      endif()
+      target_link_libraries(${wloop_wakeup_target} PRIVATE ww)
+      add_dependencies(waterwall_unit_tests ${wloop_wakeup_target})
+
+      add_waterwall_unit_test(
+        waterwall.wloop_wakeup_${wloop_wakeup_backend}
+        ${wloop_wakeup_target}
+        "unit;event;wakeup;coalescing;${wloop_wakeup_backend}"
+      )
+    endforeach()
+
     if(UNIX)
       add_executable(shutdown_manager_test shutdown_manager_test.c)
       target_link_libraries(shutdown_manager_test PRIVATE ww)
