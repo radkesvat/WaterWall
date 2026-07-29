@@ -4,7 +4,8 @@
 #
 # Purpose:
 # - run exactly one tests/cases/<name> directory against a chosen Waterwall binary
-# - run Waterwall from that case directory so generated logs stay beside the case
+# - copy the case into a private run directory so generated files stay out of the
+#   source tree and concurrent tests cannot clobber each other
 # - create a generated core.json so the case only needs to provide config.json
 # - fail on crash, early exit, missing success marker, or timeout
 # - print logs on failure for easier debugging
@@ -42,11 +43,11 @@ binary_path=$(realpath "$1")
 case_dir=$(realpath "$2")
 timeout_seconds=$3
 
-run_dir=$case_dir
+source "$(dirname "$(realpath "$0")")/case_run_dir.lib.sh"
+
+prepare_case_run_dir "$case_dir"
+run_dir=$case_run_dir
 generated_core_json="$run_dir/core.json"
-core_created=0
-mutable_backup_dir=""
-mutable_files=()
 success_exit_grace_seconds=${WATERWALL_TEST_SUCCESS_EXIT_GRACE_SECONDS:-$DEFAULT_SUCCESS_EXIT_GRACE_SECONDS}
 pid=""
 success_seen=0
@@ -137,68 +138,18 @@ wait_for_success_graceful_exit() {
   done
 }
 
-snapshot_mutable_file() {
-  local path=$1
-  local name
-
-  if [[ ! -f "$path" ]]; then
-    return 0
-  fi
-
-  if [[ -z "$mutable_backup_dir" ]]; then
-    mutable_backup_dir=$(mktemp -d)
-  fi
-
-  name=$(basename "$path")
-  cp "$path" "$mutable_backup_dir/$name"
-  mutable_files+=("$name")
-}
-
-restore_mutable_files() {
-  local name
-
-  if [[ -z "$mutable_backup_dir" ]]; then
-    return 0
-  fi
-
-  for name in "${mutable_files[@]}"; do
-    cp "$mutable_backup_dir/$name" "$run_dir/$name"
-  done
-
-  rm -rf "$mutable_backup_dir"
-  mutable_backup_dir=""
-}
-
 cleanup() {
   if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
     kill -TERM "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
   fi
 
-  restore_mutable_files
-
-  if [[ $core_created -eq 1 ]]; then
-    rm -f "$generated_core_json"
-  fi
-
-  if [[ ! " ${mutable_files[*]} " =~ " users.json.backup " ]]; then
-    rm -f "$run_dir/users.json.backup"
-  fi
+  # The run directory is a private copy, so files Waterwall mutates in place
+  # (users.json and its backup) die with it and never touch the case directory.
+  remove_case_run_dir
 }
 
 trap cleanup EXIT
-
-if [[ -e "$generated_core_json" ]]; then
-  echo "Refusing to overwrite existing generated core.json in case directory: $generated_core_json" >&2
-  exit 2
-fi
-
-# Logs are intentionally kept in the case directory for debugging, but each run
-# must start clean so stale tester success markers cannot satisfy this run.
-rm -rf "$run_dir/stdout.log" "$run_dir/log"
-
-snapshot_mutable_file "$run_dir/users.json"
-snapshot_mutable_file "$run_dir/users.json.backup"
 
 test_workers=$DEFAULT_TEST_WORKERS
 if [[ -f "$run_dir/workers.txt" ]]; then
@@ -209,7 +160,6 @@ if [[ -f "$run_dir/workers.txt" ]]; then
   fi
 fi
 
-core_created=1
 cat >"$generated_core_json" <<EOF
 {
   "log": {

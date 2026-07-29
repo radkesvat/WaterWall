@@ -12,9 +12,11 @@ binary_path=$(realpath "$1")
 case_dir=$(realpath "$2")
 timeout_seconds=$3
 
-run_dir=$case_dir
+source "$(dirname "$(realpath "$0")")/case_run_dir.lib.sh"
+
+prepare_case_run_dir "$case_dir"
+run_dir=$case_run_dir
 generated_core_json="$run_dir/core.json"
-core_created=0
 pid=""
 
 dump_logs() {
@@ -51,21 +53,14 @@ cleanup() {
     wait "$pid" 2>/dev/null || true
   fi
 
-  if [[ $core_created -eq 1 ]]; then
-    rm -f "$generated_core_json"
-  fi
+  remove_case_run_dir
 }
 
 trap cleanup EXIT
 
-if [[ -e "$generated_core_json" ]]; then
-  echo "Refusing to overwrite existing generated core.json in case directory: $generated_core_json" >&2
-  exit 2
-fi
-
-# Keep generated logs and packet reports in the case directory, but make sure
-# stale output cannot satisfy this run.
-rm -rf "$run_dir/stdout.log" "$run_dir/log" "$run_dir/packet-receiver-report.txt"
+# The run directory is a fresh copy, so no stale packet report can satisfy this
+# run; drop one only if the case directory itself carries a checked-in leftover.
+rm -f "$run_dir/packet-receiver-report.txt"
 
 workers=2
 if [[ -f "$run_dir/workers.txt" ]]; then
@@ -76,7 +71,6 @@ if [[ -f "$run_dir/workers.txt" ]]; then
   fi
 fi
 
-core_created=1
 cat >"$generated_core_json" <<EOF
 {
   "log": {

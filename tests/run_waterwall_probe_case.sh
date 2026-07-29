@@ -17,10 +17,11 @@ case_dir=$(realpath "$2")
 timeout_seconds=$3
 python_path=$4
 
-run_dir=$case_dir
+source "$(dirname "$(realpath "$0")")/case_run_dir.lib.sh"
+
+prepare_case_run_dir "$case_dir"
+run_dir=$case_run_dir
 generated_core_json="$run_dir/core.json"
-core_created=0
-generated_fixture_paths=()
 pid=""
 
 dump_logs() {
@@ -47,42 +48,18 @@ cleanup() {
     wait "$pid" 2>/dev/null || true
   fi
 
-  if [[ $core_created -eq 1 ]]; then
-    rm -f "$generated_core_json"
-  fi
-
-  if [[ ${#generated_fixture_paths[@]} -gt 0 ]]; then
-    rm -f -- "${generated_fixture_paths[@]}"
-  fi
+  # Generated core.json, logs and fixtures live in the private run directory,
+  # so removing it is the whole cleanup.
+  remove_case_run_dir
 }
 
 trap cleanup EXIT
 
-if [[ -e "$generated_core_json" ]]; then
-  echo "Refusing to overwrite existing generated core.json in case directory: $generated_core_json" >&2
-  exit 2
-fi
-
-# Keep generated logs in the case directory, but start each run clean.
-rm -rf "$run_dir/stdout.log" "$run_dir/log"
-
-copy_generated_fixture() {
-  local source_path=$1
-  local dest_path=$2
-
-  if [[ -e "$dest_path" ]]; then
-    return 0
-  fi
-
-  cp "$source_path" "$dest_path"
-  generated_fixture_paths+=("$dest_path")
-}
-
 if [[ ! -f "$run_dir/server.crt" && -f "$case_dir/../tls_roundtrip/server.crt" ]]; then
-  copy_generated_fixture "$case_dir/../tls_roundtrip/server.crt" "$run_dir/server.crt"
+  cp "$case_dir/../tls_roundtrip/server.crt" "$run_dir/server.crt"
 fi
 if [[ ! -f "$run_dir/server.key" && -f "$case_dir/../tls_roundtrip/server.key" ]]; then
-  copy_generated_fixture "$case_dir/../tls_roundtrip/server.key" "$run_dir/server.key"
+  cp "$case_dir/../tls_roundtrip/server.key" "$run_dir/server.key"
 fi
 
 test_workers=$DEFAULT_TEST_WORKERS
@@ -94,7 +71,6 @@ if [[ -f "$run_dir/workers.txt" ]]; then
   fi
 fi
 
-core_created=1
 cat >"$generated_core_json" <<EOF
 {
   "log": {
