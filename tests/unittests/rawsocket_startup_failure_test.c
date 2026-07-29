@@ -11,6 +11,7 @@ static int notify_fd = -1;
 
 static capture_device_t fake_capture_device;
 static raw_device_t     fake_raw_device;
+static bool             fake_raw_device_up;
 
 capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
                                              uint32_t capture_range_count, void *userdata, CaptureReadEventHandle cb);
@@ -75,15 +76,15 @@ raw_device_t *__wrap_rawdeviceCreate(const char *name, uint32_t mark, void *user
     require(mark == 7, "RawSocket passed the wrong firewall mark");
     require(userdata != NULL, "RawSocket did not pass tunnel userdata to raw device");
 
-    fake_raw_device = (raw_device_t) {0};
-    atomic_store(&fake_raw_device.up, false);
+    fake_raw_device    = (raw_device_t) {0};
+    fake_raw_device_up = false;
     return &fake_raw_device;
 }
 
 bool __wrap_caputredeviceBringUp(capture_device_t *cdev)
 {
     require(cdev == &fake_capture_device, "RawSocket brought up an unexpected capture device");
-    require(atomic_load(&fake_raw_device.up), "RawSocket activated capture before the raw writer was ready");
+    require(fake_raw_device_up, "RawSocket activated capture before the raw writer was ready");
     notifyCleanup('c');
     return false;
 }
@@ -91,7 +92,7 @@ bool __wrap_caputredeviceBringUp(capture_device_t *cdev)
 bool __wrap_rawdeviceBringUp(raw_device_t *rdev)
 {
     require(rdev == &fake_raw_device, "RawSocket brought up an unexpected raw device");
-    atomic_store(&rdev->up, true);
+    fake_raw_device_up = true;
     notifyCleanup('u');
     return true;
 }
@@ -107,8 +108,8 @@ bool __wrap_caputredeviceBringDown(capture_device_t *cdev)
 bool __wrap_rawdeviceBringDown(raw_device_t *rdev)
 {
     require(rdev == &fake_raw_device, "RawSocket brought down an unexpected raw device");
-    require(atomic_load(&rdev->up), "RawSocket brought down a raw device that was not up");
-    atomic_store(&rdev->up, false);
+    require(fake_raw_device_up, "RawSocket brought down a raw device that was not up");
+    fake_raw_device_up = false;
     notifyCleanup('d');
     return true;
 }
@@ -124,7 +125,7 @@ void __wrap_rawdeviceDestroy(raw_device_t *rdev)
 {
     require(rdev == &fake_raw_device, "RawSocket destroyed an unexpected raw device");
     require(! atomic_load(&fake_capture_device.up), "RawSocket destroyed raw device before capture was down");
-    require(! atomic_load(&rdev->up), "RawSocket destroyed raw device while its writer was still up");
+    require(! fake_raw_device_up, "RawSocket destroyed raw device while its writer was still up");
     notifyCleanup('r');
 }
 

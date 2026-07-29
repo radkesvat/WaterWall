@@ -149,6 +149,16 @@ if(TARGET ww)
     "unit;net;tun;windows;receive;drop"
   )
 
+  add_executable(raw_windows_send_policy_test raw_windows_send_policy_test.c)
+  target_include_directories(raw_windows_send_policy_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices/raw)
+  add_dependencies(waterwall_unit_tests raw_windows_send_policy_test)
+
+  add_waterwall_unit_test(
+    waterwall.raw_windows_send_policy_unit
+    raw_windows_send_policy_test
+    "unit;net;raw;windows;send;failure"
+  )
+
   add_executable(sbuf_capacity_test sbuf_capacity_test.c)
   target_link_libraries(sbuf_capacity_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests sbuf_capacity_test)
@@ -548,7 +558,13 @@ if(TARGET ww)
       ${CMAKE_SOURCE_DIR}/ww/devices/device_writer_channel.c
       ${CMAKE_SOURCE_DIR}/ww/devices/raw/raw_linux.c
     )
-    target_link_options(raw_linux_writer_test PRIVATE "-Wl,--wrap=pthread_join")
+    target_link_options(raw_linux_writer_test PRIVATE
+      "-Wl,--wrap=pthread_join"
+      "-Wl,--wrap=sendmmsg"
+      "-Wl,--wrap=poll"
+      "-Wl,--wrap=requestProgramShutdown"
+      "-Wl,--wrap=abortProgramNow"
+    )
     target_link_libraries(raw_linux_writer_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests raw_linux_writer_test)
 

@@ -1,13 +1,18 @@
 #include "devices/raw/raw.h"
+#include "devices/raw/raw_linux_internal.h"
+#include "devices/raw/raw_linux_send_policy.h"
 
 #include "global_state.h"
 #include "wchan.h"
 
 #include <errno.h>
 #include <netinet/ip.h>
+#include <poll.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 typedef struct test_env_s
 {
@@ -55,6 +60,40 @@ int __wrap_pthread_join(pthread_t thread, void **retval)
     return __real_pthread_join(thread, retval);
 }
 
+int            __real_sendmmsg(int socket_fd, struct mmsghdr *messages, unsigned int message_count, int flags);
+int            __wrap_sendmmsg(int socket_fd, struct mmsghdr *messages, unsigned int message_count, int flags);
+int            __real_poll(struct pollfd *fds, nfds_t count, int timeout_ms);
+int            __wrap_poll(struct pollfd *fds, nfds_t count, int timeout_ms);
+bool           __wrap_requestProgramShutdown(int exit_code);
+_Noreturn void __wrap_abortProgramNow(int exit_code);
+
+enum
+{
+    kInjectedRawSocketFd = 7001,
+    kMaxInjectedSends    = 16,
+    kUnexpectedAbortExit = 77
+};
+
+typedef struct injected_send_result_s
+{
+    int result;
+    int error;
+} injected_send_result_t;
+
+typedef enum injected_poll_result_e
+{
+    kInjectedPollReady = 0,
+    kInjectedPollInvalid
+} injected_poll_result_t;
+
+static injected_send_result_t injected_sends[kMaxInjectedSends];
+static unsigned int           injected_send_count;
+static atomic_uint            observed_send_calls;
+static injected_poll_result_t injected_poll_result;
+static atomic_bool            allow_injected_send;
+static atomic_uint            shutdown_request_calls;
+static atomic_int             shutdown_request_last_code;
+
 static void require(bool condition, const char *message)
 {
     if (! condition)
@@ -62,6 +101,84 @@ static void require(bool condition, const char *message)
         fprintf(stderr, "FAIL: %s\n", message);
         exit(1);
     }
+}
+
+int __wrap_sendmmsg(int socket_fd, struct mmsghdr *messages, unsigned int message_count, int flags)
+{
+    if (socket_fd != kInjectedRawSocketFd)
+    {
+        return __real_sendmmsg(socket_fd, messages, message_count, flags);
+    }
+
+    discard messages;
+    discard flags;
+
+    while (! atomicLoadExplicit(&allow_injected_send, memory_order_acquire))
+    {
+        YIELD_THREAD();
+    }
+
+    unsigned int call = atomicAddExplicit(&observed_send_calls, 1, memory_order_relaxed);
+    require(call < injected_send_count, "raw writer made an unarmed sendmmsg() call");
+
+    const injected_send_result_t entry = injected_sends[call];
+    if (entry.result < 0)
+    {
+        errno = entry.error;
+        return -1;
+    }
+
+    require((unsigned int) entry.result <= message_count, "injected sendmmsg() result exceeded its batch");
+    return entry.result;
+}
+
+int __wrap_poll(struct pollfd *fds, nfds_t count, int timeout_ms)
+{
+    if (count != 1 || fds[0].fd != kInjectedRawSocketFd)
+    {
+        return __real_poll(fds, count, timeout_ms);
+    }
+
+    discard timeout_ms;
+    if (injected_poll_result == kInjectedPollInvalid)
+    {
+        fds[0].revents = POLLNVAL;
+        return 1;
+    }
+
+    fds[0].revents = POLLOUT;
+    return 1;
+}
+
+bool __wrap_requestProgramShutdown(int exit_code)
+{
+    atomicAddExplicit(&shutdown_request_calls, 1, memory_order_relaxed);
+    atomicStoreRelaxed(&shutdown_request_last_code, exit_code);
+    return true;
+}
+
+_Noreturn void __wrap_abortProgramNow(int exit_code)
+{
+    fprintf(stderr, "FAIL: raw writer reached abortProgramNow(%d)\n", exit_code);
+    _Exit(kUnexpectedAbortExit);
+}
+
+static void resetFailureInjection(void)
+{
+    memoryZero(injected_sends, sizeof(injected_sends));
+    injected_send_count  = 0;
+    injected_poll_result = kInjectedPollReady;
+    atomicStoreRelaxed(&allow_injected_send, false);
+    atomicStoreRelaxed(&observed_send_calls, 0);
+    atomicStoreRelaxed(&shutdown_request_calls, 0);
+    atomicStoreRelaxed(&shutdown_request_last_code, 0);
+}
+
+static void armInjectedSends(const injected_send_result_t *results, unsigned int count)
+{
+    require(count <= ARRAY_SIZE(injected_sends), "too many injected raw send results");
+    memoryCopy(injected_sends, results, count * sizeof(results[0]));
+    injected_send_count = count;
 }
 
 static void envSetup(test_env_t *env)
@@ -93,7 +210,7 @@ static WTHREAD_ROUTINE(testWriterRoutine)
     sbuf_t           *buf;
     struct wchan_s   *writer_channel = deviceWriterChannelGetConsumerChannel(&rdev->writer_channel);
 
-    while (atomicLoadRelaxed(&rdev->running))
+    while (rawLifecycleIsActive(rawLifecycleLoad(&rdev->lifecycle)))
     {
         if (! chanRecv(writer_channel, &buf))
         {
@@ -113,7 +230,7 @@ static WTHREAD_ROUTINE(recyclingWriterRoutine)
     struct wchan_s    *writer_channel = deviceWriterChannelGetConsumerChannel(&rdev->writer_channel);
     sbuf_t            *buf;
 
-    while (atomicLoadRelaxed(&rdev->running))
+    while (rawLifecycleIsActive(rawLifecycleLoad(&rdev->lifecycle)))
     {
         if (! chanRecv(writer_channel, &buf))
         {
@@ -162,6 +279,8 @@ static void *senderRoutine(void *userdata)
 
 static void testRawBringDownQuiescesConcurrentWriters(test_env_t *env)
 {
+    resetFailureInjection();
+
     enum
     {
         kWriterThreads = 4,
@@ -179,6 +298,7 @@ static void testRawBringDownQuiescesConcurrentWriters(test_env_t *env)
     rdev.writer_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
     rdev.routine_writer     = testWriterRoutine;
     rdev.userdata           = &consumer;
+    atomic_init(&rdev.lifecycle, kRawLifecycleDown);
     deviceWriterChannelInit(&rdev.writer_channel);
 
     require(rawdeviceBringUp(&rdev), "production rawdeviceBringUp failed");
@@ -239,12 +359,15 @@ static void testRawBringDownQuiescesConcurrentWriters(test_env_t *env)
     }
 
     require(deviceWriterChannelDestroy(&rdev.writer_channel), "failed to destroy retired raw writer generations");
+    require(atomicLoadRelaxed(&shutdown_request_calls) == 0, "normal raw writer stop requested process shutdown");
     memoryFree(rdev.name);
     bufferpoolDestroy(rdev.writer_buffer_pool);
 }
 
 static void testRawJoinFailureRetainsOwnership(test_env_t *env)
 {
+    resetFailureInjection();
+
     raw_device_t rdev;
     memoryZero(&rdev, sizeof(rdev));
     sbuf_t          *consumed_buffers[1];
@@ -256,6 +379,7 @@ static void testRawJoinFailureRetainsOwnership(test_env_t *env)
     rdev.writer_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
     rdev.routine_writer     = testWriterRoutine;
     rdev.userdata           = &consumer;
+    atomic_init(&rdev.lifecycle, kRawLifecycleDown);
     deviceWriterChannelInit(&rdev.writer_channel);
 
     require(rawdeviceBringUp(&rdev), "raw join-retry bring-up failed");
@@ -272,12 +396,15 @@ static void testRawJoinFailureRetainsOwnership(test_env_t *env)
             "raw writer join retry did not retire its closed generation");
 
     require(deviceWriterChannelDestroy(&rdev.writer_channel), "failed to destroy raw join-retry generations");
+    require(atomicLoadRelaxed(&shutdown_request_calls) == 0, "raw writer join retry requested process shutdown");
     memoryFree(rdev.name);
     bufferpoolDestroy(rdev.writer_buffer_pool);
 }
 
 static void testRawRestartTransfersWriterPoolOwnership(test_env_t *env)
 {
+    resetFailureInjection();
+
     raw_device_t      rdev;
     recycling_probe_t probe = {0};
     memoryZero(&rdev, sizeof(rdev));
@@ -286,6 +413,7 @@ static void testRawRestartTransfersWriterPoolOwnership(test_env_t *env)
     rdev.writer_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
     rdev.routine_writer     = recyclingWriterRoutine;
     rdev.userdata           = &probe;
+    atomic_init(&rdev.lifecycle, kRawLifecycleDown);
     deviceWriterChannelInit(&rdev.writer_channel);
 
     for (unsigned int generation = 0; generation < 2; generation++)
@@ -309,17 +437,170 @@ static void testRawRestartTransfersWriterPoolOwnership(test_env_t *env)
     }
 
     require(deviceWriterChannelDestroy(&rdev.writer_channel), "failed to destroy raw pool-owner generations");
+    require(atomicLoadRelaxed(&shutdown_request_calls) == 0, "normal raw writer restart requested process shutdown");
     memoryFree(rdev.name);
     bufferpoolDestroy(rdev.writer_buffer_pool);
+}
+
+static void productionWriterDeviceInit(raw_device_t *rdev, test_env_t *env, const char *name)
+{
+    memoryZero(rdev, sizeof(*rdev));
+    rdev->name               = stringDuplicate(name);
+    rdev->socket             = kInjectedRawSocketFd;
+    rdev->routine_writer     = rawLinuxWriteRoutine;
+    rdev->writer_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
+    atomic_init(&rdev->lifecycle, kRawLifecycleDown);
+    deviceWriterChannelInit(&rdev->writer_channel);
+}
+
+static void productionWriterDeviceDestroy(raw_device_t *rdev)
+{
+    require(rawLifecycleLoad(&rdev->lifecycle) == kRawLifecycleDown,
+            "destroying a raw writer test device that is not down");
+    require(! rdev->writer_joinable, "destroying a raw writer test device with an unjoined writer");
+    require(! deviceWriterChannelHasCurrent(&rdev->writer_channel),
+            "destroying a raw writer test device with a current queue generation");
+    require(deviceWriterChannelDestroy(&rdev->writer_channel), "failed to destroy raw writer test queue generations");
+    memoryFree(rdev->name);
+    bufferpoolDestroy(rdev->writer_buffer_pool);
+}
+
+static void queueRawPackets(raw_device_t *rdev, test_env_t *env, unsigned int count)
+{
+    for (unsigned int i = 0; i < count; i++)
+    {
+        sbuf_t *buf = bufferpoolGetSmallBuffer(env->worker_buffer_pool);
+        sbufSetLength(buf, sizeof(struct iphdr) + 1);
+        memoryZero(sbufGetMutablePtr(buf), sbufGetLength(buf));
+        require(rawdeviceWrite(rdev, buf), "failed to queue a raw writer failure-injection packet");
+    }
+}
+
+static void waitForRawWriterFailure(raw_device_t *rdev)
+{
+    for (unsigned int spin = 0; spin < 1000000; spin++)
+    {
+        if (rawLifecycleLoad(&rdev->lifecycle) == kRawLifecycleFailed && atomicLoadRelaxed(&shutdown_request_calls) > 0)
+        {
+            return;
+        }
+        YIELD_THREAD();
+    }
+    require(false, "timed out waiting for the raw writer to publish failure");
+}
+
+/*
+ * Recoverable and packet-local failures must advance to later packets, while
+ * the first unknown/terminal failure ends the writer and requests teardown.
+ * The sequence deliberately reaches every branch before EBADF; swallowing
+ * EBADF would make one more unarmed sendmmsg() call and fail in the wrapper.
+ */
+static void testRawSendErrorPolicyEndsOnTerminalFailure(test_env_t *env)
+{
+    resetFailureInjection();
+
+    const injected_send_result_t sends[] = {
+        {.result = -1, .error = EINTR},
+        {.result = -1, .error = EAGAIN},
+        {.result = -1, .error = ENOBUFS},
+        {.result = -1, .error = ENOMEM},
+        {.result = -1, .error = EMSGSIZE},
+        {.result = -1, .error = EINVAL},
+        {.result = -1, .error = EHOSTUNREACH},
+        {.result = -1, .error = EBADF},
+    };
+    armInjectedSends(sends, ARRAY_SIZE(sends));
+
+    raw_device_t rdev;
+    productionWriterDeviceInit(&rdev, env, "raw-send-error-test");
+    require(rawdeviceBringUp(&rdev), "raw send-error test device failed to start");
+    queueRawPackets(&rdev, env, 8);
+    atomicStoreExplicit(&allow_injected_send, true, memory_order_release);
+
+    waitForRawWriterFailure(&rdev);
+    require(! rawdeviceIsUp(&rdev), "terminal sendmmsg() failure left the raw device up");
+    require(rawLifecycleLoad(&rdev.lifecycle) == kRawLifecycleFailed,
+            "terminal sendmmsg() failure did not publish FAILED");
+    require(atomicLoadRelaxed(&observed_send_calls) == ARRAY_SIZE(sends),
+            "raw send-error policy stopped before or continued beyond the terminal error");
+    require(atomicLoadRelaxed(&shutdown_request_calls) == 1,
+            "terminal sendmmsg() failure did not request exactly one shutdown");
+    require(atomicLoadRelaxed(&shutdown_request_last_code) == 1,
+            "terminal sendmmsg() failure requested the wrong exit code");
+
+    sbuf_t *after_failure = bufferpoolGetSmallBuffer(env->worker_buffer_pool);
+    sbufSetLength(after_failure, sizeof(struct iphdr) + 1);
+    require(! rawdeviceWrite(&rdev, after_failure), "raw writer accepted a packet after publishing FAILED");
+    bufferpoolReuseBuffer(env->worker_buffer_pool, after_failure);
+
+    require(rawdeviceBringDown(&rdev), "bring-down after terminal sendmmsg() failure failed");
+    require(rdev.discarded_packet_total == 5, "recoverable raw send errors recorded the wrong discard total");
+    require(rdev.transient_send_error_total == 2, "raw resource-pressure discard accounting is wrong");
+    require(rdev.message_too_large_packet_total == 1, "raw EMSGSIZE discard accounting is wrong");
+    require(rdev.packet_local_send_error_total == 2, "raw packet-local discard accounting is wrong");
+    productionWriterDeviceDestroy(&rdev);
+}
+
+/*
+ * EAGAIN delegates to poll(). A dead descriptor is reported through POLLNVAL,
+ * not writability, and must end the writer instead of re-entering sendmmsg().
+ */
+static void testRawPollTerminalEventFailsTheDevice(test_env_t *env)
+{
+    resetFailureInjection();
+
+    const injected_send_result_t sends[] = {{.result = -1, .error = EAGAIN}};
+    armInjectedSends(sends, ARRAY_SIZE(sends));
+    injected_poll_result = kInjectedPollInvalid;
+
+    raw_device_t rdev;
+    productionWriterDeviceInit(&rdev, env, "raw-poll-error-test");
+    require(rawdeviceBringUp(&rdev), "raw poll-error test device failed to start");
+    queueRawPackets(&rdev, env, 2);
+    atomicStoreExplicit(&allow_injected_send, true, memory_order_release);
+
+    waitForRawWriterFailure(&rdev);
+    require(atomicLoadRelaxed(&observed_send_calls) == 1, "raw writer retried sendmmsg() after a terminal poll event");
+    require(rawLifecycleLoad(&rdev.lifecycle) == kRawLifecycleFailed,
+            "terminal raw writer poll event did not publish FAILED");
+    require(atomicLoadRelaxed(&shutdown_request_calls) == 1,
+            "terminal raw writer poll event did not request one shutdown");
+
+    require(rawdeviceBringDown(&rdev), "bring-down after a terminal raw writer poll event failed");
+    productionWriterDeviceDestroy(&rdev);
+}
+
+static void testRawLinuxSendErrorClassifier(void)
+{
+    require(rawLinuxClassifySendError(EINTR) == kRawLinuxSendRetryImmediately,
+            "EINTR was not classified as an immediate retry");
+    require(rawLinuxClassifySendError(EAGAIN) == kRawLinuxSendWaitWritable,
+            "EAGAIN was not classified as wait-for-writable");
+    require(rawLinuxClassifySendError(ENOBUFS) == kRawLinuxSendDiscardPacket,
+            "ENOBUFS was not classified as a transient packet discard");
+    require(rawLinuxClassifySendError(EINVAL) == kRawLinuxSendDiscardPacket,
+            "EINVAL was not classified as a packet-local discard");
+    require(rawLinuxClassifySendError(EMSGSIZE) == kRawLinuxSendDiscardPacket,
+            "EMSGSIZE was not classified as a packet-local discard");
+    require(rawLinuxClassifySendError(EHOSTUNREACH) == kRawLinuxSendDiscardPacket,
+            "EHOSTUNREACH was not classified as a destination-local discard");
+    require(rawLinuxClassifySendError(EPERM) == kRawLinuxSendDiscardPacket,
+            "EPERM was not classified as a packet-policy discard");
+    require(rawLinuxClassifySendError(EBADF) == kRawLinuxSendTerminal, "EBADF was not classified as terminal");
+    require(rawLinuxClassifySendError(EIO) == kRawLinuxSendTerminal,
+            "an unknown raw send error was not classified as terminal");
 }
 
 int main(void)
 {
     test_env_t env;
     envSetup(&env);
+    testRawLinuxSendErrorClassifier();
     testRawBringDownQuiescesConcurrentWriters(&env);
     testRawJoinFailureRetainsOwnership(&env);
     testRawRestartTransfersWriterPoolOwnership(&env);
+    testRawSendErrorPolicyEndsOnTerminalFailure(&env);
+    testRawPollTerminalEventFailsTheDevice(&env);
     envTeardown(&env);
     puts("Linux raw writer lifetime tests passed");
     return 0;
