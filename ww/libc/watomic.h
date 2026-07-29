@@ -9,8 +9,9 @@
 #include <limits.h>
 #include <stdatomic.h>
 
-typedef int          w_atomic_int_value_t;
-typedef unsigned int w_atomic_uint_value_t;
+typedef int                w_atomic_int_value_t;
+typedef unsigned int       w_atomic_uint_value_t;
+typedef unsigned long long w_atomic_ullong_value_t;
 #define W_ATOMIC_UINT_VALUE_SIGNED 0
 #define W_ATOMIC_UINT_VALUE_MAX    UINT_MAX
 
@@ -68,6 +69,7 @@ typedef intptr_t atomic_long;
 typedef intptr_t atomic_ulong;
 typedef intptr_t atomic_llong;
 typedef intptr_t atomic_ullong;
+typedef intptr_t w_atomic_ullong_value_t;
 typedef intptr_t atomic_wchar_t;
 typedef intptr_t atomic_int_least8_t;
 typedef intptr_t atomic_uint_least8_t;
@@ -198,6 +200,40 @@ static inline int atomic_compare_exchange_strong(intptr_t *object, intptr_t *exp
 
 #define atomicCompareExchange         atomic_compare_exchange_strong
 #define atomicCompareExchangeExplicit atomic_compare_exchange_strong_explicit
+
+/*
+ * Compare/exchange helpers for atomic_ullong storage.
+ *
+ * The two branches above disagree on the value type a compare/exchange expects
+ * for atomic_ullong: C11 wants unsigned long long, the Windows fallback wants
+ * intptr_t. Call sites that spell the expected value out themselves therefore
+ * need an #if of their own, so these wrappers own the difference once and let
+ * callers stay in plain uint64_t.
+ *
+ * Note the fallback still stores atomic_ullong in a pointer-width slot, so
+ * these truncate on 32-bit Windows targets. That is a property of the fallback
+ * storage, not of the wrappers.
+ */
+_Static_assert(sizeof(atomic_ullong) == sizeof(w_atomic_ullong_value_t),
+               "atomic_ullong compare/exchange value type must match its storage");
+
+static inline bool atomicCompareExchangeU64(atomic_ullong *object, uint64_t *expected, uint64_t desired)
+{
+    w_atomic_ullong_value_t expected_value = (w_atomic_ullong_value_t) *expected;
+    const bool exchanged = atomicCompareExchange(object, &expected_value, (w_atomic_ullong_value_t) desired);
+    *expected            = (uint64_t) expected_value;
+    return exchanged;
+}
+
+static inline bool atomicCompareExchangeWeakU64Explicit(atomic_ullong *object, uint64_t *expected, uint64_t desired,
+                                                        memory_order success, memory_order failure)
+{
+    w_atomic_ullong_value_t expected_value = (w_atomic_ullong_value_t) *expected;
+    const bool              exchanged      = atomic_compare_exchange_weak_explicit(
+        object, &expected_value, (w_atomic_ullong_value_t) desired, success, failure);
+    *expected = (uint64_t) expected_value;
+    return exchanged;
+}
 
 #define atomicFlagTestAndSet atomic_flag_test_and_set
 #define atomicFlagClear      atomic_flag_clear

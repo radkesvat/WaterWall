@@ -67,8 +67,8 @@ static void speedlimitRefillAtomicBucket(const speedlimit_tstate_t *ts, speedlim
         uint64_t last_refill_ms = atomicLoadRelaxed(&bucket->last_refill_ms);
         if (last_refill_ms == 0)
         {
-            unsigned long long expected = 0;
-            if (atomicCompareExchange(&bucket->last_refill_ms, &expected, now_ms))
+            uint64_t expected = 0;
+            if (atomicCompareExchangeU64(&bucket->last_refill_ms, &expected, now_ms))
             {
                 return;
             }
@@ -87,9 +87,9 @@ static void speedlimitRefillAtomicBucket(const speedlimit_tstate_t *ts, speedlim
             return;
         }
 
-        uint64_t           new_last_refill_ms = last_refill_ms + (steps * ts->recharge_interval_ms);
-        unsigned long long expected_last      = last_refill_ms;
-        if (! atomicCompareExchange(&bucket->last_refill_ms, &expected_last, new_last_refill_ms))
+        uint64_t new_last_refill_ms = last_refill_ms + (steps * ts->recharge_interval_ms);
+        uint64_t expected_last      = last_refill_ms;
+        if (! atomicCompareExchangeU64(&bucket->last_refill_ms, &expected_last, new_last_refill_ms))
         {
             continue;
         }
@@ -121,8 +121,8 @@ static void speedlimitRefillAtomicBucket(const speedlimit_tstate_t *ts, speedlim
                 }
             }
 
-            unsigned long long expected_units = old_units;
-            if (atomicCompareExchange(&bucket->tokens_units, &expected_units, new_units))
+            uint64_t expected_units = old_units;
+            if (atomicCompareExchangeU64(&bucket->tokens_units, &expected_units, new_units))
             {
                 return;
             }
@@ -204,9 +204,9 @@ size_t speedlimitGrantBytes(tunnel_t *t, line_t *l, size_t requested_bytes, bool
                 return 0;
             }
 
-            uint64_t           consume_units  = ((uint64_t) grant_bytes) * kSpeedLimitUnitsPerByte;
-            unsigned long long expected_units = old_units;
-            if (atomicCompareExchange(&ts->global_bucket.tokens_units, &expected_units, old_units - consume_units))
+            uint64_t consume_units  = ((uint64_t) grant_bytes) * kSpeedLimitUnitsPerByte;
+            uint64_t expected_units = old_units;
+            if (atomicCompareExchangeU64(&ts->global_bucket.tokens_units, &expected_units, old_units - consume_units))
             {
                 return grant_bytes;
             }

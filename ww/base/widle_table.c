@@ -100,22 +100,8 @@ static void idleItemSetExpireAt(idle_item_t *item, uint64_t expire_at_ms)
 
 static bool idleItemCompareExchangeExpireAt(idle_item_t *item, uint64_t *expected, uint64_t desired)
 {
-#if HAVE_STDATOMIC_H
-    unsigned long long expected_value = (unsigned long long) *expected;
-    const bool         exchanged      = atomic_compare_exchange_weak_explicit(&(item->expire_at_ms),
-                                                                 &expected_value,
-                                                                 (unsigned long long) desired,
-                                                                 memory_order_acq_rel,
-                                                                 memory_order_acquire);
-    *expected                         = (uint64_t) expected_value;
-    return exchanged;
-#else
-    intptr_t   expected_value = (intptr_t) *expected;
-    const bool exchanged      = atomic_compare_exchange_weak_explicit(
-        &(item->expire_at_ms), &expected_value, (intptr_t) desired, memory_order_acq_rel, memory_order_acquire);
-    *expected = (uint64_t) expected_value;
-    return exchanged;
-#endif
+    return atomicCompareExchangeWeakU64Explicit(&(item->expire_at_ms), expected, desired, memory_order_acq_rel,
+                                                memory_order_acquire);
 }
 
 static void idleItemKeepExpireAtForAtleast(idle_item_t *item, uint64_t expire_at_ms)

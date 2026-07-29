@@ -47,22 +47,14 @@ static void authenticationserverSessionFree(authenticationserver_session_t *sess
 static bool authenticationserverSessionCompareExchangeLastActivity(authenticationserver_session_t *session,
                                                                    uint32_t *expected, uint32_t desired)
 {
-#if HAVE_STDATOMIC_H
-    unsigned int expected_value = (unsigned int) *expected;
-    const bool   exchanged      = atomic_compare_exchange_weak_explicit(&session->last_activity_ms,
+    w_atomic_uint_value_t expected_value = (w_atomic_uint_value_t) *expected;
+    const bool            exchanged      = atomic_compare_exchange_weak_explicit(&session->last_activity_ms,
                                                                  &expected_value,
-                                                                 (unsigned int) desired,
+                                                                 (w_atomic_uint_value_t) desired,
                                                                  memory_order_relaxed,
                                                                  memory_order_relaxed);
-    *expected                   = (uint32_t) expected_value;
+    *expected                            = (uint32_t) expected_value;
     return exchanged;
-#else
-    intptr_t   expected_value = (intptr_t) *expected;
-    const bool exchanged      = atomic_compare_exchange_weak_explicit(
-        &session->last_activity_ms, &expected_value, (intptr_t) desired, memory_order_relaxed, memory_order_relaxed);
-    *expected = (uint32_t) expected_value;
-    return exchanged;
-#endif
 }
 
 bool authenticationserverCopyUsersTable(users_t *dest, const users_t *src)
