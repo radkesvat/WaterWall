@@ -51,6 +51,7 @@ tunnel_t *ptcTunnelCreate(node_t *node)
         .udp_idle_timeout_ms = kPtcDefaultUdpIdleTimeoutMs,
         .ipv4_identification = 0,
     };
+    atomic_init(&ts->stopping, false);
 
     if (settings != NULL && ! cJSON_IsObject(settings))
     {

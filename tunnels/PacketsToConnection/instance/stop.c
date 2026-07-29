@@ -4,10 +4,17 @@
 
 void ptcTunnelOnStop(tunnel_t *t)
 {
+    ptc_tstate_t *state = tunnelGetState(t);
+
     /*
-     * The process-level lwIP shutdown follows node Stop and precedes tunnel
-     * destruction. Detach this tunnel's netifs and PCBs while the core thread
-     * and tunnel state are both still valid.
+     * Set the value-only gate before waiting for the core lock. A packet
+     * callback that was already waiting on that lock will recheck the gate
+     * after acquiring it and cannot recreate a route after the cleanup below.
+     * The core lock, not this atomic, supplies the cleanup ordering.
      */
+    atomicStoreRelaxed(&state->stopping, true);
+
+    // Process-level lwIP shutdown follows node Stop, so detach this tunnel's
+    // netifs and PCBs while the core lock and tunnel state are still valid.
     ptcDestroyLwipResources(t);
 }

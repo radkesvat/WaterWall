@@ -122,6 +122,19 @@ set_tests_properties(
     LABELS "test-harness;negative"
 )
 
+add_test(
+  NAME waterwall.lwip_shutdown_order_policy
+  COMMAND
+    "${PYTHON3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/lwip_shutdown_order_policy_test.py"
+)
+set_tests_properties(
+  waterwall.lwip_shutdown_order_policy
+  PROPERTIES
+    TIMEOUT 10
+    LABELS "unit;net;lwip;lifetime;shutdown;policy"
+)
+
 function(add_waterwall_probe_integration_test test_name case_name timeout_seconds)
   set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
 

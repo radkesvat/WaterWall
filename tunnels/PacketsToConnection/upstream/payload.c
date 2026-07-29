@@ -161,6 +161,14 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    ptc_tstate_t *state = tunnelGetState(t);
+
+    if (UNLIKELY(atomicLoadRelaxed(&state->stopping)))
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
+
     if (UNLIKELY(sbufGetLength(buf) < 1))
     {
         lineReuseBuffer(l, buf);
@@ -172,6 +180,19 @@ void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (IPH_V(iphdr) == 4)
     {
         LOCK_TCPIP_CORE();
+
+        /*
+         * Stop may have won the core lock after our optimistic check and
+         * removed every route. Recheck under the same lock that serializes
+         * route creation so cleanup is a stable barrier.
+         */
+        if (UNLIKELY(atomicLoadRelaxed(&state->stopping)))
+        {
+            UNLOCK_TCPIP_CORE();
+            lineReuseBuffer(l, buf);
+            return;
+        }
+
         processV4(t, l, buf);
         UNLOCK_TCPIP_CORE();
         return;

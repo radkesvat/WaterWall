@@ -14,8 +14,8 @@ void ptcDestroyLwipResources(tunnel_t *t)
     ptcDestroyRouteContexts(&state->route_context4);
     ptcDestroyRouteContexts(&state->route_context6);
     ptcFakeDnsDestroy(state);
-    UNLOCK_TCPIP_CORE();
     state->lwip_resources_destroyed = true;
+    UNLOCK_TCPIP_CORE();
 }
 
 void ptcTunnelDestroy(tunnel_t *t)

@@ -144,6 +144,7 @@ typedef struct ptc_tstate_s
     uint32_t                  udp_idle_timeout_ms;
     uint32_t                  ipv4_identification;
     ptc_fake_dns_t            fake_dns;
+    atomic_bool               stopping;
     bool                      lwip_resources_destroyed;
 } ptc_tstate_t;
 

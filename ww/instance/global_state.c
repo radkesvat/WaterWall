@@ -114,11 +114,18 @@ static void exitHandle(void *userdata, int signum)
     }
 
     /*
+     * Worker 0 was not spawned, so the join loop above cannot quiesce its
+     * tunnel callbacks. Destroy its event-loop-local resources now: onWorkerStop
+     * may still close live connections through lwIP and must run while the core
+     * lock exists.
+     */
+    workerDestroyOwnResources(getWorker(0));
+
+    /*
      * tcpip_init() owns a real OS thread even though WaterWall models its pools
-     * as a pseudo-worker. Normal workers can enter the lwIP core from tunnel
-     * callbacks, so they must be joined before the core lock and tcpip thread
-     * are destroyed. The remaining lwIP work is then drained while every
-     * global and pseudo-worker resource it can reference is still alive.
+     * as a pseudo-worker. All ordinary workers are now quiescent, so the
+     * remaining lwIP work can be drained while every global and pseudo-worker
+     * resource it can reference is still alive.
      */
     if (GSTATE.flag_lwip_initialized)
     {
@@ -132,9 +139,6 @@ static void exitHandle(void *userdata, int signum)
     // The joined lwIP thread has no WaterWall event loop. Its pseudo-worker
     // pools can now be destroyed explicitly without a late pbuf callback.
     workerDestroyOwnResources(getWorker(getTotalWorkersCount() - 1));
-
-    // Worker 0 destroys its own worker-local resources, on worker 0.
-    workerDestroyOwnResources(getWorker(0));
 
     finishGlobalState();
 }
