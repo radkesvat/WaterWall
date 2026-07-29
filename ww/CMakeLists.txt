@@ -1388,10 +1388,18 @@ if(BUILD_TESTING)
         # production objects separate so extracting ww's Unity object does not
         # define the same symbols a second time.
         base/wproc.c
+        bufio/buffer_pool.c
+        bufio/buffer_queue.c
+        bufio/buffer_stream.c
         libc/wfrand.c
         instance/global_state.c
         managers/signal_manager.c
+        managers/node_manager.c
         managers/socket_manager_iptables_recovery.c
+        net/adapter.c
+        net/tunnel.c
+        net/pipe_tunnel.c
+        net/wchecksum.c
         devices/device_reader_session.c
         devices/device_writer_channel.c
         devices/device_lifetime.c
