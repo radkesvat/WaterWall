@@ -41,6 +41,7 @@ enum
     kMaxCommandSteps       = 96,
     kMaxRecordedCommands   = 192,
     kMaxCommandText        = 64,
+    kConfiguredQueueLength = 64 * 1024,
     kInjectedPacketId      = 0x10203040U,
     // Long enough for a freshly created reader to actually park inside poll().
     kReaderSettleUs = 50000
@@ -97,7 +98,13 @@ static atomic_bool        observed_capture_thread_created;
 static atomic_int         observed_capture_thread_joins;
 static atomic_bool        inject_packet_on_next_insert;
 static atomic_bool        injected_recv_pending;
+static atomic_int         injected_recv_errno;
+static atomic_uint        injected_residual_packets;
+static atomic_uint        injected_recv_attempts;
 static atomic_bool        injected_verdict_seen;
+static atomic_int         injected_verdict_errno;
+static atomic_uint        injected_verdict_attempts;
+static atomic_uint        injected_verdict_count;
 static atomic_int         injected_callback_count;
 static atomic_uint        shutdown_request_calls;
 static atomic_int         shutdown_request_last_code;
@@ -156,7 +163,13 @@ static void commandScriptReset(void)
     atomicStoreExplicit(&observed_capture_thread_joins, 0, memory_order_relaxed);
     atomicStoreExplicit(&inject_packet_on_next_insert, false, memory_order_relaxed);
     atomicStoreExplicit(&injected_recv_pending, false, memory_order_relaxed);
+    atomicStoreExplicit(&injected_recv_errno, 0, memory_order_relaxed);
+    atomicStoreExplicit(&injected_residual_packets, 0, memory_order_relaxed);
+    atomicStoreExplicit(&injected_recv_attempts, 0, memory_order_relaxed);
     atomicStoreExplicit(&injected_verdict_seen, false, memory_order_relaxed);
+    atomicStoreExplicit(&injected_verdict_errno, 0, memory_order_relaxed);
+    atomicStoreExplicit(&injected_verdict_attempts, 0, memory_order_relaxed);
+    atomicStoreExplicit(&injected_verdict_count, 0, memory_order_relaxed);
     atomicStoreExplicit(&injected_callback_count, 0, memory_order_relaxed);
     atomicStoreExplicit(&shutdown_request_calls, 0, memory_order_relaxed);
     atomicStoreExplicit(&shutdown_request_last_code, 0, memory_order_relaxed);
@@ -432,26 +445,47 @@ static size_t buildInjectedPacket(void *destination, size_t capacity)
     return message_len;
 }
 
+static ssize_t buildInjectedRecvMessage(struct msghdr *msg)
+{
+    require(msg != NULL && msg->msg_iov != NULL && msg->msg_iovlen >= 1,
+            "production reader supplied an invalid recvmsg iovec");
+
+    struct sockaddr_nl *source = msg->msg_name;
+    require(source != NULL, "production reader did not request the netlink source address");
+    memoryZero(source, sizeof(*source));
+    source->nl_family = AF_NETLINK;
+    source->nl_pid    = 0;
+    msg->msg_namelen  = sizeof(*source);
+    msg->msg_flags    = 0;
+
+    return (ssize_t) buildInjectedPacket(msg->msg_iov[0].iov_base, msg->msg_iov[0].iov_len);
+}
+
 ssize_t __wrap_recvmsg(int sockfd, struct msghdr *msg, int flags)
 {
+    atomicAddExplicit(&injected_recv_attempts, 1, memory_order_relaxed);
+
+    const int injected_error = atomicExchangeExplicit(&injected_recv_errno, 0, memory_order_acq_rel);
+    if (injected_error != 0)
+    {
+        errno = injected_error;
+        return -1;
+    }
+
+    if (atomicLoadExplicit(&injected_residual_packets, memory_order_relaxed) > 0)
+    {
+        atomicSubExplicit(&injected_residual_packets, 1, memory_order_relaxed);
+        return buildInjectedRecvMessage(msg);
+    }
+
     if (atomicExchangeExplicit(&injected_recv_pending, false, memory_order_acq_rel))
     {
         char wake_byte;
         require(recv(sockfd, &wake_byte, 1, MSG_DONTWAIT) == 1,
                 "failed to consume the startup packet's poll wake byte");
-        require(msg != NULL && msg->msg_iov != NULL && msg->msg_iovlen >= 1,
-                "production reader supplied an invalid recvmsg iovec");
-
-        struct sockaddr_nl *source = msg->msg_name;
-        require(source != NULL, "production reader did not request the netlink source address");
-        memoryZero(source, sizeof(*source));
-        source->nl_family = AF_NETLINK;
-        source->nl_pid    = 0;
-        msg->msg_namelen  = sizeof(*source);
-        msg->msg_flags    = 0;
-
-        return (ssize_t) buildInjectedPacket(msg->msg_iov[0].iov_base, msg->msg_iov[0].iov_len);
+        return buildInjectedRecvMessage(msg);
     }
+
     return __real_recvmsg(sockfd, msg, flags);
 }
 
@@ -463,13 +497,23 @@ ssize_t __wrap_sendto(int sockfd, const void *buf, size_t len, int flags, const 
         const struct nlmsghdr *nlh = buf;
         if ((nlh->nlmsg_type & 0xFFU) == NFQNL_MSG_VERDICT)
         {
+            atomicAddExplicit(&injected_verdict_attempts, 1, memory_order_relaxed);
             const size_t attr_offset = (size_t) NLMSG_ALIGN(NLMSG_LENGTH(sizeof(struct nfgenmsg)));
             require(len >= attr_offset + NFA_LENGTH(sizeof(struct nfqnl_msg_verdict_hdr)),
                     "production reader emitted a short NFQUEUE verdict");
             const struct nfattr *attr = (const struct nfattr *) (const void *) ((const uint8_t *) buf + attr_offset);
             require(NFA_TYPE(attr) == NFQA_VERDICT_HDR, "production reader emitted the wrong verdict attribute");
             const struct nfqnl_msg_verdict_hdr *verdict = NFA_DATA(attr);
-            injected_verdict                            = ntohl(verdict->verdict);
+
+            const int injected_error = atomicExchangeExplicit(&injected_verdict_errno, 0, memory_order_acq_rel);
+            if (injected_error != 0)
+            {
+                errno = injected_error;
+                return -1;
+            }
+
+            injected_verdict = ntohl(verdict->verdict);
+            atomicAddExplicit(&injected_verdict_count, 1, memory_order_relaxed);
             atomicStoreExplicit(&injected_verdict_seen, true, memory_order_release);
             return (ssize_t) len;
         }
@@ -645,8 +689,8 @@ static void deviceSetup(capture_device_t *cdev, test_env_t *env, reader_probe_t 
     require(pipe(cdev->linux_pipe_fds) == 0, "test pipe creation failed");
     require(capturedeviceMakeStopPipeNonblocking(cdev->linux_pipe_fds[0]),
             "the production helper failed to make the stop pipe read end nonblocking");
-    cdev->socket = dup(STDERR_FILENO);
-    require(cdev->socket >= 0, "failed to create a harmless queue-socket stand-in");
+    cdev->socket = socket(AF_UNIX, SOCK_DGRAM, 0);
+    require(cdev->socket >= 0, "failed to create an empty queue-socket stand-in");
     require(pthread_mutex_init(&cdev->reader_state_mutex, NULL) == 0, "failed to initialize the reader-state mutex");
     require(pthread_cond_init(&cdev->reader_state_changed, NULL) == 0,
             "failed to initialize the reader-state condition variable");
@@ -1007,6 +1051,151 @@ static void testPendingQueuePacketIsAcceptedDuringBringDown(test_env_t *env)
 
     close(queue_pair[1]);
     requireCommandScriptConsumed("the pending-packet drain changed the firewall lifecycle command sequence");
+    deviceTeardown(&cdev);
+}
+
+static void testResidualDrainRetriesInterruptedIo(test_env_t *env)
+{
+    commandScriptReset();
+    scriptSuccessfulInsertions();
+    scriptSuccessfulDeletions();
+
+    capture_device_t cdev;
+    reader_probe_t   probe;
+    deviceSetup(&cdev, env, &probe);
+    int queue_pair[2];
+    attachQueueSocket(&cdev, queue_pair);
+
+    require(caputredeviceBringUp(&cdev), "bring-up before the interrupted residual drain failed");
+    atomicStoreExplicit(&injected_residual_packets, 1, memory_order_relaxed);
+    atomicStoreExplicit(&injected_recv_errno, EINTR, memory_order_relaxed);
+    atomicStoreExplicit(&injected_verdict_errno, EINTR, memory_order_relaxed);
+
+    require(caputredeviceBringDown(&cdev), "transient EINTR failed the residual drain");
+    require(atomicLoadExplicit(&injected_recv_attempts, memory_order_relaxed) == 3,
+            "the residual drain did not retry recvmsg before draining to EAGAIN");
+    require(atomicLoadExplicit(&injected_verdict_attempts, memory_order_relaxed) == 2,
+            "the residual drain did not retry an interrupted verdict");
+    require(atomicLoadExplicit(&injected_verdict_count, memory_order_relaxed) == 1,
+            "the interrupted residual packet did not receive exactly one successful verdict");
+    require(injected_verdict == NF_ACCEPT, "the residual drain retried with the wrong verdict");
+
+    close(queue_pair[1]);
+    requireCommandScriptConsumed("the interrupted residual drain changed the firewall lifecycle command sequence");
+    deviceTeardown(&cdev);
+}
+
+static void testResidualReadFailureFailsBringDown(test_env_t *env)
+{
+    commandScriptReset();
+    scriptSuccessfulInsertions();
+    scriptSuccessfulDeletions();
+
+    capture_device_t cdev;
+    reader_probe_t   probe;
+    deviceSetup(&cdev, env, &probe);
+    int queue_pair[2];
+    attachQueueSocket(&cdev, queue_pair);
+    const int queue_socket = cdev.socket;
+
+    require(caputredeviceBringUp(&cdev), "bring-up before the residual read failure failed");
+    atomicStoreExplicit(&injected_recv_errno, EIO, memory_order_relaxed);
+
+    require(! caputredeviceBringDown(&cdev), "a residual read failure was not propagated by bring-down");
+    require(atomicLoadExplicit(&injected_recv_attempts, memory_order_relaxed) == 1,
+            "the residual drain continued after a permanent read failure");
+    require(atomicLoadExplicit(&injected_verdict_count, memory_order_relaxed) == 0,
+            "a residual read failure emitted an unexpected verdict");
+    requireQueueSocketClosed(&cdev, queue_socket);
+
+    close(queue_pair[1]);
+    requireCommandScriptConsumed("the residual read failure changed the firewall lifecycle command sequence");
+    deviceTeardown(&cdev);
+}
+
+static void testResidualVerdictFailureFailsBringDown(test_env_t *env)
+{
+    commandScriptReset();
+    scriptSuccessfulInsertions();
+    scriptSuccessfulDeletions();
+
+    capture_device_t cdev;
+    reader_probe_t   probe;
+    deviceSetup(&cdev, env, &probe);
+    int queue_pair[2];
+    attachQueueSocket(&cdev, queue_pair);
+    const int queue_socket = cdev.socket;
+
+    require(caputredeviceBringUp(&cdev), "bring-up before the residual verdict failure failed");
+    atomicStoreExplicit(&injected_residual_packets, 1, memory_order_relaxed);
+    atomicStoreExplicit(&injected_verdict_errno, EIO, memory_order_relaxed);
+
+    require(! caputredeviceBringDown(&cdev), "a residual verdict failure was not propagated by bring-down");
+    require(atomicLoadExplicit(&injected_recv_attempts, memory_order_relaxed) == 1,
+            "the residual drain continued after a permanent verdict failure");
+    require(atomicLoadExplicit(&injected_verdict_attempts, memory_order_relaxed) == 1,
+            "the residual drain attempted an unexpected number of failed verdicts");
+    require(atomicLoadExplicit(&injected_verdict_count, memory_order_relaxed) == 0,
+            "a failed residual verdict was recorded as successful");
+    requireQueueSocketClosed(&cdev, queue_socket);
+
+    close(queue_pair[1]);
+    requireCommandScriptConsumed("the residual verdict failure changed the firewall lifecycle command sequence");
+    deviceTeardown(&cdev);
+}
+
+static void testFullResidualQueueDrainsSuccessfully(test_env_t *env)
+{
+    commandScriptReset();
+    scriptSuccessfulInsertions();
+    scriptSuccessfulDeletions();
+
+    capture_device_t cdev;
+    reader_probe_t   probe;
+    deviceSetup(&cdev, env, &probe);
+    int queue_pair[2];
+    attachQueueSocket(&cdev, queue_pair);
+
+    require(caputredeviceBringUp(&cdev), "bring-up before the full residual drain failed");
+    atomicStoreExplicit(&injected_residual_packets, kConfiguredQueueLength, memory_order_relaxed);
+
+    require(caputredeviceBringDown(&cdev), "a full residual queue failed after draining to EAGAIN");
+    require(atomicLoadExplicit(&injected_recv_attempts, memory_order_relaxed) == kConfiguredQueueLength + 1U,
+            "a full residual queue did not receive its final emptiness probe");
+    require(atomicLoadExplicit(&injected_verdict_count, memory_order_relaxed) == kConfiguredQueueLength,
+            "a full residual queue did not verdict every packet");
+    require(cdev.queue_restartable, "a successfully drained full queue was unnecessarily disabled");
+
+    close(queue_pair[1]);
+    requireCommandScriptConsumed("the full residual drain changed the firewall lifecycle command sequence");
+    deviceTeardown(&cdev);
+}
+
+static void testResidualDrainBoundFailureFailsBringDown(test_env_t *env)
+{
+    commandScriptReset();
+    scriptSuccessfulInsertions();
+    scriptSuccessfulDeletions();
+
+    capture_device_t cdev;
+    reader_probe_t   probe;
+    deviceSetup(&cdev, env, &probe);
+    int queue_pair[2];
+    attachQueueSocket(&cdev, queue_pair);
+    const int queue_socket = cdev.socket;
+
+    require(caputredeviceBringUp(&cdev), "bring-up before the residual drain bound failure failed");
+    atomicStoreExplicit(&injected_residual_packets, kConfiguredQueueLength + 1U, memory_order_relaxed);
+
+    require(! caputredeviceBringDown(&cdev), "a residual drain bound failure was not propagated by bring-down");
+    require(atomicLoadExplicit(&injected_recv_attempts, memory_order_relaxed) == kConfiguredQueueLength + 1U,
+            "the residual drain did not stop at its configured bound probe");
+    require(atomicLoadExplicit(&injected_verdict_count, memory_order_relaxed) == kConfiguredQueueLength + 1U,
+            "the residual drain bound probe did not verdict the packet it received");
+    requireQueueSocketClosed(&cdev, queue_socket);
+
+    close(queue_pair[1]);
+    requireCommandScriptConsumed("the residual bound failure changed the firewall lifecycle command sequence");
     deviceTeardown(&cdev);
 }
 
@@ -1582,6 +1771,11 @@ int main(void)
     testReaderExitBeforeReadinessPreventsInsertion(&env);
     testPacketDuringInsertionIsAcceptedWithoutDispatch(&env);
     testPendingQueuePacketIsAcceptedDuringBringDown(&env);
+    testResidualDrainRetriesInterruptedIo(&env);
+    testResidualReadFailureFailsBringDown(&env);
+    testResidualVerdictFailureFailsBringDown(&env);
+    testFullResidualQueueDrainsSuccessfully(&env);
+    testResidualDrainBoundFailureFailsBringDown(&env);
     testPartialInsertionRollsBackConfirmedPrefix(&env);
     testPartialRollbackFailureIsRetriedByDestroy(&env);
     testReverseDeletionPreservesPerRuleState(&env);

@@ -748,8 +748,12 @@ static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa
     memoryZero(&nl_addr, sizeof(nl_addr));
     nl_addr.nl_family = AF_NETLINK;
 
-    ssize_t send_result =
-        sendto(netfilter_socket, buff, sizeof(buff), 0, (struct sockaddr *) &nl_addr, sizeof(nl_addr));
+    ssize_t send_result;
+    do
+    {
+        send_result = sendto(netfilter_socket, buff, sizeof(buff), 0, (struct sockaddr *) &nl_addr, sizeof(nl_addr));
+    } while (send_result < 0 && errno == EINTR);
+
     if (send_result != (ssize_t) sizeof(buff))
     {
         if (send_result >= 0)
@@ -765,9 +769,14 @@ static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa
     }
 
     uint8_t   ack_buff[64];
-    socklen_t nl_addr_len = sizeof(nl_addr);
-    ssize_t   result =
-        recvfrom(netfilter_socket, ack_buff, sizeof(ack_buff), 0, (struct sockaddr *) &nl_addr, &nl_addr_len);
+    socklen_t nl_addr_len;
+    ssize_t   result;
+    do
+    {
+        nl_addr_len = sizeof(nl_addr);
+        result = recvfrom(netfilter_socket, ack_buff, sizeof(ack_buff), 0, (struct sockaddr *) &nl_addr, &nl_addr_len);
+    } while (result < 0 && errno == EINTR);
+
     nl_hdr = (struct nlmsghdr *) ack_buff;
 
     if (result < 0)
@@ -1070,8 +1079,14 @@ static netfilter_packet_result_t netfilterGetPacket(capture_device_t *cdev, int 
     memoryZero(&nl_addr, sizeof(nl_addr));
     uint8_t      *message = sbufGetMutablePtr(buff);
     struct iovec  iov     = {.iov_base = message, .iov_len = kNetfilterReadBufferSize};
-    struct msghdr msg     = {.msg_name = &nl_addr, .msg_namelen = sizeof(nl_addr), .msg_iov = &iov, .msg_iovlen = 1};
-    ssize_t       result  = recvmsg(netfilter_socket, &msg, MSG_DONTWAIT | MSG_TRUNC);
+    struct msghdr msg     = {.msg_name = &nl_addr, .msg_iov = &iov, .msg_iovlen = 1};
+    ssize_t       result;
+    do
+    {
+        msg.msg_namelen = sizeof(nl_addr);
+        msg.msg_flags   = 0;
+        result          = recvmsg(netfilter_socket, &msg, MSG_DONTWAIT | MSG_TRUNC);
+    } while (result < 0 && errno == EINTR);
 
     if (result < 0)
     {
@@ -1468,23 +1483,18 @@ static void capturedeviceDeactivate(capture_device_t *cdev)
 // exclusive use of the descriptor and no synchronization is needed.
 // `capture_active` is already false by then, so netfilterGetPacket() issues
 // NF_ACCEPT for each packet on its own.
-static void capturedeviceDrainResidualQueue(capture_device_t *cdev, int socket_fd)
+static bool capturedeviceDrainResidualQueue(capture_device_t *cdev, int socket_fd)
 {
     // A standalone buffer rather than one from cdev->reader_buffer_pool: that
     // pool is bound to the reader thread on first use, and this runs on the
     // lifecycle owner's thread. Nothing here is dispatched, so one buffer is
     // reused for the whole drain and released on the way out.
     sbuf_t *buf = sbufCreate(kNetfilterReadBufferSize);
-    if (buf == NULL)
-    {
-        LOGE("CaptureDevice: could not allocate a drain buffer for residual queue %u packets", cdev->queue_number);
-        return;
-    }
 
     // The kernel cannot hold more than the queue length configured at bring-up,
-    // so that is the natural bound. It only guards a queue that keeps producing;
-    // an ordinary bring-down reaches EAGAIN after a handful of packets.
-    for (uint32_t drained = 0; drained < (uint32_t) kNetfilterQueueLen; ++drained)
+    // so that is the natural bound. The extra iteration is an emptiness probe:
+    // draining exactly a full queue is successful only after EAGAIN confirms it.
+    for (uint32_t drained = 0;; ++drained)
     {
         sbufReset(buf);
         buf = sbufReserveSpace(buf, kNetfilterReadBufferSize);
@@ -1497,7 +1507,7 @@ static void capturedeviceDrainResidualQueue(capture_device_t *cdev, int socket_f
         {
             // The queue is empty: every packet it still held has been verdicted.
             sbufDestroy(buf);
-            return;
+            return true;
         }
 
         if (packet_result == kNetfilterPacketError)
@@ -1508,14 +1518,18 @@ static void capturedeviceDrainResidualQueue(capture_device_t *cdev, int socket_f
                  cdev->queue_number,
                  strerror(errno));
             sbufDestroy(buf);
-            return;
+            return false;
+        }
+
+        if (drained == (uint32_t) kNetfilterQueueLen)
+        {
+            sbufDestroy(buf);
+            LOGW("CaptureDevice: residual drain of queue %u exceeded its %d-packet bound",
+                 cdev->queue_number,
+                 kNetfilterQueueLen);
+            return false;
         }
     }
-
-    sbufDestroy(buf);
-    LOGW("CaptureDevice: residual drain of queue %u stopped at its %d-packet bound",
-         cdev->queue_number,
-         kNetfilterQueueLen);
 }
 
 static bool capturedeviceStopReader(capture_device_t *cdev)
@@ -1569,7 +1583,12 @@ static bool capturedeviceStopReader(capture_device_t *cdev)
             // kernel drop whatever is still enqueued.
             if (drain_fd >= 0)
             {
-                capturedeviceDrainResidualQueue(cdev, drain_fd);
+                const bool drain_ok = capturedeviceDrainResidualQueue(cdev, drain_fd);
+                result              = drain_ok && result;
+                if (! drain_ok)
+                {
+                    capturedeviceDisableQueue(cdev, "residual queue drain failure");
+                }
             }
 
             if (socket_fd >= 0 && close(socket_fd) != 0)
