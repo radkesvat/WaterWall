@@ -7,6 +7,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#if defined(OS_UNIX)
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 enum
 {
     kCapturedMessageMax = 8
@@ -386,6 +391,33 @@ static void testEndWaitsForEnteredDelivery(test_env_t *env)
     deviceReaderSessionUnref(session);
 }
 
+static void testReferenceOverflowFailsBeforeWrap(test_env_t *env)
+{
+#if defined(OS_UNIX)
+    reader_probe_t           probe   = {0};
+    device_reader_session_t *session = createSession(env, &probe, 1);
+    atomicStoreRelaxed(&session->refcount, W_ATOMIC_UINT_VALUE_MAX);
+
+    const pid_t child = fork();
+    require(child >= 0, "failed to fork reader-reference overflow test");
+    if (child == 0)
+    {
+        deviceReaderSessionRef(session);
+        _Exit(0);
+    }
+
+    int status;
+    require(waitpid(child, &status, 0) == child, "failed to wait for reader-reference overflow child");
+    require(WIFEXITED(status) && WEXITSTATUS(status) != 0,
+            "reader-reference overflow returned or wrapped instead of aborting");
+
+    atomicStoreRelaxed(&session->refcount, 1);
+    deviceReaderSessionUnref(session);
+#else
+    discard env;
+#endif
+}
+
 int main(void)
 {
     test_env_t env;
@@ -396,6 +428,7 @@ int main(void)
     testFailedPostBalancesReference(&env);
     testOversizedBatchIsRejectedAndRecycled(&env);
     testEndWaitsForEnteredDelivery(&env);
+    testReferenceOverflowFailsBeforeWrap(&env);
     envTeardown(&env);
     puts("device reader session tests passed");
     return 0;

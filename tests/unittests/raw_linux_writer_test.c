@@ -36,6 +36,11 @@ typedef struct consumer_probe_s
     atomic_uint  buffer_count;
 } consumer_probe_t;
 
+typedef struct recycling_probe_s
+{
+    atomic_uint consumed;
+} recycling_probe_t;
+
 static bool fail_next_thread_join;
 
 int __real_pthread_join(pthread_t thread, void **retval);
@@ -97,6 +102,32 @@ static WTHREAD_ROUTINE(testWriterRoutine)
         const unsigned int index = atomicAddExplicit(&probe->buffer_count, 1, memory_order_relaxed);
         require(index < probe->buffer_capacity, "raw writer consumed more buffers than the test allocated");
         probe->buffers[index] = buf;
+    }
+    return 0;
+}
+
+static WTHREAD_ROUTINE(recyclingWriterRoutine)
+{
+    raw_device_t      *rdev           = userdata;
+    recycling_probe_t *probe          = rdev->userdata;
+    struct wchan_s    *writer_channel = deviceWriterChannelGetConsumerChannel(&rdev->writer_channel);
+    sbuf_t            *buf;
+
+    while (atomicLoadRelaxed(&rdev->running))
+    {
+        if (! chanRecv(writer_channel, &buf))
+        {
+            break;
+        }
+
+        /*
+         * The queued buffer proves the write reached this generation. Probe the
+         * writer-owned pool separately so its debug accounting remains paired.
+         */
+        sbufDestroy(buf);
+        sbuf_t *pool_probe = bufferpoolGetSmallBuffer(rdev->writer_buffer_pool);
+        bufferpoolReuseBuffer(rdev->writer_buffer_pool, pool_probe);
+        atomicAddExplicit(&probe->consumed, 1, memory_order_release);
     }
     return 0;
 }
@@ -245,12 +276,50 @@ static void testRawJoinFailureRetainsOwnership(test_env_t *env)
     bufferpoolDestroy(rdev.writer_buffer_pool);
 }
 
+static void testRawRestartTransfersWriterPoolOwnership(test_env_t *env)
+{
+    raw_device_t      rdev;
+    recycling_probe_t probe = {0};
+    memoryZero(&rdev, sizeof(rdev));
+
+    rdev.name               = stringDuplicate("raw-pool-restart-test");
+    rdev.writer_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
+    rdev.routine_writer     = recyclingWriterRoutine;
+    rdev.userdata           = &probe;
+    deviceWriterChannelInit(&rdev.writer_channel);
+
+    for (unsigned int generation = 0; generation < 2; generation++)
+    {
+        require(rawdeviceBringUp(&rdev), "raw pool-owner generation failed to start");
+
+        sbuf_t *buf = sbufCreateWithPadding(4096, 0);
+        sbufSetLength(buf, sizeof(struct iphdr) + 1);
+        require(rawdeviceWrite(&rdev, buf), "raw pool-owner generation rejected its test write");
+
+        const unsigned int expected = generation + 1;
+        for (unsigned int spin = 0;
+             spin < 1000000 && atomicLoadExplicit(&probe.consumed, memory_order_acquire) < expected;
+             spin++)
+        {
+            YIELD_THREAD();
+        }
+        require(atomicLoadExplicit(&probe.consumed, memory_order_acquire) == expected,
+                "raw pool-owner generation did not recycle its write");
+        require(rawdeviceBringDown(&rdev), "raw pool-owner generation failed to stop");
+    }
+
+    require(deviceWriterChannelDestroy(&rdev.writer_channel), "failed to destroy raw pool-owner generations");
+    memoryFree(rdev.name);
+    bufferpoolDestroy(rdev.writer_buffer_pool);
+}
+
 int main(void)
 {
     test_env_t env;
     envSetup(&env);
     testRawBringDownQuiescesConcurrentWriters(&env);
     testRawJoinFailureRetainsOwnership(&env);
+    testRawRestartTransfersWriterPoolOwnership(&env);
     envTeardown(&env);
     puts("Linux raw writer lifetime tests passed");
     return 0;

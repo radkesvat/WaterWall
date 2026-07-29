@@ -479,6 +479,14 @@ static WTHREAD_ROUTINE(probeReader) // NOLINT
     capture_device_t *cdev  = userdata;
     reader_probe_t   *probe = cdev->userdata;
 
+    /*
+     * Exercise the real per-reader pool ownership on every lifecycle
+     * generation. A stop/restart test now fails in Debug unless BringDown
+     * releases the joined reader's ownership before the replacement starts.
+     */
+    sbuf_t *pool_probe = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
+    bufferpoolReuseBuffer(cdev->reader_buffer_pool, pool_probe);
+
     atomicAddExplicit(&probe->started, 1, memory_order_relaxed);
 
     if (atomicLoadExplicit(&probe->exit_before_ready, memory_order_relaxed))
@@ -608,7 +616,7 @@ static void deviceSetup(capture_device_t *cdev, test_env_t *env, reader_probe_t 
     cdev->rule_states        = memoryAllocateZero(kTestCaptureRangeCount * sizeof(*cdev->rule_states));
     cdev->rule_token         = UINT64_C(0x1122334455667788);
     cdev->queue_restartable  = true;
-    cdev->reader_buffer_pool = env->buffer_pool;
+    cdev->reader_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
     cdev->routine_reader     = probeReader;
     cdev->userdata           = probe;
     cdev->running            = false;
@@ -629,6 +637,7 @@ static void deviceTeardown(capture_device_t *cdev)
 {
     deviceReaderSessionEnd(cdev->reader_session);
     deviceReaderSessionUnref(cdev->reader_session);
+    bufferpoolDestroy(cdev->reader_buffer_pool);
     if (cdev->socket >= 0)
     {
         close(cdev->socket);
@@ -651,9 +660,6 @@ static capture_device_t *ownedDeviceCreate(test_env_t *env, reader_probe_t *prob
 {
     capture_device_t *cdev = memoryAllocate(sizeof(*cdev));
     deviceSetup(cdev, env, probe);
-    deviceReaderSessionUnref(cdev->reader_session);
-    cdev->reader_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
-    cdev->reader_session     = deviceReaderSessionCreate(16, 512, cdev, testDeliverPacket, cdev->reader_buffer_pool);
     return cdev;
 }
 
@@ -759,6 +765,9 @@ static void testDrainReportsBrokenPipe(test_env_t *env)
 
     close(cdev.socket);
     close(cdev.linux_pipe_fds[0]);
+    deviceReaderSessionEnd(cdev.reader_session);
+    deviceReaderSessionUnref(cdev.reader_session);
+    bufferpoolDestroy(cdev.reader_buffer_pool);
     for (uint32_t i = 0; i < cdev.capture_range_count; ++i)
     {
         memoryFree(cdev.capture_cidrs[i]);

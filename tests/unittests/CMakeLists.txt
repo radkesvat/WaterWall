@@ -85,6 +85,26 @@ if(TARGET ww)
   )
 
   if(LINUX)
+    add_executable(buffer_pool_thread_transfer_test buffer_pool_thread_transfer_test.c)
+    target_link_libraries(buffer_pool_thread_transfer_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests buffer_pool_thread_transfer_test)
+
+    add_waterwall_unit_test(
+      waterwall.buffer_pool_thread_transfer_unit
+      buffer_pool_thread_transfer_test
+      "unit;bufio;lifetime;thread"
+    )
+
+    add_executable(lwip_shutdown_test lwip_shutdown_test.c)
+    target_link_libraries(lwip_shutdown_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests lwip_shutdown_test)
+
+    add_waterwall_unit_test(
+      waterwall.lwip_shutdown_unit
+      lwip_shutdown_test
+      "unit;net;lwip;lifetime;shutdown"
+    )
+
     add_executable(device_reader_session_test
       device_reader_session_test.c
       ${CMAKE_SOURCE_DIR}/ww/devices/device_reader_session.c
