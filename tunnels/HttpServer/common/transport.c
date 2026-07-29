@@ -1069,6 +1069,11 @@ static bool validateWebSocketHttp1Request(const httpserver_tstate_t *ts, const h
     return true;
 }
 
+static bool httpserverLinestateIsActive(const httpserver_lstate_t *ls)
+{
+    return ls->line != NULL;
+}
+
 static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
     buffer_pool_t *pool      = lineGetBufferPool(l);
@@ -1126,6 +1131,17 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
             sbufWriteLarge(buf, ptr, chunk);
 
             if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
+            {
+                return false;
+            }
+
+            /*
+             * The downstream callback can re-enter through upstream Finish.
+             * That path destroys this state even when the line owner keeps the
+             * line itself alive for orderly shutdown. Do not resume nghttp2 or
+             * advance another frame after the session has been invalidated.
+             */
+            if (UNLIKELY(! httpserverLinestateIsActive(ls)))
             {
                 return false;
             }
@@ -2743,6 +2759,17 @@ bool httpserverTransportDrainHttp1RequestBody(tunnel_t *t, line_t *l, httpserver
 static void httpserverTransportCloseDirections(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, bool close_next,
                                                bool close_prev)
 {
+    /*
+     * A failed transport operation can mean a re-entrant Finish already
+     * destroyed the state while leaving the owner line alive. In that case the
+     * callback that received Finish owns propagation; reflecting another
+     * Finish from this unwinding failure path would violate the closed side.
+     */
+    if (UNLIKELY(! httpserverLinestateIsActive(ls)))
+    {
+        return;
+    }
+
     lineLock(l);
 
     bool    send_next   = close_next && ! ls->next_finished;
