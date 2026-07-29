@@ -64,8 +64,8 @@ jobs:
 
       - name: Install Android NDK
         run: |
-          sdkmanager "ndk;$ANDROID_NDK_VERSION"
-          echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ANDROID_NDK_VERSION"
+          echo "ANDROID_NDK=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
 
       - name: Reset ccache statistics
         run: ccache --zero-stats
