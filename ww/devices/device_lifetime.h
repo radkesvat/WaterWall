@@ -10,6 +10,7 @@
 
 #include "loggers/internal_logger.h"
 #include "watomic.h"
+#include "wmutex.h"
 #include "wtime.h"
 
 typedef struct device_lifetime_gate_s
