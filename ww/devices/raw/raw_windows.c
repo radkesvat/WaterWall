@@ -19,8 +19,10 @@ enum
     kRawWriteChannelQueueMax              = 256
 };
 
+#ifdef ERROR_DATA_NOT_ACCEPTED
 static_assert(kRawWindowsErrorDataNotAccepted == ERROR_DATA_NOT_ACCEPTED,
               "the raw writer's ERROR_DATA_NOT_ACCEPTED value drifted from Win32");
+#endif
 static_assert(kRawWindowsErrorHostUnreachable == ERROR_HOST_UNREACHABLE,
               "the raw writer's ERROR_HOST_UNREACHABLE value drifted from Win32");
 static_assert(kRawWindowsErrorRetry == ERROR_RETRY, "the raw writer's ERROR_RETRY value drifted from Win32");
