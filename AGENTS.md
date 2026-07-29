@@ -46,9 +46,27 @@ A correct tunnel is never "just" a parser or encoder. It must preserve callback
    `prev_finished`/`next_finished` flag — add directional-close state *only* if you
    must send final bytes before closing.
 7. **Only the tunnel that created a line may call `lineDestroy()`.**
-8. **Prepend only within your advertised `required_padding_left`.**
-9. **Never destroy a packet line at runtime; never treat it as per-connection.**
-10. **Validate through the CMake preset**, not hand-rolled compiler commands.
+8. **An owner's `Finish` must leave its own normal line dead.** When you receive
+   `Finish` for a normal line *you* created, the handler may not return while the
+   line is still logically alive: `assert(! lineIsAlive(line))` must hold at
+   `return`. Detach producers, destroy your line state, propagate away from the
+   sender, then `lineDestroy()`. Outstanding `lineLock()` references may still
+   delay the physical free — that is fine, logical death is what the contract
+   requires.
+9. **`requestProgramShutdown()` is not line destruction.** A terminal failure in
+   an owner's `Finish` still has to close its own line before returning; worker 0
+   tears the process down long after this callback unwinds.
+10. **Prepend only within your advertised `required_padding_left`.**
+11. **Never destroy a packet line at runtime; never treat it as per-connection.**
+    A packet line belongs to the chain, so rule 8 does not apply to it and only
+    `tunnelchainDestroy()` may release it. Classify `Finish` by the exact handler
+    role and direction: a packet-lifecycle anchor for which close is impossible
+    must `LOGF` + `abortProgramNow(1)`; a transparent middle transform forwards
+    it in the same direction; an intentional terminal absorber documents why
+    there is nothing to forward or release. `PacketSender` downstream and
+    `PacketReceiver` are absorbers, not fatal anchors. Never `lineDestroy()` in
+    any category.
+12. **Validate through the CMake preset**, not hand-rolled compiler commands.
 
 > If a proposed change cannot explain how it preserves all of the above, it is not
 > ready.
@@ -73,7 +91,8 @@ A correct tunnel is never "just" a parser or encoder. It must preserve callback
 
 | Need | Look at |
 | --- | --- |
-| Adapter (owns a socket; creates/destroys lines) | `TcpListener`, `TcpConnector` |
+| Adapter that **creates and destroys** its lines | `TcpListener`, `UdpListener` |
+| Adapter that **owns a socket but borrows** its line | `TcpConnector`, `UdpConnector` |
 | Stateful protocol wrapping, clean finish w/ final bytes | `TlsClient`, `EncryptionClient` |
 | Internal line ownership, re-entrant safety | `MuxClient` |
 | Packet/stream bridges | `PacketsToStream`, `StreamToPackets`, `PacketsToConnection` |
@@ -85,9 +104,18 @@ A correct tunnel is never "just" a parser or encoder. It must preserve callback
 ## 2. Architecture In One Screen
 
 **Adapters** sit at the chain head/tail and own an OS resource (TCP/UDP socket,
-TUN device, raw socket). They are the only nodes that touch the outside world and
-the usual creators/destroyers of lines. **Middle tunnels** transform
-callbacks/payloads and must work regardless of which adapter is on either side.
+TUN device, raw socket). They are the only nodes that touch the outside world.
+**Middle tunnels** transform callbacks/payloads and must work regardless of which
+adapter is on either side.
+
+**OS-resource ownership is not `line_t` ownership.** A chain-head adapter such as
+`TcpListener` calls `lineCreate()` for every accepted connection and is that
+line's owner. A chain-end adapter such as `TcpConnector` owns a socket but calls
+neither `lineCreate()` nor `lineDestroy()` — it consumes a line created upstream.
+Middle tunnels are usually borrowers, but several own *specific internal line
+roles* (a mux carrier, an HTTP split transport, a UDP remote flow) while
+borrowing the application line that passes through them. Always classify the
+**exact line instance**, never the node type or its name.
 
 **Four core objects:**
 
@@ -135,9 +163,18 @@ flow callbacks; `onChain`/`onIndex` keep the framework defaults.
 
 ### 3.1 Line lifetime & re-entrancy → [Part 2](WaterWall-Docs/docs/05-devguides/part2-lines-and-callbacks.mdx)
 
-- `lineLock()`/`lineUnlock()` adjust a refcount and keep the **memory** valid;
+- **Logical death and physical reclamation are two different events.**
+  `lineDestroy()` clears `alive` and drops the creator's reference; the
+  allocation returns to its worker pool only when the last `lineLock()` is
+  released. So a line can be `! lineIsAlive(line)` while its memory is still
+  readable to whoever holds a reference — that is the normal shape when a nested
+  callback closes a line under an outer frame.
+- `lineLock()`/`lineUnlock()` adjust that refcount and keep the **memory** valid;
   they do **not** mean the line is logically alive. After a re-entrant call,
   re-check `lineIsAlive()`.
+- A logically dead line must never receive a new flow callback, and its
+  `tunnels_line_state` must already be zeroed — `lineUnRefInternal()` asserts
+  exactly that when the allocation is finally reclaimed.
 - These calls can close the line before returning — treat them as dangerous:
   `tunnelNextUpStream*` / `tunnelPrevDownStream*` for `Init`, `Payload`, `Est`,
   `Pause`, `Resume`.
@@ -182,6 +219,58 @@ to rely on — and mandatory to obey:
 
 - **Closing from the middle:** destroy local state → finish **upstream first** →
   finish **downstream second** (line may die here) → `return` immediately.
+
+- **Owner termination — the postcondition.** The three cases above are about
+  *propagation*. If the line you were finished on is a **normal line you created**,
+  propagation is not enough: that handler must not return while the line is still
+  alive.
+
+  ```c
+  // fnFinU: prev sent this Finish, so nothing may travel back toward prev.
+  void ownerTunnelUpStreamFinish(tunnel_t *t, line_t *l)
+  {
+      owner_lstate_t *ls = lineGetState(l, t);
+
+      ownerDetachIo(t, l, ls);        // io callbacks, timers, idle items, maps
+      bool propagate = ls->next_init_sent;
+      ownerLinestateDestroy(ls);      // exactly once
+
+      if (propagate)
+      {
+          tunnelNextUpStreamFinish(t, l);   // away from the sender only
+      }
+      if (lineIsAlive(l))             // a nested path may have killed it already
+      {
+          lineDestroy(l);
+      }
+  }                                   // assert(! lineIsAlive(l)) holds here
+  ```
+
+  The downstream mirror (`fnFinD`, sent by **next**) is the same code with
+  `tunnelPrevDownStreamFinish()`. An **endpoint** owner — a chain head such as
+  `TcpListener` or `UdpStatelessSocket` — has no prev at all and propagates
+  nothing; it only detaches, destroys its state, and destroys the line.
+
+  The caller may rely on it:
+
+  ```c
+  lineLock(l);
+  owner->fnFinU(owner, l);    // or fnFinD, whichever side is finishing it
+  assert(! lineIsAlive(l));   // logical death is immediate
+  lineUnlock(l);              // physical free may happen here
+  ```
+
+  This is what closes the gap where a middle tunnel's nested `Finish` destroyed
+  its line state while an outer callback frame still saw `lineIsAlive(line)` and
+  resumed on freed state. Exceptions, and only these: **borrowed lines** (destroy
+  your own state, propagate away from the sender, never `lineDestroy()`) and
+  **packet lines** (§3.4).
+
+- **A shutdown request does not close a line.** `requestProgramShutdown()`
+  schedules global teardown on worker 0; the current callback still unwinds
+  through every suspended frame first. An owner that fails terminally inside
+  `Finish` must detach, destroy its state and mark the line dead *and then*
+  request the shutdown.
 
 - **Do NOT add `prev_finished` / `next_finished` (or `can_upstream` /
   `can_downstream`) flags by default.** Because `Finish` is non-re-entrant, a tunnel
@@ -235,6 +324,34 @@ to rely on — and mandatory to obey:
 - A packet line is one persistent `line_t` **per worker** for a chain containing a
   layer-3 node. Allocated in `tunnelchainFinalize()`, destroyed only in
   `tunnelchainDestroy()`. **Never** `lineDestroy()` it at runtime.
+- **The owner postcondition in §3.2 does not apply to a packet line.** Whatever
+  else a handler does, it must never `lineDestroy()` one.
+- **Classify packet-line `Finish` per handler and direction:**
+  1. A **packet-lifecycle anchor** for which close is impossible fails loudly
+     with `LOGF` + `abortProgramNow(1)`. Examples include `TunDevice`,
+     `RawSocket`, the packet sides of `PacketsToConnection`,
+     `PacketsToStream`, `StreamToPackets`, and `PacketSplitStream`, and the
+     packet modes of the tester nodes.
+  2. A **transparent middle transform** forwards unrelated lifecycle callbacks
+     in the same direction. `PingClient` inherits the standard pass-throughs
+     and `PingServer` spells them out, which permits compositions such as
+     `UdpListener <-> PingServer <-> UdpConnector`.
+  3. An **intentional terminal absorber** owns no relevant per-line state and has
+     no onward direction, so it documents why doing nothing is correct.
+     `PacketSender` downstream absorbs the close emitted when its
+     `UdpConnector` peer expires; `PacketReceiver` is also an absorber.
+  Chain position alone does not select a category, and the same tunnel may use
+  different categories for different directions or line roles.
+- Use `tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l)` when one handler can
+  see both a normal transport line and the packet line — `WireGuardDevice` owns
+  per-worker transport lines *and* sits on the packet line, so it must branch on
+  the exact role before doing anything.
+- **A `Finish` handler that does nothing must say why.** Propagate the close,
+  release what you own, report a violation, or document that you own no per-line
+  state and have no onward direction so absorbing it is the whole job.
+  `tests/line_ownership_policy_test.py` rejects any `fin.c` whose body is nothing
+  but `discard` statements unless it is registered in `SILENT_FINISH_ALLOWED` with
+  a rationale.
 - Its state is **worker-local scratch**, reused across unrelated packets. Do not
   treat `routing_context`, `recalculate_checksum`, or stored state as stable
   per-flow identity. For per-flow behavior, create normal lines *behind* the packet
@@ -339,7 +456,12 @@ Build/validation rules:
 
 1. **Draw the chain flow**; mark upstream/downstream and which direction owns the
    transformation.
-2. **Identify the line owner** (who creates/destroys it).
+2. **Classify every line your change touches** — before editing any `Finish`
+   path — as **owned normal**, **borrowed normal**, or **packet**. Find the exact
+   `lineCreate()`/`lineCreateForWorker()` site, not the node name; one tunnel can
+   own some roles and borrow others. `tests/line_ownership_policy_test.py` holds
+   the classification of every production creation site and fails on a new
+   unclassified one.
 3. **Read** the target tunnel + neighbors, then `line.h`, `tunnel.h`, `chain.c`.
 4. If framing/prepending: read `shiftbuffer.h`, `buffer_pool.h`, and nearby `node.c`
    padding.
@@ -362,6 +484,15 @@ Build/validation rules:
   upstream then downstream then returns; no `Pause`/`Resume`/`Finish` reflection
   toward a finished side.
 - Only the line **owner** calls `lineDestroy()`.
+- Every owner `Finish` path for a normal line returns with `! lineIsAlive(line)`
+  — including error, timeout, and terminal-verdict branches.
+- A borrowed-line `Finish` path never calls `lineDestroy()`.
+- A packet-line `Finish` path never destroys the packet line and follows its
+  exact handler role: fatal rejection at an anchor, same-direction forwarding
+  through a transparent middle transform, or a documented terminal absorption.
+- `requestProgramShutdown()` is never used in place of closing an owned line.
+- Producers (io callbacks, timers, idle-table items, maps, queues) are detached
+  before the owner's line state and line are destroyed.
 - Every prepend fits inside `required_padding_left`; `sbufShiftLeft` only with
   enough left capacity; buffers recycled exactly on paths that own them.
 - Packet lines stay alive at runtime; packet-line state treated as worker-local;
