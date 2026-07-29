@@ -6,6 +6,7 @@ void testerserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 {
     testerserver_tstate_t *ts = tunnelGetState(t);
     testerserver_lstate_t *ls = lineGetState(l, t);
+    const char            *failure_reason;
 
     if (ts->packet_mode)
     {
@@ -17,15 +18,20 @@ void testerserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     if (ls->request_rx_index != testerserverGetChunkCount(t) || ! ls->response_ready)
     {
-        testerserverFail(t, l, "received finish before full request verification");
-        return;
+        failure_reason = "received finish before full request verification";
     }
-
-    if (! ls->response_sent)
+    else if (! ls->response_sent)
     {
-        testerserverFail(t, l, "received finish before sending the full response sequence");
+        failure_reason = "received finish before sending the full response sequence";
+    }
+    else
+    {
+        testerserverLinestateDestroy(ls);
         return;
     }
 
+    // Finish is terminal for this endpoint. Orderly process shutdown may defer
+    // line reclamation, but this callback must not leave live per-line state.
     testerserverLinestateDestroy(ls);
+    testerserverFail(t, l, failure_reason);
 }

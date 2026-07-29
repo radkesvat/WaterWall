@@ -96,6 +96,37 @@ static void requireVerdictLeftNothingBehind(testerserver_fixture_t *fixture)
     twfRequire(! ls->response_ready, "a failed verdict must not mark the request verified");
 }
 
+static void requireTesterStateDestroyed(testerserver_fixture_t *fixture)
+{
+    const uint8_t *bytes = lineGetState(fixture->line, fixture->tester);
+    const size_t   size  = tunnelGetCorrectAlignedLineStateSize(sizeof(testerserver_lstate_t));
+
+    for (size_t i = 0; i < size; ++i)
+    {
+        twfRequire(bytes[i] == 0, "a terminal Finish verdict must destroy the complete TesterServer line state");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Category B: an incomplete stream ends before verification
+// ---------------------------------------------------------------------------
+
+static void caseIncompleteFinishDestroysLineState(void)
+{
+    twfSetCase("testerserver incomplete finish");
+    tosResetProcessApi(true);
+
+    testerserver_fixture_t fixture;
+    fixtureSetup(&fixture, false, false);
+
+    testerserverTunnelUpStreamFinish(fixture.tester, fixture.line);
+
+    tosRequireAcceptedRequest(1);
+    requireTesterStateDestroyed(&fixture);
+
+    fixtureTeardown(&fixture);
+}
+
 // ---------------------------------------------------------------------------
 // Category B: a packet-mode request mismatch
 // ---------------------------------------------------------------------------
@@ -282,6 +313,7 @@ static void casePacketLineDeathAborts(void)
 
 int main(void)
 {
+    caseIncompleteFinishDestroysLineState();
     casePacketRequestMismatch();
     caseStatelessPacketRequestMismatch();
     caseStreamRequestMismatch();
