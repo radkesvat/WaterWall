@@ -124,5 +124,6 @@ bool     testerclientVerifyChunk(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_t ch
 void     testerclientRequestSendTask(tunnel_t *t, line_t *l);
 void     testerclientWatchdogTask(tunnel_t *t, line_t *l);
 void     testerclientCloseCompletedStreamTask(tunnel_t *t, line_t *l);
+void     testerclientCloseCompletedOwnedLine(tunnel_t *t, line_t *l, bool send_upstream_finish);
 void     testerclientScheduleRequestSend(tunnel_t *t, line_t *l, testerclient_lstate_t *ls);
 void     testerclientMarkWorkerComplete(tunnel_t *t, line_t *l);

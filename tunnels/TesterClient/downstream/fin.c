@@ -25,11 +25,6 @@ void testerclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         return;
     }
 
-    testerclientLinestateDestroy(ls);
     testerclientMarkWorkerComplete(t, l);
-
-    if (lineIsAlive(l))
-    {
-        lineDestroy(l);
-    }
+    testerclientCloseCompletedOwnedLine(t, l, false);
 }

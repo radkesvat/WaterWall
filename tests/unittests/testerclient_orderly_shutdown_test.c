@@ -243,6 +243,123 @@ static void caseTerminalDownstreamFinishClosesOwnedLine(void)
 }
 
 // ---------------------------------------------------------------------------
+// Category A: a completed worker is finished before the final-worker sweep
+// ---------------------------------------------------------------------------
+//
+// TcpOverUdp waits for every worker to verify its response before it closes the
+// completed streams. A peer Finish can close an earlier worker in that gap. Its
+// slot must be detached and counted before the final worker queues the sweep.
+
+static void caseSuccessfulDownstreamFinishClosesBeforeSweep(void)
+{
+    enum
+    {
+        kWorkerCount = 2
+    };
+
+    twfSetCase("testerclient successful downstream Finish closes before TcpOverUdp sweep");
+    tosResetProcessApi(true);
+
+    tos_worker_env_t env;
+    tosWorkerEnvSetup(&env, kWorkerCount, kTestLargeBufferSize, kTestSmallBufferSize);
+
+    twf_trace_t trace  = {0};
+    tunnel_t   *tester = tunnelCreate(NULL, sizeof(testerclient_tstate_t), sizeof(testerclient_lstate_t));
+    twfRequire(tester != NULL, "failed to create the multi-worker TesterClient tunnel");
+    tunnel_t *next = twfCreateNextTunnel(&trace);
+    tunnelBind(tester, next);
+
+    node_t tcp_over_udp_node = {.type = (char *) "TcpOverUdpClient"};
+    next->node               = &tcp_over_udp_node;
+
+    tunnel_chain_t *chain = memoryAllocateZero(sizeof(tunnel_chain_t) + kWorkerCount * sizeof(generic_pool_t *));
+    twfRequire(chain != NULL, "failed to allocate the multi-worker test chain");
+    chain->workers_count = kWorkerCount;
+    tester->chain        = chain;
+
+    master_pool_t *line_master = masterpoolCreateWithCapacity(2 * kWorkerCount * kTestLinePoolItems);
+    twfRequire(line_master != NULL, "failed to create the multi-worker line master pool");
+
+    line_t *lines[kWorkerCount];
+    for (wid_t wi = 0; wi < kWorkerCount; ++wi)
+    {
+        chain->line_pools[wi] = genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(
+            line_master, sizeof(line_t) + tester->lstate_size, kTestLinePoolItems);
+        twfRequire(chain->line_pools[wi] != NULL, "failed to create a worker line pool");
+
+        const wid_t previous_wid = tosSetCurrentWorker(wi);
+        lines[wi]                = lineCreateForWorker(wi, chain->line_pools, wi);
+        discard tosSetCurrentWorker(previous_wid);
+
+        testerclient_lstate_t *ls = lineGetState(lines[wi], tester);
+        testerclientLinestateInitialize(ls, lineGetBufferPool(lines[wi]));
+        ls->request_complete  = true;
+        ls->response_complete = true;
+    }
+
+    testerclient_tstate_t *ts = tunnelGetState(tester);
+    ts->chunk_count           = kTestChunkCount;
+    ts->workers[0].line       = lines[0];
+    ts->workers[0].completed  = true;
+    ts->workers[1].line       = lines[1];
+    atomicStoreRelaxed(&ts->completed_workers, 1);
+
+    // Worker 0 completed earlier, then its peer closed it before worker 1
+    // completed. The received Finish must not be reflected toward that peer.
+    wid_t previous_wid = tosSetCurrentWorker(0);
+    twfRunOwnerFinish(
+        tester, lines[0], testerclientTunnelDownStreamFinish, "successful testerclientTunnelDownStreamFinish");
+
+    twfRequire(ts->workers[0].line == NULL, "successful Finish must detach the completed worker slot");
+    twfRequire(ts->workers[0].close_scheduled, "successful Finish must suppress a later close schedule");
+    twfRequire(ts->workers[0].closed, "successful Finish must mark the completed worker closed");
+    twfRequireEqualU32(
+        (uint32_t) atomicLoadRelaxed(&ts->closed_workers), 1, "successful Finish must count the closed worker");
+    twfRequireEqualU32(trace.next_finish, 0, "a received downstream Finish must not be reflected upstream");
+    tosRequireNoProcessApiCall();
+
+    twfRequireOwnedLineReclaimed(lines[0], "successful testerclientTunnelDownStreamFinish");
+    lines[0] = NULL;
+    discard tosSetCurrentWorker(previous_wid);
+
+    // Worker 1 is the last completion. It queues one worker-local sweep
+    // dispatch per slot; worker 0 must skip its detached line, while worker 1
+    // closes normally and supplies the second closed-worker count.
+    previous_wid = tosSetCurrentWorker(1);
+    lineLock(lines[1]);
+    testerclientMarkWorkerComplete(tester, lines[1]);
+    discard tosSetCurrentWorker(previous_wid);
+
+    tosPumpWorker(&env, 0);
+    tosPumpWorker(&env, 1);
+    tosPumpWorker(&env, 1);
+
+    twfRequire(ts->workers[0].line == NULL, "the sweep must leave the externally closed slot detached");
+    twfRequire(ts->workers[1].line == NULL, "the sweep must detach the internally closed slot");
+    twfRequire(ts->workers[1].closed, "the sweep must mark the final worker closed");
+    twfRequireEqualU32(
+        (uint32_t) atomicLoadRelaxed(&ts->closed_workers), kWorkerCount, "every completed stream must be counted");
+    twfRequireEqualU32(trace.next_finish, 1, "only the internally closed worker may send upstream Finish");
+    tosRequireAcceptedRequest(0);
+    twfRequireLineStateZeroed(lines[1], tester, "the final worker line state was not destroyed");
+
+    previous_wid = tosSetCurrentWorker(1);
+    twfRequireOwnedLineReclaimed(lines[1], "testerclientCloseCompletedStreamTask");
+    lines[1] = NULL;
+    discard tosSetCurrentWorker(previous_wid);
+
+    tosWorkerEnvTeardown(&env);
+    for (wid_t wi = 0; wi < kWorkerCount; ++wi)
+    {
+        genericpoolDestroy(chain->line_pools[wi]);
+    }
+    masterpoolDestroy(line_master);
+    memoryFree(chain);
+    tunnelDestroy(next);
+    tunnelDestroy(tester);
+}
+
+// ---------------------------------------------------------------------------
 // Category D: the same Finish on a persistent worker packet line
 // ---------------------------------------------------------------------------
 
@@ -310,6 +427,7 @@ int main(void)
     caseTerminalDownstreamFinishClosesOwnedLine();
     casePacketModeFinishAborts();
     casePayloadGeneratorInvariantAborts();
+    caseSuccessfulDownstreamFinishClosesBeforeSweep();
 
     printf("testerclient_orderly_shutdown_test: all cases passed\n");
     return 0;

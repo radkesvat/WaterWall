@@ -755,19 +755,33 @@ void testerclientWatchdogTask(tunnel_t *t, line_t *l)
     }
 }
 
+static void testerclientScheduleCompletedStreamCloseOnWorker(void *worker, void *arg1, void *arg2, void *arg3)
+{
+    worker_t                    *real_worker = worker;
+    tunnel_t                    *t           = arg1;
+    testerclient_tstate_t       *ts          = tunnelGetState(t);
+    testerclient_worker_state_t *slot        = &ts->workers[real_worker->wid];
+
+    discard arg2;
+    discard arg3;
+
+    if (slot->line != NULL && slot->completed && ! slot->close_scheduled && ! slot->closed)
+    {
+        slot->close_scheduled = true;
+        lineScheduleTask(slot->line, testerclientCloseCompletedStreamTask, t);
+    }
+}
+
 static void testerclientScheduleCompletedStreamClose(tunnel_t *t)
 {
-    testerclient_tstate_t *ts = tunnelGetState(t);
-    tunnel_chain_t        *tc = tunnelGetChain(t);
+    tunnel_chain_t *tc = tunnelGetChain(t);
 
     for (wid_t wi = 0; wi < tc->workers_count; ++wi)
     {
-        testerclient_worker_state_t *slot = &ts->workers[wi];
-        if (slot->line != NULL && slot->completed && ! slot->close_scheduled)
-        {
-            slot->close_scheduled = true;
-            lineScheduleTask(slot->line, testerclientCloseCompletedStreamTask, t);
-        }
+        // A line and its worker slot have the same owner worker. Queue the slot
+        // inspection there so a concurrent Finish cannot destroy the line
+        // between a foreign worker's pointer load and lineScheduleTask().
+        sendWorkerMessageForceQueue(wi, testerclientScheduleCompletedStreamCloseOnWorker, t, NULL, NULL);
     }
 }
 
@@ -793,12 +807,55 @@ static void testerclientRequestSuccessfulShutdown(tunnel_chain_t *tc)
     }
 }
 
-void testerclientCloseCompletedStreamTask(tunnel_t *t, line_t *l)
+void testerclientCloseCompletedOwnedLine(tunnel_t *t, line_t *l, bool send_upstream_finish)
 {
     testerclient_tstate_t       *ts   = tunnelGetState(t);
     testerclient_worker_state_t *slot = &ts->workers[lineGetWID(l)];
     testerclient_lstate_t       *ls   = lineGetState(l, t);
     tunnel_chain_t              *tc   = tunnelGetChain(t);
+
+    assert(! ts->packet_mode);
+    assert(slot->completed);
+    assert(! slot->closed);
+    assert(slot->line == l);
+
+    // Detach before destroying the line. The TcpOverUdp completion sweep runs
+    // on this worker and must observe either this closed slot or a live line.
+    slot->line            = NULL;
+    slot->close_scheduled = true;
+    slot->closed          = true;
+
+    testerclientLinestateDestroy(ls);
+
+    if (send_upstream_finish && lineIsAlive(l))
+    {
+        tunnelNextUpStreamFinish(t, l);
+    }
+
+    if (lineIsAlive(l))
+    {
+        lineDestroy(l);
+    }
+
+    if (! testerclientShouldCloseCompletedStreams(t))
+    {
+        return;
+    }
+
+    unsigned int closed = (unsigned int) atomicIncRelaxed(&ts->closed_workers) + 1U;
+    if (closed == (unsigned int) tc->workers_count)
+    {
+        LOGI("TesterClient: all %u worker lines closed successfully", (unsigned int) tc->workers_count);
+        testerclientRequestSuccessfulShutdown(tc);
+        return;
+    }
+}
+
+void testerclientCloseCompletedStreamTask(tunnel_t *t, line_t *l)
+{
+    testerclient_tstate_t       *ts   = tunnelGetState(t);
+    testerclient_worker_state_t *slot = &ts->workers[lineGetWID(l)];
+    testerclient_lstate_t       *ls   = lineGetState(l, t);
 
     if (slot->closed)
     {
@@ -821,23 +878,7 @@ void testerclientCloseCompletedStreamTask(tunnel_t *t, line_t *l)
         return;
     }
 
-    tunnelNextUpStreamFinish(t, l);
-    testerclientLinestateDestroy(ls);
-    slot->line   = NULL;
-    slot->closed = true;
-
-    if (lineIsAlive(l))
-    {
-        lineDestroy(l);
-    }
-
-    unsigned int closed = (unsigned int) atomicIncRelaxed(&ts->closed_workers) + 1U;
-    if (closed == (unsigned int) tc->workers_count)
-    {
-        LOGI("TesterClient: all %u worker lines closed successfully", (unsigned int) tc->workers_count);
-        testerclientRequestSuccessfulShutdown(tc);
-        return;
-    }
+    testerclientCloseCompletedOwnedLine(t, l, true);
 }
 
 void testerclientMarkWorkerComplete(tunnel_t *t, line_t *l)

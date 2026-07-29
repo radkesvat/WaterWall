@@ -178,6 +178,10 @@ CREATION_SITES = [
      "the shared pool-backed fixture line the owner-postcondition cases need"),
     ("tests/unittests/wireguarddevice_orderly_shutdown_test.c", "fixtureSetup", TEST_ONLY,
      "a stand-in for the chain's worker packet line, which tunnelchainFinalize() normally allocates"),
+    ("tests/unittests/testerclient_orderly_shutdown_test.c",
+     "caseSuccessfulDownstreamFinishClosesBeforeSweep",
+     TEST_ONLY,
+     "two worker-owned lines used to reproduce a completed-line Finish before the final sweep"),
 ]
 
 # How many lines a site creates, where that is not one. Losing one of a pair is a
@@ -203,7 +207,7 @@ OWNER_CLOSE_SITES = [
      "stateful UDP peer line"),
     ("tunnels/UdpStatelessSocket/common/helpers.c", "udpstatelesssocketCloseOwnedLineFromAdjacent",
      "stateless UDP peer line, from either adjacent Finish"),
-    ("tunnels/TesterClient/downstream/fin.c", "testerclientTunnelDownStreamFinish",
+    ("tunnels/TesterClient/common/helpers.c", "testerclientCloseCompletedOwnedLine",
      "the completed-verification branch of the tester's own line"),
     ("tunnels/TesterClient/common/helpers.c", "testerclientFailOwnedLine",
      "the terminal-verdict branch; a shutdown request does not close the line"),
@@ -430,6 +434,7 @@ REQUIRED_CONTRACT_TESTS = [
      "a representative internal owner: the owned child dies, the borrowed parent does not"),
     ("tests/unittests/testerclient_orderly_shutdown_test.c",
      ("caseTerminalDownstreamFinishClosesOwnedLine",
+      "caseSuccessfulDownstreamFinishClosesBeforeSweep",
       "casePacketModeFinishAborts",
       "testerclientTunnelDownStreamFinish"),
      ((UNIT_CMAKE, '"TesterClient|testerclient_orderly_shutdown_test|testerclient|OFF"'),),
