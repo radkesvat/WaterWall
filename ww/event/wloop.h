@@ -166,17 +166,20 @@ WW_EXPORT wloop_status_e wloopStatus(wloop_t *loop);
 /**
  * @brief Dedicated shutdown-control stop request. Thread-safe.
  *
- * Sets the loop's atomic stop_requested flag with release ordering and wakes the
- * poller through the loop's eventfd/pipe/socketpair. It does not enqueue an
- * application callback, does not allocate, does not wait, and is not subject to
- * the event-admission gate that rejects normal work during shutdown, so it stays
- * usable while the application is stopping.
+ * Publishes the loop's level-triggered atomic stop_requested flag with release
+ * ordering and ensures that the poller has a pending eventfd/pipe/socketpair
+ * wake. Repeated requests coalesce without writing additional wake tokens. It
+ * does not enqueue or allocate an application callback and is not subject to
+ * the event-admission gate that rejects normal work during shutdown, so it
+ * stays usable while the application is stopping.
  *
  * The loop checks the flag with acquire ordering before starting another
  * iteration, which makes a request issued before wloopRun() started equally
  * effective. Repeated requests are idempotent.
  *
- * @return false only when the poller could not be woken.
+ * @return false only when the immediate wake could not be armed. The atomic
+ * stop condition remains published and is still observed by the loop's bounded
+ * polling/check path.
  */
 WW_EXPORT bool wloopRequestStop(wloop_t *loop);
 
@@ -226,19 +229,38 @@ WW_EXPORT void *wloopGetUserData(wloop_t *loop);
  * ev.userdata = userdata;
  * wloopPostEvent(loop, &ev);
  */
-// NOTE: wloopPostEvent is thread-safe, used to post event from other thread to loop thread.
-// It rejects new work once the application is stopping.
+// NOTE: wloopPostEvent is thread-safe, used to post an event from another
+// thread to the loop thread. The event is copied into a FIFO queue, and its
+// nonblocking transport wake may be coalesced with other accepted events. Every
+// accepted event is covered by a current or newly armed wake. It rejects new
+// work once the application is stopping.
 WW_EXPORT bool wloopPostEvent(wloop_t *loop, wevent_t *ev);
 
 /**
  * @brief Post a shutdown-control event, bypassing the stopping-state gate.
  *
- * Same thread-safety and ownership contract as wloopPostEvent (the event is
- * copied into the loop's queue, so a stack object is fine), but it is admitted
- * even after normal application event posting has been closed. Reserved for
+ * Same thread-safety, copied-event, FIFO, and coalesced-wake contract as
+ * wloopPostEvent (so a stack object is fine), but it is admitted even after
+ * normal application event posting has been closed. Reserved for
  * shutdown-control traffic that must not be discarded during teardown.
  */
 WW_EXPORT bool wloopPostControlEvent(wloop_t *loop, wevent_t *ev);
+
+#ifdef WATERWALL_WLOOP_TEST_HOOKS
+typedef enum wloop_test_wake_backend_e
+{
+    kWLoopTestWakeBackendEventFD,
+    kWLoopTestWakeBackendPipe,
+    kWLoopTestWakeBackendSocketPair
+} wloop_test_wake_backend_e;
+
+void                      wloopTestSetNextWakeWriteError(int error);
+void                      wloopTestSetNextWakeConfigError(int error);
+void                      wloopTestRejectNextWakeRegistration(void);
+uint64_t                  wloopTestWakeWriteAttempts(void);
+bool                      wloopTestWakeupPending(wloop_t *loop);
+wloop_test_wake_backend_e wloopTestWakeBackend(void);
+#endif
 
 // idle
 WW_EXPORT widle_t *widleAdd(wloop_t *loop, widle_cb cb, uint32_t repeat DEFAULT(INFINITE));

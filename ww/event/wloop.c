@@ -34,6 +34,13 @@ static void __widle_del(widle_t *idle);
 static void __wtimer_del(wtimer_t *timer);
 static void wioReleaseNoCloseNow(wio_t *io);
 
+#ifdef WATERWALL_WLOOP_TEST_HOOKS
+static int      s_wloop_test_next_wake_write_error;
+static int      s_wloop_test_next_wake_config_error;
+static bool     s_wloop_test_reject_next_wake_registration;
+static uint64_t s_wloop_test_wake_write_attempts;
+#endif
+
 typedef struct wio_release_no_close_msg_s
 {
     wio_t   *io;
@@ -301,26 +308,51 @@ static void wloopStatTimerCallBack(wtimer_t *timer)
 
 static void eventFDReadCB(wio_t *io, sbuf_t *buf)
 {
-    wloop_t  *loop = io->loop;
-    wevent_t *pev  = NULL;
-    wevent_t  ev;
-    uint64_t  count = sbufGetLength(buf);
+    wloop_t *loop        = io->loop;
+    size_t   read_length = sbufGetLength(buf);
 #if defined(OS_UNIX) && HAVE_EVENTFD
-    assert(sbufGetLength(buf) == sizeof(count));
-    sbufReadUnAlignedUI64(buf, &count);
-#endif
-    discard count;
-    for (uint64_t i = 0; i < count; ++i)
+    uint64_t count;
+    if (UNLIKELY(read_length != sizeof(count)))
     {
+        assert(read_length == sizeof(count));
+        wloge("eventfd wake read returned an invalid length: %zu", read_length);
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        return;
+    }
+    sbufReadUnAlignedUI64(buf, &count);
+    // The eventfd counter is diagnostic only. Wake data reports readiness; it
+    // does not encode the number of queued custom events.
+    discard count;
+#else
+    if (UNLIKELY(read_length == 0))
+    {
+        assert(read_length > 0);
+        wloge("wake read returned no data");
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
+        return;
+    }
+#endif
+
+    mutexLock(&loop->custom_events_mutex);
+    // Clearing this before taking the bounded snapshot lets a concurrent or
+    // recursive post arm the next wake without extending the current batch.
+    loop->wakeup_pending     = false;
+    const size_t batch_count = loop->custom_events.size;
+    mutexUnlock(&loop->custom_events_mutex);
+
+    for (size_t i = 0; i < batch_count; ++i)
+    {
+        wevent_t  ev;
+        wevent_t *pev;
+
         mutexLock(&loop->custom_events_mutex);
-        if (event_queue_empty(&loop->custom_events))
-        {
-            goto unlock;
-        }
+        assert(! event_queue_empty(&loop->custom_events));
         pev = event_queue_front(&loop->custom_events);
-        if (pev == NULL)
+        if (UNLIKELY(pev == NULL))
         {
-            goto unlock;
+            mutexUnlock(&loop->custom_events_mutex);
+            wloge("custom event queue became empty inside a captured wake batch");
+            break;
         }
         ev = *pev;
         event_queue_pop_front(&loop->custom_events);
@@ -332,36 +364,142 @@ static void eventFDReadCB(wio_t *io, sbuf_t *buf)
         }
     }
     bufferpoolReuseBuffer(io->loop->bufpool, buf);
-    return;
-unlock:
-    mutexUnlock(&loop->custom_events_mutex);
-    bufferpoolReuseBuffer(io->loop->bufpool, buf);
+}
+
+#ifdef OS_UNIX
+static bool wloopConfigureWakeFD(int fd)
+{
+    int flags;
+    int descriptor_flags;
+
+#ifdef WATERWALL_WLOOP_TEST_HOOKS
+    if (s_wloop_test_next_wake_config_error != 0)
+    {
+        errno                               = s_wloop_test_next_wake_config_error;
+        s_wloop_test_next_wake_config_error = 0;
+        return false;
+    }
+#endif
+
+    flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+    {
+        return false;
+    }
+
+    descriptor_flags = fcntl(fd, F_GETFD, 0);
+    if (descriptor_flags < 0 || fcntl(fd, F_SETFD, descriptor_flags | FD_CLOEXEC) < 0)
+    {
+        return false;
+    }
+
+    return true;
+}
+#else
+static bool wloopConfigureWakeFD(int fd)
+{
+#ifdef WATERWALL_WLOOP_TEST_HOOKS
+    if (s_wloop_test_next_wake_config_error != 0)
+    {
+        WSASetLastError(s_wloop_test_next_wake_config_error);
+        s_wloop_test_next_wake_config_error = 0;
+        return false;
+    }
+#endif
+    return nonBlocking(fd) == 0;
+}
+#endif
+
+static void wloopCloseUnregisteredEventFDS(wloop_t *loop)
+{
+#if defined(OS_UNIX) && HAVE_EVENTFD
+    // eventfd uses one descriptor for both indexes.
+    SAFE_CLOSE(loop->eventfds[EVENTFDS_READ_INDEX]);
+    loop->eventfds[EVENTFDS_WRITE_INDEX] = -1;
+#elif defined(OS_UNIX) && HAVE_PIPE
+    SAFE_CLOSE(loop->eventfds[EVENTFDS_READ_INDEX]);
+    SAFE_CLOSE(loop->eventfds[EVENTFDS_WRITE_INDEX]);
+#else
+    SAFE_CLOSESOCKET(loop->eventfds[EVENTFDS_READ_INDEX]);
+    SAFE_CLOSESOCKET(loop->eventfds[EVENTFDS_WRITE_INDEX]);
+#endif
 }
 
 static int wloopCreateEventFDS(wloop_t *loop)
 {
+    assert(loop->eventfds[EVENTFDS_READ_INDEX] == -1);
+    assert(loop->eventfds[EVENTFDS_WRITE_INDEX] == -1);
+
 #if defined(OS_UNIX) && HAVE_EVENTFD
-    int efd = eventfd(0, 0);
+    int eventfd_flags = 0;
+#ifdef EFD_NONBLOCK
+    eventfd_flags |= EFD_NONBLOCK;
+#endif
+#ifdef EFD_CLOEXEC
+    eventfd_flags |= EFD_CLOEXEC;
+#endif
+    int efd = eventfd(0, eventfd_flags);
     if (efd < 0)
     {
-        wloge("eventfd create failed!");
+        wloge("eventfd create failed: %s:%d", socketStrError(errno), errno);
         return -1;
     }
     loop->eventfds[0] = loop->eventfds[1] = efd;
+    if (! wloopConfigureWakeFD(efd))
+    {
+        int error = errno;
+        wloge("eventfd configuration failed: %s:%d", socketStrError(error), error);
+        wloopCloseUnregisteredEventFDS(loop);
+        return -1;
+    }
 #elif defined(OS_UNIX) && HAVE_PIPE
     if (pipe(loop->eventfds) != 0)
     {
-        wloge("pipe create failed!");
+        wloge("pipe create failed: %s:%d", socketStrError(errno), errno);
+        return -1;
+    }
+    if (! wloopConfigureWakeFD(loop->eventfds[EVENTFDS_READ_INDEX]) ||
+        ! wloopConfigureWakeFD(loop->eventfds[EVENTFDS_WRITE_INDEX]))
+    {
+        int error = errno;
+        wloge("pipe configuration failed: %s:%d", socketStrError(error), error);
+        wloopCloseUnregisteredEventFDS(loop);
         return -1;
     }
 #else
     if (createSocketPair(AF_INET, SOCK_STREAM, 0, loop->eventfds) != 0)
     {
-        wloge("socketpair create failed!");
+        int error = socketERRNO();
+        wloge("socketpair create failed: %s:%d", socketStrError(error), error);
+        return -1;
+    }
+    if (! wloopConfigureWakeFD(loop->eventfds[EVENTFDS_READ_INDEX]) ||
+        ! wloopConfigureWakeFD(loop->eventfds[EVENTFDS_WRITE_INDEX]))
+    {
+        int error = socketERRNO();
+        wloge("socketpair configuration failed: %s:%d", socketStrError(error), error);
+        wloopCloseUnregisteredEventFDS(loop);
         return -1;
     }
 #endif
-    wio_t *io = wRead(loop, loop->eventfds[EVENTFDS_READ_INDEX], eventFDReadCB);
+
+    const int read_fd               = loop->eventfds[EVENTFDS_READ_INDEX];
+    bool      registration_rejected = read_fd < 0 || read_fd > WIO_MAX_FD;
+#ifdef WATERWALL_WLOOP_TEST_HOOKS
+    if (s_wloop_test_reject_next_wake_registration)
+    {
+        s_wloop_test_reject_next_wake_registration = false;
+        registration_rejected                      = true;
+    }
+#endif
+    if (UNLIKELY(registration_rejected))
+    {
+        wloge("wake read descriptor %d cannot be registered", read_fd);
+        wloopCloseUnregisteredEventFDS(loop);
+        return -1;
+    }
+
+    wio_t *io = wRead(loop, read_fd, eventFDReadCB);
     if (UNLIKELY(io == NULL))
     {
         loop->eventfds[EVENTFDS_READ_INDEX] = -1;
@@ -382,28 +520,36 @@ static int wloopCreateEventFDS(wloop_t *loop)
 static void wloopDestroyEventFDS(wloop_t *loop)
 {
 #if defined(OS_UNIX) && HAVE_EVENTFD
-    // NOTE: eventfd has only one fd
-    SAFE_CLOSE(loop->eventfds[0]);
+    // The read-side wio owns and already closed the shared eventfd.
+    loop->eventfds[0] = loop->eventfds[1] = -1;
 #elif defined(OS_UNIX) && HAVE_PIPE
-    SAFE_CLOSE(loop->eventfds[0]);
+    // The read-side wio owns its descriptor; only close the separate writer.
+    loop->eventfds[0] = -1;
     SAFE_CLOSE(loop->eventfds[1]);
 #else
-    // NOTE: Avoid duplication closesocket in wio_cleanup
-    // SAFE_CLOSESOCKET(loop->eventfds[EVENTFDS_READ_INDEX]);
+    // Avoid duplicating the read-side close performed by wio cleanup.
+    loop->eventfds[EVENTFDS_READ_INDEX] = -1;
     SAFE_CLOSESOCKET(loop->eventfds[EVENTFDS_WRITE_INDEX]);
 #endif
-    loop->eventfds[0] = loop->eventfds[1] = -1;
+    loop->wakeup_pending = false;
 }
 
 /**
- * @brief Write one wakeup byte to the loop's poller.
+ * @brief Ensure that one readiness notification is armed for the loop.
  *
- * Must be called with custom_events_mutex held. Does not enqueue anything: a
- * spurious wakeup only makes eventFDReadCB find an empty queue.
+ * Must be called with custom_events_mutex held. A successful write and a
+ * would-block result both arm the wake: would-block proves that the nonblocking
+ * transport already contains unread wake data.
  */
-static bool wloopWriteWakeupLocked(wloop_t *loop)
+static bool wloopArmWakeupLocked(wloop_t *loop)
 {
     int nwrite = 0;
+    int error  = 0;
+
+    if (loop->wakeup_pending)
+    {
+        return true;
+    }
 
     if (loop->eventfds[EVENTFDS_WRITE_INDEX] == -1)
     {
@@ -412,6 +558,24 @@ static bool wloopWriteWakeupLocked(wloop_t *loop)
             return false;
         }
     }
+
+retry:;
+#ifdef WATERWALL_WLOOP_TEST_HOOKS
+    ++s_wloop_test_wake_write_attempts;
+    if (s_wloop_test_next_wake_write_error != 0)
+    {
+        error                              = s_wloop_test_next_wake_write_error;
+        s_wloop_test_next_wake_write_error = 0;
+#ifdef OS_WIN
+        WSASetLastError(error);
+#else
+        errno = error;
+#endif
+        nwrite = -1;
+        goto classify;
+    }
+#endif
+
 #if defined(OS_UNIX) && HAVE_EVENTFD
     uint64_t count = 1;
     nwrite         = (int) write(loop->eventfds[EVENTFDS_WRITE_INDEX], &count, sizeof(count));
@@ -420,7 +584,47 @@ static bool wloopWriteWakeupLocked(wloop_t *loop)
 #else
     nwrite = send(loop->eventfds[EVENTFDS_WRITE_INDEX], "e", 1, 0);
 #endif
-    return nwrite > 0;
+
+#ifdef WATERWALL_WLOOP_TEST_HOOKS
+classify:
+#endif
+    if (nwrite < 0)
+    {
+#if defined(OS_UNIX) && (HAVE_EVENTFD || HAVE_PIPE)
+        error = errno;
+#else
+        error = socketERRNO();
+#endif
+        if (error == EINTR)
+        {
+            goto retry;
+        }
+        if (error == EAGAIN
+#if defined(EWOULDBLOCK) && (EWOULDBLOCK != EAGAIN)
+            || error == EWOULDBLOCK
+#endif
+        )
+        {
+            loop->wakeup_pending = true;
+            return true;
+        }
+        wloge("wakeup write failed: %s:%d", socketStrError(error), error);
+        return false;
+    }
+
+#if defined(OS_UNIX) && HAVE_EVENTFD
+    const int expected = (int) sizeof(uint64_t);
+#else
+    const int expected = 1;
+#endif
+    if (nwrite != expected)
+    {
+        wloge("wakeup write was incomplete: wrote %d of %d bytes", nwrite, expected);
+        return false;
+    }
+
+    loop->wakeup_pending = true;
+    return true;
 }
 
 bool wloopPostControlEvent(wloop_t *loop, wevent_t *ev)
@@ -440,7 +644,7 @@ bool wloopPostControlEvent(wloop_t *loop, wevent_t *ev)
 
     bool success = false;
     mutexLock(&loop->custom_events_mutex);
-    if (! wloopWriteWakeupLocked(loop))
+    if (! wloopArmWakeupLocked(loop))
     {
         wloge("wloopPostEvent failed!");
         goto unlock;
@@ -503,6 +707,7 @@ static void wloopInit(wloop_t *loop)
     mutexInit(&loop->custom_events_mutex);
     // NOTE: wloopCreateEventFDS when wloopPostEvent or wloopRun
     loop->eventfds[0] = loop->eventfds[1] = -1;
+    loop->wakeup_pending                  = false;
 
     // NOTE: init start_time here, because wtimerAdd use it.
     loop->start_ms     = getTimeOfDayMS();
@@ -784,26 +989,69 @@ bool wloopRequestStop(wloop_t *loop)
         return false;
     }
 
-    atomicStoreExplicit(&loop->stop_requested, true, memory_order_release);
+    if (atomicLoadExplicit(&loop->stop_requested, memory_order_acquire))
+    {
+        return true;
+    }
 
-    /*
-     * Always wake the poller. Skipping the wakeup when the caller looks like the
-     * loop thread would mean reading loop->pid, which the loop thread writes
-     * without synchronization in wloopRun() - and a stale read there costs a
-     * full poll interval of shutdown latency. A redundant wakeup is cheap: it
-     * only makes eventFDReadCB find an empty queue.
-     *
-     * This deliberately does not enqueue an application callback and does not
-     * allocate a custom-event object, so it stays available while the
-     * application is stopping and cannot be rejected by the normal
-     * event-admission gate.
-     */
     mutexLock(&loop->custom_events_mutex);
-    const bool woken = wloopWriteWakeupLocked(loop);
+    if (atomicLoadExplicit(&loop->stop_requested, memory_order_acquire))
+    {
+        mutexUnlock(&loop->custom_events_mutex);
+        return true;
+    }
+
+    // Publish the level-triggered condition before arming the edge that wakes a
+    // blocked poller. A hard wake failure does not retract the stop request.
+    atomicStoreExplicit(&loop->stop_requested, true, memory_order_release);
+    const bool woken = wloopArmWakeupLocked(loop);
     mutexUnlock(&loop->custom_events_mutex);
 
     return woken;
 }
+
+#ifdef WATERWALL_WLOOP_TEST_HOOKS
+void wloopTestSetNextWakeWriteError(int error)
+{
+    s_wloop_test_next_wake_write_error = error;
+}
+
+void wloopTestSetNextWakeConfigError(int error)
+{
+    s_wloop_test_next_wake_config_error = error;
+}
+
+void wloopTestRejectNextWakeRegistration(void)
+{
+    s_wloop_test_reject_next_wake_registration = true;
+}
+
+uint64_t wloopTestWakeWriteAttempts(void)
+{
+    return s_wloop_test_wake_write_attempts;
+}
+
+bool wloopTestWakeupPending(wloop_t *loop)
+{
+    bool pending;
+
+    mutexLock(&loop->custom_events_mutex);
+    pending = loop->wakeup_pending;
+    mutexUnlock(&loop->custom_events_mutex);
+    return pending;
+}
+
+wloop_test_wake_backend_e wloopTestWakeBackend(void)
+{
+#if defined(OS_UNIX) && HAVE_EVENTFD
+    return kWLoopTestWakeBackendEventFD;
+#elif defined(OS_UNIX) && HAVE_PIPE
+    return kWLoopTestWakeBackendPipe;
+#else
+    return kWLoopTestWakeBackendSocketPair;
+#endif
+}
+#endif
 
 bool wloopStopRequested(wloop_t *loop)
 {

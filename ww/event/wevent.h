@@ -79,7 +79,11 @@ struct wloop_s
     uint32_t iocp_posted_operations; // records currently posted to the kernel
 #endif
     // custom_events
+    // custom_events_mutex protects eventfds, custom_events, and wakeup_pending.
+    // wakeup_pending means that one readiness notification is armed for the
+    // loop; it is not a count of queued events.
     int         eventfds[2];
+    bool        wakeup_pending;
     event_queue custom_events;
     wmutex_t    custom_events_mutex;
 };
