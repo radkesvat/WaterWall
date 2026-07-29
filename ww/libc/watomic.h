@@ -169,13 +169,23 @@ typedef intptr_t atomic_uintmax_t;
 
 #define atomic_exchange_explicit(object, desired, order) atomic_exchange(object, desired)
 
-static inline int atomic_compare_exchange_strong(intptr_t *object, intptr_t *expected, intptr_t desired)
+static inline int w_atomicCompareExchangePtrWidth(intptr_t *object, intptr_t *expected, intptr_t desired)
 {
     intptr_t old = *expected;
     *expected    = (intptr_t) InterlockedCompareExchangePointer(
         (PVOID volatile *) object, (PVOID) (intptr_t) desired, (PVOID) (intptr_t) old);
     return *expected == old;
 }
+
+/*
+ * Wrapped in a macro so the width check reaches compare/exchange too. Both the
+ * object and the expected-value slot are checked: passing 64-bit state here is
+ * one mistake spelled two ways, and the intptr_t parameters alone would only
+ * report it as a pointer type mismatch.
+ */
+#define atomic_compare_exchange_strong(object, expected, desired)                                                      \
+    (W_ATOMIC_REQUIRE_PTR_WIDTH(object), W_ATOMIC_REQUIRE_PTR_WIDTH(expected),                                         \
+     w_atomicCompareExchangePtrWidth(object, expected, desired))
 
 #define atomic_compare_exchange_strong_explicit(object, expected, desired, success, failure)                           \
     atomic_compare_exchange_strong(object, expected, desired)
