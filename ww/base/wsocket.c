@@ -253,7 +253,7 @@ static int sockaddrBind(sockaddr_u *localaddr, int type)
 
     if (bind(sockfd, &localaddr->sa, sockaddrLen(localaddr)) < 0)
     {
-        printError("syscall return error , call: bind , value: %d\n", -1);
+        printError("syscall return error, call: bind , value: %d\n", -1);
         goto error;
     }
 
@@ -502,12 +502,12 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
     listenfd = socketToFd(socket(AF_INET, SOCK_STREAM, 0));
     if (listenfd < 0)
     {
-        printError("syscall return error , call: socket , value: %d\n", (int) listenfd);
+        printError("syscall return error, call: socket , value: %d\n", (int) listenfd);
         goto error;
     }
     if (bind(listenfd, (struct sockaddr *) &localaddr, addrlen) < 0)
     {
-        printError("syscall return error , call: bind , value: %d\n", -1);
+        printError("syscall return error, call: bind , value: %d\n", -1);
         goto error;
     }
     if (listen(listenfd, 1) < 0)
@@ -524,19 +524,19 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
     connfd = socketToFd(socket(AF_INET, SOCK_STREAM, 0));
     if (connfd < 0)
     {
-        printError("socket");
+        printError("syscall return error, call: socket , value: %d\n", (int) connfd);
         goto error;
     }
     if (connect(connfd, (struct sockaddr *) &localaddr, addrlen) < 0)
     {
-        printError("connect");
+        printError("syscall return error, call: connect , value: %d\n", -1);
         goto error;
     }
     // acceptor
     acceptfd = socketToFd(accept(listenfd, (struct sockaddr *) &localaddr, &addrlen));
     if (acceptfd < 0)
     {
-        printError("accept");
+        printError("syscall return error, call: accept , value: %d\n", -1);
         goto error;
     }
 
