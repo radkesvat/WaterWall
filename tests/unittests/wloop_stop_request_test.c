@@ -8,6 +8,7 @@
  *   - a request issued before wloopRun() started is still honored;
  *   - large and concurrent repeated request sets coalesce without blocking;
  *   - an existing custom-event wake also covers a stop request;
+ *   - the first request may race wake-channel initialization during startup;
  *   - a request racing the loop's own exit is safe.
  */
 
@@ -73,6 +74,8 @@ typedef struct loop_runner_s
     wthread_t      thread;
     atomic_bool    running;
     atomic_bool    finished;
+    atomic_bool    start_gate;
+    bool           wait_for_start_gate;
     int            result;
 } loop_runner_t;
 
@@ -82,6 +85,9 @@ static WTHREAD_ROUTINE(loopRunnerMain) // NOLINT
 
     tl_wid = 0;
     atomicStoreExplicit(&runner->running, true, memory_order_release);
+    while (runner->wait_for_start_gate && ! atomicLoadExplicit(&runner->start_gate, memory_order_acquire))
+    {
+    }
     runner->result = wloopRun(runner->loop);
     atomicStoreExplicit(&runner->finished, true, memory_order_release);
     return 0;
@@ -280,6 +286,60 @@ static void testStopCoveredByExistingEventWake(env_t *env)
     runnerDestroy(&runner);
 }
 
+typedef struct startup_requester_s
+{
+    wloop_t     *loop;
+    atomic_bool  ready;
+    atomic_bool *start_gate;
+    wthread_t    thread;
+    bool         success;
+} startup_requester_t;
+
+static WTHREAD_ROUTINE(startupRequesterMain) // NOLINT
+{
+    startup_requester_t *requester = userdata;
+
+    tl_wid = 0;
+    atomicStoreExplicit(&requester->ready, true, memory_order_release);
+    while (! atomicLoadExplicit(requester->start_gate, memory_order_acquire))
+    {
+    }
+    requester->success = wloopRequestStop(requester->loop);
+    return 0;
+}
+
+/*
+ * Release wloopRun() and the first stop request from the same gate. This is a
+ * functional stress test in normal builds and a regression test for the
+ * intern_nevents startup handoff when run under ThreadSanitizer.
+ */
+static void testFirstStopRacesLoopStartup(env_t *env)
+{
+    for (int attempt = 0; attempt < 32; ++attempt)
+    {
+        loop_runner_t       runner;
+        startup_requester_t requester;
+        runnerCreate(&runner, env);
+        runner.wait_for_start_gate = true;
+        runnerStart(&runner);
+        require(waitForFlag(&runner.running, 2000), "the loop thread did not start");
+
+        memoryZero(&requester, sizeof(requester));
+        requester.loop       = runner.loop;
+        requester.start_gate = &runner.start_gate;
+        require(threadCreate(&requester.thread, startupRequesterMain, &requester) == kWThreadErrorNone,
+                "failed to spawn the startup stop-request thread");
+        require(waitForFlag(&requester.ready, 2000), "the startup stop-request thread did not start");
+
+        atomicStoreExplicit(&runner.start_gate, true, memory_order_release);
+        threadJoin(requester.thread);
+        require(requester.success, "the first stop request failed while racing loop startup");
+        require(waitForFlag(&runner.finished, 2000), "the loop did not stop after the startup race");
+        runnerJoin(&runner);
+        runnerDestroy(&runner);
+    }
+}
+
 /* A stop request racing the loop thread's own exit must be safe both ways. */
 static void testStopRacingSelfExit(env_t *env)
 {
@@ -319,6 +379,7 @@ int main(void)
     testRepeatedStopRequests(&env);
     testConcurrentRepeatedStopRequests(&env);
     testStopCoveredByExistingEventWake(&env);
+    testFirstStopRacesLoopStartup(&env);
     testStopRacingSelfExit(&env);
 
     envTeardown(&env);

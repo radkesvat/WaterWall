@@ -908,27 +908,31 @@ int wloopRun(wloop_t *loop)
     // loop->tid = getTID();  tid is taken at wloop_create
     // wlogd("wloopRun tid=%ld", loop->tid);
 
-    int result = kWLoopRunOk;
-    if (loop->intern_nevents == 0)
+    int  result = kWLoopRunOk;
+    int  eventfds_result;
+    bool initialize_internal_events;
+
+    mutexLock(&loop->custom_events_mutex);
+    initialize_internal_events = loop->intern_nevents == 0;
+    eventfds_result            = 0;
+    if (initialize_internal_events && loop->eventfds[EVENTFDS_WRITE_INDEX] == -1)
     {
-        int eventfds_result = 0;
-        mutexLock(&loop->custom_events_mutex);
-        if (loop->eventfds[EVENTFDS_WRITE_INDEX] == -1)
-        {
-            eventfds_result = wloopCreateEventFDS(loop);
-        }
-        mutexUnlock(&loop->custom_events_mutex);
-        if (eventfds_result != 0)
-        {
-            result = kWLoopRunErrorWakeupInit;
-            goto exit_loop;
-        }
+        eventfds_result = wloopCreateEventFDS(loop);
+    }
+    mutexUnlock(&loop->custom_events_mutex);
+    if (eventfds_result != 0)
+    {
+        result = kWLoopRunErrorWakeupInit;
+        goto exit_loop;
+    }
 
 #ifdef DEBUG
+    if (initialize_internal_events)
+    {
         _loop_debug_timer = wtimerAdd(loop, wloopStatTimerCallBack, WLOOP_STAT_TIMEOUT, INFINITE);
         ++loop->intern_nevents;
-#endif
     }
+#endif
 
     while (loop->status != WLOOP_STATUS_STOP)
     {
