@@ -4,6 +4,7 @@
 #include "global_state.h"
 #include "managers/windivert_manager.h"
 #include "master_pool.h"
+#include "raw_windows_send_policy.h"
 #include "wchan.h"
 #include "wloop.h"
 #include "worker.h"
@@ -18,13 +19,33 @@ enum
     kRawWriteChannelQueueMax              = 256
 };
 
-static void rawdeviceRecordOversizedDiscard(raw_device_t *rdev)
+static_assert(kRawWindowsErrorDataNotAccepted == ERROR_DATA_NOT_ACCEPTED,
+              "the raw writer's ERROR_DATA_NOT_ACCEPTED value drifted from Win32");
+static_assert(kRawWindowsErrorHostUnreachable == ERROR_HOST_UNREACHABLE,
+              "the raw writer's ERROR_HOST_UNREACHABLE value drifted from Win32");
+static_assert(kRawWindowsErrorRetry == ERROR_RETRY, "the raw writer's ERROR_RETRY value drifted from Win32");
+
+typedef enum rawdevice_discard_reason_e
+{
+    kRawDeviceDiscardOversized,
+    kRawDeviceDiscardPacketLocalSendError
+} rawdevice_discard_reason_t;
+
+static void rawdeviceRecordDiscard(raw_device_t *rdev, rawdevice_discard_reason_t reason, unsigned long send_error)
 {
     unsigned long long now_ms = getTimeOfDayMS();
 
     rdev->discarded_packet_total++;
     rdev->discarded_packet_suppressed++;
-    rdev->oversized_packet_total++;
+    if (reason == kRawDeviceDiscardOversized)
+    {
+        rdev->oversized_packet_total++;
+    }
+    else
+    {
+        rdev->packet_local_send_error_total++;
+        rdev->last_discard_error = (uint32_t) send_error;
+    }
 
     if (rdev->discard_last_report_ms == 0)
     {
@@ -38,13 +59,16 @@ static void rawdeviceRecordOversizedDiscard(raw_device_t *rdev)
         return;
     }
 
-    LOGW("RawDevice: discarded %llu oversized packet(s) over %llums "
-         "(total=%llu, exceeding kMaxAllowedPacketLength=%u: %llu)",
+    LOGW("RawDevice: discarded %llu packet(s) over %llums "
+         "(total=%llu, exceeding kMaxAllowedPacketLength=%u: %llu, "
+         "packet-local WinDivertSend errors=%llu, last error=%u)",
          LLU(rdev->discarded_packet_suppressed),
          LLU(elapsed_ms),
          LLU(rdev->discarded_packet_total),
          (unsigned int) kMaxAllowedPacketLength,
-         LLU(rdev->oversized_packet_total));
+         LLU(rdev->oversized_packet_total),
+         LLU(rdev->packet_local_send_error_total),
+         rdev->last_discard_error);
     rdev->discarded_packet_suppressed = 0;
     rdev->discard_last_report_ms      = now_ms;
 }
@@ -56,12 +80,15 @@ static void rawdeviceReportPendingDiscards(raw_device_t *rdev)
         return;
     }
 
-    LOGW("RawDevice: discarded %llu oversized packet(s) before writer exit "
-         "(total=%llu, exceeding kMaxAllowedPacketLength=%u: %llu)",
+    LOGW("RawDevice: discarded %llu packet(s) before writer exit "
+         "(total=%llu, exceeding kMaxAllowedPacketLength=%u: %llu, "
+         "packet-local WinDivertSend errors=%llu, last error=%u)",
          LLU(rdev->discarded_packet_suppressed),
          LLU(rdev->discarded_packet_total),
          (unsigned int) kMaxAllowedPacketLength,
-         LLU(rdev->oversized_packet_total));
+         LLU(rdev->oversized_packet_total),
+         LLU(rdev->packet_local_send_error_total),
+         rdev->last_discard_error);
     rdev->discarded_packet_suppressed = 0;
 }
 
@@ -78,7 +105,7 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
                   .UDPChecksum = 1,
     };
 
-    while (atomicLoadExplicit(&(rdev->running), memory_order_relaxed))
+    while (rawLifecycleIsActive(rawLifecycleLoad(&rdev->lifecycle)))
     {
         if (! chanRecv(writer_channel, (void **) &buf))
         {
@@ -89,16 +116,24 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
         uint32_t packet_len = sbufGetLength(buf);
         if (UNLIKELY(packet_len > kMaxAllowedPacketLength))
         {
-            rawdeviceRecordOversizedDiscard(rdev);
+            rawdeviceRecordDiscard(rdev, kRawDeviceDiscardOversized, 0);
             bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
             continue;
         }
 
         if (! windivertSend(rdev->handle, sbufGetRawPtr(buf), packet_len, NULL, &addr))
         {
-            LOGW("RawDevice: WinDivertSend failed: error %lu", GetLastError());
+            const unsigned long send_error = GetLastError();
             bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
-            continue;
+
+            if (rawWindowsClassifySendError(send_error) == kRawWindowsSendDiscardPacket)
+            {
+                rawdeviceRecordDiscard(rdev, kRawDeviceDiscardPacketLocalSendError, send_error);
+                continue;
+            }
+
+            LOGE("RawDevice: terminal WinDivertSend failure on device %s: error %lu", rdev->name, send_error);
+            break;
         }
         bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
     }
@@ -107,9 +142,44 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
     return 0;
 }
 
+static void rawdeviceNoteUnexpectedWriterExit(raw_device_t *rdev)
+{
+    raw_lifecycle_state_t failed_from;
+    if (! rawLifecycleTransitionToFailed(&rdev->lifecycle, &failed_from))
+    {
+        return;
+    }
+
+    LOGE("RawDevice: writer thread for device %s exited unexpectedly; the device is no longer usable", rdev->name);
+
+    if (failed_from == kRawLifecycleUp && ! requestProgramShutdown(1))
+    {
+        abortProgramNow(1);
+    }
+}
+
+static WTHREAD_ROUTINE(rawdeviceWriterThreadMain) // NOLINT
+{
+    raw_device_t *rdev = userdata;
+    discard       rdev->routine_writer(rdev);
+    rawdeviceNoteUnexpectedWriterExit(rdev);
+    return 0;
+}
+
+bool rawdeviceIsUp(const raw_device_t *rdev)
+{
+    return rdev != NULL && rawLifecycleLoad(&rdev->lifecycle) == kRawLifecycleUp;
+}
+
 bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf)
 {
     assert(sbufGetLength(buf) > sizeof(struct ip_hdr));
+
+    if (UNLIKELY(! rawdeviceIsUp(rdev)))
+    {
+        LOGE("RawDevice: write failed, device is not up");
+        return false;
+    }
 
     switch (deviceWriterChannelTrySend(&rdev->writer_channel, buf))
     {
@@ -131,14 +201,14 @@ bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf)
 
 bool rawdeviceBringUp(raw_device_t *rdev)
 {
-    if (atomicLoadRelaxed(&rdev->up))
-    {
-        LOGE("RawDevice: device is already up");
-        return false;
-    }
     if (rdev->writer_joinable || deviceWriterChannelHasCurrent(&rdev->writer_channel))
     {
         LOGE("RawDevice: previous writer ownership has not been released");
+        return false;
+    }
+    if (! rawLifecycleTransitionDownToStarting(&rdev->lifecycle))
+    {
+        LOGE("RawDevice: device cannot be started in current lifecycle state");
         return false;
     }
 
@@ -149,61 +219,99 @@ bool rawdeviceBringUp(raw_device_t *rdev)
     if (! deviceWriterChannelOpen(&rdev->writer_channel, kRawWriteChannelQueueMax))
     {
         LOGE("RawDevice: failed to open writer channel");
+        rawLifecycleTransitionStoppingToDown(&rdev->lifecycle);
         return false;
     }
-    // These atomics carry only stop/status values; queue publication and thread
-    // creation provide the resource-publication edges.
-    atomicStoreRelaxed(&rdev->running, true);
 
     // wthread_error_t read_error = threadCreate(&rdev->read_thread, rdev->routine_reader, rdev);
 
-    wthread_error_t error = threadCreate(&rdev->write_thread, rdev->routine_writer, rdev);
+    wthread_error_t error = threadCreate(&rdev->write_thread, rawdeviceWriterThreadMain, rdev);
     if (UNLIKELY(error != kWThreadErrorNone))
     {
         LOGE("RawDevice: failed to create writer thread: error %u", error);
-        atomicStoreRelaxed(&rdev->running, false);
         deviceWriterChannelClose(&rdev->writer_channel);
         discard deviceWriterChannelRetireCurrent(&rdev->writer_channel);
-        atomicStoreRelaxed(&rdev->up, false);
+        rawLifecycleTransitionStoppingToDown(&rdev->lifecycle);
         return false;
     }
 
     rdev->writer_joinable = true;
-    atomicStoreRelaxed(&rdev->up, true);
+    if (! rawLifecycleTransitionStartingToUp(&rdev->lifecycle))
+    {
+        LOGE("RawDevice: writer thread failed during startup");
+        goto rollback;
+    }
+
     LOGI("RawDevice: device %s is now up", rdev->name);
     return true;
+
+rollback:
+    rawLifecycleTransitionToStopping(&rdev->lifecycle);
+    deviceWriterChannelClose(&rdev->writer_channel);
+
+    bool rollback_ok = true;
+    if (rdev->writer_joinable)
+    {
+        if (safeThreadJoin(rdev->write_thread))
+        {
+            rdev->writer_joinable = false;
+            bufferpoolResetThreadOwnership(rdev->writer_buffer_pool);
+        }
+        else
+        {
+            LOGE("RawDevice: failed to join writer during startup rollback");
+            rollback_ok = false;
+        }
+    }
+    if (! rdev->writer_joinable && ! deviceWriterChannelRetireCurrent(&rdev->writer_channel))
+    {
+        rollback_ok = false;
+    }
+    if (rollback_ok)
+    {
+        rawLifecycleTransitionStoppingToDown(&rdev->lifecycle);
+    }
+    return false;
 }
 
 bool rawdeviceBringDown(raw_device_t *rdev)
 {
-    const bool was_up = atomicExchangeExplicit(&rdev->up, false, memory_order_relaxed);
-    if (! was_up && ! rdev->writer_joinable && ! deviceWriterChannelHasCurrent(&rdev->writer_channel))
+    if (rawLifecycleLoad(&rdev->lifecycle) == kRawLifecycleDown && ! rdev->writer_joinable &&
+        ! deviceWriterChannelHasCurrent(&rdev->writer_channel))
     {
         LOGE("RawDevice: device is already down");
         return true;
     }
 
-    atomicStoreRelaxed(&rdev->running, false);
+    rawLifecycleTransitionToStopping(&rdev->lifecycle);
     deviceWriterChannelClose(&rdev->writer_channel);
 
+    bool bring_down_ok = true;
     if (rdev->writer_joinable)
     {
-        if (UNLIKELY(! safeThreadJoin(rdev->write_thread)))
+        if (safeThreadJoin(rdev->write_thread))
+        {
+            rdev->writer_joinable = false;
+            bufferpoolResetThreadOwnership(rdev->writer_buffer_pool);
+        }
+        else
         {
             LOGE("RawDevice: failed to join writer thread; retaining writer resources");
-            return false;
+            bring_down_ok = false;
         }
-        rdev->writer_joinable = false;
-        bufferpoolResetThreadOwnership(rdev->writer_buffer_pool);
     }
-    if (! deviceWriterChannelRetireCurrent(&rdev->writer_channel))
+    if (! rdev->writer_joinable && ! deviceWriterChannelRetireCurrent(&rdev->writer_channel))
     {
-        return false;
+        bring_down_ok = false;
     }
 
-    LOGI("RawDevice: device %s is now down", rdev->name);
+    if (bring_down_ok)
+    {
+        rawLifecycleTransitionStoppingToDown(&rdev->lifecycle);
+        LOGI("RawDevice: device %s is now down", rdev->name);
+    }
 
-    return true;
+    return bring_down_ok;
 }
 
 raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
@@ -233,14 +341,13 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
     );
 
     *rdev = (raw_device_t) {.name               = stringDuplicate(name),
-                            .running            = false,
-                            .up                 = false,
                             .routine_writer     = routineWriteToRaw,
                             .handle             = handle,
                             .mark               = mark,
                             .userdata           = userdata,
                             .writer_buffer_pool = writer_bpool,
                             .writer_joinable    = false};
+    atomic_init(&rdev->lifecycle, kRawLifecycleDown);
     deviceWriterChannelInit(&rdev->writer_channel);
 
     return rdev;
@@ -249,7 +356,8 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
 void rawdeviceDestroy(raw_device_t *rdev)
 {
 
-    if (atomicLoadRelaxed(&rdev->up) || rdev->writer_joinable || deviceWriterChannelHasCurrent(&rdev->writer_channel))
+    if (rawLifecycleLoad(&rdev->lifecycle) != kRawLifecycleDown || rdev->writer_joinable ||
+        deviceWriterChannelHasCurrent(&rdev->writer_channel))
     {
         if (! rawdeviceBringDown(rdev))
         {
