@@ -361,11 +361,37 @@ CORE_DESTROY_SITES = {
 
 REENTRANT_STATE_GUARDS = [
     ("tunnels/HttpClient/common/transport.c", "httpclientLinestateIsActive",
-     ("sendNghttp2Outbound", "httpclientTransportCloseDirections"),
-     "the nghttp2 session must not be resumed after a re-entrant Finish destroyed the state"),
+     ("httpclientTransportCloseDirections",),
+     "the failure-unwind path must not touch state destroyed by a re-entrant Finish"),
+    ("tunnels/HttpClient/common/transport.c", "httpclientCanSendUpstream",
+     ("sendBytesUp",
+      "httpclientSendRawUp",
+      "httpclientTransportSendHttp1ChunkedPayload",
+      "sendNghttp2Outbound",
+      "httpclientTransportSendHttp2DataFrame"),
+     "multi-part output must stop when a re-entrant Finish closes the upstream destination"),
     ("tunnels/HttpServer/common/transport.c", "httpserverLinestateIsActive",
-     ("sendNghttp2Outbound", "httpserverTransportCloseDirections"),
-     "the nghttp2 session must not be resumed after a re-entrant Finish destroyed the state"),
+     ("httpserverTransportCloseDirections",),
+     "the failure-unwind path must not touch state destroyed by a re-entrant Finish"),
+    ("tunnels/HttpServer/common/transport.c", "httpserverCanSendDownstream",
+     ("sendBytesDown",
+      "httpserverSendRawDown",
+      "httpserverTransportSendHttp1ChunkedPayload",
+      "sendNghttp2Outbound",
+      "httpserverTransportSendHttp2DataFrame"),
+     "multi-part output must stop when a re-entrant Finish closes the downstream destination"),
+]
+
+# Calling a helper is insufficient if its predicate regresses to the old
+# active-state-only check. These definitions pin the finished-side half of the
+# contract that prevents payload after Finish.
+DESTINATION_GUARD_CONTRACTS = [
+    ("tunnels/HttpClient/common/transport.c", "httpclientCanSendUpstream",
+     ((r"\bhttpclientLinestateIsActive\s*\(\s*ls\s*\)", "active line state"),
+      (r"!\s*ls->next_finished\b", "unfinished upstream destination"))),
+    ("tunnels/HttpServer/common/transport.c", "httpserverCanSendDownstream",
+     ((r"\bhttpserverLinestateIsActive\s*\(\s*ls\s*\)", "active line state"),
+      (r"!\s*ls->prev_finished\b", "unfinished downstream destination"))),
 ]
 
 # ---------------------------------------------------------------------------
@@ -422,6 +448,18 @@ REQUIRED_CONTRACT_TESTS = [
      ((UNIT_CMAKE, "add_executable(packet_adapter_finish_test"),
       (UNIT_CMAKE, "waterwall.packet_adapter_finish_unit")),
      "packet adapters do not return from Finish"),
+    ("tests/unittests/httpclient_reentrant_finish_test.c",
+     ("caseFinishDuringFirstFinalChunkStopsRemainingOutput",
+      "finishClientFromNextOnFirstPayload"),
+     ((UNIT_CMAKE, "add_executable(httpclient_reentrant_finish_test"),
+      (UNIT_CMAKE, "waterwall.httpclient_reentrant_finish_unit")),
+     "HttpClient stops a multi-part final send after re-entrant downstream Finish"),
+    ("tests/unittests/httpserver_reentrant_finish_test.c",
+     ("caseFinishDuringFirstFinalChunkStopsRemainingOutput",
+      "finishServerFromPrevOnFirstPayload"),
+     ((UNIT_CMAKE, "add_executable(httpserver_reentrant_finish_test"),
+      (UNIT_CMAKE, "waterwall.httpserver_reentrant_finish_unit")),
+     "HttpServer stops a multi-part final send after re-entrant upstream Finish"),
     ("tests/line_ownership_policy_test.py",
      ("PACKET_LINE_FINISH",
       "SILENT_FINISH_ALLOWED",
@@ -561,6 +599,7 @@ def verify_policy(source_overrides=None, classification_overrides=None):
         "packet_handlers": 0,
         "destroy_sites": 0,
         "guards": 0,
+        "guard_contracts": 0,
         "finish_handlers": 0,
         "tests": 0,
         "registrations": 0,
@@ -761,6 +800,24 @@ def verify_policy(source_overrides=None, classification_overrides=None):
                     % (rel_path, function, guard, description)
                 )
 
+    for rel_path, guard, requirements in DESTINATION_GUARD_CONTRACTS:
+        content = read_source(rel_path, source_overrides)
+        if content is None:
+            errors.append("[guard] missing source file %s for %s()" % (rel_path, guard))
+            continue
+        span = function_span(content, rel_path, guard, "guard", errors)
+        if span is None:
+            continue
+
+        checked["guard_contracts"] += 1
+        body = analyze(content)[0][span[0]:span[1]]
+        for pattern, description in requirements:
+            if re.search(pattern, body) is None:
+                errors.append(
+                    "[guard] %s::%s no longer requires %s"
+                    % (rel_path, guard, description)
+                )
+
     # --- 7. no Finish handler absorbs its callback in silence ---------------
 
     for rel_path in walk_sources(("tunnels",)):
@@ -887,13 +944,27 @@ def mutate_destroy_packet_line(content, function, anchor):
 
 
 def mutate_drop_guard(content, function, guard):
-    """Neutralize a state-survival check inside one function."""
+    """Neutralize every use of one lifecycle guard inside a function."""
     masked = analyze(content)[0]
     span = _span(content, function)
-    match = re.compile(r"\b%s\s*\(" % re.escape(guard)).search(masked, span[0], span[1])
-    if match is None:
+    matches = list(re.compile(r"\b%s\s*\(" % re.escape(guard)).finditer(masked, span[0], span[1]))
+    if not matches:
         raise AssertionError("guard %r not found in %s()" % (guard, function))
-    return content[:match.start()] + "alwaysActive(" + content[match.end():]
+    for match in reversed(matches):
+        content = content[:match.start()] + "alwaysActive(" + content[match.end():]
+    return content
+
+
+def mutate_drop_guard_requirement(content, function, pattern):
+    """Remove one required predicate from a destination-send guard."""
+    masked = analyze(content)[0]
+    span = _span(content, function)
+    match = re.search(pattern, masked[span[0]:span[1]])
+    if match is None:
+        raise AssertionError("guard requirement %r not found in %s()" % (pattern, function))
+    start = span[0] + match.start()
+    end = span[0] + match.end()
+    return content[:start] + "true" + content[end:]
 
 
 def mutate_drop_test_marker(content, marker):
@@ -1000,6 +1071,13 @@ def run_mutation_tests():
                 "%s::%s dropped its %s() check" % (rel_path, function, guard),
                 {rel_path: mutate_drop_guard(content, function, guard)})
 
+    for rel_path, guard, requirements in DESTINATION_GUARD_CONTRACTS:
+        content = read_source(rel_path, None)
+        for pattern, description in requirements:
+            runner.expect_failure(
+                "%s::%s dropped %s" % (rel_path, guard, description),
+                {rel_path: mutate_drop_guard_requirement(content, guard, pattern)})
+
     # 8: a Finish handler quietly reduced to "return", losing a propagation, an
     #    owner's close, or a packet-line abort with nobody having to say so.
     for rel_path, function in (("tunnels/TcpConnector/downstream/fin.c", "tcpconnectorTunnelDownStreamFinish"),
@@ -1050,10 +1128,11 @@ def main():
 
     print("Line Ownership Policy Check PASSED: %d creation site(s) classified, %d owner close path(s), "
           "%d lineDestroy() site(s), %d packet-anchor Finish handler(s), %d Finish handler(s) scanned, "
-          "%d re-entrancy guard(s), %d contract test(s) with %d ctest registration(s)."
+          "%d re-entrancy guard(s), %d destination guard contract(s), %d contract test(s) with "
+          "%d ctest registration(s)."
           % (checked["creations"], checked["owners"], checked["destroy_sites"],
              checked["packet_handlers"], checked["finish_handlers"], checked["guards"],
-             checked["tests"], checked["registrations"]))
+             checked["guard_contracts"], checked["tests"], checked["registrations"]))
 
     if "--mutation-test" in sys.argv or "-m" in sys.argv:
         if not run_mutation_tests():

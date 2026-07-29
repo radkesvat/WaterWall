@@ -66,6 +66,16 @@ static bool httpserverVerboseEnabled(tunnel_t *t)
     return ts->verbose;
 }
 
+static bool httpserverLinestateIsActive(const httpserver_lstate_t *ls)
+{
+    return ls->line != NULL;
+}
+
+static bool httpserverCanSendDownstream(const httpserver_lstate_t *ls)
+{
+    return httpserverLinestateIsActive(ls) && ! ls->prev_finished;
+}
+
 static const char *httpserverWebSocketOpcodeName(uint8_t opcode)
 {
     switch (opcode)
@@ -343,6 +353,12 @@ static size_t minSize(size_t a, size_t b)
 
 static bool sendBytesDown(tunnel_t *t, line_t *l, const void *data, uint32_t len)
 {
+    httpserver_lstate_t *ls = lineGetState(l, t);
+    if (UNLIKELY(! httpserverCanSendDownstream(ls)))
+    {
+        return false;
+    }
+
     if (len == 0)
     {
         return true;
@@ -371,6 +387,11 @@ static bool sendBytesDown(tunnel_t *t, line_t *l, const void *data, uint32_t len
             return false;
         }
 
+        if (UNLIKELY(! httpserverCanSendDownstream(ls)))
+        {
+            return false;
+        }
+
         ptr += chunk;
         rem -= chunk;
     }
@@ -385,6 +406,15 @@ static bool sendTextDown(tunnel_t *t, line_t *l, const char *text)
 
 static bool httpserverSendRawDown(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, sbuf_t *buf)
 {
+    if (UNLIKELY(! httpserverCanSendDownstream(ls)))
+    {
+        if (buf != NULL)
+        {
+            lineReuseBuffer(l, buf);
+        }
+        return false;
+    }
+
     if (buf == NULL)
     {
         return true;
@@ -395,11 +425,21 @@ static bool httpserverSendRawDown(tunnel_t *t, line_t *l, httpserver_lstate_t *l
         return httpserverTransportSendHttp2DataFrame(t, l, ls, buf, false);
     }
 
-    return withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf);
+    if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
+    {
+        return false;
+    }
+
+    return httpserverCanSendDownstream(ls);
 }
 
 static bool httpserverSendRawBytesDown(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, const void *data, uint32_t len)
 {
+    if (UNLIKELY(! httpserverCanSendDownstream(ls)))
+    {
+        return false;
+    }
+
     if (len == 0)
     {
         return true;
@@ -744,6 +784,13 @@ bool httpserverTransportSendHttp1FinalChunk(tunnel_t *t, line_t *l)
 
 bool httpserverTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *payload)
 {
+    httpserver_lstate_t *ls = lineGetState(l, t);
+    if (UNLIKELY(! httpserverCanSendDownstream(ls)))
+    {
+        lineReuseBuffer(l, payload);
+        return false;
+    }
+
     uint32_t payload_len = sbufGetLength(payload);
 
     char chunk_prefix[32];
@@ -751,7 +798,11 @@ bool httpserverTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
 
     if (prefix_len <= 0)
     {
-        return withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, payload);
+        if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, payload))
+        {
+            return false;
+        }
+        return httpserverCanSendDownstream(ls);
     }
 
     if (sbufGetLeftCapacity(payload) >= (uint32_t) prefix_len)
@@ -778,6 +829,11 @@ bool httpserverTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
     }
 
     if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, payload))
+    {
+        return false;
+    }
+
+    if (UNLIKELY(! httpserverCanSendDownstream(ls)))
     {
         return false;
     }
@@ -1069,13 +1125,13 @@ static bool validateWebSocketHttp1Request(const httpserver_tstate_t *ts, const h
     return true;
 }
 
-static bool httpserverLinestateIsActive(const httpserver_lstate_t *ls)
-{
-    return ls->line != NULL;
-}
-
 static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
+    if (UNLIKELY(! httpserverCanSendDownstream(ls)))
+    {
+        return false;
+    }
+
     buffer_pool_t *pool      = lineGetBufferPool(l);
     uint32_t       max_chunk = bufferpoolGetLargeBufferSize(pool);
     if (max_chunk == 0)
@@ -1137,11 +1193,11 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 
             /*
              * The downstream callback can re-enter through upstream Finish.
-             * That path destroys this state even when the line owner keeps the
-             * line itself alive for orderly shutdown. Do not resume nghttp2 or
-             * advance another frame after the session has been invalidated.
+             * That path may destroy this state or leave it alive while marking
+             * prev finished. Do not resume nghttp2 or send another frame in
+             * either case.
              */
-            if (UNLIKELY(! httpserverLinestateIsActive(ls)))
+            if (UNLIKELY(! httpserverCanSendDownstream(ls)))
             {
                 return false;
             }
@@ -1817,6 +1873,15 @@ bool httpserverTransportSubmitHttp2ResponseHeaders(tunnel_t *t, line_t *l, https
 bool httpserverTransportSendHttp2DataFrame(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, sbuf_t *payload,
                                            bool end_stream)
 {
+    if (UNLIKELY(! httpserverCanSendDownstream(ls)))
+    {
+        if (payload != NULL)
+        {
+            lineReuseBuffer(l, payload);
+        }
+        return false;
+    }
+
     if (ls->h2_stream_id <= 0)
     {
         if (payload != NULL)
@@ -2103,9 +2168,7 @@ bool httpserverTransportFlushPendingDown(tunnel_t *t, line_t *l, httpserver_lsta
         }
         else if (ls->runtime_proto == kHttpServerRuntimeUpgradedRaw)
         {
-            tunnelPrevDownStreamPayload(t, l, buf);
-
-            if (! lineIsAlive(l))
+            if (! httpserverSendRawDown(t, l, ls, buf))
             {
                 return false;
             }

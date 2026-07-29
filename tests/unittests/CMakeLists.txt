@@ -1220,6 +1220,46 @@ function(waterwall_line_failure_test_use_tunnel test_target tunnel_target)
   endforeach()
 endfunction()
 
+if(TARGET HttpClient)
+  add_executable(httpclient_reentrant_finish_test
+    httpclient_reentrant_finish_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(httpclient_reentrant_finish_test HttpClient)
+  target_link_options(httpclient_reentrant_finish_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=bufferpoolGetLargeBufferSize"
+  )
+  target_link_libraries(httpclient_reentrant_finish_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests httpclient_reentrant_finish_test)
+
+  add_waterwall_unit_test(
+    waterwall.httpclient_reentrant_finish_unit
+    httpclient_reentrant_finish_test
+    "unit;tunnels;httpclient;reentrant;finish;line"
+  )
+endif()
+
+if(TARGET HttpServer)
+  add_executable(httpserver_reentrant_finish_test
+    httpserver_reentrant_finish_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(httpserver_reentrant_finish_test HttpServer)
+  target_link_options(httpserver_reentrant_finish_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=bufferpoolGetLargeBufferSize"
+  )
+  target_link_libraries(httpserver_reentrant_finish_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests httpserver_reentrant_finish_test)
+
+  add_waterwall_unit_test(
+    waterwall.httpserver_reentrant_finish_unit
+    httpserver_reentrant_finish_test
+    "unit;tunnels;httpserver;reentrant;finish;line"
+  )
+endif()
+
 if(TARGET SpeedLimit)
   add_executable(speedlimit_line_failure_test
     speedlimit_line_failure_test.c

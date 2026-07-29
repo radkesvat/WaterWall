@@ -46,6 +46,16 @@ static bool httpclientVerboseEnabled(tunnel_t *t)
     return ts->verbose;
 }
 
+static bool httpclientLinestateIsActive(const httpclient_lstate_t *ls)
+{
+    return ls->line != NULL;
+}
+
+static bool httpclientCanSendUpstream(const httpclient_lstate_t *ls)
+{
+    return httpclientLinestateIsActive(ls) && ! ls->next_finished;
+}
+
 static bool httpclientSubmitNextHttp2Data(tunnel_t *t, line_t *l, httpclient_lstate_t *ls);
 
 static const char *httpclientWebSocketOpcodeName(uint8_t opcode)
@@ -343,6 +353,12 @@ static bool httpclientGenerateWebSocketKey(httpclient_lstate_t *ls)
 
 static bool sendBytesUp(tunnel_t *t, line_t *l, const void *data, uint32_t len)
 {
+    httpclient_lstate_t *ls = lineGetState(l, t);
+    if (UNLIKELY(! httpclientCanSendUpstream(ls)))
+    {
+        return false;
+    }
+
     if (len == 0)
     {
         return true;
@@ -371,6 +387,11 @@ static bool sendBytesUp(tunnel_t *t, line_t *l, const void *data, uint32_t len)
             return false;
         }
 
+        if (UNLIKELY(! httpclientCanSendUpstream(ls)))
+        {
+            return false;
+        }
+
         ptr += chunk;
         rem -= chunk;
     }
@@ -385,6 +406,15 @@ static bool sendTextUp(tunnel_t *t, line_t *l, const char *text)
 
 static bool httpclientSendRawUp(tunnel_t *t, line_t *l, httpclient_lstate_t *ls, sbuf_t *buf)
 {
+    if (UNLIKELY(! httpclientCanSendUpstream(ls)))
+    {
+        if (buf != NULL)
+        {
+            lineReuseBuffer(l, buf);
+        }
+        return false;
+    }
+
     if (buf == NULL)
     {
         return true;
@@ -395,11 +425,21 @@ static bool httpclientSendRawUp(tunnel_t *t, line_t *l, httpclient_lstate_t *ls,
         return httpclientTransportSendHttp2DataFrame(t, l, ls, buf, false);
     }
 
-    return withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf);
+    if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf))
+    {
+        return false;
+    }
+
+    return httpclientCanSendUpstream(ls);
 }
 
 static bool httpclientSendRawBytesUp(tunnel_t *t, line_t *l, httpclient_lstate_t *ls, const void *data, uint32_t len)
 {
+    if (UNLIKELY(! httpclientCanSendUpstream(ls)))
+    {
+        return false;
+    }
+
     if (len == 0)
     {
         return true;
@@ -1080,6 +1120,13 @@ bool httpclientTransportSendHttp1FinalChunk(tunnel_t *t, line_t *l)
 
 bool httpclientTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *payload)
 {
+    httpclient_lstate_t *ls = lineGetState(l, t);
+    if (UNLIKELY(! httpclientCanSendUpstream(ls)))
+    {
+        lineReuseBuffer(l, payload);
+        return false;
+    }
+
     uint32_t payload_len = sbufGetLength(payload);
 
     char chunk_prefix[32];
@@ -1087,7 +1134,11 @@ bool httpclientTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
 
     if (prefix_len <= 0)
     {
-        return withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, payload);
+        if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, payload))
+        {
+            return false;
+        }
+        return httpclientCanSendUpstream(ls);
     }
 
     if (sbufGetLeftCapacity(payload) >= (uint32_t) prefix_len)
@@ -1114,6 +1165,11 @@ bool httpclientTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
     }
 
     if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, payload))
+    {
+        return false;
+    }
+
+    if (UNLIKELY(! httpclientCanSendUpstream(ls)))
     {
         return false;
     }
@@ -1254,13 +1310,13 @@ static bool parseHttp1ResponseHeaders(const char *headers, httpclient_h1_respons
     return true;
 }
 
-static bool httpclientLinestateIsActive(const httpclient_lstate_t *ls)
-{
-    return ls->line != NULL;
-}
-
 static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
 {
+    if (UNLIKELY(! httpclientCanSendUpstream(ls)))
+    {
+        return false;
+    }
+
     buffer_pool_t *pool      = lineGetBufferPool(l);
     uint32_t       max_chunk = bufferpoolGetLargeBufferSize(pool);
     if (max_chunk == 0)
@@ -1323,11 +1379,11 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
 
             /*
              * The upstream callback can re-enter through downstream Finish.
-             * That path destroys this state even when the line owner keeps the
-             * line itself alive for orderly shutdown. Do not resume nghttp2 or
-             * advance another frame after the session has been invalidated.
+             * That path may destroy this state or leave it alive while marking
+             * next finished. Do not resume nghttp2 or send another frame in
+             * either case.
              */
-            if (UNLIKELY(! httpclientLinestateIsActive(ls)))
+            if (UNLIKELY(! httpclientCanSendUpstream(ls)))
             {
                 return false;
             }
@@ -2296,6 +2352,15 @@ void httpclientTransportCloseNextDirection(tunnel_t *t, line_t *l, httpclient_ls
 bool httpclientTransportSendHttp2DataFrame(tunnel_t *t, line_t *l, httpclient_lstate_t *ls, sbuf_t *payload,
                                            bool end_stream)
 {
+    if (UNLIKELY(! httpclientCanSendUpstream(ls)))
+    {
+        if (payload != NULL)
+        {
+            lineReuseBuffer(l, payload);
+        }
+        return false;
+    }
+
     if (ls->h2_stream_id <= 0)
     {
         if (payload != NULL)
@@ -2347,9 +2412,7 @@ bool httpclientTransportFlushPendingUp(tunnel_t *t, line_t *l, httpclient_lstate
         }
         else if (ls->runtime_proto == kHttpClientRuntimeUpgradedRaw)
         {
-            tunnelNextUpStreamPayload(t, l, buf);
-
-            if (! lineIsAlive(l))
+            if (! httpclientSendRawUp(t, l, ls, buf))
             {
                 return false;
             }
