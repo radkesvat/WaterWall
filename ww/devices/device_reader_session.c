@@ -72,9 +72,21 @@ device_reader_session_t *deviceReaderSessionCreate(uint32_t pool_capacity, uint1
 
 void deviceReaderSessionRef(device_reader_session_t *session)
 {
-    const w_atomic_uint_value_t previous = atomicAddExplicit(&session->refcount, 1, memory_order_relaxed);
-    assert(previous > 0);
-    discard previous;
+    w_atomic_uint_value_t previous = atomicLoadRelaxed(&session->refcount);
+    for (;;)
+    {
+        if (UNLIKELY(previous == 0 || previous >= W_ATOMIC_UINT_VALUE_MAX))
+        {
+            LOGF("DeviceReaderSession: reference count overflow or resurrection attempt");
+            abortProgramNow(1);
+        }
+
+        if (atomic_compare_exchange_weak_explicit(
+                &session->refcount, &previous, previous + 1, memory_order_relaxed, memory_order_relaxed))
+        {
+            return;
+        }
+    }
 }
 
 static void deviceReaderSessionDestroyInternal(device_reader_session_t *session)

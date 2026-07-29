@@ -308,6 +308,21 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
     }
 }
 
+void bufferpoolResetThreadOwnership(buffer_pool_t *pool)
+{
+    assert(pool != NULL);
+
+#if POOL_THREAD_CHECK
+    /*
+     * This is deliberately a plain store: the API requires the former owner to
+     * be joined and all other access to be quiesced before ownership moves.
+     */
+    pool->tid = 0;
+#else
+    discard pool;
+#endif
+}
+
 sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restrict b2)
 {
     b1 = sbufConcat(b1, b2);

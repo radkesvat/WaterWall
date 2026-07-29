@@ -1553,6 +1553,8 @@ static bool capturedeviceStopReader(capture_device_t *cdev)
             }
             pthread_mutex_unlock(&cdev->reader_state_mutex);
 
+            bufferpoolResetThreadOwnership(cdev->reader_buffer_pool);
+
             // Must precede the close below: closing the queue socket makes the
             // kernel drop whatever is still enqueued.
             if (drain_fd >= 0)

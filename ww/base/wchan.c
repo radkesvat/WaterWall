@@ -179,7 +179,7 @@ typedef struct Thr Thr;
 
 // Thr holds thread-specific data and is owned by thread-local storage
 
-#ifdef COMPILER_MSVC
+#if ! HAVE_STDATOMIC_H
 struct Thr
 {
     size_t                            id;
@@ -215,7 +215,7 @@ typedef struct WaitQ
 
 #endif
 
-#ifdef COMPILER_MSVC
+#if ! HAVE_STDATOMIC_H
 #define atomicLoadThrPtr(p, order)      ((Thr *) atomicLoadExplicit((intptr_t *) (p), order))
 #define atomicStoreThrPtr(p, v, order)  atomicStoreExplicit((intptr_t *) (p), (intptr_t) (v), order)
 #define atomicLoadVoidPtr(p, order)     ((void *) atomicLoadExplicit((intptr_t *) (p), order))

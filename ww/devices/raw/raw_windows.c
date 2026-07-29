@@ -194,6 +194,7 @@ bool rawdeviceBringDown(raw_device_t *rdev)
             return false;
         }
         rdev->writer_joinable = false;
+        bufferpoolResetThreadOwnership(rdev->writer_buffer_pool);
     }
     if (! deviceWriterChannelRetireCurrent(&rdev->writer_channel))
     {

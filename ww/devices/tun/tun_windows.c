@@ -795,13 +795,23 @@ static bool tundeviceSignalStopEvent(void *context)
 static bool tundeviceJoinReader(void *context)
 {
     tun_device_t *tdev = context;
-    return tundeviceJoinThread(&tdev->read_thread, "reader");
+    if (! tundeviceJoinThread(&tdev->read_thread, "reader"))
+    {
+        return false;
+    }
+    bufferpoolResetThreadOwnership(tdev->reader_buffer_pool);
+    return true;
 }
 
 static bool tundeviceJoinWriter(void *context)
 {
     tun_device_t *tdev = context;
-    return tundeviceJoinThread(&tdev->write_thread, "writer");
+    if (! tundeviceJoinThread(&tdev->write_thread, "writer"))
+    {
+        return false;
+    }
+    bufferpoolResetThreadOwnership(tdev->writer_buffer_pool);
+    return true;
 }
 
 static bool tundeviceReleaseWriter(void *context)

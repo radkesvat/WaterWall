@@ -259,6 +259,7 @@ static capture_windows_join_result_e capturedeviceJoinReader(void *context)
 
     cdev->read_thread           = NULL;
     cdev->reader_exit_confirmed = false;
+    bufferpoolResetThreadOwnership(cdev->reader_buffer_pool);
     return kCaptureWindowsJoinResultStopped;
 }
 

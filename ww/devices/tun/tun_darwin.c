@@ -982,6 +982,7 @@ rollback:
         {
             tundeviceDrainStopPipe(tdev);
             tdev->reader_joinable = false;
+            bufferpoolResetThreadOwnership(tdev->reader_buffer_pool);
         }
         else
         {
@@ -994,6 +995,7 @@ rollback:
         if (safeThreadJoin(tdev->write_thread))
         {
             tdev->writer_joinable = false;
+            bufferpoolResetThreadOwnership(tdev->writer_buffer_pool);
         }
         else
         {
@@ -1049,6 +1051,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
         {
             tundeviceDrainStopPipe(tdev);
             tdev->reader_joinable = false;
+            bufferpoolResetThreadOwnership(tdev->reader_buffer_pool);
         }
         else
         {
@@ -1061,6 +1064,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
         if (safeThreadJoin(tdev->write_thread))
         {
             tdev->writer_joinable = false;
+            bufferpoolResetThreadOwnership(tdev->writer_buffer_pool);
         }
         else
         {

@@ -6,11 +6,13 @@
 #if HAVE_STDATOMIC_H
 
 // c11
+#include <limits.h>
 #include <stdatomic.h>
 
 typedef int          w_atomic_int_value_t;
 typedef unsigned int w_atomic_uint_value_t;
 #define W_ATOMIC_UINT_VALUE_SIGNED 0
+#define W_ATOMIC_UINT_VALUE_MAX    UINT_MAX
 
 #elif defined(OS_WIN)
 
@@ -34,6 +36,21 @@ typedef unsigned int w_atomic_uint_value_t;
 #define atomic_signal_fence(order) ((void) 0)
 
 #define atomic_is_lock_free(obj)   0
+
+/*
+ * Match the C11 names used throughout the codebase. The fallback implements
+ * every operation below with a full-barrier Interlocked primitive, so the
+ * individual order values are API markers rather than code-generation inputs.
+ */
+typedef enum memory_order_e
+{
+    memory_order_relaxed,
+    memory_order_consume,
+    memory_order_acquire,
+    memory_order_release,
+    memory_order_acq_rel,
+    memory_order_seq_cst
+} memory_order;
 
 typedef intptr_t atomic_flag;
 typedef intptr_t atomic_bool;
@@ -75,29 +92,35 @@ typedef intptr_t atomic_ptrdiff_t;
 typedef intptr_t atomic_intmax_t;
 typedef intptr_t atomic_uintmax_t;
 
-#define _Atomic(x) intptr_t
+#define _Atomic(x)              intptr_t
+#define W_ATOMIC_UINT_VALUE_MAX INTPTR_MAX
 
+/*
+ * Interlocked operations are intentionally used even for relaxed call sites.
+ * Besides providing indivisible pointer-width access, their full barrier keeps
+ * release publication and acquire consumption correct on Windows ARM. A
+ * store-then-barrier or barrier-then-load sequence would put the barrier on the
+ * wrong side of the access.
+ */
 #define atomic_store(object, desired)                                                                                  \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        *(object) = (desired);                                                                                         \
-        MemoryBarrier();                                                                                               \
-    } while (0)
+    ((void) InterlockedExchangePointer((PVOID volatile *) (object), (PVOID) (intptr_t) (desired)))
 
 #define atomic_store_explicit(object, desired, order) atomic_store(object, desired)
 
-#define atomic_load(object) (MemoryBarrier(), *(object))
+#define atomic_load(object) ((intptr_t) InterlockedCompareExchangePointer((PVOID volatile *) (object), NULL, NULL))
 
 #define atomic_load_explicit(object, order) atomic_load(object)
 
-#define atomic_exchange(object, desired) InterlockedExchangePointer((PVOID volatile *) object, (PVOID) desired)
+#define atomic_exchange(object, desired)                                                                               \
+    ((intptr_t) InterlockedExchangePointer((PVOID volatile *) (object), (PVOID) (intptr_t) (desired)))
 
 #define atomic_exchange_explicit(object, desired, order) atomic_exchange(object, desired)
 
 static inline int atomic_compare_exchange_strong(intptr_t *object, intptr_t *expected, intptr_t desired)
 {
     intptr_t old = *expected;
-    *expected    = (intptr_t) InterlockedCompareExchangePointer((PVOID *) object, (PVOID) desired, (PVOID) old);
+    *expected    = (intptr_t) InterlockedCompareExchangePointer(
+        (PVOID volatile *) object, (PVOID) (intptr_t) desired, (PVOID) (intptr_t) old);
     return *expected == old;
 }
 

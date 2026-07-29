@@ -75,6 +75,17 @@ sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool);
 void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b);
 
 /**
+ * Releases the pool's debug thread ownership after its owning thread has been
+ * joined. The next accessor becomes the new owner.
+ *
+ * The caller must have exclusive access to the pool. In particular, this must
+ * not be used as a way to move a live pool between concurrent threads.
+ *
+ * @param pool Buffer pool whose former owner can no longer access it.
+ */
+void bufferpoolResetThreadOwnership(buffer_pool_t *pool);
+
+/**
  * Updates the allocation paddings for the buffer pool.
  * @param pool The buffer pool.
  * @param large_buffer_left_padding The left padding for large buffers.
