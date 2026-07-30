@@ -460,13 +460,21 @@ static bool smugglesnitrickRewriteSavedPacketPayload(ipmanipulator_smuggle_saved
         return false;
     }
 
-    if ((uint32_t) saved_packet->payload_len != payload_len || (uint32_t) info.tcp_payload_len != payload_len ||
-        info.payload_offset + payload_len > sbufGetLength(saved_packet->packet))
+    if (payload_len > UINT16_MAX || info.payload_offset > UINT16_MAX - payload_len)
     {
         return false;
     }
 
-    memoryCopyLarge(sbufGetMutablePtr(saved_packet->packet) + info.payload_offset, payload, payload_len);
+    uint32_t rewritten_len = info.payload_offset + payload_len;
+    saved_packet->packet   = sbufReserveSpace(saved_packet->packet, rewritten_len);
+    sbufSetLength(saved_packet->packet, rewritten_len);
+
+    uint8_t *packet = sbufGetMutablePtr(saved_packet->packet);
+    memoryCopyLarge(packet + info.payload_offset, payload, payload_len);
+    IPH_LEN_SET((struct ip_hdr *) packet, lwip_htons((uint16_t) rewritten_len));
+
+    saved_packet->payload_len = (uint16_t) payload_len;
+    lineSetRecalculateChecksum(saved_packet->line, true);
     return true;
 }
 
@@ -482,37 +490,29 @@ static bool smugglesnitrickBuildFakePackets(tunnel_t *t, smugglesnitrick_complet
         return false;
     }
 
-    for (;;)
+    sbuf_t *tls_hello = smugglesnitrickGenerateTlsClientHello(t);
+
+    if (tls_hello == NULL)
     {
-        sbuf_t *tls_hello = smugglesnitrickGenerateTlsClientHello(t);
-
-        if (tls_hello == NULL)
-        {
-            return false;
-        }
-
-        if (sbufGetLength(tls_hello) != completion->captured_payload_sum)
-        {
-            reuseBuffer(tls_hello);
-            continue;
-        }
-
-        const uint8_t *hello_payload = (const uint8_t *) sbufGetRawPtr(tls_hello);
-        uint32_t       offset        = 0;
-        bool           rewrite_ok    = true;
-
-        for (uint32_t i = 0; i < kIpManipulatorSmuggleSavedPacketsCount; ++i)
-        {
-            uint32_t this_payload_len = completion->saved_packets[i].payload_len;
-
-            rewrite_ok &= smugglesnitrickRewriteSavedPacketPayload(
-                &completion->saved_packets[i], hello_payload + offset, this_payload_len);
-            offset += this_payload_len;
-        }
-
-        reuseBuffer(tls_hello);
-        return rewrite_ok;
+        return false;
     }
+
+    const uint8_t *hello_payload = (const uint8_t *) sbufGetRawPtr(tls_hello);
+    uint32_t       hello_len     = sbufGetLength(tls_hello);
+    bool           rewrite_ok    = false;
+
+    for (uint32_t i = 0; i < kIpManipulatorSmuggleSavedPacketsCount; ++i)
+    {
+        if (completion->saved_packets[i].packet != NULL)
+        {
+            rewrite_ok =
+                smugglesnitrickRewriteSavedPacketPayload(&completion->saved_packets[i], hello_payload, hello_len);
+            break;
+        }
+    }
+
+    reuseBuffer(tls_hello);
+    return rewrite_ok;
 }
 
 void smugglesnitrickDestroyState(tunnel_t *t)
@@ -643,6 +643,18 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         break;
 
     case kIpManipulatorSmuggleFlowPhaseCapture: {
+        const uint8_t *packet = (const uint8_t *) sbufGetRawPtr(buf);
+        const uint8_t *tls    = packet + info.payload_offset;
+
+        if (info.tcp_payload_len < 9 || tls[0] != 0x16 || tls[1] != 0x03 || tls[5] != 0x01)
+        {
+            flow->phase                = kIpManipulatorSmuggleFlowPhasePassthrough;
+            flow->capture_packets_seen = 0;
+            flow->captured_payload_sum = 0;
+            action                     = kSmuggleSniActionPassNormal;
+            break;
+        }
+
         uint32_t slot_index = flow->capture_packets_seen;
         sbuf_t  *copy       = smugglesnitrickDuplicateStandalonePacket(buf);
 

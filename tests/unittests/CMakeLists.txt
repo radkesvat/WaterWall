@@ -1184,6 +1184,21 @@ if(TARGET IpManipulator)
     ipmanipulator_firstsni_offsets_test
     "unit;tunnels;ipmanipulator;firstsni;tls"
   )
+
+  add_executable(ipmanipulator_smugglesni_capture_test ipmanipulator_smugglesni_capture_test.c)
+  target_include_directories(ipmanipulator_smugglesni_capture_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include/IpManipulator
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common
+  )
+  target_link_libraries(ipmanipulator_smugglesni_capture_test PRIVATE IpManipulator ww)
+  add_dependencies(waterwall_unit_tests ipmanipulator_smugglesni_capture_test)
+
+  add_waterwall_unit_test(
+    waterwall.ipmanipulator_smugglesni_capture_unit
+    ipmanipulator_smugglesni_capture_test
+    "unit;tunnels;ipmanipulator;smugglesni;tls"
+  )
 endif()
 
 if(TARGET IpOverrider)
