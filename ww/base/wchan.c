@@ -339,9 +339,12 @@ static void thr_register_cleanup(Thr *t)
     static wonce_t once = WONCE_INIT;
 
     wonce(&once, thr_tls_create);
-    if (thr_tls_slot != FLS_OUT_OF_INDEXES)
+    if (thr_tls_slot == FLS_OUT_OF_INDEXES || ! FlsSetValue(thr_tls_slot, t))
     {
-        discard FlsSetValue(thr_tls_slot, t);
+        // Continuing here would silently reinstate the per-thread semaphore leak this
+        // registration exists to prevent.
+        printError("failed to register channel wait semaphore cleanup");
+        abortProgramNow(1);
     }
 }
 #else
@@ -375,9 +378,12 @@ static void thr_register_cleanup(Thr *t)
     static wonce_t once = WONCE_INIT;
 
     discard wonce(&once, thr_tls_create);
-    if (thr_tls_key_ok)
+    if (! thr_tls_key_ok || pthread_setspecific(thr_tls_key, t) != 0)
     {
-        discard pthread_setspecific(thr_tls_key, t);
+        // Continuing here would silently reinstate the per-thread semaphore leak this
+        // registration exists to prevent.
+        printError("failed to register channel wait semaphore cleanup");
+        abortProgramNow(1);
     }
 }
 #endif
@@ -425,7 +431,14 @@ inline static void thr_signal(Thr *t)
 inline static void thr_wait(Thr *t)
 {
     // dlog_chan("thr_wait ...");
-    leightweightsemaphoreWait(&t->sema); // sleep
+    if (UNLIKELY(! leightweightsemaphoreWait(&t->sema))) // sleep
+    {
+        // A failed wait returns without a wakeup while this thread is still linked into a
+        // channel wait queue, which is exactly the state that lets a later operation write
+        // through a waiter that has already gone. There is no way back from here.
+        printError("channel wait failed");
+        abortProgramNow(1);
+    }
 }
 
 // Enqueues a waiting participant into a channel wait queue.

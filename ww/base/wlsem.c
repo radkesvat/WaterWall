@@ -411,7 +411,13 @@ void leightweightsemaphoreSignal(wlsem_t *s, uint32_t count)
     long long toRelease = -old_count < count ? -old_count : count;
     if (toRelease > 0)
     {
-        semaSignal(&s->sema, (uint32_t) toRelease);
+        if (UNLIKELY(! semaSignal(&s->sema, (uint32_t) toRelease)))
+        {
+            // The count was already published, so there is nothing to roll back to and the
+            // waiter this signal belonged to would never be woken again.
+            printError("semaphore signal failed");
+            abortProgramNow(1);
+        }
     }
 }
 
