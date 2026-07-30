@@ -21,6 +21,7 @@
 
 #include <tchar.h>
 
+#include "devices/device_flow_affinity.h"
 #include "devices/device_reader_session.h"
 #include "devices/device_writer_channel.h"
 #include "loggers/internal_logger.h"
@@ -582,7 +583,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
                 {
                     goto cleanup;
                 }
-                deviceReaderSessionPost(tdev->reader_session, getNextDistributionWID(), &bufs[0], queued_count);
+                deviceFlowAffinityPostBatch(tdev->reader_session, &bufs[0], queued_count);
                 queued_count = 0;
             }
         }
@@ -618,7 +619,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
                 {
                     goto cleanup;
                 }
-                deviceReaderSessionPost(tdev->reader_session, getNextDistributionWID(), &bufs[0], queued_count);
+                deviceFlowAffinityPostBatch(tdev->reader_session, &bufs[0], queued_count);
                 queued_count = 0;
                 continue;
             }

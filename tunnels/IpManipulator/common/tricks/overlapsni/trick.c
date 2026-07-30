@@ -1258,6 +1258,8 @@ void overlapsnitrickDestroyState(tunnel_t *t)
 
 bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    assert(lineGetWID(l) == getWID());
+
     ipmanipulator_tstate_t           *state   = tunnelGetState(t);
     overlapsnitrick_tcp_packet_info_t info    = {0};
     const uint8_t                    *packet  = (const uint8_t *) sbufGetRawPtr(buf);
@@ -1311,6 +1313,8 @@ bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    assert(lineGetWID(l) == getWID());
+
     ipmanipulator_tstate_t           *state  = tunnelGetState(t);
     overlapsnitrick_tcp_packet_info_t info   = {0};
     uint64_t                          now_ms = getTickMS();

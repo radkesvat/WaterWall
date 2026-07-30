@@ -1758,6 +1758,8 @@ void echsnitrickDestroyState(tunnel_t *t)
 
 bool echsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    assert(lineGetWID(l) == getWID());
+
     discard l;
 
     ipmanipulator_tstate_t       *state  = tunnelGetState(t);
@@ -1789,6 +1791,8 @@ bool echsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 bool echsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    assert(lineGetWID(l) == getWID());
+
     ipmanipulator_tstate_t       *state  = tunnelGetState(t);
     echsnitrick_tcp_packet_info_t info   = {0};
     uint64_t                      now_ms = getTickMS();

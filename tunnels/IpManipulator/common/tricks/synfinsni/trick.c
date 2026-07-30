@@ -1287,6 +1287,8 @@ void synfinsnitrickDestroyState(tunnel_t *t)
 
 bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    assert(lineGetWID(l) == getWID());
+
     ipmanipulator_tstate_t          *state  = tunnelGetState(t);
     synfinsnitrick_tcp_packet_info_t info   = {0};
     uint64_t                         now_ms = getTickMS();

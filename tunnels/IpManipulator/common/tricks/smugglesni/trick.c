@@ -541,6 +541,7 @@ void smugglesnitrickDestroyState(tunnel_t *t)
 
 void smugglesnitrickLogDownStreamServerHello(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    assert(lineGetWID(l) == getWID());
     discard l;
 
     smugglesnitrick_tcp_packet_info_t info   = {0};
@@ -589,6 +590,8 @@ void smugglesnitrickLogDownStreamServerHello(tunnel_t *t, line_t *l, sbuf_t *buf
 
 bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    assert(lineGetWID(l) == getWID());
+
     ipmanipulator_tstate_t           *state      = tunnelGetState(t);
     smugglesnitrick_tcp_packet_info_t info       = {0};
     smugglesnitrick_completion_t      completion = {0};

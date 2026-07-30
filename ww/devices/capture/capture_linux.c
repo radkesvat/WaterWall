@@ -1,5 +1,6 @@
 #include "capture.h"
 #include "capture_linux_internal.h"
+#include "devices/device_flow_affinity.h"
 #include "generic_pool.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
@@ -1400,7 +1401,7 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     if (queued_count > 0)
                     {
-                        deviceReaderSessionPost(cdev->reader_session, getNextDistributionWID(), bufs, queued_count);
+                        deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count);
                         queued_count = 0;
                     }
                     leave_drain_loop = true;
@@ -1410,7 +1411,7 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     if (queued_count > 0)
                     {
-                        deviceReaderSessionPost(cdev->reader_session, getNextDistributionWID(), bufs, queued_count);
+                        deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count);
                         queued_count = 0;
                     }
                     capturedeviceReportPendingNetfilterDiscards(cdev);
@@ -1423,7 +1424,7 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     if (queued_count > 0)
                     {
-                        deviceReaderSessionPost(cdev->reader_session, getNextDistributionWID(), bufs, queued_count);
+                        deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count);
                         queued_count = 0;
                     }
                     LOGW("CaptureDevice: failed to read a packet from netfilter socket, errno is %d (%s)",
@@ -1443,7 +1444,7 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
             // Distribute all accumulated packets in one batch
             if (queued_count > 0)
             {
-                deviceReaderSessionPost(cdev->reader_session, getNextDistributionWID(), bufs, queued_count);
+                deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count);
             }
             continue;
         }

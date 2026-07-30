@@ -13,6 +13,8 @@
 
 void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    assert(lineGetWID(l) == getWID());
+
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
     if (state->trick_source_port_ghost || state->trick_dest_port_ghost)

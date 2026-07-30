@@ -79,6 +79,7 @@ add_library(ww STATIC
     base/wproc.c
 
     # Device lifetime primitives
+    devices/device_flow_affinity.c
     devices/device_lifetime.c
     devices/device_reader_session.c
     devices/device_writer_channel.c

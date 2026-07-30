@@ -95,6 +95,16 @@ if(TARGET ww)
     "unit;net;device;lifetime"
   )
 
+  add_executable(device_flow_affinity_test device_flow_affinity_test.c)
+  target_link_libraries(device_flow_affinity_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests device_flow_affinity_test)
+
+  add_waterwall_unit_test(
+    waterwall.device_flow_affinity_unit
+    device_flow_affinity_test
+    "unit;net;device;affinity"
+  )
+
   if(LINUX)
     add_executable(buffer_pool_thread_transfer_test buffer_pool_thread_transfer_test.c)
     target_link_libraries(buffer_pool_thread_transfer_test PRIVATE ww)

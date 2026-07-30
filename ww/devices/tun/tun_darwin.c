@@ -1,3 +1,4 @@
+#include "devices/device_flow_affinity.h"
 #include "devices/device_reader_session.h"
 #include "devices/device_writer_channel.h"
 #include "devices/tun/tun_io_error.h"
@@ -233,7 +234,7 @@ static void tunFlushReadBatch(tun_device_t *tdev, sbuf_t **bufs, uint16_t queued
 {
     if (queued_count > 0)
     {
-        deviceReaderSessionPost(tdev->reader_session, getNextDistributionWID(), bufs, queued_count);
+        deviceFlowAffinityPostBatch(tdev->reader_session, bufs, queued_count);
     }
 }
 

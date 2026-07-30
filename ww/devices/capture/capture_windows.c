@@ -2,6 +2,7 @@
 #include "capture_windows_lifetime.h"
 
 #include "buffer_pool.h"
+#include "devices/device_flow_affinity.h"
 #include "global_state.h"
 #include "managers/windivert_manager.h"
 #include "master_pool.h"
@@ -90,9 +91,9 @@ static void captureDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
     cdev->read_event_callback(cdev, cdev->userdata, buf, wid);
 }
 
-static void distributePacketPayload(capture_device_t *cdev, wid_t target_wid, sbuf_t *buf)
+static void distributePacketPayload(capture_device_t *cdev, sbuf_t *buf)
 {
-    deviceReaderSessionPost(cdev->reader_session, target_wid, &buf, 1);
+    deviceFlowAffinityPostBatch(cdev->reader_session, &buf, 1);
 }
 static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 {
@@ -155,7 +156,7 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
             continue;
         }
 
-        distributePacketPayload(cdev, getNextDistributionWID(), buf);
+        distributePacketPayload(cdev, buf);
     }
 
     return 0;

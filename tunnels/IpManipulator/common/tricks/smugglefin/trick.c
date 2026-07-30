@@ -458,6 +458,8 @@ static void smugglefintrickScheduleQueuedRelease(tunnel_t *t, line_t *l, uint32_
 
 bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    assert(lineGetWID(l) == getWID());
+
     ipmanipulator_tstate_t           *state  = tunnelGetState(t);
     smugglefintrick_tcp_packet_info_t info   = {0};
     uint64_t                          now_ms = getTickMS();
@@ -570,6 +572,8 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    assert(lineGetWID(l) == getWID());
+
     ipmanipulator_tstate_t           *state  = tunnelGetState(t);
     smugglefintrick_tcp_packet_info_t info   = {0};
     uint64_t                          now_ms = getTickMS();

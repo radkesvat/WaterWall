@@ -14,6 +14,8 @@
 
 void ipmanipulatorUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    assert(lineGetWID(l) == getWID());
+
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
     if (state->trick_smuggle_fin && smugglefintrickUpStreamPayload(t, l, buf))
