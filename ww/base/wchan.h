@@ -41,7 +41,9 @@ uint32_t chanCap(const wchan_t* c);
 
 // chanSend enqueues a message to a channel by copying the value at elemptr to the channel.
 // Blocks until the message is sent or the channel is closed.
-// Returns false if the channel closed.
+// Returns false if the channel closed. A canceled send delivered nothing, so ownership of
+// whatever the message refers to stays with the caller.
+// Note that sending on an already closed channel is a programming error and aborts.
 bool chanSend(wchan_t*, void* elemptr);
 
 // chanRecv dequeues a message from a channel by copying a received value to elemptr.

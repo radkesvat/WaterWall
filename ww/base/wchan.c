@@ -355,11 +355,41 @@ inline static void *chan_bufptr(wchan_t *c, uint32_t i)
     return (void *) &c->buf[(uintptr_t) i * (uintptr_t) c->elemsize];
 }
 
+// Cancels every waiter of wq and detaches it from the queue.
+// Caller must hold the lock of the channel that owns wq.
+static void wq_cancel_all(WaitQ *wq)
+{
+    Thr *t = atomicLoadThrPtr(&wq->first, memory_order_acquire);
+
+    // The queue must be emptied, not just walked: a woken waiter returns to its caller and
+    // its Thr (thread-local) along with the elemptr it parked with (usually a stack address)
+    // stop being valid to touch. A leftover link would let a later recv hand out the canceled
+    // message, write through that stale pointer, or signal a thread parked elsewhere.
+    atomicStoreThrPtr(&wq->first, NULL, memory_order_release);
+    atomicStoreThrPtr(&wq->last, NULL, memory_order_release);
+
+    while (t)
+    {
+        // dlog_chan("close: cancel waiter [%zu]", t->id);
+        Thr *next = t->next;
+        t->next   = NULL;
+        atomicStoreVoidPtr(&t->elemptr, NULL, memory_order_relaxed);
+        atomicStoreExplicit(&t->closed, true, memory_order_relaxed);
+        thr_signal(t); // the semaphore pair orders the two stores above against the wakeup
+        t = next;
+    }
+}
+
 // chan_park adds elemptr to wait queue wq, unlocks channel c and blocks the calling thread
 static Thr *chan_park(wchan_t *c, WaitQ *wq, void *elemptr)
 {
     // caller must hold lock on channel that owns wq
     Thr *t = thr_current();
+
+    // Reset the wait state of a previous park: closing a channel leaves "closed" set on
+    // every waiter it cancels, and wq_enqueue requires next to be NULL. Both are stale here.
+    t->next = NULL;
+    atomicStoreExplicit(&t->closed, false, memory_order_relaxed);
     atomicStoreVoidPtr(&t->elemptr, elemptr, memory_order_relaxed);
     // dlog_chan("park: elemptr %p", elemptr);
     wq_enqueue(wq, t);
@@ -477,7 +507,21 @@ inline static bool chan_send(wchan_t *c, void *srcelemptr, bool *closed)
     // park the calling thread. Some recv caller will wake us up.
     // Note that chan_park calls chan_unlock(&c->lock)
     // dlog_send("wait... (elemptr %p)", srcelemptr);
-    chan_park(c, &c->sendq, srcelemptr);
+    Thr *t = chan_park(c, &c->sendq, srcelemptr);
+
+    // woken up by a receiver or by close. Like chan_recv, check "closed" on the Thr and not
+    // on the wchan_t: a message handed to a receiver right before the close still counts as
+    // sent, while a canceled send never delivered anything and must not report success.
+    if (UNLIKELY(atomicLoadExplicit(&t->closed, memory_order_relaxed)))
+    {
+        // dlog_send("woke up -- channel closed");
+        if (! block)
+        {
+            *closed = true;
+        }
+        return false;
+    }
+
     // dlog_send("woke up -- sent elemptr %p", srcelemptr);
     return true;
 }
@@ -729,25 +773,8 @@ void chanClose(wchan_t *c)
     }
     atomic_thread_fence(memory_order_seq_cst);
 
-    Thr *t = atomicLoadThrPtr(&c->recvq.first, memory_order_acquire);
-    while (t)
-    {
-        // dlog_chan("close: wake recv [%zu]", t->id);
-        Thr *next = t->next;
-        atomicStoreExplicit(&t->closed, true, memory_order_relaxed);
-        thr_signal(t);
-        t = next;
-    }
-
-    t = atomicLoadThrPtr(&c->sendq.first, memory_order_acquire);
-    while (t)
-    {
-        // dlog_chan("close: wake send [%zu]", t->id);
-        Thr *next = t->next;
-        atomicStoreExplicit(&t->closed, true, memory_order_relaxed);
-        thr_signal(t);
-        t = next;
-    }
+    wq_cancel_all(&c->recvq);
+    wq_cancel_all(&c->sendq);
 
     chan_unlock(&c->lock);
     // dlog_chan("close: done");
