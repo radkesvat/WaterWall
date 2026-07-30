@@ -64,6 +64,15 @@
 struct master_pool_s;
 typedef void master_pool_item_t;
 
+/*
+ * Empty-stack marker for the head and next indices. Spelled in the atomic's own
+ * value type rather than as a bare UINT32_MAX so that it round-trips through the
+ * pool's atomic slots and compares equal on every target: those slots are
+ * pointer-width and signed under the Windows fallback in watomic.h, so a
+ * uint32_t sentinel would be stored and read back as a different value.
+ */
+#define MASTER_POOL_LOCKFREE_NIL ((w_atomic_uint_value_t) UINT32_MAX)
+
 // pool handles are assumed to be thread safe
 typedef master_pool_item_t *(*MasterPoolItemCreateHandle)(void *userdata);
 typedef void (*MasterPoolItemDestroyHandle)(master_pool_item_t *item);
@@ -114,16 +123,17 @@ static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_ite
     // Try to get items from the pool
     while (acquired < count && atomicLoad(&pool->count) > 0)
     {
-        // Get the current head
-        uint32_t old_head = atomicLoad(&pool->head);
-        if (old_head == UINT32_MAX)
+        // Get the current head. Held in the atomic's own value type because the compare/exchange
+        // below writes the observed value back through this slot.
+        w_atomic_uint_value_t old_head = atomicLoad(&pool->head);
+        if (old_head == MASTER_POOL_LOCKFREE_NIL)
         {
             // Empty stack, break and create new items
             break;
         }
 
         // Get the next item in line
-        uint32_t new_head = atomicLoad(&pool->next[old_head]);
+        w_atomic_uint_value_t new_head = atomicLoad(&pool->next[old_head]);
 
         // Try to update the head with compare-and-swap
         if (atomicCompareExchange(&pool->head, &old_head, new_head))
@@ -157,8 +167,9 @@ static inline void masterpoolReuseItems(master_pool_t *const pool, master_pool_i
 {
     uint32_t returned = 0;
 
-    // Try to return items to the pool while there's room
-    while (returned < count && atomicLoad(&pool->count) < pool->cap)
+    // Try to return items to the pool while there's room. cap is converted to the atomic's value
+    // type because that type is signed under the Windows fallback.
+    while (returned < count && atomicLoad(&pool->count) < (w_atomic_uint_value_t) pool->cap)
     {
         // Find an empty slot in the next array
         uint32_t slot = returned;
@@ -166,8 +177,9 @@ static inline void masterpoolReuseItems(master_pool_t *const pool, master_pool_i
         // Store the item
         pool->items[slot] = iptr[returned];
 
-        // Get the current head
-        uint32_t old_head = atomicLoad(&pool->head);
+        // Get the current head. Held in the atomic's own value type because the compare/exchange
+        // below writes the observed value back through this slot.
+        w_atomic_uint_value_t old_head = atomicLoad(&pool->head);
 
         // Set our next pointer to the current head
         atomicStore(&pool->next[slot], old_head);

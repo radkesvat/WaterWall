@@ -80,7 +80,7 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t capacity)
     pool->destroy_item_handle = defaultDestroyHandle;
 
     // Initialize atomic variables
-    atomicStore(&pool->head, UINT32_MAX); // Empty stack marker
+    atomicStore(&pool->head, MASTER_POOL_LOCKFREE_NIL); // Empty stack marker
     atomicStore(&pool->count, 0);
 
     // Set up memory layout
@@ -93,7 +93,7 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t capacity)
     // Initialize next array
     for (uint32_t i = 0; i < capacity; i++)
     {
-        atomicStore(&pool->next[i], UINT32_MAX);
+        atomicStore(&pool->next[i], MASTER_POOL_LOCKFREE_NIL);
     }
 
     return pool;
@@ -122,8 +122,8 @@ void masterpoolInstallCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle 
  */
 void masterpoolMakeEmpty(master_pool_t *pool)
 {
-    uint32_t head = atomicLoad(&pool->head);
-    while (head != UINT32_MAX)
+    w_atomic_uint_value_t head = atomicLoad(&pool->head);
+    while (head != MASTER_POOL_LOCKFREE_NIL)
     {
         void *item = pool->items[head];
         head       = atomicLoad(&pool->next[head]);
@@ -135,7 +135,7 @@ void masterpoolMakeEmpty(master_pool_t *pool)
         }
     }
 
-    atomicStore(&pool->head, UINT32_MAX);
+    atomicStore(&pool->head, MASTER_POOL_LOCKFREE_NIL);
     atomicStore(&pool->count, 0);
 }
 
