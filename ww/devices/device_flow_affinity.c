@@ -4,8 +4,10 @@
 
 enum
 {
-    kDeviceFlowAffinityMaxBatch = 512,
-    kDeviceFlowAffinityBuckets  = UINT8_MAX + 1
+    kDeviceFlowAffinityMaxBatch          = 512,
+    kDeviceFlowAffinityBuckets           = UINT8_MAX + 1,
+    kDeviceFlowAffinityIpv4MoreFragments = 0x2000,
+    kDeviceFlowAffinityIpv4OffsetMask    = 0x1FFF
 };
 
 static uint64_t deviceFlowAffinityMix64(uint64_t value)
@@ -18,7 +20,8 @@ static uint64_t deviceFlowAffinityMix64(uint64_t value)
     return value;
 }
 
-static wid_t deviceFlowAffinityHash(uint32_t src, uint16_t src_port, uint32_t dst, uint16_t dst_port, uint8_t proto)
+static wid_t deviceFlowAffinityHash(uint32_t src, uint16_t src_port, uint32_t dst, uint16_t dst_port, uint8_t proto,
+                                    uint32_t fragment_key)
 {
     uint64_t endpoint_a = ((uint64_t) src << 16U) | src_port;
     uint64_t endpoint_b = ((uint64_t) dst << 16U) | dst_port;
@@ -28,6 +31,10 @@ static wid_t deviceFlowAffinityHash(uint32_t src, uint16_t src_port, uint32_t ds
 
     hash ^= deviceFlowAffinityMix64(high + UINT64_C(0xD1B54A32D192ED03));
     hash ^= deviceFlowAffinityMix64((uint64_t) proto + UINT64_C(0x94D049BB133111EB));
+    if (fragment_key != 0)
+    {
+        hash ^= deviceFlowAffinityMix64((uint64_t) fragment_key + UINT64_C(0xDB4F0B9175AE2165));
+    }
     hash = deviceFlowAffinityMix64(hash);
 
     return (wid_t) (hash % getWorkersCount());
@@ -51,12 +58,13 @@ bool deviceFlowAffineWID(const uint8_t *packet, uint32_t length, wid_t *out_wid)
         return true;
     }
 
-    uint8_t  version  = length > 0 ? packet[0] >> 4U : 0;
-    uint8_t  proto    = 0;
-    uint32_t src      = 0;
-    uint32_t dst      = 0;
-    uint16_t src_port = 0;
-    uint16_t dst_port = 0;
+    uint8_t  version      = length > 0 ? packet[0] >> 4U : 0;
+    uint8_t  proto        = 0;
+    uint32_t src          = 0;
+    uint32_t dst          = 0;
+    uint32_t fragment_key = 0;
+    uint16_t src_port     = 0;
+    uint16_t dst_port     = 0;
 
     if (version == 4)
     {
@@ -75,8 +83,19 @@ bool deviceFlowAffineWID(const uint8_t *packet, uint32_t length, wid_t *out_wid)
         src   = GET_BE32(packet + 12);
         dst   = GET_BE32(packet + 16);
 
-        bool non_initial_fragment = (GET_BE16(packet + 6) & 0x1FFFU) != 0;
-        if (! non_initial_fragment && (proto == 6 || proto == 17 || proto == 132) && length >= ip_header_len + 4U)
+        uint16_t fragment_field = GET_BE16(packet + 6);
+        bool     fragmented =
+            (fragment_field & (kDeviceFlowAffinityIpv4MoreFragments | kDeviceFlowAffinityIpv4OffsetMask)) != 0;
+        if (fragmented)
+        {
+            /*
+             * Every fragment of one datagram must reach the same worker. The
+             * leading fragment has transport bytes but later fragments do not,
+             * so use the IP identification for all of them.
+             */
+            fragment_key = UINT32_C(0x10000) | GET_BE16(packet + 4);
+        }
+        else if ((proto == 6 || proto == 17 || proto == 132) && length >= ip_header_len + 4U)
         {
             src_port = GET_BE16(packet + ip_header_len);
             dst_port = GET_BE16(packet + ip_header_len + 2U);
@@ -104,7 +123,7 @@ bool deviceFlowAffineWID(const uint8_t *packet, uint32_t length, wid_t *out_wid)
         return false;
     }
 
-    *out_wid = deviceFlowAffinityHash(src, src_port, dst, dst_port, proto);
+    *out_wid = deviceFlowAffinityHash(src, src_port, dst, dst_port, proto, fragment_key);
     return true;
 }
 

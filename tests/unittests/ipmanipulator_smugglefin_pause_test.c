@@ -380,6 +380,37 @@ static void testCrossWorkerEchoReleasesOwnerFlow(void)
     destroyTestTunnel(t);
 }
 
+static void testCrossWorkerReversePacketPasses(void)
+{
+    tunnel_t  normal_upstream   = {0};
+    tunnel_t  normal_downstream = {0};
+    tunnel_t  fin_branch        = {0};
+    tunnel_t *t                 = createTestTunnel(&normal_upstream, &normal_downstream, &fin_branch);
+    line_t    owner_line;
+    line_t    foreign_line;
+    initializeLine(&owner_line, 0);
+    initializeLine(&foreign_line, 1);
+
+    resetCounters();
+    tl_wid = 0;
+    startPausedFlow(t, &owner_line);
+
+    tl_wid          = 1;
+    sbuf_t *reverse = makeTcpPacket(1, 0xC0000201, 443, 0x0A000001, 12345, 200, 110, TCP_ACK | TCP_PSH, 8);
+    require(! smugglefintrickDownStreamPayload(t, &foreign_line, reverse),
+            "cross-worker reverse packet was queued on the owner line");
+    lineReuseBuffer(&foreign_line, reverse);
+
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    require(state->smuggle_fin_flows[0].queued_packets_count == 1,
+            "cross-worker reverse packet changed the owner flow queue");
+
+    runTimedMessage(0);
+    require(normal_upstream_packets == 1, "owner flow did not survive a cross-worker reverse packet");
+
+    destroyTestTunnel(t);
+}
+
 static void testUnconfirmedFlowIsReclaimed(void)
 {
     tunnel_t                normal_upstream   = {0};
@@ -390,13 +421,21 @@ static void testUnconfirmedFlowIsReclaimed(void)
     ipmanipulator_tstate_t *state = tunnelGetState(t);
     initializeLine(&line, 0);
 
+    ipmanipulator_smuggle_fin_queued_packet_t *stale_queue = memoryAllocate(sizeof(*stale_queue));
+    stale_queue[0]                                         = (ipmanipulator_smuggle_fin_queued_packet_t) {
+                                                .buf       = sbufCreate(64),
+                                                .direction = kIpManipulatorSmuggleFinQueueDirectionUpstream,
+    };
     state->smuggle_fin_flows[0] = (ipmanipulator_smuggle_fin_flow_t) {
-        .last_activity_ms = 0,
-        .src_addr         = lwip_htonl(0x0A000001),
-        .dst_addr         = lwip_htonl(0xC0000201),
-        .src_port         = 12345,
-        .dst_port         = 443,
-        .active           = true,
+        .last_activity_ms        = 0,
+        .src_addr                = lwip_htonl(0x0A000001),
+        .dst_addr                = lwip_htonl(0xC0000201),
+        .src_port                = 12345,
+        .dst_port                = 443,
+        .queued_packets          = stale_queue,
+        .queued_packets_count    = 1,
+        .queued_packets_capacity = 1,
+        .active                  = true,
     };
 
     resetCounters();
@@ -404,6 +443,38 @@ static void testUnconfirmedFlowIsReclaimed(void)
     require(! smugglefintrickUpStreamPayload(t, &line, ack), "empty ACK unexpectedly triggered smuggle-fin");
     lineReuseBuffer(&line, ack);
     require(! state->smuggle_fin_flows[0].active, "idle unconfirmed flow was not reclaimed");
+    require(state->smuggle_fin_flows[0].queued_packets == NULL, "idle flow retained its stale queue");
+
+    destroyTestTunnel(t);
+}
+
+static void testPauseGenerationSurvivesSlotReuse(void)
+{
+    tunnel_t                normal_upstream   = {0};
+    tunnel_t                normal_downstream = {0};
+    tunnel_t                fin_branch        = {0};
+    tunnel_t               *t                 = createTestTunnel(&normal_upstream, &normal_downstream, &fin_branch);
+    line_t                  line;
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    initializeLine(&line, 0);
+
+    resetCounters();
+    startPausedFlow(t, &line);
+    uint32_t first_generation = state->smuggle_fin_flows[0].pause_generation;
+    runTimedMessage(0);
+
+    state->smuggle_fin_flows[0].confirmed        = false;
+    state->smuggle_fin_flows[0].last_activity_ms = 0;
+    sbuf_t *ack = makeTcpPacket(0, 0x0A000002, 23456, 0xC0000202, 443, 1, 1, TCP_ACK, 0);
+    require(! smugglefintrickUpStreamPayload(t, &line, ack), "empty ACK unexpectedly triggered smuggle-fin");
+    lineReuseBuffer(&line, ack);
+    require(! state->smuggle_fin_flows[0].active, "old flow slot was not reclaimed");
+
+    resetCounters();
+    startPausedFlow(t, &line);
+    require(state->smuggle_fin_flows[0].pause_generation != first_generation,
+            "reused flow slot repeated a live delayed-release generation");
+    runTimedMessage(0);
 
     destroyTestTunnel(t);
 }
@@ -416,7 +487,9 @@ int main(void)
     testPauseTimeoutReleasesFlow();
     testQueueCapForcesRelease();
     testCrossWorkerEchoReleasesOwnerFlow();
+    testCrossWorkerReversePacketPasses();
     testUnconfirmedFlowIsReclaimed();
+    testPauseGenerationSurvivesSlotReuse();
     envTeardown(&env);
     return 0;
 }

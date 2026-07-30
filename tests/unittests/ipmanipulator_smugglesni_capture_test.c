@@ -217,12 +217,34 @@ static void testTlsCaptureResizesInOneAttempt(void)
     destroyTestTunnel(t);
 }
 
+static void testOversizeGeneratedHelloFallsThrough(void)
+{
+    tunnel_t  normal           = {0};
+    tunnel_t  real             = {0};
+    tunnel_t *t                = createTestTunnel(&normal, &real);
+    line_t    line             = {.alive = true, .wid = 0};
+    uint8_t   client_hello[12] = {0x16, 0x03, 0x03, 0x00, 0x07, 0x01};
+
+    resetCounters();
+    generated_hello_len = kMaxAllowedPacketLength;
+    warmFlow(t, &line);
+    require(smugglesnitrickUpStreamPayload(t, &line, makeTcpPacket(TCP_ACK, client_hello, sizeof(client_hello))),
+            "TLS capture packet was not consumed");
+
+    require(generator_calls == 1, "oversize ClientHello generator was retried");
+    require(real_packets == 1, "oversize fake prevented the real ClientHello send");
+    require(normal_packets == 2, "oversize fake ClientHello was emitted");
+
+    destroyTestTunnel(t);
+}
+
 int main(void)
 {
     test_env_t env;
     envSetup(&env);
     testNonTlsCaptureFallsThrough();
     testTlsCaptureResizesInOneAttempt();
+    testOversizeGeneratedHelloFallsThrough();
     envTeardown(&env);
     return 0;
 }

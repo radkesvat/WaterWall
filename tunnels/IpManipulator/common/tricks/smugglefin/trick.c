@@ -189,68 +189,77 @@ static void smugglefintrickDestroyFlow(ipmanipulator_smuggle_fin_flow_t *flow)
     memoryZero(flow, sizeof(*flow));
 }
 
-static void smugglefintrickCleanupIdleFlowsLocked(ipmanipulator_tstate_t *state, uint64_t now_ms)
+static bool smugglefintrickCleanupIdleFlowLocked(ipmanipulator_smuggle_fin_flow_t *flow, uint64_t now_ms)
 {
+    if (! flow->active || flow->paused)
+    {
+        return false;
+    }
+
+    uint64_t timeout_ms = flow->confirmed ? kSmuggleFinIdleTimeoutMs : kSmuggleFinUnconfirmedIdleTimeoutMs;
+    if (now_ms - flow->last_activity_ms < timeout_ms)
+    {
+        return false;
+    }
+
+    smugglefintrickDestroyFlow(flow);
+    return true;
+}
+
+static ipmanipulator_smuggle_fin_flow_t *smugglefintrickInspectUpstreamFlowsLocked(
+    ipmanipulator_tstate_t *state, const smugglefintrick_tcp_packet_info_t *info, uint64_t now_ms, wid_t wid,
+    bool *worker_has_paused_flow)
+{
+    ipmanipulator_smuggle_fin_flow_t *matched_flow = NULL;
+    *worker_has_paused_flow                        = false;
+
     for (uint32_t i = 0; i < state->smuggle_fin_flows_capacity; ++i)
     {
         ipmanipulator_smuggle_fin_flow_t *flow = &state->smuggle_fin_flows[i];
 
-        if (! flow->active || flow->paused)
+        if (smugglefintrickCleanupIdleFlowLocked(flow, now_ms))
         {
             continue;
         }
 
-        uint64_t timeout_ms = flow->confirmed ? kSmuggleFinIdleTimeoutMs : kSmuggleFinUnconfirmedIdleTimeoutMs;
-        if (now_ms - flow->last_activity_ms < timeout_ms)
+        if (matched_flow == NULL && smugglefintrickFlowMatches(flow, info))
+        {
+            matched_flow = flow;
+        }
+
+        *worker_has_paused_flow |= flow->active && flow->paused && flow->line != NULL && lineGetWID(flow->line) == wid;
+    }
+
+    return matched_flow;
+}
+
+static void smugglefintrickInspectDownstreamFlowsLocked(ipmanipulator_tstate_t                  *state,
+                                                        const smugglefintrick_tcp_packet_info_t *info, uint64_t now_ms,
+                                                        ipmanipulator_smuggle_fin_flow_t **expected_flow,
+                                                        ipmanipulator_smuggle_fin_flow_t **reverse_flow)
+{
+    *expected_flow = NULL;
+    *reverse_flow  = NULL;
+
+    for (uint32_t i = 0; i < state->smuggle_fin_flows_capacity; ++i)
+    {
+        ipmanipulator_smuggle_fin_flow_t *flow = &state->smuggle_fin_flows[i];
+
+        if (smugglefintrickCleanupIdleFlowLocked(flow, now_ms))
         {
             continue;
         }
 
-        assert(flow->queued_packets == NULL && flow->queued_packets_count == 0);
-        memoryZero(flow, sizeof(*flow));
-    }
-}
-
-static ipmanipulator_smuggle_fin_flow_t *smugglefintrickFindFlowLocked(ipmanipulator_tstate_t                  *state,
-                                                                       const smugglefintrick_tcp_packet_info_t *info)
-{
-    for (uint32_t i = 0; i < state->smuggle_fin_flows_capacity; ++i)
-    {
-        if (smugglefintrickFlowMatches(&state->smuggle_fin_flows[i], info))
+        if (*expected_flow == NULL && smugglefintrickExpectedFinMatches(flow, info))
         {
-            return &state->smuggle_fin_flows[i];
+            *expected_flow = flow;
+        }
+
+        if (*reverse_flow == NULL && smugglefintrickFlowMatchesReverse(flow, info))
+        {
+            *reverse_flow = flow;
         }
     }
-
-    return NULL;
-}
-
-static ipmanipulator_smuggle_fin_flow_t *smugglefintrickFindReverseFlowLocked(
-    ipmanipulator_tstate_t *state, const smugglefintrick_tcp_packet_info_t *info)
-{
-    for (uint32_t i = 0; i < state->smuggle_fin_flows_capacity; ++i)
-    {
-        if (smugglefintrickFlowMatchesReverse(&state->smuggle_fin_flows[i], info))
-        {
-            return &state->smuggle_fin_flows[i];
-        }
-    }
-
-    return NULL;
-}
-
-static ipmanipulator_smuggle_fin_flow_t *smugglefintrickFindExpectedFlowLocked(
-    ipmanipulator_tstate_t *state, const smugglefintrick_tcp_packet_info_t *info)
-{
-    for (uint32_t i = 0; i < state->smuggle_fin_flows_capacity; ++i)
-    {
-        if (smugglefintrickExpectedFinMatches(&state->smuggle_fin_flows[i], info))
-        {
-            return &state->smuggle_fin_flows[i];
-        }
-    }
-
-    return NULL;
 }
 
 static ipmanipulator_smuggle_fin_flow_t *smugglefintrickFindReleaseFlowLocked(
@@ -265,20 +274,6 @@ static ipmanipulator_smuggle_fin_flow_t *smugglefintrickFindReleaseFlowLocked(
     }
 
     return NULL;
-}
-
-static bool smugglefintrickWorkerHasPausedFlowLocked(const ipmanipulator_tstate_t *state, wid_t wid)
-{
-    for (uint32_t i = 0; i < state->smuggle_fin_flows_capacity; ++i)
-    {
-        const ipmanipulator_smuggle_fin_flow_t *flow = &state->smuggle_fin_flows[i];
-        if (flow->active && flow->paused && flow->line != NULL && lineGetWID(flow->line) == wid)
-        {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 static ipmanipulator_smuggle_fin_flow_t *smugglefintrickCreateFlowLocked(ipmanipulator_tstate_t                  *state,
@@ -594,9 +589,10 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     mutexLock(&state->smuggle_fin_mutex);
-    smugglefintrickCleanupIdleFlowsLocked(state, now_ms);
 
-    ipmanipulator_smuggle_fin_flow_t *flow = smugglefintrickFindFlowLocked(state, &info);
+    bool                              worker_has_paused_flow = false;
+    ipmanipulator_smuggle_fin_flow_t *flow =
+        smugglefintrickInspectUpstreamFlowsLocked(state, &info, now_ms, lineGetWID(l), &worker_has_paused_flow);
     if (flow != NULL)
     {
         flow->last_activity_ms = now_ms;
@@ -622,8 +618,7 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
     }
 
-    if ((flow == NULL && smugglefintrickWorkerHasPausedFlowLocked(state, lineGetWID(l))) ||
-        ! smugglefintrickShouldMirror(&info))
+    if ((flow == NULL && worker_has_paused_flow) || ! smugglefintrickShouldMirror(&info))
     {
         mutexUnlock(&state->smuggle_fin_mutex);
         return false;
@@ -660,11 +655,16 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     flow->line              = l;
     flow->release_pending   = false;
     flow->paused            = true;
-    flow->pause_generation += 1U;
-    if (flow->pause_generation == 0)
+    /*
+     * Allocate generations across the whole tunnel so zeroing and reusing a
+     * flow slot cannot let an old delayed-release context match a new occupant.
+     */
+    state->smuggle_fin_next_pause_generation += 1U;
+    if (state->smuggle_fin_next_pause_generation == 0)
     {
-        flow->pause_generation = 1;
+        state->smuggle_fin_next_pause_generation = 1;
     }
+    flow->pause_generation = state->smuggle_fin_next_pause_generation;
 
     if (! smugglefintrickQueuePacketLocked(flow, buf, kIpManipulatorSmuggleFinQueueDirectionUpstream))
     {
@@ -725,9 +725,12 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     mutexLock(&state->smuggle_fin_mutex);
-    smugglefintrickCleanupIdleFlowsLocked(state, now_ms);
 
-    ipmanipulator_smuggle_fin_flow_t *flow = smugglefintrickFindExpectedFlowLocked(state, &info);
+    ipmanipulator_smuggle_fin_flow_t *expected_flow = NULL;
+    ipmanipulator_smuggle_fin_flow_t *reverse_flow  = NULL;
+    smugglefintrickInspectDownstreamFlowsLocked(state, &info, now_ms, &expected_flow, &reverse_flow);
+
+    ipmanipulator_smuggle_fin_flow_t *flow = expected_flow;
     if (flow != NULL)
     {
         flow->last_activity_ms = now_ms;
@@ -756,18 +759,19 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return true;
     }
 
-    flow = smugglefintrickFindReverseFlowLocked(state, &info);
+    flow = reverse_flow;
     if (flow != NULL)
     {
-        flow->last_activity_ms = now_ms;
-
         if (flow->paused)
         {
-            /*
-             * Phase C's symmetric device hash guarantees ordinary packets from
-             * this reverse 4-tuple arrive on the flow owner's worker.
-             */
-            assert(flow->line != NULL && lineGetWID(flow->line) == lineGetWID(l));
+            line_t *owner_line = flow->line;
+            if (owner_line == NULL || lineGetWID(owner_line) != lineGetWID(l))
+            {
+                mutexUnlock(&state->smuggle_fin_mutex);
+                return false;
+            }
+
+            flow->last_activity_ms = now_ms;
 
             if (smugglefintrickQueuePacketLocked(flow, buf, kIpManipulatorSmuggleFinQueueDirectionDownstream))
             {
@@ -775,12 +779,13 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 return true;
             }
 
-            line_t *owner_line = flow->line;
             smugglefintrickDetachQueuedPacketsLocked(flow, true, now_ms, &queued_packets, &queued_packets_count);
             mutexUnlock(&state->smuggle_fin_mutex);
             smugglefintrickForceReleaseAfterQueueLimit(t, owner_line, queued_packets, queued_packets_count);
             return false;
         }
+
+        flow->last_activity_ms = now_ms;
     }
 
     mutexUnlock(&state->smuggle_fin_mutex);

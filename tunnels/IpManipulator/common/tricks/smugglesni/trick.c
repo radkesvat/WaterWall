@@ -12,6 +12,11 @@ enum
     kSmuggleSniIdleTimeoutMs  = 20U * 60U * 1000U
 };
 
+static_assert(kIpManipulatorSmuggleSavedPacketsCount == 1,
+              "smuggle-sni fake rewriting currently supports exactly one saved packet");
+static_assert((uint32_t) kSmuggleSniCapturePackets == (uint32_t) kIpManipulatorSmuggleSavedPacketsCount,
+              "smuggle-sni capture and saved-packet counts must remain aligned");
+
 typedef struct smugglesnitrick_tcp_packet_info_s
 {
     uint32_t src_addr;
@@ -466,7 +471,12 @@ static bool smugglesnitrickRewriteSavedPacketPayload(ipmanipulator_smuggle_saved
     }
 
     uint32_t rewritten_len = info.payload_offset + payload_len;
-    saved_packet->packet   = sbufReserveSpace(saved_packet->packet, rewritten_len);
+    if (rewritten_len > kMaxAllowedPacketLength)
+    {
+        return false;
+    }
+
+    saved_packet->packet = sbufReserveSpace(saved_packet->packet, rewritten_len);
     sbufSetLength(saved_packet->packet, rewritten_len);
 
     uint8_t *packet = sbufGetMutablePtr(saved_packet->packet);
@@ -474,7 +484,6 @@ static bool smugglesnitrickRewriteSavedPacketPayload(ipmanipulator_smuggle_saved
     IPH_LEN_SET((struct ip_hdr *) packet, lwip_htons((uint16_t) rewritten_len));
 
     saved_packet->payload_len = (uint16_t) payload_len;
-    lineSetRecalculateChecksum(saved_packet->line, true);
     return true;
 }
 

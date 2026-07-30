@@ -101,6 +101,13 @@ static void testIpv4SymmetryAndFragments(void)
     sbuf_t *udp_reverse = makeIpv4Packet(0xC6336401, 53, 0x0A000002, 5353, 17, 0);
     require(affinityOf(udp_forward) == affinityOf(udp_reverse), "IPv4 UDP flow was not symmetric");
 
+    sbuf_t *first_fragment = makeIpv4Packet(0x0A000003, 1000, 0xCB007101, 2000, 6, 0x2000);
+    sbuf_t *later_fragment = makeIpv4Packet(0x0A000003, 9999, 0xCB007101, 8888, 6, 185);
+    PUT_BE16(sbufGetMutablePtr(first_fragment) + 4, 0xBEEF);
+    PUT_BE16(sbufGetMutablePtr(later_fragment) + 4, 0xBEEF);
+    require(affinityOf(first_fragment) == affinityOf(later_fragment),
+            "first and later IPv4 fragments of one datagram selected different workers");
+
     sbuf_t *fragment_forward = makeIpv4Packet(0x0A000003, 1000, 0xCB007101, 2000, 6, 1);
     sbuf_t *fragment_reverse = makeIpv4Packet(0xCB007101, 9999, 0x0A000003, 8888, 6, 1);
     require(affinityOf(fragment_forward) == affinityOf(fragment_reverse),
@@ -108,6 +115,8 @@ static void testIpv4SymmetryAndFragments(void)
 
     sbufDestroy(fragment_reverse);
     sbufDestroy(fragment_forward);
+    sbufDestroy(later_fragment);
+    sbufDestroy(first_fragment);
     sbufDestroy(udp_reverse);
     sbufDestroy(udp_forward);
     sbufDestroy(reverse);

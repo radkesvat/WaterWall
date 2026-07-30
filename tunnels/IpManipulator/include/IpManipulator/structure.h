@@ -366,6 +366,7 @@ typedef struct ipmanipulator_tstate_s
     wmutex_t                          smuggle_fin_mutex;
     ipmanipulator_smuggle_fin_flow_t *smuggle_fin_flows;
     uint32_t                          smuggle_fin_flows_capacity;
+    uint32_t                          smuggle_fin_next_pause_generation;
     enum tcp_bit_action_dynamic_value up_tcp_bit_cwr_action;
     enum tcp_bit_action_dynamic_value up_tcp_bit_ece_action;
     enum tcp_bit_action_dynamic_value up_tcp_bit_urg_action;
