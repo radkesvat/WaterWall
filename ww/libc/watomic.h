@@ -137,18 +137,30 @@ typedef intptr_t atomic_uintmax_t;
  */
 
 /*
- * Every generic operation below is an Interlocked*Pointer call, so the widest
- * object it can carry indivisibly is one pointer. Applying one to something
- * wider would half-write and half-read it, and the resulting value would not
- * even be the surviving low half -- the load returns a signed intptr_t, so it
- * sign-extends. Reject that at compile time on the targets where it is wrong
- * (32-bit Windows) instead of shipping a silent data corruption; on 64-bit
- * Windows a pointer is 64 bits and the generic set is correct for every type
- * here, so the check simply passes.
+ * Every generic operation below is an Interlocked*Pointer call, so it accesses
+ * exactly one pointer -- no more and no less -- and the check below demands
+ * exactly that width. Both directions are silent corruption otherwise, and
+ * neither is caught by the type system, because these macros cast their operand
+ * to (PVOID volatile *) and that cast accepts any object pointer:
+ *
+ *   too wide     half-writes and half-reads the object, and the value that
+ *                comes back is not even the surviving low half -- the load
+ *                returns a signed intptr_t, so it sign-extends. This is what
+ *                a 64-bit field costs on a 32-bit Windows target.
+ *
+ *   too narrow   reads and writes past the end of the object. A pointer-width
+ *                store into a 32-bit field on a 64-bit target overwrites
+ *                whatever the compiler laid out in the next four bytes.
+ *
+ * So the fix depends on which way the mismatch goes: 64-bit state belongs to
+ * the u64 API below, while a caller whose own variable is narrower than a
+ * pointer should hold the value in a w_atomic_int_value_t / w_atomic_uint_value_t
+ * and convert at the boundary, the way worker.c and device_lifetime.h do.
  */
 #define W_ATOMIC_REQUIRE_PTR_WIDTH(object)                                                                             \
     ((void) sizeof(struct {                                                                                            \
-        int object_is_wider_than_a_pointer_use_the_u64_api : ((sizeof *(object)) <= sizeof(intptr_t)) ? 1 : -1;         \
+        int atomic_object_is_not_pointer_width_use_the_u64_api_for_64_bit_state                                        \
+            : ((sizeof *(object)) == sizeof(intptr_t)) ? 1 : -1;                                                       \
     }))
 
 #define atomic_store(object, desired)                                                                                  \
