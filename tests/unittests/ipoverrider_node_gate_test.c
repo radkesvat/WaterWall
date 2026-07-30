@@ -1,4 +1,6 @@
 #include "IpOverrider/structure.h"
+#include "wchecksum.h"
+#include "wlibc.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,20 +66,73 @@ static tunnel_t *createConfiguredTunnel(int chance, bool only120, cJSON **settin
     return t;
 }
 
-static sbuf_t *createIpv4Packet(uint16_t total_len)
+static sbuf_t *createIpv4TcpPacket(uint16_t total_len)
 {
-    require(total_len >= sizeof(struct ip_hdr), "IPv4 test packet is shorter than its header");
+    require(total_len >= sizeof(struct ip_hdr) + sizeof(struct tcp_hdr),
+            "IPv4 TCP test packet is shorter than headers");
 
-    sbuf_t *buf = sbufCreate(256);
-    require(buf != NULL, "failed to allocate IPv4 packet buffer");
+    sbuf_t *buf = sbufCreate(512);
+    require(buf != NULL, "failed to allocate IPv4 TCP packet buffer");
     sbufSetLength(buf, total_len);
 
-    struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
-    memoryZero(ipheader, total_len);
+    uint8_t *raw = sbufGetMutablePtr(buf);
+    memoryZero(raw, total_len);
+
+    struct ip_hdr  *ipheader  = (struct ip_hdr *) raw;
+    struct tcp_hdr *tcpheader = (struct tcp_hdr *) (raw + sizeof(struct ip_hdr));
+
     IPH_VHL_SET(ipheader, 4, sizeof(*ipheader) / 4U);
     IPH_LEN_SET(ipheader, lwip_htons(total_len));
+    IPH_TTL_SET(ipheader, 64);
+    IPH_PROTO_SET(ipheader, IP_PROTO_TCP);
     ipheader->src.addr  = PP_HTONL(LWIP_MAKEU32(192, 0, 2, 1));
     ipheader->dest.addr = PP_HTONL(LWIP_MAKEU32(192, 0, 2, 2));
+
+    tcpheader->src  = lwip_htons(12345);
+    tcpheader->dest = lwip_htons(80);
+    TCPH_HDRLEN_FLAGS_SET(tcpheader, sizeof(struct tcp_hdr) / 4U, TCP_ACK);
+
+    for (size_t i = sizeof(struct ip_hdr) + sizeof(struct tcp_hdr); i < total_len; ++i)
+    {
+        raw[i] = (uint8_t) (i + 1);
+    }
+
+    require(calcFullPacketChecksum(raw, total_len), "failed to compute initial TCP checksums");
+    return buf;
+}
+
+static sbuf_t *createIpv4UdpPacket(uint16_t total_len)
+{
+    require(total_len >= sizeof(struct ip_hdr) + sizeof(struct udp_hdr),
+            "IPv4 UDP test packet is shorter than headers");
+
+    sbuf_t *buf = sbufCreate(512);
+    require(buf != NULL, "failed to allocate IPv4 UDP packet buffer");
+    sbufSetLength(buf, total_len);
+
+    uint8_t *raw = sbufGetMutablePtr(buf);
+    memoryZero(raw, total_len);
+
+    struct ip_hdr  *ipheader  = (struct ip_hdr *) raw;
+    struct udp_hdr *udpheader = (struct udp_hdr *) (raw + sizeof(struct ip_hdr));
+
+    IPH_VHL_SET(ipheader, 4, sizeof(*ipheader) / 4U);
+    IPH_LEN_SET(ipheader, lwip_htons(total_len));
+    IPH_TTL_SET(ipheader, 64);
+    IPH_PROTO_SET(ipheader, IP_PROTO_UDP);
+    ipheader->src.addr  = PP_HTONL(LWIP_MAKEU32(192, 0, 2, 1));
+    ipheader->dest.addr = PP_HTONL(LWIP_MAKEU32(192, 0, 2, 2));
+
+    udpheader->src  = lwip_htons(5000);
+    udpheader->dest = lwip_htons(5001);
+    udpheader->len  = lwip_htons((u16_t) (total_len - sizeof(struct ip_hdr)));
+
+    for (size_t i = sizeof(struct ip_hdr) + sizeof(struct udp_hdr); i < total_len; ++i)
+    {
+        raw[i] = (uint8_t) (i + 10);
+    }
+
+    require(calcFullPacketChecksum(raw, total_len), "failed to compute initial UDP checksums");
     return buf;
 }
 
@@ -123,7 +178,7 @@ static void testChanceZeroSkipsEntireNodeAction(void)
     require(! state->only120, "root-level only120=false was not parsed");
 
     line_t  line = {0};
-    sbuf_t *buf  = createIpv4Packet(60);
+    sbuf_t *buf  = createIpv4TcpPacket(60);
     resetForwardingRecord();
     t->fnPayloadU(t, &line, buf);
 
@@ -131,14 +186,14 @@ static void testChanceZeroSkipsEntireNodeAction(void)
                            PP_HTONL(LWIP_MAKEU32(192, 0, 2, 1)),
                            PP_HTONL(LWIP_MAKEU32(192, 0, 2, 2)),
                            "chance=0 partially rewrote the upstream packet");
-    require(! lineGetRecalculateChecksum(&line), "chance=0 requested checksum recalculation");
+    require(! lineGetRecalculateChecksum(&line), "chance=0 modified checksum recalculation flag");
     require(atomicLoadRelaxed(&(state->rules[kIpOverriderDirectionUp][kIpOverriderModeSource].ov_4_rr_cursor)) == 0,
             "chance=0 advanced a rule's round-robin cursor");
     require(forwarded_upstream == 1 && forwarded_downstream == 0 && forwarded_line == &line && forwarded_buffer == buf,
             "chance=0 did not forward the upstream packet unchanged");
     sbufDestroy(buf);
 
-    buf = createIpv4Packet(60);
+    buf = createIpv4UdpPacket(60);
     resetForwardingRecord();
     t->fnPayloadD(t, &line, buf);
 
@@ -146,9 +201,17 @@ static void testChanceZeroSkipsEntireNodeAction(void)
                            PP_HTONL(LWIP_MAKEU32(192, 0, 2, 1)),
                            PP_HTONL(LWIP_MAKEU32(192, 0, 2, 2)),
                            "chance=0 partially rewrote the downstream packet");
-    require(! lineGetRecalculateChecksum(&line), "chance=0 requested downstream checksum recalculation");
+    require(! lineGetRecalculateChecksum(&line), "chance=0 modified downstream checksum recalculation flag");
     require(forwarded_downstream == 1 && forwarded_upstream == 0 && forwarded_line == &line && forwarded_buffer == buf,
             "chance=0 did not forward the downstream packet unchanged");
+    sbufDestroy(buf);
+
+    /* Pre-existing true flag preserved on chance=0 */
+    lineSetRecalculateChecksum(&line, true);
+    buf = createIpv4TcpPacket(60);
+    resetForwardingRecord();
+    t->fnPayloadU(t, &line, buf);
+    require(lineGetRecalculateChecksum(&line), "chance=0 cleared pre-existing recalculate_checksum flag");
     sbufDestroy(buf);
 
     ipoverriderDestroy(t);
@@ -157,7 +220,7 @@ static void testChanceZeroSkipsEntireNodeAction(void)
     cJSON_Delete(settings);
 }
 
-static void testChanceHundredAppliesEntireNodeAction(void)
+static void testCleanTcpRewriteComposition(void)
 {
     cJSON    *settings = NULL;
     tunnel_t *t        = createConfiguredTunnel(100, false, &settings);
@@ -165,40 +228,133 @@ static void testChanceHundredAppliesEntireNodeAction(void)
     tunnel_t *next     = NULL;
     bindRecordingNeighbors(t, &prev, &next);
 
-    ipoverrider_tstate_t *state = tunnelGetState(t);
-    require(state->chance == 100, "root-level chance=100 was not parsed");
-    require(! state->only120, "root-level only120=false was not parsed");
+    ipoverrider_tstate_t *state    = tunnelGetState(t);
+    line_t                line     = {0};
+    sbuf_t               *buf      = createIpv4TcpPacket(60);
+    uint32_t              new_src  = PP_HTONL(LWIP_MAKEU32(198, 51, 100, 10));
+    uint32_t              new_dest = PP_HTONL(LWIP_MAKEU32(198, 51, 100, 20));
 
-    line_t  line = {0};
-    sbuf_t *buf  = createIpv4Packet(60);
+    sbuf_t        *oracle    = createIpv4TcpPacket(60);
+    struct ip_hdr *oracle_ip = (struct ip_hdr *) sbufGetMutablePtr(oracle);
+    oracle_ip->src.addr      = new_src;
+    oracle_ip->dest.addr     = new_dest;
+    require(calcFullPacketChecksum(sbufGetMutablePtr(oracle), 60), "failed to compute oracle TCP checksums");
+
     resetForwardingRecord();
     t->fnPayloadU(t, &line, buf);
 
-    requirePacketAddresses(buf,
-                           PP_HTONL(LWIP_MAKEU32(198, 51, 100, 10)),
-                           PP_HTONL(LWIP_MAKEU32(198, 51, 100, 20)),
-                           "chance=100 did not rewrite both upstream address fields");
-    require(lineGetRecalculateChecksum(&line), "upstream rewrite did not request checksum recalculation");
+    requirePacketAddresses(buf, new_src, new_dest, "chance=100 did not rewrite both upstream address fields");
+    require(! lineGetRecalculateChecksum(&line), "incremental rewrite modified recalculate_checksum flag");
     require(atomicLoadRelaxed(&(state->rules[kIpOverriderDirectionUp][kIpOverriderModeSource].ov_4_rr_cursor)) == 1,
             "upstream rewrite did not advance its round-robin cursor exactly once");
     require(forwarded_upstream == 1 && forwarded_downstream == 0 && forwarded_line == &line && forwarded_buffer == buf,
             "chance=100 did not forward the rewritten upstream packet");
-    sbufDestroy(buf);
 
-    lineSetRecalculateChecksum(&line, false);
-    buf = createIpv4Packet(60);
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), 60),
+            "incrementally rewritten TCP packet mismatch with oracle");
+
+    sbufDestroy(buf);
+    sbufDestroy(oracle);
+    ipoverriderDestroy(t);
+    tunnelDestroy(next);
+    tunnelDestroy(prev);
+    cJSON_Delete(settings);
+}
+
+static void testCleanUdpRewriteAndZeroChecksum(void)
+{
+    cJSON    *settings = NULL;
+    tunnel_t *t        = createConfiguredTunnel(100, false, &settings);
+    tunnel_t *prev     = NULL;
+    tunnel_t *next     = NULL;
+    bindRecordingNeighbors(t, &prev, &next);
+
+    line_t   line     = {0};
+    sbuf_t  *buf      = createIpv4UdpPacket(60);
+    uint32_t new_src  = PP_HTONL(LWIP_MAKEU32(198, 51, 100, 30));
+    uint32_t new_dest = PP_HTONL(LWIP_MAKEU32(198, 51, 100, 40));
+
+    sbuf_t        *oracle    = createIpv4UdpPacket(60);
+    struct ip_hdr *oracle_ip = (struct ip_hdr *) sbufGetMutablePtr(oracle);
+    oracle_ip->src.addr      = new_src;
+    oracle_ip->dest.addr     = new_dest;
+    require(calcFullPacketChecksum(sbufGetMutablePtr(oracle), 60), "failed to compute oracle UDP checksums");
+
     resetForwardingRecord();
     t->fnPayloadD(t, &line, buf);
 
-    requirePacketAddresses(buf,
-                           PP_HTONL(LWIP_MAKEU32(198, 51, 100, 30)),
-                           PP_HTONL(LWIP_MAKEU32(198, 51, 100, 40)),
-                           "chance=100 did not rewrite both downstream address fields");
-    require(lineGetRecalculateChecksum(&line), "downstream rewrite did not request checksum recalculation");
+    requirePacketAddresses(buf, new_src, new_dest, "chance=100 did not rewrite both downstream address fields");
+    require(! lineGetRecalculateChecksum(&line), "downstream UDP rewrite modified recalculate_checksum flag");
     require(forwarded_downstream == 1 && forwarded_upstream == 0 && forwarded_line == &line && forwarded_buffer == buf,
             "chance=100 did not forward the rewritten downstream packet");
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), 60),
+            "incrementally rewritten UDP packet mismatch with oracle");
+    sbufDestroy(buf);
+    sbufDestroy(oracle);
+
+    /* Test UDP zero checksum remains zero */
+    buf                  = createIpv4UdpPacket(60);
+    struct udp_hdr *udph = (struct udp_hdr *) (sbufGetMutablePtr(buf) + sizeof(struct ip_hdr));
+    udph->chksum         = 0;
+    require(calcIpv4HeaderChecksum(sbufGetMutablePtr(buf), 60), "failed to compute IP header checksum");
+
+    resetForwardingRecord();
+    t->fnPayloadD(t, &line, buf);
+
+    requirePacketAddresses(buf, new_src, new_dest, "downstream zero-UDP rewrite failed");
+    udph = (struct udp_hdr *) (sbufGetMutablePtr(buf) + sizeof(struct ip_hdr));
+    require(udph->chksum == 0, "zero UDP checksum was modified to non-zero");
+    require(! lineGetRecalculateChecksum(&line), "zero UDP rewrite modified recalculate_checksum flag");
     sbufDestroy(buf);
 
+    ipoverriderDestroy(t);
+    tunnelDestroy(next);
+    tunnelDestroy(prev);
+    cJSON_Delete(settings);
+}
+
+static void testExistingFullRecalculationRequestPreserved(void)
+{
+    cJSON    *settings = NULL;
+    tunnel_t *t        = createConfiguredTunnel(100, false, &settings);
+    tunnel_t *prev     = NULL;
+    tunnel_t *next     = NULL;
+    bindRecordingNeighbors(t, &prev, &next);
+
+    line_t line = {0};
+    lineSetRecalculateChecksum(&line, true);
+
+    sbuf_t  *buf      = createIpv4TcpPacket(60);
+    uint32_t new_src  = PP_HTONL(LWIP_MAKEU32(198, 51, 100, 10));
+    uint32_t new_dest = PP_HTONL(LWIP_MAKEU32(198, 51, 100, 20));
+
+    sbuf_t *expected_intermediate = sbufCreate(512);
+    sbufSetLength(expected_intermediate, 60);
+    memoryCopy(sbufGetMutablePtr(expected_intermediate), sbufGetRawPtr(buf), 60);
+    setIpv4AddressWithChecksumUpdate(sbufGetMutablePtr(expected_intermediate), 60, kIpv4ChecksumAddressSource, new_src);
+    setIpv4AddressWithChecksumUpdate(
+        sbufGetMutablePtr(expected_intermediate), 60, kIpv4ChecksumAddressDestination, new_dest);
+
+    resetForwardingRecord();
+    t->fnPayloadU(t, &line, buf);
+
+    require(lineGetRecalculateChecksum(&line), "pre-existing recalculate_checksum flag was cleared");
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(expected_intermediate), 60),
+            "incremental helper was not applied to pending-recalculation packet");
+
+    /* Simulating a later full recalculation */
+    require(calcFullPacketChecksum(sbufGetMutablePtr(buf), 60), "later full recalculation failed");
+    sbuf_t        *oracle    = createIpv4TcpPacket(60);
+    struct ip_hdr *oracle_ip = (struct ip_hdr *) sbufGetMutablePtr(oracle);
+    oracle_ip->src.addr      = new_src;
+    oracle_ip->dest.addr     = new_dest;
+    require(calcFullPacketChecksum(sbufGetMutablePtr(oracle), 60), "oracle calc failed");
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), 60),
+            "later full recalculation mismatch with oracle");
+
+    sbufDestroy(buf);
+    sbufDestroy(expected_intermediate);
+    sbufDestroy(oracle);
     ipoverriderDestroy(t);
     tunnelDestroy(next);
     tunnelDestroy(prev);
@@ -216,8 +372,10 @@ static void testOnly120GatesEntireNodeAction(void)
     ipoverrider_tstate_t *state = tunnelGetState(t);
     require(state->only120, "root-level only120=true was not parsed");
 
-    line_t  line = {0};
-    sbuf_t *buf  = createIpv4Packet(121);
+    line_t line = {0};
+
+    /* Upstream oversized (121 bytes) -> skipped */
+    sbuf_t *buf = createIpv4TcpPacket(121);
     resetForwardingRecord();
     t->fnPayloadU(t, &line, buf);
 
@@ -225,14 +383,15 @@ static void testOnly120GatesEntireNodeAction(void)
                            PP_HTONL(LWIP_MAKEU32(192, 0, 2, 1)),
                            PP_HTONL(LWIP_MAKEU32(192, 0, 2, 2)),
                            "only120 partially rewrote an oversized upstream packet");
-    require(! lineGetRecalculateChecksum(&line), "only120 requested checksum recalculation for an oversized packet");
+    require(! lineGetRecalculateChecksum(&line), "only120 modified checksum recalculation flag for oversized packet");
     require(atomicLoadRelaxed(&(state->rules[kIpOverriderDirectionUp][kIpOverriderModeSource].ov_4_rr_cursor)) == 0,
             "only120 advanced a rule's round-robin cursor for an oversized packet");
     require(forwarded_upstream == 1 && forwarded_downstream == 0 && forwarded_line == &line && forwarded_buffer == buf,
             "only120 did not forward the oversized upstream packet unchanged");
     sbufDestroy(buf);
 
-    buf = createIpv4Packet(120);
+    /* Upstream boundary (120 bytes) -> rewritten */
+    buf = createIpv4TcpPacket(120);
     resetForwardingRecord();
     t->fnPayloadU(t, &line, buf);
 
@@ -240,13 +399,13 @@ static void testOnly120GatesEntireNodeAction(void)
                            PP_HTONL(LWIP_MAKEU32(198, 51, 100, 10)),
                            PP_HTONL(LWIP_MAKEU32(198, 51, 100, 20)),
                            "only120 did not rewrite both fields at the 120-byte boundary");
-    require(lineGetRecalculateChecksum(&line), "only120 boundary rewrite did not request checksum recalculation");
+    require(! lineGetRecalculateChecksum(&line), "only120 boundary rewrite modified checksum flag");
     require(atomicLoadRelaxed(&(state->rules[kIpOverriderDirectionUp][kIpOverriderModeSource].ov_4_rr_cursor)) == 1,
             "only120 boundary rewrite did not advance the round-robin cursor");
     sbufDestroy(buf);
 
-    lineSetRecalculateChecksum(&line, false);
-    buf = createIpv4Packet(121);
+    /* Downstream oversized (121 bytes) -> skipped */
+    buf = createIpv4UdpPacket(121);
     resetForwardingRecord();
     t->fnPayloadD(t, &line, buf);
 
@@ -255,22 +414,194 @@ static void testOnly120GatesEntireNodeAction(void)
                            PP_HTONL(LWIP_MAKEU32(192, 0, 2, 2)),
                            "only120 partially rewrote an oversized downstream packet");
     require(! lineGetRecalculateChecksum(&line),
-            "only120 requested downstream checksum recalculation for an oversized packet");
+            "only120 modified checksum recalculation flag for oversized downstream packet");
     require(forwarded_downstream == 1 && forwarded_upstream == 0 && forwarded_line == &line && forwarded_buffer == buf,
             "only120 did not forward the oversized downstream packet unchanged");
     sbufDestroy(buf);
 
-    buf = createIpv4Packet(120);
+    /* Downstream boundary (120 bytes) -> rewritten */
+    buf = createIpv4UdpPacket(120);
     resetForwardingRecord();
     t->fnPayloadD(t, &line, buf);
 
     requirePacketAddresses(buf,
                            PP_HTONL(LWIP_MAKEU32(198, 51, 100, 30)),
                            PP_HTONL(LWIP_MAKEU32(198, 51, 100, 40)),
-                           "only120 did not rewrite both downstream fields at the 120-byte boundary");
-    require(lineGetRecalculateChecksum(&line),
-            "only120 downstream boundary rewrite did not request checksum recalculation");
+                           "only120 did not rewrite downstream fields at the 120-byte boundary");
+    require(! lineGetRecalculateChecksum(&line), "only120 downstream boundary rewrite modified checksum flag");
     sbufDestroy(buf);
+
+    ipoverriderDestroy(t);
+    tunnelDestroy(next);
+    tunnelDestroy(prev);
+    cJSON_Delete(settings);
+}
+
+static void testUnchangedAddressHandling(void)
+{
+    cJSON    *settings = NULL;
+    tunnel_t *t        = createConfiguredTunnel(100, false, &settings);
+    tunnel_t *prev     = NULL;
+    tunnel_t *next     = NULL;
+    bindRecordingNeighbors(t, &prev, &next);
+
+    ipoverrider_tstate_t *state       = tunnelGetState(t);
+    line_t                line        = {0};
+    uint32_t              target_src  = PP_HTONL(LWIP_MAKEU32(198, 51, 100, 10));
+    uint32_t              target_dest = PP_HTONL(LWIP_MAKEU32(198, 51, 100, 20));
+
+    sbuf_t        *buf      = createIpv4TcpPacket(60);
+    struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
+    ipheader->src.addr      = target_src;
+    ipheader->dest.addr     = target_dest;
+    require(calcFullPacketChecksum(sbufGetMutablePtr(buf), 60), "failed to compute initial checksums");
+
+    sbuf_t *before = sbufCreate(512);
+    sbufSetLength(before, 60);
+    memoryCopy(sbufGetMutablePtr(before), sbufGetRawPtr(buf), 60);
+
+    resetForwardingRecord();
+    t->fnPayloadU(t, &line, buf);
+
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), 60), "unchanged address packet was modified");
+    require(! lineGetRecalculateChecksum(&line), "unchanged address modified recalculate_checksum flag");
+    require(atomicLoadRelaxed(&(state->rules[kIpOverriderDirectionUp][kIpOverriderModeSource].ov_4_rr_cursor)) == 1,
+            "unchanged source address did not advance the round-robin cursor exactly once");
+    require(forwarded_upstream == 1 && forwarded_downstream == 0 && forwarded_line == &line && forwarded_buffer == buf,
+            "unchanged address forwarding failed");
+
+    sbufDestroy(buf);
+    sbufDestroy(before);
+    ipoverriderDestroy(t);
+    tunnelDestroy(next);
+    tunnelDestroy(prev);
+    cJSON_Delete(settings);
+}
+
+static void testRejectionAndMalformedPackets(void)
+{
+    cJSON    *settings = NULL;
+    tunnel_t *t        = createConfiguredTunnel(100, false, &settings);
+    tunnel_t *prev     = NULL;
+    tunnel_t *next     = NULL;
+    bindRecordingNeighbors(t, &prev, &next);
+
+    line_t line = {0};
+
+    /* 1. IPv6 packet (IPH_V = 6) - with false and true flags */
+    sbuf_t *buf = sbufCreate(256);
+    sbufSetLength(buf, 40);
+    uint8_t *raw = sbufGetMutablePtr(buf);
+    memoryZero(raw, 40);
+    raw[0] = 0x60; /* IPv6 version */
+    uint8_t before6[40];
+    memoryCopy(before6, raw, 40);
+
+    resetForwardingRecord();
+    t->fnPayloadU(t, &line, buf);
+    require(memoryEqual(sbufGetRawPtr(buf), before6, 40), "IPv6 packet was modified");
+    require(! lineGetRecalculateChecksum(&line), "IPv6 packet modified checksum flag");
+    require(forwarded_upstream == 1 && forwarded_downstream == 0, "IPv6 packet forwarding failed");
+    sbufDestroy(buf);
+
+    buf = sbufCreate(256);
+    sbufSetLength(buf, 40);
+    raw = sbufGetMutablePtr(buf);
+    memoryZero(raw, 40);
+    raw[0] = 0x60;
+    lineSetRecalculateChecksum(&line, true);
+    resetForwardingRecord();
+    t->fnPayloadU(t, &line, buf);
+    require(memoryEqual(sbufGetRawPtr(buf), before6, 40), "IPv6 packet was modified");
+    require(lineGetRecalculateChecksum(&line), "pre-existing true flag cleared on IPv6 packet");
+    sbufDestroy(buf);
+
+    /* 2. Truncated IPv4 header (length < 20) - with false and true flags */
+    lineSetRecalculateChecksum(&line, false);
+    buf = sbufCreate(256);
+    sbufSetLength(buf, 10);
+    raw = sbufGetMutablePtr(buf);
+    memoryZero(raw, 10);
+    uint8_t before_trunc[10];
+    memoryCopy(before_trunc, raw, 10);
+
+    resetForwardingRecord();
+    t->fnPayloadU(t, &line, buf);
+    require(memoryEqual(sbufGetRawPtr(buf), before_trunc, 10), "truncated packet was modified");
+    require(! lineGetRecalculateChecksum(&line), "truncated packet modified checksum flag");
+    require(forwarded_upstream == 1 && forwarded_downstream == 0, "truncated packet forwarding failed");
+    sbufDestroy(buf);
+
+    buf = sbufCreate(256);
+    sbufSetLength(buf, 10);
+    raw = sbufGetMutablePtr(buf);
+    memoryZero(raw, 10);
+    lineSetRecalculateChecksum(&line, true);
+    resetForwardingRecord();
+    t->fnPayloadU(t, &line, buf);
+    require(memoryEqual(sbufGetRawPtr(buf), before_trunc, 10), "truncated packet was modified");
+    require(lineGetRecalculateChecksum(&line), "pre-existing true flag cleared on truncated packet");
+    sbufDestroy(buf);
+
+    /* 3. Malformed TCP header (data offset = 4 < 5) */
+    lineSetRecalculateChecksum(&line, false);
+    buf                  = createIpv4TcpPacket(60);
+    struct tcp_hdr *tcph = (struct tcp_hdr *) (sbufGetMutablePtr(buf) + sizeof(struct ip_hdr));
+    TCPH_HDRLEN_FLAGS_SET(tcph, 4, TCP_ACK); /* short data offset */
+    sbuf_t *before_tcp = sbufCreate(512);
+    sbufSetLength(before_tcp, 60);
+    memoryCopy(sbufGetMutablePtr(before_tcp), sbufGetRawPtr(buf), 60);
+
+    resetForwardingRecord();
+    t->fnPayloadU(t, &line, buf);
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before_tcp), 60), "malformed TCP packet was modified");
+    require(! lineGetRecalculateChecksum(&line), "malformed TCP packet modified checksum flag");
+    require(forwarded_upstream == 1 && forwarded_downstream == 0 && forwarded_line == &line && forwarded_buffer == buf,
+            "malformed TCP packet was not forwarded upstream exactly once");
+    sbufDestroy(buf);
+
+    buf  = createIpv4TcpPacket(60);
+    tcph = (struct tcp_hdr *) (sbufGetMutablePtr(buf) + sizeof(struct ip_hdr));
+    TCPH_HDRLEN_FLAGS_SET(tcph, 4, TCP_ACK);
+    lineSetRecalculateChecksum(&line, true);
+    resetForwardingRecord();
+    t->fnPayloadU(t, &line, buf);
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before_tcp), 60), "malformed TCP packet was modified");
+    require(lineGetRecalculateChecksum(&line), "pre-existing true flag cleared on malformed TCP packet");
+    require(forwarded_upstream == 1 && forwarded_downstream == 0 && forwarded_line == &line && forwarded_buffer == buf,
+            "malformed TCP packet with a pending checksum request was not forwarded upstream exactly once");
+    sbufDestroy(buf);
+    sbufDestroy(before_tcp);
+
+    /* 4. Malformed UDP header (udp_len = 4 < UDP_HLEN) */
+    lineSetRecalculateChecksum(&line, false);
+    buf                  = createIpv4UdpPacket(60);
+    struct udp_hdr *udph = (struct udp_hdr *) (sbufGetMutablePtr(buf) + sizeof(struct ip_hdr));
+    udph->len            = lwip_htons(4); /* < UDP_HLEN */
+    sbuf_t *before_udp   = sbufCreate(512);
+    sbufSetLength(before_udp, 60);
+    memoryCopy(sbufGetMutablePtr(before_udp), sbufGetRawPtr(buf), 60);
+
+    resetForwardingRecord();
+    t->fnPayloadD(t, &line, buf);
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before_udp), 60), "malformed UDP packet was modified");
+    require(! lineGetRecalculateChecksum(&line), "malformed UDP packet modified checksum flag");
+    require(forwarded_downstream == 1 && forwarded_upstream == 0 && forwarded_line == &line && forwarded_buffer == buf,
+            "malformed UDP packet was not forwarded downstream exactly once");
+    sbufDestroy(buf);
+
+    buf       = createIpv4UdpPacket(60);
+    udph      = (struct udp_hdr *) (sbufGetMutablePtr(buf) + sizeof(struct ip_hdr));
+    udph->len = lwip_htons(4);
+    lineSetRecalculateChecksum(&line, true);
+    resetForwardingRecord();
+    t->fnPayloadD(t, &line, buf);
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before_udp), 60), "malformed UDP packet was modified");
+    require(lineGetRecalculateChecksum(&line), "pre-existing true flag cleared on malformed UDP packet");
+    require(forwarded_downstream == 1 && forwarded_upstream == 0 && forwarded_line == &line && forwarded_buffer == buf,
+            "malformed UDP packet with a pending checksum request was not forwarded downstream exactly once");
+    sbufDestroy(buf);
+    sbufDestroy(before_udp);
 
     ipoverriderDestroy(t);
     tunnelDestroy(next);
@@ -280,8 +611,13 @@ static void testOnly120GatesEntireNodeAction(void)
 
 int main(void)
 {
+    checkSumInit();
     testChanceZeroSkipsEntireNodeAction();
-    testChanceHundredAppliesEntireNodeAction();
+    testCleanTcpRewriteComposition();
+    testCleanUdpRewriteAndZeroChecksum();
+    testExistingFullRecalculationRequestPreserved();
     testOnly120GatesEntireNodeAction();
+    testUnchangedAddressHandling();
+    testRejectionAndMalformedPackets();
     return 0;
 }

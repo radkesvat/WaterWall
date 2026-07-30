@@ -1,5 +1,5 @@
 <!--
-Documentation version: 109
+Documentation version: 110
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpOverrider.mdx, and both files must keep the same documentation version.
 -->
 
@@ -17,7 +17,7 @@ This node is a layer-3 packet tunnel. It does not create connections or sockets.
 - Rewrites IPv4 destination addresses on downstream traffic when configured.
 - Applies one node-level `only120` size gate before any configured rewrite.
 - Applies one node-level `chance` gate before any configured rewrite.
-- Marks packets for checksum recalculation after a rewrite.
+- Updates IPv4 header and TCP/UDP pseudo-header checksums incrementally after a rewrite.
 
 ## Typical Placement
 
@@ -226,9 +226,7 @@ If no rule exists for a given direction, packets in that direction simply pass t
 
 ### Checksum behavior
 
-Whenever an IPv4 rewrite is applied, `IpOverrider` sets the line flag that requests checksum recalculation later in the packet pipeline.
-
-This keeps downstream packet writers or adapters responsible for final checksum updates.
+When an IPv4 address rewrite is applied, `IpOverrider` updates the IPv4 header checksum incrementally in place. For TCP and enabled UDP packets, it also applies the corresponding IPv4 pseudo-header checksum delta. A disabled (zero) UDP checksum remains zero. The node does not request a full-packet checksum recalculation for its own rewrite, and preserves any pre-existing checksum recalculation request.
 
 ## Notes And Caveats
 
