@@ -1,6 +1,7 @@
 #include "trick.h"
 
 #include "loggers/network_logger.h"
+#include "net/wchecksum.h"
 
 enum
 {
@@ -17,7 +18,7 @@ static void tcpbitchangeSetAllTcpFlags(struct tcp_hdr *tcp_header, uint8_t flags
 {
     uint16_t hdrlen_rsvd_flags = lwip_ntohs(tcp_header->_hdrlen_rsvd_flags);
 
-    hdrlen_rsvd_flags = (uint16_t) ((hdrlen_rsvd_flags & ~kTcpAllFlagsMask) | flags);
+    hdrlen_rsvd_flags              = (uint16_t) ((hdrlen_rsvd_flags & ~kTcpAllFlagsMask) | flags);
     tcp_header->_hdrlen_rsvd_flags = lwip_htons(hdrlen_rsvd_flags);
 }
 
@@ -97,12 +98,13 @@ static bool appendOriginalTcpFlagsToPayload(sbuf_t **buf_ptr, struct ip_hdr **ip
     uint32_t new_len = (uint32_t) ip_total_len + 1U;
     if (sbufGetMaximumWriteableSize(buf) < new_len)
     {
-        LOGW("tcpbitchangetrick: dropping packet because preserve-tcp-bitflags needs one extra byte but the buffer has no room");
+        LOGW("tcpbitchangetrick: dropping packet because preserve-tcp-bitflags needs one extra byte but the buffer has "
+             "no room");
         return false;
     }
 
     sbufSetLength(buf, new_len);
-    uint8_t *packet = sbufGetMutablePtr(buf);
+    uint8_t *packet      = sbufGetMutablePtr(buf);
     packet[ip_total_len] = flags;
 
     *buf_ptr      = buf;
@@ -121,10 +123,10 @@ static bool restoreOriginalTcpFlagsFromPayload(sbuf_t *buf, struct ip_hdr *iphea
         return false;
     }
 
-    uint8_t *packet            = sbufGetMutablePtr(buf);
-    uint32_t flags_offset      = (uint32_t) ip_total_len - 1U;
-    uint8_t  restored_flags    = packet[flags_offset];
-    uint16_t restored_len      = (uint16_t) (ip_total_len - 1U);
+    uint8_t *packet         = sbufGetMutablePtr(buf);
+    uint32_t flags_offset   = (uint32_t) ip_total_len - 1U;
+    uint8_t  restored_flags = packet[flags_offset];
+    uint16_t restored_len   = (uint16_t) (ip_total_len - 1U);
 
     tcpbitchangeSetAllTcpFlags(tcp_header, restored_flags);
     IPH_LEN_SET(ipheader, lwip_htons(restored_len));
@@ -141,25 +143,25 @@ static uint8_t processAllTcpFlags(uint8_t original_flags, const ipmanipulator_ts
 
     if (is_upstream)
     {
-        flag_configs[0] = (tcp_flag_config_t){0x80, state->up_tcp_bit_cwr_action}; // CWR
-        flag_configs[1] = (tcp_flag_config_t){0x40, state->up_tcp_bit_ece_action}; // ECE
-        flag_configs[2] = (tcp_flag_config_t){0x20, state->up_tcp_bit_urg_action}; // URG
-        flag_configs[3] = (tcp_flag_config_t){0x10, state->up_tcp_bit_ack_action}; // ACK
-        flag_configs[4] = (tcp_flag_config_t){0x08, state->up_tcp_bit_psh_action}; // PSH
-        flag_configs[5] = (tcp_flag_config_t){0x04, state->up_tcp_bit_rst_action}; // RST
-        flag_configs[6] = (tcp_flag_config_t){0x02, state->up_tcp_bit_syn_action}; // SYN
-        flag_configs[7] = (tcp_flag_config_t){0x01, state->up_tcp_bit_fin_action}; // FIN
+        flag_configs[0] = (tcp_flag_config_t) {0x80, state->up_tcp_bit_cwr_action}; // CWR
+        flag_configs[1] = (tcp_flag_config_t) {0x40, state->up_tcp_bit_ece_action}; // ECE
+        flag_configs[2] = (tcp_flag_config_t) {0x20, state->up_tcp_bit_urg_action}; // URG
+        flag_configs[3] = (tcp_flag_config_t) {0x10, state->up_tcp_bit_ack_action}; // ACK
+        flag_configs[4] = (tcp_flag_config_t) {0x08, state->up_tcp_bit_psh_action}; // PSH
+        flag_configs[5] = (tcp_flag_config_t) {0x04, state->up_tcp_bit_rst_action}; // RST
+        flag_configs[6] = (tcp_flag_config_t) {0x02, state->up_tcp_bit_syn_action}; // SYN
+        flag_configs[7] = (tcp_flag_config_t) {0x01, state->up_tcp_bit_fin_action}; // FIN
     }
     else
     {
-        flag_configs[0] = (tcp_flag_config_t){0x80, state->down_tcp_bit_cwr_action}; // CWR
-        flag_configs[1] = (tcp_flag_config_t){0x40, state->down_tcp_bit_ece_action}; // ECE
-        flag_configs[2] = (tcp_flag_config_t){0x20, state->down_tcp_bit_urg_action}; // URG
-        flag_configs[3] = (tcp_flag_config_t){0x10, state->down_tcp_bit_ack_action}; // ACK
-        flag_configs[4] = (tcp_flag_config_t){0x08, state->down_tcp_bit_psh_action}; // PSH
-        flag_configs[5] = (tcp_flag_config_t){0x04, state->down_tcp_bit_rst_action}; // RST
-        flag_configs[6] = (tcp_flag_config_t){0x02, state->down_tcp_bit_syn_action}; // SYN
-        flag_configs[7] = (tcp_flag_config_t){0x01, state->down_tcp_bit_fin_action}; // FIN
+        flag_configs[0] = (tcp_flag_config_t) {0x80, state->down_tcp_bit_cwr_action}; // CWR
+        flag_configs[1] = (tcp_flag_config_t) {0x40, state->down_tcp_bit_ece_action}; // ECE
+        flag_configs[2] = (tcp_flag_config_t) {0x20, state->down_tcp_bit_urg_action}; // URG
+        flag_configs[3] = (tcp_flag_config_t) {0x10, state->down_tcp_bit_ack_action}; // ACK
+        flag_configs[4] = (tcp_flag_config_t) {0x08, state->down_tcp_bit_psh_action}; // PSH
+        flag_configs[5] = (tcp_flag_config_t) {0x04, state->down_tcp_bit_rst_action}; // RST
+        flag_configs[6] = (tcp_flag_config_t) {0x02, state->down_tcp_bit_syn_action}; // SYN
+        flag_configs[7] = (tcp_flag_config_t) {0x01, state->down_tcp_bit_fin_action}; // FIN
     }
 
     for (int i = 0; i < 8; i++)
@@ -180,11 +182,16 @@ static uint8_t processAllTcpFlags(uint8_t original_flags, const ipmanipulator_ts
 
 static void tcpbitchangetrickPayload(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, bool is_upstream)
 {
-    ipmanipulator_tstate_t *state       = tunnelGetState(t);
-    sbuf_t                 *buf         = *buf_ptr;
-    struct ip_hdr          *ipheader    = (struct ip_hdr *) sbufGetMutablePtr(buf);
-    bool                    has_actions = hasTcpFlagActionsConfigured(state, is_upstream);
-    bool                    opposite_has_actions = hasTcpFlagActionsConfigured(state, ! is_upstream);
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    sbuf_t                 *buf   = *buf_ptr;
+    if (UNLIKELY(sbufGetLength(buf) < sizeof(struct ip_hdr)))
+    {
+        return;
+    }
+
+    struct ip_hdr *ipheader             = (struct ip_hdr *) sbufGetMutablePtr(buf);
+    bool           has_actions          = hasTcpFlagActionsConfigured(state, is_upstream);
+    bool           opposite_has_actions = hasTcpFlagActionsConfigured(state, ! is_upstream);
 
     if (IPH_V(ipheader) == 4 && IPH_PROTO(ipheader) == IPPROTO_TCP)
     {
@@ -197,7 +204,7 @@ static void tcpbitchangetrickPayload(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, b
         }
 
         uint16_t iphdr_len = ip_hdr_len_words * 4;
-        uint16_t off_f      = lwip_ntohs(IPH_OFFSET(ipheader));
+        uint16_t off_f     = lwip_ntohs(IPH_OFFSET(ipheader));
         if ((off_f & (IP_MF | kIpv4FragmentMask)) != 0)
         {
             return;
@@ -210,7 +217,7 @@ static void tcpbitchangetrickPayload(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, b
             return;
         }
 
-        struct tcp_hdr *tcp_header = (struct tcp_hdr *) (((uint8_t *) sbufGetMutablePtr(buf)) + iphdr_len);
+        struct tcp_hdr *tcp_header        = (struct tcp_hdr *) (((uint8_t *) sbufGetMutablePtr(buf)) + iphdr_len);
         uint8_t         tcp_hdr_len_words = TCPH_HDRLEN(tcp_header);
 
         // Validate TCP header length
@@ -251,16 +258,26 @@ static void tcpbitchangetrickPayload(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, b
 
             buf        = *buf_ptr;
             tcp_header = (struct tcp_hdr *) (((uint8_t *) sbufGetMutablePtr(buf)) + iphdr_len);
+            if (new_flags != original_flags)
+            {
+                tcpbitchangeSetAllTcpFlags(tcp_header, new_flags);
+            }
+            l->recalculate_checksum = true;
+            return;
         }
 
         if (new_flags != original_flags)
         {
-            tcpbitchangeSetAllTcpFlags(tcp_header, new_flags);
-        }
+            uint16_t old_word_network  = tcp_header->_hdrlen_rsvd_flags;
+            uint16_t hdrlen_rsvd_flags = lwip_ntohs(old_word_network);
+            hdrlen_rsvd_flags          = (uint16_t) ((hdrlen_rsvd_flags & ~kTcpAllFlagsMask) | new_flags);
+            uint16_t new_word_network  = lwip_htons(hdrlen_rsvd_flags);
 
-        if ((state->trick_preserve_tcp_bitflags && has_actions) || new_flags != original_flags)
-        {
-            l->recalculate_checksum = true;
+            if (updateIpv4TransportChecksum16(
+                    sbufGetMutablePtr(buf), sbufGetLength(buf), old_word_network, new_word_network))
+            {
+                tcp_header->_hdrlen_rsvd_flags = new_word_network;
+            }
         }
     }
 

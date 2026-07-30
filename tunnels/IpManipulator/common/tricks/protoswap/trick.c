@@ -1,50 +1,78 @@
 #include "trick.h"
 
 #include "loggers/network_logger.h"
+#include "net/wchecksum.h"
 
-static bool protoswapIsTcpUdp(uint8_t protocol)
+static bool protoswapSetProtocol(sbuf_t *buf, uint8_t new_protocol)
 {
-    return protocol == IPPROTO_TCP || protocol == IPPROTO_UDP;
-}
-
-static void protoswapRefreshIpv4HeaderChecksum(struct ip_hdr *ipheader)
-{
-    uint16_t ip_header_len = IPH_HL_BYTES(ipheader);
-    uint16_t ip_total_len  = lwip_ntohs(IPH_LEN(ipheader));
-
-    if (ip_header_len < IP_HLEN || ip_header_len > IP_HLEN_MAX || ip_total_len < ip_header_len)
+    if (UNLIKELY(sbufGetLength(buf) < sizeof(struct ip_hdr)))
     {
-        return;
+        return false;
     }
 
-    IPH_CHKSUM_SET(ipheader, 0);
-    IPH_CHKSUM_SET(ipheader, inet_chksum(ipheader, ip_header_len));
-}
+    const struct ip_hdr *ipheader = (const struct ip_hdr *) sbufGetRawPtr(buf);
 
-static void protoswapSetProtocol(line_t *l, struct ip_hdr *ipheader, uint8_t original_protocol, uint8_t new_protocol)
-{
-    if (new_protocol == original_protocol)
+    if (IPH_V(ipheader) != 4)
     {
-        return;
+        return false;
     }
 
-    IPH_PROTO_SET(ipheader, new_protocol);
-
-    if (protoswapIsTcpUdp(original_protocol) && protoswapIsTcpUdp(new_protocol))
+    uint16_t ip_hdr_len = IPH_HL_BYTES(ipheader);
+    if (ip_hdr_len < IP_HLEN || ip_hdr_len > IP_HLEN_MAX || ip_hdr_len > sbufGetLength(buf))
     {
-        protoswapRefreshIpv4HeaderChecksum(ipheader);
-        return;
+        return false;
     }
 
-    lineSetRecalculateChecksum(l, true);
+    uint16_t ip_total_len = lwip_ntohs(IPH_LEN(ipheader));
+    if (ip_total_len < ip_hdr_len || ip_total_len > sbufGetLength(buf))
+    {
+        return false;
+    }
+
+    if (IPH_PROTO(ipheader) == new_protocol)
+    {
+        return true;
+    }
+
+    uint8_t        old_proto    = IPH_PROTO(ipheader);
+    uint16_t       old_chksum   = IPH_CHKSUM(ipheader);
+    struct ip_hdr *mut_ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
+
+    IPH_PROTO_SET(mut_ipheader, new_protocol);
+
+    if (calcIpv4HeaderChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)))
+    {
+        return true;
+    }
+
+    IPH_PROTO_SET(mut_ipheader, old_proto);
+    IPH_CHKSUM_SET(mut_ipheader, old_chksum);
+    return false;
 }
 
 static void protoswapApply(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream)
 {
-    ipmanipulator_tstate_t *state    = tunnelGetState(t);
-    struct ip_hdr          *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    if (UNLIKELY(sbufGetLength(buf) < sizeof(struct ip_hdr)))
+    {
+        return;
+    }
+
+    const struct ip_hdr *ipheader = (const struct ip_hdr *) sbufGetRawPtr(buf);
 
     if (IPH_V(ipheader) != 4)
+    {
+        return;
+    }
+
+    uint16_t ip_hdr_len = IPH_HL_BYTES(ipheader);
+    if (ip_hdr_len < IP_HLEN || ip_hdr_len > IP_HLEN_MAX || ip_hdr_len > sbufGetLength(buf))
+    {
+        return;
+    }
+
+    uint16_t ip_total_len = lwip_ntohs(IPH_LEN(ipheader));
+    if (ip_total_len < ip_hdr_len || ip_total_len > sbufGetLength(buf))
     {
         return;
     }
@@ -58,11 +86,11 @@ static void protoswapApply(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream)
         {
             if (state->trick_proto_swap_tcp_number_2 != -1)
             {
-                int *toggle =
+                atomic_uint *toggle_ptr =
                     upstream ? &state->trick_proto_swap_tcp_toggle_up : &state->trick_proto_swap_tcp_toggle_down;
+                unsigned int counter = (unsigned int) atomicIncRelaxed(toggle_ptr);
                 new_protocol =
-                    (*toggle == 0) ? state->trick_proto_swap_tcp_number : state->trick_proto_swap_tcp_number_2;
-                *toggle = (*toggle == 0) ? 1 : 0;
+                    (counter % 2U == 0) ? state->trick_proto_swap_tcp_number : state->trick_proto_swap_tcp_number_2;
             }
             else
             {
@@ -90,8 +118,10 @@ static void protoswapApply(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream)
 
     if (new_protocol != -1)
     {
-        protoswapSetProtocol(l, ipheader, original_protocol, (uint8_t) new_protocol);
+        protoswapSetProtocol(buf, (uint8_t) new_protocol);
     }
+
+    discard l;
 }
 
 void protoswaptrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)

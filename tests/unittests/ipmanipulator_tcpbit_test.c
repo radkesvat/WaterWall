@@ -1,5 +1,7 @@
 #include "IpManipulator/structure.h"
 #include "tricks/tcpbitchange/trick.h"
+#include "wchecksum.h"
+#include "wlibc.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,7 +47,7 @@ static sbuf_t *createTcpPacket(uint8_t flags, uint8_t extra_tail_byte, bool appe
     const uint16_t packet_len =
         (uint16_t) (ip_header_len + tcp_header_len + payload_len + (append_extra_tail ? 1U : 0U));
 
-    sbuf_t *buf = sbufCreate(128);
+    sbuf_t *buf = sbufCreate(256);
     require(buf != NULL, "failed to allocate packet buffer");
     sbufSetLength(buf, packet_len);
 
@@ -63,7 +65,6 @@ static sbuf_t *createTcpPacket(uint8_t flags, uint8_t extra_tail_byte, bool appe
     IPH_OFFSET_SET(ipheader, 0);
     IPH_TTL_SET(ipheader, 64);
     IPH_PROTO_SET(ipheader, IPPROTO_TCP);
-    IPH_CHKSUM_SET(ipheader, 0);
     ipheader->src.addr  = PP_HTONL(LWIP_MAKEU32(10, 0, 0, 1));
     ipheader->dest.addr = PP_HTONL(LWIP_MAKEU32(10, 0, 0, 2));
 
@@ -85,6 +86,7 @@ static sbuf_t *createTcpPacket(uint8_t flags, uint8_t extra_tail_byte, bool appe
         packet[packet_len - 1U] = extra_tail_byte;
     }
 
+    require(calcFullPacketChecksum(packet, packet_len), "failed to compute initial checksums");
     return buf;
 }
 
@@ -98,52 +100,64 @@ static uint8_t getAllTcpFlags(sbuf_t *buf)
 
 static void testDownstreamCanClearCwr(void)
 {
-    tunnel_t                *t     = createTestTunnel();
+    tunnel_t               *t     = createTestTunnel();
     ipmanipulator_tstate_t *state = testTunnelState(t);
     line_t                  line  = {0};
     sbuf_t                 *buf   = createTcpPacket(TCP_CWR | TCP_ECE | TCP_ACK | TCP_PSH, 0, false);
+
+    uint8_t expected_flags = TCP_ECE | TCP_ACK | TCP_PSH;
+    sbuf_t *oracle         = createTcpPacket(expected_flags, 0, false);
 
     state->down_tcp_bit_cwr_action = kDvsOff;
 
     tcpbitchangetrickDownStreamPayload(t, &line, &buf);
 
     require(buf != NULL, "packet was unexpectedly dropped");
-    require(getAllTcpFlags(buf) == (TCP_ECE | TCP_ACK | TCP_PSH), "downstream CWR action did not clear CWR");
-    require(lineGetRecalculateChecksum(&line), "downstream CWR change did not request checksum recalculation");
+    require(getAllTcpFlags(buf) == expected_flags, "downstream CWR action did not clear CWR");
+    require(! lineGetRecalculateChecksum(&line), "downstream simple CWR change modified recalculate_checksum flag");
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), sbufGetLength(buf)),
+            "downstream CWR cleared packet mismatch with oracle");
 
     sbufDestroy(buf);
+    sbufDestroy(oracle);
     destroyTestTunnel(t);
 }
 
 static void testDownstreamCanCopyPacketCwr(void)
 {
-    tunnel_t                *t     = createTestTunnel();
+    tunnel_t               *t     = createTestTunnel();
     ipmanipulator_tstate_t *state = testTunnelState(t);
     line_t                  line  = {0};
     sbuf_t                 *buf   = createTcpPacket(TCP_CWR | TCP_ACK, 0, false);
+
+    uint8_t expected_flags = TCP_CWR | TCP_ECE | TCP_ACK;
+    sbuf_t *oracle         = createTcpPacket(expected_flags, 0, false);
 
     state->down_tcp_bit_ece_action = kDvsPacketCwr;
 
     tcpbitchangetrickDownStreamPayload(t, &line, &buf);
 
     require(buf != NULL, "packet was unexpectedly dropped");
-    require(getAllTcpFlags(buf) == (TCP_CWR | TCP_ECE | TCP_ACK), "downstream packet->cwr action did not see CWR");
-    require(lineGetRecalculateChecksum(&line), "downstream packet->cwr change did not request checksum recalculation");
+    require(getAllTcpFlags(buf) == expected_flags, "downstream packet->cwr action did not see CWR");
+    require(! lineGetRecalculateChecksum(&line), "downstream packet->cwr change modified recalculate_checksum flag");
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), sbufGetLength(buf)),
+            "downstream copy CWR packet mismatch with oracle");
 
     sbufDestroy(buf);
+    sbufDestroy(oracle);
     destroyTestTunnel(t);
 }
 
 static void testPreservedBitflagsCanClearCwrEceOnRestore(void)
 {
-    tunnel_t                *t     = createTestTunnel();
-    ipmanipulator_tstate_t *state = testTunnelState(t);
-    line_t                  line  = {0};
-    sbuf_t                 *buf   = createTcpPacket(TCP_CWR | TCP_ECE | TCP_ACK, TCP_ACK, true);
+    tunnel_t               *t            = createTestTunnel();
+    ipmanipulator_tstate_t *state        = testTunnelState(t);
+    line_t                  line         = {0};
+    sbuf_t                 *buf          = createTcpPacket(TCP_CWR | TCP_ECE | TCP_ACK, TCP_ACK, true);
     uint16_t                original_len = (uint16_t) sbufGetLength(buf);
 
     state->trick_preserve_tcp_bitflags = true;
-    state->up_tcp_bit_ack_action          = kDvsToggle;
+    state->up_tcp_bit_ack_action       = kDvsToggle;
 
     tcpbitchangetrickDownStreamPayload(t, &line, &buf);
 
@@ -152,15 +166,193 @@ static void testPreservedBitflagsCanClearCwrEceOnRestore(void)
     require(sbufGetLength(buf) == original_len - 1U, "preserved bitflags byte was not removed");
     require(lineGetRecalculateChecksum(&line), "preserved bitflags restore did not request checksum recalculation");
 
+    require(calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)),
+            "full recalculation failed after restore");
+    sbuf_t *oracle = createTcpPacket(TCP_ACK, 0, false);
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), sbufGetLength(buf)),
+            "restored preserve-bitflags packet mismatch with oracle");
+
     sbufDestroy(buf);
+    sbufDestroy(oracle);
+    destroyTestTunnel(t);
+}
+
+static void testPreservedBitflagsAppend(void)
+{
+    tunnel_t               *t     = createTestTunnel();
+    ipmanipulator_tstate_t *state = testTunnelState(t);
+    line_t                  line  = {0};
+    sbuf_t                 *buf   = createTcpPacket(TCP_SYN, 0, false);
+
+    state->trick_preserve_tcp_bitflags = true;
+    state->up_tcp_bit_syn_action       = kDvsOff;
+
+    tcpbitchangetrickUpStreamPayload(t, &line, &buf);
+
+    require(buf != NULL, "packet was unexpectedly dropped");
+    require(getAllTcpFlags(buf) == 0, "preserve append did not clear SYN bit");
+    require(lineGetRecalculateChecksum(&line), "preserve append did not request checksum recalculation");
+
+    uint8_t *raw = sbufGetMutablePtr(buf);
+    uint16_t len = (uint16_t) sbufGetLength(buf);
+    require(raw[len - 1] == TCP_SYN, "preserve append did not append original SYN flag byte");
+
+    require(calcFullPacketChecksum(raw, len), "full recalculation failed after preserve append");
+    sbufDestroy(buf);
+    destroyTestTunnel(t);
+}
+
+static void testSimpleTcpFlagPreExistingFlagPreserved(void)
+{
+    tunnel_t               *t     = createTestTunnel();
+    ipmanipulator_tstate_t *state = testTunnelState(t);
+    line_t                  line  = {0};
+    sbuf_t                 *buf   = createTcpPacket(TCP_ACK, 0, false);
+
+    lineSetRecalculateChecksum(&line, true);
+    state->up_tcp_bit_psh_action = kDvsOn;
+
+    tcpbitchangetrickUpStreamPayload(t, &line, &buf);
+
+    require(buf != NULL, "packet was unexpectedly dropped");
+    require(getAllTcpFlags(buf) == (TCP_ACK | TCP_PSH), "simple flag change failed");
+    require(lineGetRecalculateChecksum(&line), "pre-existing recalculate_checksum flag was cleared");
+
+    require(calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)), "full recalculation failed");
+    sbuf_t *oracle = createTcpPacket(TCP_ACK | TCP_PSH, 0, false);
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), sbufGetLength(buf)),
+            "pending-flag packet mismatch with oracle after full recalculation");
+
+    sbufDestroy(buf);
+    sbufDestroy(oracle);
+    destroyTestTunnel(t);
+}
+
+static void testNoOpAndRejection(void)
+{
+    tunnel_t               *t     = createTestTunnel();
+    ipmanipulator_tstate_t *state = testTunnelState(t);
+    line_t                  line  = {0};
+
+    state->up_tcp_bit_psh_action = kDvsOn;
+
+    /* 1. No-op (new_flags == original_flags) */
+    sbuf_t *buf    = createTcpPacket(TCP_ACK | TCP_PSH, 0, false);
+    sbuf_t *before = sbufCreate(256);
+    sbufSetLength(before, sbufGetLength(buf));
+    memoryCopy(sbufGetMutablePtr(before), sbufGetRawPtr(buf), sbufGetLength(buf));
+
+    tcpbitchangetrickUpStreamPayload(t, &line, &buf);
+
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), sbufGetLength(buf)), "no-op modified packet");
+    require(! lineGetRecalculateChecksum(&line), "no-op modified recalculate_checksum flag");
+    sbufDestroy(buf);
+
+    /* 2. Short buffer (< sizeof(struct ip_hdr)) */
+    buf = sbufCreate(256);
+    sbufSetLength(buf, 10);
+    memoryZero(sbufGetMutablePtr(buf), 10);
+
+    tcpbitchangetrickUpStreamPayload(t, &line, &buf);
+    require(sbufGetLength(buf) == 10, "short buffer modified");
+    require(! lineGetRecalculateChecksum(&line), "short buffer modified flag");
+    sbufDestroy(buf);
+
+    /* 3. Fragmented IPv4 packet */
+    buf                     = createTcpPacket(TCP_ACK, 0, false);
+    struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
+    IPH_OFFSET_SET(ipheader, lwip_htons(IP_MF));
+    sbufSetLength(before, sbufGetLength(buf));
+    memoryCopy(sbufGetMutablePtr(before), sbufGetRawPtr(buf), sbufGetLength(buf));
+
+    tcpbitchangetrickUpStreamPayload(t, &line, &buf);
+
+    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), sbufGetLength(buf)), "fragmented packet modified");
+    require(! lineGetRecalculateChecksum(&line), "fragmented packet modified flag");
+    sbufDestroy(buf);
+
+    /* 4. IPv6-looking input (IPH_V = 6) */
+    buf = sbufCreate(256);
+    sbufSetLength(buf, 40);
+    uint8_t *raw = sbufGetMutablePtr(buf);
+    memoryZero(raw, 40);
+    raw[0] = 0x60;
+    uint8_t before6[40];
+    memoryCopy(before6, raw, 40);
+
+    tcpbitchangetrickUpStreamPayload(t, &line, &buf);
+    require(memoryEqual(sbufGetRawPtr(buf), before6, 40), "IPv6 packet modified");
+    require(! lineGetRecalculateChecksum(&line), "IPv6 packet modified flag");
+    sbufDestroy(buf);
+
+    /* 5. Truncated TCP header (sbuf len < iphdr_len + sizeof(struct tcp_hdr)) */
+    buf = createTcpPacket(TCP_ACK, 0, false);
+    sbufSetLength(buf, 30); /* 20 IP + 10 TCP bytes */
+    memoryCopy(before, sbufGetRawPtr(buf), 30);
+
+    tcpbitchangetrickUpStreamPayload(t, &line, &buf);
+    require(memoryEqual(sbufGetRawPtr(buf), before, 30), "truncated TCP header packet modified");
+    require(! lineGetRecalculateChecksum(&line), "truncated TCP header modified flag");
+    sbufDestroy(buf);
+
+    /* 6. Invalid TCP data offset (data_offset = 4 < 5) */
+    buf                  = createTcpPacket(TCP_ACK, 0, false);
+    struct tcp_hdr *tcph = (struct tcp_hdr *) (sbufGetMutablePtr(buf) + 20);
+    TCPH_HDRLEN_FLAGS_SET(tcph, 4, TCP_ACK);
+    memoryCopy(before, sbufGetRawPtr(buf), sbufGetLength(buf));
+
+    tcpbitchangetrickUpStreamPayload(t, &line, &buf);
+    require(memoryEqual(sbufGetRawPtr(buf), before, sbufGetLength(buf)), "invalid TCP data offset packet modified");
+    require(! lineGetRecalculateChecksum(&line), "invalid TCP data offset modified flag");
+    sbufDestroy(buf);
+
+    /* 7. Invalid IP header length (IHL = 4 < 5) */
+    buf      = createTcpPacket(TCP_ACK, 0, false);
+    ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
+    IPH_VHL_SET(ipheader, 4, 4);
+    memoryCopy(before, sbufGetRawPtr(buf), sbufGetLength(buf));
+
+    tcpbitchangetrickUpStreamPayload(t, &line, &buf);
+    require(memoryEqual(sbufGetRawPtr(buf), before, sbufGetLength(buf)), "invalid IP IHL packet modified");
+    require(! lineGetRecalculateChecksum(&line), "invalid IP IHL modified flag");
+    sbufDestroy(buf);
+
+    /* 8. Invalid IP total length below IHL (total_len = 10 < IHL 20) */
+    buf      = createTcpPacket(TCP_ACK, 0, false);
+    ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
+    IPH_LEN_SET(ipheader, lwip_htons(10));
+    memoryCopy(before, sbufGetRawPtr(buf), sbufGetLength(buf));
+
+    tcpbitchangetrickUpStreamPayload(t, &line, &buf);
+    require(memoryEqual(sbufGetRawPtr(buf), before, sbufGetLength(buf)), "IP total_len < IHL packet modified");
+    require(! lineGetRecalculateChecksum(&line), "IP total_len < IHL modified flag");
+    sbufDestroy(buf);
+
+    /* 9. Invalid IP total length beyond buffer (total_len = 200 > sbuf len 60) */
+    buf      = createTcpPacket(TCP_ACK, 0, false);
+    ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
+    IPH_LEN_SET(ipheader, lwip_htons(200));
+    sbufSetLength(buf, 60);
+    memoryCopy(before, sbufGetRawPtr(buf), 60);
+
+    tcpbitchangetrickUpStreamPayload(t, &line, &buf);
+    require(memoryEqual(sbufGetRawPtr(buf), before, 60), "IP total_len > buffer len packet modified");
+    require(! lineGetRecalculateChecksum(&line), "IP total_len > buffer len modified flag");
+    sbufDestroy(buf);
+
+    sbufDestroy(before);
     destroyTestTunnel(t);
 }
 
 int main(void)
 {
+    checkSumInit();
     testDownstreamCanClearCwr();
     testDownstreamCanCopyPacketCwr();
     testPreservedBitflagsCanClearCwrEceOnRestore();
+    testPreservedBitflagsAppend();
+    testSimpleTcpFlagPreExistingFlagPreserved();
+    testNoOpAndRejection();
 
     return 0;
 }

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 109
+Documentation version: 110
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx, and both files must keep the same documentation version.
 -->
 
@@ -32,7 +32,7 @@ The current implementation provides these classes of tricks:
 - Can hold the third upstream TLS ClientHello packet, complete it with the fourth packet, then emit an enlarged real first TLS chunk, a client-looking FIN packet, a fake TCP SYN, a full crafted fake ClientHello, one valid generated TLS-looking filler packet, and the remaining real TLS bytes immediately on the normal upstream path.
 - Can hold the third upstream TLS ClientHello packet, complete it with the fourth packet, locate a fake TLS ClientHello embedded inside the `encrypted_client_hello` payload, send that byte range first as an out-of-order TCP segment, and then release the original captured ClientHello packets after a delay without changing the TLS bytes.
 - Optionally duplicates the final outgoing packet after all other enabled tricks.
-- Marks packets for checksum recalculation when it changes protocol or TCP flags.
+- Updates IPv4 header and TCP checksums in place for protocol swaps and simple TCP flag changes; size-changing or payload-crafting tricks request full checksum recalculation.
 - Can replace one outgoing TLS ClientHello packet with multiple shuffled IP fragments.
 
 This is a packet tunnel created with `packettunnelCreate()`, so normal stream-style `Init` and `Finish` callbacks are not part of its intended usage.
@@ -526,10 +526,7 @@ If `protoswap-tcp-2` is configured:
 - TCP packets alternate between `protoswap-tcp` and `protoswap-tcp-2`
 - upstream and downstream maintain their own toggle state
 
-Whenever the tunnel changes the protocol field to or from a non-TCP/non-UDP protocol number, it sets
-`line->recalculate_checksum = true` so a later packet writer can rebuild checksums. For direct TCP-to-UDP or
-UDP-to-TCP protocol-number swaps, it refreshes only the IPv4 header checksum so the unchanged transport header is not
-reinterpreted as the opposite transport protocol during checksum repair.
+Whenever the tunnel changes the protocol field, it recalculates only the IPv4 header checksum with `calcIpv4HeaderChecksum()`. Transport bytes and transport checksums remain untouched, and protocol swap does not create or clear a full-recalculation request.
 
 ### SNI blender
 
@@ -623,10 +620,7 @@ For each configured bit action, the tunnel can:
 - toggle it
 - copy the value of another TCP flag from the same packet
 
-If any flag changes:
-
-- the TCP flags byte is rewritten
-- `line->recalculate_checksum` is set to `true`
+If any flag changes in simple mode (without `preserve-tcp-bitflags`), the TCP flags byte is rewritten and the TCP checksum is updated incrementally in place with `updateIpv4TransportChecksum16()`. Simple flag changes preserve any pre-existing checksum recalculation flag without creating a new request.
 
 This happens independently on upstream and downstream using the `up-...` and `dw-...` setting families.
 

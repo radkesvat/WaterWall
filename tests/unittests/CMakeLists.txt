@@ -1154,6 +1154,21 @@ if(TARGET IpManipulator)
   add_dependencies(waterwall_unit_tests ipmanipulator_tcpbit_test)
 
   add_waterwall_unit_test(waterwall.ipmanipulator_tcpbit_unit ipmanipulator_tcpbit_test "unit;tunnels;ipmanipulator")
+
+  add_executable(ipmanipulator_protoswap_test ipmanipulator_protoswap_test.c)
+  target_include_directories(ipmanipulator_protoswap_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include/IpManipulator
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common
+  )
+  target_link_libraries(ipmanipulator_protoswap_test PRIVATE IpManipulator ww)
+  add_dependencies(waterwall_unit_tests ipmanipulator_protoswap_test)
+
+  add_waterwall_unit_test(
+    waterwall.ipmanipulator_protoswap_unit
+    ipmanipulator_protoswap_test
+    "unit;tunnels;ipmanipulator;protoswap;checksum"
+  )
 endif()
 
 if(TARGET IpOverrider)

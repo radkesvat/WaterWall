@@ -283,10 +283,10 @@ typedef struct ipmanipulator_tstate_s
     uint64_t trick_source_port_ghost : 1;
     uint64_t trick_dest_port_ghost : 1;
 
-    int trick_proto_swap_tcp_number;
-    int trick_proto_swap_tcp_number_2;
-    int trick_proto_swap_tcp_toggle_up;
-    int trick_proto_swap_tcp_toggle_down;
+    int         trick_proto_swap_tcp_number;
+    int         trick_proto_swap_tcp_number_2;
+    atomic_uint trick_proto_swap_tcp_toggle_up;
+    atomic_uint trick_proto_swap_tcp_toggle_down;
 
     int trick_proto_swap_udp_number;
 
