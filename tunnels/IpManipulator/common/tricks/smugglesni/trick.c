@@ -471,6 +471,11 @@ static bool smugglesnitrickRewriteSavedPacketPayload(ipmanipulator_smuggle_saved
     }
 
     uint32_t rewritten_len = info.payload_offset + payload_len;
+    /*
+     * This is the process-wide compile-time packet ceiling, not the live
+     * device MTU. A device configured below this limit may still reject the
+     * crafted packet.
+     */
     if (rewritten_len > kMaxAllowedPacketLength)
     {
         return false;

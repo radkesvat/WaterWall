@@ -91,7 +91,9 @@ bool deviceFlowAffineWID(const uint8_t *packet, uint32_t length, wid_t *out_wid)
             /*
              * Every fragment of one datagram must reach the same worker. The
              * leading fragment has transport bytes but later fragments do not,
-             * so use the IP identification for all of them.
+             * so use the IP identification for all of them. This affinity is
+             * scoped to the IP datagram; unfragmented packets include ports and
+             * may select a different worker for the surrounding transport flow.
              */
             fragment_key = UINT32_C(0x10000) | GET_BE16(packet + 4);
         }
