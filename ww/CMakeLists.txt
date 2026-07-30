@@ -1394,6 +1394,7 @@ if(BUILD_TESTING)
         # production objects separate so extracting ww's Unity object does not
         # define the same symbols a second time.
         base/wproc.c
+        base/wchan.c
         bufio/buffer_pool.c
         bufio/buffer_queue.c
         bufio/buffer_stream.c
