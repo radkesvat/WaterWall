@@ -1492,7 +1492,8 @@ bool parseClientHelloSni(const uint8_t *packet, uint32_t packet_length, sni_matc
     }
     cursor += compression_methods_len;
 
-    uint16_t extensions_len = GET_BE16(cursor);
+    uint16_t       extensions_len       = GET_BE16(cursor);
+    const uint8_t *extensions_len_field = cursor;
     cursor += 2;
     if ((size_t) (hello_end - cursor) < extensions_len)
     {
@@ -1556,7 +1557,7 @@ bool parseClientHelloSni(const uint8_t *packet, uint32_t packet_length, sni_matc
                         .sni_name_len                      = name_len,
                         .sni_name_offset                   = (uint32_t) (name_data - packet),
                         .sni_name_len_field_offset         = (uint32_t) ((server_name_cursor + 1) - packet),
-                        .extensions_len_field_offset       = (uint32_t) ((cursor - 2) - packet),
+                        .extensions_len_field_offset       = (uint32_t) (extensions_len_field - packet),
                         .server_name_list_len_field_offset = (uint32_t) (extension_data - packet),
                         .server_name_ext_len_field_offset  = (uint32_t) ((cursor + 2) - packet),
                         .tls_record_len_field_offset       = (uint32_t) ((tls + 3) - packet),
