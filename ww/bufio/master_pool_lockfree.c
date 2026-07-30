@@ -3,7 +3,7 @@
  * @brief Implementation of the lock-free master object pool.
  */
 
-#include "master_pool.h"
+#include "master_pool_lockfree.h"
 #include "wdef.h"
 
 /**
