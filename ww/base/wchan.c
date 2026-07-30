@@ -194,6 +194,7 @@ struct Thr
     size_t                            id;
     bool                              init;
     atomic_bool                       closed;
+    atomic_int                        signals; // thr_signal() calls that have not returned yet
     wlsem_t                           sema;
     MSVC_ATTR_ALIGNED_LINE_CACHE Thr *next; // list link
     atomic_intptr_t                   elemptr;
@@ -211,6 +212,7 @@ struct Thr
     size_t          id;
     bool            init;
     atomic_bool     closed;
+    atomic_int      signals; // thr_signal() calls that have not returned yet
     wlsem_t         sema;
     Thr *next       GNU_ATTR_ALIGNED_LINE_CACHE; // list link
     _Atomic(void *) elemptr;
@@ -285,6 +287,24 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct wchan_s
     uint8_t buf[]; // queue storage
 } GNU_ATTR_ALIGNED_LINE_CACHE wchan_t;
 
+// Waits until no thr_signal() call is still inside t's semaphore. Publishing the wakeup and
+// returning from the call that published it are not the same instant: the woken thread can
+// run to completion, exit, and tear its Thr down while the waker is still touching the
+// semaphore. A waiter is only ever signaled while it is parked, so by the time its thread
+// exits the wake that released it is the only one that can still be in flight.
+static void thr_drain_signals(Thr *t)
+{
+    while (atomicLoadExplicit(&t->signals, memory_order_acquire) != 0)
+    {
+        YIELD_CPU();
+#ifdef OS_WIN
+        SwitchToThread();
+#else
+        YIELD_THREAD();
+#endif
+    }
+}
+
 // The wait semaphore of a Thr is owned by an OS object on Windows (a HANDLE) and macOS
 // (a Mach port), so letting the thread die without disposing of it leaks that object once
 // per thread that ever parked on a channel -- which is once per device writer restart.
@@ -300,6 +320,7 @@ static void WINAPI thr_tls_release(void *value)
     Thr *t = (Thr *) value;
     if (t != NULL)
     {
+        thr_drain_signals(t);
         // Clearing init keeps a channel used after this point (from another thread-exit
         // callback, say) re-initializing instead of waiting on a destroyed semaphore.
         t->init = false;
@@ -333,6 +354,7 @@ static void thr_tls_release(void *value)
     Thr *t = (Thr *) value;
     if (t != NULL)
     {
+        thr_drain_signals(t);
         // Clearing init keeps a channel used after this point (from a later thread-exit
         // destructor, say) re-initializing instead of waiting on a destroyed semaphore.
         t->init = false;
@@ -391,7 +413,12 @@ inline static Thr *thr_current(void)
 // Wakes a parked sender/receiver thread.
 inline static void thr_signal(Thr *t)
 {
+    // Registered before the wake and cleared as the last access to t, so a thread woken here
+    // cannot destroy its semaphore from under this call. t is still parked at this point,
+    // which is what makes reaching it safe in the first place.
+    atomicAddExplicit(&t->signals, 1, memory_order_relaxed);
     leightweightsemaphoreSignal(&t->sema, 1); // wake
+    atomicSubExplicit(&t->signals, 1, memory_order_release);
 }
 
 // Blocks current sender/receiver thread until signaled.
