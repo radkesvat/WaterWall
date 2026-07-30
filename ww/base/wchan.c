@@ -618,6 +618,19 @@ inline static bool chan_empty(wchan_t *c)
     return atomicLoadExplicit(&c->qlen, memory_order_relaxed) == 0;
 }
 
+// chan_empty_ordered is chan_empty for the lock-free try-recv path, where the result has to
+// be ordered against the c->closed observation made next to it. Relaxed loads carry no such
+// order: a weakly ordered CPU may satisfy the closed load ahead of the queue load, and the
+// compiler is free to reuse one queue load for both calls, either of which would report
+// "closed and empty" while a buffered message is still there. Sequentially consistent loads
+// are plain loads on x86 and a load-acquire on arm64, so the fast path stays cheap.
+inline static bool chan_empty_ordered(wchan_t *c)
+{
+    if (c->qcap == 0)
+        return atomicLoadThrPtr(&c->sendq.first, memory_order_seq_cst) == NULL;
+    return atomicLoadExplicit(&c->qlen, memory_order_seq_cst) == 0;
+}
+
 static bool chan_recv_direct(wchan_t *c, void *dstelemptr, Thr *st);
 
 // Internal receive implementation used by blocking and try-recv APIs.
@@ -627,7 +640,7 @@ inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
     // dlog_recv("dstelemptr %p", dstelemptr);
 
     // Fast path: check for failed non-blocking operation without acquiring the lock.
-    if (! block && chan_empty(c))
+    if (! block && chan_empty_ordered(c))
     {
         // After observing that the channel is not ready for receiving, we observe whether the
         // channel is closed.
@@ -638,7 +651,7 @@ inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
         // we use atomic loads for both checks, and rely on emptying and closing to happen in
         // separate critical sections under the same lock.  This assumption fails when closing
         // an unbuffered channel with a blocked send, but that is an error condition anyway.
-        if (atomicLoadExplicit(&c->closed, memory_order_relaxed) == false)
+        if (atomicLoadExplicit(&c->closed, memory_order_seq_cst) == false)
         {
             // Because a channel cannot be reopened, the later observation of the channel
             // being not closed implies that it was also not closed at the moment of the
@@ -649,7 +662,7 @@ inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
         // The channel is irreversibly closed. Re-check whether the channel has any pending data
         // to receive, which could have arrived between the empty and closed checks above.
         // Sequential consistency is also required here, when racing with such a send.
-        if (chan_empty(c))
+        if (chan_empty_ordered(c))
         {
             // The channel is irreversibly closed and empty
             memoryZero(dstelemptr, c->elemsize);
@@ -848,12 +861,14 @@ void chanClose(wchan_t *c)
     chan_lock(&c->lock);
     // dlog_chan("close: channel locked");
 
-    if (atomicExchangeExplicit(&c->closed, 1, memory_order_acquire) != 0)
+    // Sequentially consistent, not acquire: the acquire half of an exchange orders nothing
+    // for the store, and lock-free readers of c->closed observe this store without taking
+    // the lock, so they need it ordered against the queue state written before the close.
+    if (atomicExchangeExplicit(&c->closed, 1, memory_order_seq_cst) != 0)
     {
         printError("close of closed channel");
         abortProgramNow(1);
     }
-    atomic_thread_fence(memory_order_seq_cst);
 
     wq_cancel_all(&c->recvq);
     wq_cancel_all(&c->sendq);
