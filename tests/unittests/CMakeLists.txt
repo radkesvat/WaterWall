@@ -150,7 +150,11 @@ if(TARGET ww)
     )
   endif()
 
-  add_executable(wchan_close_semantics_test wchan_close_semantics_test.c)
+  add_executable(wchan_close_semantics_test
+    wchan_close_semantics_test.c
+    ${CMAKE_SOURCE_DIR}/ww/base/wchan.c
+  )
+  target_compile_definitions(wchan_close_semantics_test PRIVATE WCHAN_TEST_HOOKS=1)
   target_link_libraries(wchan_close_semantics_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests wchan_close_semantics_test)
 

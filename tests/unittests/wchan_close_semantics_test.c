@@ -14,8 +14,7 @@
 
 enum
 {
-    kParkSettleMs = 150, // time allowed for a worker to reach its blocking call
-    kJoinWaitMs   = 150
+    kParkWaitMs = 5000 // ceiling for a worker to reach its blocking call
 };
 
 static void require(bool condition, const char *message)
@@ -25,6 +24,22 @@ static void require(bool condition, const char *message)
         fprintf(stderr, "FAIL: %s\n", message);
         exit(1);
     }
+}
+
+// Waits until a worker is really parked on c. Closing on a timer instead would race the
+// worker on a loaded machine, and a send that arrives after the close aborts the process
+// by design rather than exercising cancellation.
+static void waitUntilParked(wchan_t *c, bool senders)
+{
+    for (unsigned int i = 0; i < kParkWaitMs; i++)
+    {
+        if (chanWaiterCount(c, senders) > 0)
+        {
+            return;
+        }
+        wwSleepMS(1);
+    }
+    require(false, "timed out waiting for the worker to park on the channel");
 }
 
 typedef struct sender_worker_s
@@ -86,11 +101,8 @@ static void testCanceledSenderReportsFailure(void)
     wthread_t       thread;
     require(threadCreate(&thread, senderWorkerMain, &worker) == kWThreadErrorNone, "worker thread should start");
 
-    wwSleepMS(kParkSettleMs); // let the worker block in chanSend
+    waitUntilParked(canceled, true);
     chanClose(canceled);
-    wwSleepMS(kJoinWaitMs);
-
-    require(! worker.send_result, "a send canceled by close must return false");
 
     // Draining must yield the message that was really queued, and nothing else: the canceled
     // sender is gone, so its Thr and the stack address it parked with must not be touched.
@@ -107,7 +119,10 @@ static void testCanceledSenderReportsFailure(void)
     // The cancellation must not leak into the next channel this thread waits on.
     int fresh_message = 42;
     require(chanSend(fresh, &fresh_message), "send on the fresh channel should succeed");
+
+    // Everything the worker reports is read after the join, which is what publishes it.
     require(threadJoin(thread) == 0, "worker thread should join");
+    require(! worker.send_result, "a send canceled by close must return false");
     require(worker.fresh_recv_result, "recv on a fresh channel must succeed after an earlier close");
     require(worker.fresh_recv_value == 42, "recv on a fresh channel returned the wrong message");
 
@@ -126,15 +141,15 @@ static void testCanceledReceiverStaysUsable(void)
     wthread_t         thread;
     require(threadCreate(&thread, receiverWorkerMain, &worker) == kWThreadErrorNone, "worker thread should start");
 
-    wwSleepMS(kParkSettleMs); // let the worker block in chanRecv
+    waitUntilParked(canceled, false);
     chanClose(canceled);
-    wwSleepMS(kJoinWaitMs);
-
-    require(! worker.recv_result, "a recv canceled by close must return false");
 
     int fresh_message = 7;
     require(chanSend(fresh, &fresh_message), "send on the fresh channel should succeed");
+
+    // Everything the worker reports is read after the join, which is what publishes it.
     require(threadJoin(thread) == 0, "worker thread should join");
+    require(! worker.recv_result, "a recv canceled by close must return false");
     require(worker.fresh_recv_result, "recv on a fresh channel must succeed after an earlier close");
     require(worker.fresh_recv_value == 7, "recv on a fresh channel returned the wrong message");
 

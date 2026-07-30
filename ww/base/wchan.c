@@ -944,3 +944,19 @@ bool chanTryRecv(wchan_t *c, void *elemptr, bool *closed)
 {
     return chan_recv(c, elemptr, closed);
 }
+
+#ifdef WCHAN_TEST_HOOKS
+uint32_t chanWaiterCount(wchan_t *c, bool senders)
+{
+    chan_lock(&c->lock);
+    uint32_t count = 0;
+    Thr     *t     = atomicLoadThrPtr(senders ? &c->sendq.first : &c->recvq.first, memory_order_acquire);
+    while (t)
+    {
+        count++;
+        t = t->next;
+    }
+    chan_unlock(&c->lock);
+    return count;
+}
+#endif
