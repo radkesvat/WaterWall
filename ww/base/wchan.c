@@ -285,14 +285,96 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct wchan_s
     uint8_t buf[]; // queue storage
 } GNU_ATTR_ALIGNED_LINE_CACHE wchan_t;
 
+// The wait semaphore of a Thr is owned by an OS object on Windows (a HANDLE) and macOS
+// (a Mach port), so letting the thread die without disposing of it leaks that object once
+// per thread that ever parked on a channel -- which is once per device writer restart.
+// Thread-local storage has no destructor hook of its own, so the Thr is registered with a
+// key/slot whose callback runs on thread exit.
+#ifdef OS_WIN
+static DWORD thr_tls_slot = FLS_OUT_OF_INDEXES;
+
+// Releases the wait semaphore of an exiting thread (fiber-local slots run callbacks on
+// thread exit, plain TLS slots do not).
+static void WINAPI thr_tls_release(void *value)
+{
+    Thr *t = (Thr *) value;
+    if (t != NULL)
+    {
+        // Clearing init keeps a channel used after this point (from another thread-exit
+        // callback, say) re-initializing instead of waiting on a destroyed semaphore.
+        t->init = false;
+        leightweightsemaphoreDestroy(&t->sema);
+    }
+}
+
+static void thr_tls_create(void)
+{
+    thr_tls_slot = FlsAlloc(thr_tls_release);
+}
+
+// Arranges for t's wait semaphore to be disposed of when the calling thread exits.
+static void thr_register_cleanup(Thr *t)
+{
+    static wonce_t once = WONCE_INIT;
+
+    wonce(&once, thr_tls_create);
+    if (thr_tls_slot != FLS_OUT_OF_INDEXES)
+    {
+        discard FlsSetValue(thr_tls_slot, t);
+    }
+}
+#else
+static pthread_key_t thr_tls_key;
+static bool          thr_tls_key_ok = false;
+
+// Releases the wait semaphore of an exiting thread.
+static void thr_tls_release(void *value)
+{
+    Thr *t = (Thr *) value;
+    if (t != NULL)
+    {
+        // Clearing init keeps a channel used after this point (from a later thread-exit
+        // destructor, say) re-initializing instead of waiting on a destroyed semaphore.
+        t->init = false;
+        leightweightsemaphoreDestroy(&t->sema);
+    }
+}
+
+static void thr_tls_create(void)
+{
+    thr_tls_key_ok = (pthread_key_create(&thr_tls_key, thr_tls_release) == 0);
+}
+
+// Arranges for t's wait semaphore to be disposed of when the calling thread exits.
+// Note that pthread does not run key destructors for the main thread; that bounded
+// case costs one semaphore for the lifetime of the process.
+static void thr_register_cleanup(Thr *t)
+{
+    static wonce_t once = WONCE_INIT;
+
+    discard wonce(&once, thr_tls_create);
+    if (thr_tls_key_ok)
+    {
+        discard pthread_setspecific(thr_tls_key, t);
+    }
+}
+#endif
+
 // Initializes thread-local channel wait context.
 static void thr_init(Thr *t)
 {
     static atomic_size_t _thread_id_counter = (0);
 
-    t->id   = atomicAddExplicit(&_thread_id_counter, 1, memory_order_relaxed);
-    t->init = true;
-    leightweightsemaphoreInit(&t->sema, 0); // TODO: Semadestroy?
+    t->id = atomicAddExplicit(&_thread_id_counter, 1, memory_order_relaxed);
+    if (UNLIKELY(! leightweightsemaphoreInit(&t->sema, 0)))
+    {
+        // Without a usable semaphore every park would return immediately, silently
+        // corrupting every channel this thread touches.
+        printError("failed to create channel wait semaphore");
+        abortProgramNow(1);
+    }
+    thr_register_cleanup(t);
+    t->init = true; // set last: thr_current() gates first use on it
 }
 
 // Returns thread-local wait context, initializing it on first use.
