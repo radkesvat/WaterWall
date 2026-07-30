@@ -212,8 +212,11 @@ static inline int w_atomicCompareExchangePtrWidth(intptr_t *object, intptr_t *ex
 
 #define atomic_fetch_add(object, operand) (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedExchangeAdd64(object, operand))
 
+// negated as unsigned: -(operand) is signed overflow when operand is the signed minimum, and
+// the C11 branch subtracts modularly for every operand, so this keeps the two branches agreeing
 #define atomic_fetch_sub(object, operand)                                                                              \
-    (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedExchangeAdd64(object, -(operand)))
+    (W_ATOMIC_REQUIRE_PTR_WIDTH(object),                                                                               \
+     InterlockedExchangeAdd64(object, (LONG64) (0ULL - (unsigned long long) (operand))))
 
 #define atomic_fetch_or(object, operand) (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedOr64(object, operand))
 
@@ -224,8 +227,10 @@ static inline int w_atomicCompareExchangePtrWidth(intptr_t *object, intptr_t *ex
 
 #define atomic_fetch_add(object, operand) (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedExchangeAdd(object, operand))
 
+// negated as unsigned, for the reason given on the 64-bit spelling above
 #define atomic_fetch_sub(object, operand)                                                                              \
-    (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedExchangeAdd(object, -(operand)))
+    (W_ATOMIC_REQUIRE_PTR_WIDTH(object),                                                                               \
+     InterlockedExchangeAdd(object, (LONG) (0UL - (unsigned long) (operand))))
 
 #define atomic_fetch_or(object, operand) (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedOr(object, operand))
 
