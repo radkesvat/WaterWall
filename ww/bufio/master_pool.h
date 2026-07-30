@@ -94,7 +94,10 @@ static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_ite
 
         if (consumed > 0)
         {
-            atomicAddExplicit(&(pool->len), -consumed, memory_order_release);
+            // subtracted rather than added negated: consumed is uint32_t, so -consumed wraps to a
+            // large positive value that then zero-extends into the pointer-width slot the Windows
+            // fallback uses, adding 2^32 per call instead of subtracting
+            atomicSubExplicit(&(pool->len), consumed, memory_order_release);
             const uint32_t pbase = (tmp_len - consumed);
             for (; i < consumed; i++)
             {
