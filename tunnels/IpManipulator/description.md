@@ -414,6 +414,14 @@ If none of the supported trick settings are present, tunnel creation fails with:
 
   Defaults to `0`.
 
+- `fin-pause-timeout-ms` `(integer)`
+  Optional.
+
+  Maximum time in milliseconds that a flow waits for the expected echoed `FIN|ACK`. If the echo does not arrive,
+  `IpManipulator` releases that flow's queued packets through the normal pipeline.
+
+  Defaults to `1000`.
+
 - `real-fin-upstream-node` `(string)`
   Required when `smuggle-fin` is enabled.
 

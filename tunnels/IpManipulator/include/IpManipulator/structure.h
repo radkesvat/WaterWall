@@ -225,17 +225,6 @@ typedef struct ipmanipulator_echsni_flow_s
     ipmanipulator_captured_packet_t   held_packet;
 } ipmanipulator_echsni_flow_t;
 
-typedef struct ipmanipulator_smuggle_fin_flow_s
-{
-    uint64_t last_activity_ms;
-    uint32_t src_addr;
-    uint32_t dst_addr;
-    uint16_t src_port;
-    uint16_t dst_port;
-    bool     active;
-    bool     confirmed;
-} ipmanipulator_smuggle_fin_flow_t;
-
 typedef enum ipmanipulator_smuggle_fin_queue_direction_e
 {
     kIpManipulatorSmuggleFinQueueDirectionUpstream = 0,
@@ -248,24 +237,30 @@ typedef struct ipmanipulator_smuggle_fin_queued_packet_s
     ipmanipulator_smuggle_fin_queue_direction_e direction;
 } ipmanipulator_smuggle_fin_queued_packet_t;
 
-typedef struct ipmanipulator_smuggle_fin_worker_state_s
+typedef struct ipmanipulator_smuggle_fin_flow_s
 {
-    uint32_t                                   flow_src_addr;
-    uint32_t                                   flow_dst_addr;
+    uint64_t                                   last_activity_ms;
+    uint64_t                                   paused_at_ms;
+    uint32_t                                   src_addr;
+    uint32_t                                   dst_addr;
     uint32_t                                   expected_src_addr;
     uint32_t                                   expected_dst_addr;
     uint32_t                                   expected_seq;
     uint32_t                                   expected_ack;
-    uint16_t                                   flow_src_port;
-    uint16_t                                   flow_dst_port;
+    uint32_t                                   pause_generation;
+    uint16_t                                   src_port;
+    uint16_t                                   dst_port;
     uint16_t                                   expected_src_port;
     uint16_t                                   expected_dst_port;
+    line_t                                    *line;
     ipmanipulator_smuggle_fin_queued_packet_t *queued_packets;
     uint32_t                                   queued_packets_count;
     uint32_t                                   queued_packets_capacity;
+    bool                                       active;
+    bool                                       confirmed;
     bool                                       release_pending;
     bool                                       paused;
-} ipmanipulator_smuggle_fin_worker_state_t;
+} ipmanipulator_smuggle_fin_flow_t;
 
 typedef struct ipmanipulator_tstate_s
 {
@@ -342,6 +337,7 @@ typedef struct ipmanipulator_tstate_s
     node_t   *trick_real_fin_upstream_node;
     tunnel_t *trick_real_fin_upstream_tunnel;
     uint32_t  trick_smuggle_fin_delay_ms;
+    uint32_t  trick_smuggle_fin_pause_timeout_ms;
 
     wmutex_t                           tls_capture_mutex;
     ipmanipulator_tls_capture_slot_t  *tls_capture_slots;
@@ -367,19 +363,17 @@ typedef struct ipmanipulator_tstate_s
     ipmanipulator_echsni_flow_t *echsni_flows;
     uint32_t                     echsni_flows_capacity;
 
-    wmutex_t                                  smuggle_fin_mutex;
-    ipmanipulator_smuggle_fin_flow_t         *smuggle_fin_flows;
-    uint32_t                                  smuggle_fin_flows_capacity;
-    ipmanipulator_smuggle_fin_worker_state_t *smuggle_fin_worker_states;
-    uint32_t                                  smuggle_fin_worker_states_count;
-    enum tcp_bit_action_dynamic_value         up_tcp_bit_cwr_action;
-    enum tcp_bit_action_dynamic_value         up_tcp_bit_ece_action;
-    enum tcp_bit_action_dynamic_value         up_tcp_bit_urg_action;
-    enum tcp_bit_action_dynamic_value         up_tcp_bit_ack_action;
-    enum tcp_bit_action_dynamic_value         up_tcp_bit_psh_action;
-    enum tcp_bit_action_dynamic_value         up_tcp_bit_rst_action;
-    enum tcp_bit_action_dynamic_value         up_tcp_bit_syn_action;
-    enum tcp_bit_action_dynamic_value         up_tcp_bit_fin_action;
+    wmutex_t                          smuggle_fin_mutex;
+    ipmanipulator_smuggle_fin_flow_t *smuggle_fin_flows;
+    uint32_t                          smuggle_fin_flows_capacity;
+    enum tcp_bit_action_dynamic_value up_tcp_bit_cwr_action;
+    enum tcp_bit_action_dynamic_value up_tcp_bit_ece_action;
+    enum tcp_bit_action_dynamic_value up_tcp_bit_urg_action;
+    enum tcp_bit_action_dynamic_value up_tcp_bit_ack_action;
+    enum tcp_bit_action_dynamic_value up_tcp_bit_psh_action;
+    enum tcp_bit_action_dynamic_value up_tcp_bit_rst_action;
+    enum tcp_bit_action_dynamic_value up_tcp_bit_syn_action;
+    enum tcp_bit_action_dynamic_value up_tcp_bit_fin_action;
 
     enum tcp_bit_action_dynamic_value down_tcp_bit_cwr_action;
     enum tcp_bit_action_dynamic_value down_tcp_bit_ece_action;

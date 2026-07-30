@@ -27,7 +27,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 235
+EXPECTED_TOTAL_ABORTS = 234
 
 
 # ---------------------------------------------------------------------------
@@ -711,9 +711,6 @@ MANIFEST = [
     ("tunnels/AuthenticationClient/common/users_api.c", "authenticationclientAssertProfileEmpty", 1,
      ("AuthenticationClient: %s received a non-empty user profile output; clear it before reuse",),
      "helper/line-state invariant: AuthClient users_api profile contract"),
-    ("tunnels/IpManipulator/common/tricks/smugglefin/trick.c", "smugglefintrickQueuePacketOrDieLocked", 1,
-     ("IpManipulator: smuggle-fin failed to grow the paused packet queue",),
-     "helper/line-state invariant: IpManipulator trick queue growth"),
     ("tunnels/IpManipulator/common/tricks/smugglefin/trick.c", "smugglefintrickFlushQueuedPackets", 1,
      ("IpManipulator: worker packet line died while replaying smuggle-fin queued packets",),
      "helper/line-state invariant: IpManipulator trick packet line died 1"),

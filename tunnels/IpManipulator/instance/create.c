@@ -708,8 +708,9 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     getBoolFromJsonObject(&smuggle_fin_enabled, settings, "smuggle-fin");
     if (smuggle_fin_enabled)
     {
-        int   smuggle_fin_delay_ms        = 0;
-        char *real_fin_upstream_node_name = NULL;
+        int   smuggle_fin_delay_ms         = 0;
+        int   smuggle_fin_pause_timeout_ms = 1000;
+        char *real_fin_upstream_node_name  = NULL;
 
         if (! nodeHasNext(node))
         {
@@ -756,9 +757,20 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
             }
         }
 
-        state->trick_real_fin_upstream_node = real_fin_upstream_node;
-        state->trick_smuggle_fin_delay_ms   = (uint32_t) smuggle_fin_delay_ms;
-        state->trick_smuggle_fin            = true;
+        if (getIntFromJsonObject(&smuggle_fin_pause_timeout_ms, settings, "fin-pause-timeout-ms"))
+        {
+            if (smuggle_fin_pause_timeout_ms <= 0)
+            {
+                LOGF("IpManipulator: smuggle-fin field \"fin-pause-timeout-ms\" must be greater than zero");
+                tunnelDestroy(t);
+                return NULL;
+            }
+        }
+
+        state->trick_real_fin_upstream_node       = real_fin_upstream_node;
+        state->trick_smuggle_fin_delay_ms         = (uint32_t) smuggle_fin_delay_ms;
+        state->trick_smuggle_fin_pause_timeout_ms = (uint32_t) smuggle_fin_pause_timeout_ms;
+        state->trick_smuggle_fin                  = true;
     }
 
     bool tcp_parse_ok = true;
@@ -864,11 +876,8 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         uint32_t initial_flows = max(kIpManipulatorSmuggleInitialFlows, (uint32_t) getTotalWorkersCount() * 8U);
 
         mutexInit(&state->smuggle_fin_mutex);
-        state->smuggle_fin_flows_capacity      = initial_flows;
-        state->smuggle_fin_flows               = memoryAllocateZero(sizeof(*state->smuggle_fin_flows) * initial_flows);
-        state->smuggle_fin_worker_states_count = (uint32_t) getTotalWorkersCount();
-        state->smuggle_fin_worker_states =
-            memoryAllocateZero(sizeof(*state->smuggle_fin_worker_states) * state->smuggle_fin_worker_states_count);
+        state->smuggle_fin_flows_capacity = initial_flows;
+        state->smuggle_fin_flows          = memoryAllocateZero(sizeof(*state->smuggle_fin_flows) * initial_flows);
     }
 
     return t;

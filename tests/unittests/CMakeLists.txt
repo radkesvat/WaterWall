@@ -1209,6 +1209,25 @@ if(TARGET IpManipulator)
     ipmanipulator_smugglesni_capture_test
     "unit;tunnels;ipmanipulator;smugglesni;tls"
   )
+
+  add_executable(ipmanipulator_smugglefin_pause_test
+    ipmanipulator_smugglefin_pause_test.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/smugglefin/trick.c
+  )
+  target_include_directories(ipmanipulator_smugglefin_pause_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include/IpManipulator
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common
+  )
+  target_compile_definitions(ipmanipulator_smugglefin_pause_test PRIVATE IPMANIPULATOR_SMUGGLEFIN_TEST_HOOKS=1)
+  target_link_libraries(ipmanipulator_smugglefin_pause_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests ipmanipulator_smugglefin_pause_test)
+
+  add_waterwall_unit_test(
+    waterwall.ipmanipulator_smugglefin_pause_unit
+    ipmanipulator_smugglefin_pause_test
+    "unit;tunnels;ipmanipulator;smugglefin;timeout;affinity"
+  )
 endif()
 
 if(TARGET IpOverrider)
