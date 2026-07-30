@@ -180,6 +180,15 @@ typedef struct Thr Thr;
 // Thr holds thread-specific data and is owned by thread-local storage
 
 #if ! HAVE_STDATOMIC_H
+/*
+ * The slots the accessors below operate on are declared as the fallback's own
+ * atomic type rather than as pointers. The fallback's generic atomics take an
+ * intptr_t *, so keeping real pointer types here would mean casting Thr ** and
+ * void ** at every call, and reading an object of one type through an lvalue of
+ * another is exactly what strict aliasing forbids -- gcc rejects it outright at
+ * every optimization level. Storing intptr_t makes the declared type match the
+ * access, and the accessors convert at the edge so callers still see pointers.
+ */
 struct Thr
 {
     size_t                            id;
@@ -187,13 +196,13 @@ struct Thr
     atomic_bool                       closed;
     wlsem_t                           sema;
     MSVC_ATTR_ALIGNED_LINE_CACHE Thr *next; // list link
-    void                             *elemptr;
+    atomic_intptr_t                   elemptr;
 };
 
 typedef struct WaitQ
 {
-    Thr *first; // head of linked list of parked threads
-    Thr *last;  // tail of linked list of parked threads
+    atomic_intptr_t first; // head of linked list of parked threads
+    atomic_intptr_t last;  // tail of linked list of parked threads
 } WaitQ;
 #else
 
@@ -216,10 +225,10 @@ typedef struct WaitQ
 #endif
 
 #if ! HAVE_STDATOMIC_H
-#define atomicLoadThrPtr(p, order)      ((Thr *) atomicLoadExplicit((intptr_t *) (p), order))
-#define atomicStoreThrPtr(p, v, order)  atomicStoreExplicit((intptr_t *) (p), (intptr_t) (v), order)
-#define atomicLoadVoidPtr(p, order)     ((void *) atomicLoadExplicit((intptr_t *) (p), order))
-#define atomicStoreVoidPtr(p, v, order) atomicStoreExplicit((intptr_t *) (p), (intptr_t) (v), order)
+#define atomicLoadThrPtr(p, order)      ((Thr *) atomicLoadExplicit((p), order))
+#define atomicStoreThrPtr(p, v, order)  atomicStoreExplicit((p), (intptr_t) (v), order)
+#define atomicLoadVoidPtr(p, order)     ((void *) atomicLoadExplicit((p), order))
+#define atomicStoreVoidPtr(p, v, order) atomicStoreExplicit((p), (intptr_t) (v), order)
 #else
 inline static Thr *atomicLoadThrPtr(_Atomic(Thr *) *p, memory_order order)
 {
