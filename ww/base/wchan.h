@@ -66,5 +66,5 @@ bool chanTryRecv(wchan_t* ch, void* elemptr, bool* closed);
 #ifdef WCHAN_TEST_HOOKS
 // Test-only: number of threads currently parked in the send (senders=true) or receive
 // queue. Lets a test wait for a worker to really be parked instead of sleeping and hoping.
-uint32_t chanWaiterCount(wchan_t* c, bool senders);
+uint32_t chanWaiterCount(wchan_t *c, bool senders);
 #endif

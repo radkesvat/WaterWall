@@ -160,7 +160,9 @@ typedef intptr_t atomic_uintmax_t;
 #define W_ATOMIC_REQUIRE_PTR_WIDTH(object)                                                                             \
     ((void) sizeof(struct {                                                                                            \
         int atomic_object_is_not_pointer_width_use_the_u64_api_for_64_bit_state                                        \
-            : ((sizeof *(object)) == sizeof(intptr_t)) ? 1 : -1;                                                       \
+            : ((sizeof *(object)) == sizeof(intptr_t))                                                                 \
+              ? 1                                                                                                      \
+              : -1;                                                                                                    \
     }))
 
 #define atomic_store(object, desired)                                                                                  \
@@ -196,7 +198,8 @@ static inline int w_atomicCompareExchangePtrWidth(intptr_t *object, intptr_t *ex
  * report it as a pointer type mismatch.
  */
 #define atomic_compare_exchange_strong(object, expected, desired)                                                      \
-    (W_ATOMIC_REQUIRE_PTR_WIDTH(object), W_ATOMIC_REQUIRE_PTR_WIDTH(expected),                                         \
+    (W_ATOMIC_REQUIRE_PTR_WIDTH(object),                                                                               \
+     W_ATOMIC_REQUIRE_PTR_WIDTH(expected),                                                                             \
      w_atomicCompareExchangePtrWidth(object, expected, desired))
 
 #define atomic_compare_exchange_strong_explicit(object, expected, desired, success, failure)                           \
@@ -229,8 +232,7 @@ static inline int w_atomicCompareExchangePtrWidth(intptr_t *object, intptr_t *ex
 
 // negated as unsigned, for the reason given on the 64-bit spelling above
 #define atomic_fetch_sub(object, operand)                                                                              \
-    (W_ATOMIC_REQUIRE_PTR_WIDTH(object),                                                                               \
-     InterlockedExchangeAdd(object, (LONG) (0UL - (unsigned long) (operand))))
+    (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedExchangeAdd(object, (LONG) (0UL - (unsigned long) (operand))))
 
 #define atomic_fetch_or(object, operand) (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedOr(object, operand))
 
