@@ -150,6 +150,16 @@ if(TARGET ww)
     )
   endif()
 
+  add_executable(wchan_close_semantics_test wchan_close_semantics_test.c)
+  target_link_libraries(wchan_close_semantics_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests wchan_close_semantics_test)
+
+  add_waterwall_unit_test(
+    waterwall.wchan_close_semantics_unit
+    wchan_close_semantics_test
+    "unit;base;chan;lifetime;close"
+  )
+
   add_executable(tun_windows_receive_policy_test tun_windows_receive_policy_test.c)
   target_include_directories(tun_windows_receive_policy_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices/tun)
   add_dependencies(waterwall_unit_tests tun_windows_receive_policy_test)
