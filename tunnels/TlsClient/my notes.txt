@@ -1,5 +1,153 @@
 
 
+================================================================================
+TLS 1.3 RECORD SHAPING / BORINGSSL UPDATE CHECKLIST (added 2026-07-31)
+================================================================================
+
+The sender-side TLS 1.3 record-padding hook used by WaterWall is a local
+BoringSSL extension. Upstream BoringSSL does not provide this exact API. Every
+future replacement or update of `TlsClient/boringssl` must port and verify it.
+
+The complete BoringSSL-side diff is saved here:
+
+    RadkesvatPatches/tls13_record_padding_callback.patch
+
+The patch was first recorded against the vendored BoringSSL snapshot identified
+later in this file as upstream commit:
+
+    4b3285002397da82681bebaacea9b4f231c9dbfc
+
+The patch is rooted at the BoringSSL source directory and currently changes
+exactly these four upstream files:
+
+    include/openssl/ssl.h
+    ssl/internal.h
+    ssl/ssl_lib.cc
+    ssl/tls_record.cc
+
+Apply or check it from `tunnels/TlsClient/boringssl`:
+
+    git apply --check ../RadkesvatPatches/tls13_record_padding_callback.patch
+    git apply ../RadkesvatPatches/tls13_record_padding_callback.patch
+
+If a newer BoringSSL has changed these files, do not force the old patch. Port
+the behavior below to the new record-sealing code, run the tests, and regenerate
+the patch against a clean checkout of the new BoringSSL revision.
+
+Required BoringSSL API and behavior:
+
+1. Keep the public per-SSL API and callback declaration in `openssl/ssl.h`:
+
+       SSL_set_tls13_record_padding_callback(SSL *ssl, callback, arg,
+                                               size_t max_padding)
+
+2. Keep callback, opaque argument, and maximum-padding fields in per-SSL state.
+   They must not be global or stored on SSL_CTX because each WaterWall line has
+   separate sampler and output-order state.
+
+3. Invoke the callback exactly once for every encrypted TLS 1.3 record after
+   write keys are active. Pass the inner content type and plaintext length.
+   This includes post-handshake handshake and alert records; WaterWall returns
+   zero padding for ineligible records but still needs the callback to preserve
+   one metadata decision per emitted record. Also invoke it when legal padding
+   capacity is zero, such as a full 16384-byte application record.
+
+4. Never invoke the callback once for sizing and again for sealing. Save one
+   selected padding length and use it for both calculations so retries cannot
+   consume the sampler twice.
+
+5. Encode TLSInnerPlaintext as:
+
+       content || inner_content_type || zero_padding
+
+6. Cap the callback result by both the configured `max_padding` and the legal
+   remaining TLS record capacity. Reject an installed maximum above
+   `SSL3_RT_MAX_PLAIN_LENGTH`.
+
+7. Include the installed maximum in `SSL_max_seal_overhead()` so callers reserve
+   enough output space before the callback runs.
+
+8. Keep TLS 1.2 and the no-callback path byte-for-byte unchanged. Passing NULL
+   must clear the callback, argument, and reservation.
+
+9. Preserve BoringSSL's stack-byte TLS 1.3 path whenever the selected padding
+   is zero. Allocate the `content_type || zero_padding` array only for nonzero
+   padding so disabled shaping and no-op outcomes add neither a heap allocation
+   nor a new per-record allocation-failure path.
+
+WaterWall-side pieces that must remain compatible with this patch:
+
+- `boringssl_symbols.txt` must contain
+  `SSL_set_tls13_record_padding_callback`. This is outside the BoringSSL source
+  directory and therefore is intentionally not part of the patch above. Do not
+  remove it during an update; otherwise symbol-prefixed builds will fail or call
+  the wrong TLS library.
+- `TlsClient/CMakeLists.txt` links `TlsRecordShapingCommon` and keeps the bundled
+  BoringSSL symbol-prefix configuration.
+- `TlsClient/common/line_state.c` installs the callback per SSL object and clears
+  it before releasing that object.
+- `TlsClient/common/helpers.c` maps callback decisions to complete encrypted TLS
+  records, preserves FIFO release order, enforces the queue limits, and owns the
+  single release timer.
+- `TlsClient/include/TlsClient/structure.h`, `instance/create.c`, and the
+  upstream/downstream payload, pause, resume, and finish handlers carry the
+  per-line shaping state and lifecycle rules.
+- `TlsClient.fnFinU` must remain synchronous: cancel its timer, force-drain in
+  FIFO order only while the wire is writable, discard any paused remainder,
+  destroy state, and forward upstream Finish before returning. Once
+  `upstream_finished` is set, downstream Payload and Est are absorbed and
+  Pause/Resume update only the local wire-paused state; none may reflect toward
+  the finished cleartext owner.
+- A drain attempted while the wire is paused must still run the shaping
+  backpressure updater. It records a high-water producer pause without emitting
+  a second Pause, so the later low-water transition produces exactly one
+  matching Resume.
+- After any drain invoked from downstream Resume, re-read line state and suppress
+  that Resume if a nested wire callback set `shaping_wire_paused` again. A stale
+  outer Resume must not overwrite a re-entrant Pause; only a later genuine wire
+  Resume may be forwarded.
+- `RealityClient/instance/create.c` rejects delayed shaping during handshake
+  takeover. Padding-only shaping is allowed only at an empty takeover boundary.
+- The conditional common-library registration is in WaterWall's root
+  `CMakeLists.txt`. These WaterWall-side files are not overwritten by replacing
+  `TlsClient/boringssl`, but their API assumptions must be rechecked.
+
+Patch maintenance:
+
+- The checked-in patch must contain only the four BoringSSL files listed above.
+- After porting to a clean checkout of a new BoringSSL revision, regenerate the
+  diff from that clean revision rather than editing hunk offsets by hand.
+- Keep the callback API narrow. Do not turn it into generic cover traffic,
+  plaintext scheduling, or a receive-side hook.
+- Add any newly exported public/assembly symbol that can collide with OpenSSL to
+  `boringssl_symbols.txt`; see the architecture-specific prefix notes near the
+  end of this file.
+
+Required verification after every BoringSSL update:
+
+    cmake --preset linux
+    cmake --build --preset linux --target TlsClient tlsclient_record_padding_test tls13_record_delay_lifecycle_test -j8
+    ctest --preset linux --output-on-failure -R '^waterwall\.tlsclient_record_padding_unit$'
+    ctest --preset linux --output-on-failure -R '^waterwall\.tls13_record_delay_lifecycle_unit$'
+    ctest --preset linux --output-on-failure -R 'tlsclient|tls13_record|reality'
+
+The focused record-padding test must continue to prove: no-callback behavior,
+zero padding, exact padding length, safe oversize capping, one callback per
+record, unchanged TLS 1.2 output, and successful decryption by an OpenSSL peer.
+The common and integration tests also verify partial/coalesced BIO reads,
+metadata/record matching, delayed FIFO release, Finish ordering, and payload
+integrity.
+
+This record-shaping patch is in addition to the older local BoringSSL changes
+already recorded below and in `RadkesvatPatches/`:
+
+- `CMakeLists.txt.patch` (embedded build/tool and prefix-header behavior)
+- `handshake_client.cc.patch` (Chrome-like cipher ordering)
+- `p256_64.h.patch` (Windows fiat assembly guard)
+
+Rebase and revalidate all four patch sets when replacing the vendored tree.
+
+
 First , there is a full caputred client hello from my just updated chrome Version 138.0.7204.184 (Official Build) (64-bit)
 
 Frame 3902: 1766 bytes on wire (14128 bits), 1766 bytes captured (14128 bits) on interface \Device\NPF_{6A460D48-FB76-6C3F-A47D-EF97D3DC6B0E}, id 0

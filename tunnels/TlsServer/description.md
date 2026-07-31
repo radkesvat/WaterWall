@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 110
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TlsServer.mdx, and both files must keep the same documentation version.
 -->
 
@@ -235,6 +235,57 @@ Both fields are required. If either one is missing or invalid, tunnel creation f
   Default: `false`
 
   Handshake success logs and handshake failure/rejection reasons are still emitted without this flag.
+
+- `tls13-record-shaping` `(object)`
+  Enables the experimental sender-side TLS 1.3 record shaping described below. Absent by default.
+
+## Experimental TLS 1.3 Record Shaping
+
+`tls13-record-shaping` optionally pads and delays the first locally sent TLS 1.3 application records. It is disabled
+when absent. It never changes received ciphertext, handshake records, alerts, empty application records, fallback bytes,
+or TLS 1.2 records. Configure the local `TlsServer` and remote `TlsClient` separately when both sending directions should
+be shaped.
+
+Custom form:
+
+```json
+"tls13-record-shaping": {
+  "scope": {"first-application-records": 8},
+  "outcomes": [
+    {
+      "probability": 50,
+      "padding-bytes": [100, 200],
+      "delay": {"probability": 75, "ms": [10, 20]}
+    },
+    {"probability": 10, "padding-bytes": [400, 600]}
+  ]
+}
+```
+
+`padding-bytes` and `delay.ms` accept either an integer or an inclusive `[minimum, maximum]` integer range. There may be
+1 through 16 outcomes; `first-application-records` is 1 through 1024, padding is 1 through 4096 bytes, and delay is 0
+through 1000 milliseconds. Outcome probabilities are cumulative, mutually exclusive percentages whose sum may not exceed
+100. One roll selects at most one outcome; the unused percentage is an unchanged record. An outcome's delay probability
+is rolled only after that outcome is selected. Unknown keys and non-integer or out-of-range values are startup errors.
+Every eligible record consumes one scope position even when its roll selects no outcome.
+
+Only the custom `scope` plus `outcomes` form is currently accepted. The `profile` key is rejected until representative
+capture, overhead, connection-success, and classifier measurements justify publishing a versioned preset.
+
+Padding is standard zero-valued TLS 1.3 `TLSInnerPlaintext` padding and adds the selected number of bytes to ciphertext,
+subject to the remaining legal TLS record capacity. Delay starts after encryption and adds up to the selected latency.
+Records stay in wire order with `release_at = max(now + delay, previous_release_at)`. Queued ciphertext is bounded to 1
+MiB per line, with producer backpressure at 768 KiB and release at 384 KiB. Pause and Resume propagation follows the
+current wire state: if draining during Resume re-enters with another wire Pause, the stale Resume is suppressed until a
+later wire Resume. After peer `close_notify` finishes the cleartext side, `TlsServer` sends no Payload, Pause, or Resume
+toward it; application bytes received later or already decrypted by an outer callback are discarded. If the cleartext
+side finishes, already accepted server ciphertext and an unpadded `close_notify` drain before downstream
+`Finish`; a wire-side finish cancels and discards queued output and is propagated only toward cleartext. Timer allocation
+failure drains immediately in order.
+
+Record shaping can make early sizes and timings less deterministic, but it cannot remove an inner handshake round trip,
+make a burst smaller, or hide every direction and timing feature. Combine it with `MuxClient`/`MuxServer` when
+multiplexing fits the deployment.
 
 ## Detailed Behavior
 
