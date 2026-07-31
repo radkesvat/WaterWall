@@ -1,5 +1,5 @@
 <!--
-Documentation version: 113
+Documentation version: 114
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx, and both files must keep the same documentation version.
 -->
 
@@ -13,7 +13,7 @@ The current implementation provides these classes of tricks:
 
 - protocol-number swapping
 - TLS ClientHello copy (`first-sni`)
-- TLS ClientHello split-route delay (`smuggle-sni`)
+- TLS ClientHello multi-segment split-route delay (`smuggle-sni`)
 - TLS ClientHello overlap split (`overlap-sni`)
 - TLS ClientHello SYN/FIN overlap (`synfin-sni`)
 - TLS ClientHello ECH-aware transport split (`ech-sni-trick`)
@@ -595,18 +595,16 @@ If the ClientHello contains a TLS 1.3 `pre_shared_key` extension with PSK binder
 
 ### smuggle-sni
 
-This trick is upstream-only and only applies to IPv4 TCP packets that begin with a TLS ClientHello carrying an SNI extension.
+This trick is upstream-only and applies to IPv4 TCP packets carrying a TLS ClientHello record with an SNI extension.
 
 Behavior:
 
-- detect an upstream TLS ClientHello
-- clone the packet and replace only the copied packet's SNI with `smuggle-sni`
-- send the real captured ClientHello through `real-sni-upstream-node` immediately
-- wait `smuggle-sni-delay-ms`
-- send the modified `smuggle-sni` copy through the normal top-level `next` tunnel
-- leave every non-ClientHello packet on the normal path unchanged
-
-`smuggle-sni` does not keep per-flow connection state. It only sends one immediate real ClientHello to `real-sni-upstream-node` and schedules one delayed crafted `smuggle-sni` copy on the normal branch.
+- captures and reassembles a TLS ClientHello record across single or multi-segment TCP payloads (up to 16 segments / 16 KB) on the 4-tuple
+- generates a fake TLS ClientHello of total record length `L` matching the captured ClientHello total record length `R`
+- constructs a multi-segment fake batch that strictly preserves original TCP segment boundaries, original TCP segment payload lengths, original TCP sequence numbers, and any trailing payload bytes beyond the ClientHello record
+- sends the original captured ClientHello segments immediately to `real-sni-upstream-node` in order
+- schedules the generated fake segment batch to the normal next tunnel after `smuggle-sni-delay-ms`
+- if record length mismatch (`L != R`), segment sequence discontinuity, timeout, or generation failure occurs, `smuggle-sni` fails open immediately, forwarding original captured packets to the normal path without delay or modification
 
 If the ClientHello contains a TLS 1.3 `pre_shared_key` extension with PSK binders and the configured `smuggle-sni` would actually change the SNI bytes, the trick skips crafting the fake packet and leaves the original packet on the normal path. `IpManipulator` does not have the PSK secret required to recompute valid binders.
 

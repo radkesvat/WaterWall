@@ -66,10 +66,17 @@ typedef struct ipmanipulator_captured_packet_s
     sbuf_t *buf;
 } ipmanipulator_captured_packet_t;
 
+typedef struct ipmanipulator_tls_capture_timeout_msg_s
+{
+    uint32_t slot_index;
+    uint32_t generation;
+} ipmanipulator_tls_capture_timeout_msg_t;
+
 typedef struct ipmanipulator_tls_capture_slot_s
 {
     sbuf_t                          *assembled_packet;
     uint64_t                         last_update_ms;
+    uint32_t                         generation;
     uint32_t                         next_seq;
     uint32_t                         tls_record_total_len;
     uint32_t                         tls_record_captured_len;
@@ -110,32 +117,21 @@ typedef enum ipmanipulator_smuggle_flow_phase_e
 
 enum
 {
-    kIpManipulatorSmuggleSavedPacketsCount = 1,
-    kIpManipulatorSmuggleInitialFlows      = 32
+    kIpManipulatorSmuggleInitialFlows = 32
 };
-
-typedef struct ipmanipulator_smuggle_saved_packet_s
-{
-    line_t  *line;
-    sbuf_t  *packet;
-    uint16_t payload_len;
-} ipmanipulator_smuggle_saved_packet_t;
 
 typedef struct ipmanipulator_smuggle_flow_s
 {
-    uint64_t                             created_ms;
-    uint64_t                             last_activity_ms;
-    uint64_t                             delay_window_until_ms;
-    uint32_t                             src_addr;
-    uint32_t                             dst_addr;
-    uint16_t                             src_port;
-    uint16_t                             dst_port;
-    uint8_t                              warmup_packets_seen;
-    uint8_t                              capture_packets_seen;
-    ipmanipulator_smuggle_flow_phase_e   phase;
-    bool                                 active;
-    uint32_t                             captured_payload_sum;
-    ipmanipulator_smuggle_saved_packet_t saved_packets[kIpManipulatorSmuggleSavedPacketsCount];
+    uint64_t                           created_ms;
+    uint64_t                           last_activity_ms;
+    uint64_t                           delay_window_until_ms;
+    uint32_t                           src_addr;
+    uint32_t                           dst_addr;
+    uint16_t                           src_port;
+    uint16_t                           dst_port;
+    uint8_t                            warmup_packets_seen;
+    ipmanipulator_smuggle_flow_phase_e phase;
+    bool                               active;
 } ipmanipulator_smuggle_flow_t;
 
 typedef struct ipmanipulator_firstsni_flow_s
@@ -438,11 +434,18 @@ bool     portghosttrickApply(tunnel_t *t, line_t *l, sbuf_t **buf_ptr);
 bool     portghosttrickRestore(tunnel_t *t, line_t *l, sbuf_t **buf_ptr);
 
 sbuf_t *clonePacketWithLength(line_t *l, sbuf_t *buf, uint32_t new_len);
+bool    parseTlsRecordSni(const uint8_t *tls, uint32_t tls_len, sni_match_t *match);
 bool    parseClientHelloSni(const uint8_t *packet, uint32_t packet_length, sni_match_t *match);
+sbuf_t *smugglesnitrickGenerateTlsClientHello(tunnel_t *t);
 ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(tunnel_t *t, line_t *l, sbuf_t *buf,
                                                                       ipmanipulator_tls_capture_kind_e  kind,
                                                                       ipmanipulator_tls_capture_slot_t *out_slot);
 void ipmanipulatorReleaseCapturedPacketsNormal(tunnel_t *t, ipmanipulator_tls_capture_slot_t *slot);
+void ipmanipulatorReleasePendingCaptureOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3);
+bool ipmanipulatorFlushMatchingCaptureSlot(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
+                                           uint16_t dst_port, ipmanipulator_tls_capture_kind_e kind);
 void ipmanipulatorRecycleCapturedTlsPackets(tunnel_t *t, ipmanipulator_tls_capture_slot_t *slot);
 void ipmanipulatorDestroyCapturedTlsPackets(ipmanipulator_tls_capture_slot_t *slot);
 void ipmanipulatorDestroyTlsCaptureState(tunnel_t *t);
+void smugglesnitrickSetFlowPassthrough(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
+                                       uint16_t dst_port);

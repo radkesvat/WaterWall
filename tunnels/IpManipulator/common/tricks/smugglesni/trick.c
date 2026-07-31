@@ -6,21 +6,16 @@ api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 enum
 {
-    kSmuggleSniWarmupPackets  = 2,
-    kSmuggleSniCapturePackets = 1,
-    kSmuggleSniDelayWindowMs  = 50000,
-    kSmuggleSniIdleTimeoutMs  = 20U * 60U * 1000U
+    kSmuggleSniWarmupPackets = 2,
+    kSmuggleSniDelayWindowMs = 50000,
+    kSmuggleSniIdleTimeoutMs = 20U * 60U * 1000U
 };
-
-static_assert(kIpManipulatorSmuggleSavedPacketsCount == 1,
-              "smuggle-sni fake rewriting currently supports exactly one saved packet");
-static_assert((uint32_t) kSmuggleSniCapturePackets == (uint32_t) kIpManipulatorSmuggleSavedPacketsCount,
-              "smuggle-sni capture and saved-packet counts must remain aligned");
 
 typedef struct smugglesnitrick_tcp_packet_info_s
 {
     uint32_t src_addr;
     uint32_t dst_addr;
+    uint32_t seq;
     uint32_t payload_offset;
     uint8_t  tcp_flags;
     uint16_t src_port;
@@ -33,81 +28,30 @@ typedef enum smugglesnitrick_action_e
 {
     kSmuggleSniActionPassNormal = 0,
     kSmuggleSniActionDelayNormal,
-    kSmuggleSniActionPassReal
+    kSmuggleSniActionCapture
 } smugglesnitrick_action_e;
 
-typedef struct smugglesnitrick_completion_s
+typedef struct smugglesnitrick_fake_batch_entry_s
 {
-    bool                                 ready;
-    uint32_t                             captured_payload_sum;
-    ipmanipulator_smuggle_saved_packet_t saved_packets[kIpManipulatorSmuggleSavedPacketsCount];
-} smugglesnitrick_completion_t;
+    line_t *line;
+    sbuf_t *buf;
+} smugglesnitrick_fake_batch_entry_t;
 
-static void smugglesnitrickResetSavedPacket(ipmanipulator_smuggle_saved_packet_t *saved_packet)
+typedef struct smugglesnitrick_fake_batch_s
 {
-    memoryZero(saved_packet, sizeof(*saved_packet));
-}
-
-static void smugglesnitrickDestroySavedPacket(ipmanipulator_smuggle_saved_packet_t *saved_packet)
-{
-    if (saved_packet->packet != NULL)
-    {
-        sbufDestroy(saved_packet->packet);
-    }
-
-    smugglesnitrickResetSavedPacket(saved_packet);
-}
+    uint8_t                            count;
+    smugglesnitrick_fake_batch_entry_t entries[kIpManipulatorTlsCaptureMaxPackets];
+} smugglesnitrick_fake_batch_t;
 
 static void smugglesnitrickDestroyFlow(ipmanipulator_smuggle_flow_t *flow)
 {
-    for (uint32_t i = 0; i < kIpManipulatorSmuggleSavedPacketsCount; ++i)
-    {
-        smugglesnitrickDestroySavedPacket(&flow->saved_packets[i]);
-    }
-
     memoryZero(flow, sizeof(*flow));
-}
-
-static void smugglesnitrickMoveCompletionOut(smugglesnitrick_completion_t *completion,
-                                             ipmanipulator_smuggle_flow_t *flow)
-{
-    if (completion == NULL || flow == NULL)
-    {
-        return;
-    }
-
-    completion->ready                = true;
-    completion->captured_payload_sum = flow->captured_payload_sum;
-
-    for (uint32_t i = 0; i < kIpManipulatorSmuggleSavedPacketsCount; ++i)
-    {
-        completion->saved_packets[i] = flow->saved_packets[i];
-        smugglesnitrickResetSavedPacket(&flow->saved_packets[i]);
-    }
-
-    flow->capture_packets_seen = 0;
-    flow->captured_payload_sum = 0;
-}
-
-static void smugglesnitrickDestroyCompletion(smugglesnitrick_completion_t *completion)
-{
-    if (completion == NULL)
-    {
-        return;
-    }
-
-    for (uint32_t i = 0; i < kIpManipulatorSmuggleSavedPacketsCount; ++i)
-    {
-        smugglesnitrickDestroySavedPacket(&completion->saved_packets[i]);
-    }
-
-    memoryZero(completion, sizeof(*completion));
 }
 
 static bool smugglesnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t packet_length,
                                               smugglesnitrick_tcp_packet_info_t *info)
 {
-    if (packet_length < sizeof(struct ip_hdr))
+    if (packet == NULL || info == NULL || packet_length < sizeof(struct ip_hdr))
     {
         return false;
     }
@@ -124,7 +68,7 @@ static bool smugglesnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t pa
         return false;
     }
 
-    uint16_t ip_header_len = (uint16_t) (ip_hdr_len_words * 4);
+    uint16_t ip_header_len = (uint16_t) (ip_hdr_len_words * 4U);
     if (packet_length < ip_header_len + sizeof(struct tcp_hdr))
     {
         return false;
@@ -149,7 +93,7 @@ static bool smugglesnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t pa
         return false;
     }
 
-    uint16_t tcp_header_len = (uint16_t) (tcp_hdr_len_words * 4);
+    uint16_t tcp_header_len = (uint16_t) (tcp_hdr_len_words * 4U);
     uint16_t headers_len    = (uint16_t) (ip_header_len + tcp_header_len);
     if (ip_total_len < headers_len)
     {
@@ -159,6 +103,7 @@ static bool smugglesnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t pa
     *info = (smugglesnitrick_tcp_packet_info_t) {
         .src_addr        = ipheader->src.addr,
         .dst_addr        = ipheader->dest.addr,
+        .seq             = lwip_ntohl(tcp_header->seqno),
         .payload_offset  = headers_len,
         .tcp_flags       = TCPH_FLAGS(tcp_header),
         .src_port        = lwip_ntohs(tcp_header->src),
@@ -192,21 +137,6 @@ static bool smugglesnitrickFlowMatchesReverse(const ipmanipulator_smuggle_flow_t
 {
     return flow->active && flow->src_addr == info->dst_addr && flow->dst_addr == info->src_addr &&
            flow->src_port == info->dst_port && flow->dst_port == info->src_port;
-}
-
-static sbuf_t *smugglesnitrickDuplicateStandalonePacket(const sbuf_t *source)
-{
-    uint32_t packet_len = sbufGetLength(source);
-    sbuf_t  *copy       = sbufCreateWithPadding(packet_len, sbufGetLeftPadding(source));
-
-    if (copy == NULL)
-    {
-        return NULL;
-    }
-
-    sbufSetLength(copy, packet_len);
-    memoryCopyLarge(sbufGetMutablePtr(copy), sbufGetRawPtr(source), packet_len);
-    return copy;
 }
 
 static void smugglesnitrickCleanupIdleFlowsLocked(ipmanipulator_tstate_t *state, uint64_t now_ms)
@@ -328,10 +258,6 @@ static void smugglesnitrickForwardReal(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 static void smugglesnitrickSendRealNow(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    /*
-     * The dedicated real-SNI branch historically carries the original tuple.
-     * Apply checksum/protocol egress ordering without adding a portghost trailer.
-     */
     lineSetRecalculateChecksum(l, true);
     ipmanipulatorEmitUpstreamPreservingTuple(t, l, buf, smugglesnitrickForwardReal);
 }
@@ -418,7 +344,7 @@ static sbuf_t *smugglesnitrickAllocateRequestBuffer(uint32_t len)
     return sbufCreate(len);
 }
 
-static sbuf_t *smugglesnitrickGenerateTlsClientHello(tunnel_t *t)
+sbuf_t *smugglesnitrickGenerateTlsClientHello(tunnel_t *t)
 {
     static const char kGenerateTlsHelloPrefix[] = "generateTlsHello:";
 
@@ -452,84 +378,291 @@ static sbuf_t *smugglesnitrickGenerateTlsClientHello(tunnel_t *t)
     return result.buffer;
 }
 
-static bool smugglesnitrickRewriteSavedPacketPayload(ipmanipulator_smuggle_saved_packet_t *saved_packet,
-                                                     const uint8_t *payload, uint32_t payload_len)
+static bool smugglesnitrickBuildFakeBatch(tunnel_t *t, ipmanipulator_tls_capture_slot_t *slot,
+                                          smugglesnitrick_fake_batch_t *batch)
 {
-    smugglesnitrick_tcp_packet_info_t info = {0};
+    memoryZero(batch, sizeof(*batch));
 
-    if (saved_packet == NULL || saved_packet->packet == NULL)
+    if (slot == NULL || slot->captured_packets_count == 0 || slot->tls_record_total_len == 0)
     {
         return false;
     }
 
-    if (! smugglesnitrickParseTcpPacketInfo(
-            (const uint8_t *) sbufGetRawPtr(saved_packet->packet), sbufGetLength(saved_packet->packet), &info))
-    {
-        return false;
-    }
-
-    if (payload_len > UINT16_MAX || info.payload_offset > UINT16_MAX - payload_len)
-    {
-        return false;
-    }
-
-    uint32_t rewritten_len = info.payload_offset + payload_len;
-    /*
-     * This is the process-wide compile-time packet ceiling, not the live
-     * device MTU. A device configured below this limit may still reject the
-     * crafted packet.
-     */
-    if (rewritten_len > kMaxAllowedPacketLength)
-    {
-        return false;
-    }
-
-    saved_packet->packet = sbufReserveSpace(saved_packet->packet, rewritten_len);
-    sbufSetLength(saved_packet->packet, rewritten_len);
-
-    uint8_t *packet = sbufGetMutablePtr(saved_packet->packet);
-    memoryCopyLarge(packet + info.payload_offset, payload, payload_len);
-    IPH_LEN_SET((struct ip_hdr *) packet, lwip_htons((uint16_t) rewritten_len));
-
-    saved_packet->payload_len = (uint16_t) payload_len;
-    return true;
-}
-
-static bool smugglesnitrickBuildFakePackets(tunnel_t *t, smugglesnitrick_completion_t *completion)
-{
-    if (completion == NULL || ! completion->ready)
-    {
-        return false;
-    }
-
-    if (completion->captured_payload_sum == 0)
+    if (slot->tls_record_total_len > slot->captured_payload_len)
     {
         return false;
     }
 
     sbuf_t *tls_hello = smugglesnitrickGenerateTlsClientHello(t);
-
     if (tls_hello == NULL)
     {
+        LOGD("IpManipulator: smuggle-sni failed to generate TLS ClientHello");
         return false;
     }
 
-    const uint8_t *hello_payload = (const uint8_t *) sbufGetRawPtr(tls_hello);
-    uint32_t       hello_len     = sbufGetLength(tls_hello);
-    bool           rewrite_ok    = false;
-
-    for (uint32_t i = 0; i < kIpManipulatorSmuggleSavedPacketsCount; ++i)
+    uint32_t generated_len = sbufGetLength(tls_hello);
+    if (generated_len != slot->tls_record_total_len)
     {
-        if (completion->saved_packets[i].packet != NULL)
+        LOGD("IpManipulator: smuggle-sni generated TLS ClientHello length mismatch (original=%u, generated=%u); "
+             "failing open",
+             slot->tls_record_total_len,
+             generated_len);
+        reuseBuffer(tls_hello);
+        return false;
+    }
+
+    const uint8_t *generated_bytes = (const uint8_t *) sbufGetRawPtr(tls_hello);
+
+    sni_match_t fake_match = {0};
+    if (! parseTlsRecordSni(generated_bytes, generated_len, &fake_match))
+    {
+        LOGD("IpManipulator: smuggle-sni generated payload is not a valid ClientHello or lacks SNI; failing open");
+        reuseBuffer(tls_hello);
+        return false;
+    }
+
+    if (5U + (uint32_t) fake_match.tls_record_len != generated_len)
+    {
+        LOGD("IpManipulator: smuggle-sni generated payload contains bytes outside the declared TLS record; failing "
+             "open");
+        reuseBuffer(tls_hello);
+        return false;
+    }
+
+    ipmanipulator_tstate_t *state        = tunnelGetState(t);
+    uint16_t                fake_sni_len = state->trick_smuggle_sni_value_len;
+    if (fake_match.sni_name_len != fake_sni_len ||
+        memcmp(generated_bytes + fake_match.sni_name_offset, state->trick_smuggle_sni_value, fake_sni_len) != 0)
+    {
+        LOGD("IpManipulator: smuggle-sni generated SNI does not match configured fake SNI; failing open");
+        reuseBuffer(tls_hello);
+        return false;
+    }
+
+    uint32_t tls_record_len = slot->tls_record_total_len;
+    uint32_t stream_offset  = 0;
+    uint32_t first_seq      = 0;
+
+    for (uint8_t i = 0; i < slot->captured_packets_count; ++i)
+    {
+        ipmanipulator_captured_packet_t  *orig_entry = &slot->captured_packets[i];
+        smugglesnitrick_tcp_packet_info_t orig_info  = {0};
+
+        if (orig_entry->line == NULL || orig_entry->buf == NULL)
         {
-            rewrite_ok =
-                smugglesnitrickRewriteSavedPacketPayload(&completion->saved_packets[i], hello_payload, hello_len);
-            break;
+            goto fail;
         }
+
+        if (! smugglesnitrickParseTcpPacketInfo(
+                (const uint8_t *) sbufGetRawPtr(orig_entry->buf), sbufGetLength(orig_entry->buf), &orig_info))
+        {
+            goto fail;
+        }
+
+        if (i == 0)
+        {
+            first_seq = orig_info.seq;
+        }
+        else
+        {
+            if (orig_info.seq != first_seq + stream_offset)
+            {
+                goto fail;
+            }
+        }
+
+        uint32_t orig_buf_len = sbufGetLength(orig_entry->buf);
+        sbuf_t  *fake_buf     = clonePacketWithLength(orig_entry->line, orig_entry->buf, orig_buf_len);
+        if (fake_buf == NULL)
+        {
+            goto fail;
+        }
+
+        memoryCopyLarge(sbufGetMutablePtr(fake_buf), sbufGetRawPtr(orig_entry->buf), orig_buf_len);
+
+        uint8_t *fake_packet = sbufGetMutablePtr(fake_buf);
+
+        if (stream_offset < tls_record_len)
+        {
+            uint32_t overwrite_len = min((uint32_t) orig_info.tcp_payload_len, tls_record_len - stream_offset);
+            memoryCopyLarge(fake_packet + orig_info.payload_offset, generated_bytes + stream_offset, overwrite_len);
+        }
+
+        stream_offset += orig_info.tcp_payload_len;
+
+        smugglesnitrick_tcp_packet_info_t fake_info = {0};
+        if (! smugglesnitrickParseTcpPacketInfo(fake_packet, orig_buf_len, &fake_info))
+        {
+            sbufDestroy(fake_buf);
+            goto fail;
+        }
+
+        if (fake_info.ip_total_len != orig_info.ip_total_len ||
+            fake_info.tcp_payload_len != orig_info.tcp_payload_len || fake_info.seq != orig_info.seq ||
+            fake_info.payload_offset != orig_info.payload_offset || fake_info.tcp_flags != orig_info.tcp_flags)
+        {
+            sbufDestroy(fake_buf);
+            goto fail;
+        }
+
+        batch->entries[i] = (smugglesnitrick_fake_batch_entry_t) {.line = orig_entry->line, .buf = fake_buf};
+        batch->count++;
+    }
+
+    if (stream_offset != slot->captured_payload_len)
+    {
+        goto fail;
     }
 
     reuseBuffer(tls_hello);
-    return rewrite_ok;
+    return true;
+
+fail:
+    for (uint8_t i = 0; i < batch->count; ++i)
+    {
+        if (batch->entries[i].buf != NULL)
+        {
+            smugglesnitrickCleanupDelayedBuffer(batch->entries[i].line, batch->entries[i].buf);
+            batch->entries[i].buf  = NULL;
+            batch->entries[i].line = NULL;
+        }
+    }
+    batch->count = 0;
+    reuseBuffer(tls_hello);
+    return false;
+}
+
+typedef struct smugglesnitrick_fake_batch_msg_s
+{
+    smugglesnitrick_fake_batch_t *batch;
+} smugglesnitrick_fake_batch_msg_t;
+
+static void smugglesnitrickRunDelayedBatchOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    discard arg3;
+
+    tunnel_t                         *t   = arg1;
+    smugglesnitrick_fake_batch_msg_t *msg = arg2;
+
+    if (msg != NULL && msg->batch != NULL)
+    {
+        smugglesnitrick_fake_batch_t *batch = msg->batch;
+        for (uint8_t i = 0; i < batch->count; ++i)
+        {
+            smugglesnitrick_fake_batch_entry_t *entry = &batch->entries[i];
+            if (entry->line != NULL && entry->buf != NULL)
+            {
+                if (lineIsAlive(entry->line))
+                {
+                    smugglesnitrickSendNormalNow(t, entry->line, entry->buf);
+                }
+                else
+                {
+                    lineReuseBuffer(entry->line, entry->buf);
+                }
+                lineUnlock(entry->line);
+                entry->line = NULL;
+                entry->buf  = NULL;
+            }
+        }
+        memoryFree(batch);
+        msg->batch = NULL;
+    }
+
+    memoryFree(msg);
+}
+
+static void smugglesnitrickCleanupDelayedBatch(void *arg1, void *arg2, void *arg3)
+{
+    discard arg1;
+    discard arg3;
+
+    smugglesnitrick_fake_batch_msg_t *msg = arg2;
+    if (msg == NULL)
+    {
+        return;
+    }
+
+    if (msg->batch != NULL)
+    {
+        smugglesnitrick_fake_batch_t *batch = msg->batch;
+        for (uint8_t i = 0; i < batch->count; ++i)
+        {
+            smugglesnitrick_fake_batch_entry_t *entry = &batch->entries[i];
+            if (entry->line != NULL && entry->buf != NULL)
+            {
+                smugglesnitrickCleanupDelayedBuffer(entry->line, entry->buf);
+                lineUnlock(entry->line);
+                entry->line = NULL;
+                entry->buf  = NULL;
+            }
+        }
+        memoryFree(batch);
+        msg->batch = NULL;
+    }
+
+    memoryFree(msg);
+}
+
+static void smugglesnitrickScheduleBatchSend(tunnel_t *t, smugglesnitrick_fake_batch_t *batch, uint32_t delay_ms)
+{
+    if (batch == NULL || batch->count == 0)
+    {
+        if (batch != NULL)
+        {
+            memoryFree(batch);
+        }
+        return;
+    }
+
+    line_t *first_line = batch->entries[0].line;
+    if (first_line == NULL)
+    {
+        for (uint8_t i = 0; i < batch->count; ++i)
+        {
+            if (batch->entries[i].buf != NULL)
+            {
+                sbufDestroy(batch->entries[i].buf);
+            }
+        }
+        memoryFree(batch);
+        return;
+    }
+
+    wid_t target_wid = lineGetWID(first_line);
+
+    if (delay_ms == 0 && getWID() == target_wid)
+    {
+        for (uint8_t i = 0; i < batch->count; ++i)
+        {
+            smugglesnitrick_fake_batch_entry_t *entry = &batch->entries[i];
+            if (entry->line != NULL && entry->buf != NULL)
+            {
+                smugglesnitrickSendNormalNow(t, entry->line, entry->buf);
+                entry->buf  = NULL;
+                entry->line = NULL;
+            }
+        }
+        memoryFree(batch);
+        return;
+    }
+
+    smugglesnitrick_fake_batch_msg_t *msg = memoryAllocate(sizeof(*msg));
+    msg->batch                            = batch;
+
+    for (uint8_t i = 0; i < batch->count; ++i)
+    {
+        lineLock(batch->entries[i].line);
+    }
+
+    sendWorkerMessageTimedWithCleanup(target_wid,
+                                      (WorkerMessageCallback) smugglesnitrickRunDelayedBatchOnWorker,
+                                      smugglesnitrickCleanupDelayedBatch,
+                                      delay_ms,
+                                      t,
+                                      msg,
+                                      NULL);
 }
 
 void smugglesnitrickDestroyState(tunnel_t *t)
@@ -556,6 +689,36 @@ void smugglesnitrickDestroyState(tunnel_t *t)
     state->smuggle_flows_capacity = 0;
 }
 
+void smugglesnitrickSetFlowPassthrough(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
+                                       uint16_t dst_port)
+{
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    if (state == NULL || state->smuggle_flows == NULL)
+    {
+        return;
+    }
+
+    smugglesnitrick_tcp_packet_info_t info = {
+        .src_addr = src_addr,
+        .dst_addr = dst_addr,
+        .src_port = src_port,
+        .dst_port = dst_port,
+    };
+
+    mutexLock(&state->smuggle_flows_mutex);
+    ipmanipulator_smuggle_flow_t *f = smugglesnitrickFindFlowLocked(state, &info);
+    if (f == NULL)
+    {
+        f = smugglesnitrickFindReverseFlowLocked(state, &info);
+    }
+    if (f != NULL)
+    {
+        f->phase                 = kIpManipulatorSmuggleFlowPhasePassthrough;
+        f->delay_window_until_ms = 0;
+    }
+    mutexUnlock(&state->smuggle_flows_mutex);
+}
+
 void smugglesnitrickLogDownStreamServerHello(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     assert(lineGetWID(l) == getWID());
@@ -571,6 +734,9 @@ void smugglesnitrickLogDownStreamServerHello(tunnel_t *t, line_t *l, sbuf_t *buf
 
     if (smugglesnitrickHasFinOrRst(&info))
     {
+        ipmanipulatorFlushMatchingCaptureSlot(
+            t, info.dst_addr, info.src_addr, info.dst_port, info.src_port, kIpManipulatorTlsCaptureKindSmuggleSni);
+
         ipmanipulator_tstate_t *state = tunnelGetState(t);
 
         mutexLock(&state->smuggle_flows_mutex);
@@ -609,11 +775,9 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     assert(lineGetWID(l) == getWID());
 
-    ipmanipulator_tstate_t           *state      = tunnelGetState(t);
-    smugglesnitrick_tcp_packet_info_t info       = {0};
-    smugglesnitrick_completion_t      completion = {0};
-    smugglesnitrick_action_e          action     = kSmuggleSniActionPassNormal;
-    uint64_t                          now_ms     = getTickMS();
+    ipmanipulator_tstate_t           *state  = tunnelGetState(t);
+    smugglesnitrick_tcp_packet_info_t info   = {0};
+    uint64_t                          now_ms = getTickMS();
 
     if (! smugglesnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
     {
@@ -648,8 +812,12 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         smugglesnitrickDestroyFlow(flow);
         mutexUnlock(&state->smuggle_flows_mutex);
+        ipmanipulatorFlushMatchingCaptureSlot(
+            t, info.src_addr, info.dst_addr, info.src_port, info.dst_port, kIpManipulatorTlsCaptureKindSmuggleSni);
         return false;
     }
+
+    smugglesnitrick_action_e action = kSmuggleSniActionPassNormal;
 
     switch (flow->phase)
     {
@@ -662,56 +830,9 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         action = kSmuggleSniActionPassNormal;
         break;
 
-    case kIpManipulatorSmuggleFlowPhaseCapture: {
-        const uint8_t *packet = (const uint8_t *) sbufGetRawPtr(buf);
-        const uint8_t *tls    = packet + info.payload_offset;
-
-        if (info.tcp_payload_len < 9 || tls[0] != 0x16 || tls[1] != 0x03 || tls[5] != 0x01)
-        {
-            flow->phase                = kIpManipulatorSmuggleFlowPhasePassthrough;
-            flow->capture_packets_seen = 0;
-            flow->captured_payload_sum = 0;
-            action                     = kSmuggleSniActionPassNormal;
-            break;
-        }
-
-        uint32_t slot_index = flow->capture_packets_seen;
-        sbuf_t  *copy       = smugglesnitrickDuplicateStandalonePacket(buf);
-
-        if (copy == NULL || slot_index >= kIpManipulatorSmuggleSavedPacketsCount)
-        {
-            if (copy != NULL)
-            {
-                sbufDestroy(copy);
-            }
-
-            flow->phase                = kIpManipulatorSmuggleFlowPhasePassthrough;
-            flow->capture_packets_seen = 0;
-            flow->captured_payload_sum = 0;
-
-            for (uint32_t i = 0; i < kIpManipulatorSmuggleSavedPacketsCount; ++i)
-            {
-                smugglesnitrickDestroySavedPacket(&flow->saved_packets[i]);
-            }
-
-            action = kSmuggleSniActionPassReal;
-            break;
-        }
-
-        flow->saved_packets[slot_index] =
-            (ipmanipulator_smuggle_saved_packet_t) {.line = l, .packet = copy, .payload_len = info.tcp_payload_len};
-        flow->capture_packets_seen += 1;
-        flow->captured_payload_sum += info.tcp_payload_len;
-        action = kSmuggleSniActionPassReal;
-
-        if (flow->capture_packets_seen >= kSmuggleSniCapturePackets)
-        {
-            flow->phase                 = kIpManipulatorSmuggleFlowPhasePassthrough;
-            flow->delay_window_until_ms = now_ms + kSmuggleSniDelayWindowMs;
-            smugglesnitrickMoveCompletionOut(&completion, flow);
-        }
+    case kIpManipulatorSmuggleFlowPhaseCapture:
+        action = kSmuggleSniActionCapture;
         break;
-    }
 
     case kIpManipulatorSmuggleFlowPhasePassthrough:
         action = (now_ms < flow->delay_window_until_ms) ? kSmuggleSniActionDelayNormal : kSmuggleSniActionPassNormal;
@@ -720,50 +841,139 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     mutexUnlock(&state->smuggle_flows_mutex);
 
-    switch (action)
+    if (action == kSmuggleSniActionDelayNormal)
     {
-    case kSmuggleSniActionDelayNormal:
         smugglesnitrickScheduleNormalSend(t, l, buf, state->trick_smuggle_sni_delay_ms);
-        break;
-
-    case kSmuggleSniActionPassReal:
-        smugglesnitrickSendRealNow(t, l, buf);
-        break;
-
-    case kSmuggleSniActionPassNormal:
-    default:
-        smugglesnitrickSendNormalNow(t, l, buf);
-        break;
+        return true;
     }
 
-    if (completion.ready)
+    if (action == kSmuggleSniActionPassNormal)
     {
-        if (smugglesnitrickBuildFakePackets(t, &completion))
-        {
-            LOGD("IpManipulator: smuggle-sni sent the real packets immediately to \"%s\" and scheduled the fake SNI "
-                 "\"%s\" packets after %u ms",
-                 state->trick_real_sni_upstream_node->name,
-                 state->trick_smuggle_sni_value,
-                 state->trick_smuggle_sni_delay_ms);
+        return false;
+    }
 
-            for (uint32_t i = 0; i < kIpManipulatorSmuggleSavedPacketsCount; ++i)
-            {
-                if (completion.saved_packets[i].line != NULL && completion.saved_packets[i].packet != NULL)
-                {
-                    LOGD("scheduling size %u bytes normal send for captured packet with payload_len=%u",
-                         sbufGetLength(completion.saved_packets[i].packet),
-                         completion.saved_packets[i].payload_len);
-                    smugglesnitrickScheduleNormalSend(t,
-                                                      completion.saved_packets[i].line,
-                                                      completion.saved_packets[i].packet,
-                                                      state->trick_smuggle_sni_delay_ms + (2 * i));
-                    smugglesnitrickResetSavedPacket(&completion.saved_packets[i]);
-                }
-            }
+    ipmanipulator_tls_capture_slot_t   captured_slot = {0};
+    ipmanipulator_tls_capture_status_e status =
+        ipmanipulatorCaptureTlsClientHello(t, l, buf, kIpManipulatorTlsCaptureKindSmuggleSni, &captured_slot);
+
+    if (status == kIpManipulatorTlsCaptureStatusPending)
+    {
+        return true;
+    }
+
+    if (status == kIpManipulatorTlsCaptureStatusBypassed)
+    {
+        mutexLock(&state->smuggle_flows_mutex);
+        ipmanipulator_smuggle_flow_t *f = smugglesnitrickFindFlowLocked(state, &info);
+        if (f != NULL)
+        {
+            f->phase                 = kIpManipulatorSmuggleFlowPhasePassthrough;
+            f->delay_window_until_ms = 0;
+        }
+        mutexUnlock(&state->smuggle_flows_mutex);
+        return true;
+    }
+
+    if (status == kIpManipulatorTlsCaptureStatusMiss)
+    {
+        mutexLock(&state->smuggle_flows_mutex);
+        ipmanipulator_smuggle_flow_t *f = smugglesnitrickFindFlowLocked(state, &info);
+        if (f != NULL)
+        {
+            f->phase                 = kIpManipulatorSmuggleFlowPhasePassthrough;
+            f->delay_window_until_ms = 0;
+        }
+        mutexUnlock(&state->smuggle_flows_mutex);
+        return false;
+    }
+
+    /* status == kIpManipulatorTlsCaptureStatusReady */
+    sni_match_t    match          = {0};
+    const uint8_t *assembled_data = (const uint8_t *) sbufGetRawPtr(captured_slot.assembled_packet);
+    uint32_t       assembled_len  = sbufGetLength(captured_slot.assembled_packet);
+
+    bool valid_ch = parseClientHelloSni(assembled_data, assembled_len, &match);
+    if (valid_ch)
+    {
+        if (captured_slot.tls_record_total_len != 5U + (uint32_t) match.tls_record_len ||
+            captured_slot.tls_record_total_len > captured_slot.captured_payload_len)
+        {
+            valid_ch = false;
+        }
+    }
+
+    if (match.has_tls13_psk_binder &&
+        (match.sni_name_len != state->trick_smuggle_sni_value_len ||
+         memcmp(assembled_data + match.sni_name_offset, state->trick_smuggle_sni_value, match.sni_name_len) != 0))
+    {
+        LOGD("IpManipulator: smuggle-sni skipping fake ClientHello rewrite because pre_shared_key binders are present");
+        valid_ch = false;
+    }
+
+    smugglesnitrick_fake_batch_t *batch    = NULL;
+    bool                          build_ok = false;
+
+    if (valid_ch)
+    {
+        batch    = memoryAllocateZero(sizeof(*batch));
+        build_ok = smugglesnitrickBuildFakeBatch(t, &captured_slot, batch);
+    }
+
+    if (! build_ok)
+    {
+        if (batch != NULL)
+        {
+            memoryFree(batch);
+            batch = NULL;
         }
 
-        smugglesnitrickDestroyCompletion(&completion);
+        ipmanipulatorReleaseCapturedPacketsNormal(t, &captured_slot);
+
+        mutexLock(&state->smuggle_flows_mutex);
+        ipmanipulator_smuggle_flow_t *f = smugglesnitrickFindFlowLocked(state, &info);
+        if (f != NULL)
+        {
+            f->phase                 = kIpManipulatorSmuggleFlowPhasePassthrough;
+            f->delay_window_until_ms = 0;
+        }
+        mutexUnlock(&state->smuggle_flows_mutex);
+        return true;
     }
 
+    if (captured_slot.assembled_packet != NULL)
+    {
+        sbufDestroy(captured_slot.assembled_packet);
+        captured_slot.assembled_packet = NULL;
+    }
+
+    LOGD("IpManipulator: smuggle-sni sent the real packets immediately to \"%s\" and scheduled fake SNI \"%s\" packets "
+         "(%u segment(s)) after %u ms",
+         state->trick_real_sni_upstream_node->name,
+         state->trick_smuggle_sni_value,
+         (unsigned int) batch->count,
+         (unsigned int) state->trick_smuggle_sni_delay_ms);
+
+    for (uint8_t i = 0; i < captured_slot.captured_packets_count; ++i)
+    {
+        ipmanipulator_captured_packet_t *entry = &captured_slot.captured_packets[i];
+        if (entry->line != NULL && entry->buf != NULL)
+        {
+            smugglesnitrickSendRealNow(t, entry->line, entry->buf);
+            entry->line = NULL;
+            entry->buf  = NULL;
+        }
+    }
+    captured_slot.captured_packets_count = 0;
+
+    smugglesnitrickScheduleBatchSend(t, batch, state->trick_smuggle_sni_delay_ms);
+
+    mutexLock(&state->smuggle_flows_mutex);
+    ipmanipulator_smuggle_flow_t *f = smugglesnitrickFindFlowLocked(state, &info);
+    if (f != NULL)
+    {
+        f->phase                 = kIpManipulatorSmuggleFlowPhasePassthrough;
+        f->delay_window_until_ms = now_ms + kSmuggleSniDelayWindowMs;
+    }
+    mutexUnlock(&state->smuggle_flows_mutex);
     return true;
 }

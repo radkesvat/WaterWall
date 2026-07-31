@@ -95,7 +95,13 @@ static const char *ipmanipulatorTlsCaptureKindName(ipmanipulator_tls_capture_kin
 
 static void ipmanipulatorResetCapturedSlot(ipmanipulator_tls_capture_slot_t *slot)
 {
+    uint32_t gen = slot->generation + 1;
+    if (gen == 0)
+    {
+        gen = 1;
+    }
     memoryZero(slot, sizeof(*slot));
+    slot->generation = gen;
 }
 
 static void ipmanipulatorTakeCapturedSlot(ipmanipulator_tls_capture_slot_t *dest, ipmanipulator_tls_capture_slot_t *src)
@@ -200,6 +206,13 @@ static void ipmanipulatorCleanupCapturedPacketReuse(void *arg1, void *arg2, void
 
 static void ipmanipulatorScheduleCapturedPacketNormal(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    if (getWID() == lineGetWID(l))
+    {
+        lineSetRecalculateChecksum(l, true);
+        ipmanipulatorSendUpstreamFinal(t, l, buf);
+        return;
+    }
+
     lineLock(l);
     sendWorkerMessageForceQueueWithCleanup(lineGetWID(l),
                                            (WorkerMessageCallback) ipmanipulatorReplayCapturedPacketOnWorker,
@@ -225,6 +238,11 @@ static void ipmanipulatorReleasePrestartPacketsNormal(tunnel_t *t, ipmanipulator
     if (slot == NULL)
     {
         return;
+    }
+
+    if (slot->kind == kIpManipulatorTlsCaptureKindSmuggleSni)
+    {
+        smugglesnitrickSetFlowPassthrough(t, slot->src_addr, slot->dst_addr, slot->src_port, slot->dst_port);
     }
 
     for (uint8_t i = 0; i < slot->captured_packets_count; ++i)
@@ -301,11 +319,79 @@ static void ipmanipulatorSchedulePrestartTimeout(tunnel_t *t, uint32_t slot_inde
                                       NULL);
 }
 
+void ipmanipulatorReleasePendingCaptureOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    discard arg3;
+
+    tunnel_t                                *t            = arg1;
+    ipmanipulator_tls_capture_timeout_msg_t *msg          = arg2;
+    ipmanipulator_tstate_t                  *state        = tunnelGetState(t);
+    ipmanipulator_tls_capture_slot_t         release_slot = {0};
+
+    mutexLock(&state->tls_capture_mutex);
+
+    if (msg->slot_index < state->tls_capture_slots_count)
+    {
+        ipmanipulator_tls_capture_slot_t *slot = &state->tls_capture_slots[msg->slot_index];
+
+        if (slot->active && slot->generation == msg->generation &&
+            getTickMS() - slot->last_update_ms >= kIpManipulatorTlsCaptureTimeoutMs)
+        {
+            ipmanipulatorTakeCapturedSlot(&release_slot, slot);
+        }
+    }
+
+    mutexUnlock(&state->tls_capture_mutex);
+
+    if (release_slot.active)
+    {
+        ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
+    }
+
+    memoryFree(msg);
+}
+
+static void ipmanipulatorCleanupPendingCaptureMessage(void *arg1, void *arg2, void *arg3)
+{
+    discard arg1;
+    discard arg3;
+
+    memoryFree(arg2);
+}
+
+static void ipmanipulatorScheduleCaptureTimeout(tunnel_t *t, uint32_t slot_index, uint32_t generation)
+{
+    if (getWorkersCount() == 0 || GSTATE.workers == NULL)
+    {
+        return;
+    }
+
+    ipmanipulator_tls_capture_timeout_msg_t *msg = memoryAllocate(sizeof(*msg));
+    *msg                                         = (ipmanipulator_tls_capture_timeout_msg_t) {
+                                                .slot_index = slot_index,
+                                                .generation = generation,
+    };
+
+    sendWorkerMessageTimedWithCleanup(getWID(),
+                                      (WorkerMessageCallback) ipmanipulatorReleasePendingCaptureOnWorker,
+                                      ipmanipulatorCleanupPendingCaptureMessage,
+                                      kIpManipulatorTlsCaptureTimeoutMs,
+                                      t,
+                                      msg,
+                                      NULL);
+}
+
 void ipmanipulatorReleaseCapturedPacketsNormal(tunnel_t *t, ipmanipulator_tls_capture_slot_t *slot)
 {
     if (slot == NULL)
     {
         return;
+    }
+
+    if (slot->kind == kIpManipulatorTlsCaptureKindSmuggleSni)
+    {
+        smugglesnitrickSetFlowPassthrough(t, slot->src_addr, slot->dst_addr, slot->src_port, slot->dst_port);
     }
 
     if (slot->assembled_packet != NULL)
@@ -329,6 +415,44 @@ void ipmanipulatorReleaseCapturedPacketsNormal(tunnel_t *t, ipmanipulator_tls_ca
 
     slot->captured_packets_count = 0;
     slot->active                 = false;
+}
+
+bool ipmanipulatorFlushMatchingCaptureSlot(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
+                                           uint16_t dst_port, ipmanipulator_tls_capture_kind_e kind)
+{
+    ipmanipulator_tstate_t          *state        = tunnelGetState(t);
+    ipmanipulator_tls_capture_slot_t release_slot = {0};
+
+    if (state->tls_capture_slots == NULL)
+    {
+        return false;
+    }
+
+    mutexLock(&state->tls_capture_mutex);
+
+    for (uint32_t i = 0; i < state->tls_capture_slots_count; ++i)
+    {
+        ipmanipulator_tls_capture_slot_t *slot = &state->tls_capture_slots[i];
+        if (slot->active && slot->kind == kind &&
+            ((slot->src_addr == src_addr && slot->dst_addr == dst_addr && slot->src_port == src_port &&
+              slot->dst_port == dst_port) ||
+             (slot->src_addr == dst_addr && slot->dst_addr == src_addr && slot->src_port == dst_port &&
+              slot->dst_port == src_port)))
+        {
+            ipmanipulatorTakeCapturedSlot(&release_slot, slot);
+            break;
+        }
+    }
+
+    mutexUnlock(&state->tls_capture_mutex);
+
+    if (release_slot.active)
+    {
+        ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
+        return true;
+    }
+
+    return false;
 }
 
 void ipmanipulatorDestroyCapturedTlsPackets(ipmanipulator_tls_capture_slot_t *slot)
@@ -499,15 +623,15 @@ static ipmanipulator_tls_clienthello_start_status_t ipmanipulatorInspectTlsClien
         return kIpManipulatorTlsClientHelloStartUnsupported;
     }
 
-    if (tls_record_total_len <= tcp.tcp_payload_len)
-    {
-        return kIpManipulatorTlsClientHelloStartComplete;
-    }
-
     *start = (ipmanipulator_tls_clienthello_start_t) {
         .tcp                  = tcp,
         .tls_record_total_len = tls_record_total_len,
     };
+
+    if (tls_record_total_len <= tcp.tcp_payload_len)
+    {
+        return kIpManipulatorTlsClientHelloStartComplete;
+    }
 
     return kIpManipulatorTlsClientHelloStartFragmented;
 }
@@ -1066,6 +1190,7 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(tunnel_t *
 
         if (appended)
         {
+            ipmanipulatorScheduleCaptureTimeout(t, (uint32_t) matched_index, slot->generation);
             mutexUnlock(&state->tls_capture_mutex);
 
             if (have_release)
@@ -1094,17 +1219,70 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(tunnel_t *
 
         ipmanipulatorReleaseCapturedPacketsNormal(t, out_slot);
         ipmanipulatorResetCapturedSlot(out_slot);
-        ipmanipulatorSendUpstreamFinal(t, l, buf);
+        ipmanipulatorScheduleCapturedPacketNormal(t, l, buf);
         return kIpManipulatorTlsCaptureStatusBypassed;
     }
 
     ipmanipulator_tls_clienthello_start_t        start = {0};
     ipmanipulator_tls_clienthello_start_status_t start_status =
         ipmanipulatorInspectTlsClientHelloStart((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &start);
+
+    if (start_status == kIpManipulatorTlsClientHelloStartComplete)
+    {
+        sbuf_t *assembled = ipmanipulatorCreateStandalonePacketBuffer(buf, start.tcp.ip_total_len);
+        if (assembled == NULL)
+        {
+            mutexUnlock(&state->tls_capture_mutex);
+
+            if (have_release)
+            {
+                ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
+            }
+            if (have_prestart_release)
+            {
+                ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
+            }
+
+            return kIpManipulatorTlsCaptureStatusMiss;
+        }
+
+        memoryCopyLarge(sbufGetMutablePtr(assembled), start.tcp.packet, start.tcp.ip_total_len);
+
+        out_slot->assembled_packet        = assembled;
+        out_slot->last_update_ms          = now_ms;
+        out_slot->next_seq                = start.tcp.seq + start.tcp.tcp_payload_len;
+        out_slot->tls_record_total_len    = start.tls_record_total_len;
+        out_slot->tls_record_captured_len = start.tls_record_total_len;
+        out_slot->captured_payload_len    = start.tcp.tcp_payload_len;
+        out_slot->src_addr                = start.tcp.src_addr;
+        out_slot->dst_addr                = start.tcp.dst_addr;
+        out_slot->src_port                = start.tcp.src_port;
+        out_slot->dst_port                = start.tcp.dst_port;
+        out_slot->ip_header_len           = start.tcp.ip_header_len;
+        out_slot->tcp_header_len          = start.tcp.tcp_header_len;
+        out_slot->headers_len             = start.tcp.headers_len;
+        out_slot->captured_packets_count  = 1;
+        out_slot->kind                    = kind;
+        out_slot->active                  = true;
+        out_slot->captured_packets[0]     = (ipmanipulator_captured_packet_t) {.line = l, .buf = buf};
+
+        mutexUnlock(&state->tls_capture_mutex);
+
+        if (have_release)
+        {
+            ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
+        }
+        if (have_prestart_release)
+        {
+            ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
+        }
+
+        return kIpManipulatorTlsCaptureStatusReady;
+    }
+
     if (start_status != kIpManipulatorTlsClientHelloStartFragmented)
     {
-        if (start_status == kIpManipulatorTlsClientHelloStartComplete ||
-            start_status == kIpManipulatorTlsClientHelloStartUnsupported)
+        if (start_status == kIpManipulatorTlsClientHelloStartUnsupported)
         {
             mutexUnlock(&state->tls_capture_mutex);
 
@@ -1420,6 +1598,7 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(tunnel_t *
         return kIpManipulatorTlsCaptureStatusReady;
     }
 
+    ipmanipulatorScheduleCaptureTimeout(t, (uint32_t) candidate_index, slot->generation);
     mutexUnlock(&state->tls_capture_mutex);
 
     if (have_release)
@@ -1488,67 +1667,20 @@ sbuf_t *clonePacketWithLength(line_t *l, sbuf_t *buf, uint32_t new_len)
     return clone;
 }
 
-bool parseClientHelloSni(const uint8_t *packet, uint32_t packet_length, sni_match_t *match)
+bool parseTlsRecordSni(const uint8_t *tls, uint32_t tls_len, sni_match_t *match)
 {
-    if (packet_length < sizeof(struct ip_hdr))
+    if (tls == NULL || tls_len < 9 || match == NULL)
     {
         return false;
     }
 
-    const struct ip_hdr *ipheader = (const struct ip_hdr *) packet;
-    if (IPH_V(ipheader) != 4 || IPH_PROTO(ipheader) != IPPROTO_TCP)
-    {
-        return false;
-    }
-
-    uint8_t ip_hdr_len_words = IPH_HL(ipheader);
-    if (ip_hdr_len_words < 5 || ip_hdr_len_words > 15)
-    {
-        LOGE("smugglesnitrick: invalid IP header length: %u", ip_hdr_len_words);
-        return false;
-    }
-
-    uint16_t iphdr_len = (uint16_t) (ip_hdr_len_words * 4);
-    if (packet_length < iphdr_len + sizeof(struct tcp_hdr))
-    {
-        return false;
-    }
-
-    uint16_t ip_total_len = lwip_ntohs(IPH_LEN(ipheader));
-    if (ip_total_len < iphdr_len + sizeof(struct tcp_hdr) || packet_length < ip_total_len)
-    {
-        return false;
-    }
-
-    uint16_t off_f = lwip_ntohs(IPH_OFFSET(ipheader));
-    if ((off_f & IP_OFFMASK) != 0)
-    {
-        return false;
-    }
-
-    const struct tcp_hdr *tcp_header        = (const struct tcp_hdr *) (packet + iphdr_len);
-    uint8_t               tcp_hdr_len_words = TCPH_HDRLEN(tcp_header);
-    if (tcp_hdr_len_words < 5 || tcp_hdr_len_words > 15)
-    {
-        LOGE("smugglesnitrick: invalid TCP header length: %u", tcp_hdr_len_words);
-        return false;
-    }
-
-    uint16_t tcphdr_len = (uint16_t) (tcp_hdr_len_words * 4);
-    if (ip_total_len < iphdr_len + tcphdr_len + 9)
-    {
-        return false;
-    }
-
-    const uint8_t *tls             = packet + iphdr_len + tcphdr_len;
-    uint16_t       tcp_payload_len = (uint16_t) (ip_total_len - iphdr_len - tcphdr_len);
     if (tls[0] != 0x16 || tls[1] != 0x03 || tls[2] > 0x03)
     {
         return false;
     }
 
     uint16_t tls_record_len = GET_BE16(tls + 3);
-    if ((uint32_t) tls_record_len + 5U > tcp_payload_len)
+    if ((uint32_t) tls_record_len + 5U > tls_len)
     {
         return false;
     }
@@ -1559,7 +1691,7 @@ bool parseClientHelloSni(const uint8_t *packet, uint32_t packet_length, sni_matc
     }
 
     uint32_t client_hello_len = GET_BE24(tls + 6);
-    if (client_hello_len < 34 || client_hello_len + 4U > tls_record_len)
+    if (client_hello_len < 34 || client_hello_len + 4U != (uint32_t) tls_record_len)
     {
         return false;
     }
@@ -1606,8 +1738,13 @@ bool parseClientHelloSni(const uint8_t *packet, uint32_t packet_length, sni_matc
     }
 
     const uint8_t *extensions_end = cursor + extensions_len;
-    bool           found_sni      = false;
-    bool           has_psk_binder = false;
+    if (extensions_end != hello_end)
+    {
+        return false;
+    }
+
+    bool found_sni      = false;
+    bool has_psk_binder = false;
 
     while (cursor + 4 <= extensions_end)
     {
@@ -1652,7 +1789,6 @@ bool parseClientHelloSni(const uint8_t *packet, uint32_t packet_length, sni_matc
                 if (name_type == 0x00)
                 {
                     *match = (sni_match_t) {
-                        .ip_total_len                      = ip_total_len,
                         .tls_record_len                    = tls_record_len,
                         .client_hello_len                  = client_hello_len,
                         .has_tls13_psk_binder              = false,
@@ -1660,13 +1796,13 @@ bool parseClientHelloSni(const uint8_t *packet, uint32_t packet_length, sni_matc
                         .server_name_list_len              = server_name_list_len,
                         .server_name_ext_len               = extension_len,
                         .sni_name_len                      = name_len,
-                        .sni_name_offset                   = (uint32_t) (name_data - packet),
-                        .sni_name_len_field_offset         = (uint32_t) ((server_name_cursor + 1) - packet),
-                        .extensions_len_field_offset       = (uint32_t) (extensions_len_field - packet),
-                        .server_name_list_len_field_offset = (uint32_t) (extension_data - packet),
-                        .server_name_ext_len_field_offset  = (uint32_t) ((cursor + 2) - packet),
-                        .tls_record_len_field_offset       = (uint32_t) ((tls + 3) - packet),
-                        .client_hello_len_field_offset     = (uint32_t) ((tls + 6) - packet),
+                        .sni_name_offset                   = (uint32_t) (name_data - tls),
+                        .sni_name_len_field_offset         = (uint32_t) ((server_name_cursor + 1) - tls),
+                        .extensions_len_field_offset       = (uint32_t) (extensions_len_field - tls),
+                        .server_name_list_len_field_offset = (uint32_t) (extension_data - tls),
+                        .server_name_ext_len_field_offset  = (uint32_t) ((cursor + 2) - tls),
+                        .tls_record_len_field_offset       = 3,
+                        .client_hello_len_field_offset     = 6,
                     };
                     found_sni = true;
                     break;
@@ -1674,19 +1810,18 @@ bool parseClientHelloSni(const uint8_t *packet, uint32_t packet_length, sni_matc
 
                 server_name_cursor = next_name;
             }
-
-            if (! found_sni)
-            {
-                return false;
-            }
         }
-
-        if (extension_type == 0x0029)
+        else if (extension_type == 0x0029)
         {
             has_psk_binder = true;
         }
 
         cursor = next_extension;
+    }
+
+    if (cursor != extensions_end)
+    {
+        return false;
     }
 
     if (! found_sni)
@@ -1695,6 +1830,30 @@ bool parseClientHelloSni(const uint8_t *packet, uint32_t packet_length, sni_matc
     }
 
     match->has_tls13_psk_binder = has_psk_binder;
+    return true;
+}
+
+bool parseClientHelloSni(const uint8_t *packet, uint32_t packet_length, sni_match_t *match)
+{
+    ipmanipulator_tcp_packet_info_t info = {0};
+    if (! ipmanipulatorParseTcpPacketInfo(packet, packet_length, &info))
+    {
+        return false;
+    }
+
+    if (! parseTlsRecordSni(packet + info.headers_len, info.tcp_payload_len, match))
+    {
+        return false;
+    }
+
+    match->ip_total_len = info.ip_total_len;
+    match->sni_name_offset += info.headers_len;
+    match->sni_name_len_field_offset += info.headers_len;
+    match->extensions_len_field_offset += info.headers_len;
+    match->server_name_list_len_field_offset += info.headers_len;
+    match->server_name_ext_len_field_offset += info.headers_len;
+    match->tls_record_len_field_offset += info.headers_len;
+    match->client_hello_len_field_offset += info.headers_len;
     return true;
 }
 

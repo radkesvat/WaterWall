@@ -830,7 +830,7 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         return NULL;
     }
 
-    if (state->trick_first_sni)
+    if (state->trick_first_sni || state->trick_smuggle_sni)
     {
         mutexInit(&state->tls_capture_mutex);
         state->tls_capture_slots_count = (uint32_t) getTotalWorkersCount() * kIpManipulatorTlsCaptureSlotsPerWorker;
@@ -839,7 +839,10 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         state->tls_prestart_slots_count = state->tls_capture_slots_count;
         state->tls_prestart_slots =
             memoryAllocateZero(sizeof(*state->tls_prestart_slots) * state->tls_prestart_slots_count);
+    }
 
+    if (state->trick_first_sni)
+    {
         uint32_t initial_flows = max(kIpManipulatorSmuggleInitialFlows, (uint32_t) getTotalWorkersCount() * 8U);
 
         mutexInit(&state->first_sni_flows_mutex);
