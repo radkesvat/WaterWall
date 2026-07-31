@@ -1,5 +1,5 @@
 <!--
-Documentation version: 114
+Documentation version: 115
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx, and both files must keep the same documentation version.
 -->
 
@@ -589,6 +589,11 @@ Behavior:
 - then forward the original packet using the original `line->recalculate_checksum` intent
 - when replay or final delays are configured, `IpManipulator` keeps a short shared flow record for that TCP 4-tuple and delays later upstream packets on the same flow so they cannot overtake the held original ClientHello
 
+Multi-segment capture starts only when the first segment contains a recognizable
+TLS ClientHello start. Unrelated or non-TLS TCP payloads fail open immediately;
+they are not held in a speculative prestart queue. Recognized in-order
+ClientHellos can still span multiple TCP segments.
+
 If `first-sni` is longer or shorter than the original SNI, the copied packet updates the relevant TLS and IPv4 length fields.
 
 If the ClientHello contains a TLS 1.3 `pre_shared_key` extension with PSK binders and the configured `first-sni` would actually change the SNI bytes, the trick skips crafting the fake packet and leaves the original packet path alone. `IpManipulator` does not own the PSK secret needed to recompute valid binders.
@@ -620,12 +625,18 @@ Behavior:
 - turn the copied packet into a pure `FIN|ACK` packet with no transport payload
 - mirror the TCP sequence and acknowledgement numbers from the original packet so the crafted packet looks like the reverse direction
 - send the crafted packet immediately through `real-fin-upstream-node`
-- pause this worker packet path inside `IpManipulator`
-- queue later upstream and downstream packets on that worker instead of forwarding them immediately
+- pause the flow on its owner worker inside `IpManipulator`
+- queue later upstream and downstream packets on that owner worker instead of forwarding them immediately, including matching reverse packets that arrive on another worker
 - ignore the first downstream packet that exactly matches the crafted `FIN|ACK`
 - wait `fin-sni-delay-ms`
 - replay the queued packets in arrival order through the normal pipeline
+- preserve each queued packet's checksum-recalculation intent independently
 - keep the remembered flow in the internal table after that success so the expected echoed `FIN|ACK` is not treated as a real connection-closing FIN event for this trick
+
+Upstream replay restarts at the upstream entry because `smuggle-fin` is the
+first upstream stage. Downstream replay resumes immediately after
+`smuggle-fin`, because protocol and port-ghost restoration already ran before
+the packet was queued and must not run twice.
 
 Packets without TCP payload, packets that are already `SYN`, `FIN`, or `RST`, and non-TCP or fragmented IPv4 packets are left alone.
 
@@ -677,9 +688,9 @@ When `source-port-ghost` and/or `dest-port-ghost` are enabled:
 
 - This tunnel is for raw packet chains, not normal byte-stream chains.
 - Only IPv4 packets are modified by the current implementation.
-- `first-sni` is upstream-only and rewrites the first TLS host-name entry in the crafted copy.
+- `first-sni` is upstream-only, rewrites the first TLS host-name entry in the crafted copy, and immediately fails open on traffic without a recognizable ClientHello start.
 - `smuggle-sni` is upstream-only and sends the real matching ClientHello immediately to `real-sni-upstream-node`, then delays the crafted `smuggle-sni` copy to the normal `next` branch.
-- `smuggle-fin` is upstream-only and injects a crafted mirrored FIN/ACK packet to `real-fin-upstream-node`, then temporarily queues later packets on that worker until the expected downstream echo is seen and the optional `fin-sni-delay-ms` window expires.
+- `smuggle-fin` is upstream-only and injects a crafted mirrored FIN/ACK packet to `real-fin-upstream-node`, then temporarily queues later packets on the flow-owner worker until the expected downstream echo is seen and the optional `fin-sni-delay-ms` window expires.
 - `sni-blender` is upstream-only. The downstream half of that trick is currently a no-op.
 - The tunnel relies on later packet-writing code to honor `line->recalculate_checksum` and rebuild packet checksums.
 - `sni-blender-packets` is required when `sni-blender` is enabled.
