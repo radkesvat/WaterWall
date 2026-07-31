@@ -1,5 +1,5 @@
 <!--
-Documentation version: 110
+Documentation version: 113
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx, and both files must keep the same documentation version.
 -->
 
@@ -137,6 +137,11 @@ If none of the supported trick settings are present, tunnel creation fails with:
 
 - `protoswap-udp` `(integer)`
   Replacement IP protocol number for UDP packets.
+
+Replacement values must not be the literal TCP (`6`) or UDP (`17`) protocol
+numbers, even when only one family is configured, because genuine traffic using
+the reused number could not be distinguished from mapped traffic. When both
+families are enabled, their configured replacement values must also be distinct.
 
 ### SNI blender settings
 
@@ -524,17 +529,26 @@ The protocol-swap trick only applies to IPv4 packets.
 Behavior:
 
 - if the packet protocol is TCP and `protoswap-tcp` is enabled, the tunnel rewrites the IP protocol field to the configured protocol number
-- if the packet protocol is already equal to that configured number, it rewrites it back to normal TCP
+- on downstream, a packet already equal to that configured number is restored to normal TCP
 - the same idea applies to `protoswap-udp`
-- the configured protocol number may be another real protocol such as `17` for UDP or `6` for TCP, so configuring
-  `protoswap-tcp=17` and `protoswap-udp=6` swaps TCP and UDP protocol numbers in one pass
+- no replacement value may equal literal TCP (`6`) or UDP (`17`)
+- configured TCP and UDP replacement values must remain distinct
+- an upstream packet already carrying this node's configured replacement is
+  treated as wrapped by an earlier `IpManipulator`; this node restores the real
+  protocol, completes checksum work, and forwards it unmapped
+- to keep a packet wrapped past a later node, do not enable the same protocol
+  swap on that node
 
 If `protoswap-tcp-2` is configured:
 
 - TCP packets alternate between `protoswap-tcp` and `protoswap-tcp-2`
 - upstream and downstream maintain their own toggle state
 
-Whenever the tunnel changes the protocol field, it recalculates only the IPv4 header checksum with `calcIpv4HeaderChecksum()`. Transport bytes and transport checksums remain untouched, and protocol swap does not create or clear a full-recalculation request.
+Upstream tricks run while the packet still carries its real protocol number.
+Immediately before normal egress, `IpManipulator` applies port ghost, completes
+the IPv4 and transport checksums using that real protocol, swaps the protocol
+number, and repairs the IPv4 header checksum. Downstream restores the protocol
+before port-ghost restoration or any TCP/TLS trick parses the packet.
 
 ### SNI blender
 
@@ -655,6 +669,11 @@ When `source-port-ghost` and/or `dest-port-ghost` are enabled:
 - UDP length is also increased when the packet is UDP
 - `line->recalculate_checksum` is set so a later packet writer rebuilds checksums
 - fragmented IPv4 packets are skipped
+- oversized crafted TCP packets are segmented before port ghost is applied, so
+  every emitted segment carries exactly one trailer and remains within
+  `GLOBAL_MTU_SIZE`
+- dedicated real-SNI, mirrored-FIN, and overlap-SNI server-hello helper branches
+  preserve their original tuples and do not receive a port-ghost trailer
 
 ## Notes And Caveats
 
