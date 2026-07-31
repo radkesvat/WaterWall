@@ -914,6 +914,28 @@ if(TARGET TlsClient)
     "unit;tunnels;tlsclient;configuration;alpn"
   )
 
+  add_executable(tlsclient_hostname_verification_test tlsclient_hostname_verification_test.c)
+  target_include_directories(tlsclient_hostname_verification_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include
+  )
+  target_include_directories(tlsclient_hostname_verification_test BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
+    ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
+  )
+  target_compile_definitions(tlsclient_hostname_verification_test PRIVATE
+    BORINGSSL_PREFIX=WW_BSSL
+    TLSCLIENT_TEST_CERT_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.crt"
+    TLSCLIENT_TEST_KEY_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.key"
+  )
+  target_link_libraries(tlsclient_hostname_verification_test PRIVATE TlsClient ww ssl crypto)
+  add_dependencies(waterwall_unit_tests tlsclient_hostname_verification_test)
+
+  add_waterwall_unit_test(
+    waterwall.tlsclient_hostname_verification_unit
+    tlsclient_hostname_verification_test
+    "unit;tunnels;tlsclient;certificate;hostname"
+  )
+
   add_executable(tlsclient_close_lifecycle_test tlsclient_close_lifecycle_test.c)
   target_include_directories(tlsclient_close_lifecycle_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include

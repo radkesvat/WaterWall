@@ -546,6 +546,21 @@ bool tlsclientConfigureSslForConnect(SSL *ssl, BIO *rbio, BIO *wbio, const char 
         return false;
     }
 
+    const int verify_mode = SSL_get_verify_mode(ssl);
+    if (verify_mode < 0)
+    {
+        return false;
+    }
+
+    if ((verify_mode & SSL_VERIFY_PEER) != 0)
+    {
+        SSL_set_hostflags(ssl, X509_CHECK_FLAG_NEVER_CHECK_SUBJECT);
+        if (SSL_set1_host(ssl, sni) != 1)
+        {
+            return false;
+        }
+    }
+
     if (ech_grease_override_payload != NULL && ech_grease_override_payload_len > 0)
     {
         if (SSL_set1_ech_grease_override_payload(
