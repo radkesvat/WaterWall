@@ -1,5 +1,5 @@
 <!--
-Documentation version: 115
+Documentation version: 116
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TlsClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -72,15 +72,15 @@ That arrangement lets:
 - `sni` `(string)`
   Required TLS server name indication.
 
-  The current implementation rejects missing or empty `sni`.
+  The value must contain between 1 and 255 bytes.
 
 ## Optional `settings` Fields
 
 - `alpns` `(array of strings, default: ["h2", "http/1.1"])`
   Ordered ALPN protocol offer. The order written in JSON is preserved in the TLS ClientHello.
 
-  Each protocol name must contain between 1 and 255 bytes, and duplicate names are rejected. An empty array disables
-  ALPN. The singular key `alpn` is not supported.
+  Each protocol name must contain between 1 and 255 bytes, duplicate names are rejected, and the encoded list may not
+  exceed 65,533 bytes. An empty array disables ALPN. The singular key `alpn` is not supported.
 
 - `verify` `(boolean, default: true)`
   Controls whether BoringSSL verifies the peer certificate chain.
@@ -129,6 +129,7 @@ Accepted request format:
 
 Important note:
 
+- the API SNI must contain between 1 and 255 bytes
 - the API follows the tunnel's configured `settings.alpns` order
 - the API follows the tunnel's `settings.x25519mlkem768` value
 - if that setting is disabled, the generated ClientHello is smaller but less Chrome-like
@@ -628,7 +629,7 @@ That is the complete pattern this repository uses.
 of `TlsClient`. Use it only when a deployment deliberately coordinates TLS ClientHello construction with compatible
 packet-level manipulation.
 
-The optional `ech-sni-trick` setting accepts a non-empty hostname string:
+The optional `ech-sni-trick` setting accepts a hostname string containing between 1 and 255 bytes:
 
 ```json
 "ech-sni-trick": "example.net"
@@ -641,5 +642,5 @@ The embedded fake ClientHello uses the configured `alpns` list in the same order
 the payload smaller. This behavior is intended to coordinate with packet-side mechanisms such as `IpManipulator`'s
 packet-splitting trick, keeping the ClientHello bytes hashed by BoringSSL consistent with the bytes placed on the wire.
 
-The value must be a non-empty JSON string; an empty value or another JSON type is a startup error. The raw ClientHello
-generation API also applies this setting when it is configured.
+The value must be a JSON string containing between 1 and 255 bytes; a value outside that range or another JSON type is a
+startup error. The raw ClientHello generation API also applies this setting when it is configured.

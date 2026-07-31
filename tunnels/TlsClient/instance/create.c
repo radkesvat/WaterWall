@@ -31,11 +31,19 @@ static void configureTunnelCallbacks(tunnel_t *t)
 
 static bool getandvalidateSniSetting(tlsclient_tstate_t *ts, const cJSON *settings)
 {
-    if (! getStringFromJsonObject(&(ts->sni), settings, "sni") || stringLength(ts->sni) == 0)
+    if (! getStringFromJsonObject(&(ts->sni), settings, "sni"))
     {
         LOGF("JSON Error: OpenSSLClient->settings->sni (string field) : The data was empty or invalid");
         return false;
     }
+
+    const size_t sni_len = stringLength(ts->sni);
+    if (sni_len == 0 || sni_len > kTlsClientMaxSniLength)
+    {
+        LOGF("TlsClient: 'sni' must contain between 1 and %u bytes", (unsigned int) kTlsClientMaxSniLength);
+        return false;
+    }
+
     return true;
 }
 
@@ -91,13 +99,14 @@ bool tlsclientParseAlpnSetting(tlsclient_tstate_t *ts, const cJSON *settings)
             }
         }
 
-        if (wire_len > UINT16_MAX - (1 + name_len))
+        const size_t entry_len = 1 + name_len;
+        if (entry_len > kTlsClientMaxAlpnWireLength - wire_len)
         {
             LOGF("JSON Error: TlsClient->settings->alpns is too large for a TLS ALPN protocol list");
             return false;
         }
 
-        wire_len += 1 + name_len;
+        wire_len += entry_len;
         ++index;
     }
 
@@ -161,6 +170,12 @@ static bool getAndValidateEchGreaseSniOverrideSetting(tlsclient_tstate_t *ts, co
     if (override_len == 0)
     {
         LOGF("TlsClient: 'ech-sni-trick' must be a non-empty string");
+        return false;
+    }
+
+    if (override_len > kTlsClientMaxSniLength)
+    {
+        LOGF("TlsClient: 'ech-sni-trick' must contain between 1 and %u bytes", (unsigned int) kTlsClientMaxSniLength);
         return false;
     }
 

@@ -17,7 +17,7 @@ api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message)
 
     const uint32_t sni_len = msg_len - prefix_len;
 
-    if (sni_len == 0)
+    if (sni_len == 0 || sni_len > kTlsClientMaxSniLength)
     {
         bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), message);
         return (api_result_t) {.result_code = kApiResultError};

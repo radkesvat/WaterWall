@@ -5,6 +5,24 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+enum
+{
+    kTestLargeBufferSize   = 32768,
+    kTestSmallBufferSize   = 1024,
+    kTestBufferLeftPadding = 96,
+    kTestLargeAlpnWireSize = 40000,
+};
+
+typedef struct tlsclient_test_worker_env_s
+{
+    uint32_t        saved_workers_count;
+    buffer_pool_t **saved_buffer_pools;
+    master_pool_t  *large_master;
+    master_pool_t  *small_master;
+    buffer_pool_t  *pool;
+    buffer_pool_t  *buffer_pools[1];
+} tlsclient_test_worker_env_t;
+
 static void require(bool condition, const char *message)
 {
     if (! condition)
@@ -19,6 +37,37 @@ static cJSON *parseSettings(const char *text)
     cJSON *settings = cJSON_Parse(text);
     require(settings != NULL && cJSON_IsObject(settings), "failed to parse ALPN test settings");
     return settings;
+}
+
+static void workerEnvSetup(tlsclient_test_worker_env_t *env)
+{
+    memoryZero(env, sizeof(*env));
+    env->saved_workers_count = GSTATE.workers_count;
+    env->saved_buffer_pools  = GSTATE.shortcut_buffer_pools;
+
+    env->large_master = masterpoolCreateWithCapacity(8);
+    env->small_master = masterpoolCreateWithCapacity(8);
+    require(env->large_master != NULL && env->small_master != NULL, "failed to create ClientHello test master pools");
+
+    env->pool = bufferpoolCreate(env->large_master, env->small_master, 4, kTestLargeBufferSize, kTestSmallBufferSize);
+    require(env->pool != NULL, "failed to create ClientHello test buffer pool");
+    bufferpoolUpdateAllocationPaddings(env->pool, kTestBufferLeftPadding, kTestBufferLeftPadding);
+
+    env->buffer_pools[0]         = env->pool;
+    GSTATE.shortcut_buffer_pools = env->buffer_pools;
+    GSTATE.workers_count         = 2;
+}
+
+static void workerEnvTeardown(tlsclient_test_worker_env_t *env)
+{
+    GSTATE.shortcut_buffer_pools = env->saved_buffer_pools;
+    GSTATE.workers_count         = env->saved_workers_count;
+
+    bufferpoolDestroy(env->pool);
+    masterpoolMakeEmpty(env->large_master);
+    masterpoolMakeEmpty(env->small_master);
+    masterpoolDestroy(env->large_master);
+    masterpoolDestroy(env->small_master);
 }
 
 static void requireWire(const tlsclient_tstate_t *ts, const uint8_t *expected, size_t expected_len,
@@ -102,6 +151,213 @@ static void testInvalidListsAreRejected(void)
 
         cJSON_Delete(settings);
     }
+}
+
+static cJSON *createAlpnSettingsWithWireLength(size_t wire_len)
+{
+    cJSON *settings = cJSON_CreateObject();
+    cJSON *alpns    = cJSON_AddArrayToObject(settings, "alpns");
+    require(settings != NULL && alpns != NULL, "failed to create ALPN boundary settings");
+
+    int index = 0;
+    while (wire_len > 0)
+    {
+        require(wire_len > 1, "ALPN boundary test requested an unrepresentable wire length");
+
+        const size_t entry_len = wire_len > UINT8_MAX + 1U ? UINT8_MAX + 1U : wire_len;
+        const size_t name_len  = entry_len - 1U;
+        char         name[UINT8_MAX + 1U];
+
+        int prefix_len = snprintf(name, name_len + 1U, "protocol-%03d-", index);
+        require(prefix_len > 0 && (size_t) prefix_len < name_len, "failed to create a unique ALPN boundary protocol");
+        memorySet(name + prefix_len, 'x', name_len - (size_t) prefix_len);
+        name[name_len] = '\0';
+
+        require(cJSON_AddItemToArray(alpns, cJSON_CreateString(name)), "failed to append an ALPN boundary protocol");
+
+        wire_len -= entry_len;
+        ++index;
+    }
+
+    return settings;
+}
+
+static void testTotalWireLengthBounds(void)
+{
+    cJSON             *settings = createAlpnSettingsWithWireLength(kTlsClientMaxAlpnWireLength);
+    tlsclient_tstate_t ts       = {0};
+
+    require(tlsclientParseAlpnSetting(&ts, settings), "maximum encodable ALPN wire list was rejected");
+    require(ts.alpn_wire_len == kTlsClientMaxAlpnWireLength, "maximum encodable ALPN wire list changed length");
+    releaseParsedAlpns(&ts);
+    cJSON_Delete(settings);
+
+    settings = createAlpnSettingsWithWireLength(kTlsClientMaxAlpnWireLength + 1U);
+    require(! tlsclientParseAlpnSetting(&ts, settings), "oversized ALPN wire list was accepted");
+    require(ts.alpn_wire == NULL && ts.alpn_wire_len == 0, "oversized ALPN wire list left allocated state behind");
+    cJSON_Delete(settings);
+}
+
+static void fillServerName(char *sni, size_t length)
+{
+    memorySet(sni, 'a', length);
+    sni[length] = '\0';
+}
+
+static cJSON *createTlsSettings(const char *sni, const char *ech_sni)
+{
+    cJSON *settings = cJSON_CreateObject();
+    require(settings != NULL && cJSON_AddStringToObject(settings, "sni", sni) != NULL &&
+                cJSON_AddBoolToObject(settings, "verify", false) != NULL &&
+                cJSON_AddBoolToObject(settings, "x25519mlkem768", false) != NULL,
+            "failed to create TlsClient boundary settings");
+
+    if (ech_sni != NULL)
+    {
+        require(cJSON_AddStringToObject(settings, "ech-sni-trick", ech_sni) != NULL,
+                "failed to create ECH SNI boundary setting");
+    }
+
+    return settings;
+}
+
+static tunnel_t *createTlsClientFromSettings(node_t *node, cJSON *settings)
+{
+    *node = (node_t) {.node_settings_json = settings};
+    return tlsclientTunnelCreate(node);
+}
+
+static void testConfiguredSniLengthBounds(void)
+{
+    const uint32_t saved_workers_count = GSTATE.workers_count;
+    char           maximum_sni[kTlsClientMaxSniLength + 1U];
+    char           oversized_sni[kTlsClientMaxSniLength + 2U];
+
+    GSTATE.workers_count = 2;
+    fillServerName(maximum_sni, kTlsClientMaxSniLength);
+    fillServerName(oversized_sni, kTlsClientMaxSniLength + 1U);
+
+    node_t    node     = {0};
+    cJSON    *settings = createTlsSettings(maximum_sni, NULL);
+    tunnel_t *tunnel   = createTlsClientFromSettings(&node, settings);
+    require(tunnel != NULL, "maximum-length TlsClient SNI was rejected");
+    tlsclientTunnelDestroy(tunnel);
+    cJSON_Delete(settings);
+
+    settings = createTlsSettings(oversized_sni, NULL);
+    require(createTlsClientFromSettings(&node, settings) == NULL, "oversized TlsClient SNI was accepted");
+    cJSON_Delete(settings);
+
+    settings = createTlsSettings("example.com", oversized_sni);
+    require(createTlsClientFromSettings(&node, settings) == NULL, "oversized TlsClient ECH SNI was accepted");
+    cJSON_Delete(settings);
+
+    GSTATE.workers_count = saved_workers_count;
+}
+
+static bool tlsFlightIsComplete(const sbuf_t *flight)
+{
+    const uint8_t *bytes   = (const uint8_t *) sbufGetRawPtr(flight);
+    const size_t   length  = sbufGetLength(flight);
+    size_t         offset  = 0;
+    uint32_t       records = 0;
+
+    while (offset < length)
+    {
+        if (length - offset < SSL3_RT_HEADER_LENGTH)
+        {
+            return false;
+        }
+
+        const size_t body_len   = ((size_t) bytes[offset + 3U] << 8U) | bytes[offset + 4U];
+        const size_t record_len = SSL3_RT_HEADER_LENGTH + body_len;
+        if (record_len > length - offset)
+        {
+            return false;
+        }
+
+        offset += record_len;
+        ++records;
+    }
+
+    return records > 0;
+}
+
+static void testGeneratedLargeClientHelloIsComplete(void)
+{
+    tlsclient_test_worker_env_t env;
+    workerEnvSetup(&env);
+
+    uint8_t *alpn_wire = memoryAllocate(kTestLargeAlpnWireSize);
+    for (size_t offset = 0; offset < kTestLargeAlpnWireSize; offset += 2U)
+    {
+        alpn_wire[offset]      = 1;
+        alpn_wire[offset + 1U] = (uint8_t) ('a' + ((offset / 2U) % 26U));
+    }
+
+    SSL_CTX *ssl_ctx = SSL_CTX_new(TLS_client_method());
+    require(ssl_ctx != NULL && SSL_CTX_set_alpn_protos(ssl_ctx, alpn_wire, kTestLargeAlpnWireSize) == 0,
+            "failed to configure the large-ClientHello SSL context");
+
+    sbuf_t *hello = NULL;
+    require(tlsclientCreateClientHelloFromContext(
+                ssl_ctx, "example.com", NULL, 0, alpn_wire, kTestLargeAlpnWireSize, &hello),
+            "failed to generate a large ClientHello");
+    require(hello != NULL && sbufGetLength(hello) > kTestLargeBufferSize,
+            "large ClientHello did not exceed the worker buffer");
+    require(sbufGetLeftPadding(hello) == kTestBufferLeftPadding,
+            "generated ClientHello did not preserve worker-buffer padding");
+    require(tlsFlightIsComplete(hello), "generated ClientHello contains a truncated TLS record");
+
+    bufferpoolReuseBuffer(env.pool, hello);
+    SSL_CTX_free(ssl_ctx);
+    memoryFree(alpn_wire);
+    workerEnvTeardown(&env);
+}
+
+static sbuf_t *createGenerateRequest(buffer_pool_t *pool, const char *sni, size_t sni_len)
+{
+    static const char kPrefix[] = "generateTlsHello:";
+
+    sbuf_t      *request = bufferpoolGetLargeBuffer(pool);
+    const size_t length  = sizeof(kPrefix) - 1U + sni_len;
+    require(length <= sbufGetMaximumWriteableSize(request), "ClientHello API test request exceeds its buffer");
+
+    memoryCopy(sbufGetMutablePtr(request), kPrefix, sizeof(kPrefix) - 1U);
+    memoryCopy(sbufGetMutablePtr(request) + sizeof(kPrefix) - 1U, sni, sni_len);
+    sbufSetLength(request, (uint32_t) length);
+    return request;
+}
+
+static void testApiSniLengthBounds(void)
+{
+    tlsclient_test_worker_env_t env;
+    workerEnvSetup(&env);
+
+    node_t    node     = {0};
+    cJSON    *settings = createTlsSettings("example.com", NULL);
+    tunnel_t *tunnel   = createTlsClientFromSettings(&node, settings);
+    require(tunnel != NULL, "failed to create TlsClient for API SNI boundary test");
+
+    char maximum_sni[kTlsClientMaxSniLength + 1U];
+    char oversized_sni[kTlsClientMaxSniLength + 2U];
+    fillServerName(maximum_sni, kTlsClientMaxSniLength);
+    fillServerName(oversized_sni, kTlsClientMaxSniLength + 1U);
+
+    api_result_t result =
+        tlsclientTunnelApi(tunnel, createGenerateRequest(env.pool, maximum_sni, kTlsClientMaxSniLength));
+    require(result.result_code == kApiResultOk && result.buffer != NULL,
+            "ClientHello API rejected a maximum-length SNI");
+    require(tlsFlightIsComplete(result.buffer), "ClientHello API returned an incomplete TLS flight");
+    bufferpoolReuseBuffer(env.pool, result.buffer);
+
+    result = tlsclientTunnelApi(tunnel, createGenerateRequest(env.pool, oversized_sni, kTlsClientMaxSniLength + 1U));
+    require(result.result_code == kApiResultError && result.buffer == NULL,
+            "ClientHello API accepted an oversized SNI");
+
+    tlsclientTunnelDestroy(tunnel);
+    cJSON_Delete(settings);
+    workerEnvTeardown(&env);
 }
 
 static int selectHttp11(SSL *ssl, const uint8_t **out, uint8_t *out_len, const uint8_t *in,
@@ -279,6 +535,10 @@ int main(void)
     testConfiguredOrder();
     testEmptyListDisablesAlpn();
     testInvalidListsAreRejected();
+    testTotalWireLengthBounds();
+    testConfiguredSniLengthBounds();
+    testGeneratedLargeClientHelloIsComplete();
+    testApiSniLengthBounds();
     testHttp11Negotiation();
     return 0;
 }

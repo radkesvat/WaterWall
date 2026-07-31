@@ -62,6 +62,9 @@ enum tlsclient_record_e
 {
     kTlsClientRecordHeaderSize = SSL3_RT_HEADER_LENGTH,
     kTlsClientMaxRecordBody    = SSL3_RT_MAX_ENCRYPTED_LENGTH,
+    kTlsClientMaxSniLength     = TLSEXT_MAXLEN_host_name,
+    // The ALPN extension body also contains a two-byte ProtocolNameList length.
+    kTlsClientMaxAlpnWireLength = UINT16_MAX - 2U,
 };
 
 static enum sslstatus getSslStatus(SSL *ssl, int n)

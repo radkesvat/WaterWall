@@ -49,6 +49,51 @@ void tlsclientPrintSSLErrorAndAbort(void)
     abort();
 }
 
+static bool tlsclientDrainBioToBuffer(buffer_pool_t *pool, BIO *bio, sbuf_t **out)
+{
+    assert(pool != NULL && bio != NULL && out != NULL);
+    *out = NULL;
+
+    const size_t pending = BIO_ctrl_pending(bio);
+    if (pending == 0)
+    {
+        return true;
+    }
+
+    const uint16_t padding  = bufferpoolGetLargeBufferPadding(pool);
+    uint32_t       capacity = 0;
+    if (pending > INT_MAX || ! sbufTryComputeCapacity(pending, padding, &capacity))
+    {
+        return false;
+    }
+    discard capacity;
+
+    sbuf_t *buf = bufferpoolGetLargeBuffer(pool);
+    buf         = sbufReserveSpace(buf, (uint32_t) pending);
+
+    size_t offset = 0;
+    while (offset < pending)
+    {
+        const int n = BIO_read(bio, sbufGetMutablePtr(buf) + offset, (int) (pending - offset));
+        if (n <= 0)
+        {
+            bufferpoolReuseBuffer(pool, buf);
+            return false;
+        }
+        offset += (size_t) n;
+    }
+
+    if (BIO_ctrl_pending(bio) != 0)
+    {
+        bufferpoolReuseBuffer(pool, buf);
+        return false;
+    }
+
+    sbufSetLength(buf, (uint32_t) pending);
+    *out = buf;
+    return true;
+}
+
 static bool tlsclientDrainPendingRawBytes(line_t *l, BIO *bio, sbuf_t **pending_raw)
 {
     if (pending_raw != NULL)
@@ -61,29 +106,7 @@ static bool tlsclientDrainPendingRawBytes(line_t *l, BIO *bio, sbuf_t **pending_
         return true;
     }
 
-    size_t pending = BIO_ctrl_pending(bio);
-    if (pending == 0)
-    {
-        return true;
-    }
-
-    if (pending > UINT32_MAX)
-    {
-        return false;
-    }
-
-    sbuf_t *buf = sbufCreateWithPadding((uint32_t) pending, bufferpoolGetLargeBufferPadding(lineGetBufferPool(l)));
-    sbufSetLength(buf, (uint32_t) pending);
-
-    int n = BIO_read(bio, sbufGetMutablePtr(buf), (int) pending);
-    if (n != (int) pending)
-    {
-        lineReuseBuffer(l, buf);
-        return false;
-    }
-
-    *pending_raw = buf;
-    return true;
+    return tlsclientDrainBioToBuffer(lineGetBufferPool(l), bio, pending_raw);
 }
 
 static bool tlsclientRecordHeader(const uint8_t header[kTlsClientRecordHeaderSize], size_t *record_len)
@@ -585,6 +608,12 @@ bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
 
     *out = NULL;
 
+    const size_t sni_len = stringLength(sni);
+    if (sni_len == 0 || sni_len > kTlsClientMaxSniLength)
+    {
+        return false;
+    }
+
     wid_t wid = getWID();
 
     if (wid >= getWorkersCount())
@@ -616,27 +645,9 @@ bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
         return false;
     }
 
-    sbuf_t *buf   = bufferpoolGetLargeBuffer(getWorkerBufferPool(wid));
-    int     avail = (int) sbufGetMaximumWriteableSize(buf);
-
-    while (true)
-    {
-        n = BIO_read(ls->wbio, sbufGetMutablePtr(buf), avail);
-        if (n > 0)
-        {
-            sbufSetLength(buf, n);
-            tlsclientLinestateDestroy(ls);
-            *out = buf;
-            return true;
-        }
-
-        if (! BIO_should_retry(ls->wbio))
-        {
-            bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
-            tlsclientLinestateDestroy(ls);
-            return false;
-        }
-    }
+    const bool drained = tlsclientDrainBioToBuffer(getWorkerBufferPool(wid), ls->wbio, out);
+    tlsclientLinestateDestroy(ls);
+    return drained && *out != NULL;
 }
 
 bool tlsclientCreateEchGreaseInnerClientHello(tlsclient_tstate_t *ts, wid_t wid, sbuf_t **out)
