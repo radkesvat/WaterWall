@@ -15,17 +15,6 @@ struct tlsrecordshaping_output_node_s
     uint64_t                        release_at_ms;
 };
 
-static bool setError(char error[kTlsRecordShapingErrorSize], const char *format, ...)
-{
-    if (error != NULL)
-    {
-        va_list args;
-        va_start(args, format);
-        vsnprintf(error, kTlsRecordShapingErrorSize, format, args);
-        va_end(args);
-    }
-    return false;
-}
 
 void tlsrecordshapingOutputQueueInitialize(tlsrecordshaping_output_queue_t *queue, buffer_pool_t *pool)
 {
@@ -144,7 +133,7 @@ static bool parseRecordLength(tlsrecordshaping_output_queue_t *queue, size_t *re
     if (header[0] != 0x17 || header[1] != 0x03 || header[2] != 0x03 || body_length == 0 ||
         body_length > kTlsRecordShapingMaxRecordBody)
     {
-        return setError(error,
+        return tlsrecordshapingSetError(error,
                         "outgoing TLS 1.3 record framing mismatch (type=%u version=%02x%02x length=%u)",
                         (unsigned int) header[0],
                         (unsigned int) header[1],
@@ -199,7 +188,7 @@ bool tlsrecordshapingOutputQueueFeed(tlsrecordshaping_output_queue_t *queue, sbu
         {
             reuseBuffer(ciphertext);
         }
-        return setError(error, "invalid outgoing TLS record queue input");
+        return tlsrecordshapingSetError(error, "invalid outgoing TLS record queue input");
     }
 
     bufferstreamPush(&queue->ciphertext_stream, ciphertext);
@@ -218,7 +207,7 @@ bool tlsrecordshapingOutputQueueFeed(tlsrecordshaping_output_queue_t *queue, sbu
         tlsrecordshaping_metadata_node_t *metadata = popMetadata(queue);
         if (metadata == NULL)
         {
-            return setError(error, "outgoing TLS record has no matching shaping decision");
+            return tlsrecordshapingSetError(error, "outgoing TLS record has no matching shaping decision");
         }
 
         uint64_t release_at = now_ms + metadata->delay_ms;
@@ -244,19 +233,19 @@ bool tlsrecordshapingOutputQueueFinishFeed(const tlsrecordshaping_output_queue_t
 {
     if (queue == NULL || ! queue->initialized)
     {
-        return setError(error, "outgoing TLS record queue is not initialized");
+        return tlsrecordshapingSetError(error, "outgoing TLS record queue is not initialized");
     }
     if (bufferstreamGetBufLen((buffer_stream_t *) &queue->ciphertext_stream) != 0)
     {
-        return setError(error, "outgoing TLS write BIO ended with a partial record");
+        return tlsrecordshapingSetError(error, "outgoing TLS write BIO ended with a partial record");
     }
     if (queue->metadata_count != 0)
     {
-        return setError(error, "shaping decision has no matching outgoing TLS record");
+        return tlsrecordshapingSetError(error, "shaping decision has no matching outgoing TLS record");
     }
     if (queue->pending_metadata_count != 0)
     {
-        return setError(error, "padding callback decision has no matching outgoing TLS record header");
+        return tlsrecordshapingSetError(error, "padding callback decision has no matching outgoing TLS record header");
     }
     return true;
 }

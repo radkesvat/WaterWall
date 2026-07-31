@@ -116,3 +116,15 @@ bool    tlsrecordshapingOutputQueueNextDelay(const tlsrecordshaping_output_queue
 size_t  tlsrecordshapingOutputQueueBytes(const tlsrecordshaping_output_queue_t *queue);
 size_t  tlsrecordshapingOutputQueueCount(const tlsrecordshaping_output_queue_t *queue);
 bool    tlsrecordshapingOutputQueueIsEmpty(const tlsrecordshaping_output_queue_t *queue);
+
+static bool tlsrecordshapingSetError(char error[kTlsRecordShapingErrorSize], const char *format, ...)
+{
+    if (error != NULL)
+    {
+        va_list args;
+        va_start(args, format);
+        vsnprintf(error, kTlsRecordShapingErrorSize, format, args);
+        va_end(args);
+    }
+    return false;
+}

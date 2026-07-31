@@ -2,17 +2,7 @@
 
 #include <stdarg.h>
 
-static bool setError(char error[kTlsRecordShapingErrorSize], const char *format, ...)
-{
-    if (error != NULL)
-    {
-        va_list args;
-        va_start(args, format);
-        vsnprintf(error, kTlsRecordShapingErrorSize, format, args);
-        va_end(args);
-    }
-    return false;
-}
+
 
 static bool keyIsOneOf(const char *key, const char *const *allowed, size_t allowed_count)
 {
@@ -34,7 +24,7 @@ static bool rejectUnknownKeys(const cJSON *object, const char *path, const char 
     {
         if (item->string == NULL || ! keyIsOneOf(item->string, allowed, allowed_count))
         {
-            return setError(
+            return tlsrecordshapingSetError(
                 error, "%s contains unknown key \"%s\"", path, item->string != NULL ? item->string : "<null>");
         }
     }
@@ -54,7 +44,7 @@ static bool parseRange(const cJSON *item, uint32_t minimum, uint32_t maximum, co
 
     if (! cJSON_IsArray(item) || cJSON_GetArraySize(item) != 2)
     {
-        return setError(error,
+        return tlsrecordshapingSetError(error,
                         "%s must be an integer or a two-integer range [%u, %u]",
                         path,
                         (unsigned int) minimum,
@@ -66,12 +56,12 @@ static bool parseRange(const cJSON *item, uint32_t minimum, uint32_t maximum, co
     if (! jsonGetIntegerInRange(cJSON_GetArrayItem(item, 0), minimum, maximum, &lower) ||
         ! jsonGetIntegerInRange(cJSON_GetArrayItem(item, 1), minimum, maximum, &upper))
     {
-        return setError(
+        return tlsrecordshapingSetError(
             error, "%s values must be integers in [%u, %u]", path, (unsigned int) minimum, (unsigned int) maximum);
     }
     if (lower > upper)
     {
-        return setError(error, "%s minimum must not exceed its maximum", path);
+        return tlsrecordshapingSetError(error, "%s minimum must not exceed its maximum", path);
     }
 
     range->minimum = (uint32_t) lower;
@@ -88,13 +78,13 @@ static bool parseDelay(const cJSON *delay, int outcome_index, tlsrecordshaping_o
 
     if (! cJSON_IsObject(delay) || ! rejectUnknownKeys(delay, path, allowed, ARRAY_SIZE(allowed), error))
     {
-        return cJSON_IsObject(delay) ? false : setError(error, "%s must be an object", path);
+        return cJSON_IsObject(delay) ? false : tlsrecordshapingSetError(error, "%s must be an object", path);
     }
 
     int64_t probability = 0;
     if (! jsonGetIntegerInRange(cJSON_GetObjectItemCaseSensitive(delay, "probability"), 0, 100, &probability))
     {
-        return setError(error, "%s.probability must be an integer in [0, 100]", path);
+        return tlsrecordshapingSetError(error, "%s.probability must be an integer in [0, 100]", path);
     }
     if (! parseRange(cJSON_GetObjectItemCaseSensitive(delay, "ms"),
                      0,
@@ -120,13 +110,13 @@ static bool parseOutcome(const cJSON *item, int index, tlsrecordshaping_outcome_
 
     if (! cJSON_IsObject(item) || ! rejectUnknownKeys(item, path, allowed, ARRAY_SIZE(allowed), error))
     {
-        return cJSON_IsObject(item) ? false : setError(error, "%s must be an object", path);
+        return cJSON_IsObject(item) ? false : tlsrecordshapingSetError(error, "%s must be an object", path);
     }
 
     int64_t probability = 0;
     if (! jsonGetIntegerInRange(cJSON_GetObjectItemCaseSensitive(item, "probability"), 1, 100, &probability))
     {
-        return setError(error, "%s.probability must be an integer in [1, 100]", path);
+        return tlsrecordshapingSetError(error, "%s.probability must be an integer in [1, 100]", path);
     }
     outcome->probability = (uint8_t) probability;
 
@@ -154,7 +144,7 @@ static bool parseOutcome(const cJSON *item, int index, tlsrecordshaping_outcome_
     bool effective_delay = outcome->has_delay && outcome->delay_probability > 0 && outcome->delay_ms.maximum > 0;
     if (! outcome->has_padding && ! effective_delay)
     {
-        return setError(error, "%s has no effective padding or delay action", path);
+        return tlsrecordshapingSetError(error, "%s has no effective padding or delay action", path);
     }
     return true;
 }
@@ -165,14 +155,14 @@ static bool parseCustom(const cJSON *shaping, tlsrecordshaping_config_t *config,
     const cJSON *outcomes = cJSON_GetObjectItemCaseSensitive(shaping, "outcomes");
     if (scope == NULL || outcomes == NULL)
     {
-        return setError(error, "custom tls13-record-shaping requires both scope and outcomes");
+        return tlsrecordshapingSetError(error, "custom tls13-record-shaping requires both scope and outcomes");
     }
 
     static const char *const scope_allowed[] = {"first-application-records"};
     if (! cJSON_IsObject(scope) ||
         ! rejectUnknownKeys(scope, "tls13-record-shaping.scope", scope_allowed, ARRAY_SIZE(scope_allowed), error))
     {
-        return cJSON_IsObject(scope) ? false : setError(error, "tls13-record-shaping.scope must be an object");
+        return cJSON_IsObject(scope) ? false : tlsrecordshapingSetError(error, "tls13-record-shaping.scope must be an object");
     }
 
     int64_t first_records = 0;
@@ -181,18 +171,18 @@ static bool parseCustom(const cJSON *shaping, tlsrecordshaping_config_t *config,
                                 kTlsRecordShapingMaxApplicationRecords,
                                 &first_records))
     {
-        return setError(error, "tls13-record-shaping.scope.first-application-records must be an integer in [1, 1024]");
+        return tlsrecordshapingSetError(error, "tls13-record-shaping.scope.first-application-records must be an integer in [1, 1024]");
     }
     config->first_application_records = (uint16_t) first_records;
 
     if (! cJSON_IsArray(outcomes))
     {
-        return setError(error, "tls13-record-shaping.outcomes must be a non-empty array with at most 16 items");
+        return tlsrecordshapingSetError(error, "tls13-record-shaping.outcomes must be a non-empty array with at most 16 items");
     }
     int count = cJSON_GetArraySize(outcomes);
     if (count < 1 || count > kTlsRecordShapingMaxOutcomes)
     {
-        return setError(error, "tls13-record-shaping.outcomes must contain between 1 and 16 items");
+        return tlsrecordshapingSetError(error, "tls13-record-shaping.outcomes must contain between 1 and 16 items");
     }
 
     unsigned int probability_sum = 0;
@@ -205,7 +195,7 @@ static bool parseCustom(const cJSON *shaping, tlsrecordshaping_config_t *config,
         probability_sum += config->outcomes[i].probability;
         if (probability_sum > 100)
         {
-            return setError(error, "tls13-record-shaping outcome probabilities sum to more than 100");
+            return tlsrecordshapingSetError(error, "tls13-record-shaping outcome probabilities sum to more than 100");
         }
     }
 
@@ -219,7 +209,7 @@ bool tlsrecordshapingParse(const cJSON *settings, tlsrecordshaping_sender_role_t
 {
     if (config == NULL)
     {
-        return setError(error, "tls13-record-shaping parser received a null configuration destination");
+        return tlsrecordshapingSetError(error, "tls13-record-shaping parser received a null configuration destination");
     }
     memoryZero(config, sizeof(*config));
     config->sender_role = sender_role;
@@ -235,7 +225,7 @@ bool tlsrecordshapingParse(const cJSON *settings, tlsrecordshaping_sender_role_t
     }
     if (! cJSON_IsObject(shaping))
     {
-        return setError(error, "tls13-record-shaping must be an object");
+        return tlsrecordshapingSetError(error, "tls13-record-shaping must be an object");
     }
 
     static const char *const allowed[] = {"scope", "outcomes"};
