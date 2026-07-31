@@ -1,5 +1,6 @@
 #include "IpManipulator/structure.h"
 #include "tricks/portghost/trick.h"
+#include "tricks/protoswap/trick.h"
 #include "tricks/sniblender/trick.h"
 #include "wchecksum.h"
 
@@ -248,6 +249,72 @@ static void testEgressOrderAndDownstreamRoundTrip(test_env_t *env)
     require(lineGetRecalculateChecksum(env->line), "portghost restore did not request checksum recalculation");
     require(calcFullPacketChecksum(sbufGetMutablePtr(restored), sbufGetLength(restored)),
             "restored packet could not be checksummed as TCP");
+    lineSetRecalculateChecksum(env->line, false);
+
+    recycleCaptured(env);
+    destroyTestTunnel(t);
+}
+
+static void testDownstreamResumeAfterSmuggleFinDoesNotRepeatRestoration(test_env_t *env)
+{
+    tunnel_t  next = {.fnPayloadU = capturePacket};
+    tunnel_t  prev = {.fnPayloadD = capturePacket};
+    tunnel_t *t    = createTestTunnel();
+    t->next        = &next;
+    t->prev        = &prev;
+
+    ipmanipulator_tstate_t *state        = tunnelGetState(t);
+    state->trick_source_port_ghost       = true;
+    state->trick_dest_port_ghost         = true;
+    state->trick_proto_swap              = true;
+    state->trick_proto_swap_tcp_number   = 143;
+    state->trick_proto_swap_tcp_number_2 = 144;
+
+    sbuf_t  *buf          = makeTcpPacket(env, 96);
+    uint32_t original_len = sbufGetLength(buf);
+    uint8_t  original_payload[56];
+    memoryCopy(original_payload,
+               (const uint8_t *) sbufGetRawPtr(buf) + sizeof(struct ip_hdr) + sizeof(struct tcp_hdr),
+               sizeof(original_payload));
+
+    lineSetRecalculateChecksum(env->line, true);
+    ipmanipulatorEmitUpstream(t, env->line, buf, tunnelNextUpStreamPayload);
+    require(captured_count == 1, "resume-stage fixture did not create one wire packet");
+
+    sbuf_t *post_restore = captured[0];
+    captured[0]          = NULL;
+    captured_count       = 0;
+
+    protoswaptrickDownStreamPayload(t, env->line, post_restore);
+    require(portghosttrickRestore(t, env->line, &post_restore),
+            "resume-stage fixture could not restore the portghost trailer");
+    require(post_restore != NULL, "resume-stage fixture consumed a valid restored packet");
+    require(atomicLoadRelaxed(&state->trick_proto_swap_tcp_toggle_down) == 0,
+            "protocol restoration unexpectedly consumed the downstream TCP toggle");
+
+    ipmanipulatorDownStreamPayloadAfterSmuggleFin(t, env->line, post_restore);
+
+    require(captured_count == 1, "post-smuggle-fin resume did not forward exactly one packet");
+    require(atomicLoadRelaxed(&state->trick_proto_swap_tcp_toggle_down) == 0,
+            "post-smuggle-fin resume repeated protocol restoration");
+
+    sbuf_t               *restored    = captured[0];
+    const struct ip_hdr  *restored_ip = (const struct ip_hdr *) sbufGetRawPtr(restored);
+    const struct tcp_hdr *restored_tcp =
+        (const struct tcp_hdr *) ((const uint8_t *) sbufGetRawPtr(restored) + sizeof(struct ip_hdr));
+
+    require(IPH_PROTO(restored_ip) == IPPROTO_TCP, "post-smuggle-fin resume changed restored TCP protocol");
+    require(sbufGetLength(restored) == original_len,
+            "post-smuggle-fin resume removed or retained the portghost trailer twice");
+    require(lwip_ntohs(restored_tcp->src) == 12345 && lwip_ntohs(restored_tcp->dest) == 443,
+            "post-smuggle-fin resume changed the restored TCP tuple");
+    require(memoryEqual((const uint8_t *) sbufGetRawPtr(restored) + sizeof(struct ip_hdr) + sizeof(struct tcp_hdr),
+                        original_payload,
+                        sizeof(original_payload)),
+            "post-smuggle-fin resume changed the restored payload");
+    require(lineGetRecalculateChecksum(env->line), "post-smuggle-fin resume lost the portghost checksum request");
+    require(calcFullPacketChecksum(sbufGetMutablePtr(restored), sbufGetLength(restored)),
+            "post-smuggle-fin resumed packet could not be checksummed");
     lineSetRecalculateChecksum(env->line, false);
 
     recycleCaptured(env);
@@ -549,6 +616,7 @@ int main(void)
     test_env_t env;
     envSetup(&env);
     testEgressOrderAndDownstreamRoundTrip(&env);
+    testDownstreamResumeAfterSmuggleFinDoesNotRepeatRestoration(&env);
     testAlreadyMappedEgressUnwraps(&env);
     testTuplePreservingHelperEgress(&env);
     testPortghostSegmentation(&env);

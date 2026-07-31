@@ -1261,6 +1261,8 @@ if(TARGET IpManipulator)
 
   add_executable(ipmanipulator_smugglefin_pause_test
     ipmanipulator_smugglefin_pause_test.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/portghost/trick.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/protoswap/trick.c
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/smugglefin/trick.c
   )
   target_include_directories(ipmanipulator_smugglefin_pause_test PRIVATE

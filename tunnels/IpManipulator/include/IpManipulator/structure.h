@@ -231,6 +231,7 @@ typedef struct ipmanipulator_smuggle_fin_queued_packet_s
 {
     sbuf_t                                     *buf;
     ipmanipulator_smuggle_fin_queue_direction_e direction;
+    bool                                        recalculate_checksum;
 } ipmanipulator_smuggle_fin_queued_packet_t;
 
 typedef struct ipmanipulator_smuggle_fin_flow_s
@@ -416,6 +417,7 @@ void ipmanipulatorDownStreamInit(tunnel_t *t, line_t *l);
 void ipmanipulatorDownStreamEst(tunnel_t *t, line_t *l);
 void ipmanipulatorDownStreamFinish(tunnel_t *t, line_t *l);
 void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void ipmanipulatorDownStreamPayloadAfterSmuggleFin(tunnel_t *t, line_t *l, sbuf_t *buf);
 void ipmanipulatorDownStreamPause(tunnel_t *t, line_t *l);
 void ipmanipulatorDownStreamResume(tunnel_t *t, line_t *l);
 

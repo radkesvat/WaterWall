@@ -1,4 +1,7 @@
 #include "IpManipulator/structure.h"
+#include "devices/device_flow_affinity.h"
+#include "tricks/portghost/trick.h"
+#include "tricks/protoswap/trick.h"
 #include "tricks/smugglefin/trick.h"
 
 #include <stdio.h>
@@ -7,6 +10,7 @@
 enum
 {
     kMaxTimedMessages                = 16,
+    kMaxImmediateMessages            = 16,
     kExpectedSmuggleFinQueueCapacity = 256
 };
 
@@ -22,6 +26,17 @@ typedef struct timed_message_s
     bool                         consumed;
 } timed_message_t;
 
+typedef struct immediate_message_s
+{
+    wid_t                        wid;
+    WorkerMessageCallback        callback;
+    WorkerMessageCleanupCallback cleanup;
+    void                        *arg1;
+    void                        *arg2;
+    void                        *arg3;
+    bool                         consumed;
+} immediate_message_t;
+
 typedef struct test_env_s
 {
     master_pool_t *large_master;
@@ -29,16 +44,50 @@ typedef struct test_env_s
     buffer_pool_t *buffer_pools[2];
 } test_env_t;
 
-static timed_message_t timed_messages[kMaxTimedMessages];
-static uint32_t        timed_message_count;
-static uint32_t        normal_upstream_packets;
-static uint32_t        normal_downstream_packets;
-static uint32_t        mirrored_fin_packets;
-static uint32_t        replayed_upstream_sequences[kExpectedSmuggleFinQueueCapacity];
+static timed_message_t     timed_messages[kMaxTimedMessages];
+static immediate_message_t immediate_messages[kMaxImmediateMessages];
+static uint32_t            timed_message_count;
+static uint32_t            immediate_message_count;
+static uint32_t            normal_upstream_packets;
+static uint32_t            normal_downstream_packets;
+static uint32_t            downstream_entry_packets;
+static uint32_t            downstream_after_smuggle_fin_packets;
+static uint32_t            mirrored_fin_packets;
+static uint32_t            replayed_upstream_sequences[kExpectedSmuggleFinQueueCapacity];
+static bool                replayed_upstream_checksum_intents[kExpectedSmuggleFinQueueCapacity];
+static uint32_t            replayed_downstream_sequences[kExpectedSmuggleFinQueueCapacity];
+static bool                replayed_downstream_checksum_intents[kExpectedSmuggleFinQueueCapacity];
+static uint8_t             replayed_downstream_protocols[kExpectedSmuggleFinQueueCapacity];
+static uint16_t            replayed_downstream_src_ports[kExpectedSmuggleFinQueueCapacity];
+static uint16_t            replayed_downstream_dst_ports[kExpectedSmuggleFinQueueCapacity];
+static uint32_t            replayed_downstream_packet_lengths[kExpectedSmuggleFinQueueCapacity];
+static uint8_t             replay_directions[kExpectedSmuggleFinQueueCapacity * 2U];
+static uint32_t            replay_sequences[kExpectedSmuggleFinQueueCapacity * 2U];
+static uint32_t            replay_count;
+static bool                reject_immediate_messages;
 
 void ipmanipulatorSmuggleFinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                               WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                               void *arg2, void *arg3);
+bool ipmanipulatorSmuggleFinTestScheduleImmediate(wid_t wid, WorkerMessageCallback callback,
+                                                  WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
+                                                  void *arg3);
+
+uint8_t ipmanipulatorResolveTransportProtocol(const ipmanipulator_tstate_t *state, uint8_t packet_protocol)
+{
+    if (packet_protocol == state->trick_proto_swap_tcp_number ||
+        packet_protocol == state->trick_proto_swap_tcp_number_2)
+    {
+        return IPPROTO_TCP;
+    }
+
+    if (packet_protocol == state->trick_proto_swap_udp_number)
+    {
+        return IPPROTO_UDP;
+    }
+
+    return packet_protocol == IPPROTO_TCP || packet_protocol == IPPROTO_UDP ? packet_protocol : 0;
+}
 
 static void require(bool condition, const char *message)
 {
@@ -65,6 +114,28 @@ void ipmanipulatorSmuggleFinTestScheduleTimed(wid_t wid, WorkerMessageCallback c
     };
 }
 
+bool ipmanipulatorSmuggleFinTestScheduleImmediate(wid_t wid, WorkerMessageCallback callback,
+                                                  WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
+                                                  void *arg3)
+{
+    if (reject_immediate_messages)
+    {
+        cleanup(arg1, arg2, arg3);
+        return false;
+    }
+
+    require(immediate_message_count < kMaxImmediateMessages, "immediate-message capture overflow");
+    immediate_messages[immediate_message_count++] = (immediate_message_t) {
+        .wid      = wid,
+        .callback = callback,
+        .cleanup  = cleanup,
+        .arg1     = arg1,
+        .arg2     = arg2,
+        .arg3     = arg3,
+    };
+    return true;
+}
+
 void ipmanipulatorUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard               t;
@@ -73,15 +144,62 @@ void ipmanipulatorUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     const struct tcp_hdr *tcp_header = (const struct tcp_hdr *) (packet + IPH_HL_BYTES(ipheader));
 
     require(normal_upstream_packets < kExpectedSmuggleFinQueueCapacity, "upstream replay capture overflow");
-    replayed_upstream_sequences[normal_upstream_packets] = lwip_ntohl(tcp_header->seqno);
+    replayed_upstream_sequences[normal_upstream_packets]        = lwip_ntohl(tcp_header->seqno);
+    replayed_upstream_checksum_intents[normal_upstream_packets] = lineGetRecalculateChecksum(l);
+    if (lineGetRecalculateChecksum(l))
+    {
+        require(calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)),
+                "upstream sink failed to apply the queued checksum request");
+        require(tcp_header->chksum != 0, "upstream sink left a requested TCP checksum empty");
+    }
     normal_upstream_packets++;
+    require(replay_count < ARRAY_SIZE(replay_directions), "replay-order capture overflow");
+    replay_directions[replay_count] = 0;
+    replay_sequences[replay_count]  = lwip_ntohl(tcp_header->seqno);
+    replay_count++;
+    lineSetRecalculateChecksum(l, false);
     lineReuseBuffer(l, buf);
 }
 
 void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;
+    downstream_entry_packets++;
     normal_downstream_packets++;
+    lineSetRecalculateChecksum(l, false);
+    lineReuseBuffer(l, buf);
+}
+
+void ipmanipulatorDownStreamPayloadAfterSmuggleFin(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    discard t;
+
+    const uint8_t        *packet     = (const uint8_t *) sbufGetRawPtr(buf);
+    const struct ip_hdr  *ipheader   = (const struct ip_hdr *) packet;
+    const struct tcp_hdr *tcp_header = (const struct tcp_hdr *) (packet + IPH_HL_BYTES(ipheader));
+
+    require(downstream_after_smuggle_fin_packets < kExpectedSmuggleFinQueueCapacity,
+            "downstream replay capture overflow");
+    replayed_downstream_sequences[downstream_after_smuggle_fin_packets]        = lwip_ntohl(tcp_header->seqno);
+    replayed_downstream_checksum_intents[downstream_after_smuggle_fin_packets] = lineGetRecalculateChecksum(l);
+    replayed_downstream_protocols[downstream_after_smuggle_fin_packets]        = IPH_PROTO(ipheader);
+    replayed_downstream_src_ports[downstream_after_smuggle_fin_packets]        = lwip_ntohs(tcp_header->src);
+    replayed_downstream_dst_ports[downstream_after_smuggle_fin_packets]        = lwip_ntohs(tcp_header->dest);
+    replayed_downstream_packet_lengths[downstream_after_smuggle_fin_packets]   = sbufGetLength(buf);
+    if (lineGetRecalculateChecksum(l))
+    {
+        require(calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)),
+                "downstream sink failed to apply the queued checksum request");
+        require(tcp_header->chksum != 0, "downstream sink left a requested TCP checksum empty");
+    }
+
+    downstream_after_smuggle_fin_packets++;
+    normal_downstream_packets++;
+    require(replay_count < ARRAY_SIZE(replay_directions), "replay-order capture overflow");
+    replay_directions[replay_count] = 1;
+    replay_sequences[replay_count]  = lwip_ntohl(tcp_header->seqno);
+    replay_count++;
+    lineSetRecalculateChecksum(l, false);
     lineReuseBuffer(l, buf);
 }
 
@@ -227,8 +345,22 @@ static void cleanupTimedMessages(void)
     }
 }
 
+static void cleanupImmediateMessages(void)
+{
+    for (uint32_t i = 0; i < immediate_message_count; ++i)
+    {
+        immediate_message_t *message = &immediate_messages[i];
+        if (! message->consumed)
+        {
+            message->cleanup(message->arg1, message->arg2, message->arg3);
+            message->consumed = true;
+        }
+    }
+}
+
 static void destroyTestTunnel(tunnel_t *t)
 {
+    cleanupImmediateMessages();
     cleanupTimedMessages();
     smugglefintrickDestroyState(t);
     memoryFreeAligned(t);
@@ -237,11 +369,26 @@ static void destroyTestTunnel(tunnel_t *t)
 static void resetCounters(void)
 {
     memoryZero(timed_messages, sizeof(timed_messages));
-    timed_message_count       = 0;
-    normal_upstream_packets   = 0;
-    normal_downstream_packets = 0;
-    mirrored_fin_packets      = 0;
+    memoryZero(immediate_messages, sizeof(immediate_messages));
+    timed_message_count                  = 0;
+    immediate_message_count              = 0;
+    normal_upstream_packets              = 0;
+    normal_downstream_packets            = 0;
+    downstream_entry_packets             = 0;
+    downstream_after_smuggle_fin_packets = 0;
+    mirrored_fin_packets                 = 0;
+    replay_count                         = 0;
+    reject_immediate_messages            = false;
     memoryZero(replayed_upstream_sequences, sizeof(replayed_upstream_sequences));
+    memoryZero(replayed_upstream_checksum_intents, sizeof(replayed_upstream_checksum_intents));
+    memoryZero(replayed_downstream_sequences, sizeof(replayed_downstream_sequences));
+    memoryZero(replayed_downstream_checksum_intents, sizeof(replayed_downstream_checksum_intents));
+    memoryZero(replayed_downstream_protocols, sizeof(replayed_downstream_protocols));
+    memoryZero(replayed_downstream_src_ports, sizeof(replayed_downstream_src_ports));
+    memoryZero(replayed_downstream_dst_ports, sizeof(replayed_downstream_dst_ports));
+    memoryZero(replayed_downstream_packet_lengths, sizeof(replayed_downstream_packet_lengths));
+    memoryZero(replay_directions, sizeof(replay_directions));
+    memoryZero(replay_sequences, sizeof(replay_sequences));
 }
 
 static void runTimedMessage(uint32_t index)
@@ -256,13 +403,49 @@ static void runTimedMessage(uint32_t index)
     message->consumed = true;
 }
 
-static void startPausedFlow(tunnel_t *t, line_t *line)
+static void runImmediateMessage(uint32_t index)
 {
-    sbuf_t *packet = makeTcpPacket(line->wid, 0x0A000001, 12345, 0xC0000201, 443, 100, 200, TCP_ACK | TCP_PSH, 10);
+    require(index < immediate_message_count, "immediate-message index is out of range");
+    immediate_message_t *message = &immediate_messages[index];
+    require(! message->consumed, "immediate message ran twice");
+
+    tl_wid          = message->wid;
+    worker_t worker = {.wid = message->wid};
+    message->callback(&worker, message->arg1, message->arg2, message->arg3);
+    message->consumed = true;
+}
+
+static void cancelImmediateMessage(uint32_t index)
+{
+    require(index < immediate_message_count, "immediate-message cancellation index is out of range");
+    immediate_message_t *message = &immediate_messages[index];
+    require(! message->consumed, "immediate message was already consumed");
+
+    message->cleanup(message->arg1, message->arg2, message->arg3);
+    message->consumed = true;
+}
+
+static void startPausedFlowForTuple(tunnel_t *t, line_t *line, uint32_t src_addr, uint16_t src_port, uint32_t dst_addr,
+                                    uint16_t dst_port)
+{
+    bool     expected_recalculate_checksum = lineGetRecalculateChecksum(line);
+    uint32_t previous_mirrored_fin_packets = mirrored_fin_packets;
+    uint32_t previous_timed_message_count  = timed_message_count;
+    sbuf_t  *packet = makeTcpPacket(line->wid, src_addr, src_port, dst_addr, dst_port, 100, 200, TCP_ACK | TCP_PSH, 10);
     require(smugglefintrickUpStreamPayload(t, line, packet), "first payload did not pause its flow");
 
-    require(mirrored_fin_packets == 1, "mirrored FIN was not sent");
-    require(timed_message_count == 1, "pause timeout was not scheduled");
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    require(state->smuggle_fin_flows[0].queued_packets_count == 1, "first payload was not queued");
+    require(state->smuggle_fin_flows[0].queued_packets[0].recalculate_checksum == expected_recalculate_checksum,
+            "first payload did not retain its checksum intent");
+    require(! lineGetRecalculateChecksum(line), "queued first payload left checksum intent on the packet line");
+    require(mirrored_fin_packets == previous_mirrored_fin_packets + 1, "mirrored FIN was not sent");
+    require(timed_message_count == previous_timed_message_count + 1, "pause timeout was not scheduled");
+}
+
+static void startPausedFlow(tunnel_t *t, line_t *line)
+{
+    startPausedFlowForTuple(t, line, 0x0A000001, 12345, 0xC0000201, 443);
 }
 
 static void testUnrelatedFlowPasses(void)
@@ -321,6 +504,43 @@ static void testPauseTimeoutReleasesFlow(void)
     destroyTestTunnel(t);
 }
 
+static void testQueuedPacketsRetainIndependentChecksumIntent(void)
+{
+    tunnel_t  normal_upstream   = {0};
+    tunnel_t  normal_downstream = {0};
+    tunnel_t  fin_branch        = {0};
+    tunnel_t *t                 = createTestTunnel(&normal_upstream, &normal_downstream, &fin_branch);
+    line_t    line;
+    initializeLine(&line, 0);
+
+    resetCounters();
+    lineSetRecalculateChecksum(&line, true);
+    startPausedFlow(t, &line);
+
+    sbuf_t *unrelated = makeTcpPacket(0, 0x0A000002, 23456, 0xC0000202, 443, 300, 400, TCP_ACK | TCP_PSH, 12);
+    lineSetRecalculateChecksum(&line, true);
+    require(! smugglefintrickUpStreamPayload(t, &line, unrelated),
+            "unrelated packet was consumed while testing checksum isolation");
+    ipmanipulatorUpStreamPayload(t, &line, unrelated);
+    require(! lineGetRecalculateChecksum(&line), "unrelated writer did not clear packet-line checksum scratch");
+
+    sbuf_t *second = makeTcpPacket(0, 0x0A000001, 12345, 0xC0000201, 443, 110, 200, TCP_ACK | TCP_PSH, 7);
+    require(smugglefintrickUpStreamPayload(t, &line, second), "second checksum fixture packet was not held");
+
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    require(state->smuggle_fin_flows[0].queued_packets_count == 2, "checksum fixture queue count is wrong");
+    require(state->smuggle_fin_flows[0].queued_packets[0].recalculate_checksum, "queued true checksum intent was lost");
+    require(! state->smuggle_fin_flows[0].queued_packets[1].recalculate_checksum,
+            "queued false checksum intent inherited stale state");
+
+    runTimedMessage(0);
+    require(normal_upstream_packets == 3, "checksum fixture did not emit unrelated plus queued packets");
+    require(replayed_upstream_checksum_intents[1], "replayed packet lost its saved true checksum intent");
+    require(! replayed_upstream_checksum_intents[2], "replayed packet inherited a stale true checksum intent");
+
+    destroyTestTunnel(t);
+}
+
 static void testQueueCapForcesRelease(void)
 {
     tunnel_t  normal_upstream   = {0};
@@ -344,8 +564,11 @@ static void testQueueCapForcesRelease(void)
             "paused-flow queue exceeded its configured cap");
 
     sbuf_t *overflow = makeTcpPacket(0, 0x0A000001, 12345, 0xC0000201, 443, 500, 200, TCP_ACK | TCP_PSH, 1);
+    lineSetRecalculateChecksum(&line, true);
     require(! smugglefintrickUpStreamPayload(t, &line, overflow), "queue overflow packet was not released");
+    require(lineGetRecalculateChecksum(&line), "queue-cap replay erased the current packet's checksum intent");
     lineReuseBuffer(&line, overflow);
+    lineSetRecalculateChecksum(&line, false);
 
     require(! state->smuggle_fin_flows[0].paused, "queue cap left the flow paused");
     require(state->smuggle_fin_flows[0].queued_packets_count == 0, "queue cap left packets allocated");
@@ -385,7 +608,7 @@ static void testCrossWorkerEchoReleasesOwnerFlow(void)
     destroyTestTunnel(t);
 }
 
-static void testCrossWorkerReversePacketPasses(void)
+static void testCrossWorkerReversePacketQueuesOnOwner(void)
 {
     tunnel_t  normal_upstream   = {0};
     tunnel_t  normal_downstream = {0};
@@ -402,17 +625,249 @@ static void testCrossWorkerReversePacketPasses(void)
 
     tl_wid          = 1;
     sbuf_t *reverse = makeTcpPacket(1, 0xC0000201, 443, 0x0A000001, 12345, 200, 110, TCP_ACK | TCP_PSH, 8);
-    require(! smugglefintrickDownStreamPayload(t, &foreign_line, reverse),
-            "cross-worker reverse packet was queued on the owner line");
-    lineReuseBuffer(&foreign_line, reverse);
+    lineSetRecalculateChecksum(&foreign_line, true);
+    require(smugglefintrickDownStreamPayload(t, &foreign_line, reverse),
+            "cross-worker reverse packet was not consumed for handoff");
+    require(immediate_message_count == 1, "cross-worker reverse packet did not schedule one handoff");
+    require(immediate_messages[0].wid == 0, "cross-worker reverse handoff targeted the wrong worker");
+    require(! lineGetRecalculateChecksum(&foreign_line),
+            "successful cross-worker handoff left checksum intent on the source line");
 
     ipmanipulator_tstate_t *state = tunnelGetState(t);
     require(state->smuggle_fin_flows[0].queued_packets_count == 1,
-            "cross-worker reverse packet changed the owner flow queue");
+            "cross-worker reverse packet changed the owner queue before its callback");
+
+    runImmediateMessage(0);
+    require(state->smuggle_fin_flows[0].queued_packets_count == 2,
+            "cross-worker reverse packet was not queued on the owner worker");
+    require(state->smuggle_fin_flows[0].queued_packets[1].direction == kIpManipulatorSmuggleFinQueueDirectionDownstream,
+            "cross-worker reverse packet kept the wrong queue direction");
+    require(state->smuggle_fin_flows[0].queued_packets[1].recalculate_checksum,
+            "cross-worker reverse packet lost its checksum intent");
 
     runTimedMessage(0);
-    require(normal_upstream_packets == 1, "owner flow did not survive a cross-worker reverse packet");
+    require(normal_upstream_packets == 1 && downstream_after_smuggle_fin_packets == 1,
+            "cross-worker flow did not replay both queued directions");
+    require(downstream_entry_packets == 0, "cross-worker downstream replay restarted before smuggle-fin");
+    require(replay_count == 2 && replay_directions[0] == 0 && replay_directions[1] == 1,
+            "cross-worker flow replayed packets out of queue order");
+    require(replay_sequences[0] == 100 && replay_sequences[1] == 200, "cross-worker flow replayed the wrong packets");
+    require(replayed_downstream_checksum_intents[0], "cross-worker downstream replay lost its saved checksum request");
 
+    destroyTestTunnel(t);
+}
+
+static void testCrossWorkerCompositionRestoresProtocolAndPortghostOnce(void)
+{
+    tunnel_t  normal_upstream   = {0};
+    tunnel_t  normal_downstream = {0};
+    tunnel_t  fin_branch        = {0};
+    tunnel_t *t                 = createTestTunnel(&normal_upstream, &normal_downstream, &fin_branch);
+    line_t    probe_line;
+    line_t    owner_line;
+    line_t    source_line;
+    sbuf_t   *wire_packet = NULL;
+    wid_t     owner_wid   = UINT8_MAX;
+    wid_t     source_wid  = UINT8_MAX;
+    uint16_t  client_port = 0;
+
+    initializeLine(&probe_line, 0);
+    resetCounters();
+
+    ipmanipulator_tstate_t *state        = tunnelGetState(t);
+    state->trick_proto_swap              = true;
+    state->trick_proto_swap_tcp_number   = 143;
+    state->trick_proto_swap_tcp_number_2 = 144;
+    state->trick_proto_swap_udp_number   = -1;
+    state->trick_source_port_ghost       = true;
+    state->trick_dest_port_ghost         = true;
+
+    for (uint32_t port = 12000; port < 14048; ++port)
+    {
+        tl_wid = 0;
+        sbuf_t *forward =
+            makeTcpPacket(0, 0x0A000001, (uint16_t) port, 0xC0000201, 443, 100, 200, TCP_ACK | TCP_PSH, 10);
+        wid_t forward_wid = UINT8_MAX;
+        require(deviceFlowAffineWID(sbufGetRawPtr(forward), sbufGetLength(forward), &forward_wid),
+                "composition fixture could not hash the forward packet");
+        lineReuseBuffer(&probe_line, forward);
+
+        wid_t  candidate_source_wid = (wid_t) (1U - forward_wid);
+        line_t candidate_source_line;
+        initializeLine(&candidate_source_line, candidate_source_wid);
+        tl_wid = candidate_source_wid;
+
+        sbuf_t *candidate_wire = makeTcpPacket(
+            candidate_source_wid, 0xC0000201, 443, 0x0A000001, (uint16_t) port, 200, 110, TCP_ACK | TCP_PSH, 8);
+        require(portghosttrickApply(t, &candidate_source_line, &candidate_wire),
+                "composition fixture could not apply portghost");
+        require(candidate_wire != NULL, "composition fixture lost its wire packet");
+        protoswaptrickUpStreamPayload(t, &candidate_source_line, candidate_wire);
+
+        wid_t wire_wid = UINT8_MAX;
+        require(deviceFlowAffineWID(sbufGetRawPtr(candidate_wire), sbufGetLength(candidate_wire), &wire_wid),
+                "composition fixture could not hash the transformed return packet");
+
+        if (wire_wid == candidate_source_wid && wire_wid != forward_wid)
+        {
+            owner_wid   = forward_wid;
+            source_wid  = wire_wid;
+            client_port = (uint16_t) port;
+            wire_packet = candidate_wire;
+            break;
+        }
+
+        lineReuseBuffer(&candidate_source_line, candidate_wire);
+    }
+
+    require(wire_packet != NULL, "composition fixture could not find a cross-worker transformed tuple");
+    initializeLine(&owner_line, owner_wid);
+    initializeLine(&source_line, source_wid);
+    lineSetRecalculateChecksum(&source_line, true);
+
+    tl_wid = owner_wid;
+    startPausedFlowForTuple(t, &owner_line, 0x0A000001, client_port, 0xC0000201, 443);
+
+    tl_wid = source_wid;
+    require(IPH_PROTO((const struct ip_hdr *) sbufGetRawPtr(wire_packet)) != IPPROTO_TCP,
+            "composition fixture did not carry a custom protocol");
+    require(sbufGetLength(wire_packet) == sizeof(struct ip_hdr) + sizeof(struct tcp_hdr) + 8U + 4U,
+            "composition fixture did not carry exactly one portghost trailer");
+
+    protoswaptrickDownStreamPayload(t, &source_line, wire_packet);
+    require(portghosttrickRestore(t, &source_line, &wire_packet),
+            "composition fixture could not restore the return packet");
+    require(wire_packet != NULL, "composition fixture consumed a valid restored packet");
+    require(IPH_PROTO((const struct ip_hdr *) sbufGetRawPtr(wire_packet)) == IPPROTO_TCP,
+            "composition fixture did not restore TCP before smuggle-fin");
+    require(sbufGetLength(wire_packet) == sizeof(struct ip_hdr) + sizeof(struct tcp_hdr) + 8U,
+            "composition fixture did not remove exactly one portghost trailer");
+
+    require(smugglefintrickDownStreamPayload(t, &source_line, wire_packet),
+            "composition return packet was not handed to its flow owner");
+    runImmediateMessage(0);
+    runTimedMessage(0);
+
+    require(downstream_after_smuggle_fin_packets == 1 && downstream_entry_packets == 0,
+            "composition return packet did not resume after smuggle-fin");
+    require(replayed_downstream_protocols[0] == IPPROTO_TCP,
+            "composition replay did not retain the restored TCP protocol");
+    require(replayed_downstream_src_ports[0] == 443 && replayed_downstream_dst_ports[0] == client_port,
+            "composition replay did not retain the original ports");
+    require(replayed_downstream_packet_lengths[0] == sizeof(struct ip_hdr) + sizeof(struct tcp_hdr) + 8U,
+            "composition replay retained or removed the portghost trailer twice");
+    require(replayed_downstream_checksum_intents[0],
+            "composition replay did not retain its checksum-recalculation intent");
+
+    destroyTestTunnel(t);
+}
+
+static void testStaleCrossWorkerHandoffFailsOpenAfterSmuggleFin(void)
+{
+    tunnel_t  normal_upstream   = {0};
+    tunnel_t  normal_downstream = {0};
+    tunnel_t  fin_branch        = {0};
+    tunnel_t *t                 = createTestTunnel(&normal_upstream, &normal_downstream, &fin_branch);
+    line_t    owner_line;
+    line_t    foreign_line;
+    initializeLine(&owner_line, 0);
+    initializeLine(&foreign_line, 1);
+
+    resetCounters();
+    tl_wid = 0;
+    startPausedFlow(t, &owner_line);
+
+    tl_wid          = 1;
+    sbuf_t *reverse = makeTcpPacket(1, 0xC0000201, 443, 0x0A000001, 12345, 200, 110, TCP_ACK | TCP_PSH, 8);
+    require(smugglefintrickDownStreamPayload(t, &foreign_line, reverse),
+            "stale-handoff fixture did not schedule a reverse packet");
+
+    runTimedMessage(0);
+
+    ipmanipulator_tstate_t *state                = tunnelGetState(t);
+    state->smuggle_fin_flows[0].confirmed        = false;
+    state->smuggle_fin_flows[0].last_activity_ms = 0;
+    sbuf_t *ack = makeTcpPacket(0, 0x0A000002, 23456, 0xC0000202, 443, 1, 1, TCP_ACK, 0);
+    require(! smugglefintrickUpStreamPayload(t, &owner_line, ack), "stale flow cleanup packet was consumed");
+    lineReuseBuffer(&owner_line, ack);
+    require(! state->smuggle_fin_flows[0].active, "stale flow slot was not reclaimed");
+
+    startPausedFlow(t, &owner_line);
+    uint32_t new_generation = state->smuggle_fin_flows[0].pause_generation;
+
+    runImmediateMessage(0);
+    require(state->smuggle_fin_flows[0].pause_generation == new_generation,
+            "stale handoff changed the replacement flow generation");
+    require(state->smuggle_fin_flows[0].queued_packets_count == 1, "stale handoff entered the replacement flow queue");
+    require(downstream_after_smuggle_fin_packets == 1 && downstream_entry_packets == 0,
+            "stale handoff did not fail open from the post-smuggle-fin stage");
+    require(replayed_downstream_sequences[0] == 200, "stale handoff resumed the wrong packet");
+
+    runTimedMessage(1);
+    destroyTestTunnel(t);
+}
+
+static void testRejectedCrossWorkerHandoffLeavesPacketWithCaller(void)
+{
+    tunnel_t  normal_upstream   = {0};
+    tunnel_t  normal_downstream = {0};
+    tunnel_t  fin_branch        = {0};
+    tunnel_t *t                 = createTestTunnel(&normal_upstream, &normal_downstream, &fin_branch);
+    line_t    owner_line;
+    line_t    foreign_line;
+    initializeLine(&owner_line, 0);
+    initializeLine(&foreign_line, 1);
+
+    resetCounters();
+    tl_wid = 0;
+    startPausedFlow(t, &owner_line);
+
+    tl_wid                    = 1;
+    reject_immediate_messages = true;
+    sbuf_t *reverse           = makeTcpPacket(1, 0xC0000201, 443, 0x0A000001, 12345, 200, 110, TCP_ACK | TCP_PSH, 8);
+    lineSetRecalculateChecksum(&foreign_line, true);
+    require(! smugglefintrickDownStreamPayload(t, &foreign_line, reverse),
+            "rejected cross-worker handoff consumed the source packet");
+    require(lineGetRecalculateChecksum(&foreign_line),
+            "rejected cross-worker handoff cleared the source checksum intent");
+    require(atomicLoadRelaxed(&owner_line.refc) == 2, "rejected cross-worker handoff leaked the owner-line lock");
+
+    ipmanipulatorDownStreamPayloadAfterSmuggleFin(t, &foreign_line, reverse);
+    require(downstream_after_smuggle_fin_packets == 1 && replayed_downstream_checksum_intents[0],
+            "rejected handoff did not fall through with its checksum intent");
+
+    runTimedMessage(0);
+    require(atomicLoadRelaxed(&owner_line.refc) == 1, "rejected-handoff timeout leaked the owner-line reference");
+    destroyTestTunnel(t);
+}
+
+static void testCancelledCrossWorkerHandoffReleasesOwnerReference(void)
+{
+    tunnel_t  normal_upstream   = {0};
+    tunnel_t  normal_downstream = {0};
+    tunnel_t  fin_branch        = {0};
+    tunnel_t *t                 = createTestTunnel(&normal_upstream, &normal_downstream, &fin_branch);
+    line_t    owner_line;
+    line_t    foreign_line;
+    initializeLine(&owner_line, 0);
+    initializeLine(&foreign_line, 1);
+
+    resetCounters();
+    tl_wid = 0;
+    startPausedFlow(t, &owner_line);
+
+    tl_wid          = 1;
+    sbuf_t *reverse = makeTcpPacket(1, 0xC0000201, 443, 0x0A000001, 12345, 200, 110, TCP_ACK | TCP_PSH, 8);
+    require(smugglefintrickDownStreamPayload(t, &foreign_line, reverse),
+            "cancellation fixture did not schedule a handoff");
+    require(atomicLoadRelaxed(&owner_line.refc) == 3,
+            "handoff and timeout did not hold their expected owner-line references");
+
+    cancelImmediateMessage(0);
+    require(atomicLoadRelaxed(&owner_line.refc) == 2, "handoff cancellation leaked the owner-line reference");
+
+    runTimedMessage(0);
+    require(atomicLoadRelaxed(&owner_line.refc) == 1, "timeout completion leaked the owner-line reference");
     destroyTestTunnel(t);
 }
 
@@ -486,13 +941,20 @@ static void testPauseGenerationSurvivesSlotReuse(void)
 
 int main(void)
 {
+    checkSumInit();
+
     test_env_t env;
     envSetup(&env);
     testUnrelatedFlowPasses();
     testPauseTimeoutReleasesFlow();
+    testQueuedPacketsRetainIndependentChecksumIntent();
     testQueueCapForcesRelease();
     testCrossWorkerEchoReleasesOwnerFlow();
-    testCrossWorkerReversePacketPasses();
+    testCrossWorkerReversePacketQueuesOnOwner();
+    testCrossWorkerCompositionRestoresProtocolAndPortghostOnce();
+    testStaleCrossWorkerHandoffFailsOpenAfterSmuggleFin();
+    testRejectedCrossWorkerHandoffLeavesPacketWithCaller();
+    testCancelledCrossWorkerHandoffReleasesOwnerReference();
     testUnconfirmedFlowIsReclaimed();
     testPauseGenerationSurvivesSlotReuse();
     envTeardown(&env);

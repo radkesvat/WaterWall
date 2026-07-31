@@ -37,10 +37,25 @@ typedef struct smugglefintrick_release_context_s
     bool     force;
 } smugglefintrick_release_context_t;
 
+typedef struct smugglefintrick_handoff_message_s
+{
+    uint32_t src_addr;
+    uint32_t dst_addr;
+    uint32_t pause_generation;
+    uint32_t packet_length;
+    uint16_t src_port;
+    uint16_t dst_port;
+    bool     recalculate_checksum;
+    uint8_t  packet[];
+} smugglefintrick_handoff_message_t;
+
 #ifdef IPMANIPULATOR_SMUGGLEFIN_TEST_HOOKS
 void ipmanipulatorSmuggleFinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                               WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                               void *arg2, void *arg3);
+bool ipmanipulatorSmuggleFinTestScheduleImmediate(wid_t wid, WorkerMessageCallback callback,
+                                                  WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
+                                                  void *arg3);
 #endif
 
 static bool smugglefintrickParseTcpPacketInfo(const uint8_t *packet, uint32_t packet_length,
@@ -327,7 +342,8 @@ static ipmanipulator_smuggle_fin_flow_t *smugglefintrickCreateFlowLocked(ipmanip
 }
 
 static bool smugglefintrickQueuePacketLocked(ipmanipulator_smuggle_fin_flow_t *flow, sbuf_t *buf,
-                                             ipmanipulator_smuggle_fin_queue_direction_e direction)
+                                             ipmanipulator_smuggle_fin_queue_direction_e direction,
+                                             bool                                        recalculate_checksum)
 {
     if (flow->queued_packets_count >= kSmuggleFinMaxQueueCapacity)
     {
@@ -351,8 +367,11 @@ static bool smugglefintrickQueuePacketLocked(ipmanipulator_smuggle_fin_flow_t *f
         flow->queued_packets_capacity = new_capacity;
     }
 
-    flow->queued_packets[flow->queued_packets_count++] =
-        (ipmanipulator_smuggle_fin_queued_packet_t) {.buf = buf, .direction = direction};
+    flow->queued_packets[flow->queued_packets_count++] = (ipmanipulator_smuggle_fin_queued_packet_t) {
+        .buf                  = buf,
+        .direction            = direction,
+        .recalculate_checksum = recalculate_checksum,
+    };
     return true;
 }
 
@@ -425,13 +444,15 @@ static void smugglefintrickFlushQueuedPackets(tunnel_t *t, line_t *l,
     {
         ipmanipulator_smuggle_fin_queued_packet_t *entry = &queued_packets[i];
 
+        lineSetRecalculateChecksum(l, entry->recalculate_checksum);
+
         if (entry->direction == kIpManipulatorSmuggleFinQueueDirectionUpstream)
         {
             ipmanipulatorUpStreamPayload(t, l, entry->buf);
         }
         else
         {
-            ipmanipulatorDownStreamPayload(t, l, entry->buf);
+            ipmanipulatorDownStreamPayloadAfterSmuggleFin(t, l, entry->buf);
         }
 
         if (! lineIsAlive(l))
@@ -556,7 +577,7 @@ static void smugglefintrickScheduleQueuedRelease(tunnel_t *t, line_t *l, uint32_
 
 static void smugglefintrickForceReleaseAfterQueueLimit(tunnel_t *t, line_t *l,
                                                        ipmanipulator_smuggle_fin_queued_packet_t *queued_packets,
-                                                       uint32_t                                   queued_packets_count)
+                                                       uint32_t queued_packets_count, bool current_recalculate_checksum)
 {
     LOGW("IpManipulator: smuggle-fin paused-flow queue reached its %u-packet limit; releasing the flow",
          kSmuggleFinMaxQueueCapacity);
@@ -569,6 +590,138 @@ static void smugglefintrickForceReleaseAfterQueueLimit(tunnel_t *t, line_t *l,
     {
         memoryFree(queued_packets);
     }
+
+    if (! lineIsAlive(l))
+    {
+        LOGF("IpManipulator: worker packet line died while releasing a full smuggle-fin queue");
+        abortProgramNow(1);
+    }
+
+    lineSetRecalculateChecksum(l, current_recalculate_checksum);
+}
+
+static sbuf_t *smugglefintrickCreateHandoffBuffer(line_t *owner_line, uint32_t packet_length)
+{
+    buffer_pool_t *pool = lineGetBufferPool(owner_line);
+    sbuf_t        *buf  = NULL;
+
+    if (packet_length <= bufferpoolGetSmallBufferSize(pool))
+    {
+        buf = bufferpoolGetSmallBuffer(pool);
+    }
+    else if (packet_length <= bufferpoolGetLargeBufferSize(pool))
+    {
+        buf = bufferpoolGetLargeBuffer(pool);
+    }
+    else
+    {
+        buf = sbufCreateWithPadding(packet_length, bufferpoolGetLargeBufferPadding(pool));
+    }
+
+    if (buf != NULL)
+    {
+        sbufSetLength(buf, packet_length);
+    }
+
+    return buf;
+}
+
+static void smugglefintrickCleanupHandoffMessage(void *arg1, void *arg2, void *arg3)
+{
+    discard arg1;
+
+    memoryFree(arg3);
+    lineUnlock((line_t *) arg2);
+}
+
+static void smugglefintrickRunHandoffMessage(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    tunnel_t                                  *t                    = arg1;
+    line_t                                    *owner_line           = arg2;
+    smugglefintrick_handoff_message_t         *message              = arg3;
+    ipmanipulator_tstate_t                    *state                = tunnelGetState(t);
+    ipmanipulator_smuggle_fin_queued_packet_t *queued_packets       = NULL;
+    uint32_t                                   queued_packets_count = 0;
+
+    discard worker;
+    assert(worker != NULL);
+    assert(worker->wid == getWID());
+    assert(lineGetWID(owner_line) == getWID());
+
+    if (! lineIsAlive(owner_line))
+    {
+        memoryFree(message);
+        lineUnlock(owner_line);
+        LOGF("IpManipulator: worker packet line died before a smuggle-fin handoff ran");
+        abortProgramNow(1);
+    }
+
+    uint32_t                          src_addr             = message->src_addr;
+    uint32_t                          dst_addr             = message->dst_addr;
+    uint32_t                          pause_generation     = message->pause_generation;
+    uint32_t                          packet_length        = message->packet_length;
+    uint16_t                          src_port             = message->src_port;
+    uint16_t                          dst_port             = message->dst_port;
+    bool                              recalculate_checksum = message->recalculate_checksum;
+    sbuf_t                           *buf      = smugglefintrickCreateHandoffBuffer(owner_line, packet_length);
+    smugglefintrick_release_context_t flow_key = {
+        .src_addr   = src_addr,
+        .dst_addr   = dst_addr,
+        .generation = pause_generation,
+        .src_port   = src_port,
+        .dst_port   = dst_port,
+    };
+
+    if (buf == NULL)
+    {
+        memoryFree(message);
+        lineUnlock(owner_line);
+        LOGF("IpManipulator: failed to allocate an owner-worker buffer for a smuggle-fin handoff");
+        abortProgramNow(1);
+    }
+
+    memoryCopyLarge(sbufGetMutablePtr(buf), message->packet, packet_length);
+    memoryFree(message);
+
+    mutexLock(&state->smuggle_fin_mutex);
+
+    ipmanipulator_smuggle_fin_flow_t *flow = smugglefintrickFindReleaseFlowLocked(state, &flow_key);
+
+    if (flow != NULL && flow->paused && flow->pause_generation == pause_generation && flow->line == owner_line)
+    {
+        flow->last_activity_ms = getTickMS();
+
+        if (smugglefintrickQueuePacketLocked(
+                flow, buf, kIpManipulatorSmuggleFinQueueDirectionDownstream, recalculate_checksum))
+        {
+            lineSetRecalculateChecksum(owner_line, false);
+            mutexUnlock(&state->smuggle_fin_mutex);
+            lineUnlock(owner_line);
+            return;
+        }
+
+        smugglefintrickDetachQueuedPacketsLocked(flow, true, getTickMS(), &queued_packets, &queued_packets_count);
+        mutexUnlock(&state->smuggle_fin_mutex);
+
+        smugglefintrickForceReleaseAfterQueueLimit(
+            t, owner_line, queued_packets, queued_packets_count, recalculate_checksum);
+    }
+    else
+    {
+        mutexUnlock(&state->smuggle_fin_mutex);
+        lineSetRecalculateChecksum(owner_line, recalculate_checksum);
+    }
+
+    ipmanipulatorDownStreamPayloadAfterSmuggleFin(t, owner_line, buf);
+
+    if (! lineIsAlive(owner_line))
+    {
+        lineUnlock(owner_line);
+        LOGF("IpManipulator: worker packet line died while resuming a smuggle-fin handoff");
+        abortProgramNow(1);
+    }
+
+    lineUnlock(owner_line);
 }
 
 bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -595,6 +748,8 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return false;
     }
 
+    bool current_recalculate_checksum = lineGetRecalculateChecksum(l);
+
     mutexLock(&state->smuggle_fin_mutex);
 
     bool                              worker_has_paused_flow = false;
@@ -606,15 +761,18 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (flow->paused)
         {
-            if (smugglefintrickQueuePacketLocked(flow, buf, kIpManipulatorSmuggleFinQueueDirectionUpstream))
+            if (smugglefintrickQueuePacketLocked(
+                    flow, buf, kIpManipulatorSmuggleFinQueueDirectionUpstream, current_recalculate_checksum))
             {
+                lineSetRecalculateChecksum(l, false);
                 mutexUnlock(&state->smuggle_fin_mutex);
                 return true;
             }
 
             smugglefintrickDetachQueuedPacketsLocked(flow, true, now_ms, &queued_packets, &queued_packets_count);
             mutexUnlock(&state->smuggle_fin_mutex);
-            smugglefintrickForceReleaseAfterQueueLimit(t, l, queued_packets, queued_packets_count);
+            smugglefintrickForceReleaseAfterQueueLimit(
+                t, l, queued_packets, queued_packets_count, current_recalculate_checksum);
             return false;
         }
 
@@ -673,14 +831,18 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     flow->pause_generation = state->smuggle_fin_next_pause_generation;
 
-    if (! smugglefintrickQueuePacketLocked(flow, buf, kIpManipulatorSmuggleFinQueueDirectionUpstream))
+    if (! smugglefintrickQueuePacketLocked(
+            flow, buf, kIpManipulatorSmuggleFinQueueDirectionUpstream, current_recalculate_checksum))
     {
         smugglefintrickDetachQueuedPacketsLocked(flow, true, now_ms, &queued_packets, &queued_packets_count);
         mutexUnlock(&state->smuggle_fin_mutex);
         lineReuseBuffer(l, fin_packet);
-        smugglefintrickForceReleaseAfterQueueLimit(t, l, queued_packets, queued_packets_count);
+        smugglefintrickForceReleaseAfterQueueLimit(
+            t, l, queued_packets, queued_packets_count, current_recalculate_checksum);
         return false;
     }
+
+    lineSetRecalculateChecksum(l, false);
 
     smugglefintrick_release_context_t *timeout_context  = smugglefintrickCreateReleaseContextLocked(flow, true);
     uint32_t                           pause_generation = flow->pause_generation;
@@ -688,8 +850,6 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     mutexUnlock(&state->smuggle_fin_mutex);
 
     smugglefintrickScheduleQueuedRelease(t, l, state->trick_smuggle_fin_pause_timeout_ms, timeout_context);
-
-    bool original_recalculate_checksum = lineGetRecalculateChecksum(l);
 
     lineLock(l);
     lineSetRecalculateChecksum(l, true);
@@ -707,7 +867,7 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         abortProgramNow(1);
     }
 
-    lineSetRecalculateChecksum(l, original_recalculate_checksum);
+    lineSetRecalculateChecksum(l, false);
     lineUnlock(l);
 
     LOGD("IpManipulator: smuggle-fin sent a mirrored FIN packet to \"%s\" and paused flow generation %u",
@@ -736,6 +896,8 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return false;
     }
 
+    bool current_recalculate_checksum = lineGetRecalculateChecksum(l);
+
     mutexLock(&state->smuggle_fin_mutex);
 
     ipmanipulator_smuggle_fin_flow_t *expected_flow = NULL;
@@ -750,6 +912,7 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (flow->release_pending)
         {
             mutexUnlock(&state->smuggle_fin_mutex);
+            lineSetRecalculateChecksum(l, false);
             lineReuseBuffer(l, buf);
             return true;
         }
@@ -763,6 +926,7 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         mutexUnlock(&state->smuggle_fin_mutex);
 
+        lineSetRecalculateChecksum(l, false);
         lineReuseBuffer(l, buf);
 
         LOGD("IpManipulator: received the expected smuggle-fin echo and will release its flow after %u ms",
@@ -777,23 +941,94 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (flow->paused)
         {
             line_t *owner_line = flow->line;
-            if (owner_line == NULL || lineGetWID(owner_line) != lineGetWID(l))
+            if (owner_line == NULL)
             {
                 mutexUnlock(&state->smuggle_fin_mutex);
                 return false;
             }
 
+            if (lineGetWID(owner_line) != lineGetWID(l))
+            {
+                uint32_t packet_length = sbufGetLength(buf);
+                wid_t    owner_wid     = lineGetWID(owner_line);
+
+                lineLock(owner_line);
+
+                uint32_t src_addr         = flow->src_addr;
+                uint32_t dst_addr         = flow->dst_addr;
+                uint32_t pause_generation = flow->pause_generation;
+                uint16_t src_port         = flow->src_port;
+                uint16_t dst_port         = flow->dst_port;
+
+                mutexUnlock(&state->smuggle_fin_mutex);
+
+#if WW_COMPILE_FOR_32BIT
+                if (packet_length > (uint32_t) (SIZE_MAX - sizeof(smugglefintrick_handoff_message_t)))
+                {
+                    lineUnlock(owner_line);
+                    return false;
+                }
+#endif
+
+                smugglefintrick_handoff_message_t *message = memoryAllocate(sizeof(*message) + (size_t) packet_length);
+                if (message == NULL)
+                {
+                    lineUnlock(owner_line);
+                    return false;
+                }
+
+                *message = (smugglefintrick_handoff_message_t) {
+                    .src_addr             = src_addr,
+                    .dst_addr             = dst_addr,
+                    .pause_generation     = pause_generation,
+                    .packet_length        = packet_length,
+                    .src_port             = src_port,
+                    .dst_port             = dst_port,
+                    .recalculate_checksum = current_recalculate_checksum,
+                };
+                memoryCopyLarge(message->packet, sbufGetRawPtr(buf), packet_length);
+
+#ifdef IPMANIPULATOR_SMUGGLEFIN_TEST_HOOKS
+                bool submitted = ipmanipulatorSmuggleFinTestScheduleImmediate(
+                    owner_wid,
+                    (WorkerMessageCallback) smugglefintrickRunHandoffMessage,
+                    smugglefintrickCleanupHandoffMessage,
+                    t,
+                    owner_line,
+                    message);
+#else
+                bool submitted =
+                    sendWorkerMessageForceQueueWithCleanup(owner_wid,
+                                                           (WorkerMessageCallback) smugglefintrickRunHandoffMessage,
+                                                           smugglefintrickCleanupHandoffMessage,
+                                                           t,
+                                                           owner_line,
+                                                           message);
+#endif
+                if (! submitted)
+                {
+                    return false;
+                }
+
+                lineSetRecalculateChecksum(l, false);
+                lineReuseBuffer(l, buf);
+                return true;
+            }
+
             flow->last_activity_ms = now_ms;
 
-            if (smugglefintrickQueuePacketLocked(flow, buf, kIpManipulatorSmuggleFinQueueDirectionDownstream))
+            if (smugglefintrickQueuePacketLocked(
+                    flow, buf, kIpManipulatorSmuggleFinQueueDirectionDownstream, current_recalculate_checksum))
             {
+                lineSetRecalculateChecksum(l, false);
                 mutexUnlock(&state->smuggle_fin_mutex);
                 return true;
             }
 
             smugglefintrickDetachQueuedPacketsLocked(flow, true, now_ms, &queued_packets, &queued_packets_count);
             mutexUnlock(&state->smuggle_fin_mutex);
-            smugglefintrickForceReleaseAfterQueueLimit(t, owner_line, queued_packets, queued_packets_count);
+            smugglefintrickForceReleaseAfterQueueLimit(
+                t, owner_line, queued_packets, queued_packets_count, current_recalculate_checksum);
             return false;
         }
 

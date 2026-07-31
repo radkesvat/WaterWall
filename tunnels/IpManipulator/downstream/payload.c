@@ -36,6 +36,15 @@ void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    ipmanipulatorDownStreamPayloadAfterSmuggleFin(t, l, buf);
+}
+
+void ipmanipulatorDownStreamPayloadAfterSmuggleFin(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    assert(lineGetWID(l) == getWID());
+
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
     if (state->trick_ech_sni && echsnitrickDownStreamPayload(t, l, buf))
     {
         return;
