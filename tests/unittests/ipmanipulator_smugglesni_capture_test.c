@@ -69,7 +69,7 @@ static void envTeardown(test_env_t *env)
 
 enum
 {
-    kMaxReceivedPackets = 16
+    kMaxReceivedPackets = 32
 };
 
 typedef struct received_packet_record_s
@@ -409,6 +409,83 @@ static void requireNoActiveTlsSlots(const ipmanipulator_tstate_t *state)
         require(! state->tls_prestart_slots[i].active, "prestart slot remained active");
         require(state->tls_prestart_slots[i].captured_packets_count == 0, "prestart slot retained packets");
     }
+}
+
+static void testFirstSniNonTlsBurstFallsThroughImmediately(void)
+{
+    tunnel_t  normal = {0};
+    tunnel_t  real   = {0};
+    tunnel_t *t      = createTestTunnel(&normal, &real);
+    line_t    line   = makeTestLine();
+    uint8_t   payload[128];
+
+    memorySet(payload, 0x91, sizeof(payload));
+    resetCounters();
+
+    uint32_t seq = 4000;
+    for (uint32_t i = 0; i < 17; ++i)
+    {
+        ipmanipulator_tls_capture_slot_t capture = {0};
+        sbuf_t *packet = makeTcpPacketWithSeq(seq, TCP_ACK | TCP_PSH, payload, sizeof(payload));
+
+        require(ipmanipulatorCaptureTlsClientHello(t, &line, packet, kIpManipulatorTlsCaptureKindFirstSni, &capture) ==
+                    kIpManipulatorTlsCaptureStatusMiss,
+                "first-sni delayed a non-TLS packet");
+        tunnelNextUpStreamPayload(t, &line, packet);
+        seq += sizeof(payload);
+    }
+
+    require(normal_packets_count == 17, "first-sni did not immediately forward the full non-TLS burst");
+    for (uint32_t i = 0; i < normal_packets_count; ++i)
+    {
+        require(normal_packets[i].seq == 4000U + i * sizeof(payload), "first-sni reordered the non-TLS burst");
+    }
+
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    requireNoActiveTlsSlots(state);
+
+    usleep(70000);
+    wloopProcessEvents(GSTATE.shortcut_loops[0], 0);
+    require(normal_packets_count == 17, "first-sni scheduled a prestart timeout for non-TLS traffic");
+    requireNoActiveTlsSlots(state);
+
+    destroyTestTunnel(t);
+}
+
+static void testFirstSniFragmentedClientHelloCapture(void)
+{
+    tunnel_t  normal          = {0};
+    tunnel_t  real            = {0};
+    tunnel_t *t               = createTestTunnel(&normal, &real);
+    line_t    line            = makeTestLine();
+    uint8_t   hello_buf[1705] = {0};
+    uint16_t  hello_len       = buildTlsClientHelloPayload(hello_buf, sizeof(hello_buf), "first.example");
+    uint16_t  first_len       = 900;
+    uint16_t  second_len      = hello_len - first_len;
+    uint32_t  first_seq       = 9000;
+    ipmanipulator_tls_capture_slot_t capture = {0};
+
+    resetCounters();
+
+    sbuf_t *first = makeTcpPacketWithSeq(first_seq, TCP_ACK | TCP_PSH, hello_buf, first_len);
+    require(ipmanipulatorCaptureTlsClientHello(t, &line, first, kIpManipulatorTlsCaptureKindFirstSni, &capture) ==
+                kIpManipulatorTlsCaptureStatusPending,
+            "first-sni did not start capture from a recognizable fragmented ClientHello");
+
+    sbuf_t *second = makeTcpPacketWithSeq(first_seq + first_len, TCP_ACK | TCP_PSH, hello_buf + first_len, second_len);
+    require(ipmanipulatorCaptureTlsClientHello(t, &line, second, kIpManipulatorTlsCaptureKindFirstSni, &capture) ==
+                kIpManipulatorTlsCaptureStatusReady,
+            "first-sni did not complete an in-order fragmented ClientHello");
+    require(capture.captured_packets_count == 2, "first-sni captured the wrong segment count");
+    require(capture.assembled_packet != NULL, "first-sni did not assemble the fragmented ClientHello");
+    requireNoActiveTlsSlots(tunnelGetState(t));
+
+    ipmanipulatorReleaseCapturedPacketsNormal(t, &capture);
+    require(normal_packets_count == 2, "first-sni cleanup did not release both captured segments");
+    require(normal_packets[0].seq == first_seq && normal_packets[1].seq == first_seq + first_len,
+            "first-sni cleanup reordered the captured segments");
+
+    destroyTestTunnel(t);
 }
 
 static void testNonTlsCaptureFallsThrough(void)
@@ -971,6 +1048,8 @@ int main(void)
     test_env_t env;
     envSetup(&env);
 
+    testFirstSniNonTlsBurstFallsThroughImmediately();
+    testFirstSniFragmentedClientHelloCapture();
     testPendingPrestartTimeoutEntersPassthrough();
     testNonZeroDelayBatchOrdering();
     testNonTlsCaptureFallsThrough();

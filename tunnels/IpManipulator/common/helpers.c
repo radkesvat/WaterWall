@@ -93,6 +93,11 @@ static const char *ipmanipulatorTlsCaptureKindName(ipmanipulator_tls_capture_kin
     }
 }
 
+static bool ipmanipulatorTlsCaptureKindAllowsPrestart(ipmanipulator_tls_capture_kind_e kind)
+{
+    return kind == kIpManipulatorTlsCaptureKindSmuggleSni;
+}
+
 static void ipmanipulatorResetCapturedSlot(ipmanipulator_tls_capture_slot_t *slot)
 {
     uint32_t gen = slot->generation + 1;
@@ -1088,6 +1093,7 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(tunnel_t *
     ipmanipulator_tls_prestart_slot_t release_prestart_slot = {0};
     bool                              have_release          = false;
     bool                              have_prestart_release = false;
+    bool                              allow_prestart        = ipmanipulatorTlsCaptureKindAllowsPrestart(kind);
 
     ipmanipulatorResetCapturedSlot(out_slot);
 
@@ -1128,29 +1134,32 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(tunnel_t *
         }
     }
 
-    for (uint32_t i = 0; i < state->tls_prestart_slots_count; ++i)
+    if (allow_prestart)
     {
-        ipmanipulator_tls_prestart_slot_t *slot = &state->tls_prestart_slots[i];
-
-        if (! slot->active)
+        for (uint32_t i = 0; i < state->tls_prestart_slots_count; ++i)
         {
-            continue;
-        }
+            ipmanipulator_tls_prestart_slot_t *slot = &state->tls_prestart_slots[i];
 
-        if (now_ms - slot->last_update_ms >= kIpManipulatorTlsPrestartTimeoutMs)
-        {
-            if (! have_prestart_release)
+            if (! slot->active)
             {
-                ipmanipulatorTakePrestartSlot(&release_prestart_slot, slot);
-                have_prestart_release = true;
+                continue;
             }
-            continue;
-        }
 
-        if (ipmanipulatorTlsPrestartSlotMatches(slot, &info, kind))
-        {
-            prestart_index = (int) i;
-            break;
+            if (now_ms - slot->last_update_ms >= kIpManipulatorTlsPrestartTimeoutMs)
+            {
+                if (! have_prestart_release)
+                {
+                    ipmanipulatorTakePrestartSlot(&release_prestart_slot, slot);
+                    have_prestart_release = true;
+                }
+                continue;
+            }
+
+            if (ipmanipulatorTlsPrestartSlotMatches(slot, &info, kind))
+            {
+                prestart_index = (int) i;
+                break;
+            }
         }
     }
 
@@ -1282,6 +1291,22 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(tunnel_t *
 
     if (start_status != kIpManipulatorTlsClientHelloStartFragmented)
     {
+        if (! allow_prestart)
+        {
+            mutexUnlock(&state->tls_capture_mutex);
+
+            if (have_release)
+            {
+                ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
+            }
+            if (have_prestart_release)
+            {
+                ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
+            }
+
+            return kIpManipulatorTlsCaptureStatusMiss;
+        }
+
         if (start_status == kIpManipulatorTlsClientHelloStartUnsupported)
         {
             mutexUnlock(&state->tls_capture_mutex);
