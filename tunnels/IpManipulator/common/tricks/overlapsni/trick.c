@@ -769,18 +769,19 @@ static bool overlapsnitrickSendUpstreamDirect(tunnel_t *t, line_t *l, sbuf_t *bu
         return false;
     }
 
-    discard portghosttrickApply(t, l, &buf);
-    if (buf == NULL)
-    {
-        return lineIsAlive(l);
-    }
-
     lineSetRecalculateChecksum(l, true);
-    tunnelNextUpStreamPayload(t, l, buf);
+    ipmanipulatorEmitUpstream(t, l, buf, tunnelNextUpStreamPayload);
     return lineIsAlive(l);
 }
 
-static bool overlapsnitrickSendHelperPacket(tunnel_t *helper_tunnel, line_t *l, sbuf_t *buf)
+static void overlapsnitrickForwardHelperPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+    tunnelUpStreamPayload(state->trick_overlap_sni_server_hello_upstream_tunnel, l, buf);
+}
+
+static bool overlapsnitrickSendHelperPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     if (l == NULL || buf == NULL)
     {
@@ -797,14 +798,20 @@ static bool overlapsnitrickSendHelperPacket(tunnel_t *helper_tunnel, line_t *l, 
         return false;
     }
 
-    if (helper_tunnel == NULL)
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    if (state->trick_overlap_sni_server_hello_upstream_tunnel == NULL)
     {
         lineReuseBuffer(l, buf);
         return lineIsAlive(l);
     }
 
-    lineSetRecalculateChecksum(l, false);
-    tunnelUpStreamPayload(helper_tunnel, l, buf);
+    /*
+     * This dedicated branch is built from the captured downstream SYN|ACK and
+     * must retain that original tuple. Apply checksum/protocol egress ordering
+     * without adding a portghost trailer.
+     */
+    lineSetRecalculateChecksum(l, true);
+    ipmanipulatorEmitUpstreamPreservingTuple(t, l, buf, overlapsnitrickForwardHelperPacket);
     return lineIsAlive(l);
 }
 
@@ -953,8 +960,7 @@ static void overlapsnitrickSendHeldThenCurrentNormal(tunnel_t *t, ipmanipulator_
 }
 
 static void overlapsnitrickSendOutputs(tunnel_t *t, line_t *l, overlapsnitrick_packet_sequence_t *normal_sequence,
-                                       tunnel_t *server_hello_helper_tunnel, sbuf_t *crafted_server_hello,
-                                       uint32_t delay_ms)
+                                       sbuf_t *crafted_server_hello, uint32_t delay_ms)
 {
     if (l == NULL || normal_sequence == NULL)
     {
@@ -984,7 +990,7 @@ static void overlapsnitrickSendOutputs(tunnel_t *t, line_t *l, overlapsnitrick_p
     {
         if (alive)
         {
-            alive = overlapsnitrickSendHelperPacket(server_hello_helper_tunnel, l, crafted_server_hello);
+            alive = overlapsnitrickSendHelperPacket(t, l, crafted_server_hello);
         }
         else
         {
@@ -1223,12 +1229,7 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
     overlapsnitrickRecycleCapturedPacket(held_packet);
     lineReuseBuffer(l, current_buf);
 
-    overlapsnitrickSendOutputs(t,
-                               l,
-                               &sequence,
-                               state->trick_overlap_sni_server_hello_upstream_tunnel,
-                               crafted_server_hello,
-                               state->trick_overlap_sni_delay_ms);
+    overlapsnitrickSendOutputs(t, l, &sequence, crafted_server_hello, state->trick_overlap_sni_delay_ms);
     return true;
 }
 

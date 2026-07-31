@@ -1,5 +1,5 @@
 {
-  "name": "ipmanipulator-tcp-udp-swap-roundtrip",
+  "name": "ipmanipulator-udp-custom-protocol-roundtrip",
   "nodes": [
     {
       "name": "tester-client",
@@ -9,9 +9,9 @@
         "packet-start-immediately": true,
         "max-payload-size": 24,
         "packet-ipv4": {
-          "source-ip": "10.83.0.1",
-          "dest-ip": "10.83.0.2",
-          "protocol": 6,
+          "source-ip": "10.84.0.1",
+          "dest-ip": "10.84.0.2",
+          "protocol": 17,
           "ttl": 64
         }
       },
@@ -24,7 +24,7 @@
         "chance": 0,
         "up": {
           "source-ip": {
-            "ipv4": "10.83.0.1"
+            "ipv4": "10.84.0.1"
           }
         }
       },
@@ -34,8 +34,7 @@
       "name": "ip-manipulator",
       "type": "IpManipulator",
       "settings": {
-        "protoswap-tcp": 17,
-        "protoswap-udp": 6
+        "protoswap-udp": 144
       },
       "next": "tester-server"
     },
@@ -47,9 +46,9 @@
         "packet-init-on-start": true,
         "max-payload-size": 24,
         "packet-ipv4": {
-          "source-ip": "10.83.0.1",
-          "dest-ip": "10.83.0.2",
-          "protocol": 17,
+          "source-ip": "10.84.0.1",
+          "dest-ip": "10.84.0.2",
+          "protocol": 144,
           "ttl": 64
         }
       }

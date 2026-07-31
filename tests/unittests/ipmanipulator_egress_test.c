@@ -1,0 +1,559 @@
+#include "IpManipulator/structure.h"
+#include "tricks/portghost/trick.h"
+#include "tricks/sniblender/trick.h"
+#include "wchecksum.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+
+enum
+{
+    kCapturedPackets = 32,
+    /* Mirrors the low-RAM profile where the small and large pools are both 4096 bytes. */
+    kTestSmallBuffer = 256,
+    kTestLargeBuffer = 256
+};
+
+typedef struct test_env_s
+{
+    master_pool_t *large_master;
+    master_pool_t *small_master;
+    buffer_pool_t *buffer_pool;
+    buffer_pool_t *buffer_pools[1];
+    line_t        *line;
+} test_env_t;
+
+static sbuf_t   *captured[kCapturedPackets];
+static uint32_t  captured_count;
+static tunnel_t *init_targets[4];
+static uint32_t  init_counts[4];
+
+api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message);
+
+static void require(bool condition, const char *message)
+{
+    if (! condition)
+    {
+        fprintf(stderr, "FAIL: %s\n", message);
+        exit(1);
+    }
+}
+
+api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message)
+{
+    discard instance;
+    reuseBuffer(message);
+    return (api_result_t) {.result_code = kApiResultError, .buffer = NULL};
+}
+
+static tunnel_t *createTestTunnel(void)
+{
+    tunnel_t *t = memoryAllocateAlignedZero(sizeof(tunnel_t) + sizeof(ipmanipulator_tstate_t), kCpuLineCacheSize);
+    require(t != NULL, "failed to allocate test tunnel");
+
+    t->tstate_size = sizeof(ipmanipulator_tstate_t);
+
+    ipmanipulator_tstate_t *state        = tunnelGetState(t);
+    state->trick_proto_swap_tcp_number   = -1;
+    state->trick_proto_swap_tcp_number_2 = -1;
+    state->trick_proto_swap_udp_number   = -1;
+    return t;
+}
+
+static void destroyTestTunnel(tunnel_t *t)
+{
+    memoryFreeAligned(t);
+}
+
+static void envSetup(test_env_t *env)
+{
+    memoryZero(env, sizeof(*env));
+    env->large_master = masterpoolCreateWithCapacity(64);
+    env->small_master = masterpoolCreateWithCapacity(64);
+    env->buffer_pool  = bufferpoolCreate(env->large_master, env->small_master, 64, kTestLargeBuffer, kTestSmallBuffer);
+    env->buffer_pools[0] = env->buffer_pool;
+
+    GSTATE.shortcut_buffer_pools         = env->buffer_pools;
+    GSTATE.masterpool_buffer_pools_large = env->large_master;
+    GSTATE.masterpool_buffer_pools_small = env->small_master;
+    GSTATE.workers_count                 = 2;
+    tl_wid                               = 0;
+
+    env->line = memoryAllocateZero(sizeof(line_t));
+    require(env->line != NULL, "failed to allocate test line");
+    atomicStoreRelaxed(&env->line->refc, 1);
+    env->line->alive = true;
+    env->line->wid   = 0;
+}
+
+static void recycleCaptured(test_env_t *env)
+{
+    for (uint32_t i = 0; i < captured_count; ++i)
+    {
+        if (captured[i] != NULL)
+        {
+            lineReuseBuffer(env->line, captured[i]);
+            captured[i] = NULL;
+        }
+    }
+    captured_count = 0;
+}
+
+static void envTeardown(test_env_t *env)
+{
+    recycleCaptured(env);
+
+    GSTATE.shortcut_buffer_pools         = NULL;
+    GSTATE.masterpool_buffer_pools_large = NULL;
+    GSTATE.masterpool_buffer_pools_small = NULL;
+    GSTATE.workers_count                 = 0;
+
+    memoryFree(env->line);
+    bufferpoolDestroy(env->buffer_pool);
+    masterpoolMakeEmpty(env->large_master);
+    masterpoolMakeEmpty(env->small_master);
+    masterpoolDestroy(env->large_master);
+    masterpoolDestroy(env->small_master);
+}
+
+static void capturePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    discard t;
+    discard l;
+
+    require(captured_count < kCapturedPackets, "captured packet array overflow");
+    captured[captured_count++] = buf;
+}
+
+static sbuf_t *makeTcpPacket(test_env_t *env, uint16_t packet_len)
+{
+    require(packet_len >= sizeof(struct ip_hdr) + sizeof(struct tcp_hdr), "TCP test packet is too small");
+
+    sbuf_t *buf = bufferpoolGetLargeBuffer(env->buffer_pool);
+    buf         = sbufReserveSpace(buf, packet_len);
+    sbufSetLength(buf, packet_len);
+
+    uint8_t *packet = sbufGetMutablePtr(buf);
+    memoryZero(packet, packet_len);
+
+    struct ip_hdr *ip = (struct ip_hdr *) packet;
+    IPH_VHL_SET(ip, 4, sizeof(struct ip_hdr) / 4U);
+    IPH_LEN_SET(ip, lwip_htons(packet_len));
+    IPH_ID_SET(ip, lwip_htons(0x1234));
+    IPH_TTL_SET(ip, 64);
+    IPH_PROTO_SET(ip, IPPROTO_TCP);
+    ip->src.addr  = PP_HTONL(LWIP_MAKEU32(10, 0, 0, 1));
+    ip->dest.addr = PP_HTONL(LWIP_MAKEU32(10, 0, 0, 2));
+
+    struct tcp_hdr *tcp = (struct tcp_hdr *) (packet + sizeof(struct ip_hdr));
+    tcp->src            = lwip_htons(12345);
+    tcp->dest           = lwip_htons(443);
+    tcp->seqno          = lwip_htonl(1000);
+    tcp->ackno          = lwip_htonl(2000);
+    TCPH_HDRLEN_FLAGS_SET(tcp, sizeof(struct tcp_hdr) / 4U, TCP_ACK | TCP_PSH);
+    tcp->wnd = lwip_htons(64240);
+
+    uint32_t payload_offset = sizeof(struct ip_hdr) + sizeof(struct tcp_hdr);
+    for (uint32_t i = payload_offset; i < packet_len; ++i)
+    {
+        packet[i] = (uint8_t) (i * 17U + 3U);
+    }
+
+    require(calcFullPacketChecksum(packet, packet_len), "failed to checksum TCP test packet");
+    return buf;
+}
+
+static void requireValidIpv4HeaderChecksum(const sbuf_t *buf)
+{
+    sbuf_t *copy = sbufDuplicate((sbuf_t *) buf);
+    require(copy != NULL, "failed to duplicate packet for IPv4 checksum verification");
+
+    const struct ip_hdr *original = (const struct ip_hdr *) sbufGetRawPtr(buf);
+    require(calcIpv4HeaderChecksum(sbufGetMutablePtr(copy), sbufGetLength(copy)),
+            "failed to recalculate IPv4 header checksum");
+    const struct ip_hdr *recalculated = (const struct ip_hdr *) sbufGetRawPtr(copy);
+    require(IPH_CHKSUM(original) == IPH_CHKSUM(recalculated), "IPv4 header checksum is invalid");
+    sbufDestroy(copy);
+}
+
+static void requireTcpChecksumMatchesRealProtocol(const sbuf_t *buf)
+{
+    const uint8_t        *packet = sbufGetRawPtr(buf);
+    const struct ip_hdr  *ip     = (const struct ip_hdr *) packet;
+    const struct tcp_hdr *tcp    = (const struct tcp_hdr *) (packet + IPH_HL_BYTES(ip));
+    uint16_t              actual = tcp->chksum;
+
+    sbuf_t *copy = sbufDuplicate((sbuf_t *) buf);
+    require(copy != NULL, "failed to duplicate packet for TCP checksum verification");
+    struct ip_hdr *copy_ip = (struct ip_hdr *) sbufGetMutablePtr(copy);
+    IPH_PROTO_SET(copy_ip, IPPROTO_TCP);
+    require(calcFullPacketChecksum(sbufGetMutablePtr(copy), sbufGetLength(copy)),
+            "failed to calculate real-protocol TCP checksum");
+    struct tcp_hdr *copy_tcp = (struct tcp_hdr *) (sbufGetMutablePtr(copy) + IPH_HL_BYTES(copy_ip));
+    require(actual == copy_tcp->chksum, "TCP checksum was not calculated under the real protocol");
+    sbufDestroy(copy);
+}
+
+static void testEgressOrderAndDownstreamRoundTrip(test_env_t *env)
+{
+    tunnel_t  next = {.fnPayloadU = capturePacket};
+    tunnel_t  prev = {.fnPayloadD = capturePacket};
+    tunnel_t *t    = createTestTunnel();
+    t->next        = &next;
+    t->prev        = &prev;
+
+    ipmanipulator_tstate_t *state      = tunnelGetState(t);
+    state->trick_source_port_ghost     = true;
+    state->trick_dest_port_ghost       = true;
+    state->trick_proto_swap            = true;
+    state->trick_proto_swap_tcp_number = 143;
+
+    sbuf_t  *buf          = makeTcpPacket(env, 96);
+    uint32_t original_len = sbufGetLength(buf);
+    uint8_t  original_payload[56];
+    memoryCopy(original_payload,
+               (const uint8_t *) sbufGetRawPtr(buf) + sizeof(struct ip_hdr) + sizeof(struct tcp_hdr),
+               sizeof(original_payload));
+
+    lineSetRecalculateChecksum(env->line, true);
+    ipmanipulatorEmitUpstream(t, env->line, buf, tunnelNextUpStreamPayload);
+
+    require(captured_count == 1, "egress did not forward exactly one packet");
+    sbuf_t              *wire    = captured[0];
+    const struct ip_hdr *wire_ip = (const struct ip_hdr *) sbufGetRawPtr(wire);
+    require(IPH_PROTO(wire_ip) == 143, "egress did not apply protocol swap last");
+    require(sbufGetLength(wire) == original_len + 4U, "portghost trailer was not applied exactly once");
+    require(! lineGetRecalculateChecksum(env->line), "swapped packet left a device checksum request pending");
+    requireValidIpv4HeaderChecksum(wire);
+    requireTcpChecksumMatchesRealProtocol(wire);
+
+    captured[0]    = NULL;
+    captured_count = 0;
+    ipmanipulatorDownStreamPayload(t, env->line, wire);
+
+    require(captured_count == 1, "downstream round trip did not forward exactly one packet");
+    sbuf_t               *restored    = captured[0];
+    const struct ip_hdr  *restored_ip = (const struct ip_hdr *) sbufGetRawPtr(restored);
+    const struct tcp_hdr *restored_tcp =
+        (const struct tcp_hdr *) ((const uint8_t *) sbufGetRawPtr(restored) + sizeof(struct ip_hdr));
+
+    require(IPH_PROTO(restored_ip) == IPPROTO_TCP, "downstream did not restore TCP before parsing");
+    require(sbufGetLength(restored) == original_len, "downstream did not remove the portghost trailer");
+    require(lwip_ntohs(restored_tcp->src) == 12345 && lwip_ntohs(restored_tcp->dest) == 443,
+            "downstream did not restore the original TCP tuple");
+    require(memoryEqual((const uint8_t *) sbufGetRawPtr(restored) + sizeof(struct ip_hdr) + sizeof(struct tcp_hdr),
+                        original_payload,
+                        sizeof(original_payload)),
+            "egress/downstream round trip changed the TCP payload");
+    require(lineGetRecalculateChecksum(env->line), "portghost restore did not request checksum recalculation");
+    require(calcFullPacketChecksum(sbufGetMutablePtr(restored), sbufGetLength(restored)),
+            "restored packet could not be checksummed as TCP");
+    lineSetRecalculateChecksum(env->line, false);
+
+    recycleCaptured(env);
+    destroyTestTunnel(t);
+}
+
+static void testAlreadyMappedEgressUnwraps(test_env_t *env)
+{
+    tunnel_t *t = createTestTunnel();
+
+    ipmanipulator_tstate_t *state      = tunnelGetState(t);
+    state->trick_proto_swap            = true;
+    state->trick_proto_swap_tcp_number = 143;
+
+    sbuf_t        *buf = makeTcpPacket(env, 96);
+    struct ip_hdr *ip  = (struct ip_hdr *) sbufGetMutablePtr(buf);
+    IPH_PROTO_SET(ip, 143);
+    require(calcIpv4HeaderChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)),
+            "failed to checksum mapped-layer fixture");
+
+    lineSetRecalculateChecksum(env->line, true);
+    ipmanipulatorEmitUpstream(t, env->line, buf, capturePacket);
+
+    require(captured_count == 1, "layered egress did not forward exactly one packet");
+    const struct ip_hdr *wire_ip = (const struct ip_hdr *) sbufGetRawPtr(captured[0]);
+    require(IPH_PROTO(wire_ip) == IPPROTO_TCP, "the upstream unwrapping layer re-mapped the packet");
+    require(! lineGetRecalculateChecksum(env->line), "layered mapped packet left a checksum request pending");
+    requireValidIpv4HeaderChecksum(captured[0]);
+    requireTcpChecksumMatchesRealProtocol(captured[0]);
+
+    recycleCaptured(env);
+    destroyTestTunnel(t);
+}
+
+static void testTuplePreservingHelperEgress(test_env_t *env)
+{
+    tunnel_t *t = createTestTunnel();
+
+    ipmanipulator_tstate_t *state      = tunnelGetState(t);
+    state->trick_source_port_ghost     = true;
+    state->trick_dest_port_ghost       = true;
+    state->trick_proto_swap            = true;
+    state->trick_proto_swap_tcp_number = 143;
+
+    sbuf_t  *buf          = makeTcpPacket(env, 96);
+    uint32_t original_len = sbufGetLength(buf);
+
+    lineSetRecalculateChecksum(env->line, true);
+    ipmanipulatorEmitUpstreamPreservingTuple(t, env->line, buf, capturePacket);
+
+    require(captured_count == 1, "tuple-preserving egress did not forward exactly one packet");
+    const struct ip_hdr  *wire_ip = (const struct ip_hdr *) sbufGetRawPtr(captured[0]);
+    const struct tcp_hdr *wire_tcp =
+        (const struct tcp_hdr *) ((const uint8_t *) sbufGetRawPtr(captured[0]) + sizeof(struct ip_hdr));
+    require(IPH_PROTO(wire_ip) == 143, "tuple-preserving egress omitted protocol swap");
+    require(sbufGetLength(captured[0]) == original_len, "tuple-preserving egress appended a portghost trailer");
+    require(lwip_ntohs(wire_tcp->src) == 12345 && lwip_ntohs(wire_tcp->dest) == 443,
+            "tuple-preserving egress changed the helper branch ports");
+    require(! lineGetRecalculateChecksum(env->line), "tuple-preserving packet left a checksum request pending");
+    requireValidIpv4HeaderChecksum(captured[0]);
+    requireTcpChecksumMatchesRealProtocol(captured[0]);
+
+    recycleCaptured(env);
+    destroyTestTunnel(t);
+}
+
+static void runPortghostSegmentationCase(test_env_t *env, bool ghost_dest)
+{
+    tunnel_t               *t      = createTestTunnel();
+    ipmanipulator_tstate_t *state  = tunnelGetState(t);
+    state->trick_source_port_ghost = true;
+    state->trick_dest_port_ghost   = ghost_dest;
+
+    const uint16_t packet_len         = 213;
+    const uint32_t headers_len        = sizeof(struct ip_hdr) + sizeof(struct tcp_hdr);
+    const uint32_t source_payload_len = packet_len - headers_len;
+    uint8_t        source_payload[packet_len - sizeof(struct ip_hdr) - sizeof(struct tcp_hdr)];
+    sbuf_t        *buf = makeTcpPacket(env, packet_len);
+    memoryCopy(source_payload, (const uint8_t *) sbufGetRawPtr(buf) + headers_len, source_payload_len);
+
+    lineSetRecalculateChecksum(env->line, false);
+    require(ipmanipulatorSendWithForwardMaybeSegmented(t, env->line, buf, capturePacket),
+            "segmentation unexpectedly killed the packet line");
+    require(captured_count > 1, "oversized packet was not segmented");
+
+    uint8_t  reassembled[sizeof(source_payload)];
+    uint32_t reassembled_len = 0;
+    for (uint32_t i = 0; i < captured_count; ++i)
+    {
+        sbuf_t              *segment = captured[i];
+        const struct ip_hdr *ip      = (const struct ip_hdr *) sbufGetRawPtr(segment);
+
+        require(sbufGetLength(segment) <= GLOBAL_MTU_SIZE, "portghost segment exceeded GLOBAL_MTU_SIZE");
+        require(lwip_ntohs(IPH_LEN(ip)) == sbufGetLength(segment),
+                "segment IPv4 total length does not match its buffer");
+        require(portghosttrickRestore(t, env->line, &segment), "segment did not carry a restorable trailer");
+        require(segment != NULL, "portghost restore consumed a valid segment");
+
+        const struct tcp_hdr *tcp =
+            (const struct tcp_hdr *) ((const uint8_t *) sbufGetRawPtr(segment) + sizeof(struct ip_hdr));
+        require(lwip_ntohs(tcp->src) == 12345 && lwip_ntohs(tcp->dest) == 443,
+                "segment restored to the wrong TCP tuple");
+
+        uint32_t restored_payload_len = sbufGetLength(segment) - sizeof(struct ip_hdr) - sizeof(struct tcp_hdr);
+        require(reassembled_len + restored_payload_len <= sizeof(reassembled), "reassembled payload overflow");
+        memoryCopy(reassembled + reassembled_len,
+                   (const uint8_t *) sbufGetRawPtr(segment) + headers_len,
+                   restored_payload_len);
+        reassembled_len += restored_payload_len;
+
+        captured[i] = segment;
+    }
+
+    require(reassembled_len == source_payload_len, "restored segments have the wrong total payload length");
+    require(memoryEqual(reassembled, source_payload, source_payload_len),
+            "restored segment payloads do not reconstruct the source payload");
+
+    recycleCaptured(env);
+    lineSetRecalculateChecksum(env->line, false);
+    destroyTestTunnel(t);
+}
+
+static void testPortghostSegmentation(test_env_t *env)
+{
+    uint16_t original_mtu = GLOBAL_MTU_SIZE;
+    GLOBAL_MTU_SIZE       = 100;
+
+    runPortghostSegmentationCase(env, false);
+    runPortghostSegmentationCase(env, true);
+
+    tunnel_t               *t      = createTestTunnel();
+    ipmanipulator_tstate_t *state  = tunnelGetState(t);
+    state->trick_source_port_ghost = true;
+    state->trick_dest_port_ghost   = true;
+
+    GLOBAL_MTU_SIZE = sizeof(struct ip_hdr) + sizeof(struct tcp_hdr) + 4U;
+    sbuf_t *buf     = makeTcpPacket(env, 80);
+    require(ipmanipulatorSendWithForwardMaybeSegmented(t, env->line, buf, capturePacket),
+            "header/trailer boundary unexpectedly killed the packet line");
+    require(captured_count == 0, "header/trailer boundary did not bail before underflow");
+
+    destroyTestTunnel(t);
+    GLOBAL_MTU_SIZE = original_mtu;
+}
+
+static void testSniBlenderBoundsAndProtocolSwap(test_env_t *env)
+{
+    tunnel_t  next = {.fnPayloadU = capturePacket};
+    tunnel_t *t    = createTestTunnel();
+    t->next        = &next;
+
+    ipmanipulator_tstate_t *state          = tunnelGetState(t);
+    state->trick_sni_blender_packets_count = 2;
+    state->trick_proto_swap                = true;
+    state->trick_proto_swap_tcp_number     = 143;
+
+    sbuf_t *short_buf = sbufCreate(12);
+    sbufSetLength(short_buf, 12);
+    memoryZero(sbufGetMutablePtr(short_buf), 12);
+    require(! sniblendertrickUpStreamPayload(t, env->line, short_buf), "short SNI Blender packet was accepted");
+    sbufDestroy(short_buf);
+
+    sbuf_t  *buf = makeTcpPacket(env, 800);
+    uint8_t *tls = sbufGetMutablePtr(buf) + sizeof(struct ip_hdr) + sizeof(struct tcp_hdr);
+    tls[0]       = 0x16;
+    tls[1]       = 0x03;
+    tls[2]       = 0x03;
+    tls[5]       = 0x01;
+    require(calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)),
+            "failed to checksum oversized SNI Blender packet");
+
+    require(sniblendertrickUpStreamPayload(t, env->line, buf), "oversized SNI Blender packet was not handled");
+    require(captured_count == 2, "SNI Blender emitted the wrong fragment count");
+
+    bool saw_heap_backed_fragment = false;
+    for (uint32_t i = 0; i < captured_count; ++i)
+    {
+        const struct ip_hdr *ip = (const struct ip_hdr *) sbufGetRawPtr(captured[i]);
+        require(lwip_ntohs(IPH_LEN(ip)) == sbufGetLength(captured[i]), "SNI Blender fragment length is inconsistent");
+        require(IPH_PROTO(ip) == 143, "SNI Blender fragment bypassed the egress protocol swap");
+        requireValidIpv4HeaderChecksum(captured[i]);
+        saw_heap_backed_fragment |= sbufGetTotalCapacityNoPadding(captured[i]) > kTestLargeBuffer;
+    }
+    require(saw_heap_backed_fragment, "oversized SNI Blender fragment did not use a heap-backed buffer");
+
+    recycleCaptured(env);
+    destroyTestTunnel(t);
+}
+
+static void countInit(tunnel_t *t, line_t *l)
+{
+    discard l;
+
+    for (uint32_t i = 0; i < ARRAY_SIZE(init_targets); ++i)
+    {
+        if (init_targets[i] == t)
+        {
+            init_counts[i] += 1;
+            return;
+        }
+    }
+    require(false, "unexpected Init target");
+}
+
+static void resetInitCounters(tunnel_t *normal, tunnel_t *helper1, tunnel_t *helper2, tunnel_t *helper3)
+{
+    init_targets[0] = normal;
+    init_targets[1] = helper1;
+    init_targets[2] = helper2;
+    init_targets[3] = helper3;
+    memoryZero(init_counts, sizeof(init_counts));
+}
+
+static void testHelperInitDeduplication(test_env_t *env)
+{
+    tunnel_t  normal              = {.fnInitU = countInit};
+    tunnel_t  helper1             = {.fnInitU = countInit};
+    tunnel_t  helper2             = {.fnInitU = countInit};
+    tunnel_t  helper3             = {.fnInitU = countInit};
+    tunnel_t *t                   = createTestTunnel();
+    t->next                       = &normal;
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+    resetInitCounters(&normal, &helper1, &helper2, &helper3);
+    state->trick_overlap_sni_server_hello_upstream_tunnel = &helper3;
+    ipmanipulatorUpStreamInit(t, env->line);
+    require(init_counts[0] == 1 && init_counts[3] == 1, "overlap-only helper Init count is wrong");
+
+    resetInitCounters(&normal, &helper1, &helper2, &helper3);
+    state->trick_real_sni_upstream_tunnel                 = &helper1;
+    state->trick_real_fin_upstream_tunnel                 = &helper2;
+    state->trick_overlap_sni_server_hello_upstream_tunnel = &helper3;
+    ipmanipulatorUpStreamInit(t, env->line);
+    require(init_counts[0] == 1 && init_counts[1] == 1 && init_counts[2] == 1 && init_counts[3] == 1,
+            "distinct helper branches were not initialized once each");
+
+    resetInitCounters(&normal, &helper1, &helper2, &helper3);
+    state->trick_real_sni_upstream_tunnel                 = &helper1;
+    state->trick_real_fin_upstream_tunnel                 = NULL;
+    state->trick_overlap_sni_server_hello_upstream_tunnel = &helper1;
+    ipmanipulatorUpStreamInit(t, env->line);
+    require(init_counts[0] == 1 && init_counts[1] == 1, "aliased helper branch received duplicate Init");
+
+    resetInitCounters(&normal, &helper1, &helper2, &helper3);
+    state->trick_real_sni_upstream_tunnel                 = NULL;
+    state->trick_real_fin_upstream_tunnel                 = NULL;
+    state->trick_overlap_sni_server_hello_upstream_tunnel = NULL;
+    ipmanipulatorUpStreamInit(t, env->line);
+    require(init_counts[0] == 1 && init_counts[1] == 0 && init_counts[2] == 0 && init_counts[3] == 0,
+            "empty helper configuration initialized a helper");
+
+    destroyTestTunnel(t);
+}
+
+static tunnel_t *createFromSettings(const char *settings_text)
+{
+    cJSON *settings = cJSON_Parse(settings_text);
+    require(settings != NULL, "failed to parse IpManipulator settings fixture");
+
+    node_t    node = {.node_settings_json = settings};
+    tunnel_t *t    = ipmanipulatorCreate(&node);
+    cJSON_Delete(settings);
+    return t;
+}
+
+static void testProtocolSwapConfigurationValidation(void)
+{
+    require(createFromSettings("{\"protoswap\":17}") == NULL,
+            "legacy protocol swap accepted a literal UDP replacement");
+    require(createFromSettings("{\"protoswap-tcp\":17}") == NULL,
+            "TCP protocol swap accepted a literal UDP replacement");
+    require(createFromSettings("{\"protoswap-tcp\":6}") == NULL,
+            "TCP protocol swap accepted a literal TCP replacement");
+    require(createFromSettings("{\"protoswap-udp\":6}") == NULL,
+            "UDP protocol swap accepted a literal TCP replacement");
+    require(createFromSettings("{\"protoswap-udp\":17}") == NULL,
+            "UDP protocol swap accepted a literal UDP replacement");
+    require(createFromSettings("{\"protoswap-tcp\":143,\"protoswap-tcp-2\":17}") == NULL,
+            "secondary TCP protocol swap accepted a literal UDP replacement");
+    require(createFromSettings("{\"protoswap-tcp\":17,\"protoswap-udp\":6}") == NULL,
+            "cross-mapped TCP/UDP protocols were accepted");
+    require(createFromSettings("{\"protoswap-tcp\":143,\"protoswap-udp\":143}") == NULL,
+            "shared TCP/UDP replacement protocol was accepted");
+
+    tunnel_t *valid = createFromSettings("{\"protoswap-tcp\":143,\"protoswap-udp\":144}");
+    require(valid != NULL, "unambiguous TCP/UDP protocol mapping was rejected");
+    ipmanipulatorDestroy(valid);
+
+    tunnel_t *tcp_only = createFromSettings("{\"protoswap-tcp\":143}");
+    require(tcp_only != NULL, "single-family TCP-to-custom-protocol mapping was rejected");
+    ipmanipulatorDestroy(tcp_only);
+}
+
+int main(void)
+{
+    checkSumInit();
+    testProtocolSwapConfigurationValidation();
+
+    test_env_t env;
+    envSetup(&env);
+    testEgressOrderAndDownstreamRoundTrip(&env);
+    testAlreadyMappedEgressUnwraps(&env);
+    testTuplePreservingHelperEgress(&env);
+    testPortghostSegmentation(&env);
+    testSniBlenderBoundsAndProtocolSwap(&env);
+    testHelperInitDeduplication(&env);
+    envTeardown(&env);
+    return 0;
+}

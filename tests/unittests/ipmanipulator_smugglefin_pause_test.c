@@ -107,6 +107,11 @@ sbuf_t *clonePacketWithLength(line_t *l, sbuf_t *buf, uint32_t new_len)
     return clone;
 }
 
+void ipmanipulatorEmitUpstreamPreservingTuple(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward)
+{
+    forward(t, l, buf);
+}
+
 static void receiveMirroredFin(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;

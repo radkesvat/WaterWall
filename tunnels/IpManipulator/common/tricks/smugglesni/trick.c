@@ -315,22 +315,25 @@ static ipmanipulator_smuggle_flow_t *smugglesnitrickCreateFlowLocked(ipmanipulat
 
 static void smugglesnitrickSendNormalNow(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    discard portghosttrickApply(t, l, &buf);
-    if (buf == NULL)
-    {
-        return;
-    }
-
     lineSetRecalculateChecksum(l, true);
-    tunnelNextUpStreamPayload(t, l, buf);
+    ipmanipulatorEmitUpstream(t, l, buf, tunnelNextUpStreamPayload);
+}
+
+static void smugglesnitrickForwardReal(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+    tunnelUpStreamPayload(state->trick_real_sni_upstream_tunnel, l, buf);
 }
 
 static void smugglesnitrickSendRealNow(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    ipmanipulator_tstate_t *state = tunnelGetState(t);
-
+    /*
+     * The dedicated real-SNI branch historically carries the original tuple.
+     * Apply checksum/protocol egress ordering without adding a portghost trailer.
+     */
     lineSetRecalculateChecksum(l, true);
-    tunnelUpStreamPayload(state->trick_real_sni_upstream_tunnel, l, buf);
+    ipmanipulatorEmitUpstreamPreservingTuple(t, l, buf, smugglesnitrickForwardReal);
 }
 
 static void smugglesnitrickRunDelayedNormal(worker_t *worker, void *arg1, void *arg2, void *arg3)

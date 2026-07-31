@@ -21,22 +21,6 @@ static uint32_t mixGhostPortSeed(uint32_t value)
     return value;
 }
 
-static uint8_t resolveTransportProtocol(const ipmanipulator_tstate_t *state, uint8_t packet_protocol)
-{
-    if (packet_protocol == IPPROTO_TCP || packet_protocol == state->trick_proto_swap_tcp_number ||
-        packet_protocol == state->trick_proto_swap_tcp_number_2)
-    {
-        return IPPROTO_TCP;
-    }
-
-    if (packet_protocol == IPPROTO_UDP || packet_protocol == state->trick_proto_swap_udp_number)
-    {
-        return IPPROTO_UDP;
-    }
-
-    return 0;
-}
-
 static uint16_t ghostPortFromTuple(uint16_t original_port, uint16_t peer_port, uint32_t src_addr, uint32_t dst_addr,
                                    uint8_t protocol, uint8_t salt)
 {
@@ -168,7 +152,7 @@ bool portghosttrickApply(tunnel_t *t, line_t *l, sbuf_t **buf_ptr)
     uint8_t *packet = sbufGetMutablePtr(buf);
     uint8_t *tail   = packet + ip_total_len;
 
-    switch (resolveTransportProtocol(state, IPH_PROTO(ipheader)))
+    switch (ipmanipulatorResolveTransportProtocol(state, IPH_PROTO(ipheader)))
     {
     case IPPROTO_TCP: {
         if (ip_total_len < iphdr_len + sizeof(struct tcp_hdr))
@@ -321,7 +305,7 @@ bool portghosttrickRestore(tunnel_t *t, line_t *l, sbuf_t **buf_ptr)
         return false;
     }
 
-    uint8_t packet_protocol = resolveTransportProtocol(state, IPH_PROTO(ipheader));
+    uint8_t packet_protocol = ipmanipulatorResolveTransportProtocol(state, IPH_PROTO(ipheader));
     if (packet_protocol == 0)
     {
         return false;

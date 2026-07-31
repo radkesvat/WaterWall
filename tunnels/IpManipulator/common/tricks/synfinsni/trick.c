@@ -987,14 +987,8 @@ static bool synfinsnitrickSendUpstreamDirectWithMode(tunnel_t *t, line_t *l, sbu
         return false;
     }
 
-    bool ghost_applied = portghosttrickApply(t, l, &buf);
-    if (buf == NULL)
-    {
-        return lineIsAlive(l);
-    }
-
-    lineSetRecalculateChecksum(l, recalculate_checksum || ghost_applied);
-    tunnelNextUpStreamPayload(t, l, buf);
+    lineSetRecalculateChecksum(l, recalculate_checksum);
+    ipmanipulatorEmitUpstream(t, l, buf, tunnelNextUpStreamPayload);
     return lineIsAlive(l);
 }
 

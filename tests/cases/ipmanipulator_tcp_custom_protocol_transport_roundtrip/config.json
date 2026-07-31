@@ -1,5 +1,5 @@
 {
-  "name": "ipmanipulator-tcp-udp-tcp-transport-roundtrip",
+  "name": "ipmanipulator-tcp-custom-protocol-transport-roundtrip",
   "nodes": [
     {
       "name": "tester-client",
@@ -14,21 +14,21 @@
           "ttl": 64
         }
       },
-      "next": "tcp-to-udp"
+      "next": "tcp-to-custom"
     },
     {
-      "name": "tcp-to-udp",
+      "name": "tcp-to-custom",
       "type": "IpManipulator",
       "settings": {
-        "protoswap-tcp": 17
+        "protoswap-tcp": 143
       },
-      "next": "udp-to-tcp"
+      "next": "custom-to-tcp"
     },
     {
-      "name": "udp-to-tcp",
+      "name": "custom-to-tcp",
       "type": "IpManipulator",
       "settings": {
-        "protoswap-tcp": 17
+        "protoswap-tcp": 143
       },
       "next": "tester-server"
     },

@@ -11,14 +11,28 @@ void ipmanipulatorUpStreamInit(tunnel_t *t, line_t *l)
         abortProgramNow(1);
     }
 
-    if (ts->trick_real_sni_upstream_tunnel != NULL)
-    {
-        tunnelUpStreamInit(ts->trick_real_sni_upstream_tunnel, l);
-    }
+    tunnel_t *helpers[] = {
+        ts->trick_real_sni_upstream_tunnel,
+        ts->trick_real_fin_upstream_tunnel,
+        ts->trick_overlap_sni_server_hello_upstream_tunnel,
+    };
 
-    if (ts->trick_real_fin_upstream_tunnel != NULL &&
-        ts->trick_real_fin_upstream_tunnel != ts->trick_real_sni_upstream_tunnel)
+    for (uint32_t i = 0; i < ARRAY_SIZE(helpers); ++i)
     {
-        tunnelUpStreamInit(ts->trick_real_fin_upstream_tunnel, l);
+        if (helpers[i] == NULL)
+        {
+            continue;
+        }
+
+        bool already_initialized = false;
+        for (uint32_t j = 0; j < i; ++j)
+        {
+            already_initialized |= helpers[j] == helpers[i];
+        }
+
+        if (! already_initialized)
+        {
+            tunnelUpStreamInit(helpers[i], l);
+        }
     }
 }

@@ -1180,6 +1180,21 @@ if(TARGET IpManipulator)
     "unit;tunnels;ipmanipulator;protoswap;checksum"
   )
 
+  add_executable(ipmanipulator_egress_test ipmanipulator_egress_test.c)
+  target_include_directories(ipmanipulator_egress_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include/IpManipulator
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common
+  )
+  target_link_libraries(ipmanipulator_egress_test PRIVATE IpManipulator ww)
+  add_dependencies(waterwall_unit_tests ipmanipulator_egress_test)
+
+  add_waterwall_unit_test(
+    waterwall.ipmanipulator_egress_unit
+    ipmanipulator_egress_test
+    "unit;tunnels;ipmanipulator;protoswap;portghost;sniblender;checksum;lifecycle"
+  )
+
   add_executable(ipmanipulator_firstsni_offsets_test ipmanipulator_firstsni_offsets_test.c)
   target_include_directories(ipmanipulator_firstsni_offsets_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include

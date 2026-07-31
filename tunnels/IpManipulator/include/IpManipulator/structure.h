@@ -427,8 +427,11 @@ void ipmanipulatorLinestateDestroy(ipmanipulator_lstate_t *ls);
 
 void     ipmanipulatorSendUpstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf);
 void     ipmanipulatorSendDownstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf);
+void     ipmanipulatorEmitUpstream(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward);
+void     ipmanipulatorEmitUpstreamPreservingTuple(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward);
 bool     ipmanipulatorSendWithForwardMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward);
 bool     ipmanipulatorSendUpstreamMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *buf);
+uint8_t  ipmanipulatorResolveTransportProtocol(const ipmanipulator_tstate_t *state, uint8_t packet_protocol);
 uint32_t portghosttrickGetTailLength(const ipmanipulator_tstate_t *state);
 bool     portghosttrickApply(tunnel_t *t, line_t *l, sbuf_t **buf_ptr);
 bool     portghosttrickRestore(tunnel_t *t, line_t *l, sbuf_t **buf_ptr);

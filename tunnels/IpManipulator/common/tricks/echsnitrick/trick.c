@@ -810,14 +810,8 @@ static bool echsnitrickSendUpstreamDirect(tunnel_t *t, line_t *l, sbuf_t *buf)
         return false;
     }
 
-    discard portghosttrickApply(t, l, &buf);
-    if (buf == NULL)
-    {
-        return lineIsAlive(l);
-    }
-
     lineSetRecalculateChecksum(l, true);
-    tunnelNextUpStreamPayload(t, l, buf);
+    ipmanipulatorEmitUpstream(t, l, buf, tunnelNextUpStreamPayload);
     return lineIsAlive(l);
 }
 

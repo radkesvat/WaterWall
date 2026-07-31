@@ -410,6 +410,13 @@ static sbuf_t *smugglefintrickBuildMirrorFinPacket(line_t *l, sbuf_t *source_buf
     return clone;
 }
 
+static void smugglefintrickForwardRealFin(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+    tunnelUpStreamPayload(state->trick_real_fin_upstream_tunnel, l, buf);
+}
+
 static void smugglefintrickFlushQueuedPackets(tunnel_t *t, line_t *l,
                                               ipmanipulator_smuggle_fin_queued_packet_t *queued_packets,
                                               uint32_t                                   queued_packets_count)
@@ -686,7 +693,12 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     lineLock(l);
     lineSetRecalculateChecksum(l, true);
-    tunnelUpStreamPayload(state->trick_real_fin_upstream_tunnel, l, fin_packet);
+
+    /*
+     * The mirrored-FIN helper peer expects the original tuple. Apply the normal
+     * checksum/protocol ordering without adding a portghost trailer.
+     */
+    ipmanipulatorEmitUpstreamPreservingTuple(t, l, fin_packet, smugglefintrickForwardRealFin);
 
     if (! lineIsAlive(l))
     {

@@ -53,6 +53,12 @@ static bool validateProtocolSwapNumber(const char *key, int protocol_number)
         return false;
     }
 
+    if (protocol_number == IPPROTO_TCP || protocol_number == IPPROTO_UDP)
+    {
+        LOGF("IpManipulator: settings->%s must not reuse a literal TCP/UDP protocol number", key);
+        return false;
+    }
+
     return true;
 }
 
@@ -108,6 +114,16 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     }
 
     state->trick_proto_swap = has_proto_swap_legacy || has_proto_swap_tcp || has_proto_swap_udp;
+
+    bool tcp_swap_enabled = has_proto_swap_legacy || has_proto_swap_tcp;
+    if (tcp_swap_enabled && has_proto_swap_udp &&
+        (state->trick_proto_swap_udp_number == state->trick_proto_swap_tcp_number ||
+         (has_proto_swap_tcp_2 && state->trick_proto_swap_udp_number == state->trick_proto_swap_tcp_number_2)))
+    {
+        LOGF("IpManipulator: TCP and UDP protocol-swap mappings must remain unambiguous");
+        tunnelDestroy(t);
+        return NULL;
+    }
 
     bool sni_blender_enabled = false;
     getBoolFromJsonObject(&sni_blender_enabled, settings, "sni-blender");

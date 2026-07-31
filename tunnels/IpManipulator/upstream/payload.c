@@ -2,7 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include "tricks/protoswap/trick.h"
 #include "tricks/echsnitrick/trick.h"
 #include "tricks/firstsni/trick.h"
 #include "tricks/overlapsni/trick.h"
@@ -21,11 +20,6 @@ void ipmanipulatorUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (state->trick_smuggle_fin && smugglefintrickUpStreamPayload(t, l, buf))
     {
         return;
-    }
-
-    if (state->trick_proto_swap)
-    {
-        protoswaptrickUpStreamPayload(t, l, buf);
     }
 
     if (state->trick_tcp_bit_changes)

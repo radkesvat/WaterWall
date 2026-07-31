@@ -1,6 +1,7 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
+#include "tricks/protoswap/trick.h"
 
 enum
 {
@@ -41,6 +42,37 @@ typedef enum ipmanipulator_tls_clienthello_start_status_e
     kIpManipulatorTlsClientHelloStartFragmented,
     kIpManipulatorTlsClientHelloStartUnsupported
 } ipmanipulator_tls_clienthello_start_status_t;
+
+uint8_t ipmanipulatorResolveTransportProtocol(const ipmanipulator_tstate_t *state, uint8_t packet_protocol)
+{
+    /*
+     * Mapped values must win over literal protocol numbers. Creation rejects
+     * literal TCP/UDP replacements and collisions between TCP and UDP maps, so
+     * each configured wire value has one inverse.
+     */
+    if (packet_protocol == state->trick_proto_swap_tcp_number ||
+        packet_protocol == state->trick_proto_swap_tcp_number_2)
+    {
+        return IPPROTO_TCP;
+    }
+
+    if (packet_protocol == state->trick_proto_swap_udp_number)
+    {
+        return IPPROTO_UDP;
+    }
+
+    if (packet_protocol == IPPROTO_TCP)
+    {
+        return IPPROTO_TCP;
+    }
+
+    if (packet_protocol == IPPROTO_UDP)
+    {
+        return IPPROTO_UDP;
+    }
+
+    return 0;
+}
 
 typedef struct ipmanipulator_tls_prestart_timeout_msg_s
 {
@@ -707,21 +739,93 @@ static uint8_t ipmanipulatorGetSegmentFlags(uint8_t original_flags, uint32_t pay
     return original_flags;
 }
 
+static bool ipmanipulatorPacketUsesMappedProtocol(const ipmanipulator_tstate_t *state, const sbuf_t *buf)
+{
+    if (sbufGetLength(buf) < sizeof(struct ip_hdr))
+    {
+        return false;
+    }
+
+    const struct ip_hdr *ipheader = (const struct ip_hdr *) sbufGetRawPtr(buf);
+    if (IPH_V(ipheader) != 4)
+    {
+        return false;
+    }
+
+    uint8_t protocol = IPH_PROTO(ipheader);
+    return protocol == state->trick_proto_swap_tcp_number || protocol == state->trick_proto_swap_tcp_number_2 ||
+           protocol == state->trick_proto_swap_udp_number;
+}
+
+static void ipmanipulatorEmitUpstreamWithPolicy(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward,
+                                                bool apply_portghost)
+{
+    ipmanipulator_tstate_t *state                = tunnelGetState(t);
+    bool                    recalculate_checksum = lineGetRecalculateChecksum(l);
+    bool                    ghost_applied        = false;
+
+    if (apply_portghost)
+    {
+        ghost_applied = portghosttrickApply(t, l, &buf);
+    }
+
+    if (buf == NULL)
+    {
+        return;
+    }
+
+    recalculate_checksum |= ghost_applied;
+    lineSetRecalculateChecksum(l, recalculate_checksum);
+
+    if (state->trick_proto_swap)
+    {
+        /*
+         * Chained transport pair: a packet already carrying one of our mapped
+         * values was wrapped by an earlier IpManipulator, and this node is the
+         * unwrapping half. Restore the real protocol, checksum under it, and
+         * forward unmapped. Do NOT re-map -- an operator who wants the packet
+         * to stay wrapped past this node simply does not enable protoswap here.
+         */
+        if (ipmanipulatorPacketUsesMappedProtocol(state, buf))
+        {
+            protoswaptrickUpStreamPayload(t, l, buf);
+            if (recalculate_checksum && calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)))
+            {
+                lineSetRecalculateChecksum(l, false);
+            }
+        }
+        else
+        {
+            if (recalculate_checksum && calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)))
+            {
+                lineSetRecalculateChecksum(l, false);
+            }
+            protoswaptrickUpStreamPayload(t, l, buf);
+        }
+    }
+
+    forward(t, l, buf);
+}
+
+void ipmanipulatorEmitUpstream(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward)
+{
+    ipmanipulatorEmitUpstreamWithPolicy(t, l, buf, forward, true);
+}
+
+void ipmanipulatorEmitUpstreamPreservingTuple(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward)
+{
+    ipmanipulatorEmitUpstreamWithPolicy(t, l, buf, forward, false);
+}
+
 static bool ipmanipulatorSendSinglePacketWithForward(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward)
 {
     lineSetRecalculateChecksum(l, true);
-    forward(t, l, buf);
+    ipmanipulatorEmitUpstream(t, l, buf, forward);
     return lineIsAlive(l);
 }
 
 bool ipmanipulatorSendWithForwardMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward)
 {
-    discard portghosttrickApply(t, l, &buf);
-    if (buf == NULL)
-    {
-        return lineIsAlive(l);
-    }
-
     uint8_t *packet = sbufGetMutablePtr(buf);
 
     if (sbufGetLength(buf) < sizeof(struct ip_hdr))
@@ -760,17 +864,18 @@ bool ipmanipulatorSendWithForwardMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *
         return lineIsAlive(l);
     }
 
-    if (ip_total_len <= GLOBAL_MTU_SIZE)
+    uint32_t portghost_tail_len = portghosttrickGetTailLength(tunnelGetState(t));
+    if ((uint32_t) ip_total_len + portghost_tail_len <= GLOBAL_MTU_SIZE)
     {
         return ipmanipulatorSendSinglePacketWithForward(t, l, buf, forward);
     }
 
-    if (GLOBAL_MTU_SIZE <= headers_len)
+    if (headers_len + portghost_tail_len >= GLOBAL_MTU_SIZE)
     {
         LOGW("IpManipulator: cannot segment crafted TLS packet because GLOBAL_MTU_SIZE (%u) is not larger than "
-             "IPv4+TCP headers (%u)",
+             "IPv4+TCP headers and the portghost trailer (%u)",
              GLOBAL_MTU_SIZE,
-             headers_len);
+             headers_len + portghost_tail_len);
         reuseBuffer(buf);
         return lineIsAlive(l);
     }
@@ -785,7 +890,7 @@ bool ipmanipulatorSendWithForwardMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *
 
     const uint8_t *source_payload      = packet + headers_len;
     uint32_t       total_payload_len   = (uint32_t) ip_total_len - headers_len;
-    uint32_t       max_segment_payload = (uint32_t) GLOBAL_MTU_SIZE - headers_len;
+    uint32_t       max_segment_payload = (uint32_t) GLOBAL_MTU_SIZE - headers_len - portghost_tail_len;
     uint32_t       payload_offset      = 0;
     uint32_t       segment_index       = 0;
     uint32_t       base_seq            = lwip_ntohl(tcp_header->seqno);
@@ -805,7 +910,7 @@ bool ipmanipulatorSendWithForwardMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *
     {
         uint32_t this_payload_len = min(max_segment_payload, total_payload_len - payload_offset);
         uint32_t this_packet_len  = headers_len + this_payload_len;
-        sbuf_t  *segment_buf      = clonePacketWithLength(l, buf, this_packet_len);
+        sbuf_t  *segment_buf      = clonePacketWithLength(l, buf, this_packet_len + portghost_tail_len);
 
         if (segment_buf == NULL)
         {
@@ -1593,24 +1698,10 @@ bool parseClientHelloSni(const uint8_t *packet, uint32_t packet_length, sni_matc
     return true;
 }
 
-static void ipmanipulatorSendWithDuplicates(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward,
-                                            bool apply_portghost)
+static void ipmanipulatorSendWithDuplicates(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward)
 {
     ipmanipulator_tstate_t *state                = tunnelGetState(t);
     bool                    recalculate_checksum = lineGetRecalculateChecksum(l);
-    bool                    ghost_applied        = false;
-
-    if (apply_portghost)
-    {
-        ghost_applied = portghosttrickApply(t, l, &buf);
-    }
-
-    if (buf == NULL)
-    {
-        return;
-    }
-
-    recalculate_checksum = recalculate_checksum || ghost_applied;
 
     if (! state->trick_packet_duplicate || state->trick_packet_duplicate_count <= 0)
     {
@@ -1643,12 +1734,17 @@ static void ipmanipulatorSendWithDuplicates(tunnel_t *t, line_t *l, sbuf_t *buf,
     lineUnlock(l);
 }
 
+static void ipmanipulatorSendUpstreamDuplicates(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    ipmanipulatorSendWithDuplicates(t, l, buf, tunnelNextUpStreamPayload);
+}
+
 void ipmanipulatorSendUpstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    ipmanipulatorSendWithDuplicates(t, l, buf, tunnelNextUpStreamPayload, true);
+    ipmanipulatorEmitUpstream(t, l, buf, ipmanipulatorSendUpstreamDuplicates);
 }
 
 void ipmanipulatorSendDownstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    ipmanipulatorSendWithDuplicates(t, l, buf, tunnelPrevDownStreamPayload, false);
+    ipmanipulatorSendWithDuplicates(t, l, buf, tunnelPrevDownStreamPayload);
 }
