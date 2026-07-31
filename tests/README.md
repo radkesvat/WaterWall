@@ -84,6 +84,9 @@ Practical rule:
 - `tls_roundtrip`
   Verifies `TlsClient` and `TlsServer` chained directly with a self-signed test certificate, peer verification disabled
   on the client, SNI checked by the server, and streaming responses enabled so TLS traffic flows in both directions.
+- `tls13_record_shaping_roundtrip`
+  Verifies bidirectional TLS 1.3 record shaping with fixed padding and delay values, including ordered deferred close after
+  all accepted tester payload bytes have crossed both TLS senders.
 - `tlsclient_direct_close_probe`
   Uses a local TLS 1.2 peer behind a recording TCP relay to verify TlsClient direct-close policy: normal protected-side
   close emits no client alert, peer `close_notify` closes without a client response or FIN wait, corrupted records close

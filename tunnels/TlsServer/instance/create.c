@@ -7,9 +7,9 @@
 
 enum
 {
-    kTlsServerDefaultSessionTimeout            = 300,
-    kTlsServerDefaultHandshakeTimeoutMs        = 60000,
-    kTlsServerDefaultFallbackIntentionalDelayMs = 7,
+    kTlsServerDefaultSessionTimeout                   = 300,
+    kTlsServerDefaultHandshakeTimeoutMs               = 60000,
+    kTlsServerDefaultFallbackIntentionalDelayMs       = 7,
     kTlsServerDefaultFallbackIntentionalDelayJitterMs = 1
 };
 
@@ -89,8 +89,7 @@ static void configureTunnelCallbacks(tunnel_t *t)
 
 static bool parseFallbackNode(tlsserver_tstate_t *ts, tunnel_t *t, node_t *node, const cJSON *settings)
 {
-    const cJSON *fallback_json =
-        getJsonObjectItemByKeys(settings, "fallback-node-name", "fallback-node", "fallback");
+    const cJSON *fallback_json = getJsonObjectItemByKeys(settings, "fallback-node-name", "fallback-node", "fallback");
 
     if (fallback_json == NULL)
     {
@@ -389,8 +388,7 @@ static bool parseAlpnList(struct tlsserver_alpn_item_s **out, unsigned int *out_
 
 static void tlsserverSetDefaultSelectAlpns(tlsserver_tstate_t *ts)
 {
-    ts->select_alpns =
-        memoryAllocateZero(ARRAY_SIZE(kTlsServerDefaultSelectAlpns) * sizeof(*ts->select_alpns));
+    ts->select_alpns = memoryAllocateZero(ARRAY_SIZE(kTlsServerDefaultSelectAlpns) * sizeof(*ts->select_alpns));
 
     for (unsigned int i = 0; i < ARRAY_SIZE(kTlsServerDefaultSelectAlpns); ++i)
     {
@@ -433,17 +431,15 @@ static bool parseAlpns(tlsserver_tstate_t *ts, const cJSON *settings, tunnel_t *
 
 static bool parseTlsDefaults(tlsserver_tstate_t *ts, const cJSON *settings, tunnel_t *t)
 {
-    int handshake_timeout_ms                  = kTlsServerDefaultHandshakeTimeoutMs;
+    int handshake_timeout_ms                 = kTlsServerDefaultHandshakeTimeoutMs;
     int fallback_intentional_delay_ms        = kTlsServerDefaultFallbackIntentionalDelayMs;
     int fallback_intentional_delay_jitter_ms = kTlsServerDefaultFallbackIntentionalDelayJitterMs;
 
     getBoolFromJsonObjectOrDefault(&ts->prefer_server_ciphers, settings, "prefer-server-ciphers", false);
     getBoolFromJsonObjectOrDefault(&ts->session_tickets, settings, "session-tickets", true);
     getIntFromJsonObjectOrDefault(&ts->session_timeout, settings, "session-timeout", kTlsServerDefaultSessionTimeout);
-    getIntFromJsonObjectOrDefault(&handshake_timeout_ms,
-                                  settings,
-                                  "handshake-timeout-ms",
-                                  kTlsServerDefaultHandshakeTimeoutMs);
+    getIntFromJsonObjectOrDefault(
+        &handshake_timeout_ms, settings, "handshake-timeout-ms", kTlsServerDefaultHandshakeTimeoutMs);
     getIntFromJsonObjectOrDefault(&fallback_intentional_delay_ms,
                                   settings,
                                   "fallback-intentional-delay-ms",
@@ -479,8 +475,8 @@ static bool parseTlsDefaults(tlsserver_tstate_t *ts, const cJSON *settings, tunn
 
     if (fallback_intentional_delay_jitter_ms < 0)
     {
-        LOGF(
-            "JSON Error: TlsServer->settings->fallback-intentional-delay-jitter-ms (number field) : The value was invalid");
+        LOGF("JSON Error: TlsServer->settings->fallback-intentional-delay-jitter-ms (number field) : The value was "
+             "invalid");
         tlsserverTunnelDestroy(t);
         return false;
     }
@@ -548,6 +544,12 @@ static SSL_CTX *createServerSslContext(tlsserver_tstate_t *ts)
 
     SSL_CTX_set_app_data(ctx, ts);
     SSL_CTX_set_info_callback(ctx, tlsserverInfoCallback);
+
+    if (ts->record_shaping.enabled)
+    {
+        SSL_CTX_set_record_padding_callback(ctx, tlsserverRecordPaddingCallback);
+        SSL_CTX_set_msg_callback(ctx, tlsserverRecordMessageCallback);
+    }
 
     if (ts->prefer_server_ciphers)
     {
@@ -632,6 +634,14 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
 
     getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
 
+    char shaping_error[kTlsRecordShapingErrorSize];
+    if (! tlsrecordshapingParse(settings, kTlsRecordShapingSenderServer, &ts->record_shaping, shaping_error))
+    {
+        LOGF("TlsServer: invalid tls13-record-shaping configuration: %s", shaping_error);
+        tlsserverTunnelDestroy(t);
+        return NULL;
+    }
+
     if (! parseRequiredString(&ts->cert_file, settings, "cert-file", t) ||
         ! parseRequiredString(&ts->key_file, settings, "key-file", t) ||
         ! parseOptionalString(&ts->expected_sni, settings, "sni", t) || ! parseTlsDefaults(ts, settings, t) ||
@@ -655,7 +665,7 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
             "TlsServer: creating node \"%s\" cert-file=\"%s\" key-file=\"%s\" sni=\"%s\" min-version=%d max-version=%d "
             "ciphers=\"%s\" session-cache=%s session-cache-size=%d session-tickets=%d "
             "handshake-timeout-ms=%u fallback-intentional-delay-ms=%u fallback-intentional-delay-jitter-ms=%u "
-            "alpns=%u select-alpns=%u workers=%d",
+            "alpns=%u select-alpns=%u tls13-record-shaping=%s workers=%d",
             node->name,
             ts->cert_file,
             ts->key_file,
@@ -671,6 +681,7 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
             (unsigned int) ts->fallback_intentional_delay_jitter_ms,
             ts->alpns_length,
             ts->select_alpns_length,
+            tlsrecordshapingConfigModeName(&ts->record_shaping),
             worker_count);
     }
 

@@ -1,0 +1,60 @@
+{
+  "name": "tls13-record-shaping-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true
+      },
+      "next": "tls-client"
+    },
+    {
+      "name": "tls-client",
+      "type": "TlsClient",
+      "settings": {
+        "sni": "tls.integration.test",
+        "alpns": ["http/1.1"],
+        "verify": false,
+        "tls13-record-shaping": {
+          "scope": {"first-application-records": 8},
+          "outcomes": [
+            {
+              "probability": 100,
+              "padding-bytes": 128,
+              "delay": {"probability": 100, "ms": 5}
+            }
+          ]
+        }
+      },
+      "next": "tls-server"
+    },
+    {
+      "name": "tls-server",
+      "type": "TlsServer",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "sni": "tls.integration.test",
+        "tls13-record-shaping": {
+          "scope": {"first-application-records": 8},
+          "outcomes": [
+            {
+              "probability": 100,
+              "padding-bytes": 96,
+              "delay": {"probability": 100, "ms": 5}
+            }
+          ]
+        }
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "streaming-response": true
+      }
+    }
+  ]
+}

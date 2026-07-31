@@ -189,6 +189,11 @@ static bool tlsserverReadDecryptedData(tunnel_t *t, line_t *l, tlsserver_lstate_
 {
     while (true)
     {
+        if (ls->upstream_finished || ls->downstream_finishing)
+        {
+            return true;
+        }
+
         sbuf_t *data_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
         int     avail    = (int) sbufGetMaximumWriteableSize(data_buf);
         int     n        = SSL_read(ls->ssl, sbufGetMutablePtr(data_buf), avail);
@@ -207,14 +212,35 @@ static bool tlsserverReadDecryptedData(tunnel_t *t, line_t *l, tlsserver_lstate_
                 return false;
             }
 
+            ls = lineGetState(l, t);
+            if (ls->upstream_finished || ls->downstream_finishing)
+            {
+                lineReuseBuffer(l, data_buf);
+                return true;
+            }
+
             if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, data_buf))
             {
                 LOGW("TlsServer: line closed while forwarding decrypted application bytes upstream");
                 return false;
             }
+            ls = lineGetState(l, t);
+            if (ls->tunnel != t || ls->resources_released)
+            {
+                return false;
+            }
+            if (ls->upstream_finished || ls->downstream_finishing)
+            {
+                return true;
+            }
             continue;
         }
 
+        /*
+         * SSL_get_error must immediately follow its SSL_read. The output
+         * flush below touches OpenSSL and may also re-enter this TLS state.
+         */
+        int ssl_error = SSL_get_error(ls->ssl, n);
         lineReuseBuffer(l, data_buf);
 
         if (! tlsserverFlushSslOutput(t, l, ls))
@@ -222,7 +248,17 @@ static bool tlsserverReadDecryptedData(tunnel_t *t, line_t *l, tlsserver_lstate_
             return false;
         }
 
-        switch (SSL_get_error(ls->ssl, n))
+        ls = lineGetState(l, t);
+        if (ls->tunnel != t || ls->resources_released)
+        {
+            return false;
+        }
+        if (ls->upstream_finished || ls->downstream_finishing)
+        {
+            return true;
+        }
+
+        switch (ssl_error)
         {
         case SSL_ERROR_WANT_READ:
         case SSL_ERROR_WANT_WRITE:
@@ -244,8 +280,7 @@ static bool tlsserverReadDecryptedData(tunnel_t *t, line_t *l, tlsserver_lstate_
             }
             return withLineLocked(l, tunnelNextUpStreamFinish, t);
         default:
-            LOGW("TlsServer: SSL_read failed while decrypting upstream TLS bytes (ssl_error=%d)",
-                 SSL_get_error(ls->ssl, n));
+            LOGW("TlsServer: SSL_read failed while decrypting upstream TLS bytes (ssl_error=%d)", ssl_error);
             tlsserverPrintSSLError();
             return false;
         }
@@ -256,6 +291,12 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     tlsserver_tstate_t *ts = tunnelGetState(t);
     tlsserver_lstate_t *ls = lineGetState(l, t);
+
+    if (ls->upstream_finished || ls->downstream_finishing)
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
 
     if (ls->fallback_mode)
     {

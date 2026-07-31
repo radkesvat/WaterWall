@@ -22,7 +22,18 @@ void tlsserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->upstream_finished)
+    if (ts->record_shaping.enabled)
+    {
+        ls->shaping_wire_paused = true;
+        tlsserverCancelShapedOutputTimer(ls);
+        if (ls->handshake_completed && SSL_version(ls->ssl) == TLS1_3_VERSION &&
+            (ls->shaping_producer_paused || ls->downstream_finishing))
+        {
+            return;
+        }
+    }
+
+    if (ls->upstream_finished || ls->downstream_finishing)
     {
         if (ls->verbose)
         {

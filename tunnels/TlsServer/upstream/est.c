@@ -17,7 +17,7 @@ void tlsserverTunnelUpStreamEst(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->protected_init_sent && ! ls->upstream_finished)
+    if (ls->protected_init_sent && ! ls->upstream_finished && ! ls->downstream_finishing)
     {
         tunnelNextUpStreamEst(t, l);
     }

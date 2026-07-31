@@ -901,9 +901,68 @@ if(TARGET TlsServer)
   add_dependencies(waterwall_unit_tests tlsserver_alpn_test)
 
   add_waterwall_unit_test(waterwall.tlsserver_alpn_unit tlsserver_alpn_test "unit;tunnels;tlsserver")
+
+  add_executable(tlsserver_record_padding_test tlsserver_record_padding_test.c)
+  target_compile_definitions(tlsserver_record_padding_test PRIVATE
+    TLSSERVER_TEST_CERT_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.crt"
+    TLSSERVER_TEST_KEY_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.key"
+  )
+  target_link_libraries(tlsserver_record_padding_test PRIVATE TlsServer TlsRecordShapingCommon ww)
+  add_dependencies(waterwall_unit_tests tlsserver_record_padding_test)
+
+  add_waterwall_unit_test(
+    waterwall.tlsserver_record_padding_unit
+    tlsserver_record_padding_test
+    "unit;tunnels;tlsserver;tls13_record;padding;openssl"
+  )
+
+  add_executable(tlsserver_record_delay_lifecycle_test tlsserver_record_delay_lifecycle_test.c)
+  target_compile_definitions(tlsserver_record_delay_lifecycle_test PRIVATE
+    TLSSERVER_TEST_CERT_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.crt"
+    TLSSERVER_TEST_KEY_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.key"
+  )
+  target_link_libraries(tlsserver_record_delay_lifecycle_test PRIVATE TlsServer TlsRecordShapingCommon ww)
+  add_dependencies(waterwall_unit_tests tlsserver_record_delay_lifecycle_test)
+
+  add_waterwall_unit_test(
+    waterwall.tlsserver_record_delay_lifecycle_unit
+    tlsserver_record_delay_lifecycle_test
+    "unit;tunnels;tlsserver;tls13_record;delay;lifecycle;reentry"
+  )
+endif()
+
+if(TARGET TlsRecordShapingCommon)
+  add_executable(tls13_record_shaping_test tls13_record_shaping_test.c)
+  target_link_libraries(tls13_record_shaping_test PRIVATE TlsRecordShapingCommon ww)
+  add_dependencies(waterwall_unit_tests tls13_record_shaping_test)
+
+  add_waterwall_unit_test(
+    waterwall.tls13_record_shaping_unit
+    tls13_record_shaping_test
+    "unit;tunnels;tls13_record;configuration;sampler"
+  )
 endif()
 
 if(TARGET TlsClient)
+  add_executable(tlsclient_record_padding_test tlsclient_record_padding_test.c)
+  target_include_directories(tlsclient_record_padding_test BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
+    ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
+  )
+  target_compile_definitions(tlsclient_record_padding_test PRIVATE
+    BORINGSSL_PREFIX=WW_BSSL
+    TLSCLIENT_TEST_CERT_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.crt"
+    TLSCLIENT_TEST_KEY_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.key"
+  )
+  target_link_libraries(tlsclient_record_padding_test PRIVATE ssl crypto)
+  add_dependencies(waterwall_unit_tests tlsclient_record_padding_test)
+
+  add_waterwall_unit_test(
+    waterwall.tlsclient_record_padding_unit
+    tlsclient_record_padding_test
+    "unit;tunnels;tlsclient;tls13_record;padding;boringssl"
+  )
+
   add_executable(tlsclient_alpn_test tlsclient_alpn_test.c)
   target_include_directories(tlsclient_alpn_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include
@@ -969,6 +1028,27 @@ if(TARGET TlsClient)
     tlsclient_close_lifecycle_test
     "unit;tunnels;tlsclient;lifecycle;reentry"
   )
+
+  if(LINUX)
+    add_executable(tls13_record_delay_lifecycle_test tls13_record_delay_lifecycle_test.c)
+    target_include_directories(tls13_record_delay_lifecycle_test PRIVATE
+      ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include
+    )
+    target_include_directories(tls13_record_delay_lifecycle_test BEFORE PRIVATE
+      ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/boringssl/include
+      ${CMAKE_BINARY_DIR}/tunnels/TlsClient/boringssl/symbol_prefix_include
+    )
+    target_compile_definitions(tls13_record_delay_lifecycle_test PRIVATE BORINGSSL_PREFIX=WW_BSSL)
+    target_link_options(tls13_record_delay_lifecycle_test PRIVATE "-Wl,--wrap=WW_BSSL_SSL_version")
+    target_link_libraries(tls13_record_delay_lifecycle_test PRIVATE TlsClient TlsRecordShapingCommon ww ssl crypto)
+    add_dependencies(waterwall_unit_tests tls13_record_delay_lifecycle_test)
+
+    add_waterwall_unit_test(
+      waterwall.tls13_record_delay_lifecycle_unit
+      tls13_record_delay_lifecycle_test
+      "unit;tunnels;tlsclient;tls13_record;delay;lifecycle;reentry"
+    )
+  endif()
 endif()
 
 if(TARGET RealityCommon)
@@ -1136,7 +1216,7 @@ if(TARGET RealityClient AND TARGET RealityServer AND TARGET TlsClient)
     REALITY_TEST_KEY_FILE="${CMAKE_SOURCE_DIR}/tests/cases/tls_roundtrip/server.key"
   )
   target_link_libraries(reality_close_lifecycle_test PRIVATE
-    RealityClient RealityServer RealityCommon TlsClient ww ssl crypto
+    RealityClient RealityServer RealityCommon TlsClient TlsRecordShapingCommon ww ssl crypto
   )
   add_dependencies(waterwall_unit_tests reality_close_lifecycle_test)
 

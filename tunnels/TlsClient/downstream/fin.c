@@ -9,6 +9,10 @@ void tlsclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     // Raw transport close is directional: free TLS resources without
     // SSL_shutdown(), so no close_notify response is generated.
+    bool forward_downstream = ! ls->upstream_finished;
     tlsclientLinestateDestroy(ls);
-    tunnelPrevDownStreamFinish(t, l);
+    if (forward_downstream)
+    {
+        tunnelPrevDownStreamFinish(t, l);
+    }
 }

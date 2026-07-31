@@ -12,13 +12,16 @@ void tlsserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
         LOGD("TlsServer: worker %u initializing TLS server line", (unsigned int) lineGetWID(l));
     }
 
-    if (! tlsserverLinestateInitialize(ls, ts->threadlocal_ssl_contexts[lineGetWID(l)], lineGetBufferPool(l),
-                                       ts->verbose))
+    if (! tlsserverLinestateInitialize(
+            ls, ts->threadlocal_ssl_contexts[lineGetWID(l)], lineGetBufferPool(l), &ts->record_shaping, ts->verbose))
     {
         LOGE("TlsServer: failed to initialize per-line OpenSSL state");
         tunnelPrevDownStreamFinish(t, l);
         return;
     }
+
+    ls->tunnel = t;
+    ls->line   = l;
 
     if (! tlsserverArmHandshakeDeadline(t, l, ls))
     {

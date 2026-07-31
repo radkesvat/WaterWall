@@ -115,7 +115,11 @@ static bool initializeInternalTlsClient(tunnel_t *t, node_t *node)
         return false;
     }
 
-    tlsclientTunnelEnableHandshakeTakeover(ts->tls_tunnel);
+    if (! tlsclientTunnelEnableHandshakeTakeover(ts->tls_tunnel))
+    {
+        LOGF("RealityClient: internal TlsClient rejected handshake takeover configuration");
+        return false;
+    }
     return true;
 }
 

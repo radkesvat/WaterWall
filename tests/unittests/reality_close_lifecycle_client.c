@@ -1,4 +1,5 @@
 #include "RealityClient/structure.h"
+#include "TlsRecordShapingCommon/record_shaping.h"
 
 #include "reality_close_lifecycle_test.h"
 
@@ -35,6 +36,7 @@ extern void           WW_BSSL_SSL_set_bio(struct ssl_st *ssl, struct bio_st *rbi
 extern void           WW_BSSL_SSL_set_accept_state(struct ssl_st *ssl);
 extern int            WW_BSSL_SSL_do_handshake(struct ssl_st *ssl);
 extern int            WW_BSSL_SSL_is_init_finished(const struct ssl_st *ssl);
+extern int            WW_BSSL_SSL_version(const struct ssl_st *ssl);
 extern int            WW_BSSL_SSL_write(struct ssl_st *ssl, const void *buf, int len);
 extern int            WW_BSSL_SSL_key_update(struct ssl_st *ssl, int request_type);
 extern int            WW_BSSL_SSL_set_max_send_fragment(struct ssl_st *ssl, size_t max_send_fragment);
@@ -49,6 +51,7 @@ extern int                         WW_BSSL_BIO_write(struct bio_st *bio, const v
 extern bool tlsclientLinestateInitialize(struct tlsclient_lstate_s *ls, struct ssl_ctx_st *ssl_ctx, buffer_pool_t *pool,
                                          const uint8_t *alpn_wire, size_t alpn_wire_len);
 extern void tlsclientLinestateDestroy(struct tlsclient_lstate_s *ls);
+extern bool tlsclientSslReadBoundaryIsClean(struct tlsclient_lstate_s *ls);
 extern bool tlsclientConfigureSslForConnect(struct ssl_st *ssl, struct bio_st *rbio, struct bio_st *wbio,
                                             const char *sni, const uint8_t *ech_grease_override_payload,
                                             size_t ech_grease_override_payload_len);
@@ -57,7 +60,7 @@ enum client_tls_fixture_e
 {
     kClientTls13Version        = 0x0304,
     kClientSslFiletypePem      = 1,
-    kClientTlsTunnelStateSize  = 128,
+    kClientTlsTunnelStateSize  = 1024,
     kClientTlsLineStateSize    = 512,
     kClientKeyUpdateRequested  = 1,
     kClientTlsRecordHeaderSize = 5,
@@ -68,16 +71,21 @@ enum client_tls_fixture_e
  * this private view. */
 typedef struct client_tls_lstate_view_s
 {
-    void           *ssl;
-    void           *rbio;
-    void           *wbio;
-    buffer_queue_t  bq;
-    buffer_stream_t takeover_stream;
-    uint32_t        takeover_phase;
-    bool            handshake_completed;
-    bool            handshake_est_sent;
-    bool            resources_released;
-    bool            post_handshake_consume_in_progress;
+    tunnel_t                       *tunnel;
+    line_t                         *line;
+    void                           *ssl;
+    void                           *rbio;
+    void                           *wbio;
+    buffer_queue_t                  bq;
+    buffer_stream_t                 takeover_stream;
+    tlsrecordshaping_output_queue_t shaping_output;
+    tlsrecordshaping_state_t        shaping_state;
+    wtimer_t                       *shaping_output_timer;
+    uint32_t                        takeover_phase;
+    bool                            handshake_completed;
+    bool                            handshake_est_sent;
+    bool                            resources_released;
+    bool                            post_handshake_consume_in_progress;
 } client_tls_lstate_view_t;
 
 typedef struct client_lifecycle_context_s
@@ -374,6 +382,7 @@ static void clientFixtureInitialize(client_lifecycle_fixture_t *fixture)
     requireClient(fixture->prev != NULL && fixture->reality != NULL && fixture->next != NULL &&
                       fixture->tls_owner != NULL && fixture->tls != NULL && fixture->tls_wire != NULL,
                   "failed to create client lifecycle tunnels");
+    memoryZero(tunnelGetState(fixture->tls), kClientTlsTunnelStateSize);
     tunnelBind(fixture->prev, fixture->reality);
     tunnelBind(fixture->reality, fixture->next);
     tunnelBind(fixture->tls_owner, fixture->tls);
@@ -630,7 +639,8 @@ static void clientFixtureEnableTls13TakeoverWithTickets(client_lifecycle_fixture
     fixture->tls_state_initialized = true;
     requireClient(tlsclientConfigureSslForConnect(tls_ls->ssl, tls_ls->rbio, tls_ls->wbio, "example.com", NULL, 0),
                   "client TLS fixture failed to configure the retained client");
-    tlsclientTunnelEnableHandshakeTakeover(fixture->tls);
+    requireClient(tlsclientTunnelEnableHandshakeTakeover(fixture->tls),
+                  "client TLS fixture failed to enable handshake takeover");
 
     fixture->tls_server_ssl  = WW_BSSL_SSL_new(fixture->tls_server_ctx);
     fixture->tls_server_rbio = WW_BSSL_BIO_new(WW_BSSL_BIO_s_mem());
@@ -668,7 +678,21 @@ static void clientFixtureEnableTls13TakeoverWithTickets(client_lifecycle_fixture
 
     tls_ls->handshake_completed = true;
     sbuf_t *pending_raw         = NULL;
-    requireClient(tlsclientTunnelBeginTakeoverDrain(fixture->tls, fixture->line, &pending_raw) && pending_raw == NULL,
+    bool    began_drain         = tlsclientTunnelBeginTakeoverDrain(fixture->tls, fixture->line, &pending_raw);
+    if (! began_drain)
+    {
+        fprintf(
+            stderr,
+            "client drain diagnostics: handshake=%d phase=%u released=%d ssl=%p version=0x%x clean=%d queue-empty=%d\n",
+            (int) tls_ls->handshake_completed,
+            (unsigned int) tls_ls->takeover_phase,
+            (int) tls_ls->resources_released,
+            tls_ls->ssl,
+            tls_ls->ssl != NULL ? WW_BSSL_SSL_version(tls_ls->ssl) : 0,
+            (int) tlsclientSslReadBoundaryIsClean((struct tlsclient_lstate_s *) tls_ls),
+            (int) tlsrecordshapingOutputQueueIsEmpty(&tls_ls->shaping_output));
+    }
+    requireClient(began_drain && pending_raw == NULL,
                   "client TLS fixture failed to enter retained drain mode at a clean boundary");
 }
 

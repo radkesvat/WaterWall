@@ -17,7 +17,8 @@ int tlsserverOnServername(SSL *ssl, int *ad, void *arg)
     if (sni == NULL || stricmp(sni, ts->expected_sni) != 0)
     {
         LOGW("TlsServer: rejected TLS connection due to SNI mismatch, expected=\"%s\", got=\"%s\"",
-             ts->expected_sni, sni != NULL ? sni : "<none>");
+             ts->expected_sni,
+             sni != NULL ? sni : "<none>");
         *ad = SSL_AD_UNRECOGNIZED_NAME;
         return SSL_TLSEXT_ERR_ALERT_FATAL;
     }
@@ -33,7 +34,7 @@ int tlsserverOnServername(SSL *ssl, int *ad, void *arg)
 int tlsserverOnAlpnSelect(SSL *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in,
                           unsigned int inlen, void *arg)
 {
-    discard ssl;
+    discard                             ssl;
     tlsserver_tstate_t                 *ts     = arg;
     const struct tlsserver_alpn_item_s *alpns  = ts->alpns;
     unsigned int                        length = ts->alpns_length;
@@ -61,7 +62,7 @@ int tlsserverOnAlpnSelect(SSL *ssl, const unsigned char **out, unsigned char *ou
 #endif
             }
 
-            const unsigned char *cur        = &in[client_offset + 1];
+            const unsigned char *cur = &in[client_offset + 1];
 
             if (alpns[i].name_length == current_len && memoryCompare(cur, alpns[i].name, current_len) == 0)
             {
@@ -159,13 +160,277 @@ void tlsserverTunnelstateDestroy(tlsserver_tstate_t *ts)
     memoryFree(ts->key_file);
     memoryFree(ts->ciphers);
     ts->expected_sni = NULL;
-    ts->cert_file = NULL;
-    ts->key_file  = NULL;
-    ts->ciphers   = NULL;
+    ts->cert_file    = NULL;
+    ts->key_file     = NULL;
+    ts->ciphers      = NULL;
+}
+
+size_t tlsserverRecordPaddingCallback(SSL *ssl, int type, size_t len, void *arg)
+{
+    discard arg;
+
+    tlsserver_lstate_t *ls = SSL_get_app_data(ssl);
+    if (ls == NULL || ls->ssl != ssl || ls->resources_released || ! ls->handshake_completed || ls->tunnel == NULL ||
+        SSL_version(ssl) != TLS1_3_VERSION)
+    {
+        return 0;
+    }
+
+    tlsserver_tstate_t         *ts                = tunnelGetState(ls->tunnel);
+    tlsrecordshaping_decision_t decision          = {0};
+    uint32_t                    effective_padding = 0;
+
+    if (type == SSL3_RT_APPLICATION_DATA && len > 0)
+    {
+        discard tlsrecordshapingSample(&ts->record_shaping, &ls->shaping_state, &decision);
+
+        size_t legal_padding = len < SSL3_RT_MAX_PLAIN_LENGTH ? SSL3_RT_MAX_PLAIN_LENGTH - len : 0;
+        effective_padding    = decision.requested_padding_bytes < legal_padding ? decision.requested_padding_bytes
+                                                                                : (uint32_t) legal_padding;
+        tlsrecordshapingRecordEffectivePadding(&ls->shaping_state, &decision, effective_padding);
+    }
+
+    if (! tlsrecordshapingOutputQueuePushPendingMetadata(&ls->shaping_output, decision.delay_ms))
+    {
+        ls->shaping_metadata_error = true;
+        return 0;
+    }
+    return effective_padding;
+}
+
+void tlsserverRecordMessageCallback(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl,
+                                    void *arg)
+{
+    discard version;
+    discard arg;
+
+    tlsserver_lstate_t *ls = SSL_get_app_data(ssl);
+    if (write_p != 1 || content_type != SSL3_RT_HEADER || buf == NULL || len != SSL3_RT_HEADER_LENGTH || ls == NULL ||
+        ls->ssl != ssl || ls->resources_released || ! ls->handshake_completed || ls->tunnel == NULL ||
+        SSL_version(ssl) != TLS1_3_VERSION)
+    {
+        return;
+    }
+
+    const uint8_t *header = buf;
+    if (header[0] != SSL3_RT_APPLICATION_DATA || header[1] != SSL3_VERSION_MAJOR ||
+        header[2] != (TLS1_2_VERSION & 0xff))
+    {
+        return;
+    }
+
+    uint32_t fallback_delay_ms = 0;
+    if (! tlsrecordshapingOutputQueueHasPendingMetadata(&ls->shaping_output))
+    {
+        if (ls->shaping_metadata_error)
+        {
+            return;
+        }
+
+        if (ls->shaping_writing_application)
+        {
+            /*
+             * OpenSSL skips its padding callback when TLSInnerPlaintext has no
+             * remaining padding capacity. The record-header callback is still
+             * delivered, so a full application record samples its delay here,
+             * consumes scope, and records zero effective padding.
+             */
+            tlsserver_tstate_t         *ts       = tunnelGetState(ls->tunnel);
+            tlsrecordshaping_decision_t decision = {0};
+            discard                     tlsrecordshapingSample(&ts->record_shaping, &ls->shaping_state, &decision);
+            tlsrecordshapingRecordEffectivePadding(&ls->shaping_state, &decision, 0);
+            fallback_delay_ms = decision.delay_ms;
+        }
+    }
+
+    if (! tlsrecordshapingOutputQueueCommitMetadata(&ls->shaping_output, fallback_delay_ms))
+    {
+        ls->shaping_metadata_error = true;
+    }
+}
+
+void tlsserverCancelShapedOutputTimer(tlsserver_lstate_t *ls)
+{
+    if (ls->shaping_output_timer == NULL)
+    {
+        return;
+    }
+
+    weventSetUserData(ls->shaping_output_timer, NULL);
+    wtimerDelete(ls->shaping_output_timer);
+    ls->shaping_output_timer = NULL;
+}
+
+static bool tlsserverUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
+{
+    size_t queued = tlsrecordshapingOutputQueueBytes(&ls->shaping_output);
+    if (! ls->shaping_producer_paused && queued >= kTlsRecordShapingQueueHighWatermark)
+    {
+        ls->shaping_producer_paused = true;
+        if (! ls->shaping_wire_paused && ! ls->upstream_finished && ! ls->downstream_finishing)
+        {
+            if (! withLineLocked(l, tunnelNextUpStreamPause, t))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    if (ls->shaping_producer_paused && queued <= kTlsRecordShapingQueueLowWatermark)
+    {
+        ls->shaping_producer_paused = false;
+        if (! ls->shaping_wire_paused && ! ls->upstream_finished && ! ls->downstream_finishing)
+        {
+            if (! withLineLocked(l, tunnelNextUpStreamResume, t))
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool tlsserverDrainShapedOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls, bool force)
+{
+    if (ls->shaping_wire_paused)
+    {
+        return tlsserverUpdateShapingBackpressure(t, l, ls);
+    }
+
+    uint64_t now_ms = wloopNowMS(getWorkerLoop(lineGetWID(l)));
+    while (! ls->shaping_wire_paused)
+    {
+        sbuf_t *record = tlsrecordshapingOutputQueuePopReady(&ls->shaping_output, now_ms, force);
+        if (record == NULL)
+        {
+            break;
+        }
+
+        if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, record))
+        {
+            return false;
+        }
+
+        ls = lineGetState(l, t);
+        if (ls->tunnel != t || ls->resources_released || ! ls->shaping_output.initialized)
+        {
+            return false;
+        }
+        now_ms = wloopNowMS(getWorkerLoop(lineGetWID(l)));
+    }
+
+    return tlsserverUpdateShapingBackpressure(t, l, ls);
+}
+
+static void tlsserverShapingOutputTimerCallback(wtimer_t *timer)
+{
+    tlsserver_lstate_t *ls = weventGetUserdata(timer);
+    if (ls == NULL)
+    {
+        return;
+    }
+
+    ls->shaping_output_timer = NULL;
+    tunnel_t *t              = ls->tunnel;
+    line_t   *l              = ls->line;
+    if (t == NULL || l == NULL || ! lineIsAlive(l) || ls->resources_released)
+    {
+        return;
+    }
+
+    lineLock(l);
+    if (! tlsserverDrainShapedOutput(t, l, ls, false))
+    {
+        if (lineIsAlive(l))
+        {
+            bool state_is_active = ((tlsserver_lstate_t *) lineGetState(l, t))->tunnel == t;
+            lineUnlock(l);
+            if (state_is_active)
+            {
+                tlsserverCloseLineFatal(t, l);
+            }
+            return;
+        }
+        lineUnlock(l);
+        return;
+    }
+
+    ls = lineGetState(l, t);
+    if (! tlsserverTryCompleteDeferredFinish(t, l, ls))
+    {
+        lineUnlock(l);
+        return;
+    }
+
+    if (! tlsserverScheduleShapedOutput(t, l, ls))
+    {
+        if (lineIsAlive(l))
+        {
+            bool state_is_active = ((tlsserver_lstate_t *) lineGetState(l, t))->tunnel == t;
+            lineUnlock(l);
+            if (state_is_active)
+            {
+                tlsserverCloseLineFatal(t, l);
+            }
+            return;
+        }
+    }
+    lineUnlock(l);
+}
+
+bool tlsserverScheduleShapedOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
+{
+    if (ls->shaping_output_timer != NULL || ls->shaping_wire_paused ||
+        tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output))
+    {
+        return true;
+    }
+
+    uint32_t delay_ms = 0;
+    if (! tlsrecordshapingOutputQueueNextDelay(
+            &ls->shaping_output, wloopNowMS(getWorkerLoop(lineGetWID(l))), &delay_ms))
+    {
+        return true;
+    }
+    if (delay_ms == 0)
+    {
+        return tlsserverDrainShapedOutput(t, l, ls, false);
+    }
+
+    ls->shaping_output_timer =
+        wtimerAdd(getWorkerLoop(lineGetWID(l)), tlsserverShapingOutputTimerCallback, delay_ms, 1);
+    if (ls->shaping_output_timer != NULL)
+    {
+        weventSetUserData(ls->shaping_output_timer, ls);
+        return true;
+    }
+
+    if (! ls->shaping_timer_failure_logged)
+    {
+        LOGW("TlsServer: failed to allocate record shaping timer; draining queued ciphertext immediately");
+        ls->shaping_timer_failure_logged = true;
+    }
+    return tlsserverDrainShapedOutput(t, l, ls, true);
+}
+
+bool tlsserverTryCompleteDeferredFinish(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
+{
+    if (! ls->downstream_finish_deferred || ! tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output))
+    {
+        return true;
+    }
+
+    tlsserverLinestateDestroy(ls);
+    tunnelPrevDownStreamFinish(t, l);
+    return false;
 }
 
 bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
+    tlsserver_tstate_t *ts = tunnelGetState(t);
+    bool shape_output = ts->record_shaping.enabled && ls->handshake_completed && SSL_version(ls->ssl) == TLS1_3_VERSION;
+
     while (true)
     {
         sbuf_t *ssl_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
@@ -179,6 +444,18 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
             {
                 LOGD("TlsServer: worker %u flushing %d TLS bytes downstream", (unsigned int) lineGetWID(l), n);
             }
+            if (shape_output)
+            {
+                char queue_error[kTlsRecordShapingErrorSize];
+                if (! tlsrecordshapingOutputQueueFeed(
+                        &ls->shaping_output, ssl_buf, wloopNowMS(getWorkerLoop(lineGetWID(l))), queue_error))
+                {
+                    LOGW("TlsServer: %s", queue_error);
+                    return false;
+                }
+                continue;
+            }
+
             if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, ssl_buf))
             {
                 LOGW("TlsServer: line closed while flushing TLS bytes downstream");
@@ -195,8 +472,50 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
             tlsserverPrintSSLError();
             return false;
         }
+        break;
+    }
+
+    if (! shape_output)
+    {
         return true;
     }
+    if (ls->shaping_metadata_error)
+    {
+        LOGW("TlsServer: failed to enqueue TLS record shaping metadata");
+        return false;
+    }
+
+    char queue_error[kTlsRecordShapingErrorSize];
+    if (! tlsrecordshapingOutputQueueFinishFeed(&ls->shaping_output, queue_error))
+    {
+        LOGW("TlsServer: %s", queue_error);
+        return false;
+    }
+
+    size_t queued = tlsrecordshapingOutputQueueBytes(&ls->shaping_output);
+    if (queued > ls->shaping_state.maximum_queued_ciphertext_bytes)
+    {
+        ls->shaping_state.maximum_queued_ciphertext_bytes = queued;
+    }
+
+    bool force = queued >= kTlsRecordShapingQueueHardLimit;
+    if (force && ls->shaping_wire_paused)
+    {
+        LOGW("TlsServer: record shaping queue exceeded 1 MiB while the wire side was paused");
+        return false;
+    }
+    if (! tlsserverDrainShapedOutput(t, l, ls, force))
+    {
+        return false;
+    }
+
+    ls = lineGetState(l, t);
+    if (tlsrecordshapingOutputQueueBytes(&ls->shaping_output) >= kTlsRecordShapingQueueHardLimit)
+    {
+        LOGW("TlsServer: record shaping queue could not be reduced below its 1 MiB hard limit");
+        return false;
+    }
+    return tlsserverScheduleShapedOutput(t, l, ls);
 }
 
 bool tlsserverEncryptAndSendApplicationData(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls, sbuf_t *buf)
@@ -209,8 +528,10 @@ bool tlsserverEncryptAndSendApplicationData(tunnel_t *t, line_t *l, tlsserver_ls
 
     while (len > 0)
     {
-        int            n      = SSL_write(ls->ssl, sbufGetRawPtr(buf), len);
-        enum sslstatus status = getSslStatus(ls->ssl, n);
+        ls->shaping_writing_application = true;
+        int n                           = SSL_write(ls->ssl, sbufGetRawPtr(buf), len);
+        ls->shaping_writing_application = false;
+        enum sslstatus status           = getSslStatus(ls->ssl, n);
 
         if (n > 0)
         {
@@ -263,7 +584,8 @@ bool tlsserverFlushPendingDownQueue(tunnel_t *t, line_t *l, tlsserver_lstate_t *
         if (ls->verbose)
         {
             LOGD("TlsServer: worker %u flushing %u queued downstream payload buffers after handshake",
-                 (unsigned int) lineGetWID(l), (unsigned int) pending_count);
+                 (unsigned int) lineGetWID(l),
+                 (unsigned int) pending_count);
         }
     }
 
@@ -311,8 +633,8 @@ static void tlsserverForwardPendingFallbackFinish(tunnel_t *t, line_t *l, tlsser
     tlsserver_tstate_t *ts       = tunnelGetState(t);
     tunnel_t           *fallback = ts->fallback_tunnel;
 
-    if (! ls->fallback_up_finish_pending || tlsserverFallbackPendingCount(ls) > 0 ||
-        fallback == NULL || ls->fallback_up_finished)
+    if (! ls->fallback_up_finish_pending || tlsserverFallbackPendingCount(ls) > 0 || fallback == NULL ||
+        ls->fallback_up_finished)
     {
         return;
     }
@@ -356,11 +678,11 @@ static void tlsserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
     if (tlsserverFallbackPendingCount(ls) > 0 && ! ls->fallback_delay_scheduled)
     {
         ls->fallback_delay_scheduled = true;
-        lineScheduleDelayedTask(l,
-                                tlsserverDelayedFallbackPayloadTask,
-                                fastRandJittered32(ts->fallback_intentional_delay_ms,
-                                                   ts->fallback_intentional_delay_jitter_ms),
-                                t);
+        lineScheduleDelayedTask(
+            l,
+            tlsserverDelayedFallbackPayloadTask,
+            fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
+            t);
         return;
     }
 
@@ -390,11 +712,11 @@ bool tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls
     if (! ls->fallback_delay_scheduled)
     {
         ls->fallback_delay_scheduled = true;
-        lineScheduleDelayedTask(l,
-                                tlsserverDelayedFallbackPayloadTask,
-                                fastRandJittered32(ts->fallback_intentional_delay_ms,
-                                                   ts->fallback_intentional_delay_jitter_ms),
-                                t);
+        lineScheduleDelayedTask(
+            l,
+            tlsserverDelayedFallbackPayloadTask,
+            fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
+            t);
     }
 
     return true;
@@ -410,8 +732,8 @@ static void tlsserverHandshakeDeadlineTimerCallback(wtimer_t *timer)
 
     ls->handshake_deadline_timer = NULL;
 
-    if (! ls->handshake_deadline_armed || ls->handshake_completed || ls->fallback_mode ||
-        ls->ssl == NULL || ls->line == NULL || ls->tunnel == NULL || ! lineIsAlive(ls->line))
+    if (! ls->handshake_deadline_armed || ls->handshake_completed || ls->fallback_mode || ls->ssl == NULL ||
+        ls->line == NULL || ls->tunnel == NULL || ! lineIsAlive(ls->line))
     {
         return;
     }
@@ -512,7 +834,9 @@ bool tlsserverSendCloseNotify(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
         if (ls->verbose)
         {
             LOGD("TlsServer: skipping close_notify (released=%d, ssl=%p, handshake=%d)",
-                 (int) ls->resources_released, (void *) ls->ssl, (int) ls->handshake_completed);
+                 (int) ls->resources_released,
+                 (void *) ls->ssl,
+                 (int) ls->handshake_completed);
         }
         return true;
     }
@@ -560,7 +884,8 @@ void tlsserverCloseLineFatal(tunnel_t *t, line_t *l)
     bool                close_prev = ! ls->downstream_finishing;
 
     LOGW("TlsServer: closing line after fatal TLS failure (close_next=%d, close_prev=%d)",
-         (int) close_next, (int) close_prev);
+         (int) close_next,
+         (int) close_prev);
 
     tlsserverLinestateDestroy(ls);
 

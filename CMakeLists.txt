@@ -380,6 +380,10 @@ endif()
 # Tunnel Libraries
 #--------------------------------------------------------------------------------
 
+if(INCLUDE_TLS_CLIENT OR INCLUDE_TLS_SERVER)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/TlsRecordShapingCommon)
+endif()
+
 #template
 if(INCLUDE_TEMPLATE)
   target_compile_definitions(Waterwall PUBLIC INCLUDE_TEMPLATE=1)

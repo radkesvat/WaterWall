@@ -4054,6 +4054,13 @@ struct ssl_st {
                        void *arg) = nullptr;
   void *msg_callback_arg = nullptr;
 
+  // WaterWall-maintained, narrowly scoped TLS 1.3 sender padding hook. The
+  // explicit maximum is included in SSL_max_seal_overhead before sealing.
+  ssl_tls13_record_padding_callback_func tls13_record_padding_callback =
+      nullptr;
+  void *tls13_record_padding_callback_arg = nullptr;
+  size_t tls13_record_padding_max = 0;
+
   // session info
 
   // initial_timeout_duration_ms is the default DTLS timeout duration in

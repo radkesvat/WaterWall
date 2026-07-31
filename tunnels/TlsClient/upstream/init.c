@@ -8,8 +8,13 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     tlsclient_lstate_t *ls          = lineGetState(l, t);
     sbuf_t             *ech_payload = NULL;
 
-    if (! tlsclientLinestateInitialize(
-            ls, ts->threadlocal_ssl_contexts[lineGetWID(l)], lineGetBufferPool(l), ts->alpn_wire, ts->alpn_wire_len))
+    if (! tlsclientLinestateInitializeWithShaping(ls,
+                                                  ts->threadlocal_ssl_contexts[lineGetWID(l)],
+                                                  lineGetBufferPool(l),
+                                                  ts->alpn_wire,
+                                                  ts->alpn_wire_len,
+                                                  &ts->record_shaping,
+                                                  ts->verbose))
     {
         // there is no SSL object to print a state for, and the line state is already released and zeroed;
         // the next tunnel never received Init for this line, so only the downstream side may be closed here
@@ -17,6 +22,9 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         tunnelPrevDownStreamFinish(t, l);
         return;
     }
+
+    ls->tunnel = t;
+    ls->line   = l;
 
     if (! tlsclientCreateEchGreaseInnerClientHello(ts, lineGetWID(l), &ech_payload))
     {

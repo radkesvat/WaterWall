@@ -50,8 +50,18 @@ static bool getandvalidateSniSetting(tlsclient_tstate_t *ts, const cJSON *settin
 bool tlsclientParseAlpnSetting(tlsclient_tstate_t *ts, const cJSON *settings)
 {
     static const uint8_t kDefaultAlpnWire[] = {
-        2, 'h', '2',
-        8, 'h', 't', 't', 'p', '/', '1', '.', '1',
+        2,
+        'h',
+        '2',
+        8,
+        'h',
+        't',
+        't',
+        'p',
+        '/',
+        '1',
+        '.',
+        '1',
     };
 
     const cJSON *alpns = cJSON_GetObjectItemCaseSensitive(settings, "alpns");
@@ -115,13 +125,13 @@ bool tlsclientParseAlpnSetting(tlsclient_tstate_t *ts, const cJSON *settings)
         return true;
     }
 
-    ts->alpn_wire = memoryAllocate(wire_len);
+    ts->alpn_wire     = memoryAllocate(wire_len);
     ts->alpn_wire_len = wire_len;
 
     size_t offset = 0;
     cJSON_ArrayForEach(item, alpns)
     {
-        const size_t name_len = stringLength(item->valuestring);
+        const size_t name_len   = stringLength(item->valuestring);
         ts->alpn_wire[offset++] = (uint8_t) name_len;
         memoryCopy(ts->alpn_wire + offset, item->valuestring, name_len);
         offset += name_len;
@@ -302,8 +312,7 @@ static SSL_CTX *setupSslContext(const uint8_t *alpn_wire, size_t alpn_wire_len, 
 }
 
 static bool createSslContextPool(SSL_CTX ***out_contexts, const uint8_t *alpn_wire, size_t alpn_wire_len,
-                                 int worker_count,
-                                 bool verify, bool x25519mlkem768_enabled)
+                                 int worker_count, bool verify, bool x25519mlkem768_enabled)
 {
     *out_contexts = memoryAllocateZero((size_t) worker_count * sizeof(SSL_CTX *));
 
@@ -336,11 +345,17 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
         goto fail;
     }
 
+    char shaping_error[kTlsRecordShapingErrorSize];
+    if (! tlsrecordshapingParse(settings, kTlsRecordShapingSenderClient, &ts->record_shaping, shaping_error))
+    {
+        LOGF("TlsClient: invalid tls13-record-shaping configuration: %s", shaping_error);
+        goto fail;
+    }
+
     if (! getOptionalBoolSetting(&ts->x25519mlkem768_enabled, settings, "x25519mlkem768", true) ||
         ! getOptionalBoolSetting(&ts->verify, settings, "verify", true) ||
         ! getOptionalBoolSetting(&ts->verbose, settings, "verbose", false) ||
-        ! getAndValidateEchGreaseSniOverrideSetting(ts, settings) ||
-        ! tlsclientParseAlpnSetting(ts, settings))
+        ! getAndValidateEchGreaseSniOverrideSetting(ts, settings) || ! tlsclientParseAlpnSetting(ts, settings))
     {
         goto fail;
     }
@@ -367,6 +382,13 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
         tlsclientTunnelstateDestroy(ts);
         tunnelDestroy(t);
         return NULL;
+    }
+
+    if (ts->verbose)
+    {
+        LOGD("TlsClient: creating node \"%s\" tls13-record-shaping=%s",
+             node->name,
+             tlsrecordshapingConfigModeName(&ts->record_shaping));
     }
 
     return t;

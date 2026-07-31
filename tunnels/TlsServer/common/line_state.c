@@ -2,7 +2,8 @@
 
 #include "loggers/network_logger.h"
 
-bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, buffer_pool_t *pool, bool verbose)
+bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, buffer_pool_t *pool,
+                                  const tlsrecordshaping_config_t *record_shaping, bool verbose)
 {
     *ls = (tlsserver_lstate_t) {
         .pending_down        = bufferqueueCreate(2),
@@ -10,6 +11,11 @@ bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, buff
         .fallback_probe      = bufferstreamCreate(pool, 0),
         .verbose             = verbose,
     };
+
+    if (record_shaping->enabled)
+    {
+        tlsrecordshapingOutputQueueInitialize(&ls->shaping_output, pool);
+    }
 
     ls->rbio = BIO_new(BIO_s_mem());
     ls->wbio = BIO_new(BIO_s_mem());
@@ -27,6 +33,7 @@ bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, buff
     }
 
     SSL_set_accept_state(ls->ssl);
+    SSL_set_app_data(ls->ssl, ls);
     SSL_set_bio(ls->ssl, ls->rbio, ls->wbio);
     ls->rbio = NULL;
     ls->wbio = NULL;
@@ -47,6 +54,22 @@ void tlsserverLinestateRelease(tlsserver_lstate_t *ls)
     ls->resources_released = true;
 
     tlsserverDisarmHandshakeDeadline(ls);
+    tlsserverCancelShapedOutputTimer(ls);
+
+    if (ls->verbose &&
+        (ls->shaping_state.application_records_seen > 0 || ls->shaping_state.maximum_queued_ciphertext_bytes > 0))
+    {
+        LOGD("TlsServer: record shaping summary eligible=%u padded=%u requested-padding=%" PRIu64
+             " effective-padding=%" PRIu64 " delayed=%u max-queued=%zu",
+             (unsigned int) ls->shaping_state.application_records_seen,
+             (unsigned int) ls->shaping_state.records_padded,
+             ls->shaping_state.requested_padding_bytes,
+             ls->shaping_state.effective_padding_bytes,
+             (unsigned int) ls->shaping_state.records_delayed,
+             ls->shaping_state.maximum_queued_ciphertext_bytes);
+    }
+
+    tlsrecordshapingOutputQueueDestroy(&ls->shaping_output);
 
     if (ls->ssl != NULL)
     {
@@ -54,6 +77,7 @@ void tlsserverLinestateRelease(tlsserver_lstate_t *ls)
         {
             LOGD("TlsServer: releasing per-line SSL object");
         }
+        SSL_set_app_data(ls->ssl, NULL);
         SSL_free(ls->ssl);
         ls->ssl = NULL;
     }

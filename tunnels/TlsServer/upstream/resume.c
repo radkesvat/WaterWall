@@ -22,7 +22,68 @@ void tlsserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->upstream_finished)
+    if (ts->record_shaping.enabled)
+    {
+        ls->shaping_wire_paused = false;
+    }
+
+    if (ts->record_shaping.enabled && ls->handshake_completed && SSL_version(ls->ssl) == TLS1_3_VERSION)
+    {
+        lineLock(l);
+        bool shaping_pause_was_active = ls->shaping_producer_paused;
+        if (! tlsserverDrainShapedOutput(t, l, ls, false))
+        {
+            if (lineIsAlive(l))
+            {
+                bool state_is_active = ((tlsserver_lstate_t *) lineGetState(l, t))->tunnel == t;
+                lineUnlock(l);
+                if (state_is_active)
+                {
+                    tlsserverCloseLineFatal(t, l);
+                }
+                return;
+            }
+            lineUnlock(l);
+            return;
+        }
+
+        ls = lineGetState(l, t);
+        if (! tlsserverTryCompleteDeferredFinish(t, l, ls))
+        {
+            lineUnlock(l);
+            return;
+        }
+
+        if (! tlsserverScheduleShapedOutput(t, l, ls))
+        {
+            if (lineIsAlive(l))
+            {
+                bool state_is_active = ((tlsserver_lstate_t *) lineGetState(l, t))->tunnel == t;
+                lineUnlock(l);
+                if (state_is_active)
+                {
+                    tlsserverCloseLineFatal(t, l);
+                }
+                return;
+            }
+            lineUnlock(l);
+            return;
+        }
+
+        ls = lineGetState(l, t);
+        if (shaping_pause_was_active || ls->shaping_producer_paused || ls->shaping_wire_paused ||
+            ls->upstream_finished || ls->downstream_finishing)
+        {
+            lineUnlock(l);
+            return;
+        }
+
+        tunnelNextUpStreamResume(t, l);
+        lineUnlock(l);
+        return;
+    }
+
+    if (ls->upstream_finished || ls->downstream_finishing)
     {
         if (ls->verbose)
         {

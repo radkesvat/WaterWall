@@ -21,16 +21,15 @@ static bool tlsclientAddConfiguredApplicationSettings(SSL *ssl, const uint8_t *a
         const uint8_t *name = alpn_wire + offset;
         if (name_len == 2 && memoryCompare(name, "h2", 2) == 0)
         {
-            if (SSL_add_application_settings(
-                    ssl, name, name_len, kChromeH2AlpsPayload, sizeof(kChromeH2AlpsPayload)) != 1)
+            if (SSL_add_application_settings(ssl, name, name_len, kChromeH2AlpsPayload, sizeof(kChromeH2AlpsPayload)) !=
+                1)
             {
                 return false;
             }
         }
         else if (name_len == 8 && memoryCompare(name, "http/1.1", 8) == 0)
         {
-            if (SSL_add_application_settings(
-                    ssl, name, name_len, kChromeH1AlpsPayload, kChromeH1AlpsPayloadLen) != 1)
+            if (SSL_add_application_settings(ssl, name, name_len, kChromeH1AlpsPayload, kChromeH1AlpsPayloadLen) != 1)
             {
                 return false;
             }
@@ -50,6 +49,7 @@ static bool tlsclientAddConfiguredApplicationSettings(SSL *ssl, const uint8_t *a
  */
 static void tlsclientLinestateReleasePartial(tlsclient_lstate_t *ls)
 {
+    tlsrecordshapingOutputQueueDestroy(&ls->shaping_output);
     SSL_free(ls->ssl);
     BIO_free(ls->rbio);
     BIO_free(ls->wbio);
@@ -58,8 +58,9 @@ static void tlsclientLinestateReleasePartial(tlsclient_lstate_t *ls)
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tlsclient_lstate_t)));
 }
 
-bool tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_pool_t *pool, const uint8_t *alpn_wire,
-                                  size_t alpn_wire_len)
+bool tlsclientLinestateInitializeWithShaping(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_pool_t *pool,
+                                             const uint8_t *alpn_wire, size_t alpn_wire_len,
+                                             const tlsrecordshaping_config_t *record_shaping, bool verbose)
 {
     assert(alpn_wire != NULL || alpn_wire_len == 0);
 
@@ -69,7 +70,13 @@ bool tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_
         .bq              = bufferqueueCreate(2),
         .takeover_stream = bufferstreamCreate(pool, 0),
         .takeover_phase  = kTlsClientTakeoverHandshake,
+        .verbose         = verbose,
     };
+
+    if (record_shaping->enabled)
+    {
+        tlsrecordshapingOutputQueueInitialize(&ls->shaping_output, pool);
+    }
 
     ls->rbio = BIO_new(BIO_s_mem());
     ls->wbio = BIO_new(BIO_s_mem());
@@ -78,6 +85,14 @@ bool tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_
     if (ls->rbio == NULL || ls->wbio == NULL || ls->ssl == NULL)
     {
         LOGE("Failed to allocate TlsClient BoringSSL line state");
+        tlsclientLinestateReleasePartial(ls);
+        return false;
+    }
+
+    if (record_shaping->enabled && ! SSL_set_tls13_record_padding_callback(
+                                       ls->ssl, tlsclientRecordPaddingCallback, ls, kTlsRecordShapingMaxPaddingBytes))
+    {
+        LOGE("Failed to install the TlsClient TLS 1.3 record padding callback");
         tlsclientLinestateReleasePartial(ls);
         return false;
     }
@@ -105,6 +120,13 @@ bool tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_
     return true;
 }
 
+bool tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx, buffer_pool_t *pool, const uint8_t *alpn_wire,
+                                  size_t alpn_wire_len)
+{
+    const tlsrecordshaping_config_t no_record_shaping = {0};
+    return tlsclientLinestateInitializeWithShaping(ls, sctx, pool, alpn_wire, alpn_wire_len, &no_record_shaping, false);
+}
+
 void tlsclientLinestateRelease(tlsclient_lstate_t *ls)
 {
     if (ls->resources_released)
@@ -114,6 +136,23 @@ void tlsclientLinestateRelease(tlsclient_lstate_t *ls)
 
     ls->resources_released = true;
 
+    tlsclientCancelShapedOutputTimer(ls);
+    if (ls->verbose &&
+        (ls->shaping_state.application_records_seen > 0 || ls->shaping_state.maximum_queued_ciphertext_bytes > 0))
+    {
+        LOGD("TlsClient: record shaping summary eligible=%u padded=%u requested-padding=%" PRIu64
+             " effective-padding=%" PRIu64 " delayed=%u max-queued=%zu",
+             (unsigned int) ls->shaping_state.application_records_seen,
+             (unsigned int) ls->shaping_state.records_padded,
+             ls->shaping_state.requested_padding_bytes,
+             ls->shaping_state.effective_padding_bytes,
+             (unsigned int) ls->shaping_state.records_delayed,
+             ls->shaping_state.maximum_queued_ciphertext_bytes);
+    }
+
+    tlsrecordshapingOutputQueueDestroy(&ls->shaping_output);
+
+    discard SSL_set_tls13_record_padding_callback(ls->ssl, NULL, NULL, 0);
     SSL_free(ls->ssl); /* free the SSL object and its BIO's */
     ls->ssl  = NULL;
     ls->rbio = NULL;

@@ -2701,6 +2701,19 @@ void SSL_set_msg_callback_arg(SSL *ssl, void *arg) {
   ssl->msg_callback_arg = arg;
 }
 
+int SSL_set_tls13_record_padding_callback(
+    SSL *ssl, ssl_tls13_record_padding_callback_func callback, void *arg,
+    size_t max_padding) {
+  if (ssl == nullptr || max_padding > SSL3_RT_MAX_PLAIN_LENGTH) {
+    return 0;
+  }
+
+  ssl->tls13_record_padding_callback = callback;
+  ssl->tls13_record_padding_callback_arg = callback != nullptr ? arg : nullptr;
+  ssl->tls13_record_padding_max = callback != nullptr ? max_padding : 0;
+  return 1;
+}
+
 void SSL_CTX_set_keylog_callback(SSL_CTX *ctx,
                                  void (*cb)(const SSL *ssl, const char *line)) {
   ctx->keylog_callback = cb;

@@ -18,7 +18,8 @@ void tlsserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     if (ls->verbose)
     {
         LOGD("TlsServer: worker %u received downstream Finish (upstream_finished=%d)",
-             (unsigned int) lineGetWID(l), (int) ls->upstream_finished);
+             (unsigned int) lineGetWID(l),
+             (int) ls->upstream_finished);
     }
 
     ls->upstream_finished    = true;
@@ -37,7 +38,24 @@ void tlsserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         }
 
         LOGW("TlsServer: line closed while sending close_notify");
-        tlsserverLinestateDestroy(ls);
+        lineUnlock(l);
+        return;
+    }
+
+    if (! lineIsAlive(l))
+    {
+        lineUnlock(l);
+        return;
+    }
+
+    ls = lineGetState(l, t);
+    if (ls->shaping_output.initialized && ! tlsrecordshapingOutputQueueIsEmpty(&ls->shaping_output))
+    {
+        ls->downstream_finish_deferred = true;
+        if (ls->verbose)
+        {
+            LOGD("TlsServer: deferring downstream Finish until queued TLS ciphertext drains");
+        }
         lineUnlock(l);
         return;
     }

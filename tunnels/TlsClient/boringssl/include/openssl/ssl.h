@@ -4753,6 +4753,24 @@ OPENSSL_EXPORT void SSL_set_msg_callback(
 // SSL_set_msg_callback_arg sets the |arg| parameter of the message callback.
 OPENSSL_EXPORT void SSL_set_msg_callback_arg(SSL *ssl, void *arg);
 
+// ssl_tls13_record_padding_callback_func is called exactly once before each
+// encrypted TLS 1.3 record is sealed. |type| is the inner content type,
+// |plaintext_len| excludes the inner content type, and |max_padding| is the
+// largest legal padding result for this record. The callback returns the
+// desired number of zero padding bytes; oversized results are capped.
+typedef size_t (*ssl_tls13_record_padding_callback_func)(SSL *ssl, uint8_t type,
+                                                         size_t plaintext_len,
+                                                         size_t max_padding,
+                                                         void *arg);
+
+// SSL_set_tls13_record_padding_callback installs a sender-only TLS 1.3 record
+// padding callback on |ssl|. |max_padding| is an explicit reservation bound
+// used by SSL_max_seal_overhead. Values above SSL3_RT_MAX_PLAIN_LENGTH are
+// rejected. Passing NULL clears the callback and its argument.
+OPENSSL_EXPORT int SSL_set_tls13_record_padding_callback(
+    SSL *ssl, ssl_tls13_record_padding_callback_func callback, void *arg,
+    size_t max_padding);
+
 // SSL_CTX_set_keylog_callback configures a callback to log key material. This
 // is intended for debugging use with tools like Wireshark. The |cb| function
 // should log |line| followed by a newline, synchronizing with any concurrent

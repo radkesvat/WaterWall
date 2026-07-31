@@ -918,7 +918,7 @@ EXCLUSIONS = [
      {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
      ("MuxServer: cid %u payload of %u bytes cannot be encoded into MUX frames, closing this child",),
      "Category-C: oversized valid MuxServer payload closes one child only"),
-    ("tunnels/TlsClient/common/line_state.c", "tlsclientLinestateInitialize",
+    ("tunnels/TlsClient/common/line_state.c", "tlsclientLinestateInitializeWithShaping",
      {"terminateProgram": 0, "abortProgramNow": 0, "requestProgramShutdown": 0},
      ("Failed to allocate TlsClient BoringSSL line state",),
      "Category-C: TlsClient per-line BoringSSL allocation failure closes one line"),

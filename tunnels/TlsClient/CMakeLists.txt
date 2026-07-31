@@ -4,6 +4,14 @@
 # Currently only removed git folder to be able to push it
 
 # All my patches (diffs) are saved in RadkesvatPatches folder
+# WaterWall's minimal sender-side TLS 1.3 padding API is recorded in
+# RadkesvatPatches/tls13_record_padding_callback.patch. Apply it from the
+# vendored BoringSSL root with `git apply ../RadkesvatPatches/tls13_record_padding_callback.patch`.
+# It changes include/openssl/ssl.h, ssl/internal.h, ssl/ssl_lib.cc, and
+# ssl/tls_record.cc. Keep SSL_set_tls13_record_padding_callback in
+# boringssl_symbols.txt as well; that symbol-list change lives outside the
+# vendored tree and is intentionally not part of the patch. The complete porting
+# contract and post-update test checklist are at the top of `my notes.txt`.
 
 # I saved original cmake file as CMakeLists.txt.original
 # and the diff of changes that I made to CMakeLists.txt is CMakeLists.txt.patch
@@ -198,6 +206,7 @@ endif()
 # Final Library Linkage
 #==============================================================================
 
+target_link_libraries(TlsClient PUBLIC TlsRecordShapingCommon)
 target_link_libraries(TlsClient PRIVATE ww BrotliDec DecompressBrotli crypto ssl)
 if(NOT APPLE)
     target_precompile_headers(TlsClient REUSE_FROM ww)

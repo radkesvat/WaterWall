@@ -153,8 +153,7 @@ static int performTakeoverHandshake(tunnel_t *t, line_t *l, tlsclient_lstate_t *
                 }
             }
 
-            if (ls->takeover_phase != kTlsClientTakeoverDrain &&
-                ls->takeover_phase != kTlsClientTakeoverPassthrough)
+            if (ls->takeover_phase != kTlsClientTakeoverDrain && ls->takeover_phase != kTlsClientTakeoverPassthrough)
             {
                 LOGW("TlsClient: takeover owner did not begin or complete the negotiated handoff");
                 return -1;
@@ -244,34 +243,7 @@ failed:
 
 static inline bool processEncryptedData(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
 {
-    int n;
-    do
-    {
-        sbuf_t *ssl_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
-        int     avail   = (int) sbufGetMaximumWriteableSize(ssl_buf);
-        n               = BIO_read(ls->wbio, sbufGetMutablePtr(ssl_buf), avail);
-
-        if (n > 0)
-        {
-            sbufSetLength(ssl_buf, n);
-            tunnelNextUpStreamPayload(t, l, ssl_buf);
-            if (! lineIsAlive(l))
-            {
-                return false;
-            }
-        }
-        else if (! BIO_should_retry(ls->wbio))
-        {
-            lineReuseBuffer(l, ssl_buf);
-            return false;
-        }
-        else
-        {
-            lineReuseBuffer(l, ssl_buf);
-        }
-    } while (n > 0);
-
-    return true;
+    return tlsclientFlushSslOutput(t, l, ls);
 }
 
 static inline bool readDecryptedData(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
@@ -323,8 +295,13 @@ void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     tlsclient_lstate_t *ls = lineGetState(l, t);
     int                 n;
 
-    if (ls->takeover_phase == kTlsClientTakeoverDrain ||
-        ls->takeover_phase == kTlsClientTakeoverPassthrough)
+    if (ls->upstream_finished)
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
+
+    if (ls->takeover_phase == kTlsClientTakeoverDrain || ls->takeover_phase == kTlsClientTakeoverPassthrough)
     {
         tunnelPrevDownStreamPayload(t, l, buf);
         return;

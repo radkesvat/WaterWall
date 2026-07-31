@@ -2500,6 +2500,7 @@ SSL_set_srtp_profiles
 SSL_set_state
 SSL_set_strict_cipher_list
 SSL_set_tls_channel_id_enabled
+SSL_set_tls13_record_padding_callback
 SSL_set_tlsext_host_name
 SSL_set_tlsext_status_ocsp_resp
 SSL_set_tlsext_status_type
