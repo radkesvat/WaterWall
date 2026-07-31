@@ -228,6 +228,77 @@ static void testSimpleTcpFlagPreExistingFlagPreserved(void)
     destroyTestTunnel(t);
 }
 
+static void testPreserveRejectsForgedIpv4TotalLength(void)
+{
+    tunnel_t               *t     = createTestTunnel();
+    ipmanipulator_tstate_t *state = testTunnelState(t);
+    line_t                  line  = {0};
+
+    state->trick_preserve_tcp_bitflags = true;
+    state->up_tcp_bit_syn_action       = kDvsOff;
+
+    sbuf_t *append_buf = createTcpPacket(TCP_SYN, 0, false);
+    IPH_LEN_SET((struct ip_hdr *) sbufGetMutablePtr(append_buf), lwip_htons(60000));
+    uint32_t append_len = sbufGetLength(append_buf);
+    uint8_t  append_before[64];
+    require(append_len <= sizeof(append_before), "append rejection fixture exceeded snapshot");
+    memoryCopy(append_before, sbufGetRawPtr(append_buf), append_len);
+
+    tcpbitchangetrickUpStreamPayload(t, &line, &append_buf);
+
+    require(append_buf != NULL, "forged append packet was unexpectedly consumed");
+    require(sbufGetLength(append_buf) == append_len, "forged append packet length changed");
+    require(memoryEqual(sbufGetRawPtr(append_buf), append_before, append_len), "forged append packet bytes changed");
+    require(! lineGetRecalculateChecksum(&line), "forged append packet requested checksum recalculation");
+    sbufDestroy(append_buf);
+
+    sbuf_t *restore_buf = createTcpPacket(0, TCP_SYN, true);
+    IPH_LEN_SET((struct ip_hdr *) sbufGetMutablePtr(restore_buf), lwip_htons(60000));
+    uint32_t restore_len = sbufGetLength(restore_buf);
+    uint8_t  restore_before[64];
+    require(restore_len <= sizeof(restore_before), "restore rejection fixture exceeded snapshot");
+    memoryCopy(restore_before, sbufGetRawPtr(restore_buf), restore_len);
+
+    tcpbitchangetrickDownStreamPayload(t, &line, &restore_buf);
+
+    require(restore_buf != NULL, "forged restore packet was unexpectedly consumed");
+    require(sbufGetLength(restore_buf) == restore_len, "forged restore packet length changed");
+    require(memoryEqual(sbufGetRawPtr(restore_buf), restore_before, restore_len),
+            "forged restore packet bytes changed");
+    require(! lineGetRecalculateChecksum(&line), "forged restore packet requested checksum recalculation");
+    sbufDestroy(restore_buf);
+
+    destroyTestTunnel(t);
+}
+
+static void testPreservedBitflagsRoundTrip(void)
+{
+    tunnel_t               *t            = createTestTunnel();
+    ipmanipulator_tstate_t *state        = testTunnelState(t);
+    line_t                  line         = {0};
+    sbuf_t                 *buf          = createTcpPacket(TCP_SYN | TCP_ACK, 0, false);
+    uint32_t                original_len = sbufGetLength(buf);
+    uint8_t                 original[64];
+
+    require(original_len <= sizeof(original), "round-trip fixture exceeded snapshot");
+    memoryCopy(original, sbufGetRawPtr(buf), original_len);
+
+    state->trick_preserve_tcp_bitflags = true;
+    state->up_tcp_bit_syn_action       = kDvsOff;
+
+    tcpbitchangetrickUpStreamPayload(t, &line, &buf);
+    require(buf != NULL && sbufGetLength(buf) == original_len + 1U, "well-formed append boundary was rejected");
+
+    tcpbitchangetrickDownStreamPayload(t, &line, &buf);
+    require(buf != NULL, "well-formed restore boundary was rejected");
+    require(sbufGetLength(buf) == original_len, "preserve round trip did not restore the original length");
+    require(memoryEqual(sbufGetRawPtr(buf), original, original_len),
+            "preserve append/restore round trip changed packet bytes");
+
+    sbufDestroy(buf);
+    destroyTestTunnel(t);
+}
+
 static void testNoOpAndRejection(void)
 {
     tunnel_t               *t     = createTestTunnel();
@@ -352,6 +423,8 @@ int main(void)
     testPreservedBitflagsCanClearCwrEceOnRestore();
     testPreservedBitflagsAppend();
     testSimpleTcpFlagPreExistingFlagPreserved();
+    testPreserveRejectsForgedIpv4TotalLength();
+    testPreservedBitflagsRoundTrip();
     testNoOpAndRejection();
 
     return 0;

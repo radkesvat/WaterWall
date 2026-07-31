@@ -77,11 +77,10 @@ static bool hasTcpFlagActionsConfigured(const ipmanipulator_tstate_t *state, boo
            state->down_tcp_bit_syn_action != kDvsNoAction || state->down_tcp_bit_fin_action != kDvsNoAction;
 }
 
-static bool appendOriginalTcpFlagsToPayload(sbuf_t **buf_ptr, struct ip_hdr **ipheader_ptr, uint16_t iphdr_len,
-                                            uint16_t tcphdr_len, uint8_t flags)
+static bool appendOriginalTcpFlagsToPayload(sbuf_t **buf_ptr, struct ip_hdr **ipheader_ptr, uint16_t ip_total_len,
+                                            uint16_t iphdr_len, uint16_t tcphdr_len, uint8_t flags)
 {
-    sbuf_t  *buf          = *buf_ptr;
-    uint16_t ip_total_len = lwip_ntohs(IPH_LEN(*ipheader_ptr));
+    sbuf_t *buf = *buf_ptr;
 
     if (ip_total_len >= UINT16_MAX)
     {
@@ -114,10 +113,8 @@ static bool appendOriginalTcpFlagsToPayload(sbuf_t **buf_ptr, struct ip_hdr **ip
 }
 
 static bool restoreOriginalTcpFlagsFromPayload(sbuf_t *buf, struct ip_hdr *ipheader, struct tcp_hdr *tcp_header,
-                                               uint16_t iphdr_len, uint16_t tcphdr_len)
+                                               uint16_t ip_total_len, uint16_t iphdr_len, uint16_t tcphdr_len)
 {
-    uint16_t ip_total_len = lwip_ntohs(IPH_LEN(ipheader));
-
     if (ip_total_len <= iphdr_len + tcphdr_len)
     {
         return false;
@@ -235,9 +232,16 @@ static void tcpbitchangetrickPayload(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, b
             return;
         }
 
+        uint16_t ip_total_len = lwip_ntohs(IPH_LEN(ipheader));
+        if (ip_total_len < iphdr_len + tcphdr_len || ip_total_len > sbufGetLength(buf))
+        {
+            LOGE("tcpbitchangetrick: IPv4 total length is inconsistent with the buffer");
+            return;
+        }
+
         if (state->trick_preserve_tcp_bitflags && ! has_actions && opposite_has_actions)
         {
-            if (restoreOriginalTcpFlagsFromPayload(buf, ipheader, tcp_header, iphdr_len, tcphdr_len))
+            if (restoreOriginalTcpFlagsFromPayload(buf, ipheader, tcp_header, ip_total_len, iphdr_len, tcphdr_len))
             {
                 l->recalculate_checksum = true;
             }
@@ -249,7 +253,8 @@ static void tcpbitchangetrickPayload(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, b
 
         if (state->trick_preserve_tcp_bitflags && has_actions)
         {
-            if (! appendOriginalTcpFlagsToPayload(buf_ptr, &ipheader, iphdr_len, tcphdr_len, original_flags))
+            if (! appendOriginalTcpFlagsToPayload(
+                    buf_ptr, &ipheader, ip_total_len, iphdr_len, tcphdr_len, original_flags))
             {
                 lineReuseBuffer(l, *buf_ptr);
                 *buf_ptr = NULL;

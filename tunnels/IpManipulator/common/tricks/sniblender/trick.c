@@ -20,6 +20,11 @@ static bool isTlsClientHello(const uint8_t *packet, uint16_t iphdr_hlen, uint16_
 
 bool sniblendertrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    if (UNLIKELY(sbufGetLength(buf) < sizeof(struct ip_hdr)))
+    {
+        return false;
+    }
+
     ipmanipulator_tstate_t *state    = tunnelGetState(t);
     struct ip_hdr          *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
     uint16_t                fragment_offsets[kSniBlenderTrickMaxPacketsCount] = {0};
@@ -105,7 +110,6 @@ bool sniblendertrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     sbuf_t *crafted_packets[kSniBlenderTrickMaxPacketsCount] = {0};
     int     crafted_count = 0;
-    buffer_pool_t *bp = lineGetBufferPool(l);
 
     fragment_offsets[0] = 0;
     fragment_lengths[0] = min_first_fragment_payload;
@@ -153,12 +157,10 @@ bool sniblendertrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             break;
         }
 
-        sbuf_t *craft_buf = ((iphdr_len + this_len) <= bufferpoolGetSmallBufferSize(bp)) ? bufferpoolGetSmallBuffer(bp)
-                                                                                           : bufferpoolGetLargeBuffer(bp);
+        sbuf_t *craft_buf  = clonePacketWithLength(l, buf, iphdr_len + this_len);
         crafted_packets[i] = craft_buf;
         crafted_count++;
 
-        sbufSetLength(craft_buf, iphdr_len + this_len);
         struct ip_hdr *fhdr = (struct ip_hdr *) sbufGetMutablePtr(craft_buf);
         memoryCopy(fhdr, ipheader, iphdr_len);
 
