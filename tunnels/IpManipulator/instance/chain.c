@@ -27,20 +27,17 @@ void ipmanipulatorOnChain(tunnel_t *t, tunnel_chain_t *chain)
         terminateProgram(1);
     }
 
-    tunnel_t *normal_next_tunnel         = normal_next_node->instance;
-    tunnel_t *real_sni_upstream_tunnel   =
+    tunnel_t *normal_next_tunnel = normal_next_node->instance;
+    tunnel_t *real_sni_upstream_tunnel =
         state->trick_real_sni_upstream_node != NULL ? state->trick_real_sni_upstream_node->instance : NULL;
-    tunnel_t *real_sni_tls_client_tunnel =
-        state->trick_real_sni_tls_client_node != NULL ? state->trick_real_sni_tls_client_node->instance : NULL;
+    tunnel_t *real_sni_tls_client_tunnel = state->trick_real_sni_tls_client_tunnel;
     tunnel_t *overlap_sni_server_hello_upstream_tunnel =
         state->trick_overlap_sni_server_hello_upstream_node != NULL
             ? state->trick_overlap_sni_server_hello_upstream_node->instance
             : NULL;
-    tunnel_t *overlap_sni_tls_client_tunnel =
-        state->trick_overlap_sni_tls_client_node != NULL ? state->trick_overlap_sni_tls_client_node->instance : NULL;
-    tunnel_t *synfin_sni_tls_client_tunnel =
-        state->trick_synfin_sni_tls_client_node != NULL ? state->trick_synfin_sni_tls_client_node->instance : NULL;
-    tunnel_t *real_fin_upstream_tunnel   =
+    tunnel_t *overlap_sni_tls_client_tunnel = state->trick_overlap_sni_tls_client_tunnel;
+    tunnel_t *synfin_sni_tls_client_tunnel  = state->trick_synfin_sni_tls_client_tunnel;
+    tunnel_t *real_fin_upstream_tunnel =
         state->trick_real_fin_upstream_node != NULL ? state->trick_real_fin_upstream_node->instance : NULL;
 
     if (normal_next_tunnel == NULL)
@@ -94,10 +91,12 @@ void ipmanipulatorOnChain(tunnel_t *t, tunnel_chain_t *chain)
     }
 
     if ((normal_next_tunnel->prev != NULL && normal_next_tunnel->prev != t) ||
-        (real_sni_upstream_tunnel != NULL && real_sni_upstream_tunnel->prev != NULL && real_sni_upstream_tunnel->prev != t) ||
+        (real_sni_upstream_tunnel != NULL && real_sni_upstream_tunnel->prev != NULL &&
+         real_sni_upstream_tunnel->prev != t) ||
         (overlap_sni_server_hello_upstream_tunnel != NULL && overlap_sni_server_hello_upstream_tunnel->prev != NULL &&
          overlap_sni_server_hello_upstream_tunnel->prev != t) ||
-        (real_fin_upstream_tunnel != NULL && real_fin_upstream_tunnel->prev != NULL && real_fin_upstream_tunnel->prev != t))
+        (real_fin_upstream_tunnel != NULL && real_fin_upstream_tunnel->prev != NULL &&
+         real_fin_upstream_tunnel->prev != t))
     {
         LOGF("IpManipulator: smuggle helper upstream nodes are already bound to another previous tunnel");
         terminateProgram(1);
@@ -109,12 +108,12 @@ void ipmanipulatorOnChain(tunnel_t *t, tunnel_chain_t *chain)
         terminateProgram(1);
     }
 
-    state->trick_real_sni_upstream_tunnel   = real_sni_upstream_tunnel;
-    state->trick_real_sni_tls_client_tunnel = real_sni_tls_client_tunnel;
+    state->trick_real_sni_upstream_tunnel                 = real_sni_upstream_tunnel;
+    state->trick_real_sni_tls_client_tunnel               = real_sni_tls_client_tunnel;
     state->trick_overlap_sni_server_hello_upstream_tunnel = overlap_sni_server_hello_upstream_tunnel;
-    state->trick_overlap_sni_tls_client_tunnel = overlap_sni_tls_client_tunnel;
-    state->trick_synfin_sni_tls_client_tunnel = synfin_sni_tls_client_tunnel;
-    state->trick_real_fin_upstream_tunnel   = real_fin_upstream_tunnel;
+    state->trick_overlap_sni_tls_client_tunnel            = overlap_sni_tls_client_tunnel;
+    state->trick_synfin_sni_tls_client_tunnel             = synfin_sni_tls_client_tunnel;
+    state->trick_real_fin_upstream_tunnel                 = real_fin_upstream_tunnel;
 
     if (real_sni_upstream_tunnel != NULL)
     {

@@ -766,6 +766,18 @@ if(TARGET ww)
         node_manager_stop_once_test
         "unit;node-manager;shutdown;lifetime"
       )
+
+      add_executable(node_manager_map_invariant_test
+        node_manager_map_invariant_test.c
+      )
+      target_link_libraries(node_manager_map_invariant_test PRIVATE ww)
+      add_dependencies(waterwall_unit_tests node_manager_map_invariant_test)
+
+      add_waterwall_unit_test(
+        waterwall.node_manager_map_invariant_unit
+        node_manager_map_invariant_test
+        "unit;node-manager;configuration;capacity;lifetime"
+      )
     endif()
 
     add_executable(thread_creation_failure_test thread_creation_failure_test.c)
@@ -1265,6 +1277,26 @@ if(TARGET IpManipulator)
     ipmanipulator_smugglefin_pause_test
     "unit;tunnels;ipmanipulator;smugglefin;timeout;affinity"
   )
+
+  if(TARGET TlsClient)
+    add_executable(ipmanipulator_internal_tls_child_test
+      ipmanipulator_internal_tls_child_test.c
+    )
+    target_include_directories(ipmanipulator_internal_tls_child_test PRIVATE
+      ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include
+      ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include/IpManipulator
+    )
+    target_link_libraries(ipmanipulator_internal_tls_child_test PRIVATE
+      IpManipulator TlsClient ww ssl crypto
+    )
+    add_dependencies(waterwall_unit_tests ipmanipulator_internal_tls_child_test)
+
+    add_waterwall_unit_test(
+      waterwall.ipmanipulator_internal_tls_child_unit
+      ipmanipulator_internal_tls_child_test
+      "unit;tunnels;ipmanipulator;tlsclient;configuration;ownership"
+    )
+  endif()
 endif()
 
 if(TARGET IpOverrider)

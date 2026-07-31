@@ -65,7 +65,12 @@ node_t *nodemanagerGetConfigNodeByName(node_manager_config_t *cfg, const char *n
 node_t *nodemanagerNewNode(void);
 
 /**
- * @brief Build a node instance from one node JSON object.
+ * @brief Build a top-level config node from one node JSON object.
+ *
+ * This API is only valid while NodeManager is loading the config's declared
+ * nodes. A tunnel that owns an internal child node should keep that child
+ * private, configure it with nodeConfigureChild(), and manage its tunnel
+ * lifecycle itself. Internal children do not belong in the config node map.
  *
  * @param cfg Node manager config.
  * @param node_json Node JSON object.

@@ -1,5 +1,6 @@
 #include "structure.h"
 
+#include "TlsClient/interface.h"
 #include "loggers/network_logger.h"
 
 #include "tricks/firstsni/trick.h"
@@ -57,6 +58,83 @@ static bool validateProtocolSwapNumber(const char *key, int protocol_number)
     {
         LOGF("IpManipulator: settings->%s must not reuse a literal TCP/UDP protocol number", key);
         return false;
+    }
+
+    return true;
+}
+
+static bool createInternalTlsClient(tunnel_t *t, node_t *owner, const char *sni, const char *name_suffix,
+                                    tunnel_t **role_tunnel)
+{
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+    assert(state->internal_tls_client_settings == NULL);
+    assert(state->internal_tls_client_tunnel == NULL);
+    assert(*role_tunnel == NULL);
+
+    state->internal_tls_client_settings = cJSON_CreateObject();
+    if (state->internal_tls_client_settings == NULL ||
+        cJSON_AddStringToObject(state->internal_tls_client_settings, "sni", sni) == NULL ||
+        cJSON_AddBoolToObject(state->internal_tls_client_settings, "x25519mlkem768", false) == NULL)
+    {
+        LOGF("IpManipulator: failed to build internal TlsClient settings");
+        return false;
+    }
+
+    if (! nodeConfigureChild(&state->internal_tls_client_node,
+                             nodeTlsClientGet(),
+                             owner,
+                             name_suffix,
+                             kNodeChildLinkNone,
+                             state->internal_tls_client_settings))
+    {
+        LOGF("IpManipulator: failed to configure internal TlsClient child node");
+        return false;
+    }
+
+    state->internal_tls_client_node.flags |= kNodeFlagNoChain;
+    state->internal_tls_client_node.can_have_next = false;
+    state->internal_tls_client_tunnel = state->internal_tls_client_node.createHandle(&state->internal_tls_client_node);
+    if (state->internal_tls_client_tunnel == NULL)
+    {
+        LOGF("IpManipulator: failed to create internal TlsClient child tunnel");
+        return false;
+    }
+
+    state->internal_tls_client_node.instance = state->internal_tls_client_tunnel;
+    *role_tunnel                             = state->internal_tls_client_tunnel;
+    return true;
+}
+
+static bool createConfiguredTlsClient(tunnel_t *t, node_t *node)
+{
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+    if (state->trick_smuggle_sni)
+    {
+        return createInternalTlsClient(t,
+                                       node,
+                                       state->trick_smuggle_sni_value,
+                                       ".smuggle-sni-tls-client",
+                                       &state->trick_real_sni_tls_client_tunnel);
+    }
+
+    if (state->trick_overlap_sni)
+    {
+        return createInternalTlsClient(t,
+                                       node,
+                                       state->trick_overlap_sni_value,
+                                       ".overlap-sni-tls-client",
+                                       &state->trick_overlap_sni_tls_client_tunnel);
+    }
+
+    if (state->trick_synfin_sni)
+    {
+        return createInternalTlsClient(t,
+                                       node,
+                                       state->trick_synfin_sni_value,
+                                       ".synfin-sni-tls-client",
+                                       &state->trick_synfin_sni_tls_client_tunnel);
     }
 
     return true;
@@ -337,32 +415,10 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
             }
         }
 
-        char *name_of_new_tlsclient_node = memoryAllocate(128);
-        stringNPrintf(name_of_new_tlsclient_node, 128, "ipm_tlsc_%s", state->trick_smuggle_sni_value);
-
-        char              *json_string_of_tls_client = memoryAllocate(256 + smuggle_sni_len);
-        static const char *tls_client_json =
-            "{\"name\":\"%s\",\"type\":\"TlsClient\",\"settings\":{\"sni\":\"%s\",\"x25519mlkem768\":false}}";
-        stringNPrintf(json_string_of_tls_client,
-                      256 + smuggle_sni_len,
-                      tls_client_json,
-                      name_of_new_tlsclient_node,
-                      state->trick_smuggle_sni_value);
-        cJSON *json_of_tls_client =
-            cJSON_ParseWithLength(json_string_of_tls_client, stringLength(json_string_of_tls_client));
-        nodemanagerCreateNodeInstance(node->node_manager_config, json_of_tls_client);
-
-        state->trick_real_sni_tls_client_node =
-            nodemanagerGetConfigNodeByName(node->node_manager_config, name_of_new_tlsclient_node);
         state->trick_smuggle_sni_value_len  = (uint16_t) smuggle_sni_len;
         state->trick_smuggle_sni_delay_ms   = (uint32_t) smuggle_sni_delay_ms;
         state->trick_real_sni_upstream_node = real_sni_upstream_node;
         state->trick_smuggle_sni            = true;
-
-        state->trick_real_sni_tls_client_node->flags |= kNodeFlagNoChain;
-
-        memoryFree(name_of_new_tlsclient_node);
-        memoryFree(json_string_of_tls_client);
     }
 
     bool has_overlap_sni = getStringFromJsonObject(&state->trick_overlap_sni_value, settings, "overlap-sni");
@@ -442,44 +498,11 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
             }
         }
 
-        size_t name_len                   = 32 + overlap_sni_len;
-        char  *name_of_new_tlsclient_node = memoryAllocate(name_len);
-        stringNPrintf(name_of_new_tlsclient_node, name_len, "ipm_tlsc_overlap_%s", state->trick_overlap_sni_value);
-
-        char              *json_string_of_tls_client = memoryAllocate(256 + overlap_sni_len);
-        static const char *tls_client_json =
-            "{\"name\":\"%s\",\"type\":\"TlsClient\",\"settings\":{\"sni\":\"%s\",\"x25519mlkem768\":false}}";
-        stringNPrintf(json_string_of_tls_client,
-                      256 + overlap_sni_len,
-                      tls_client_json,
-                      name_of_new_tlsclient_node,
-                      state->trick_overlap_sni_value);
-        cJSON *json_of_tls_client =
-            cJSON_ParseWithLength(json_string_of_tls_client, stringLength(json_string_of_tls_client));
-        nodemanagerCreateNodeInstance(node->node_manager_config, json_of_tls_client);
-
-        state->trick_overlap_sni_tls_client_node =
-            nodemanagerGetConfigNodeByName(node->node_manager_config, name_of_new_tlsclient_node);
-
-        if (state->trick_overlap_sni_tls_client_node == NULL)
-        {
-            LOGF("IpManipulator: failed to create internal overlap-sni TlsClient helper node");
-            memoryFree(name_of_new_tlsclient_node);
-            memoryFree(json_string_of_tls_client);
-            tunnelDestroy(t);
-            return NULL;
-        }
-
         state->trick_overlap_sni_value_len                  = (uint16_t) overlap_sni_len;
         state->trick_overlap_sni_delay_ms                   = (uint32_t) overlap_sni_delay_ms;
         state->trick_overlap_sni_syn_ttl                    = overlap_sni_syn_ttl;
         state->trick_overlap_sni_server_hello_upstream_node = server_hello_upstream_node;
         state->trick_overlap_sni                            = true;
-
-        state->trick_overlap_sni_tls_client_node->flags |= kNodeFlagNoChain;
-
-        memoryFree(name_of_new_tlsclient_node);
-        memoryFree(json_string_of_tls_client);
     }
 
     bool has_synfin_sni = getStringFromJsonObject(&state->trick_synfin_sni_value, settings, "synfin-sni");
@@ -571,34 +594,6 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         getBoolFromJsonObject(&state->trick_synfin_sni_random_fin_sequence, settings, "synfin-sni-random-fin-sequence");
         getBoolFromJsonObject(&state->trick_synfin_sni_use_rst, settings, "synfin-sni-use-rst");
 
-        size_t name_len                   = 32 + synfin_sni_len;
-        char  *name_of_new_tlsclient_node = memoryAllocate(name_len);
-        stringNPrintf(name_of_new_tlsclient_node, name_len, "ipm_tlsc_synfin_%s", state->trick_synfin_sni_value);
-
-        char              *json_string_of_tls_client = memoryAllocate(256 + synfin_sni_len);
-        static const char *tls_client_json =
-            "{\"name\":\"%s\",\"type\":\"TlsClient\",\"settings\":{\"sni\":\"%s\",\"x25519mlkem768\":false}}";
-        stringNPrintf(json_string_of_tls_client,
-                      256 + synfin_sni_len,
-                      tls_client_json,
-                      name_of_new_tlsclient_node,
-                      state->trick_synfin_sni_value);
-        cJSON *json_of_tls_client =
-            cJSON_ParseWithLength(json_string_of_tls_client, stringLength(json_string_of_tls_client));
-        nodemanagerCreateNodeInstance(node->node_manager_config, json_of_tls_client);
-
-        state->trick_synfin_sni_tls_client_node =
-            nodemanagerGetConfigNodeByName(node->node_manager_config, name_of_new_tlsclient_node);
-
-        if (state->trick_synfin_sni_tls_client_node == NULL)
-        {
-            LOGF("IpManipulator: failed to create internal synfin-sni TlsClient helper node");
-            memoryFree(name_of_new_tlsclient_node);
-            memoryFree(json_string_of_tls_client);
-            tunnelDestroy(t);
-            return NULL;
-        }
-
         state->trick_synfin_sni_value_len            = (uint16_t) synfin_sni_len;
         state->trick_synfin_sni_additional_range_min = (uint16_t) synfin_sni_additional_range_min;
         state->trick_synfin_sni_additional_range_max = (uint16_t) synfin_sni_additional_range_max;
@@ -610,11 +605,6 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
             LOGW("IpManipulator: synfin-sni TTL override 0 on SYN/FIN only affects those control packets; "
                  "the crafted fake TLS packets still keep the original TTL unless \"synfin-sni-fake-ttl\" is set");
         }
-
-        state->trick_synfin_sni_tls_client_node->flags |= kNodeFlagNoChain;
-
-        memoryFree(name_of_new_tlsclient_node);
-        memoryFree(json_string_of_tls_client);
     }
 
     bool has_ech_sni = getStringFromJsonObject(&state->trick_ech_sni_value, settings, "ech-sni-trick");
@@ -831,6 +821,12 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     {
         LOGF("IpManipulator: no tricks are enabled, nothing to do");
         tunnelDestroy(t);
+        return NULL;
+    }
+
+    if (! createConfiguredTlsClient(t, node))
+    {
+        ipmanipulatorDestroy(t);
         return NULL;
     }
 

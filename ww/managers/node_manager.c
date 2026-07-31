@@ -12,7 +12,7 @@
 enum
 {
     kNmConfigsVectorCap = 8,
-    kNodeMapCap         = 36
+    kMaxNodesPerConfig  = 512
 };
 
 #define i_type map_node_t // NOLINT
@@ -24,11 +24,19 @@ enum
 #define i_key  tunnel_chain_t * // NOLINT
 #include "stc/vec.h"
 
+typedef enum node_map_phase_e
+{
+    kNodeMapPhaseCollecting = 0,
+    kNodeMapPhaseFrozen
+} node_map_phase_t;
+
 typedef struct node_manager_config_s
 {
-    config_file_t *config_file;
-    map_node_t     node_map;
-    vec_chains_t   chains;
+    config_file_t   *config_file;
+    map_node_t       node_map;
+    vec_chains_t     chains;
+    isize_t          node_map_bucket_count;
+    node_map_phase_t node_map_phase;
 
 } node_manager_config_t;
 
@@ -56,7 +64,16 @@ static node_manager_t *nodemanager_gstate;
  */
 static int createTunnelInstances(node_manager_config_t *cfg, tunnel_t **t_array, int max_size)
 {
-    int index = 0;
+    if (cfg->node_map_phase != kNodeMapPhaseFrozen)
+    {
+        LOGF("NodeManager: config node map must be frozen before tunnel creation");
+        terminateProgram(1);
+    }
+
+    const isize_t expected_map_size         = map_node_t_size(&cfg->node_map);
+    const isize_t expected_map_bucket_count = cfg->node_map_bucket_count;
+    int           index                     = 0;
+
     c_foreach(p1, map_node_t, cfg->node_map)
     {
         node_t *n1 = p1.ref->second;
@@ -69,6 +86,15 @@ static int createTunnelInstances(node_manager_config_t *cfg, tunnel_t **t_array,
         }
 
         t_array[index++] = n1->instance = n1->createHandle(n1);
+
+        if (cfg->node_map_phase != kNodeMapPhaseFrozen || map_node_t_size(&cfg->node_map) != expected_map_size ||
+            map_node_t_bucket_count(&cfg->node_map) != expected_map_bucket_count)
+        {
+            LOGF("NodeManager: node \"%s\" mutated the frozen config node map during tunnel creation; "
+                 "internal child nodes must be private and owned by their parent tunnel",
+                 n1->name);
+            terminateProgram(1);
+        }
 
         if (n1->instance == NULL)
         {
@@ -310,13 +336,8 @@ static void initializePacketTunnels(tunnel_t **t_array, int tunnels_count)
  */
 static void runNodes(node_manager_config_t *cfg)
 {
-    enum
-    {
-        kMaxTarraySize = 512
-    };
-
-    tunnel_t *t_array[kMaxTarraySize] = {0};
-    int       tunnels_count           = createTunnelInstances(cfg, t_array, kMaxTarraySize);
+    tunnel_t *t_array[kMaxNodesPerConfig] = {0};
+    int       tunnels_count               = createTunnelInstances(cfg, t_array, kMaxNodesPerConfig);
 
     if (tunnels_count == 0)
     {
@@ -543,14 +564,50 @@ static void registerNodeInMap(node_t *node, node_manager_config_t *cfg)
 {
     map_node_t *map = &(cfg->node_map);
 
+    /*
+     * This map contains only nodes declared by the config. A tunnel that needs
+     * an internal child should embed/configure it with nodeConfigureChild() and
+     * own its lifecycle; registering children here couples their creation to
+     * hash iteration and is forbidden once config loading is complete.
+     */
+    if (cfg->node_map_phase != kNodeMapPhaseCollecting)
+    {
+        LOGF("NodeManager: cannot register node \"%s\" after the config node map was frozen; "
+             "internal child nodes must remain private to their parent tunnel",
+             node->name);
+        terminateProgram(1);
+    }
+
     if (map_node_t_contains(map, node->hash_name))
     {
         LOGF("NodeManager: duplicate node \"%s\" (hash: %lx) ", node->name, node->hash_name);
         terminateProgram(1);
     }
 
+    const isize_t size_before         = map_node_t_size(map);
+    const isize_t bucket_count_before = map_node_t_bucket_count(map);
+    if (size_before >= kMaxNodesPerConfig)
+    {
+        LOGF("NodeManager: config file \"%s\" exceeds the maximum of %d nodes",
+             cfg->config_file->file_path,
+             kMaxNodesPerConfig);
+        terminateProgram(1);
+    }
+    if (bucket_count_before != cfg->node_map_bucket_count)
+    {
+        LOGF("NodeManager: config node map capacity changed before registering node \"%s\"", node->name);
+        terminateProgram(1);
+    }
+
     validateSingletonNodeType(node, cfg);
-    map_node_t_insert(map, node->hash_name, node);
+    map_node_t_result result = map_node_t_insert(map, node->hash_name, node);
+
+    if (result.ref == NULL || ! result.inserted || map_node_t_size(map) != size_before + 1 ||
+        map_node_t_bucket_count(map) != cfg->node_map_bucket_count)
+    {
+        LOGF("NodeManager: fixed config node map invariant failed while registering node \"%s\"", node->name);
+        terminateProgram(1);
+    }
 }
 
 void nodemanagerCreateNodeInstance(node_manager_config_t *cfg, cJSON *node_json)
@@ -602,10 +659,35 @@ static void createAllNodeInstances(node_manager_config_t *cfg)
 {
     cJSON *nodes_json = cfg->config_file->nodes;
     cJSON *node_json  = NULL;
+
+    int nodes_count = cJSON_GetArraySize(nodes_json);
+    if (nodes_count > kMaxNodesPerConfig)
+    {
+        LOGF("NodeManager: config file \"%s\" contains %d nodes; the maximum is %d",
+             cfg->config_file->file_path,
+             nodes_count,
+             kMaxNodesPerConfig);
+        terminateProgram(1);
+    }
+
     cJSON_ArrayForEach(node_json, nodes_json)
     {
         nodemanagerCreateNodeInstance(cfg, node_json);
     }
+}
+
+static void freezeNodeMap(node_manager_config_t *cfg)
+{
+    if (cfg->node_map_phase != kNodeMapPhaseCollecting ||
+        map_node_t_bucket_count(&cfg->node_map) != cfg->node_map_bucket_count ||
+        map_node_t_capacity(&cfg->node_map) < kMaxNodesPerConfig ||
+        map_node_t_size(&cfg->node_map) > kMaxNodesPerConfig)
+    {
+        LOGF("NodeManager: config node map invariant failed before freezing");
+        terminateProgram(1);
+    }
+
+    cfg->node_map_phase = kNodeMapPhaseFrozen;
 }
 
 /**
@@ -616,6 +698,7 @@ static void createAllNodeInstances(node_manager_config_t *cfg)
 static void startInstallingConfigFile(node_manager_config_t *cfg)
 {
     createAllNodeInstances(cfg);
+    freezeNodeMap(cfg);
     cycleProcess(cfg);
     pathWalk(cfg);
     runNodes(cfg);
@@ -640,9 +723,20 @@ void nodemanagerSetState(struct node_manager_s *new_state)
  */
 static node_manager_config_t *createNodeManagerConfig(config_file_t *config_file)
 {
-    node_manager_config_t *cfg = memoryAllocate(sizeof(node_manager_config_t));
-    *cfg                       = (node_manager_config_t) {
-                              .config_file = config_file, .node_map = map_node_t_with_capacity(kNodeMapCap), .chains = vec_chains_t_init()};
+    node_manager_config_t *cfg = memoryAllocateZero(sizeof(node_manager_config_t));
+    cfg->config_file           = config_file;
+    cfg->node_map              = map_node_t_init();
+    cfg->chains                = vec_chains_t_init();
+    cfg->node_map_phase        = kNodeMapPhaseCollecting;
+
+    if (! map_node_t_reserve(&cfg->node_map, kMaxNodesPerConfig) ||
+        map_node_t_capacity(&cfg->node_map) < kMaxNodesPerConfig)
+    {
+        LOGF("NodeManager: failed to reserve fixed capacity for %d config nodes", kMaxNodesPerConfig);
+        terminateProgram(1);
+    }
+
+    cfg->node_map_bucket_count = map_node_t_bucket_count(&cfg->node_map);
     return cfg;
 }
 

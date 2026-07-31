@@ -297,12 +297,15 @@ typedef struct ipmanipulator_tstate_s
     uint32_t trick_first_sni_final_delay_ms;
     int      trick_first_sni_ttl;
 
+    node_t        internal_tls_client_node;
+    struct cJSON *internal_tls_client_settings;
+    tunnel_t     *internal_tls_client_tunnel;
+
     char     *trick_smuggle_sni_value;
     uint16_t  trick_smuggle_sni_value_len;
     uint32_t  trick_smuggle_sni_delay_ms;
     node_t   *trick_real_sni_upstream_node;
     tunnel_t *trick_real_sni_upstream_tunnel;
-    node_t   *trick_real_sni_tls_client_node;
     tunnel_t *trick_real_sni_tls_client_tunnel;
 
     char     *trick_overlap_sni_value;
@@ -311,7 +314,6 @@ typedef struct ipmanipulator_tstate_s
     int       trick_overlap_sni_syn_ttl;
     node_t   *trick_overlap_sni_server_hello_upstream_node;
     tunnel_t *trick_overlap_sni_server_hello_upstream_tunnel;
-    node_t   *trick_overlap_sni_tls_client_node;
     tunnel_t *trick_overlap_sni_tls_client_tunnel;
 
     char     *trick_synfin_sni_value;
@@ -326,7 +328,6 @@ typedef struct ipmanipulator_tstate_s
     bool      trick_synfin_sni_random_syn_sequence;
     bool      trick_synfin_sni_random_fin_sequence;
     bool      trick_synfin_sni_use_rst;
-    node_t   *trick_synfin_sni_tls_client_node;
     tunnel_t *trick_synfin_sni_tls_client_tunnel;
 
     char    *trick_ech_sni_value;

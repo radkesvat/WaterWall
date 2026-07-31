@@ -43,9 +43,10 @@ target_include_directories(IpManipulator PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/incl
 target_include_directories(IpManipulator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/IpManipulator)
 
 target_include_directories(IpManipulator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/common/)
+target_include_directories(IpManipulator PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include)
 
 
-target_link_libraries(IpManipulator ww)
+target_link_libraries(IpManipulator ww TlsClient)
 if(NOT APPLE)
     target_precompile_headers(IpManipulator REUSE_FROM ww)
 endif()
