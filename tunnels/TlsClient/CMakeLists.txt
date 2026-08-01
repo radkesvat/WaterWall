@@ -114,6 +114,12 @@ add_library(TlsClient STATIC
     downstream/est.c
 )
 
+# Keep the public API entry point in its own archive object. Some unit tests
+# provide a purpose-built tlsclientTunnelApi() stub; folding api.c into the
+# unity object would force both definitions into the link when another
+# TlsClient symbol is needed.
+set_source_files_properties(instance/api.c PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
+
 target_include_directories(TlsClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(TlsClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/TlsClient)
 
