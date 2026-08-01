@@ -1,14 +1,11 @@
+#include "wwapi.h"
+
 #include "devices/capture/capture.h"
 #include "devices/capture/capture_linux_internal.h"
 
-#include "global_state.h"
 #include "worker_messages.h"
-#include "wproc.h"
 
 #include <poll.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 
 enum

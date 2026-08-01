@@ -1,8 +1,5 @@
 #include "HttpServer/structure.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 static void expectMatch(const char *expected, const char *actual)
 {
     if (! httpserverAuthorityMatchesExpectedHost(expected, actual))

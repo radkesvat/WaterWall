@@ -1,7 +1,5 @@
 #include "wcrypto.h"
 
-
-
 enum
 {
     AES256GCM_KEY_SIZE   = 32,

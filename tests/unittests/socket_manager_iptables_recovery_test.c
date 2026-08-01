@@ -1,15 +1,9 @@
 #include "managers/socket_manager_iptables_recovery.h"
-
-#include <errno.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include "wwapi.h"
 
 #if defined(__linux__)
-#include <signal.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
-#include <time.h>
 #include <unistd.h>
 #endif
 

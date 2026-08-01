@@ -12,17 +12,9 @@
  *   ./build/linux/tests/benchmarks/Release/device_writer_channel_benchmark [duration_ms]
  */
 
+#include "wwapi.h"
+
 #include "devices/device_writer_channel.h"
-
-#include "watomic.h"
-#include "wchan.h"
-#include "wthread.h"
-#include "wtime.h"
-
-#include <inttypes.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
 
 enum
 {

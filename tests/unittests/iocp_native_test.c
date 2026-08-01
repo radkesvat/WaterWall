@@ -28,24 +28,16 @@ int main(void)
 }
 #else
 
+#include "wwapi.h"
+
 #include "async_dns.h"
-#include "buffer_pool.h"
-#include "global_state.h"
 #include "iowatcher.h"
-#include "master_pool.h"
 #include "overlapio.h"
 #include "threadsafe_generic_pool.h"
-#include "wevent.h"
-#include "wloop.h"
-#include "worker.h"
 #include "wsocket.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 static void require(bool condition, const char *message)
 {

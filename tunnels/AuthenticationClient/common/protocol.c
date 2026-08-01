@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "utils/json_helpers.h"
 
 static void authenticationclientWriteNetworkUI32(uint8_t *dest, uint32_t value)
 {

@@ -10,24 +10,18 @@
 // installed, no sysctl is written, and root is not required. A synthetic reader
 // routine replaces the NFQUEUE reader, so no netlink socket is opened either.
 
+#include "wwapi.h"
+
 #include "devices/capture/capture.h"
 #include "devices/capture/capture_linux_internal.h"
-#include "global_state.h"
-#include "worker.h"
-#include "wproc.h"
-#include "wthread.h"
 
 #include <arpa/inet.h>
-#include <errno.h>
 #include <fcntl.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter/nfnetlink.h>
 #include <linux/netfilter/nfnetlink_queue.h>
 #include <linux/netlink.h>
 #include <poll.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>

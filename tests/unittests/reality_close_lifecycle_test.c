@@ -1,10 +1,7 @@
 #include "reality_close_lifecycle_test.h"
+#include "wwapi.h"
 
-#include "global_state.h"
 #include "wcrypto.h"
-
-#include <stdio.h>
-#include <stdlib.h>
 
 int main(void)
 {

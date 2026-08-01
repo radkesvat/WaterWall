@@ -1,11 +1,10 @@
+#include "wwapi.h"
+
 #include "devices/device_reader_session.h"
 
-#include "global_state.h"
 #include "worker_messages.h"
 
 #include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
 
 #if defined(OS_UNIX)
 #include <sys/wait.h>

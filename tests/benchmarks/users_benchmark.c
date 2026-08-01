@@ -37,12 +37,7 @@
  *   adaptive_release userReleaseConnection() for those same fixed K values
  */
 
-#include "objects/users.h"
-
-#include <inttypes.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
+#include "wwapi.h"
 
 enum
 {

@@ -1,15 +1,9 @@
-#include "buffer_pool.h"
-#include "global_state.h"
-#include "master_pool.h"
+#include "wwapi.h"
+
 #include "threadsafe_generic_pool.h"
-#include "wevent.h"
-#include "wloop.h"
 #include "wsocket.h"
 
-#include <errno.h>
 #include <fcntl.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <sys/resource.h>
 #include <unistd.h>
 

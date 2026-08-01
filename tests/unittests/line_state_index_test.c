@@ -1,9 +1,4 @@
-#include "chain.h"
-#include "objects/node.h"
-#include "tunnel.h"
-
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 enum
 {

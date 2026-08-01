@@ -1,7 +1,5 @@
 #include "wsocket.h"
-
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 static void require(bool condition, const char *message)
 {

@@ -13,19 +13,13 @@
 // (ld --wrap), so the transient errors are injected instead of relying on the
 // host UDP send buffer to fill at a predictable point.
 
-#include "buffer_pool.h"
-#include "global_state.h"
-#include "master_pool.h"
+#include "wwapi.h"
+
 #include "threadsafe_generic_pool.h"
-#include "wevent.h"
 #include "wlibc.h"
-#include "wloop.h"
 #include "wsocket.h"
 
-#include <errno.h>
 #include <fcntl.h>
-#include <stdio.h>
-#include <stdlib.h>
 
 static int force_sendto_errno = 0;
 static int force_send_errno   = 0;

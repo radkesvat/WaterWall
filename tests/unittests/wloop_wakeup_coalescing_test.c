@@ -3,17 +3,10 @@
  * source once with the pipe backend and once with the socketpair backend.
  */
 
-#include "global_state.h"
-#include "wevent.h"
-#include "wloop.h"
-#include "wthread.h"
+#include "wwapi.h"
 
 #include <dirent.h>
-#include <errno.h>
 #include <fcntl.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <unistd.h>
 
 #define MANY_PRESTART_EVENTS 20000U

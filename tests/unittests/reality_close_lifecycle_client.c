@@ -3,10 +3,6 @@
 
 #include "reality_close_lifecycle_test.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
 /*
  * TlsClient deliberately keeps its vendored BoringSSL headers private.  This
  * lifecycle test only needs opaque handles to construct an in-memory TLS 1.3

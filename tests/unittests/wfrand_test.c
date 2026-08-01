@@ -1,10 +1,7 @@
-#include "global_state.h"
+#include "wwapi.h"
 
 #if defined(OS_LINUX)
-#include <errno.h>
 #include <fcntl.h>
-#include <stdarg.h>
-#include <string.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 

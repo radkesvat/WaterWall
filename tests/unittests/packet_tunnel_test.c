@@ -1,8 +1,4 @@
-#include "line.h"
-#include "packet_tunnel.h"
-
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 typedef enum callback_kind_e
 {
@@ -17,8 +13,8 @@ typedef enum callback_kind_e
 typedef void (*lifecycle_callback_t)(tunnel_t *, line_t *);
 
 static callback_kind_t observed_kind;
-static tunnel_t        *observed_tunnel;
-static line_t          *observed_line;
+static tunnel_t       *observed_tunnel;
+static line_t         *observed_line;
 
 static void require(bool condition, const char *message)
 {
@@ -104,26 +100,53 @@ static void testPacketTunnelLifecycleCallbacksPassThrough(void)
     installRecorders(prev);
     installRecorders(next);
 
-    requireForwarded(packet_tunnel->fnInitU, packet_tunnel, next, kCallbackInit,
+    requireForwarded(packet_tunnel->fnInitU,
+                     packet_tunnel,
+                     next,
+                     kCallbackInit,
                      "packet tunnel did not forward upstream Init to next");
-    requireForwarded(packet_tunnel->fnEstU, packet_tunnel, next, kCallbackEst,
-                     "packet tunnel did not forward upstream Est to next");
-    requireForwarded(packet_tunnel->fnPauseU, packet_tunnel, next, kCallbackPause,
+    requireForwarded(
+        packet_tunnel->fnEstU, packet_tunnel, next, kCallbackEst, "packet tunnel did not forward upstream Est to next");
+    requireForwarded(packet_tunnel->fnPauseU,
+                     packet_tunnel,
+                     next,
+                     kCallbackPause,
                      "packet tunnel did not forward upstream Pause to next");
-    requireForwarded(packet_tunnel->fnResumeU, packet_tunnel, next, kCallbackResume,
+    requireForwarded(packet_tunnel->fnResumeU,
+                     packet_tunnel,
+                     next,
+                     kCallbackResume,
                      "packet tunnel did not forward upstream Resume to next");
-    requireForwarded(packet_tunnel->fnFinU, packet_tunnel, next, kCallbackFinish,
+    requireForwarded(packet_tunnel->fnFinU,
+                     packet_tunnel,
+                     next,
+                     kCallbackFinish,
                      "packet tunnel did not forward upstream Finish to next");
 
-    requireForwarded(packet_tunnel->fnInitD, packet_tunnel, prev, kCallbackInit,
+    requireForwarded(packet_tunnel->fnInitD,
+                     packet_tunnel,
+                     prev,
+                     kCallbackInit,
                      "packet tunnel did not forward downstream Init to prev");
-    requireForwarded(packet_tunnel->fnEstD, packet_tunnel, prev, kCallbackEst,
+    requireForwarded(packet_tunnel->fnEstD,
+                     packet_tunnel,
+                     prev,
+                     kCallbackEst,
                      "packet tunnel did not forward downstream Est to prev");
-    requireForwarded(packet_tunnel->fnPauseD, packet_tunnel, prev, kCallbackPause,
+    requireForwarded(packet_tunnel->fnPauseD,
+                     packet_tunnel,
+                     prev,
+                     kCallbackPause,
                      "packet tunnel did not forward downstream Pause to prev");
-    requireForwarded(packet_tunnel->fnResumeD, packet_tunnel, prev, kCallbackResume,
+    requireForwarded(packet_tunnel->fnResumeD,
+                     packet_tunnel,
+                     prev,
+                     kCallbackResume,
                      "packet tunnel did not forward downstream Resume to prev");
-    requireForwarded(packet_tunnel->fnFinD, packet_tunnel, prev, kCallbackFinish,
+    requireForwarded(packet_tunnel->fnFinD,
+                     packet_tunnel,
+                     prev,
+                     kCallbackFinish,
                      "packet tunnel did not forward downstream Finish to prev");
 
     require(packet_tunnel->fnPayloadU != tunnelDefaultUpStreamPayload,

@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "managers/node_manager.h"
 
 void tlsserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 {

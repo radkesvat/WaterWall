@@ -1,8 +1,5 @@
 #include "TlsServer/structure.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 typedef struct tlsserver_padding_fixture_s
 {
     master_pool_t      *large_master;

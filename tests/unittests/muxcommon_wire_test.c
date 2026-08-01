@@ -1,7 +1,5 @@
 #include "MuxCommon/mux_wire.h"
-
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 enum
 {

@@ -1,7 +1,7 @@
-#include "global_state.h"
 #include "private/crypto_config.h"
 #include "private/crypto_validation.h"
 #include "wcrypto.h"
+#include "wwapi.h"
 
 #if defined(WCRYPTO_OPENSSL_RUNTIME_REQUIRED) && defined(WCRYPTO_BACKEND_SODIUM)
 #include "openssl_instance.h"

@@ -7,9 +7,6 @@
 
 #include "IpManipulator/structure.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 typedef struct syn_case_s
 {
     const char *name;

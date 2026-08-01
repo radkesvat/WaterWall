@@ -1,8 +1,4 @@
-#include "utils/base64.h"
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include "wwapi.h"
 
 typedef struct base64_vector_s
 {

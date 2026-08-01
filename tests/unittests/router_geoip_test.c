@@ -2,9 +2,6 @@
 #include "modules/destination_ip/destination_ip.h"
 #include "modules/source_ips/source_ips.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 static void require(bool condition, const char *message)
 {
     if (! condition)
@@ -75,8 +72,8 @@ static router_rule_t parseDestinationIpRule(const char *json_text)
 
 static bool sourceIpsRuleParseSucceeds(const char *json_text)
 {
-    router_rule_t       rule   = {0};
-    cJSON              *json   = parseJsonObject(json_text);
+    router_rule_t        rule   = {0};
+    cJSON               *json   = parseJsonObject(json_text);
     router_field_parse_t result = routerSourceIpsParse(&rule, json, 0);
 
     routerSourceIpsDestroy(&rule);
@@ -105,7 +102,8 @@ static void testSourceGeoipMatchAndMiss(router_tstate_t *ts)
 static void testDestinationIpv6Geoip(router_tstate_t *ts)
 {
     line_t *line = testLineCreate();
-    require(addresscontextSetIpAddress(&line->routing_context.dest_ctx, "2001:218::1"), "failed to set JP IPv6 dest IP");
+    require(addresscontextSetIpAddress(&line->routing_context.dest_ctx, "2001:218::1"),
+            "failed to set JP IPv6 dest IP");
 
     router_rule_t      rule = parseDestinationIpRule("{\"destination-ip\":\"geoip:jp\"}");
     router_match_ctx_t mctx = {.router_state = ts, .line = line};
@@ -127,7 +125,8 @@ static void testMixedNumericAndGeoipOrSemantics(router_tstate_t *ts)
     require(routerSourceIpsMatch(&geo_rule, &mctx), "mixed source-ips did not match through GeoIP branch");
     routerSourceIpsDestroy(&geo_rule);
 
-    require(addresscontextSetIpAddress(&line->routing_context.src_ctx, "2.125.160.216"), "failed to set numeric source IP");
+    require(addresscontextSetIpAddress(&line->routing_context.src_ctx, "2.125.160.216"),
+            "failed to set numeric source IP");
 
     router_rule_t numeric_rule = parseSourceIpsRule("{\"source-ips\":[\"2.125.160.216/32\",\"geoip:fr\"]}");
     require(routerSourceIpsMatch(&numeric_rule, &mctx), "mixed source-ips did not match through numeric branch");
@@ -161,10 +160,11 @@ static void testGeoipRequiresDbPath(void)
 {
     router_geoip_code_t code = {.code = {'U', 'S', '\0'}};
     router_rule_t       rule = {
-        .source_ips = {
-            .geoip_codes       = &code,
-            .geoip_codes_count = 1,
-        },
+              .source_ips =
+            {
+                      .geoip_codes       = &code,
+                      .geoip_codes_count = 1,
+            },
     };
     router_tstate_t ts = {
         .rules       = &rule,

@@ -12,14 +12,7 @@
  *   - a request racing the loop's own exit is safe.
  */
 
-#include "global_state.h"
-#include "wevent.h" // wio_t layout, for the worker wio pool
-#include "wloop.h"
-#include "wthread.h"
-
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 #define LARGE_STOP_REQUEST_SET 100000U
 #define STOP_REQUEST_THREADS   4U

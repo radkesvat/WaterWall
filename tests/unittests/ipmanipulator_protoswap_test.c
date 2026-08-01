@@ -3,9 +3,6 @@
 #include "wchecksum.h"
 #include "wlibc.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 static void require(bool condition, const char *message)
 {
     if (! condition)

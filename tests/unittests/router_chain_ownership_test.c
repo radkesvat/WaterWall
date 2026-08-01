@@ -1,9 +1,6 @@
 #include "Router/structure.h"
 #include "SniffRouter/structure.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 static tunnel_chain_t *replacement_chain;
 
 static void require(bool condition, const char *message)

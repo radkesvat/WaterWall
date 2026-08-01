@@ -2,9 +2,6 @@
 #include "iowatcher.h"
 #include "tricks/smugglesni/trick.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 static void require(bool condition, const char *message);
 
 typedef struct test_env_s

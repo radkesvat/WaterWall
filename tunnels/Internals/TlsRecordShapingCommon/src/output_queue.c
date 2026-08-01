@@ -1,7 +1,5 @@
 #include "TlsRecordShapingCommon/record_shaping.h"
 
-#include <stdarg.h>
-
 struct tlsrecordshaping_metadata_node_s
 {
     tlsrecordshaping_metadata_node_t *next;
@@ -14,7 +12,6 @@ struct tlsrecordshaping_output_node_s
     sbuf_t                         *record;
     uint64_t                        release_at_ms;
 };
-
 
 void tlsrecordshapingOutputQueueInitialize(tlsrecordshaping_output_queue_t *queue, buffer_pool_t *pool)
 {
@@ -134,11 +131,11 @@ static bool parseRecordLength(tlsrecordshaping_output_queue_t *queue, size_t *re
         body_length > kTlsRecordShapingMaxRecordBody)
     {
         return tlsrecordshapingSetError(error,
-                        "outgoing TLS 1.3 record framing mismatch (type=%u version=%02x%02x length=%u)",
-                        (unsigned int) header[0],
-                        (unsigned int) header[1],
-                        (unsigned int) header[2],
-                        (unsigned int) body_length);
+                                        "outgoing TLS 1.3 record framing mismatch (type=%u version=%02x%02x length=%u)",
+                                        (unsigned int) header[0],
+                                        (unsigned int) header[1],
+                                        (unsigned int) header[2],
+                                        (unsigned int) body_length);
     }
 
     *record_length = kTlsRecordShapingRecordHeaderSize + (size_t) body_length;

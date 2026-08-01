@@ -3,10 +3,6 @@
 #include "reality_close_lifecycle_test.h"
 #include "reality_tls_binding_fixture.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
 typedef struct server_lifecycle_context_s
 {
     tunnel_t      *reality;

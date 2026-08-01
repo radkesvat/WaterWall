@@ -2,8 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include <inttypes.h>
-
 bool httpclientSplitIsEnabled(tunnel_t *t)
 {
     httpclient_tstate_t *ts = tunnelGetState(t);
@@ -18,13 +16,12 @@ static void httpclientSplitGenerateId(tunnel_t *t, char out[48])
     snprintf(out, 48, "%016" PRIx64 "%016" PRIx64, seq, rnd);
 }
 
-static void httpclientSplitInitTransportState(tunnel_t *t, line_t *transport, line_t *main_line,
-                                              line_t *upload_line, line_t *download_line,
-                                              httpclient_split_role_t role, const char *id)
+static void httpclientSplitInitTransportState(tunnel_t *t, line_t *transport, line_t *main_line, line_t *upload_line,
+                                              line_t *download_line, httpclient_split_role_t role, const char *id)
 {
     httpclient_lstate_t *ls = lineGetState(transport, t);
     httpclientLinestateInitialize(ls, t, transport);
-    ls->runtime_proto        = kHttpClientRuntimeHttp1;
+    ls->runtime_proto       = kHttpClientRuntimeHttp1;
     ls->split_role          = role;
     ls->split_main_line     = main_line;
     ls->split_upload_line   = upload_line;
@@ -89,17 +86,16 @@ static void httpclientSplitDestroyCreatedLine(tunnel_t *t, line_t *l, bool send_
 // side finished. When this is called because the transport's next already finished us (a real
 // downstream Finish), pass false. When we close proactively (response complete, error, peer
 // died) the next side is still open and must be finished, so pass true.
-static void httpclientSplitCloseFromTransport(tunnel_t *t, line_t *transport_line, bool finish_main,
-                                              bool finish_sender)
+static void httpclientSplitCloseFromTransport(tunnel_t *t, line_t *transport_line, bool finish_main, bool finish_sender)
 {
-    httpclient_lstate_t *transport_ls = lineGetState(transport_line, t);
-    line_t              *main_line    = transport_ls->split_main_line;
-    line_t              *upload_line  = transport_ls->split_upload_line;
+    httpclient_lstate_t *transport_ls  = lineGetState(transport_line, t);
+    line_t              *main_line     = transport_ls->split_main_line;
+    line_t              *upload_line   = transport_ls->split_upload_line;
     line_t              *download_line = transport_ls->split_download_line;
 
     lineLock(transport_line);
-    bool main_locked = false;
-    bool upload_locked = false;
+    bool main_locked     = false;
+    bool upload_locked   = false;
     bool download_locked = false;
     if (main_line != NULL && lineIsAlive(main_line))
     {
@@ -166,8 +162,8 @@ static void httpclientSplitFailMain(tunnel_t *t, line_t *main_line)
         return;
     }
 
-    httpclient_lstate_t *main_ls = lineGetState(main_line, t);
-    line_t              *upload_line = main_ls->split_upload_line;
+    httpclient_lstate_t *main_ls       = lineGetState(main_line, t);
+    line_t              *upload_line   = main_ls->split_upload_line;
     line_t              *download_line = main_ls->split_download_line;
 
     if (upload_line != NULL && lineIsAlive(upload_line))
@@ -194,20 +190,24 @@ void httpclientSplitUpStreamInit(tunnel_t *t, line_t *l)
     httpclient_lstate_t *ls = lineGetState(l, t);
 
     httpclientLinestateInitialize(ls, t, l);
-    ls->runtime_proto    = kHttpClientRuntimeHttp1;
-    ls->split_role       = kHttpClientSplitRoleMain;
-    ls->split_main_line  = l;
+    ls->runtime_proto   = kHttpClientRuntimeHttp1;
+    ls->split_role      = kHttpClientSplitRoleMain;
+    ls->split_main_line = l;
     httpclientSplitGenerateId(t, ls->split_id);
 
     if (ts->verbose)
     {
-        LOGD("HttpClient: split HTTP/1.1 init id=%s upload=%s %s download=%s %s", ls->split_id,
-             ts->split_upload_method, ts->split_upload_path, ts->split_download_method, ts->split_download_path);
+        LOGD("HttpClient: split HTTP/1.1 init id=%s upload=%s %s download=%s %s",
+             ls->split_id,
+             ts->split_upload_method,
+             ts->split_upload_path,
+             ts->split_download_method,
+             ts->split_download_path);
     }
 
     lineLock(l);
 
-    line_t *upload_line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l));
+    line_t *upload_line   = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l));
     ls->split_upload_line = upload_line;
     httpclientSplitInitTransportState(t, upload_line, l, upload_line, NULL, kHttpClientSplitRoleUpload, ls->split_id);
 
@@ -228,14 +228,14 @@ void httpclientSplitUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    line_t *download_line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l));
+    line_t *download_line   = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l));
     ls->split_download_line = download_line;
 
     httpclient_lstate_t *upload_ls = lineGetState(upload_line, t);
     upload_ls->split_download_line = download_line;
 
-    httpclientSplitInitTransportState(t, download_line, l, upload_line, download_line,
-                                      kHttpClientSplitRoleDownload, ls->split_id);
+    httpclientSplitInitTransportState(
+        t, download_line, l, upload_line, download_line, kHttpClientSplitRoleDownload, ls->split_id);
 
     lineLock(upload_line);
     bool download_init_ok = withLineLocked(download_line, tunnelNextUpStreamInit, t);
@@ -290,7 +290,7 @@ void httpclientSplitUpStreamInit(tunnel_t *t, line_t *l)
 
 void httpclientSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    httpclient_lstate_t *ls = lineGetState(l, t);
+    httpclient_lstate_t *ls          = lineGetState(l, t);
     line_t              *upload_line = ls->split_upload_line;
 
     if (upload_line == NULL || ! lineIsAlive(upload_line))
@@ -315,7 +315,7 @@ void httpclientSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 void httpclientSplitUpStreamFinish(tunnel_t *t, line_t *l)
 {
-    httpclient_lstate_t *ls = lineGetState(l, t);
+    httpclient_lstate_t *ls            = lineGetState(l, t);
     line_t              *upload_line   = ls->split_upload_line;
     line_t              *download_line = ls->split_download_line;
 

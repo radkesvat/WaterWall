@@ -3,7 +3,6 @@
 #include "UserController/interface.h"
 
 #include "loggers/network_logger.h"
-#include "managers/node_manager.h"
 
 enum
 {
@@ -45,8 +44,7 @@ static bool vlessserverParseAuthClientNode(vlessserver_tstate_t *ts, node_t *nod
 
 static bool vlessserverParseFallbackNode(vlessserver_tstate_t *ts, node_t *node, const cJSON *settings)
 {
-    const cJSON *fallback_json =
-        getJsonObjectItemByKeys(settings, "fallback-node-name", "fallback-node", "fallback");
+    const cJSON *fallback_json = getJsonObjectItemByKeys(settings, "fallback-node-name", "fallback-node", "fallback");
 
     if (fallback_json == NULL)
     {
@@ -132,7 +130,7 @@ static bool vlessserverAppendUuid(vlessserver_tstate_t *ts, const uint8_t uuid[k
     ts->users = users;
     memoryCopy(ts->users[ts->user_count].uuid, uuid, kVlessServerUuidLen);
     ts->users[ts->user_count].username = username != NULL ? stringDuplicate(username) : NULL;
-    ts->user_count = (uint32_t) new_count;
+    ts->user_count                     = (uint32_t) new_count;
     return true;
 }
 
@@ -157,11 +155,11 @@ static bool vlessserverParseUuidValue(vlessserver_tstate_t *ts, const cJSON *ite
 
 static const cJSON *vlessserverGetObjectUuidField(const cJSON *item, const char *path, bool *invalid)
 {
-    *invalid             = false;
-    const cJSON *uuid    = cJSON_GetObjectItemCaseSensitive(item, "uuid");
-    const cJSON *id      = cJSON_GetObjectItemCaseSensitive(item, "id");
-    const cJSON *user_id = cJSON_GetObjectItemCaseSensitive(item, "user-id");
-    uint32_t field_count = (uuid != NULL ? 1U : 0U) + (id != NULL ? 1U : 0U) + (user_id != NULL ? 1U : 0U);
+    *invalid                 = false;
+    const cJSON *uuid        = cJSON_GetObjectItemCaseSensitive(item, "uuid");
+    const cJSON *id          = cJSON_GetObjectItemCaseSensitive(item, "id");
+    const cJSON *user_id     = cJSON_GetObjectItemCaseSensitive(item, "user-id");
+    uint32_t     field_count = (uuid != NULL ? 1U : 0U) + (id != NULL ? 1U : 0U) + (user_id != NULL ? 1U : 0U);
     if (field_count > 1U)
     {
         LOGF("JSON Error: VlessServer->settings->%s object must use only one of uuid, id, or user-id", path);
@@ -377,8 +375,8 @@ tunnel_t *vlessserverTunnelCreate(node_t *node)
         return NULL;
     }
 
-    ts->allow_connect = true;
-    ts->allow_udp     = true;
+    ts->allow_connect                        = true;
+    ts->allow_udp                            = true;
     int fallback_intentional_delay_ms        = kVlessServerDefaultFallbackIntentionalDelayMs;
     int fallback_intentional_delay_jitter_ms = kVlessServerDefaultFallbackIntentionalDelayJitterMs;
     getBoolFromJsonObjectOrDefault(&ts->allow_connect, settings, "connect", true);
@@ -410,8 +408,8 @@ tunnel_t *vlessserverTunnelCreate(node_t *node)
 
     if (fallback_intentional_delay_jitter_ms < 0)
     {
-        LOGF(
-            "JSON Error: VlessServer->settings->fallback-intentional-delay-jitter-ms (number field) : The value was invalid");
+        LOGF("JSON Error: VlessServer->settings->fallback-intentional-delay-jitter-ms (number field) : The value was "
+             "invalid");
         vlessserverTunnelDestroy(t);
         return NULL;
     }

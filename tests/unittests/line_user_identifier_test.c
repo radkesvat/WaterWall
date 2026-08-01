@@ -1,8 +1,4 @@
-#include "line.h"
-
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 static void require(bool condition, const char *message)
 {
@@ -112,21 +108,24 @@ static void testLineUserRecording(void)
 
     lineAddUser(line, &first, NULL, NULL);
     require(line->user_count == 1, "line user count did not increment for first user");
-    requireUserHandleEquals(requireHandleEntry(line, 0, "first user was not a handle marker"), &first,
+    requireUserHandleEquals(requireHandleEntry(line, 0, "first user was not a handle marker"),
+                            &first,
                             "line did not record first user handle");
     require(lineGetCurrentUser(line) == requireHandleEntry(line, 0, "first user marker disappeared"),
             "current user did not point to first user");
 
     lineAddUser(line, &second, NULL, NULL);
     require(line->user_count == 2, "line user count did not increment for second user");
-    requireUserHandleEquals(requireHandleEntry(line, 1, "second user was not a handle marker"), &second,
+    requireUserHandleEquals(requireHandleEntry(line, 1, "second user was not a handle marker"),
+                            &second,
                             "line did not record second user handle");
     require(lineGetCurrentUser(line) == requireHandleEntry(line, 1, "second user marker disappeared"),
             "current user did not point to second user");
 
     lineAddUser(line, &third, NULL, NULL);
     require(line->user_count == 3, "line user count did not increment for third user");
-    requireUserHandleEquals(requireHandleEntry(line, 2, "third user was not a handle marker"), &third,
+    requireUserHandleEquals(requireHandleEntry(line, 2, "third user was not a handle marker"),
+                            &third,
                             "line did not record third user handle");
     require(lineGetCurrentUser(line) == requireHandleEntry(line, 2, "third user marker disappeared"),
             "current user did not point to third user");
@@ -161,16 +160,16 @@ static void testLineUserCopy(void)
     requireStringEquals(requireCredentialsEntry(dest, 0, "line user copy lost first credentials")->password,
                         "first-password",
                         "line user copy lost first password");
-    requireUserHandleEquals(requireHandleEntry(dest, 0, "line user copy lost first handle"), &first,
-                            "line user copy lost first user");
+    requireUserHandleEquals(
+        requireHandleEntry(dest, 0, "line user copy lost first handle"), &first, "line user copy lost first user");
     requireStringEquals(requireCredentialsEntry(dest, 1, "line user copy lost second credentials")->username,
                         "second-user",
                         "line user copy lost second username");
     requireStringEquals(requireCredentialsEntry(dest, 1, "line user copy lost second credentials")->password,
                         "second-password",
                         "line user copy lost second password");
-    requireUserHandleEquals(requireHandleEntry(dest, 1, "line user copy lost second handle"), &second,
-                            "line user copy lost second user");
+    requireUserHandleEquals(
+        requireHandleEntry(dest, 1, "line user copy lost second handle"), &second, "line user copy lost second user");
     require(lineGetCurrentUser(dest) == requireHandleEntry(dest, 1, "line user copy lost latest handle"),
             "line user copy did not preserve current user");
     requireStringEquals(lineGetAuthenticatedUsername(dest), "second-user", "line user copy lost username");

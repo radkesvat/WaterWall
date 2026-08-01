@@ -1,8 +1,5 @@
 #include "SoftIpLimiter/structure.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 static void require(bool condition, const char *message)
 {
     if (! condition)
@@ -15,10 +12,10 @@ static void require(bool condition, const char *message)
 static softiplimiter_ip_key_t ip4(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
 {
     softiplimiter_ip_key_t ip = {.type = 4};
-    ip.bytes[0] = a;
-    ip.bytes[1] = b;
-    ip.bytes[2] = c;
-    ip.bytes[3] = d;
+    ip.bytes[0]               = a;
+    ip.bytes[1]               = b;
+    ip.bytes[2]               = c;
+    ip.bytes[3]               = d;
     return ip;
 }
 
@@ -41,18 +38,18 @@ static void testVlessExtraction(void)
     }
 
     hash_t out = 0;
-    require(softiplimiterTryExtractIdentifierFromBytes(
-                kSoftIpLimiterIdentifierVless, bytes, sizeof(bytes), &out) == kSoftIpLimiterExtractOk,
+    require(softiplimiterTryExtractIdentifierFromBytes(kSoftIpLimiterIdentifierVless, bytes, sizeof(bytes), &out) ==
+                kSoftIpLimiterExtractOk,
             "vless: expected full UUID extraction");
     require(out == calcHashBytes(bytes + 1, kSoftIpLimiterVlessUuidLen), "vless: wrong UUID hash");
 
-    require(softiplimiterTryExtractIdentifierFromBytes(
-                kSoftIpLimiterIdentifierVless, bytes, 8, &out) == kSoftIpLimiterExtractWait,
+    require(softiplimiterTryExtractIdentifierFromBytes(kSoftIpLimiterIdentifierVless, bytes, 8, &out) ==
+                kSoftIpLimiterExtractWait,
             "vless: short UUID should wait");
 
     bytes[0] = 1;
-    require(softiplimiterTryExtractIdentifierFromBytes(
-                kSoftIpLimiterIdentifierVless, bytes, sizeof(bytes), &out) == kSoftIpLimiterExtractInvalid,
+    require(softiplimiterTryExtractIdentifierFromBytes(kSoftIpLimiterIdentifierVless, bytes, sizeof(bytes), &out) ==
+                kSoftIpLimiterExtractInvalid,
             "vless: invalid version should reject");
 }
 
@@ -61,13 +58,12 @@ static void testTrojanExtraction(void)
     const uint8_t hex[kSoftIpLimiterTrojanPasswordLen + 2] =
         "f1d1bbbcd40453cb585a2b136031c94f8b65ce015e62fc798ec6ea53\r\n";
     uint8_t sha224[SHA224_DIGEST_SIZE] = {0};
-    hash_t  out = 0;
+    hash_t  out                        = 0;
 
     require(asciiHexDecodeBytes(hex, kSoftIpLimiterTrojanPasswordLen, sha224, sizeof(sha224)),
             "trojan: test vector should decode");
     require(softiplimiterTryExtractIdentifierFromBytes(
-                kSoftIpLimiterIdentifierTrojan, hex, kSoftIpLimiterTrojanPasswordLen, &out) ==
-                kSoftIpLimiterExtractOk,
+                kSoftIpLimiterIdentifierTrojan, hex, kSoftIpLimiterTrojanPasswordLen, &out) == kSoftIpLimiterExtractOk,
             "trojan: expected SHA224 extraction");
     require(out == calcHashBytes(sha224, sizeof(sha224)), "trojan: wrong SHA224 hash");
 
@@ -79,8 +75,7 @@ static void testTrojanExtraction(void)
     memorySet(invalid_hex, '0', sizeof(invalid_hex));
     invalid_hex[4] = 'g';
     require(softiplimiterTryExtractIdentifierFromBytes(
-                kSoftIpLimiterIdentifierTrojan, invalid_hex, sizeof(invalid_hex), &out) ==
-                kSoftIpLimiterExtractInvalid,
+                kSoftIpLimiterIdentifierTrojan, invalid_hex, sizeof(invalid_hex), &out) == kSoftIpLimiterExtractInvalid,
             "trojan: invalid hex should reject");
 
     uint8_t invalid_crlf[kSoftIpLimiterTrojanPasswordLen + 1] = {0};
@@ -94,10 +89,10 @@ static void testTrojanExtraction(void)
 
 static void testAdmissionSameIpRefs(void)
 {
-    softiplimiter_identity_map_t table = softiplimiter_identity_map_t_with_capacity(4);
+    softiplimiter_identity_map_t table  = softiplimiter_identity_map_t_with_capacity(4);
     softiplimiter_table_result_t result = {0};
-    softiplimiter_ip_key_t       ip = ip4(10, 0, 0, 1);
-    hash_t                       id = 1001;
+    softiplimiter_ip_key_t       ip     = ip4(10, 0, 0, 1);
+    hash_t                       id     = 1001;
 
     require(softiplimiterTableAdmit(&table, id, &ip, 1, 1000, 100, &result), "same-ip: first admit failed");
     require(softiplimiterTableAdmit(&table, id, &ip, 1, 1000, 101, &result), "same-ip: second admit failed");
@@ -118,15 +113,14 @@ static void testAdmissionSameIpRefs(void)
 
 static void testAdmissionRejectsNewIpAtLimit(void)
 {
-    softiplimiter_identity_map_t table = softiplimiter_identity_map_t_with_capacity(4);
+    softiplimiter_identity_map_t table  = softiplimiter_identity_map_t_with_capacity(4);
     softiplimiter_table_result_t result = {0};
-    softiplimiter_ip_key_t       ip1 = ip4(10, 0, 0, 1);
-    softiplimiter_ip_key_t       ip2 = ip4(10, 0, 0, 2);
-    hash_t                       id = 1002;
+    softiplimiter_ip_key_t       ip1    = ip4(10, 0, 0, 1);
+    softiplimiter_ip_key_t       ip2    = ip4(10, 0, 0, 2);
+    hash_t                       id     = 1002;
 
     require(softiplimiterTableAdmit(&table, id, &ip1, 1, 1000, 100, &result), "limit: first admit failed");
-    require(! softiplimiterTableAdmit(&table, id, &ip2, 1, 1000, 101, &result),
-            "limit: second IP should reject");
+    require(! softiplimiterTableAdmit(&table, id, &ip2, 1, 1000, 101, &result), "limit: second IP should reject");
     require(result.reason == kSoftIpLimiterTableLimitReached, "limit: expected limit reason");
     require(result.count == 1 && result.limit == 1, "limit: expected count=1 limit=1");
 
@@ -135,11 +129,11 @@ static void testAdmissionRejectsNewIpAtLimit(void)
 
 static void testStaleRowsArePrunedBeforeReject(void)
 {
-    softiplimiter_identity_map_t table = softiplimiter_identity_map_t_with_capacity(4);
+    softiplimiter_identity_map_t table  = softiplimiter_identity_map_t_with_capacity(4);
     softiplimiter_table_result_t result = {0};
-    softiplimiter_ip_key_t       ip1 = ip4(10, 0, 0, 1);
-    softiplimiter_ip_key_t       ip2 = ip4(10, 0, 0, 2);
-    hash_t                       id = 1003;
+    softiplimiter_ip_key_t       ip1    = ip4(10, 0, 0, 1);
+    softiplimiter_ip_key_t       ip2    = ip4(10, 0, 0, 2);
+    hash_t                       id     = 1003;
 
     require(softiplimiterTableAdmit(&table, id, &ip1, 1, 10, 100, &result), "stale: first admit failed");
     require(softiplimiterTableAdmit(&table, id, &ip2, 1, 10, 111, &result),
@@ -155,21 +149,19 @@ static void testStaleRowsArePrunedBeforeReject(void)
 
 static void testPayloadCheckClosesWhenRowMissing(void)
 {
-    softiplimiter_identity_map_t table = softiplimiter_identity_map_t_with_capacity(4);
+    softiplimiter_identity_map_t table  = softiplimiter_identity_map_t_with_capacity(4);
     softiplimiter_table_result_t result = {0};
-    softiplimiter_ip_key_t       ip = ip4(10, 0, 0, 1);
-    hash_t                       id = 1004;
+    softiplimiter_ip_key_t       ip     = ip4(10, 0, 0, 1);
+    hash_t                       id     = 1004;
 
     require(softiplimiterTableAdmit(&table, id, &ip, 1, 10, 100, &result), "payload: admit failed");
-    require(! softiplimiterTableTouch(&table, id, &ip, 1, 10, 111, &result),
-            "payload: stale row should fail touch");
+    require(! softiplimiterTableTouch(&table, id, &ip, 1, 10, 111, &result), "payload: stale row should fail touch");
     require(result.reason == kSoftIpLimiterTableMissingRow, "payload: expected missing row after prune");
     require(findEntry(&table, id) == NULL, "payload: stale-only identifier should be erased");
 
     require(softiplimiterTableAdmit(&table, id, &ip, 1, 10, 200, &result), "payload: second admit failed");
     softiplimiterTableRelease(&table, id, &ip, 10, 201);
-    require(! softiplimiterTableTouch(&table, id, &ip, 1, 10, 202, &result),
-            "payload: removed row should fail touch");
+    require(! softiplimiterTableTouch(&table, id, &ip, 1, 10, 202, &result), "payload: removed row should fail touch");
     require(result.reason == kSoftIpLimiterTableMissingRow, "payload: expected missing row after release");
 
     softiplimiter_identity_map_t_drop(&table);
@@ -177,10 +169,10 @@ static void testPayloadCheckClosesWhenRowMissing(void)
 
 static void testTouchRefreshKeepsRowAlive(void)
 {
-    softiplimiter_identity_map_t table = softiplimiter_identity_map_t_with_capacity(4);
+    softiplimiter_identity_map_t table  = softiplimiter_identity_map_t_with_capacity(4);
     softiplimiter_table_result_t result = {0};
-    softiplimiter_ip_key_t       ip = ip4(10, 0, 0, 1);
-    hash_t                       id = 2001;
+    softiplimiter_ip_key_t       ip     = ip4(10, 0, 0, 1);
+    hash_t                       id     = 2001;
 
     require(softiplimiterTableAdmit(&table, id, &ip, 1, 10, 100, &result), "refresh: admit failed");
 
@@ -192,7 +184,8 @@ static void testTouchRefreshKeepsRowAlive(void)
 
     const softiplimiter_identity_entry_t *entry = findEntry(&table, id);
     require(entry != NULL && entry->ip_count == 1, "refresh: row should remain alive after refreshes");
-    require(atomicLoadU64Relaxed(&entry->ips[0].last_seen_ms) == 124, "refresh: last_seen should track the latest touch");
+    require(atomicLoadU64Relaxed(&entry->ips[0].last_seen_ms) == 124,
+            "refresh: last_seen should track the latest touch");
 
     // Stop refreshing: once now advances past last_seen + tolerance the row expires.
     require(! softiplimiterTableTouch(&table, id, &ip, 1, 10, 200, &result), "refresh: stale row should expire");
@@ -215,4 +208,3 @@ int main(void)
     printf("softiplimiter_test: all checks passed\n");
     return 0;
 }
-

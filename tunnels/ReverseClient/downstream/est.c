@@ -1,5 +1,3 @@
-#include <stddef.h>
-
 #include "structure.h"
 
 #include "loggers/network_logger.h"
@@ -17,7 +15,8 @@ void reverseclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
         ts->threadlocal_pool[wid].connecting_cons_count -= 1;
         ts->threadlocal_pool[wid].unused_cons_count += 1;
 
-        LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d", wid,
+        LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d",
+             wid,
              ts->threadlocal_pool[wid].unused_cons_count,
              atomicLoadExplicit(&(ts->reverse_cons), memory_order_relaxed));
 

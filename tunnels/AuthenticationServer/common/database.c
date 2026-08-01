@@ -2,8 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include <inttypes.h>
-
 typedef struct authenticationserver_backup_path_list_s
 {
     char **items;

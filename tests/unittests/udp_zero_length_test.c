@@ -1,14 +1,8 @@
-#include "buffer_pool.h"
-#include "global_state.h"
-#include "master_pool.h"
-#include "threadsafe_generic_pool.h"
-#include "wevent.h"
-#include "wlibc.h"
-#include "wloop.h"
-#include "wsocket.h"
+#include "wwapi.h"
 
-#include <stdio.h>
-#include <stdlib.h>
+#include "threadsafe_generic_pool.h"
+#include "wlibc.h"
+#include "wsocket.h"
 
 typedef struct udp_test_state_s
 {
@@ -37,21 +31,16 @@ static void onUdpRead(wio_t *io, sbuf_t *buf)
 
 static void sendDatagram(int sender, sockaddr_u *target, const void *payload, size_t payload_len)
 {
-    int sent = sendto(sender,
-                      (const char *) payload,
-                      payload_len,
-                      0,
-                      &target->sa,
-                      sockaddrLen(target));
+    int sent = sendto(sender, (const char *) payload, payload_len, 0, &target->sa, sockaddrLen(target));
     require(sent == (int) payload_len, "failed to send UDP test datagram");
 }
 
 int main(void)
 {
-    master_pool_t *large_master = masterpoolCreateWithCapacity(8);
-    master_pool_t *small_master = masterpoolCreateWithCapacity(8);
-    master_pool_t *wio_master   = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *buffer_pool  = bufferpoolCreate(large_master, small_master, 8, 8192, 1024);
+    master_pool_t             *large_master = masterpoolCreateWithCapacity(8);
+    master_pool_t             *small_master = masterpoolCreateWithCapacity(8);
+    master_pool_t             *wio_master   = masterpoolCreateWithCapacity(8);
+    buffer_pool_t             *buffer_pool  = bufferpoolCreate(large_master, small_master, 8, 8192, 1024);
     threadsafe_generic_pool_t *wio_pool =
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(wio_master, sizeof(wio_t), 8);
     threadsafe_generic_pool_t *wio_pools[] = {wio_pool};
@@ -73,8 +62,7 @@ int main(void)
     sockaddr_u target;
     memoryZero(&target, sizeof(target));
     socklen_t target_len = sizeof(target);
-    require(getsockname(wioGetFD(server), &target.sa, &target_len) == 0,
-            "failed to obtain UDP test server address");
+    require(getsockname(wioGetFD(server), &target.sa, &target_len) == 0, "failed to obtain UDP test server address");
     require(sockaddrPort(&target) != 0, "UDP test server did not receive an ephemeral port");
 
     int sender = (int) socket(AF_INET, SOCK_DGRAM, 0);

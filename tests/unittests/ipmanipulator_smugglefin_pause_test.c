@@ -4,9 +4,6 @@
 #include "tricks/protoswap/trick.h"
 #include "tricks/smugglefin/trick.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 enum
 {
     kMaxTimedMessages                = 16,

@@ -2,9 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include <stdarg.h>
-#include <stdio.h>
-
 enum
 {
     kPacketReceiverFileBufferSize = 4096

@@ -1,11 +1,7 @@
-#include "iowatcher.h"
-#include "wevent.h"
-#include "wloop.h"
-#include "wsocket.h"
+#include "wwapi.h"
 
-#include <errno.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include "iowatcher.h"
+#include "wsocket.h"
 
 static void require(bool condition, const char *message)
 {

@@ -1,10 +1,5 @@
 #include "TlsClient/structure.h"
 
-#include "global_state.h"
-
-#include <stdio.h>
-#include <stdlib.h>
-
 enum
 {
     kTestLargeBufferSize   = 32768,
@@ -70,8 +65,7 @@ static void workerEnvTeardown(tlsclient_test_worker_env_t *env)
     masterpoolDestroy(env->small_master);
 }
 
-static void requireWire(const tlsclient_tstate_t *ts, const uint8_t *expected, size_t expected_len,
-                        const char *message)
+static void requireWire(const tlsclient_tstate_t *ts, const uint8_t *expected, size_t expected_len, const char *message)
 {
     require(ts->alpn_wire_len == expected_len, message);
     require(expected_len == 0 || memoryCompare(ts->alpn_wire, expected, expected_len) == 0, message);
@@ -87,12 +81,22 @@ static void releaseParsedAlpns(tlsclient_tstate_t *ts)
 static void testDefaultOrder(void)
 {
     static const uint8_t expected[] = {
-        2, 'h', '2',
-        8, 'h', 't', 't', 'p', '/', '1', '.', '1',
+        2,
+        'h',
+        '2',
+        8,
+        'h',
+        't',
+        't',
+        'p',
+        '/',
+        '1',
+        '.',
+        '1',
     };
 
-    cJSON              *settings = parseSettings("{}");
-    tlsclient_tstate_t  ts       = {0};
+    cJSON             *settings = parseSettings("{}");
+    tlsclient_tstate_t ts       = {0};
 
     require(tlsclientParseAlpnSetting(&ts, settings), "default ALPN parsing failed");
     requireWire(&ts, expected, sizeof(expected), "default ALPN order changed");
@@ -104,9 +108,22 @@ static void testDefaultOrder(void)
 static void testConfiguredOrder(void)
 {
     static const uint8_t expected[] = {
-        8, 'h', 't', 't', 'p', '/', '1', '.', '1',
-        2, 'h', '2',
-        3, 'f', 'o', 'o',
+        8,
+        'h',
+        't',
+        't',
+        'p',
+        '/',
+        '1',
+        '.',
+        '1',
+        2,
+        'h',
+        '2',
+        3,
+        'f',
+        'o',
+        'o',
     };
 
     cJSON             *settings = parseSettings("{\"alpns\":[\"http/1.1\",\"h2\",\"foo\"]}");
@@ -146,8 +163,7 @@ static void testInvalidListsAreRejected(void)
         tlsclient_tstate_t ts       = {0};
 
         require(! tlsclientParseAlpnSetting(&ts, settings), "invalid ALPN setting was accepted");
-        require(ts.alpn_wire == NULL && ts.alpn_wire_len == 0,
-                "invalid ALPN setting left allocated state behind");
+        require(ts.alpn_wire == NULL && ts.alpn_wire_len == 0, "invalid ALPN setting left allocated state behind");
 
         cJSON_Delete(settings);
     }
@@ -360,11 +376,19 @@ static void testApiSniLengthBounds(void)
     workerEnvTeardown(&env);
 }
 
-static int selectHttp11(SSL *ssl, const uint8_t **out, uint8_t *out_len, const uint8_t *in,
-                        unsigned int in_len, void *arg)
+static int selectHttp11(SSL *ssl, const uint8_t **out, uint8_t *out_len, const uint8_t *in, unsigned int in_len,
+                        void *arg)
 {
     static const uint8_t supported[] = {
-        8, 'h', 't', 't', 'p', '/', '1', '.', '1',
+        8,
+        'h',
+        't',
+        't',
+        'p',
+        '/',
+        '1',
+        '.',
+        '1',
     };
 
     uint8_t *selected     = NULL;
@@ -373,12 +397,8 @@ static int selectHttp11(SSL *ssl, const uint8_t **out, uint8_t *out_len, const u
     discard ssl;
     discard arg;
 
-    if (SSL_select_next_proto(&selected,
-                              &selected_len,
-                              in,
-                              in_len,
-                              supported,
-                              (unsigned int) sizeof(supported)) != OPENSSL_NPN_NEGOTIATED)
+    if (SSL_select_next_proto(&selected, &selected_len, in, in_len, supported, (unsigned int) sizeof(supported)) !=
+        OPENSSL_NPN_NEGOTIATED)
     {
         return SSL_TLSEXT_ERR_ALERT_FATAL;
     }
@@ -440,10 +460,8 @@ static bool driveHandshake(SSL *client, SSL *server)
 
     for (uint32_t step = 0; step < 100; ++step)
     {
-        if (! advanceHandshake(client, &client_complete) ||
-            ! transferBio(SSL_get_wbio(client), SSL_get_rbio(server)) ||
-            ! advanceHandshake(server, &server_complete) ||
-            ! transferBio(SSL_get_wbio(server), SSL_get_rbio(client)))
+        if (! advanceHandshake(client, &client_complete) || ! transferBio(SSL_get_wbio(client), SSL_get_rbio(server)) ||
+            ! advanceHandshake(server, &server_complete) || ! transferBio(SSL_get_wbio(server), SSL_get_rbio(client)))
         {
             return false;
         }
@@ -462,9 +480,8 @@ static void testHttp11Negotiation(void)
     static const uint8_t expected[] = "http/1.1";
 
     const uint32_t saved_workers_count = GSTATE.workers_count;
-    cJSON        *settings =
-        parseSettings("{\"sni\":\"tls.integration.test\",\"alpns\":[\"http/1.1\"],\"verify\":false}");
-    node_t node = {.node_settings_json = settings};
+    cJSON *settings = parseSettings("{\"sni\":\"tls.integration.test\",\"alpns\":[\"http/1.1\"],\"verify\":false}");
+    node_t node     = {.node_settings_json = settings};
 
     GSTATE.workers_count = 2; // one regular worker plus WaterWall's additional lwIP worker
 
@@ -472,8 +489,8 @@ static void testHttp11Negotiation(void)
     require(tunnel != NULL, "failed to create HTTP/1.1-only TlsClient");
 
     tlsclient_tstate_t *ts             = tunnelGetState(tunnel);
-    SSL_CTX             *client_context = ts->threadlocal_ssl_contexts[0];
-    SSL_CTX             *server_context = SSL_CTX_new(TLS_server_method());
+    SSL_CTX            *client_context = ts->threadlocal_ssl_contexts[0];
+    SSL_CTX            *server_context = SSL_CTX_new(TLS_server_method());
 
     require(client_context != NULL && server_context != NULL &&
                 SSL_CTX_set_min_proto_version(client_context, TLS1_2_VERSION) == 1 &&
@@ -487,15 +504,15 @@ static void testHttp11Negotiation(void)
 
     SSL_CTX_set_alpn_select_cb(server_context, selectHttp11, NULL);
 
-    SSL *client = SSL_new(client_context);
-    SSL *server = SSL_new(server_context);
+    SSL *client      = SSL_new(client_context);
+    SSL *server      = SSL_new(server_context);
     BIO *client_rbio = BIO_new(BIO_s_mem());
     BIO *client_wbio = BIO_new(BIO_s_mem());
     BIO *server_rbio = BIO_new(BIO_s_mem());
     BIO *server_wbio = BIO_new(BIO_s_mem());
 
-    require(client != NULL && server != NULL && client_rbio != NULL && client_wbio != NULL &&
-                server_rbio != NULL && server_wbio != NULL,
+    require(client != NULL && server != NULL && client_rbio != NULL && client_wbio != NULL && server_rbio != NULL &&
+                server_wbio != NULL,
             "failed to allocate ALPN negotiation state");
 
     BIO_set_mem_eof_return(client_rbio, -1);
@@ -509,8 +526,8 @@ static void testHttp11Negotiation(void)
 
     require(driveHandshake(client, server), "HTTP/1.1-only ALPN handshake failed");
 
-    const uint8_t *client_alpn = NULL;
-    const uint8_t *server_alpn = NULL;
+    const uint8_t *client_alpn     = NULL;
+    const uint8_t *server_alpn     = NULL;
     unsigned int   client_alpn_len = 0;
     unsigned int   server_alpn_len = 0;
 

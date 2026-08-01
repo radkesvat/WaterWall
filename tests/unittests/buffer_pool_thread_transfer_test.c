@@ -1,8 +1,6 @@
-#include "buffer_pool.h"
+#include "wwapi.h"
 
 #include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
 
 typedef struct pool_thread_probe_s
 {

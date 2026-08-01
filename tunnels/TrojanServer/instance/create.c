@@ -3,7 +3,6 @@
 #include "UserController/interface.h"
 
 #include "loggers/network_logger.h"
-#include "managers/node_manager.h"
 
 enum
 {

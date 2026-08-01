@@ -1,9 +1,5 @@
 #include "TlsRecordShapingCommon/record_shaping.h"
 
-#include <stdarg.h>
-
-
-
 static bool keyIsOneOf(const char *key, const char *const *allowed, size_t allowed_count)
 {
     for (size_t i = 0; i < allowed_count; ++i)
@@ -45,10 +41,10 @@ static bool parseRange(const cJSON *item, uint32_t minimum, uint32_t maximum, co
     if (! cJSON_IsArray(item) || cJSON_GetArraySize(item) != 2)
     {
         return tlsrecordshapingSetError(error,
-                        "%s must be an integer or a two-integer range [%u, %u]",
-                        path,
-                        (unsigned int) minimum,
-                        (unsigned int) maximum);
+                                        "%s must be an integer or a two-integer range [%u, %u]",
+                                        path,
+                                        (unsigned int) minimum,
+                                        (unsigned int) maximum);
     }
 
     int64_t lower = 0;
@@ -162,7 +158,8 @@ static bool parseCustom(const cJSON *shaping, tlsrecordshaping_config_t *config,
     if (! cJSON_IsObject(scope) ||
         ! rejectUnknownKeys(scope, "tls13-record-shaping.scope", scope_allowed, ARRAY_SIZE(scope_allowed), error))
     {
-        return cJSON_IsObject(scope) ? false : tlsrecordshapingSetError(error, "tls13-record-shaping.scope must be an object");
+        return cJSON_IsObject(scope) ? false
+                                     : tlsrecordshapingSetError(error, "tls13-record-shaping.scope must be an object");
     }
 
     int64_t first_records = 0;
@@ -171,13 +168,15 @@ static bool parseCustom(const cJSON *shaping, tlsrecordshaping_config_t *config,
                                 kTlsRecordShapingMaxApplicationRecords,
                                 &first_records))
     {
-        return tlsrecordshapingSetError(error, "tls13-record-shaping.scope.first-application-records must be an integer in [1, 1024]");
+        return tlsrecordshapingSetError(
+            error, "tls13-record-shaping.scope.first-application-records must be an integer in [1, 1024]");
     }
     config->first_application_records = (uint16_t) first_records;
 
     if (! cJSON_IsArray(outcomes))
     {
-        return tlsrecordshapingSetError(error, "tls13-record-shaping.outcomes must be a non-empty array with at most 16 items");
+        return tlsrecordshapingSetError(
+            error, "tls13-record-shaping.outcomes must be a non-empty array with at most 16 items");
     }
     int count = cJSON_GetArraySize(outcomes);
     if (count < 1 || count > kTlsRecordShapingMaxOutcomes)

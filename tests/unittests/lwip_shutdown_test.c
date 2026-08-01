@@ -1,11 +1,8 @@
 #include "ww_lwip.h"
+#include "wwapi.h"
 
 #include "lwip/memp.h"
 #include "lwip/priv/tcp_priv.h"
-#include "wthread.h"
-
-#include <stdio.h>
-#include <stdlib.h>
 
 typedef struct retained_pbuf_s
 {

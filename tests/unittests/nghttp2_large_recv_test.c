@@ -4,7 +4,7 @@
 
 enum
 {
-    kPayloadLen      = 48 * 1024,
+    kPayloadLen     = 48 * 1024,
     kLargeRecvFloor = 32 * 1024
 };
 
@@ -57,8 +57,8 @@ static ssize_t read_payload_callback(nghttp2_session *session, int32_t stream_id
     return (ssize_t) nread;
 }
 
-static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id,
-                                       const uint8_t *data, size_t len, void *user_data)
+static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data,
+                                       size_t len, void *user_data)
 {
     (void) session;
     (void) flags;
@@ -112,8 +112,10 @@ int main(void)
     client_data_t client_data = {.offset = 0};
     server_data_t server_data = {.received = 0};
 
-    require(nghttp2_session_client_new(&client, client_callbacks, &client_data) == 0, "client session allocation failed");
-    require(nghttp2_session_server_new(&server, server_callbacks, &server_data) == 0, "server session allocation failed");
+    require(nghttp2_session_client_new(&client, client_callbacks, &client_data) == 0,
+            "client session allocation failed");
+    require(nghttp2_session_server_new(&server, server_callbacks, &server_data) == 0,
+            "server session allocation failed");
 
     require(nghttp2_submit_settings(client, NGHTTP2_FLAG_NONE, NULL, 0) == 0, "client settings submit failed");
 
@@ -128,8 +130,8 @@ int main(void)
         .source        = {.ptr = &client_data},
         .read_callback = read_payload_callback,
     };
-    int32_t stream_id = nghttp2_submit_request(client, NULL, headers, sizeof(headers) / sizeof(headers[0]), &provider,
-                                               NULL);
+    int32_t stream_id =
+        nghttp2_submit_request(client, NULL, headers, sizeof(headers) / sizeof(headers[0]), &provider, NULL);
     require(stream_id > 0, "request submit failed");
 
     uint8_t *wire     = NULL;

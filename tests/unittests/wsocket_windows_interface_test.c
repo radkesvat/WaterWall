@@ -1,4 +1,5 @@
 #include "wlibc.h"
+#include "wwapi.h"
 
 #if ! defined(OS_WIN)
 int main(void)
@@ -11,8 +12,6 @@ int main(void)
 #include "wsocket.h"
 
 #include <iphlpapi.h>
-#include <stdio.h>
-#include <stdlib.h>
 
 typedef struct adapter_fixture
 {

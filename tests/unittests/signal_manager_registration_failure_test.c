@@ -1,10 +1,5 @@
-#include "global_state.h"
-#include "managers/signal_manager.h"
-#include "wloop.h"
+#include "wwapi.h"
 
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <sys/wait.h>
 #include <unistd.h>
 

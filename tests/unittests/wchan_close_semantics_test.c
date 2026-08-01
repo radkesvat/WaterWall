@@ -6,11 +6,7 @@
 // out that canceled message through a Thr that had already returned to its caller, and the
 // cancellation flag stayed set on the thread forever, breaking the next channel it used.
 
-#include "wchan.h"
-#include "wthread.h"
-
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 enum
 {

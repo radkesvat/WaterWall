@@ -1,4 +1,5 @@
 #include "Router/structure.h"
+#include "generic_sniffer.h"
 #include "modules/attributes/attributes.h"
 #include "modules/destination_domain/destination_domain.h"
 #include "modules/destination_port/destination_port.h"
@@ -6,7 +7,6 @@
 #include "modules/protocol/protocol.h"
 #include "modules/source_port/source_port.h"
 #include "modules/username/username.h"
-#include "generic_sniffer.h"
 
 #ifdef ROUTER_ENABLE_HTTP2_SNIFFING
 #include "Router/http2_sniffing.h"
@@ -16,9 +16,6 @@
 #ifdef ROUTER_ENABLE_QUIC_SNIFFING
 #include "Router/quic_sniffing.h"
 #endif
-
-#include <stdio.h>
-#include <stdlib.h>
 
 #ifndef ROUTER_QUIC_SNI_VECTOR_DIR
 #define ROUTER_QUIC_SNI_VECTOR_DIR "fixtures/router_quic_sni/vectors"
@@ -148,11 +145,7 @@ static uint32_t makeHttp2PriorKnowledgeRequest(uint8_t **out_wire, const char *a
         {(uint8_t *) ":method", (uint8_t *) "GET", 7, 3, NGHTTP2_NV_FLAG_NONE},
         {(uint8_t *) ":scheme", (uint8_t *) "http", 7, 4, NGHTTP2_NV_FLAG_NONE},
         {(uint8_t *) ":path", (uint8_t *) "/", 5, 1, NGHTTP2_NV_FLAG_NONE},
-        {(uint8_t *) ":authority",
-         (uint8_t *) authority,
-         10,
-         stringLength(authority),
-         NGHTTP2_NV_FLAG_NONE},
+        {(uint8_t *) ":authority", (uint8_t *) authority, 10, stringLength(authority), NGHTTP2_NV_FLAG_NONE},
     };
 
     int32_t stream_id = nghttp2_submit_request(client, NULL, headers, ARRAY_SIZE(headers), NULL, NULL);
@@ -281,8 +274,8 @@ static router_rule_t parseDestinationPortRule(const char *json_text, tunnel_t *t
 
 static router_rule_t parseAuthenticatedIdentityRule(const char *json_text)
 {
-    router_rule_t       rule            = {0};
-    cJSON              *json            = parseJsonObject(json_text);
+    router_rule_t        rule            = {0};
+    cJSON               *json            = parseJsonObject(json_text);
     router_field_parse_t username_result = routerUsernameParse(&rule, json, 0);
     router_field_parse_t password_result = routerPasswordParse(&rule, json, 0);
 
@@ -442,23 +435,44 @@ static void testQuicSniffingRejectsNonQuicPayload(void)
     uint32_t host_len = 0;
 
     const uint8_t http[] = "GET / HTTP/1.1\r\nHost: not-quic.example.test\r\n\r\n";
-    require(routerQuicSniffClientHelloSni(http, (uint32_t) sizeof(http) - 1U, host, (uint32_t) sizeof(host),
-                                          &host_len) == kGenericSnifferMissing,
+    require(routerQuicSniffClientHelloSni(
+                http, (uint32_t) sizeof(http) - 1U, host, (uint32_t) sizeof(host), &host_len) == kGenericSnifferMissing,
             "QUIC sniffing treated HTTP payload as QUIC");
     require(host_len == 0, "QUIC sniffing filled host for non-QUIC payload");
 
     const uint8_t partial_quic_long_header[] = {0xc3, 0x00};
-    require(routerQuicSniffClientHelloSni(partial_quic_long_header, (uint32_t) sizeof(partial_quic_long_header), host,
-                                          (uint32_t) sizeof(host), &host_len) == kGenericSnifferMissing,
+    require(routerQuicSniffClientHelloSni(partial_quic_long_header,
+                                          (uint32_t) sizeof(partial_quic_long_header),
+                                          host,
+                                          (uint32_t) sizeof(host),
+                                          &host_len) == kGenericSnifferMissing,
             "partial QUIC long-header payload asked Router to keep buffering");
 
     const uint8_t truncated_v1_initial[] = {
-        0xc3, 0x00, 0x00, 0x00, 0x01, 0x08, 0x01, 0x02, 0x03,
-        0x04, 0x05, 0x06, 0x07, 0x08, 0x00, 0x00, 0x40, 0x20,
+        0xc3,
+        0x00,
+        0x00,
+        0x00,
+        0x01,
+        0x08,
+        0x01,
+        0x02,
+        0x03,
+        0x04,
+        0x05,
+        0x06,
+        0x07,
+        0x08,
+        0x00,
+        0x00,
+        0x40,
+        0x20,
     };
-    require(routerQuicSniffClientHelloSni(truncated_v1_initial, (uint32_t) sizeof(truncated_v1_initial), host,
-                                          (uint32_t) sizeof(host), &host_len) == kGenericSnifferMissing,
-            "truncated QUIC v1 Initial asked Router to keep buffering");
+    require(
+        routerQuicSniffClientHelloSni(
+            truncated_v1_initial, (uint32_t) sizeof(truncated_v1_initial), host, (uint32_t) sizeof(host), &host_len) ==
+            kGenericSnifferMissing,
+        "truncated QUIC v1 Initial asked Router to keep buffering");
 
     line_t *line = testLineCreate();
     require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.53", 443, IP_PROTO_UDP),
@@ -503,8 +517,8 @@ static const char *quicSniffResultName(generic_sniffer_result_t result)
     }
 }
 
-static void quicVectorFail(const char *name, const char *expect, generic_sniffer_result_t result,
-                           const uint8_t *domain, const char *want_domain, const char *comment)
+static void quicVectorFail(const char *name, const char *expect, generic_sniffer_result_t result, const uint8_t *domain,
+                           const char *want_domain, const char *comment)
 {
     fprintf(stderr,
             "QUIC vector %s failed: expect=%s got=%s domain='%s' want='%s' note=%s\n",
@@ -670,11 +684,11 @@ static void runQuicVectorCase(char *line)
     char       *files_csv   = fields[3];
     const char *comment     = fields[4];
 
-    quic_vector_buffer_t accumulated = {0};
-    generic_sniffer_result_t result  = kGenericSnifferMissing;
-    uint8_t domain[UINT8_MAX + 1U];
-    uint32_t domain_len = 0;
-    domain[0]           = '\0';
+    quic_vector_buffer_t     accumulated = {0};
+    generic_sniffer_result_t result      = kGenericSnifferMissing;
+    uint8_t                  domain[UINT8_MAX + 1U];
+    uint32_t                 domain_len = 0;
+    domain[0]                           = '\0';
 
     char       *cursor = files_csv;
     const char *file_name;
@@ -687,11 +701,8 @@ static void runQuicVectorCase(char *line)
         quicVectorAppend(&accumulated, file, file_len);
         memoryFree(file);
 
-        result = routerQuicSniffClientHelloSni(accumulated.data,
-                                               accumulated.len,
-                                               domain,
-                                               (uint32_t) sizeof(domain),
-                                               &domain_len);
+        result = routerQuicSniffClientHelloSni(
+            accumulated.data, accumulated.len, domain, (uint32_t) sizeof(domain), &domain_len);
 
         bool has_more_files = cursor != NULL && cursor[0] != '\0';
         if (has_more_files && stringCompare(expect, "OK") == 0 && result != kGenericSnifferNeedMore)
@@ -862,10 +873,8 @@ static void testPortMatchers(void)
     require(sourcePortConfigFails("{\"source-port\":[]}"), "empty source-port array was accepted");
     require(sourcePortConfigFails("{\"source-port\":70000}"), "out-of-range source-port was accepted");
     require(sourcePortConfigFails("{\"source-port-range\":443}"), "non-array source-port-range was accepted");
-    require(sourcePortConfigFails("{\"source-port-range\":[1000]}"),
-            "single-element source-port-range was accepted");
-    require(sourcePortConfigFails("{\"source-port-range\":[2000,1000]}"),
-            "descending source-port-range was accepted");
+    require(sourcePortConfigFails("{\"source-port-range\":[1000]}"), "single-element source-port-range was accepted");
+    require(sourcePortConfigFails("{\"source-port-range\":[2000,1000]}"), "descending source-port-range was accepted");
     require(destinationPortConfigFails("{\"destination-port\":\"443\"}"), "string destination-port was accepted");
     require(destinationPortConfigFails("{\"destination-port\":-1}"), "negative destination-port was accepted");
     require(destinationPortConfigFails("{\"destination-port-range\":[80,443,8443]}"),
@@ -874,9 +883,9 @@ static void testPortMatchers(void)
             "fractional destination-port-range element was accepted");
 
     tunnel_t *source_target = (tunnel_t *) (uintptr_t) 0x81;
-    line_t   *line         = testLineCreate();
+    line_t   *line          = testLineCreate();
 
-    router_rule_t   source_rule =
+    router_rule_t source_rule =
         parseSourcePortRule("{\"source-port\":[80,443],\"source-port-range\":[1000,1002]}", source_target);
     router_tstate_t ts = {0};
 
@@ -893,20 +902,17 @@ static void testPortMatchers(void)
                 source_target);
 
     addresscontextSetPort(&line->routing_context.src_ctx, 999);
-    expectMatch("source port nonmatch route",
-                classifyOneRule(&ts, &source_rule, line, NULL, 0),
-                kRouterClassifyDefault,
-                NULL);
+    expectMatch(
+        "source port nonmatch route", classifyOneRule(&ts, &source_rule, line, NULL, 0), kRouterClassifyDefault, NULL);
 
     routerSourcePortDestroy(&source_rule);
     testLineDestroy(line);
 
     tunnel_t *destination_target = (tunnel_t *) (uintptr_t) 0x82;
-    line                       = testLineCreate();
+    line                         = testLineCreate();
 
-    router_rule_t destination_rule =
-        parseDestinationPortRule("{\"destination-port\":[53,443],\"destination-port-range\":[8000,8002]}",
-                                 destination_target);
+    router_rule_t destination_rule = parseDestinationPortRule(
+        "{\"destination-port\":[53,443],\"destination-port-range\":[8000,8002]}", destination_target);
 
     addresscontextSetPort(&line->routing_context.dest_ctx, 53);
     expectMatch("destination exact port route",
@@ -1010,11 +1016,9 @@ static void testHttp2PartialPrefaceNeedsMore(void)
     uint32_t host_len = 0;
 
     const uint8_t partial_preface[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n";
-    require(routerHttp2SniffDomain(partial_preface,
-                                   (uint32_t) sizeof(partial_preface) - 1U,
-                                   host,
-                                   (uint32_t) sizeof(host),
-                                   &host_len) == kGenericSnifferNeedMore,
+    require(routerHttp2SniffDomain(
+                partial_preface, (uint32_t) sizeof(partial_preface) - 1U, host, (uint32_t) sizeof(host), &host_len) ==
+                kGenericSnifferNeedMore,
             "partial valid HTTP/2 preface did not ask for more bytes");
     require(host_len == 0 && host[0] == '\0', "partial HTTP/2 preface filled a host");
 }
@@ -1613,10 +1617,8 @@ static void testAuthenticatedIdentityMatchesCredentialMarkers(void)
     require(routerPasswordMatch(&password_rule, &mctx), "Router password did not match the latest credential marker");
     require(routerUsernameMatch(&pair_rule, &mctx), "Router username/password pair did not match one marker");
     require(routerPasswordMatch(&pair_rule, &mctx), "Router password pair check did not match one marker");
-    require(! routerUsernameMatch(&crossed_rule, &mctx),
-            "Router username match crossed stacked credential markers");
-    require(! routerPasswordMatch(&crossed_rule, &mctx),
-            "Router password match crossed stacked credential markers");
+    require(! routerUsernameMatch(&crossed_rule, &mctx), "Router username match crossed stacked credential markers");
+    require(! routerPasswordMatch(&crossed_rule, &mctx), "Router password match crossed stacked credential markers");
 
     destroyAuthenticatedIdentityRule(&crossed_rule);
     destroyAuthenticatedIdentityRule(&pair_rule);

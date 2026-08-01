@@ -13,10 +13,9 @@
  * the definitions here take precedence over the ones in libww at link time.
  */
 
-#include "managers/node_manager.c" // NOLINT: needs the private config containers
+#include "wwapi.h"
 
-#include <stdio.h>
-#include <stdlib.h>
+#include "managers/node_manager.c" // NOLINT: needs the private config containers
 
 static unsigned int stop_calls_first;
 static unsigned int stop_calls_second;

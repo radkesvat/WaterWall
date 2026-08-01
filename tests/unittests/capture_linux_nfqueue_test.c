@@ -1,12 +1,11 @@
+#include "wwapi.h"
+
 #include "devices/capture/capture_linux_internal.h"
 
 #include <arpa/inet.h>
 #include <linux/netfilter/nfnetlink.h>
 #include <linux/netfilter/nfnetlink_queue.h>
 #include <linux/netlink.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/socket.h>
 
 enum
@@ -16,8 +15,8 @@ enum
 
 typedef struct nfqueue_message_builder_s
 {
-    uint8_t        *data;
-    size_t          capacity;
+    uint8_t         *data;
+    size_t           capacity;
     struct nlmsghdr *nlh;
 } nfqueue_message_builder_t;
 
@@ -54,8 +53,8 @@ static void nfqueueBuilderInit(nfqueue_message_builder_t *builder, uint8_t *data
     gen->res_id          = 0;
 }
 
-static struct nfattr *nfqueueBuilderAppendAttr(nfqueue_message_builder_t *builder, uint16_t type,
-                                               const void *payload, uint16_t payload_len)
+static struct nfattr *nfqueueBuilderAppendAttr(nfqueue_message_builder_t *builder, uint16_t type, const void *payload,
+                                               uint16_t payload_len)
 {
     size_t offset     = (size_t) NLMSG_ALIGN(builder->nlh->nlmsg_len);
     size_t attr_len   = (size_t) NFA_LENGTH(payload_len);
@@ -92,8 +91,7 @@ static struct nfattr *nfqueueBuilderAppendPacketHeader(nfqueue_message_builder_t
     packet_hdr.hw_protocol = htons(0x0800U);
     packet_hdr.hook        = 0;
 
-    return nfqueueBuilderAppendAttr(
-        builder, NFQA_PACKET_HDR, &packet_hdr, (uint16_t) sizeof(packet_hdr));
+    return nfqueueBuilderAppendAttr(builder, NFQA_PACKET_HDR, &packet_hdr, (uint16_t) sizeof(packet_hdr));
 }
 
 static struct nfattr *nfqueueBuilderAppendPayload(nfqueue_message_builder_t *builder, const uint8_t *payload,
@@ -227,20 +225,19 @@ static void testDuplicateAttributesRejected(void)
 
 static void testShortAttributesRejected(void)
 {
-    uint8_t                       message[kCaptureLinuxNetfilterReadBufferSize];
-    uint8_t                       payload[16];
-    nfqueue_message_builder_t     builder;
-    netfilter_packet_view_t       view;
-    struct nfqnl_msg_packet_hdr   packet_hdr;
-    uint32_t                      cap_len = htonl((uint32_t) sizeof(payload));
+    uint8_t                     message[kCaptureLinuxNetfilterReadBufferSize];
+    uint8_t                     payload[16];
+    nfqueue_message_builder_t   builder;
+    netfilter_packet_view_t     view;
+    struct nfqnl_msg_packet_hdr packet_hdr;
+    uint32_t                    cap_len = htonl((uint32_t) sizeof(payload));
 
     fillPayload(payload, sizeof(payload));
     memoryZero(&packet_hdr, sizeof(packet_hdr));
     packet_hdr.packet_id = htonl(kTestPacketId);
 
     nfqueueBuilderInit(&builder, message, sizeof(message));
-    nfqueueBuilderAppendAttr(
-        &builder, NFQA_PACKET_HDR, &packet_hdr, (uint16_t) (sizeof(packet_hdr) - 1U));
+    nfqueueBuilderAppendAttr(&builder, NFQA_PACKET_HDR, &packet_hdr, (uint16_t) (sizeof(packet_hdr) - 1U));
     nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
     require(parseBuilt(&builder, &view) == kNetfilterPacketParseMalformed, "short packet header accepted");
     require(! view.has_packet_id, "short packet header produced a packet id");
@@ -266,7 +263,7 @@ static void testMalformedBoundsRejected(void)
 
     nfqueueBuilderInit(&builder, message, sizeof(message));
     nfqueueBuilderAppendPacketHeader(&builder);
-    payload_attr = nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
+    payload_attr          = nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
     payload_attr->nfa_len = (uint16_t) NFA_LENGTH(200);
     require(parseBuilt(&builder, &view) == kNetfilterPacketParseMalformed,
             "attribute extending beyond message accepted");
@@ -274,8 +271,8 @@ static void testMalformedBoundsRejected(void)
 
     nfqueueBuilderInit(&builder, message, sizeof(message));
     nfqueueBuilderAppendPacketHeader(&builder);
-    payload_attr = nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
-    original_len = nfqueueBuilderLen(&builder);
+    payload_attr           = nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
+    original_len           = nfqueueBuilderLen(&builder);
     builder.nlh->nlmsg_len = (uint32_t) (original_len - 4U);
     discard payload_attr;
     require(parseBuilt(&builder, &view) == kNetfilterPacketParseMalformed,
@@ -323,8 +320,7 @@ static void testPrefixPacketIdRecovery(void)
 
     size_t complete_packet_header_prefix =
         nfqueueAttrOffset() + (size_t) NFA_ALIGN(NFA_LENGTH(sizeof(struct nfqnl_msg_packet_hdr)));
-    require(captureLinuxNetfilterTryReadPacketIdFromPrefix(
-                message, complete_packet_header_prefix, &packet_id),
+    require(captureLinuxNetfilterTryReadPacketIdFromPrefix(message, complete_packet_header_prefix, &packet_id),
             "complete prefix did not recover packet id");
     require(packet_id == htonl(kTestPacketId), "prefix packet id byte order changed");
 

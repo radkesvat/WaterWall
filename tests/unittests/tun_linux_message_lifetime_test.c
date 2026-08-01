@@ -4,21 +4,16 @@
 // syscalls and thread creation are wrapped, while the production BringUp,
 // BringDown, queued-message delivery, and cleanup paths run unchanged.
 
+#include "wwapi.h"
+
 #include "devices/tun/tun_linux_internal.h"
-#include "global_state.h"
-#include "worker.h"
 #include "worker_messages.h"
 
-#include <errno.h>
 #include <fcntl.h>
 #include <linux/if.h>
 #include <linux/if_tun.h>
 #include <poll.h>
 #include <pthread.h>
-#include <stdarg.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/wait.h>

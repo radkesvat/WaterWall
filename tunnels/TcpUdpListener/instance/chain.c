@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "managers/node_manager.h"
 
 static tunnel_t *tcpudplistenerGetNextTunnel(tunnel_t *t)
 {

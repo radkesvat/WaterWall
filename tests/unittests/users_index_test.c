@@ -15,10 +15,7 @@
  * unconditionally so the test is still meaningful on platforms without --wrap.
  */
 
-#include "objects/users.h"
-
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 #if defined(WCRYPTO_TEST_LINKER_WRAP)
 static size_t g_sha224_calls;

@@ -2,9 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include <ctype.h>
-#include <errno.h>
-
 #ifndef OS_WIN
 #include <arpa/inet.h>
 #endif

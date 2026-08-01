@@ -1,7 +1,6 @@
 #include "trick.h"
 
 #include "loggers/network_logger.h"
-#include "net/wchecksum.h"
 
 static bool protoswapSetProtocol(sbuf_t *buf, uint8_t new_protocol)
 {

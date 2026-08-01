@@ -13,17 +13,8 @@
  *   - a second stop signal forces an immediate exit while cleanup is blocked.
  */
 
-#include "global_state.h"
-#include "managers/signal_manager.h"
-#include "wloop.h"
-#include "worker.h"
-#include "wthread.h"
+#include "wwapi.h"
 
-#include <signal.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
 

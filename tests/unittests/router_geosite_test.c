@@ -2,8 +2,6 @@
 #include "modules/destination_domain/destination_domain.h"
 
 #include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <unistd.h>
 
 static void require(bool condition, const char *message)
@@ -200,8 +198,8 @@ static void *geositeThreadSafetyReader(void *userdata)
                                      probe->list, "asset-cdn.example", stringLength("asset-cdn.example"));
         probe->ok =
             probe->ok && ! routerGeositeCompiledListMatches(probe->list, "badazure.com", stringLength("badazure.com"));
-        probe->ok = probe->ok && routerGeositeCompiledListMatches(
-                                     probe->list, "ignored.example", stringLength("ignored.example"));
+        probe->ok = probe->ok &&
+                    routerGeositeCompiledListMatches(probe->list, "ignored.example", stringLength("ignored.example"));
     }
 
     return NULL;

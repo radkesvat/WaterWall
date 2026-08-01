@@ -4,9 +4,6 @@
 #include "tricks/sniblender/trick.h"
 #include "wchecksum.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 enum
 {
     kCapturedPackets = 32,

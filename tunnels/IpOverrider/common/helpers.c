@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "net/wchecksum.h"
 
 static bool ipoverriderShouldApply(const ipoverrider_tstate_t *state, const sbuf_t *buf)
 {

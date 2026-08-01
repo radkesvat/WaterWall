@@ -1,6 +1,5 @@
 #include "wlibc.h"
-
-#include <stdio.h>
+#include "wwapi.h"
 
 int main(void)
 {

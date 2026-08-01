@@ -1,7 +1,5 @@
 #include "devices/capture/capture_lifecycle.h"
-
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 #define kUntouchedSourceState ((capture_lifecycle_state_t) 0x7F)
 

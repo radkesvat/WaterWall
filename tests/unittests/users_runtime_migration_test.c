@@ -1,7 +1,5 @@
 #include "loggers/internal_logger.h"
-#include "objects/users.h"
-#include "utils/json_helpers.h"
-#include "wthread.h"
+#include "wwapi.h"
 
 #if defined(WCRYPTO_TEST_LINKER_WRAP)
 typedef enum crypto_failure_injection_e

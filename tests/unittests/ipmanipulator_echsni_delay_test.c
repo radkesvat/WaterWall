@@ -12,9 +12,6 @@
 #include "iowatcher.h"
 #include "tricks/echsnitrick/trick.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 enum
 {
     kMaxTimedMessages  = 64,

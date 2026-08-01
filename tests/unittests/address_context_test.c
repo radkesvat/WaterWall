@@ -1,7 +1,5 @@
 #include "address_context.h"
-
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 static void require(bool condition, const char *message)
 {
@@ -49,12 +47,12 @@ static void testSockaddrIpv4HashIgnoresUnrelatedBytes(void)
     memorySet(&first, 0xAA, sizeof(first));
     memorySet(&second, 0x55, sizeof(second));
 
-    first.sin.sin_family       = AF_INET;
-    second.sin.sin_family      = AF_INET;
-    first.sin.sin_port         = htons(5353);
-    second.sin.sin_port        = first.sin.sin_port;
+    first.sin.sin_family      = AF_INET;
+    second.sin.sin_family     = AF_INET;
+    first.sin.sin_port        = htons(5353);
+    second.sin.sin_port       = first.sin.sin_port;
     first.sin.sin_addr.s_addr = PP_HTONL(LWIP_MAKEU32(192, 0, 2, 10));
-    second.sin.sin_addr        = first.sin.sin_addr;
+    second.sin.sin_addr       = first.sin.sin_addr;
 
     require(sockaddrCalcHashWithPort(&first) == sockaddrCalcHashWithPort(&second),
             "IPv4 endpoint hash includes unrelated sockaddr bytes");
@@ -62,7 +60,8 @@ static void testSockaddrIpv4HashIgnoresUnrelatedBytes(void)
 
 static void testSockaddrIpv6HashUsesOnlyEndpointFields(void)
 {
-    struct {
+    struct
+    {
         sockaddr_u addr;
         uint8_t    trailing[sizeof(struct sockaddr_in6)];
     } first, second;

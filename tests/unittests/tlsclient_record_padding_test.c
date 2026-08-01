@@ -1,11 +1,7 @@
+#include "wwapi.h"
+
 #include <openssl/err.h>
 #include <openssl/ssl.h>
-
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 typedef struct padding_test_state_s
 {

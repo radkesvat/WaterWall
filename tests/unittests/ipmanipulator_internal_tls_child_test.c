@@ -1,11 +1,6 @@
 #include "IpManipulator/interface.h"
 #include "IpManipulator/structure.h"
 
-#include "global_state.h"
-
-#include <stdio.h>
-#include <stdlib.h>
-
 static void require(bool condition, const char *message)
 {
     if (! condition)

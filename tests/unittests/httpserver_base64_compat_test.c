@@ -1,7 +1,5 @@
 #include "HttpServer/http_base64.h"
-
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 static void require(bool condition, const char *message)
 {

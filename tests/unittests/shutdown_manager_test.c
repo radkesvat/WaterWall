@@ -15,16 +15,8 @@
  *   - a request that cannot be handed off reports failure to its caller.
  */
 
-#include "global_state.h"
-#include "managers/signal_manager.h"
-#include "wloop.h"
-#include "worker.h"
-#include "wthread.h"
+#include "wwapi.h"
 
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
 

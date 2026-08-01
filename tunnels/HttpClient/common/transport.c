@@ -3,11 +3,6 @@
 #include "loggers/network_logger.h"
 #include "utils/sha1.h"
 
-#include <ctype.h>
-#include <inttypes.h>
-#include <limits.h>
-#include <stdarg.h>
-
 typedef struct httpclient_h1_response_info_s
 {
     int     status_code;

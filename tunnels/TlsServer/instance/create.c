@@ -1,9 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "managers/node_manager.h"
-
-#include <stdlib.h>
 
 enum
 {

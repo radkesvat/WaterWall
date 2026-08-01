@@ -1,9 +1,5 @@
-#include "wevent.h"
 #include "wsocket.h"
-
-#include <limits.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 static void require(bool condition, const char *message)
 {

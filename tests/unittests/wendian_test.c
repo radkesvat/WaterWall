@@ -1,14 +1,12 @@
 #include "wlibc.h"
 
-
 enum
 {
-    kWireLength = 17,
+    kWireLength  = 17,
     kStorageSize = 32,
 };
 
-typedef union test_storage_u
-{
+typedef union test_storage_u {
     uint64_t alignment;
     uint8_t  bytes[kStorageSize];
 } test_storage_t;
@@ -25,7 +23,14 @@ static void require(bool condition, const char *message)
 static void testHtonll64(void)
 {
     static const uint8_t network_order[8] = {
-        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x01,
+        0x02,
+        0x03,
+        0x04,
+        0x05,
+        0x06,
+        0x07,
+        0x08,
     };
     const uint64_t host_value = UINT64_C(0x0102030405060708);
 
@@ -59,10 +64,23 @@ static void testHtonll64(void)
 static void testBigEndianUnalignedAccess(void)
 {
     static const uint8_t expected[kWireLength] = {
-        0x12, 0x34,
-        0x56, 0x78, 0x9A,
-        0xBC, 0xDE, 0xF0, 0x12,
-        0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x12,
+        0x12,
+        0x34,
+        0x56,
+        0x78,
+        0x9A,
+        0xBC,
+        0xDE,
+        0xF0,
+        0x12,
+        0x34,
+        0x56,
+        0x78,
+        0x9A,
+        0xBC,
+        0xDE,
+        0xF0,
+        0x12,
     };
     test_storage_t storage = {0};
     uint8_t       *start   = storage.bytes + 1;
@@ -97,10 +115,23 @@ static void testBigEndianUnalignedAccess(void)
 static void testLittleEndianUnalignedAccess(void)
 {
     static const uint8_t expected[kWireLength] = {
-        0x34, 0x12,
-        0x9A, 0x78, 0x56,
-        0x12, 0xF0, 0xDE, 0xBC,
-        0x12, 0xF0, 0xDE, 0xBC, 0x9A, 0x78, 0x56, 0x34,
+        0x34,
+        0x12,
+        0x9A,
+        0x78,
+        0x56,
+        0x12,
+        0xF0,
+        0xDE,
+        0xBC,
+        0x12,
+        0xF0,
+        0xDE,
+        0xBC,
+        0x9A,
+        0x78,
+        0x56,
+        0x34,
     };
     test_storage_t storage = {0};
     uint8_t       *start   = storage.bytes + 1;

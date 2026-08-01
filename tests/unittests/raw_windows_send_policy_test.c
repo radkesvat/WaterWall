@@ -1,8 +1,5 @@
 #include "raw_windows_send_policy.h"
-
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 static void require(bool condition, const char *message)
 {

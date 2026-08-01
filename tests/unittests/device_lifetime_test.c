@@ -1,11 +1,9 @@
 #include "device_reader_session.h"
+#include "wwapi.h"
 
 #include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
 
 #if ! defined(NDEBUG) && ! defined(OS_WIN)
-#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif

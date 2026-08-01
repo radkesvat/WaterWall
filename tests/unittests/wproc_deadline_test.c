@@ -4,17 +4,11 @@
 // regression repeats its timing check to distinguish the bounded drain pass.
 // Every case ends by proving the process has no reapable children left.
 
-#include "wproc.h"
+#include "wwapi.h"
 
-#include <errno.h>
 #include <fcntl.h>
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
-#include <time.h>
 #include <unistd.h>
 
 enum

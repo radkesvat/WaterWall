@@ -1,9 +1,5 @@
 #include "devices/device_flow_affinity.h"
-
-#include "global_state.h"
-
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 enum
 {

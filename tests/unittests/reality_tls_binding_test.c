@@ -1,21 +1,15 @@
 #include "RealityServer/structure.h"
 
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
 enum
 {
-    kHandshakeClientHello = 0x01,
-    kHandshakeServerHello = 0x02,
-    kHandshakeCertificate = 0x0b,
-    kHandshakeServerHelloDone = 0x0e,
+    kHandshakeClientHello       = 0x01,
+    kHandshakeServerHello       = 0x02,
+    kHandshakeCertificate       = 0x0b,
+    kHandshakeServerHelloDone   = 0x0e,
     kHandshakeClientKeyExchange = 0x10,
-    kHandshakeFinished = 0x14,
-    kRecordHandshake      = 0x16,
-    kRecordChangeCipherSpec = 0x14,
+    kHandshakeFinished          = 0x14,
+    kRecordHandshake            = 0x16,
+    kRecordChangeCipherSpec     = 0x14,
 };
 
 static const uint8_t kHelloRetryRequestRandom[32] = {
@@ -38,8 +32,8 @@ static void   initializeGcmTracker(realityserver_tls12_record_tracker_t *tracker
 static size_t buildClientHelloBody(uint8_t *out)
 {
     uint8_t *p = out;
-    *p++ = 0x03;
-    *p++ = 0x03;
+    *p++       = 0x03;
+    *p++       = 0x03;
     for (uint8_t i = 0; i < 32; ++i)
     {
         *p++ = i;
@@ -66,8 +60,8 @@ static size_t buildClientHelloBody(uint8_t *out)
 static size_t buildServerHelloBody(uint8_t *out, const uint8_t random[32], bool tls13)
 {
     uint8_t *p = out;
-    *p++ = 0x03;
-    *p++ = 0x03;
+    *p++       = 0x03;
+    *p++       = 0x03;
     memcpy(p, random, 32);
     p += 32;
     *p++ = 0;
@@ -113,7 +107,7 @@ static size_t buildPlainHandshakeRecord(uint8_t type, uint8_t *out)
 {
     const uint8_t body = 0xa5;
     uint8_t       handshake[5];
-    size_t handshake_len = buildHandshake(type, &body, sizeof(body), handshake);
+    size_t        handshake_len = buildHandshake(type, &body, sizeof(body), handshake);
     return buildRecord(kRecordHandshake, handshake, handshake_len, out);
 }
 
@@ -161,13 +155,11 @@ static void testProgressiveTlsRecordPrefixClassification(void)
         {{0x16, 0x03, 0x03, 0x48, 0x01}, 5, kRealityServerTlsRecordPrefixInvalid},
     };
 
-    require(realityserverClassifyTlsRecordPrefix(NULL, 0) ==
-                kRealityServerTlsRecordPrefixNeedMore,
+    require(realityserverClassifyTlsRecordPrefix(NULL, 0) == kRealityServerTlsRecordPrefixNeedMore,
             "empty TLS record prefix was not classified as incomplete");
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
     {
-        require(realityserverClassifyTlsRecordPrefix(cases[i].bytes, cases[i].length) ==
-                    cases[i].expected,
+        require(realityserverClassifyTlsRecordPrefix(cases[i].bytes, cases[i].length) == cases[i].expected,
                 "progressive TLS record prefix classification mismatch");
     }
 
@@ -180,19 +172,15 @@ static void testProgressiveTlsRecordPrefixClassification(void)
     const size_t invalid_lengths[] = {1, 2, 3, 5};
     for (size_t i = 0; i < sizeof(invalid_lengths) / sizeof(invalid_lengths[0]); ++i)
     {
-        realityserver_tls_parser_t parser;
+        realityserver_tls_parser_t  parser;
         realityserver_tls_capture_t capture = {0};
         realityserverTlsParserInitialize(&parser, kRealityServerTlsParserClientHello);
         for (size_t j = 0; j + 1 < invalid_lengths[i]; ++j)
         {
-            require(realityserverTlsParserFeed(&parser, &invalid_prefixes[i][j], 1, &capture) &&
-                        ! parser.failed,
+            require(realityserverTlsParserFeed(&parser, &invalid_prefixes[i][j], 1, &capture) && ! parser.failed,
                     "TLS parser rejected a prefix before invalidity was proven");
         }
-        require(! realityserverTlsParserFeed(&parser,
-                                              &invalid_prefixes[i][invalid_lengths[i] - 1],
-                                              1,
-                                              &capture) &&
+        require(! realityserverTlsParserFeed(&parser, &invalid_prefixes[i][invalid_lengths[i] - 1], 1, &capture) &&
                     parser.failed,
                 "TLS parser did not fail on the first impossible prefix byte");
         realityserverTlsParserDestroy(&parser);
@@ -201,12 +189,11 @@ static void testProgressiveTlsRecordPrefixClassification(void)
     const uint8_t plausible_prefix[] = {0x16, 0x03, 0x04, 0x40};
     for (size_t length = 1; length <= sizeof(plausible_prefix); ++length)
     {
-        realityserver_tls_parser_t parser;
+        realityserver_tls_parser_t  parser;
         realityserver_tls_capture_t capture = {0};
         realityserverTlsParserInitialize(&parser, kRealityServerTlsParserClientHello);
-        require(realityserverTlsParserFeed(&parser, plausible_prefix, length, &capture) &&
-                    ! parser.failed && ! parser.complete &&
-                    parser.record_header_length == length,
+        require(realityserverTlsParserFeed(&parser, plausible_prefix, length, &capture) && ! parser.failed &&
+                    ! parser.complete && parser.record_header_length == length,
                 "TLS parser rejected a plausible fragmented record header");
         realityserverTlsParserDestroy(&parser);
     }
@@ -217,17 +204,16 @@ static void testClientHelloEveryCallbackSplit(void)
     uint8_t body[128];
     uint8_t handshake[160];
     uint8_t record[192];
-    size_t body_len = buildClientHelloBody(body);
-    size_t hs_len   = buildHandshake(kHandshakeClientHello, body, body_len, handshake);
-    size_t record_len = buildRecord(kRecordHandshake, handshake, hs_len, record);
+    size_t  body_len   = buildClientHelloBody(body);
+    size_t  hs_len     = buildHandshake(kHandshakeClientHello, body, body_len, handshake);
+    size_t  record_len = buildRecord(kRecordHandshake, handshake, hs_len, record);
 
     for (size_t split = 0; split <= record_len; ++split)
     {
-        realityserver_tls_parser_t parser;
+        realityserver_tls_parser_t  parser;
         realityserver_tls_capture_t capture = {0};
         realityserverTlsParserInitialize(&parser, kRealityServerTlsParserClientHello);
-        require(realityserverTlsParserFeed(&parser, record, split, &capture),
-                "ClientHello first split feed failed");
+        require(realityserverTlsParserFeed(&parser, record, split, &capture), "ClientHello first split feed failed");
         require(realityserverTlsParserFeed(&parser, record + split, record_len - split, &capture),
                 "ClientHello second split feed failed");
         require(parser.complete, "ClientHello parser did not complete across callback split");
@@ -235,13 +221,12 @@ static void testClientHelloEveryCallbackSplit(void)
         realityserverTlsParserDestroy(&parser);
     }
 
-    realityserver_tls_parser_t parser;
+    realityserver_tls_parser_t  parser;
     realityserver_tls_capture_t capture = {0};
     realityserverTlsParserInitialize(&parser, kRealityServerTlsParserClientHello);
     for (size_t i = 0; i < record_len; ++i)
     {
-        require(realityserverTlsParserFeed(&parser, record + i, 1, &capture),
-                "one-byte ClientHello feed failed");
+        require(realityserverTlsParserFeed(&parser, record + i, 1, &capture), "one-byte ClientHello feed failed");
     }
     require(parser.complete, "one-byte ClientHello parser did not complete");
     requireClientCapture(&capture);
@@ -253,14 +238,14 @@ static void testClientHelloSpansRecords(void)
     uint8_t body[128];
     uint8_t handshake[160];
     uint8_t records[256];
-    size_t body_len = buildClientHelloBody(body);
-    size_t hs_len   = buildHandshake(kHandshakeClientHello, body, body_len, handshake);
+    size_t  body_len = buildClientHelloBody(body);
+    size_t  hs_len   = buildHandshake(kHandshakeClientHello, body, body_len, handshake);
 
     for (size_t split = 1; split < hs_len; ++split)
     {
         size_t first_len  = buildRecord(kRecordHandshake, handshake, split, records);
         size_t second_len = buildRecord(kRecordHandshake, handshake + split, hs_len - split, records + first_len);
-        realityserver_tls_parser_t parser;
+        realityserver_tls_parser_t  parser;
         realityserver_tls_capture_t capture = {0};
         realityserverTlsParserInitialize(&parser, kRealityServerTlsParserClientHello);
         require(realityserverTlsParserFeed(&parser, records, first_len + second_len, &capture),
@@ -291,8 +276,7 @@ static void testServerHelloEveryCallbackSplit(void)
         realityserver_tls_parser_t  parser;
         realityserver_tls_capture_t capture = {0};
         realityserverTlsParserInitialize(&parser, kRealityServerTlsParserServerHello);
-        require(realityserverTlsParserFeed(&parser, record, split, &capture),
-                "ServerHello first split feed failed");
+        require(realityserverTlsParserFeed(&parser, record, split, &capture), "ServerHello first split feed failed");
         require(realityserverTlsParserFeed(&parser, record + split, record_len - split, &capture),
                 "ServerHello second split feed failed");
         require(parser.complete, "ServerHello parser did not complete across callback split");
@@ -305,8 +289,7 @@ static void testServerHelloEveryCallbackSplit(void)
     realityserverTlsParserInitialize(&parser, kRealityServerTlsParserServerHello);
     for (size_t i = 0; i < record_len; ++i)
     {
-        require(realityserverTlsParserFeed(&parser, record + i, 1, &capture),
-                "one-byte ServerHello feed failed");
+        require(realityserverTlsParserFeed(&parser, record + i, 1, &capture), "one-byte ServerHello feed failed");
     }
     require(parser.complete, "one-byte ServerHello parser did not complete");
     requireServerCapture(&capture, 0x0304);
@@ -352,13 +335,13 @@ static void testTls13ServerHelloAndMultipleRecords(void)
     {
         random[i] = (uint8_t) (0x80U + i);
     }
-    size_t body_len = buildServerHelloBody(body, random, true);
-    size_t hs_len   = buildHandshake(kHandshakeServerHello, body, body_len, handshake);
-    const uint8_t ccs = 1;
-    size_t record_len = buildRecord(kRecordChangeCipherSpec, &ccs, 1, records);
+    size_t        body_len   = buildServerHelloBody(body, random, true);
+    size_t        hs_len     = buildHandshake(kHandshakeServerHello, body, body_len, handshake);
+    const uint8_t ccs        = 1;
+    size_t        record_len = buildRecord(kRecordChangeCipherSpec, &ccs, 1, records);
     record_len += buildRecord(kRecordHandshake, handshake, hs_len, records + record_len);
 
-    realityserver_tls_parser_t parser;
+    realityserver_tls_parser_t  parser;
     realityserver_tls_capture_t capture = {0};
     realityserverTlsParserInitialize(&parser, kRealityServerTlsParserServerHello);
     require(realityserverTlsParserFeed(&parser, records, record_len, &capture),
@@ -378,11 +361,11 @@ static void testTls12ServerHello(void)
     {
         random[i] = (uint8_t) (0x80U + i);
     }
-    size_t body_len = buildServerHelloBody(body, random, false);
-    size_t hs_len   = buildHandshake(kHandshakeServerHello, body, body_len, handshake);
+    size_t body_len   = buildServerHelloBody(body, random, false);
+    size_t hs_len     = buildHandshake(kHandshakeServerHello, body, body_len, handshake);
     size_t record_len = buildRecord(kRecordHandshake, handshake, hs_len, record);
 
-    realityserver_tls_parser_t parser;
+    realityserver_tls_parser_t  parser;
     realityserver_tls_capture_t capture = {0};
     realityserverTlsParserInitialize(&parser, kRealityServerTlsParserServerHello);
     require(realityserverTlsParserFeed(&parser, record, record_len, &capture), "TLS 1.2 ServerHello feed failed");
@@ -401,18 +384,18 @@ static void testHelloRetryRequestWaitsForFinal(void)
         final_random[i] = (uint8_t) (0x80U + i);
     }
 
-    size_t body_len = buildServerHelloBody(body, kHelloRetryRequestRandom, true);
-    size_t hs_len   = buildHandshake(kHandshakeServerHello, body, body_len, handshake);
+    size_t body_len  = buildServerHelloBody(body, kHelloRetryRequestRandom, true);
+    size_t hs_len    = buildHandshake(kHandshakeServerHello, body, body_len, handshake);
     size_t first_len = buildRecord(kRecordHandshake, handshake, hs_len, records);
 
-    realityserver_tls_parser_t parser;
+    realityserver_tls_parser_t  parser;
     realityserver_tls_capture_t capture = {0};
     realityserverTlsParserInitialize(&parser, kRealityServerTlsParserServerHello);
     require(realityserverTlsParserFeed(&parser, records, first_len, &capture), "HelloRetryRequest feed failed");
     require(! parser.complete && ! capture.server_ready, "HelloRetryRequest must not finalize binding");
 
-    body_len = buildServerHelloBody(body, final_random, true);
-    hs_len   = buildHandshake(kHandshakeServerHello, body, body_len, handshake);
+    body_len          = buildServerHelloBody(body, final_random, true);
+    hs_len            = buildHandshake(kHandshakeServerHello, body, body_len, handshake);
     size_t second_len = buildRecord(kRecordHandshake, handshake, hs_len, records + first_len);
     require(realityserverTlsParserFeed(&parser, records + first_len, second_len, &capture),
             "final ServerHello after HRR failed");
@@ -426,13 +409,13 @@ static void testMalformedAndIncompleteInputs(void)
     uint8_t body[128];
     uint8_t handshake[160];
     uint8_t record[192];
-    size_t body_len = buildClientHelloBody(body);
-    body[41] = 0xff;
-    body[42] = 0xff;
-    size_t hs_len = buildHandshake(kHandshakeClientHello, body, body_len, handshake);
+    size_t  body_len  = buildClientHelloBody(body);
+    body[41]          = 0xff;
+    body[42]          = 0xff;
+    size_t hs_len     = buildHandshake(kHandshakeClientHello, body, body_len, handshake);
     size_t record_len = buildRecord(kRecordHandshake, handshake, hs_len, record);
 
-    realityserver_tls_parser_t parser;
+    realityserver_tls_parser_t  parser;
     realityserver_tls_capture_t capture = {0};
     realityserverTlsParserInitialize(&parser, kRealityServerTlsParserClientHello);
     require(! realityserverTlsParserFeed(&parser, record, record_len, &capture),
@@ -441,23 +424,23 @@ static void testMalformedAndIncompleteInputs(void)
     realityserverTlsParserDestroy(&parser);
 
     const uint8_t oversized[] = {0x16, 0x03, 0x03, 0x00, 0x04, 0x01, 0x01, 0x00, 0x00};
-    capture = (realityserver_tls_capture_t) {0};
+    capture                   = (realityserver_tls_capture_t) {0};
     realityserverTlsParserInitialize(&parser, kRealityServerTlsParserClientHello);
     require(! realityserverTlsParserFeed(&parser, oversized, sizeof(oversized), &capture),
             "oversized handshake length must fail");
     realityserverTlsParserDestroy(&parser);
 
     const uint8_t plaintext[] = "not tls";
-    capture = (realityserver_tls_capture_t) {0};
+    capture                   = (realityserver_tls_capture_t) {0};
     realityserverTlsParserInitialize(&parser, kRealityServerTlsParserClientHello);
     require(! realityserverTlsParserFeed(&parser, plaintext, sizeof(plaintext), &capture),
             "ordinary plaintext must fail TLS parsing");
     realityserverTlsParserDestroy(&parser);
 
-    body_len = buildClientHelloBody(body);
-    hs_len   = buildHandshake(kHandshakeClientHello, body, body_len, handshake);
+    body_len   = buildClientHelloBody(body);
+    hs_len     = buildHandshake(kHandshakeClientHello, body, body_len, handshake);
     record_len = buildRecord(kRecordHandshake, handshake, hs_len, record);
-    capture = (realityserver_tls_capture_t) {0};
+    capture    = (realityserver_tls_capture_t) {0};
     realityserverTlsParserInitialize(&parser, kRealityServerTlsParserClientHello);
     require(realityserverTlsParserFeed(&parser, record, record_len / 2, &capture),
             "incomplete ClientHello prefix should be retained");
@@ -468,10 +451,11 @@ static void testMalformedAndIncompleteInputs(void)
 static void testFailedParsingAndTrackingPreserveBinding(void)
 {
     realityserver_tls_capture_t capture = {
-        .binding = {
-            .tls_version  = kRealityV2Tls12,
-            .cipher_suite = 0xC02F,
-        },
+        .binding =
+            {
+                .tls_version  = kRealityV2Tls12,
+                .cipher_suite = 0xC02F,
+            },
         .client_legacy_version = kRealityV2Tls12,
         .client_ready          = true,
         .server_ready          = true,
@@ -486,8 +470,8 @@ static void testFailedParsingAndTrackingPreserveBinding(void)
     uint8_t body[128];
     uint8_t handshake[160];
     uint8_t record[192];
-    size_t body_len = buildClientHelloBody(body);
-    body[0]         = 0x02;
+    size_t  body_len     = buildClientHelloBody(body);
+    body[0]              = 0x02;
     size_t handshake_len = buildHandshake(kHandshakeClientHello, body, body_len, handshake);
     size_t record_len    = buildRecord(kRecordHandshake, handshake, handshake_len, record);
 
@@ -500,14 +484,14 @@ static void testFailedParsingAndTrackingPreserveBinding(void)
     realityserverTlsParserDestroy(&parser);
 
     realityserver_lstate_t ls = {0};
-    ls.tls_capture             = expected;
+    ls.tls_capture            = expected;
     initializeGcmTracker(&ls.client_record_tracker);
     const uint8_t ccs = 1;
-    record_len = buildRecord(kRecordChangeCipherSpec, &ccs, sizeof(ccs), record);
+    record_len        = buildRecord(kRecordChangeCipherSpec, &ccs, sizeof(ccs), record);
     require(realityserverTls12RecordTrackerFeed(&ls.client_record_tracker, record, record_len),
             "binding-preservation tracker CCS failed");
     uint8_t malformed_body[23] = {0};
-    record_len = buildRecord(kRecordHandshake, malformed_body, sizeof(malformed_body), record);
+    record_len                 = buildRecord(kRecordHandshake, malformed_body, sizeof(malformed_body), record);
     require(! realityserverTls12RecordTrackerFeed(&ls.client_record_tracker, record, record_len) &&
                 ls.client_record_tracker.failed,
             "malformed protected record must fail tracking");
@@ -527,11 +511,9 @@ static size_t buildProtectedGcmRecord(uint64_t explicit_nonce, uint8_t *out)
 static void initializeGcmTracker(realityserver_tls12_record_tracker_t *tracker)
 {
     reality_v2_record_profile_t profile;
-    require(realityV2SelectRecordProfile(kRealityV2Tls12, 0xC02F, &profile),
-            "failed to select tracker GCM profile");
+    require(realityV2SelectRecordProfile(kRealityV2Tls12, 0xC02F, &profile), "failed to select tracker GCM profile");
     realityserverTls12RecordTrackerInitialize(tracker);
-    require(realityserverTls12RecordTrackerSetProfile(tracker, &profile),
-            "failed to configure tracker GCM profile");
+    require(realityserverTls12RecordTrackerSetProfile(tracker, &profile), "failed to configure tracker GCM profile");
 }
 
 static void feedPlainHandshake(realityserver_tls12_record_tracker_t *tracker, uint8_t handshake_type,
@@ -550,8 +532,7 @@ static void feedChangeCipherSpec(realityserver_tls12_record_tracker_t *tracker, 
     require(realityserverTls12RecordTrackerFeed(tracker, record, record_len), message);
 }
 
-static void feedProtectedRecord(realityserver_tls12_record_tracker_t *tracker, uint64_t nonce,
-                                const char *message)
+static void feedProtectedRecord(realityserver_tls12_record_tracker_t *tracker, uint64_t nonce, const char *message)
 {
     uint8_t record[64];
     size_t  record_len = buildProtectedGcmRecord(nonce, record);
@@ -577,8 +558,8 @@ static void testTls12PairedEpochActivationAndFullHandshakeOrdering(void)
     require(client.protected_epoch && ! server.protected_epoch,
             "client CCS must activate only the client protected epoch");
     feedProtectedRecord(&client, 0, "full handshake client Finished tracking failed");
-    require(client.saw_protected_record && client.next_sequence == 1 &&
-                ! server.saw_protected_record && server.next_sequence == 0,
+    require(client.saw_protected_record && client.next_sequence == 1 && ! server.saw_protected_record &&
+                server.next_sequence == 0,
             "client Finished must advance only the client sequence");
 
     feedChangeCipherSpec(&server, "full handshake server CCS tracking failed");
@@ -603,14 +584,13 @@ static void testTls12ResumedHandshakeOrdering(void)
     feedPlainHandshake(&server, kHandshakeServerHello, "resumed handshake ServerHello tracking failed");
     feedChangeCipherSpec(&server, "resumed handshake server CCS tracking failed");
     feedProtectedRecord(&server, 0, "resumed handshake server Finished tracking failed");
-    require(server.protected_epoch && server.next_sequence == 1 &&
-                ! client.protected_epoch && client.next_sequence == 0,
+    require(server.protected_epoch && server.next_sequence == 1 && ! client.protected_epoch &&
+                client.next_sequence == 0,
             "resumed server flight must activate and advance only the server epoch");
 
     feedChangeCipherSpec(&client, "resumed handshake client CCS tracking failed");
     feedProtectedRecord(&client, 0, "resumed handshake client Finished tracking failed");
-    require(client.protected_epoch && server.protected_epoch &&
-                client.next_sequence == 1 && server.next_sequence == 1,
+    require(client.protected_epoch && server.protected_epoch && client.next_sequence == 1 && server.next_sequence == 1,
             "resumed handshake Finished ordering produced the wrong paired sequences");
 
     realityserverTls12RecordTrackerDestroy(&client);
@@ -619,7 +599,7 @@ static void testTls12ResumedHandshakeOrdering(void)
 
 static void initializeAuthorizationState(realityserver_lstate_t *ls)
 {
-    *ls = (realityserver_lstate_t) {0};
+    *ls                                  = (realityserver_lstate_t) {0};
     ls->tls_capture.binding.tls_version  = kRealityV2Tls12;
     ls->tls_capture.binding.cipher_suite = 0xC02F;
     require(realityV2SelectRecordProfile(kRealityV2Tls12, 0xC02F, &ls->record_profile),
@@ -674,17 +654,17 @@ static void testTls12MissingFinishedRejectsAuthorization(void)
     ls.c2s_recv_seq = 1;
     require(realityserverFreezeTlsCamouflage(&ts, &ls),
             "authorization gate rejected complete TLS 1.2 Finished ordering");
-    require(ls.client_record_tracker.frozen && ls.server_record_tracker.frozen &&
-                ls.client_tls_sequence_base == 1 && ls.server_tls_sequence_base == 1,
+    require(ls.client_record_tracker.frozen && ls.server_record_tracker.frozen && ls.client_tls_sequence_base == 1 &&
+                ls.server_tls_sequence_base == 1,
             "successful authorization must freeze the expected directional sequence bases");
     destroyAuthorizationState(&ls);
 }
 
 static void testTls12RecordTrackerEveryCallbackSplit(void)
 {
-    uint8_t stream[128];
-    const uint8_t ccs = 1;
-    size_t stream_len = buildRecord(kRecordChangeCipherSpec, &ccs, 1, stream);
+    uint8_t       stream[128];
+    const uint8_t ccs        = 1;
+    size_t        stream_len = buildRecord(kRecordChangeCipherSpec, &ccs, 1, stream);
     stream_len += buildProtectedGcmRecord(0, stream + stream_len);
     stream_len += buildProtectedGcmRecord(1, stream + stream_len);
 
@@ -707,17 +687,13 @@ static void testTls12RecordTrackerEveryCallbackSplit(void)
     initializeGcmTracker(&tracker);
     for (size_t i = 0; i < stream_len; ++i)
     {
-        require(realityserverTls12RecordTrackerFeed(&tracker, stream + i, 1),
-                "one-byte TLS 1.2 tracker feed failed");
+        require(realityserverTls12RecordTrackerFeed(&tracker, stream + i, 1), "one-byte TLS 1.2 tracker feed failed");
     }
     require(tracker.next_sequence == 2 && tracker.last_record_sequence == 1,
             "one-byte TLS 1.2 tracker sequence mismatch");
-    uint8_t policy = 0;
+    uint8_t  policy       = 0;
     uint64_t counter_next = 0;
-    require(realityserverResolveGcmNoncePolicy(kRealityServerGcmNoncePolicyAuto,
-                                               &tracker,
-                                               &policy,
-                                               &counter_next) &&
+    require(realityserverResolveGcmNoncePolicy(kRealityServerGcmNoncePolicyAuto, &tracker, &policy, &counter_next) &&
                 policy == kRealityServerGcmNoncePolicySequence,
             "auto sequence policy resolution mismatch");
     realityserverTls12RecordTrackerDestroy(&tracker);
@@ -725,9 +701,9 @@ static void testTls12RecordTrackerEveryCallbackSplit(void)
 
 static void testTls12RecordTrackerPatternsAndProfiles(void)
 {
-    uint8_t records[128];
+    uint8_t       records[128];
     const uint8_t ccs = 1;
-    size_t len = buildRecord(kRecordChangeCipherSpec, &ccs, 1, records);
+    size_t        len = buildRecord(kRecordChangeCipherSpec, &ccs, 1, records);
     len += buildProtectedGcmRecord(100, records + len);
     len += buildProtectedGcmRecord(101, records + len);
 
@@ -736,24 +712,16 @@ static void testTls12RecordTrackerPatternsAndProfiles(void)
     require(realityserverTls12RecordTrackerFeed(&tracker, records, len), "counter-pattern tracker feed failed");
     require(! tracker.sequence_pattern && tracker.counter_pattern && tracker.last_explicit_nonce == 101,
             "counter-pattern inference mismatch");
-    uint8_t  policy = 0;
+    uint8_t  policy       = 0;
     uint64_t counter_next = 0;
-    require(realityserverResolveGcmNoncePolicy(kRealityServerGcmNoncePolicyAuto,
-                                               &tracker,
-                                               &policy,
-                                               &counter_next) &&
+    require(realityserverResolveGcmNoncePolicy(kRealityServerGcmNoncePolicyAuto, &tracker, &policy, &counter_next) &&
                 policy == kRealityServerGcmNoncePolicyCounter && counter_next == 102,
             "auto counter policy resolution mismatch");
-    require(realityserverResolveGcmNoncePolicy(kRealityServerGcmNoncePolicySequence,
-                                               &tracker,
-                                               &policy,
-                                               &counter_next) &&
-                policy == kRealityServerGcmNoncePolicySequence,
-            "explicit sequence policy resolution mismatch");
-    require(realityserverResolveGcmNoncePolicy(kRealityServerGcmNoncePolicyRandom,
-                                               &tracker,
-                                               &policy,
-                                               &counter_next) &&
+    require(
+        realityserverResolveGcmNoncePolicy(kRealityServerGcmNoncePolicySequence, &tracker, &policy, &counter_next) &&
+            policy == kRealityServerGcmNoncePolicySequence,
+        "explicit sequence policy resolution mismatch");
+    require(realityserverResolveGcmNoncePolicy(kRealityServerGcmNoncePolicyRandom, &tracker, &policy, &counter_next) &&
                 policy == kRealityServerGcmNoncePolicyRandom,
             "explicit random policy resolution mismatch");
     realityserverTls12RecordTrackerFreeze(&tracker);
@@ -768,10 +736,7 @@ static void testTls12RecordTrackerPatternsAndProfiles(void)
     initializeGcmTracker(&tracker);
     require(realityserverTls12RecordTrackerFeed(&tracker, records, len), "random-pattern tracker feed failed");
     require(! tracker.sequence_pattern && ! tracker.counter_pattern, "random-pattern inference mismatch");
-    require(realityserverResolveGcmNoncePolicy(kRealityServerGcmNoncePolicyAuto,
-                                               &tracker,
-                                               &policy,
-                                               &counter_next) &&
+    require(realityserverResolveGcmNoncePolicy(kRealityServerGcmNoncePolicyAuto, &tracker, &policy, &counter_next) &&
                 policy == kRealityServerGcmNoncePolicyRandom,
             "auto random policy resolution mismatch");
     realityserverTls12RecordTrackerDestroy(&tracker);
@@ -787,8 +752,7 @@ static void testTls12RecordTrackerPatternsAndProfiles(void)
     len = buildRecord(kRecordChangeCipherSpec, &ccs, 1, records);
     len += buildRecord(0x16, cbc_body, sizeof(cbc_body), records + len);
     require(realityserverTls12RecordTrackerFeed(&tracker, records, len), "CBC protected tracker feed failed");
-    require(tracker.saw_protected_record && tracker.next_sequence == 1,
-            "CBC protected tracker sequence mismatch");
+    require(tracker.saw_protected_record && tracker.next_sequence == 1, "CBC protected tracker sequence mismatch");
     realityserverTls12RecordTrackerDestroy(&tracker);
 
     reality_v2_record_profile_t chacha_profile;
@@ -800,10 +764,10 @@ static void testTls12RecordTrackerPatternsAndProfiles(void)
     require(realityserverTls12RecordTrackerSetProfile(&tracker, &chacha_profile),
             "failed to configure tracker TLS 1.2 ChaCha profile");
     uint8_t chacha_body[kRealityV2TagSize] = {0};
-    len = buildRecord(kRecordChangeCipherSpec, &ccs, 1, records);
+    len                                    = buildRecord(kRecordChangeCipherSpec, &ccs, 1, records);
     len += buildRecord(0x17, chacha_body, sizeof(chacha_body), records + len);
-    require(realityserverTls12RecordTrackerFeed(&tracker, records, len) &&
-                tracker.saw_protected_record && tracker.next_sequence == 1,
+    require(realityserverTls12RecordTrackerFeed(&tracker, records, len) && tracker.saw_protected_record &&
+                tracker.next_sequence == 1,
             "TLS 1.2 ChaCha protected tracker feed failed");
     realityserverTls12RecordTrackerDestroy(&tracker);
 
@@ -818,35 +782,31 @@ static void testTls12RecordTrackerPatternsAndProfiles(void)
 
 static void testTls12RecordTrackerFailures(void)
 {
-    uint8_t records[64];
-    const uint8_t ccs = 1;
-    size_t ccs_len = buildRecord(kRecordChangeCipherSpec, &ccs, 1, records);
+    uint8_t       records[64];
+    const uint8_t ccs     = 1;
+    size_t        ccs_len = buildRecord(kRecordChangeCipherSpec, &ccs, 1, records);
 
     realityserver_tls12_record_tracker_t tracker;
     initializeGcmTracker(&tracker);
     require(realityserverTls12RecordTrackerFeed(&tracker, records, ccs_len), "tracker CCS feed failed");
-    require(tracker.protected_epoch && ! tracker.saw_protected_record,
-            "CCS must activate an empty protected epoch");
+    require(tracker.protected_epoch && ! tracker.saw_protected_record, "CCS must activate an empty protected epoch");
     uint8_t short_body[23] = {0};
-    size_t short_len = buildRecord(0x16, short_body, sizeof(short_body), records);
+    size_t  short_len      = buildRecord(0x16, short_body, sizeof(short_body), records);
     require(! realityserverTls12RecordTrackerFeed(&tracker, records, short_len) && tracker.failed,
             "short protected GCM record must fail");
     realityserverTls12RecordTrackerDestroy(&tracker);
 
     initializeGcmTracker(&tracker);
-    uint8_t policy = 0;
+    uint8_t  policy       = 0;
     uint64_t counter_next = 0;
-    require(! realityserverResolveGcmNoncePolicy(kRealityServerGcmNoncePolicyCounter,
-                                                 &tracker,
-                                                 &policy,
-                                                 &counter_next),
+    require(! realityserverResolveGcmNoncePolicy(kRealityServerGcmNoncePolicyCounter, &tracker, &policy, &counter_next),
             "manual counter policy without a sample must fail");
     require(realityserverTls12RecordTrackerFeed(&tracker, records + short_len, 0),
             "zero-length tracker callback failed");
     ccs_len = buildRecord(kRecordChangeCipherSpec, &ccs, 1, records);
     require(realityserverTls12RecordTrackerFeed(&tracker, records, ccs_len), "exhaustion tracker CCS failed");
     tracker.next_sequence = UINT64_MAX;
-    size_t protected_len = buildProtectedGcmRecord(UINT64_MAX, records);
+    size_t protected_len  = buildProtectedGcmRecord(UINT64_MAX, records);
     require(! realityserverTls12RecordTrackerFeed(&tracker, records, protected_len) && tracker.failed,
             "TLS sequence exhaustion must fail before wrap");
     realityserverTls12RecordTrackerDestroy(&tracker);
@@ -863,32 +823,29 @@ static sbuf_t *createPooledBuffer(buffer_pool_t *pool, const uint8_t *data, size
 
 static void testLinestateDestroyClearsPartialTlsState(void)
 {
-    master_pool_t *large_master = masterpoolCreateWithCapacity(8);
-    master_pool_t *small_master = masterpoolCreateWithCapacity(8);
-    buffer_pool_t *pool = bufferpoolCreate(large_master, small_master, 8, 8192, 1024);
-    uint32_t aligned_size = tunnelGetCorrectAlignedLineStateSize(sizeof(realityserver_lstate_t));
-    realityserver_lstate_t *ls = memoryAllocateCacheAlignedZero(aligned_size);
+    master_pool_t          *large_master = masterpoolCreateWithCapacity(8);
+    master_pool_t          *small_master = masterpoolCreateWithCapacity(8);
+    buffer_pool_t          *pool         = bufferpoolCreate(large_master, small_master, 8, 8192, 1024);
+    uint32_t                aligned_size = tunnelGetCorrectAlignedLineStateSize(sizeof(realityserver_lstate_t));
+    realityserver_lstate_t *ls           = memoryAllocateCacheAlignedZero(aligned_size);
     require(ls != NULL, "failed to allocate aligned RealityServer line state");
     realityserverLinestateInitialize(ls, pool);
 
     const uint8_t queued_upstream[]   = {0x16, 0x03, 0x03, 0x00, 0x20, 0xaa};
     const uint8_t queued_downstream[] = {0x16, 0x03, 0x03, 0x00, 0x20, 0xbb};
-    bufferstreamPush(&ls->read_stream,
-                     createPooledBuffer(pool, queued_upstream, sizeof(queued_upstream)));
+    bufferstreamPush(&ls->read_stream, createPooledBuffer(pool, queued_upstream, sizeof(queued_upstream)));
     bufferstreamPush(&ls->downstream_tls_observe_stream,
                      createPooledBuffer(pool, queued_downstream, sizeof(queued_downstream)));
 
     uint8_t body[128];
     uint8_t handshake[160];
     uint8_t record[192];
-    size_t body_len = buildClientHelloBody(body);
-    size_t handshake_len = buildHandshake(kHandshakeClientHello, body, body_len, handshake);
-    size_t record_len = buildRecord(kRecordHandshake, handshake, handshake_len, record);
-    require(record_len > 12 &&
-                realityserverTlsParserFeed(&ls->client_hello_parser, record, 12, &ls->tls_capture),
+    size_t  body_len      = buildClientHelloBody(body);
+    size_t  handshake_len = buildHandshake(kHandshakeClientHello, body, body_len, handshake);
+    size_t  record_len    = buildRecord(kRecordHandshake, handshake, handshake_len, record);
+    require(record_len > 12 && realityserverTlsParserFeed(&ls->client_hello_parser, record, 12, &ls->tls_capture),
             "partial ClientHello accumulation failed");
-    require(ls->client_hello_parser.handshake_body != NULL,
-            "partial ClientHello did not allocate parser state");
+    require(ls->client_hello_parser.handshake_body != NULL, "partial ClientHello did not allocate parser state");
 
     uint8_t random[32];
     for (uint8_t i = 0; i < sizeof(random); ++i)
@@ -898,11 +855,9 @@ static void testLinestateDestroyClearsPartialTlsState(void)
     body_len      = buildServerHelloBody(body, random, false);
     handshake_len = buildHandshake(kHandshakeServerHello, body, body_len, handshake);
     record_len    = buildRecord(kRecordHandshake, handshake, handshake_len, record);
-    require(record_len > 12 &&
-                realityserverTlsParserFeed(&ls->server_hello_parser, record, 12, &ls->tls_capture),
+    require(record_len > 12 && realityserverTlsParserFeed(&ls->server_hello_parser, record, 12, &ls->tls_capture),
             "partial ServerHello accumulation failed");
-    require(ls->server_hello_parser.handshake_body != NULL,
-            "partial ServerHello did not allocate parser state");
+    require(ls->server_hello_parser.handshake_body != NULL, "partial ServerHello did not allocate parser state");
 
     reality_v2_record_profile_t profile;
     require(realityV2SelectRecordProfile(kRealityV2Tls12, 0xC02F, &profile),
@@ -914,8 +869,7 @@ static void testLinestateDestroyClearsPartialTlsState(void)
                 realityserverTls12RecordTrackerFeed(&ls->server_record_tracker, record, 2),
             "partial TLS record-header accumulation failed");
     require(ls->client_record_tracker.record_header_length == 3 &&
-                ls->server_record_tracker.record_header_length == 2 &&
-                bufferstreamGetBufLen(&ls->read_stream) != 0 &&
+                ls->server_record_tracker.record_header_length == 2 && bufferstreamGetBufLen(&ls->read_stream) != 0 &&
                 bufferstreamGetBufLen(&ls->downstream_tls_observe_stream) != 0,
             "line state did not retain all intended partial parser/tracker data");
     memorySet(ls->session_id, 0xa7, sizeof(ls->session_id));

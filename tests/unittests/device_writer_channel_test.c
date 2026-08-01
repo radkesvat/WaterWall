@@ -1,11 +1,8 @@
+#include "wwapi.h"
+
 #include "devices/device_writer_channel.h"
 
-#include "global_state.h"
-#include "wchan.h"
-
 #include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
 
 typedef struct test_env_s
 {

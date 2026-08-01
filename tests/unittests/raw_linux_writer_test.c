@@ -1,16 +1,12 @@
+#include "wwapi.h"
+
 #include "devices/raw/raw.h"
 #include "devices/raw/raw_linux_internal.h"
 #include "devices/raw/raw_linux_send_policy.h"
 
-#include "global_state.h"
-#include "wchan.h"
-
-#include <errno.h>
 #include <netinet/ip.h>
 #include <poll.h>
 #include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <sys/socket.h>
 #include <unistd.h>
 

@@ -14,7 +14,7 @@ static crypto_failure_injection_t crypto_failure_injection;
 wcrypto_status_t __real_wCryptoBlake2sInit(wcrypto_blake2s_ctx_t *ctx, size_t outlen, const unsigned char *key,
                                            size_t keylen);
 wcrypto_status_t __real_wCryptoBlake2s(unsigned char *out, size_t outlen, const unsigned char *key, size_t keylen,
-                                      const unsigned char *in, size_t inlen);
+                                       const unsigned char *in, size_t inlen);
 wcrypto_status_t __real_wCryptoX25519(unsigned char       out[WCRYPTO_X25519_KEY_SIZE],
                                       const unsigned char scalar[WCRYPTO_X25519_KEY_SIZE],
                                       const unsigned char point[WCRYPTO_X25519_KEY_SIZE]);
@@ -26,7 +26,7 @@ wcrypto_status_t __real_wCryptoChaCha20Poly1305Encrypt(unsigned char *dst, size_
 wcrypto_status_t __wrap_wCryptoBlake2sInit(wcrypto_blake2s_ctx_t *ctx, size_t outlen, const unsigned char *key,
                                            size_t keylen);
 wcrypto_status_t __wrap_wCryptoBlake2s(unsigned char *out, size_t outlen, const unsigned char *key, size_t keylen,
-                                      const unsigned char *in, size_t inlen);
+                                       const unsigned char *in, size_t inlen);
 wcrypto_status_t __wrap_wCryptoX25519(unsigned char       out[WCRYPTO_X25519_KEY_SIZE],
                                       const unsigned char scalar[WCRYPTO_X25519_KEY_SIZE],
                                       const unsigned char point[WCRYPTO_X25519_KEY_SIZE]);
@@ -51,7 +51,7 @@ wcrypto_status_t __wrap_wCryptoBlake2sInit(wcrypto_blake2s_ctx_t *ctx, size_t ou
 }
 
 wcrypto_status_t __wrap_wCryptoBlake2s(unsigned char *out, size_t outlen, const unsigned char *key, size_t keylen,
-                                      const unsigned char *in, size_t inlen)
+                                       const unsigned char *in, size_t inlen)
 {
     if (crypto_failure_injection == kCryptoFailureBlake2sOneShot)
     {
@@ -144,8 +144,7 @@ static void testSessionKdfFailureInvalidatesHandshake(void)
         require(! wireguardStartSession(&peer, roles[i]), "WireGuard accepted a failed session KDF");
         crypto_failure_injection = kCryptoFailureNone;
 
-        require(isAllZero(&peer.handshake, sizeof(peer.handshake)),
-                "failed session KDF retained handshake secrets");
+        require(isAllZero(&peer.handshake, sizeof(peer.handshake)), "failed session KDF retained handshake secrets");
         require(isAllZero(&peer.pending_handshake, sizeof(peer.pending_handshake)),
                 "failed session KDF retained pending handshake packet");
         require(isAllZero(&peer.curr_keypair, sizeof(peer.curr_keypair)) &&
@@ -157,9 +156,9 @@ static void testSessionKdfFailureInvalidatesHandshake(void)
 
 static void testHandshakeResponseFailureClearsPendingState(void)
 {
-    wireguard_device_t             device;
-    wireguard_peer_t               peer;
-    message_handshake_response_t   response;
+    wireguard_device_t           device;
+    wireguard_peer_t             peer;
+    message_handshake_response_t response;
 
     memset(&device, 0, sizeof(device));
     memset(&peer, 0, sizeof(peer));
@@ -174,17 +173,16 @@ static void testHandshakeResponseFailureClearsPendingState(void)
             "WireGuard accepted a failed handshake response");
     crypto_failure_injection = kCryptoFailureNone;
 
-    require(isAllZero(&peer.handshake, sizeof(peer.handshake)),
-            "failed handshake response retained handshake secrets");
+    require(isAllZero(&peer.handshake, sizeof(peer.handshake)), "failed handshake response retained handshake secrets");
     require(isAllZero(&peer.pending_handshake, sizeof(peer.pending_handshake)),
             "failed handshake response retained pending handshake packet");
 }
 
 static void testInitiationConstructionFailureClearsPendingState(void)
 {
-    wireguard_device_t               device;
-    wireguard_peer_t                 peer;
-    message_handshake_initiation_t   initiation;
+    wireguard_device_t             device;
+    wireguard_peer_t               peer;
+    message_handshake_initiation_t initiation;
 
     memset(&device, 0, sizeof(device));
     memset(&peer, 0, sizeof(peer));
@@ -200,8 +198,7 @@ static void testInitiationConstructionFailureClearsPendingState(void)
             "failed initiation construction retained handshake secrets");
     require(isAllZero(&peer.pending_handshake, sizeof(peer.pending_handshake)),
             "failed initiation construction retained pending handshake packet");
-    require(isAllZero(&initiation, sizeof(initiation)),
-            "failed initiation construction retained partial wire output");
+    require(isAllZero(&initiation, sizeof(initiation)), "failed initiation construction retained partial wire output");
 }
 
 static void prepareResponderHandshake(wireguard_peer_t *peer)
@@ -261,14 +258,14 @@ static void testResponseConstructionFailureInvalidatesHandshake(void)
 
 static void testCookieMacFailureDoesNotPublishState(void)
 {
-    wireguard_device_t               device;
-    wireguard_peer_t                 peer;
-    message_handshake_initiation_t   initiation;
-    message_cookie_reply_t           reply;
-    wireguard_pending_handshake_t    pending_before;
-    uint8_t                          cookie_before[WIREGUARD_COOKIE_LEN];
-    const uint8_t                    source[] = {127, 0, 0, 1, 0x69, 0x46};
-    const uint32_t                   cookie_millis_before = 0x12345678U;
+    wireguard_device_t             device;
+    wireguard_peer_t               peer;
+    message_handshake_initiation_t initiation;
+    message_cookie_reply_t         reply;
+    wireguard_pending_handshake_t  pending_before;
+    uint8_t                        cookie_before[WIREGUARD_COOKIE_LEN];
+    const uint8_t                  source[]             = {127, 0, 0, 1, 0x69, 0x46};
+    const uint32_t                 cookie_millis_before = 0x12345678U;
 
     memset(&device, 0, sizeof(device));
     memset(&peer, 0, sizeof(peer));

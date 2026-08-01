@@ -1,8 +1,5 @@
 #include "TlsServer/structure.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 typedef struct server_delay_context_s
 {
     tunnel_t *tls;

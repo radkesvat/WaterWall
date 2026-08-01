@@ -15,12 +15,8 @@
 // so it is covered here too: the cases at the bottom drive bufferpoolCreate()
 // directly to pin its delegation to the shared helper.
 
-#include "buffer_pool.h"
-#include "master_pool.h"
-#include "shiftbuffer.h"
+#include "wwapi.h"
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <sys/wait.h>
 #include <unistd.h>
 

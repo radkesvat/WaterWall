@@ -6,12 +6,9 @@
  * not depend on machine speed.
  */
 
+#include "wwapi.h"
+
 #include "flow_table.h"
-
-#include "global_state.h"
-
-#include <stdio.h>
-#include <stdlib.h>
 
 enum
 {

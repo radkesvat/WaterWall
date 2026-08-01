@@ -1,7 +1,5 @@
 #include "tun_windows_lifetime.h"
-
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 typedef struct lifetime_probe_s
 {

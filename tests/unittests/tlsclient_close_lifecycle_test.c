@@ -1,9 +1,5 @@
 #include "TlsClient/structure.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
 typedef struct tlsclient_lifecycle_context_s
 {
     char      events[16];

@@ -1,9 +1,6 @@
 #include "IpManipulator/structure.h"
 #include "wlibc.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 enum
 {
     kIpv4HeaderLength              = 20,

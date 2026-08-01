@@ -2,8 +2,8 @@
 
 enum
 {
-    TEST_MAX_OFFSET = 63,
-    TEST_MAX_LENGTH = 257,
+    TEST_MAX_OFFSET   = 63,
+    TEST_MAX_LENGTH   = 257,
     TEST_STORAGE_SIZE = TEST_MAX_OFFSET + TEST_MAX_LENGTH + 64,
 };
 
@@ -41,8 +41,12 @@ static void test_misaligned_copy(void (*copy_fn)(void *, const void *, intmax_t)
 
                 if (memcmp(actual, expected, sizeof(actual)) != 0)
                 {
-                    fprintf(stderr, "%s mismatch at dst_offset=%zu src_offset=%zu length=%zu\n", name, dst_offset,
-                            src_offset, length);
+                    fprintf(stderr,
+                            "%s mismatch at dst_offset=%zu src_offset=%zu length=%zu\n",
+                            name,
+                            dst_offset,
+                            src_offset,
+                            length);
                     exit(1);
                 }
             }

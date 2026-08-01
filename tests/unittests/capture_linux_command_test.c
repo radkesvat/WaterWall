@@ -5,11 +5,7 @@
 // capture_linux_nfqueue_test.c.
 
 #include "devices/capture/capture_linux_internal.h"
-#include "wproc.h"
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include "wwapi.h"
 
 enum
 {

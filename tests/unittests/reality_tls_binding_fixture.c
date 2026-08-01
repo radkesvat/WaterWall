@@ -66,15 +66,11 @@ static bool driveHandshake(SSL *client, SSL *server, reality_tls_handshake_fixtu
     for (uint32_t step = 0; step < 10000; ++step)
     {
         if (! advanceHandshake(client, &client_complete) ||
-            ! appendAndForward(SSL_get_wbio(client),
-                               SSL_get_rbio(server),
-                               fixture->client_flight,
-                               &fixture->client_flight_len) ||
+            ! appendAndForward(
+                SSL_get_wbio(client), SSL_get_rbio(server), fixture->client_flight, &fixture->client_flight_len) ||
             ! advanceHandshake(server, &server_complete) ||
-            ! appendAndForward(SSL_get_wbio(server),
-                               SSL_get_rbio(client),
-                               fixture->server_flight,
-                               &fixture->server_flight_len))
+            ! appendAndForward(
+                SSL_get_wbio(server), SSL_get_rbio(client), fixture->server_flight, &fixture->server_flight_len))
         {
             return false;
         }
@@ -140,11 +136,10 @@ static bool driveShutdown(SSL *client, SSL *server, reality_tls_handshake_fixtur
     return false;
 }
 
-static bool collectTls13PostHandshakeFlights(SSL *client, SSL *server,
-                                             reality_tls_handshake_fixture_t *fixture)
+static bool collectTls13PostHandshakeFlights(SSL *client, SSL *server, reality_tls_handshake_fixture_t *fixture)
 {
-    static const uint8_t early_application[] = "Chrome-like early application payload";
-    uint8_t application_plaintext[sizeof(early_application)] = {0};
+    static const uint8_t early_application[]                              = "Chrome-like early application payload";
+    uint8_t              application_plaintext[sizeof(early_application)] = {0};
 
     if (SSL_write(server, NULL, 0) < 0 ||
         ! appendAndForward(SSL_get_wbio(server),
@@ -156,8 +151,7 @@ static bool collectTls13PostHandshakeFlights(SSL *client, SSL *server,
                            SSL_get_rbio(client),
                            fixture->server_early_application_flight,
                            &fixture->server_early_application_flight_len) ||
-        SSL_read(client, application_plaintext, sizeof(application_plaintext)) !=
-            (int) sizeof(application_plaintext) ||
+        SSL_read(client, application_plaintext, sizeof(application_plaintext)) != (int) sizeof(application_plaintext) ||
         ! memoryEqual(application_plaintext, early_application, sizeof(early_application)) ||
         ! SSL_key_update(server, SSL_KEY_UPDATE_NOT_REQUESTED) || SSL_write(server, NULL, 0) < 0 ||
         ! appendAndForward(SSL_get_wbio(server),
@@ -194,7 +188,7 @@ static bool collectTls13PostHandshakeFlights(SSL *client, SSL *server,
     }
 
     read_result = SSL_read(server, application_plaintext, sizeof(application_plaintext));
-    bool ok = read_result < 0 && SSL_get_error(server, read_result) == SSL_ERROR_WANT_READ;
+    bool ok     = read_result < 0 && SSL_get_error(server, read_result) == SSL_ERROR_WANT_READ;
     memoryZero(application_plaintext, sizeof(application_plaintext));
     return ok;
 }
@@ -214,7 +208,7 @@ static bool readTlsClientAccessor(SSL *ssl, tlsclient_handshake_binding_t *bindi
         return false;
     }
 
-    tlsclient_lstate_t *line_state = lineGetState(line, tunnel);
+    tlsclient_lstate_t *line_state  = lineGetState(line, tunnel);
     line_state->ssl                 = ssl;
     line_state->handshake_completed = true;
 
@@ -248,8 +242,7 @@ static bool buildTlsHandshakeFixture(uint16_t version, const char *cipher, bool 
 
     client_context = SSL_CTX_new(TLS_client_method());
     server_context = SSL_CTX_new(TLS_server_method());
-    if (client_context == NULL || server_context == NULL ||
-        ! SSL_CTX_set_min_proto_version(client_context, version) ||
+    if (client_context == NULL || server_context == NULL || ! SSL_CTX_set_min_proto_version(client_context, version) ||
         ! SSL_CTX_set_max_proto_version(client_context, version) ||
         ! SSL_CTX_set_min_proto_version(server_context, version) ||
         ! SSL_CTX_set_max_proto_version(server_context, version) ||
@@ -261,8 +254,7 @@ static bool buildTlsHandshakeFixture(uint16_t version, const char *cipher, bool 
     }
 
     if (version == TLS1_2_VERSION && cipher != NULL &&
-        (SSL_CTX_set_cipher_list(client_context, cipher) != 1 ||
-         SSL_CTX_set_cipher_list(server_context, cipher) != 1))
+        (SSL_CTX_set_cipher_list(client_context, cipher) != 1 || SSL_CTX_set_cipher_list(server_context, cipher) != 1))
     {
         goto cleanup;
     }
@@ -271,14 +263,14 @@ static bool buildTlsHandshakeFixture(uint16_t version, const char *cipher, bool 
         goto cleanup;
     }
 
-    client = SSL_new(client_context);
-    server = SSL_new(server_context);
+    client      = SSL_new(client_context);
+    server      = SSL_new(server_context);
     client_rbio = BIO_new(BIO_s_mem());
     client_wbio = BIO_new(BIO_s_mem());
     server_rbio = BIO_new(BIO_s_mem());
     server_wbio = BIO_new(BIO_s_mem());
-    if (client == NULL || server == NULL || client_rbio == NULL || client_wbio == NULL ||
-        server_rbio == NULL || server_wbio == NULL)
+    if (client == NULL || server == NULL || client_rbio == NULL || client_wbio == NULL || server_rbio == NULL ||
+        server_wbio == NULL)
     {
         goto cleanup;
     }
@@ -305,15 +297,13 @@ static bool buildTlsHandshakeFixture(uint16_t version, const char *cipher, bool 
     if (resume)
     {
         SSL_SESSION *session = SSL_get_session(client);
-        if (session == NULL || ! SSL_SESSION_is_resumable(session) ||
-            SSL_clear(client) != 1 || SSL_clear(server) != 1)
+        if (session == NULL || ! SSL_SESSION_is_resumable(session) || SSL_clear(client) != 1 || SSL_clear(server) != 1)
         {
             goto cleanup;
         }
 
         *fixture = (reality_tls_handshake_fixture_t) {0};
-        if (! driveHandshake(client, server, fixture) ||
-            ! SSL_session_reused(client) || ! SSL_session_reused(server))
+        if (! driveHandshake(client, server, fixture) || ! SSL_session_reused(client) || ! SSL_session_reused(server))
         {
             goto cleanup;
         }
@@ -342,8 +332,7 @@ bool realityTestBuildTlsHandshakeFixtureForCipher(uint16_t version, const char *
     return buildTlsHandshakeFixture(version, cipher, false, fixture);
 }
 
-bool realityTestBuildResumedTls12HandshakeFixtureForCipher(const char *cipher,
-                                                           reality_tls_handshake_fixture_t *fixture)
+bool realityTestBuildResumedTls12HandshakeFixtureForCipher(const char *cipher, reality_tls_handshake_fixture_t *fixture)
 {
     return buildTlsHandshakeFixture(TLS1_2_VERSION, cipher, true, fixture);
 }

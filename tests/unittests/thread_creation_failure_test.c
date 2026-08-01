@@ -1,13 +1,6 @@
-#include "global_state.h"
-#include "worker.h"
-#include "wthread.h"
+#include "wwapi.h"
 
-#include <errno.h>
 #include <pthread.h>
-#include <stdatomic.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 static bool inject_pthread_create_failure;
 

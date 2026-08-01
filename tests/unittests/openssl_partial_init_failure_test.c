@@ -1,5 +1,5 @@
-#include "global_state.h"
 #include "openssl_instance.h"
+#include "wwapi.h"
 
 #include <openssl/crypto.h>
 

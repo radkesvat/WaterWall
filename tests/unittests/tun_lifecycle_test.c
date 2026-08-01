@@ -1,7 +1,5 @@
 #include "devices/tun/tun_lifecycle.h"
-
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 // Sentinel the helper must never write when the transition loses.
 #define kUntouchedSourceState ((tun_lifecycle_state_t) 0x7F)

@@ -5,8 +5,6 @@
 #include "utils/md5.h"
 #endif
 
-
-
 enum
 {
     BLAKE2S_DIGEST_SIZE                  = 32,
@@ -329,10 +327,40 @@ static void test_software_md5(void)
 {
     const uint8_t abc[]                           = "abc";
     const uint8_t expected_empty[MD5_DIGEST_SIZE] = {
-        0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04, 0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8, 0x42, 0x7e,
+        0xd4,
+        0x1d,
+        0x8c,
+        0xd9,
+        0x8f,
+        0x00,
+        0xb2,
+        0x04,
+        0xe9,
+        0x80,
+        0x09,
+        0x98,
+        0xec,
+        0xf8,
+        0x42,
+        0x7e,
     };
     const uint8_t expected_abc[MD5_DIGEST_SIZE] = {
-        0x90, 0x01, 0x50, 0x98, 0x3c, 0xd2, 0x4f, 0xb0, 0xd6, 0x96, 0x3f, 0x7d, 0x28, 0xe1, 0x7f, 0x72,
+        0x90,
+        0x01,
+        0x50,
+        0x98,
+        0x3c,
+        0xd2,
+        0x4f,
+        0xb0,
+        0xd6,
+        0x96,
+        0x3f,
+        0x7d,
+        0x28,
+        0xe1,
+        0x7f,
+        0x72,
     };
     md5_hash_t software = {0};
 
@@ -387,9 +415,24 @@ static void test_software_md5(void)
     /* 4. RFC 1321 one-million-'a' vector. */
     {
         const uint8_t expected_million_a[MD5_DIGEST_SIZE] = {
-            0x77, 0x07, 0xd6, 0xae, 0x4e, 0x02, 0x7c, 0x70, 0xee, 0xa2, 0xa9, 0x35, 0xc2, 0x29, 0x6f, 0x21,
+            0x77,
+            0x07,
+            0xd6,
+            0xae,
+            0x4e,
+            0x02,
+            0x7c,
+            0x70,
+            0xee,
+            0xa2,
+            0xa9,
+            0x35,
+            0xc2,
+            0x29,
+            0x6f,
+            0x21,
         };
-        const size_t million     = 1000000U;
+        const size_t million      = 1000000U;
         uint8_t     *ones         = malloc(million);
         md5_hash_t   million_hash = {0};
         require(ones != NULL, "failed to allocate one-million-'a' buffer");

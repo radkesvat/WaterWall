@@ -3,9 +3,6 @@
 #include "wchecksum.h"
 #include "wlibc.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 enum
 {
     kTcpAllFlagsMask = 0x00FF

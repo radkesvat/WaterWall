@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "managers/node_manager.h"
 
 static hash_t socks5serverUserControllerTypeHashForChain(void)
 {
@@ -50,8 +49,7 @@ void socks5serverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 
     if (controller->prev != NULL && controller->prev != t)
     {
-        LOGF("Socks5Server: internal UserController is already bound downstream by %s",
-             controller->prev->node->name);
+        LOGF("Socks5Server: internal UserController is already bound downstream by %s", controller->prev->node->name);
         terminateProgram(1);
     }
 

@@ -1,7 +1,6 @@
 #include "modules/push_user_stats/push_user_stats.h"
 
 #include "loggers/network_logger.h"
-#include "utils/json_helpers.h"
 
 typedef struct authenticationserver_stats_hint_s
 {

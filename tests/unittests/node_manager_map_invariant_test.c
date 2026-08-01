@@ -3,10 +3,10 @@
  * nodes are owned by their parent tunnel and must never be inserted here.
  */
 
+#include "wwapi.h"
+
 #include "managers/node_manager.c" // NOLINT: exercises the private map invariants
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <sys/wait.h>
 #include <unistd.h>
 

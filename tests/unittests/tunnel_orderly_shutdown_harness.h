@@ -33,10 +33,6 @@
 #define TWF_CUSTOM_PROCESS_API_WRAPS 1
 #include "tunnel_line_failure_harness.h"
 
-// The worker wios pool is sized from the concrete wio_t, which wwapi.h only
-// forward declares.
-#include "wevent.h"
-
 #include <sys/wait.h>
 #include <unistd.h>
 

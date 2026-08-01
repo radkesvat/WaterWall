@@ -10,15 +10,11 @@
  * Every case is compiled in only when its tunnel target exists, so an optional
  * or platform-specific tunnel removes its own case and nothing else.
  */
+#include "wwapi.h"
+
 #include "tunnels_abort_runtime_cases.h"
 
 #include "adapter.h"
-#include "global_state.h"
-#include "line.h"
-#include "tunnel.h"
-
-#include <stdio.h>
-#include <string.h>
 
 // Category-D callbacks under test. They are declared here rather than pulled in
 // through their owning tunnel's structure.h so this translation unit stays free

@@ -12,8 +12,6 @@
 
 #include "PacketsToStream/structure.h"
 
-#include <stdio.h>
-
 static int g_failures = 0;
 
 static void require(bool cond, const char *msg)
@@ -47,8 +45,7 @@ static uint32_t buildIpv4(uint8_t *dst, uint16_t total_len, uint8_t proto, uint8
 
 // Pushes raw bytes into the stream, fragmenting them across pooled buffers of at most chunk bytes so
 // the parser is exercised against arbitrary stream fragmentation.
-static void pushBytes(buffer_stream_t *bs, buffer_pool_t *pool, const uint8_t *data, uint32_t len,
-                      uint32_t chunk)
+static void pushBytes(buffer_stream_t *bs, buffer_pool_t *pool, const uint8_t *data, uint32_t len, uint32_t chunk)
 {
     uint32_t off = 0;
     if (chunk == 0)
@@ -91,7 +88,7 @@ static int drainCount(buffer_stream_t *bs, buffer_pool_t *pool)
 
 static void testSinglePacket(buffer_stream_t *bs, buffer_pool_t *pool)
 {
-    uint8_t raw[64];
+    uint8_t  raw[64];
     uint32_t len = buildIpv4(raw, 40, IP_PROTO_TCP, 0xAB);
 
     pushBytes(bs, pool, raw, len, 0);
@@ -111,7 +108,7 @@ static void testSinglePacket(buffer_stream_t *bs, buffer_pool_t *pool)
 
 static void testTwoConcatenated(buffer_stream_t *bs, buffer_pool_t *pool)
 {
-    uint8_t raw[200];
+    uint8_t  raw[200];
     uint32_t a = buildIpv4(raw, 40, IP_PROTO_UDP, 0x11);
     uint32_t b = buildIpv4(raw + a, 75, IP_PROTO_TCP, 0x22);
 
@@ -120,18 +117,20 @@ static void testTwoConcatenated(buffer_stream_t *bs, buffer_pool_t *pool)
     sbuf_t *p = NULL;
     require(packetstostreamTryReadIPv4Packet(bs, &p), "concat: expected first packet");
     require(p != NULL && sbufGetLength(p) == 40, "concat: first length wrong");
-    if (p) bufferpoolReuseBuffer(pool, p);
+    if (p)
+        bufferpoolReuseBuffer(pool, p);
 
     require(packetstostreamTryReadIPv4Packet(bs, &p), "concat: expected second packet");
     require(p != NULL && sbufGetLength(p) == 75, "concat: second length wrong");
-    if (p) bufferpoolReuseBuffer(pool, p);
+    if (p)
+        bufferpoolReuseBuffer(pool, p);
 
     require(! packetstostreamTryReadIPv4Packet(bs, &p), "concat: stream should be empty");
 }
 
 static void testSplitPacket(buffer_stream_t *bs, buffer_pool_t *pool)
 {
-    uint8_t raw[128];
+    uint8_t  raw[128];
     uint32_t len = buildIpv4(raw, 100, IP_PROTO_TCP, 0x5A);
 
     // First only part of the header.
@@ -147,7 +146,8 @@ static void testSplitPacket(buffer_stream_t *bs, buffer_pool_t *pool)
     pushBytes(bs, pool, raw + 58, len - 58, 0);
     require(packetstostreamTryReadIPv4Packet(bs, &p), "split: expected packet once complete");
     require(p != NULL && sbufGetLength(p) == 100, "split: wrong length");
-    if (p) bufferpoolReuseBuffer(pool, p);
+    if (p)
+        bufferpoolReuseBuffer(pool, p);
 }
 
 static void testGarbagePrefixRecovers(buffer_stream_t *bs, buffer_pool_t *pool)
@@ -173,7 +173,8 @@ static void testGarbagePrefixRecovers(buffer_stream_t *bs, buffer_pool_t *pool)
                 got = true;
             }
         }
-        if (p) bufferpoolReuseBuffer(pool, p);
+        if (p)
+            bufferpoolReuseBuffer(pool, p);
     }
     require(got, "garbage-prefix: valid packet was not recovered after garbage");
     require(bufferstreamGetBufLen(bs) < (size_t) IP_HLEN, "garbage-prefix: parser did not drain");
@@ -230,7 +231,8 @@ static void testLooksValidWorstCase(buffer_stream_t *bs, buffer_pool_t *pool)
     pushBytes(bs, pool, filler, sizeof(filler), 128);
     require(packetstostreamTryReadIPv4Packet(bs, &p), "worst-case: should forward the sized packet");
     require(p != NULL && sbufGetLength(p) == 1000, "worst-case: forwarded wrong size");
-    if (p) bufferpoolReuseBuffer(pool, p);
+    if (p)
+        bufferpoolReuseBuffer(pool, p);
     require(bufferstreamGetBufLen(bs) == 0, "worst-case: stream should be drained");
 }
 
@@ -247,22 +249,23 @@ static void testFuzzRecovers(buffer_stream_t *bs, buffer_pool_t *pool)
     uint32_t seed = 0xC0FFEEu;
     for (int round = 0; round < 100; ++round)
     {
-        uint8_t buf[512];
+        uint8_t  buf[512];
         uint32_t glen = 20 + (seed % 400);
         for (uint32_t i = 0; i < glen; ++i)
         {
-            seed = seed * 1103515245u + 12345u;
+            seed   = seed * 1103515245u + 12345u;
             buf[i] = (uint8_t) (seed >> 16);
         }
         uint32_t chunk = 1 + (seed % 97);
         pushBytes(bs, pool, buf, glen, chunk);
 
-        sbuf_t *p = NULL;
+        sbuf_t *p     = NULL;
         int     guard = 0;
         while (packetstostreamTryReadIPv4Packet(bs, &p)) // must always terminate
         {
             require(p != NULL, "fuzz: success with NULL packet");
-            if (p) bufferpoolReuseBuffer(pool, p);
+            if (p)
+                bufferpoolReuseBuffer(pool, p);
             require(++guard < 100000, "fuzz: extractor did not terminate");
         }
 
@@ -271,7 +274,7 @@ static void testFuzzRecovers(buffer_stream_t *bs, buffer_pool_t *pool)
         memoryZero(zeros, sizeof(zeros));
         pushBytes(bs, pool, zeros, sizeof(zeros), 211);
 
-        uint8_t pkt[80];
+        uint8_t  pkt[80];
         uint32_t plen = buildIpv4(pkt, 64, IP_PROTO_TCP, 0x7E);
         pushBytes(bs, pool, pkt, plen, 9);
 
@@ -286,7 +289,8 @@ static void testFuzzRecovers(buffer_stream_t *bs, buffer_pool_t *pool)
                     got = true;
                 }
             }
-            if (p) bufferpoolReuseBuffer(pool, p);
+            if (p)
+                bufferpoolReuseBuffer(pool, p);
         }
         require(got, "fuzz: sentinel packet not recovered after garbage and clean gap");
         bufferstreamEmpty(bs);

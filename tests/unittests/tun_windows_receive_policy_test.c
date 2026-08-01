@@ -1,7 +1,5 @@
 #include "tun_windows_receive_policy.h"
-
-#include <stdio.h>
-#include <stdlib.h>
+#include "wwapi.h"
 
 // Focused, platform-neutral coverage for the Windows TUN oversized-receive drop
 // policy: the packet-size decision and the rate-limited discard accounting state

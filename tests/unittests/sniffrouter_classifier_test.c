@@ -1,25 +1,23 @@
 #include "SniffRouter/structure.h"
 
-#include <stdio.h>
-
 static uint32_t make_client_hello(uint8_t *buf, const char *sni)
 {
-    uint8_t *cursor = buf;
+    uint8_t *cursor  = buf;
     uint32_t sni_len = (uint32_t) stringLength(sni);
 
-    *cursor++ = 0x16;
-    *cursor++ = 0x03;
-    *cursor++ = 0x01;
+    *cursor++           = 0x16;
+    *cursor++           = 0x03;
+    *cursor++           = 0x01;
     uint8_t *record_len = cursor;
     cursor += 2;
 
-    *cursor++ = 0x01;
+    *cursor++          = 0x01;
     uint8_t *hello_len = cursor;
     cursor += 3;
 
     uint8_t *body = cursor;
-    *cursor++ = 0x03;
-    *cursor++ = 0x03;
+    *cursor++     = 0x03;
+    *cursor++     = 0x03;
     memorySet(cursor, 0x11, 32);
     cursor += 32;
 
@@ -48,7 +46,7 @@ static uint32_t make_client_hello(uint8_t *buf, const char *sni)
     memoryCopy(cursor, sni, sni_len);
     cursor += sni_len;
 
-    uint32_t ext_len = (uint32_t) (cursor - extensions_len - 2);
+    uint32_t ext_len  = (uint32_t) (cursor - extensions_len - 2);
     uint32_t body_len = (uint32_t) (cursor - body);
 
     PUT_BE16(extensions_len, (uint16_t) ext_len);
@@ -66,7 +64,8 @@ static int expect_match(const char *name, sniffrouter_match_t got, enum sniffrou
         return 0;
     }
 
-    fprintf(stderr, "%s: got result=%d target=%p, expected result=%d target=%p\n",
+    fprintf(stderr,
+            "%s: got result=%d target=%p, expected result=%d target=%p\n",
             name,
             got.result,
             (void *) got.target,
@@ -80,8 +79,8 @@ int main(void)
     tunnel_t *http_target = (tunnel_t *) (uintptr_t) 0x10;
     tunnel_t *tls_target  = (tunnel_t *) (uintptr_t) 0x20;
 
-    char http_domain[] = "api.example.test";
-    char tls_domain[]  = "*.example.test";
+    char  http_domain[]  = "api.example.test";
+    char  tls_domain[]   = "*.example.test";
     char *http_domains[] = {http_domain};
     char *tls_domains[]  = {tls_domain};
 
@@ -116,26 +115,17 @@ int main(void)
 
     uint8_t  hello[256];
     uint32_t hello_len = make_client_hello(hello, "www.example.test");
-    if (expect_match("partial tls route",
-                     sniffrouterClassify(&ts, hello, 3),
-                     kSniffClassifyNeedMore,
-                     NULL) != 0)
+    if (expect_match("partial tls route", sniffrouterClassify(&ts, hello, 3), kSniffClassifyNeedMore, NULL) != 0)
     {
         return 1;
     }
 
-    if (expect_match("partial tls record body",
-                     sniffrouterClassify(&ts, hello, 5),
-                     kSniffClassifyNeedMore,
-                     NULL) != 0)
+    if (expect_match("partial tls record body", sniffrouterClassify(&ts, hello, 5), kSniffClassifyNeedMore, NULL) != 0)
     {
         return 1;
     }
 
-    if (expect_match("tls route",
-                     sniffrouterClassify(&ts, hello, hello_len),
-                     kSniffClassifyTarget,
-                     tls_target) != 0)
+    if (expect_match("tls route", sniffrouterClassify(&ts, hello, hello_len), kSniffClassifyTarget, tls_target) != 0)
     {
         return 1;
     }
@@ -152,19 +142,16 @@ int main(void)
     }
 
     routes[1].detection = kSniffDetectionHttp1;
-    if (expect_match("tls disabled for route",
-                     sniffrouterClassify(&ts, hello, hello_len),
-                     kSniffClassifyDefault,
-                     NULL) != 0)
+    if (expect_match(
+            "tls disabled for route", sniffrouterClassify(&ts, hello, hello_len), kSniffClassifyDefault, NULL) != 0)
     {
         return 1;
     }
 
     routes[1].detection = kSniffDetectionHttp1 | kSniffDetectionTlsClientHello;
-    if (expect_match("combined detection route",
-                     sniffrouterClassify(&ts, hello, hello_len),
-                     kSniffClassifyTarget,
-                     tls_target) != 0)
+    if (expect_match(
+            "combined detection route", sniffrouterClassify(&ts, hello, hello_len), kSniffClassifyTarget, tls_target) !=
+        0)
     {
         return 1;
     }
@@ -267,7 +254,7 @@ int main(void)
         return 1;
     }
 
-    uint8_t custom_handshake[32];
+    uint8_t    custom_handshake[32];
     const char custom_secret[] = "unit-secret";
     for (uint32_t i = 0; i < (uint32_t) sizeof(custom_handshake); ++i)
     {
@@ -302,11 +289,11 @@ int main(void)
         return 1;
     }
 
-    if (expect_match("custom reverse partial falls back",
-                     sniffrouterClassify(&custom_reverse_ts, custom_handshake,
-                                         (uint32_t) sizeof(custom_handshake) - 1U),
-                     kSniffClassifyDefault,
-                     NULL) != 0)
+    if (expect_match(
+            "custom reverse partial falls back",
+            sniffrouterClassify(&custom_reverse_ts, custom_handshake, (uint32_t) sizeof(custom_handshake) - 1U),
+            kSniffClassifyDefault,
+            NULL) != 0)
     {
         return 1;
     }

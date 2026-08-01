@@ -1,4 +1,4 @@
-#include "global_state.h"
+#include "wwapi.h"
 
 static void require(bool condition, const char *message)
 {
@@ -11,12 +11,12 @@ static void require(bool condition, const char *message)
 
 int main(void)
 {
-    system_load_state_t state = {0};
+    system_load_state_t  state          = {0};
     system_load_state_t *previous_state = GSTATE.system_load;
 
     mutexInit(&state.mutex);
-    state.initialized = true;
-    state.supported   = true;
+    state.initialized  = true;
+    state.supported    = true;
     GSTATE.system_load = &state;
 
     state.sample_warming_up = true;

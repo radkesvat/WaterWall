@@ -2,9 +2,6 @@
 #include "wchecksum.h"
 #include "wlibc.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 static unsigned int forwarded_upstream;
 static unsigned int forwarded_downstream;
 static line_t      *forwarded_line;
