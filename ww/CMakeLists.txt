@@ -649,6 +649,7 @@ CPMAddPackage(
 )
 if(komihash_ADDED)
     target_include_directories(ww PUBLIC ${komihash_SOURCE_DIR})
+    set(komihash_SOURCE_DIR "${komihash_SOURCE_DIR}" PARENT_SCOPE)
 endif()
 
 # STC library
@@ -661,6 +662,7 @@ CPMAddPackage(
 if(stc_ADDED)
     target_compile_definitions(ww PUBLIC STC_STATIC=1 STC_ALLOCATOR=c)
     target_include_directories(ww PUBLIC ${stc_SOURCE_DIR}/include)
+    set(stc_SOURCE_DIR "${stc_SOURCE_DIR}" PARENT_SCOPE)
     if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
         target_compile_options(ww PUBLIC /wd4310)
     endif()
@@ -687,6 +689,7 @@ CPMAddPackage(
 )
 
 if(cares_ADDED)
+    set(cares_SOURCE_DIR "${cares_SOURCE_DIR}" PARENT_SCOPE)
 
     set(CARES_NO_UNUSED_RESULT_SOURCES
         src/lib/event/ares_event_wake_pipe.c

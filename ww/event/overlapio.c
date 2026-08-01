@@ -1695,4 +1695,6 @@ int wioClose(wio_t *io)
     return 0;
 }
 
+#else
+typedef int ww_overlapio_dummy_t;
 #endif

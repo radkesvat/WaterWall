@@ -15,6 +15,36 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang")
   add_link_options($<$<CONFIG:Release>:-flto=thin>)
 endif()
 
+include_directories(
+  ${CMAKE_SOURCE_DIR}/ww
+  ${CMAKE_SOURCE_DIR}/ww/base
+  ${CMAKE_SOURCE_DIR}/ww/base/internal_types
+  ${CMAKE_SOURCE_DIR}/ww/node_builder
+  ${CMAKE_SOURCE_DIR}/ww/bufio
+  ${CMAKE_SOURCE_DIR}/ww/event
+  ${CMAKE_SOURCE_DIR}/ww/net
+  ${CMAKE_SOURCE_DIR}/ww/instance
+  ${CMAKE_SOURCE_DIR}/ww/libc
+  ${CMAKE_SOURCE_DIR}/ww/crypto
+  ${CMAKE_SOURCE_DIR}/ww/lwip
+  ${CMAKE_SOURCE_DIR}/ww/lwip/contrib/ports/unix/port/include
+  ${CMAKE_SOURCE_DIR}/ww/vendor/asmlib
+  ${CMAKE_SOURCE_DIR}/ww/vendor/cjson
+  ${CMAKE_BINARY_DIR}/ww
+  ${CMAKE_BINARY_DIR}/ww/generated
+  ${CMAKE_BINARY_DIR}/patched-deps/lwip/src/include
+  ${CMAKE_BINARY_DIR}/patched-deps/lwip/contrib
+  ${CMAKE_BINARY_DIR}/_deps/cares-build
+  ${cares_SOURCE_DIR}
+  ${cares_SOURCE_DIR}/include
+  ${komihash_SOURCE_DIR}
+  ${stc_SOURCE_DIR}/include
+)
+
+if(NOT APPLE)
+  add_compile_definitions(LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
+endif()
+
 add_custom_target(waterwall_unit_tests)
 
 set(WATERWALL_UNIT_TEST_RUNNER "${CMAKE_CURRENT_SOURCE_DIR}/run_unit_test.cmake")

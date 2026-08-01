@@ -33,15 +33,14 @@ target_include_directories(HttpServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/includ
 
 target_link_libraries(HttpServer ww)
 
-if(NOT TARGET http_def)
-    add_library(http_def OBJECT
-        common/http_def.c
-    )
-    target_include_directories(http_def PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-    target_include_directories(http_def PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/HttpServer)
-endif()
+add_library(http_server_def OBJECT
+    common/http_def.c
+)
+target_include_directories(http_server_def PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(http_server_def PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/HttpServer)
+target_link_libraries(http_server_def PRIVATE ww nghttp2_static)
 
-target_link_libraries(HttpServer http_def)
+target_link_libraries(HttpServer http_server_def)
 
 if(NOT TARGET nghttp2_static)
     message(FATAL_ERROR "HttpServer requires nghttp2_static, but it was not created")

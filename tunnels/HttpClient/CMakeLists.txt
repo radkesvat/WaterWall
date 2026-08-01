@@ -33,15 +33,14 @@ target_include_directories(HttpClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/includ
 
 target_link_libraries(HttpClient ww)
 
-if(NOT TARGET http_def)
-    add_library(http_def OBJECT
-        common/http_def.c
-    )
-    target_include_directories(http_def PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-    target_include_directories(http_def PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/HttpClient)
-endif()
+add_library(http_client_def OBJECT
+    common/http_def.c
+)
+target_include_directories(http_client_def PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(http_client_def PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/HttpClient)
+target_link_libraries(http_client_def PRIVATE ww nghttp2_static)
 
-target_link_libraries(HttpClient http_def)
+target_link_libraries(HttpClient http_client_def)
 
 if(NOT TARGET nghttp2_static)
     message(FATAL_ERROR "HttpClient requires nghttp2_static, but it was not created")

@@ -131,4 +131,6 @@ int iowatcherPollEvents(wloop_t *loop, int timeout)
     }
     return 1;
 }
+#else
+typedef int ww_iocp_dummy_t;
 #endif
