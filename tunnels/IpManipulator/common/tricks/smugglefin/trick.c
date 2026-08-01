@@ -160,31 +160,40 @@ static uint32_t smugglefintrickAckAdvance(const smugglefintrick_tcp_packet_info_
     return advance;
 }
 
-static bool smugglefintrickFlowMatches(const ipmanipulator_smuggle_fin_flow_t  *flow,
-                                       const smugglefintrick_tcp_packet_info_t *info)
+static ipmanipulator_smuggle_fin_flow_t *smugglefintrickEntryRecord(ipmanipulator_flow_entry_t *entry)
 {
-    return flow->active && flow->src_addr == info->src_addr && flow->dst_addr == info->dst_addr &&
-           flow->src_port == info->src_port && flow->dst_port == info->dst_port;
+    return (ipmanipulator_smuggle_fin_flow_t *) ipmanipulatorFlowEntryRecord(entry);
 }
 
-static bool smugglefintrickFlowMatchesReverse(const ipmanipulator_smuggle_fin_flow_t  *flow,
-                                              const smugglefintrick_tcp_packet_info_t *info)
+static ipmanipulator_flow_key_t smugglefintrickMakeKey(const smugglefintrick_tcp_packet_info_t *info)
 {
-    return flow->active && flow->src_addr == info->dst_addr && flow->dst_addr == info->src_addr &&
-           flow->src_port == info->dst_port && flow->dst_port == info->src_port;
+    return ipmanipulatorFlowKeyMake(info->src_addr, info->src_port, info->dst_addr, info->dst_port);
 }
 
-static bool smugglefintrickFlowMatchesReleaseContext(const ipmanipulator_smuggle_fin_flow_t  *flow,
-                                                     const smugglefintrick_release_context_t *context)
+static ipmanipulator_flow_key_t smugglefintrickMakeFlowKey(const ipmanipulator_smuggle_fin_flow_t *flow)
 {
-    return flow->active && flow->src_addr == context->src_addr && flow->dst_addr == context->dst_addr &&
-           flow->src_port == context->src_port && flow->dst_port == context->dst_port;
+    return ipmanipulatorFlowKeyMake(flow->src_addr, flow->src_port, flow->dst_addr, flow->dst_port);
+}
+
+/* The record keeps the client-to-server orientation the mirrored FIN is built from. */
+static bool smugglefintrickFlowIsForward(const ipmanipulator_smuggle_fin_flow_t  *flow,
+                                         const smugglefintrick_tcp_packet_info_t *info)
+{
+    return flow->src_addr == info->src_addr && flow->dst_addr == info->dst_addr && flow->src_port == info->src_port &&
+           flow->dst_port == info->dst_port;
+}
+
+static bool smugglefintrickFlowIsReverse(const ipmanipulator_smuggle_fin_flow_t  *flow,
+                                         const smugglefintrick_tcp_packet_info_t *info)
+{
+    return flow->src_addr == info->dst_addr && flow->dst_addr == info->src_addr && flow->src_port == info->dst_port &&
+           flow->dst_port == info->src_port;
 }
 
 static bool smugglefintrickExpectedFinMatches(const ipmanipulator_smuggle_fin_flow_t  *flow,
                                               const smugglefintrick_tcp_packet_info_t *info)
 {
-    return flow->active && flow->paused && info->tcp_payload_len == 0 && info->tcp_flags == (TCP_FIN | TCP_ACK) &&
+    return flow->paused && info->tcp_payload_len == 0 && info->tcp_flags == (TCP_FIN | TCP_ACK) &&
            info->src_addr == flow->expected_src_addr && info->dst_addr == flow->expected_dst_addr &&
            info->src_port == flow->expected_src_port && info->dst_port == flow->expected_dst_port &&
            info->seq == flow->expected_seq && info->ack == flow->expected_ack;
@@ -204,141 +213,132 @@ static void smugglefintrickDestroyFlow(ipmanipulator_smuggle_fin_flow_t *flow)
     memoryZero(flow, sizeof(*flow));
 }
 
-static bool smugglefintrickCleanupIdleFlowLocked(ipmanipulator_smuggle_fin_flow_t *flow, uint64_t now_ms)
+static void smugglefintrickInitializeFlow(ipmanipulator_smuggle_fin_flow_t        *flow,
+                                          const smugglefintrick_tcp_packet_info_t *info, uint64_t now_ms)
 {
-    if (! flow->active || flow->paused)
-    {
-        return false;
-    }
-
-    uint64_t timeout_ms = flow->confirmed ? kSmuggleFinIdleTimeoutMs : kSmuggleFinUnconfirmedIdleTimeoutMs;
-    if (now_ms - flow->last_activity_ms < timeout_ms)
-    {
-        return false;
-    }
-
     smugglefintrickDestroyFlow(flow);
-    return true;
+
+    *flow = (ipmanipulator_smuggle_fin_flow_t) {
+        .last_activity_ms = now_ms,
+        .src_addr         = info->src_addr,
+        .dst_addr         = info->dst_addr,
+        .src_port         = info->src_port,
+        .dst_port         = info->dst_port,
+    };
 }
 
-static ipmanipulator_smuggle_fin_flow_t *smugglefintrickInspectUpstreamFlowsLocked(
-    ipmanipulator_tstate_t *state, const smugglefintrick_tcp_packet_info_t *info, uint64_t now_ms, wid_t wid,
-    bool *worker_has_paused_flow)
+/* Runs under the shard lock: dispose only, never forward or call the tunnel. */
+static void smugglefintrickDestroyFlowRecord(void *record, void *context)
 {
-    ipmanipulator_smuggle_fin_flow_t *matched_flow = NULL;
-    *worker_has_paused_flow                        = false;
+    discard context;
 
-    for (uint32_t i = 0; i < state->smuggle_fin_flows_capacity; ++i)
-    {
-        ipmanipulator_smuggle_fin_flow_t *flow = &state->smuggle_fin_flows[i];
-
-        if (smugglefintrickCleanupIdleFlowLocked(flow, now_ms))
-        {
-            continue;
-        }
-
-        if (matched_flow == NULL && smugglefintrickFlowMatches(flow, info))
-        {
-            matched_flow = flow;
-        }
-
-        *worker_has_paused_flow |= flow->active && flow->paused && flow->line != NULL && lineGetWID(flow->line) == wid;
-    }
-
-    return matched_flow;
+    smugglefintrickDestroyFlow((ipmanipulator_smuggle_fin_flow_t *) record);
 }
 
-static void smugglefintrickInspectDownstreamFlowsLocked(ipmanipulator_tstate_t                  *state,
-                                                        const smugglefintrick_tcp_packet_info_t *info, uint64_t now_ms,
-                                                        ipmanipulator_smuggle_fin_flow_t **expected_flow,
-                                                        ipmanipulator_smuggle_fin_flow_t **reverse_flow)
+/*
+ * A paused flow owns queued buffers on its owner worker and must never be
+ * reclaimed by idle expiry; it only leaves the table through a release path or
+ * tunnel teardown.
+ */
+static uint64_t smugglefintrickDeadline(const ipmanipulator_smuggle_fin_flow_t *flow, uint64_t now_ms)
 {
-    *expected_flow = NULL;
-    *reverse_flow  = NULL;
-
-    for (uint32_t i = 0; i < state->smuggle_fin_flows_capacity; ++i)
+    if (flow->paused)
     {
-        ipmanipulator_smuggle_fin_flow_t *flow = &state->smuggle_fin_flows[i];
-
-        if (smugglefintrickCleanupIdleFlowLocked(flow, now_ms))
-        {
-            continue;
-        }
-
-        if (*expected_flow == NULL && smugglefintrickExpectedFinMatches(flow, info))
-        {
-            *expected_flow = flow;
-        }
-
-        if (*reverse_flow == NULL && smugglefintrickFlowMatchesReverse(flow, info))
-        {
-            *reverse_flow = flow;
-        }
+        return UINT64_MAX;
     }
+
+    return now_ms +
+           (flow->confirmed ? (uint64_t) kSmuggleFinIdleTimeoutMs : (uint64_t) kSmuggleFinUnconfirmedIdleTimeoutMs);
 }
 
-static ipmanipulator_smuggle_fin_flow_t *smugglefintrickFindReleaseFlowLocked(
-    ipmanipulator_tstate_t *state, const smugglefintrick_release_context_t *context)
+static void smugglefintrickTouchLocked(ipmanipulator_flow_shard_t *shard, ipmanipulator_flow_entry_t *entry,
+                                       uint64_t now_ms)
 {
-    for (uint32_t i = 0; i < state->smuggle_fin_flows_capacity; ++i)
-    {
-        if (smugglefintrickFlowMatchesReleaseContext(&state->smuggle_fin_flows[i], context))
-        {
-            return &state->smuggle_fin_flows[i];
-        }
-    }
+    ipmanipulator_smuggle_fin_flow_t *flow = smugglefintrickEntryRecord(entry);
 
-    return NULL;
+    flow->last_activity_ms = now_ms;
+    ipmanipulatorFlowShardTouch(shard, entry, smugglefintrickDeadline(flow, now_ms));
 }
 
-static ipmanipulator_smuggle_fin_flow_t *smugglefintrickCreateFlowLocked(ipmanipulator_tstate_t                  *state,
-                                                                         const smugglefintrick_tcp_packet_info_t *info,
-                                                                         uint64_t now_ms)
+static ipmanipulator_smuggle_fin_worker_pause_t *smugglefintrickWorkerRegistry(ipmanipulator_tstate_t *state, wid_t wid)
 {
-    for (uint32_t i = 0; i < state->smuggle_fin_flows_capacity; ++i)
-    {
-        ipmanipulator_smuggle_fin_flow_t *flow = &state->smuggle_fin_flows[i];
-
-        if (flow->active)
-        {
-            continue;
-        }
-
-        *flow = (ipmanipulator_smuggle_fin_flow_t) {
-            .last_activity_ms = now_ms,
-            .src_addr         = info->src_addr,
-            .dst_addr         = info->dst_addr,
-            .src_port         = info->src_port,
-            .dst_port         = info->dst_port,
-            .active           = true,
-        };
-        return flow;
-    }
-
-    uint32_t                          old_capacity = state->smuggle_fin_flows_capacity;
-    uint32_t                          new_capacity = max(kSmuggleFinInitialFlows, old_capacity * 2U);
-    ipmanipulator_smuggle_fin_flow_t *grown =
-        memoryReAllocate(state->smuggle_fin_flows, sizeof(*state->smuggle_fin_flows) * new_capacity);
-
-    if (grown == NULL)
+    if (state->smuggle_fin_worker_pauses == NULL || (uint32_t) wid >= state->smuggle_fin_worker_pauses_count)
     {
         return NULL;
     }
 
-    memoryZero(grown + old_capacity, sizeof(*grown) * (new_capacity - old_capacity));
-    state->smuggle_fin_flows          = grown;
-    state->smuggle_fin_flows_capacity = new_capacity;
+    return &state->smuggle_fin_worker_pauses[(uint32_t) wid];
+}
 
-    ipmanipulator_smuggle_fin_flow_t *flow = &state->smuggle_fin_flows[old_capacity];
-    *flow                                  = (ipmanipulator_smuggle_fin_flow_t) {
-                                         .last_activity_ms = now_ms,
-                                         .src_addr         = info->src_addr,
-                                         .dst_addr         = info->dst_addr,
-                                         .src_port         = info->src_port,
-                                         .dst_port         = info->dst_port,
-                                         .active           = true,
-    };
-    return flow;
+/* Only the flow-owner worker installs or clears its own registry slot. */
+static void smugglefintrickInstallWorkerRegistry(ipmanipulator_tstate_t *state, wid_t wid,
+                                                 const ipmanipulator_flow_key_t *key, uint32_t pause_generation)
+{
+    ipmanipulator_smuggle_fin_worker_pause_t *registry = smugglefintrickWorkerRegistry(state, wid);
+
+    if (registry != NULL)
+    {
+        *registry = (ipmanipulator_smuggle_fin_worker_pause_t) {
+            .key              = *key,
+            .pause_generation = pause_generation,
+            .installed        = true,
+        };
+    }
+}
+
+static void smugglefintrickClearWorkerRegistry(ipmanipulator_tstate_t *state, wid_t wid,
+                                               const ipmanipulator_flow_key_t *key, uint32_t pause_generation)
+{
+    ipmanipulator_smuggle_fin_worker_pause_t *registry = smugglefintrickWorkerRegistry(state, wid);
+
+    if (registry != NULL && registry->installed && registry->pause_generation == pause_generation &&
+        ipmanipulatorFlowKeyEquals(&registry->key, key))
+    {
+        registry->installed = false;
+    }
+}
+
+/*
+ * Answers whether this worker already owns a paused flow on some other tuple.
+ * Must run with no shard lock held; it takes and releases one shard lock and
+ * clears a registry entry that no longer names a live paused flow of its own.
+ * A same-tuple registry entry is validated by the caller under the packet lock.
+ */
+static bool smugglefintrickWorkerOwnsOtherPause(ipmanipulator_tstate_t         *state,
+                                                const ipmanipulator_flow_key_t *packet_key, wid_t wid)
+{
+    ipmanipulator_smuggle_fin_worker_pause_t *registry = smugglefintrickWorkerRegistry(state, wid);
+
+    if (registry == NULL || ! registry->installed || ipmanipulatorFlowKeyEquals(&registry->key, packet_key))
+    {
+        return false;
+    }
+
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->smuggle_fin_table, &registry->key);
+    bool                        owns  = false;
+
+    if (shard != NULL)
+    {
+        ipmanipulator_flow_entry_t *entry =
+            ipmanipulatorFlowShardFind(&state->smuggle_fin_table, shard, &registry->key);
+
+        if (entry != NULL)
+        {
+            const ipmanipulator_smuggle_fin_flow_t *flow = smugglefintrickEntryRecord(entry);
+
+            owns = flow->paused && flow->pause_generation == registry->pause_generation && flow->line != NULL &&
+                   lineGetWID(flow->line) == wid;
+        }
+
+        ipmanipulatorFlowShardUnlock(shard);
+    }
+
+    if (! owns)
+    {
+        registry->installed = false;
+    }
+
+    return owns;
 }
 
 static bool smugglefintrickQueuePacketLocked(ipmanipulator_smuggle_fin_flow_t *flow, sbuf_t *buf,
@@ -375,11 +375,20 @@ static bool smugglefintrickQueuePacketLocked(ipmanipulator_smuggle_fin_flow_t *f
     return true;
 }
 
-static void smugglefintrickDetachQueuedPacketsLocked(ipmanipulator_smuggle_fin_flow_t *flow, bool force,
-                                                     uint64_t                                    now_ms,
+/*
+ * Detaches the queued batch and unpauses the flow. Every caller runs on the
+ * flow-owner worker, so the worker registry is cleared here too and the entry
+ * goes back to a normal idle deadline.
+ */
+static void smugglefintrickDetachQueuedPacketsLocked(ipmanipulator_tstate_t *state, ipmanipulator_flow_shard_t *shard,
+                                                     ipmanipulator_flow_entry_t *entry, bool force, uint64_t now_ms,
                                                      ipmanipulator_smuggle_fin_queued_packet_t **queued_packets,
                                                      uint32_t                                   *queued_packets_count)
 {
+    ipmanipulator_smuggle_fin_flow_t *flow     = smugglefintrickEntryRecord(entry);
+    wid_t                             owner    = flow->line != NULL ? lineGetWID(flow->line) : getWID();
+    ipmanipulator_flow_key_t          flow_key = smugglefintrickMakeFlowKey(flow);
+
     *queued_packets       = flow->queued_packets;
     *queued_packets_count = flow->queued_packets_count;
 
@@ -395,6 +404,9 @@ static void smugglefintrickDetachQueuedPacketsLocked(ipmanipulator_smuggle_fin_f
     {
         flow->confirmed = true;
     }
+
+    smugglefintrickClearWorkerRegistry(state, owner, &flow_key, flow->pause_generation);
+    ipmanipulatorFlowShardTouch(shard, entry, smugglefintrickDeadline(flow, now_ms));
 }
 
 static sbuf_t *smugglefintrickBuildMirrorFinPacket(line_t *l, sbuf_t *source_buf,
@@ -490,13 +502,22 @@ static void smugglefintrickReleaseQueuedPacketsNow(tunnel_t *t, line_t *l,
 
     assert(lineGetWID(l) == getWID());
 
-    mutexLock(&state->smuggle_fin_mutex);
+    ipmanipulator_flow_key_t key =
+        ipmanipulatorFlowKeyMake(context->src_addr, context->src_port, context->dst_addr, context->dst_port);
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->smuggle_fin_table, &key);
 
-    ipmanipulator_smuggle_fin_flow_t *flow = smugglefintrickFindReleaseFlowLocked(state, context);
-    if (flow == NULL || ! flow->paused || flow->pause_generation != context->generation ||
-        (! context->force && ! flow->release_pending))
+    if (shard == NULL)
     {
-        mutexUnlock(&state->smuggle_fin_mutex);
+        return;
+    }
+
+    ipmanipulator_flow_entry_t       *entry = ipmanipulatorFlowShardFind(&state->smuggle_fin_table, shard, &key);
+    ipmanipulator_smuggle_fin_flow_t *flow  = entry != NULL ? smugglefintrickEntryRecord(entry) : NULL;
+
+    if (flow == NULL || flow->src_addr != context->src_addr || flow->src_port != context->src_port || ! flow->paused ||
+        flow->pause_generation != context->generation || (! context->force && ! flow->release_pending))
+    {
+        ipmanipulatorFlowShardUnlock(shard);
         return;
     }
 
@@ -506,9 +527,10 @@ static void smugglefintrickReleaseQueuedPacketsNow(tunnel_t *t, line_t *l,
              state->trick_smuggle_fin_pause_timeout_ms);
     }
 
-    smugglefintrickDetachQueuedPacketsLocked(flow, context->force, now_ms, &queued_packets, &queued_packets_count);
+    smugglefintrickDetachQueuedPacketsLocked(
+        state, shard, entry, context->force, now_ms, &queued_packets, &queued_packets_count);
 
-    mutexUnlock(&state->smuggle_fin_mutex);
+    ipmanipulatorFlowShardUnlock(shard);
 
     if (queued_packets_count > 0)
     {
@@ -683,32 +705,38 @@ static void smugglefintrickRunHandoffMessage(worker_t *worker, void *arg1, void 
     memoryCopyLarge(sbufGetMutablePtr(buf), message->packet, packet_length);
     memoryFree(message);
 
-    mutexLock(&state->smuggle_fin_mutex);
+    ipmanipulator_flow_key_t    key   = ipmanipulatorFlowKeyMake(src_addr, src_port, dst_addr, dst_port);
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->smuggle_fin_table, &key);
+    ipmanipulator_flow_entry_t *entry =
+        shard != NULL ? ipmanipulatorFlowShardFind(&state->smuggle_fin_table, shard, &key) : NULL;
+    ipmanipulator_smuggle_fin_flow_t *flow = entry != NULL ? smugglefintrickEntryRecord(entry) : NULL;
 
-    ipmanipulator_smuggle_fin_flow_t *flow = smugglefintrickFindReleaseFlowLocked(state, &flow_key);
+    discard flow_key;
 
-    if (flow != NULL && flow->paused && flow->pause_generation == pause_generation && flow->line == owner_line)
+    if (flow != NULL && flow->src_addr == src_addr && flow->src_port == src_port && flow->paused &&
+        flow->pause_generation == pause_generation && flow->line == owner_line)
     {
-        flow->last_activity_ms = getTickMS();
+        smugglefintrickTouchLocked(shard, entry, getTickMS());
 
         if (smugglefintrickQueuePacketLocked(
                 flow, buf, kIpManipulatorSmuggleFinQueueDirectionDownstream, recalculate_checksum))
         {
             lineSetRecalculateChecksum(owner_line, false);
-            mutexUnlock(&state->smuggle_fin_mutex);
+            ipmanipulatorFlowShardUnlock(shard);
             lineUnlock(owner_line);
             return;
         }
 
-        smugglefintrickDetachQueuedPacketsLocked(flow, true, getTickMS(), &queued_packets, &queued_packets_count);
-        mutexUnlock(&state->smuggle_fin_mutex);
+        smugglefintrickDetachQueuedPacketsLocked(
+            state, shard, entry, true, getTickMS(), &queued_packets, &queued_packets_count);
+        ipmanipulatorFlowShardUnlock(shard);
 
         smugglefintrickForceReleaseAfterQueueLimit(
             t, owner_line, queued_packets, queued_packets_count, recalculate_checksum);
     }
     else
     {
-        mutexUnlock(&state->smuggle_fin_mutex);
+        ipmanipulatorFlowShardUnlock(shard);
         lineSetRecalculateChecksum(owner_line, recalculate_checksum);
     }
 
@@ -750,14 +778,54 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     bool current_recalculate_checksum = lineGetRecalculateChecksum(l);
 
-    mutexLock(&state->smuggle_fin_mutex);
+    ipmanipulator_flow_key_t key = smugglefintrickMakeKey(&info);
 
-    bool                              worker_has_paused_flow = false;
-    ipmanipulator_smuggle_fin_flow_t *flow =
-        smugglefintrickInspectUpstreamFlowsLocked(state, &info, now_ms, lineGetWID(l), &worker_has_paused_flow);
+    /*
+     * Resolved before the packet shard is locked so the two shard locks are
+     * never nested. A stale registry entry is cleared by this call.
+     */
+    bool worker_has_paused_flow = smugglefintrickWorkerOwnsOtherPause(state, &key, lineGetWID(l));
+
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->smuggle_fin_table, &key);
+
+    if (shard == NULL)
+    {
+        return false;
+    }
+
+    discard ipmanipulatorFlowShardExpire(&state->smuggle_fin_table, shard, now_ms, kIpManipulatorFlowCleanupBudget);
+
+    ipmanipulator_flow_entry_t       *entry = ipmanipulatorFlowShardFind(&state->smuggle_fin_table, shard, &key);
+    ipmanipulator_smuggle_fin_flow_t *flow  = entry != NULL ? smugglefintrickEntryRecord(entry) : NULL;
+
+    if (flow != NULL && ! smugglefintrickFlowIsForward(flow, &info))
+    {
+        if (! smugglefintrickShouldMirror(&info))
+        {
+            entry = NULL;
+            flow  = NULL;
+        }
+        else
+        {
+            /*
+             * The normalized tuple already belongs to the reverse orientation.
+             * Cancel its pause/queue ownership before reusing the sole canonical
+             * entry for the new transcript.
+             */
+            if (flow->paused && flow->line != NULL && lineGetWID(flow->line) == getWID())
+            {
+                ipmanipulator_flow_key_t old_key = smugglefintrickMakeFlowKey(flow);
+
+                smugglefintrickClearWorkerRegistry(state, getWID(), &old_key, flow->pause_generation);
+            }
+
+            smugglefintrickInitializeFlow(flow, &info, now_ms);
+        }
+    }
+
     if (flow != NULL)
     {
-        flow->last_activity_ms = now_ms;
+        smugglefintrickTouchLocked(shard, entry, now_ms);
 
         if (flow->paused)
         {
@@ -765,12 +833,13 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                     flow, buf, kIpManipulatorSmuggleFinQueueDirectionUpstream, current_recalculate_checksum))
             {
                 lineSetRecalculateChecksum(l, false);
-                mutexUnlock(&state->smuggle_fin_mutex);
+                ipmanipulatorFlowShardUnlock(shard);
                 return true;
             }
 
-            smugglefintrickDetachQueuedPacketsLocked(flow, true, now_ms, &queued_packets, &queued_packets_count);
-            mutexUnlock(&state->smuggle_fin_mutex);
+            smugglefintrickDetachQueuedPacketsLocked(
+                state, shard, entry, true, now_ms, &queued_packets, &queued_packets_count);
+            ipmanipulatorFlowShardUnlock(shard);
             smugglefintrickForceReleaseAfterQueueLimit(
                 t, l, queued_packets, queued_packets_count, current_recalculate_checksum);
             return false;
@@ -778,34 +847,42 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (flow->confirmed)
         {
-            mutexUnlock(&state->smuggle_fin_mutex);
+            ipmanipulatorFlowShardUnlock(shard);
             return false;
         }
     }
 
     if ((flow == NULL && worker_has_paused_flow) || ! smugglefintrickShouldMirror(&info))
     {
-        mutexUnlock(&state->smuggle_fin_mutex);
+        ipmanipulatorFlowShardUnlock(shard);
         return false;
     }
 
     sbuf_t *fin_packet = smugglefintrickBuildMirrorFinPacket(l, buf, &info);
     if (fin_packet == NULL)
     {
-        mutexUnlock(&state->smuggle_fin_mutex);
+        ipmanipulatorFlowShardUnlock(shard);
         return false;
     }
 
-    if (flow == NULL)
+    if (entry == NULL)
     {
-        flow = smugglefintrickCreateFlowLocked(state, &info, now_ms);
+        entry = ipmanipulatorFlowShardReserve(
+            &state->smuggle_fin_table, shard, &key, now_ms, now_ms + kSmuggleFinUnconfirmedIdleTimeoutMs);
+
+        if (entry != NULL)
+        {
+            smugglefintrickInitializeFlow(smugglefintrickEntryRecord(entry), &info, now_ms);
+        }
+
+        flow = entry != NULL ? smugglefintrickEntryRecord(entry) : NULL;
     }
 
     if (flow == NULL)
     {
-        mutexUnlock(&state->smuggle_fin_mutex);
+        ipmanipulatorFlowShardUnlock(shard);
         lineReuseBuffer(l, fin_packet);
-        LOGW("IpManipulator: smuggle-fin failed to allocate a connection record");
+        LOGW("IpManipulator: smuggle-fin could not admit a connection record; the packet passes unchanged");
         return false;
     }
 
@@ -821,21 +898,24 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     flow->release_pending   = false;
     flow->paused            = true;
     /*
-     * Allocate generations across the whole tunnel so zeroing and reusing a
-     * flow slot cannot let an old delayed-release context match a new occupant.
+     * Allocate generations across the whole tunnel so reusing a tuple cannot let
+     * an old delayed-release context match a new occupant.
      */
-    state->smuggle_fin_next_pause_generation += 1U;
-    if (state->smuggle_fin_next_pause_generation == 0)
+    uint32_t pause_generation = (uint32_t) atomicInc(&state->smuggle_fin_next_pause_generation) + 1U;
+    if (pause_generation == 0)
     {
-        state->smuggle_fin_next_pause_generation = 1;
+        pause_generation = (uint32_t) atomicInc(&state->smuggle_fin_next_pause_generation) + 1U;
     }
-    flow->pause_generation = state->smuggle_fin_next_pause_generation;
+    flow->pause_generation = pause_generation;
+
+    ipmanipulatorFlowShardTouch(shard, entry, smugglefintrickDeadline(flow, now_ms));
 
     if (! smugglefintrickQueuePacketLocked(
             flow, buf, kIpManipulatorSmuggleFinQueueDirectionUpstream, current_recalculate_checksum))
     {
-        smugglefintrickDetachQueuedPacketsLocked(flow, true, now_ms, &queued_packets, &queued_packets_count);
-        mutexUnlock(&state->smuggle_fin_mutex);
+        smugglefintrickDetachQueuedPacketsLocked(
+            state, shard, entry, true, now_ms, &queued_packets, &queued_packets_count);
+        ipmanipulatorFlowShardUnlock(shard);
         lineReuseBuffer(l, fin_packet);
         smugglefintrickForceReleaseAfterQueueLimit(
             t, l, queued_packets, queued_packets_count, current_recalculate_checksum);
@@ -844,10 +924,11 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     lineSetRecalculateChecksum(l, false);
 
-    smugglefintrick_release_context_t *timeout_context  = smugglefintrickCreateReleaseContextLocked(flow, true);
-    uint32_t                           pause_generation = flow->pause_generation;
+    smugglefintrickInstallWorkerRegistry(state, lineGetWID(l), &key, pause_generation);
 
-    mutexUnlock(&state->smuggle_fin_mutex);
+    smugglefintrick_release_context_t *timeout_context = smugglefintrickCreateReleaseContextLocked(flow, true);
+
+    ipmanipulatorFlowShardUnlock(shard);
 
     smugglefintrickScheduleQueuedRelease(t, l, state->trick_smuggle_fin_pause_timeout_ms, timeout_context);
 
@@ -898,20 +979,36 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     bool current_recalculate_checksum = lineGetRecalculateChecksum(l);
 
-    mutexLock(&state->smuggle_fin_mutex);
+    ipmanipulator_flow_key_t    key   = smugglefintrickMakeKey(&info);
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->smuggle_fin_table, &key);
 
-    ipmanipulator_smuggle_fin_flow_t *expected_flow = NULL;
-    ipmanipulator_smuggle_fin_flow_t *reverse_flow  = NULL;
-    smugglefintrickInspectDownstreamFlowsLocked(state, &info, now_ms, &expected_flow, &reverse_flow);
-
-    ipmanipulator_smuggle_fin_flow_t *flow = expected_flow;
-    if (flow != NULL)
+    if (shard == NULL)
     {
-        flow->last_activity_ms = now_ms;
+        return false;
+    }
+
+    discard ipmanipulatorFlowShardExpire(&state->smuggle_fin_table, shard, now_ms, kIpManipulatorFlowCleanupBudget);
+
+    /*
+     * Both the mirrored-FIN echo and ordinary reverse traffic normalize to the
+     * same key, so one lookup replaces the old expected/reverse table scans.
+     */
+    ipmanipulator_flow_entry_t       *entry = ipmanipulatorFlowShardFind(&state->smuggle_fin_table, shard, &key);
+    ipmanipulator_smuggle_fin_flow_t *flow  = entry != NULL ? smugglefintrickEntryRecord(entry) : NULL;
+
+    if (flow != NULL && ! smugglefintrickFlowIsReverse(flow, &info))
+    {
+        entry = NULL;
+        flow  = NULL;
+    }
+
+    if (flow != NULL && smugglefintrickExpectedFinMatches(flow, &info))
+    {
+        smugglefintrickTouchLocked(shard, entry, now_ms);
 
         if (flow->release_pending)
         {
-            mutexUnlock(&state->smuggle_fin_mutex);
+            ipmanipulatorFlowShardUnlock(shard);
             lineSetRecalculateChecksum(l, false);
             lineReuseBuffer(l, buf);
             return true;
@@ -924,7 +1021,7 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         smugglefintrick_release_context_t *release_context  = smugglefintrickCreateReleaseContextLocked(flow, false);
         uint32_t                           release_delay_ms = state->trick_smuggle_fin_delay_ms;
 
-        mutexUnlock(&state->smuggle_fin_mutex);
+        ipmanipulatorFlowShardUnlock(shard);
 
         lineSetRecalculateChecksum(l, false);
         lineReuseBuffer(l, buf);
@@ -935,7 +1032,6 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return true;
     }
 
-    flow = reverse_flow;
     if (flow != NULL)
     {
         if (flow->paused)
@@ -943,7 +1039,7 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             line_t *owner_line = flow->line;
             if (owner_line == NULL)
             {
-                mutexUnlock(&state->smuggle_fin_mutex);
+                ipmanipulatorFlowShardUnlock(shard);
                 return false;
             }
 
@@ -960,7 +1056,7 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 uint16_t src_port         = flow->src_port;
                 uint16_t dst_port         = flow->dst_port;
 
-                mutexUnlock(&state->smuggle_fin_mutex);
+                ipmanipulatorFlowShardUnlock(shard);
 
 #if WW_COMPILE_FOR_32BIT
                 if (packet_length > (uint32_t) (SIZE_MAX - sizeof(smugglefintrick_handoff_message_t)))
@@ -1015,50 +1111,62 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 return true;
             }
 
-            flow->last_activity_ms = now_ms;
+            smugglefintrickTouchLocked(shard, entry, now_ms);
 
             if (smugglefintrickQueuePacketLocked(
                     flow, buf, kIpManipulatorSmuggleFinQueueDirectionDownstream, current_recalculate_checksum))
             {
                 lineSetRecalculateChecksum(l, false);
-                mutexUnlock(&state->smuggle_fin_mutex);
+                ipmanipulatorFlowShardUnlock(shard);
                 return true;
             }
 
-            smugglefintrickDetachQueuedPacketsLocked(flow, true, now_ms, &queued_packets, &queued_packets_count);
-            mutexUnlock(&state->smuggle_fin_mutex);
+            smugglefintrickDetachQueuedPacketsLocked(
+                state, shard, entry, true, now_ms, &queued_packets, &queued_packets_count);
+            ipmanipulatorFlowShardUnlock(shard);
             smugglefintrickForceReleaseAfterQueueLimit(
                 t, owner_line, queued_packets, queued_packets_count, current_recalculate_checksum);
             return false;
         }
 
-        flow->last_activity_ms = now_ms;
+        smugglefintrickTouchLocked(shard, entry, now_ms);
     }
 
-    mutexUnlock(&state->smuggle_fin_mutex);
+    ipmanipulatorFlowShardUnlock(shard);
     return false;
+}
+
+bool smugglefintrickInitializeState(tunnel_t *t)
+{
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+    state->smuggle_fin_worker_pauses_count = (uint32_t) getTotalWorkersCount();
+    state->smuggle_fin_worker_pauses =
+        memoryAllocateZero(sizeof(*state->smuggle_fin_worker_pauses) * state->smuggle_fin_worker_pauses_count);
+
+    if (state->smuggle_fin_worker_pauses == NULL)
+    {
+        state->smuggle_fin_worker_pauses_count = 0;
+        LOGF("IpManipulator: failed to allocate the smuggle-fin per-worker paused-flow registry");
+        return false;
+    }
+
+    return ipmanipulatorFlowTableInit(&state->smuggle_fin_table,
+                                      "smuggle-fin",
+                                      state->trick_stateful_flow_limit,
+                                      (uint32_t) getTotalWorkersCount(),
+                                      sizeof(ipmanipulator_smuggle_fin_flow_t),
+                                      smugglefintrickDestroyFlowRecord,
+                                      NULL);
 }
 
 void smugglefintrickDestroyState(tunnel_t *t)
 {
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
-    if (state->smuggle_fin_flows == NULL)
-    {
-        return;
-    }
+    ipmanipulatorFlowTableDestroy(&state->smuggle_fin_table);
 
-    mutexLock(&state->smuggle_fin_mutex);
-
-    for (uint32_t i = 0; i < state->smuggle_fin_flows_capacity; ++i)
-    {
-        smugglefintrickDestroyFlow(&state->smuggle_fin_flows[i]);
-    }
-
-    mutexUnlock(&state->smuggle_fin_mutex);
-    mutexDestroy(&state->smuggle_fin_mutex);
-
-    memoryFree(state->smuggle_fin_flows);
-    state->smuggle_fin_flows          = NULL;
-    state->smuggle_fin_flows_capacity = 0;
+    memoryFree(state->smuggle_fin_worker_pauses);
+    state->smuggle_fin_worker_pauses       = NULL;
+    state->smuggle_fin_worker_pauses_count = 0;
 }

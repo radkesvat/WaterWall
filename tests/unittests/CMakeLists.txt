@@ -1279,6 +1279,54 @@ if(TARGET IpManipulator)
 
   add_waterwall_unit_test(waterwall.ipmanipulator_tcpbit_unit ipmanipulator_tcpbit_test "unit;tunnels;ipmanipulator")
 
+  add_executable(ipmanipulator_syn_predicate_test ipmanipulator_syn_predicate_test.c)
+  target_include_directories(ipmanipulator_syn_predicate_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include/IpManipulator
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common
+  )
+  target_link_libraries(ipmanipulator_syn_predicate_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests ipmanipulator_syn_predicate_test)
+
+  add_waterwall_unit_test(
+    waterwall.ipmanipulator_syn_predicate_unit
+    ipmanipulator_syn_predicate_test
+    "unit;tunnels;ipmanipulator;tcp;configuration"
+  )
+
+  add_executable(ipmanipulator_flow_table_test
+    ipmanipulator_flow_table_test.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/flow_table.c
+  )
+  target_include_directories(ipmanipulator_flow_table_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include/IpManipulator
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common
+  )
+  target_link_libraries(ipmanipulator_flow_table_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests ipmanipulator_flow_table_test)
+
+  add_waterwall_unit_test(
+    waterwall.ipmanipulator_flow_table_unit
+    ipmanipulator_flow_table_test
+    "unit;tunnels;ipmanipulator;flowtable;bounded;hashing"
+  )
+
+  add_executable(ipmanipulator_config_validation_test ipmanipulator_config_validation_test.c)
+  target_include_directories(ipmanipulator_config_validation_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include/IpManipulator
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common
+  )
+  target_link_libraries(ipmanipulator_config_validation_test PRIVATE IpManipulator ww)
+  add_dependencies(waterwall_unit_tests ipmanipulator_config_validation_test)
+
+  add_waterwall_unit_test(
+    waterwall.ipmanipulator_config_validation_unit
+    ipmanipulator_config_validation_test
+    "unit;tunnels;ipmanipulator;configuration;tcpbit;sni"
+  )
+
   add_executable(ipmanipulator_protoswap_test ipmanipulator_protoswap_test.c)
   target_include_directories(ipmanipulator_protoswap_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include
@@ -1324,6 +1372,29 @@ if(TARGET IpManipulator)
     "unit;tunnels;ipmanipulator;firstsni;tls"
   )
 
+  add_executable(ipmanipulator_echsni_delay_test
+    ipmanipulator_echsni_delay_test.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/flow_table.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/helpers.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/echsnitrick/trick.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/portghost/trick.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/protoswap/trick.c
+  )
+  target_include_directories(ipmanipulator_echsni_delay_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include/IpManipulator
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common
+  )
+  target_compile_definitions(ipmanipulator_echsni_delay_test PRIVATE IPMANIPULATOR_ECHSNI_TEST_HOOKS=1)
+  target_link_libraries(ipmanipulator_echsni_delay_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests ipmanipulator_echsni_delay_test)
+
+  add_waterwall_unit_test(
+    waterwall.ipmanipulator_echsni_delay_unit
+    ipmanipulator_echsni_delay_test
+    "unit;tunnels;ipmanipulator;echsni;delay;lifecycle"
+  )
+
   add_executable(ipmanipulator_smugglesni_capture_test ipmanipulator_smugglesni_capture_test.c)
   target_include_directories(ipmanipulator_smugglesni_capture_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include
@@ -1341,6 +1412,7 @@ if(TARGET IpManipulator)
 
   add_executable(ipmanipulator_smugglefin_pause_test
     ipmanipulator_smugglefin_pause_test.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/flow_table.c
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/portghost/trick.c
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/protoswap/trick.c
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/smugglefin/trick.c
@@ -1367,6 +1439,7 @@ if(TARGET IpManipulator)
     target_include_directories(ipmanipulator_internal_tls_child_test PRIVATE
       ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include
       ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include/IpManipulator
+      ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common
     )
     target_link_libraries(ipmanipulator_internal_tls_child_test PRIVATE
       IpManipulator TlsClient ww ssl crypto

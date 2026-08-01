@@ -1,5 +1,5 @@
 <!--
-Documentation version: 115
+Documentation version: 116
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx, and both files must keep the same documentation version.
 -->
 
@@ -30,7 +30,7 @@ The current implementation provides these classes of tricks:
 - Can inject a crafted mirrored FIN/ACK packet on a dedicated upstream helper branch.
 - Can hold the third upstream TLS ClientHello packet, overlap it with a crafted fake ClientHello after the fourth packet arrives, send a crafted server-side TLS packet on a helper upstream branch, emit a fake TCP SYN on the same 4-tuple, and then flush the remaining real ClientHello bytes.
 - Can hold the third upstream TLS ClientHello packet, complete it with the fourth packet, then emit an enlarged real first TLS chunk, a client-looking FIN packet, a fake TCP SYN, a full crafted fake ClientHello, one valid generated TLS-looking filler packet, and the remaining real TLS bytes immediately on the normal upstream path.
-- Can hold the third upstream TLS ClientHello packet, complete it with the fourth packet, locate a fake TLS ClientHello embedded inside the `encrypted_client_hello` payload, send that byte range first as an out-of-order TCP segment, and then release the original captured ClientHello packets after a delay without changing the TLS bytes.
+- Can capture an upstream TLS ClientHello across one or more TCP segments regardless of packet ordinal, locate a fake TLS ClientHello embedded inside the `encrypted_client_hello` payload, send that byte range first as an out-of-order TCP segment, and then release the original captured ClientHello packets after a delay without changing the TLS bytes.
 - Optionally duplicates the final outgoing packet after all other enabled tricks.
 - Updates IPv4 header and TCP checksums in place for protocol swaps and simple TCP flag changes; size-changing or payload-crafting tricks request full checksum recalculation.
 - Can replace one outgoing TLS ClientHello packet with multiple shuffled IP fragments.
@@ -88,6 +88,7 @@ Typical use cases include:
     "smuggle-fin": true,
     "fin-sni-delay-ms": 250,
     "real-fin-upstream-node": "packet-to-stream-real-fin",
+    "stateful-flow-limit": 65536,
     "sni-blender": true,
     "sni-blender-packets": 4,
     "packet-duplicate": 2,
@@ -266,19 +267,36 @@ families are enabled, their configured replacement values must also be distinct.
 - `ech-sni-trick` `(string)`
   Enables the `ech-sni-trick`.
 
-  In the current architecture, this value should match `TlsClient.settings.ech-sni-trick` for the same flow. `TlsClient` is responsible for embedding the fake ClientHello inside the GREASE `encrypted_client_hello` payload, and `IpManipulator` is responsible for the transport-level out-of-order send and delayed release.
+  Must be between 1 and 255 bytes, the same TLS `host_name` boundary `TlsClient` enforces.
 
-  In the current implementation, the first two upstream packets pass unchanged, the third packet is held, and the fourth packet completes the captured real TLS ClientHello. `IpManipulator` then requires:
+  In the current architecture, this value should match `TlsClient.settings.ech-sni-trick` for the same flow. `TlsClient` is responsible for embedding the fake ClientHello inside the GREASE `encrypted_client_hello` payload, and `IpManipulator` is responsible for the transport-level out-of-order send and delayed release. This remains GREASE camouflage rather than real encrypted ECH.
+
+  Capture is sequence aware and does not depend on packet ordinals. A flow is opened by a payload-free TCP `SYN` (plain or with ECN `ECE`/`CWR`); TCP Fast Open SYN data is not supported and passes through. Capture then starts on the first upstream packet that carries a recognizable beginning of a TLS ClientHello record, and continues over contiguous following segments until the exact TLS record length is complete. Payload-free packets, including ACK-only packets before or between ClientHello segments, pass unchanged and never advance or disable capture.
+
+  Capture is bounded by the shared TLS capture helper:
+  - at most 16 captured packets
+  - at most a 16384-byte TLS record
+  - a 1500 ms capture timeout
+
+  A sequence gap, an overlap the helper cannot prove is a retransmission, a malformed record, an unsupported layout, exceeding the packet or size limit, and the capture timeout all fail open: the held originals are released unchanged and in TCP sequence order, and that flow generation becomes passthrough. Once a generation is passthrough its later packets are not recaptured.
+
+  When capture completes, `IpManipulator` requires:
   - a valid SNI extension
   - a valid `encrypted_client_hello` extension
-  - a full fake TLS ClientHello inside the ECH payload bytes
+  - exactly one embedded inner TLS ClientHello inside the ECH payload whose own SNI parses completely and equals the configured `ech-sni-trick` value byte for byte
+
+  A candidate that is truncated, malformed, has no SNI, carries a different host name, or is only structurally TLS-looking is rejected, and more than one exactly matching candidate is ambiguous and also rejected. Every rejection fails open: the captured originals leave unchanged, in order, and no fake inner packet is emitted.
 
   When those checks pass, `IpManipulator` keeps the captured ClientHello bytes unchanged and sends:
   - one out-of-order TCP packet carrying only the fake inner ClientHello bytes from the ECH payload, using the TCP sequence number that corresponds to those bytes inside the original ClientHello stream
-  - after `data-shard-1-delay`, the original held upstream packet unchanged
-  - after `data-shard-2-delay`, the following original upstream packet unchanged
+  - after `data-shard-1-delay`, original captured packet 1 unchanged
+  - after an additional `data-shard-2-delay`, original captured packets 2 through N unchanged, emitted consecutively in their original sequence order
 
-  During both delay windows, later upstream packets on the same 4-tuple are discarded as expected retransmissions.
+  A one-packet capture therefore uses only `data-shard-1-delay` and arms no second timer, a two-packet capture keeps the previous byte-for-byte and timing behaviour, and a three-or-more-packet capture never creates independently scheduled equal-deadline messages that could reorder.
+
+  During the release window only an exact retransmission of a still-pending original segment is swallowed. ACK-only packets, non-overlapping later application data, and any partial or ambiguous overlap pass through unchanged. TCP `FIN` and `RST` packets are connection-lifecycle traffic and are never swallowed. A matching close in either direction cancels every original packet that is still pending release; an upstream close during an incomplete capture releases the held originals before forwarding the close packet, while a downstream close disposes of the incomplete capture without any later injection.
+
+  Each delayed original and each capture is bound to the nonzero generation of the ECH flow that captured it as well as its 4-tuple. Reusing the same 4-tuple starts a new generation and invalidates the previous generation's capture and pending originals first, so a timer or capture left from the previous connection cannot release stale ClientHello data.
 
   In the current implementation, the crafted out-of-order `ech-sni-trick` TCP packet is sent with the `PSH` flag set so it is less likely to be buffered by middle services.
 
@@ -287,14 +305,14 @@ families are enabled, their configured replacement values must also be distinct.
 - `data-shard-1-delay` `(integer)`
   Optional.
 
-  Delay in milliseconds between sending the out-of-order fake inner ClientHello segment and releasing the original held upstream packet.
+  Delay in milliseconds between sending the out-of-order fake inner ClientHello segment and releasing original captured packet 1.
 
   Defaults to `0`.
 
 - `data-shard-2-delay` `(integer)`
   Optional.
 
-  Delay in milliseconds between releasing the original held upstream packet and releasing the following original upstream packet. After this packet is released, the original ClientHello has been fully sent.
+  Additional delay in milliseconds between releasing original captured packet 1 and releasing original captured packets 2 through N. Those remaining originals are emitted consecutively in sequence order from that second release. After they are released, the original ClientHello has been fully sent. A one-packet capture ignores this setting.
 
   Defaults to `0`.
 
@@ -497,6 +515,37 @@ Supported values are:
 
   Downstream and bidirectional actions require a separate budget for packets entering those rewrite directions. Lowering the local TUN MTU does not constrain packets arriving from `RawSocket`. Subtract any other size-growing tunnel overhead as well.
 
+#### Rejected TCP-bit compositions
+
+Configuration fails at creation for these combinations:
+
+- any `up-tcp-bit-...` action together with `first-sni`, `smuggle-sni`, `overlap-sni`, `synfin-sni` or `ech-sni-trick`, with or without `preserve-tcp-bitflags`. Upstream TCP-bit actions run before stateful SNI inspection, while the packets those state machines generate and replay do not consistently re-enter TCP-bit processing, so the result would depend on packet flags and on the selected SNI transcript.
+- `preserve-tcp-bitflags` together with at least one `up-tcp-bit-...` action and `sni-blender`. That is the encoder direction: the backup byte is appended before SNI Blender creates IPv4 fragments, and the peer restoration path skips fragments and cannot remove that byte.
+
+These remain accepted:
+
+- `preserve-tcp-bitflags` with no TCP-bit actions, which is a no-op encoder
+- downstream-only `dw-tcp-bit-...` actions with any stateful SNI trick or with `sni-blender`, because they never touch the upstream flow-opening SYN or the upstream ClientHello
+- simple upstream TCP-bit actions with `sni-blender` when `preserve-tcp-bitflags` is off
+
+`preserve-tcp-bitflags` stays unsupported with any future upstream stage that fragments or reshapes a metadata-bearing TCP packet.
+
+### Stateful flow-table settings
+
+- `stateful-flow-limit` `(integer)`
+  Optional.
+
+  Hard upper bound on the number of active flows each enabled stateful trick may track. `first-sni`, `smuggle-sni`, `overlap-sni`, `synfin-sni`, `ech-sni-trick` and `smuggle-fin` each get their own bounded table with this limit.
+
+  Valid range in the current implementation:
+  - `32` to `1048576`
+
+  Defaults to `65536`.
+
+  The tables never grow past this limit. When a shard is full, `IpManipulator` first reclaims entries whose idle deadline has passed, up to a small fixed budget; if no slot becomes available the admission fails open, the packet is forwarded unchanged, and a rate-limited warning is logged. A live flow is never evicted to admit a new one, which matters for the `ech-sni-trick` and `smuggle-fin` records that own held packet buffers.
+
+  Lookup uses one normalized four-tuple, so a forward packet and its reverse resolve to the same record, the same hash and the same lock, including across workers. Idle expiry uses a per-shard deadline heap, so no packet callback ever scans the whole table.
+
 ### Port ghost settings
 
 - `source-port-ghost` `(boolean)`
@@ -665,6 +714,32 @@ If `preserve-tcp-bitflags` is enabled:
 - no actions in either direction means this option does not add or remove a backup byte
 - fragmented IPv4 packets are skipped so the tunnel only operates on whole TCP packets with a real TCP header and transport payload
 
+### Stateful flow tables
+
+Every stateful trick keeps its records in its own bounded, sharded flow table:
+
+- the canonical key normalizes the two endpoints, so a forward packet and its
+  reverse select the same hash, the same shard and the same record
+- the shard count follows the worker count, capped at 64, and the configured
+  `stateful-flow-limit` is partitioned across shards so the shard limits sum to
+  it exactly
+- lookup is average O(1) through hash buckets and idle expiry pops a per-shard
+  deadline heap, so no packet callback scans the whole table
+- the per-tunnel hash seed comes from `secureRandomBytes()`; tunnel creation
+  fails when no secure seed is available, because a predictable hash would let
+  an attacker pick tuples that all land in one bucket
+- a record pointer is only valid while its shard mutex is held, so timers and
+  cross-worker messages carry the normalized tuple plus a flow generation
+- record destructors run under the shard mutex and only dispose of owned
+  buffers; they never forward a packet or call into a tunnel
+
+`smuggle-fin` additionally keeps a per-worker paused-flow registry holding one
+tuple plus pause generation, so the rule that a worker does not start a second
+pause while it already owns one no longer requires a full-table scan. The
+registry is only written by the flow-owner worker and is validated against the
+table before use, so a cross-worker release simply leaves an entry that the
+owner worker clears on its next packet.
+
 ### Port ghost tailing
 
 The port-ghost trick only applies to whole IPv4 TCP or UDP packets.
@@ -692,6 +767,9 @@ When `source-port-ghost` and/or `dest-port-ghost` are enabled:
 - `smuggle-sni` is upstream-only and sends the real matching ClientHello immediately to `real-sni-upstream-node`, then delays the crafted `smuggle-sni` copy to the normal `next` branch.
 - `smuggle-fin` is upstream-only and injects a crafted mirrored FIN/ACK packet to `real-fin-upstream-node`, then temporarily queues later packets on the flow-owner worker until the expected downstream echo is seen and the optional `fin-sni-delay-ms` window expires.
 - `sni-blender` is upstream-only. The downstream half of that trick is currently a no-op.
+- `ech-sni-trick` capture is sequence aware rather than ordinal based, is bounded to 16 packets and a 16384-byte TLS record, ignores ACK-only packets, and fails open on timeout, gaps, limits and any inner-SNI mismatch.
+- Upstream TCP-bit actions are rejected together with any stateful SNI trick, and preserved upstream TCP-bit metadata is rejected together with `sni-blender`.
+- Every stateful trick is bounded by `stateful-flow-limit`; a full table fails open with a rate-limited warning instead of evicting a live flow.
 - The tunnel relies on later packet-writing code to honor `line->recalculate_checksum` and rebuild packet checksums.
 - `sni-blender-packets` is required when `sni-blender` is enabled.
 - `first-sni-random-tcp-sequence` affects only the crafted `first-sni` copy, not the original packet.

@@ -250,6 +250,9 @@ static void envSetup(test_env_t *env)
     GSTATE.masterpool_buffer_pools_small = env->small_master;
     GSTATE.workers_count                 = 3;
     tl_wid                               = 0;
+
+    /* Bounded flow tables refuse to run without a secure hash seed. */
+    require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
 }
 
 static void envTeardown(test_env_t *env)
@@ -257,7 +260,8 @@ static void envTeardown(test_env_t *env)
     GSTATE.shortcut_buffer_pools         = NULL;
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
-    GSTATE.workers_count                 = 0;
+    globalstateDestroySecureRandom();
+    GSTATE.workers_count = 0;
 
     bufferpoolDestroy(env->buffer_pools[0]);
     bufferpoolDestroy(env->buffer_pools[1]);
@@ -325,11 +329,84 @@ static tunnel_t *createTestTunnel(tunnel_t *normal_upstream, tunnel_t *normal_do
     state->trick_smuggle_fin_pause_timeout_ms = 25;
     state->trick_real_fin_upstream_node       = &real_node;
     state->trick_real_fin_upstream_tunnel     = fin_branch;
-    state->smuggle_fin_flows_capacity         = kIpManipulatorSmuggleInitialFlows;
-    state->smuggle_fin_flows =
-        memoryAllocateZero(sizeof(*state->smuggle_fin_flows) * state->smuggle_fin_flows_capacity);
-    mutexInit(&state->smuggle_fin_mutex);
+    state->trick_stateful_flow_limit          = kIpManipulatorFlowLimitMin;
+    require(smugglefintrickInitializeState(t), "failed to create the smuggle-fin flow table");
     return t;
+}
+
+/*
+ * Test-only accessor for one bounded flow record. Production code may only use
+ * an entry pointer while its shard is locked; these tests are single threaded,
+ * so the record stays put until the entry is removed.
+ */
+static ipmanipulator_smuggle_fin_flow_t *findFinFlow(ipmanipulator_tstate_t *state, uint32_t src_addr,
+                                                     uint16_t src_port, uint32_t dst_addr, uint16_t dst_port)
+{
+    ipmanipulator_flow_key_t key =
+        ipmanipulatorFlowKeyMake(lwip_htonl(src_addr), src_port, lwip_htonl(dst_addr), dst_port);
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->smuggle_fin_table, &key);
+
+    if (shard == NULL)
+    {
+        return NULL;
+    }
+
+    ipmanipulator_flow_entry_t       *entry = ipmanipulatorFlowShardFind(&state->smuggle_fin_table, shard, &key);
+    ipmanipulator_smuggle_fin_flow_t *flow =
+        entry != NULL ? (ipmanipulator_smuggle_fin_flow_t *) ipmanipulatorFlowEntryRecord(entry) : NULL;
+
+    ipmanipulatorFlowShardUnlock(shard);
+    return flow;
+}
+
+/* The tuple every fixture in this file pauses. */
+static ipmanipulator_smuggle_fin_flow_t *findPausedFixtureFlow(ipmanipulator_tstate_t *state)
+{
+    return findFinFlow(state, 0x0A000001, 12345, 0xC0000201, 443);
+}
+
+/* Forces the bounded-table idle deadline for one tuple into the past. */
+static void expireFinFlowNow(ipmanipulator_tstate_t *state, uint32_t src_addr, uint16_t src_port, uint32_t dst_addr,
+                             uint16_t dst_port)
+{
+    ipmanipulator_flow_key_t key =
+        ipmanipulatorFlowKeyMake(lwip_htonl(src_addr), src_port, lwip_htonl(dst_addr), dst_port);
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->smuggle_fin_table, &key);
+
+    require(shard != NULL, "the smuggle-fin flow table is not ready");
+
+    ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->smuggle_fin_table, shard, &key);
+    require(entry != NULL, "the flow to expire is not in the table");
+    ipmanipulatorFlowShardTouch(shard, entry, 0);
+
+    ipmanipulatorFlowShardUnlock(shard);
+}
+
+/*
+ * Admits a record directly so a test can plant a stale flow. Expiry is shard
+ * local, so the fixture and the packet that triggers cleanup share a tuple.
+ */
+static ipmanipulator_smuggle_fin_flow_t *insertFinFlow(ipmanipulator_tstate_t *state, uint32_t src_addr,
+                                                       uint16_t src_port, uint32_t dst_addr, uint16_t dst_port)
+{
+    ipmanipulator_flow_key_t key =
+        ipmanipulatorFlowKeyMake(lwip_htonl(src_addr), src_port, lwip_htonl(dst_addr), dst_port);
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->smuggle_fin_table, &key);
+
+    require(shard != NULL, "the smuggle-fin flow table is not ready");
+
+    ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardReserve(&state->smuggle_fin_table, shard, &key, 0, 0);
+    require(entry != NULL, "failed to admit a fixture flow");
+
+    ipmanipulator_smuggle_fin_flow_t *flow = (ipmanipulator_smuggle_fin_flow_t *) ipmanipulatorFlowEntryRecord(entry);
+
+    flow->src_addr = lwip_htonl(src_addr);
+    flow->dst_addr = lwip_htonl(dst_addr);
+    flow->src_port = src_port;
+    flow->dst_port = dst_port;
+
+    ipmanipulatorFlowShardUnlock(shard);
+    return flow;
 }
 
 static void cleanupTimedMessages(void)
@@ -434,9 +511,11 @@ static void startPausedFlowForTuple(tunnel_t *t, line_t *line, uint32_t src_addr
     sbuf_t  *packet = makeTcpPacket(line->wid, src_addr, src_port, dst_addr, dst_port, 100, 200, TCP_ACK | TCP_PSH, 10);
     require(smugglefintrickUpStreamPayload(t, line, packet), "first payload did not pause its flow");
 
-    ipmanipulator_tstate_t *state = tunnelGetState(t);
-    require(state->smuggle_fin_flows[0].queued_packets_count == 1, "first payload was not queued");
-    require(state->smuggle_fin_flows[0].queued_packets[0].recalculate_checksum == expected_recalculate_checksum,
+    ipmanipulator_tstate_t           *state = tunnelGetState(t);
+    ipmanipulator_smuggle_fin_flow_t *flow  = findFinFlow(state, src_addr, src_port, dst_addr, dst_port);
+    require(flow != NULL, "the paused flow is missing from the bounded table");
+    require(flow->queued_packets_count == 1, "first payload was not queued");
+    require(flow->queued_packets[0].recalculate_checksum == expected_recalculate_checksum,
             "first payload did not retain its checksum intent");
     require(! lineGetRecalculateChecksum(line), "queued first payload left checksum intent on the packet line");
     require(mirrored_fin_packets == previous_mirrored_fin_packets + 1, "mirrored FIN was not sent");
@@ -494,9 +573,9 @@ static void testPauseTimeoutReleasesFlow(void)
 
     runTimedMessage(0);
     ipmanipulator_tstate_t *state = tunnelGetState(t);
-    require(! state->smuggle_fin_flows[0].paused, "flow remained paused after timeout");
-    require(state->smuggle_fin_flows[0].confirmed, "timed-out flow was allowed to pause again");
-    require(state->smuggle_fin_flows[0].queued_packets_count == 0, "timeout left queued packets behind");
+    require(! findPausedFixtureFlow(state)->paused, "flow remained paused after timeout");
+    require(findPausedFixtureFlow(state)->confirmed, "timed-out flow was allowed to pause again");
+    require(findPausedFixtureFlow(state)->queued_packets_count == 0, "timeout left queued packets behind");
     require(normal_upstream_packets == 2, "timeout did not replay every queued packet");
     require(replayed_upstream_sequences[0] == 100 && replayed_upstream_sequences[1] == 110,
             "timeout replayed queued packets out of order");
@@ -528,9 +607,10 @@ static void testQueuedPacketsRetainIndependentChecksumIntent(void)
     require(smugglefintrickUpStreamPayload(t, &line, second), "second checksum fixture packet was not held");
 
     ipmanipulator_tstate_t *state = tunnelGetState(t);
-    require(state->smuggle_fin_flows[0].queued_packets_count == 2, "checksum fixture queue count is wrong");
-    require(state->smuggle_fin_flows[0].queued_packets[0].recalculate_checksum, "queued true checksum intent was lost");
-    require(! state->smuggle_fin_flows[0].queued_packets[1].recalculate_checksum,
+    require(findPausedFixtureFlow(state)->queued_packets_count == 2, "checksum fixture queue count is wrong");
+    require(findPausedFixtureFlow(state)->queued_packets[0].recalculate_checksum,
+            "queued true checksum intent was lost");
+    require(! findPausedFixtureFlow(state)->queued_packets[1].recalculate_checksum,
             "queued false checksum intent inherited stale state");
 
     runTimedMessage(0);
@@ -560,7 +640,7 @@ static void testQueueCapForcesRelease(void)
     }
 
     ipmanipulator_tstate_t *state = tunnelGetState(t);
-    require(state->smuggle_fin_flows[0].queued_packets_capacity == kExpectedSmuggleFinQueueCapacity,
+    require(findPausedFixtureFlow(state)->queued_packets_capacity == kExpectedSmuggleFinQueueCapacity,
             "paused-flow queue exceeded its configured cap");
 
     sbuf_t *overflow = makeTcpPacket(0, 0x0A000001, 12345, 0xC0000201, 443, 500, 200, TCP_ACK | TCP_PSH, 1);
@@ -570,8 +650,8 @@ static void testQueueCapForcesRelease(void)
     lineReuseBuffer(&line, overflow);
     lineSetRecalculateChecksum(&line, false);
 
-    require(! state->smuggle_fin_flows[0].paused, "queue cap left the flow paused");
-    require(state->smuggle_fin_flows[0].queued_packets_count == 0, "queue cap left packets allocated");
+    require(! findPausedFixtureFlow(state)->paused, "queue cap left the flow paused");
+    require(findPausedFixtureFlow(state)->queued_packets_count == 0, "queue cap left packets allocated");
     require(normal_upstream_packets == 256, "queue cap did not replay every held packet");
 
     destroyTestTunnel(t);
@@ -634,15 +714,16 @@ static void testCrossWorkerReversePacketQueuesOnOwner(void)
             "successful cross-worker handoff left checksum intent on the source line");
 
     ipmanipulator_tstate_t *state = tunnelGetState(t);
-    require(state->smuggle_fin_flows[0].queued_packets_count == 1,
+    require(findPausedFixtureFlow(state)->queued_packets_count == 1,
             "cross-worker reverse packet changed the owner queue before its callback");
 
     runImmediateMessage(0);
-    require(state->smuggle_fin_flows[0].queued_packets_count == 2,
+    require(findPausedFixtureFlow(state)->queued_packets_count == 2,
             "cross-worker reverse packet was not queued on the owner worker");
-    require(state->smuggle_fin_flows[0].queued_packets[1].direction == kIpManipulatorSmuggleFinQueueDirectionDownstream,
+    require(findPausedFixtureFlow(state)->queued_packets[1].direction ==
+                kIpManipulatorSmuggleFinQueueDirectionDownstream,
             "cross-worker reverse packet kept the wrong queue direction");
-    require(state->smuggle_fin_flows[0].queued_packets[1].recalculate_checksum,
+    require(findPausedFixtureFlow(state)->queued_packets[1].recalculate_checksum,
             "cross-worker reverse packet lost its checksum intent");
 
     runTimedMessage(0);
@@ -784,21 +865,22 @@ static void testStaleCrossWorkerHandoffFailsOpenAfterSmuggleFin(void)
 
     runTimedMessage(0);
 
-    ipmanipulator_tstate_t *state                = tunnelGetState(t);
-    state->smuggle_fin_flows[0].confirmed        = false;
-    state->smuggle_fin_flows[0].last_activity_ms = 0;
-    sbuf_t *ack = makeTcpPacket(0, 0x0A000002, 23456, 0xC0000202, 443, 1, 1, TCP_ACK, 0);
+    ipmanipulator_tstate_t *state           = tunnelGetState(t);
+    findPausedFixtureFlow(state)->confirmed = false;
+    expireFinFlowNow(state, 0x0A000001, 12345, 0xC0000201, 443);
+    sbuf_t *ack = makeTcpPacket(0, 0x0A000001, 12345, 0xC0000201, 443, 1, 1, TCP_ACK, 0);
     require(! smugglefintrickUpStreamPayload(t, &owner_line, ack), "stale flow cleanup packet was consumed");
     lineReuseBuffer(&owner_line, ack);
-    require(! state->smuggle_fin_flows[0].active, "stale flow slot was not reclaimed");
+    require(findPausedFixtureFlow(state) == NULL, "stale flow entry was not reclaimed");
 
     startPausedFlow(t, &owner_line);
-    uint32_t new_generation = state->smuggle_fin_flows[0].pause_generation;
+    uint32_t new_generation = findPausedFixtureFlow(state)->pause_generation;
 
     runImmediateMessage(0);
-    require(state->smuggle_fin_flows[0].pause_generation == new_generation,
+    require(findPausedFixtureFlow(state)->pause_generation == new_generation,
             "stale handoff changed the replacement flow generation");
-    require(state->smuggle_fin_flows[0].queued_packets_count == 1, "stale handoff entered the replacement flow queue");
+    require(findPausedFixtureFlow(state)->queued_packets_count == 1,
+            "stale handoff entered the replacement flow queue");
     require(downstream_after_smuggle_fin_packets == 1 && downstream_entry_packets == 0,
             "stale handoff did not fail open from the post-smuggle-fin stage");
     require(replayed_downstream_sequences[0] == 200, "stale handoff resumed the wrong packet");
@@ -886,24 +968,18 @@ static void testUnconfirmedFlowIsReclaimed(void)
                                                 .buf       = sbufCreate(64),
                                                 .direction = kIpManipulatorSmuggleFinQueueDirectionUpstream,
     };
-    state->smuggle_fin_flows[0] = (ipmanipulator_smuggle_fin_flow_t) {
-        .last_activity_ms        = 0,
-        .src_addr                = lwip_htonl(0x0A000001),
-        .dst_addr                = lwip_htonl(0xC0000201),
-        .src_port                = 12345,
-        .dst_port                = 443,
-        .queued_packets          = stale_queue,
-        .queued_packets_count    = 1,
-        .queued_packets_capacity = 1,
-        .active                  = true,
-    };
+    ipmanipulator_smuggle_fin_flow_t *stale = insertFinFlow(state, 0x0A000001, 12345, 0xC0000201, 443);
+
+    stale->queued_packets          = stale_queue;
+    stale->queued_packets_count    = 1;
+    stale->queued_packets_capacity = 1;
 
     resetCounters();
-    sbuf_t *ack = makeTcpPacket(0, 0x0A000002, 23456, 0xC0000202, 443, 1, 1, TCP_ACK, 0);
+    /* Expiry is per shard, so the cleanup trigger shares the stale flow tuple. */
+    sbuf_t *ack = makeTcpPacket(0, 0x0A000001, 12345, 0xC0000201, 443, 1, 1, TCP_ACK, 0);
     require(! smugglefintrickUpStreamPayload(t, &line, ack), "empty ACK unexpectedly triggered smuggle-fin");
     lineReuseBuffer(&line, ack);
-    require(! state->smuggle_fin_flows[0].active, "idle unconfirmed flow was not reclaimed");
-    require(state->smuggle_fin_flows[0].queued_packets == NULL, "idle flow retained its stale queue");
+    require(findPausedFixtureFlow(state) == NULL, "idle unconfirmed flow was not reclaimed");
 
     destroyTestTunnel(t);
 }
@@ -920,21 +996,66 @@ static void testPauseGenerationSurvivesSlotReuse(void)
 
     resetCounters();
     startPausedFlow(t, &line);
-    uint32_t first_generation = state->smuggle_fin_flows[0].pause_generation;
+    uint32_t first_generation = findPausedFixtureFlow(state)->pause_generation;
     runTimedMessage(0);
 
-    state->smuggle_fin_flows[0].confirmed        = false;
-    state->smuggle_fin_flows[0].last_activity_ms = 0;
-    sbuf_t *ack = makeTcpPacket(0, 0x0A000002, 23456, 0xC0000202, 443, 1, 1, TCP_ACK, 0);
+    findPausedFixtureFlow(state)->confirmed = false;
+    expireFinFlowNow(state, 0x0A000001, 12345, 0xC0000201, 443);
+    sbuf_t *ack = makeTcpPacket(0, 0x0A000001, 12345, 0xC0000201, 443, 1, 1, TCP_ACK, 0);
     require(! smugglefintrickUpStreamPayload(t, &line, ack), "empty ACK unexpectedly triggered smuggle-fin");
     lineReuseBuffer(&line, ack);
-    require(! state->smuggle_fin_flows[0].active, "old flow slot was not reclaimed");
+    require(findPausedFixtureFlow(state) == NULL, "old flow entry was not reclaimed");
 
     resetCounters();
     startPausedFlow(t, &line);
-    require(state->smuggle_fin_flows[0].pause_generation != first_generation,
+    require(findPausedFixtureFlow(state)->pause_generation != first_generation,
             "reused flow slot repeated a live delayed-release generation");
     runTimedMessage(0);
+
+    destroyTestTunnel(t);
+}
+
+static void testReverseOrientationReuseCancelsPausedFlow(void)
+{
+    tunnel_t                normal_upstream   = {0};
+    tunnel_t                normal_downstream = {0};
+    tunnel_t                fin_branch        = {0};
+    tunnel_t               *t                 = createTestTunnel(&normal_upstream, &normal_downstream, &fin_branch);
+    line_t                  line;
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    initializeLine(&line, 0);
+
+    resetCounters();
+    startPausedFlow(t, &line);
+
+    ipmanipulator_smuggle_fin_flow_t *old_flow = findPausedFixtureFlow(state);
+    require(old_flow != NULL && old_flow->paused && old_flow->queued_packets_count == 1,
+            "the reverse-reuse fixture did not start with one paused original");
+    uint32_t old_generation = old_flow->pause_generation;
+
+    sbuf_t *replacement = makeTcpPacket(0, 0xC0000201, 443, 0x0A000001, 12345, 300, 400, TCP_ACK | TCP_PSH, 8);
+    require(smugglefintrickUpStreamPayload(t, &line, replacement),
+            "the reverse-orientation replacement payload did not start a pause");
+
+    ipmanipulator_smuggle_fin_flow_t *new_flow = findPausedFixtureFlow(state);
+    require(new_flow != NULL && new_flow->paused, "the reverse-orientation replacement flow is missing");
+    require(new_flow->src_addr == lwip_htonl(0xC0000201) && new_flow->src_port == 443,
+            "the sole canonical entry retained the old orientation");
+    require(new_flow->pause_generation != old_generation,
+            "the reverse-orientation replacement reused the old pause generation");
+    require(new_flow->queued_packets_count == 1,
+            "the replacement inherited or lost queued packets from the old orientation");
+    require(ipmanipulatorFlowTableCount(&state->smuggle_fin_table) == 1,
+            "reverse-orientation reuse created a hidden duplicate smuggle-fin entry");
+
+    runTimedMessage(0);
+    new_flow = findPausedFixtureFlow(state);
+    require(new_flow != NULL && new_flow->paused && new_flow->queued_packets_count == 1,
+            "the old pause timer acted on the replacement orientation");
+
+    runTimedMessage(1);
+    require(! findPausedFixtureFlow(state)->paused, "the replacement pause timer did not release its flow");
+    require(normal_upstream_packets == 1, "the replacement timer did not replay exactly its own queued packet");
 
     destroyTestTunnel(t);
 }
@@ -957,6 +1078,7 @@ int main(void)
     testCancelledCrossWorkerHandoffReleasesOwnerReference();
     testUnconfirmedFlowIsReclaimed();
     testPauseGenerationSurvivesSlotReuse();
+    testReverseOrientationReuseCancelsPausedFlow();
     envTeardown(&env);
     return 0;
 }

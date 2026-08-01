@@ -2,6 +2,8 @@
 
 #include "wwapi.h"
 
+#include "flow_table.h"
+
 enum tcp_bit_action_dynamic_value
 {
     kDvsNoAction = kDvsEmpty,
@@ -17,6 +19,28 @@ enum tcp_bit_action_dynamic_value
     kDvsPacketSyn,
     kDvsPacketFin
 };
+
+/*
+ * One shared definition of a flow-opening TCP SYN for every stateful SNI
+ * tracker. A flow may only be opened by a payload-free SYN that carries no
+ * ACK/FIN/RST and no unexpected control flag. ECE and CWR are allowed so an
+ * ECN negotiation SYN still starts tracking; TCP Fast Open SYN data stays
+ * unsupported and fails open without creating trick state.
+ */
+static inline bool ipmanipulatorIsFlowOpeningSyn(uint8_t tcp_flags, uint32_t tcp_payload_len)
+{
+    if (tcp_payload_len != 0)
+    {
+        return false;
+    }
+
+    if ((tcp_flags & TCP_SYN) == 0)
+    {
+        return false;
+    }
+
+    return (tcp_flags & (uint8_t) ~(TCP_SYN | TCP_ECE | TCP_CWR)) == 0;
+}
 
 typedef struct sni_match_s
 {
@@ -42,7 +66,8 @@ typedef enum ipmanipulator_tls_capture_kind_e
 {
     kIpManipulatorTlsCaptureKindNone = 0,
     kIpManipulatorTlsCaptureKindFirstSni,
-    kIpManipulatorTlsCaptureKindSmuggleSni
+    kIpManipulatorTlsCaptureKindSmuggleSni,
+    kIpManipulatorTlsCaptureKindEchSni
 } ipmanipulator_tls_capture_kind_e;
 
 typedef enum ipmanipulator_tls_capture_status_e
@@ -57,8 +82,32 @@ enum
 {
     kSniBlenderTrickMaxPacketsCount        = 16,
     kIpManipulatorTlsCaptureSlotsPerWorker = 16,
-    kIpManipulatorTlsCaptureMaxPackets     = 16
+    kIpManipulatorTlsCaptureMaxPackets     = 16,
+
+    /*
+     * A TLS host_name is carried in a 16-bit vector on the wire, but the paired
+     * TlsClient refuses anything longer than 255 bytes. IpManipulator must
+     * enforce the same boundary so an accepted configuration can always be
+     * embedded in the crafted handshakes.
+     */
+    kIpManipulatorMaxTlsHostNameLen = 255
 };
+
+typedef enum ipmanipulator_config_validation_e
+{
+    kIpManipulatorConfigValid = 0,
+    /*
+     * An upstream TCP-bit action runs before every stateful SNI state machine,
+     * while their generated and replayed packets do not consistently re-enter
+     * TCP-bit processing.
+     */
+    kIpManipulatorConfigRejectUpstreamTcpBitWithStatefulSni,
+    /*
+     * preserve-tcp-bitflags appends a metadata byte upstream; SNI Blender then
+     * fragments the packet and the peer restoration path skips fragments.
+     */
+    kIpManipulatorConfigRejectPreservedTcpBitWithSniBlender
+} ipmanipulator_config_validation_e;
 
 typedef struct ipmanipulator_captured_packet_s
 {
@@ -74,8 +123,14 @@ typedef struct ipmanipulator_tls_capture_timeout_msg_s
 
 typedef struct ipmanipulator_tls_capture_slot_s
 {
-    sbuf_t                          *assembled_packet;
-    uint64_t                         last_update_ms;
+    sbuf_t  *assembled_packet;
+    uint64_t last_update_ms;
+    /*
+     * Flow generation that owns this capture. First-SNI and Smuggle-SNI leave
+     * it zero; ECH copies the generation from its bounded flow entry so a
+     * timeout, eviction, close or tuple reuse can never touch a replacement.
+     */
+    uint64_t                         owner_generation;
     uint32_t                         generation;
     uint32_t                         next_seq;
     uint32_t                         tls_record_total_len;
@@ -115,11 +170,13 @@ typedef enum ipmanipulator_smuggle_flow_phase_e
     kIpManipulatorSmuggleFlowPhasePassthrough
 } ipmanipulator_smuggle_flow_phase_e;
 
-enum
-{
-    kIpManipulatorSmuggleInitialFlows = 32
-};
-
+/*
+ * Every stateful trick record below lives inside a bounded flow-table entry.
+ * Membership in the table is what makes a flow active, so the records carry no
+ * "active" flag and a record pointer is only valid while its shard is locked.
+ * The client-to-server orientation is kept in the record because transcript
+ * logic needs it; lookup always goes through the normalized table key.
+ */
 typedef struct ipmanipulator_smuggle_flow_s
 {
     uint64_t                           created_ms;
@@ -131,7 +188,6 @@ typedef struct ipmanipulator_smuggle_flow_s
     uint16_t                           dst_port;
     uint8_t                            warmup_packets_seen;
     ipmanipulator_smuggle_flow_phase_e phase;
-    bool                               active;
 } ipmanipulator_smuggle_flow_t;
 
 typedef struct ipmanipulator_firstsni_flow_s
@@ -143,7 +199,6 @@ typedef struct ipmanipulator_firstsni_flow_s
     uint32_t dst_addr;
     uint16_t src_port;
     uint16_t dst_port;
-    bool     active;
 } ipmanipulator_firstsni_flow_t;
 
 typedef enum ipmanipulator_overlap_flow_phase_e
@@ -168,7 +223,6 @@ typedef struct ipmanipulator_overlap_flow_s
     uint16_t                           expected_downstream_fingerprint;
     uint8_t                            warmup_packets_seen;
     ipmanipulator_overlap_flow_phase_e phase;
-    bool                               active;
     bool                               ignore_expected_downstream_packet;
     ipmanipulator_captured_packet_t    held_packet;
     sbuf_t                            *synack_packet;
@@ -192,33 +246,40 @@ typedef struct ipmanipulator_synfin_flow_s
     uint16_t                          dst_port;
     uint8_t                           warmup_packets_seen;
     ipmanipulator_synfin_flow_phase_e phase;
-    bool                              active;
     ipmanipulator_captured_packet_t   held_packet;
     sbuf_t                           *syn_packet_template;
 } ipmanipulator_synfin_flow_t;
 
 typedef enum ipmanipulator_echsni_flow_phase_e
 {
-    kIpManipulatorEchSniFlowPhaseWarmup = 0,
-    kIpManipulatorEchSniFlowPhaseHoldThird,
+    /* No recognizable ClientHello has started yet on this generation. */
+    kIpManipulatorEchSniFlowPhaseAwaitingClientHello = 0,
+    /* A ClientHello record is being assembled by the shared capture helper. */
+    kIpManipulatorEchSniFlowPhaseCapturing,
+    /* The fake inner packet was emitted; originals are waiting on their timers. */
+    kIpManipulatorEchSniFlowPhaseReleasing,
+    /* This generation is done inspecting; later packets pass unchanged. */
     kIpManipulatorEchSniFlowPhasePassthrough,
+    /* Terminal reject: the flow may not proceed with the crafted transcript. */
     kIpManipulatorEchSniFlowPhaseBlocked
 } ipmanipulator_echsni_flow_phase_e;
 
 typedef struct ipmanipulator_echsni_flow_s
 {
-    uint64_t                          created_ms;
-    uint64_t                          last_activity_ms;
-    uint64_t                          shard1_release_at_ms;
-    uint64_t                          shard2_release_at_ms;
-    uint32_t                          src_addr;
-    uint32_t                          dst_addr;
-    uint16_t                          src_port;
-    uint16_t                          dst_port;
-    uint8_t                           warmup_packets_seen;
+    uint64_t created_ms;
+    uint64_t last_activity_ms;
+    uint64_t shard1_release_at_ms;
+    uint64_t shard2_release_at_ms;
+    uint64_t generation;
+    uint32_t src_addr;
+    uint32_t dst_addr;
+    uint16_t src_port;
+    uint16_t dst_port;
+    /* Bounded batch of unmodified originals owned by this flow generation. */
+    uint8_t                           pending_original_count;
+    uint8_t                           next_release_index;
     ipmanipulator_echsni_flow_phase_e phase;
-    bool                              active;
-    ipmanipulator_captured_packet_t   held_packet;
+    ipmanipulator_captured_packet_t   pending_original_packets[kIpManipulatorTlsCaptureMaxPackets];
 } ipmanipulator_echsni_flow_t;
 
 typedef enum ipmanipulator_smuggle_fin_queue_direction_e
@@ -253,11 +314,23 @@ typedef struct ipmanipulator_smuggle_fin_flow_s
     ipmanipulator_smuggle_fin_queued_packet_t *queued_packets;
     uint32_t                                   queued_packets_count;
     uint32_t                                   queued_packets_capacity;
-    bool                                       active;
     bool                                       confirmed;
     bool                                       release_pending;
     bool                                       paused;
 } ipmanipulator_smuggle_fin_flow_t;
+
+/*
+ * Per-worker record of the one Smuggle-FIN flow that this worker currently owns
+ * a pause on. It replaces the old full-table scan and is only mutated on the
+ * flow-owner worker; cross-worker reverse traffic resolves the normalized tuple
+ * in the shared table instead of touching this registry.
+ */
+typedef struct ipmanipulator_smuggle_fin_worker_pause_s
+{
+    ipmanipulator_flow_key_t key;
+    uint32_t                 pause_generation;
+    bool                     installed;
+} ipmanipulator_smuggle_fin_worker_pause_t;
 
 typedef struct ipmanipulator_tstate_s
 {
@@ -342,37 +415,30 @@ typedef struct ipmanipulator_tstate_s
     uint32_t                           tls_capture_slots_count;
     ipmanipulator_tls_prestart_slot_t *tls_prestart_slots;
     uint32_t                           tls_prestart_slots_count;
-    wmutex_t                           first_sni_flows_mutex;
-    ipmanipulator_firstsni_flow_t     *first_sni_flows;
-    uint32_t                           first_sni_flows_capacity;
-    wmutex_t                           smuggle_flows_mutex;
-    ipmanipulator_smuggle_flow_t      *smuggle_flows;
-    uint32_t                           smuggle_flows_capacity;
 
-    wmutex_t                      overlap_flows_mutex;
-    ipmanipulator_overlap_flow_t *overlap_flows;
-    uint32_t                      overlap_flows_capacity;
+    /* Per-enabled-trick active-flow limit shared by every bounded table below. */
+    uint32_t trick_stateful_flow_limit;
 
-    wmutex_t                     synfin_flows_mutex;
-    ipmanipulator_synfin_flow_t *synfin_flows;
-    uint32_t                     synfin_flows_capacity;
+    ipmanipulator_flow_table_t first_sni_table;
+    ipmanipulator_flow_table_t smuggle_table;
+    ipmanipulator_flow_table_t overlap_table;
+    ipmanipulator_flow_table_t synfin_table;
 
-    wmutex_t                     echsni_flows_mutex;
-    ipmanipulator_echsni_flow_t *echsni_flows;
-    uint32_t                     echsni_flows_capacity;
+    ipmanipulator_flow_table_t echsni_table;
+    atomic_ullong              echsni_next_generation;
 
-    wmutex_t                          smuggle_fin_mutex;
-    ipmanipulator_smuggle_fin_flow_t *smuggle_fin_flows;
-    uint32_t                          smuggle_fin_flows_capacity;
-    uint32_t                          smuggle_fin_next_pause_generation;
-    enum tcp_bit_action_dynamic_value up_tcp_bit_cwr_action;
-    enum tcp_bit_action_dynamic_value up_tcp_bit_ece_action;
-    enum tcp_bit_action_dynamic_value up_tcp_bit_urg_action;
-    enum tcp_bit_action_dynamic_value up_tcp_bit_ack_action;
-    enum tcp_bit_action_dynamic_value up_tcp_bit_psh_action;
-    enum tcp_bit_action_dynamic_value up_tcp_bit_rst_action;
-    enum tcp_bit_action_dynamic_value up_tcp_bit_syn_action;
-    enum tcp_bit_action_dynamic_value up_tcp_bit_fin_action;
+    ipmanipulator_flow_table_t                smuggle_fin_table;
+    atomic_uint                               smuggle_fin_next_pause_generation;
+    ipmanipulator_smuggle_fin_worker_pause_t *smuggle_fin_worker_pauses;
+    uint32_t                                  smuggle_fin_worker_pauses_count;
+    enum tcp_bit_action_dynamic_value         up_tcp_bit_cwr_action;
+    enum tcp_bit_action_dynamic_value         up_tcp_bit_ece_action;
+    enum tcp_bit_action_dynamic_value         up_tcp_bit_urg_action;
+    enum tcp_bit_action_dynamic_value         up_tcp_bit_ack_action;
+    enum tcp_bit_action_dynamic_value         up_tcp_bit_psh_action;
+    enum tcp_bit_action_dynamic_value         up_tcp_bit_rst_action;
+    enum tcp_bit_action_dynamic_value         up_tcp_bit_syn_action;
+    enum tcp_bit_action_dynamic_value         up_tcp_bit_fin_action;
 
     enum tcp_bit_action_dynamic_value down_tcp_bit_cwr_action;
     enum tcp_bit_action_dynamic_value down_tcp_bit_ece_action;
@@ -442,6 +508,23 @@ sbuf_t *smugglesnitrickGenerateTlsClientHello(tunnel_t *t);
 ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(tunnel_t *t, line_t *l, sbuf_t *buf,
                                                                       ipmanipulator_tls_capture_kind_e  kind,
                                                                       ipmanipulator_tls_capture_slot_t *out_slot);
+/*
+ * Same as above, but the capture is tagged with an owner flow generation so a
+ * timeout, eviction, close or tuple reuse can tell a live capture from one that
+ * belongs to a replaced generation. First-SNI and Smuggle-SNI pass zero.
+ */
+ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
+    tunnel_t *t, line_t *l, sbuf_t *buf, ipmanipulator_tls_capture_kind_e kind, uint64_t owner_generation,
+    ipmanipulator_tls_capture_slot_t *out_slot);
+/*
+ * Detaches a capture slot by kind, normalized tuple and owner generation. The
+ * caller owns the returned slot and decides whether to release, recycle or
+ * dispose of it -- always after this call returns.
+ */
+bool ipmanipulatorTakeMatchingCaptureSlot(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
+                                          uint16_t dst_port, ipmanipulator_tls_capture_kind_e kind,
+                                          uint64_t owner_generation, bool match_any_generation,
+                                          ipmanipulator_tls_capture_slot_t *out_slot);
 void ipmanipulatorReleaseCapturedPacketsNormal(tunnel_t *t, ipmanipulator_tls_capture_slot_t *slot);
 void ipmanipulatorReleasePendingCaptureOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3);
 bool ipmanipulatorFlushMatchingCaptureSlot(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
@@ -451,3 +534,12 @@ void ipmanipulatorDestroyCapturedTlsPackets(ipmanipulator_tls_capture_slot_t *sl
 void ipmanipulatorDestroyTlsCaptureState(tunnel_t *t);
 void smugglesnitrickSetFlowPassthrough(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
                                        uint16_t dst_port);
+/*
+ * Fails an ECH flow generation open after a capture timeout, eviction or parse
+ * failure. A generation mismatch is a no-op so a stale capture can never touch
+ * a replacement generation.
+ */
+void echsnitrickSetFlowPassthrough(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
+                                   uint16_t dst_port, uint64_t generation);
+
+ipmanipulator_config_validation_e ipmanipulatorValidateTrickCompatibility(const ipmanipulator_tstate_t *state);

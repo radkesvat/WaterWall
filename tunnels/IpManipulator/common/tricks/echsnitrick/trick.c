@@ -4,7 +4,6 @@
 
 enum
 {
-    kEchSniWarmupPackets             = 2,
     kEchSniIdleTimeoutMs             = 20U * 60U * 1000U,
     kEchSniExtensionTypeServerName   = 0x0000U,
     kEchSniExtensionTypeEncryptedCH  = 0xFE0DU,
@@ -57,10 +56,39 @@ typedef struct echsnitrick_clienthello_match_s
 
 typedef struct echsnitrick_delayed_release_s
 {
-    sbuf_t  *buf;
-    sbuf_t  *next_buf;
+    uint64_t generation;
+    uint32_t src_addr;
+    uint32_t dst_addr;
     uint32_t next_delay_ms;
+    uint16_t src_port;
+    uint16_t dst_port;
+    /* 0 releases original packet 1; 1 releases originals 2 through N in order. */
+    uint8_t release_phase;
 } echsnitrick_delayed_release_t;
+
+typedef struct echsnitrick_flow_identity_s
+{
+    uint64_t                 generation;
+    ipmanipulator_flow_key_t key;
+    uint32_t                 src_addr;
+    uint32_t                 dst_addr;
+    uint16_t                 src_port;
+    uint16_t                 dst_port;
+} echsnitrick_flow_identity_t;
+
+enum
+{
+    kEchSniReleasePhaseFirst = 0,
+    kEchSniReleasePhaseRest  = 1
+};
+
+#ifdef IPMANIPULATOR_ECHSNI_TEST_HOOKS
+void ipmanipulatorEchSniTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
+                                          WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
+                                          void *arg2, void *arg3);
+#endif
+
+/* ---------------------------------------------------------------- packets -- */
 
 static void echsnitrickDestroyCapturedPacket(ipmanipulator_captured_packet_t *packet)
 {
@@ -78,22 +106,6 @@ static void echsnitrickDestroyCapturedPacket(ipmanipulator_captured_packet_t *pa
     packet->buf  = NULL;
 }
 
-static void echsnitrickRecycleCapturedPacket(ipmanipulator_captured_packet_t *packet)
-{
-    if (packet == NULL)
-    {
-        return;
-    }
-
-    if (packet->line != NULL && packet->buf != NULL)
-    {
-        lineReuseBuffer(packet->line, packet->buf);
-    }
-
-    packet->line = NULL;
-    packet->buf  = NULL;
-}
-
 static void echsnitrickDestroyStandalonePacket(sbuf_t **packet)
 {
     if (packet == NULL || *packet == NULL)
@@ -103,93 +115,6 @@ static void echsnitrickDestroyStandalonePacket(sbuf_t **packet)
 
     sbufDestroy(*packet);
     *packet = NULL;
-}
-
-static void echsnitrickResetFlow(ipmanipulator_echsni_flow_t *flow)
-{
-    if (flow == NULL)
-    {
-        return;
-    }
-
-    memoryZero(flow, sizeof(*flow));
-}
-
-static void echsnitrickDestroyFlow(ipmanipulator_echsni_flow_t *flow)
-{
-    if (flow == NULL)
-    {
-        return;
-    }
-
-    echsnitrickDestroyCapturedPacket(&flow->held_packet);
-    echsnitrickResetFlow(flow);
-}
-
-static void echsnitrickInitializeFlow(ipmanipulator_echsni_flow_t *flow, const echsnitrick_tcp_packet_info_t *info,
-                                      uint64_t now_ms)
-{
-    if (flow == NULL || info == NULL)
-    {
-        return;
-    }
-
-    echsnitrickDestroyCapturedPacket(&flow->held_packet);
-    echsnitrickResetFlow(flow);
-
-    *flow = (ipmanipulator_echsni_flow_t) {
-        .created_ms       = now_ms,
-        .last_activity_ms = now_ms,
-        .src_addr         = info->src_addr,
-        .dst_addr         = info->dst_addr,
-        .src_port         = info->src_port,
-        .dst_port         = info->dst_port,
-        .phase            = kIpManipulatorEchSniFlowPhaseWarmup,
-        .active           = true,
-    };
-}
-
-static void echsnitrickFinalizeFlowLocked(ipmanipulator_echsni_flow_t *flow, bool block_flow, bool start_delay,
-                                          uint64_t now_ms, const ipmanipulator_tstate_t *state)
-{
-    if (flow == NULL)
-    {
-        return;
-    }
-
-    echsnitrickDestroyCapturedPacket(&flow->held_packet);
-    flow->warmup_packets_seen = kEchSniWarmupPackets;
-    flow->phase = block_flow ? kIpManipulatorEchSniFlowPhaseBlocked : kIpManipulatorEchSniFlowPhasePassthrough;
-
-    if (block_flow || ! start_delay || state == NULL)
-    {
-        flow->shard1_release_at_ms = 0;
-        flow->shard2_release_at_ms = 0;
-        return;
-    }
-
-    flow->shard1_release_at_ms = now_ms + state->trick_ech_sni_shard1_delay_ms;
-    flow->shard2_release_at_ms = flow->shard1_release_at_ms + state->trick_ech_sni_shard2_delay_ms;
-}
-
-static uint8_t echsnitrickGetActiveDelayPhase(const ipmanipulator_echsni_flow_t *flow, uint64_t now_ms)
-{
-    if (flow == NULL || ! flow->active || flow->phase != kIpManipulatorEchSniFlowPhasePassthrough)
-    {
-        return 0;
-    }
-
-    if (now_ms < flow->shard1_release_at_ms)
-    {
-        return 1;
-    }
-
-    if (now_ms < flow->shard2_release_at_ms)
-    {
-        return 2;
-    }
-
-    return 0;
 }
 
 static bool echsnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t packet_length,
@@ -266,7 +191,7 @@ static bool echsnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t packet
 
 static bool echsnitrickIsPureSyn(const echsnitrick_tcp_packet_info_t *info)
 {
-    return info != NULL && info->tcp_payload_len == 0 && info->tcp_flags == TCP_SYN;
+    return info != NULL && ipmanipulatorIsFlowOpeningSyn(info->tcp_flags, info->tcp_payload_len);
 }
 
 static bool echsnitrickHasFinOrRst(const echsnitrick_tcp_packet_info_t *info)
@@ -274,102 +199,180 @@ static bool echsnitrickHasFinOrRst(const echsnitrick_tcp_packet_info_t *info)
     return info != NULL && (info->tcp_flags & (TCP_FIN | TCP_RST)) != 0;
 }
 
-static bool echsnitrickFlowMatches(const ipmanipulator_echsni_flow_t *flow, const echsnitrick_tcp_packet_info_t *info)
-{
-    return flow->active && flow->src_addr == info->src_addr && flow->dst_addr == info->dst_addr &&
-           flow->src_port == info->src_port && flow->dst_port == info->dst_port;
-}
+/* --------------------------------------------------------------- records -- */
 
-static bool echsnitrickFlowMatchesReverse(const ipmanipulator_echsni_flow_t   *flow,
-                                          const echsnitrick_tcp_packet_info_t *info)
+static void echsnitrickReleasePendingOriginalsLocked(ipmanipulator_echsni_flow_t *flow)
 {
-    return flow->active && flow->src_addr == info->dst_addr && flow->dst_addr == info->src_addr &&
-           flow->src_port == info->dst_port && flow->dst_port == info->src_port;
-}
-
-static void echsnitrickCleanupIdleFlowsLocked(ipmanipulator_tstate_t *state, uint64_t now_ms)
-{
-    for (uint32_t i = 0; i < state->echsni_flows_capacity; ++i)
+    if (flow == NULL)
     {
-        ipmanipulator_echsni_flow_t *flow = &state->echsni_flows[i];
-
-        if (! flow->active)
-        {
-            continue;
-        }
-
-        if (now_ms - flow->last_activity_ms < kEchSniIdleTimeoutMs)
-        {
-            continue;
-        }
-
-        echsnitrickDestroyFlow(flow);
-    }
-}
-
-static ipmanipulator_echsni_flow_t *echsnitrickFindFlowLocked(ipmanipulator_tstate_t              *state,
-                                                              const echsnitrick_tcp_packet_info_t *info)
-{
-    for (uint32_t i = 0; i < state->echsni_flows_capacity; ++i)
-    {
-        if (echsnitrickFlowMatches(&state->echsni_flows[i], info))
-        {
-            return &state->echsni_flows[i];
-        }
+        return;
     }
 
-    return NULL;
-}
-
-static ipmanipulator_echsni_flow_t *echsnitrickFindReverseFlowLocked(ipmanipulator_tstate_t              *state,
-                                                                     const echsnitrick_tcp_packet_info_t *info)
-{
-    for (uint32_t i = 0; i < state->echsni_flows_capacity; ++i)
+    for (uint8_t i = 0; i < flow->pending_original_count; ++i)
     {
-        if (echsnitrickFlowMatchesReverse(&state->echsni_flows[i], info))
-        {
-            return &state->echsni_flows[i];
-        }
+        echsnitrickDestroyCapturedPacket(&flow->pending_original_packets[i]);
     }
 
-    return NULL;
+    flow->pending_original_count = 0;
+    flow->next_release_index     = 0;
+    flow->shard1_release_at_ms   = 0;
+    flow->shard2_release_at_ms   = 0;
 }
 
-static ipmanipulator_echsni_flow_t *echsnitrickCreateFlowLocked(ipmanipulator_tstate_t              *state,
-                                                                const echsnitrick_tcp_packet_info_t *info,
-                                                                uint64_t                             now_ms)
+static void echsnitrickDestroyFlow(ipmanipulator_echsni_flow_t *flow)
 {
-    for (uint32_t i = 0; i < state->echsni_flows_capacity; ++i)
+    if (flow == NULL)
     {
-        ipmanipulator_echsni_flow_t *flow = &state->echsni_flows[i];
-
-        if (flow->active)
-        {
-            continue;
-        }
-
-        echsnitrickInitializeFlow(flow, info, now_ms);
-        return flow;
+        return;
     }
 
-    uint32_t                     old_capacity = state->echsni_flows_capacity;
-    uint32_t                     new_capacity = max(kIpManipulatorSmuggleInitialFlows, old_capacity * 2U);
-    ipmanipulator_echsni_flow_t *grown =
-        memoryReAllocate(state->echsni_flows, sizeof(*state->echsni_flows) * new_capacity);
+    echsnitrickReleasePendingOriginalsLocked(flow);
+    memoryZero(flow, sizeof(*flow));
+}
 
-    if (grown == NULL)
+/* Runs under the shard lock: dispose only, never forward or call the tunnel. */
+static void echsnitrickDestroyFlowRecord(void *record, void *context)
+{
+    discard context;
+
+    echsnitrickDestroyFlow((ipmanipulator_echsni_flow_t *) record);
+}
+
+static ipmanipulator_echsni_flow_t *echsnitrickEntryRecord(ipmanipulator_flow_entry_t *entry)
+{
+    return (ipmanipulator_echsni_flow_t *) ipmanipulatorFlowEntryRecord(entry);
+}
+
+static ipmanipulator_flow_key_t echsnitrickMakeKey(const echsnitrick_tcp_packet_info_t *info)
+{
+    return ipmanipulatorFlowKeyMake(info->src_addr, info->src_port, info->dst_addr, info->dst_port);
+}
+
+/* The record keeps the client-to-server orientation the transcript logic uses. */
+static bool echsnitrickFlowIsForward(const ipmanipulator_echsni_flow_t *flow, const echsnitrick_tcp_packet_info_t *info)
+{
+    return flow->src_addr == info->src_addr && flow->dst_addr == info->dst_addr && flow->src_port == info->src_port &&
+           flow->dst_port == info->dst_port;
+}
+
+static uint64_t echsnitrickNextGeneration(ipmanipulator_tstate_t *state)
+{
+    uint64_t generation = (uint64_t) atomicInc(&state->echsni_next_generation) + 1U;
+
+    if (generation == 0)
+    {
+        generation = (uint64_t) atomicInc(&state->echsni_next_generation) + 1U;
+    }
+
+    return generation;
+}
+
+static void echsnitrickInitializeFlow(ipmanipulator_tstate_t *state, ipmanipulator_echsni_flow_t *flow,
+                                      const echsnitrick_tcp_packet_info_t *info, uint64_t now_ms)
+{
+    echsnitrickDestroyFlow(flow);
+
+    *flow = (ipmanipulator_echsni_flow_t) {
+        .created_ms       = now_ms,
+        .last_activity_ms = now_ms,
+        .generation       = echsnitrickNextGeneration(state),
+        .src_addr         = info->src_addr,
+        .dst_addr         = info->dst_addr,
+        .src_port         = info->src_port,
+        .dst_port         = info->dst_port,
+        .phase            = kIpManipulatorEchSniFlowPhaseAwaitingClientHello,
+    };
+}
+
+static echsnitrick_flow_identity_t echsnitrickGetFlowIdentity(const ipmanipulator_echsni_flow_t *flow)
+{
+    return (echsnitrick_flow_identity_t) {
+        .generation = flow->generation,
+        .key        = ipmanipulatorFlowKeyMake(flow->src_addr, flow->src_port, flow->dst_addr, flow->dst_port),
+        .src_addr   = flow->src_addr,
+        .dst_addr   = flow->dst_addr,
+        .src_port   = flow->src_port,
+        .dst_port   = flow->dst_port,
+    };
+}
+
+static ipmanipulator_flow_shard_t *echsnitrickLockShard(ipmanipulator_tstate_t         *state,
+                                                        const ipmanipulator_flow_key_t *key, uint64_t now_ms)
+{
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->echsni_table, key);
+
+    if (shard != NULL)
+    {
+        discard ipmanipulatorFlowShardExpire(&state->echsni_table, shard, now_ms, kIpManipulatorFlowCleanupBudget);
+    }
+
+    return shard;
+}
+
+static void echsnitrickTouchLocked(ipmanipulator_flow_shard_t *shard, ipmanipulator_flow_entry_t *entry,
+                                   uint64_t now_ms)
+{
+    ipmanipulator_echsni_flow_t *flow = echsnitrickEntryRecord(entry);
+
+    flow->last_activity_ms = now_ms;
+    ipmanipulatorFlowShardTouch(shard,
+                                entry,
+                                flow->phase == kIpManipulatorEchSniFlowPhaseReleasing ? UINT64_MAX
+                                                                                      : now_ms + kEchSniIdleTimeoutMs);
+}
+
+/*
+ * Resolves an identity (normalized tuple plus generation) to its entry. The
+ * returned pointer is only valid while the shard stays locked.
+ */
+static ipmanipulator_flow_entry_t *echsnitrickFindByIdentityLocked(ipmanipulator_tstate_t            *state,
+                                                                   ipmanipulator_flow_shard_t        *shard,
+                                                                   const echsnitrick_flow_identity_t *identity)
+{
+    ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->echsni_table, shard, &identity->key);
+
+    if (entry == NULL)
     {
         return NULL;
     }
 
-    memoryZero(grown + old_capacity, sizeof(*grown) * (new_capacity - old_capacity));
-    state->echsni_flows          = grown;
-    state->echsni_flows_capacity = new_capacity;
+    const ipmanipulator_echsni_flow_t *flow = echsnitrickEntryRecord(entry);
 
-    ipmanipulator_echsni_flow_t *flow = &state->echsni_flows[old_capacity];
-    echsnitrickInitializeFlow(flow, info, now_ms);
-    return flow;
+    if (flow->generation != identity->generation || flow->src_addr != identity->src_addr ||
+        flow->src_port != identity->src_port)
+    {
+        return NULL;
+    }
+
+    return entry;
 }
+
+/* ------------------------------------------------------------- forwarding -- */
+
+static bool echsnitrickSendUpstreamDirect(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    if (t == NULL || l == NULL || buf == NULL)
+    {
+        return l != NULL ? lineIsAlive(l) : false;
+    }
+
+    if (! lineIsAlive(l))
+    {
+        lineReuseBuffer(l, buf);
+        return false;
+    }
+
+    lineSetRecalculateChecksum(l, true);
+    ipmanipulatorEmitUpstream(t, l, buf, tunnelNextUpStreamPayload);
+    return lineIsAlive(l);
+}
+
+static void echsnitrickSendNormalNow(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    discard echsnitrickSendUpstreamDirect(t, l, buf);
+}
+
+/* --------------------------------------------------- ClientHello parsing -- */
 
 static echsnitrick_clienthello_parse_status_e echsnitrickParseClientHello(const uint8_t *packet, uint32_t packet_length,
                                                                           echsnitrick_clienthello_match_t *match)
@@ -608,13 +611,31 @@ static void echsnitrickCopySniName(const uint8_t *packet, const echsnitrick_clie
 
     size_t copy_len = min((size_t) match->sni_name_len, dst_size - 1U);
     memoryCopy(dst, packet + match->sni_name_offset, copy_len);
+
+    /* Never let untrusted binary bytes reach a log format string. */
+    for (size_t i = 0; i < copy_len; ++i)
+    {
+        if (dst[i] < 0x20 || dst[i] > 0x7E)
+        {
+            dst[i] = '?';
+        }
+    }
 }
 
-static bool echsnitrickFindInnerClientHello(const uint8_t *packet, uint32_t packet_length,
-                                            const echsnitrick_clienthello_match_t *match, uint32_t *inner_offset_out,
-                                            uint32_t *inner_len_out)
+/*
+ * Bounded candidate parsing for the embedded inner ClientHello.
+ *
+ * A structurally TLS-looking byte run is not enough: every candidate must parse
+ * as a complete ClientHello record through parseTlsRecordSni() and must carry
+ * exactly the configured ech-sni-trick host name. Zero matches, a truncated or
+ * malformed candidate, a different host name, or more than one match all fail
+ * open.
+ */
+static bool echsnitrickFindInnerClientHello(const ipmanipulator_tstate_t *state, const uint8_t *packet,
+                                            uint32_t packet_length, const echsnitrick_clienthello_match_t *match,
+                                            uint32_t *inner_offset_out, uint32_t *inner_len_out)
 {
-    if (packet == NULL || match == NULL || inner_offset_out == NULL || inner_len_out == NULL ||
+    if (state == NULL || packet == NULL || match == NULL || inner_offset_out == NULL || inner_len_out == NULL ||
         match->ech_payload_offset >= packet_length)
     {
         return false;
@@ -628,6 +649,9 @@ static bool echsnitrickFindInnerClientHello(const uint8_t *packet, uint32_t pack
 
     const uint8_t *payload     = packet + match->ech_payload_offset;
     uint32_t       payload_len = (uint32_t) match->ech_payload_len;
+    uint32_t       matches     = 0;
+    uint32_t       best_offset = 0;
+    uint32_t       best_len    = 0;
 
     for (uint32_t offset = 0; offset + 9U <= payload_len; ++offset)
     {
@@ -645,75 +669,45 @@ static bool echsnitrickFindInnerClientHello(const uint8_t *packet, uint32_t pack
             continue;
         }
 
-        uint32_t client_hello_len = GET_BE24(tls + 6);
-        if (client_hello_len < 34U || client_hello_len + 4U > tls_record_len)
+        sni_match_t inner = {0};
+        if (! parseTlsRecordSni(tls, tls_total_len, &inner))
         {
             continue;
         }
 
-        *inner_offset_out = match->ech_payload_offset + offset;
-        *inner_len_out    = tls_total_len;
-        return true;
+        if (inner.sni_name_len != state->trick_ech_sni_value_len)
+        {
+            continue;
+        }
+
+        if (memoryCompare(tls + inner.sni_name_offset, state->trick_ech_sni_value, inner.sni_name_len) != 0)
+        {
+            continue;
+        }
+
+        matches += 1U;
+        if (matches > 1U)
+        {
+            LOGW("IpManipulator: ech-sni-trick rejected flow because the ECH payload contains more than one inner "
+                 "ClientHello matching the configured host name");
+            return false;
+        }
+
+        best_offset = match->ech_payload_offset + offset;
+        best_len    = tls_total_len;
     }
 
-    return false;
+    if (matches != 1U)
+    {
+        return false;
+    }
+
+    *inner_offset_out = best_offset;
+    *inner_len_out    = best_len;
+    return true;
 }
 
-static void echsnitrickLogDelayDiscard(const echsnitrick_tcp_packet_info_t *info, uint8_t phase)
-{
-    if (info == NULL)
-    {
-        return;
-    }
-
-    LOGW("IpManipulator: ech-sni-trick discarded an upstream packet on %u:%u -> %u:%u during original-release delay "
-         "phase %u",
-         info->src_addr,
-         info->src_port,
-         info->dst_addr,
-         info->dst_port,
-         (unsigned int) phase);
-}
-
-static sbuf_t *echsnitrickBuildCombinedPacket(line_t *l, const ipmanipulator_captured_packet_t *held_packet,
-                                              const echsnitrick_tcp_packet_info_t *held_info,
-                                              const echsnitrick_tcp_packet_info_t *current_info)
-{
-    if (l == NULL || held_packet == NULL || held_packet->buf == NULL || held_info == NULL || current_info == NULL)
-    {
-        return NULL;
-    }
-
-    uint32_t combined_payload_len = (uint32_t) held_info->tcp_payload_len + (uint32_t) current_info->tcp_payload_len;
-    uint32_t combined_packet_len  = (uint32_t) held_info->headers_len + combined_payload_len;
-
-    if (combined_packet_len > UINT16_MAX)
-    {
-        return NULL;
-    }
-
-    sbuf_t *combined = clonePacketWithLength(l, held_packet->buf, combined_packet_len);
-    if (combined == NULL)
-    {
-        return NULL;
-    }
-
-    sbufSetLength(combined, combined_packet_len);
-
-    uint8_t *packet = sbufGetMutablePtr(combined);
-    memoryCopyLarge(packet, held_info->packet, held_info->headers_len);
-    memoryCopyLarge(
-        packet + held_info->headers_len, held_info->packet + held_info->payload_offset, held_info->tcp_payload_len);
-    memoryCopyLarge(packet + held_info->headers_len + held_info->tcp_payload_len,
-                    current_info->packet + current_info->payload_offset,
-                    current_info->tcp_payload_len);
-
-    struct ip_hdr *ipheader = (struct ip_hdr *) packet;
-    IPH_LEN_SET(ipheader, lwip_htons((uint16_t) combined_packet_len));
-    IPH_OFFSET_SET(ipheader, lwip_htons((uint16_t) (lwip_ntohs(IPH_OFFSET(ipheader)) & ~(IP_MF | IP_OFFMASK))));
-
-    return combined;
-}
+/* ------------------------------------------------------- packet crafting -- */
 
 static sbuf_t *echsnitrickBuildPacketFromTemplate(line_t *l, sbuf_t *template_buf,
                                                   const echsnitrick_tcp_packet_info_t *template_info,
@@ -764,991 +758,642 @@ static sbuf_t *echsnitrickBuildPacketFromTemplate(line_t *l, sbuf_t *template_bu
     return result;
 }
 
-static uint8_t echsnitrickGetContinuationFlags(uint8_t original_flags)
-{
-    return (uint8_t) (original_flags & kEchSniContinuationPreserveFlags);
-}
-
 static uint8_t echsnitrickGetContinuationPushFlags(uint8_t original_flags)
 {
-    return (uint8_t) (echsnitrickGetContinuationFlags(original_flags) | TCP_PSH);
+    return (uint8_t) ((original_flags & kEchSniContinuationPreserveFlags) | TCP_PSH);
 }
 
-static void echsnitrickSelectTemplateForOffset(const ipmanipulator_captured_packet_t *held_packet,
-                                               const echsnitrick_tcp_packet_info_t *held_info, sbuf_t *current_buf,
-                                               const echsnitrick_tcp_packet_info_t *current_info,
-                                               uint32_t payload_offset, sbuf_t **template_buf,
-                                               const echsnitrick_tcp_packet_info_t **template_info)
+/*
+ * Picks the captured packet whose payload range contains payload_offset so the
+ * fake inner packet inherits a real data-packet header template.
+ */
+static bool echsnitrickSelectTemplateForOffset(const ipmanipulator_tls_capture_slot_t *slot, uint32_t payload_offset,
+                                               sbuf_t **template_buf, echsnitrick_tcp_packet_info_t *template_info)
 {
-    if (template_buf == NULL || template_info == NULL || held_packet == NULL || held_info == NULL ||
-        current_buf == NULL || current_info == NULL)
+    uint32_t consumed = 0;
+
+    for (uint8_t i = 0; i < slot->captured_packets_count; ++i)
     {
-        return;
+        sbuf_t                       *buf  = slot->captured_packets[i].buf;
+        echsnitrick_tcp_packet_info_t info = {0};
+
+        if (buf == NULL ||
+            ! echsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
+        {
+            return false;
+        }
+
+        if (payload_offset < consumed + info.tcp_payload_len || i + 1U == slot->captured_packets_count)
+        {
+            *template_buf  = buf;
+            *template_info = info;
+            return true;
+        }
+
+        consumed += info.tcp_payload_len;
     }
 
-    if (payload_offset >= held_info->tcp_payload_len)
-    {
-        *template_buf  = current_buf;
-        *template_info = current_info;
-        return;
-    }
-
-    *template_buf  = held_packet->buf;
-    *template_info = held_info;
+    return false;
 }
 
-static bool echsnitrickSendUpstreamDirect(tunnel_t *t, line_t *l, sbuf_t *buf)
+/* ------------------------------------------------------- delayed release -- */
+
+static void echsnitrickScheduleOriginalRelease(tunnel_t *t, const echsnitrick_flow_identity_t *identity,
+                                               uint8_t release_phase, uint32_t delay_ms, uint32_t next_delay_ms);
+
+/*
+ * Takes the originals that this release phase owns. Phase 0 takes exactly the
+ * first packet; phase 1 takes packets 2 through N so they are emitted back to
+ * back in stream order instead of racing on equal deadlines.
+ */
+static uint8_t echsnitrickTakeReleaseBatch(tunnel_t *t, const echsnitrick_flow_identity_t *identity,
+                                           uint8_t release_phase, ipmanipulator_captured_packet_t *out,
+                                           uint8_t out_capacity, bool *schedule_next)
 {
-    if (t == NULL || l == NULL || buf == NULL)
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    uint8_t                 taken = 0;
+
+    *schedule_next = false;
+
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->echsni_table, &identity->key);
+    if (shard == NULL)
     {
-        return l != NULL ? lineIsAlive(l) : false;
+        return 0;
     }
 
-    if (! lineIsAlive(l))
+    ipmanipulator_flow_entry_t *entry = echsnitrickFindByIdentityLocked(state, shard, identity);
+    if (entry != NULL)
     {
-        lineReuseBuffer(l, buf);
-        return false;
+        ipmanipulator_echsni_flow_t *flow = echsnitrickEntryRecord(entry);
+
+        if (flow->phase == kIpManipulatorEchSniFlowPhaseReleasing)
+        {
+            uint8_t first = release_phase == kEchSniReleasePhaseFirst ? 0U : 1U;
+            uint8_t last  = release_phase == kEchSniReleasePhaseFirst ? 1U : flow->pending_original_count;
+
+            if (flow->next_release_index == first)
+            {
+                for (uint8_t i = first; i < last && i < flow->pending_original_count && taken < out_capacity; ++i)
+                {
+                    out[taken++]                      = flow->pending_original_packets[i];
+                    flow->pending_original_packets[i] = (ipmanipulator_captured_packet_t) {0};
+                }
+
+                flow->next_release_index = (uint8_t) (first + taken);
+                *schedule_next = release_phase == kEchSniReleasePhaseFirst && flow->pending_original_count > 1U;
+
+                if (flow->next_release_index >= flow->pending_original_count)
+                {
+                    flow->phase                = kIpManipulatorEchSniFlowPhasePassthrough;
+                    flow->shard1_release_at_ms = 0;
+                    flow->shard2_release_at_ms = 0;
+                    flow->last_activity_ms     = getTickMS();
+                    ipmanipulatorFlowShardTouch(shard, entry, flow->last_activity_ms + kEchSniIdleTimeoutMs);
+                }
+            }
+        }
     }
 
-    lineSetRecalculateChecksum(l, true);
-    ipmanipulatorEmitUpstream(t, l, buf, tunnelNextUpStreamPayload);
-    return lineIsAlive(l);
+    ipmanipulatorFlowShardUnlock(shard);
+    return taken;
 }
-
-static bool echsnitrickScheduleOriginalReleasePacket(tunnel_t *t, line_t *l, sbuf_t *buf, sbuf_t *next_buf,
-                                                     uint32_t delay_ms, uint32_t next_delay_ms);
 
 static void echsnitrickRunDelayedOriginalRelease(worker_t *worker, void *arg1, void *arg2, void *arg3)
 {
     discard worker;
+    discard arg2;
 
-    tunnel_t                      *t       = arg1;
-    line_t                        *l       = arg2;
-    echsnitrick_delayed_release_t *release = arg3;
-    bool                           alive   = lineIsAlive(l);
+    tunnel_t                       *t       = arg1;
+    echsnitrick_delayed_release_t  *release = arg3;
+    ipmanipulator_captured_packet_t batch[kIpManipulatorTlsCaptureMaxPackets];
+    bool                            schedule_next = false;
 
-    if (release != NULL && release->buf != NULL)
-    {
-        if (alive)
-        {
-            alive = echsnitrickSendUpstreamDirect(t, l, release->buf);
-        }
-        else
-        {
-            lineReuseBuffer(l, release->buf);
-        }
-    }
-
-    if (release != NULL && release->next_buf != NULL)
-    {
-        if (alive)
-        {
-            discard echsnitrickScheduleOriginalReleasePacket(t, l, release->next_buf, NULL, release->next_delay_ms, 0);
-        }
-        else
-        {
-            lineReuseBuffer(l, release->next_buf);
-        }
-    }
-
-    if (release != NULL)
+    if (t == NULL || release == NULL)
     {
         memoryFree(release);
-    }
-
-    lineUnlock(l);
-}
-
-static void echsnitrickCleanupDelayedBuffer(line_t *l, sbuf_t *buf)
-{
-    if (buf == NULL)
-    {
         return;
     }
 
-    if (getWID() == lineGetWID(l))
+    memoryZero(batch, sizeof(batch));
+
+    echsnitrick_flow_identity_t identity = {
+        .generation = release->generation,
+        .key = ipmanipulatorFlowKeyMake(release->src_addr, release->src_port, release->dst_addr, release->dst_port),
+        .src_addr = release->src_addr,
+        .dst_addr = release->dst_addr,
+        .src_port = release->src_port,
+        .dst_port = release->dst_port,
+    };
+
+    uint8_t taken = echsnitrickTakeReleaseBatch(
+        t, &identity, release->release_phase, batch, (uint8_t) ARRAY_SIZE(batch), &schedule_next);
+
+    if (taken == 0)
     {
-        lineReuseBuffer(l, buf);
+        memoryFree(release);
         return;
     }
 
-    sbufDestroy(buf);
+    if (lineGetWID(batch[0].line) != getWID())
+    {
+        for (uint8_t i = 0; i < taken; ++i)
+        {
+            echsnitrickDestroyCapturedPacket(&batch[i]);
+        }
+
+        memoryFree(release);
+        LOGF("IpManipulator: ech-sni-trick original release ran on the wrong worker");
+        abortProgramNow(1);
+    }
+
+    bool alive = true;
+    for (uint8_t i = 0; i < taken; ++i)
+    {
+        if (alive)
+        {
+            alive = echsnitrickSendUpstreamDirect(t, batch[i].line, batch[i].buf);
+        }
+        else
+        {
+            lineReuseBuffer(batch[i].line, batch[i].buf);
+        }
+
+        batch[i].line = NULL;
+        batch[i].buf  = NULL;
+    }
+
+    uint32_t next_delay_ms = release->next_delay_ms;
+    memoryFree(release);
+
+    if (alive && schedule_next)
+    {
+        echsnitrickScheduleOriginalRelease(t, &identity, kEchSniReleasePhaseRest, next_delay_ms, 0);
+    }
 }
 
 static void echsnitrickCleanupDelayedOriginalRelease(void *arg1, void *arg2, void *arg3)
 {
     discard arg1;
+    discard arg2;
 
-    line_t                        *l       = arg2;
-    echsnitrick_delayed_release_t *release = arg3;
-
-    if (release != NULL)
-    {
-        if (release->buf != NULL)
-        {
-            echsnitrickCleanupDelayedBuffer(l, release->buf);
-        }
-        if (release->next_buf != NULL)
-        {
-            echsnitrickCleanupDelayedBuffer(l, release->next_buf);
-        }
-        memoryFree(release);
-    }
-
-    lineUnlock(l);
+    memoryFree(arg3);
 }
 
-static bool echsnitrickScheduleOriginalReleasePacket(tunnel_t *t, line_t *l, sbuf_t *buf, sbuf_t *next_buf,
-                                                     uint32_t delay_ms, uint32_t next_delay_ms)
+/* Reads the worker that still owns the next pending original for this phase. */
+static bool echsnitrickGetPendingReleaseWorker(tunnel_t *t, const echsnitrick_flow_identity_t *identity,
+                                               uint8_t release_phase, wid_t *wid)
 {
-    if (t == NULL || l == NULL)
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    bool                    found = false;
+
+    if (t == NULL || identity == NULL || wid == NULL)
     {
-        if (buf != NULL)
-        {
-            sbufDestroy(buf);
-        }
-
-        if (next_buf != NULL)
-        {
-            sbufDestroy(next_buf);
-        }
-
-        return l != NULL ? lineIsAlive(l) : false;
-    }
-
-    if (! lineIsAlive(l))
-    {
-        if (buf != NULL)
-        {
-            lineReuseBuffer(l, buf);
-        }
-
-        if (next_buf != NULL)
-        {
-            lineReuseBuffer(l, next_buf);
-        }
-
         return false;
     }
 
-    if (delay_ms == 0 && getWID() == lineGetWID(l))
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->echsni_table, &identity->key);
+    if (shard == NULL)
     {
-        bool alive = lineIsAlive(l);
+        return false;
+    }
 
-        if (buf != NULL)
+    ipmanipulator_flow_entry_t *entry = echsnitrickFindByIdentityLocked(state, shard, identity);
+    if (entry != NULL)
+    {
+        const ipmanipulator_echsni_flow_t *flow  = echsnitrickEntryRecord(entry);
+        uint8_t                            first = release_phase == kEchSniReleasePhaseFirst ? 0U : 1U;
+
+        if (flow->phase == kIpManipulatorEchSniFlowPhaseReleasing && flow->next_release_index == first &&
+            first < flow->pending_original_count && flow->pending_original_packets[first].line != NULL &&
+            flow->pending_original_packets[first].buf != NULL)
         {
-            alive = echsnitrickSendUpstreamDirect(t, l, buf);
+            *wid  = lineGetWID(flow->pending_original_packets[first].line);
+            found = true;
         }
+    }
 
-        if (next_buf != NULL)
-        {
-            if (alive)
-            {
-                discard echsnitrickScheduleOriginalReleasePacket(t, l, next_buf, NULL, next_delay_ms, 0);
-            }
-            else
-            {
-                lineReuseBuffer(l, next_buf);
-            }
-        }
+    ipmanipulatorFlowShardUnlock(shard);
+    return found;
+}
 
-        return alive;
+static void echsnitrickScheduleOriginalRelease(tunnel_t *t, const echsnitrick_flow_identity_t *identity,
+                                               uint8_t release_phase, uint32_t delay_ms, uint32_t next_delay_ms)
+{
+    wid_t wid = 0;
+
+    if (! echsnitrickGetPendingReleaseWorker(t, identity, release_phase, &wid))
+    {
+        return;
     }
 
     echsnitrick_delayed_release_t *release = memoryAllocate(sizeof(*release));
-    *release                               = (echsnitrick_delayed_release_t) {
-                                      .buf           = buf,
-                                      .next_buf      = next_buf,
-                                      .next_delay_ms = next_delay_ms,
+    if (release == NULL)
+    {
+        return;
+    }
+
+    *release = (echsnitrick_delayed_release_t) {
+        .generation    = identity->generation,
+        .src_addr      = identity->src_addr,
+        .dst_addr      = identity->dst_addr,
+        .next_delay_ms = next_delay_ms,
+        .src_port      = identity->src_port,
+        .dst_port      = identity->dst_port,
+        .release_phase = release_phase,
     };
 
-    lineLock(l);
-    sendWorkerMessageTimedWithCleanup(lineGetWID(l),
+    if (delay_ms == 0 && getWID() == wid)
+    {
+        echsnitrickRunDelayedOriginalRelease(NULL, t, NULL, release);
+        return;
+    }
+
+#ifdef IPMANIPULATOR_ECHSNI_TEST_HOOKS
+    ipmanipulatorEchSniTestScheduleTimed(wid,
+                                         (WorkerMessageCallback) echsnitrickRunDelayedOriginalRelease,
+                                         echsnitrickCleanupDelayedOriginalRelease,
+                                         delay_ms,
+                                         t,
+                                         NULL,
+                                         release);
+#else
+    sendWorkerMessageTimedWithCleanup(wid,
                                       (WorkerMessageCallback) echsnitrickRunDelayedOriginalRelease,
                                       echsnitrickCleanupDelayedOriginalRelease,
                                       delay_ms,
                                       t,
-                                      l,
+                                      NULL,
                                       release);
-    return lineIsAlive(l);
+#endif
 }
 
-static bool echsnitrickScheduleOriginalRelease(tunnel_t *t, line_t *l, sbuf_t *held_buf, sbuf_t *current_buf,
-                                               uint32_t shard1_delay_ms, uint32_t shard2_delay_ms)
-{
-    if (held_buf == NULL)
-    {
-        return echsnitrickScheduleOriginalReleasePacket(t, l, current_buf, NULL, shard1_delay_ms, 0);
-    }
+/* ------------------------------------------------------------- reporting -- */
 
-    return echsnitrickScheduleOriginalReleasePacket(t, l, held_buf, current_buf, shard1_delay_ms, shard2_delay_ms);
+static void echsnitrickLogReject(const char *reason, const char *sni_name)
+{
+    LOGW("IpManipulator: ech-sni-trick failed open for SNI \"%s\" because %s", sni_name, reason);
 }
 
-static void echsnitrickSendInnerThenOriginalDelayed(tunnel_t *t, line_t *l, sbuf_t *inner_packet,
-                                                    ipmanipulator_captured_packet_t *held_packet, sbuf_t *current_buf,
-                                                    uint32_t shard1_delay_ms, uint32_t shard2_delay_ms)
+/* ------------------------------------------------- completed-capture path -- */
+
+/*
+ * Moves every captured original into the flow's pending batch and finalizes the
+ * generation. Returns false when the flow was replaced or closed while the
+ * assembled ClientHello was being parsed, in which case the slot is untouched
+ * and the caller releases it through the safe fail-open path.
+ */
+static bool echsnitrickInstallPendingOriginals(tunnel_t *t, const echsnitrick_flow_identity_t *identity,
+                                               ipmanipulator_tls_capture_slot_t *slot, uint64_t now_ms)
 {
-    line_t *line = held_packet != NULL && held_packet->line != NULL ? held_packet->line : l;
+    ipmanipulator_tstate_t     *state     = tunnelGetState(t);
+    ipmanipulator_flow_shard_t *shard     = ipmanipulatorFlowTableLockShard(&state->echsni_table, &identity->key);
+    bool                        installed = false;
 
-    if (line == NULL)
-    {
-        echsnitrickDestroyStandalonePacket(&inner_packet);
-        if (held_packet != NULL)
-        {
-            echsnitrickDestroyCapturedPacket(held_packet);
-        }
-
-        if (current_buf != NULL)
-        {
-            sbufDestroy(current_buf);
-        }
-
-        return;
-    }
-
-    sbuf_t *held_buf = NULL;
-    if (held_packet != NULL)
-    {
-        held_buf          = held_packet->buf;
-        held_packet->line = NULL;
-        held_packet->buf  = NULL;
-    }
-
-    lineLock(line);
-
-    bool alive = lineIsAlive(line);
-
-    if (inner_packet != NULL)
-    {
-        if (alive)
-        {
-            alive = echsnitrickSendUpstreamDirect(t, line, inner_packet);
-        }
-        else
-        {
-            lineReuseBuffer(line, inner_packet);
-        }
-        inner_packet = NULL;
-    }
-
-    if (held_buf != NULL || current_buf != NULL)
-    {
-        if (alive)
-        {
-            discard echsnitrickScheduleOriginalRelease(
-                t, line, held_buf, current_buf, shard1_delay_ms, shard2_delay_ms);
-        }
-        else
-        {
-            if (held_buf != NULL)
-            {
-                lineReuseBuffer(line, held_buf);
-            }
-
-            if (current_buf != NULL)
-            {
-                lineReuseBuffer(line, current_buf);
-            }
-        }
-    }
-
-    lineUnlock(line);
-}
-
-static void echsnitrickSendNormalNow(tunnel_t *t, line_t *l, sbuf_t *buf)
-{
-    discard echsnitrickSendUpstreamDirect(t, l, buf);
-}
-
-static void echsnitrickSendHeldThenCurrentNormal(tunnel_t *t, ipmanipulator_captured_packet_t *held_packet,
-                                                 line_t *current_line, sbuf_t *current_buf)
-{
-    line_t *line = held_packet != NULL && held_packet->line != NULL ? held_packet->line : current_line;
-
-    if (line == NULL)
-    {
-        if (held_packet != NULL)
-        {
-            echsnitrickDestroyCapturedPacket(held_packet);
-        }
-
-        if (current_buf != NULL)
-        {
-            sbufDestroy(current_buf);
-        }
-
-        return;
-    }
-
-    lineLock(line);
-
-    bool alive = lineIsAlive(line);
-
-    if (held_packet != NULL && held_packet->buf != NULL)
-    {
-        if (alive)
-        {
-            alive = echsnitrickSendUpstreamDirect(t, line, held_packet->buf);
-        }
-        else
-        {
-            lineReuseBuffer(line, held_packet->buf);
-        }
-
-        held_packet->line = NULL;
-        held_packet->buf  = NULL;
-    }
-
-    if (current_buf != NULL)
-    {
-        if (alive)
-        {
-            discard echsnitrickSendUpstreamDirect(t, line, current_buf);
-        }
-        else
-        {
-            lineReuseBuffer(line, current_buf);
-        }
-    }
-
-    lineUnlock(line);
-}
-
-static void echsnitrickLogMissingSniReject(void)
-{
-    LOGW("IpManipulator: ech-sni-trick rejected flow because the TLS ClientHello has no usable SNI extension");
-}
-
-static void echsnitrickLogMalformedReject(void)
-{
-    LOGW("IpManipulator: ech-sni-trick rejected flow because the TLS ClientHello extensions are malformed");
-}
-
-static void echsnitrickLogMissingEchReject(const char *sni_name)
-{
-    LOGW("IpManipulator: ech-sni-trick rejected flow because TLS ClientHello for SNI \"%s\" does not contain the "
-         "encrypted_client_hello extension",
-         sni_name);
-}
-
-static void echsnitrickLogMissingInnerReject(const char *sni_name)
-{
-    LOGW("IpManipulator: ech-sni-trick rejected flow because the ECH payload for SNI \"%s\" does not contain a fake "
-         "TLS ClientHello",
-         sni_name);
-}
-
-static void echsnitrickLogInnerMtuReject(const char *sni_name, uint32_t inner_len, uint32_t packet_len)
-{
-    LOGW("IpManipulator: ech-sni-trick rejected flow because fake inner ClientHello for \"%s\" is %u bytes and would "
-         "create a %u-byte TCP packet, exceeding GLOBAL_MTU_SIZE %u",
-         sni_name,
-         inner_len,
-         packet_len,
-         GLOBAL_MTU_SIZE);
-}
-
-static void echsnitrickLogPairCapture(const echsnitrick_tcp_packet_info_t *held_info,
-                                      const echsnitrick_tcp_packet_info_t *current_info)
-{
-    if (held_info == NULL || current_info == NULL)
-    {
-        return;
-    }
-
-    LOGD("IpManipulator: ech-sni-trick combining held packet payload=%u seq=%u with next payload=%u seq=%u",
-         held_info->tcp_payload_len,
-         held_info->seq,
-         current_info->tcp_payload_len,
-         current_info->seq);
-}
-
-static void echsnitrickLogParseMissPassthrough(uint32_t combined_payload_len)
-{
-    LOGD("IpManipulator: ech-sni-trick forwarded the held packet unchanged because the combined TCP payload (%u bytes) "
-         "was not a complete parseable TLS ClientHello",
-         combined_payload_len);
-}
-
-static void echsnitrickLogCandidateMatch(const char *sni_name, const echsnitrick_clienthello_match_t *match,
-                                         uint32_t inner_offset, uint32_t inner_len)
-{
-    if (sni_name == NULL || match == NULL)
-    {
-        return;
-    }
-
-    LOGD("IpManipulator: ech-sni-trick matched SNI \"%s\" with ECH ext offset=%u payload offset=%u SNI ext offset=%u "
-         "payload_len=%u inner_offset=%u inner_len=%u",
-         sni_name,
-         match->ech_extension_offset,
-         match->ech_payload_offset,
-         match->sni_extension_offset,
-         match->ech_payload_len,
-         inner_offset,
-         inner_len);
-}
-
-static void echsnitrickLogCraftedSuccess(const char *original_sni, const char *replacement_sni,
-                                         const echsnitrick_clienthello_match_t *match, uint32_t inner_stream_offset,
-                                         uint32_t inner_payload_len, uint32_t shard1_delay_ms, uint32_t shard2_delay_ms)
-{
-    if (original_sni == NULL || replacement_sni == NULL || match == NULL)
-    {
-        return;
-    }
-
-    LOGD("IpManipulator: ech-sni-trick sent fake inner ClientHello for \"%s\" out of order using existing ECH payload "
-         "bytes (configured replacement \"%s\") (ech_offset=%u sni_offset=%u inner_stream_offset=%u inner_len=%u "
-         "shard1_delay=%u shard2_delay=%u)",
-         original_sni,
-         replacement_sni,
-         match->ech_extension_offset,
-         match->sni_extension_offset,
-         inner_stream_offset,
-         inner_payload_len,
-         shard1_delay_ms,
-         shard2_delay_ms);
-}
-
-static void echsnitrickLogRetransmitStandaloneAttempt(const echsnitrick_tcp_packet_info_t *held_info)
-{
-    if (held_info == NULL)
-    {
-        return;
-    }
-
-    LOGD("IpManipulator: ech-sni-trick saw a retransmission of the held packet seq=%u payload=%u and will attempt a "
-         "held-only ClientHello craft",
-         held_info->seq,
-         held_info->tcp_payload_len);
-}
-
-static void echsnitrickLogSequenceMismatchPassthrough(uint32_t expected_seq, uint32_t actual_seq)
-{
-    LOGD("IpManipulator: ech-sni-trick forwarded the held packet unchanged because it expected next seq=%u but saw "
-         "seq=%u",
-         expected_seq,
-         actual_seq);
-}
-
-static bool echsnitrickIsHeldPayloadRetransmit(const echsnitrick_tcp_packet_info_t *held_info,
-                                               const echsnitrick_tcp_packet_info_t *current_info)
-{
-    if (held_info == NULL || current_info == NULL || held_info->tcp_payload_len == 0 ||
-        held_info->tcp_payload_len != current_info->tcp_payload_len || held_info->seq != current_info->seq)
+    if (shard == NULL)
     {
         return false;
     }
 
-    return memoryCompare(held_info->packet + held_info->payload_offset,
-                         current_info->packet + current_info->payload_offset,
-                         held_info->tcp_payload_len) == 0;
+    ipmanipulator_flow_entry_t *entry = echsnitrickFindByIdentityLocked(state, shard, identity);
+    if (entry != NULL)
+    {
+        ipmanipulator_echsni_flow_t *flow = echsnitrickEntryRecord(entry);
+
+        /*
+         * A one-packet ClientHello completes without ever entering Capturing,
+         * so both still-eligible phases may install a batch.
+         */
+        bool eligible = flow->phase == kIpManipulatorEchSniFlowPhaseCapturing ||
+                        flow->phase == kIpManipulatorEchSniFlowPhaseAwaitingClientHello;
+
+        if (eligible && flow->pending_original_count == 0)
+        {
+            for (uint8_t i = 0; i < slot->captured_packets_count; ++i)
+            {
+                flow->pending_original_packets[i] = slot->captured_packets[i];
+                slot->captured_packets[i]         = (ipmanipulator_captured_packet_t) {0};
+            }
+
+            flow->pending_original_count = slot->captured_packets_count;
+            flow->next_release_index     = 0;
+            flow->phase                  = kIpManipulatorEchSniFlowPhaseReleasing;
+            flow->last_activity_ms       = now_ms;
+            flow->shard1_release_at_ms   = now_ms + state->trick_ech_sni_shard1_delay_ms;
+            flow->shard2_release_at_ms   = flow->shard1_release_at_ms + state->trick_ech_sni_shard2_delay_ms;
+
+            slot->captured_packets_count = 0;
+            installed                    = true;
+
+            /* Timers own the originals now; idle cleanup resumes after the final release. */
+            ipmanipulatorFlowShardTouch(shard, entry, UINT64_MAX);
+        }
+    }
+
+    ipmanipulatorFlowShardUnlock(shard);
+    return installed;
 }
 
-static sbuf_t *echsnitrickCloneStandalonePacket(line_t *l, const ipmanipulator_captured_packet_t *held_packet,
-                                                const echsnitrick_tcp_packet_info_t *held_info)
+/* Marks a generation passthrough without disturbing a replacement generation. */
+static void echsnitrickMarkPassthrough(tunnel_t *t, const echsnitrick_flow_identity_t *identity, bool block_flow)
 {
-    if (l == NULL || held_packet == NULL || held_packet->buf == NULL || held_info == NULL)
+    ipmanipulator_tstate_t     *state = tunnelGetState(t);
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->echsni_table, &identity->key);
+
+    if (shard == NULL)
     {
-        return NULL;
+        return;
     }
 
-    uint32_t packet_len = (uint32_t) held_info->headers_len + held_info->tcp_payload_len;
-    sbuf_t  *clone      = clonePacketWithLength(l, held_packet->buf, packet_len);
-    if (clone == NULL)
+    ipmanipulator_flow_entry_t *entry = echsnitrickFindByIdentityLocked(state, shard, identity);
+    if (entry != NULL)
     {
-        return NULL;
+        ipmanipulator_echsni_flow_t *flow = echsnitrickEntryRecord(entry);
+
+        if (flow->phase != kIpManipulatorEchSniFlowPhaseReleasing)
+        {
+            flow->phase = block_flow ? kIpManipulatorEchSniFlowPhaseBlocked : kIpManipulatorEchSniFlowPhasePassthrough;
+        }
     }
 
-    sbufSetLength(clone, packet_len);
-    memoryCopyLarge(sbufGetMutablePtr(clone), held_info->packet, packet_len);
-    return clone;
+    ipmanipulatorFlowShardUnlock(shard);
 }
 
-static bool echsnitrickHandleHeldStandalone(tunnel_t *t, line_t *l, ipmanipulator_captured_packet_t *held_packet,
-                                            sbuf_t *current_buf, const echsnitrick_tcp_packet_info_t *held_info,
-                                            bool *block_flow_out, bool *start_delay_out)
+void echsnitrickSetFlowPassthrough(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
+                                   uint16_t dst_port, uint64_t generation)
 {
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
-    if (block_flow_out != NULL)
+    if (state == NULL || generation == 0 || ! ipmanipulatorFlowTableIsReady(&state->echsni_table))
     {
-        *block_flow_out = false;
+        return;
     }
 
-    if (start_delay_out != NULL)
-    {
-        *start_delay_out = false;
-    }
+    echsnitrick_flow_identity_t identity = {
+        .generation = generation,
+        .key        = ipmanipulatorFlowKeyMake(src_addr, src_port, dst_addr, dst_port),
+        .src_addr   = src_addr,
+        .dst_addr   = dst_addr,
+        .src_port   = src_port,
+        .dst_port   = dst_port,
+    };
 
-    if (held_packet == NULL || held_packet->buf == NULL || held_packet->line == NULL || held_info == NULL)
-    {
-        if (held_packet != NULL)
-        {
-            echsnitrickRecycleCapturedPacket(held_packet);
-        }
-
-        if (current_buf != NULL)
-        {
-            lineReuseBuffer(l, current_buf);
-        }
-
-        return true;
-    }
-
-    sbuf_t *combined_packet = echsnitrickCloneStandalonePacket(held_packet->line, held_packet, held_info);
-    if (combined_packet == NULL)
-    {
-        echsnitrickSendHeldThenCurrentNormal(t, held_packet, l, current_buf);
-        return true;
-    }
-
-    echsnitrick_clienthello_match_t        match        = {0};
-    echsnitrick_clienthello_parse_status_e parse_status = echsnitrickParseClientHello(
-        (const uint8_t *) sbufGetRawPtr(combined_packet), sbufGetLength(combined_packet), &match);
-
-    if (parse_status == kEchSniClientHelloParseMiss)
-    {
-        echsnitrickLogParseMissPassthrough((uint32_t) held_info->tcp_payload_len);
-        sbufDestroy(combined_packet);
-        echsnitrickSendHeldThenCurrentNormal(t, held_packet, l, current_buf);
-        return true;
-    }
-
-    if (parse_status == kEchSniClientHelloParseMalformed)
-    {
-        echsnitrickLogMalformedReject();
-
-        if (block_flow_out != NULL)
-        {
-            *block_flow_out = true;
-        }
-
-        sbufDestroy(combined_packet);
-        echsnitrickRecycleCapturedPacket(held_packet);
-        if (current_buf != NULL)
-        {
-            lineReuseBuffer(l, current_buf);
-        }
-        return true;
-    }
-
-    if (parse_status == kEchSniClientHelloParseNoSni)
-    {
-        echsnitrickLogMissingSniReject();
-
-        if (block_flow_out != NULL)
-        {
-            *block_flow_out = true;
-        }
-
-        sbufDestroy(combined_packet);
-        echsnitrickRecycleCapturedPacket(held_packet);
-        if (current_buf != NULL)
-        {
-            lineReuseBuffer(l, current_buf);
-        }
-        return true;
-    }
-
-    char           sni_name[256];
-    const uint8_t *combined_packet_bytes = (const uint8_t *) sbufGetRawPtr(combined_packet);
-    echsnitrickCopySniName(combined_packet_bytes, &match, sni_name, sizeof(sni_name));
-
-    if (! match.has_ech)
-    {
-        echsnitrickLogMissingEchReject(sni_name);
-
-        if (block_flow_out != NULL)
-        {
-            *block_flow_out = true;
-        }
-
-        sbufDestroy(combined_packet);
-        echsnitrickRecycleCapturedPacket(held_packet);
-        if (current_buf != NULL)
-        {
-            lineReuseBuffer(l, current_buf);
-        }
-        return true;
-    }
-
-    uint32_t inner_offset = 0;
-    uint32_t inner_len    = 0;
-    if (! echsnitrickFindInnerClientHello(
-            combined_packet_bytes, sbufGetLength(combined_packet), &match, &inner_offset, &inner_len))
-    {
-        echsnitrickLogMissingInnerReject(sni_name);
-
-        if (block_flow_out != NULL)
-        {
-            *block_flow_out = true;
-        }
-
-        sbufDestroy(combined_packet);
-        echsnitrickRecycleCapturedPacket(held_packet);
-        if (current_buf != NULL)
-        {
-            lineReuseBuffer(l, current_buf);
-        }
-        return true;
-    }
-
-    echsnitrickLogCandidateMatch(sni_name, &match, inner_offset, inner_len);
-
-    uint32_t total_payload_len   = (uint32_t) held_info->tcp_payload_len;
-    uint32_t inner_stream_offset = inner_offset - match.headers_len;
-
-    if (inner_offset < match.headers_len || inner_stream_offset >= total_payload_len ||
-        inner_len > total_payload_len - inner_stream_offset)
-    {
-        echsnitrickLogMalformedReject();
-
-        if (block_flow_out != NULL)
-        {
-            *block_flow_out = true;
-        }
-
-        sbufDestroy(combined_packet);
-        echsnitrickRecycleCapturedPacket(held_packet);
-        if (current_buf != NULL)
-        {
-            lineReuseBuffer(l, current_buf);
-        }
-        return true;
-    }
-
-    const uint8_t *combined_payload = ((const uint8_t *) sbufGetRawPtr(combined_packet)) + held_info->headers_len;
-    uint32_t       packet_len       = (uint32_t) held_info->headers_len + inner_len;
-    if (packet_len > GLOBAL_MTU_SIZE)
-    {
-        echsnitrickLogInnerMtuReject(sni_name, inner_len, packet_len);
-
-        if (block_flow_out != NULL)
-        {
-            *block_flow_out = true;
-        }
-
-        sbufDestroy(combined_packet);
-        echsnitrickRecycleCapturedPacket(held_packet);
-        if (current_buf != NULL)
-        {
-            lineReuseBuffer(l, current_buf);
-        }
-        return true;
-    }
-
-    uint8_t inner_flags  = echsnitrickGetContinuationPushFlags(held_info->tcp_flags);
-    sbuf_t *inner_packet = echsnitrickBuildPacketFromTemplate(held_packet->line,
-                                                              held_packet->buf,
-                                                              held_info,
-                                                              combined_payload + inner_stream_offset,
-                                                              inner_len,
-                                                              held_info->seq + inner_stream_offset,
-                                                              held_info->ip_identification,
-                                                              inner_flags);
-
-    if (inner_packet == NULL)
-    {
-        sbufDestroy(combined_packet);
-        echsnitrickSendHeldThenCurrentNormal(t, held_packet, l, current_buf);
-        return true;
-    }
-
-    sbufDestroy(combined_packet);
-    if (current_buf != NULL)
-    {
-        lineReuseBuffer(l, current_buf);
-        current_buf = NULL;
-    }
-
-    echsnitrickSendInnerThenOriginalDelayed(t,
-                                            l,
-                                            inner_packet,
-                                            held_packet,
-                                            current_buf,
-                                            state->trick_ech_sni_shard1_delay_ms,
-                                            state->trick_ech_sni_shard2_delay_ms);
-    echsnitrickLogCraftedSuccess(sni_name,
-                                 state->trick_ech_sni_value,
-                                 &match,
-                                 inner_stream_offset,
-                                 inner_len,
-                                 state->trick_ech_sni_shard1_delay_ms,
-                                 state->trick_ech_sni_shard2_delay_ms);
-
-    if (start_delay_out != NULL)
-    {
-        *start_delay_out = true;
-    }
-    return true;
+    echsnitrickMarkPassthrough(t, &identity, false);
 }
 
-static bool echsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_captured_packet_t *held_packet,
-                                      sbuf_t *current_buf, const echsnitrick_tcp_packet_info_t *current_info,
-                                      bool *block_flow_out, bool *start_delay_out)
+/*
+ * Parses one complete captured ClientHello and, when everything checks out,
+ * emits the fake inner packet ahead of the untouched originals.
+ *
+ * On every rejection the captured originals leave unchanged and in sequence
+ * order through ipmanipulatorReleaseCapturedPacketsNormal(), which also marks
+ * this generation passthrough.
+ */
+static void echsnitrickProcessCompletedCapture(tunnel_t *t, const echsnitrick_flow_identity_t *identity,
+                                               ipmanipulator_tls_capture_slot_t *slot)
 {
-    echsnitrick_tcp_packet_info_t held_info = {0};
-    ipmanipulator_tstate_t       *state     = tunnelGetState(t);
+    ipmanipulator_tstate_t *state  = tunnelGetState(t);
+    uint64_t                now_ms = getTickMS();
+    char                    sni_name[kIpManipulatorMaxTlsHostNameLen + 1];
 
-    if (block_flow_out != NULL)
-    {
-        *block_flow_out = false;
-    }
-
-    if (start_delay_out != NULL)
-    {
-        *start_delay_out = false;
-    }
-
-    if (held_packet == NULL || held_packet->buf == NULL || held_packet->line == NULL || current_buf == NULL ||
-        current_info == NULL)
-    {
-        if (held_packet != NULL)
-        {
-            echsnitrickRecycleCapturedPacket(held_packet);
-        }
-
-        if (current_buf != NULL)
-        {
-            echsnitrickSendNormalNow(t, l, current_buf);
-        }
-
-        return true;
-    }
-
-    if (! echsnitrickParseTcpPacketInfo(
-            (const uint8_t *) sbufGetRawPtr(held_packet->buf), sbufGetLength(held_packet->buf), &held_info))
-    {
-        echsnitrickRecycleCapturedPacket(held_packet);
-        echsnitrickSendNormalNow(t, l, current_buf);
-        return true;
-    }
-
-    echsnitrickLogPairCapture(&held_info, current_info);
-
-    if ((uint32_t) current_info->seq != held_info.seq + (uint32_t) held_info.tcp_payload_len ||
-        held_info.tcp_payload_len == 0 || current_info->tcp_payload_len == 0)
-    {
-        if (echsnitrickIsHeldPayloadRetransmit(&held_info, current_info))
-        {
-            echsnitrickLogRetransmitStandaloneAttempt(&held_info);
-            return echsnitrickHandleHeldStandalone(
-                t, l, held_packet, current_buf, &held_info, block_flow_out, start_delay_out);
-        }
-
-        echsnitrickLogSequenceMismatchPassthrough(held_info.seq + (uint32_t) held_info.tcp_payload_len,
-                                                  current_info->seq);
-        echsnitrickSendHeldThenCurrentNormal(t, held_packet, l, current_buf);
-        return true;
-    }
-
-    sbuf_t *combined_packet = echsnitrickBuildCombinedPacket(held_packet->line, held_packet, &held_info, current_info);
-    if (combined_packet == NULL)
-    {
-        echsnitrickSendHeldThenCurrentNormal(t, held_packet, l, current_buf);
-        return true;
-    }
+    const uint8_t *assembled     = (const uint8_t *) sbufGetRawPtr(slot->assembled_packet);
+    uint32_t       assembled_len = sbufGetLength(slot->assembled_packet);
 
     echsnitrick_clienthello_match_t        match        = {0};
-    echsnitrick_clienthello_parse_status_e parse_status = echsnitrickParseClientHello(
-        (const uint8_t *) sbufGetRawPtr(combined_packet), sbufGetLength(combined_packet), &match);
+    echsnitrick_clienthello_parse_status_e parse_status = echsnitrickParseClientHello(assembled, assembled_len, &match);
 
-    if (parse_status == kEchSniClientHelloParseMiss)
+    memoryZero(sni_name, sizeof(sni_name));
+
+    if (parse_status != kEchSniClientHelloParseReady)
     {
-        echsnitrickLogParseMissPassthrough((uint32_t) held_info.tcp_payload_len +
-                                           (uint32_t) current_info->tcp_payload_len);
-        sbufDestroy(combined_packet);
-        echsnitrickSendHeldThenCurrentNormal(t, held_packet, l, current_buf);
-        return true;
+        echsnitrickLogReject(parse_status == kEchSniClientHelloParseNoSni
+                                 ? "the assembled TLS ClientHello has no usable SNI extension"
+                                 : "the assembled TLS ClientHello is malformed or unparseable",
+                             "");
+        ipmanipulatorReleaseCapturedPacketsNormal(t, slot);
+        return;
     }
 
-    if (parse_status == kEchSniClientHelloParseMalformed)
-    {
-        echsnitrickLogMalformedReject();
-
-        if (block_flow_out != NULL)
-        {
-            *block_flow_out = true;
-        }
-
-        sbufDestroy(combined_packet);
-        echsnitrickRecycleCapturedPacket(held_packet);
-        lineReuseBuffer(l, current_buf);
-        return true;
-    }
-
-    if (parse_status == kEchSniClientHelloParseNoSni)
-    {
-        echsnitrickLogMissingSniReject();
-
-        if (block_flow_out != NULL)
-        {
-            *block_flow_out = true;
-        }
-
-        sbufDestroy(combined_packet);
-        echsnitrickRecycleCapturedPacket(held_packet);
-        lineReuseBuffer(l, current_buf);
-        return true;
-    }
-
-    char           sni_name[256];
-    const uint8_t *combined_packet_bytes = (const uint8_t *) sbufGetRawPtr(combined_packet);
-    echsnitrickCopySniName(combined_packet_bytes, &match, sni_name, sizeof(sni_name));
+    echsnitrickCopySniName(assembled, &match, sni_name, sizeof(sni_name));
 
     if (! match.has_ech)
     {
-        echsnitrickLogMissingEchReject(sni_name);
-
-        if (block_flow_out != NULL)
-        {
-            *block_flow_out = true;
-        }
-
-        sbufDestroy(combined_packet);
-        echsnitrickRecycleCapturedPacket(held_packet);
-        lineReuseBuffer(l, current_buf);
-        return true;
+        echsnitrickLogReject("the TLS ClientHello does not contain the encrypted_client_hello extension", sni_name);
+        ipmanipulatorReleaseCapturedPacketsNormal(t, slot);
+        return;
     }
 
     uint32_t inner_offset = 0;
     uint32_t inner_len    = 0;
-    if (! echsnitrickFindInnerClientHello(
-            combined_packet_bytes, sbufGetLength(combined_packet), &match, &inner_offset, &inner_len))
+    if (! echsnitrickFindInnerClientHello(state, assembled, assembled_len, &match, &inner_offset, &inner_len))
     {
-        echsnitrickLogMissingInnerReject(sni_name);
-
-        if (block_flow_out != NULL)
-        {
-            *block_flow_out = true;
-        }
-
-        sbufDestroy(combined_packet);
-        echsnitrickRecycleCapturedPacket(held_packet);
-        lineReuseBuffer(l, current_buf);
-        return true;
+        echsnitrickLogReject("the ECH payload holds no single inner ClientHello carrying the configured host name",
+                             sni_name);
+        ipmanipulatorReleaseCapturedPacketsNormal(t, slot);
+        return;
     }
 
-    echsnitrickLogCandidateMatch(sni_name, &match, inner_offset, inner_len);
+    uint32_t total_payload_len   = slot->captured_payload_len;
+    uint32_t inner_stream_offset = inner_offset - slot->headers_len;
 
-    uint32_t total_payload_len   = (uint32_t) held_info.tcp_payload_len + (uint32_t) current_info->tcp_payload_len;
-    uint32_t inner_stream_offset = inner_offset - match.headers_len;
-
-    if (inner_offset < match.headers_len || inner_stream_offset >= total_payload_len ||
+    if (inner_offset < slot->headers_len || inner_stream_offset >= total_payload_len ||
         inner_len > total_payload_len - inner_stream_offset)
     {
-        echsnitrickLogMalformedReject();
-
-        if (block_flow_out != NULL)
-        {
-            *block_flow_out = true;
-        }
-
-        sbufDestroy(combined_packet);
-        echsnitrickRecycleCapturedPacket(held_packet);
-        lineReuseBuffer(l, current_buf);
-        return true;
+        echsnitrickLogReject("the inner ClientHello does not lie inside the captured TCP stream bytes", sni_name);
+        ipmanipulatorReleaseCapturedPacketsNormal(t, slot);
+        return;
     }
 
-    const uint8_t *combined_payload   = ((const uint8_t *) sbufGetRawPtr(combined_packet)) + held_info.headers_len;
-    sbuf_t        *inner_template_buf = NULL;
-    const echsnitrick_tcp_packet_info_t *inner_template_info = NULL;
-    echsnitrickSelectTemplateForOffset(held_packet,
-                                       &held_info,
-                                       current_buf,
-                                       current_info,
-                                       inner_stream_offset,
-                                       &inner_template_buf,
-                                       &inner_template_info);
-
-    if (inner_template_buf == NULL || inner_template_info == NULL)
+    sbuf_t                       *template_buf  = NULL;
+    echsnitrick_tcp_packet_info_t template_info = {0};
+    if (! echsnitrickSelectTemplateForOffset(slot, inner_stream_offset, &template_buf, &template_info))
     {
-        sbufDestroy(combined_packet);
-        echsnitrickSendHeldThenCurrentNormal(t, held_packet, l, current_buf);
-        return true;
+        echsnitrickLogReject("no captured data packet could serve as a header template", sni_name);
+        ipmanipulatorReleaseCapturedPacketsNormal(t, slot);
+        return;
     }
 
-    uint32_t packet_len = (uint32_t) inner_template_info->headers_len + inner_len;
+    uint32_t packet_len = (uint32_t) template_info.headers_len + inner_len;
     if (packet_len > GLOBAL_MTU_SIZE)
     {
-        echsnitrickLogInnerMtuReject(sni_name, inner_len, packet_len);
-
-        if (block_flow_out != NULL)
-        {
-            *block_flow_out = true;
-        }
-
-        sbufDestroy(combined_packet);
-        echsnitrickRecycleCapturedPacket(held_packet);
-        lineReuseBuffer(l, current_buf);
-        return true;
+        LOGW("IpManipulator: ech-sni-trick failed open because the fake inner ClientHello for \"%s\" is %u bytes and "
+             "would create a %u-byte TCP packet, exceeding GLOBAL_MTU_SIZE %u",
+             sni_name,
+             inner_len,
+             packet_len,
+             GLOBAL_MTU_SIZE);
+        ipmanipulatorReleaseCapturedPacketsNormal(t, slot);
+        return;
     }
 
-    uint8_t inner_flags  = echsnitrickGetContinuationPushFlags(inner_template_info->tcp_flags);
-    sbuf_t *inner_packet = echsnitrickBuildPacketFromTemplate(held_packet->line,
-                                                              inner_template_buf,
-                                                              inner_template_info,
-                                                              combined_payload + inner_stream_offset,
-                                                              inner_len,
-                                                              held_info.seq + inner_stream_offset,
-                                                              inner_template_info->ip_identification,
-                                                              inner_flags);
+    /*
+     * The fake inner packet is emitted out of order, so its TCP sequence is the
+     * exact stream offset of the embedded inner ClientHello.
+     */
+    echsnitrick_tcp_packet_info_t first_info = {0};
+    if (slot->captured_packets[0].buf == NULL ||
+        ! echsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(slot->captured_packets[0].buf),
+                                        sbufGetLength(slot->captured_packets[0].buf),
+                                        &first_info))
+    {
+        echsnitrickLogReject("the first captured packet is no longer parseable", sni_name);
+        ipmanipulatorReleaseCapturedPacketsNormal(t, slot);
+        return;
+    }
+
+    line_t *line = slot->captured_packets[0].line;
+    sbuf_t *inner_packet =
+        echsnitrickBuildPacketFromTemplate(line,
+                                           template_buf,
+                                           &template_info,
+                                           assembled + slot->headers_len + inner_stream_offset,
+                                           inner_len,
+                                           first_info.seq + inner_stream_offset,
+                                           template_info.ip_identification,
+                                           echsnitrickGetContinuationPushFlags(template_info.tcp_flags));
 
     if (inner_packet == NULL)
     {
-        sbufDestroy(combined_packet);
-        echsnitrickSendHeldThenCurrentNormal(t, held_packet, l, current_buf);
-        return true;
+        echsnitrickLogReject("the fake inner ClientHello packet could not be allocated", sni_name);
+        ipmanipulatorReleaseCapturedPacketsNormal(t, slot);
+        return;
     }
 
-    sbufDestroy(combined_packet);
-    echsnitrickSendInnerThenOriginalDelayed(t,
-                                            l,
-                                            inner_packet,
-                                            held_packet,
-                                            current_buf,
-                                            state->trick_ech_sni_shard1_delay_ms,
-                                            state->trick_ech_sni_shard2_delay_ms);
-    echsnitrickLogCraftedSuccess(sni_name,
-                                 state->trick_ech_sni_value,
-                                 &match,
-                                 inner_stream_offset,
-                                 inner_len,
-                                 state->trick_ech_sni_shard1_delay_ms,
-                                 state->trick_ech_sni_shard2_delay_ms);
+    uint8_t original_count = slot->captured_packets_count;
 
-    if (start_delay_out != NULL)
+    /* The assembled copy is never forwarded; only originals enter delayed ownership. */
+    if (! echsnitrickInstallPendingOriginals(t, identity, slot, now_ms))
     {
-        *start_delay_out = true;
+        echsnitrickDestroyStandalonePacket(&inner_packet);
+        ipmanipulatorReleaseCapturedPacketsNormal(t, slot);
+        return;
     }
-    return true;
+
+    echsnitrickDestroyStandalonePacket(&slot->assembled_packet);
+    slot->active = false;
+
+    LOGD("IpManipulator: ech-sni-trick sent a fake inner ClientHello for \"%s\" out of order using the existing ECH "
+         "payload bytes (inner_stream_offset=%u inner_len=%u originals=%u shard1_delay=%u shard2_delay=%u)",
+         sni_name,
+         inner_stream_offset,
+         inner_len,
+         (unsigned int) original_count,
+         state->trick_ech_sni_shard1_delay_ms,
+         state->trick_ech_sni_shard2_delay_ms);
+
+    discard echsnitrickSendUpstreamDirect(t, line, inner_packet);
+
+    /* Emission may re-enter the chain, so revalidate before arming the timer. */
+    echsnitrickScheduleOriginalRelease(t,
+                                       identity,
+                                       kEchSniReleasePhaseFirst,
+                                       state->trick_ech_sni_shard1_delay_ms,
+                                       state->trick_ech_sni_shard2_delay_ms);
+}
+
+/* ------------------------------------------------- capture cancel/release -- */
+
+static void echsnitrickReleaseCaptureNormally(tunnel_t *t, const echsnitrick_flow_identity_t *identity)
+{
+    ipmanipulator_tls_capture_slot_t slot = {0};
+
+    if (ipmanipulatorTakeMatchingCaptureSlot(t,
+                                             identity->src_addr,
+                                             identity->dst_addr,
+                                             identity->src_port,
+                                             identity->dst_port,
+                                             kIpManipulatorTlsCaptureKindEchSni,
+                                             identity->generation,
+                                             false,
+                                             &slot))
+    {
+        ipmanipulatorReleaseCapturedPacketsNormal(t, &slot);
+    }
+}
+
+static void echsnitrickDisposeCapture(tunnel_t *t, const echsnitrick_flow_identity_t *identity)
+{
+    ipmanipulator_tls_capture_slot_t slot = {0};
+
+    if (ipmanipulatorTakeMatchingCaptureSlot(t,
+                                             identity->src_addr,
+                                             identity->dst_addr,
+                                             identity->src_port,
+                                             identity->dst_port,
+                                             kIpManipulatorTlsCaptureKindEchSni,
+                                             identity->generation,
+                                             false,
+                                             &slot))
+    {
+        ipmanipulatorRecycleCapturedTlsPackets(t, &slot);
+    }
+}
+
+/* -------------------------------------------------------- release window -- */
+
+/*
+ * While originals are pending, only an exact retransmission of a still-pending
+ * segment may be swallowed. Anything the trick cannot classify exactly -- a
+ * partial overlap, later data, an ACK -- passes through untouched.
+ */
+static bool echsnitrickIsPendingRetransmitLocked(const ipmanipulator_echsni_flow_t   *flow,
+                                                 const echsnitrick_tcp_packet_info_t *info)
+{
+    if (info->tcp_payload_len == 0)
+    {
+        return false;
+    }
+
+    for (uint8_t i = flow->next_release_index; i < flow->pending_original_count; ++i)
+    {
+        const ipmanipulator_captured_packet_t *pending      = &flow->pending_original_packets[i];
+        echsnitrick_tcp_packet_info_t          pending_info = {0};
+
+        if (pending->buf == NULL || ! echsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(pending->buf),
+                                                                    sbufGetLength(pending->buf),
+                                                                    &pending_info))
+        {
+            continue;
+        }
+
+        if (pending_info.seq != info->seq || pending_info.tcp_payload_len != info->tcp_payload_len)
+        {
+            continue;
+        }
+
+        if (memoryCompare(pending_info.packet + pending_info.payload_offset,
+                          info->packet + info->payload_offset,
+                          info->tcp_payload_len) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* ------------------------------------------------------------- lifecycle -- */
+
+bool echsnitrickInitializeState(tunnel_t *t)
+{
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+    return ipmanipulatorFlowTableInit(&state->echsni_table,
+                                      "ech-sni-trick",
+                                      state->trick_stateful_flow_limit,
+                                      (uint32_t) getTotalWorkersCount(),
+                                      sizeof(ipmanipulator_echsni_flow_t),
+                                      echsnitrickDestroyFlowRecord,
+                                      NULL);
 }
 
 void echsnitrickDestroyState(tunnel_t *t)
 {
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
-    if (state->echsni_flows == NULL)
-    {
-        return;
-    }
-
-    mutexLock(&state->echsni_flows_mutex);
-
-    for (uint32_t i = 0; i < state->echsni_flows_capacity; ++i)
-    {
-        echsnitrickDestroyFlow(&state->echsni_flows[i]);
-    }
-
-    mutexUnlock(&state->echsni_flows_mutex);
-    mutexDestroy(&state->echsni_flows_mutex);
-
-    memoryFree(state->echsni_flows);
-    state->echsni_flows          = NULL;
-    state->echsni_flows_capacity = 0;
+    ipmanipulatorFlowTableDestroy(&state->echsni_table);
 }
+
+/* ------------------------------------------------------------ downstream -- */
 
 bool echsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
@@ -1765,23 +1410,49 @@ bool echsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return false;
     }
 
-    mutexLock(&state->echsni_flows_mutex);
-    echsnitrickCleanupIdleFlowsLocked(state, now_ms);
+    ipmanipulator_flow_key_t    key   = echsnitrickMakeKey(&info);
+    ipmanipulator_flow_shard_t *shard = echsnitrickLockShard(state, &key, now_ms);
 
-    ipmanipulator_echsni_flow_t *flow = echsnitrickFindReverseFlowLocked(state, &info);
-    if (flow != NULL)
+    if (shard == NULL)
     {
-        flow->last_activity_ms = now_ms;
+        return false;
+    }
+
+    echsnitrick_flow_identity_t identity       = {0};
+    bool                        cancel_capture = false;
+
+    ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->echsni_table, shard, &key);
+    if (entry != NULL && echsnitrickFlowIsForward(echsnitrickEntryRecord(entry), &info))
+    {
+        /* Downstream traffic runs the reverse orientation of the stored record. */
+        entry = NULL;
+    }
+
+    if (entry != NULL)
+    {
+        ipmanipulator_echsni_flow_t *flow = echsnitrickEntryRecord(entry);
+
+        echsnitrickTouchLocked(shard, entry, now_ms);
 
         if (echsnitrickHasFinOrRst(&info))
         {
-            echsnitrickDestroyFlow(flow);
+            identity       = echsnitrickGetFlowIdentity(flow);
+            cancel_capture = flow->phase == kIpManipulatorEchSniFlowPhaseCapturing;
+            ipmanipulatorFlowShardRemove(&state->echsni_table, shard, entry);
         }
     }
 
-    mutexUnlock(&state->echsni_flows_mutex);
+    ipmanipulatorFlowShardUnlock(shard);
+
+    if (cancel_capture)
+    {
+        echsnitrickDisposeCapture(t, &identity);
+    }
+
     return false;
 }
+
+/* -------------------------------------------------------------- upstream -- */
 
 bool echsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
@@ -1796,143 +1467,196 @@ bool echsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return false;
     }
 
-    ipmanipulator_captured_packet_t held_packet    = {0};
-    bool                            bypass_current = false;
+    ipmanipulator_flow_key_t    key   = echsnitrickMakeKey(&info);
+    ipmanipulator_flow_shard_t *shard = echsnitrickLockShard(state, &key, now_ms);
 
-    mutexLock(&state->echsni_flows_mutex);
-    echsnitrickCleanupIdleFlowsLocked(state, now_ms);
-
-    ipmanipulator_echsni_flow_t *flow = echsnitrickFindFlowLocked(state, &info);
-
-    if (flow != NULL && echsnitrickIsPureSyn(&info))
+    if (shard == NULL)
     {
-        echsnitrickInitializeFlow(flow, &info, now_ms);
-    }
-
-    if (flow == NULL)
-    {
-        if (! echsnitrickIsPureSyn(&info))
-        {
-            mutexUnlock(&state->echsni_flows_mutex);
-            return false;
-        }
-
-        flow = echsnitrickCreateFlowLocked(state, &info, now_ms);
-    }
-
-    if (flow == NULL)
-    {
-        mutexUnlock(&state->echsni_flows_mutex);
-        LOGW("IpManipulator: ech-sni-trick failed to allocate a flow record");
         return false;
     }
 
-    flow->last_activity_ms = now_ms;
+    ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->echsni_table, shard, &key);
 
-    if (flow->phase == kIpManipulatorEchSniFlowPhaseBlocked)
+    /*
+     * A valid plain or ECN SYN always starts a fresh generation. Any capture and
+     * any pending originals of the previous generation are invalidated first so
+     * an old timer or capture can never act on the replacement.
+     */
+    if (echsnitrickIsPureSyn(&info))
     {
-        if (echsnitrickHasFinOrRst(&info))
+        echsnitrick_flow_identity_t previous         = {0};
+        bool                        dispose_previous = false;
+
+        if (entry != NULL)
         {
-            echsnitrickDestroyFlow(flow);
+            ipmanipulator_echsni_flow_t *flow = echsnitrickEntryRecord(entry);
+
+            previous         = echsnitrickGetFlowIdentity(flow);
+            dispose_previous = true;
+            echsnitrickInitializeFlow(state, flow, &info, now_ms);
+            echsnitrickTouchLocked(shard, entry, now_ms);
+        }
+        else
+        {
+            entry =
+                ipmanipulatorFlowShardReserve(&state->echsni_table, shard, &key, now_ms, now_ms + kEchSniIdleTimeoutMs);
+
+            if (entry != NULL)
+            {
+                echsnitrickInitializeFlow(state, echsnitrickEntryRecord(entry), &info, now_ms);
+            }
         }
 
-        mutexUnlock(&state->echsni_flows_mutex);
-        lineReuseBuffer(l, buf);
+        bool admitted = entry != NULL;
+
+        ipmanipulatorFlowShardUnlock(shard);
+
+        if (dispose_previous)
+        {
+            echsnitrickDisposeCapture(t, &previous);
+        }
+
+        if (! admitted)
+        {
+            LOGW("IpManipulator: ech-sni-trick could not admit a flow record; the handshake passes unchanged");
+        }
+
+        echsnitrickSendNormalNow(t, l, buf);
         return true;
     }
 
-    uint8_t delay_phase = echsnitrickGetActiveDelayPhase(flow, now_ms);
-    if (delay_phase != 0)
+    if (entry != NULL && ! echsnitrickFlowIsForward(echsnitrickEntryRecord(entry), &info))
     {
-        mutexUnlock(&state->echsni_flows_mutex);
-        echsnitrickLogDelayDiscard(&info, delay_phase);
-        lineReuseBuffer(l, buf);
-        return true;
+        entry = NULL;
     }
+
+    if (entry == NULL)
+    {
+        ipmanipulatorFlowShardUnlock(shard);
+        return false;
+    }
+
+    ipmanipulator_echsni_flow_t *flow = echsnitrickEntryRecord(entry);
+
+    echsnitrickTouchLocked(shard, entry, now_ms);
 
     if (echsnitrickHasFinOrRst(&info))
     {
-        if (flow->phase == kIpManipulatorEchSniFlowPhaseHoldThird)
+        echsnitrick_flow_identity_t identity      = echsnitrickGetFlowIdentity(flow);
+        bool                        flush_capture = flow->phase == kIpManipulatorEchSniFlowPhaseCapturing;
+
+        /* Removal disposes of any pending originals through the record destructor. */
+        ipmanipulatorFlowShardRemove(&state->echsni_table, shard, entry);
+        ipmanipulatorFlowShardUnlock(shard);
+
+        if (flush_capture)
         {
-            held_packet       = flow->held_packet;
-            flow->held_packet = (ipmanipulator_captured_packet_t) {0};
-            bypass_current    = true;
+            /* Held originals leave in sequence order before the close packet. */
+            echsnitrickReleaseCaptureNormally(t, &identity);
         }
 
-        echsnitrickDestroyFlow(flow);
-        mutexUnlock(&state->echsni_flows_mutex);
-
-        if (! bypass_current)
-        {
-            return false;
-        }
-
-        echsnitrickSendHeldThenCurrentNormal(t, &held_packet, l, buf);
-        return true;
+        return false;
     }
 
     switch (flow->phase)
     {
-    case kIpManipulatorEchSniFlowPhaseWarmup:
-        if (flow->warmup_packets_seen < kEchSniWarmupPackets)
-        {
-            flow->warmup_packets_seen += 1;
-            mutexUnlock(&state->echsni_flows_mutex);
-
-            echsnitrickSendNormalNow(t, l, buf);
-            return true;
-        }
-
-        if (info.tcp_payload_len == 0)
-        {
-            flow->phase = kIpManipulatorEchSniFlowPhasePassthrough;
-            mutexUnlock(&state->echsni_flows_mutex);
-
-            echsnitrickSendNormalNow(t, l, buf);
-            return true;
-        }
-
-        flow->phase       = kIpManipulatorEchSniFlowPhaseHoldThird;
-        flow->held_packet = (ipmanipulator_captured_packet_t) {.line = l, .buf = buf};
-        mutexUnlock(&state->echsni_flows_mutex);
-        LOGD("IpManipulator: ech-sni-trick captured the third upstream packet payload=%u seq=%u for delayed inspection",
-             info.tcp_payload_len,
-             info.seq);
+    case kIpManipulatorEchSniFlowPhaseBlocked:
+        ipmanipulatorFlowShardUnlock(shard);
+        lineReuseBuffer(l, buf);
         return true;
 
     case kIpManipulatorEchSniFlowPhasePassthrough:
-        mutexUnlock(&state->echsni_flows_mutex);
+        ipmanipulatorFlowShardUnlock(shard);
         echsnitrickSendNormalNow(t, l, buf);
         return true;
 
-    case kIpManipulatorEchSniFlowPhaseHoldThird: {
-        bool block_flow  = false;
-        bool start_delay = false;
+    case kIpManipulatorEchSniFlowPhaseReleasing: {
+        bool swallow = echsnitrickIsPendingRetransmitLocked(flow, &info);
 
-        held_packet       = flow->held_packet;
-        flow->held_packet = (ipmanipulator_captured_packet_t) {0};
+        ipmanipulatorFlowShardUnlock(shard);
 
-        mutexUnlock(&state->echsni_flows_mutex);
-
-        bool handled = echsnitrickHandleHeldPair(t, l, &held_packet, buf, &info, &block_flow, &start_delay);
-
-        mutexLock(&state->echsni_flows_mutex);
-        flow = echsnitrickFindFlowLocked(state, &info);
-        if (flow != NULL)
+        if (swallow)
         {
-            flow->last_activity_ms = getTickMS();
-            echsnitrickFinalizeFlowLocked(flow, block_flow, start_delay, now_ms, state);
+            LOGD("IpManipulator: ech-sni-trick swallowed an exact retransmission of a still-pending original seq=%u "
+                 "payload=%u",
+                 info.seq,
+                 (unsigned int) info.tcp_payload_len);
+            lineReuseBuffer(l, buf);
+            return true;
         }
-        mutexUnlock(&state->echsni_flows_mutex);
 
-        return handled;
+        echsnitrickSendNormalNow(t, l, buf);
+        return true;
     }
 
-    case kIpManipulatorEchSniFlowPhaseBlocked:
+    case kIpManipulatorEchSniFlowPhaseAwaitingClientHello:
+    case kIpManipulatorEchSniFlowPhaseCapturing:
     default:
-        mutexUnlock(&state->echsni_flows_mutex);
         break;
     }
 
-    return false;
+    /*
+     * Payload-free packets never count as ClientHello segments and must not move
+     * the generation out of capture.
+     */
+    if (info.tcp_payload_len == 0)
+    {
+        ipmanipulatorFlowShardUnlock(shard);
+        echsnitrickSendNormalNow(t, l, buf);
+        return true;
+    }
+
+    echsnitrick_flow_identity_t identity = echsnitrickGetFlowIdentity(flow);
+
+    ipmanipulatorFlowShardUnlock(shard);
+
+    ipmanipulator_tls_capture_slot_t   slot   = {0};
+    ipmanipulator_tls_capture_status_e status = ipmanipulatorCaptureTlsClientHelloForOwner(
+        t, l, buf, kIpManipulatorTlsCaptureKindEchSni, identity.generation, &slot);
+
+    switch (status)
+    {
+    case kIpManipulatorTlsCaptureStatusPending: {
+        /* Capture in progress: the helper owns the packet. */
+        ipmanipulator_flow_shard_t *pending_shard = ipmanipulatorFlowTableLockShard(&state->echsni_table, &key);
+        bool                        pending_generation_is_live = false;
+
+        if (pending_shard != NULL)
+        {
+            ipmanipulator_flow_entry_t *pending_entry =
+                echsnitrickFindByIdentityLocked(state, pending_shard, &identity);
+
+            if (pending_entry != NULL)
+            {
+                echsnitrickEntryRecord(pending_entry)->phase = kIpManipulatorEchSniFlowPhaseCapturing;
+                pending_generation_is_live                   = true;
+            }
+
+            ipmanipulatorFlowShardUnlock(pending_shard);
+        }
+
+        if (! pending_generation_is_live)
+        {
+            /* A concurrent close/replacement won after capture admission. */
+            echsnitrickDisposeCapture(t, &identity);
+        }
+
+        return true;
+    }
+
+    case kIpManipulatorTlsCaptureStatusReady:
+        echsnitrickProcessCompletedCapture(t, &identity, &slot);
+        return true;
+
+    case kIpManipulatorTlsCaptureStatusBypassed:
+        /* The helper already released the old capture and forwarded this packet. */
+        echsnitrickMarkPassthrough(t, &identity, false);
+        return true;
+
+    case kIpManipulatorTlsCaptureStatusMiss:
+    default:
+        echsnitrickMarkPassthrough(t, &identity, false);
+        echsnitrickSendNormalNow(t, l, buf);
+        return true;
+    }
 }

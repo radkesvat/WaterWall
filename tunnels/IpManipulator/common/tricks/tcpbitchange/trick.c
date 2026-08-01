@@ -61,20 +61,25 @@ typedef struct
     enum tcp_bit_action_dynamic_value action;
 } tcp_flag_config_t;
 
-static bool hasTcpFlagActionsConfigured(const ipmanipulator_tstate_t *state, bool is_upstream)
+bool tcpbitchangetrickHasUpstreamActions(const ipmanipulator_tstate_t *state)
 {
-    if (is_upstream)
-    {
-        return state->up_tcp_bit_cwr_action != kDvsNoAction || state->up_tcp_bit_ece_action != kDvsNoAction ||
-               state->up_tcp_bit_urg_action != kDvsNoAction || state->up_tcp_bit_ack_action != kDvsNoAction ||
-               state->up_tcp_bit_psh_action != kDvsNoAction || state->up_tcp_bit_rst_action != kDvsNoAction ||
-               state->up_tcp_bit_syn_action != kDvsNoAction || state->up_tcp_bit_fin_action != kDvsNoAction;
-    }
+    return state->up_tcp_bit_cwr_action != kDvsNoAction || state->up_tcp_bit_ece_action != kDvsNoAction ||
+           state->up_tcp_bit_urg_action != kDvsNoAction || state->up_tcp_bit_ack_action != kDvsNoAction ||
+           state->up_tcp_bit_psh_action != kDvsNoAction || state->up_tcp_bit_rst_action != kDvsNoAction ||
+           state->up_tcp_bit_syn_action != kDvsNoAction || state->up_tcp_bit_fin_action != kDvsNoAction;
+}
 
+bool tcpbitchangetrickHasDownstreamActions(const ipmanipulator_tstate_t *state)
+{
     return state->down_tcp_bit_cwr_action != kDvsNoAction || state->down_tcp_bit_ece_action != kDvsNoAction ||
            state->down_tcp_bit_urg_action != kDvsNoAction || state->down_tcp_bit_ack_action != kDvsNoAction ||
            state->down_tcp_bit_psh_action != kDvsNoAction || state->down_tcp_bit_rst_action != kDvsNoAction ||
            state->down_tcp_bit_syn_action != kDvsNoAction || state->down_tcp_bit_fin_action != kDvsNoAction;
+}
+
+static bool hasTcpFlagActionsConfigured(const ipmanipulator_tstate_t *state, bool is_upstream)
+{
+    return is_upstream ? tcpbitchangetrickHasUpstreamActions(state) : tcpbitchangetrickHasDownstreamActions(state);
 }
 
 static bool appendOriginalTcpFlagsToPayload(sbuf_t **buf_ptr, struct ip_hdr **ipheader_ptr, uint16_t ip_total_len,

@@ -20,18 +20,8 @@ typedef struct firstsnitrick_tcp_packet_info_s
     uint8_t  ttl;
 } firstsnitrick_tcp_packet_info_t;
 
-static void firstsnitrickResetFlow(ipmanipulator_firstsni_flow_t *flow)
-{
-    if (flow == NULL)
-    {
-        return;
-    }
-
-    memoryZero(flow, sizeof(*flow));
-}
-
-static void firstsnitrickInitializeFlow(ipmanipulator_firstsni_flow_t *flow, const firstsnitrick_tcp_packet_info_t *info,
-                                        uint64_t now_ms)
+static void firstsnitrickInitializeFlow(ipmanipulator_firstsni_flow_t         *flow,
+                                        const firstsnitrick_tcp_packet_info_t *info, uint64_t now_ms)
 {
     if (flow == NULL || info == NULL)
     {
@@ -39,20 +29,14 @@ static void firstsnitrickInitializeFlow(ipmanipulator_firstsni_flow_t *flow, con
     }
 
     *flow = (ipmanipulator_firstsni_flow_t) {
-        .created_ms           = now_ms,
-        .last_activity_ms     = now_ms,
+        .created_ms            = now_ms,
+        .last_activity_ms      = now_ms,
         .delay_window_until_ms = 0,
-        .src_addr             = info->src_addr,
-        .dst_addr             = info->dst_addr,
-        .src_port             = info->src_port,
-        .dst_port             = info->dst_port,
-        .active               = true,
+        .src_addr              = info->src_addr,
+        .dst_addr              = info->dst_addr,
+        .src_port              = info->src_port,
+        .dst_port              = info->dst_port,
     };
-}
-
-static void firstsnitrickDestroyFlow(ipmanipulator_firstsni_flow_t *flow)
-{
-    firstsnitrickResetFlow(flow);
 }
 
 static bool firstsnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t packet_length,
@@ -93,7 +77,7 @@ static bool firstsnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t pack
         return false;
     }
 
-    const struct tcp_hdr *tcp_header = (const struct tcp_hdr *) (packet + ip_header_len);
+    const struct tcp_hdr *tcp_header       = (const struct tcp_hdr *) (packet + ip_header_len);
     uint8_t               tcp_header_words = TCPH_HDRLEN(tcp_header);
     if (tcp_header_words < 5 || tcp_header_words > 15)
     {
@@ -124,7 +108,7 @@ static bool firstsnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t pack
 
 static bool firstsnitrickIsPureSyn(const firstsnitrick_tcp_packet_info_t *info)
 {
-    return info != NULL && info->tcp_payload_len == 0 && info->tcp_flags == TCP_SYN;
+    return info != NULL && ipmanipulatorIsFlowOpeningSyn(info->tcp_flags, info->tcp_payload_len);
 }
 
 static bool firstsnitrickHasFinOrRst(const firstsnitrick_tcp_packet_info_t *info)
@@ -132,95 +116,56 @@ static bool firstsnitrickHasFinOrRst(const firstsnitrick_tcp_packet_info_t *info
     return info != NULL && (info->tcp_flags & (TCP_FIN | TCP_RST)) != 0;
 }
 
-static bool firstsnitrickFlowMatches(const ipmanipulator_firstsni_flow_t *flow, const firstsnitrick_tcp_packet_info_t *info)
+static ipmanipulator_flow_key_t firstsnitrickMakeKey(const firstsnitrick_tcp_packet_info_t *info)
 {
-    return flow != NULL && info != NULL && flow->active && flow->src_addr == info->src_addr &&
-           flow->dst_addr == info->dst_addr && flow->src_port == info->src_port && flow->dst_port == info->dst_port;
+    return ipmanipulatorFlowKeyMake(info->src_addr, info->src_port, info->dst_addr, info->dst_port);
 }
 
-static void firstsnitrickCleanupIdleFlowsLocked(ipmanipulator_tstate_t *state, uint64_t now_ms)
+static ipmanipulator_firstsni_flow_t *firstsnitrickEntryRecord(ipmanipulator_flow_entry_t *entry)
 {
-    if (state == NULL || state->first_sni_flows == NULL)
-    {
-        return;
-    }
-
-    for (uint32_t i = 0; i < state->first_sni_flows_capacity; ++i)
-    {
-        ipmanipulator_firstsni_flow_t *flow = &state->first_sni_flows[i];
-
-        if (! flow->active)
-        {
-            continue;
-        }
-
-        if (now_ms - flow->last_activity_ms < kFirstSniIdleTimeoutMs)
-        {
-            continue;
-        }
-
-        firstsnitrickDestroyFlow(flow);
-    }
+    return (ipmanipulator_firstsni_flow_t *) ipmanipulatorFlowEntryRecord(entry);
 }
 
-static ipmanipulator_firstsni_flow_t *firstsnitrickFindFlowLocked(ipmanipulator_tstate_t *state,
-                                                                  const firstsnitrick_tcp_packet_info_t *info)
+/*
+ * Locks the shard that owns this tuple and reclaims a bounded number of expired
+ * entries. Returns NULL when the trick is not configured.
+ */
+static ipmanipulator_flow_shard_t *firstsnitrickLockShard(ipmanipulator_tstate_t         *state,
+                                                          const ipmanipulator_flow_key_t *key, uint64_t now_ms)
 {
-    if (state == NULL || state->first_sni_flows == NULL)
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->first_sni_table, key);
+
+    if (shard != NULL)
+    {
+        discard ipmanipulatorFlowShardExpire(&state->first_sni_table, shard, now_ms, kIpManipulatorFlowCleanupBudget);
+    }
+
+    return shard;
+}
+
+static void firstsnitrickTouchLocked(ipmanipulator_flow_shard_t *shard, ipmanipulator_flow_entry_t *entry,
+                                     ipmanipulator_firstsni_flow_t *flow, uint64_t now_ms)
+{
+    flow->last_activity_ms = now_ms;
+    ipmanipulatorFlowShardTouch(shard, entry, now_ms + kFirstSniIdleTimeoutMs);
+}
+
+static ipmanipulator_flow_entry_t *firstsnitrickReserveLocked(ipmanipulator_tstate_t                *state,
+                                                              ipmanipulator_flow_shard_t            *shard,
+                                                              const ipmanipulator_flow_key_t        *key,
+                                                              const firstsnitrick_tcp_packet_info_t *info,
+                                                              uint64_t                               now_ms)
+{
+    ipmanipulator_flow_entry_t *entry =
+        ipmanipulatorFlowShardReserve(&state->first_sni_table, shard, key, now_ms, now_ms + kFirstSniIdleTimeoutMs);
+
+    if (entry == NULL)
     {
         return NULL;
     }
 
-    for (uint32_t i = 0; i < state->first_sni_flows_capacity; ++i)
-    {
-        if (firstsnitrickFlowMatches(&state->first_sni_flows[i], info))
-        {
-            return &state->first_sni_flows[i];
-        }
-    }
-
-    return NULL;
-}
-
-static ipmanipulator_firstsni_flow_t *firstsnitrickCreateFlowLocked(ipmanipulator_tstate_t *state,
-                                                                    const firstsnitrick_tcp_packet_info_t *info,
-                                                                    uint64_t now_ms)
-{
-    if (state == NULL || info == NULL)
-    {
-        return NULL;
-    }
-
-    for (uint32_t i = 0; i < state->first_sni_flows_capacity; ++i)
-    {
-        ipmanipulator_firstsni_flow_t *flow = &state->first_sni_flows[i];
-
-        if (flow->active)
-        {
-            continue;
-        }
-
-        firstsnitrickInitializeFlow(flow, info, now_ms);
-        return flow;
-    }
-
-    uint32_t old_capacity = state->first_sni_flows_capacity;
-    uint32_t new_capacity = max(kIpManipulatorSmuggleInitialFlows, old_capacity * 2U);
-    ipmanipulator_firstsni_flow_t *grown =
-        memoryReAllocate(state->first_sni_flows, sizeof(*state->first_sni_flows) * new_capacity);
-
-    if (grown == NULL)
-    {
-        return NULL;
-    }
-
-    memoryZero(grown + old_capacity, sizeof(*grown) * (new_capacity - old_capacity));
-    state->first_sni_flows          = grown;
-    state->first_sni_flows_capacity = new_capacity;
-
-    ipmanipulator_firstsni_flow_t *flow = &state->first_sni_flows[old_capacity];
-    firstsnitrickInitializeFlow(flow, info, now_ms);
-    return flow;
+    firstsnitrickInitializeFlow(firstsnitrickEntryRecord(entry), info, now_ms);
+    return entry;
 }
 
 static uint32_t firstsnitrickGetTailDelayMs(const ipmanipulator_tstate_t *state)
@@ -242,11 +187,11 @@ static uint32_t firstsnitrickGetTailDelayMs(const ipmanipulator_tstate_t *state)
 
 static void firstsnitrickArmDelayWindow(tunnel_t *t, sbuf_t *buf, uint64_t now_ms)
 {
-    ipmanipulator_tstate_t     *state         = tunnelGetState(t);
+    ipmanipulator_tstate_t         *state         = tunnelGetState(t);
     firstsnitrick_tcp_packet_info_t info          = {0};
-    uint32_t                    tail_delay_ms = firstsnitrickGetTailDelayMs(state);
+    uint32_t                        tail_delay_ms = firstsnitrickGetTailDelayMs(state);
 
-    if (tail_delay_ms == 0 || state->first_sni_flows == NULL || buf == NULL)
+    if (tail_delay_ms == 0 || ! ipmanipulatorFlowTableIsReady(&state->first_sni_table) || buf == NULL)
     {
         return;
     }
@@ -256,26 +201,34 @@ static void firstsnitrickArmDelayWindow(tunnel_t *t, sbuf_t *buf, uint64_t now_m
         return;
     }
 
-    mutexLock(&state->first_sni_flows_mutex);
-    firstsnitrickCleanupIdleFlowsLocked(state, now_ms);
+    ipmanipulator_flow_key_t    key   = firstsnitrickMakeKey(&info);
+    ipmanipulator_flow_shard_t *shard = firstsnitrickLockShard(state, &key, now_ms);
 
-    ipmanipulator_firstsni_flow_t *flow = firstsnitrickFindFlowLocked(state, &info);
-    if (flow == NULL)
+    if (shard == NULL)
     {
-        flow = firstsnitrickCreateFlowLocked(state, &info, now_ms);
+        return;
     }
 
-    if (flow != NULL)
+    ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->first_sni_table, shard, &key);
+    if (entry == NULL)
     {
-        flow->last_activity_ms      = now_ms;
+        entry = firstsnitrickReserveLocked(state, shard, &key, &info, now_ms);
+    }
+
+    if (entry != NULL)
+    {
+        ipmanipulator_firstsni_flow_t *flow = firstsnitrickEntryRecord(entry);
+
         flow->delay_window_until_ms = now_ms + tail_delay_ms;
+        firstsnitrickTouchLocked(shard, entry, flow, now_ms);
     }
 
-    mutexUnlock(&state->first_sni_flows_mutex);
+    ipmanipulatorFlowShardUnlock(shard);
 
-    if (flow == NULL)
+    if (entry == NULL)
     {
-        LOGW("IpManipulator: first-sni failed to allocate a flow record for delayed replay handling");
+        LOGW("IpManipulator: first-sni could not admit a flow record for delayed replay handling; the packet is "
+             "forwarded without the replay delay window");
     }
 }
 
@@ -298,7 +251,7 @@ static bool setTcpSequenceRandom(uint8_t *packet, uint32_t packet_length)
         return false;
     }
 
-    struct tcp_hdr *tcph = (struct tcp_hdr *) (packet + ip_hlen);
+    struct tcp_hdr *tcph     = (struct tcp_hdr *) (packet + ip_hlen);
     uint8_t         tcp_hlen = TCPH_HDRLEN_BYTES(tcph);
     if (tcp_hlen < sizeof(struct tcp_hdr) || packet_length < ip_hlen + tcp_hlen)
     {
@@ -322,10 +275,10 @@ static sbuf_t *craftFirstSniPacket(tunnel_t *t, line_t *l, sbuf_t *buf, const sn
         return NULL;
     }
 
-    uint32_t original_packet_len  = match->ip_total_len;
-    int32_t  delta                = (int32_t) state->trick_first_sni_value_len - (int32_t) match->sni_name_len;
-    int32_t  new_ip_total_len     = (int32_t) match->ip_total_len + delta;
-    int32_t  new_extensions_len   = (int32_t) match->extensions_len + delta;
+    uint32_t original_packet_len      = match->ip_total_len;
+    int32_t  delta                    = (int32_t) state->trick_first_sni_value_len - (int32_t) match->sni_name_len;
+    int32_t  new_ip_total_len         = (int32_t) match->ip_total_len + delta;
+    int32_t  new_extensions_len       = (int32_t) match->extensions_len + delta;
     int32_t  new_server_name_list_len = (int32_t) match->server_name_list_len + delta;
     int32_t  new_server_name_ext_len  = (int32_t) match->server_name_ext_len + delta;
     int32_t  new_tls_record_len       = (int32_t) match->tls_record_len + delta;
@@ -397,9 +350,9 @@ static sbuf_t *craftFirstSniPacket(tunnel_t *t, line_t *l, sbuf_t *buf, const sn
         return NULL;
     }
 
-    uint8_t  *dest        = sbufGetMutablePtr(clone);
-    uint32_t  prefix_len  = match->sni_name_offset;
-    uint32_t  tail_offset = match->sni_name_offset + match->sni_name_len;
+    uint8_t *dest        = sbufGetMutablePtr(clone);
+    uint32_t prefix_len  = match->sni_name_offset;
+    uint32_t tail_offset = match->sni_name_offset + match->sni_name_len;
     if (tail_offset > original_packet_len)
     {
         reuseBuffer(clone);
@@ -514,37 +467,50 @@ static bool firstsnitrickMaybeDelayFlowPacket(tunnel_t *t, line_t *l, sbuf_t *bu
     ipmanipulator_tstate_t *state         = tunnelGetState(t);
     uint32_t                tail_delay_ms = firstsnitrickGetTailDelayMs(state);
 
-    if (state->first_sni_flows == NULL || tail_delay_ms == 0 || info == NULL)
+    if (! ipmanipulatorFlowTableIsReady(&state->first_sni_table) || tail_delay_ms == 0 || info == NULL)
     {
         return false;
     }
 
-    mutexLock(&state->first_sni_flows_mutex);
-    firstsnitrickCleanupIdleFlowsLocked(state, now_ms);
+    ipmanipulator_flow_key_t    key   = firstsnitrickMakeKey(info);
+    ipmanipulator_flow_shard_t *shard = firstsnitrickLockShard(state, &key, now_ms);
 
-    ipmanipulator_firstsni_flow_t *flow = firstsnitrickFindFlowLocked(state, info);
-
-    if (flow != NULL && firstsnitrickIsPureSyn(info))
+    if (shard == NULL)
     {
-        firstsnitrickInitializeFlow(flow, info, now_ms);
-    }
-    else if (flow == NULL && firstsnitrickIsPureSyn(info))
-    {
-        flow = firstsnitrickCreateFlowLocked(state, info, now_ms);
+        return false;
     }
 
-    if (flow != NULL)
+    ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->first_sni_table, shard, &key);
+
+    if (firstsnitrickIsPureSyn(info))
     {
-        flow->last_activity_ms = now_ms;
+        /* A new handshake on this tuple starts a fresh, delay-free flow. */
+        if (entry != NULL)
+        {
+            firstsnitrickInitializeFlow(firstsnitrickEntryRecord(entry), info, now_ms);
+        }
+        else
+        {
+            entry = firstsnitrickReserveLocked(state, shard, &key, info, now_ms);
+        }
     }
 
-    bool delay_active = flow != NULL && now_ms < flow->delay_window_until_ms;
-    if (! delay_active && flow != NULL && firstsnitrickHasFinOrRst(info))
+    bool delay_active = false;
+
+    if (entry != NULL)
     {
-        firstsnitrickDestroyFlow(flow);
+        ipmanipulator_firstsni_flow_t *flow = firstsnitrickEntryRecord(entry);
+
+        firstsnitrickTouchLocked(shard, entry, flow, now_ms);
+        delay_active = now_ms < flow->delay_window_until_ms;
+
+        if (! delay_active && firstsnitrickHasFinOrRst(info))
+        {
+            ipmanipulatorFlowShardRemove(&state->first_sni_table, shard, entry);
+        }
     }
 
-    mutexUnlock(&state->first_sni_flows_mutex);
+    ipmanipulatorFlowShardUnlock(shard);
 
     if (! delay_active)
     {
@@ -715,8 +681,8 @@ bool firstsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     assert(lineGetWID(l) == getWID());
 
-    firstsnitrick_tcp_packet_info_t  info       = {0};
-    uint64_t                         now_ms     = getTickMS();
+    firstsnitrick_tcp_packet_info_t info   = {0};
+    uint64_t                        now_ms = getTickMS();
 
     if (firstsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info) &&
         firstsnitrickMaybeDelayFlowPacket(t, l, buf, &info, now_ms))
@@ -729,7 +695,7 @@ bool firstsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return true;
     }
 
-    ipmanipulator_tls_capture_slot_t   captured_slot  = {0};
+    ipmanipulator_tls_capture_slot_t   captured_slot = {0};
     ipmanipulator_tls_capture_status_e capture_status =
         ipmanipulatorCaptureTlsClientHello(t, l, buf, kIpManipulatorTlsCaptureKindFirstSni, &captured_slot);
 
@@ -741,7 +707,7 @@ bool firstsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (capture_status == kIpManipulatorTlsCaptureStatusReady)
     {
-        sbuf_t *captured_packet = captured_slot.assembled_packet;
+        sbuf_t *captured_packet        = captured_slot.assembled_packet;
         captured_slot.assembled_packet = NULL;
         ipmanipulatorRecycleCapturedTlsPackets(t, &captured_slot);
 
@@ -760,26 +726,23 @@ bool firstsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     return false;
 }
 
+bool firstsnitrickInitializeState(tunnel_t *t)
+{
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+    /* A First-SNI record owns no buffers, so it needs no resource destructor. */
+    return ipmanipulatorFlowTableInit(&state->first_sni_table,
+                                      "first-sni",
+                                      state->trick_stateful_flow_limit,
+                                      (uint32_t) getTotalWorkersCount(),
+                                      sizeof(ipmanipulator_firstsni_flow_t),
+                                      NULL,
+                                      NULL);
+}
+
 void firstsnitrickDestroyState(tunnel_t *t)
 {
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
-    if (state->first_sni_flows == NULL)
-    {
-        return;
-    }
-
-    mutexLock(&state->first_sni_flows_mutex);
-
-    for (uint32_t i = 0; i < state->first_sni_flows_capacity; ++i)
-    {
-        firstsnitrickDestroyFlow(&state->first_sni_flows[i]);
-    }
-
-    mutexUnlock(&state->first_sni_flows_mutex);
-    mutexDestroy(&state->first_sni_flows_mutex);
-
-    memoryFree(state->first_sni_flows);
-    state->first_sni_flows          = NULL;
-    state->first_sni_flows_capacity = 0;
+    ipmanipulatorFlowTableDestroy(&state->first_sni_table);
 }

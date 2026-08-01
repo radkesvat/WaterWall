@@ -3,10 +3,14 @@
 #include "TlsClient/interface.h"
 #include "loggers/network_logger.h"
 
+#include "tricks/echsnitrick/trick.h"
 #include "tricks/firstsni/trick.h"
+#include "tricks/overlapsni/trick.h"
 #include "tricks/protoswap/trick.h"
+#include "tricks/smugglefin/trick.h"
 #include "tricks/smugglesni/trick.h"
 #include "tricks/sniblender/trick.h"
+#include "tricks/synfinsni/trick.h"
 #include "tricks/tcpbitchange/trick.h"
 
 static bool parseTcpBitActionField(enum tcp_bit_action_dynamic_value *dest, const cJSON *settings, const char *key)
@@ -44,6 +48,57 @@ static bool parseTcpBitActionField(enum tcp_bit_action_dynamic_value *dest, cons
     *dest = (enum tcp_bit_action_dynamic_value) action.status;
     dynamicvalueDestroy(action);
     return true;
+}
+
+ipmanipulator_config_validation_e ipmanipulatorValidateTrickCompatibility(const ipmanipulator_tstate_t *state)
+{
+    bool has_upstream_actions = tcpbitchangetrickHasUpstreamActions(state);
+
+    if (! has_upstream_actions)
+    {
+        /*
+         * Downstream-only actions never touch the upstream flow-opening SYN or
+         * the upstream ClientHello, and preservation without any action is a
+         * no-op encoder that appends nothing.
+         */
+        return kIpManipulatorConfigValid;
+    }
+
+    if (state->trick_first_sni || state->trick_smuggle_sni || state->trick_overlap_sni || state->trick_synfin_sni ||
+        state->trick_ech_sni)
+    {
+        return kIpManipulatorConfigRejectUpstreamTcpBitWithStatefulSni;
+    }
+
+    if (state->trick_preserve_tcp_bitflags && state->trick_sni_blender)
+    {
+        return kIpManipulatorConfigRejectPreservedTcpBitWithSniBlender;
+    }
+
+    return kIpManipulatorConfigValid;
+}
+
+static bool reportTrickCompatibility(const ipmanipulator_tstate_t *state)
+{
+    switch (ipmanipulatorValidateTrickCompatibility(state))
+    {
+    case kIpManipulatorConfigRejectUpstreamTcpBitWithStatefulSni:
+        LOGF("IpManipulator: upstream TCP-bit actions (\"up-tcp-bit-*\") cannot be combined with the stateful SNI "
+             "tricks \"first-sni\", \"smuggle-sni\", \"overlap-sni\", \"synfin-sni\" or \"ech-sni-trick\"; upstream "
+             "TCP-bit actions run before stateful SNI inspection and their generated or replayed packets do not "
+             "re-enter TCP-bit processing");
+        return false;
+
+    case kIpManipulatorConfigRejectPreservedTcpBitWithSniBlender:
+        LOGF("IpManipulator: \"preserve-tcp-bitflags\" with an upstream TCP-bit action cannot be combined with "
+             "\"sni-blender\"; the preserved-flag byte is appended before SNI Blender creates IPv4 fragments and the "
+             "peer restoration path skips fragments");
+        return false;
+
+    case kIpManipulatorConfigValid:
+    default:
+        return true;
+    }
 }
 
 static bool validateProtocolSwapNumber(const char *key, int protocol_number)
@@ -140,6 +195,35 @@ static bool createConfiguredTlsClient(tunnel_t *t, node_t *node)
     return true;
 }
 
+static bool parseStatefulFlowLimit(ipmanipulator_tstate_t *state, const cJSON *settings)
+{
+    int limit = kIpManipulatorFlowLimitDefault;
+
+    if (getIntFromJsonObject(&limit, settings, "stateful-flow-limit") &&
+        (limit < kIpManipulatorFlowLimitMin || limit > kIpManipulatorFlowLimitMax))
+    {
+        LOGF("IpManipulator: settings->stateful-flow-limit must be between %d and %d",
+             kIpManipulatorFlowLimitMin,
+             kIpManipulatorFlowLimitMax);
+        return false;
+    }
+
+    state->trick_stateful_flow_limit = (uint32_t) limit;
+    return true;
+}
+
+static bool initializeStatefulTrickTables(tunnel_t *t)
+{
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+    return (! state->trick_first_sni || firstsnitrickInitializeState(t)) &&
+           (! state->trick_smuggle_sni || smugglesnitrickInitializeState(t)) &&
+           (! state->trick_overlap_sni || overlapsnitrickInitializeState(t)) &&
+           (! state->trick_synfin_sni || synfinsnitrickInitializeState(t)) &&
+           (! state->trick_ech_sni || echsnitrickInitializeState(t)) &&
+           (! state->trick_smuggle_fin || smugglefintrickInitializeState(t));
+}
+
 tunnel_t *ipmanipulatorCreate(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(ipmanipulator_tstate_t), 0);
@@ -170,6 +254,12 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     state->trick_synfin_sni_additional_range_max = 0;
     state->trick_ech_sni_shard1_delay_ms         = 0;
     state->trick_ech_sni_shard2_delay_ms         = 0;
+
+    if (! parseStatefulFlowLimit(state, settings))
+    {
+        tunnelDestroy(t);
+        return NULL;
+    }
 
     bool has_proto_swap_legacy = false;
     bool has_proto_swap_tcp    = false;
@@ -621,9 +711,10 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
             return NULL;
         }
 
-        if (ech_sni_len > UINT16_MAX)
+        if (ech_sni_len > kIpManipulatorMaxTlsHostNameLen)
         {
-            LOGF("IpManipulator: ech-sni-trick field \"ech-sni-trick\" must fit in 16-bit TLS length fields");
+            LOGF("IpManipulator: ech-sni-trick field \"ech-sni-trick\" must not be longer than %d bytes",
+                 kIpManipulatorMaxTlsHostNameLen);
             tunnelDestroy(t);
             return NULL;
         }
@@ -814,6 +905,12 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
          state->up_tcp_bit_psh_action != kDvsNoAction || state->up_tcp_bit_rst_action != kDvsNoAction ||
          state->up_tcp_bit_syn_action != kDvsNoAction || state->up_tcp_bit_fin_action != kDvsNoAction);
 
+    if (! reportTrickCompatibility(state))
+    {
+        tunnelDestroy(t);
+        return NULL;
+    }
+
     if (! (state->trick_proto_swap || state->trick_sni_blender || state->trick_first_sni || state->trick_smuggle_sni ||
            state->trick_overlap_sni || state->trick_synfin_sni || state->trick_ech_sni || state->trick_smuggle_fin ||
            state->trick_tcp_bit_changes || state->trick_packet_duplicate || state->trick_preserve_tcp_bitflags ||
@@ -830,7 +927,7 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         return NULL;
     }
 
-    if (state->trick_first_sni || state->trick_smuggle_sni)
+    if (state->trick_first_sni || state->trick_smuggle_sni || state->trick_ech_sni)
     {
         mutexInit(&state->tls_capture_mutex);
         state->tls_capture_slots_count = (uint32_t) getTotalWorkersCount() * kIpManipulatorTlsCaptureSlotsPerWorker;
@@ -839,60 +936,27 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         state->tls_prestart_slots_count = state->tls_capture_slots_count;
         state->tls_prestart_slots =
             memoryAllocateZero(sizeof(*state->tls_prestart_slots) * state->tls_prestart_slots_count);
+
+        if (state->tls_capture_slots == NULL || state->tls_prestart_slots == NULL)
+        {
+            memoryFree(state->tls_capture_slots);
+            memoryFree(state->tls_prestart_slots);
+            state->tls_capture_slots        = NULL;
+            state->tls_prestart_slots       = NULL;
+            state->tls_capture_slots_count  = 0;
+            state->tls_prestart_slots_count = 0;
+            mutexDestroy(&state->tls_capture_mutex);
+
+            LOGF("IpManipulator: failed to allocate the TLS ClientHello capture slots");
+            ipmanipulatorDestroy(t);
+            return NULL;
+        }
     }
 
-    if (state->trick_first_sni)
+    if (! initializeStatefulTrickTables(t))
     {
-        uint32_t initial_flows = max(kIpManipulatorSmuggleInitialFlows, (uint32_t) getTotalWorkersCount() * 8U);
-
-        mutexInit(&state->first_sni_flows_mutex);
-        state->first_sni_flows_capacity = initial_flows;
-        state->first_sni_flows          = memoryAllocateZero(sizeof(*state->first_sni_flows) * initial_flows);
-    }
-
-    if (state->trick_smuggle_sni)
-    {
-        uint32_t initial_flows = max(kIpManipulatorSmuggleInitialFlows, (uint32_t) getTotalWorkersCount() * 8U);
-
-        mutexInit(&state->smuggle_flows_mutex);
-        state->smuggle_flows_capacity = initial_flows;
-        state->smuggle_flows          = memoryAllocateZero(sizeof(*state->smuggle_flows) * initial_flows);
-    }
-
-    if (state->trick_overlap_sni)
-    {
-        uint32_t initial_flows = max(kIpManipulatorSmuggleInitialFlows, (uint32_t) getTotalWorkersCount() * 8U);
-
-        mutexInit(&state->overlap_flows_mutex);
-        state->overlap_flows_capacity = initial_flows;
-        state->overlap_flows          = memoryAllocateZero(sizeof(*state->overlap_flows) * initial_flows);
-    }
-
-    if (state->trick_synfin_sni)
-    {
-        uint32_t initial_flows = max(kIpManipulatorSmuggleInitialFlows, (uint32_t) getTotalWorkersCount() * 8U);
-
-        mutexInit(&state->synfin_flows_mutex);
-        state->synfin_flows_capacity = initial_flows;
-        state->synfin_flows          = memoryAllocateZero(sizeof(*state->synfin_flows) * initial_flows);
-    }
-
-    if (state->trick_ech_sni)
-    {
-        uint32_t initial_flows = max(kIpManipulatorSmuggleInitialFlows, (uint32_t) getTotalWorkersCount() * 8U);
-
-        mutexInit(&state->echsni_flows_mutex);
-        state->echsni_flows_capacity = initial_flows;
-        state->echsni_flows          = memoryAllocateZero(sizeof(*state->echsni_flows) * initial_flows);
-    }
-
-    if (state->trick_smuggle_fin)
-    {
-        uint32_t initial_flows = max(kIpManipulatorSmuggleInitialFlows, (uint32_t) getTotalWorkersCount() * 8U);
-
-        mutexInit(&state->smuggle_fin_mutex);
-        state->smuggle_fin_flows_capacity = initial_flows;
-        state->smuggle_fin_flows          = memoryAllocateZero(sizeof(*state->smuggle_fin_flows) * initial_flows);
+        ipmanipulatorDestroy(t);
+        return NULL;
     }
 
     return t;

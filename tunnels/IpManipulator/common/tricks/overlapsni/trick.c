@@ -170,7 +170,6 @@ static void overlapsnitrickInitializeFlow(ipmanipulator_overlap_flow_t          
         .src_port         = info->src_port,
         .dst_port         = info->dst_port,
         .phase            = kIpManipulatorOverlapFlowPhaseWarmup,
-        .active           = true,
     };
 }
 
@@ -269,7 +268,7 @@ static bool overlapsnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t pa
 
 static bool overlapsnitrickIsPureSyn(const overlapsnitrick_tcp_packet_info_t *info)
 {
-    return info != NULL && info->tcp_payload_len == 0 && info->tcp_flags == TCP_SYN;
+    return info != NULL && ipmanipulatorIsFlowOpeningSyn(info->tcp_flags, info->tcp_payload_len);
 }
 
 static bool overlapsnitrickIsSynAck(const overlapsnitrick_tcp_packet_info_t *info)
@@ -284,102 +283,76 @@ static bool overlapsnitrickHasFinOrRst(const overlapsnitrick_tcp_packet_info_t *
     return info != NULL && (info->tcp_flags & (TCP_FIN | TCP_RST)) != 0;
 }
 
-static bool overlapsnitrickFlowMatches(const ipmanipulator_overlap_flow_t      *flow,
-                                       const overlapsnitrick_tcp_packet_info_t *info)
+static ipmanipulator_flow_key_t overlapsnitrickMakeKey(const overlapsnitrick_tcp_packet_info_t *info)
 {
-    return flow->active && flow->src_addr == info->src_addr && flow->dst_addr == info->dst_addr &&
-           flow->src_port == info->src_port && flow->dst_port == info->dst_port;
+    return ipmanipulatorFlowKeyMake(info->src_addr, info->src_port, info->dst_addr, info->dst_port);
 }
 
-static bool overlapsnitrickFlowMatchesReverse(const ipmanipulator_overlap_flow_t      *flow,
-                                              const overlapsnitrick_tcp_packet_info_t *info)
+static ipmanipulator_overlap_flow_t *overlapsnitrickEntryRecord(ipmanipulator_flow_entry_t *entry)
 {
-    return flow->active && flow->src_addr == info->dst_addr && flow->dst_addr == info->src_addr &&
-           flow->src_port == info->dst_port && flow->dst_port == info->src_port;
+    return (ipmanipulator_overlap_flow_t *) ipmanipulatorFlowEntryRecord(entry);
 }
 
-static void overlapsnitrickCleanupIdleFlowsLocked(ipmanipulator_tstate_t *state, uint64_t now_ms)
+/* The record keeps the client-to-server orientation the transcript logic uses. */
+static bool overlapsnitrickFlowIsForward(const ipmanipulator_overlap_flow_t      *flow,
+                                         const overlapsnitrick_tcp_packet_info_t *info)
 {
-    for (uint32_t i = 0; i < state->overlap_flows_capacity; ++i)
+    return flow->src_addr == info->src_addr && flow->dst_addr == info->dst_addr && flow->src_port == info->src_port &&
+           flow->dst_port == info->dst_port;
+}
+
+static ipmanipulator_flow_shard_t *overlapsnitrickLockShard(ipmanipulator_tstate_t         *state,
+                                                            const ipmanipulator_flow_key_t *key, uint64_t now_ms)
+{
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->overlap_table, key);
+
+    if (shard != NULL)
     {
-        ipmanipulator_overlap_flow_t *flow = &state->overlap_flows[i];
-
-        if (! flow->active)
-        {
-            continue;
-        }
-
-        if (now_ms - flow->last_activity_ms < kOverlapSniIdleTimeoutMs)
-        {
-            continue;
-        }
-
-        overlapsnitrickDestroyFlow(flow);
-    }
-}
-
-static ipmanipulator_overlap_flow_t *overlapsnitrickFindFlowLocked(ipmanipulator_tstate_t                  *state,
-                                                                   const overlapsnitrick_tcp_packet_info_t *info)
-{
-    for (uint32_t i = 0; i < state->overlap_flows_capacity; ++i)
-    {
-        if (overlapsnitrickFlowMatches(&state->overlap_flows[i], info))
-        {
-            return &state->overlap_flows[i];
-        }
+        discard ipmanipulatorFlowShardExpire(&state->overlap_table, shard, now_ms, kIpManipulatorFlowCleanupBudget);
     }
 
-    return NULL;
+    return shard;
 }
 
-static ipmanipulator_overlap_flow_t *overlapsnitrickFindReverseFlowLocked(ipmanipulator_tstate_t *state,
-                                                                          const overlapsnitrick_tcp_packet_info_t *info)
+static void overlapsnitrickTouchLocked(ipmanipulator_flow_shard_t *shard, ipmanipulator_flow_entry_t *entry,
+                                       uint64_t now_ms)
 {
-    for (uint32_t i = 0; i < state->overlap_flows_capacity; ++i)
-    {
-        if (overlapsnitrickFlowMatchesReverse(&state->overlap_flows[i], info))
-        {
-            return &state->overlap_flows[i];
-        }
-    }
-
-    return NULL;
+    overlapsnitrickEntryRecord(entry)->last_activity_ms = now_ms;
+    ipmanipulatorFlowShardTouch(shard, entry, now_ms + kOverlapSniIdleTimeoutMs);
 }
 
-static ipmanipulator_overlap_flow_t *overlapsnitrickCreateFlowLocked(ipmanipulator_tstate_t                  *state,
-                                                                     const overlapsnitrick_tcp_packet_info_t *info,
-                                                                     uint64_t                                 now_ms)
+static ipmanipulator_flow_entry_t *overlapsnitrickFindLocked(ipmanipulator_tstate_t                  *state,
+                                                             ipmanipulator_flow_shard_t              *shard,
+                                                             const ipmanipulator_flow_key_t          *key,
+                                                             const overlapsnitrick_tcp_packet_info_t *info,
+                                                             bool                                     want_forward)
 {
-    for (uint32_t i = 0; i < state->overlap_flows_capacity; ++i)
-    {
-        ipmanipulator_overlap_flow_t *flow = &state->overlap_flows[i];
+    ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->overlap_table, shard, key);
 
-        if (flow->active)
-        {
-            continue;
-        }
-
-        overlapsnitrickInitializeFlow(flow, info, now_ms);
-        return flow;
-    }
-
-    uint32_t                      old_capacity = state->overlap_flows_capacity;
-    uint32_t                      new_capacity = max(kIpManipulatorSmuggleInitialFlows, old_capacity * 2U);
-    ipmanipulator_overlap_flow_t *grown =
-        memoryReAllocate(state->overlap_flows, sizeof(*state->overlap_flows) * new_capacity);
-
-    if (grown == NULL)
+    if (entry != NULL && overlapsnitrickFlowIsForward(overlapsnitrickEntryRecord(entry), info) != want_forward)
     {
         return NULL;
     }
 
-    memoryZero(grown + old_capacity, sizeof(*grown) * (new_capacity - old_capacity));
-    state->overlap_flows          = grown;
-    state->overlap_flows_capacity = new_capacity;
+    return entry;
+}
 
-    ipmanipulator_overlap_flow_t *flow = &state->overlap_flows[old_capacity];
-    overlapsnitrickInitializeFlow(flow, info, now_ms);
-    return flow;
+static ipmanipulator_flow_entry_t *overlapsnitrickReserveLocked(ipmanipulator_tstate_t                  *state,
+                                                                ipmanipulator_flow_shard_t              *shard,
+                                                                const ipmanipulator_flow_key_t          *key,
+                                                                const overlapsnitrick_tcp_packet_info_t *info,
+                                                                uint64_t                                 now_ms)
+{
+    ipmanipulator_flow_entry_t *entry =
+        ipmanipulatorFlowShardReserve(&state->overlap_table, shard, key, now_ms, now_ms + kOverlapSniIdleTimeoutMs);
+
+    if (entry == NULL)
+    {
+        return NULL;
+    }
+
+    overlapsnitrickInitializeFlow(overlapsnitrickEntryRecord(entry), info, now_ms);
+    return entry;
 }
 
 static sbuf_t *overlapsnitrickAllocateRequestBuffer(uint32_t len)
@@ -1233,28 +1206,32 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
     return true;
 }
 
+/* Runs under the shard lock: dispose only, never forward or call the tunnel. */
+static void overlapsnitrickDestroyFlowRecord(void *record, void *context)
+{
+    discard context;
+
+    overlapsnitrickDestroyFlow((ipmanipulator_overlap_flow_t *) record);
+}
+
+bool overlapsnitrickInitializeState(tunnel_t *t)
+{
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+    return ipmanipulatorFlowTableInit(&state->overlap_table,
+                                      "overlap-sni",
+                                      state->trick_stateful_flow_limit,
+                                      (uint32_t) getTotalWorkersCount(),
+                                      sizeof(ipmanipulator_overlap_flow_t),
+                                      overlapsnitrickDestroyFlowRecord,
+                                      NULL);
+}
+
 void overlapsnitrickDestroyState(tunnel_t *t)
 {
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
-    if (state->overlap_flows == NULL)
-    {
-        return;
-    }
-
-    mutexLock(&state->overlap_flows_mutex);
-
-    for (uint32_t i = 0; i < state->overlap_flows_capacity; ++i)
-    {
-        overlapsnitrickDestroyFlow(&state->overlap_flows[i]);
-    }
-
-    mutexUnlock(&state->overlap_flows_mutex);
-    mutexDestroy(&state->overlap_flows_mutex);
-
-    memoryFree(state->overlap_flows);
-    state->overlap_flows          = NULL;
-    state->overlap_flows_capacity = 0;
+    ipmanipulatorFlowTableDestroy(&state->overlap_table);
 }
 
 bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -1272,14 +1249,22 @@ bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return false;
     }
 
-    mutexLock(&state->overlap_flows_mutex);
-    overlapsnitrickCleanupIdleFlowsLocked(state, now_ms);
+    ipmanipulator_flow_key_t    key   = overlapsnitrickMakeKey(&info);
+    ipmanipulator_flow_shard_t *shard = overlapsnitrickLockShard(state, &key, now_ms);
 
-    ipmanipulator_overlap_flow_t *flow = overlapsnitrickFindReverseFlowLocked(state, &info);
-
-    if (flow != NULL)
+    if (shard == NULL)
     {
-        flow->last_activity_ms = now_ms;
+        return false;
+    }
+
+    /* Downstream traffic runs the reverse orientation of the stored record. */
+    ipmanipulator_flow_entry_t *entry = overlapsnitrickFindLocked(state, shard, &key, &info, false);
+
+    if (entry != NULL)
+    {
+        ipmanipulator_overlap_flow_t *flow = overlapsnitrickEntryRecord(entry);
+
+        overlapsnitrickTouchLocked(shard, entry, now_ms);
 
         if (flow->ignore_expected_downstream_packet && info.ip_total_len == flow->expected_downstream_ip_total_len &&
             info.seq == flow->expected_downstream_seq &&
@@ -1293,7 +1278,7 @@ bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
         else if (overlapsnitrickHasFinOrRst(&info))
         {
-            overlapsnitrickDestroyFlow(flow);
+            ipmanipulatorFlowShardRemove(&state->overlap_table, shard, entry);
         }
         else if (flow->synack_packet == NULL && overlapsnitrickIsSynAck(&info))
         {
@@ -1301,7 +1286,7 @@ bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
     }
 
-    mutexUnlock(&state->overlap_flows_mutex);
+    ipmanipulatorFlowShardUnlock(shard);
 
     if (! drop_it)
     {
@@ -1329,44 +1314,56 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     sbuf_t                         *synack_packet  = NULL;
     bool                            bypass_current = false;
 
-    mutexLock(&state->overlap_flows_mutex);
-    overlapsnitrickCleanupIdleFlowsLocked(state, now_ms);
+    ipmanipulator_flow_key_t    key   = overlapsnitrickMakeKey(&info);
+    ipmanipulator_flow_shard_t *shard = overlapsnitrickLockShard(state, &key, now_ms);
 
-    ipmanipulator_overlap_flow_t *flow = overlapsnitrickFindFlowLocked(state, &info);
-
-    if (flow != NULL && overlapsnitrickIsPureSyn(&info))
+    if (shard == NULL)
     {
-        overlapsnitrickInitializeFlow(flow, &info, now_ms);
-    }
-
-    if (flow == NULL)
-    {
-        if (! overlapsnitrickIsPureSyn(&info))
-        {
-            mutexUnlock(&state->overlap_flows_mutex);
-            return false;
-        }
-
-        flow = overlapsnitrickCreateFlowLocked(state, &info, now_ms);
-    }
-
-    if (flow == NULL)
-    {
-        mutexUnlock(&state->overlap_flows_mutex);
-        LOGW("IpManipulator: overlap-sni failed to allocate a flow record");
         return false;
     }
 
-    flow->last_activity_ms = now_ms;
+    bool                        opening_syn = overlapsnitrickIsPureSyn(&info);
+    ipmanipulator_flow_entry_t *entry       = ipmanipulatorFlowShardFind(&state->overlap_table, shard, &key);
+
+    if (entry != NULL && opening_syn)
+    {
+        overlapsnitrickInitializeFlow(overlapsnitrickEntryRecord(entry), &info, now_ms);
+    }
+    else if (entry != NULL && ! overlapsnitrickFlowIsForward(overlapsnitrickEntryRecord(entry), &info))
+    {
+        entry = NULL;
+    }
+
+    if (entry == NULL)
+    {
+        if (! opening_syn)
+        {
+            ipmanipulatorFlowShardUnlock(shard);
+            return false;
+        }
+
+        entry = overlapsnitrickReserveLocked(state, shard, &key, &info, now_ms);
+    }
+
+    if (entry == NULL)
+    {
+        ipmanipulatorFlowShardUnlock(shard);
+        LOGW("IpManipulator: overlap-sni could not admit a flow record; the packet passes unchanged");
+        return false;
+    }
+
+    ipmanipulator_overlap_flow_t *flow = overlapsnitrickEntryRecord(entry);
+
+    overlapsnitrickTouchLocked(shard, entry, now_ms);
 
     if (flow->phase == kIpManipulatorOverlapFlowPhaseBlocked)
     {
         if (overlapsnitrickHasFinOrRst(&info))
         {
-            overlapsnitrickDestroyFlow(flow);
+            ipmanipulatorFlowShardRemove(&state->overlap_table, shard, entry);
         }
 
-        mutexUnlock(&state->overlap_flows_mutex);
+        ipmanipulatorFlowShardUnlock(shard);
         lineReuseBuffer(l, buf);
         return true;
     }
@@ -1380,8 +1377,8 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             bypass_current    = true;
         }
 
-        overlapsnitrickDestroyFlow(flow);
-        mutexUnlock(&state->overlap_flows_mutex);
+        ipmanipulatorFlowShardRemove(&state->overlap_table, shard, entry);
+        ipmanipulatorFlowShardUnlock(shard);
 
         if (! bypass_current)
         {
@@ -1398,7 +1395,7 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (flow->warmup_packets_seen < kOverlapSniWarmupPackets)
         {
             flow->warmup_packets_seen += 1;
-            mutexUnlock(&state->overlap_flows_mutex);
+            ipmanipulatorFlowShardUnlock(shard);
 
             overlapsnitrickSendNormalNow(t, l, buf);
             return true;
@@ -1407,7 +1404,7 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (info.tcp_payload_len == 0)
         {
             flow->phase = kIpManipulatorOverlapFlowPhasePassthrough;
-            mutexUnlock(&state->overlap_flows_mutex);
+            ipmanipulatorFlowShardUnlock(shard);
 
             overlapsnitrickSendNormalNow(t, l, buf);
             return true;
@@ -1415,12 +1412,12 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         flow->phase       = kIpManipulatorOverlapFlowPhaseHoldThird;
         flow->held_packet = (ipmanipulator_captured_packet_t) {.line = l, .buf = buf};
-        mutexUnlock(&state->overlap_flows_mutex);
+        ipmanipulatorFlowShardUnlock(shard);
         return true;
 
     case kIpManipulatorOverlapFlowPhasePassthrough: {
         bool delay_window_active = now_ms < flow->delay_window_until_ms;
-        mutexUnlock(&state->overlap_flows_mutex);
+        ipmanipulatorFlowShardUnlock(shard);
         if (delay_window_active)
         {
             discard overlapsnitrickScheduleNormalSend(t, l, buf, state->trick_overlap_sni_delay_ms);
@@ -1440,25 +1437,30 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         flow->held_packet   = (ipmanipulator_captured_packet_t) {0};
         flow->synack_packet = NULL;
 
-        mutexUnlock(&state->overlap_flows_mutex);
+        ipmanipulatorFlowShardUnlock(shard);
 
         bool handled = overlapsnitrickHandleHeldPair(t, l, &held_packet, synack_packet, buf, &info, &result);
 
-        mutexLock(&state->overlap_flows_mutex);
-        flow = overlapsnitrickFindFlowLocked(state, &info);
-        if (flow != NULL)
+        /* The entry pointer did not survive the unlock; resolve the tuple again. */
+        shard = ipmanipulatorFlowTableLockShard(&state->overlap_table, &key);
+        if (shard != NULL)
         {
-            flow->last_activity_ms = getTickMS();
-            overlapsnitrickFinalizeFlowLocked(flow, result.block_flow, &result, now_ms);
+            entry = overlapsnitrickFindLocked(state, shard, &key, &info, true);
+            if (entry != NULL)
+            {
+                overlapsnitrickFinalizeFlowLocked(
+                    overlapsnitrickEntryRecord(entry), result.block_flow, &result, now_ms);
+                overlapsnitrickTouchLocked(shard, entry, getTickMS());
+            }
+            ipmanipulatorFlowShardUnlock(shard);
         }
-        mutexUnlock(&state->overlap_flows_mutex);
 
         return handled;
     }
 
     case kIpManipulatorOverlapFlowPhaseBlocked:
     default:
-        mutexUnlock(&state->overlap_flows_mutex);
+        ipmanipulatorFlowShardUnlock(shard);
         break;
     }
 

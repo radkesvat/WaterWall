@@ -43,11 +43,6 @@ typedef struct smugglesnitrick_fake_batch_s
     smugglesnitrick_fake_batch_entry_t entries[kIpManipulatorTlsCaptureMaxPackets];
 } smugglesnitrick_fake_batch_t;
 
-static void smugglesnitrickDestroyFlow(ipmanipulator_smuggle_flow_t *flow)
-{
-    memoryZero(flow, sizeof(*flow));
-}
-
 static bool smugglesnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t packet_length,
                                               smugglesnitrick_tcp_packet_info_t *info)
 {
@@ -117,7 +112,7 @@ static bool smugglesnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t pa
 
 static bool smugglesnitrickIsPureSyn(const smugglesnitrick_tcp_packet_info_t *info)
 {
-    return info->tcp_flags == TCP_SYN;
+    return ipmanipulatorIsFlowOpeningSyn(info->tcp_flags, info->tcp_payload_len);
 }
 
 static bool smugglesnitrickHasFinOrRst(const smugglesnitrick_tcp_packet_info_t *info)
@@ -125,122 +120,118 @@ static bool smugglesnitrickHasFinOrRst(const smugglesnitrick_tcp_packet_info_t *
     return (info->tcp_flags & (TCP_FIN | TCP_RST)) != 0;
 }
 
-static bool smugglesnitrickFlowMatches(const ipmanipulator_smuggle_flow_t      *flow,
-                                       const smugglesnitrick_tcp_packet_info_t *info)
+static ipmanipulator_flow_key_t smugglesnitrickMakeKey(const smugglesnitrick_tcp_packet_info_t *info)
 {
-    return flow->active && flow->src_addr == info->src_addr && flow->dst_addr == info->dst_addr &&
-           flow->src_port == info->src_port && flow->dst_port == info->dst_port;
+    return ipmanipulatorFlowKeyMake(info->src_addr, info->src_port, info->dst_addr, info->dst_port);
 }
 
-static bool smugglesnitrickFlowMatchesReverse(const ipmanipulator_smuggle_flow_t      *flow,
-                                              const smugglesnitrick_tcp_packet_info_t *info)
+static ipmanipulator_smuggle_flow_t *smugglesnitrickEntryRecord(ipmanipulator_flow_entry_t *entry)
 {
-    return flow->active && flow->src_addr == info->dst_addr && flow->dst_addr == info->src_addr &&
-           flow->src_port == info->dst_port && flow->dst_port == info->src_port;
+    return (ipmanipulator_smuggle_flow_t *) ipmanipulatorFlowEntryRecord(entry);
 }
 
-static void smugglesnitrickCleanupIdleFlowsLocked(ipmanipulator_tstate_t *state, uint64_t now_ms)
+/* The record keeps the client-to-server orientation the transcript logic uses. */
+static bool smugglesnitrickFlowIsForward(const ipmanipulator_smuggle_flow_t      *flow,
+                                         const smugglesnitrick_tcp_packet_info_t *info)
 {
-    for (uint32_t i = 0; i < state->smuggle_flows_capacity; ++i)
+    return flow->src_addr == info->src_addr && flow->dst_addr == info->dst_addr && flow->src_port == info->src_port &&
+           flow->dst_port == info->dst_port;
+}
+
+static ipmanipulator_flow_shard_t *smugglesnitrickLockShard(ipmanipulator_tstate_t         *state,
+                                                            const ipmanipulator_flow_key_t *key, uint64_t now_ms)
+{
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->smuggle_table, key);
+
+    if (shard != NULL)
     {
-        ipmanipulator_smuggle_flow_t *flow = &state->smuggle_flows[i];
-
-        if (! flow->active)
-        {
-            continue;
-        }
-
-        if (now_ms - flow->last_activity_ms < kSmuggleSniIdleTimeoutMs)
-        {
-            continue;
-        }
-
-        smugglesnitrickDestroyFlow(flow);
-    }
-}
-
-static ipmanipulator_smuggle_flow_t *smugglesnitrickFindFlowLocked(ipmanipulator_tstate_t                  *state,
-                                                                   const smugglesnitrick_tcp_packet_info_t *info)
-{
-    for (uint32_t i = 0; i < state->smuggle_flows_capacity; ++i)
-    {
-        if (smugglesnitrickFlowMatches(&state->smuggle_flows[i], info))
-        {
-            return &state->smuggle_flows[i];
-        }
+        discard ipmanipulatorFlowShardExpire(&state->smuggle_table, shard, now_ms, kIpManipulatorFlowCleanupBudget);
     }
 
-    return NULL;
+    return shard;
 }
 
-static ipmanipulator_smuggle_flow_t *smugglesnitrickFindReverseFlowLocked(ipmanipulator_tstate_t *state,
-                                                                          const smugglesnitrick_tcp_packet_info_t *info)
+static void smugglesnitrickTouchLocked(ipmanipulator_flow_shard_t *shard, ipmanipulator_flow_entry_t *entry,
+                                       uint64_t now_ms)
 {
-    for (uint32_t i = 0; i < state->smuggle_flows_capacity; ++i)
-    {
-        if (smugglesnitrickFlowMatchesReverse(&state->smuggle_flows[i], info))
-        {
-            return &state->smuggle_flows[i];
-        }
-    }
-
-    return NULL;
+    smugglesnitrickEntryRecord(entry)->last_activity_ms = now_ms;
+    ipmanipulatorFlowShardTouch(shard, entry, now_ms + kSmuggleSniIdleTimeoutMs);
 }
 
-static ipmanipulator_smuggle_flow_t *smugglesnitrickCreateFlowLocked(ipmanipulator_tstate_t                  *state,
-                                                                     const smugglesnitrick_tcp_packet_info_t *info,
-                                                                     uint64_t                                 now_ms)
+/*
+ * Finds the entry for this tuple and, when require_forward is set, rejects a
+ * record whose stored orientation does not match the packet direction.
+ */
+static ipmanipulator_flow_entry_t *smugglesnitrickFindLocked(ipmanipulator_tstate_t                  *state,
+                                                             ipmanipulator_flow_shard_t              *shard,
+                                                             const ipmanipulator_flow_key_t          *key,
+                                                             const smugglesnitrick_tcp_packet_info_t *info,
+                                                             bool                                     require_forward)
 {
-    for (uint32_t i = 0; i < state->smuggle_flows_capacity; ++i)
-    {
-        ipmanipulator_smuggle_flow_t *flow = &state->smuggle_flows[i];
+    ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->smuggle_table, shard, key);
 
-        if (flow->active)
-        {
-            continue;
-        }
-
-        *flow = (ipmanipulator_smuggle_flow_t) {
-            .created_ms       = now_ms,
-            .last_activity_ms = now_ms,
-            .src_addr         = info->src_addr,
-            .dst_addr         = info->dst_addr,
-            .src_port         = info->src_port,
-            .dst_port         = info->dst_port,
-            .phase            = kIpManipulatorSmuggleFlowPhaseWarmup,
-            .active           = true,
-        };
-
-        return flow;
-    }
-
-    uint32_t                      old_capacity = state->smuggle_flows_capacity;
-    uint32_t                      new_capacity = max(kIpManipulatorSmuggleInitialFlows, old_capacity * 2U);
-    ipmanipulator_smuggle_flow_t *grown =
-        memoryReAllocate(state->smuggle_flows, sizeof(*state->smuggle_flows) * new_capacity);
-
-    if (grown == NULL)
+    if (entry != NULL && require_forward && ! smugglesnitrickFlowIsForward(smugglesnitrickEntryRecord(entry), info))
     {
         return NULL;
     }
 
-    memoryZero(grown + old_capacity, sizeof(*grown) * (new_capacity - old_capacity));
-    state->smuggle_flows          = grown;
-    state->smuggle_flows_capacity = new_capacity;
+    return entry;
+}
 
-    ipmanipulator_smuggle_flow_t *flow = &state->smuggle_flows[old_capacity];
-    *flow                              = (ipmanipulator_smuggle_flow_t) {
-                                     .created_ms       = now_ms,
-                                     .last_activity_ms = now_ms,
-                                     .src_addr         = info->src_addr,
-                                     .dst_addr         = info->dst_addr,
-                                     .src_port         = info->src_port,
-                                     .dst_port         = info->dst_port,
-                                     .phase            = kIpManipulatorSmuggleFlowPhaseWarmup,
-                                     .active           = true,
+static void smugglesnitrickInitializeFlow(ipmanipulator_smuggle_flow_t            *flow,
+                                          const smugglesnitrick_tcp_packet_info_t *info, uint64_t now_ms)
+{
+    *flow = (ipmanipulator_smuggle_flow_t) {
+        .created_ms       = now_ms,
+        .last_activity_ms = now_ms,
+        .src_addr         = info->src_addr,
+        .dst_addr         = info->dst_addr,
+        .src_port         = info->src_port,
+        .dst_port         = info->dst_port,
+        .phase            = kIpManipulatorSmuggleFlowPhaseWarmup,
     };
+}
 
-    return flow;
+static ipmanipulator_flow_entry_t *smugglesnitrickReserveLocked(ipmanipulator_tstate_t                  *state,
+                                                                ipmanipulator_flow_shard_t              *shard,
+                                                                const ipmanipulator_flow_key_t          *key,
+                                                                const smugglesnitrick_tcp_packet_info_t *info,
+                                                                uint64_t                                 now_ms)
+{
+    ipmanipulator_flow_entry_t *entry =
+        ipmanipulatorFlowShardReserve(&state->smuggle_table, shard, key, now_ms, now_ms + kSmuggleSniIdleTimeoutMs);
+
+    if (entry == NULL)
+    {
+        return NULL;
+    }
+
+    smugglesnitrickInitializeFlow(smugglesnitrickEntryRecord(entry), info, now_ms);
+
+    return entry;
+}
+
+/* Marks the flow for this tuple as passthrough regardless of packet direction. */
+static void smugglesnitrickMarkPassthrough(ipmanipulator_tstate_t *state, const ipmanipulator_flow_key_t *key,
+                                           uint64_t delay_window_until_ms)
+{
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->smuggle_table, key);
+
+    if (shard == NULL)
+    {
+        return;
+    }
+
+    ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->smuggle_table, shard, key);
+    if (entry != NULL)
+    {
+        ipmanipulator_smuggle_flow_t *flow = smugglesnitrickEntryRecord(entry);
+
+        flow->phase                 = kIpManipulatorSmuggleFlowPhasePassthrough;
+        flow->delay_window_until_ms = delay_window_until_ms;
+    }
+
+    ipmanipulatorFlowShardUnlock(shard);
 }
 
 static void smugglesnitrickSendNormalNow(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -665,58 +656,40 @@ static void smugglesnitrickScheduleBatchSend(tunnel_t *t, smugglesnitrick_fake_b
                                       NULL);
 }
 
+bool smugglesnitrickInitializeState(tunnel_t *t)
+{
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+    /* A Smuggle-SNI record owns no buffers, so it needs no resource destructor. */
+    return ipmanipulatorFlowTableInit(&state->smuggle_table,
+                                      "smuggle-sni",
+                                      state->trick_stateful_flow_limit,
+                                      (uint32_t) getTotalWorkersCount(),
+                                      sizeof(ipmanipulator_smuggle_flow_t),
+                                      NULL,
+                                      NULL);
+}
+
 void smugglesnitrickDestroyState(tunnel_t *t)
 {
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
-    if (state->smuggle_flows == NULL)
-    {
-        return;
-    }
-
-    mutexLock(&state->smuggle_flows_mutex);
-
-    for (uint32_t i = 0; i < state->smuggle_flows_capacity; ++i)
-    {
-        smugglesnitrickDestroyFlow(&state->smuggle_flows[i]);
-    }
-
-    mutexUnlock(&state->smuggle_flows_mutex);
-    mutexDestroy(&state->smuggle_flows_mutex);
-
-    memoryFree(state->smuggle_flows);
-    state->smuggle_flows          = NULL;
-    state->smuggle_flows_capacity = 0;
+    ipmanipulatorFlowTableDestroy(&state->smuggle_table);
 }
 
 void smugglesnitrickSetFlowPassthrough(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
                                        uint16_t dst_port)
 {
     ipmanipulator_tstate_t *state = tunnelGetState(t);
-    if (state == NULL || state->smuggle_flows == NULL)
+
+    if (state == NULL || ! ipmanipulatorFlowTableIsReady(&state->smuggle_table))
     {
         return;
     }
 
-    smugglesnitrick_tcp_packet_info_t info = {
-        .src_addr = src_addr,
-        .dst_addr = dst_addr,
-        .src_port = src_port,
-        .dst_port = dst_port,
-    };
+    ipmanipulator_flow_key_t key = ipmanipulatorFlowKeyMake(src_addr, src_port, dst_addr, dst_port);
 
-    mutexLock(&state->smuggle_flows_mutex);
-    ipmanipulator_smuggle_flow_t *f = smugglesnitrickFindFlowLocked(state, &info);
-    if (f == NULL)
-    {
-        f = smugglesnitrickFindReverseFlowLocked(state, &info);
-    }
-    if (f != NULL)
-    {
-        f->phase                 = kIpManipulatorSmuggleFlowPhasePassthrough;
-        f->delay_window_until_ms = 0;
-    }
-    mutexUnlock(&state->smuggle_flows_mutex);
+    smugglesnitrickMarkPassthrough(state, &key, 0);
 }
 
 void smugglesnitrickLogDownStreamServerHello(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -737,17 +710,22 @@ void smugglesnitrickLogDownStreamServerHello(tunnel_t *t, line_t *l, sbuf_t *buf
         ipmanipulatorFlushMatchingCaptureSlot(
             t, info.dst_addr, info.src_addr, info.dst_port, info.src_port, kIpManipulatorTlsCaptureKindSmuggleSni);
 
-        ipmanipulator_tstate_t *state = tunnelGetState(t);
+        ipmanipulator_tstate_t     *state = tunnelGetState(t);
+        ipmanipulator_flow_key_t    key   = smugglesnitrickMakeKey(&info);
+        ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->smuggle_table, &key);
 
-        mutexLock(&state->smuggle_flows_mutex);
-
-        ipmanipulator_smuggle_flow_t *flow = smugglesnitrickFindReverseFlowLocked(state, &info);
-        if (flow != NULL)
+        if (shard != NULL)
         {
-            smugglesnitrickDestroyFlow(flow);
-        }
+            /* Downstream traffic runs the reverse orientation of the stored record. */
+            ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->smuggle_table, shard, &key);
 
-        mutexUnlock(&state->smuggle_flows_mutex);
+            if (entry != NULL && ! smugglesnitrickFlowIsForward(smugglesnitrickEntryRecord(entry), &info))
+            {
+                ipmanipulatorFlowShardRemove(&state->smuggle_table, shard, entry);
+            }
+
+            ipmanipulatorFlowShardUnlock(shard);
+        }
     }
 
     if (info.tcp_payload_len < 9)
@@ -784,34 +762,68 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return false;
     }
 
-    mutexLock(&state->smuggle_flows_mutex);
-    smugglesnitrickCleanupIdleFlowsLocked(state, now_ms);
+    bool opening_syn = smugglesnitrickIsPureSyn(&info);
 
-    ipmanipulator_smuggle_flow_t *flow = smugglesnitrickFindFlowLocked(state, &info);
-    if (flow == NULL)
+    if (opening_syn)
     {
-        if (! smugglesnitrickIsPureSyn(&info))
-        {
-            mutexUnlock(&state->smuggle_flows_mutex);
-            return false;
-        }
+        ipmanipulator_tls_capture_slot_t replaced_capture = {0};
 
-        flow = smugglesnitrickCreateFlowLocked(state, &info, now_ms);
+        if (ipmanipulatorTakeMatchingCaptureSlot(t,
+                                                 info.src_addr,
+                                                 info.dst_addr,
+                                                 info.src_port,
+                                                 info.dst_port,
+                                                 kIpManipulatorTlsCaptureKindSmuggleSni,
+                                                 0,
+                                                 true,
+                                                 &replaced_capture))
+        {
+            /* A replacement SYN invalidates held bytes from either old orientation. */
+            ipmanipulatorRecycleCapturedTlsPackets(t, &replaced_capture);
+        }
     }
 
-    if (flow == NULL)
+    ipmanipulator_flow_key_t    key   = smugglesnitrickMakeKey(&info);
+    ipmanipulator_flow_shard_t *shard = smugglesnitrickLockShard(state, &key, now_ms);
+
+    if (shard == NULL)
     {
-        mutexUnlock(&state->smuggle_flows_mutex);
-        LOGW("IpManipulator: smuggle-sni failed to allocate a shared connection record");
         return false;
     }
 
-    flow->last_activity_ms = now_ms;
+    ipmanipulator_flow_entry_t *entry = opening_syn ? ipmanipulatorFlowShardFind(&state->smuggle_table, shard, &key)
+                                                    : smugglesnitrickFindLocked(state, shard, &key, &info, true);
+
+    if (opening_syn && entry != NULL)
+    {
+        smugglesnitrickInitializeFlow(smugglesnitrickEntryRecord(entry), &info, now_ms);
+    }
+    else if (entry == NULL)
+    {
+        if (! opening_syn)
+        {
+            ipmanipulatorFlowShardUnlock(shard);
+            return false;
+        }
+
+        entry = smugglesnitrickReserveLocked(state, shard, &key, &info, now_ms);
+    }
+
+    if (entry == NULL)
+    {
+        ipmanipulatorFlowShardUnlock(shard);
+        LOGW("IpManipulator: smuggle-sni could not admit a shared connection record; the packet passes unchanged");
+        return false;
+    }
+
+    ipmanipulator_smuggle_flow_t *flow = smugglesnitrickEntryRecord(entry);
+
+    smugglesnitrickTouchLocked(shard, entry, now_ms);
 
     if (smugglesnitrickHasFinOrRst(&info))
     {
-        smugglesnitrickDestroyFlow(flow);
-        mutexUnlock(&state->smuggle_flows_mutex);
+        ipmanipulatorFlowShardRemove(&state->smuggle_table, shard, entry);
+        ipmanipulatorFlowShardUnlock(shard);
         ipmanipulatorFlushMatchingCaptureSlot(
             t, info.src_addr, info.dst_addr, info.src_port, info.dst_port, kIpManipulatorTlsCaptureKindSmuggleSni);
         return false;
@@ -839,7 +851,7 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         break;
     }
 
-    mutexUnlock(&state->smuggle_flows_mutex);
+    ipmanipulatorFlowShardUnlock(shard);
 
     if (action == kSmuggleSniActionDelayNormal)
     {
@@ -863,27 +875,13 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (status == kIpManipulatorTlsCaptureStatusBypassed)
     {
-        mutexLock(&state->smuggle_flows_mutex);
-        ipmanipulator_smuggle_flow_t *f = smugglesnitrickFindFlowLocked(state, &info);
-        if (f != NULL)
-        {
-            f->phase                 = kIpManipulatorSmuggleFlowPhasePassthrough;
-            f->delay_window_until_ms = 0;
-        }
-        mutexUnlock(&state->smuggle_flows_mutex);
+        smugglesnitrickMarkPassthrough(state, &key, 0);
         return true;
     }
 
     if (status == kIpManipulatorTlsCaptureStatusMiss)
     {
-        mutexLock(&state->smuggle_flows_mutex);
-        ipmanipulator_smuggle_flow_t *f = smugglesnitrickFindFlowLocked(state, &info);
-        if (f != NULL)
-        {
-            f->phase                 = kIpManipulatorSmuggleFlowPhasePassthrough;
-            f->delay_window_until_ms = 0;
-        }
-        mutexUnlock(&state->smuggle_flows_mutex);
+        smugglesnitrickMarkPassthrough(state, &key, 0);
         return false;
     }
 
@@ -928,15 +926,7 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
 
         ipmanipulatorReleaseCapturedPacketsNormal(t, &captured_slot);
-
-        mutexLock(&state->smuggle_flows_mutex);
-        ipmanipulator_smuggle_flow_t *f = smugglesnitrickFindFlowLocked(state, &info);
-        if (f != NULL)
-        {
-            f->phase                 = kIpManipulatorSmuggleFlowPhasePassthrough;
-            f->delay_window_until_ms = 0;
-        }
-        mutexUnlock(&state->smuggle_flows_mutex);
+        smugglesnitrickMarkPassthrough(state, &key, 0);
         return true;
     }
 
@@ -955,25 +945,18 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     for (uint8_t i = 0; i < captured_slot.captured_packets_count; ++i)
     {
-        ipmanipulator_captured_packet_t *entry = &captured_slot.captured_packets[i];
-        if (entry->line != NULL && entry->buf != NULL)
+        ipmanipulator_captured_packet_t *captured = &captured_slot.captured_packets[i];
+        if (captured->line != NULL && captured->buf != NULL)
         {
-            smugglesnitrickSendRealNow(t, entry->line, entry->buf);
-            entry->line = NULL;
-            entry->buf  = NULL;
+            smugglesnitrickSendRealNow(t, captured->line, captured->buf);
+            captured->line = NULL;
+            captured->buf  = NULL;
         }
     }
     captured_slot.captured_packets_count = 0;
 
     smugglesnitrickScheduleBatchSend(t, batch, state->trick_smuggle_sni_delay_ms);
 
-    mutexLock(&state->smuggle_flows_mutex);
-    ipmanipulator_smuggle_flow_t *f = smugglesnitrickFindFlowLocked(state, &info);
-    if (f != NULL)
-    {
-        f->phase                 = kIpManipulatorSmuggleFlowPhasePassthrough;
-        f->delay_window_until_ms = now_ms + kSmuggleSniDelayWindowMs;
-    }
-    mutexUnlock(&state->smuggle_flows_mutex);
+    smugglesnitrickMarkPassthrough(state, &key, now_ms + kSmuggleSniDelayWindowMs);
     return true;
 }

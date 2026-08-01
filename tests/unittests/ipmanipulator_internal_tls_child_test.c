@@ -76,6 +76,9 @@ int main(void)
 
     GSTATE.workers_count = 2;
 
+    /* Creating a tunnel builds bounded flow tables, which need a secure seed. */
+    require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
+
     tunnel_t               *first_t      = createManipulator(&first, "ipm-first", special_sni);
     tunnel_t               *second_t     = createManipulator(&second, "ipm-second", special_sni);
     ipmanipulator_tstate_t *first_state  = tunnelGetState(first_t);
@@ -88,6 +91,7 @@ int main(void)
 
     destroyManipulator(&first);
     destroyManipulator(&second);
+    globalstateDestroySecureRandom();
     GSTATE.workers_count = saved_workers_count;
     return 0;
 }

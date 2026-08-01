@@ -9,6 +9,7 @@ add_library(IpManipulator STATIC
                     instance/stop.c
                     instance/chain.c
                     instance/index.c
+                    common/flow_table.c
                     common/helpers.c
                     common/line_state.c
                     upstream/init.c
@@ -42,7 +43,8 @@ add_library(IpManipulator STATIC
 target_include_directories(IpManipulator PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(IpManipulator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/IpManipulator)
 
-target_include_directories(IpManipulator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/common/)
+# common/ is PUBLIC because the public structure.h includes common/flow_table.h.
+target_include_directories(IpManipulator PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/common/)
 target_include_directories(IpManipulator PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include)
 
 

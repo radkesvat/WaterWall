@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+static void require(bool condition, const char *message);
+
 typedef struct test_env_s
 {
     master_pool_t *large_master;
@@ -43,10 +45,14 @@ static void envSetup(test_env_t *env)
     GSTATE.masterpool_buffer_pools_small = env->small_master;
     GSTATE.masterpool_messages           = env->messages_master;
     tl_wid                               = 0;
+
+    /* Bounded flow tables refuse to run without a secure hash seed. */
+    require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
 }
 
 static void envTeardown(test_env_t *env)
 {
+    globalstateDestroySecureRandom();
     workerMessagesDestroy(&env->workers[0]);
     wloopDestroy(&env->loops[0]);
 
@@ -336,10 +342,9 @@ static tunnel_t *createTestTunnel(tunnel_t *normal, tunnel_t *real)
     state->tls_prestart_slots =
         memoryAllocateZero(sizeof(*state->tls_prestart_slots) * state->tls_prestart_slots_count);
 
-    mutexInit(&state->smuggle_flows_mutex);
-    state->smuggle_flows_capacity  = kIpManipulatorSmuggleInitialFlows;
-    state->smuggle_flows           = memoryAllocateZero(sizeof(*state->smuggle_flows) * state->smuggle_flows_capacity);
-    state->trick_smuggle_sni_value = fake_sni;
+    state->trick_stateful_flow_limit = kIpManipulatorFlowLimitMin;
+    require(smugglesnitrickInitializeState(t), "failed to create the smuggle-sni flow table");
+    state->trick_smuggle_sni_value        = fake_sni;
     state->trick_smuggle_sni_value_len    = (uint16_t) stringLength(state->trick_smuggle_sni_value);
     state->trick_real_sni_upstream_node   = &real_node;
     state->trick_real_sni_upstream_tunnel = real;
@@ -382,18 +387,32 @@ static void warmFlow(tunnel_t *t, line_t *line, uint32_t start_seq)
     warmFlowForSourcePort(t, line, 12345, start_seq);
 }
 
-static ipmanipulator_smuggle_flow_t *findFlowForSourcePort(ipmanipulator_tstate_t *state, uint16_t src_port)
+/*
+ * Snapshots the record for one source port out of the bounded flow table. The
+ * copy is taken under the shard lock because an entry pointer is only valid
+ * while its shard stays locked.
+ */
+static bool findFlowForSourcePort(ipmanipulator_tstate_t *state, uint16_t src_port, ipmanipulator_smuggle_flow_t *out)
 {
-    for (uint32_t i = 0; i < state->smuggle_flows_capacity; ++i)
+    ipmanipulator_flow_key_t key = ipmanipulatorFlowKeyMake(
+        PP_HTONL(LWIP_MAKEU32(10, 0, 0, 1)), src_port, PP_HTONL(LWIP_MAKEU32(10, 0, 0, 2)), 443);
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->smuggle_table, &key);
+    bool                        found = false;
+
+    if (shard == NULL)
     {
-        ipmanipulator_smuggle_flow_t *flow = &state->smuggle_flows[i];
-        if (flow->active && flow->src_port == src_port)
-        {
-            return flow;
-        }
+        return false;
     }
 
-    return NULL;
+    ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->smuggle_table, shard, &key);
+    if (entry != NULL)
+    {
+        *out  = *(ipmanipulator_smuggle_flow_t *) ipmanipulatorFlowEntryRecord(entry);
+        found = out->src_port == src_port;
+    }
+
+    ipmanipulatorFlowShardUnlock(shard);
+    return found;
 }
 
 static void requireNoActiveTlsSlots(const ipmanipulator_tstate_t *state)
@@ -502,9 +521,10 @@ static void testNonTlsCaptureFallsThrough(void)
     require(! smugglesnitrickUpStreamPayload(t, &line, packet), "non-TLS capture packet was consumed");
     lineReuseBuffer(&line, packet);
 
-    ipmanipulator_tstate_t *state = tunnelGetState(t);
-    require(state->smuggle_flows[0].phase == kIpManipulatorSmuggleFlowPhasePassthrough,
-            "non-TLS flow did not enter passthrough");
+    ipmanipulator_tstate_t      *state = tunnelGetState(t);
+    ipmanipulator_smuggle_flow_t flow  = {0};
+    require(findFlowForSourcePort(state, 12345, &flow), "non-TLS flow disappeared");
+    require(flow.phase == kIpManipulatorSmuggleFlowPhasePassthrough, "non-TLS flow did not enter passthrough");
     require(generator_calls == 0, "non-TLS flow invoked ClientHello generation");
     require(real_packets_count == 0, "non-TLS capture packet went to real-SNI branch");
     require(normal_packets_count == 0, "non-TLS flow sent packets through helper internal schedule");
@@ -673,11 +693,11 @@ static void testPendingPrestartTimeoutEntersPassthrough(void)
     require(normal_packets[0].seq == payload_seq && normal_packets[0].payload_len == sizeof(payload),
             "prestart timeout changed the held packet");
 
-    ipmanipulator_smuggle_flow_t *flow = findFlowForSourcePort(state, 12345);
-    require(flow != NULL, "prestart timeout removed the flow");
-    require(flow->phase == kIpManipulatorSmuggleFlowPhasePassthrough,
+    ipmanipulator_smuggle_flow_t flow = {0};
+    require(findFlowForSourcePort(state, 12345, &flow), "prestart timeout removed the flow");
+    require(flow.phase == kIpManipulatorSmuggleFlowPhasePassthrough,
             "prestart timeout did not enter permanent passthrough");
-    require(flow->delay_window_until_ms == 0, "prestart timeout retained a delay window");
+    require(flow.delay_window_until_ms == 0, "prestart timeout retained a delay window");
     requireNoActiveTlsSlots(state);
 
     ipmanipulatorUpStreamPayload(
@@ -726,11 +746,11 @@ static void testPendingPrestartEvictionEntersPassthrough(void)
     require(normal_packets_count == 1, "prestart eviction did not emit the evicted packet exactly once");
     require(normal_packets[0].seq == start_seqs[0] + 1, "prestart eviction released the wrong packet");
 
-    ipmanipulator_smuggle_flow_t *evicted_flow = findFlowForSourcePort(state, src_ports[0]);
-    require(evicted_flow != NULL, "evicted prestart flow disappeared");
-    require(evicted_flow->phase == kIpManipulatorSmuggleFlowPhasePassthrough,
+    ipmanipulator_smuggle_flow_t evicted_flow = {0};
+    require(findFlowForSourcePort(state, src_ports[0], &evicted_flow), "evicted prestart flow disappeared");
+    require(evicted_flow.phase == kIpManipulatorSmuggleFlowPhasePassthrough,
             "prestart eviction did not enter permanent passthrough");
-    require(evicted_flow->delay_window_until_ms == 0, "prestart eviction retained a delay window");
+    require(evicted_flow.delay_window_until_ms == 0, "prestart eviction retained a delay window");
 
     uint32_t active_prestart_slots = 0;
     for (uint32_t i = 0; i < state->tls_prestart_slots_count; ++i)
@@ -795,11 +815,11 @@ static void testPendingCaptureTimeout(void)
     require(normal_packets[0].seq == seg0_seq && normal_packets[0].payload_len == seg0_len,
             "timed out packet payload mismatch");
 
-    ipmanipulator_smuggle_flow_t *flow = findFlowForSourcePort(state, 12345);
-    require(flow != NULL, "timed-out flow disappeared");
-    require(flow->phase == kIpManipulatorSmuggleFlowPhasePassthrough,
+    ipmanipulator_smuggle_flow_t flow = {0};
+    require(findFlowForSourcePort(state, 12345, &flow), "timed-out flow disappeared");
+    require(flow.phase == kIpManipulatorSmuggleFlowPhasePassthrough,
             "capture timeout did not enter permanent passthrough");
-    require(flow->delay_window_until_ms == 0, "capture timeout retained a delay window");
+    require(flow.delay_window_until_ms == 0, "capture timeout retained a delay window");
     requireNoActiveTlsSlots(state);
 
     ipmanipulatorUpStreamPayload(t, &line, makeTcpPacketWithSeq(seg1_seq, TCP_ACK, hello_buf + seg0_len, seg1_len));
@@ -964,12 +984,12 @@ static void testGeneratedRecordWithTrailingBytesFailsOpen(void)
             "fail-open packet changed sequence or payload length");
     require(real_packets_count == 0, "real-SNI branch received a packet after generated validation failed");
 
-    ipmanipulator_tstate_t       *state = tunnelGetState(t);
-    ipmanipulator_smuggle_flow_t *flow  = findFlowForSourcePort(state, 12345);
-    require(flow != NULL, "generated validation failure removed the flow");
-    require(flow->phase == kIpManipulatorSmuggleFlowPhasePassthrough,
+    ipmanipulator_tstate_t      *state = tunnelGetState(t);
+    ipmanipulator_smuggle_flow_t flow  = {0};
+    require(findFlowForSourcePort(state, 12345, &flow), "generated validation failure removed the flow");
+    require(flow.phase == kIpManipulatorSmuggleFlowPhasePassthrough,
             "generated validation failure did not enter passthrough");
-    require(flow->delay_window_until_ms == 0, "generated validation failure retained a delay window");
+    require(flow.delay_window_until_ms == 0, "generated validation failure retained a delay window");
     requireNoActiveTlsSlots(state);
 
     destroyTestTunnel(t);

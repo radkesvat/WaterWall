@@ -34,7 +34,7 @@ typedef struct synfinsnitrick_tcp_packet_info_s
 
 typedef struct synfinsnitrick_packet_sequence_s
 {
-    sbuf_t *packets[kSynfinSniMaxEmittedPackets];
+    sbuf_t  *packets[kSynfinSniMaxEmittedPackets];
     uint16_t count;
 } synfinsnitrick_packet_sequence_t;
 
@@ -45,8 +45,8 @@ static void synfinsnitrickFinalizePacketChecksum(sbuf_t *packet_buf, uint16_t ip
         return;
     }
 
-    uint8_t *packet   = sbufGetMutablePtr(packet_buf);
-    uint32_t pkt_len  = sbufGetLength(packet_buf);
+    uint8_t *packet  = sbufGetMutablePtr(packet_buf);
+    uint32_t pkt_len = sbufGetLength(packet_buf);
     if (pkt_len < sizeof(struct ip_hdr))
     {
         return;
@@ -215,7 +215,7 @@ static void synfinsnitrickDestroyFlow(ipmanipulator_synfin_flow_t *flow)
     synfinsnitrickResetFlow(flow);
 }
 
-static void synfinsnitrickInitializeFlow(ipmanipulator_synfin_flow_t           *flow,
+static void synfinsnitrickInitializeFlow(ipmanipulator_synfin_flow_t            *flow,
                                          const synfinsnitrick_tcp_packet_info_t *info, const sbuf_t *syn_packet_buf,
                                          uint64_t now_ms)
 {
@@ -236,14 +236,13 @@ static void synfinsnitrickInitializeFlow(ipmanipulator_synfin_flow_t           *
     synfinsnitrickResetFlow(flow);
 
     *flow = (ipmanipulator_synfin_flow_t) {
-        .created_ms       = now_ms,
-        .last_activity_ms = now_ms,
-        .src_addr         = info->src_addr,
-        .dst_addr         = info->dst_addr,
-        .src_port         = info->src_port,
-        .dst_port         = info->dst_port,
-        .phase            = kIpManipulatorSynfinFlowPhaseWarmup,
-        .active           = true,
+        .created_ms          = now_ms,
+        .last_activity_ms    = now_ms,
+        .src_addr            = info->src_addr,
+        .dst_addr            = info->dst_addr,
+        .src_port            = info->src_port,
+        .dst_port            = info->dst_port,
+        .phase               = kIpManipulatorSynfinFlowPhaseWarmup,
         .syn_packet_template = syn_packet_template,
     };
 }
@@ -257,8 +256,7 @@ static void synfinsnitrickFinalizeFlowLocked(ipmanipulator_synfin_flow_t *flow, 
 
     synfinsnitrickDestroyCapturedPacket(&flow->held_packet);
     flow->warmup_packets_seen = kSynfinSniWarmupPackets;
-    flow->phase               = block_flow ? kIpManipulatorSynfinFlowPhaseBlocked
-                                           : kIpManipulatorSynfinFlowPhasePassthrough;
+    flow->phase = block_flow ? kIpManipulatorSynfinFlowPhaseBlocked : kIpManipulatorSynfinFlowPhasePassthrough;
 }
 
 static bool synfinsnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t packet_length,
@@ -336,7 +334,7 @@ static bool synfinsnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t pac
 
 static bool synfinsnitrickIsPureSyn(const synfinsnitrick_tcp_packet_info_t *info)
 {
-    return info != NULL && info->tcp_flags == TCP_SYN;
+    return info != NULL && ipmanipulatorIsFlowOpeningSyn(info->tcp_flags, info->tcp_payload_len);
 }
 
 static bool synfinsnitrickHasFinOrRst(const synfinsnitrick_tcp_packet_info_t *info)
@@ -344,82 +342,75 @@ static bool synfinsnitrickHasFinOrRst(const synfinsnitrick_tcp_packet_info_t *in
     return info != NULL && (info->tcp_flags & (TCP_FIN | TCP_RST)) != 0;
 }
 
-static bool synfinsnitrickFlowMatches(const ipmanipulator_synfin_flow_t      *flow,
-                                      const synfinsnitrick_tcp_packet_info_t *info)
+static ipmanipulator_flow_key_t synfinsnitrickMakeKey(const synfinsnitrick_tcp_packet_info_t *info)
 {
-    return flow->active && flow->src_addr == info->src_addr && flow->dst_addr == info->dst_addr &&
-           flow->src_port == info->src_port && flow->dst_port == info->dst_port;
+    return ipmanipulatorFlowKeyMake(info->src_addr, info->src_port, info->dst_addr, info->dst_port);
 }
 
-static void synfinsnitrickCleanupIdleFlowsLocked(ipmanipulator_tstate_t *state, uint64_t now_ms)
+static ipmanipulator_synfin_flow_t *synfinsnitrickEntryRecord(ipmanipulator_flow_entry_t *entry)
 {
-    for (uint32_t i = 0; i < state->synfin_flows_capacity; ++i)
-    {
-        ipmanipulator_synfin_flow_t *flow = &state->synfin_flows[i];
-
-        if (! flow->active)
-        {
-            continue;
-        }
-
-        if (now_ms - flow->last_activity_ms < kSynfinSniIdleTimeoutMs)
-        {
-            continue;
-        }
-
-        synfinsnitrickDestroyFlow(flow);
-    }
+    return (ipmanipulator_synfin_flow_t *) ipmanipulatorFlowEntryRecord(entry);
 }
 
-static ipmanipulator_synfin_flow_t *synfinsnitrickFindFlowLocked(ipmanipulator_tstate_t                 *state,
-                                                                 const synfinsnitrick_tcp_packet_info_t *info)
+/* The record keeps the client-to-server orientation the transcript logic uses. */
+static bool synfinsnitrickFlowIsForward(const ipmanipulator_synfin_flow_t      *flow,
+                                        const synfinsnitrick_tcp_packet_info_t *info)
 {
-    for (uint32_t i = 0; i < state->synfin_flows_capacity; ++i)
-    {
-        if (synfinsnitrickFlowMatches(&state->synfin_flows[i], info))
-        {
-            return &state->synfin_flows[i];
-        }
-    }
-
-    return NULL;
+    return flow->src_addr == info->src_addr && flow->dst_addr == info->dst_addr && flow->src_port == info->src_port &&
+           flow->dst_port == info->dst_port;
 }
 
-static ipmanipulator_synfin_flow_t *synfinsnitrickCreateFlowLocked(ipmanipulator_tstate_t                 *state,
-                                                                   const synfinsnitrick_tcp_packet_info_t *info,
-                                                                   const sbuf_t                           *syn_packet_buf,
-                                                                   uint64_t                                 now_ms)
+static ipmanipulator_flow_shard_t *synfinsnitrickLockShard(ipmanipulator_tstate_t         *state,
+                                                           const ipmanipulator_flow_key_t *key, uint64_t now_ms)
 {
-    for (uint32_t i = 0; i < state->synfin_flows_capacity; ++i)
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->synfin_table, key);
+
+    if (shard != NULL)
     {
-        ipmanipulator_synfin_flow_t *flow = &state->synfin_flows[i];
-
-        if (flow->active)
-        {
-            continue;
-        }
-
-        synfinsnitrickInitializeFlow(flow, info, syn_packet_buf, now_ms);
-        return flow;
+        discard ipmanipulatorFlowShardExpire(&state->synfin_table, shard, now_ms, kIpManipulatorFlowCleanupBudget);
     }
 
-    uint32_t                     old_capacity = state->synfin_flows_capacity;
-    uint32_t                     new_capacity = max(kIpManipulatorSmuggleInitialFlows, old_capacity * 2U);
-    ipmanipulator_synfin_flow_t *grown =
-        memoryReAllocate(state->synfin_flows, sizeof(*state->synfin_flows) * new_capacity);
+    return shard;
+}
 
-    if (grown == NULL)
+static void synfinsnitrickTouchLocked(ipmanipulator_flow_shard_t *shard, ipmanipulator_flow_entry_t *entry,
+                                      uint64_t now_ms)
+{
+    synfinsnitrickEntryRecord(entry)->last_activity_ms = now_ms;
+    ipmanipulatorFlowShardTouch(shard, entry, now_ms + kSynfinSniIdleTimeoutMs);
+}
+
+static ipmanipulator_flow_entry_t *synfinsnitrickFindLocked(ipmanipulator_tstate_t                 *state,
+                                                            ipmanipulator_flow_shard_t             *shard,
+                                                            const ipmanipulator_flow_key_t         *key,
+                                                            const synfinsnitrick_tcp_packet_info_t *info)
+{
+    ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->synfin_table, shard, key);
+
+    if (entry != NULL && ! synfinsnitrickFlowIsForward(synfinsnitrickEntryRecord(entry), info))
     {
         return NULL;
     }
 
-    memoryZero(grown + old_capacity, sizeof(*grown) * (new_capacity - old_capacity));
-    state->synfin_flows          = grown;
-    state->synfin_flows_capacity = new_capacity;
+    return entry;
+}
 
-    ipmanipulator_synfin_flow_t *flow = &state->synfin_flows[old_capacity];
-    synfinsnitrickInitializeFlow(flow, info, syn_packet_buf, now_ms);
-    return flow;
+static ipmanipulator_flow_entry_t *synfinsnitrickReserveLocked(ipmanipulator_tstate_t                 *state,
+                                                               ipmanipulator_flow_shard_t             *shard,
+                                                               const ipmanipulator_flow_key_t         *key,
+                                                               const synfinsnitrick_tcp_packet_info_t *info,
+                                                               const sbuf_t *syn_packet_buf, uint64_t now_ms)
+{
+    ipmanipulator_flow_entry_t *entry =
+        ipmanipulatorFlowShardReserve(&state->synfin_table, shard, key, now_ms, now_ms + kSynfinSniIdleTimeoutMs);
+
+    if (entry == NULL)
+    {
+        return NULL;
+    }
+
+    synfinsnitrickInitializeFlow(synfinsnitrickEntryRecord(entry), info, syn_packet_buf, now_ms);
+    return entry;
 }
 
 static sbuf_t *synfinsnitrickAllocateRequestBuffer(uint32_t len)
@@ -443,10 +434,9 @@ static sbuf_t *synfinsnitrickGenerateTlsClientHello(tunnel_t *t)
 {
     static const char kGenerateTlsHelloPrefix[] = "generateTlsHello:";
 
-    ipmanipulator_tstate_t *state       = tunnelGetState(t);
-    uint32_t                request_len =
-        (uint32_t) (sizeof(kGenerateTlsHelloPrefix) - 1) + state->trick_synfin_sni_value_len;
-    sbuf_t *request_buf = synfinsnitrickAllocateRequestBuffer(request_len);
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    uint32_t request_len = (uint32_t) (sizeof(kGenerateTlsHelloPrefix) - 1) + state->trick_synfin_sni_value_len;
+    sbuf_t  *request_buf = synfinsnitrickAllocateRequestBuffer(request_len);
 
     if (request_buf == NULL)
     {
@@ -563,11 +553,10 @@ static sbuf_t *synfinsnitrickBuildPacketFromTemplate(line_t *l, sbuf_t *template
     return result;
 }
 
-static sbuf_t *synfinsnitrickBuildGeneratedTlsDataPacket(line_t *l,
-                                                         const ipmanipulator_captured_packet_t *held_packet,
+static sbuf_t *synfinsnitrickBuildGeneratedTlsDataPacket(line_t *l, const ipmanipulator_captured_packet_t *held_packet,
                                                          const synfinsnitrick_tcp_packet_info_t *held_info,
-                                                         uint32_t payload_len, uint32_t seq,
-                                                         uint16_t ip_identification, uint8_t tcp_flags)
+                                                         uint32_t payload_len, uint32_t seq, uint16_t ip_identification,
+                                                         uint8_t tcp_flags)
 {
     if (l == NULL || held_packet == NULL || held_packet->buf == NULL || held_info == NULL || payload_len == 0)
     {
@@ -606,8 +595,7 @@ static sbuf_t *synfinsnitrickBuildGeneratedTlsDataPacket(line_t *l,
 }
 
 static uint32_t synfinsnitrickChooseAdditionalPayloadLen(const ipmanipulator_tstate_t *state,
-                                                         uint32_t generated_payload_len,
-                                                         uint32_t real_payload_len,
+                                                         uint32_t generated_payload_len, uint32_t real_payload_len,
                                                          uint32_t real_sni_payload_offset)
 {
     if (state == NULL || real_payload_len <= generated_payload_len || real_sni_payload_offset <= generated_payload_len)
@@ -656,15 +644,14 @@ static void synfinsnitrickApplyOptionalTtl(sbuf_t *packet_buf, int ttl_override)
 }
 
 static sbuf_t *synfinsnitrickBuildFakeSynPacket(line_t *l, const sbuf_t *syn_packet_template,
-                                                const ipmanipulator_captured_packet_t *held_packet,
-                                                const ipmanipulator_tstate_t      *state,
+                                                const ipmanipulator_captured_packet_t  *held_packet,
+                                                const ipmanipulator_tstate_t           *state,
                                                 const synfinsnitrick_tcp_packet_info_t *held_info,
-                                                uint16_t                                 ip_identification,
-                                                uint32_t                                *syn_seq_out)
+                                                uint16_t ip_identification, uint32_t *syn_seq_out)
 {
-    synfinsnitrick_tcp_packet_info_t syn_template_info = {0};
-    sbuf_t                          *source_template   = NULL;
-    const synfinsnitrick_tcp_packet_info_t *source_info = NULL;
+    synfinsnitrick_tcp_packet_info_t        syn_template_info = {0};
+    sbuf_t                                 *source_template   = NULL;
+    const synfinsnitrick_tcp_packet_info_t *source_info       = NULL;
 
     if (l == NULL || held_packet == NULL || held_packet->buf == NULL || held_info == NULL || state == NULL)
     {
@@ -728,14 +715,14 @@ static sbuf_t *synfinsnitrickBuildFakeSynPacket(line_t *l, const sbuf_t *syn_pac
         *syn_seq_out = syn_seq;
     }
 
-    synfinsnitrickFinalizePacketChecksum(syn_packet, source_info->ip_header_len,
-                                         state->trick_synfin_sni_random_syn_checksum);
+    synfinsnitrickFinalizePacketChecksum(
+        syn_packet, source_info->ip_header_len, state->trick_synfin_sni_random_syn_checksum);
 
     return syn_packet;
 }
 
 static sbuf_t *synfinsnitrickBuildFakeClosePacket(line_t *l, const ipmanipulator_captured_packet_t *held_packet,
-                                                  const ipmanipulator_tstate_t      *state,
+                                                  const ipmanipulator_tstate_t           *state,
                                                   const synfinsnitrick_tcp_packet_info_t *held_info,
                                                   uint32_t control_seq, uint16_t ip_identification)
 {
@@ -745,14 +732,8 @@ static sbuf_t *synfinsnitrickBuildFakeClosePacket(line_t *l, const ipmanipulator
     }
 
     uint8_t control_flags = state->trick_synfin_sni_use_rst ? (TCP_RST | TCP_ACK) : (TCP_FIN | TCP_ACK);
-    sbuf_t *packet        = synfinsnitrickBuildPacketFromTemplate(l,
-                                                           held_packet->buf,
-                                                           held_info,
-                                                           NULL,
-                                                           0,
-                                                           control_seq,
-                                                           ip_identification,
-                                                           control_flags);
+    sbuf_t *packet        = synfinsnitrickBuildPacketFromTemplate(
+        l, held_packet->buf, held_info, NULL, 0, control_seq, ip_identification, control_flags);
     if (packet == NULL)
     {
         return NULL;
@@ -773,8 +754,7 @@ static sbuf_t *synfinsnitrickBuildFakeClosePacket(line_t *l, const ipmanipulator
     }
     tcp_header->urgp = 0;
 
-    synfinsnitrickFinalizePacketChecksum(packet, held_info->ip_header_len,
-                                         state->trick_synfin_sni_random_fin_checksum);
+    synfinsnitrickFinalizePacketChecksum(packet, held_info->ip_header_len, state->trick_synfin_sni_random_fin_checksum);
     return packet;
 }
 
@@ -799,9 +779,8 @@ static uint8_t synfinsnitrickGetFakePayloadFlags(uint8_t original_flags)
     return (uint8_t) (synfinsnitrickGetContinuationFlags(original_flags) | TCP_PSH);
 }
 
-static bool synfinsnitrickBuildPacketSequence(tunnel_t *t, line_t *l,
-                                              const sbuf_t *syn_packet_template,
-                                              const ipmanipulator_captured_packet_t *held_packet,
+static bool synfinsnitrickBuildPacketSequence(tunnel_t *t, line_t *l, const sbuf_t *syn_packet_template,
+                                              const ipmanipulator_captured_packet_t  *held_packet,
                                               const synfinsnitrick_tcp_packet_info_t *held_info, sbuf_t *current_buf,
                                               const synfinsnitrick_tcp_packet_info_t *current_info,
                                               const uint8_t *real_combined_payload, const uint8_t *generated_payload,
@@ -823,7 +802,6 @@ static bool synfinsnitrickBuildPacketSequence(tunnel_t *t, line_t *l,
     {
         return false;
     }
-
 
     uint16_t next_ip_id = held_info->ip_identification;
     uint32_t close_seq  = held_info->seq + packet_y_payload_len;
@@ -847,8 +825,7 @@ static bool synfinsnitrickBuildPacketSequence(tunnel_t *t, line_t *l,
         return false;
     }
 
-    sbuf_t *packet_fin =
-        synfinsnitrickBuildFakeClosePacket(l, held_packet, state, held_info, close_seq, next_ip_id++);
+    sbuf_t *packet_fin = synfinsnitrickBuildFakeClosePacket(l, held_packet, state, held_info, close_seq, next_ip_id++);
     if (! synfinsnitrickAppendPacket(sequence, packet_fin))
     {
         if (packet_fin != NULL)
@@ -897,13 +874,14 @@ static bool synfinsnitrickBuildPacketSequence(tunnel_t *t, line_t *l,
 
     if (generated_tail_payload_len > 0)
     {
-        sbuf_t *generated_tail = synfinsnitrickBuildGeneratedTlsDataPacket(l,
-                                                                           held_packet,
-                                                                           held_info,
-                                                                           generated_tail_payload_len,
-                                                                           fake_payload_seq + generated_payload_len,
-                                                                           next_ip_id++,
-                                                                           synfinsnitrickGetFakePayloadFlags(held_info->tcp_flags));
+        sbuf_t *generated_tail =
+            synfinsnitrickBuildGeneratedTlsDataPacket(l,
+                                                      held_packet,
+                                                      held_info,
+                                                      generated_tail_payload_len,
+                                                      fake_payload_seq + generated_payload_len,
+                                                      next_ip_id++,
+                                                      synfinsnitrickGetFakePayloadFlags(held_info->tcp_flags));
         synfinsnitrickFinalizePacketChecksum(generated_tail, held_info->ip_header_len, false);
         if (! synfinsnitrickAppendPacket(sequence, generated_tail))
         {
@@ -1112,10 +1090,9 @@ static void synfinsnitrickLogRejectedFlow(const sbuf_t *combined_packet, const s
 
 static bool synfinsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_captured_packet_t *held_packet,
                                          const sbuf_t *syn_packet_template, sbuf_t *current_buf,
-                                         const synfinsnitrick_tcp_packet_info_t *current_info,
-                                         bool *block_flow_out)
+                                         const synfinsnitrick_tcp_packet_info_t *current_info, bool *block_flow_out)
 {
-    ipmanipulator_tstate_t            *state     = tunnelGetState(t);
+    ipmanipulator_tstate_t          *state     = tunnelGetState(t);
     synfinsnitrick_tcp_packet_info_t held_info = {0};
 
     if (block_flow_out != NULL)
@@ -1154,7 +1131,8 @@ static bool synfinsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_c
         return true;
     }
 
-    sbuf_t *combined_packet = synfinsnitrickBuildCombinedPacket(held_packet->line, held_packet, &held_info, current_info);
+    sbuf_t *combined_packet =
+        synfinsnitrickBuildCombinedPacket(held_packet->line, held_packet, &held_info, current_info);
     if (combined_packet == NULL)
     {
         synfinsnitrickSendHeldThenCurrentNormal(t, held_packet, l, current_buf);
@@ -1216,14 +1194,12 @@ static bool synfinsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_c
         return true;
     }
 
-    uint32_t additional_payload_len =
-        synfinsnitrickChooseAdditionalPayloadLen(
-            state, generated_payload_len, real_payload_len, real_sni_payload_offset);
+    uint32_t additional_payload_len = synfinsnitrickChooseAdditionalPayloadLen(
+        state, generated_payload_len, real_payload_len, real_sni_payload_offset);
     uint32_t packet_y_payload_len = generated_payload_len + additional_payload_len;
 
     synfinsnitrick_packet_sequence_t sequence = {0};
-    const uint8_t                   *combined_payload =
-        (const uint8_t *) sbufGetRawPtr(combined_packet) + held_info.headers_len;
+    const uint8_t *combined_payload  = (const uint8_t *) sbufGetRawPtr(combined_packet) + held_info.headers_len;
     const uint8_t *generated_payload = (const uint8_t *) sbufGetRawPtr(generated_hello);
 
     if (! synfinsnitrickBuildPacketSequence(t,
@@ -1255,28 +1231,32 @@ static bool synfinsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_c
     return true;
 }
 
+/* Runs under the shard lock: dispose only, never forward or call the tunnel. */
+static void synfinsnitrickDestroyFlowRecord(void *record, void *context)
+{
+    discard context;
+
+    synfinsnitrickDestroyFlow((ipmanipulator_synfin_flow_t *) record);
+}
+
+bool synfinsnitrickInitializeState(tunnel_t *t)
+{
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+    return ipmanipulatorFlowTableInit(&state->synfin_table,
+                                      "synfin-sni",
+                                      state->trick_stateful_flow_limit,
+                                      (uint32_t) getTotalWorkersCount(),
+                                      sizeof(ipmanipulator_synfin_flow_t),
+                                      synfinsnitrickDestroyFlowRecord,
+                                      NULL);
+}
+
 void synfinsnitrickDestroyState(tunnel_t *t)
 {
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
-    if (state->synfin_flows == NULL)
-    {
-        return;
-    }
-
-    mutexLock(&state->synfin_flows_mutex);
-
-    for (uint32_t i = 0; i < state->synfin_flows_capacity; ++i)
-    {
-        synfinsnitrickDestroyFlow(&state->synfin_flows[i]);
-    }
-
-    mutexUnlock(&state->synfin_flows_mutex);
-    mutexDestroy(&state->synfin_flows_mutex);
-
-    memoryFree(state->synfin_flows);
-    state->synfin_flows          = NULL;
-    state->synfin_flows_capacity = 0;
+    ipmanipulatorFlowTableDestroy(&state->synfin_table);
 }
 
 bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -1292,48 +1272,60 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return false;
     }
 
-    ipmanipulator_captured_packet_t held_packet    = {0};
-    bool                            bypass_current = false;
+    ipmanipulator_captured_packet_t held_packet         = {0};
+    bool                            bypass_current      = false;
     sbuf_t                         *syn_packet_template = NULL;
 
-    mutexLock(&state->synfin_flows_mutex);
-    synfinsnitrickCleanupIdleFlowsLocked(state, now_ms);
+    ipmanipulator_flow_key_t    key   = synfinsnitrickMakeKey(&info);
+    ipmanipulator_flow_shard_t *shard = synfinsnitrickLockShard(state, &key, now_ms);
 
-    ipmanipulator_synfin_flow_t *flow = synfinsnitrickFindFlowLocked(state, &info);
-
-    if (flow != NULL && synfinsnitrickIsPureSyn(&info))
+    if (shard == NULL)
     {
-        synfinsnitrickInitializeFlow(flow, &info, buf, now_ms);
-    }
-
-    if (flow == NULL)
-    {
-        if (! synfinsnitrickIsPureSyn(&info))
-        {
-            mutexUnlock(&state->synfin_flows_mutex);
-            return false;
-        }
-
-        flow = synfinsnitrickCreateFlowLocked(state, &info, buf, now_ms);
-    }
-
-    if (flow == NULL)
-    {
-        mutexUnlock(&state->synfin_flows_mutex);
-        LOGW("IpManipulator: synfin-sni failed to allocate a flow record");
         return false;
     }
 
-    flow->last_activity_ms = now_ms;
+    bool                        opening_syn = synfinsnitrickIsPureSyn(&info);
+    ipmanipulator_flow_entry_t *entry       = ipmanipulatorFlowShardFind(&state->synfin_table, shard, &key);
+
+    if (entry != NULL && opening_syn)
+    {
+        synfinsnitrickInitializeFlow(synfinsnitrickEntryRecord(entry), &info, buf, now_ms);
+    }
+    else if (entry != NULL && ! synfinsnitrickFlowIsForward(synfinsnitrickEntryRecord(entry), &info))
+    {
+        entry = NULL;
+    }
+
+    if (entry == NULL)
+    {
+        if (! opening_syn)
+        {
+            ipmanipulatorFlowShardUnlock(shard);
+            return false;
+        }
+
+        entry = synfinsnitrickReserveLocked(state, shard, &key, &info, buf, now_ms);
+    }
+
+    if (entry == NULL)
+    {
+        ipmanipulatorFlowShardUnlock(shard);
+        LOGW("IpManipulator: synfin-sni could not admit a flow record; the packet passes unchanged");
+        return false;
+    }
+
+    ipmanipulator_synfin_flow_t *flow = synfinsnitrickEntryRecord(entry);
+
+    synfinsnitrickTouchLocked(shard, entry, now_ms);
 
     if (flow->phase == kIpManipulatorSynfinFlowPhaseBlocked)
     {
         if (synfinsnitrickHasFinOrRst(&info))
         {
-            synfinsnitrickDestroyFlow(flow);
+            ipmanipulatorFlowShardRemove(&state->synfin_table, shard, entry);
         }
 
-        mutexUnlock(&state->synfin_flows_mutex);
+        ipmanipulatorFlowShardUnlock(shard);
         lineReuseBuffer(l, buf);
         return true;
     }
@@ -1347,8 +1339,8 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             bypass_current    = true;
         }
 
-        synfinsnitrickDestroyFlow(flow);
-        mutexUnlock(&state->synfin_flows_mutex);
+        ipmanipulatorFlowShardRemove(&state->synfin_table, shard, entry);
+        ipmanipulatorFlowShardUnlock(shard);
 
         if (! bypass_current)
         {
@@ -1365,7 +1357,7 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (flow->warmup_packets_seen < kSynfinSniWarmupPackets)
         {
             flow->warmup_packets_seen += 1;
-            mutexUnlock(&state->synfin_flows_mutex);
+            ipmanipulatorFlowShardUnlock(shard);
 
             synfinsnitrickSendNormalNow(t, l, buf);
             return true;
@@ -1374,7 +1366,7 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (info.tcp_payload_len == 0)
         {
             flow->phase = kIpManipulatorSynfinFlowPhasePassthrough;
-            mutexUnlock(&state->synfin_flows_mutex);
+            ipmanipulatorFlowShardUnlock(shard);
 
             synfinsnitrickSendNormalNow(t, l, buf);
             return true;
@@ -1382,11 +1374,11 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         flow->phase       = kIpManipulatorSynfinFlowPhaseHoldThird;
         flow->held_packet = (ipmanipulator_captured_packet_t) {.line = l, .buf = buf};
-        mutexUnlock(&state->synfin_flows_mutex);
+        ipmanipulatorFlowShardUnlock(shard);
         return true;
 
     case kIpManipulatorSynfinFlowPhasePassthrough:
-        mutexUnlock(&state->synfin_flows_mutex);
+        ipmanipulatorFlowShardUnlock(shard);
         synfinsnitrickSendNormalNow(t, l, buf);
         return true;
 
@@ -1395,27 +1387,39 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         held_packet       = flow->held_packet;
         flow->held_packet = (ipmanipulator_captured_packet_t) {0};
-        syn_packet_template = flow->syn_packet_template;
 
-        mutexUnlock(&state->synfin_flows_mutex);
+        /*
+         * Take ownership of the SYN template: the entry pointer does not survive
+         * the unlock below, and the crafted transcript is the template's last
+         * user on this generation.
+         */
+        syn_packet_template       = flow->syn_packet_template;
+        flow->syn_packet_template = NULL;
+
+        ipmanipulatorFlowShardUnlock(shard);
 
         bool handled = synfinsnitrickHandleHeldPair(t, l, &held_packet, syn_packet_template, buf, &info, &block_flow);
 
-        mutexLock(&state->synfin_flows_mutex);
-        flow = synfinsnitrickFindFlowLocked(state, &info);
-        if (flow != NULL)
+        synfinsnitrickDestroyStandalonePacket(&syn_packet_template);
+
+        shard = ipmanipulatorFlowTableLockShard(&state->synfin_table, &key);
+        if (shard != NULL)
         {
-            flow->last_activity_ms = getTickMS();
-            synfinsnitrickFinalizeFlowLocked(flow, block_flow);
+            entry = synfinsnitrickFindLocked(state, shard, &key, &info);
+            if (entry != NULL)
+            {
+                synfinsnitrickFinalizeFlowLocked(synfinsnitrickEntryRecord(entry), block_flow);
+                synfinsnitrickTouchLocked(shard, entry, getTickMS());
+            }
+            ipmanipulatorFlowShardUnlock(shard);
         }
-        mutexUnlock(&state->synfin_flows_mutex);
 
         return handled;
     }
 
     case kIpManipulatorSynfinFlowPhaseBlocked:
     default:
-        mutexUnlock(&state->synfin_flows_mutex);
+        ipmanipulatorFlowShardUnlock(shard);
         break;
     }
 
