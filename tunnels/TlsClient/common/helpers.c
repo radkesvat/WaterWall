@@ -49,7 +49,7 @@ void tlsclientPrintSSLErrorAndAbort(void)
     abort();
 }
 
-static bool tlsclientDrainBioToBuffer(buffer_pool_t *pool, BIO *bio, sbuf_t **out)
+bool tlsclientDrainBioToBuffer(buffer_pool_t *pool, BIO *bio, sbuf_t **out)
 {
     assert(pool != NULL && bio != NULL && out != NULL);
     *out = NULL;
@@ -865,7 +865,7 @@ bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
 
     if (wid >= getWorkersCount())
     {
-        wid = 0;
+        return false;
     }
 
     STACK_ALLOCATE_CACHE_ALIGNED(tlsclient_lstate_t, ls);
@@ -913,9 +913,9 @@ bool tlsclientCreateEchGreaseInnerClientHello(tlsclient_tstate_t *ts, wid_t wid,
         return true;
     }
 
-    if (wid >= getWorkersCount())
+    if (wid >= getWorkersCount() || wid != getWID())
     {
-        wid = 0;
+        return false;
     }
 
     if (ts->threadlocal_ech_grease_inner_ssl_contexts == NULL ||

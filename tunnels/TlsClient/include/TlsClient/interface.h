@@ -24,6 +24,16 @@ WW_EXPORT tunnel_t *tlsclientTunnelCreate(node_t *node);
 WW_EXPORT bool      tlsclientTunnelEnableHandshakeTakeover(tunnel_t *t);
 WW_EXPORT bool      tlsclientTunnelIsHandshakeCompleted(tunnel_t *t, line_t *l);
 WW_EXPORT bool      tlsclientTunnelGetHandshakeBinding(tunnel_t *t, line_t *l, tlsclient_handshake_binding_t *binding);
+/*
+ * Generate a ClientHello using this tunnel's configured fingerprint, ALPN, and
+ * ECH GREASE settings. Hostname bytes need not be NUL-terminated and must not
+ * contain an embedded NUL. The caller line must belong to the current ordinary
+ * worker. The caller owns the returned buffer and must return it through that
+ * line's buffer pool; NULL reports validation, worker-ownership, or generation
+ * failure.
+ */
+WW_EXPORT sbuf_t *tlsclientTunnelGenerateClientHello(tunnel_t *t, line_t *caller_line, const uint8_t *hostname,
+                                                     uint32_t hostname_length);
 /* TLS 1.2-only immediate takeover. TLS 1.3 callers must use the phased APIs below. */
 WW_EXPORT bool tlsclientTunnelDeinitAfterHandshake(tunnel_t *t, line_t *l, sbuf_t **pending_raw);
 /*

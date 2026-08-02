@@ -69,32 +69,20 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     /* Did SSL request to write bytes? */
     if (status == kSslstatusWantIo)
     {
-        sbuf_t *buf   = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
-        int     avail = (int) sbufGetMaximumWriteableSize(buf);
-
-        while (true)
+        // the initial flight can be larger than any pool buffer, so the complete pending
+        // length is drained into one exactly sized buffer instead of a single BIO_read
+        sbuf_t *buf = NULL;
+        if (! tlsclientDrainBioToBuffer(lineGetBufferPool(l), ls->wbio, &buf) || buf == NULL)
         {
-            n = BIO_read(ls->wbio, sbufGetMutablePtr(buf), avail);
-            if (n > 0)
-            {
-                sbufSetLength(buf, n);
-                tunnelNextUpStreamPayload(t, l, buf);
-                return;
-            }
-
-            if (! BIO_should_retry(ls->wbio))
-            {
-                // If BIO_should_retry() is false then the cause is an error condition.
-                lineReuseBuffer(l, buf);
-                goto failed;
-            }
-            else
-            {
-                continue; // retry reading
-            }
+            goto failed;
         }
+
+        // the line is not touched after this forward, so no lock/lineIsAlive recheck is needed
+        tunnelNextUpStreamPayload(t, l, buf);
+        return;
     }
-    else if (status == kSslstatusFail)
+
+    if (status == kSslstatusFail)
     {
         goto failed;
     }

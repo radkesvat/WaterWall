@@ -138,10 +138,18 @@ void tlsclientLinestateDestroy(tlsclient_lstate_t *ls);
 void tlsclientLinestateRelease(tlsclient_lstate_t *ls);
 void tlsclientCloseLineBidirectional(tunnel_t *t, line_t *l);
 bool tlsclientTakeoverTryReadRecord(tlsclient_lstate_t *ls, sbuf_t **record, bool *invalid);
-bool tlsclientFlushSslOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls);
-bool tlsclientDrainShapedOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls, bool force);
-bool tlsclientScheduleShapedOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls);
-void tlsclientCancelShapedOutputTimer(tlsclient_lstate_t *ls);
+/*
+ * Drains every byte currently pending in a BIO into one buffer that is grown to
+ * the exact pending length. Returns false on allocation failure, a short read or
+ * unexpected remaining bytes; `*out` is left NULL and nothing is leaked. An
+ * empty BIO succeeds with `*out` still NULL, so callers that require output must
+ * check for it.
+ */
+bool   tlsclientDrainBioToBuffer(buffer_pool_t *pool, BIO *bio, sbuf_t **out);
+bool   tlsclientFlushSslOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls);
+bool   tlsclientDrainShapedOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls, bool force);
+bool   tlsclientScheduleShapedOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls);
+void   tlsclientCancelShapedOutputTimer(tlsclient_lstate_t *ls);
 size_t tlsclientRecordPaddingCallback(SSL *ssl, uint8_t type, size_t plaintext_len, size_t max_padding, void *arg);
 bool   tlsclientSslReadBoundaryIsClean(tlsclient_lstate_t *ls);
 

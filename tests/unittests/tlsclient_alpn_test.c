@@ -1,5 +1,7 @@
 #include "TlsClient/structure.h"
 
+#include "tls_client_hello.h"
+
 enum
 {
     kTestLargeBufferSize   = 32768,
@@ -12,11 +14,32 @@ typedef struct tlsclient_test_worker_env_s
 {
     uint32_t        saved_workers_count;
     buffer_pool_t **saved_buffer_pools;
+    wid_t           saved_wid;
     master_pool_t  *large_master;
     master_pool_t  *small_master;
     buffer_pool_t  *pool;
     buffer_pool_t  *buffer_pools[1];
 } tlsclient_test_worker_env_t;
+
+static void require(bool condition, const char *message);
+
+static sbuf_t  *ordinary_init_flight;
+static uint32_t ordinary_init_count;
+
+static void captureOrdinaryInit(tunnel_t *t, line_t *l)
+{
+    discard t;
+    discard l;
+    ordinary_init_count += 1U;
+}
+
+static void captureOrdinaryPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    discard t;
+    discard l;
+    require(ordinary_init_flight == NULL, "ordinary TlsClient Init emitted more than one initial-flight buffer");
+    ordinary_init_flight = buf;
+}
 
 static void require(bool condition, const char *message)
 {
@@ -39,6 +62,7 @@ static void workerEnvSetup(tlsclient_test_worker_env_t *env)
     memoryZero(env, sizeof(*env));
     env->saved_workers_count = GSTATE.workers_count;
     env->saved_buffer_pools  = GSTATE.shortcut_buffer_pools;
+    env->saved_wid           = getWID();
 
     env->large_master = masterpoolCreateWithCapacity(8);
     env->small_master = masterpoolCreateWithCapacity(8);
@@ -51,12 +75,14 @@ static void workerEnvSetup(tlsclient_test_worker_env_t *env)
     env->buffer_pools[0]         = env->pool;
     GSTATE.shortcut_buffer_pools = env->buffer_pools;
     GSTATE.workers_count         = 2;
+    tl_wid                       = 0;
 }
 
 static void workerEnvTeardown(tlsclient_test_worker_env_t *env)
 {
     GSTATE.shortcut_buffer_pools = env->saved_buffer_pools;
     GSTATE.workers_count         = env->saved_workers_count;
+    tl_wid                       = env->saved_wid;
 
     bufferpoolDestroy(env->pool);
     masterpoolMakeEmpty(env->large_master);
@@ -326,6 +352,26 @@ static void testGeneratedLargeClientHelloIsComplete(void)
     require(tlsFlightIsComplete(hello), "generated ClientHello contains a truncated TLS record");
 
     bufferpoolReuseBuffer(env.pool, hello);
+
+    hello  = (sbuf_t *) (uintptr_t) 0x1;
+    tl_wid = 1;
+    require(! tlsclientCreateClientHelloFromContext(
+                ssl_ctx, "example.com", NULL, 0, alpn_wire, kTestLargeAlpnWireSize, &hello) &&
+                hello == NULL,
+            "private ClientHello helper mapped an additional thread onto worker 0");
+    tl_wid = 0;
+
+    SSL_CTX           *inner_contexts[] = {ssl_ctx};
+    tlsclient_tstate_t ts               = {
+                      .threadlocal_ech_grease_inner_ssl_contexts = inner_contexts,
+                      .alpn_wire                                 = alpn_wire,
+                      .alpn_wire_len                             = kTestLargeAlpnWireSize,
+                      .ech_grease_sni_override                   = (char *) (uintptr_t) "inner.example.com",
+    };
+    hello = (sbuf_t *) (uintptr_t) 0x1;
+    require(! tlsclientCreateEchGreaseInnerClientHello(&ts, 1, &hello) && hello == NULL,
+            "private ECH helper mapped an invalid worker onto worker 0");
+
     SSL_CTX_free(ssl_ctx);
     memoryFree(alpn_wire);
     workerEnvTeardown(&env);
@@ -370,6 +416,54 @@ static void testApiSniLengthBounds(void)
     result = tlsclientTunnelApi(tunnel, createGenerateRequest(env.pool, oversized_sni, kTlsClientMaxSniLength + 1U));
     require(result.result_code == kApiResultError && result.buffer == NULL,
             "ClientHello API accepted an oversized SNI");
+
+    tlsclientTunnelDestroy(tunnel);
+    cJSON_Delete(settings);
+    workerEnvTeardown(&env);
+}
+
+static void testTypedClientHelloGeneration(void)
+{
+    static const uint8_t hostname[] = "typed.example.test";
+
+    tlsclient_test_worker_env_t env;
+    workerEnvSetup(&env);
+
+    node_t    node     = {0};
+    cJSON    *settings = createTlsSettings("example.com", NULL);
+    tunnel_t *tunnel   = createTlsClientFromSettings(&node, settings);
+    require(tunnel != NULL, "failed to create TlsClient for typed generation test");
+
+    line_t  caller_line = {.wid = 0};
+    sbuf_t *hello =
+        tlsclientTunnelGenerateClientHello(tunnel, &caller_line, hostname, (uint32_t) sizeof(hostname) - 1U);
+    require(hello != NULL && tlsFlightIsComplete(hello), "typed ClientHello generation failed");
+
+    tls_client_hello_view_t parsed = {0};
+    require(tlsclienthelloParseRecord(sbufGetRawPtr(hello), sbufGetLength(hello), &parsed) == kTlsClientHelloFound,
+            "typed generation returned an invalid ClientHello");
+    require(parsed.sni_name_length == sizeof(hostname) - 1U &&
+                memoryCompare((const uint8_t *) sbufGetRawPtr(hello) + parsed.sni_name_offset,
+                              hostname,
+                              sizeof(hostname) - 1U) == 0,
+            "typed generation did not preserve the exact hostname bytes");
+    bufferpoolReuseBuffer(env.pool, hello);
+
+    const uint8_t embedded_nul[] = {'a', '\0', 'b'};
+    require(tlsclientTunnelGenerateClientHello(tunnel, &caller_line, embedded_nul, sizeof(embedded_nul)) == NULL,
+            "typed generation accepted an embedded NUL");
+    require(tlsclientTunnelGenerateClientHello(tunnel, &caller_line, hostname, 0) == NULL,
+            "typed generation accepted an empty hostname");
+
+    line_t additional_thread_line = {.wid = 1};
+    tl_wid                        = 1;
+    require(tlsclientTunnelGenerateClientHello(
+                tunnel, &additional_thread_line, hostname, (uint32_t) sizeof(hostname) - 1U) == NULL,
+            "typed generation mapped an additional thread onto worker 0");
+    require(tlsclientTunnelGenerateClientHello(tunnel, &caller_line, hostname, (uint32_t) sizeof(hostname) - 1U) ==
+                NULL,
+            "typed generation accessed another worker's line");
+    tl_wid = 0;
 
     tlsclientTunnelDestroy(tunnel);
     cJSON_Delete(settings);
@@ -475,6 +569,98 @@ static bool driveHandshake(SSL *client, SSL *server)
     return false;
 }
 
+static void testOrdinaryLargeClientHelloIsCompletelyDrained(void)
+{
+    tlsclient_test_worker_env_t env;
+    workerEnvSetup(&env);
+
+    uint8_t *alpn_wire = memoryAllocate(kTestLargeAlpnWireSize);
+    for (size_t offset = 0; offset < kTestLargeAlpnWireSize; offset += 2U)
+    {
+        alpn_wire[offset]      = 1;
+        alpn_wire[offset + 1U] = (uint8_t) ('a' + ((offset / 2U) % 26U));
+    }
+
+    SSL_CTX *client_context = SSL_CTX_new(TLS_client_method());
+    SSL_CTX *server_context = SSL_CTX_new(TLS_server_method());
+    require(client_context != NULL && server_context != NULL,
+            "failed to allocate ordinary oversized-Init TLS contexts");
+    SSL_CTX_set_verify(server_context, SSL_VERIFY_PEER, NULL);
+    SSL_CTX_set_max_cert_list(server_context, UINT16_MAX);
+    require(SSL_CTX_set_alpn_protos(client_context, alpn_wire, kTestLargeAlpnWireSize) == 0 &&
+                SSL_CTX_use_certificate_chain_file(server_context, REALITY_TEST_CERT_FILE) == 1 &&
+                SSL_CTX_use_PrivateKey_file(server_context, REALITY_TEST_KEY_FILE, SSL_FILETYPE_PEM) == 1 &&
+                SSL_CTX_check_private_key(server_context) == 1,
+            "failed to configure ordinary oversized-Init TLS contexts");
+
+    SSL_CTX  *context_slots[] = {client_context};
+    tunnel_t *prev            = tunnelCreate(NULL, 0, 0);
+    tunnel_t *tls             = tunnelCreate(NULL, sizeof(tlsclient_tstate_t), sizeof(tlsclient_lstate_t));
+    tunnel_t *next            = tunnelCreate(NULL, 0, 0);
+    require(prev != NULL && tls != NULL && next != NULL, "failed to allocate ordinary oversized-Init tunnels");
+    tunnelBind(prev, tls);
+    tunnelBind(tls, next);
+    next->fnInitU    = captureOrdinaryInit;
+    next->fnPayloadU = captureOrdinaryPayload;
+
+    tlsclient_tstate_t *ts       = tunnelGetState(tls);
+    ts->threadlocal_ssl_contexts = context_slots;
+    ts->alpn_wire                = alpn_wire;
+    ts->alpn_wire_len            = kTestLargeAlpnWireSize;
+    ts->sni                      = (char *) (uintptr_t) "example.com";
+
+    uint32_t line_size = (uint32_t) sizeof(line_t) + tls->lstate_size;
+    line_t  *line      = memoryAllocateCacheAlignedZero(line_size);
+    require(line != NULL, "failed to allocate ordinary oversized-Init line");
+    atomic_init(&line->refc, 1);
+    line->alive = true;
+    line->wid   = 0;
+
+    ordinary_init_flight = NULL;
+    ordinary_init_count  = 0;
+    tlsclientTunnelUpStreamInit(tls, line);
+
+    tlsclient_lstate_t *ls = lineGetState(line, tls);
+    require(ordinary_init_count == 1U, "ordinary TlsClient Init did not initialize its next tunnel exactly once");
+    require(ordinary_init_flight != NULL && sbufGetLength(ordinary_init_flight) > kTestLargeBufferSize,
+            "ordinary TlsClient Init did not emit a flight larger than the 32 KiB pool buffer");
+    require(tlsFlightIsComplete(ordinary_init_flight), "ordinary TlsClient Init emitted a truncated TLS flight");
+    require(BIO_ctrl_pending(ls->wbio) == 0, "ordinary TlsClient Init left bytes pending in its write BIO");
+
+    SSL *server      = SSL_new(server_context);
+    BIO *server_rbio = BIO_new(BIO_s_mem());
+    BIO *server_wbio = BIO_new(BIO_s_mem());
+    require(server != NULL && server_rbio != NULL && server_wbio != NULL,
+            "failed to allocate the ordinary oversized-Init peer");
+    BIO_set_mem_eof_return(server_rbio, -1);
+    BIO_set_mem_eof_return(server_wbio, -1);
+    SSL_set_bio(server, server_rbio, server_wbio);
+    SSL_set_accept_state(server);
+
+    uint32_t flight_len = sbufGetLength(ordinary_init_flight);
+    require(BIO_write(SSL_get_rbio(server), sbufGetRawPtr(ordinary_init_flight), (int) flight_len) == (int) flight_len,
+            "the peer could not consume the ordinary oversized initial flight");
+    bufferpoolReuseBuffer(env.pool, ordinary_init_flight);
+    ordinary_init_flight = NULL;
+
+    if (! driveHandshake(ls->ssl, server))
+    {
+        ERR_print_errors_fp(stderr);
+        require(false, "the peer could not continue the ordinary oversized-Init handshake");
+    }
+
+    SSL_free(server);
+    tlsclientLinestateDestroy(ls);
+    memoryFreeAligned(line);
+    tunnelDestroy(prev);
+    tunnelDestroy(tls);
+    tunnelDestroy(next);
+    SSL_CTX_free(client_context);
+    SSL_CTX_free(server_context);
+    memoryFree(alpn_wire);
+    workerEnvTeardown(&env);
+}
+
 static void testHttp11Negotiation(void)
 {
     static const uint8_t expected[] = "http/1.1";
@@ -555,7 +741,9 @@ int main(void)
     testTotalWireLengthBounds();
     testConfiguredSniLengthBounds();
     testGeneratedLargeClientHelloIsComplete();
+    testOrdinaryLargeClientHelloIsCompletelyDrained();
     testApiSniLengthBounds();
+    testTypedClientHelloGeneration();
     testHttp11Negotiation();
     return 0;
 }

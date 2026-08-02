@@ -2,45 +2,43 @@
 
 #include "loggers/network_logger.h"
 
-api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message)
+static bool tlsclientHostnameBytesAreValid(const uint8_t *hostname, uint32_t hostname_length)
 {
-    static const char kGenerateTlsHelloPrefix[] = "generateTlsHello:";
-    const uint8_t    *msg_ptr                   = (const uint8_t *) sbufGetRawPtr(message);
-    uint32_t          msg_len                   = sbufGetLength(message);
-    const uint32_t    prefix_len                = (uint32_t) (sizeof(kGenerateTlsHelloPrefix) - 1);
-
-    if (msg_len <= prefix_len || memoryCompare(msg_ptr, kGenerateTlsHelloPrefix, prefix_len) != 0)
+    if (hostname == NULL || hostname_length == 0 || hostname_length > kTlsClientMaxSniLength)
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), message);
-        return (api_result_t) {.result_code = kApiResultError};
+        return false;
     }
 
-    const uint32_t sni_len = msg_len - prefix_len;
-
-    if (sni_len == 0 || sni_len > kTlsClientMaxSniLength)
+    for (uint32_t i = 0; i < hostname_length; ++i)
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), message);
-        return (api_result_t) {.result_code = kApiResultError};
+        if (hostname[i] == '\0')
+        {
+            return false;
+        }
     }
 
-    char *sni = memoryAllocate(sni_len + 1);
+    return true;
+}
 
-    memoryCopy(sni, msg_ptr + prefix_len, sni_len);
-    sni[sni_len] = '\0';
-    bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), message);
+static sbuf_t *tlsclientGenerateClientHelloForWorker(tunnel_t *instance, wid_t wid, buffer_pool_t *pool,
+                                                     const uint8_t *hostname, uint32_t hostname_length)
+{
+    if (instance == NULL || pool == NULL || wid >= getWorkersCount() || wid != getWID() ||
+        ! tlsclientHostnameBytesAreValid(hostname, hostname_length))
+    {
+        return NULL;
+    }
+
+    char *sni = memoryAllocate((size_t) hostname_length + 1U);
+    memoryCopy(sni, hostname, hostname_length);
+    sni[hostname_length] = '\0';
 
     tlsclient_tstate_t *ts = tunnelGetState(instance);
-    wid_t               wid = getWID();
-
-    if (wid >= getWorkersCount())
-    {
-        wid = 0;
-    }
 
     sbuf_t *ech_payload = NULL;
     bool    created_ok  = tlsclientCreateEchGreaseInnerClientHello(ts, wid, &ech_payload);
 
-    sbuf_t *hello_buf = NULL;
+    sbuf_t *hello = NULL;
     if (created_ok)
     {
         created_ok = tlsclientCreateClientHelloFromContext(
@@ -50,20 +48,71 @@ api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message)
             ech_payload != NULL ? sbufGetLength(ech_payload) : 0,
             ts->alpn_wire,
             ts->alpn_wire_len,
-            &hello_buf);
+            &hello);
     }
 
     if (ech_payload != NULL)
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(wid), ech_payload);
+        bufferpoolReuseBuffer(pool, ech_payload);
     }
-
     memoryFree(sni);
 
-    if (! created_ok)
+    if (! created_ok && hello != NULL)
+    {
+        bufferpoolReuseBuffer(pool, hello);
+        hello = NULL;
+    }
+
+    return created_ok ? hello : NULL;
+}
+
+sbuf_t *tlsclientTunnelGenerateClientHello(tunnel_t *instance, line_t *caller_line, const uint8_t *hostname,
+                                           uint32_t hostname_length)
+{
+    if (caller_line == NULL)
+    {
+        return NULL;
+    }
+
+    wid_t wid = lineGetWID(caller_line);
+    if (wid >= getWorkersCount() || wid != getWID())
+    {
+        return NULL;
+    }
+
+    return tlsclientGenerateClientHelloForWorker(
+        instance, wid, lineGetBufferPool(caller_line), hostname, hostname_length);
+}
+
+api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message)
+{
+    static const char kGenerateTlsHelloPrefix[] = "generateTlsHello:";
+    const uint8_t    *msg_ptr                   = (const uint8_t *) sbufGetRawPtr(message);
+    uint32_t          msg_len                   = sbufGetLength(message);
+    const uint32_t    prefix_len                = (uint32_t) (sizeof(kGenerateTlsHelloPrefix) - 1);
+    wid_t             wid                       = getWID();
+
+    if (wid >= getTotalWorkersCount())
+    {
+        sbufDestroy(message);
+        return (api_result_t) {.result_code = kApiResultError};
+    }
+
+    buffer_pool_t *pool = getWorkerBufferPool(wid);
+
+    if (msg_len <= prefix_len || memoryCompare(msg_ptr, kGenerateTlsHelloPrefix, prefix_len) != 0)
+    {
+        bufferpoolReuseBuffer(pool, message);
+        return (api_result_t) {.result_code = kApiResultError};
+    }
+
+    sbuf_t *hello =
+        tlsclientGenerateClientHelloForWorker(instance, wid, pool, msg_ptr + prefix_len, msg_len - prefix_len);
+    bufferpoolReuseBuffer(pool, message);
+    if (hello == NULL)
     {
         return (api_result_t) {.result_code = kApiResultError};
     }
 
-    return (api_result_t) {.result_code = kApiResultOk, .buffer = hello_buf};
+    return (api_result_t) {.result_code = kApiResultOk, .buffer = hello};
 }
