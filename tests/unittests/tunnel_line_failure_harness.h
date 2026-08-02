@@ -466,7 +466,8 @@ static void twfWorkerEnvSetupWithSmallBuffers(twf_worker_env_t *env, uint32_t la
 {
     memoryZero(env, sizeof(*env));
 
-    GSTATE.workers_count = 1;
+    // The total includes the additional lwIP thread, so two total workers model one ordinary worker.
+    GSTATE.workers_count = 2;
 
     env->large_master = masterpoolCreateWithCapacity(8);
     env->small_master = masterpoolCreateWithCapacity(8);
