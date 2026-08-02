@@ -927,13 +927,21 @@ bool tundeviceBringUp(tun_device_t *tdev)
         return false;
     }
 
+    /*
+     * Device bring-up/creation runs on an event worker even though the reader
+     * and writer threads it manages stay unregistered. Read that worker's pool
+     * geometry once here and copy it onto the device-owned pools; the auxiliary
+     * threads never touch worker-local state themselves.
+     */
+    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
+
     bufferpoolUpdateAllocationPaddings(tdev->reader_buffer_pool,
-                                       bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
-                                       bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
+                                       bufferpoolGetLargeBufferPadding(worker_pool),
+                                       bufferpoolGetSmallBufferPadding(worker_pool));
 
     bufferpoolUpdateAllocationPaddings(tdev->writer_buffer_pool,
-                                       bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
-                                       bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
+                                       bufferpoolGetLargeBufferPadding(worker_pool),
+                                       bufferpoolGetSmallBufferPadding(worker_pool));
 
     if (! tunWindowsSetMtu(tdev))
     {
@@ -1438,8 +1446,16 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
 
     LOGI("TunDevice: WinTun loaded successfully");
 
-    uint32_t worker_large_buffer_size = bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID()));
-    uint32_t worker_small_buffer_size = bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()));
+    /*
+     * Device bring-up/creation runs on an event worker even though the reader
+     * and writer threads it manages stay unregistered. Read that worker's pool
+     * geometry once here and copy it onto the device-owned pools; the auxiliary
+     * threads never touch worker-local state themselves.
+     */
+    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
+
+    uint32_t worker_large_buffer_size = bufferpoolGetLargeBufferSize(worker_pool);
+    uint32_t worker_small_buffer_size = bufferpoolGetSmallBufferSize(worker_pool);
     worker_small_buffer_size          = max(worker_small_buffer_size, (uint32_t) mtu);
 
     buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,

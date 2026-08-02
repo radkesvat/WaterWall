@@ -1627,9 +1627,17 @@ static bool capturedeviceReaderOperational(capture_device_t *cdev)
 
 static bool capturedeviceStartReader(capture_device_t *cdev)
 {
+    /*
+     * Device bring-up/creation runs on an event worker even though the reader
+     * and writer threads it manages stay unregistered. Read that worker's pool
+     * geometry once here and copy it onto the device-owned pools; the auxiliary
+     * threads never touch worker-local state themselves.
+     */
+    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
+
     bufferpoolUpdateAllocationPaddings(cdev->reader_buffer_pool,
-                                       bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
-                                       bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
+                                       bufferpoolGetLargeBufferPadding(worker_pool),
+                                       bufferpoolGetSmallBufferPadding(worker_pool));
 
     capturedeviceDeactivate(cdev);
     pthread_mutex_lock(&cdev->reader_state_mutex);
@@ -1996,11 +2004,19 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     }
     capturedeviceLogSocketBufferSize(socket_netfilter, SO_RCVBUF, "SO_RCVBUF");
 
+    /*
+     * Device bring-up/creation runs on an event worker even though the reader
+     * and writer threads it manages stay unregistered. Read that worker's pool
+     * geometry once here and copy it onto the device-owned pools; the auxiliary
+     * threads never touch worker-local state themselves.
+     */
+    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
+
     buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
                                                    GSTATE.masterpool_buffer_pools_small,
                                                    RAM_PROFILE,
-                                                   bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
-                                                   bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
+                                                   bufferpoolGetLargeBufferSize(worker_pool),
+                                                   bufferpoolGetSmallBufferSize(worker_pool)
 
     );
     if (UNLIKELY(bufferpoolGetSmallBufferSize(reader_bpool) < kNetfilterReadBufferSize))

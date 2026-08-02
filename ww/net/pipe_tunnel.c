@@ -698,7 +698,10 @@ bool pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
     if (! lineIsOnCurrentEventWorker(l))
     {
         LOGF("PipeTunnel: Pipe From different WID is not allowed, line: %p, tunnel: %p", l, parent_tunnel);
-        LOGF("PipeTunnel: WID: %d, line WID: %d , to WID: %d", getWID(), lineGetWID(l), wid_to);
+        LOGF("PipeTunnel: WID: %s, line WID: %s , to WID: %s",
+             workerWIDLabel(getWID()),
+             workerWIDLabel(lineGetWID(l)),
+             workerWIDLabel(wid_to));
         assert(false);
         abortProgramNow(1);
         return false;
@@ -706,7 +709,10 @@ bool pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
     if (! workerWIDIsEventWorker(wid_to) || wid_to == wid)
     {
         LOGF("PipeTunnel: Pipe target must be a different event worker, line: %p, tunnel: %p", l, parent_tunnel);
-        LOGF("PipeTunnel: WID: %d, line WID: %d , to WID: %d", getWID(), lineGetWID(l), wid_to);
+        LOGF("PipeTunnel: WID: %s, line WID: %s , to WID: %s",
+             workerWIDLabel(getWID()),
+             workerWIDLabel(lineGetWID(l)),
+             workerWIDLabel(wid_to));
         assert(false);
         abortProgramNow(1);
         return false;

@@ -346,9 +346,17 @@ bool caputredeviceBringUp(capture_device_t *cdev)
     }
     cdev->handle = handle;
 
+    /*
+     * Device bring-up/creation runs on an event worker even though the reader
+     * and writer threads it manages stay unregistered. Read that worker's pool
+     * geometry once here and copy it onto the device-owned pools; the auxiliary
+     * threads never touch worker-local state themselves.
+     */
+    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
+
     bufferpoolUpdateAllocationPaddings(cdev->reader_buffer_pool,
-                                       bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
-                                       bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
+                                       bufferpoolGetLargeBufferPadding(worker_pool),
+                                       bufferpoolGetSmallBufferPadding(worker_pool));
 
     cdev->reader_exit_confirmed = false;
     if (deviceReaderSessionBegin(cdev->reader_session) == 0)
@@ -441,11 +449,19 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         return NULL;
     }
 
+    /*
+     * Device bring-up/creation runs on an event worker even though the reader
+     * and writer threads it manages stay unregistered. Read that worker's pool
+     * geometry once here and copy it onto the device-owned pools; the auxiliary
+     * threads never touch worker-local state themselves.
+     */
+    buffer_pool_t *worker_pool = getCurrentEventWorkerBufferPool();
+
     buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
                                                    GSTATE.masterpool_buffer_pools_small,
                                                    RAM_PROFILE,
-                                                   bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
-                                                   bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
+                                                   bufferpoolGetLargeBufferSize(worker_pool),
+                                                   bufferpoolGetSmallBufferSize(worker_pool)
 
     );
 
