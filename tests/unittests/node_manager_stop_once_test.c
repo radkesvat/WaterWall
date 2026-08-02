@@ -86,7 +86,7 @@ int main(void)
 
     // Worker-local teardown is a separate concern and must still run for the
     // owning worker after the process-wide stop already happened.
-    tl_wid = 0;
+    testWorkerBindWID(0);
     nodemanagerStopWorkerResources(0);
     require(worker_stop_calls == 2, "onWorkerStop did not run once per tunnel on the owning worker");
 

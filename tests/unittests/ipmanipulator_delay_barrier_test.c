@@ -370,7 +370,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
 int main(void)
 {
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
-    tl_wid = 0;
+    testWorkerBindWID(0);
 
     testKind(kIpManipulatorDelayBarrierFirstSni);
     testKind(kIpManipulatorDelayBarrierSmuggleSni);

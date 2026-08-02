@@ -32,6 +32,7 @@ typedef struct tlsclient_lifecycle_fixture_s
     tunnel_t                     *tls;
     tunnel_t                     *next;
     line_t                       *line;
+    worker_t                      worker;
     tlsclient_lifecycle_context_t context;
 } tlsclient_lifecycle_fixture_t;
 
@@ -162,12 +163,18 @@ static void fixtureInitialize(tlsclient_lifecycle_fixture_t *fixture)
 {
     memoryZero(fixture, sizeof(*fixture));
 
+    GSTATE.flag_initialized      = true;
+    GSTATE.workers_count         = 2;
     fixture->large_master        = masterpoolCreateWithCapacity(8);
     fixture->small_master        = masterpoolCreateWithCapacity(8);
     fixture->pool                = bufferpoolCreate(fixture->large_master, fixture->small_master, 8, 65536, 1024);
     fixture->saved_shortcuts     = GSTATE.shortcut_buffer_pools;
     fixture->shortcut[0]         = fixture->pool;
     GSTATE.shortcut_buffer_pools = fixture->shortcut;
+
+    fixture->worker = (worker_t) {.wid = 0, .buffer_pool = fixture->pool, .has_event_loop = true};
+    GSTATE.workers  = &fixture->worker;
+    testWorkerBindWID(0);
 
     fixture->ssl_ctx = SSL_CTX_new(TLS_client_method());
     requireTlsClient(fixture->ssl_ctx != NULL, "failed to create TlsClient test SSL_CTX");
@@ -223,7 +230,12 @@ static void fixtureDestroy(tlsclient_lifecycle_fixture_t *fixture)
     tunnelDestroy(fixture->tls);
     tunnelDestroy(fixture->next);
     SSL_CTX_free(fixture->ssl_ctx);
+
+    testWorkerUnbindWID();
+    GSTATE.flag_initialized      = false;
+    GSTATE.workers               = NULL;
     GSTATE.shortcut_buffer_pools = fixture->saved_shortcuts;
+
     bufferpoolDestroy(fixture->pool);
     masterpoolMakeEmpty(fixture->large_master);
     masterpoolMakeEmpty(fixture->small_master);

@@ -45,8 +45,10 @@ int main(void)
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(wio_master, sizeof(wio_t), 8);
     threadsafe_generic_pool_t *wio_pools[] = {wio_pool};
 
+    GSTATE.flag_initialized    = true;
+    GSTATE.workers_count       = 2;
     GSTATE.shortcut_wios_pools = wio_pools;
-    tl_wid                     = 0;
+    testWorkerBindWID(0);
 
     wloop_t *loop = wloopCreate(WLOOP_FLAG_RUN_ONCE, buffer_pool, 0);
     require(loop != NULL, "failed to create UDP test event loop");

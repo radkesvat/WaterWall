@@ -170,7 +170,7 @@ static void envSetup(test_env_t *env)
     GSTATE.masterpool_buffer_pools_small = env->small_master;
     GSTATE.masterpool_messages           = env->messages_master;
     GSTATE.mtu_size                      = 1500;
-    tl_wid                               = 0;
+    testWorkerBindWID(0);
 
     /* Bounded flow tables refuse to run without a secure hash seed. */
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
@@ -598,7 +598,7 @@ static void runTimedMessage(uint32_t index)
     require(! message->consumed, "timed message was consumed twice");
     message->consumed = true;
 
-    tl_wid          = message->wid;
+    testWorkerBindWID(message->wid);
     worker_t worker = {.wid = message->wid};
     message->callback(&worker, message->arg1, message->arg2, message->arg3);
 }

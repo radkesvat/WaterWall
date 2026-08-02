@@ -72,7 +72,7 @@ static void envSetup(env_t *env)
     env->wio_pools[0] = env->wio_pool;
 
     GSTATE.shortcut_wios_pools = env->wio_pools;
-    tl_wid                     = 0;
+    testWorkerBindWID(0);
 }
 
 static void envTeardown(env_t *env)

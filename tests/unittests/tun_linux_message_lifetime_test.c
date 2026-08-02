@@ -490,7 +490,7 @@ static void envSetup(test_env_t *env)
     GSTATE.workers_count                 = 2;
     GSTATE.ram_profile                   = 1;
     atomicStoreExplicit(&GSTATE.application_stopping_flag, false, memory_order_release);
-    tl_wid = 0;
+    testWorkerBindWID(0);
 }
 
 static void envTeardown(test_env_t *env)

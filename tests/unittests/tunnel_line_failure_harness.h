@@ -445,6 +445,7 @@ typedef struct twf_worker_env_s
     buffer_pool_t *pool_shortcut[1];
     wloop_t       *loop;
     wloop_t       *loop_shortcut[1];
+    worker_t       worker;
 } twf_worker_env_t;
 
 enum
@@ -465,6 +466,8 @@ static void twfWorkerEnvSetupWithSmallBuffers(twf_worker_env_t *env, uint32_t la
                                               uint32_t small_buffer_size, uint16_t left_padding)
 {
     memoryZero(env, sizeof(*env));
+
+    GSTATE.flag_initialized = true;
 
     // The total includes the additional lwIP thread, so two total workers model one ordinary worker.
     GSTATE.workers_count = 2;
@@ -488,12 +491,34 @@ static void twfWorkerEnvSetupWithSmallBuffers(twf_worker_env_t *env, uint32_t la
     env->loop_shortcut[0] = env->loop;
     GSTATE.shortcut_loops = env->loop_shortcut;
 
+    env->worker    = (worker_t) {.wid = 0, .buffer_pool = env->pool, .loop = env->loop, .has_event_loop = true};
+    GSTATE.workers = &env->worker;
+    testWorkerBindWID(0);
+
     twfBufferLedgerReset();
 }
 
 static void twfWorkerEnvSetup(twf_worker_env_t *env, uint32_t large_buffer_size, uint16_t left_padding)
 {
     twfWorkerEnvSetupWithSmallBuffers(env, large_buffer_size, kTwfDefaultSmallBufferSize, left_padding);
+}
+
+static void twfWorkerEnvTeardown(twf_worker_env_t *env)
+{
+    twfRequireNoLeakedBuffers();
+
+    testWorkerUnbindWID();
+    GSTATE.flag_initialized      = false;
+    GSTATE.workers               = NULL;
+    GSTATE.shortcut_buffer_pools = NULL;
+    GSTATE.shortcut_loops        = NULL;
+
+    wloopDestroy(&env->loop);
+    bufferpoolDestroy(env->pool);
+    masterpoolMakeEmpty(env->large_master);
+    masterpoolMakeEmpty(env->small_master);
+    masterpoolDestroy(env->large_master);
+    masterpoolDestroy(env->small_master);
 }
 
 // ---------------------------------------------------------------------------

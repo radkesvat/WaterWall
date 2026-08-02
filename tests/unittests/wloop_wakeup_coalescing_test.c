@@ -51,12 +51,17 @@ static void envSetup(env_t *env)
     env->wio_pool     = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wio_master, sizeof(wio_t), 64);
     env->wio_pools[0] = env->wio_pool;
 
+    GSTATE.flag_initialized    = true;
+    GSTATE.workers_count       = 2;
     GSTATE.shortcut_wios_pools = env->wio_pools;
-    tl_wid                     = 0;
+    testWorkerBindWID(0);
 }
 
 static void envTeardown(env_t *env)
 {
+    testWorkerUnbindWID();
+    GSTATE.flag_initialized    = false;
+    GSTATE.workers_count       = 0;
     GSTATE.shortcut_wios_pools = NULL;
     threadsafegenericpoolDestroy(env->wio_pool);
     masterpoolMakeEmpty(env->wio_master);
@@ -71,7 +76,7 @@ static WTHREAD_ROUTINE(loopRunnerMain) // NOLINT
 {
     loop_runner_t *runner = userdata;
 
-    tl_wid = 0;
+    testWorkerBindWID(0);
     atomicStoreExplicit(&runner->running, true, memory_order_release);
     runner->result = wloopRun(runner->loop);
     atomicStoreExplicit(&runner->finished, true, memory_order_release);
@@ -481,7 +486,7 @@ static WTHREAD_ROUTINE(producerMain) // NOLINT
 {
     producer_t *producer = userdata;
 
-    tl_wid = 0;
+    testWorkerBindWID(0);
     for (size_t i = 0; i < producer->count; ++i)
     {
         postEvent(producer->delivery->loop, concurrentDeliveryCallback, producer->delivery, producer->begin + i);

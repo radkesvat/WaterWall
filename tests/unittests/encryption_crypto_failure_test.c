@@ -100,7 +100,10 @@ int main(void)
     buffer_pool_t  *pool            = bufferpoolCreate(large_master, small_master, 8, 65536, 1024);
     buffer_pool_t **saved_shortcuts = GSTATE.shortcut_buffer_pools;
     buffer_pool_t  *shortcuts[1]    = {pool};
+    GSTATE.flag_initialized         = true;
+    GSTATE.workers_count            = 2;
     GSTATE.shortcut_buffer_pools    = shortcuts;
+    testWorkerBindWID(0);
 
     encryption_failure_context_t context = {0};
     tunnel_t                    *prev    = tunnelCreate(NULL, sizeof(encryption_failure_context_t *), 0);
@@ -159,6 +162,9 @@ int main(void)
     tunnelDestroy(prev);
     tunnelDestroy(encryption);
     tunnelDestroy(next);
+    testWorkerUnbindWID();
+    GSTATE.flag_initialized      = false;
+    GSTATE.workers_count         = 0;
     GSTATE.shortcut_buffer_pools = saved_shortcuts;
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);

@@ -43,7 +43,7 @@ static void envSetup(test_env_t *env)
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
     GSTATE.masterpool_messages           = env->messages_master;
-    tl_wid                               = 0;
+    testWorkerBindWID(0);
 
     /* Bounded flow tables refuse to run without a secure hash seed. */
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");

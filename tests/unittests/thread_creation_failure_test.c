@@ -33,6 +33,8 @@ static void require(bool condition, const char *message)
 static WTHREAD_ROUTINE(threadCreationSuccessRoutine)
 {
     atomic_bool *ran = userdata;
+    require(getWID() == kInvalidWID, "plain threadCreate thread did not observe kInvalidWID");
+    require(! currentThreadHasRegisteredWID(), "plain threadCreate thread reported registered WID");
     atomic_store(ran, true);
     return 0;
 }
@@ -66,32 +68,50 @@ static void testThreadCreateSuccessStillJoins(void)
 
 static void testWorkerSpawnFailureLeavesThreadInvalid(void)
 {
-    worker_t worker = {.wid = 1};
+    worker_t dummy_workers[2] = {{.wid = 0}, {.wid = 1}};
+    GSTATE.flag_initialized   = true;
+    GSTATE.workers_count      = 2;
+    GSTATE.workers            = dummy_workers;
+
+    worker_t *worker = &dummy_workers[1];
 
     inject_pthread_create_failure = true;
-    wthread_error_t error         = workerSpawn(&worker);
+    wthread_error_t error         = workerSpawn(worker);
     inject_pthread_create_failure = false;
 
     require(error == EAGAIN, "workerSpawn did not return the pthread_create error");
-    require(! worker.thread_valid, "failed workerSpawn published a valid thread");
+    require(! worker->thread_valid, "failed workerSpawn published a valid thread");
+
+    GSTATE.flag_initialized = false;
+    GSTATE.workers_count    = 0;
+    GSTATE.workers          = NULL;
 }
 
 static void testWorkerJoinClearsValidThread(void)
 {
-    worker_t worker = {.wid = 1};
+    worker_t dummy_workers[2] = {{.wid = 0}, {.wid = 1}};
 
-    GSTATE = (ww_global_state_t) {0};
+    GSTATE                  = (ww_global_state_t) {0};
+    GSTATE.flag_initialized = true;
+    GSTATE.workers_count    = 2;
+    GSTATE.workers          = dummy_workers;
+
     atomic_init(&GSTATE.application_stopping_flag, true);
     atomic_init(&GSTATE.workers_run_flag, false);
 
-    wthread_error_t error = workerSpawn(&worker);
-    require(error == kWThreadErrorNone, "workerSpawn success returned an error");
-    require(worker.thread_valid, "workerSpawn success did not publish a valid thread");
+    worker_t *worker = &dummy_workers[1];
 
-    workerJoin(&worker);
-    require(! worker.thread_valid, "workerJoin did not clear thread validity");
+    wthread_error_t error = workerSpawn(worker);
+    require(error == kWThreadErrorNone, "workerSpawn success returned an error");
+    require(worker->thread_valid, "workerSpawn success did not publish a valid thread");
+
+    workerJoin(worker);
+    require(! worker->thread_valid, "workerJoin did not clear thread validity");
 
     atomic_store(&GSTATE.application_stopping_flag, false);
+    GSTATE.flag_initialized = false;
+    GSTATE.workers_count    = 0;
+    GSTATE.workers          = NULL;
 }
 
 int main(void)

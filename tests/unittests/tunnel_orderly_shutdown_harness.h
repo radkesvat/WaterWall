@@ -241,11 +241,13 @@ static void tosWorkerEnvSetup(tos_worker_env_t *env, wid_t count, uint32_t large
         workerMessagesInit(&env->workers[wi]);
     }
 
+    GSTATE.flag_initialized      = true;
     GSTATE.workers               = env->workers;
     GSTATE.workers_count         = (uint32_t) count + 1U; // + the lwIP pseudo-worker
     GSTATE.shortcut_buffer_pools = env->pools;
     GSTATE.shortcut_loops        = env->loops;
     GSTATE.shortcut_wios_pools   = env->wios_pools;
+    testWorkerBindWID(0);
 
     twfRequire(getWorkersCount() == count, "the published worker count is not what getWorkersCount() reports");
 
@@ -261,8 +263,8 @@ static void tosWorkerEnvSetup(tos_worker_env_t *env, wid_t count, uint32_t large
  */
 static wid_t tosSetCurrentWorker(wid_t wid)
 {
-    const wid_t previous = tl_wid;
-    tl_wid               = wid;
+    const wid_t previous = getWID();
+    testWorkerBindWID(wid);
     return previous;
 }
 
@@ -289,6 +291,13 @@ static void tosPumpWorker(tos_worker_env_t *env, wid_t wid)
 
 static void tosWorkerEnvTeardown(tos_worker_env_t *env)
 {
+    testWorkerUnbindWID();
+    GSTATE.flag_initialized      = false;
+    GSTATE.workers               = NULL;
+    GSTATE.shortcut_buffer_pools = NULL;
+    GSTATE.shortcut_loops        = NULL;
+    GSTATE.shortcut_wios_pools   = NULL;
+
     for (wid_t wi = 0; wi < env->count; ++wi)
     {
         workerMessagesDestroy(&env->workers[wi]);

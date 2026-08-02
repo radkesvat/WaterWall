@@ -57,6 +57,7 @@ typedef struct server_lifecycle_fixture_s
     generic_pool_t            *line_pool;
     generic_pool_t            *line_pools[1];
     uint32_t                   line_pool_available;
+    worker_t                   worker;
     server_lifecycle_context_t context;
 } server_lifecycle_fixture_t;
 
@@ -412,14 +413,21 @@ static void serverFixtureAddDestination(server_lifecycle_fixture_t *fixture)
 static void serverFixtureInitialize(server_lifecycle_fixture_t *fixture)
 {
     memoryZero(fixture, sizeof(*fixture));
-    fixture->large_master = masterpoolCreateWithCapacity(8);
-    fixture->small_master = masterpoolCreateWithCapacity(8);
-    fixture->pool         = bufferpoolCreate(fixture->large_master, fixture->small_master, 8, 8192, 1024);
+
+    GSTATE.flag_initialized = true;
+    GSTATE.workers_count    = 2;
+    fixture->large_master   = masterpoolCreateWithCapacity(8);
+    fixture->small_master   = masterpoolCreateWithCapacity(8);
+    fixture->pool           = bufferpoolCreate(fixture->large_master, fixture->small_master, 8, 8192, 1024);
     bufferpoolUpdateAllocationPaddings(
         fixture->pool, kRealityServerMaxFramePrefixSize, kRealityServerMaxFramePrefixSize);
     fixture->saved_shortcuts     = GSTATE.shortcut_buffer_pools;
     fixture->shortcut[0]         = fixture->pool;
     GSTATE.shortcut_buffer_pools = fixture->shortcut;
+
+    fixture->worker = (worker_t) {.wid = 0, .buffer_pool = fixture->pool, .has_event_loop = true};
+    GSTATE.workers  = &fixture->worker;
+    testWorkerBindWID(0);
 
     fixture->prev    = tunnelCreate(NULL, sizeof(server_lifecycle_context_t *), 0);
     fixture->reality = tunnelCreate(NULL, sizeof(realityserver_tstate_t), sizeof(realityserver_lstate_t));
@@ -510,7 +518,12 @@ static void serverFixtureDestroy(server_lifecycle_fixture_t *fixture)
         masterpoolMakeEmpty(fixture->line_master);
         masterpoolDestroy(fixture->line_master);
     }
+
+    testWorkerUnbindWID();
+    GSTATE.flag_initialized      = false;
+    GSTATE.workers               = NULL;
     GSTATE.shortcut_buffer_pools = fixture->saved_shortcuts;
+
     bufferpoolDestroy(fixture->pool);
     masterpoolMakeEmpty(fixture->large_master);
     masterpoolMakeEmpty(fixture->small_master);

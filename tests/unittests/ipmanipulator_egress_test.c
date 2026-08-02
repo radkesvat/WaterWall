@@ -82,7 +82,7 @@ static void envSetup(test_env_t *env)
     GSTATE.workers_count                 = 2;
     env->original_mtu                    = GLOBAL_MTU_SIZE;
     GLOBAL_MTU_SIZE                      = 1500;
-    tl_wid                               = 0;
+    testWorkerBindWID(0);
 
     env->line = memoryAllocateZero(sizeof(line_t));
     require(env->line != NULL, "failed to allocate test line");

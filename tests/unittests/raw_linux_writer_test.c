@@ -184,13 +184,18 @@ static void envSetup(test_env_t *env)
     env->worker_buffer_pool = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
     env->buffer_pools[0]    = env->worker_buffer_pool;
 
+    GSTATE.flag_initialized      = true;
+    GSTATE.workers_count         = 2;
     GSTATE.shortcut_buffer_pools = env->buffer_pools;
     GSTATE.ram_profile           = 1;
-    tl_wid                       = 0;
+    testWorkerBindWID(0);
 }
 
 static void envTeardown(test_env_t *env)
 {
+    testWorkerUnbindWID();
+    GSTATE.flag_initialized      = false;
+    GSTATE.workers_count         = 0;
     GSTATE.shortcut_buffer_pools = NULL;
     bufferpoolDestroy(env->worker_buffer_pool);
     masterpoolMakeEmpty(env->large_master);

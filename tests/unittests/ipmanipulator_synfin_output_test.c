@@ -109,7 +109,7 @@ static void initializeEnvironment(void)
     GSTATE.masterpool_buffer_pools_large = large_master;
     GSTATE.masterpool_buffer_pools_small = small_master;
     GSTATE.workers_count                 = 1;
-    tl_wid                               = 0;
+    testWorkerBindWID(0);
 }
 
 static void destroyEnvironment(void)

@@ -75,14 +75,14 @@ static void workerEnvSetup(tlsclient_test_worker_env_t *env)
     env->buffer_pools[0]         = env->pool;
     GSTATE.shortcut_buffer_pools = env->buffer_pools;
     GSTATE.workers_count         = 2;
-    tl_wid                       = 0;
+    testWorkerBindWID(0);
 }
 
 static void workerEnvTeardown(tlsclient_test_worker_env_t *env)
 {
     GSTATE.shortcut_buffer_pools = env->saved_buffer_pools;
     GSTATE.workers_count         = env->saved_workers_count;
-    tl_wid                       = env->saved_wid;
+    testWorkerBindWID(env->saved_wid);
 
     bufferpoolDestroy(env->pool);
     masterpoolMakeEmpty(env->large_master);
@@ -325,6 +325,31 @@ static bool tlsFlightIsComplete(const sbuf_t *flight)
     return records > 0;
 }
 
+typedef struct aux_thread_args_s
+{
+    SSL_CTX       *ssl_ctx;
+    const uint8_t *alpn_wire;
+    size_t         alpn_wire_len;
+    atomic_bool    success;
+} aux_thread_args_t;
+
+static WTHREAD_ROUTINE(tlsclientAuxiliaryThreadRoutine)
+{
+    aux_thread_args_t *args = userdata;
+
+    require(getWID() == kInvalidWID, "auxiliary thread did not observe kInvalidWID");
+    require(! currentThreadHasRegisteredWID(), "auxiliary thread reported registered WID");
+
+    sbuf_t *hello = (sbuf_t *) (uintptr_t) 0x1;
+    bool    ok    = tlsclientCreateClientHelloFromContext(
+        args->ssl_ctx, "example.com", NULL, 0, args->alpn_wire, args->alpn_wire_len, &hello);
+
+    require(! ok && hello == NULL, "TlsClient helper from unregistered thread did not reject call cleanly");
+
+    atomic_store(&args->success, true);
+    return 0;
+}
+
 static void testGeneratedLargeClientHelloIsComplete(void)
 {
     tlsclient_test_worker_env_t env;
@@ -353,13 +378,27 @@ static void testGeneratedLargeClientHelloIsComplete(void)
 
     bufferpoolReuseBuffer(env.pool, hello);
 
-    hello  = (sbuf_t *) (uintptr_t) 0x1;
-    tl_wid = 1;
+    // Test calling TlsClient helper from a genuine unregistered background thread (getWID() == kInvalidWID)
+    aux_thread_args_t aux_args = {
+        .ssl_ctx       = ssl_ctx,
+        .alpn_wire     = alpn_wire,
+        .alpn_wire_len = kTestLargeAlpnWireSize,
+    };
+    atomic_init(&aux_args.success, false);
+
+    wthread_t       aux_thread;
+    wthread_error_t thread_err = threadCreate(&aux_thread, tlsclientAuxiliaryThreadRoutine, &aux_args);
+    require(thread_err == kWThreadErrorNone, "failed to spawn auxiliary test thread for TlsClient");
+    require(threadJoin(aux_thread) == 0, "failed to join auxiliary test thread for TlsClient");
+    require(atomic_load(&aux_args.success), "auxiliary thread TlsClient rejection test failed");
+
+    hello = (sbuf_t *) (uintptr_t) 0x1;
+    testWorkerBindWID(1);
     require(! tlsclientCreateClientHelloFromContext(
                 ssl_ctx, "example.com", NULL, 0, alpn_wire, kTestLargeAlpnWireSize, &hello) &&
                 hello == NULL,
             "private ClientHello helper mapped an additional thread onto worker 0");
-    tl_wid = 0;
+    testWorkerBindWID(0);
 
     SSL_CTX           *inner_contexts[] = {ssl_ctx};
     tlsclient_tstate_t ts               = {
@@ -456,14 +495,14 @@ static void testTypedClientHelloGeneration(void)
             "typed generation accepted an empty hostname");
 
     line_t additional_thread_line = {.wid = 1};
-    tl_wid                        = 1;
+    testWorkerBindWID(1);
     require(tlsclientTunnelGenerateClientHello(
                 tunnel, &additional_thread_line, hostname, (uint32_t) sizeof(hostname) - 1U) == NULL,
             "typed generation mapped an additional thread onto worker 0");
     require(tlsclientTunnelGenerateClientHello(tunnel, &caller_line, hostname, (uint32_t) sizeof(hostname) - 1U) ==
                 NULL,
             "typed generation accessed another worker's line");
-    tl_wid = 0;
+    testWorkerBindWID(0);
 
     tlsclientTunnelDestroy(tunnel);
     cJSON_Delete(settings);

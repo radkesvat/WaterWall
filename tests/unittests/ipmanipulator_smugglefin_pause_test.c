@@ -251,7 +251,7 @@ static void envSetup(test_env_t *env)
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
     GSTATE.workers_count                 = 3;
-    tl_wid                               = 0;
+    testWorkerBindWID(0);
 
     /* Bounded flow tables refuse to run without a secure hash seed. */
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
@@ -476,7 +476,7 @@ static void runTimedMessage(uint32_t index)
     timed_message_t *message = &timed_messages[index];
     require(! message->consumed, "timed message ran twice");
 
-    tl_wid          = message->wid;
+    testWorkerBindWID(message->wid);
     worker_t worker = {.wid = message->wid};
     message->callback(&worker, message->arg1, message->arg2, message->arg3);
     message->consumed = true;
@@ -488,7 +488,7 @@ static void runImmediateMessage(uint32_t index)
     immediate_message_t *message = &immediate_messages[index];
     require(! message->consumed, "immediate message ran twice");
 
-    tl_wid          = message->wid;
+    testWorkerBindWID(message->wid);
     worker_t worker = {.wid = message->wid};
     message->callback(&worker, message->arg1, message->arg2, message->arg3);
     message->consumed = true;
@@ -671,10 +671,10 @@ static void testCrossWorkerEchoReleasesOwnerFlow(void)
     initializeLine(&echo_line, 1);
 
     resetCounters();
-    tl_wid = 0;
+    testWorkerBindWID(0);
     startPausedFlow(t, &owner_line);
 
-    tl_wid = 1;
+    testWorkerBindWID(1);
     sbuf_t *echo =
         makeTcpPacket(1, 0xC0000201, 443, 0x0A000001, 12345, 200, 110, TCP_FIN | TCP_ACK | TCP_ECE | TCP_CWR, 0);
     require(smugglefintrickDownStreamPayload(t, &echo_line, echo), "ECN-marked expected echo was not consumed");
@@ -703,10 +703,10 @@ static void testCrossWorkerReversePacketQueuesOnOwner(void)
     initializeLine(&foreign_line, 1);
 
     resetCounters();
-    tl_wid = 0;
+    testWorkerBindWID(0);
     startPausedFlow(t, &owner_line);
 
-    tl_wid          = 1;
+    testWorkerBindWID(1);
     sbuf_t *reverse = makeTcpPacket(1, 0xC0000201, 443, 0x0A000001, 12345, 200, 110, TCP_ACK | TCP_PSH, 8);
     lineSetRecalculateChecksum(&foreign_line, true);
     require(smugglefintrickDownStreamPayload(t, &foreign_line, reverse),
@@ -767,7 +767,7 @@ static void testCrossWorkerCompositionRestoresProtocolAndPortghostOnce(void)
 
     for (uint32_t port = 12000; port < 14048; ++port)
     {
-        tl_wid = 0;
+        testWorkerBindWID(0);
         sbuf_t *forward =
             makeTcpPacket(0, 0x0A000001, (uint16_t) port, 0xC0000201, 443, 100, 200, TCP_ACK | TCP_PSH, 10);
         wid_t forward_wid = UINT8_MAX;
@@ -778,7 +778,7 @@ static void testCrossWorkerCompositionRestoresProtocolAndPortghostOnce(void)
         wid_t  candidate_source_wid = (wid_t) (1U - forward_wid);
         line_t candidate_source_line;
         initializeLine(&candidate_source_line, candidate_source_wid);
-        tl_wid = candidate_source_wid;
+        testWorkerBindWID(candidate_source_wid);
 
         sbuf_t *candidate_wire = makeTcpPacket(
             candidate_source_wid, 0xC0000201, 443, 0x0A000001, (uint16_t) port, 200, 110, TCP_ACK | TCP_PSH, 8);
@@ -808,10 +808,10 @@ static void testCrossWorkerCompositionRestoresProtocolAndPortghostOnce(void)
     initializeLine(&source_line, source_wid);
     lineSetRecalculateChecksum(&source_line, true);
 
-    tl_wid = owner_wid;
+    testWorkerBindWID(owner_wid);
     startPausedFlowForTuple(t, &owner_line, 0x0A000001, client_port, 0xC0000201, 443);
 
-    tl_wid = source_wid;
+    testWorkerBindWID(source_wid);
     require(IPH_PROTO((const struct ip_hdr *) sbufGetRawPtr(wire_packet)) != IPPROTO_TCP,
             "composition fixture did not carry a custom protocol");
     require(sbufGetLength(wire_packet) == sizeof(struct ip_hdr) + sizeof(struct tcp_hdr) + 8U + 4U,
@@ -857,10 +857,10 @@ static void testStaleCrossWorkerHandoffFailsOpenAfterSmuggleFin(void)
     initializeLine(&foreign_line, 1);
 
     resetCounters();
-    tl_wid = 0;
+    testWorkerBindWID(0);
     startPausedFlow(t, &owner_line);
 
-    tl_wid          = 1;
+    testWorkerBindWID(1);
     sbuf_t *reverse = makeTcpPacket(1, 0xC0000201, 443, 0x0A000001, 12345, 200, 110, TCP_ACK | TCP_PSH, 8);
     require(smugglefintrickDownStreamPayload(t, &foreign_line, reverse),
             "stale-handoff fixture did not schedule a reverse packet");
@@ -903,10 +903,10 @@ static void testRejectedCrossWorkerHandoffLeavesPacketWithCaller(void)
     initializeLine(&foreign_line, 1);
 
     resetCounters();
-    tl_wid = 0;
+    testWorkerBindWID(0);
     startPausedFlow(t, &owner_line);
 
-    tl_wid                    = 1;
+    testWorkerBindWID(1);
     reject_immediate_messages = true;
     sbuf_t *reverse           = makeTcpPacket(1, 0xC0000201, 443, 0x0A000001, 12345, 200, 110, TCP_ACK | TCP_PSH, 8);
     lineSetRecalculateChecksum(&foreign_line, true);
@@ -937,10 +937,10 @@ static void testCancelledCrossWorkerHandoffReleasesOwnerReference(void)
     initializeLine(&foreign_line, 1);
 
     resetCounters();
-    tl_wid = 0;
+    testWorkerBindWID(0);
     startPausedFlow(t, &owner_line);
 
-    tl_wid          = 1;
+    testWorkerBindWID(1);
     sbuf_t *reverse = makeTcpPacket(1, 0xC0000201, 443, 0x0A000001, 12345, 200, 110, TCP_ACK | TCP_PSH, 8);
     require(smugglefintrickDownStreamPayload(t, &foreign_line, reverse),
             "cancellation fixture did not schedule a handoff");

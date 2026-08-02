@@ -431,6 +431,18 @@ set_tests_properties(
     TIMEOUT 30
     LABELS "unit;tunnels;ipmanipulator;policy;nonblocking"
 )
+add_test(
+  NAME waterwall.worker_identity_source_policy_test
+  COMMAND
+    "${PYTHON3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/worker_identity_source_policy_test.py"
+)
+set_tests_properties(
+  waterwall.worker_identity_source_policy_test
+  PROPERTIES
+    TIMEOUT 30
+    LABELS "unit;worker;identity;policy"
+)
 add_waterwall_integration_test(waterwall.connection_fisher_roundtrip connection_fisher_roundtrip)
 add_waterwall_integration_test(waterwall.connection_fisher_encryption_roundtrip connection_fisher_encryption_roundtrip)
 add_waterwall_integration_test(waterwall.sniffrouter_non_http_tcp_loopback sniffrouter_non_http_tcp_loopback)

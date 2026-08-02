@@ -44,12 +44,17 @@ static void envSetup(env_t *env)
     env->wio_pool     = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wio_master, sizeof(wio_t), 64);
     env->wio_pools[0] = env->wio_pool;
 
+    GSTATE.flag_initialized    = true;
+    GSTATE.workers_count       = 2;
     GSTATE.shortcut_wios_pools = env->wio_pools;
-    tl_wid                     = 0;
+    testWorkerBindWID(0);
 }
 
 static void envTeardown(env_t *env)
 {
+    testWorkerUnbindWID();
+    GSTATE.flag_initialized    = false;
+    GSTATE.workers_count       = 0;
     GSTATE.shortcut_wios_pools = NULL;
     threadsafegenericpoolDestroy(env->wio_pool);
     masterpoolMakeEmpty(env->wio_master);
@@ -76,7 +81,7 @@ static WTHREAD_ROUTINE(loopRunnerMain) // NOLINT
 {
     loop_runner_t *runner = userdata;
 
-    tl_wid = 0;
+    testWorkerBindWID(0);
     atomicStoreExplicit(&runner->running, true, memory_order_release);
     while (runner->wait_for_start_gate && ! atomicLoadExplicit(&runner->start_gate, memory_order_acquire))
     {
@@ -229,7 +234,7 @@ static WTHREAD_ROUTINE(stopRequesterMain) // NOLINT
 {
     stop_requester_t *requester = userdata;
 
-    tl_wid = 0;
+    testWorkerBindWID(0);
     for (size_t i = 0; i < STOPS_PER_THREAD; ++i)
     {
         require(wloopRequestStop(requester->loop), "a concurrent repeated stop request failed");
@@ -292,7 +297,7 @@ static WTHREAD_ROUTINE(startupRequesterMain) // NOLINT
 {
     startup_requester_t *requester = userdata;
 
-    tl_wid = 0;
+    testWorkerBindWID(0);
     atomicStoreExplicit(&requester->ready, true, memory_order_release);
     while (! atomicLoadExplicit(requester->start_gate, memory_order_acquire))
     {
