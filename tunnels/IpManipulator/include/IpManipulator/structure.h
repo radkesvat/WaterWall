@@ -3,6 +3,7 @@
 #include "wwapi.h"
 
 #include "flow_table.h"
+#include "ipv4_packet_view.h"
 
 enum tcp_bit_action_dynamic_value
 {
@@ -29,17 +30,7 @@ enum tcp_bit_action_dynamic_value
  */
 static inline bool ipmanipulatorIsFlowOpeningSyn(uint8_t tcp_flags, uint32_t tcp_payload_len)
 {
-    if (tcp_payload_len != 0)
-    {
-        return false;
-    }
-
-    if ((tcp_flags & TCP_SYN) == 0)
-    {
-        return false;
-    }
-
-    return (tcp_flags & (uint8_t) ~(TCP_SYN | TCP_ECE | TCP_CWR)) == 0;
+    return ipv4packetviewTcpFlagsAreOpeningSyn(tcp_flags, tcp_payload_len);
 }
 
 typedef struct sni_match_s
@@ -80,9 +71,12 @@ typedef enum ipmanipulator_tls_capture_status_e
 
 enum
 {
+    kSniBlenderTrickMinPacketsCount        = 2,
     kSniBlenderTrickMaxPacketsCount        = 16,
     kIpManipulatorTlsCaptureSlotsPerWorker = 16,
     kIpManipulatorTlsCaptureMaxPackets     = 16,
+    kIpManipulatorDelayBarrierMaxPackets   = 16,
+    kIpManipulatorDelayBarrierMaxBytes     = 256U * 1024U,
 
     /*
      * A TLS host_name is carried in a 16-bit vector on the wire, but the paired
@@ -106,7 +100,20 @@ typedef enum ipmanipulator_config_validation_e
      * preserve-tcp-bitflags appends a metadata byte upstream; SNI Blender then
      * fragments the packet and the peer restoration path skips fragments.
      */
-    kIpManipulatorConfigRejectPreservedTcpBitWithSniBlender
+    kIpManipulatorConfigRejectPreservedTcpBitWithSniBlender,
+    /*
+     * Two stateful SNI state machines in one instance would each try to own the
+     * same flow's ClientHello and emit their own transcript for it.
+     */
+    kIpManipulatorConfigRejectMultipleStatefulSni,
+    /*
+     * A stateful SNI trick emits its crafted packets through the direct egress
+     * helper, so they never reach a later SNI Blender stage of the same
+     * instance. Chain a second IpManipulator node instead.
+     */
+    kIpManipulatorConfigRejectSniBlenderWithStatefulSni,
+    /* Same reasoning as above for the final packet-duplication stage. */
+    kIpManipulatorConfigRejectPacketDuplicateWithStatefulSni
 } ipmanipulator_config_validation_e;
 
 typedef struct ipmanipulator_captured_packet_s
@@ -114,6 +121,55 @@ typedef struct ipmanipulator_captured_packet_s
     line_t *line;
     sbuf_t *buf;
 } ipmanipulator_captured_packet_t;
+
+typedef enum ipmanipulator_delay_barrier_kind_e
+{
+    kIpManipulatorDelayBarrierFirstSni = 0,
+    kIpManipulatorDelayBarrierSmuggleSni,
+    kIpManipulatorDelayBarrierOverlapSni
+} ipmanipulator_delay_barrier_kind_e;
+
+/*
+ * One transcript output owned by the per-flow ordered delay scheduler. The
+ * scheduler retains the line and invokes send only after due_ms. Entries must
+ * be installed in their logical wire order with nondecreasing deadlines.
+ */
+typedef struct ipmanipulator_ordered_output_s
+{
+    line_t           *line;
+    sbuf_t           *buf;
+    LineTaskFnWithBuf send;
+    uint64_t          due_ms;
+} ipmanipulator_ordered_output_t;
+
+/*
+ * A fixed-size per-flow FIFO used only while a stateful SNI transcript has
+ * delayed output pending. Each retained line is locked until its packet is
+ * forwarded or recycled, so a normal-line test fixture is as safe as the
+ * persistent worker packet line used in production.
+ */
+typedef struct ipmanipulator_delay_barrier_s
+{
+    uint64_t                        generation;
+    uint64_t                        deadline_ms;
+    uint32_t                        retained_bytes;
+    uint8_t                         count;
+    bool                            timer_armed;
+    bool                            remove_after_release;
+    ipmanipulator_ordered_output_t *ordered_outputs;
+    uint32_t                        ordered_outputs_count;
+    uint32_t                        next_ordered_output;
+    ipmanipulator_captured_packet_t packets[kIpManipulatorDelayBarrierMaxPackets];
+} ipmanipulator_delay_barrier_t;
+
+typedef struct ipmanipulator_delay_batch_s
+{
+    uint8_t                         count;
+    ipmanipulator_ordered_output_t *ordered_outputs;
+    uint32_t                        ordered_outputs_count;
+    uint32_t                        next_ordered_output;
+    ipmanipulator_captured_packet_t packets[kIpManipulatorDelayBarrierMaxPackets];
+} ipmanipulator_delay_batch_t;
 
 typedef struct ipmanipulator_tls_capture_timeout_msg_s
 {
@@ -188,17 +244,19 @@ typedef struct ipmanipulator_smuggle_flow_s
     uint16_t                           dst_port;
     uint8_t                            warmup_packets_seen;
     ipmanipulator_smuggle_flow_phase_e phase;
+    ipmanipulator_delay_barrier_t      delay_barrier;
 } ipmanipulator_smuggle_flow_t;
 
 typedef struct ipmanipulator_firstsni_flow_s
 {
-    uint64_t created_ms;
-    uint64_t last_activity_ms;
-    uint64_t delay_window_until_ms;
-    uint32_t src_addr;
-    uint32_t dst_addr;
-    uint16_t src_port;
-    uint16_t dst_port;
+    uint64_t                      created_ms;
+    uint64_t                      last_activity_ms;
+    uint64_t                      delay_window_until_ms;
+    uint32_t                      src_addr;
+    uint32_t                      dst_addr;
+    uint16_t                      src_port;
+    uint16_t                      dst_port;
+    ipmanipulator_delay_barrier_t delay_barrier;
 } ipmanipulator_firstsni_flow_t;
 
 typedef enum ipmanipulator_overlap_flow_phase_e
@@ -226,6 +284,7 @@ typedef struct ipmanipulator_overlap_flow_s
     bool                               ignore_expected_downstream_packet;
     ipmanipulator_captured_packet_t    held_packet;
     sbuf_t                            *synack_packet;
+    ipmanipulator_delay_barrier_t      delay_barrier;
 } ipmanipulator_overlap_flow_t;
 
 typedef enum ipmanipulator_synfin_flow_phase_e
@@ -348,11 +407,9 @@ typedef struct ipmanipulator_tstate_s
     uint64_t trick_source_port_ghost : 1;
     uint64_t trick_dest_port_ghost : 1;
 
-    int         trick_proto_swap_tcp_number;
-    int         trick_proto_swap_tcp_number_2;
-    atomic_uint trick_proto_swap_tcp_toggle_up;
-    atomic_uint trick_proto_swap_tcp_toggle_down;
-
+    /* TCP has exactly one reversible replacement number, so every fragment of
+     * one datagram is mapped identically and the downstream restore is exact. */
+    int trick_proto_swap_tcp_number;
     int trick_proto_swap_udp_number;
 
     int trick_sni_blender_packets_count;
@@ -426,6 +483,8 @@ typedef struct ipmanipulator_tstate_s
 
     ipmanipulator_flow_table_t echsni_table;
     atomic_ullong              echsni_next_generation;
+    atomic_ullong              delay_barrier_next_generation;
+    atomic_ullong              egress_last_warning_ms;
 
     ipmanipulator_flow_table_t                smuggle_fin_table;
     atomic_uint                               smuggle_fin_next_pause_generation;
@@ -490,12 +549,32 @@ void ipmanipulatorDownStreamResume(tunnel_t *t, line_t *l);
 void ipmanipulatorLinestateInitialize(ipmanipulator_lstate_t *ls);
 void ipmanipulatorLinestateDestroy(ipmanipulator_lstate_t *ls);
 
-void     ipmanipulatorSendUpstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf);
-void     ipmanipulatorSendDownstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf);
-void     ipmanipulatorEmitUpstream(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward);
-void     ipmanipulatorEmitUpstreamPreservingTuple(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward);
-bool     ipmanipulatorSendWithForwardMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward);
-bool     ipmanipulatorSendUpstreamMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *buf);
+void ipmanipulatorSendUpstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf);
+void ipmanipulatorSendDownstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf);
+void ipmanipulatorEmitUpstream(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward);
+void ipmanipulatorEmitUpstreamPreservingTuple(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward);
+bool ipmanipulatorSendWithForwardMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward);
+bool ipmanipulatorSendUpstreamMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *buf);
+void ipmanipulatorDelayBarrierInitialize(ipmanipulator_tstate_t *state, ipmanipulator_delay_barrier_t *barrier,
+                                         uint64_t deadline_ms);
+void ipmanipulatorDelayBarrierDestroy(ipmanipulator_delay_barrier_t *barrier);
+bool ipmanipulatorDelayBarrierTryEnqueue(ipmanipulator_delay_barrier_t *barrier, line_t *l, sbuf_t *buf,
+                                         bool remove_after_release, bool *needs_schedule);
+bool ipmanipulatorDelayBarrierInstallOrdered(ipmanipulator_delay_barrier_t  *barrier,
+                                             ipmanipulator_ordered_output_t *outputs, uint32_t count,
+                                             bool *needs_schedule);
+bool ipmanipulatorDelayBarrierHasPendingOrdered(const ipmanipulator_delay_barrier_t *barrier);
+void ipmanipulatorDelayBarrierTake(ipmanipulator_delay_barrier_t *barrier, ipmanipulator_delay_batch_t *batch);
+void ipmanipulatorDelayBarrierSchedule(tunnel_t *t, const ipmanipulator_flow_key_t *key,
+                                       ipmanipulator_delay_barrier_kind_e kind, uint64_t generation, wid_t wid,
+                                       uint32_t delay_ms);
+bool ipmanipulatorDelayBatchSendUpstream(tunnel_t *t, ipmanipulator_delay_batch_t *batch);
+bool ipmanipulatorShouldLogEgressWarning(ipmanipulator_tstate_t *state);
+#ifdef IPMANIPULATOR_DELAY_BARRIER_TEST_HOOKS
+void ipmanipulatorDelayBarrierTestSetNow(uint64_t now_ms);
+void ipmanipulatorDelayBarrierTestFire(tunnel_t *t, const ipmanipulator_flow_key_t *key,
+                                       ipmanipulator_delay_barrier_kind_e kind, uint64_t generation);
+#endif
 uint8_t  ipmanipulatorResolveTransportProtocol(const ipmanipulator_tstate_t *state, uint8_t packet_protocol);
 uint32_t portghosttrickGetTailLength(const ipmanipulator_tstate_t *state);
 bool     portghosttrickApply(tunnel_t *t, line_t *l, sbuf_t **buf_ptr);
@@ -504,7 +583,7 @@ bool     portghosttrickRestore(tunnel_t *t, line_t *l, sbuf_t **buf_ptr);
 sbuf_t *clonePacketWithLength(line_t *l, sbuf_t *buf, uint32_t new_len);
 bool    parseTlsRecordSni(const uint8_t *tls, uint32_t tls_len, sni_match_t *match);
 bool    parseClientHelloSni(const uint8_t *packet, uint32_t packet_length, sni_match_t *match);
-sbuf_t *smugglesnitrickGenerateTlsClientHello(tunnel_t *t);
+sbuf_t *smugglesnitrickGenerateTlsClientHello(tunnel_t *t, line_t *l);
 ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(tunnel_t *t, line_t *l, sbuf_t *buf,
                                                                       ipmanipulator_tls_capture_kind_e  kind,
                                                                       ipmanipulator_tls_capture_slot_t *out_slot);

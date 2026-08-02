@@ -28,6 +28,9 @@ static void firstsnitrickInitializeFlow(ipmanipulator_firstsni_flow_t         *f
         return;
     }
 
+    ipmanipulatorDelayBarrierDestroy(&flow->delay_barrier);
+    uint64_t barrier_generation = flow->delay_barrier.generation;
+
     *flow = (ipmanipulator_firstsni_flow_t) {
         .created_ms            = now_ms,
         .last_activity_ms      = now_ms,
@@ -37,70 +40,28 @@ static void firstsnitrickInitializeFlow(ipmanipulator_firstsni_flow_t         *f
         .src_port              = info->src_port,
         .dst_port              = info->dst_port,
     };
+    flow->delay_barrier.generation = barrier_generation;
 }
 
 static bool firstsnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t packet_length,
                                             firstsnitrick_tcp_packet_info_t *info)
 {
-    if (packet == NULL || info == NULL || packet_length < sizeof(struct ip_hdr))
-    {
-        return false;
-    }
-
-    const struct ip_hdr *ipheader = (const struct ip_hdr *) packet;
-    if (IPH_V(ipheader) != 4 || IPH_PROTO(ipheader) != IPPROTO_TCP)
-    {
-        return false;
-    }
-
-    uint8_t ip_header_len_words = IPH_HL(ipheader);
-    if (ip_header_len_words < 5 || ip_header_len_words > 15)
-    {
-        return false;
-    }
-
-    uint16_t ip_header_len = (uint16_t) (ip_header_len_words * 4U);
-    if (packet_length < ip_header_len + sizeof(struct tcp_hdr))
-    {
-        return false;
-    }
-
-    uint16_t ip_total_len = lwip_ntohs(IPH_LEN(ipheader));
-    if (ip_total_len < ip_header_len + sizeof(struct tcp_hdr) || packet_length < ip_total_len)
-    {
-        return false;
-    }
-
-    uint16_t off_f = lwip_ntohs(IPH_OFFSET(ipheader));
-    if ((off_f & (IP_MF | IP_OFFMASK)) != 0)
-    {
-        return false;
-    }
-
-    const struct tcp_hdr *tcp_header       = (const struct tcp_hdr *) (packet + ip_header_len);
-    uint8_t               tcp_header_words = TCPH_HDRLEN(tcp_header);
-    if (tcp_header_words < 5 || tcp_header_words > 15)
-    {
-        return false;
-    }
-
-    uint16_t tcp_header_len = (uint16_t) (tcp_header_words * 4U);
-    uint16_t headers_len    = (uint16_t) (ip_header_len + tcp_header_len);
-    if (ip_total_len < headers_len)
+    ipv4_packet_view_t packet_view = {0};
+    if (info == NULL || ! ipv4packetviewParseTcp(packet, packet_length, &packet_view) || packet_view.fragmented)
     {
         return false;
     }
 
     *info = (firstsnitrick_tcp_packet_info_t) {
-        .src_addr        = ipheader->src.addr,
-        .dst_addr        = ipheader->dest.addr,
-        .seq             = lwip_ntohl(tcp_header->seqno),
-        .ip_total_len    = ip_total_len,
-        .src_port        = lwip_ntohs(tcp_header->src),
-        .dst_port        = lwip_ntohs(tcp_header->dest),
-        .tcp_payload_len = (uint16_t) (ip_total_len - headers_len),
-        .tcp_flags       = TCPH_FLAGS(tcp_header),
-        .ttl             = ipheader->_ttl,
+        .src_addr        = packet_view.source_address,
+        .dst_addr        = packet_view.destination_address,
+        .seq             = packet_view.tcp_sequence,
+        .ip_total_len    = packet_view.ip_total_length,
+        .src_port        = packet_view.source_port,
+        .dst_port        = packet_view.destination_port,
+        .tcp_payload_len = packet_view.payload_length,
+        .tcp_flags       = packet_view.tcp_flags,
+        .ttl             = packet_view.ttl,
     };
 
     return true;
@@ -185,19 +146,90 @@ static uint32_t firstsnitrickGetTailDelayMs(const ipmanipulator_tstate_t *state)
     return (uint32_t) (replay_span_ms + (uint64_t) state->trick_first_sni_final_delay_ms);
 }
 
-static void firstsnitrickArmDelayWindow(tunnel_t *t, sbuf_t *buf, uint64_t now_ms)
+static void firstsnitrickSendPreparedBatchNow(tunnel_t *t, line_t *l, sbuf_t **packets, uint8_t count)
 {
-    ipmanipulator_tstate_t         *state         = tunnelGetState(t);
-    firstsnitrick_tcp_packet_info_t info          = {0};
-    uint32_t                        tail_delay_ms = firstsnitrickGetTailDelayMs(state);
-
-    if (tail_delay_ms == 0 || ! ipmanipulatorFlowTableIsReady(&state->first_sni_table) || buf == NULL)
+    if (! lineIsAlive(l))
     {
+        for (uint8_t i = 0; i < count; ++i)
+        {
+            if (packets[i] != NULL)
+            {
+                lineReuseBuffer(l, packets[i]);
+                packets[i] = NULL;
+            }
+        }
         return;
     }
 
-    if (! firstsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
+    lineLock(l);
+
+    bool alive = lineIsAlive(l);
+    for (uint8_t i = 0; i < count; ++i)
     {
+        if (packets[i] == NULL)
+        {
+            continue;
+        }
+
+        if (alive)
+        {
+            alive = ipmanipulatorSendUpstreamMaybeSegmented(t, l, packets[i]);
+        }
+        else
+        {
+            lineReuseBuffer(l, packets[i]);
+        }
+        packets[i] = NULL;
+    }
+
+    lineUnlock(l);
+}
+
+static void firstsnitrickSendOrderedNow(tunnel_t *t, ipmanipulator_ordered_output_t *outputs, uint32_t count)
+{
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        ipmanipulator_ordered_output_t *output = &outputs[i];
+
+        if (output->line == NULL || output->buf == NULL)
+        {
+            continue;
+        }
+
+        lineLock(output->line);
+        if (lineIsAlive(output->line))
+        {
+            output->send(t, output->line, output->buf);
+        }
+        else
+        {
+            lineReuseBuffer(output->line, output->buf);
+        }
+        lineUnlock(output->line);
+        output->line = NULL;
+        output->buf  = NULL;
+    }
+}
+
+/*
+ * Installs the transcript tail as the first FIFO entries. Later flow packets
+ * therefore cannot overtake the delayed original ClientHello even when a fake
+ * scheduler executes equal-deadline timers in reverse insertion order.
+ */
+static void firstsnitrickStartDelayBarrier(tunnel_t *t, line_t *l, sbuf_t **packets, uint8_t count,
+                                           ipmanipulator_ordered_output_t *ordered_outputs,
+                                           uint32_t ordered_outputs_count, uint64_t deadline_ms, uint64_t now_ms)
+{
+    ipmanipulator_tstate_t         *state = tunnelGetState(t);
+    firstsnitrick_tcp_packet_info_t info  = {0};
+
+    if (count == 0 || packets == NULL || packets[count - 1U] == NULL ||
+        ! ipmanipulatorFlowTableIsReady(&state->first_sni_table) ||
+        ! firstsnitrickParseTcpPacketInfo(
+            (const uint8_t *) sbufGetRawPtr(packets[count - 1U]), sbufGetLength(packets[count - 1U]), &info))
+    {
+        firstsnitrickSendOrderedNow(t, ordered_outputs, ordered_outputs_count);
+        firstsnitrickSendPreparedBatchNow(t, l, packets, count);
         return;
     }
 
@@ -206,6 +238,8 @@ static void firstsnitrickArmDelayWindow(tunnel_t *t, sbuf_t *buf, uint64_t now_m
 
     if (shard == NULL)
     {
+        firstsnitrickSendOrderedNow(t, ordered_outputs, ordered_outputs_count);
+        firstsnitrickSendPreparedBatchNow(t, l, packets, count);
         return;
     }
 
@@ -219,17 +253,78 @@ static void firstsnitrickArmDelayWindow(tunnel_t *t, sbuf_t *buf, uint64_t now_m
     {
         ipmanipulator_firstsni_flow_t *flow = firstsnitrickEntryRecord(entry);
 
-        flow->delay_window_until_ms = now_ms + tail_delay_ms;
+        flow->delay_window_until_ms = deadline_ms;
+        ipmanipulatorDelayBarrierInitialize(state, &flow->delay_barrier, deadline_ms);
+
+        bool     needs_schedule  = false;
+        bool     ordered_ok      = ordered_outputs_count == 0;
+        uint64_t first_action_ms = deadline_ms;
+
+        if (ordered_outputs_count > 0)
+        {
+            first_action_ms = ordered_outputs[0].due_ms;
+            ordered_ok      = ipmanipulatorDelayBarrierInstallOrdered(
+                &flow->delay_barrier, ordered_outputs, ordered_outputs_count, &needs_schedule);
+        }
+
+        if (! ordered_ok)
+        {
+            flow->delay_window_until_ms = 0;
+            ipmanipulatorDelayBarrierDestroy(&flow->delay_barrier);
+            ipmanipulatorFlowShardUnlock(shard);
+            firstsnitrickSendOrderedNow(t, ordered_outputs, ordered_outputs_count);
+            firstsnitrickSendPreparedBatchNow(t, l, packets, count);
+            return;
+        }
+
+        bool enqueue_ok = true;
+        for (uint8_t i = 0; i < count; ++i)
+        {
+            bool packet_needs_schedule = false;
+            if (! ipmanipulatorDelayBarrierTryEnqueue(
+                    &flow->delay_barrier, l, packets[i], false, &packet_needs_schedule))
+            {
+                enqueue_ok = false;
+                break;
+            }
+            packets[i] = NULL;
+            needs_schedule |= packet_needs_schedule;
+        }
+
+        if (! enqueue_ok)
+        {
+            ipmanipulator_delay_batch_t release_batch = {0};
+            ipmanipulatorDelayBarrierTake(&flow->delay_barrier, &release_batch);
+            flow->delay_window_until_ms = 0;
+            ipmanipulatorFlowShardUnlock(shard);
+            discard ipmanipulatorDelayBatchSendUpstream(t, &release_batch);
+            firstsnitrickSendPreparedBatchNow(t, l, packets, count);
+            return;
+        }
+
+        uint64_t generation = flow->delay_barrier.generation;
         firstsnitrickTouchLocked(shard, entry, flow, now_ms);
+        ipmanipulatorFlowShardUnlock(shard);
+
+        if (needs_schedule)
+        {
+            uint64_t remaining = first_action_ms > now_ms ? first_action_ms - now_ms : 0;
+            ipmanipulatorDelayBarrierSchedule(t,
+                                              &key,
+                                              kIpManipulatorDelayBarrierFirstSni,
+                                              generation,
+                                              lineGetWID(l),
+                                              remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining);
+        }
+        return;
     }
 
     ipmanipulatorFlowShardUnlock(shard);
 
-    if (entry == NULL)
-    {
-        LOGW("IpManipulator: first-sni could not admit a flow record for delayed replay handling; the packet is "
-             "forwarded without the replay delay window");
-    }
+    LOGW("IpManipulator: first-sni could not admit a flow record for delayed replay handling; the transcript tail "
+         "is forwarded immediately");
+    firstsnitrickSendOrderedNow(t, ordered_outputs, ordered_outputs_count);
+    firstsnitrickSendPreparedBatchNow(t, l, packets, count);
 }
 
 static bool setTcpSequenceRandom(uint8_t *packet, uint32_t packet_length)
@@ -464,8 +559,14 @@ static void firstsnitrickSendOriginalPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 static bool firstsnitrickMaybeDelayFlowPacket(tunnel_t *t, line_t *l, sbuf_t *buf,
                                               const firstsnitrick_tcp_packet_info_t *info, uint64_t now_ms)
 {
-    ipmanipulator_tstate_t *state         = tunnelGetState(t);
-    uint32_t                tail_delay_ms = firstsnitrickGetTailDelayMs(state);
+    ipmanipulator_tstate_t     *state                    = tunnelGetState(t);
+    uint32_t                    tail_delay_ms            = firstsnitrickGetTailDelayMs(state);
+    ipmanipulator_delay_batch_t release_batch            = {0};
+    bool                        queued                   = false;
+    bool                        needs_schedule           = false;
+    bool                        send_current_after_batch = false;
+    uint64_t                    generation               = 0;
+    uint64_t                    deadline_ms              = 0;
 
     if (! ipmanipulatorFlowTableIsReady(&state->first_sni_table) || tail_delay_ms == 0 || info == NULL)
     {
@@ -502,7 +603,35 @@ static bool firstsnitrickMaybeDelayFlowPacket(tunnel_t *t, line_t *l, sbuf_t *bu
         ipmanipulator_firstsni_flow_t *flow = firstsnitrickEntryRecord(entry);
 
         firstsnitrickTouchLocked(shard, entry, flow, now_ms);
-        delay_active = now_ms < flow->delay_window_until_ms;
+        bool transcript_pending = ipmanipulatorDelayBarrierHasPendingOrdered(&flow->delay_barrier);
+        delay_active = now_ms < flow->delay_window_until_ms || flow->delay_barrier.count > 0 || transcript_pending;
+
+        if (delay_active && ! transcript_pending && now_ms >= flow->delay_window_until_ms &&
+            flow->delay_barrier.count > 0)
+        {
+            ipmanipulatorDelayBarrierTake(&flow->delay_barrier, &release_batch);
+            flow->delay_window_until_ms = 0;
+            delay_active                = false;
+            send_current_after_batch    = true;
+        }
+        else if (delay_active)
+        {
+            queued = ipmanipulatorDelayBarrierTryEnqueue(
+                &flow->delay_barrier, l, buf, firstsnitrickHasFinOrRst(info), &needs_schedule);
+            if (queued)
+            {
+                generation  = flow->delay_barrier.generation;
+                deadline_ms = flow->delay_barrier.deadline_ms;
+            }
+            else
+            {
+                /* Bounded fail-open: older packets leave before the current one. */
+                ipmanipulatorDelayBarrierTake(&flow->delay_barrier, &release_batch);
+                flow->delay_window_until_ms = 0;
+                delay_active                = false;
+                send_current_after_batch    = true;
+            }
+        }
 
         if (! delay_active && firstsnitrickHasFinOrRst(info))
         {
@@ -512,50 +641,40 @@ static bool firstsnitrickMaybeDelayFlowPacket(tunnel_t *t, line_t *l, sbuf_t *bu
 
     ipmanipulatorFlowShardUnlock(shard);
 
-    if (! delay_active)
+    if (needs_schedule)
+    {
+        uint64_t remaining = deadline_ms > now_ms ? deadline_ms - now_ms : 0;
+        ipmanipulatorDelayBarrierSchedule(t,
+                                          &key,
+                                          kIpManipulatorDelayBarrierFirstSni,
+                                          generation,
+                                          lineGetWID(l),
+                                          remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining);
+    }
+
+    if (send_current_after_batch)
+    {
+        bool alive = ipmanipulatorDelayBatchSendUpstream(t, &release_batch);
+        if (alive && lineIsAlive(l))
+        {
+            firstsnitrickSendOriginalPacket(t, l, buf);
+        }
+        else
+        {
+            lineReuseBuffer(l, buf);
+        }
+        return true;
+    }
+
+    if (! delay_active || ! queued)
     {
         return false;
     }
 
-    LOGD("IpManipulator: first-sni delaying flow packet payload=%u for %u ms while replay/final-delay window is active",
+    LOGD("IpManipulator: first-sni queued flow packet payload=%u until absolute replay/final-delay deadline %llu",
          (unsigned int) info->tcp_payload_len,
-         tail_delay_ms);
-    lineScheduleDelayedTaskWithBuf(l, firstsnitrickSendOriginalPacket, tail_delay_ms, t, buf);
+         (unsigned long long) deadline_ms);
     return true;
-}
-
-static void firstsnitrickSendLastCraftedThenOriginal(tunnel_t *t, line_t *l, sbuf_t *buf)
-{
-    ipmanipulator_tstate_t *state = tunnelGetState(t);
-    sni_match_t             match = {0};
-
-    if (parseClientHelloSni((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &match))
-    {
-        sbuf_t *fake_packet = craftFirstSniPacket(t, l, buf, &match);
-        if (fake_packet != NULL)
-        {
-            firstsnitrickSendCraftedPacket(t, l, fake_packet);
-
-            if (! lineIsAlive(l))
-            {
-                reuseBuffer(buf);
-                return;
-            }
-        }
-        else
-        {
-            LOGD("IpManipulator: first-sni could not craft the last replay packet; forwarding original ClientHello");
-        }
-    }
-
-    if (state->trick_first_sni_final_delay_ms > 0)
-    {
-        lineScheduleDelayedTaskWithBuf(
-            l, firstsnitrickSendOriginalPacket, state->trick_first_sni_final_delay_ms, t, buf);
-        return;
-    }
-
-    firstsnitrickSendOriginalPacket(t, l, buf);
 }
 
 static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, uint64_t now_ms)
@@ -600,12 +719,9 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
     {
         if (state->trick_first_sni_final_delay_ms > 0)
         {
-            lineScheduleDelayedTaskWithBuf(
-                l, firstsnitrickSendOriginalPacket, state->trick_first_sni_final_delay_ms, t, buf);
-            if (tail_delay_ms > 0)
-            {
-                firstsnitrickArmDelayWindow(t, buf, now_ms);
-            }
+            sbuf_t *barrier_packets[] = {buf};
+            firstsnitrickStartDelayBarrier(
+                t, l, barrier_packets, 1, NULL, 0, now_ms + state->trick_first_sni_final_delay_ms, now_ms);
             lineUnlock(l);
             return true;
         }
@@ -636,12 +752,9 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
 
         if (state->trick_first_sni_final_delay_ms > 0)
         {
-            lineScheduleDelayedTaskWithBuf(
-                l, firstsnitrickSendOriginalPacket, state->trick_first_sni_final_delay_ms, t, buf);
-            if (tail_delay_ms > 0)
-            {
-                firstsnitrickArmDelayWindow(t, buf, now_ms);
-            }
+            sbuf_t *barrier_packets[] = {buf};
+            firstsnitrickStartDelayBarrier(
+                t, l, barrier_packets, 1, NULL, 0, now_ms + state->trick_first_sni_final_delay_ms, now_ms);
             lineUnlock(l);
             return true;
         }
@@ -651,7 +764,11 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
         return true;
     }
 
-    for (uint32_t replay_index = 1; replay_index + 1 < state->trick_first_sni_count; ++replay_index)
+    uint32_t                        ordered_capacity = state->trick_first_sni_count - 1U;
+    ipmanipulator_ordered_output_t *ordered_outputs  = memoryAllocateZero(sizeof(*ordered_outputs) * ordered_capacity);
+    uint32_t                        ordered_count    = 0;
+
+    for (uint32_t replay_index = 1; replay_index < state->trick_first_sni_count; ++replay_index)
     {
         sbuf_t *scheduled_packet = craftFirstSniPacket(t, l, buf, &match);
         if (scheduled_packet == NULL)
@@ -659,19 +776,20 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
             break;
         }
 
-        uint32_t delay_ms = replay_index * state->trick_first_sni_replay_delay_ms;
-        lineScheduleDelayedTaskWithBuf(l, firstsnitrickSendCraftedPacket, delay_ms, t, scheduled_packet);
+        uint32_t delay_ms                = replay_index * state->trick_first_sni_replay_delay_ms;
+        ordered_outputs[ordered_count++] = (ipmanipulator_ordered_output_t) {
+            .line   = l,
+            .buf    = scheduled_packet,
+            .send   = firstsnitrickSendCraftedPacket,
+            .due_ms = now_ms + delay_ms,
+        };
     }
 
-    lineScheduleDelayedTaskWithBuf(l,
-                                   firstsnitrickSendLastCraftedThenOriginal,
-                                   (state->trick_first_sni_count - 1) * state->trick_first_sni_replay_delay_ms,
-                                   t,
-                                   buf);
-    if (tail_delay_ms > 0)
-    {
-        firstsnitrickArmDelayWindow(t, buf, now_ms);
-    }
+    sbuf_t *barrier_packets[] = {buf};
+
+    firstsnitrickStartDelayBarrier(
+        t, l, barrier_packets, 1, ordered_outputs, ordered_count, now_ms + tail_delay_ms, now_ms);
+    memoryFree(ordered_outputs);
 
     lineUnlock(l);
     return true;
@@ -726,17 +844,25 @@ bool firstsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     return false;
 }
 
+/* Runs under the flow-shard lock: recycle retained packets only. */
+static void firstsnitrickDestroyFlowRecord(void *record, void *context)
+{
+    discard context;
+
+    ipmanipulator_firstsni_flow_t *flow = record;
+    ipmanipulatorDelayBarrierDestroy(&flow->delay_barrier);
+}
+
 bool firstsnitrickInitializeState(tunnel_t *t)
 {
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
-    /* A First-SNI record owns no buffers, so it needs no resource destructor. */
     return ipmanipulatorFlowTableInit(&state->first_sni_table,
                                       "first-sni",
                                       state->trick_stateful_flow_limit,
                                       (uint32_t) getTotalWorkersCount(),
                                       sizeof(ipmanipulator_firstsni_flow_t),
-                                      NULL,
+                                      firstsnitrickDestroyFlowRecord,
                                       NULL);
 }
 

@@ -50,11 +50,39 @@ static bool parseTcpBitActionField(enum tcp_bit_action_dynamic_value *dest, cons
     return true;
 }
 
+/*
+ * The one authoritative compatibility matrix. Every rule below is independent
+ * of TCP-bit actions, so none of them may be moved behind the upstream-action
+ * early return at the end.
+ */
 ipmanipulator_config_validation_e ipmanipulatorValidateTrickCompatibility(const ipmanipulator_tstate_t *state)
 {
-    bool has_upstream_actions = tcpbitchangetrickHasUpstreamActions(state);
+    uint32_t stateful_sni_count = (state->trick_first_sni ? 1U : 0U) + (state->trick_smuggle_sni ? 1U : 0U) +
+                                  (state->trick_overlap_sni ? 1U : 0U) + (state->trick_synfin_sni ? 1U : 0U) +
+                                  (state->trick_ech_sni ? 1U : 0U);
 
-    if (! has_upstream_actions)
+    if (stateful_sni_count > 1U)
+    {
+        return kIpManipulatorConfigRejectMultipleStatefulSni;
+    }
+
+    /*
+     * A stateful SNI trick sends its held originals and crafted transcript
+     * straight to the next tunnel, so a later same-instance stage would only
+     * see the flow's untouched packets. Splitting the operations over two
+     * chained nodes is what actually shapes the trick's own output.
+     */
+    if (stateful_sni_count == 1U && state->trick_sni_blender)
+    {
+        return kIpManipulatorConfigRejectSniBlenderWithStatefulSni;
+    }
+
+    if (stateful_sni_count == 1U && state->trick_packet_duplicate)
+    {
+        return kIpManipulatorConfigRejectPacketDuplicateWithStatefulSni;
+    }
+
+    if (! tcpbitchangetrickHasUpstreamActions(state))
     {
         /*
          * Downstream-only actions never touch the upstream flow-opening SYN or
@@ -64,8 +92,7 @@ ipmanipulator_config_validation_e ipmanipulatorValidateTrickCompatibility(const 
         return kIpManipulatorConfigValid;
     }
 
-    if (state->trick_first_sni || state->trick_smuggle_sni || state->trick_overlap_sni || state->trick_synfin_sni ||
-        state->trick_ech_sni)
+    if (stateful_sni_count > 0U)
     {
         return kIpManipulatorConfigRejectUpstreamTcpBitWithStatefulSni;
     }
@@ -86,13 +113,36 @@ static bool reportTrickCompatibility(const ipmanipulator_tstate_t *state)
         LOGF("IpManipulator: upstream TCP-bit actions (\"up-tcp-bit-*\") cannot be combined with the stateful SNI "
              "tricks \"first-sni\", \"smuggle-sni\", \"overlap-sni\", \"synfin-sni\" or \"ech-sni-trick\"; upstream "
              "TCP-bit actions run before stateful SNI inspection and their generated or replayed packets do not "
-             "re-enter TCP-bit processing");
+             "re-enter TCP-bit processing. Put the operations in separate IpManipulator nodes");
         return false;
 
     case kIpManipulatorConfigRejectPreservedTcpBitWithSniBlender:
         LOGF("IpManipulator: \"preserve-tcp-bitflags\" with an upstream TCP-bit action cannot be combined with "
              "\"sni-blender\"; the preserved-flag byte is appended before SNI Blender creates IPv4 fragments and the "
-             "peer restoration path skips fragments");
+             "peer restoration path skips fragments. Put the operations in separate IpManipulator nodes");
+        return false;
+
+    case kIpManipulatorConfigRejectMultipleStatefulSni:
+        LOGF("IpManipulator: only one of the stateful SNI tricks \"first-sni\", \"smuggle-sni\", \"overlap-sni\", "
+             "\"synfin-sni\" or \"ech-sni-trick\" may be enabled in one IpManipulator node; each one owns the same "
+             "flow's ClientHello and emits its own transcript for it. Put the operations in separate IpManipulator "
+             "nodes");
+        return false;
+
+    case kIpManipulatorConfigRejectSniBlenderWithStatefulSni:
+        LOGF("IpManipulator: \"sni-blender\" cannot be combined with the stateful SNI tricks \"first-sni\", "
+             "\"smuggle-sni\", \"overlap-sni\", \"synfin-sni\" or \"ech-sni-trick\" in one node; a stateful SNI trick "
+             "emits its packets directly and they never reach a later same-instance blender stage. Put the operations "
+             "in separate IpManipulator nodes, with the stateful SNI node first and the \"sni-blender\" node as its "
+             "next node");
+        return false;
+
+    case kIpManipulatorConfigRejectPacketDuplicateWithStatefulSni:
+        LOGF("IpManipulator: \"packet-duplicate\" cannot be combined with the stateful SNI tricks \"first-sni\", "
+             "\"smuggle-sni\", \"overlap-sni\", \"synfin-sni\" or \"ech-sni-trick\" in one node; a stateful SNI trick "
+             "emits its packets directly and they never reach a later same-instance duplication stage. Put the "
+             "operations in separate IpManipulator nodes, with the stateful SNI node first and the "
+             "\"packet-duplicate\" node as its next node");
         return false;
 
     case kIpManipulatorConfigValid:
@@ -242,10 +292,7 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     const cJSON            *settings = node->node_settings_json;
 
     state->trick_proto_swap_tcp_number           = -1;
-    state->trick_proto_swap_tcp_number_2         = -1;
     state->trick_proto_swap_udp_number           = -1;
-    state->trick_proto_swap_tcp_toggle_up        = 0;
-    state->trick_proto_swap_tcp_toggle_down      = 0;
     state->trick_overlap_sni_syn_ttl             = -1;
     state->trick_synfin_sni_syn_ttl              = -1;
     state->trick_synfin_sni_fin_ttl              = -1;
@@ -254,6 +301,8 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     state->trick_synfin_sni_additional_range_max = 0;
     state->trick_ech_sni_shard1_delay_ms         = 0;
     state->trick_ech_sni_shard2_delay_ms         = 0;
+    atomicStoreU64Relaxed(&state->delay_barrier_next_generation, 0);
+    atomicStoreU64Relaxed(&state->egress_last_warning_ms, 0);
 
     if (! parseStatefulFlowLimit(state, settings))
     {
@@ -261,21 +310,29 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         return NULL;
     }
 
-    bool has_proto_swap_legacy = false;
-    bool has_proto_swap_tcp    = false;
-    bool has_proto_swap_udp    = false;
-    bool has_proto_swap_tcp_2  = false;
-    has_proto_swap_legacy      = getIntFromJsonObject(&state->trick_proto_swap_tcp_number, settings, "protoswap");
-    has_proto_swap_tcp         = getIntFromJsonObject(&state->trick_proto_swap_tcp_number, settings, "protoswap-tcp");
-    has_proto_swap_udp         = getIntFromJsonObject(&state->trick_proto_swap_udp_number, settings, "protoswap-udp");
-    has_proto_swap_tcp_2 = getIntFromJsonObject(&state->trick_proto_swap_tcp_number_2, settings, "protoswap-tcp-2");
+    /*
+     * "protoswap-tcp-2" alternated between two TCP replacement numbers, which
+     * split one IPv4 datagram across two mappings. It is gone; a stale key is
+     * rejected instead of ignored so an old configuration cannot silently do
+     * something different from what it says.
+     */
+    if (cJSON_GetObjectItemCaseSensitive(settings, "protoswap-tcp-2") != NULL)
+    {
+        LOGF("IpManipulator: settings->protoswap-tcp-2 has been removed; protocol swap now uses one reversible TCP "
+             "replacement number, so configure only \"protoswap-tcp\"");
+        tunnelDestroy(t);
+        return NULL;
+    }
+
+    bool has_proto_swap_legacy = getIntFromJsonObject(&state->trick_proto_swap_tcp_number, settings, "protoswap");
+    bool has_proto_swap_tcp    = getIntFromJsonObject(&state->trick_proto_swap_tcp_number, settings, "protoswap-tcp");
+    bool has_proto_swap_udp    = getIntFromJsonObject(&state->trick_proto_swap_udp_number, settings, "protoswap-udp");
 
     const char *proto_swap_tcp_key = has_proto_swap_tcp ? "protoswap-tcp" : "protoswap";
 
     if (((has_proto_swap_legacy || has_proto_swap_tcp) &&
          ! validateProtocolSwapNumber(proto_swap_tcp_key, state->trick_proto_swap_tcp_number)) ||
-        (has_proto_swap_udp && ! validateProtocolSwapNumber("protoswap-udp", state->trick_proto_swap_udp_number)) ||
-        (has_proto_swap_tcp_2 && ! validateProtocolSwapNumber("protoswap-tcp-2", state->trick_proto_swap_tcp_number_2)))
+        (has_proto_swap_udp && ! validateProtocolSwapNumber("protoswap-udp", state->trick_proto_swap_udp_number)))
     {
         tunnelDestroy(t);
         return NULL;
@@ -285,8 +342,7 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
 
     bool tcp_swap_enabled = has_proto_swap_legacy || has_proto_swap_tcp;
     if (tcp_swap_enabled && has_proto_swap_udp &&
-        (state->trick_proto_swap_udp_number == state->trick_proto_swap_tcp_number ||
-         (has_proto_swap_tcp_2 && state->trick_proto_swap_udp_number == state->trick_proto_swap_tcp_number_2)))
+        state->trick_proto_swap_udp_number == state->trick_proto_swap_tcp_number)
     {
         LOGF("IpManipulator: TCP and UDP protocol-swap mappings must remain unambiguous");
         tunnelDestroy(t);
@@ -304,16 +360,17 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
             return NULL;
         }
 
-        if (state->trick_sni_blender_packets_count <= 0)
+        /*
+         * One "fragment" is the packet itself, so the trick only means anything
+         * from two upwards. The runtime keeps its own planned_count <= 1 bypass
+         * for packets that cannot actually be divided.
+         */
+        if (state->trick_sni_blender_packets_count < kSniBlenderTrickMinPacketsCount ||
+            state->trick_sni_blender_packets_count > kSniBlenderTrickMaxPacketsCount)
         {
-            LOGF("IpManipulator: sni-blender-packets must be greater than zero");
-            tunnelDestroy(t);
-            return NULL;
-        }
-
-        if (state->trick_sni_blender_packets_count > kSniBlenderTrickMaxPacketsCount)
-        {
-            LOGF("IpManipulator: sni-blender-packets cannot be more than %d", kSniBlenderTrickMaxPacketsCount);
+            LOGF("IpManipulator: sni-blender-packets must be between %d and %d",
+                 kSniBlenderTrickMinPacketsCount,
+                 kSniBlenderTrickMaxPacketsCount);
             tunnelDestroy(t);
             return NULL;
         }
@@ -759,47 +816,11 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         state->trick_ech_sni                 = true;
     }
 
-    if (state->trick_smuggle_sni && state->trick_overlap_sni)
-    {
-        LOGF("IpManipulator: smuggle-sni and overlap-sni cannot be enabled at the same time");
-        tunnelDestroy(t);
-        return NULL;
-    }
-
-    if (state->trick_smuggle_sni && state->trick_synfin_sni)
-    {
-        LOGF("IpManipulator: smuggle-sni and synfin-sni cannot be enabled at the same time");
-        tunnelDestroy(t);
-        return NULL;
-    }
-
-    if (state->trick_overlap_sni && state->trick_synfin_sni)
-    {
-        LOGF("IpManipulator: overlap-sni and synfin-sni cannot be enabled at the same time");
-        tunnelDestroy(t);
-        return NULL;
-    }
-
-    if (state->trick_ech_sni && state->trick_smuggle_sni)
-    {
-        LOGF("IpManipulator: ech-sni-trick and smuggle-sni cannot be enabled at the same time");
-        tunnelDestroy(t);
-        return NULL;
-    }
-
-    if (state->trick_ech_sni && state->trick_overlap_sni)
-    {
-        LOGF("IpManipulator: ech-sni-trick and overlap-sni cannot be enabled at the same time");
-        tunnelDestroy(t);
-        return NULL;
-    }
-
-    if (state->trick_ech_sni && state->trick_synfin_sni)
-    {
-        LOGF("IpManipulator: ech-sni-trick and synfin-sni cannot be enabled at the same time");
-        tunnelDestroy(t);
-        return NULL;
-    }
+    /*
+     * The pairwise stateful-SNI checks that used to live here are now part of
+     * ipmanipulatorValidateTrickCompatibility(), reported by
+     * reportTrickCompatibility() below.
+     */
 
     bool smuggle_fin_enabled = false;
     getBoolFromJsonObject(&smuggle_fin_enabled, settings, "smuggle-fin");

@@ -5,7 +5,7 @@
 
 node_t nodeIpManipulatorGet(void)
 {
-    const char *type_name     = "IpManipulator";
+    const char *type_name          = "IpManipulator";
     node_t      node_ipmanipulator = {
              .name                  = NULL,
              .type                  = stringDuplicate(type_name),
@@ -21,7 +21,7 @@ node_t nodeIpManipulatorGet(void)
              .instance              = NULL,
              .flags                 = kNodeFlagNone,
              .required_padding_left = 0,
-             .layer_group           = kNodeLayerAnything,
+             .layer_group           = kNodeLayer3,
              .layer_group_next_node = kNodeLayerAnything,
              .layer_group_prev_node = kNodeLayerAnything,
              .can_have_next         = true,

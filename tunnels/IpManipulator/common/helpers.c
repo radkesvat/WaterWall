@@ -1,6 +1,7 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
+#include "tls_client_hello.h"
 #include "tricks/protoswap/trick.h"
 
 enum
@@ -9,8 +10,7 @@ enum
     kIpManipulatorTlsPrestartTimeoutMs     = 50,
     kIpManipulatorTlsPrestartMinPayloadLen = 128,
     kIpManipulatorTlsCaptureMaxRecordLen   = 16384,
-
-    kTcpFlagsPreservedOnSegmentContinuation = (TCP_CWR | TCP_ECE | TCP_URG | TCP_ACK)
+    kIpManipulatorEgressWarningIntervalMs  = 5000
 };
 
 typedef struct ipmanipulator_tcp_packet_info_s
@@ -28,6 +28,25 @@ typedef struct ipmanipulator_tcp_packet_info_s
     uint16_t       src_port;
     uint16_t       dst_port;
 } ipmanipulator_tcp_packet_info_t;
+
+bool ipmanipulatorShouldLogEgressWarning(ipmanipulator_tstate_t *state)
+{
+    uint64_t now_ms   = max(getTickMS(), 1ULL);
+    uint64_t observed = atomicLoadU64Relaxed(&state->egress_last_warning_ms);
+
+    for (;;)
+    {
+        if (observed != 0 && now_ms >= observed && now_ms - observed < kIpManipulatorEgressWarningIntervalMs)
+        {
+            return false;
+        }
+
+        if (atomicCompareExchangeU64(&state->egress_last_warning_ms, &observed, now_ms))
+        {
+            return true;
+        }
+    }
+}
 
 typedef struct ipmanipulator_tls_clienthello_start_s
 {
@@ -51,8 +70,7 @@ uint8_t ipmanipulatorResolveTransportProtocol(const ipmanipulator_tstate_t *stat
      * literal TCP/UDP replacements and collisions between TCP and UDP maps, so
      * each configured wire value has one inverse.
      */
-    if (packet_protocol == state->trick_proto_swap_tcp_number ||
-        packet_protocol == state->trick_proto_swap_tcp_number_2)
+    if (packet_protocol == state->trick_proto_swap_tcp_number)
     {
         return IPPROTO_TCP;
     }
@@ -574,68 +592,25 @@ void ipmanipulatorRecycleCapturedTlsPackets(tunnel_t *t, ipmanipulator_tls_captu
 static bool ipmanipulatorParseTcpPacketInfo(const uint8_t *packet, uint32_t packet_length,
                                             ipmanipulator_tcp_packet_info_t *info)
 {
-    if (packet_length < sizeof(struct ip_hdr))
-    {
-        return false;
-    }
-
-    const struct ip_hdr *ipheader = (const struct ip_hdr *) packet;
-    if (IPH_V(ipheader) != 4 || IPH_PROTO(ipheader) != IPPROTO_TCP)
-    {
-        return false;
-    }
-
-    uint8_t ip_hdr_len_words = IPH_HL(ipheader);
-    if (ip_hdr_len_words < 5 || ip_hdr_len_words > 15)
-    {
-        return false;
-    }
-
-    uint16_t ip_header_len = (uint16_t) (ip_hdr_len_words * 4);
-    if (packet_length < ip_header_len + sizeof(struct tcp_hdr))
-    {
-        return false;
-    }
-
-    uint16_t ip_total_len = lwip_ntohs(IPH_LEN(ipheader));
-    if (ip_total_len < ip_header_len + sizeof(struct tcp_hdr) || packet_length < ip_total_len)
-    {
-        return false;
-    }
-
-    uint16_t off_f = lwip_ntohs(IPH_OFFSET(ipheader));
-    if ((off_f & (IP_MF | IP_OFFMASK)) != 0)
-    {
-        return false;
-    }
-
-    const struct tcp_hdr *tcp_header        = (const struct tcp_hdr *) (packet + ip_header_len);
-    uint8_t               tcp_hdr_len_words = TCPH_HDRLEN(tcp_header);
-    if (tcp_hdr_len_words < 5 || tcp_hdr_len_words > 15)
-    {
-        return false;
-    }
-
-    uint16_t tcp_header_len = (uint16_t) (tcp_hdr_len_words * 4);
-    uint16_t headers_len    = (uint16_t) (ip_header_len + tcp_header_len);
-    if (ip_total_len < headers_len)
+    ipv4_packet_view_t packet_view = {0};
+    if (! ipv4packetviewParseTcp(packet, packet_length, &packet_view) || packet_view.fragmented)
     {
         return false;
     }
 
     *info = (ipmanipulator_tcp_packet_info_t) {
         .packet          = packet,
-        .payload         = packet + headers_len,
-        .seq             = lwip_ntohl(tcp_header->seqno),
-        .src_addr        = ipheader->src.addr,
-        .dst_addr        = ipheader->dest.addr,
-        .ip_total_len    = ip_total_len,
-        .ip_header_len   = ip_header_len,
-        .tcp_header_len  = tcp_header_len,
-        .headers_len     = headers_len,
-        .tcp_payload_len = (uint16_t) (ip_total_len - headers_len),
-        .src_port        = lwip_ntohs(tcp_header->src),
-        .dst_port        = lwip_ntohs(tcp_header->dest),
+        .payload         = packet + packet_view.payload_offset,
+        .seq             = packet_view.tcp_sequence,
+        .src_addr        = packet_view.source_address,
+        .dst_addr        = packet_view.destination_address,
+        .ip_total_len    = packet_view.ip_total_length,
+        .ip_header_len   = packet_view.ip_header_length,
+        .tcp_header_len  = packet_view.transport_header_length,
+        .headers_len     = packet_view.payload_offset,
+        .tcp_payload_len = packet_view.payload_length,
+        .src_port        = packet_view.source_port,
+        .dst_port        = packet_view.destination_port,
     };
 
     return true;
@@ -992,20 +967,34 @@ static void ipmanipulatorDrainPrestartPacketsIntoCaptureSlot(ipmanipulator_tls_p
     }
 }
 
-static uint8_t ipmanipulatorGetSegmentFlags(uint8_t original_flags, uint32_t payload_offset, uint32_t this_payload_len,
-                                            uint32_t total_payload_len)
+static uint8_t ipmanipulatorGetSegmentFlags(uint8_t original_flags, bool first_segment, bool final_segment)
 {
-    if (payload_offset == 0)
+    uint8_t flags = (uint8_t) (original_flags & (TCP_ACK | TCP_ECE));
+
+    if (first_segment)
     {
-        return original_flags;
+        flags |= (uint8_t) (original_flags & (TCP_SYN | TCP_CWR));
     }
 
-    if (payload_offset + this_payload_len < total_payload_len)
+    if (final_segment)
     {
-        return (uint8_t) (original_flags & kTcpFlagsPreservedOnSegmentContinuation);
+        flags |= (uint8_t) (original_flags & (TCP_FIN | TCP_PSH));
     }
 
-    return original_flags;
+    return flags;
+}
+
+static uint8_t ipmanipulatorGetAllTcpFlags(const struct tcp_hdr *tcp_header)
+{
+    return (uint8_t) (lwip_ntohs(tcp_header->_hdrlen_rsvd_flags) & 0x00FFU);
+}
+
+static void ipmanipulatorSetAllTcpFlags(struct tcp_hdr *tcp_header, uint8_t flags)
+{
+    uint16_t header_word = lwip_ntohs(tcp_header->_hdrlen_rsvd_flags);
+
+    header_word                    = (uint16_t) ((header_word & 0xFF00U) | flags);
+    tcp_header->_hdrlen_rsvd_flags = lwip_htons(header_word);
 }
 
 static bool ipmanipulatorPacketUsesMappedProtocol(const ipmanipulator_tstate_t *state, const sbuf_t *buf)
@@ -1022,16 +1011,32 @@ static bool ipmanipulatorPacketUsesMappedProtocol(const ipmanipulator_tstate_t *
     }
 
     uint8_t protocol = IPH_PROTO(ipheader);
-    return protocol == state->trick_proto_swap_tcp_number || protocol == state->trick_proto_swap_tcp_number_2 ||
-           protocol == state->trick_proto_swap_udp_number;
+    return protocol == state->trick_proto_swap_tcp_number || protocol == state->trick_proto_swap_udp_number;
 }
 
-static void ipmanipulatorEmitUpstreamWithPolicy(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward,
-                                                bool apply_portghost)
+static bool ipmanipulatorHasTcpBitActionsForDirection(const ipmanipulator_tstate_t *state, bool upstream)
+{
+    if (upstream)
+    {
+        return state->up_tcp_bit_cwr_action != kDvsNoAction || state->up_tcp_bit_ece_action != kDvsNoAction ||
+               state->up_tcp_bit_urg_action != kDvsNoAction || state->up_tcp_bit_ack_action != kDvsNoAction ||
+               state->up_tcp_bit_psh_action != kDvsNoAction || state->up_tcp_bit_rst_action != kDvsNoAction ||
+               state->up_tcp_bit_syn_action != kDvsNoAction || state->up_tcp_bit_fin_action != kDvsNoAction;
+    }
+
+    return state->down_tcp_bit_cwr_action != kDvsNoAction || state->down_tcp_bit_ece_action != kDvsNoAction ||
+           state->down_tcp_bit_urg_action != kDvsNoAction || state->down_tcp_bit_ack_action != kDvsNoAction ||
+           state->down_tcp_bit_psh_action != kDvsNoAction || state->down_tcp_bit_rst_action != kDvsNoAction ||
+           state->down_tcp_bit_syn_action != kDvsNoAction || state->down_tcp_bit_fin_action != kDvsNoAction;
+}
+
+static bool ipmanipulatorPrepareSingleEgressPacket(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, bool upstream,
+                                                   bool apply_portghost)
 {
     ipmanipulator_tstate_t *state                = tunnelGetState(t);
     bool                    recalculate_checksum = lineGetRecalculateChecksum(l);
     bool                    ghost_applied        = false;
+    sbuf_t                 *buf                  = *buf_ptr;
 
     if (apply_portghost)
     {
@@ -1040,13 +1045,14 @@ static void ipmanipulatorEmitUpstreamWithPolicy(tunnel_t *t, line_t *l, sbuf_t *
 
     if (buf == NULL)
     {
-        return;
+        *buf_ptr = NULL;
+        return false;
     }
 
     recalculate_checksum |= ghost_applied;
     lineSetRecalculateChecksum(l, recalculate_checksum);
 
-    if (state->trick_proto_swap)
+    if (upstream && state->trick_proto_swap)
     {
         /*
          * Chained transport pair: a packet already carrying one of our mapped
@@ -1073,99 +1079,179 @@ static void ipmanipulatorEmitUpstreamWithPolicy(tunnel_t *t, line_t *l, sbuf_t *
         }
     }
 
+    *buf_ptr = buf;
+    return true;
+}
+
+static bool ipmanipulatorForwardSingleEgressPacket(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward,
+                                                   bool upstream, bool apply_portghost)
+{
+    if (! ipmanipulatorPrepareSingleEgressPacket(t, l, &buf, upstream, apply_portghost))
+    {
+        return lineIsAlive(l);
+    }
+
     forward(t, l, buf);
-}
-
-void ipmanipulatorEmitUpstream(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward)
-{
-    ipmanipulatorEmitUpstreamWithPolicy(t, l, buf, forward, true);
-}
-
-void ipmanipulatorEmitUpstreamPreservingTuple(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward)
-{
-    ipmanipulatorEmitUpstreamWithPolicy(t, l, buf, forward, false);
-}
-
-static bool ipmanipulatorSendSinglePacketWithForward(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward)
-{
-    lineSetRecalculateChecksum(l, true);
-    ipmanipulatorEmitUpstream(t, l, buf, forward);
     return lineIsAlive(l);
 }
 
-bool ipmanipulatorSendWithForwardMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward)
+static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward,
+                                                  bool upstream, bool apply_portghost)
 {
-    uint8_t *packet = sbufGetMutablePtr(buf);
+    ipmanipulator_tstate_t *state  = tunnelGetState(t);
+    uint8_t                *packet = sbufGetMutablePtr(buf);
 
     if (sbufGetLength(buf) < sizeof(struct ip_hdr))
     {
-        reuseBuffer(buf);
-        return lineIsAlive(l);
+        return ipmanipulatorForwardSingleEgressPacket(t, l, buf, forward, upstream, apply_portghost);
     }
 
     struct ip_hdr *ipheader = (struct ip_hdr *) packet;
-    if (IPH_V(ipheader) != 4 || IPH_PROTO(ipheader) != IPPROTO_TCP)
+    if (IPH_V(ipheader) != 4)
     {
-        return ipmanipulatorSendSinglePacketWithForward(t, l, buf, forward);
+        return ipmanipulatorForwardSingleEgressPacket(t, l, buf, forward, upstream, apply_portghost);
     }
 
-    uint16_t ip_header_len = IPH_HL_BYTES(ipheader);
-    if (sbufGetLength(buf) < ip_header_len + sizeof(struct tcp_hdr))
+    uint8_t ip_header_words = IPH_HL(ipheader);
+    if (ip_header_words < 5 || ip_header_words > 15)
     {
+        LOGW("IpManipulator: dropping packet with an invalid IPv4 header length before final egress");
         reuseBuffer(buf);
         return lineIsAlive(l);
     }
 
-    struct tcp_hdr *tcp_header     = (struct tcp_hdr *) (packet + ip_header_len);
-    uint16_t        tcp_header_len = TCPH_HDRLEN_BYTES(tcp_header);
-    uint32_t        headers_len    = (uint32_t) ip_header_len + (uint32_t) tcp_header_len;
-
-    if (tcp_header_len < sizeof(struct tcp_hdr) || headers_len > sbufGetLength(buf))
+    uint16_t ip_header_len = (uint16_t) (ip_header_words * 4U);
+    uint16_t ip_total_len  = lwip_ntohs(IPH_LEN(ipheader));
+    if (ip_total_len < ip_header_len || ip_total_len > sbufGetLength(buf))
     {
+        LOGW("IpManipulator: dropping packet with an invalid IPv4 total length before final egress");
         reuseBuffer(buf);
         return lineIsAlive(l);
     }
 
-    uint16_t ip_total_len = lwip_ntohs(IPH_LEN(ipheader));
-    if (ip_total_len < headers_len || ip_total_len > sbufGetLength(buf))
+    uint32_t portghost_tail_len = apply_portghost ? portghosttrickGetTailLength(state) : 0;
+    uint8_t  transport_protocol = ipmanipulatorResolveTransportProtocol(state, IPH_PROTO(ipheader));
+    uint16_t fragment_state     = lwip_ntohs(IPH_OFFSET(ipheader));
+
+    /* These trailer transforms intentionally skip IPv4 fragments. Preserve
+     * their fail-open path instead of treating unapplied trailer overhead as a
+     * reason to segment or drop the fragment. */
+    if ((fragment_state & (IP_MF | IP_OFFMASK)) != 0)
     {
+        return ipmanipulatorForwardSingleEgressPacket(t, l, buf, forward, upstream, apply_portghost);
+    }
+
+    /* Unit fixtures and pre-start construction may not have installed the
+     * runtime MTU yet. Zero means no final-MTU shaping is available. */
+    if (GLOBAL_MTU_SIZE == 0)
+    {
+        return ipmanipulatorForwardSingleEgressPacket(t, l, buf, forward, upstream, apply_portghost);
+    }
+
+    uint32_t prospective_len = (uint32_t) ip_total_len + portghost_tail_len;
+    if (prospective_len <= GLOBAL_MTU_SIZE)
+    {
+        /* Protocol swap historically accepts opaque packet-mode fixtures that
+         * identify the IPv4 protocol as TCP without carrying a TCP header.
+         * Transport parsing is needed only when final MTU shaping is actually
+         * required; the individual trailer helpers still validate packets
+         * before mutating an in-MTU packet. */
+        return ipmanipulatorForwardSingleEgressPacket(t, l, buf, forward, upstream, apply_portghost);
+    }
+
+    if (transport_protocol != IPPROTO_TCP)
+    {
+        if (portghost_tail_len > 0 && (uint32_t) ip_total_len + portghost_tail_len > GLOBAL_MTU_SIZE)
+        {
+            if (ipmanipulatorShouldLogEgressWarning(state))
+            {
+                LOGW("IpManipulator: dropping non-TCP IPv4 packet because its %u-byte trailer would exceed "
+                     "GLOBAL_MTU_SIZE %u; IPv4 fragmentation is not supported",
+                     (unsigned int) portghost_tail_len,
+                     (unsigned int) GLOBAL_MTU_SIZE);
+            }
+            reuseBuffer(buf);
+            return lineIsAlive(l);
+        }
+
+        return ipmanipulatorForwardSingleEgressPacket(t, l, buf, forward, upstream, apply_portghost);
+    }
+
+    if (ip_total_len < ip_header_len + sizeof(struct tcp_hdr))
+    {
+        LOGW("IpManipulator: dropping truncated TCP packet before final egress");
         reuseBuffer(buf);
         return lineIsAlive(l);
     }
 
-    uint32_t portghost_tail_len = portghosttrickGetTailLength(tunnelGetState(t));
-    if ((uint32_t) ip_total_len + portghost_tail_len <= GLOBAL_MTU_SIZE)
+    struct tcp_hdr *tcp_header       = (struct tcp_hdr *) (packet + ip_header_len);
+    uint8_t         tcp_header_words = TCPH_HDRLEN(tcp_header);
+    if (tcp_header_words < 5 || tcp_header_words > 15)
     {
-        return ipmanipulatorSendSinglePacketWithForward(t, l, buf, forward);
-    }
-
-    if (headers_len + portghost_tail_len >= GLOBAL_MTU_SIZE)
-    {
-        LOGW("IpManipulator: cannot segment crafted TLS packet because GLOBAL_MTU_SIZE (%u) is not larger than "
-             "IPv4+TCP headers and the portghost trailer (%u)",
-             GLOBAL_MTU_SIZE,
-             headers_len + portghost_tail_len);
+        LOGW("IpManipulator: dropping packet with an invalid TCP header length before final egress");
         reuseBuffer(buf);
         return lineIsAlive(l);
     }
 
-    uint16_t off_f = lwip_ntohs(IPH_OFFSET(ipheader));
-    if ((off_f & (IP_MF | IP_OFFMASK)) != 0)
+    uint16_t tcp_header_len = (uint16_t) (tcp_header_words * 4U);
+    uint32_t headers_len    = (uint32_t) ip_header_len + tcp_header_len;
+    if (ip_total_len < headers_len)
     {
-        LOGW("IpManipulator: refusing TCP segmentation for an already fragmented IPv4 packet");
+        LOGW("IpManipulator: dropping packet whose IPv4 length truncates its TCP header before final egress");
+        reuseBuffer(buf);
+        return lineIsAlive(l);
+    }
+
+    bool has_flag_metadata =
+        state->trick_preserve_tcp_bitflags && ipmanipulatorHasTcpBitActionsForDirection(state, upstream);
+    uint32_t flag_metadata_len = has_flag_metadata ? 1U : 0U;
+    if ((uint32_t) ip_total_len < headers_len + flag_metadata_len)
+    {
+        LOGW("IpManipulator: dropping TCP packet without its configured preserved-flags metadata");
+        reuseBuffer(buf);
+        return lineIsAlive(l);
+    }
+
+    uint8_t live_flags        = ipmanipulatorGetAllTcpFlags(tcp_header);
+    uint8_t original_flags    = has_flag_metadata ? packet[ip_total_len - 1U] : live_flags;
+    uint8_t unsupported_flags = (uint8_t) ((live_flags | original_flags) & (TCP_RST | TCP_URG));
+    if (unsupported_flags != 0)
+    {
+        if (ipmanipulatorShouldLogEgressWarning(state))
+        {
+            LOGW("IpManipulator: dropping oversized TCP packet because live or preserved-original %s segmentation "
+                 "is unsupported",
+                 (unsupported_flags & TCP_RST) != 0 ? "RST" : "URG");
+        }
+        reuseBuffer(buf);
+        return lineIsAlive(l);
+    }
+
+    uint32_t total_payload_len = (uint32_t) ip_total_len - headers_len - flag_metadata_len;
+    uint32_t segment_overhead  = portghost_tail_len + flag_metadata_len;
+    if (total_payload_len == 0 || headers_len + segment_overhead >= GLOBAL_MTU_SIZE)
+    {
+        if (ipmanipulatorShouldLogEgressWarning(state))
+        {
+            LOGW("IpManipulator: dropping oversized TCP packet because IPv4/TCP headers and configured trailers "
+                 "leave no segmentable payload within GLOBAL_MTU_SIZE %u",
+                 (unsigned int) GLOBAL_MTU_SIZE);
+        }
         reuseBuffer(buf);
         return lineIsAlive(l);
     }
 
     const uint8_t *source_payload      = packet + headers_len;
-    uint32_t       total_payload_len   = (uint32_t) ip_total_len - headers_len;
-    uint32_t       max_segment_payload = (uint32_t) GLOBAL_MTU_SIZE - headers_len - portghost_tail_len;
+    uint32_t       max_segment_payload = (uint32_t) GLOBAL_MTU_SIZE - headers_len - segment_overhead;
     uint32_t       payload_offset      = 0;
     uint32_t       segment_index       = 0;
     uint32_t       base_seq            = lwip_ntohl(tcp_header->seqno);
     uint16_t       base_identification = lwip_ntohs(IPH_ID(ipheader));
-    uint8_t        original_flags      = TCPH_FLAGS(tcp_header);
-    bool           line_alive          = true;
+    /* When preservation is enabled, the peer restores original_flags before
+     * its TCP stack observes the segments. Otherwise original_flags is the
+     * same value as live_flags. */
+    bool syn_consumes_seq = (original_flags & TCP_SYN) != 0;
+    bool line_alive       = true;
 
     LOGD("IpManipulator: segmenting TCP packet ip-len=%u payload=%u mtu=%u segment-payload=%u",
          ip_total_len,
@@ -1179,7 +1265,8 @@ bool ipmanipulatorSendWithForwardMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *
     {
         uint32_t this_payload_len = min(max_segment_payload, total_payload_len - payload_offset);
         uint32_t this_packet_len  = headers_len + this_payload_len;
-        sbuf_t  *segment_buf      = clonePacketWithLength(l, buf, this_packet_len + portghost_tail_len);
+        uint32_t required_len     = this_packet_len + flag_metadata_len + portghost_tail_len;
+        sbuf_t  *segment_buf      = clonePacketWithLength(l, buf, required_len);
 
         if (segment_buf == NULL)
         {
@@ -1192,18 +1279,29 @@ bool ipmanipulatorSendWithForwardMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *
         memoryCopyLarge(segment_packet, packet, headers_len);
         memoryCopyLarge(segment_packet + headers_len, source_payload + payload_offset, this_payload_len);
 
-        struct ip_hdr  *segment_ipheader  = (struct ip_hdr *) segment_packet;
-        struct tcp_hdr *segment_tcpheader = (struct tcp_hdr *) (segment_packet + ip_header_len);
+        struct ip_hdr  *segment_ipheader   = (struct ip_hdr *) segment_packet;
+        struct tcp_hdr *segment_tcpheader  = (struct tcp_hdr *) (segment_packet + ip_header_len);
+        bool            first_segment      = payload_offset == 0;
+        bool            final_segment      = payload_offset + this_payload_len == total_payload_len;
+        uint8_t         segment_live_flags = ipmanipulatorGetSegmentFlags(live_flags, first_segment, final_segment);
+        uint8_t segment_original_flags     = ipmanipulatorGetSegmentFlags(original_flags, first_segment, final_segment);
+
+        if (has_flag_metadata)
+        {
+            segment_packet[this_packet_len] = segment_original_flags;
+            this_packet_len += 1U;
+            sbufSetLength(segment_buf, this_packet_len);
+        }
 
         IPH_LEN_SET(segment_ipheader, lwip_htons((uint16_t) this_packet_len));
         IPH_ID_SET(segment_ipheader, lwip_htons((uint16_t) (base_identification + (uint16_t) segment_index)));
-        IPH_OFFSET_SET(segment_ipheader, lwip_htons(off_f & ~(IP_MF | IP_OFFMASK)));
-        segment_tcpheader->seqno = lwip_htonl(base_seq + payload_offset);
-        TCPH_FLAGS_SET(
-            segment_tcpheader,
-            ipmanipulatorGetSegmentFlags(original_flags, payload_offset, this_payload_len, total_payload_len));
+        IPH_OFFSET_SET(segment_ipheader, lwip_htons((uint16_t) (fragment_state & ~(IP_MF | IP_OFFMASK))));
+        segment_tcpheader->seqno =
+            lwip_htonl(base_seq + payload_offset + (! first_segment && syn_consumes_seq ? 1U : 0U));
+        ipmanipulatorSetAllTcpFlags(segment_tcpheader, segment_live_flags);
 
-        line_alive = ipmanipulatorSendSinglePacketWithForward(t, l, segment_buf, forward);
+        lineSetRecalculateChecksum(l, true);
+        line_alive = ipmanipulatorForwardSingleEgressPacket(t, l, segment_buf, forward, upstream, apply_portghost);
         if (! line_alive)
         {
             break;
@@ -1218,9 +1316,521 @@ bool ipmanipulatorSendWithForwardMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *
     return line_alive;
 }
 
+void ipmanipulatorEmitUpstream(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward)
+{
+    discard ipmanipulatorSendEgressMaybeSegmented(t, l, buf, forward, true, true);
+}
+
+void ipmanipulatorEmitUpstreamPreservingTuple(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward)
+{
+    discard ipmanipulatorSendEgressMaybeSegmented(t, l, buf, forward, true, false);
+}
+
+bool ipmanipulatorSendWithForwardMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward)
+{
+    lineSetRecalculateChecksum(l, true);
+    return ipmanipulatorSendEgressMaybeSegmented(t, l, buf, forward, true, true);
+}
+
 bool ipmanipulatorSendUpstreamMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     return ipmanipulatorSendWithForwardMaybeSegmented(t, l, buf, tunnelNextUpStreamPayload);
+}
+
+typedef struct ipmanipulator_delay_timer_message_s
+{
+    ipmanipulator_flow_key_t           key;
+    ipmanipulator_delay_barrier_kind_e kind;
+    uint64_t                           generation;
+} ipmanipulator_delay_timer_message_t;
+
+static uint64_t ipmanipulatorAllocateDelayGeneration(ipmanipulator_tstate_t *state)
+{
+    uint64_t generation = 0;
+
+    while (generation == 0)
+    {
+        generation = atomicIncU64Relaxed(&state->delay_barrier_next_generation) + 1U;
+    }
+
+    return generation;
+}
+
+void ipmanipulatorDelayBarrierDestroy(ipmanipulator_delay_barrier_t *barrier)
+{
+    if (barrier == NULL)
+    {
+        return;
+    }
+
+    for (uint8_t i = 0; i < barrier->count; ++i)
+    {
+        ipmanipulator_captured_packet_t *packet = &barrier->packets[i];
+
+        if (packet->buf != NULL)
+        {
+            sbufDestroy(packet->buf);
+        }
+        if (packet->line != NULL)
+        {
+            lineUnlock(packet->line);
+        }
+    }
+
+    for (uint32_t i = barrier->next_ordered_output; i < barrier->ordered_outputs_count; ++i)
+    {
+        ipmanipulator_ordered_output_t *output = &barrier->ordered_outputs[i];
+
+        if (output->buf != NULL)
+        {
+            sbufDestroy(output->buf);
+        }
+        if (output->line != NULL)
+        {
+            lineUnlock(output->line);
+        }
+    }
+    memoryFree(barrier->ordered_outputs);
+
+    memoryZero(barrier, sizeof(*barrier));
+}
+
+void ipmanipulatorDelayBarrierInitialize(ipmanipulator_tstate_t *state, ipmanipulator_delay_barrier_t *barrier,
+                                         uint64_t deadline_ms)
+{
+    if (state == NULL || barrier == NULL)
+    {
+        return;
+    }
+
+    ipmanipulatorDelayBarrierDestroy(barrier);
+    if (deadline_ms == 0)
+    {
+        return;
+    }
+
+    barrier->generation  = ipmanipulatorAllocateDelayGeneration(state);
+    barrier->deadline_ms = deadline_ms;
+}
+
+bool ipmanipulatorDelayBarrierTryEnqueue(ipmanipulator_delay_barrier_t *barrier, line_t *l, sbuf_t *buf,
+                                         bool remove_after_release, bool *needs_schedule)
+{
+    if (needs_schedule != NULL)
+    {
+        *needs_schedule = false;
+    }
+
+    if (barrier == NULL || l == NULL || buf == NULL || barrier->deadline_ms == 0)
+    {
+        return false;
+    }
+
+    uint32_t packet_len = sbufGetLength(buf);
+    if (barrier->count >= kIpManipulatorDelayBarrierMaxPackets ||
+        packet_len > kIpManipulatorDelayBarrierMaxBytes - barrier->retained_bytes)
+    {
+        return false;
+    }
+
+    lineLock(l);
+    barrier->packets[barrier->count] = (ipmanipulator_captured_packet_t) {.line = l, .buf = buf};
+    barrier->count += 1U;
+    barrier->retained_bytes += packet_len;
+    barrier->remove_after_release |= remove_after_release;
+
+    if (! barrier->timer_armed)
+    {
+        barrier->timer_armed = true;
+        if (needs_schedule != NULL)
+        {
+            *needs_schedule = true;
+        }
+    }
+
+    return true;
+}
+
+bool ipmanipulatorDelayBarrierInstallOrdered(ipmanipulator_delay_barrier_t  *barrier,
+                                             ipmanipulator_ordered_output_t *outputs, uint32_t count,
+                                             bool *needs_schedule)
+{
+    if (needs_schedule != NULL)
+    {
+        *needs_schedule = false;
+    }
+
+    if (barrier == NULL || barrier->deadline_ms == 0 || outputs == NULL || count == 0 ||
+        barrier->ordered_outputs != NULL)
+    {
+        return false;
+    }
+
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        if (outputs[i].line == NULL || outputs[i].buf == NULL || outputs[i].send == NULL ||
+            (i > 0 && outputs[i].due_ms < outputs[i - 1U].due_ms))
+        {
+            return false;
+        }
+    }
+
+    ipmanipulator_ordered_output_t *owned_outputs = memoryAllocateZero(sizeof(*owned_outputs) * count);
+    if (owned_outputs == NULL)
+    {
+        return false;
+    }
+
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        lineLock(outputs[i].line);
+        owned_outputs[i] = outputs[i];
+        outputs[i].line  = NULL;
+        outputs[i].buf   = NULL;
+    }
+
+    barrier->ordered_outputs       = owned_outputs;
+    barrier->ordered_outputs_count = count;
+    barrier->next_ordered_output   = 0;
+
+    if (! barrier->timer_armed)
+    {
+        barrier->timer_armed = true;
+        if (needs_schedule != NULL)
+        {
+            *needs_schedule = true;
+        }
+    }
+
+    return true;
+}
+
+bool ipmanipulatorDelayBarrierHasPendingOrdered(const ipmanipulator_delay_barrier_t *barrier)
+{
+    return barrier != NULL && barrier->ordered_outputs != NULL &&
+           barrier->next_ordered_output < barrier->ordered_outputs_count;
+}
+
+void ipmanipulatorDelayBarrierTake(ipmanipulator_delay_barrier_t *barrier, ipmanipulator_delay_batch_t *batch)
+{
+    if (barrier == NULL || batch == NULL)
+    {
+        return;
+    }
+
+    memoryZero(batch, sizeof(*batch));
+    batch->count                 = barrier->count;
+    batch->ordered_outputs       = barrier->ordered_outputs;
+    batch->ordered_outputs_count = barrier->ordered_outputs_count;
+    batch->next_ordered_output   = barrier->next_ordered_output;
+    for (uint8_t i = 0; i < barrier->count; ++i)
+    {
+        batch->packets[i] = barrier->packets[i];
+    }
+
+    memoryZero(barrier, sizeof(*barrier));
+}
+
+bool ipmanipulatorDelayBatchSendUpstream(tunnel_t *t, ipmanipulator_delay_batch_t *batch)
+{
+    if (batch == NULL)
+    {
+        return true;
+    }
+
+    bool all_alive = true;
+
+    for (uint32_t i = batch->next_ordered_output; i < batch->ordered_outputs_count; ++i)
+    {
+        ipmanipulator_ordered_output_t *output = &batch->ordered_outputs[i];
+
+        if (output->line == NULL)
+        {
+            if (output->buf != NULL)
+            {
+                sbufDestroy(output->buf);
+            }
+        }
+        else if (output->buf != NULL)
+        {
+            if (lineIsAlive(output->line))
+            {
+                output->send(t, output->line, output->buf);
+                all_alive &= lineIsAlive(output->line);
+            }
+            else
+            {
+                lineReuseBuffer(output->line, output->buf);
+                all_alive = false;
+            }
+
+            lineUnlock(output->line);
+        }
+
+        output->line = NULL;
+        output->buf  = NULL;
+    }
+
+    memoryFree(batch->ordered_outputs);
+    batch->ordered_outputs       = NULL;
+    batch->ordered_outputs_count = 0;
+    batch->next_ordered_output   = 0;
+
+    for (uint8_t i = 0; i < batch->count; ++i)
+    {
+        ipmanipulator_captured_packet_t *packet = &batch->packets[i];
+
+        if (packet->line == NULL)
+        {
+            if (packet->buf != NULL)
+            {
+                sbufDestroy(packet->buf);
+            }
+        }
+        else if (packet->buf != NULL)
+        {
+            if (lineIsAlive(packet->line))
+            {
+                all_alive &= ipmanipulatorSendUpstreamMaybeSegmented(t, packet->line, packet->buf);
+            }
+            else
+            {
+                lineReuseBuffer(packet->line, packet->buf);
+                all_alive = false;
+            }
+
+            lineUnlock(packet->line);
+        }
+
+        packet->line = NULL;
+        packet->buf  = NULL;
+    }
+
+    batch->count = 0;
+    return all_alive;
+}
+
+static ipmanipulator_flow_table_t *ipmanipulatorDelayBarrierTable(ipmanipulator_tstate_t            *state,
+                                                                  ipmanipulator_delay_barrier_kind_e kind)
+{
+    switch (kind)
+    {
+    case kIpManipulatorDelayBarrierFirstSni:
+        return &state->first_sni_table;
+    case kIpManipulatorDelayBarrierSmuggleSni:
+        return &state->smuggle_table;
+    case kIpManipulatorDelayBarrierOverlapSni:
+        return &state->overlap_table;
+    default:
+        return NULL;
+    }
+}
+
+static ipmanipulator_delay_barrier_t *ipmanipulatorDelayBarrierFromRecord(void                              *record,
+                                                                          ipmanipulator_delay_barrier_kind_e kind)
+{
+    switch (kind)
+    {
+    case kIpManipulatorDelayBarrierFirstSni:
+        return &((ipmanipulator_firstsni_flow_t *) record)->delay_barrier;
+    case kIpManipulatorDelayBarrierSmuggleSni:
+        return &((ipmanipulator_smuggle_flow_t *) record)->delay_barrier;
+    case kIpManipulatorDelayBarrierOverlapSni:
+        return &((ipmanipulator_overlap_flow_t *) record)->delay_barrier;
+    default:
+        return NULL;
+    }
+}
+
+static void ipmanipulatorDelayBarrierClearWindow(void *record, ipmanipulator_delay_barrier_kind_e kind)
+{
+    switch (kind)
+    {
+    case kIpManipulatorDelayBarrierFirstSni:
+        ((ipmanipulator_firstsni_flow_t *) record)->delay_window_until_ms = 0;
+        return;
+    case kIpManipulatorDelayBarrierSmuggleSni:
+        ((ipmanipulator_smuggle_flow_t *) record)->delay_window_until_ms = 0;
+        return;
+    case kIpManipulatorDelayBarrierOverlapSni:
+        ((ipmanipulator_overlap_flow_t *) record)->delay_window_until_ms = 0;
+        return;
+    default:
+        return;
+    }
+}
+
+static void ipmanipulatorDelayBarrierCleanupTimer(void *arg1, void *arg2, void *arg3)
+{
+    discard arg1;
+    discard arg3;
+
+    memoryFree(arg2);
+}
+
+#ifdef IPMANIPULATOR_DELAY_BARRIER_TEST_HOOKS
+static uint64_t ipmanipulator_delay_barrier_test_now_ms;
+
+void ipmanipulatorDelayBarrierTestSetNow(uint64_t now_ms)
+{
+    ipmanipulator_delay_barrier_test_now_ms = now_ms;
+}
+
+static uint64_t ipmanipulatorDelayBarrierNow(void)
+{
+    return ipmanipulator_delay_barrier_test_now_ms;
+}
+#else
+static uint64_t ipmanipulatorDelayBarrierNow(void)
+{
+    return getTickMS();
+}
+#endif
+
+static void ipmanipulatorDelayBarrierRunTimer(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    discard arg3;
+
+    tunnel_t                            *t     = arg1;
+    ipmanipulator_delay_timer_message_t *msg   = arg2;
+    ipmanipulator_tstate_t              *state = tunnelGetState(t);
+    ipmanipulator_flow_table_t          *table = ipmanipulatorDelayBarrierTable(state, msg->kind);
+
+    if (table == NULL)
+    {
+        memoryFree(msg);
+        return;
+    }
+
+    for (;;)
+    {
+        ipmanipulator_delay_batch_t    batch                = {0};
+        ipmanipulator_ordered_output_t due_output           = {0};
+        bool                           have_due_output      = false;
+        bool                           remove_after_release = false;
+        uint64_t                       now_ms               = ipmanipulatorDelayBarrierNow();
+        ipmanipulator_flow_shard_t    *shard                = ipmanipulatorFlowTableLockShard(table, &msg->key);
+
+        if (shard == NULL)
+        {
+            memoryFree(msg);
+            return;
+        }
+
+        ipmanipulator_flow_entry_t    *entry = ipmanipulatorFlowShardFind(table, shard, &msg->key);
+        ipmanipulator_delay_barrier_t *barrier =
+            entry != NULL ? ipmanipulatorDelayBarrierFromRecord(ipmanipulatorFlowEntryRecord(entry), msg->kind) : NULL;
+
+        if (barrier == NULL || barrier->generation != msg->generation || ! barrier->timer_armed)
+        {
+            ipmanipulatorFlowShardUnlock(shard);
+            memoryFree(msg);
+            return;
+        }
+
+        if (ipmanipulatorDelayBarrierHasPendingOrdered(barrier))
+        {
+            ipmanipulator_ordered_output_t *next = &barrier->ordered_outputs[barrier->next_ordered_output];
+
+            if (now_ms < next->due_ms)
+            {
+                uint64_t remaining = next->due_ms - now_ms;
+                uint32_t delay_ms  = remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining;
+                wid_t    wid       = getWID();
+
+                ipmanipulatorFlowShardUnlock(shard);
+                ipmanipulatorDelayBarrierSchedule(t, &msg->key, msg->kind, msg->generation, wid, delay_ms);
+                memoryFree(msg);
+                return;
+            }
+
+            due_output = *next;
+            memoryZero(next, sizeof(*next));
+            barrier->next_ordered_output += 1U;
+            have_due_output = true;
+        }
+        else if (now_ms < barrier->deadline_ms)
+        {
+            uint64_t remaining = barrier->deadline_ms - now_ms;
+            uint32_t delay_ms  = remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining;
+            wid_t    wid       = getWID();
+
+            ipmanipulatorFlowShardUnlock(shard);
+            ipmanipulatorDelayBarrierSchedule(t, &msg->key, msg->kind, msg->generation, wid, delay_ms);
+            memoryFree(msg);
+            return;
+        }
+        else
+        {
+            remove_after_release = barrier->remove_after_release;
+            ipmanipulatorDelayBarrierTake(barrier, &batch);
+            ipmanipulatorDelayBarrierClearWindow(ipmanipulatorFlowEntryRecord(entry), msg->kind);
+
+            if (remove_after_release)
+            {
+                ipmanipulatorFlowShardRemove(table, shard, entry);
+            }
+        }
+
+        ipmanipulatorFlowShardUnlock(shard);
+
+        if (have_due_output)
+        {
+            if (due_output.line == NULL)
+            {
+                if (due_output.buf != NULL)
+                {
+                    sbufDestroy(due_output.buf);
+                }
+            }
+            else if (due_output.buf != NULL)
+            {
+                if (lineIsAlive(due_output.line))
+                {
+                    due_output.send(t, due_output.line, due_output.buf);
+                }
+                else
+                {
+                    lineReuseBuffer(due_output.line, due_output.buf);
+                }
+                lineUnlock(due_output.line);
+            }
+
+            continue;
+        }
+
+        memoryFree(msg);
+        discard ipmanipulatorDelayBatchSendUpstream(t, &batch);
+        return;
+    }
+}
+
+#ifdef IPMANIPULATOR_DELAY_BARRIER_TEST_HOOKS
+void ipmanipulatorDelayBarrierTestFire(tunnel_t *t, const ipmanipulator_flow_key_t *key,
+                                       ipmanipulator_delay_barrier_kind_e kind, uint64_t generation)
+{
+    ipmanipulator_delay_timer_message_t *msg = memoryAllocate(sizeof(*msg));
+
+    *msg = (ipmanipulator_delay_timer_message_t) {.key = *key, .kind = kind, .generation = generation};
+    ipmanipulatorDelayBarrierRunTimer(NULL, t, msg, NULL);
+}
+#endif
+
+void ipmanipulatorDelayBarrierSchedule(tunnel_t *t, const ipmanipulator_flow_key_t *key,
+                                       ipmanipulator_delay_barrier_kind_e kind, uint64_t generation, wid_t wid,
+                                       uint32_t delay_ms)
+{
+    ipmanipulator_delay_timer_message_t *msg = memoryAllocate(sizeof(*msg));
+
+    *msg = (ipmanipulator_delay_timer_message_t) {.key = *key, .kind = kind, .generation = generation};
+    sendWorkerMessageTimedWithCleanup(wid,
+                                      (WorkerMessageCallback) ipmanipulatorDelayBarrierRunTimer,
+                                      ipmanipulatorDelayBarrierCleanupTimer,
+                                      delay_ms,
+                                      t,
+                                      msg,
+                                      NULL);
 }
 
 ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(tunnel_t *t, line_t *l, sbuf_t *buf,
@@ -1846,21 +2456,7 @@ void ipmanipulatorDestroyTlsCaptureState(tunnel_t *t)
 
 sbuf_t *clonePacketWithLength(line_t *l, sbuf_t *buf, uint32_t new_len)
 {
-    buffer_pool_t *pool  = lineGetBufferPool(l);
-    sbuf_t        *clone = NULL;
-
-    if (new_len <= bufferpoolGetSmallBufferSize(pool))
-    {
-        clone = bufferpoolGetSmallBuffer(pool);
-    }
-    else if (new_len <= bufferpoolGetLargeBufferSize(pool))
-    {
-        clone = bufferpoolGetLargeBuffer(pool);
-    }
-    else
-    {
-        clone = sbufCreateWithPadding(new_len, sbufGetLeftPadding(buf));
-    }
+    sbuf_t *clone = bufferpoolGetBestFit(lineGetBufferPool(l), new_len, sbufGetLeftPadding(buf));
 
     sbufSetLength(clone, new_len);
     return clone;
@@ -1868,167 +2464,34 @@ sbuf_t *clonePacketWithLength(line_t *l, sbuf_t *buf, uint32_t new_len)
 
 bool parseTlsRecordSni(const uint8_t *tls, uint32_t tls_len, sni_match_t *match)
 {
-    if (tls == NULL || tls_len < 9 || match == NULL)
+    if (match == NULL)
     {
         return false;
     }
 
-    if (tls[0] != 0x16 || tls[1] != 0x03 || tls[2] > 0x03)
+    tls_client_hello_view_t hello = {0};
+    if (tlsclienthelloParseRecord(tls, tls_len, &hello) != kTlsClientHelloFound ||
+        hello.handshake_total_length != hello.record_body_length)
     {
         return false;
     }
 
-    uint16_t tls_record_len = GET_BE16(tls + 3);
-    if ((uint32_t) tls_record_len + 5U > tls_len)
-    {
-        return false;
-    }
-
-    if (tls[5] != 0x01)
-    {
-        return false;
-    }
-
-    uint32_t client_hello_len = GET_BE24(tls + 6);
-    if (client_hello_len < 34 || client_hello_len + 4U != (uint32_t) tls_record_len)
-    {
-        return false;
-    }
-
-    const uint8_t *client_hello = tls + 9;
-    const uint8_t *cursor       = client_hello + 34;
-    const uint8_t *hello_end    = client_hello + client_hello_len;
-
-    if (cursor >= hello_end)
-    {
-        return false;
-    }
-
-    uint8_t session_id_len = cursor[0];
-    cursor += 1;
-    if ((size_t) (hello_end - cursor) < session_id_len + 2U)
-    {
-        return false;
-    }
-    cursor += session_id_len;
-
-    uint16_t cipher_suites_len = GET_BE16(cursor);
-    cursor += 2;
-    if ((size_t) (hello_end - cursor) < cipher_suites_len + 1U)
-    {
-        return false;
-    }
-    cursor += cipher_suites_len;
-
-    uint8_t compression_methods_len = cursor[0];
-    cursor += 1;
-    if ((size_t) (hello_end - cursor) < compression_methods_len + 2U)
-    {
-        return false;
-    }
-    cursor += compression_methods_len;
-
-    uint16_t       extensions_len       = GET_BE16(cursor);
-    const uint8_t *extensions_len_field = cursor;
-    cursor += 2;
-    if ((size_t) (hello_end - cursor) < extensions_len)
-    {
-        return false;
-    }
-
-    const uint8_t *extensions_end = cursor + extensions_len;
-    if (extensions_end != hello_end)
-    {
-        return false;
-    }
-
-    bool found_sni      = false;
-    bool has_psk_binder = false;
-
-    while (cursor + 4 <= extensions_end)
-    {
-        uint16_t       extension_type = GET_BE16(cursor);
-        uint16_t       extension_len  = GET_BE16(cursor + 2);
-        const uint8_t *extension_data = cursor + 4;
-        const uint8_t *next_extension = extension_data + extension_len;
-
-        if (next_extension > extensions_end)
-        {
-            return false;
-        }
-
-        if (extension_type == 0x0000 && ! found_sni)
-        {
-            if (extension_len < 2)
-            {
-                return false;
-            }
-
-            uint16_t       server_name_list_len = GET_BE16(extension_data);
-            const uint8_t *server_name_cursor   = extension_data + 2;
-            const uint8_t *server_name_list_end = server_name_cursor + server_name_list_len;
-
-            if (server_name_list_end > next_extension)
-            {
-                return false;
-            }
-
-            while (server_name_cursor + 3 <= server_name_list_end)
-            {
-                uint8_t        name_type = server_name_cursor[0];
-                uint16_t       name_len  = GET_BE16(server_name_cursor + 1);
-                const uint8_t *name_data = server_name_cursor + 3;
-                const uint8_t *next_name = name_data + name_len;
-
-                if (next_name > server_name_list_end)
-                {
-                    return false;
-                }
-
-                if (name_type == 0x00)
-                {
-                    *match = (sni_match_t) {
-                        .tls_record_len                    = tls_record_len,
-                        .client_hello_len                  = client_hello_len,
-                        .has_tls13_psk_binder              = false,
-                        .extensions_len                    = extensions_len,
-                        .server_name_list_len              = server_name_list_len,
-                        .server_name_ext_len               = extension_len,
-                        .sni_name_len                      = name_len,
-                        .sni_name_offset                   = (uint32_t) (name_data - tls),
-                        .sni_name_len_field_offset         = (uint32_t) ((server_name_cursor + 1) - tls),
-                        .extensions_len_field_offset       = (uint32_t) (extensions_len_field - tls),
-                        .server_name_list_len_field_offset = (uint32_t) (extension_data - tls),
-                        .server_name_ext_len_field_offset  = (uint32_t) ((cursor + 2) - tls),
-                        .tls_record_len_field_offset       = 3,
-                        .client_hello_len_field_offset     = 6,
-                    };
-                    found_sni = true;
-                    break;
-                }
-
-                server_name_cursor = next_name;
-            }
-        }
-        else if (extension_type == 0x0029)
-        {
-            has_psk_binder = true;
-        }
-
-        cursor = next_extension;
-    }
-
-    if (cursor != extensions_end)
-    {
-        return false;
-    }
-
-    if (! found_sni)
-    {
-        return false;
-    }
-
-    match->has_tls13_psk_binder = has_psk_binder;
+    *match = (sni_match_t) {
+        .tls_record_len                    = (uint16_t) hello.record_body_length,
+        .client_hello_len                  = hello.handshake_body_length,
+        .has_tls13_psk_binder              = hello.has_psk,
+        .extensions_len                    = hello.extensions_length,
+        .server_name_list_len              = hello.server_name_list_length,
+        .server_name_ext_len               = hello.sni_extension_length,
+        .sni_name_len                      = hello.sni_name_length,
+        .sni_name_offset                   = hello.sni_name_offset,
+        .sni_name_len_field_offset         = hello.sni_name_length_field_offset,
+        .extensions_len_field_offset       = hello.extensions_length_field_offset,
+        .server_name_list_len_field_offset = hello.server_name_list_length_field_offset,
+        .server_name_ext_len_field_offset  = hello.sni_extension_length_field_offset,
+        .tls_record_len_field_offset       = hello.record_length_field_offset,
+        .client_hello_len_field_offset     = hello.handshake_length_field_offset,
+    };
     return true;
 }
 
@@ -2097,6 +2560,11 @@ static void ipmanipulatorSendUpstreamDuplicates(tunnel_t *t, line_t *l, sbuf_t *
     ipmanipulatorSendWithDuplicates(t, l, buf, tunnelNextUpStreamPayload);
 }
 
+static void ipmanipulatorSendDownstreamDuplicates(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    ipmanipulatorSendWithDuplicates(t, l, buf, tunnelPrevDownStreamPayload);
+}
+
 void ipmanipulatorSendUpstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     ipmanipulatorEmitUpstream(t, l, buf, ipmanipulatorSendUpstreamDuplicates);
@@ -2104,5 +2572,5 @@ void ipmanipulatorSendUpstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 void ipmanipulatorSendDownstreamFinal(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    ipmanipulatorSendWithDuplicates(t, l, buf, tunnelPrevDownStreamPayload);
+    discard ipmanipulatorSendEgressMaybeSegmented(t, l, buf, ipmanipulatorSendDownstreamDuplicates, false, false);
 }

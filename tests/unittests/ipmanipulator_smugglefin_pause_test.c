@@ -72,8 +72,7 @@ bool ipmanipulatorSmuggleFinTestScheduleImmediate(wid_t wid, WorkerMessageCallba
 
 uint8_t ipmanipulatorResolveTransportProtocol(const ipmanipulator_tstate_t *state, uint8_t packet_protocol)
 {
-    if (packet_protocol == state->trick_proto_swap_tcp_number ||
-        packet_protocol == state->trick_proto_swap_tcp_number_2)
+    if (packet_protocol == state->trick_proto_swap_tcp_number)
     {
         return IPPROTO_TCP;
     }
@@ -84,6 +83,12 @@ uint8_t ipmanipulatorResolveTransportProtocol(const ipmanipulator_tstate_t *stat
     }
 
     return packet_protocol == IPPROTO_TCP || packet_protocol == IPPROTO_UDP ? packet_protocol : 0;
+}
+
+bool ipmanipulatorShouldLogEgressWarning(ipmanipulator_tstate_t *state)
+{
+    discard state;
+    return true;
 }
 
 static void require(bool condition, const char *message)
@@ -669,9 +674,10 @@ static void testCrossWorkerEchoReleasesOwnerFlow(void)
     tl_wid = 0;
     startPausedFlow(t, &owner_line);
 
-    tl_wid       = 1;
-    sbuf_t *echo = makeTcpPacket(1, 0xC0000201, 443, 0x0A000001, 12345, 200, 110, TCP_FIN | TCP_ACK, 0);
-    require(smugglefintrickDownStreamPayload(t, &echo_line, echo), "expected echo was not consumed");
+    tl_wid = 1;
+    sbuf_t *echo =
+        makeTcpPacket(1, 0xC0000201, 443, 0x0A000001, 12345, 200, 110, TCP_FIN | TCP_ACK | TCP_ECE | TCP_CWR, 0);
+    require(smugglefintrickDownStreamPayload(t, &echo_line, echo), "ECN-marked expected echo was not consumed");
 
     require(timed_message_count == 2, "cross-worker echo did not schedule a release");
     require(timed_messages[1].wid == 0, "cross-worker echo release targeted the wrong worker");
@@ -752,13 +758,12 @@ static void testCrossWorkerCompositionRestoresProtocolAndPortghostOnce(void)
     initializeLine(&probe_line, 0);
     resetCounters();
 
-    ipmanipulator_tstate_t *state        = tunnelGetState(t);
-    state->trick_proto_swap              = true;
-    state->trick_proto_swap_tcp_number   = 143;
-    state->trick_proto_swap_tcp_number_2 = 144;
-    state->trick_proto_swap_udp_number   = -1;
-    state->trick_source_port_ghost       = true;
-    state->trick_dest_port_ghost         = true;
+    ipmanipulator_tstate_t *state      = tunnelGetState(t);
+    state->trick_proto_swap            = true;
+    state->trick_proto_swap_tcp_number = 143;
+    state->trick_proto_swap_udp_number = -1;
+    state->trick_source_port_ghost     = true;
+    state->trick_dest_port_ghost       = true;
 
     for (uint32_t port = 12000; port < 14048; ++port)
     {

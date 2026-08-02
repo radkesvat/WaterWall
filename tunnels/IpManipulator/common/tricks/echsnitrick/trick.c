@@ -120,70 +120,27 @@ static void echsnitrickDestroyStandalonePacket(sbuf_t **packet)
 static bool echsnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t packet_length,
                                           echsnitrick_tcp_packet_info_t *info)
 {
-    if (packet_length < sizeof(struct ip_hdr))
-    {
-        return false;
-    }
-
-    const struct ip_hdr *ipheader = (const struct ip_hdr *) packet;
-    if (IPH_V(ipheader) != 4 || IPH_PROTO(ipheader) != IPPROTO_TCP)
-    {
-        return false;
-    }
-
-    uint8_t ip_header_len_words = IPH_HL(ipheader);
-    if (ip_header_len_words < 5 || ip_header_len_words > 15)
-    {
-        return false;
-    }
-
-    uint16_t ip_header_len = (uint16_t) (ip_header_len_words * 4U);
-    if (packet_length < ip_header_len + sizeof(struct tcp_hdr))
-    {
-        return false;
-    }
-
-    uint16_t ip_total_len = lwip_ntohs(IPH_LEN(ipheader));
-    if (ip_total_len < ip_header_len + sizeof(struct tcp_hdr) || packet_length < ip_total_len)
-    {
-        return false;
-    }
-
-    uint16_t off_f = lwip_ntohs(IPH_OFFSET(ipheader));
-    if ((off_f & (IP_MF | IP_OFFMASK)) != 0)
-    {
-        return false;
-    }
-
-    const struct tcp_hdr *tcp_header       = (const struct tcp_hdr *) (packet + ip_header_len);
-    uint8_t               tcp_header_words = TCPH_HDRLEN(tcp_header);
-    if (tcp_header_words < 5 || tcp_header_words > 15)
-    {
-        return false;
-    }
-
-    uint16_t tcp_header_len = (uint16_t) (tcp_header_words * 4U);
-    uint16_t headers_len    = (uint16_t) (ip_header_len + tcp_header_len);
-    if (ip_total_len < headers_len)
+    ipv4_packet_view_t packet_view = {0};
+    if (info == NULL || ! ipv4packetviewParseTcp(packet, packet_length, &packet_view) || packet_view.fragmented)
     {
         return false;
     }
 
     *info = (echsnitrick_tcp_packet_info_t) {
         .packet            = packet,
-        .seq               = lwip_ntohl(tcp_header->seqno),
-        .payload_offset    = headers_len,
-        .ip_total_len      = ip_total_len,
-        .ip_header_len     = ip_header_len,
-        .tcp_header_len    = tcp_header_len,
-        .headers_len       = headers_len,
-        .tcp_payload_len   = (uint16_t) (ip_total_len - headers_len),
-        .src_port          = lwip_ntohs(tcp_header->src),
-        .dst_port          = lwip_ntohs(tcp_header->dest),
-        .ip_identification = lwip_ntohs(IPH_ID(ipheader)),
-        .src_addr          = ipheader->src.addr,
-        .dst_addr          = ipheader->dest.addr,
-        .tcp_flags         = TCPH_FLAGS(tcp_header),
+        .seq               = packet_view.tcp_sequence,
+        .payload_offset    = packet_view.payload_offset,
+        .ip_total_len      = packet_view.ip_total_length,
+        .ip_header_len     = packet_view.ip_header_length,
+        .tcp_header_len    = packet_view.transport_header_length,
+        .headers_len       = packet_view.payload_offset,
+        .tcp_payload_len   = packet_view.payload_length,
+        .src_port          = packet_view.source_port,
+        .dst_port          = packet_view.destination_port,
+        .ip_identification = packet_view.ip_identification,
+        .src_addr          = packet_view.source_address,
+        .dst_addr          = packet_view.destination_address,
+        .tcp_flags         = packet_view.tcp_flags,
     };
 
     return true;

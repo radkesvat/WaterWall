@@ -81,14 +81,18 @@ static bool hasTcpFlagActionsConfigured(const ipmanipulator_tstate_t *state, boo
     return is_upstream ? tcpbitchangetrickHasUpstreamActions(state) : tcpbitchangetrickHasDownstreamActions(state);
 }
 
-static bool appendOriginalTcpFlagsToPayload(sbuf_t **buf_ptr, struct ip_hdr **ipheader_ptr, uint16_t ip_total_len,
-                                            uint16_t iphdr_len, uint16_t tcphdr_len, uint8_t flags)
+static bool appendOriginalTcpFlagsToPayload(ipmanipulator_tstate_t *state, sbuf_t **buf_ptr,
+                                            struct ip_hdr **ipheader_ptr, uint16_t ip_total_len, uint16_t iphdr_len,
+                                            uint16_t tcphdr_len, uint8_t flags)
 {
     sbuf_t *buf = *buf_ptr;
 
     if (ip_total_len >= UINT16_MAX)
     {
-        LOGW("tcpbitchangetrick: cannot carry original TCP flags because IPv4 total length is already full");
+        if (ipmanipulatorShouldLogEgressWarning(state))
+        {
+            LOGW("tcpbitchangetrick: cannot carry original TCP flags because IPv4 total length is already full");
+        }
         return false;
     }
 
@@ -99,13 +103,9 @@ static bool appendOriginalTcpFlagsToPayload(sbuf_t **buf_ptr, struct ip_hdr **ip
     }
 
     uint32_t new_len = (uint32_t) ip_total_len + 1U;
-    if (sbufGetMaximumWriteableSize(buf) < new_len)
-    {
-        LOGW("tcpbitchangetrick: dropping packet because preserve-tcp-bitflags needs one extra byte but the buffer has "
-             "no room");
-        return false;
-    }
-
+    /* The final egress path segments this temporary representation before it
+     * reaches the wire when the metadata byte crosses the MTU boundary. */
+    buf = sbufReserveSpace(buf, new_len);
     sbufSetLength(buf, new_len);
     uint8_t *packet      = sbufGetMutablePtr(buf);
     packet[ip_total_len] = flags;
@@ -258,7 +258,7 @@ static void tcpbitchangetrickPayload(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, b
         if (state->trick_preserve_tcp_bitflags && has_actions)
         {
             if (! appendOriginalTcpFlagsToPayload(
-                    buf_ptr, &ipheader, ip_total_len, iphdr_len, tcphdr_len, original_flags))
+                    state, buf_ptr, &ipheader, ip_total_len, iphdr_len, tcphdr_len, original_flags))
             {
                 lineReuseBuffer(l, *buf_ptr);
                 *buf_ptr = NULL;

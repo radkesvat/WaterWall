@@ -1,8 +1,7 @@
 #include "trick.h"
 
+#include "TlsClient/interface.h"
 #include "loggers/network_logger.h"
-
-api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 enum
 {
@@ -37,6 +36,15 @@ typedef struct synfinsnitrick_packet_sequence_s
     sbuf_t  *packets[kSynfinSniMaxEmittedPackets];
     uint16_t count;
 } synfinsnitrick_packet_sequence_t;
+
+#ifdef IPMANIPULATOR_SYNFIN_TEST_HOOKS
+typedef void (*synfinsnitrick_test_recycle_hook_t)(sbuf_t *buf);
+
+static synfinsnitrick_test_recycle_hook_t synfinsnitrick_test_recycle_hook;
+
+void ipmanipulatorSynfinTestSetRecycleHook(synfinsnitrick_test_recycle_hook_t hook);
+void ipmanipulatorSynfinTestSendOutputs(tunnel_t *t, line_t *l, sbuf_t **packets, uint16_t count);
+#endif
 
 static void synfinsnitrickFinalizePacketChecksum(sbuf_t *packet_buf, uint16_t ip_header_len, bool random_checksum)
 {
@@ -262,71 +270,28 @@ static void synfinsnitrickFinalizeFlowLocked(ipmanipulator_synfin_flow_t *flow, 
 static bool synfinsnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t packet_length,
                                              synfinsnitrick_tcp_packet_info_t *info)
 {
-    if (packet_length < sizeof(struct ip_hdr))
-    {
-        return false;
-    }
-
-    const struct ip_hdr *ipheader = (const struct ip_hdr *) packet;
-    if (IPH_V(ipheader) != 4 || IPH_PROTO(ipheader) != IPPROTO_TCP)
-    {
-        return false;
-    }
-
-    uint8_t ip_header_len_words = IPH_HL(ipheader);
-    if (ip_header_len_words < 5 || ip_header_len_words > 15)
-    {
-        return false;
-    }
-
-    uint16_t ip_header_len = (uint16_t) (ip_header_len_words * 4U);
-    if (packet_length < ip_header_len + sizeof(struct tcp_hdr))
-    {
-        return false;
-    }
-
-    uint16_t ip_total_len = lwip_ntohs(IPH_LEN(ipheader));
-    if (ip_total_len < ip_header_len + sizeof(struct tcp_hdr) || packet_length < ip_total_len)
-    {
-        return false;
-    }
-
-    uint16_t off_f = lwip_ntohs(IPH_OFFSET(ipheader));
-    if ((off_f & (IP_MF | IP_OFFMASK)) != 0)
-    {
-        return false;
-    }
-
-    const struct tcp_hdr *tcp_header       = (const struct tcp_hdr *) (packet + ip_header_len);
-    uint8_t               tcp_header_words = TCPH_HDRLEN(tcp_header);
-    if (tcp_header_words < 5 || tcp_header_words > 15)
-    {
-        return false;
-    }
-
-    uint16_t tcp_header_len = (uint16_t) (tcp_header_words * 4U);
-    uint16_t headers_len    = (uint16_t) (ip_header_len + tcp_header_len);
-    if (ip_total_len < headers_len)
+    ipv4_packet_view_t packet_view = {0};
+    if (info == NULL || ! ipv4packetviewParseTcp(packet, packet_length, &packet_view) || packet_view.fragmented)
     {
         return false;
     }
 
     *info = (synfinsnitrick_tcp_packet_info_t) {
         .packet            = packet,
-        .seq               = lwip_ntohl(tcp_header->seqno),
-        .ack               = lwip_ntohl(tcp_header->ackno),
-        .payload_offset    = headers_len,
-        .ip_total_len      = ip_total_len,
-        .ip_header_len     = ip_header_len,
-        .tcp_header_len    = tcp_header_len,
-        .headers_len       = headers_len,
-        .tcp_payload_len   = (uint16_t) (ip_total_len - headers_len),
-        .src_port          = lwip_ntohs(tcp_header->src),
-        .dst_port          = lwip_ntohs(tcp_header->dest),
-        .ip_identification = lwip_ntohs(IPH_ID(ipheader)),
-        .src_addr          = ipheader->src.addr,
-        .dst_addr          = ipheader->dest.addr,
-        .tcp_flags         = TCPH_FLAGS(tcp_header),
+        .seq               = packet_view.tcp_sequence,
+        .ack               = packet_view.tcp_acknowledgment,
+        .payload_offset    = packet_view.payload_offset,
+        .ip_total_len      = packet_view.ip_total_length,
+        .ip_header_len     = packet_view.ip_header_length,
+        .tcp_header_len    = packet_view.transport_header_length,
+        .headers_len       = packet_view.payload_offset,
+        .tcp_payload_len   = packet_view.payload_length,
+        .src_port          = packet_view.source_port,
+        .dst_port          = packet_view.destination_port,
+        .ip_identification = packet_view.ip_identification,
+        .src_addr          = packet_view.source_address,
+        .dst_addr          = packet_view.destination_address,
+        .tcp_flags         = packet_view.tcp_flags,
     };
 
     return true;
@@ -413,55 +378,13 @@ static ipmanipulator_flow_entry_t *synfinsnitrickReserveLocked(ipmanipulator_tst
     return entry;
 }
 
-static sbuf_t *synfinsnitrickAllocateRequestBuffer(uint32_t len)
+static sbuf_t *synfinsnitrickGenerateTlsClientHello(tunnel_t *t, line_t *l)
 {
-    buffer_pool_t *pool = getWorkerBufferPool(getWID());
-
-    if (len <= bufferpoolGetSmallBufferSize(pool))
-    {
-        return bufferpoolGetSmallBuffer(pool);
-    }
-
-    if (len <= bufferpoolGetLargeBufferSize(pool))
-    {
-        return bufferpoolGetLargeBuffer(pool);
-    }
-
-    return sbufCreate(len);
-}
-
-static sbuf_t *synfinsnitrickGenerateTlsClientHello(tunnel_t *t)
-{
-    static const char kGenerateTlsHelloPrefix[] = "generateTlsHello:";
-
     ipmanipulator_tstate_t *state = tunnelGetState(t);
-    uint32_t request_len = (uint32_t) (sizeof(kGenerateTlsHelloPrefix) - 1) + state->trick_synfin_sni_value_len;
-    sbuf_t  *request_buf = synfinsnitrickAllocateRequestBuffer(request_len);
-
-    if (request_buf == NULL)
-    {
-        return NULL;
-    }
-
-    sbufSetLength(request_buf, request_len);
-    memoryCopy(sbufGetMutablePtr(request_buf), kGenerateTlsHelloPrefix, sizeof(kGenerateTlsHelloPrefix) - 1);
-    memoryCopy(sbufGetMutablePtr(request_buf) + (sizeof(kGenerateTlsHelloPrefix) - 1),
-               state->trick_synfin_sni_value,
-               state->trick_synfin_sni_value_len);
-
-    api_result_t result = tlsclientTunnelApi(state->trick_synfin_sni_tls_client_tunnel, request_buf);
-
-    if (result.result_code != kApiResultOk || result.buffer == NULL)
-    {
-        if (result.buffer != NULL)
-        {
-            reuseBuffer(result.buffer);
-        }
-
-        return NULL;
-    }
-
-    return result.buffer;
+    return tlsclientTunnelGenerateClientHello(state->trick_synfin_sni_tls_client_tunnel,
+                                              l,
+                                              (const uint8_t *) state->trick_synfin_sni_value,
+                                              state->trick_synfin_sni_value_len);
 }
 
 static sbuf_t *synfinsnitrickBuildCombinedPacket(line_t *l, const ipmanipulator_captured_packet_t *held_packet,
@@ -980,6 +903,18 @@ static void synfinsnitrickSendNormalNow(tunnel_t *t, line_t *l, sbuf_t *buf)
     discard synfinsnitrickSendUpstreamDirect(t, l, buf);
 }
 
+static void synfinsnitrickRecycleOutput(line_t *l, sbuf_t *buf)
+{
+#ifdef IPMANIPULATOR_SYNFIN_TEST_HOOKS
+    if (synfinsnitrick_test_recycle_hook != NULL)
+    {
+        synfinsnitrick_test_recycle_hook(buf);
+    }
+#endif
+
+    lineReuseBuffer(l, buf);
+}
+
 static void synfinsnitrickSendHeldThenCurrentNormal(tunnel_t *t, ipmanipulator_captured_packet_t *held_packet,
                                                     line_t *current_line, sbuf_t *current_buf)
 {
@@ -1054,14 +989,18 @@ static void synfinsnitrickSendOutputs(tunnel_t *t, line_t *l, synfinsnitrick_pac
             continue;
         }
 
+        /*
+         * The synchronous loop already fixes the order of the crafted sequence,
+         * so no pacing is applied here. A forwarded packet may close the line,
+         * which is why `alive` gates every later packet into recycling instead.
+         */
         if (alive)
         {
             alive = synfinsnitrickSendUpstreamDirectWithMode(t, l, packet, false);
-            wwSleepMS(20);
         }
         else
         {
-            lineReuseBuffer(l, packet);
+            synfinsnitrickRecycleOutput(l, packet);
         }
 
         sequence->packets[i] = NULL;
@@ -1070,6 +1009,27 @@ static void synfinsnitrickSendOutputs(tunnel_t *t, line_t *l, synfinsnitrick_pac
     sequence->count = 0;
     lineUnlock(l);
 }
+
+#ifdef IPMANIPULATOR_SYNFIN_TEST_HOOKS
+void ipmanipulatorSynfinTestSetRecycleHook(synfinsnitrick_test_recycle_hook_t hook)
+{
+    synfinsnitrick_test_recycle_hook = hook;
+}
+
+void ipmanipulatorSynfinTestSendOutputs(tunnel_t *t, line_t *l, sbuf_t **packets, uint16_t count)
+{
+    assert(count <= kSynfinSniMaxEmittedPackets);
+
+    synfinsnitrick_packet_sequence_t sequence = {.count = count};
+    for (uint16_t i = 0; i < count; ++i)
+    {
+        sequence.packets[i] = packets[i];
+        packets[i]          = NULL;
+    }
+
+    synfinsnitrickSendOutputs(t, l, &sequence);
+}
+#endif
 
 static void synfinsnitrickLogRejectedFlow(const sbuf_t *combined_packet, const sni_match_t *match,
                                           uint32_t real_sni_payload_offset, uint32_t generated_payload_len)
@@ -1139,7 +1099,7 @@ static bool synfinsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_c
         return true;
     }
 
-    sbuf_t *generated_hello = synfinsnitrickGenerateTlsClientHello(t);
+    sbuf_t *generated_hello = synfinsnitrickGenerateTlsClientHello(t, l);
     if (generated_hello == NULL)
     {
         sbufDestroy(combined_packet);

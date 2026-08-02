@@ -1,9 +1,8 @@
 #include "trick.h"
 
+#include "TlsClient/interface.h"
 #include "crafted_server_hello_bytes.h"
 #include "loggers/network_logger.h"
-
-api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 enum
 {
@@ -43,12 +42,14 @@ typedef struct overlapsnitrick_packet_sequence_s
 
 typedef struct overlapsnitrick_handle_result_s
 {
-    bool     block_flow;
-    bool     start_delay_window;
-    bool     set_downstream_marker;
-    uint32_t expected_downstream_seq;
-    uint16_t expected_downstream_ip_total_len;
-    uint16_t expected_downstream_fingerprint;
+    bool                              block_flow;
+    bool                              start_delay_window;
+    bool                              set_downstream_marker;
+    uint32_t                          expected_downstream_seq;
+    uint16_t                          expected_downstream_ip_total_len;
+    uint16_t                          expected_downstream_fingerprint;
+    overlapsnitrick_packet_sequence_t normal_sequence;
+    sbuf_t                           *crafted_server_hello;
 } overlapsnitrick_handle_result_t;
 
 static sbuf_t *overlapsnitrickDuplicateStandalonePacket(const sbuf_t *source)
@@ -135,7 +136,9 @@ static void overlapsnitrickResetFlow(ipmanipulator_overlap_flow_t *flow)
         return;
     }
 
+    uint64_t barrier_generation = flow->delay_barrier.generation;
     memoryZero(flow, sizeof(*flow));
+    flow->delay_barrier.generation = barrier_generation;
 }
 
 static void overlapsnitrickDestroyFlow(ipmanipulator_overlap_flow_t *flow)
@@ -147,6 +150,7 @@ static void overlapsnitrickDestroyFlow(ipmanipulator_overlap_flow_t *flow)
 
     overlapsnitrickDestroyCapturedPacket(&flow->held_packet);
     overlapsnitrickDestroyStandalonePacket(&flow->synack_packet);
+    ipmanipulatorDelayBarrierDestroy(&flow->delay_barrier);
     overlapsnitrickResetFlow(flow);
 }
 
@@ -160,6 +164,7 @@ static void overlapsnitrickInitializeFlow(ipmanipulator_overlap_flow_t          
 
     overlapsnitrickDestroyCapturedPacket(&flow->held_packet);
     overlapsnitrickDestroyStandalonePacket(&flow->synack_packet);
+    ipmanipulatorDelayBarrierDestroy(&flow->delay_barrier);
     overlapsnitrickResetFlow(flow);
 
     *flow = (ipmanipulator_overlap_flow_t) {
@@ -173,8 +178,9 @@ static void overlapsnitrickInitializeFlow(ipmanipulator_overlap_flow_t          
     };
 }
 
-static void overlapsnitrickFinalizeFlowLocked(ipmanipulator_overlap_flow_t *flow, bool block_flow,
-                                              const overlapsnitrick_handle_result_t *result, uint64_t now_ms)
+static void overlapsnitrickFinalizeFlowLocked(ipmanipulator_tstate_t *state, ipmanipulator_overlap_flow_t *flow,
+                                              bool block_flow, const overlapsnitrick_handle_result_t *result,
+                                              uint64_t now_ms, uint32_t configured_delay_ms)
 {
     if (flow == NULL)
     {
@@ -185,8 +191,13 @@ static void overlapsnitrickFinalizeFlowLocked(ipmanipulator_overlap_flow_t *flow
     overlapsnitrickDestroyStandalonePacket(&flow->synack_packet);
     flow->warmup_packets_seen = kOverlapSniWarmupPackets;
     flow->phase = block_flow ? kIpManipulatorOverlapFlowPhaseBlocked : kIpManipulatorOverlapFlowPhasePassthrough;
-    flow->delay_window_until_ms =
-        (result != NULL && result->start_delay_window && ! block_flow) ? now_ms + kOverlapSniDelayWindowMs : 0;
+    uint64_t transcript_delay_ms =
+        (uint64_t) configured_delay_ms +
+        ((uint64_t) (kOverlapSniMaxEmittedPackets - 3U) * kOverlapSniDelaySequenceSpacingMs) + 1U;
+    flow->delay_window_until_ms = (result != NULL && result->start_delay_window && ! block_flow)
+                                      ? now_ms + max((uint64_t) kOverlapSniDelayWindowMs, transcript_delay_ms)
+                                      : 0;
+    ipmanipulatorDelayBarrierInitialize(state, &flow->delay_barrier, flow->delay_window_until_ms);
     flow->ignore_expected_downstream_packet = result != NULL && result->set_downstream_marker;
     flow->expected_downstream_seq           = result != NULL ? result->expected_downstream_seq : 0;
     flow->expected_downstream_ip_total_len  = result != NULL ? result->expected_downstream_ip_total_len : 0;
@@ -196,71 +207,28 @@ static void overlapsnitrickFinalizeFlowLocked(ipmanipulator_overlap_flow_t *flow
 static bool overlapsnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t packet_length,
                                               overlapsnitrick_tcp_packet_info_t *info)
 {
-    if (packet_length < sizeof(struct ip_hdr))
-    {
-        return false;
-    }
-
-    const struct ip_hdr *ipheader = (const struct ip_hdr *) packet;
-    if (IPH_V(ipheader) != 4 || IPH_PROTO(ipheader) != IPPROTO_TCP)
-    {
-        return false;
-    }
-
-    uint8_t ip_header_len_words = IPH_HL(ipheader);
-    if (ip_header_len_words < 5 || ip_header_len_words > 15)
-    {
-        return false;
-    }
-
-    uint16_t ip_header_len = (uint16_t) (ip_header_len_words * 4U);
-    if (packet_length < ip_header_len + sizeof(struct tcp_hdr))
-    {
-        return false;
-    }
-
-    uint16_t ip_total_len = lwip_ntohs(IPH_LEN(ipheader));
-    if (ip_total_len < ip_header_len + sizeof(struct tcp_hdr) || packet_length < ip_total_len)
-    {
-        return false;
-    }
-
-    uint16_t off_f = lwip_ntohs(IPH_OFFSET(ipheader));
-    if ((off_f & (IP_MF | IP_OFFMASK)) != 0)
-    {
-        return false;
-    }
-
-    const struct tcp_hdr *tcp_header       = (const struct tcp_hdr *) (packet + ip_header_len);
-    uint8_t               tcp_header_words = TCPH_HDRLEN(tcp_header);
-    if (tcp_header_words < 5 || tcp_header_words > 15)
-    {
-        return false;
-    }
-
-    uint16_t tcp_header_len = (uint16_t) (tcp_header_words * 4U);
-    uint16_t headers_len    = (uint16_t) (ip_header_len + tcp_header_len);
-    if (ip_total_len < headers_len)
+    ipv4_packet_view_t packet_view = {0};
+    if (info == NULL || ! ipv4packetviewParseTcp(packet, packet_length, &packet_view) || packet_view.fragmented)
     {
         return false;
     }
 
     *info = (overlapsnitrick_tcp_packet_info_t) {
         .packet            = packet,
-        .seq               = lwip_ntohl(tcp_header->seqno),
-        .ack               = lwip_ntohl(tcp_header->ackno),
-        .payload_offset    = headers_len,
-        .ip_total_len      = ip_total_len,
-        .ip_header_len     = ip_header_len,
-        .tcp_header_len    = tcp_header_len,
-        .headers_len       = headers_len,
-        .tcp_payload_len   = (uint16_t) (ip_total_len - headers_len),
-        .src_port          = lwip_ntohs(tcp_header->src),
-        .dst_port          = lwip_ntohs(tcp_header->dest),
-        .ip_identification = lwip_ntohs(IPH_ID(ipheader)),
-        .src_addr          = ipheader->src.addr,
-        .dst_addr          = ipheader->dest.addr,
-        .tcp_flags         = TCPH_FLAGS(tcp_header),
+        .seq               = packet_view.tcp_sequence,
+        .ack               = packet_view.tcp_acknowledgment,
+        .payload_offset    = packet_view.payload_offset,
+        .ip_total_len      = packet_view.ip_total_length,
+        .ip_header_len     = packet_view.ip_header_length,
+        .tcp_header_len    = packet_view.transport_header_length,
+        .headers_len       = packet_view.payload_offset,
+        .tcp_payload_len   = packet_view.payload_length,
+        .src_port          = packet_view.source_port,
+        .dst_port          = packet_view.destination_port,
+        .ip_identification = packet_view.ip_identification,
+        .src_addr          = packet_view.source_address,
+        .dst_addr          = packet_view.destination_address,
+        .tcp_flags         = packet_view.tcp_flags,
     };
 
     return true;
@@ -355,55 +323,13 @@ static ipmanipulator_flow_entry_t *overlapsnitrickReserveLocked(ipmanipulator_ts
     return entry;
 }
 
-static sbuf_t *overlapsnitrickAllocateRequestBuffer(uint32_t len)
+static sbuf_t *overlapsnitrickGenerateTlsClientHello(tunnel_t *t, line_t *l)
 {
-    buffer_pool_t *pool = getWorkerBufferPool(getWID());
-
-    if (len <= bufferpoolGetSmallBufferSize(pool))
-    {
-        return bufferpoolGetSmallBuffer(pool);
-    }
-
-    if (len <= bufferpoolGetLargeBufferSize(pool))
-    {
-        return bufferpoolGetLargeBuffer(pool);
-    }
-
-    return sbufCreate(len);
-}
-
-static sbuf_t *overlapsnitrickGenerateTlsClientHello(tunnel_t *t)
-{
-    static const char kGenerateTlsHelloPrefix[] = "generateTlsHello:";
-
     ipmanipulator_tstate_t *state = tunnelGetState(t);
-    uint32_t request_len = (uint32_t) (sizeof(kGenerateTlsHelloPrefix) - 1) + state->trick_overlap_sni_value_len;
-    sbuf_t  *request_buf = overlapsnitrickAllocateRequestBuffer(request_len);
-
-    if (request_buf == NULL)
-    {
-        return NULL;
-    }
-
-    sbufSetLength(request_buf, request_len);
-    memoryCopy(sbufGetMutablePtr(request_buf), kGenerateTlsHelloPrefix, sizeof(kGenerateTlsHelloPrefix) - 1);
-    memoryCopy(sbufGetMutablePtr(request_buf) + (sizeof(kGenerateTlsHelloPrefix) - 1),
-               state->trick_overlap_sni_value,
-               state->trick_overlap_sni_value_len);
-
-    api_result_t result = tlsclientTunnelApi(state->trick_overlap_sni_tls_client_tunnel, request_buf);
-
-    if (result.result_code != kApiResultOk || result.buffer == NULL)
-    {
-        if (result.buffer != NULL)
-        {
-            reuseBuffer(result.buffer);
-        }
-
-        return NULL;
-    }
-
-    return result.buffer;
+    return tlsclientTunnelGenerateClientHello(state->trick_overlap_sni_tls_client_tunnel,
+                                              l,
+                                              (const uint8_t *) state->trick_overlap_sni_value,
+                                              state->trick_overlap_sni_value_len);
 }
 
 static uint16_t overlapsnitrickFingerprintPacket(const uint8_t *packet, uint16_t packet_len)
@@ -788,91 +714,6 @@ static bool overlapsnitrickSendHelperPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     return lineIsAlive(l);
 }
 
-static void overlapsnitrickRunDelayedNormal(worker_t *worker, void *arg1, void *arg2, void *arg3)
-{
-    discard worker;
-
-    tunnel_t *t   = arg1;
-    line_t   *l   = arg2;
-    sbuf_t   *buf = arg3;
-
-    if (lineIsAlive(l))
-    {
-        discard overlapsnitrickSendUpstreamDirect(t, l, buf);
-    }
-    else
-    {
-        lineReuseBuffer(l, buf);
-    }
-
-    lineUnlock(l);
-}
-
-static void overlapsnitrickCleanupDelayedBuffer(line_t *l, sbuf_t *buf)
-{
-    if (buf == NULL)
-    {
-        return;
-    }
-
-    if (getWID() == lineGetWID(l))
-    {
-        lineReuseBuffer(l, buf);
-        return;
-    }
-
-    sbufDestroy(buf);
-}
-
-static void overlapsnitrickCleanupDelayedNormal(void *arg1, void *arg2, void *arg3)
-{
-    discard arg1;
-
-    line_t *l   = arg2;
-    sbuf_t *buf = arg3;
-
-    overlapsnitrickCleanupDelayedBuffer(l, buf);
-    lineUnlock(l);
-}
-
-static bool overlapsnitrickScheduleNormalSend(tunnel_t *t, line_t *l, sbuf_t *buf, uint32_t delay_ms)
-{
-    if (t == NULL || l == NULL || buf == NULL)
-    {
-        if (l != NULL && buf != NULL)
-        {
-            lineReuseBuffer(l, buf);
-        }
-        else if (buf != NULL)
-        {
-            sbufDestroy(buf);
-        }
-
-        return l != NULL ? lineIsAlive(l) : false;
-    }
-
-    if (! lineIsAlive(l))
-    {
-        lineReuseBuffer(l, buf);
-        return false;
-    }
-
-    if (delay_ms == 0 && getWID() == lineGetWID(l))
-    {
-        return overlapsnitrickSendUpstreamDirect(t, l, buf);
-    }
-
-    lineLock(l);
-    sendWorkerMessageTimedWithCleanup(lineGetWID(l),
-                                      (WorkerMessageCallback) overlapsnitrickRunDelayedNormal,
-                                      overlapsnitrickCleanupDelayedNormal,
-                                      delay_ms,
-                                      t,
-                                      l,
-                                      buf);
-    return lineIsAlive(l);
-}
-
 static void overlapsnitrickSendNormalNow(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard overlapsnitrickSendUpstreamDirect(t, l, buf);
@@ -933,7 +774,7 @@ static void overlapsnitrickSendHeldThenCurrentNormal(tunnel_t *t, ipmanipulator_
 }
 
 static void overlapsnitrickSendOutputs(tunnel_t *t, line_t *l, overlapsnitrick_packet_sequence_t *normal_sequence,
-                                       sbuf_t *crafted_server_hello, uint32_t delay_ms)
+                                       sbuf_t *crafted_server_hello)
 {
     if (l == NULL || normal_sequence == NULL)
     {
@@ -996,8 +837,7 @@ static void overlapsnitrickSendOutputs(tunnel_t *t, line_t *l, overlapsnitrick_p
 
         if (alive)
         {
-            uint32_t packet_delay_ms = delay_ms + ((uint32_t) (i - 2U) * kOverlapSniDelaySequenceSpacingMs);
-            alive                    = overlapsnitrickScheduleNormalSend(t, l, packet, packet_delay_ms);
+            alive = overlapsnitrickSendUpstreamDirect(t, l, packet);
         }
         else
         {
@@ -1035,7 +875,6 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
 {
     overlapsnitrick_tcp_packet_info_t held_info   = {0};
     overlapsnitrick_tcp_packet_info_t synack_info = {0};
-    ipmanipulator_tstate_t           *state       = tunnelGetState(t);
 
     if (result != NULL)
     {
@@ -1086,7 +925,7 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
         return true;
     }
 
-    sbuf_t *generated_hello = overlapsnitrickGenerateTlsClientHello(t);
+    sbuf_t *generated_hello = overlapsnitrickGenerateTlsClientHello(t, l);
     if (generated_hello == NULL)
     {
         sbufDestroy(combined_packet);
@@ -1202,7 +1041,15 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
     overlapsnitrickRecycleCapturedPacket(held_packet);
     lineReuseBuffer(l, current_buf);
 
-    overlapsnitrickSendOutputs(t, l, &sequence, crafted_server_hello, state->trick_overlap_sni_delay_ms);
+    if (result != NULL)
+    {
+        result->normal_sequence      = sequence;
+        result->crafted_server_hello = crafted_server_hello;
+    }
+    else
+    {
+        overlapsnitrickSendOutputs(t, l, &sequence, crafted_server_hello);
+    }
     return true;
 }
 
@@ -1310,9 +1157,14 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return false;
     }
 
-    ipmanipulator_captured_packet_t held_packet    = {0};
-    sbuf_t                         *synack_packet  = NULL;
-    bool                            bypass_current = false;
+    ipmanipulator_captured_packet_t held_packet              = {0};
+    sbuf_t                         *synack_packet            = NULL;
+    bool                            bypass_current           = false;
+    ipmanipulator_delay_batch_t     release_batch            = {0};
+    bool                            needs_schedule           = false;
+    bool                            send_current_after_batch = false;
+    uint64_t                        barrier_generation       = 0;
+    uint64_t                        barrier_deadline         = 0;
 
     ipmanipulator_flow_key_t    key   = overlapsnitrickMakeKey(&info);
     ipmanipulator_flow_shard_t *shard = overlapsnitrickLockShard(state, &key, now_ms);
@@ -1368,6 +1220,64 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return true;
     }
 
+    bool transcript_pending = ipmanipulatorDelayBarrierHasPendingOrdered(&flow->delay_barrier);
+    if (flow->phase == kIpManipulatorOverlapFlowPhasePassthrough &&
+        (now_ms < flow->delay_window_until_ms || flow->delay_barrier.count > 0 || transcript_pending))
+    {
+        if (! transcript_pending && now_ms >= flow->delay_window_until_ms && flow->delay_barrier.count > 0)
+        {
+            ipmanipulatorDelayBarrierTake(&flow->delay_barrier, &release_batch);
+            flow->delay_window_until_ms = 0;
+            send_current_after_batch    = true;
+        }
+        else if (ipmanipulatorDelayBarrierTryEnqueue(
+                     &flow->delay_barrier, l, buf, overlapsnitrickHasFinOrRst(&info), &needs_schedule))
+        {
+            barrier_generation = flow->delay_barrier.generation;
+            barrier_deadline   = flow->delay_barrier.deadline_ms;
+        }
+        else
+        {
+            ipmanipulatorDelayBarrierTake(&flow->delay_barrier, &release_batch);
+            flow->delay_window_until_ms = 0;
+            send_current_after_batch    = true;
+        }
+
+        if (send_current_after_batch && overlapsnitrickHasFinOrRst(&info))
+        {
+            ipmanipulatorFlowShardRemove(&state->overlap_table, shard, entry);
+        }
+
+        ipmanipulatorFlowShardUnlock(shard);
+
+        if (needs_schedule)
+        {
+            uint64_t remaining = barrier_deadline > now_ms ? barrier_deadline - now_ms : 0;
+            ipmanipulatorDelayBarrierSchedule(t,
+                                              &key,
+                                              kIpManipulatorDelayBarrierOverlapSni,
+                                              barrier_generation,
+                                              lineGetWID(l),
+                                              remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining);
+        }
+
+        if (! send_current_after_batch)
+        {
+            return true;
+        }
+
+        bool alive = ipmanipulatorDelayBatchSendUpstream(t, &release_batch);
+        if (alive && lineIsAlive(l))
+        {
+            overlapsnitrickSendNormalNow(t, l, buf);
+        }
+        else
+        {
+            lineReuseBuffer(l, buf);
+        }
+        return true;
+    }
+
     if (overlapsnitrickHasFinOrRst(&info))
     {
         if (flow->phase == kIpManipulatorOverlapFlowPhaseHoldThird)
@@ -1416,21 +1326,16 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return true;
 
     case kIpManipulatorOverlapFlowPhasePassthrough: {
-        bool delay_window_active = now_ms < flow->delay_window_until_ms;
         ipmanipulatorFlowShardUnlock(shard);
-        if (delay_window_active)
-        {
-            discard overlapsnitrickScheduleNormalSend(t, l, buf, state->trick_overlap_sni_delay_ms);
-        }
-        else
-        {
-            overlapsnitrickSendNormalNow(t, l, buf);
-        }
+        overlapsnitrickSendNormalNow(t, l, buf);
         return true;
     }
 
     case kIpManipulatorOverlapFlowPhaseHoldThird: {
-        overlapsnitrick_handle_result_t result = {0};
+        overlapsnitrick_handle_result_t result                    = {0};
+        bool                            transcript_needs_schedule = false;
+        uint64_t                        transcript_generation     = 0;
+        uint64_t                        first_action_ms           = 0;
 
         held_packet         = flow->held_packet;
         synack_packet       = flow->synack_packet;
@@ -1448,12 +1353,59 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             entry = overlapsnitrickFindLocked(state, shard, &key, &info, true);
             if (entry != NULL)
             {
+                ipmanipulator_overlap_flow_t *final_flow = overlapsnitrickEntryRecord(entry);
+
                 overlapsnitrickFinalizeFlowLocked(
-                    overlapsnitrickEntryRecord(entry), result.block_flow, &result, now_ms);
+                    state, final_flow, result.block_flow, &result, now_ms, state->trick_overlap_sni_delay_ms);
+
+                ipmanipulator_ordered_output_t outputs[kOverlapSniMaxEmittedPackets - 2U] = {0};
+                uint32_t                       output_count                               = 0;
+
+                for (uint8_t i = 2; i < result.normal_sequence.count; ++i)
+                {
+                    if (result.normal_sequence.packets[i] == NULL)
+                    {
+                        continue;
+                    }
+
+                    uint64_t due_ms = now_ms + state->trick_overlap_sni_delay_ms +
+                                      ((uint64_t) (i - 2U) * kOverlapSniDelaySequenceSpacingMs);
+                    outputs[output_count++] = (ipmanipulator_ordered_output_t) {
+                        .line   = l,
+                        .buf    = result.normal_sequence.packets[i],
+                        .send   = overlapsnitrickSendNormalNow,
+                        .due_ms = due_ms,
+                    };
+                }
+
+                if (output_count > 0 &&
+                    ipmanipulatorDelayBarrierInstallOrdered(
+                        &final_flow->delay_barrier, outputs, output_count, &transcript_needs_schedule))
+                {
+                    first_action_ms = outputs[0].due_ms;
+                    for (uint8_t i = 2; i < result.normal_sequence.count; ++i)
+                    {
+                        result.normal_sequence.packets[i] = NULL;
+                    }
+                    transcript_generation = final_flow->delay_barrier.generation;
+                }
                 overlapsnitrickTouchLocked(shard, entry, getTickMS());
             }
             ipmanipulatorFlowShardUnlock(shard);
         }
+
+        if (transcript_needs_schedule)
+        {
+            uint64_t remaining = first_action_ms > now_ms ? first_action_ms - now_ms : 0;
+            ipmanipulatorDelayBarrierSchedule(t,
+                                              &key,
+                                              kIpManipulatorDelayBarrierOverlapSni,
+                                              transcript_generation,
+                                              lineGetWID(l),
+                                              remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining);
+        }
+
+        overlapsnitrickSendOutputs(t, l, &result.normal_sequence, result.crafted_server_hello);
 
         return handled;
     }

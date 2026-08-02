@@ -223,6 +223,39 @@ static void testTcpBitOnlyConfigurationsRemainValid(void)
             "an empty configuration was rejected");
 }
 
+static void testStatefulSniCompositionMatrix(void)
+{
+    for (uint32_t first = 0; first < (uint32_t) kStatefulSniCount; ++first)
+    {
+        for (uint32_t second = first + 1U; second < (uint32_t) kStatefulSniCount; ++second)
+        {
+            ipmanipulator_tstate_t state = {0};
+            enableStatefulSni(&state, (stateful_sni_trick_e) first);
+            enableStatefulSni(&state, (stateful_sni_trick_e) second);
+            require(ipmanipulatorValidateTrickCompatibility(&state) == kIpManipulatorConfigRejectMultipleStatefulSni,
+                    "a pair of stateful SNI tricks was accepted in one node");
+        }
+
+        ipmanipulator_tstate_t blender = {0};
+        enableStatefulSni(&blender, (stateful_sni_trick_e) first);
+        blender.trick_sni_blender = true;
+        require(ipmanipulatorValidateTrickCompatibility(&blender) ==
+                    kIpManipulatorConfigRejectSniBlenderWithStatefulSni,
+                "a stateful SNI trick with sni-blender was accepted in one node");
+
+        ipmanipulator_tstate_t duplicate = {0};
+        enableStatefulSni(&duplicate, (stateful_sni_trick_e) first);
+        duplicate.trick_packet_duplicate = true;
+        require(ipmanipulatorValidateTrickCompatibility(&duplicate) ==
+                    kIpManipulatorConfigRejectPacketDuplicateWithStatefulSni,
+                "a stateful SNI trick with packet-duplicate was accepted in one node");
+    }
+
+    ipmanipulator_tstate_t supported = {.trick_sni_blender = true, .trick_packet_duplicate = true};
+    require(ipmanipulatorValidateTrickCompatibility(&supported) == kIpManipulatorConfigValid,
+            "sni-blender plus packet-duplicate was rejected");
+}
+
 static node_t makeNode(const char *name, cJSON *settings)
 {
     node_t node             = nodeIpManipulatorGet();
@@ -332,6 +365,66 @@ static void testCreateRejectsIncompatibleCombinations(void)
             "failed to build the preserved first-sni fixture");
     require(createSucceeds(first_sni_preserved, "ipm-first-preserved"),
             "first-sni with preservation and no TCP-bit action was rejected");
+
+    cJSON *first_with_blender =
+        cJSON_Parse("{\"first-sni\":\"cover.test\",\"sni-blender\":true,\"sni-blender-packets\":2}");
+    require(first_with_blender != NULL, "failed to build first-sni/blender JSON fixture");
+    require(! createSucceeds(first_with_blender, "ipm-first-blender"),
+            "the JSON create path accepted first-sni with sni-blender");
+
+    cJSON *first_with_ech = cJSON_Parse("{\"first-sni\":\"cover.test\",\"ech-sni-trick\":\"cover.test\"}");
+    require(first_with_ech != NULL, "failed to build the two-stateful-SNI JSON fixture");
+    require(! createSucceeds(first_with_ech, "ipm-first-ech"), "the JSON create path accepted two stateful SNI tricks");
+
+    cJSON *first_with_duplicate = cJSON_Parse("{\"first-sni\":\"cover.test\",\"packet-duplicate\":1}");
+    require(first_with_duplicate != NULL, "failed to build first-sni/duplicate JSON fixture");
+    require(! createSucceeds(first_with_duplicate, "ipm-first-duplicate"),
+            "the JSON create path accepted first-sni with packet-duplicate");
+}
+
+static void testSniBlenderPacketRange(void)
+{
+    const int rejected[] = {0, 1, kSniBlenderTrickMaxPacketsCount + 1};
+    for (uint32_t i = 0; i < ARRAY_SIZE(rejected); ++i)
+    {
+        cJSON *settings = cJSON_CreateObject();
+        require(settings != NULL && cJSON_AddBoolToObject(settings, "sni-blender", true) != NULL &&
+                    cJSON_AddNumberToObject(settings, "sni-blender-packets", rejected[i]) != NULL,
+                "failed to build rejected sni-blender packet-count fixture");
+        require(! createSucceeds(settings, "ipm-blender-range-reject"),
+                "sni-blender accepted a packet count outside 2..16");
+    }
+
+    const int accepted[] = {kSniBlenderTrickMinPacketsCount, kSniBlenderTrickMaxPacketsCount};
+    for (uint32_t i = 0; i < ARRAY_SIZE(accepted); ++i)
+    {
+        cJSON *settings = cJSON_CreateObject();
+        require(settings != NULL && cJSON_AddBoolToObject(settings, "sni-blender", true) != NULL &&
+                    cJSON_AddNumberToObject(settings, "sni-blender-packets", accepted[i]) != NULL,
+                "failed to build accepted sni-blender packet-count fixture");
+        require(createSucceeds(settings, "ipm-blender-range-accept"),
+                "sni-blender rejected a packet count inside 2..16");
+    }
+}
+
+static void testNodeLayerMetadata(void)
+{
+    node_t          node  = nodeIpManipulatorGet();
+    tunnel_t       *t     = tunnelCreate(&node, 0, 0);
+    tunnel_chain_t *chain = tunnelchainCreate(0);
+
+    require(node.layer_group == kNodeLayer3, "IpManipulator does not advertise layer 3");
+    require(node.layer_group_prev_node == kNodeLayerAnything && node.layer_group_next_node == kNodeLayerAnything,
+            "IpManipulator unexpectedly restricts its neighboring layer groups");
+    require(t != NULL && chain != NULL, "failed to build the IpManipulator chain classification fixture");
+    require(! chain->contains_packet_node, "an empty chain is already classified as a packet chain");
+
+    tunnelchainInsert(chain, t);
+    require(chain->contains_packet_node, "a chain containing only IpManipulator was not classified as a packet chain");
+
+    tunnelchainDestroy(chain);
+    tunnelDestroy(t);
+    memoryFree(node.type);
 }
 
 int main(void)
@@ -349,8 +442,11 @@ int main(void)
     testStatefulSniAcceptsPreservationWithoutActions();
     testSniBlenderPreservationRules();
     testTcpBitOnlyConfigurationsRemainValid();
+    testStatefulSniCompositionMatrix();
     testEchHostnameLengthBoundary();
     testCreateRejectsIncompatibleCombinations();
+    testSniBlenderPacketRange();
+    testNodeLayerMetadata();
 
     globalstateDestroySecureRandom();
     GSTATE.workers_count = saved_workers_count;

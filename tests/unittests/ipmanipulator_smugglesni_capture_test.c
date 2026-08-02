@@ -1,5 +1,7 @@
 #include "IpManipulator/structure.h"
 #include "iowatcher.h"
+#include "tricks/firstsni/trick.h"
+#include "tricks/overlapsni/trick.h"
 #include "tricks/smugglesni/trick.h"
 
 static void require(bool condition, const char *message);
@@ -80,6 +82,7 @@ typedef struct received_packet_record_s
     uint32_t seq;
     uint16_t payload_len;
     uint16_t ip_len;
+    uint8_t  tcp_flags;
     uint8_t  payload[2048];
 } received_packet_record_t;
 
@@ -100,7 +103,8 @@ typedef enum test_tls_generator_mode_e
 
 static test_tls_generator_mode_e generator_mode;
 
-api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message);
+sbuf_t *tlsclientTunnelGenerateClientHello(tunnel_t *instance, line_t *caller_line, const uint8_t *hostname,
+                                           uint32_t hostname_length);
 
 static void require(bool condition, const char *message)
 {
@@ -111,10 +115,13 @@ static void require(bool condition, const char *message)
     }
 }
 
-api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message)
+sbuf_t *tlsclientTunnelGenerateClientHello(tunnel_t *instance, line_t *caller_line, const uint8_t *hostname,
+                                           uint32_t hostname_length)
 {
     discard instance;
-    reuseBuffer(message);
+    discard caller_line;
+    discard hostname;
+    discard hostname_length;
     generator_calls++;
 
     sbuf_t  *hello      = bufferpoolGetSmallBuffer(getWorkerBufferPool(getWID()));
@@ -178,7 +185,7 @@ api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message)
         }
     }
 
-    return (api_result_t) {.result_code = kApiResultOk, .buffer = hello};
+    return hello;
 }
 
 static void recordReceivedPacket(received_packet_record_t *records, uint32_t *count, const sbuf_t *buf)
@@ -199,6 +206,7 @@ static void recordReceivedPacket(received_packet_record_t *records, uint32_t *co
     rec->ip_len      = ip_len;
     rec->seq         = lwip_ntohl(tcp->seqno);
     rec->payload_len = (uint16_t) (ip_len - ip_hlen - tcp_hlen);
+    rec->tcp_flags   = TCPH_FLAGS(tcp);
 
     if (rec->payload_len > 0)
     {
@@ -317,6 +325,46 @@ static uint16_t buildTlsClientHelloPayload(uint8_t *buf, uint16_t total_len, con
     return total_len;
 }
 
+static uint16_t buildTlsClientHelloPayloadWithLeadingPadding(uint8_t *buf, uint16_t total_len, const char *sni,
+                                                             uint16_t leading_padding_len)
+{
+    uint16_t sni_len      = (uint16_t) stringLength(sni);
+    uint32_t required_len = 52U + 4U + leading_padding_len + 4U + 5U + sni_len;
+
+    require(total_len == required_len, "leading-padding ClientHello size mismatch");
+    memoryZero(buf, total_len);
+
+    buf[0] = 0x16;
+    buf[1] = 0x03;
+    buf[2] = 0x03;
+    PUT_BE16(buf + 3, (uint16_t) (total_len - 5U));
+    buf[5] = 0x01;
+    PUT_BE24(buf + 6, total_len - 9U);
+    buf[9]  = 0x03;
+    buf[10] = 0x03;
+    memorySet(buf + 11, 0x55, 32);
+    buf[43] = 0;
+    PUT_BE16(buf + 44, 2);
+    PUT_BE16(buf + 46, 0x002f);
+    buf[48] = 1;
+    buf[49] = 0;
+    PUT_BE16(buf + 50, (uint16_t) (total_len - 52U));
+
+    uint8_t *extension = buf + 52;
+    PUT_BE16(extension, 0x0015);
+    PUT_BE16(extension + 2, leading_padding_len);
+
+    extension += 4U + leading_padding_len;
+    PUT_BE16(extension, 0x0000);
+    PUT_BE16(extension + 2, (uint16_t) (5U + sni_len));
+    PUT_BE16(extension + 4, (uint16_t) (3U + sni_len));
+    extension[6] = 0;
+    PUT_BE16(extension + 7, sni_len);
+    memoryCopy(extension + 9, sni, sni_len);
+
+    return total_len;
+}
+
 static tunnel_t *createTestTunnel(tunnel_t *normal, tunnel_t *real)
 {
     static char   fake_sni[]  = "fake.example";
@@ -340,7 +388,9 @@ static tunnel_t *createTestTunnel(tunnel_t *normal, tunnel_t *real)
         memoryAllocateZero(sizeof(*state->tls_prestart_slots) * state->tls_prestart_slots_count);
 
     state->trick_stateful_flow_limit = kIpManipulatorFlowLimitMin;
+    require(firstsnitrickInitializeState(t), "failed to create the first-sni flow table");
     require(smugglesnitrickInitializeState(t), "failed to create the smuggle-sni flow table");
+    require(overlapsnitrickInitializeState(t), "failed to create the overlap-sni flow table");
     state->trick_smuggle_sni_value        = fake_sni;
     state->trick_smuggle_sni_value_len    = (uint16_t) stringLength(state->trick_smuggle_sni_value);
     state->trick_real_sni_upstream_node   = &real_node;
@@ -353,7 +403,9 @@ static tunnel_t *createTestTunnel(tunnel_t *normal, tunnel_t *real)
 static void destroyTestTunnel(tunnel_t *t)
 {
     ipmanipulatorDestroyTlsCaptureState(t);
+    firstsnitrickDestroyState(t);
     smugglesnitrickDestroyState(t);
+    overlapsnitrickDestroyState(t);
     memoryFreeAligned(t);
 }
 
@@ -410,6 +462,66 @@ static bool findFlowForSourcePort(ipmanipulator_tstate_t *state, uint16_t src_po
 
     ipmanipulatorFlowShardUnlock(shard);
     return found;
+}
+
+static ipmanipulator_flow_table_t *delayTableForKind(ipmanipulator_tstate_t            *state,
+                                                     ipmanipulator_delay_barrier_kind_e kind)
+{
+    switch (kind)
+    {
+    case kIpManipulatorDelayBarrierFirstSni:
+        return &state->first_sni_table;
+    case kIpManipulatorDelayBarrierSmuggleSni:
+        return &state->smuggle_table;
+    case kIpManipulatorDelayBarrierOverlapSni:
+        return &state->overlap_table;
+    default:
+        return NULL;
+    }
+}
+
+static ipmanipulator_delay_barrier_t *delayBarrierForKind(void *record, ipmanipulator_delay_barrier_kind_e kind)
+{
+    switch (kind)
+    {
+    case kIpManipulatorDelayBarrierFirstSni:
+        return &((ipmanipulator_firstsni_flow_t *) record)->delay_barrier;
+    case kIpManipulatorDelayBarrierSmuggleSni:
+        return &((ipmanipulator_smuggle_flow_t *) record)->delay_barrier;
+    case kIpManipulatorDelayBarrierOverlapSni:
+        return &((ipmanipulator_overlap_flow_t *) record)->delay_barrier;
+    default:
+        return NULL;
+    }
+}
+
+/* Keep these integration tests fast while still invoking the production timer runner. */
+static void forceDelayBarrierDue(tunnel_t *t, uint16_t src_port, ipmanipulator_delay_barrier_kind_e kind)
+{
+    ipmanipulator_tstate_t  *state = tunnelGetState(t);
+    ipmanipulator_flow_key_t key   = ipmanipulatorFlowKeyMake(
+        PP_HTONL(LWIP_MAKEU32(10, 0, 0, 1)), src_port, PP_HTONL(LWIP_MAKEU32(10, 0, 0, 2)), 443);
+    ipmanipulator_flow_table_t *table = delayTableForKind(state, kind);
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(table, &key);
+    ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(table, shard, &key);
+
+    require(entry != NULL, "ordered transcript flow disappeared");
+    ipmanipulator_delay_barrier_t *barrier = delayBarrierForKind(ipmanipulatorFlowEntryRecord(entry), kind);
+    require(barrier != NULL && barrier->timer_armed, "ordered transcript did not arm its timer");
+    require(ipmanipulatorDelayBarrierHasPendingOrdered(barrier), "ordered transcript was not installed");
+
+    uint64_t now_ms = getTickMS();
+    for (uint32_t i = barrier->next_ordered_output; i < barrier->ordered_outputs_count; ++i)
+    {
+        barrier->ordered_outputs[i].due_ms = now_ms;
+    }
+    barrier->deadline_ms = now_ms;
+    uint64_t generation  = barrier->generation;
+    ipmanipulatorFlowShardUnlock(shard);
+
+    ipmanipulatorDelayBarrierSchedule(t, &key, kind, generation, 0, 1);
+    usleep(2000);
+    wloopProcessEvents(GSTATE.shortcut_loops[0], 0);
 }
 
 static void requireNoActiveTlsSlots(const ipmanipulator_tstate_t *state)
@@ -501,6 +613,99 @@ static void testFirstSniFragmentedClientHelloCapture(void)
     require(normal_packets[0].seq == first_seq && normal_packets[1].seq == first_seq + first_len,
             "first-sni cleanup reordered the captured segments");
 
+    destroyTestTunnel(t);
+}
+
+static void testFirstSniRejectsIpv4Fragments(void)
+{
+    tunnel_t  normal            = {0};
+    tunnel_t  real              = {0};
+    tunnel_t *t                 = createTestTunnel(&normal, &real);
+    line_t    line              = makeTestLine();
+    uint8_t   hello_buf[256]    = {0};
+    uint16_t  hello_len         = buildTlsClientHelloPayload(hello_buf, sizeof(hello_buf), "fragment.example");
+    uint16_t  fragment_fields[] = {IP_MF, 1U};
+
+    resetCounters();
+
+    for (uint32_t i = 0; i < ARRAY_SIZE(fragment_fields); ++i)
+    {
+        ipmanipulator_tls_capture_slot_t capture = {0};
+        sbuf_t        *packet = makeTcpPacketWithSeq(12000U + i * hello_len, TCP_ACK | TCP_PSH, hello_buf, hello_len);
+        struct ip_hdr *ip     = (struct ip_hdr *) sbufGetMutablePtr(packet);
+        IPH_OFFSET_SET(ip, lwip_htons(fragment_fields[i]));
+
+        require(ipmanipulatorCaptureTlsClientHello(t, &line, packet, kIpManipulatorTlsCaptureKindFirstSni, &capture) ==
+                    kIpManipulatorTlsCaptureStatusMiss,
+                i == 0 ? "first-sni entered TLS capture for an MF first fragment"
+                       : "first-sni entered TLS capture for a nonzero-offset fragment");
+        tunnelNextUpStreamPayload(t, &line, packet);
+    }
+
+    require(normal_packets_count == 2, "first-sni did not fail IPv4 fragments open in arrival order");
+    require(normal_packets[0].seq == 12000U && normal_packets[1].seq == 12000U + hello_len,
+            "first-sni fragment fail-open path changed packet order");
+    requireNoActiveTlsSlots(tunnelGetState(t));
+
+    destroyTestTunnel(t);
+}
+
+static void testFirstSniCompleteTranscriptOrdering(void)
+{
+    static char fake_sni[] = "fake.example";
+
+    tunnel_t  normal         = {0};
+    tunnel_t  real           = {0};
+    tunnel_t *t              = createTestTunnel(&normal, &real);
+    line_t    line           = makeTestLine();
+    uint8_t   hello_buf[256] = {0};
+    uint8_t   tail_payload   = 0x7E;
+    uint16_t  hello_len      = buildTlsClientHelloPayload(hello_buf, sizeof(hello_buf), "real.example");
+    uint32_t  start_seq      = 13000;
+
+    ipmanipulator_tstate_t *state          = tunnelGetState(t);
+    state->trick_first_sni_value           = fake_sni;
+    state->trick_first_sni_value_len       = 12;
+    state->trick_first_sni_count           = 3;
+    state->trick_first_sni_replay_delay_ms = 10;
+    state->trick_first_sni_final_delay_ms  = 10;
+    state->trick_first_sni_ttl             = -1;
+
+    resetCounters();
+
+    sbuf_t *syn = makeTcpPacketWithSeq(start_seq, TCP_SYN, NULL, 0);
+    require(! firstsnitrickUpStreamPayload(t, &line, syn), "first-sni consumed the opening SYN");
+    lineReuseBuffer(&line, syn);
+
+    uint32_t hello_seq = start_seq + 1U;
+    require(firstsnitrickUpStreamPayload(
+                t, &line, makeTcpPacketWithSeq(hello_seq, TCP_ACK | TCP_PSH, hello_buf, hello_len)),
+            "first-sni did not consume the ClientHello transcript");
+    require(normal_packets_count == 1, "first-sni did not emit exactly the immediate first replay");
+
+    require(
+        firstsnitrickUpStreamPayload(t, &line, makeTcpPacketWithSeq(hello_seq + hello_len, TCP_ACK, &tail_payload, 1)),
+        "first-sni did not retain the post-ClientHello tail");
+    require(normal_packets_count == 1, "first-sni released the tail before transcript completion");
+
+    forceDelayBarrierDue(t, 12345, kIpManipulatorDelayBarrierFirstSni);
+
+    require(normal_packets_count == 5, "first-sni complete transcript emitted the wrong packet count");
+    for (uint32_t i = 0; i < 3; ++i)
+    {
+        require(normal_packets[i].payload_len == hello_len, "first-sni replay length changed");
+        require(memcmp(normal_packets[i].payload + 61, "fake.example", 12) == 0,
+                "first-sni replay order did not keep all crafted hellos first");
+    }
+    require(normal_packets[3].payload_len == hello_len &&
+                memcmp(normal_packets[3].payload + 61, "real.example", 12) == 0,
+            "first-sni original ClientHello did not follow every crafted replay");
+    require(normal_packets[4].seq == hello_seq + hello_len && normal_packets[4].payload_len == 1 &&
+                normal_packets[4].payload[0] == tail_payload,
+            "first-sni tail overtook the complete transcript");
+
+    usleep(12000);
+    wloopProcessEvents(GSTATE.shortcut_loops[0], 0);
     destroyTestTunnel(t);
 }
 
@@ -602,7 +807,7 @@ static void testTwoSegmentChromeSizedClientHello(void)
     memoryCopy(concat_payloads + seg0_len, normal_packets[1].payload, seg1_len);
 
     uint8_t expected_gen_buf[2000] = {0};
-    sbuf_t *expected_hello_sbuf    = smugglesnitrickGenerateTlsClientHello(t);
+    sbuf_t *expected_hello_sbuf    = smugglesnitrickGenerateTlsClientHello(t, &line);
     require(expected_hello_sbuf != NULL, "failed to generate expected TLS ClientHello");
     memoryCopy(expected_gen_buf, sbufGetRawPtr(expected_hello_sbuf), sbufGetLength(expected_hello_sbuf));
     reuseBuffer(expected_hello_sbuf);
@@ -626,6 +831,7 @@ static void testNonZeroDelayBatchOrdering(void)
     uint16_t  seg0_len        = 1000;
     uint16_t  seg1_len        = total_hello_len - seg0_len;
     uint32_t  start_seq       = 20000;
+    uint8_t   tail_payload    = 0x6D;
 
     ipmanipulator_tstate_t *state     = tunnelGetState(t);
     state->trick_smuggle_sni_delay_ms = 50;
@@ -648,15 +854,109 @@ static void testNonZeroDelayBatchOrdering(void)
     require(real_packets_count == 2, "real packets != 2");
     require(normal_packets_count == 0, "fake batch segments emitted before timer expiry");
 
-    /* Run event loop after 60ms to process timed message */
-    usleep(60000);
-    wloopProcessEvents(GSTATE.shortcut_loops[0], 0);
+    require(
+        smugglesnitrickUpStreamPayload(t, &line, makeTcpPacketWithSeq(seg1_seq + seg1_len, TCP_ACK, &tail_payload, 1)),
+        "smuggle-sni did not retain the post-ClientHello tail");
+    require(normal_packets_count == 0, "smuggle-sni released the tail before the fake transcript");
 
-    /* After timer processing, fake batch segments are emitted sequentially in order */
-    require(normal_packets_count == 2, "fake batch segments not emitted sequentially in order after timer expiry");
+    forceDelayBarrierDue(t, 12345, kIpManipulatorDelayBarrierSmuggleSni);
+
+    /* The production timer emits the complete fake transcript, then the queued tail. */
+    require(normal_packets_count == 3, "smuggle-sni transcript and tail emitted the wrong packet count");
     require(normal_packets[0].seq == seg0_seq && normal_packets[0].payload_len == seg0_len, "fake seg0 order mismatch");
     require(normal_packets[1].seq == seg1_seq && normal_packets[1].payload_len == seg1_len, "fake seg1 order mismatch");
+    require(normal_packets[2].seq == seg1_seq + seg1_len && normal_packets[2].payload_len == 1 &&
+                normal_packets[2].payload[0] == tail_payload,
+            "smuggle-sni tail overtook the generated fake transcript");
 
+    usleep(52000);
+    wloopProcessEvents(GSTATE.shortcut_loops[0], 0);
+    destroyTestTunnel(t);
+}
+
+static void testOverlapSniCompleteTranscriptOrdering(void)
+{
+    static char fake_sni[] = "fake.example";
+
+    enum
+    {
+        kLeadingPaddingLen = 160,
+        kHelloLen          = 245,
+        kHeldLen           = 200,
+        kGeneratedHelloLen = 180
+    };
+
+    tunnel_t  normal               = {0};
+    tunnel_t  real                 = {0};
+    tunnel_t *t                    = createTestTunnel(&normal, &real);
+    line_t    line                 = makeTestLine();
+    uint8_t   hello_buf[kHelloLen] = {0};
+    uint8_t   tail_payload         = 0x4B;
+    uint32_t  start_seq            = 27000;
+    uint32_t  hello_seq            = start_seq + 1U;
+    uint16_t  current_len          = kHelloLen - kHeldLen;
+
+    buildTlsClientHelloPayloadWithLeadingPadding(
+        hello_buf, sizeof(hello_buf), "overlap.real.example", kLeadingPaddingLen);
+
+    ipmanipulator_tstate_t *state              = tunnelGetState(t);
+    state->trick_overlap_sni_value             = fake_sni;
+    state->trick_overlap_sni_value_len         = 12;
+    state->trick_overlap_sni_delay_ms          = 1;
+    state->trick_overlap_sni_syn_ttl           = -1;
+    state->trick_overlap_sni_tls_client_tunnel = t;
+    generated_hello_len                        = kGeneratedHelloLen;
+
+    resetCounters();
+    generated_hello_len = kGeneratedHelloLen;
+
+    require(overlapsnitrickUpStreamPayload(t, &line, makeTcpPacketWithSeq(start_seq, TCP_SYN, NULL, 0)),
+            "overlap-sni did not process the opening SYN");
+    require(overlapsnitrickUpStreamPayload(t, &line, makeTcpPacketWithSeq(hello_seq, TCP_ACK, NULL, 0)),
+            "overlap-sni did not process the warmup ACK");
+    require(normal_packets_count == 2, "overlap-sni warmup output count mismatch");
+
+    resetCounters();
+    generated_hello_len = kGeneratedHelloLen;
+
+    require(overlapsnitrickUpStreamPayload(
+                t, &line, makeTcpPacketWithSeq(hello_seq, TCP_ACK | TCP_PSH, hello_buf, kHeldLen)),
+            "overlap-sni did not retain the third packet");
+    require(normal_packets_count == 0, "overlap-sni emitted the held packet prematurely");
+
+    require(
+        overlapsnitrickUpStreamPayload(
+            t, &line, makeTcpPacketWithSeq(hello_seq + kHeldLen, TCP_ACK | TCP_PSH, hello_buf + kHeldLen, current_len)),
+        "overlap-sni did not construct its transcript from the held pair");
+    require(generator_calls == 1, "overlap-sni did not generate one fake ClientHello");
+    require(normal_packets_count == 2, "overlap-sni did not emit exactly its two immediate transcript packets");
+    require(normal_packets[0].seq == hello_seq && normal_packets[0].payload_len == kGeneratedHelloLen,
+            "overlap-sni real prefix was not first");
+    require(normal_packets[1].seq == hello_seq - 1U && normal_packets[1].payload_len == 0 &&
+                normal_packets[1].tcp_flags == TCP_SYN,
+            "overlap-sni fake SYN was not second");
+
+    require(overlapsnitrickUpStreamPayload(
+                t, &line, makeTcpPacketWithSeq(hello_seq + kHelloLen, TCP_ACK, &tail_payload, 1)),
+            "overlap-sni did not retain the post-transcript tail");
+    require(normal_packets_count == 2, "overlap-sni released the tail before delayed transcript entries");
+
+    forceDelayBarrierDue(t, 12345, kIpManipulatorDelayBarrierOverlapSni);
+
+    require(normal_packets_count == 6, "overlap-sni complete transcript emitted the wrong packet count");
+    require(normal_packets[2].seq == hello_seq && normal_packets[2].payload_len == kGeneratedHelloLen,
+            "overlap-sni generated ClientHello was not third");
+    require(normal_packets[3].seq == hello_seq + kGeneratedHelloLen &&
+                normal_packets[3].payload_len == kHeldLen - kGeneratedHelloLen,
+            "overlap-sni held-packet continuation was out of order");
+    require(normal_packets[4].seq == hello_seq + kHeldLen && normal_packets[4].payload_len == current_len,
+            "overlap-sni current-packet continuation was out of order");
+    require(normal_packets[5].seq == hello_seq + kHelloLen && normal_packets[5].payload_len == 1 &&
+                normal_packets[5].payload[0] == tail_payload,
+            "overlap-sni tail overtook the complete generated transcript");
+
+    usleep(3000);
+    wloopProcessEvents(GSTATE.shortcut_loops[0], 0);
     destroyTestTunnel(t);
 }
 
@@ -1067,8 +1367,11 @@ int main(void)
 
     testFirstSniNonTlsBurstFallsThroughImmediately();
     testFirstSniFragmentedClientHelloCapture();
+    testFirstSniRejectsIpv4Fragments();
+    testFirstSniCompleteTranscriptOrdering();
     testPendingPrestartTimeoutEntersPassthrough();
     testNonZeroDelayBatchOrdering();
+    testOverlapSniCompleteTranscriptOrdering();
     testNonTlsCaptureFallsThrough();
     testSingleSegmentExactLengthSuccess();
     testLongerGeneratedRecordFallsThrough();

@@ -2,6 +2,7 @@
 #include "tricks/portghost/trick.h"
 #include "tricks/protoswap/trick.h"
 #include "tricks/sniblender/trick.h"
+#include "tricks/tcpbitchange/trick.h"
 #include "wchecksum.h"
 
 enum
@@ -19,6 +20,7 @@ typedef struct test_env_s
     buffer_pool_t *buffer_pool;
     buffer_pool_t *buffer_pools[1];
     line_t        *line;
+    uint16_t       original_mtu;
 } test_env_t;
 
 static sbuf_t   *captured[kCapturedPackets];
@@ -26,7 +28,8 @@ static uint32_t  captured_count;
 static tunnel_t *init_targets[4];
 static uint32_t  init_counts[4];
 
-api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message);
+sbuf_t *tlsclientTunnelGenerateClientHello(tunnel_t *instance, line_t *caller_line, const uint8_t *hostname,
+                                           uint32_t hostname_length);
 
 static void require(bool condition, const char *message)
 {
@@ -37,11 +40,14 @@ static void require(bool condition, const char *message)
     }
 }
 
-api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message)
+sbuf_t *tlsclientTunnelGenerateClientHello(tunnel_t *instance, line_t *caller_line, const uint8_t *hostname,
+                                           uint32_t hostname_length)
 {
     discard instance;
-    reuseBuffer(message);
-    return (api_result_t) {.result_code = kApiResultError, .buffer = NULL};
+    discard caller_line;
+    discard hostname;
+    discard hostname_length;
+    return NULL;
 }
 
 static tunnel_t *createTestTunnel(void)
@@ -51,10 +57,9 @@ static tunnel_t *createTestTunnel(void)
 
     t->tstate_size = sizeof(ipmanipulator_tstate_t);
 
-    ipmanipulator_tstate_t *state        = tunnelGetState(t);
-    state->trick_proto_swap_tcp_number   = -1;
-    state->trick_proto_swap_tcp_number_2 = -1;
-    state->trick_proto_swap_udp_number   = -1;
+    ipmanipulator_tstate_t *state      = tunnelGetState(t);
+    state->trick_proto_swap_tcp_number = -1;
+    state->trick_proto_swap_udp_number = -1;
     return t;
 }
 
@@ -75,6 +80,8 @@ static void envSetup(test_env_t *env)
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
     GSTATE.workers_count                 = 2;
+    env->original_mtu                    = GLOBAL_MTU_SIZE;
+    GLOBAL_MTU_SIZE                      = 1500;
     tl_wid                               = 0;
 
     env->line = memoryAllocateZero(sizeof(line_t));
@@ -105,6 +112,7 @@ static void envTeardown(test_env_t *env)
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
     GSTATE.workers_count                 = 0;
+    GLOBAL_MTU_SIZE                      = env->original_mtu;
 
     memoryFree(env->line);
     bufferpoolDestroy(env->buffer_pool);
@@ -121,6 +129,12 @@ static void capturePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     require(captured_count < kCapturedPackets, "captured packet array overflow");
     captured[captured_count++] = buf;
+}
+
+static void captureFirstThenKillLine(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    capturePacket(t, l, buf);
+    l->alive = false;
 }
 
 static sbuf_t *makeTcpPacket(test_env_t *env, uint16_t packet_len)
@@ -158,6 +172,55 @@ static sbuf_t *makeTcpPacket(test_env_t *env, uint16_t packet_len)
     }
 
     require(calcFullPacketChecksum(packet, packet_len), "failed to checksum TCP test packet");
+    return buf;
+}
+
+static void setTcpFlags(sbuf_t *buf, uint8_t flags)
+{
+    struct ip_hdr  *ip          = (struct ip_hdr *) sbufGetMutablePtr(buf);
+    struct tcp_hdr *tcp         = (struct tcp_hdr *) (sbufGetMutablePtr(buf) + IPH_HL_BYTES(ip));
+    uint16_t        header_word = lwip_ntohs(tcp->_hdrlen_rsvd_flags);
+
+    tcp->_hdrlen_rsvd_flags = lwip_htons((uint16_t) ((header_word & 0xFF00U) | flags));
+    require(calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)), "failed to checksum TCP flags fixture");
+}
+
+static uint8_t getTcpFlags(const struct tcp_hdr *tcp)
+{
+    return (uint8_t) (lwip_ntohs(tcp->_hdrlen_rsvd_flags) & 0x00FFU);
+}
+
+static sbuf_t *makeUdpPacket(test_env_t *env, uint16_t packet_len)
+{
+    require(packet_len >= sizeof(struct ip_hdr) + sizeof(struct udp_hdr), "UDP test packet is too small");
+
+    sbuf_t *buf = bufferpoolGetLargeBuffer(env->buffer_pool);
+    buf         = sbufReserveSpace(buf, packet_len);
+    sbufSetLength(buf, packet_len);
+
+    uint8_t *packet = sbufGetMutablePtr(buf);
+    memoryZero(packet, packet_len);
+
+    struct ip_hdr *ip = (struct ip_hdr *) packet;
+    IPH_VHL_SET(ip, 4, sizeof(struct ip_hdr) / 4U);
+    IPH_LEN_SET(ip, lwip_htons(packet_len));
+    IPH_ID_SET(ip, lwip_htons(0x4321));
+    IPH_TTL_SET(ip, 64);
+    IPH_PROTO_SET(ip, IPPROTO_UDP);
+    ip->src.addr  = PP_HTONL(LWIP_MAKEU32(10, 0, 0, 1));
+    ip->dest.addr = PP_HTONL(LWIP_MAKEU32(10, 0, 0, 2));
+
+    struct udp_hdr *udp = (struct udp_hdr *) (packet + sizeof(struct ip_hdr));
+    udp->src            = lwip_htons(12345);
+    udp->dest           = lwip_htons(443);
+    udp->len            = lwip_htons((uint16_t) (packet_len - sizeof(struct ip_hdr)));
+
+    for (uint32_t i = sizeof(struct ip_hdr) + sizeof(struct udp_hdr); i < packet_len; ++i)
+    {
+        packet[i] = (uint8_t) (i * 11U + 7U);
+    }
+
+    require(calcFullPacketChecksum(packet, packet_len), "failed to checksum UDP test packet");
     return buf;
 }
 
@@ -260,12 +323,11 @@ static void testDownstreamResumeAfterSmuggleFinDoesNotRepeatRestoration(test_env
     t->next        = &next;
     t->prev        = &prev;
 
-    ipmanipulator_tstate_t *state        = tunnelGetState(t);
-    state->trick_source_port_ghost       = true;
-    state->trick_dest_port_ghost         = true;
-    state->trick_proto_swap              = true;
-    state->trick_proto_swap_tcp_number   = 143;
-    state->trick_proto_swap_tcp_number_2 = 144;
+    ipmanipulator_tstate_t *state      = tunnelGetState(t);
+    state->trick_source_port_ghost     = true;
+    state->trick_dest_port_ghost       = true;
+    state->trick_proto_swap            = true;
+    state->trick_proto_swap_tcp_number = 143;
 
     sbuf_t  *buf          = makeTcpPacket(env, 96);
     uint32_t original_len = sbufGetLength(buf);
@@ -286,14 +348,9 @@ static void testDownstreamResumeAfterSmuggleFinDoesNotRepeatRestoration(test_env
     require(portghosttrickRestore(t, env->line, &post_restore),
             "resume-stage fixture could not restore the portghost trailer");
     require(post_restore != NULL, "resume-stage fixture consumed a valid restored packet");
-    require(atomicLoadRelaxed(&state->trick_proto_swap_tcp_toggle_down) == 0,
-            "protocol restoration unexpectedly consumed the downstream TCP toggle");
-
     ipmanipulatorDownStreamPayloadAfterSmuggleFin(t, env->line, post_restore);
 
     require(captured_count == 1, "post-smuggle-fin resume did not forward exactly one packet");
-    require(atomicLoadRelaxed(&state->trick_proto_swap_tcp_toggle_down) == 0,
-            "post-smuggle-fin resume repeated protocol restoration");
 
     sbuf_t               *restored    = captured[0];
     const struct ip_hdr  *restored_ip = (const struct ip_hdr *) sbufGetRawPtr(restored);
@@ -389,7 +446,11 @@ static void runPortghostSegmentationCase(test_env_t *env, bool ghost_dest)
     const uint32_t headers_len        = sizeof(struct ip_hdr) + sizeof(struct tcp_hdr);
     const uint32_t source_payload_len = packet_len - headers_len;
     uint8_t        source_payload[packet_len - sizeof(struct ip_hdr) - sizeof(struct tcp_hdr)];
-    sbuf_t        *buf = makeTcpPacket(env, packet_len);
+    sbuf_t        *buf       = makeTcpPacket(env, packet_len);
+    struct ip_hdr *source_ip = (struct ip_hdr *) sbufGetMutablePtr(buf);
+    IPH_OFFSET_SET(source_ip, lwip_htons(IP_RF | IP_DF));
+    require(calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)),
+            "failed to checksum the DF segmentation fixture");
     memoryCopy(source_payload, (const uint8_t *) sbufGetRawPtr(buf) + headers_len, source_payload_len);
 
     lineSetRecalculateChecksum(env->line, false);
@@ -407,6 +468,10 @@ static void runPortghostSegmentationCase(test_env_t *env, bool ghost_dest)
         require(sbufGetLength(segment) <= GLOBAL_MTU_SIZE, "portghost segment exceeded GLOBAL_MTU_SIZE");
         require(lwip_ntohs(IPH_LEN(ip)) == sbufGetLength(segment),
                 "segment IPv4 total length does not match its buffer");
+        require((lwip_ntohs(IPH_OFFSET(ip)) & (IP_RF | IP_DF)) == (IP_RF | IP_DF),
+                "TCP segmentation cleared a non-fragment IPv4 flag");
+        require((lwip_ntohs(IPH_OFFSET(ip)) & (IP_MF | IP_OFFMASK)) == 0,
+                "TCP segmentation retained IPv4 fragment state");
         require(portghosttrickRestore(t, env->line, &segment), "segment did not carry a restorable trailer");
         require(segment != NULL, "portghost restore consumed a valid segment");
 
@@ -455,6 +520,294 @@ static void testPortghostSegmentation(test_env_t *env)
 
     destroyTestTunnel(t);
     GLOBAL_MTU_SIZE = original_mtu;
+}
+
+static void testTrailerBoundaryAndExactFitGrowth(test_env_t *env)
+{
+    tunnel_t               *t         = createTestTunnel();
+    ipmanipulator_tstate_t *state     = tunnelGetState(t);
+    uint16_t                saved_mtu = GLOBAL_MTU_SIZE;
+
+    state->trick_source_port_ghost = true;
+    state->trick_dest_port_ghost   = true;
+
+    GLOBAL_MTU_SIZE  = 100;
+    sbuf_t *boundary = makeTcpPacket(env, 96);
+    require(ipmanipulatorSendWithForwardMaybeSegmented(t, env->line, boundary, capturePacket),
+            "prospective-MTU boundary unexpectedly killed the line");
+    require(captured_count == 1 && sbufGetLength(captured[0]) == GLOBAL_MTU_SIZE,
+            "prospective-MTU boundary was not emitted as one exact-MTU packet");
+    recycleCaptured(env);
+
+    sbuf_t  *exact_fit = sbufCreate(sizeof(struct ip_hdr) + sizeof(struct tcp_hdr));
+    uint32_t exact_len = sbufGetMaximumWriteableSize(exact_fit);
+    require(exact_len >= sizeof(struct ip_hdr) + sizeof(struct tcp_hdr) && exact_len <= UINT16_MAX - 4U,
+            "exact-fit buffer fixture has an unusable capacity");
+    sbuf_t *source = makeTcpPacket(env, (uint16_t) exact_len);
+    sbufSetLength(exact_fit, exact_len);
+    memoryCopy(sbufGetMutablePtr(exact_fit), sbufGetRawPtr(source), exact_len);
+    lineReuseBuffer(env->line, source);
+
+    uint32_t old_capacity = sbufGetMaximumWriteableSize(exact_fit);
+    require(sbufGetLength(exact_fit) == old_capacity, "exact-fit fixture retained spare writable capacity");
+    require(portghosttrickApply(t, env->line, &exact_fit), "exact-fit portghost append was rejected");
+    require(exact_fit != NULL && sbufGetLength(exact_fit) == exact_len + 4U,
+            "exact-fit portghost append did not grow by its trailer length");
+    require(sbufGetMaximumWriteableSize(exact_fit) > old_capacity,
+            "exact-fit portghost append did not reserve a larger buffer");
+    require(portghosttrickRestore(t, env->line, &exact_fit), "exact-fit portghost packet was not restorable");
+    require(exact_fit != NULL && sbufGetLength(exact_fit) == exact_len,
+            "exact-fit portghost round trip changed the packet length");
+    sbufDestroy(exact_fit);
+
+    GLOBAL_MTU_SIZE = saved_mtu;
+    destroyTestTunnel(t);
+}
+
+static void testPreservedFlagsAndPortghostSegmentTogether(test_env_t *env)
+{
+    tunnel_t  prev = {.fnPayloadD = capturePacket};
+    tunnel_t *t    = createTestTunnel();
+    t->prev        = &prev;
+
+    ipmanipulator_tstate_t *state      = tunnelGetState(t);
+    uint16_t                saved_mtu  = GLOBAL_MTU_SIZE;
+    state->trick_source_port_ghost     = true;
+    state->trick_dest_port_ghost       = true;
+    state->trick_preserve_tcp_bitflags = true;
+    state->trick_tcp_bit_changes       = true;
+    state->up_tcp_bit_syn_action       = kDvsOff;
+
+    GLOBAL_MTU_SIZE              = 100;
+    const uint8_t original_flags = TCP_SYN | TCP_CWR | TCP_ECE | TCP_ACK | TCP_PSH | TCP_FIN;
+    sbuf_t       *buf            = makeTcpPacket(env, 160);
+    setTcpFlags(buf, original_flags);
+    uint8_t source_payload[120];
+    memoryCopy(source_payload,
+               (const uint8_t *) sbufGetRawPtr(buf) + sizeof(struct ip_hdr) + sizeof(struct tcp_hdr),
+               sizeof(source_payload));
+
+    tcpbitchangetrickUpStreamPayload(t, env->line, &buf);
+    require(buf != NULL, "preserved-flags encoder consumed a segmentable packet");
+    require(ipmanipulatorSendWithForwardMaybeSegmented(t, env->line, buf, capturePacket),
+            "combined trailer segmentation unexpectedly killed the line");
+    require(captured_count == 3, "combined flag/portghost trailers did not produce three segments");
+
+    uint32_t expected_offsets[]    = {0, 55, 110};
+    uint8_t  expected_live_flags[] = {
+        TCP_CWR | TCP_ECE | TCP_ACK, TCP_ECE | TCP_ACK, TCP_ECE | TCP_ACK | TCP_PSH | TCP_FIN};
+    uint8_t expected_original_flags[] = {
+        TCP_SYN | TCP_CWR | TCP_ECE | TCP_ACK, TCP_ECE | TCP_ACK, TCP_ECE | TCP_ACK | TCP_PSH | TCP_FIN};
+
+    for (uint32_t i = 0; i < captured_count; ++i)
+    {
+        const uint8_t        *packet = sbufGetRawPtr(captured[i]);
+        const struct ip_hdr  *ip     = (const struct ip_hdr *) packet;
+        const struct tcp_hdr *tcp    = (const struct tcp_hdr *) (packet + sizeof(struct ip_hdr));
+        require(sbufGetLength(captured[i]) <= GLOBAL_MTU_SIZE, "combined trailer segment exceeded the MTU");
+        require(lwip_ntohl(tcp->seqno) == 1000U + expected_offsets[i] + (i == 0 ? 0U : 1U),
+                "combined trailer segment has discontinuous SYN-aware sequence space");
+        require(getTcpFlags(tcp) == expected_live_flags[i], "live TCP flags were placed on the wrong segment");
+        require(packet[lwip_ntohs(IPH_LEN(ip)) - 5U] == expected_original_flags[i],
+                "original-flags metadata was not derived independently per segment");
+    }
+
+    sbuf_t *wire_segments[3];
+    memoryCopy(wire_segments, captured, sizeof(wire_segments));
+    memoryZero(captured, sizeof(captured));
+    captured_count = 0;
+
+    for (uint32_t i = 0; i < ARRAY_SIZE(wire_segments); ++i)
+    {
+        ipmanipulatorDownStreamPayload(t, env->line, wire_segments[i]);
+    }
+
+    require(captured_count == 3, "combined trailer segments were not independently restorable");
+    uint8_t  reassembled[sizeof(source_payload)];
+    uint32_t reassembled_len = 0;
+    for (uint32_t i = 0; i < captured_count; ++i)
+    {
+        const uint8_t        *packet      = sbufGetRawPtr(captured[i]);
+        const struct ip_hdr  *ip          = (const struct ip_hdr *) packet;
+        const struct tcp_hdr *tcp         = (const struct tcp_hdr *) (packet + sizeof(struct ip_hdr));
+        uint32_t              payload_len = lwip_ntohs(IPH_LEN(ip)) - sizeof(struct ip_hdr) - sizeof(struct tcp_hdr);
+
+        require(getTcpFlags(tcp) == expected_original_flags[i],
+                "restoration did not recover the segment's original TCP flags");
+        memoryCopy(reassembled + reassembled_len, packet + sizeof(struct ip_hdr) + sizeof(struct tcp_hdr), payload_len);
+        reassembled_len += payload_len;
+    }
+    require(reassembled_len == sizeof(source_payload) &&
+                memoryEqual(reassembled, source_payload, sizeof(source_payload)),
+            "combined trailer restoration lost or treated payload as metadata");
+
+    recycleCaptured(env);
+    lineSetRecalculateChecksum(env->line, false);
+    GLOBAL_MTU_SIZE = saved_mtu;
+    destroyTestTunnel(t);
+}
+
+static void testUnsupportedOversizedPacketsDrop(test_env_t *env)
+{
+    tunnel_t                prev      = {.fnPayloadD = capturePacket};
+    tunnel_t               *t         = createTestTunnel();
+    ipmanipulator_tstate_t *state     = tunnelGetState(t);
+    uint16_t                saved_mtu = GLOBAL_MTU_SIZE;
+    t->prev                           = &prev;
+
+    state->trick_source_port_ghost = true;
+    state->trick_dest_port_ghost   = true;
+    GLOBAL_MTU_SIZE                = 80;
+
+    sbuf_t *rst = makeTcpPacket(env, 100);
+    setTcpFlags(rst, TCP_RST | TCP_ACK);
+    require(ipmanipulatorSendWithForwardMaybeSegmented(t, env->line, rst, capturePacket),
+            "oversized RST drop unexpectedly killed the line");
+    require(captured_count == 0, "oversized RST packet was partially emitted");
+
+    sbuf_t *urg = makeTcpPacket(env, 100);
+    setTcpFlags(urg, TCP_URG | TCP_ACK);
+    require(ipmanipulatorSendWithForwardMaybeSegmented(t, env->line, urg, capturePacket),
+            "oversized URG drop unexpectedly killed the line");
+    require(captured_count == 0, "oversized URG packet was partially emitted");
+
+    state->trick_preserve_tcp_bitflags = true;
+    state->trick_tcp_bit_changes       = true;
+    state->up_tcp_bit_rst_action       = kDvsOff;
+
+    rst = makeTcpPacket(env, 100);
+    setTcpFlags(rst, TCP_RST | TCP_ACK);
+    tcpbitchangetrickUpStreamPayload(t, env->line, &rst);
+    require(rst != NULL, "preserved RST fixture was consumed before final egress");
+    require(ipmanipulatorSendWithForwardMaybeSegmented(t, env->line, rst, capturePacket),
+            "preserved-original RST drop unexpectedly killed the line");
+    require(captured_count == 0, "preserved-original RST evaded segmentation rejection");
+
+    state->up_tcp_bit_rst_action = kDvsNoAction;
+    state->up_tcp_bit_urg_action = kDvsOff;
+
+    urg = makeTcpPacket(env, 100);
+    setTcpFlags(urg, TCP_URG | TCP_ACK);
+    tcpbitchangetrickUpStreamPayload(t, env->line, &urg);
+    require(urg != NULL, "preserved URG fixture was consumed before final egress");
+    require(ipmanipulatorSendWithForwardMaybeSegmented(t, env->line, urg, capturePacket),
+            "preserved-original URG drop unexpectedly killed the line");
+    require(captured_count == 0, "preserved-original URG evaded segmentation rejection");
+
+    state->up_tcp_bit_urg_action   = kDvsNoAction;
+    state->down_tcp_bit_rst_action = kDvsOff;
+
+    rst = makeTcpPacket(env, 100);
+    setTcpFlags(rst, TCP_RST | TCP_ACK);
+    tcpbitchangetrickDownStreamPayload(t, env->line, &rst);
+    require(rst != NULL, "downstream preserved RST fixture was consumed before final egress");
+    ipmanipulatorSendDownstreamFinal(t, env->line, rst);
+    require(captured_count == 0, "downstream preserved-original RST evaded segmentation rejection");
+
+    state->down_tcp_bit_rst_action = kDvsNoAction;
+    state->down_tcp_bit_urg_action = kDvsOff;
+
+    urg = makeTcpPacket(env, 100);
+    setTcpFlags(urg, TCP_URG | TCP_ACK);
+    tcpbitchangetrickDownStreamPayload(t, env->line, &urg);
+    require(urg != NULL, "downstream preserved URG fixture was consumed before final egress");
+    ipmanipulatorSendDownstreamFinal(t, env->line, urg);
+    require(captured_count == 0, "downstream preserved-original URG evaded segmentation rejection");
+
+    state->trick_preserve_tcp_bitflags = false;
+    state->trick_tcp_bit_changes       = false;
+    state->down_tcp_bit_urg_action     = kDvsNoAction;
+
+    sbuf_t *udp = makeUdpPacket(env, 77);
+    require(ipmanipulatorSendWithForwardMaybeSegmented(t, env->line, udp, capturePacket),
+            "oversized UDP drop unexpectedly killed the line");
+    require(captured_count == 0, "oversized UDP packet was emitted instead of dropped");
+
+    GLOBAL_MTU_SIZE = saved_mtu;
+    destroyTestTunnel(t);
+}
+
+static void testDownstreamEncoderAndPostSegmentationDuplication(test_env_t *env)
+{
+    tunnel_t  prev = {.fnPayloadD = capturePacket};
+    tunnel_t  next = {.fnPayloadU = capturePacket};
+    tunnel_t *t    = createTestTunnel();
+    t->prev        = &prev;
+    t->next        = &next;
+
+    ipmanipulator_tstate_t *state      = tunnelGetState(t);
+    uint16_t                saved_mtu  = GLOBAL_MTU_SIZE;
+    state->trick_preserve_tcp_bitflags = true;
+    state->down_tcp_bit_syn_action     = kDvsOff;
+    GLOBAL_MTU_SIZE                    = 80;
+
+    sbuf_t *downstream = makeTcpPacket(env, 120);
+    setTcpFlags(downstream, TCP_SYN | TCP_ACK | TCP_PSH);
+    struct ip_hdr *downstream_ip = (struct ip_hdr *) sbufGetMutablePtr(downstream);
+    IPH_OFFSET_SET(downstream_ip, lwip_htons(IP_RF | IP_DF));
+    require(calcFullPacketChecksum(sbufGetMutablePtr(downstream), sbufGetLength(downstream)),
+            "failed to checksum downstream IPv4-flags fixture");
+    tcpbitchangetrickDownStreamPayload(t, env->line, &downstream);
+    require(downstream != NULL, "downstream preserved-flags encoder consumed its packet");
+    ipmanipulatorSendDownstreamFinal(t, env->line, downstream);
+    require(captured_count == 3, "downstream preserved-flags encoder did not use final segmentation");
+    for (uint32_t i = 0; i < captured_count; ++i)
+    {
+        require(sbufGetLength(captured[i]) <= GLOBAL_MTU_SIZE, "downstream segment exceeded the MTU");
+        const struct ip_hdr *segment_ip = (const struct ip_hdr *) sbufGetRawPtr(captured[i]);
+        require((lwip_ntohs(IPH_OFFSET(segment_ip)) & (IP_RF | IP_DF)) == (IP_RF | IP_DF),
+                "downstream segmentation cleared a non-fragment IPv4 flag");
+        require((lwip_ntohs(IPH_OFFSET(segment_ip)) & (IP_MF | IP_OFFMASK)) == 0,
+                "downstream segmentation retained IPv4 fragment state");
+    }
+    recycleCaptured(env);
+
+    state->trick_preserve_tcp_bitflags  = false;
+    state->down_tcp_bit_syn_action      = kDvsNoAction;
+    state->trick_source_port_ghost      = true;
+    state->trick_packet_duplicate       = true;
+    state->trick_packet_duplicate_count = 2;
+    GLOBAL_MTU_SIZE                     = 80;
+
+    sbuf_t *upstream = makeTcpPacket(env, 120);
+    ipmanipulatorSendUpstreamFinal(t, env->line, upstream);
+    require(captured_count == 9, "packet duplication did not run after three-way segmentation");
+    for (uint32_t group = 0; group < 3; ++group)
+    {
+        const struct ip_hdr  *ip0  = (const struct ip_hdr *) sbufGetRawPtr(captured[group * 3U]);
+        const struct tcp_hdr *tcp0 = (const struct tcp_hdr *) ((const uint8_t *) ip0 + sizeof(struct ip_hdr));
+        for (uint32_t copy = 1; copy < 3; ++copy)
+        {
+            const struct ip_hdr  *ip  = (const struct ip_hdr *) sbufGetRawPtr(captured[group * 3U + copy]);
+            const struct tcp_hdr *tcp = (const struct tcp_hdr *) ((const uint8_t *) ip + sizeof(struct ip_hdr));
+            require(lwip_ntohl(tcp->seqno) == lwip_ntohl(tcp0->seqno),
+                    "post-segmentation duplicates crossed segment boundaries");
+        }
+    }
+    recycleCaptured(env);
+
+    GLOBAL_MTU_SIZE = saved_mtu;
+    destroyTestTunnel(t);
+}
+
+static void testSegmentSendStopsWhenLineDies(test_env_t *env)
+{
+    tunnel_t               *t         = createTestTunnel();
+    ipmanipulator_tstate_t *state     = tunnelGetState(t);
+    uint16_t                saved_mtu = GLOBAL_MTU_SIZE;
+
+    state->trick_source_port_ghost = true;
+    GLOBAL_MTU_SIZE                = 80;
+
+    sbuf_t *buf = makeTcpPacket(env, 180);
+    require(! ipmanipulatorSendWithForwardMaybeSegmented(t, env->line, buf, captureFirstThenKillLine),
+            "multi-segment send reported a line alive after its first callback killed it");
+    require(captured_count == 1, "multi-segment send continued after the line died");
+
+    env->line->alive = true;
+    recycleCaptured(env);
+    GLOBAL_MTU_SIZE = saved_mtu;
+    destroyTestTunnel(t);
 }
 
 static void testSniBlenderBoundsAndProtocolSwap(test_env_t *env)
@@ -589,8 +942,12 @@ static void testProtocolSwapConfigurationValidation(void)
             "UDP protocol swap accepted a literal TCP replacement");
     require(createFromSettings("{\"protoswap-udp\":17}") == NULL,
             "UDP protocol swap accepted a literal UDP replacement");
-    require(createFromSettings("{\"protoswap-tcp\":143,\"protoswap-tcp-2\":17}") == NULL,
-            "secondary TCP protocol swap accepted a literal UDP replacement");
+    require(createFromSettings("{\"protoswap-tcp-2\":144}") == NULL,
+            "removed secondary TCP protocol swap was accepted alone");
+    require(createFromSettings("{\"protoswap-tcp\":143,\"protoswap-tcp-2\":144}") == NULL,
+            "removed secondary TCP protocol swap was accepted with protoswap-tcp");
+    require(createFromSettings("{\"source-port-ghost\":true,\"protoswap-tcp-2\":144}") == NULL,
+            "removed secondary TCP protocol swap was accepted with another trick");
     require(createFromSettings("{\"protoswap-tcp\":17,\"protoswap-udp\":6}") == NULL,
             "cross-mapped TCP/UDP protocols were accepted");
     require(createFromSettings("{\"protoswap-tcp\":143,\"protoswap-udp\":143}") == NULL,
@@ -617,6 +974,11 @@ int main(void)
     testAlreadyMappedEgressUnwraps(&env);
     testTuplePreservingHelperEgress(&env);
     testPortghostSegmentation(&env);
+    testTrailerBoundaryAndExactFitGrowth(&env);
+    testPreservedFlagsAndPortghostSegmentTogether(&env);
+    testUnsupportedOversizedPacketsDrop(&env);
+    testDownstreamEncoderAndPostSegmentationDuplication(&env);
+    testSegmentSendStopsWhenLineDies(&env);
     testSniBlenderBoundsAndProtocolSwap(&env);
     testHelperInitDeduplication(&env);
     envTeardown(&env);

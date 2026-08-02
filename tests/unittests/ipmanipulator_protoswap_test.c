@@ -17,11 +17,10 @@ static tunnel_t *createTestTunnel(void)
     tunnel_t *t = memoryAllocateAlignedZero(sizeof(tunnel_t) + sizeof(ipmanipulator_tstate_t), kCpuLineCacheSize);
     require(t != NULL, "failed to allocate test tunnel");
 
-    t->tstate_size                       = sizeof(ipmanipulator_tstate_t);
-    ipmanipulator_tstate_t *state        = tunnelGetState(t);
-    state->trick_proto_swap_tcp_number   = -1;
-    state->trick_proto_swap_tcp_number_2 = -1;
-    state->trick_proto_swap_udp_number   = -1;
+    t->tstate_size                     = sizeof(ipmanipulator_tstate_t);
+    ipmanipulator_tstate_t *state      = tunnelGetState(t);
+    state->trick_proto_swap_tcp_number = -1;
+    state->trick_proto_swap_udp_number = -1;
     return t;
 }
 
@@ -250,38 +249,23 @@ static void testProtocolSwapFragmentedPacket(void)
     require(! lineGetRecalculateChecksum(&line), "fragmented packet swap modified flag");
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(oracle), 60), "fragmented packet swap mismatch with oracle");
 
+    sbuf_t        *later    = createIpv4TcpPacket(60, 5);
+    struct ip_hdr *later_ip = (struct ip_hdr *) sbufGetMutablePtr(later);
+    IPH_OFFSET_SET(later_ip, lwip_htons(1U));
+    require(calcIpv4HeaderChecksum(sbufGetMutablePtr(later), 60), "later-fragment IP calc failed");
+
+    protoswaptrickUpStreamPayload(t, &line, later);
+    require(IPH_PROTO(later_ip) == 143,
+            "later fragment did not receive the same configured mapping as the MF first fragment");
+
+    protoswaptrickDownStreamPayload(t, &line, buf);
+    protoswaptrickDownStreamPayload(t, &line, later);
+    require(IPH_PROTO(buf_ip) == IPPROTO_TCP && IPH_PROTO(later_ip) == IPPROTO_TCP,
+            "first and later fragments did not both restore to TCP");
+
     sbufDestroy(buf);
+    sbufDestroy(later);
     sbufDestroy(oracle);
-    destroyTestTunnel(t);
-}
-
-static void testProtocolSwapSameProtocolAdvancesToggle(void)
-{
-    tunnel_t               *t     = createTestTunnel();
-    ipmanipulator_tstate_t *state = testTunnelState(t);
-    line_t                  line  = {0};
-
-    state->trick_proto_swap_tcp_number   = IPPROTO_TCP;
-    state->trick_proto_swap_tcp_number_2 = 144;
-
-    sbuf_t  *buf    = createIpv4TcpPacket(60, 5);
-    uint16_t len    = (uint16_t) sbufGetLength(buf);
-    sbuf_t  *before = sbufCreate(512);
-    sbufSetLength(before, len);
-    memoryCopy(sbufGetMutablePtr(before), sbufGetRawPtr(buf), len);
-
-    /* First packet matches candidate IPPROTO_TCP -> toggle 0 -> returns true without byte changes */
-    protoswaptrickUpStreamPayload(t, &line, buf);
-    require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), len), "same-protocol packet bytes were modified");
-    require(! lineGetRecalculateChecksum(&line), "same-protocol packet modified flag");
-
-    /* Second packet -> toggle 1 -> swapped to 144 */
-    protoswaptrickUpStreamPayload(t, &line, buf);
-    struct ip_hdr *buf_ip = (struct ip_hdr *) sbufGetMutablePtr(buf);
-    require(IPH_PROTO(buf_ip) == 144, "toggle 1 failed to swap to 144");
-
-    sbufDestroy(buf);
-    sbufDestroy(before);
     destroyTestTunnel(t);
 }
 
@@ -291,8 +275,7 @@ static void testProtocolSwapMalformedHeader(void)
     ipmanipulator_tstate_t *state = testTunnelState(t);
     line_t                  line  = {0};
 
-    state->trick_proto_swap_tcp_number   = 143;
-    state->trick_proto_swap_tcp_number_2 = 144;
+    state->trick_proto_swap_tcp_number = 143;
 
     /* 1. IHL < 5 (IHL = 4) */
     sbuf_t        *buf      = createIpv4TcpPacket(60, 5);
@@ -337,11 +320,11 @@ static void testProtocolSwapMalformedHeader(void)
     protoswaptrickUpStreamPayload(t, &line, buf);
     require(memoryEqual(sbufGetRawPtr(buf), sbufGetRawPtr(before), 60), "total_len > sbuf length packet was modified");
 
-    /* Verify toggle was NOT advanced by any of the 4 malformed packets */
+    /* A later valid packet still receives the one configured mapping. */
     sbuf_t *valid = createIpv4TcpPacket(60, 5);
     protoswaptrickUpStreamPayload(t, &line, valid);
     require(IPH_PROTO((struct ip_hdr *) sbufGetMutablePtr(valid)) == 143,
-            "toggle was incorrectly advanced by malformed packets");
+            "valid packet did not receive the configured mapping after malformed packets");
 
     sbufDestroy(buf);
     sbufDestroy(before);
@@ -401,49 +384,6 @@ static void testProtocolSwapPreExistingFlagPreserved(void)
     destroyTestTunnel(t);
 }
 
-static void testAlternatingTcpReplacements(void)
-{
-    tunnel_t               *t     = createTestTunnel();
-    ipmanipulator_tstate_t *state = testTunnelState(t);
-    line_t                  line  = {0};
-
-    state->trick_proto_swap_tcp_number   = 143;
-    state->trick_proto_swap_tcp_number_2 = 144;
-
-    /* Upstream packet 1 -> 143 */
-    sbuf_t *buf1 = createIpv4TcpPacket(60, 5);
-    protoswaptrickUpStreamPayload(t, &line, buf1);
-    require(IPH_PROTO((struct ip_hdr *) sbufGetMutablePtr(buf1)) == 143, "upstream 1 failed to swap to 143");
-
-    /* Upstream packet 2 -> 144 */
-    sbuf_t *buf2 = createIpv4TcpPacket(60, 5);
-    protoswaptrickUpStreamPayload(t, &line, buf2);
-    require(IPH_PROTO((struct ip_hdr *) sbufGetMutablePtr(buf2)) == 144, "upstream 2 failed to swap to 144");
-
-    /* Downstream has independent sequence -> 143 */
-    sbuf_t *buf_d1 = createIpv4TcpPacket(60, 5);
-    protoswaptrickDownStreamPayload(t, &line, buf_d1);
-    require(IPH_PROTO((struct ip_hdr *) sbufGetMutablePtr(buf_d1)) == 143, "downstream 1 failed to swap to 143");
-
-    /* Malformed packet rejected -> does NOT advance toggle */
-    sbuf_t *malformed = sbufCreate(256);
-    sbufSetLength(malformed, 10);
-    memoryZero(sbufGetMutablePtr(malformed), 10);
-    protoswaptrickUpStreamPayload(t, &line, malformed);
-
-    /* Upstream packet 3 -> 143 (since toggle was at 0 after 143, 144) -> next is 143 */
-    sbuf_t *buf3 = createIpv4TcpPacket(60, 5);
-    protoswaptrickUpStreamPayload(t, &line, buf3);
-    require(IPH_PROTO((struct ip_hdr *) sbufGetMutablePtr(buf3)) == 143, "upstream 3 failed to swap to 143");
-
-    sbufDestroy(buf1);
-    sbufDestroy(buf2);
-    sbufDestroy(buf_d1);
-    sbufDestroy(malformed);
-    sbufDestroy(buf3);
-    destroyTestTunnel(t);
-}
-
 static void testRejectionAndNoMatch(void)
 {
     tunnel_t               *t     = createTestTunnel();
@@ -488,11 +428,9 @@ int main(void)
     testProtocolSwapUdpToCustomAndBack();
     testProtocolSwapWithIpOptions();
     testProtocolSwapFragmentedPacket();
-    testProtocolSwapSameProtocolAdvancesToggle();
     testProtocolSwapMalformedHeader();
     testProtocolSwapTcpToUdpDirect();
     testProtocolSwapPreExistingFlagPreserved();
-    testAlternatingTcpReplacements();
     testRejectionAndNoMatch();
     return 0;
 }

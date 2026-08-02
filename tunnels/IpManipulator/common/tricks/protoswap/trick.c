@@ -49,7 +49,7 @@ static bool protoswapSetProtocol(sbuf_t *buf, uint8_t new_protocol)
     return false;
 }
 
-static void protoswapApply(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream)
+static void protoswapApply(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     ipmanipulator_tstate_t *state = tunnelGetState(t);
     if (UNLIKELY(sbufGetLength(buf) < sizeof(struct ip_hdr)))
@@ -81,23 +81,15 @@ static void protoswapApply(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream)
 
     if (state->trick_proto_swap_tcp_number != -1)
     {
+        /*
+         * One mapping in each direction, so every fragment of one IPv4 datagram
+         * receives the same protocol number and restores back to TCP.
+         */
         if (original_protocol == IPPROTO_TCP)
         {
-            if (state->trick_proto_swap_tcp_number_2 != -1)
-            {
-                atomic_uint *toggle_ptr =
-                    upstream ? &state->trick_proto_swap_tcp_toggle_up : &state->trick_proto_swap_tcp_toggle_down;
-                unsigned int counter = (unsigned int) atomicIncRelaxed(toggle_ptr);
-                new_protocol =
-                    (counter % 2U == 0) ? state->trick_proto_swap_tcp_number : state->trick_proto_swap_tcp_number_2;
-            }
-            else
-            {
-                new_protocol = state->trick_proto_swap_tcp_number;
-            }
+            new_protocol = state->trick_proto_swap_tcp_number;
         }
-        else if (original_protocol == state->trick_proto_swap_tcp_number ||
-                 original_protocol == state->trick_proto_swap_tcp_number_2)
+        else if (original_protocol == state->trick_proto_swap_tcp_number)
         {
             new_protocol = IPPROTO_TCP;
         }
@@ -125,10 +117,10 @@ static void protoswapApply(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream)
 
 void protoswaptrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    protoswapApply(t, l, buf, true);
+    protoswapApply(t, l, buf);
 }
 
 void protoswaptrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    protoswapApply(t, l, buf, false);
+    protoswapApply(t, l, buf);
 }

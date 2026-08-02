@@ -68,7 +68,8 @@ static bool dropGhostedPacket(line_t *l, sbuf_t **buf_ptr)
     return false;
 }
 
-static bool appendGhostBytes(line_t *l, sbuf_t **buf_ptr, struct ip_hdr **ipheader_ptr, uint32_t tail_len)
+static bool appendGhostBytes(ipmanipulator_tstate_t *state, line_t *l, sbuf_t **buf_ptr, struct ip_hdr **ipheader_ptr,
+                             uint32_t tail_len)
 {
     sbuf_t  *buf          = *buf_ptr;
     uint16_t ip_total_len = lwip_ntohs(IPH_LEN(*ipheader_ptr));
@@ -80,19 +81,34 @@ static bool appendGhostBytes(line_t *l, sbuf_t **buf_ptr, struct ip_hdr **iphead
 
     if (ip_total_len > UINT16_MAX - tail_len)
     {
-        LOGW("portghosttrick: cannot append ghost bytes because IPv4 total length would overflow");
+        if (ipmanipulatorShouldLogEgressWarning(state))
+        {
+            LOGW("portghosttrick: cannot append ghost bytes because IPv4 total length would overflow");
+        }
         return dropGhostedPacket(l, buf_ptr);
     }
 
     uint32_t new_len = (uint32_t) ip_total_len + tail_len;
-    if (sbufGetMaximumWriteableSize(buf) < new_len)
+    if (GLOBAL_MTU_SIZE != 0 && new_len > GLOBAL_MTU_SIZE)
     {
-        LOGW("portghosttrick: dropping packet because source/dest-port-ghost needs %u extra bytes but the buffer has "
-             "no room",
-             (unsigned int) tail_len);
+        if (ipmanipulatorShouldLogEgressWarning(state))
+        {
+            LOGW("portghosttrick: dropping unsegmented packet because the %u-byte ghost trailer would make IPv4 "
+                 "length %u exceed GLOBAL_MTU_SIZE %u",
+                 (unsigned int) tail_len,
+                 (unsigned int) new_len,
+                 (unsigned int) GLOBAL_MTU_SIZE);
+        }
         return dropGhostedPacket(l, buf_ptr);
     }
 
+    /*
+     * Pool buffers are an optimization, not a wire-size contract. Grow an
+     * exact-fit input before appending instead of dropping a valid packet.
+     * sbufReserveSpace may move the allocation, so every cached header pointer
+     * is refreshed below.
+     */
+    buf = sbufReserveSpace(buf, new_len);
     sbufSetLength(buf, new_len);
     *buf_ptr      = buf;
     *ipheader_ptr = (struct ip_hdr *) sbufGetMutablePtr(buf);
@@ -179,7 +195,7 @@ bool portghosttrickApply(tunnel_t *t, line_t *l, sbuf_t **buf_ptr)
         uint16_t original_src_port = lwip_ntohs(tcp_header->src);
         uint16_t original_dst_port = lwip_ntohs(tcp_header->dest);
 
-        if (! appendGhostBytes(l, buf_ptr, &ipheader, tail_len))
+        if (! appendGhostBytes(state, l, buf_ptr, &ipheader, tail_len))
         {
             return false;
         }
@@ -235,7 +251,7 @@ bool portghosttrickApply(tunnel_t *t, line_t *l, sbuf_t **buf_ptr)
         uint16_t original_src_port = lwip_ntohs(udp_header->src);
         uint16_t original_dst_port = lwip_ntohs(udp_header->dest);
 
-        if (! appendGhostBytes(l, buf_ptr, &ipheader, tail_len))
+        if (! appendGhostBytes(state, l, buf_ptr, &ipheader, tail_len))
         {
             return false;
         }

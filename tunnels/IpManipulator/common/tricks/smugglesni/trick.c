@@ -1,8 +1,7 @@
 #include "trick.h"
 
+#include "TlsClient/interface.h"
 #include "loggers/network_logger.h"
-
-api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 enum
 {
@@ -27,7 +26,6 @@ typedef struct smugglesnitrick_tcp_packet_info_s
 typedef enum smugglesnitrick_action_e
 {
     kSmuggleSniActionPassNormal = 0,
-    kSmuggleSniActionDelayNormal,
     kSmuggleSniActionCapture
 } smugglesnitrick_action_e;
 
@@ -46,65 +44,22 @@ typedef struct smugglesnitrick_fake_batch_s
 static bool smugglesnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t packet_length,
                                               smugglesnitrick_tcp_packet_info_t *info)
 {
-    if (packet == NULL || info == NULL || packet_length < sizeof(struct ip_hdr))
-    {
-        return false;
-    }
-
-    const struct ip_hdr *ipheader = (const struct ip_hdr *) packet;
-    if (IPH_V(ipheader) != 4 || IPH_PROTO(ipheader) != IPPROTO_TCP)
-    {
-        return false;
-    }
-
-    uint8_t ip_hdr_len_words = IPH_HL(ipheader);
-    if (ip_hdr_len_words < 5 || ip_hdr_len_words > 15)
-    {
-        return false;
-    }
-
-    uint16_t ip_header_len = (uint16_t) (ip_hdr_len_words * 4U);
-    if (packet_length < ip_header_len + sizeof(struct tcp_hdr))
-    {
-        return false;
-    }
-
-    uint16_t ip_total_len = lwip_ntohs(IPH_LEN(ipheader));
-    if (ip_total_len < ip_header_len + sizeof(struct tcp_hdr) || packet_length < ip_total_len)
-    {
-        return false;
-    }
-
-    uint16_t off_f = lwip_ntohs(IPH_OFFSET(ipheader));
-    if ((off_f & (IP_MF | IP_OFFMASK)) != 0)
-    {
-        return false;
-    }
-
-    const struct tcp_hdr *tcp_header        = (const struct tcp_hdr *) (packet + ip_header_len);
-    uint8_t               tcp_hdr_len_words = TCPH_HDRLEN(tcp_header);
-    if (tcp_hdr_len_words < 5 || tcp_hdr_len_words > 15)
-    {
-        return false;
-    }
-
-    uint16_t tcp_header_len = (uint16_t) (tcp_hdr_len_words * 4U);
-    uint16_t headers_len    = (uint16_t) (ip_header_len + tcp_header_len);
-    if (ip_total_len < headers_len)
+    ipv4_packet_view_t packet_view = {0};
+    if (info == NULL || ! ipv4packetviewParseTcp(packet, packet_length, &packet_view) || packet_view.fragmented)
     {
         return false;
     }
 
     *info = (smugglesnitrick_tcp_packet_info_t) {
-        .src_addr        = ipheader->src.addr,
-        .dst_addr        = ipheader->dest.addr,
-        .seq             = lwip_ntohl(tcp_header->seqno),
-        .payload_offset  = headers_len,
-        .tcp_flags       = TCPH_FLAGS(tcp_header),
-        .src_port        = lwip_ntohs(tcp_header->src),
-        .dst_port        = lwip_ntohs(tcp_header->dest),
-        .ip_total_len    = ip_total_len,
-        .tcp_payload_len = (uint16_t) (ip_total_len - headers_len),
+        .src_addr        = packet_view.source_address,
+        .dst_addr        = packet_view.destination_address,
+        .seq             = packet_view.tcp_sequence,
+        .payload_offset  = packet_view.payload_offset,
+        .tcp_flags       = packet_view.tcp_flags,
+        .src_port        = packet_view.source_port,
+        .dst_port        = packet_view.destination_port,
+        .ip_total_len    = packet_view.ip_total_length,
+        .tcp_payload_len = packet_view.payload_length,
     };
 
     return true;
@@ -181,6 +136,9 @@ static ipmanipulator_flow_entry_t *smugglesnitrickFindLocked(ipmanipulator_tstat
 static void smugglesnitrickInitializeFlow(ipmanipulator_smuggle_flow_t            *flow,
                                           const smugglesnitrick_tcp_packet_info_t *info, uint64_t now_ms)
 {
+    ipmanipulatorDelayBarrierDestroy(&flow->delay_barrier);
+    uint64_t barrier_generation = flow->delay_barrier.generation;
+
     *flow = (ipmanipulator_smuggle_flow_t) {
         .created_ms       = now_ms,
         .last_activity_ms = now_ms,
@@ -190,6 +148,7 @@ static void smugglesnitrickInitializeFlow(ipmanipulator_smuggle_flow_t          
         .dst_port         = info->dst_port,
         .phase            = kIpManipulatorSmuggleFlowPhaseWarmup,
     };
+    flow->delay_barrier.generation = barrier_generation;
 }
 
 static ipmanipulator_flow_entry_t *smugglesnitrickReserveLocked(ipmanipulator_tstate_t                  *state,
@@ -229,6 +188,7 @@ static void smugglesnitrickMarkPassthrough(ipmanipulator_tstate_t *state, const 
 
         flow->phase                 = kIpManipulatorSmuggleFlowPhasePassthrough;
         flow->delay_window_until_ms = delay_window_until_ms;
+        ipmanipulatorDelayBarrierInitialize(state, &flow->delay_barrier, delay_window_until_ms);
     }
 
     ipmanipulatorFlowShardUnlock(shard);
@@ -238,6 +198,125 @@ static void smugglesnitrickSendNormalNow(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     lineSetRecalculateChecksum(l, true);
     ipmanipulatorEmitUpstream(t, l, buf, tunnelNextUpStreamPayload);
+}
+
+static void smugglesnitrickSendFakeBatchNow(tunnel_t *t, smugglesnitrick_fake_batch_t *batch)
+{
+    if (batch == NULL)
+    {
+        return;
+    }
+
+    for (uint8_t i = 0; i < batch->count; ++i)
+    {
+        smugglesnitrick_fake_batch_entry_t *entry = &batch->entries[i];
+
+        if (entry->line != NULL && entry->buf != NULL)
+        {
+            if (lineIsAlive(entry->line))
+            {
+                smugglesnitrickSendNormalNow(t, entry->line, entry->buf);
+            }
+            else
+            {
+                lineReuseBuffer(entry->line, entry->buf);
+            }
+            entry->line = NULL;
+            entry->buf  = NULL;
+        }
+    }
+}
+
+static void smugglesnitrickStartOrderedFakeBatch(tunnel_t *t, const ipmanipulator_flow_key_t *key,
+                                                 smugglesnitrick_fake_batch_t *batch, uint64_t now_ms)
+{
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+    if (batch == NULL || batch->count == 0)
+    {
+        memoryFree(batch);
+        smugglesnitrickMarkPassthrough(state, key, 0);
+        return;
+    }
+
+    if (state->trick_smuggle_sni_delay_ms == 0)
+    {
+        smugglesnitrickSendFakeBatchNow(t, batch);
+        memoryFree(batch);
+        smugglesnitrickMarkPassthrough(state, key, now_ms + kSmuggleSniDelayWindowMs);
+        return;
+    }
+
+    uint64_t                       due_ms            = now_ms + state->trick_smuggle_sni_delay_ms;
+    uint64_t                       minimum_window_ms = (uint64_t) state->trick_smuggle_sni_delay_ms + 1U;
+    uint64_t                       deadline_ms = now_ms + max((uint64_t) kSmuggleSniDelayWindowMs, minimum_window_ms);
+    ipmanipulator_ordered_output_t outputs[kIpManipulatorTlsCaptureMaxPackets] = {0};
+
+    for (uint8_t i = 0; i < batch->count; ++i)
+    {
+        outputs[i] = (ipmanipulator_ordered_output_t) {
+            .line   = batch->entries[i].line,
+            .buf    = batch->entries[i].buf,
+            .send   = smugglesnitrickSendNormalNow,
+            .due_ms = due_ms,
+        };
+    }
+
+    bool     installed      = false;
+    bool     needs_schedule = false;
+    uint64_t generation     = 0;
+    wid_t    wid            = lineGetWID(batch->entries[0].line);
+
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->smuggle_table, key);
+    if (shard != NULL)
+    {
+        ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->smuggle_table, shard, key);
+        if (entry != NULL)
+        {
+            ipmanipulator_smuggle_flow_t *flow = smugglesnitrickEntryRecord(entry);
+
+            flow->phase                 = kIpManipulatorSmuggleFlowPhasePassthrough;
+            flow->delay_window_until_ms = deadline_ms;
+            ipmanipulatorDelayBarrierInitialize(state, &flow->delay_barrier, deadline_ms);
+            installed =
+                ipmanipulatorDelayBarrierInstallOrdered(&flow->delay_barrier, outputs, batch->count, &needs_schedule);
+            generation = flow->delay_barrier.generation;
+
+            if (! installed)
+            {
+                flow->delay_window_until_ms = 0;
+                ipmanipulatorDelayBarrierDestroy(&flow->delay_barrier);
+            }
+        }
+        ipmanipulatorFlowShardUnlock(shard);
+    }
+
+    if (installed)
+    {
+        for (uint8_t i = 0; i < batch->count; ++i)
+        {
+            batch->entries[i].line = NULL;
+            batch->entries[i].buf  = NULL;
+        }
+
+        if (needs_schedule)
+        {
+            uint64_t remaining = due_ms > now_ms ? due_ms - now_ms : 0;
+            ipmanipulatorDelayBarrierSchedule(t,
+                                              key,
+                                              kIpManipulatorDelayBarrierSmuggleSni,
+                                              generation,
+                                              wid,
+                                              remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining);
+        }
+    }
+    else
+    {
+        smugglesnitrickSendFakeBatchNow(t, batch);
+        smugglesnitrickMarkPassthrough(state, key, 0);
+    }
+
+    memoryFree(batch);
 }
 
 static void smugglesnitrickForwardReal(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -251,26 +330,6 @@ static void smugglesnitrickSendRealNow(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     lineSetRecalculateChecksum(l, true);
     ipmanipulatorEmitUpstreamPreservingTuple(t, l, buf, smugglesnitrickForwardReal);
-}
-
-static void smugglesnitrickRunDelayedNormal(worker_t *worker, void *arg1, void *arg2, void *arg3)
-{
-    discard worker;
-
-    tunnel_t *t   = arg1;
-    line_t   *l   = arg2;
-    sbuf_t   *buf = arg3;
-
-    if (lineIsAlive(l))
-    {
-        smugglesnitrickSendNormalNow(t, l, buf);
-    }
-    else
-    {
-        lineReuseBuffer(l, buf);
-    }
-
-    lineUnlock(l);
 }
 
 static void smugglesnitrickCleanupDelayedBuffer(line_t *l, sbuf_t *buf)
@@ -289,87 +348,16 @@ static void smugglesnitrickCleanupDelayedBuffer(line_t *l, sbuf_t *buf)
     sbufDestroy(buf);
 }
 
-static void smugglesnitrickCleanupDelayedNormal(void *arg1, void *arg2, void *arg3)
+sbuf_t *smugglesnitrickGenerateTlsClientHello(tunnel_t *t, line_t *l)
 {
-    discard arg1;
-
-    line_t *l   = arg2;
-    sbuf_t *buf = arg3;
-
-    smugglesnitrickCleanupDelayedBuffer(l, buf);
-    lineUnlock(l);
-}
-
-static void smugglesnitrickScheduleNormalSend(tunnel_t *t, line_t *l, sbuf_t *buf, uint32_t delay_ms)
-{
-    if (delay_ms == 0 && getWID() == lineGetWID(l))
-    {
-        smugglesnitrickSendNormalNow(t, l, buf);
-        return;
-    }
-
-    lineLock(l);
-    sendWorkerMessageTimedWithCleanup(lineGetWID(l),
-                                      (WorkerMessageCallback) smugglesnitrickRunDelayedNormal,
-                                      smugglesnitrickCleanupDelayedNormal,
-                                      delay_ms,
-                                      t,
-                                      l,
-                                      buf);
-}
-
-static sbuf_t *smugglesnitrickAllocateRequestBuffer(uint32_t len)
-{
-    buffer_pool_t *pool = getWorkerBufferPool(getWID());
-
-    if (len <= bufferpoolGetSmallBufferSize(pool))
-    {
-        return bufferpoolGetSmallBuffer(pool);
-    }
-
-    if (len <= bufferpoolGetLargeBufferSize(pool))
-    {
-        return bufferpoolGetLargeBuffer(pool);
-    }
-
-    return sbufCreate(len);
-}
-
-sbuf_t *smugglesnitrickGenerateTlsClientHello(tunnel_t *t)
-{
-    static const char kGenerateTlsHelloPrefix[] = "generateTlsHello:";
-
     ipmanipulator_tstate_t *state = tunnelGetState(t);
-    uint32_t request_len = (uint32_t) (sizeof(kGenerateTlsHelloPrefix) - 1) + state->trick_smuggle_sni_value_len;
-    sbuf_t  *request_buf = smugglesnitrickAllocateRequestBuffer(request_len);
-
-    if (request_buf == NULL)
-    {
-        return NULL;
-    }
-
-    sbufSetLength(request_buf, request_len);
-    memoryCopy(sbufGetMutablePtr(request_buf), kGenerateTlsHelloPrefix, sizeof(kGenerateTlsHelloPrefix) - 1);
-    memoryCopy(sbufGetMutablePtr(request_buf) + (sizeof(kGenerateTlsHelloPrefix) - 1),
-               state->trick_smuggle_sni_value,
-               state->trick_smuggle_sni_value_len);
-
-    api_result_t result = tlsclientTunnelApi(state->trick_real_sni_tls_client_tunnel, request_buf);
-
-    if (result.result_code != kApiResultOk || result.buffer == NULL)
-    {
-        if (result.buffer != NULL)
-        {
-            reuseBuffer(result.buffer);
-        }
-
-        return NULL;
-    }
-
-    return result.buffer;
+    return tlsclientTunnelGenerateClientHello(state->trick_real_sni_tls_client_tunnel,
+                                              l,
+                                              (const uint8_t *) state->trick_smuggle_sni_value,
+                                              state->trick_smuggle_sni_value_len);
 }
 
-static bool smugglesnitrickBuildFakeBatch(tunnel_t *t, ipmanipulator_tls_capture_slot_t *slot,
+static bool smugglesnitrickBuildFakeBatch(tunnel_t *t, line_t *l, ipmanipulator_tls_capture_slot_t *slot,
                                           smugglesnitrick_fake_batch_t *batch)
 {
     memoryZero(batch, sizeof(*batch));
@@ -384,7 +372,7 @@ static bool smugglesnitrickBuildFakeBatch(tunnel_t *t, ipmanipulator_tls_capture
         return false;
     }
 
-    sbuf_t *tls_hello = smugglesnitrickGenerateTlsClientHello(t);
+    sbuf_t *tls_hello = smugglesnitrickGenerateTlsClientHello(t, l);
     if (tls_hello == NULL)
     {
         LOGD("IpManipulator: smuggle-sni failed to generate TLS ClientHello");
@@ -523,150 +511,25 @@ fail:
     return false;
 }
 
-typedef struct smugglesnitrick_fake_batch_msg_s
+/* Runs under the flow-shard lock: dispose retained FIFO packets only. */
+static void smugglesnitrickDestroyFlowRecord(void *record, void *context)
 {
-    smugglesnitrick_fake_batch_t *batch;
-} smugglesnitrick_fake_batch_msg_t;
+    discard context;
 
-static void smugglesnitrickRunDelayedBatchOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
-{
-    discard worker;
-    discard arg3;
-
-    tunnel_t                         *t   = arg1;
-    smugglesnitrick_fake_batch_msg_t *msg = arg2;
-
-    if (msg != NULL && msg->batch != NULL)
-    {
-        smugglesnitrick_fake_batch_t *batch = msg->batch;
-        for (uint8_t i = 0; i < batch->count; ++i)
-        {
-            smugglesnitrick_fake_batch_entry_t *entry = &batch->entries[i];
-            if (entry->line != NULL && entry->buf != NULL)
-            {
-                if (lineIsAlive(entry->line))
-                {
-                    smugglesnitrickSendNormalNow(t, entry->line, entry->buf);
-                }
-                else
-                {
-                    lineReuseBuffer(entry->line, entry->buf);
-                }
-                lineUnlock(entry->line);
-                entry->line = NULL;
-                entry->buf  = NULL;
-            }
-        }
-        memoryFree(batch);
-        msg->batch = NULL;
-    }
-
-    memoryFree(msg);
-}
-
-static void smugglesnitrickCleanupDelayedBatch(void *arg1, void *arg2, void *arg3)
-{
-    discard arg1;
-    discard arg3;
-
-    smugglesnitrick_fake_batch_msg_t *msg = arg2;
-    if (msg == NULL)
-    {
-        return;
-    }
-
-    if (msg->batch != NULL)
-    {
-        smugglesnitrick_fake_batch_t *batch = msg->batch;
-        for (uint8_t i = 0; i < batch->count; ++i)
-        {
-            smugglesnitrick_fake_batch_entry_t *entry = &batch->entries[i];
-            if (entry->line != NULL && entry->buf != NULL)
-            {
-                smugglesnitrickCleanupDelayedBuffer(entry->line, entry->buf);
-                lineUnlock(entry->line);
-                entry->line = NULL;
-                entry->buf  = NULL;
-            }
-        }
-        memoryFree(batch);
-        msg->batch = NULL;
-    }
-
-    memoryFree(msg);
-}
-
-static void smugglesnitrickScheduleBatchSend(tunnel_t *t, smugglesnitrick_fake_batch_t *batch, uint32_t delay_ms)
-{
-    if (batch == NULL || batch->count == 0)
-    {
-        if (batch != NULL)
-        {
-            memoryFree(batch);
-        }
-        return;
-    }
-
-    line_t *first_line = batch->entries[0].line;
-    if (first_line == NULL)
-    {
-        for (uint8_t i = 0; i < batch->count; ++i)
-        {
-            if (batch->entries[i].buf != NULL)
-            {
-                sbufDestroy(batch->entries[i].buf);
-            }
-        }
-        memoryFree(batch);
-        return;
-    }
-
-    wid_t target_wid = lineGetWID(first_line);
-
-    if (delay_ms == 0 && getWID() == target_wid)
-    {
-        for (uint8_t i = 0; i < batch->count; ++i)
-        {
-            smugglesnitrick_fake_batch_entry_t *entry = &batch->entries[i];
-            if (entry->line != NULL && entry->buf != NULL)
-            {
-                smugglesnitrickSendNormalNow(t, entry->line, entry->buf);
-                entry->buf  = NULL;
-                entry->line = NULL;
-            }
-        }
-        memoryFree(batch);
-        return;
-    }
-
-    smugglesnitrick_fake_batch_msg_t *msg = memoryAllocate(sizeof(*msg));
-    msg->batch                            = batch;
-
-    for (uint8_t i = 0; i < batch->count; ++i)
-    {
-        lineLock(batch->entries[i].line);
-    }
-
-    sendWorkerMessageTimedWithCleanup(target_wid,
-                                      (WorkerMessageCallback) smugglesnitrickRunDelayedBatchOnWorker,
-                                      smugglesnitrickCleanupDelayedBatch,
-                                      delay_ms,
-                                      t,
-                                      msg,
-                                      NULL);
+    ipmanipulator_smuggle_flow_t *flow = record;
+    ipmanipulatorDelayBarrierDestroy(&flow->delay_barrier);
 }
 
 bool smugglesnitrickInitializeState(tunnel_t *t)
 {
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
-    /* A Smuggle-SNI record owns no buffers, so it needs no resource destructor. */
     return ipmanipulatorFlowTableInit(&state->smuggle_table,
                                       "smuggle-sni",
                                       state->trick_stateful_flow_limit,
                                       (uint32_t) getTotalWorkersCount(),
                                       sizeof(ipmanipulator_smuggle_flow_t),
-                                      NULL,
+                                      smugglesnitrickDestroyFlowRecord,
                                       NULL);
 }
 
@@ -753,9 +616,14 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     assert(lineGetWID(l) == getWID());
 
-    ipmanipulator_tstate_t           *state  = tunnelGetState(t);
-    smugglesnitrick_tcp_packet_info_t info   = {0};
-    uint64_t                          now_ms = getTickMS();
+    ipmanipulator_tstate_t           *state                    = tunnelGetState(t);
+    smugglesnitrick_tcp_packet_info_t info                     = {0};
+    uint64_t                          now_ms                   = getTickMS();
+    ipmanipulator_delay_batch_t       release_batch            = {0};
+    bool                              needs_schedule           = false;
+    bool                              send_current_after_batch = false;
+    uint64_t                          barrier_generation       = 0;
+    uint64_t                          barrier_deadline         = 0;
 
     if (! smugglesnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
     {
@@ -820,6 +688,64 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     smugglesnitrickTouchLocked(shard, entry, now_ms);
 
+    bool transcript_pending = ipmanipulatorDelayBarrierHasPendingOrdered(&flow->delay_barrier);
+    if (flow->phase == kIpManipulatorSmuggleFlowPhasePassthrough &&
+        (now_ms < flow->delay_window_until_ms || flow->delay_barrier.count > 0 || transcript_pending))
+    {
+        if (! transcript_pending && now_ms >= flow->delay_window_until_ms && flow->delay_barrier.count > 0)
+        {
+            ipmanipulatorDelayBarrierTake(&flow->delay_barrier, &release_batch);
+            flow->delay_window_until_ms = 0;
+            send_current_after_batch    = true;
+        }
+        else if (ipmanipulatorDelayBarrierTryEnqueue(
+                     &flow->delay_barrier, l, buf, smugglesnitrickHasFinOrRst(&info), &needs_schedule))
+        {
+            barrier_generation = flow->delay_barrier.generation;
+            barrier_deadline   = flow->delay_barrier.deadline_ms;
+        }
+        else
+        {
+            ipmanipulatorDelayBarrierTake(&flow->delay_barrier, &release_batch);
+            flow->delay_window_until_ms = 0;
+            send_current_after_batch    = true;
+        }
+
+        if (send_current_after_batch && smugglesnitrickHasFinOrRst(&info))
+        {
+            ipmanipulatorFlowShardRemove(&state->smuggle_table, shard, entry);
+        }
+
+        ipmanipulatorFlowShardUnlock(shard);
+
+        if (needs_schedule)
+        {
+            uint64_t remaining = barrier_deadline > now_ms ? barrier_deadline - now_ms : 0;
+            ipmanipulatorDelayBarrierSchedule(t,
+                                              &key,
+                                              kIpManipulatorDelayBarrierSmuggleSni,
+                                              barrier_generation,
+                                              lineGetWID(l),
+                                              remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining);
+        }
+
+        if (! send_current_after_batch)
+        {
+            return true;
+        }
+
+        bool alive = ipmanipulatorDelayBatchSendUpstream(t, &release_batch);
+        if (alive && lineIsAlive(l))
+        {
+            smugglesnitrickSendNormalNow(t, l, buf);
+        }
+        else
+        {
+            lineReuseBuffer(l, buf);
+        }
+        return true;
+    }
+
     if (smugglesnitrickHasFinOrRst(&info))
     {
         ipmanipulatorFlowShardRemove(&state->smuggle_table, shard, entry);
@@ -847,17 +773,11 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         break;
 
     case kIpManipulatorSmuggleFlowPhasePassthrough:
-        action = (now_ms < flow->delay_window_until_ms) ? kSmuggleSniActionDelayNormal : kSmuggleSniActionPassNormal;
+        action = kSmuggleSniActionPassNormal;
         break;
     }
 
     ipmanipulatorFlowShardUnlock(shard);
-
-    if (action == kSmuggleSniActionDelayNormal)
-    {
-        smugglesnitrickScheduleNormalSend(t, l, buf, state->trick_smuggle_sni_delay_ms);
-        return true;
-    }
 
     if (action == kSmuggleSniActionPassNormal)
     {
@@ -914,7 +834,7 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (valid_ch)
     {
         batch    = memoryAllocateZero(sizeof(*batch));
-        build_ok = smugglesnitrickBuildFakeBatch(t, &captured_slot, batch);
+        build_ok = smugglesnitrickBuildFakeBatch(t, l, &captured_slot, batch);
     }
 
     if (! build_ok)
@@ -955,8 +875,6 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     captured_slot.captured_packets_count = 0;
 
-    smugglesnitrickScheduleBatchSend(t, batch, state->trick_smuggle_sni_delay_ms);
-
-    smugglesnitrickMarkPassthrough(state, &key, now_ms + kSmuggleSniDelayWindowMs);
+    smugglesnitrickStartOrderedFakeBatch(t, &key, batch, now_ms);
     return true;
 }

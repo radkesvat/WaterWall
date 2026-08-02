@@ -61,68 +61,25 @@ bool ipmanipulatorSmuggleFinTestScheduleImmediate(wid_t wid, WorkerMessageCallba
 static bool smugglefintrickParseTcpPacketInfo(const uint8_t *packet, uint32_t packet_length,
                                               smugglefintrick_tcp_packet_info_t *info)
 {
-    if (packet_length < sizeof(struct ip_hdr))
-    {
-        return false;
-    }
-
-    const struct ip_hdr *ipheader = (const struct ip_hdr *) packet;
-    if (IPH_V(ipheader) != 4 || IPH_PROTO(ipheader) != IPPROTO_TCP)
-    {
-        return false;
-    }
-
-    uint8_t ip_header_len_words = IPH_HL(ipheader);
-    if (ip_header_len_words < 5 || ip_header_len_words > 15)
-    {
-        return false;
-    }
-
-    uint16_t ip_header_len = (uint16_t) (ip_header_len_words * 4U);
-    if (packet_length < ip_header_len + sizeof(struct tcp_hdr))
-    {
-        return false;
-    }
-
-    uint16_t ip_total_len = lwip_ntohs(IPH_LEN(ipheader));
-    if (ip_total_len < ip_header_len + sizeof(struct tcp_hdr) || packet_length < ip_total_len)
-    {
-        return false;
-    }
-
-    uint16_t off_f = lwip_ntohs(IPH_OFFSET(ipheader));
-    if ((off_f & (IP_MF | IP_OFFMASK)) != 0)
-    {
-        return false;
-    }
-
-    const struct tcp_hdr *tcp_header       = (const struct tcp_hdr *) (packet + ip_header_len);
-    uint8_t               tcp_header_words = TCPH_HDRLEN(tcp_header);
-    if (tcp_header_words < 5 || tcp_header_words > 15)
-    {
-        return false;
-    }
-
-    uint16_t tcp_header_len = (uint16_t) (tcp_header_words * 4U);
-    uint16_t headers_len    = (uint16_t) (ip_header_len + tcp_header_len);
-    if (ip_total_len < headers_len)
+    ipv4_packet_view_t packet_view = {0};
+    if (info == NULL || ! ipv4packetviewParseTcp(packet, packet_length, &packet_view) || packet_view.fragmented)
     {
         return false;
     }
 
     *info = (smugglefintrick_tcp_packet_info_t) {
-        .seq             = lwip_ntohl(tcp_header->seqno),
-        .ack             = lwip_ntohl(tcp_header->ackno),
-        .src_addr        = ipheader->src.addr,
-        .dst_addr        = ipheader->dest.addr,
-        .ip_total_len    = ip_total_len,
-        .ip_header_len   = ip_header_len,
-        .tcp_header_len  = tcp_header_len,
-        .headers_len     = headers_len,
-        .tcp_payload_len = (uint16_t) (ip_total_len - headers_len),
-        .src_port        = lwip_ntohs(tcp_header->src),
-        .dst_port        = lwip_ntohs(tcp_header->dest),
-        .tcp_flags       = TCPH_FLAGS(tcp_header),
+        .seq             = packet_view.tcp_sequence,
+        .ack             = packet_view.tcp_acknowledgment,
+        .src_addr        = packet_view.source_address,
+        .dst_addr        = packet_view.destination_address,
+        .ip_total_len    = packet_view.ip_total_length,
+        .ip_header_len   = packet_view.ip_header_length,
+        .tcp_header_len  = packet_view.transport_header_length,
+        .headers_len     = packet_view.payload_offset,
+        .tcp_payload_len = packet_view.payload_length,
+        .src_port        = packet_view.source_port,
+        .dst_port        = packet_view.destination_port,
+        .tcp_flags       = packet_view.tcp_flags,
     };
 
     return true;
@@ -193,7 +150,9 @@ static bool smugglefintrickFlowIsReverse(const ipmanipulator_smuggle_fin_flow_t 
 static bool smugglefintrickExpectedFinMatches(const ipmanipulator_smuggle_fin_flow_t  *flow,
                                               const smugglefintrick_tcp_packet_info_t *info)
 {
-    return flow->paused && info->tcp_payload_len == 0 && info->tcp_flags == (TCP_FIN | TCP_ACK) &&
+    uint8_t flags_without_ecn = (uint8_t) (info->tcp_flags & (uint8_t) ~(TCP_ECE | TCP_CWR));
+
+    return flow->paused && info->tcp_payload_len == 0 && flags_without_ecn == (TCP_FIN | TCP_ACK) &&
            info->src_addr == flow->expected_src_addr && info->dst_addr == flow->expected_dst_addr &&
            info->src_port == flow->expected_src_port && info->dst_port == flow->expected_dst_port &&
            info->seq == flow->expected_seq && info->ack == flow->expected_ack;
