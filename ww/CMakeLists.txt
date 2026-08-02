@@ -127,6 +127,7 @@ add_library(ww STATIC
     net/packet_tunnel.c
     net/pipe_tunnel.c
     net/sync_dns.c
+    net/tls_client_hello.c
     net/async_dns.c
     net/dns_strategy.c
     net/adapter.c
@@ -135,6 +136,7 @@ add_library(ww STATIC
     net/chain.c
     net/context.c
     net/generic_sniffer.c
+    net/ipv4_packet_view.c
     net/egress_pin.c
     net/socket_filter_option.c
     net/wchecksum.c

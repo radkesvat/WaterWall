@@ -23,9 +23,11 @@
 #include "net/async_dns.h"
 #include "net/dns_strategy.h"
 #include "net/egress_pin.h"
+#include "net/ipv4_packet_view.h"
 #include "net/packet_tunnel.h"
 #include "net/pipe_tunnel.h"
 #include "net/sync_dns.h"
+#include "net/tls_client_hello.h"
 #include "net/tunnel.h"
 #include "net/wchecksum.h"
 

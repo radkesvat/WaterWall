@@ -261,6 +261,27 @@ sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
     return pool->small_buffers[pool->small_buffers_container_len];
 }
 
+sbuf_t *bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_payload, uint16_t minimum_left_padding)
+{
+    assert(pool != NULL);
+
+    if (minimum_payload <= pool->small_buffers_size && minimum_left_padding <= pool->small_buffer_left_padding)
+    {
+        return bufferpoolGetSmallBuffer(pool);
+    }
+
+    if (minimum_payload <= pool->large_buffers_size && minimum_left_padding <= pool->large_buffer_left_padding)
+    {
+        return bufferpoolGetLargeBuffer(pool);
+    }
+
+    bufferpoolDebugCheckThreadAccess(pool);
+#if BUFFER_POOL_DEBUG == 1 && BYPASS_BUFFERPOOL != 1
+    pool->in_use += 1;
+#endif
+    return sbufCreateWithPadding(minimum_payload, minimum_left_padding);
+}
+
 void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
 {
 

@@ -4,8 +4,8 @@
  * Growable two-tier buffer pool for large/small sbuf_t allocations.
  */
 
-#include "master_pool.h"
 #include "generic_pool.h"
+#include "master_pool.h"
 #include "shiftbuffer.h"
 #include "wlibc.h"
 
@@ -30,9 +30,6 @@
 */
 
 typedef struct buffer_pool_s buffer_pool_t;
-
-
-
 
 /**
  * Creates a buffer pool with specified parameters.
@@ -66,6 +63,18 @@ sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool);
  * @return A pointer to the retrieved small buffer.
  */
 sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool);
+
+/**
+ * Retrieve the smallest pooled buffer satisfying both payload capacity and
+ * left-padding requirements. When neither pool tier fits, allocate a dedicated
+ * padded buffer; bufferpoolReuseBuffer() safely destroys that fallback.
+ *
+ * @param pool Buffer pool instance.
+ * @param minimum_payload Minimum writable payload capacity in bytes.
+ * @param minimum_left_padding Minimum left padding in bytes.
+ * @return A reset owned buffer satisfying both requirements.
+ */
+sbuf_t *bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_payload, uint16_t minimum_left_padding);
 
 /**
  * Reuses a buffer by returning it to the buffer pool.
@@ -108,7 +117,6 @@ uint32_t bufferpoolGetLargeBufferSize(buffer_pool_t *pool);
  * @return uint16_t Left padding in bytes.
  */
 uint16_t bufferpoolGetLargeBufferPadding(buffer_pool_t *pool);
-
 
 /**
  * Gets the size of small buffers in the buffer pool.

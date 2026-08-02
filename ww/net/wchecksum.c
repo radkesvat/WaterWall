@@ -4,6 +4,7 @@
  * Selects checksum backend and recomputes IPv4/L4 checksums for packets.
  */
 
+#include "ipv4_packet_view.h"
 #include "wlibc.h"
 
 extern uint16_t checksumAVX2(const uint8_t *data, uint16_t len, uint32_t initial);
@@ -38,65 +39,35 @@ static inline uint32_t checksumPseudoHeader(const struct ip4_addr_packed *src, c
 
 bool calcFullPacketChecksum(uint8_t *buf, size_t available_len)
 {
-    if (UNLIKELY(buf == NULL || available_len < IP_HLEN))
+    ipv4_packet_view_t packet = {0};
+    if (! ipv4packetviewParse(buf, available_len, &packet))
     {
         return false;
     }
 
-    struct ip_hdr *ipheader = (struct ip_hdr *) buf;
-
-    if (UNLIKELY(IPH_V(ipheader) != 4))
-    {
-        return false;
-    }
-
-    u16_t ip_hdr_len = IPH_HL_BYTES(ipheader);
-    u16_t ip_tot_len = lwip_ntohs(IPH_LEN(ipheader));
-    if (UNLIKELY(ip_hdr_len < IP_HLEN || ip_hdr_len > IP_HLEN_MAX || ip_hdr_len > available_len ||
-                 ip_tot_len < ip_hdr_len || ip_tot_len > available_len))
-    {
-        return false;
-    }
-
-    uint8_t *transport_hdr = buf + ip_hdr_len;
-    u16_t    transport_len = ip_tot_len - ip_hdr_len;
-    u8_t     protocol      = IPH_PROTO(ipheader);
-    u16_t    frag_field    = lwip_ntohs(IPH_OFFSET(ipheader));
-    bool     fragmented    = (frag_field & (IP_MF | IP_OFFMASK)) != 0;
+    struct ip_hdr *ipheader      = (struct ip_hdr *) buf;
+    uint8_t       *transport_hdr = buf + packet.transport_offset;
 
     /* Validate every field that will be accessed before modifying either checksum. */
-    if (LIKELY(! fragmented))
+    if (LIKELY(! packet.fragmented))
     {
-        switch (protocol)
+        ipv4_packet_view_t transport = {0};
+        switch (packet.protocol)
         {
-        case IP_PROTO_TCP: {
-            if (UNLIKELY(transport_len < TCP_HLEN))
-            {
-                return false;
-            }
-            const struct tcp_hdr *tcph        = (const struct tcp_hdr *) transport_hdr;
-            u16_t                 tcp_hdr_len = TCPH_HDRLEN_BYTES(tcph);
-            if (UNLIKELY(tcp_hdr_len < TCP_HLEN || tcp_hdr_len > transport_len))
+        case IP_PROTO_TCP:
+            if (! ipv4packetviewParseTcp(buf, available_len, &transport))
             {
                 return false;
             }
             break;
-        }
-        case IP_PROTO_UDP: {
-            if (UNLIKELY(transport_len < UDP_HLEN))
-            {
-                return false;
-            }
-            const struct udp_hdr *udph    = (const struct udp_hdr *) transport_hdr;
-            u16_t                 udp_len = lwip_ntohs(udph->len);
-            if (UNLIKELY(udp_len < UDP_HLEN || udp_len > transport_len))
+        case IP_PROTO_UDP:
+            if (! ipv4packetviewParseUdp(buf, available_len, &transport))
             {
                 return false;
             }
             break;
-        }
         case IP_PROTO_ICMP:
-            if (UNLIKELY(transport_len < sizeof(struct icmp_hdr)))
+            if (UNLIKELY(packet.transport_length < sizeof(struct icmp_hdr)))
             {
                 return false;
             }
@@ -107,29 +78,30 @@ bool calcFullPacketChecksum(uint8_t *buf, size_t available_len)
     }
 
     IPH_CHKSUM_SET(ipheader, 0);
-    IPH_CHKSUM_SET(ipheader, inet_chksum(ipheader, ip_hdr_len));
+    IPH_CHKSUM_SET(ipheader, inet_chksum(ipheader, packet.ip_header_length));
 
     /* Fragmented IPv4 packets cannot have transport checksum recalculated per-fragment. */
-    if (UNLIKELY(fragmented))
+    if (UNLIKELY(packet.fragmented))
     {
         return true;
     }
 
-    switch (protocol)
+    switch (packet.protocol)
     {
     case IP_PROTO_TCP: {
         struct tcp_hdr *tcph = (struct tcp_hdr *) transport_hdr;
         tcph->chksum         = 0;
         {
             // seed with pseudo-header checksum (not finalized)
-            uint32_t init = checksumPseudoHeader(&ipheader->src, &ipheader->dest, IP_PROTO_TCP, transport_len);
+            uint32_t init =
+                checksumPseudoHeader(&ipheader->src, &ipheader->dest, IP_PROTO_TCP, packet.transport_length);
 
             // uint16_t d_sum = checksumDefault(transport_hdr, transport_len, 0);
             // uint16_t a_sum = checksum(transport_hdr, transport_len, 0);
             // assert(d_sum == a_sum);
             // discard d_sum;
             // discard a_sum;
-            tcph->chksum = checksum(transport_hdr, (transport_len), init);
+            tcph->chksum = checksum(transport_hdr, packet.transport_length, init);
         }
         break;
     }
@@ -152,7 +124,7 @@ bool calcFullPacketChecksum(uint8_t *buf, size_t available_len)
         struct icmp_hdr *icmph = (struct icmp_hdr *) transport_hdr;
         icmph->chksum          = 0;
         // ICMP: no pseudo-header, just header+payload
-        icmph->chksum = (checksum(transport_hdr, transport_len, 0));
+        icmph->chksum = (checksum(transport_hdr, packet.transport_length, 0));
         break;
     }
     default:
@@ -162,19 +134,6 @@ bool calcFullPacketChecksum(uint8_t *buf, size_t available_len)
 
     return true;
 }
-
-typedef struct ipv4_packet_info_s
-{
-    struct ip_hdr *ipheader;
-    u16_t          ip_hdr_len;
-    u16_t          ip_tot_len;
-    uint8_t       *transport_hdr;
-    u16_t          transport_len;
-    u8_t           protocol;
-    u16_t          frag_offset;
-    bool           more_fragments;
-    bool           fragmented;
-} ipv4_packet_info_t;
 
 static inline uint16_t checksumUpdateWord16(uint16_t checksum_network, uint16_t old_word_network,
                                             uint16_t new_word_network)
@@ -218,94 +177,17 @@ static inline uint16_t checksumUpdateWord32(uint16_t checksum_network, uint32_t 
     return checksumUpdateWord16(step1, old_low, new_low);
 }
 
-static inline bool parseIpv4Header(uint8_t *buf, size_t available_len, ipv4_packet_info_t *info)
+bool calcIpv4HeaderChecksum(uint8_t *buf, size_t available_len)
 {
-    if (UNLIKELY(buf == NULL || available_len < IP_HLEN))
+    ipv4_packet_view_t packet = {0};
+    if (! ipv4packetviewParse(buf, available_len, &packet))
     {
         return false;
     }
 
     struct ip_hdr *ipheader = (struct ip_hdr *) buf;
-    if (UNLIKELY(IPH_V(ipheader) != 4))
-    {
-        return false;
-    }
-
-    u16_t ip_hdr_len = IPH_HL_BYTES(ipheader);
-    u16_t ip_tot_len = lwip_ntohs(IPH_LEN(ipheader));
-    if (UNLIKELY(ip_hdr_len < IP_HLEN || ip_hdr_len > IP_HLEN_MAX || ip_hdr_len > available_len ||
-                 ip_tot_len < ip_hdr_len || ip_tot_len > available_len))
-    {
-        return false;
-    }
-
-    u16_t frag_field = lwip_ntohs(IPH_OFFSET(ipheader));
-
-    info->ipheader       = ipheader;
-    info->ip_hdr_len     = ip_hdr_len;
-    info->ip_tot_len     = ip_tot_len;
-    info->transport_hdr  = buf + ip_hdr_len;
-    info->transport_len  = ip_tot_len - ip_hdr_len;
-    info->protocol       = IPH_PROTO(ipheader);
-    info->frag_offset    = frag_field & IP_OFFMASK;
-    info->more_fragments = (frag_field & IP_MF) != 0;
-    info->fragmented     = (frag_field & (IP_MF | IP_OFFMASK)) != 0;
-
-    return true;
-}
-
-static inline bool validateTcpHeader(const ipv4_packet_info_t *info, struct tcp_hdr **out_tcph)
-{
-    if (UNLIKELY(info->transport_len < TCP_HLEN))
-    {
-        return false;
-    }
-    struct tcp_hdr *tcph        = (struct tcp_hdr *) info->transport_hdr;
-    u16_t           tcp_hdr_len = TCPH_HDRLEN_BYTES(tcph);
-    if (UNLIKELY(tcp_hdr_len < TCP_HLEN || tcp_hdr_len > info->transport_len))
-    {
-        return false;
-    }
-    if (out_tcph != NULL)
-    {
-        *out_tcph = tcph;
-    }
-    return true;
-}
-
-static inline bool validateUdpHeader(const ipv4_packet_info_t *info, struct udp_hdr **out_udph)
-{
-    if (UNLIKELY(info->transport_len < UDP_HLEN))
-    {
-        return false;
-    }
-    struct udp_hdr *udph    = (struct udp_hdr *) info->transport_hdr;
-    u16_t           udp_len = lwip_ntohs(udph->len);
-    if (UNLIKELY(udp_len < UDP_HLEN))
-    {
-        return false;
-    }
-    if (! info->fragmented && UNLIKELY(udp_len > info->transport_len))
-    {
-        return false;
-    }
-    if (out_udph != NULL)
-    {
-        *out_udph = udph;
-    }
-    return true;
-}
-
-bool calcIpv4HeaderChecksum(uint8_t *buf, size_t available_len)
-{
-    ipv4_packet_info_t info;
-    if (! parseIpv4Header(buf, available_len, &info))
-    {
-        return false;
-    }
-
-    IPH_CHKSUM_SET(info.ipheader, 0);
-    IPH_CHKSUM_SET(info.ipheader, inet_chksum(info.ipheader, info.ip_hdr_len));
+    IPH_CHKSUM_SET(ipheader, 0);
+    IPH_CHKSUM_SET(ipheader, inet_chksum(ipheader, packet.ip_header_length));
     return true;
 }
 
@@ -317,14 +199,14 @@ bool setIpv4AddressWithChecksumUpdate(uint8_t *buf, size_t available_len, ipv4_c
         return false;
     }
 
-    ipv4_packet_info_t info;
-    if (! parseIpv4Header(buf, available_len, &info))
+    ipv4_packet_view_t packet = {0};
+    if (! ipv4packetviewParse(buf, available_len, &packet))
     {
         return false;
     }
 
-    uint32_t old_address_network =
-        (field == kIpv4ChecksumAddressSource) ? info.ipheader->src.addr : info.ipheader->dest.addr;
+    struct ip_hdr *ipheader      = (struct ip_hdr *) buf;
+    uint32_t old_address_network = (field == kIpv4ChecksumAddressSource) ? ipheader->src.addr : ipheader->dest.addr;
 
     if (old_address_network == new_address_network)
     {
@@ -335,22 +217,25 @@ bool setIpv4AddressWithChecksumUpdate(uint8_t *buf, size_t available_len, ipv4_c
     struct udp_hdr *udph                    = NULL;
     bool            update_transport_chksum = false;
 
-    if (info.frag_offset == 0)
+    if (packet.fragment_offset == 0)
     {
-        if (info.protocol == IP_PROTO_TCP)
+        ipv4_packet_view_t transport = {0};
+        if (packet.protocol == IP_PROTO_TCP)
         {
-            if (! validateTcpHeader(&info, &tcph))
+            if (! ipv4packetviewParseTcp(buf, available_len, &transport))
             {
                 return false;
             }
+            tcph                    = (struct tcp_hdr *) (buf + transport.transport_offset);
             update_transport_chksum = true;
         }
-        else if (info.protocol == IP_PROTO_UDP)
+        else if (packet.protocol == IP_PROTO_UDP)
         {
-            if (! validateUdpHeader(&info, &udph))
+            if (! ipv4packetviewParseUdp(buf, available_len, &transport))
             {
                 return false;
             }
+            udph = (struct udp_hdr *) (buf + transport.transport_offset);
             if (udph->chksum != 0)
             {
                 update_transport_chksum = true;
@@ -358,17 +243,17 @@ bool setIpv4AddressWithChecksumUpdate(uint8_t *buf, size_t available_len, ipv4_c
         }
     }
 
-    uint16_t old_ip_chksum    = IPH_CHKSUM(info.ipheader);
+    uint16_t old_ip_chksum    = IPH_CHKSUM(ipheader);
     uint16_t new_ip_chksum    = checksumUpdateWord32(old_ip_chksum, old_address_network, new_address_network);
     uint16_t new_trans_chksum = 0;
 
     if (update_transport_chksum)
     {
-        if (info.protocol == IP_PROTO_TCP)
+        if (packet.protocol == IP_PROTO_TCP)
         {
             new_trans_chksum = checksumUpdateWord32(tcph->chksum, old_address_network, new_address_network);
         }
-        else if (info.protocol == IP_PROTO_UDP)
+        else if (packet.protocol == IP_PROTO_UDP)
         {
             new_trans_chksum = checksumUpdateWord32(udph->chksum, old_address_network, new_address_network);
             if (UNLIKELY(new_trans_chksum == 0))
@@ -380,21 +265,21 @@ bool setIpv4AddressWithChecksumUpdate(uint8_t *buf, size_t available_len, ipv4_c
 
     if (field == kIpv4ChecksumAddressSource)
     {
-        info.ipheader->src.addr = new_address_network;
+        ipheader->src.addr = new_address_network;
     }
     else
     {
-        info.ipheader->dest.addr = new_address_network;
+        ipheader->dest.addr = new_address_network;
     }
-    IPH_CHKSUM_SET(info.ipheader, new_ip_chksum);
+    IPH_CHKSUM_SET(ipheader, new_ip_chksum);
 
     if (update_transport_chksum)
     {
-        if (info.protocol == IP_PROTO_TCP)
+        if (packet.protocol == IP_PROTO_TCP)
         {
             tcph->chksum = new_trans_chksum;
         }
-        else if (info.protocol == IP_PROTO_UDP)
+        else if (packet.protocol == IP_PROTO_UDP)
         {
             udph->chksum = new_trans_chksum;
         }
@@ -406,18 +291,18 @@ bool setIpv4AddressWithChecksumUpdate(uint8_t *buf, size_t available_len, ipv4_c
 bool updateIpv4TransportChecksum16(uint8_t *buf, size_t available_len, uint16_t old_word_network,
                                    uint16_t new_word_network)
 {
-    ipv4_packet_info_t info;
-    if (! parseIpv4Header(buf, available_len, &info))
+    ipv4_packet_view_t packet = {0};
+    if (! ipv4packetviewParse(buf, available_len, &packet))
     {
         return false;
     }
 
-    if (info.protocol != IP_PROTO_TCP && info.protocol != IP_PROTO_UDP)
+    if (packet.protocol != IP_PROTO_TCP && packet.protocol != IP_PROTO_UDP)
     {
         return false;
     }
 
-    if (info.frag_offset > 0)
+    if (packet.fragment_offset > 0)
     {
         return false;
     }
@@ -425,19 +310,22 @@ bool updateIpv4TransportChecksum16(uint8_t *buf, size_t available_len, uint16_t 
     struct tcp_hdr *tcph = NULL;
     struct udp_hdr *udph = NULL;
 
-    if (info.protocol == IP_PROTO_TCP)
+    ipv4_packet_view_t transport = {0};
+    if (packet.protocol == IP_PROTO_TCP)
     {
-        if (! validateTcpHeader(&info, &tcph))
+        if (! ipv4packetviewParseTcp(buf, available_len, &transport))
         {
             return false;
         }
+        tcph = (struct tcp_hdr *) (buf + transport.transport_offset);
     }
     else
     {
-        if (! validateUdpHeader(&info, &udph))
+        if (! ipv4packetviewParseUdp(buf, available_len, &transport))
         {
             return false;
         }
+        udph = (struct udp_hdr *) (buf + transport.transport_offset);
     }
 
     if (old_word_network == new_word_network)
@@ -445,11 +333,11 @@ bool updateIpv4TransportChecksum16(uint8_t *buf, size_t available_len, uint16_t 
         return true;
     }
 
-    if (info.protocol == IP_PROTO_TCP)
+    if (packet.protocol == IP_PROTO_TCP)
     {
         tcph->chksum = checksumUpdateWord16(tcph->chksum, old_word_network, new_word_network);
     }
-    else if (info.protocol == IP_PROTO_UDP)
+    else if (packet.protocol == IP_PROTO_UDP)
     {
         if (udph->chksum != 0)
         {

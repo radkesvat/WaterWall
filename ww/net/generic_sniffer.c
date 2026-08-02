@@ -1,5 +1,7 @@
 #include "generic_sniffer.h"
 
+#include "tls_client_hello.h"
+
 static bool headerNameEquals(const uint8_t *p, uint32_t n, const char *name)
 {
     for (uint32_t i = 0; i < n; ++i)
@@ -240,8 +242,8 @@ static generic_sniffer_result_t findHttpHost(const uint8_t *p, uint32_t n, const
     return kGenericSnifferFound;
 }
 
-generic_sniffer_result_t genericsnifferSniffHttp1Host(const uint8_t *payload, uint32_t payload_len, const uint8_t **host,
-                                                      uint32_t *host_len)
+generic_sniffer_result_t genericsnifferSniffHttp1Host(const uint8_t *payload, uint32_t payload_len,
+                                                      const uint8_t **host, uint32_t *host_len)
 {
     if (payload_len == 0)
     {
@@ -299,210 +301,45 @@ generic_sniffer_result_t genericsnifferSniffHttp1UpgradeHeader(const uint8_t *pa
     return findHttpHeader(payload, payload_len, "upgrade", NULL, NULL);
 }
 
-static bool remainingAtLeast(const uint8_t *cursor, const uint8_t *end, size_t needed)
-{
-    return cursor <= end && (size_t) (end - cursor) >= needed;
-}
-
 generic_sniffer_result_t genericsnifferSniffTlsClientHello(const uint8_t *payload, uint32_t payload_len)
 {
-    if (payload_len == 0)
+    tls_client_hello_result_t result = tlsclienthelloParseRecord(payload, payload_len, NULL);
+    if (result == kTlsClientHelloNeedMore)
     {
-        return kGenericSnifferNeedMore;
+        return payload_len < (uint32_t) kGenericSnifferMaxWindowBytes ? kGenericSnifferNeedMore
+                                                                      : kGenericSnifferMissing;
     }
 
-    if (payload[0] != 0x16)
-    {
-        return kGenericSnifferMissing;
-    }
-
-    if (payload_len < 5U)
-    {
-        return kGenericSnifferNeedMore;
-    }
-
-    if (payload[1] != 0x03 || payload[2] > 0x03)
-    {
-        return kGenericSnifferMissing;
-    }
-
-    uint16_t tls_record_len = GET_BE16(payload + 3);
-    if (tls_record_len < 4U)
-    {
-        return kGenericSnifferMissing;
-    }
-
-    uint32_t tls_record_total_len = (uint32_t) tls_record_len + 5U;
-    if (payload_len < tls_record_total_len)
-    {
-        return payload_len < (uint32_t) kGenericSnifferMaxWindowBytes ? kGenericSnifferNeedMore : kGenericSnifferMissing;
-    }
-
-    if (payload[5] != 0x01)
-    {
-        return kGenericSnifferMissing;
-    }
-
-    uint32_t client_hello_len = GET_BE24(payload + 6);
-    if (client_hello_len < 34U || client_hello_len + 4U > (uint32_t) tls_record_len)
-    {
-        return kGenericSnifferMissing;
-    }
-
-    return kGenericSnifferFound;
+    return result == kTlsClientHelloFound || result == kTlsClientHelloNoSni ? kGenericSnifferFound
+                                                                            : kGenericSnifferMissing;
 }
 
 generic_sniffer_result_t genericsnifferSniffTlsClientHelloSni(const uint8_t *payload, uint32_t payload_len,
-                                                       const uint8_t **host, uint32_t *host_len)
+                                                              const uint8_t **host, uint32_t *host_len)
 {
-    if (payload_len == 0)
+    tls_client_hello_view_t   hello  = {0};
+    tls_client_hello_result_t result = tlsclienthelloParseRecord(payload, payload_len, &hello);
+    if (result == kTlsClientHelloNeedMore)
     {
-        return kGenericSnifferNeedMore;
+        return payload_len < (uint32_t) kGenericSnifferMaxWindowBytes ? kGenericSnifferNeedMore
+                                                                      : kGenericSnifferMissing;
     }
-
-    if (payload[0] != 0x16)
-    {
-        return kGenericSnifferMissing;
-    }
-
-    if (payload_len < 5U)
-    {
-        return kGenericSnifferNeedMore;
-    }
-
-    if (payload[1] != 0x03 || payload[2] > 0x03)
+    if (result != kTlsClientHelloFound)
     {
         return kGenericSnifferMissing;
     }
 
-    uint16_t tls_record_len = GET_BE16(payload + 3);
-    if (tls_record_len < 4U)
+    const uint8_t *value     = payload + hello.sni_name_offset;
+    uint32_t       value_len = hello.sni_name_length;
+    genericsnifferStripHostPortAndDot(&value, &value_len);
+    if (value_len == 0)
     {
         return kGenericSnifferMissing;
     }
 
-    uint32_t tls_record_total_len = (uint32_t) tls_record_len + 5U;
-    if (payload_len < tls_record_total_len)
-    {
-        return payload_len < (uint32_t) kGenericSnifferMaxWindowBytes ? kGenericSnifferNeedMore : kGenericSnifferMissing;
-    }
-
-    if (payload[5] != 0x01)
-    {
-        return kGenericSnifferMissing;
-    }
-
-    uint32_t client_hello_len = GET_BE24(payload + 6);
-    if (client_hello_len < 34U || client_hello_len + 4U > (uint32_t) tls_record_len)
-    {
-        return kGenericSnifferMissing;
-    }
-
-    const uint8_t *client_hello = payload + 9;
-    const uint8_t *cursor       = client_hello + 34;
-    const uint8_t *hello_end    = client_hello + client_hello_len;
-
-    if (! remainingAtLeast(cursor, hello_end, 1U))
-    {
-        return kGenericSnifferMissing;
-    }
-
-    uint8_t session_id_len = cursor[0];
-    cursor += 1;
-    if (! remainingAtLeast(cursor, hello_end, (size_t) session_id_len + 2U))
-    {
-        return kGenericSnifferMissing;
-    }
-    cursor += session_id_len;
-
-    uint16_t cipher_suites_len = GET_BE16(cursor);
-    cursor += 2;
-    if (! remainingAtLeast(cursor, hello_end, (size_t) cipher_suites_len + 1U))
-    {
-        return kGenericSnifferMissing;
-    }
-    cursor += cipher_suites_len;
-
-    uint8_t compression_methods_len = cursor[0];
-    cursor += 1;
-    if (! remainingAtLeast(cursor, hello_end, (size_t) compression_methods_len + 2U))
-    {
-        return kGenericSnifferMissing;
-    }
-    cursor += compression_methods_len;
-
-    uint16_t extensions_len = GET_BE16(cursor);
-    cursor += 2;
-    if (! remainingAtLeast(cursor, hello_end, extensions_len))
-    {
-        return kGenericSnifferMissing;
-    }
-
-    const uint8_t *extensions_end = cursor + extensions_len;
-    while (remainingAtLeast(cursor, extensions_end, 4U))
-    {
-        uint16_t       extension_type = GET_BE16(cursor);
-        uint16_t       extension_len  = GET_BE16(cursor + 2);
-        const uint8_t *extension_data = cursor + 4;
-        if (! remainingAtLeast(extension_data, extensions_end, extension_len))
-        {
-            return kGenericSnifferMissing;
-        }
-        const uint8_t *next_extension = extension_data + extension_len;
-
-        if (extension_type == 0x0000)
-        {
-            if (extension_len < 2U)
-            {
-                return kGenericSnifferMissing;
-            }
-
-            uint16_t       server_name_list_len = GET_BE16(extension_data);
-            const uint8_t *server_name_cursor   = extension_data + 2;
-
-            if (server_name_list_len > extension_len - 2U)
-            {
-                return kGenericSnifferMissing;
-            }
-            const uint8_t *server_name_list_end = server_name_cursor + server_name_list_len;
-
-            while (remainingAtLeast(server_name_cursor, server_name_list_end, 3U))
-            {
-                uint8_t        name_type = server_name_cursor[0];
-                uint16_t       name_len  = GET_BE16(server_name_cursor + 1);
-                const uint8_t *name_data = server_name_cursor + 3;
-                if (! remainingAtLeast(name_data, server_name_list_end, name_len))
-                {
-                    return kGenericSnifferMissing;
-                }
-                const uint8_t *next_name = name_data + name_len;
-
-                if (name_type == 0x00)
-                {
-                    const uint8_t *value     = name_data;
-                    uint32_t       value_len = name_len;
-                    genericsnifferStripHostPortAndDot(&value, &value_len);
-
-                    if (value_len == 0)
-                    {
-                        return kGenericSnifferMissing;
-                    }
-
-                    *host     = value;
-                    *host_len = value_len;
-                    return kGenericSnifferFound;
-                }
-
-                server_name_cursor = next_name;
-            }
-
-            return kGenericSnifferMissing;
-        }
-
-        cursor = next_extension;
-    }
-
-    return kGenericSnifferMissing;
+    *host     = value;
+    *host_len = value_len;
+    return kGenericSnifferFound;
 }
 
 generic_sniffer_result_t genericsnifferSniffBittorrentHandshake(const uint8_t *payload, uint32_t payload_len)

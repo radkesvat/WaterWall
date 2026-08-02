@@ -1,5 +1,7 @@
 #include "quic_sniffing.h"
 
+#include "tls_client_hello.h"
+
 #include "generic_sniffer.h"
 
 #include <openssl/evp.h>
@@ -44,7 +46,7 @@ static generic_sniffer_result_t routerQuicNeedMoreOrMissing(uint32_t payload_len
 }
 
 static bool routerQuicReadVarint(const uint8_t *payload, size_t payload_len, size_t *offset, uint64_t *value,
-                                  size_t *encoded_len)
+                                 size_t *encoded_len)
 {
     if (*offset >= payload_len)
     {
@@ -169,9 +171,9 @@ static bool routerQuicAes128EncryptBlock(const uint8_t key[kRouterQuicAes128KeyL
         return false;
     }
 
-    int len1 = 0;
-    int len2 = 0;
-    bool ok  = EVP_EncryptInit_ex(ctx, EVP_aes_128_ecb(), NULL, key, NULL) == 1 &&
+    int  len1 = 0;
+    int  len2 = 0;
+    bool ok   = EVP_EncryptInit_ex(ctx, EVP_aes_128_ecb(), NULL, key, NULL) == 1 &&
               EVP_CIPHER_CTX_set_padding(ctx, 0) == 1 &&
               EVP_EncryptUpdate(ctx, output, &len1, input, kRouterQuicAes128BlockLength) == 1 &&
               EVP_EncryptFinal_ex(ctx, output + len1, &len2) == 1 && len1 + len2 == kRouterQuicAes128BlockLength;
@@ -190,8 +192,8 @@ static bool routerQuicAes128GcmOpen(const uint8_t key[kRouterQuicAes128KeyLength
         return false;
     }
 
-    size_t ciphertext_len = ciphertext_and_tag_len - kRouterQuicAeadTagLength;
-    const uint8_t *tag    = ciphertext_and_tag + ciphertext_len;
+    size_t         ciphertext_len = ciphertext_and_tag_len - kRouterQuicAeadTagLength;
+    const uint8_t *tag            = ciphertext_and_tag + ciphertext_len;
 
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (ctx == NULL)
@@ -199,9 +201,9 @@ static bool routerQuicAes128GcmOpen(const uint8_t key[kRouterQuicAes128KeyLength
         return false;
     }
 
-    int len     = 0;
-    int out_len = 0;
-    bool ok     = EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, NULL, NULL) == 1 &&
+    int  len     = 0;
+    int  out_len = 0;
+    bool ok      = EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, NULL, NULL) == 1 &&
               EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, kRouterQuicIvLength, NULL) == 1 &&
               EVP_DecryptInit_ex(ctx, NULL, NULL, key, nonce) == 1;
 
@@ -246,135 +248,36 @@ static void routerQuicTrimHost(const uint8_t **host, uint32_t *host_len)
 }
 
 static router_quic_tls_parse_t routerQuicParseTlsClientHelloSni(const uint8_t *payload, size_t payload_len,
-                                                                uint8_t *host, uint32_t host_cap,
-                                                                uint32_t *host_len)
+                                                                uint8_t *host, uint32_t host_cap, uint32_t *host_len)
 {
-    if (payload_len < 4U)
+    tls_client_hello_view_t   hello  = {0};
+    tls_client_hello_result_t result = tlsclienthelloParseHandshake(payload, payload_len, &hello);
+
+    if (result == kTlsClientHelloNeedMore)
     {
         return kRouterQuicTlsParseNeedMore;
     }
-    if (payload[0] != 0x01U)
-    {
-        return kRouterQuicTlsParseBad;
-    }
-
-    uint32_t handshake_len = GET_BE24(payload + 1U);
-    if (payload_len < 4U + (size_t) handshake_len)
-    {
-        return kRouterQuicTlsParseNeedMore;
-    }
-
-    size_t offset = 4U;
-    size_t end    = 4U + (size_t) handshake_len;
-
-    if (end < offset + 2U + 32U + 1U)
-    {
-        return kRouterQuicTlsParseBad;
-    }
-    offset += 2U + 32U;
-
-    uint8_t session_id_len = payload[offset++];
-    if (end < offset + session_id_len + 2U)
-    {
-        return kRouterQuicTlsParseBad;
-    }
-    offset += session_id_len;
-
-    uint16_t cipher_suites_len = GET_BE16(payload + offset);
-    offset += 2U;
-    if (end < offset + cipher_suites_len + 1U)
-    {
-        return kRouterQuicTlsParseBad;
-    }
-    offset += cipher_suites_len;
-
-    uint8_t compression_methods_len = payload[offset++];
-    if (end < offset + compression_methods_len)
-    {
-        return kRouterQuicTlsParseBad;
-    }
-    offset += compression_methods_len;
-
-    if (offset == end)
+    if (result == kTlsClientHelloNoSni)
     {
         return kRouterQuicTlsParseNoSni;
     }
-    if (end < offset + 2U)
+    if (result != kTlsClientHelloFound)
     {
         return kRouterQuicTlsParseBad;
     }
 
-    uint16_t extensions_len = GET_BE16(payload + offset);
-    offset += 2U;
-    if (end < offset + extensions_len)
+    const uint8_t *value     = payload + hello.sni_name_offset;
+    uint32_t       value_len = hello.sni_name_length;
+    routerQuicTrimHost(&value, &value_len);
+    if (value_len == 0 || value_len >= host_cap)
     {
-        return kRouterQuicTlsParseBad;
+        return kRouterQuicTlsParseNoSni;
     }
 
-    size_t extensions_end = offset + extensions_len;
-    while (offset + 4U <= extensions_end)
-    {
-        uint16_t extension_type = GET_BE16(payload + offset);
-        uint16_t extension_len  = GET_BE16(payload + offset + 2U);
-        offset += 4U;
-        if (offset + extension_len > extensions_end)
-        {
-            return kRouterQuicTlsParseBad;
-        }
-
-        if (extension_type == 0x0000U)
-        {
-            const uint8_t *extension = payload + offset;
-            if (extension_len < 2U)
-            {
-                return kRouterQuicTlsParseBad;
-            }
-
-            uint16_t server_name_list_len = GET_BE16(extension);
-            size_t   name_offset          = 2U;
-            size_t   name_end             = 2U + (size_t) server_name_list_len;
-            if (name_end > extension_len)
-            {
-                return kRouterQuicTlsParseBad;
-            }
-
-            while (name_offset + 3U <= name_end)
-            {
-                uint8_t  name_type = extension[name_offset++];
-                uint16_t name_len  = GET_BE16(extension + name_offset);
-                name_offset += 2U;
-                if (name_offset + name_len > name_end)
-                {
-                    return kRouterQuicTlsParseBad;
-                }
-
-                if (name_type == 0x00U)
-                {
-                    const uint8_t *value     = extension + name_offset;
-                    uint32_t       value_len = name_len;
-                    routerQuicTrimHost(&value, &value_len);
-
-                    if (value_len == 0 || value_len >= host_cap)
-                    {
-                        return kRouterQuicTlsParseNoSni;
-                    }
-
-                    memoryCopy(host, value, value_len);
-                    host[value_len] = '\0';
-                    *host_len       = value_len;
-                    return kRouterQuicTlsParseOk;
-                }
-
-                name_offset += name_len;
-            }
-
-            return kRouterQuicTlsParseNoSni;
-        }
-
-        offset += extension_len;
-    }
-
-    return offset == extensions_end ? kRouterQuicTlsParseNoSni : kRouterQuicTlsParseBad;
+    memoryCopy(host, value, value_len);
+    host[value_len] = '\0';
+    *host_len       = value_len;
+    return kRouterQuicTlsParseOk;
 }
 
 static bool routerQuicMarkCrypto(uint8_t *crypto, uint8_t *seen, size_t *max_crypto_end, uint64_t crypto_offset,
@@ -477,8 +380,8 @@ static bool routerQuicParseInitialFrames(const uint8_t *payload, size_t payload_
             {
                 return false;
             }
-            if (! routerQuicMarkCrypto(crypto, seen, max_crypto_end, crypto_offset, crypto_len, payload + offset,
-                                       payload_len - offset))
+            if (! routerQuicMarkCrypto(
+                    crypto, seen, max_crypto_end, crypto_offset, crypto_len, payload + offset, payload_len - offset))
             {
                 return false;
             }
@@ -640,8 +543,8 @@ generic_sniffer_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         uint8_t mask[kRouterQuicAes128BlockLength];
 
         if (! routerQuicHkdfExtractSha256(salt, kRouterQuicInitialSaltLength, dcid, dcid_len, initial_secret) ||
-            ! routerQuicHkdfExpandLabelSha256(initial_secret, sizeof(initial_secret), "client in", client_secret,
-                                              sizeof(client_secret)) ||
+            ! routerQuicHkdfExpandLabelSha256(
+                initial_secret, sizeof(initial_secret), "client in", client_secret, sizeof(client_secret)) ||
             ! routerQuicHkdfExpandLabelSha256(client_secret, sizeof(client_secret), "quic hp", hp, sizeof(hp)) ||
             ! routerQuicHkdfExpandLabelSha256(client_secret, sizeof(client_secret), "quic key", key, sizeof(key)) ||
             ! routerQuicHkdfExpandLabelSha256(client_secret, sizeof(client_secret), "quic iv", iv, sizeof(iv)))
@@ -688,9 +591,9 @@ generic_sniffer_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
             nonce[4U + i] ^= (uint8_t) (packet_number >> (56U - 8U * i));
         }
 
-        size_t aad_len             = pn_offset + pn_len;
-        size_t ciphertext_tag_len  = packet_end - aad_len;
-        uint8_t *decrypted_payload = memoryAllocate(ciphertext_tag_len);
+        size_t   aad_len            = pn_offset + pn_len;
+        size_t   ciphertext_tag_len = packet_end - aad_len;
+        uint8_t *decrypted_payload  = memoryAllocate(ciphertext_tag_len);
         if (decrypted_payload == NULL)
         {
             memoryFree(packet);
@@ -699,8 +602,14 @@ generic_sniffer_result_t routerQuicSniffClientHelloSni(const uint8_t *payload, u
         }
 
         size_t decrypted_payload_len = 0;
-        if (! routerQuicAes128GcmOpen(key, nonce, packet, aad_len, packet + aad_len, ciphertext_tag_len,
-                                      decrypted_payload, &decrypted_payload_len))
+        if (! routerQuicAes128GcmOpen(key,
+                                      nonce,
+                                      packet,
+                                      aad_len,
+                                      packet + aad_len,
+                                      ciphertext_tag_len,
+                                      decrypted_payload,
+                                      &decrypted_payload_len))
         {
             memoryFree(decrypted_payload);
             memoryFree(packet);

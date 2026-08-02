@@ -384,6 +384,24 @@ if(TARGET ww)
 
   add_waterwall_unit_test(waterwall.wchecksum_unit wchecksum_test "unit;net;checksum")
 
+  add_executable(ipv4_packet_view_test ipv4_packet_view_test.c)
+  target_link_libraries(ipv4_packet_view_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests ipv4_packet_view_test)
+
+  add_waterwall_unit_test(waterwall.ipv4_packet_view_unit ipv4_packet_view_test "unit;net;packet-view")
+
+  add_executable(tls_client_hello_test tls_client_hello_test.c)
+  target_link_libraries(tls_client_hello_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests tls_client_hello_test)
+
+  add_waterwall_unit_test(waterwall.tls_client_hello_unit tls_client_hello_test "unit;net;tls")
+
+  add_executable(buffer_pool_best_fit_test buffer_pool_best_fit_test.c)
+  target_link_libraries(buffer_pool_best_fit_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests buffer_pool_best_fit_test)
+
+  add_waterwall_unit_test(waterwall.buffer_pool_best_fit_unit buffer_pool_best_fit_test "unit;bufio;buffer-pool")
+
   add_executable(packet_tunnel_test packet_tunnel_test.c)
   target_link_libraries(packet_tunnel_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests packet_tunnel_test)
