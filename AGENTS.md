@@ -67,6 +67,13 @@ A correct tunnel is never "just" a parser or encoder. It must preserve callback
     `PacketReceiver` are absorbers, not fatal anchors. Never `lineDestroy()` in
     any category.
 12. **Validate through the CMake preset**, not hand-rolled compiler commands.
+13. **Worker identity is explicit (`WID`) and invalid by default (`kInvalidWID`).**
+    WID represents a registered worker slot index (`0 .. WORKERS_COUNT - 1`), not
+    an OS thread ID (`getTID()`). Unregistered threads (device reader/writer
+    threads, helper threads, plain pthreads) observe `getWID() == kInvalidWID`. Never
+    index worker-owned arrays without checking identity predicates
+    (`currentThreadIsEventWorker()`, `workerWIDIsRegistered(wid)`). Auxiliary threads
+    must post work to an event worker loop and must never borrow a worker-local pool.
 
 > If a proposed change cannot explain how it preserves all of the above, it is not
 > ready.
