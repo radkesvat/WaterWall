@@ -1229,6 +1229,7 @@ bool captureLinuxReaderPublishReady(capture_device_t *cdev, int *reader_socket)
 
 static WTHREAD_ROUTINE(capturedeviceReaderThreadMain) // NOLINT
 {
+    assert(! currentThreadHasRegisteredWID());
     capture_device_t *cdev = userdata;
     discard           cdev->routine_reader(cdev);
 

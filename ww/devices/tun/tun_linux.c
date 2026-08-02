@@ -1414,6 +1414,7 @@ static void tundeviceNoteUnexpectedThreadExit(tun_device_t *tdev, const char *wh
 
 static WTHREAD_ROUTINE(tundeviceReaderThreadMain) // NOLINT
 {
+    assert(! currentThreadHasRegisteredWID());
     tun_device_t *tdev = userdata;
     discard       tdev->routine_reader(tdev);
     tundeviceNoteUnexpectedThreadExit(tdev, "reader");
@@ -1422,6 +1423,7 @@ static WTHREAD_ROUTINE(tundeviceReaderThreadMain) // NOLINT
 
 static WTHREAD_ROUTINE(tundeviceWriterThreadMain) // NOLINT
 {
+    assert(! currentThreadHasRegisteredWID());
     tun_device_t *tdev = userdata;
     discard       tdev->routine_writer(tdev);
     tundeviceNoteUnexpectedThreadExit(tdev, "writer");

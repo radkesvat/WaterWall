@@ -14,7 +14,74 @@
 
 #include "loggers/dns_logger.h"
 
-thread_local wid_t tl_wid;
+thread_local wid_t tl_wid = kInvalidWID;
+
+bool workerWIDIsRegistered(wid_t wid)
+{
+    if (! GSTATE.flag_initialized || WORKERS == NULL || wid == kInvalidWID)
+    {
+        return false;
+    }
+    return wid < getTotalWorkersCount();
+}
+
+bool workerWIDIsEventWorker(wid_t wid)
+{
+    if (! workerWIDIsRegistered(wid))
+    {
+        return false;
+    }
+    return WORKERS[wid].has_event_loop;
+}
+
+bool currentThreadHasRegisteredWID(void)
+{
+    return workerWIDIsRegistered(getWID());
+}
+
+bool currentThreadIsEventWorker(void)
+{
+    return workerWIDIsEventWorker(getWID());
+}
+
+bool currentThreadIsEventWorkerWID(wid_t wid)
+{
+    return currentThreadIsEventWorker() && (getWID() == wid);
+}
+
+void workerBindCurrentThread(worker_t *worker)
+{
+    if (UNLIKELY(worker == NULL || ! GSTATE.flag_initialized || WORKERS == NULL))
+    {
+        LOGF("workerBindCurrentThread: null worker or global state uninitialized");
+        abortProgramNow(1);
+    }
+    wid_t wid = worker->wid;
+    if (UNLIKELY(wid >= getTotalWorkersCount() || worker != getWorker(wid)))
+    {
+        LOGF("workerBindCurrentThread: WID %u is out of bounds or worker pointer mismatch", wid);
+        abortProgramNow(1);
+    }
+
+    wid_t current = getWID();
+    if (current == wid)
+    {
+        return;
+    }
+    if (UNLIKELY(current != kInvalidWID))
+    {
+        LOGF("workerBindCurrentThread: thread already bound to worker %u, cannot rebind to %u", current, wid);
+        abortProgramNow(1);
+    }
+
+    tl_wid      = wid;
+    worker->tid = getTID();
+}
+
+void workerUnbindCurrentThread(void)
+{
+    tl_wid = kInvalidWID;
+}
 
 /**
  * @brief Advance the worker lifecycle to at least @p target. Never goes back.
@@ -233,7 +300,7 @@ void workerInit(worker_t *worker, wid_t wid, bool eventloop)
 
 void workerRun(worker_t *worker)
 {
-    tl_wid    = worker->wid;
+    workerBindCurrentThread(worker);
     wid_t wid = worker->wid;
     frandInit();
 
@@ -246,6 +313,10 @@ void workerRun(worker_t *worker)
         {
             workerDestroyOwnResources(worker);
             LOGD("Worker %d exited", wid);
+            if (wid != 0)
+            {
+                workerUnbindCurrentThread();
+            }
             return;
         }
         // wait for the main thread to set the flag
@@ -275,6 +346,10 @@ void workerRun(worker_t *worker)
     workerDestroyOwnResources(worker);
 
     LOGD("Worker %d exited", wid);
+    if (wid != 0)
+    {
+        workerUnbindCurrentThread();
+    }
 }
 
 int workerResolveDomainServiceAsync(wid_t wid, const char *domain, const char *service, int socktype, dns_resolve_cb cb,

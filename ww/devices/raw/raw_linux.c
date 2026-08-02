@@ -360,6 +360,7 @@ static void rawdeviceNoteUnexpectedWriterExit(raw_device_t *rdev)
 
 static WTHREAD_ROUTINE(rawdeviceWriterThreadMain) // NOLINT
 {
+    assert(! currentThreadHasRegisteredWID());
     raw_device_t *rdev = userdata;
     discard       rdev->routine_writer(rdev);
     rawdeviceNoteUnexpectedWriterExit(rdev);

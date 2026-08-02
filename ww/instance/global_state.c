@@ -148,9 +148,8 @@ static void tcpipInitDone(void *arg)
     discard arg;
     GSTATE.flag_lwip_initialized = 1;
     GSTATE.lwip_process_v4_hook  = wwDefaultInternalLwipIpv4Hook;
-    // lwip thread worker id is set to invalid value (larger than workers 0 index)
-    tl_wid          = getTotalWorkersCount() - 1; // lwip is the last worker
-    GSTATE.lwip_wid = tl_wid;
+    GSTATE.lwip_wid              = getTotalWorkersCount() - 1;
+    workerBindCurrentThread(getWorker(GSTATE.lwip_wid));
 }
 
 // --- Public API functions ---
@@ -393,15 +392,19 @@ void createGlobalState(const ww_construction_data_t init_data)
 
     // workers and pools creation
     {
+        _Static_assert((MAX_ORDINARY_WORKERS + WORKER_ADDITIONS) <= kInvalidWID,
+                       "Max workers count must not reach kInvalidWID");
+
         WORKERS_COUNT         = init_data.workers_count;
         GSTATE.ram_profile    = init_data.ram_profile;
         GSTATE.distribute_wid = 0;
 
-        // this check was required to avoid overflow in older version when workers_count was limited to 254
-        if (WORKERS_COUNT <= 0 || WORKERS_COUNT > (254))
+        if (WORKERS_COUNT <= 0 || WORKERS_COUNT > MAX_ORDINARY_WORKERS)
         {
-            LOGW("workers count was not in valid range, value: %u range:[1 - %d]\n", WORKERS_COUNT, (254));
-            WORKERS_COUNT = (254);
+            LOGW("workers count was not in valid range, value: %u range:[1 - %d]\n",
+                 WORKERS_COUNT,
+                 MAX_ORDINARY_WORKERS);
+            WORKERS_COUNT = MAX_ORDINARY_WORKERS;
         }
         WORKERS_COUNT += WORKER_ADDITIONS;
 
@@ -416,6 +419,16 @@ void createGlobalState(const ww_construction_data_t init_data)
 
         // WORKER_ADDITIONS 1 : lwip worker dose not have event loop
         workerInit(getWorker(getTotalWorkersCount() - 1), getTotalWorkersCount() - 1, false);
+
+        worker_t *worker0 = getWorker(0);
+#ifdef OS_WIN
+        worker0->thread = (wthread_t) GetCurrentThread();
+#else
+        worker0->thread = pthread_self();
+#endif
+        worker0->thread_valid = true;
+
+        workerBindCurrentThread(worker0);
 
         initializeShortCuts();
 
@@ -441,15 +454,6 @@ void createGlobalState(const ww_construction_data_t init_data)
 
     // Spawn all workers except main worker which is current thread
     {
-        worker_t *worker = getWorker(0);
-#ifdef OS_WIN
-        worker->thread = (wthread_t) GetCurrentThread();
-#else
-        worker->thread = pthread_self();
-#endif
-        worker->thread_valid = true;
-        worker->tid          = getTID();
-
         // Block graceful (shutdown-routed) signals on the main thread before
         // spawning workers, so the workers inherit the blocked mask; the main
         // thread re-enables them in signalmanagerStart(). This keeps graceful
@@ -542,7 +546,6 @@ extern void call_freeres(void);
 
 WW_EXPORT void destroyGlobalState(void)
 {
-
     socketmanagerDestroy();
     nodemanagerDestroy();
     wCryptoGlobalCleanup();
@@ -580,8 +583,6 @@ WW_EXPORT void destroyGlobalState(void)
             mutexDestroy(&getWorker(wi)->control_mutex);
         }
     }
-    memoryFree(WORKERS);
-    WORKERS = NULL;
 
     nodelibraryCleanup();
 
@@ -596,6 +597,11 @@ WW_EXPORT void destroyGlobalState(void)
     }
 
     signalmanagerDestroy();
+
+    workerUnbindCurrentThread();
+    memoryFree(WORKERS);
+    WORKERS              = NULL;
+    GSTATE.workers_count = 0;
 
 #ifdef WW_CALL_GNU_FREES
     call_freeres();

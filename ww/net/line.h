@@ -106,8 +106,8 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
                    .recalculate_checksum = false,
                    // to set a port we need to know the AF family, default v4
                    .routing_context =
-                       (routing_context_t) {.dest_ctx     = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
-                                            .src_ctx      = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
+                       (routing_context_t) {.dest_ctx = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
+                                            .src_ctx  = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
                                             .local_listener_port = 0}};
 
     memoryZero((void *) &l->tunnels_line_state[0], genericpoolGetItemSize(pools[current]) - sizeof(line_t));

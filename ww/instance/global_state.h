@@ -115,12 +115,13 @@ typedef struct
 
 extern ww_global_state_t global_ww_state;
 
-#define GSTATE           global_ww_state
-#define GLOBAL_MTU_SIZE  global_ww_state.mtu_size
-#define RAM_PROFILE      global_ww_state.ram_profile
-#define WORKERS          global_ww_state.workers
-#define WORKERS_COUNT    global_ww_state.workers_count
-#define WORKER_ADDITIONS 1 // 1 for lwip thread (included in workers_count)
+#define GSTATE               global_ww_state
+#define GLOBAL_MTU_SIZE      global_ww_state.mtu_size
+#define RAM_PROFILE          global_ww_state.ram_profile
+#define WORKERS              global_ww_state.workers
+#define WORKERS_COUNT        global_ww_state.workers_count
+#define WORKER_ADDITIONS     1 // 1 for lwip thread (included in workers_count)
+#define MAX_ORDINARY_WORKERS (kInvalidWID - WORKER_ADDITIONS)
 
 /*!
  * @brief Get the number of total workers.
@@ -153,6 +154,13 @@ static inline wid_t getWorkersCount(void)
  */
 static inline worker_t *getWorker(wid_t wid)
 {
+    assert(GSTATE.flag_initialized && WORKERS != NULL);
+    assert(wid != kInvalidWID);
+    assert(wid < getTotalWorkersCount());
+    if (UNLIKELY(wid == kInvalidWID || wid >= getTotalWorkersCount()))
+    {
+        abortProgramNow(1);
+    }
     return &(WORKERS[wid]);
 }
 
@@ -164,6 +172,13 @@ static inline worker_t *getWorker(wid_t wid)
  */
 static inline buffer_pool_t *getWorkerBufferPool(wid_t wid)
 {
+    assert(GSTATE.flag_initialized && GSTATE.shortcut_buffer_pools != NULL);
+    assert(wid != kInvalidWID);
+    assert(wid < getTotalWorkersCount());
+    if (UNLIKELY(wid == kInvalidWID || wid >= getTotalWorkersCount()))
+    {
+        abortProgramNow(1);
+    }
     return GSTATE.shortcut_buffer_pools[wid];
 }
 
@@ -175,6 +190,13 @@ static inline buffer_pool_t *getWorkerBufferPool(wid_t wid)
  */
 static inline threadsafe_generic_pool_t *getWorkerWiosPool(wid_t wid)
 {
+    assert(GSTATE.flag_initialized && GSTATE.shortcut_wios_pools != NULL);
+    assert(wid != kInvalidWID);
+    assert(wid < getTotalWorkersCount());
+    if (UNLIKELY(wid == kInvalidWID || wid >= getTotalWorkersCount()))
+    {
+        abortProgramNow(1);
+    }
     return GSTATE.shortcut_wios_pools[wid];
 }
 
@@ -186,6 +208,13 @@ static inline threadsafe_generic_pool_t *getWorkerWiosPool(wid_t wid)
  */
 static inline generic_pool_t *getWorkerContextPool(wid_t wid)
 {
+    assert(GSTATE.flag_initialized && GSTATE.shortcut_context_pools != NULL);
+    assert(wid != kInvalidWID);
+    assert(wid < getTotalWorkersCount());
+    if (UNLIKELY(wid == kInvalidWID || wid >= getTotalWorkersCount()))
+    {
+        abortProgramNow(1);
+    }
     return GSTATE.shortcut_context_pools[wid];
 }
 
@@ -197,6 +226,13 @@ static inline generic_pool_t *getWorkerContextPool(wid_t wid)
  */
 static inline struct wloop_s *getWorkerLoop(wid_t wid)
 {
+    assert(GSTATE.flag_initialized && GSTATE.shortcut_loops != NULL);
+    assert(wid != kInvalidWID);
+    assert(wid < getTotalWorkersCount());
+    if (UNLIKELY(wid == kInvalidWID || wid >= getTotalWorkersCount()))
+    {
+        abortProgramNow(1);
+    }
     return GSTATE.shortcut_loops[wid];
 }
 

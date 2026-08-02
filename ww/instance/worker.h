@@ -10,6 +10,11 @@
 typedef uint8_t        wid_t;
 typedef _Atomic(wid_t) atomic_wid_t;
 
+enum
+{
+    kInvalidWID = UINT8_MAX,
+};
+
 typedef struct worker_message_queue_s worker_message_queue_t;
 
 /**
@@ -84,6 +89,58 @@ void workerRun(worker_t *worker);
 wthread_error_t workerSpawn(worker_t *worker);
 
 /**
+ * @brief Binds the current thread to a registered worker instance.
+ * @param worker Pointer to the target worker structure.
+ */
+void workerBindCurrentThread(worker_t *worker);
+
+/**
+ * @brief Unbinds the current thread from its worker role, restoring kInvalidWID.
+ */
+void workerUnbindCurrentThread(void);
+
+/**
+ * @brief Whether @p wid is a valid registered worker slot (including pseudo-workers).
+ */
+bool workerWIDIsRegistered(wid_t wid);
+
+/**
+ * @brief Whether @p wid is a registered ordinary event worker.
+ */
+bool workerWIDIsEventWorker(wid_t wid);
+
+/**
+ * @brief Whether the current thread owns a registered worker slot.
+ */
+bool currentThreadHasRegisteredWID(void);
+
+/**
+ * @brief Whether the current thread is a registered ordinary event worker.
+ */
+bool currentThreadIsEventWorker(void);
+
+/**
+ * @brief Whether the current thread is a registered event worker and owns @p wid.
+ */
+bool currentThreadIsEventWorkerWID(wid_t wid);
+
+/**
+ * @brief Test-only helper to bind the current thread to a test WID.
+ */
+static inline void testWorkerBindWID(wid_t wid)
+{
+    tl_wid = wid;
+}
+
+/**
+ * @brief Test-only helper to restore kInvalidWID on the current thread.
+ */
+static inline void testWorkerUnbindWID(void)
+{
+    tl_wid = kInvalidWID;
+}
+
+/**
  * @brief Resolves a domain on the current worker's async DNS channel.
  *
  * The caller must pass its own worker ID. This helper is intentionally
@@ -102,7 +159,7 @@ int workerResolveDomainServiceAsync(wid_t wid, const char *domain, const char *s
 
 /**
  * @brief Gets the worker ID of the current thread.
- * @return The worker ID.
+ * @return The worker ID, or kInvalidWID if called from an unregistered thread.
  */
 static inline wid_t getWID(void)
 {
