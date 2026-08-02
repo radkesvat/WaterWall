@@ -74,6 +74,19 @@ A correct tunnel is never "just" a parser or encoder. It must preserve callback
     index worker-owned arrays without checking identity predicates
     (`currentThreadIsEventWorker()`, `workerWIDIsRegistered(wid)`). Auxiliary threads
     must post work to an event worker loop and must never borrow a worker-local pool.
+14. **Use the narrowest worker-context helper; never compare or index with a raw
+    `getWID()`.** Prefer, in this order: the line you were given
+    (`lineIsOnCurrentEventWorker()`, `lineGetBufferPool()`, `lineReuseBuffer()`),
+    the `worker_t *` a worker message handed you (`worker->wid`), the loop the
+    event came from (`getLoopEventWorkerWID()`), then the checked current-worker
+    accessors (`getCurrentEventWorker*()`). Those accessors abort rather than fall
+    back to worker 0, so anything externally reachable must instead branch on
+    `tryGetCurrentEventWorker()` / `currentThreadIsEventWorkerWID(wid)` and fail
+    cleanly, return `NULL`, or queue to an explicit worker. Worker-0 ownership is
+    `currentThreadIsEventWorkerWID(0)`, never `getWID() == 0`. Raw `getWID()` is
+    for diagnostics only — print it through `workerWIDLabel()`. See
+    §"Choosing a Worker-Context Helper" in the developer guide;
+    `tests/worker_identity_source_policy_test.py` enforces it.
 
 > If a proposed change cannot explain how it preserves all of the above, it is not
 > ready.

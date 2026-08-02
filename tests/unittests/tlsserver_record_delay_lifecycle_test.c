@@ -1,4 +1,12 @@
 #include "TlsServer/structure.h"
+#include "worker_registry_fixture.h"
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
 
 typedef struct server_delay_context_s
 {
@@ -192,6 +200,7 @@ static void serverFixtureSetup(server_delay_fixture_t *fixture)
     fixture->saved_buffer_pools  = GSTATE.shortcut_buffer_pools;
     fixture->saved_loops         = GSTATE.shortcut_loops;
     GSTATE.workers_count         = 1;
+    testWorkerRegistryInstall(&g_test_worker_registry);
 
     fixture->large_master = masterpoolCreateWithCapacity(64);
     fixture->small_master = masterpoolCreateWithCapacity(8);
@@ -305,7 +314,8 @@ static void serverFixtureTeardown(server_delay_fixture_t *fixture)
     masterpoolDestroy(fixture->large_master);
     masterpoolDestroy(fixture->small_master);
 
-    GSTATE.workers_count         = fixture->saved_workers_count;
+    GSTATE.workers_count = fixture->saved_workers_count;
+    testWorkerRegistryRestore(&g_test_worker_registry);
     GSTATE.shortcut_buffer_pools = fixture->saved_buffer_pools;
     GSTATE.shortcut_loops        = fixture->saved_loops;
 }

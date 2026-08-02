@@ -15,6 +15,7 @@
 #include "devices/capture/capture.h"
 #include "devices/capture/capture_linux_internal.h"
 
+#include "worker_registry_fixture.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <linux/netfilter.h>
@@ -25,6 +26,13 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
 
 enum
 {
@@ -633,8 +641,9 @@ static void envSetup(test_env_t *env)
     env->buffer_pool     = bufferpoolCreate(env->large_master, env->small_master, 16, 8192, 4096);
     env->buffer_pools[0] = env->buffer_pool;
 
-    GSTATE.flag_initialized      = true;
-    GSTATE.workers_count         = 2;
+    GSTATE.flag_initialized = true;
+    GSTATE.workers_count    = 2;
+    testWorkerRegistryInstall(&g_test_worker_registry);
     GSTATE.shortcut_buffer_pools = env->buffer_pools;
     GSTATE.ram_profile           = 1;
     testWorkerBindWID(0);
@@ -643,8 +652,9 @@ static void envSetup(test_env_t *env)
 static void envTeardown(test_env_t *env)
 {
     testWorkerUnbindWID();
-    GSTATE.flag_initialized      = false;
-    GSTATE.workers_count         = 0;
+    GSTATE.flag_initialized = false;
+    GSTATE.workers_count    = 0;
+    testWorkerRegistryRestore(&g_test_worker_registry);
     GSTATE.shortcut_buffer_pools = NULL;
     bufferpoolDestroy(env->buffer_pool);
     masterpoolMakeEmpty(env->large_master);

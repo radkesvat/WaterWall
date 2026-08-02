@@ -1,4 +1,12 @@
 #include "IpManipulator/structure.h"
+#include "worker_registry_fixture.h"
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
 
 enum
 {
@@ -109,6 +117,7 @@ static void initializeEnvironment(void)
     GSTATE.masterpool_buffer_pools_large = large_master;
     GSTATE.masterpool_buffer_pools_small = small_master;
     GSTATE.workers_count                 = 1;
+    testWorkerRegistryInstall(&g_test_worker_registry);
     testWorkerBindWID(0);
 }
 
@@ -118,6 +127,7 @@ static void destroyEnvironment(void)
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
     GSTATE.workers_count                 = 0;
+    testWorkerRegistryRestore(&g_test_worker_registry);
 
     bufferpoolDestroy(buffer_pool);
     masterpoolMakeEmpty(large_master);

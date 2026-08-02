@@ -3,6 +3,14 @@
 #include "tricks/portghost/trick.h"
 #include "tricks/protoswap/trick.h"
 #include "tricks/smugglefin/trick.h"
+#include "worker_registry_fixture.h"
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
 
 enum
 {
@@ -251,6 +259,7 @@ static void envSetup(test_env_t *env)
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
     GSTATE.workers_count                 = 3;
+    testWorkerRegistryInstall(&g_test_worker_registry);
     testWorkerBindWID(0);
 
     /* Bounded flow tables refuse to run without a secure hash seed. */
@@ -264,6 +273,7 @@ static void envTeardown(test_env_t *env)
     GSTATE.masterpool_buffer_pools_small = NULL;
     globalstateDestroySecureRandom();
     GSTATE.workers_count = 0;
+    testWorkerRegistryRestore(&g_test_worker_registry);
 
     bufferpoolDestroy(env->buffer_pools[0]);
     bufferpoolDestroy(env->buffer_pools[1]);

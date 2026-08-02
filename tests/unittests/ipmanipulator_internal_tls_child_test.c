@@ -1,5 +1,13 @@
 #include "IpManipulator/interface.h"
 #include "IpManipulator/structure.h"
+#include "worker_registry_fixture.h"
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
 
 static void require(bool condition, const char *message)
 {
@@ -70,6 +78,7 @@ int main(void)
     node_t            second              = {0};
 
     GSTATE.workers_count = 2;
+    testWorkerRegistryInstall(&g_test_worker_registry);
 
     /* Creating a tunnel builds bounded flow tables, which need a secure seed. */
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
@@ -88,5 +97,6 @@ int main(void)
     destroyManipulator(&second);
     globalstateDestroySecureRandom();
     GSTATE.workers_count = saved_workers_count;
+    testWorkerRegistryRestore(&g_test_worker_registry);
     return 0;
 }

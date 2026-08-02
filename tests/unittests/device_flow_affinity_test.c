@@ -1,5 +1,13 @@
 #include "devices/device_flow_affinity.h"
+#include "worker_registry_fixture.h"
 #include "wwapi.h"
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
 
 enum
 {
@@ -150,9 +158,11 @@ static void testMalformedPacketsAndSingleWorker(void)
     require(! deviceFlowAffineWID(garbage, sizeof(garbage), &wid), "non-IP packet parsed");
 
     GSTATE.workers_count = 2;
+    testWorkerRegistryInstall(&g_test_worker_registry);
     require(deviceFlowAffineWID(garbage, sizeof(garbage), &wid) && wid == 0,
             "single-worker fast path did not select worker zero");
     GSTATE.workers_count = 5;
+    testWorkerRegistryInstall(&g_test_worker_registry);
 }
 
 static void testBalancedDistribution(void)
@@ -239,11 +249,13 @@ static void testBucketedDispatch(void)
 int main(void)
 {
     GSTATE.workers_count = 5;
+    testWorkerRegistryInstall(&g_test_worker_registry);
     testIpv4SymmetryAndFragments();
     testIpv6Symmetry();
     testMalformedPacketsAndSingleWorker();
     testBalancedDistribution();
     testBucketedDispatch();
     GSTATE.workers_count = 0;
+    testWorkerRegistryRestore(&g_test_worker_registry);
     return 0;
 }

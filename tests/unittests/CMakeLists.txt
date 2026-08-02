@@ -849,6 +849,16 @@ if(TARGET ww)
       "unit;worker;identity;threads"
     )
 
+    add_executable(worker_context_helpers_test worker_context_helpers_test.c)
+    target_link_libraries(worker_context_helpers_test PRIVATE ww)
+    add_dependencies(waterwall_unit_tests worker_context_helpers_test)
+
+    add_waterwall_unit_test(
+      waterwall.worker_context_helpers_unit
+      worker_context_helpers_test
+      "unit;worker;identity;messages;buffers"
+    )
+
     if(TARGET RawSocket)
       add_executable(rawsocket_startup_failure_test
         rawsocket_startup_failure_test.c

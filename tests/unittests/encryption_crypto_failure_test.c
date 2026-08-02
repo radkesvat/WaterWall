@@ -14,6 +14,15 @@
 #error "select an Encryption tunnel test role"
 #endif
 
+#include "worker_registry_fixture.h"
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
+
 typedef struct encryption_failure_context_s
 {
     uint32_t payloads;
@@ -102,7 +111,8 @@ int main(void)
     buffer_pool_t  *shortcuts[1]    = {pool};
     GSTATE.flag_initialized         = true;
     GSTATE.workers_count            = 2;
-    GSTATE.shortcut_buffer_pools    = shortcuts;
+    testWorkerRegistryInstall(&g_test_worker_registry);
+    GSTATE.shortcut_buffer_pools = shortcuts;
     testWorkerBindWID(0);
 
     encryption_failure_context_t context = {0};
@@ -163,8 +173,9 @@ int main(void)
     tunnelDestroy(encryption);
     tunnelDestroy(next);
     testWorkerUnbindWID();
-    GSTATE.flag_initialized      = false;
-    GSTATE.workers_count         = 0;
+    GSTATE.flag_initialized = false;
+    GSTATE.workers_count    = 0;
+    testWorkerRegistryRestore(&g_test_worker_registry);
     GSTATE.shortcut_buffer_pools = saved_shortcuts;
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large_master);

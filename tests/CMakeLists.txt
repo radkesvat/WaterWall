@@ -440,8 +440,8 @@ add_test(
 set_tests_properties(
   waterwall.worker_identity_source_policy_test
   PROPERTIES
-    TIMEOUT 30
-    LABELS "unit;worker;identity;policy"
+    TIMEOUT 60
+    LABELS "unit;worker;identity;context;policy"
 )
 add_waterwall_integration_test(waterwall.connection_fisher_roundtrip connection_fisher_roundtrip)
 add_waterwall_integration_test(waterwall.connection_fisher_encryption_roundtrip connection_fisher_encryption_roundtrip)

@@ -15,6 +15,14 @@
 #include "tunnels_abort_runtime_cases.h"
 
 #include "adapter.h"
+#include "worker_registry_fixture.h"
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
 
 // Category-D callbacks under test. They are declared here rather than pulled in
 // through their owning tunnel's structure.h so this translation unit stays free
@@ -169,6 +177,7 @@ int main(int argc, char **argv)
     // global the production invariants below read. Two total workers leave
     // exactly one event-loop worker.
     GSTATE.workers_count = 2;
+    testWorkerRegistryInstall(&g_test_worker_registry);
 
     for (size_t i = 0; i < (sizeof(kAbortCases) / sizeof(kAbortCases[0])); ++i)
     {

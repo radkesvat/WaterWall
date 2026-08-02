@@ -14,6 +14,14 @@
 #include "UdpStatelessSocket/structure.h"
 
 #include "tunnel_line_failure_harness.h"
+#include "worker_registry_fixture.h"
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
 
 enum
 {
@@ -55,6 +63,7 @@ static void fixtureSetup(udpstateless_fixture_t *fixture, bool attach_idle_item)
     // subtracts the lwIP pseudo-worker. One event-loop worker therefore has to be
     // published as two; only slot 0 is ever indexed.
     GSTATE.workers_count = 2;
+    testWorkerRegistryInstall(&g_test_worker_registry);
 
     fixture->prev = twfCreatePrevTunnel(&fixture->trace);
     fixture->uss  = tunnelCreate(NULL, sizeof(udpstatelesssocket_tstate_t), sizeof(udpstatelesssocket_lstate_t));

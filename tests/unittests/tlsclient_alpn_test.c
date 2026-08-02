@@ -1,6 +1,14 @@
 #include "TlsClient/structure.h"
 
 #include "tls_client_hello.h"
+#include "worker_registry_fixture.h"
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
 
 enum
 {
@@ -75,6 +83,7 @@ static void workerEnvSetup(tlsclient_test_worker_env_t *env)
     env->buffer_pools[0]         = env->pool;
     GSTATE.shortcut_buffer_pools = env->buffer_pools;
     GSTATE.workers_count         = 2;
+    testWorkerRegistryInstall(&g_test_worker_registry);
     testWorkerBindWID(0);
 }
 
@@ -82,6 +91,7 @@ static void workerEnvTeardown(tlsclient_test_worker_env_t *env)
 {
     GSTATE.shortcut_buffer_pools = env->saved_buffer_pools;
     GSTATE.workers_count         = env->saved_workers_count;
+    testWorkerRegistryRestore(&g_test_worker_registry);
     testWorkerBindWID(env->saved_wid);
 
     bufferpoolDestroy(env->pool);
@@ -276,6 +286,7 @@ static void testConfiguredSniLengthBounds(void)
     char           oversized_sni[kTlsClientMaxSniLength + 2U];
 
     GSTATE.workers_count = 2;
+    testWorkerRegistryInstall(&g_test_worker_registry);
     fillServerName(maximum_sni, kTlsClientMaxSniLength);
     fillServerName(oversized_sni, kTlsClientMaxSniLength + 1U);
 
@@ -295,6 +306,7 @@ static void testConfiguredSniLengthBounds(void)
     cJSON_Delete(settings);
 
     GSTATE.workers_count = saved_workers_count;
+    testWorkerRegistryRestore(&g_test_worker_registry);
 }
 
 static bool tlsFlightIsComplete(const sbuf_t *flight)
@@ -504,6 +516,22 @@ static void testTypedClientHelloGeneration(void)
             "typed generation accessed another worker's line");
     testWorkerBindWID(0);
 
+    /*
+     * The lwIP pseudo-worker is registered but owns no event loop and has no
+     * slot in the getWorkersCount()-sized SSL context arrays. It must be
+     * rejected outright rather than falling back to worker 0's context.
+     */
+    const wid_t lwip_wid         = getTotalWorkersCount() - 1;
+    line_t      lwip_worker_line = {.wid = lwip_wid};
+    testWorkerBindWID(lwip_wid);
+    require(tlsclientTunnelGenerateClientHello(tunnel, &lwip_worker_line, hostname, (uint32_t) sizeof(hostname) - 1U) ==
+                NULL,
+            "typed generation accepted the lwIP pseudo-worker");
+    require(tlsclientTunnelGenerateClientHello(tunnel, &caller_line, hostname, (uint32_t) sizeof(hostname) - 1U) ==
+                NULL,
+            "typed generation let the lwIP pseudo-worker use worker 0's context");
+    testWorkerBindWID(0);
+
     tlsclientTunnelDestroy(tunnel);
     cJSON_Delete(settings);
     workerEnvTeardown(&env);
@@ -709,6 +737,7 @@ static void testHttp11Negotiation(void)
     node_t node     = {.node_settings_json = settings};
 
     GSTATE.workers_count = 2; // one regular worker plus WaterWall's additional lwIP worker
+    testWorkerRegistryInstall(&g_test_worker_registry);
 
     tunnel_t *tunnel = tlsclientTunnelCreate(&node);
     require(tunnel != NULL, "failed to create HTTP/1.1-only TlsClient");
@@ -768,6 +797,7 @@ static void testHttp11Negotiation(void)
     SSL_CTX_free(server_context);
     tlsclientTunnelDestroy(tunnel);
     GSTATE.workers_count = saved_workers_count;
+    testWorkerRegistryRestore(&g_test_worker_registry);
     cJSON_Delete(settings);
 }
 

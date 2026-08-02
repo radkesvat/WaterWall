@@ -12,7 +12,15 @@
  *   - a request racing the loop's own exit is safe.
  */
 
+#include "worker_registry_fixture.h"
 #include "wwapi.h"
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
 
 #define LARGE_STOP_REQUEST_SET 100000U
 #define STOP_REQUEST_THREADS   4U
@@ -44,8 +52,9 @@ static void envSetup(env_t *env)
     env->wio_pool     = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wio_master, sizeof(wio_t), 64);
     env->wio_pools[0] = env->wio_pool;
 
-    GSTATE.flag_initialized    = true;
-    GSTATE.workers_count       = 2;
+    GSTATE.flag_initialized = true;
+    GSTATE.workers_count    = 2;
+    testWorkerRegistryInstall(&g_test_worker_registry);
     GSTATE.shortcut_wios_pools = env->wio_pools;
     testWorkerBindWID(0);
 }
@@ -53,8 +62,9 @@ static void envSetup(env_t *env)
 static void envTeardown(env_t *env)
 {
     testWorkerUnbindWID();
-    GSTATE.flag_initialized    = false;
-    GSTATE.workers_count       = 0;
+    GSTATE.flag_initialized = false;
+    GSTATE.workers_count    = 0;
+    testWorkerRegistryRestore(&g_test_worker_registry);
     GSTATE.shortcut_wios_pools = NULL;
     threadsafegenericpoolDestroy(env->wio_pool);
     masterpoolMakeEmpty(env->wio_master);

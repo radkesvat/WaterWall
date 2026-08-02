@@ -3,9 +3,17 @@
 #include "threadsafe_generic_pool.h"
 #include "wsocket.h"
 
+#include "worker_registry_fixture.h"
 #include <fcntl.h>
 #include <sys/resource.h>
 #include <unistd.h>
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
 
 static int  close_callback_count;
 static bool force_high_eventfd;
@@ -83,8 +91,9 @@ int main(void)
         threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(wio_master, sizeof(wio_t), 8);
     threadsafe_generic_pool_t *wio_pools[] = {wio_pool};
 
-    GSTATE.flag_initialized    = true;
-    GSTATE.workers_count       = 2;
+    GSTATE.flag_initialized = true;
+    GSTATE.workers_count    = 2;
+    testWorkerRegistryInstall(&g_test_worker_registry);
     GSTATE.shortcut_wios_pools = wio_pools;
     testWorkerBindWID(0);
 

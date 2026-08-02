@@ -9,6 +9,7 @@
 #include "devices/tun/tun_linux_internal.h"
 #include "worker_messages.h"
 
+#include "worker_registry_fixture.h"
 #include <fcntl.h>
 #include <linux/if.h>
 #include <linux/if_tun.h>
@@ -18,6 +19,13 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
 
 enum
 {
@@ -488,7 +496,8 @@ static void envSetup(test_env_t *env)
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;
     GSTATE.shortcut_loops                = env->loops;
     GSTATE.workers_count                 = 2;
-    GSTATE.ram_profile                   = 1;
+    testWorkerRegistryInstall(&g_test_worker_registry);
+    GSTATE.ram_profile = 1;
     atomicStoreExplicit(&GSTATE.application_stopping_flag, false, memory_order_release);
     testWorkerBindWID(0);
 }
@@ -500,6 +509,7 @@ static void envTeardown(test_env_t *env)
     GSTATE.shortcut_buffer_pools         = NULL;
     GSTATE.shortcut_loops                = NULL;
     GSTATE.workers_count                 = 0;
+    testWorkerRegistryRestore(&g_test_worker_registry);
 
     bufferpoolDestroy(env->worker_buffer_pool);
     masterpoolMakeEmpty(env->large_master);

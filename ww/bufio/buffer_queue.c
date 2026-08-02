@@ -26,12 +26,20 @@ buffer_queue_t bufferqueueCreate(int init_capacity)
 
 void bufferqueueDestroy(buffer_queue_t *self)
 {
-    // Queued buffers came from the owning worker's pool and are only released
-    // on that worker, so validate the identity once and reuse it.
-    buffer_pool_t *pool = getCurrentEventWorkerBufferPool();
-    c_foreach(i, ww_sbuffer_queue_t, self->q)
+    /*
+     * Only resolve the worker pool when there is something to give back: an
+     * empty queue must stay destroyable from anywhere, including teardown paths
+     * that no longer hold a worker identity.
+     */
+    if (ww_sbuffer_queue_t_size(&self->q) > 0)
     {
-        bufferpoolReuseBuffer(pool, *i.ref);
+        // Queued buffers are released on the worker that owns them, so the
+        // identity is validated once and reused for every buffer.
+        buffer_pool_t *pool = getCurrentEventWorkerBufferPool();
+        c_foreach(i, ww_sbuffer_queue_t, self->q)
+        {
+            bufferpoolReuseBuffer(pool, *i.ref);
+        }
     }
 
     ww_sbuffer_queue_t_drop(&self->q);

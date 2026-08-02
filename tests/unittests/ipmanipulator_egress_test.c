@@ -4,6 +4,14 @@
 #include "tricks/sniblender/trick.h"
 #include "tricks/tcpbitchange/trick.h"
 #include "wchecksum.h"
+#include "worker_registry_fixture.h"
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
 
 enum
 {
@@ -80,8 +88,9 @@ static void envSetup(test_env_t *env)
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
     GSTATE.workers_count                 = 2;
-    env->original_mtu                    = GLOBAL_MTU_SIZE;
-    GLOBAL_MTU_SIZE                      = 1500;
+    testWorkerRegistryInstall(&g_test_worker_registry);
+    env->original_mtu = GLOBAL_MTU_SIZE;
+    GLOBAL_MTU_SIZE   = 1500;
     testWorkerBindWID(0);
 
     env->line = memoryAllocateZero(sizeof(line_t));
@@ -112,7 +121,8 @@ static void envTeardown(test_env_t *env)
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
     GSTATE.workers_count                 = 0;
-    GLOBAL_MTU_SIZE                      = env->original_mtu;
+    testWorkerRegistryRestore(&g_test_worker_registry);
+    GLOBAL_MTU_SIZE = env->original_mtu;
 
     memoryFree(env->line);
     bufferpoolDestroy(env->buffer_pool);

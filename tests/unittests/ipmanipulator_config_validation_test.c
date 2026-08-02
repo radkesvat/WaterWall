@@ -8,6 +8,14 @@
 
 #include "IpManipulator/interface.h"
 #include "IpManipulator/structure.h"
+#include "worker_registry_fixture.h"
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
 
 typedef enum stateful_sni_trick_e
 {
@@ -432,6 +440,7 @@ int main(void)
     const uint32_t saved_workers_count = GSTATE.workers_count;
 
     GSTATE.workers_count = 2;
+    testWorkerRegistryInstall(&g_test_worker_registry);
 
     /* Creating a tunnel now builds bounded flow tables, which need a secure seed. */
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
@@ -450,6 +459,7 @@ int main(void)
 
     globalstateDestroySecureRandom();
     GSTATE.workers_count = saved_workers_count;
+    testWorkerRegistryRestore(&g_test_worker_registry);
     printf("ALL unit tests passed!\n");
     return 0;
 }

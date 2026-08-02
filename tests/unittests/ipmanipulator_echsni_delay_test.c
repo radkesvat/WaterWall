@@ -11,6 +11,14 @@
 #include "IpManipulator/structure.h"
 #include "iowatcher.h"
 #include "tricks/echsnitrick/trick.h"
+#include "worker_registry_fixture.h"
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
 
 enum
 {
@@ -162,7 +170,7 @@ static void envSetup(test_env_t *env)
     env->workers[0].has_event_loop = true;
     workerMessagesInit(&env->workers[0]);
 
-    GSTATE.workers                       = env->workers;
+    testWorkerRegistryInstallTable(&g_test_worker_registry, env->workers);
     GSTATE.workers_count                 = 2;
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;
     GSTATE.shortcut_loops                = env->loops;
@@ -188,7 +196,7 @@ static void envTeardown(test_env_t *env)
     workerMessagesDestroy(&env->workers[0]);
     wloopDestroy(&env->loops[0]);
 
-    GSTATE.workers                       = NULL;
+    testWorkerRegistryRestore(&g_test_worker_registry);
     GSTATE.workers_count                 = 0;
     GSTATE.shortcut_buffer_pools         = NULL;
     GSTATE.shortcut_loops                = NULL;
