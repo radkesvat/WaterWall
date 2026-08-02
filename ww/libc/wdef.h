@@ -295,7 +295,7 @@ enum
     WW_ATTR_ALIGNED(alignment) uint8_t name##_storage[ALIGN2(sizeof(type), alignment)];              \
     type *name = (type *) (void *) name##_storage
 
-#define STACK_ALLOCATE_CACHE_ALIGNED(type, name) STACK_ALLOCATE_ALIGNED(type, name, kCpuLineCacheSize)
+#define STACK_ALLOCATE_CACHE_ALIGNED(type, name) STACK_ALLOCATE_ALIGNED(type, name, CPULINECACHESIZE)
 
 #define memoryCopy                      memcpy
 #define memorySet                       memset
