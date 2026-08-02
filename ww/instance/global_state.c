@@ -608,9 +608,21 @@ WW_EXPORT void destroyGlobalState(void)
 #endif
 }
 
+_Noreturn void globalstateAbortNotEventWorker(const char *accessor)
+{
+    const wid_t wid = getWID();
+
+    LOGF("%s: caller is not an ordinary event worker (wid %s, tid %llu)",
+         accessor,
+         workerWIDLabel(wid),
+         (unsigned long long) getTID());
+
+    abortProgramNow(1);
+}
+
 void reuseBuffer(sbuf_t *b)
 {
     assert(b != NULL);
 
-    bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), b);
+    bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), b);
 }

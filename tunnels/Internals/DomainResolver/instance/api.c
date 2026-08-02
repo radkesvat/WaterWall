@@ -6,8 +6,7 @@
 api_result_t domainresolverTunnelApi(tunnel_t *instance, sbuf_t *message)
 {
     discard instance;
-    bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), message);
-    return (api_result_t) {.result_code = kApiResultOk};
+    return tunnelapiRecycleMessage(message);
 }
 
 void domainresolverTunnelUseLineStrategy(tunnel_t *t, bool enabled)

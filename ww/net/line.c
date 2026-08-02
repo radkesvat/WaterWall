@@ -302,7 +302,12 @@ static void lineReleaseScheduledTaskBuffer(line_t *line, sbuf_t *buf)
         return;
     }
 
-    if (getWID() == lineGetWID(line))
+    /*
+     * Cross-thread cleanup: only the owning event worker may push the buffer
+     * back into the line's pool. Anyone else (another worker, a device thread,
+     * lwIP) destroys it instead of touching a pool it does not own.
+     */
+    if (lineIsOnCurrentEventWorker(line))
     {
         lineReuseBuffer(line, buf);
         return;
@@ -453,9 +458,9 @@ void lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_
 
 void lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms, tunnel_t *t)
 {
-    if (getWID() != lineGetWID(line))
+    if (! lineIsOnCurrentEventWorker(line))
     {
-        LOGF("Attempted to schedule a delayed task on a line from a different worker thread");
+        LOGF("Attempted to schedule a delayed task on a line from a thread that does not own it");
         abortProgramNow(1);
         return;
     }
@@ -477,9 +482,9 @@ void lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t 
 void lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, uint32_t delay_ms, tunnel_t *t,
                                     sbuf_t *buf)
 {
-    if (getWID() != lineGetWID(line))
+    if (! lineIsOnCurrentEventWorker(line))
     {
-        LOGF("Attempted to schedule a delayed task on a line from a different worker thread");
+        LOGF("Attempted to schedule a delayed task on a line from a thread that does not own it");
         abortProgramNow(1);
         return;
     }
@@ -508,7 +513,7 @@ int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const 
     }
 
     lineLock(line);
-    assert(lineGetWID(line) == getWID());
+    assert(lineIsOnCurrentEventWorker(line));
 
     line_dns_resolve_msg_t *msg = memoryAllocate(sizeof(*msg));
     if (msg == NULL)

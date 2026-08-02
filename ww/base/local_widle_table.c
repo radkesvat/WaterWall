@@ -42,7 +42,7 @@ static void localIdleCallBack(wtimer_t *timer);
 static void localidletableAssertOwner(const local_idle_table_t *self)
 {
     assert(self != NULL);
-    assert(self->wid == getWID());
+    assert(currentThreadIsEventWorkerWID(self->wid));
     discard self;
 }
 
@@ -125,7 +125,15 @@ static void localidletableRemoveItemFromHeap(local_idle_table_t *self, local_idl
 local_idle_table_t *localIdleTableCreate(wloop_t *loop)
 {
     assert(loop != NULL);
-    assert((wid_t) wloopGetWID(loop) == getWID());
+
+    // The table is worker-local scratch: it must be created by the very worker
+    // whose loop drives it, so take the owner id from the loop and validate it.
+    const wid_t owner_wid = (wid_t) wloopGetWID(loop);
+    if (UNLIKELY(! currentThreadIsEventWorkerWID(owner_wid)))
+    {
+        printError("LocalIdleTable: created off its owning event worker");
+        abortProgramNow(1);
+    }
 
     wloopUpdateTime(loop);
 
@@ -140,7 +148,7 @@ local_idle_table_t *localIdleTableCreate(wloop_t *loop)
     *newtable = (local_idle_table_t) {.loop   = loop,
                                       .hqueue = local_heapq_idles_t_with_capacity(kLocalIdleTableCap),
                                       .hmap   = local_hmap_idles_t_with_capacity(kLocalIdleTableCap),
-                                      .wid    = getWID()};
+                                      .wid    = owner_wid};
 
     newtable->idle_handle = wtimerAdd(loop, localIdleCallBack, kLocalDefaultTimeout, INFINITE);
     if (UNLIKELY(newtable->idle_handle == NULL))

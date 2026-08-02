@@ -3,6 +3,8 @@
 #include "global_state.h"
 #include "wmutex.h"
 
+#include "loggers/internal_logger.h"
+
 typedef struct timed_worker_msg_s
 {
     worker_msg_t                 base;
@@ -110,6 +112,9 @@ static bool workerMessagePostWakeup(worker_t *worker)
 
 static void workerMessageDrainQueue(worker_t *worker)
 {
+    // Queued callbacks are written assuming they run on their target worker.
+    assert(currentThreadIsEventWorkerWID(worker->wid));
+
     worker_message_queue_t *queue = worker->message_queue;
     assert(queue != NULL);
 
@@ -139,8 +144,42 @@ static void workerMessageDrainQueue(worker_t *worker)
 
 static void workerMessageReceived(wevent_t *ev)
 {
+    // The wakeup event was posted to exactly one worker loop, so the loop that
+    // is dispatching it is the authoritative owner; never re-read TLS here.
     wid_t wid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
+    assert(currentThreadIsEventWorkerWID(wid));
     workerMessageDrainQueue(getWorker(wid));
+}
+
+/**
+ * @brief Rejects a message aimed at a WID that can never drain a queue.
+ *
+ * Only ordinary event workers own a message queue and a loop to wake, so the
+ * lwIP pseudo-worker, kInvalidWID, and out-of-range ids are refused here rather
+ * than at an assertion inside getWorker(). Posting is fallible and reachable
+ * from unregistered threads, so this runs the caller's cleanup exactly once and
+ * reports failure instead of aborting.
+ *
+ * @return true when the message was rejected and its cleanup already ran.
+ */
+static bool workerMessageRejectUndeliverable(wid_t wid, WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
+                                             void *arg3)
+{
+    if (LIKELY(workerWIDIsEventWorker(wid)))
+    {
+        return false;
+    }
+
+    LOGE("worker message dropped: target WID %s is not an ordinary event worker (posted from worker %s, tid %llu)",
+         workerWIDLabel(wid),
+         workerWIDLabel(getWID()),
+         (unsigned long long) getTID());
+
+    if (cleanup != NULL)
+    {
+        cleanup(arg1, arg2, arg3);
+    }
+    return true;
 }
 
 void workerMessagesInstallMasterPoolCallbacks(master_pool_t *pool)
@@ -153,8 +192,8 @@ void workerMessagesInit(worker_t *worker)
     assert(worker != NULL);
     worker_message_queue_t *queue = memoryAllocate(sizeof(*queue));
     *queue                        = (worker_message_queue_t) {
-        .queued = worker_msg_deque_t_with_capacity(32),
-        .timed  = worker_msg_deque_t_with_capacity(32),
+                               .queued = worker_msg_deque_t_with_capacity(32),
+                               .timed  = worker_msg_deque_t_with_capacity(32),
     };
     mutexInit(&(queue->mutex));
     worker->message_queue = queue;
@@ -228,14 +267,17 @@ void sendWorkerMessage(wid_t wid, WorkerMessageCallback cb, void *arg1, void *ar
 void sendWorkerMessageWithCleanup(wid_t wid, WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup, void *arg1,
                                   void *arg2, void *arg3)
 {
-
-    if (getWID() == wid)
+    /*
+     * Inline execution is only legal when this thread *is* the target event
+     * worker. An unregistered device thread and the lwIP pseudo-worker both fall
+     * through to the queueing path, which is the whole point of the bridge.
+     */
+    if (currentThreadIsEventWorkerWID(wid))
     {
         cb(getWorker(wid), arg1, arg2, arg3);
         return;
     }
 
-    assert(wid < getWorkersCount());
     discard sendWorkerMessageForceQueueWithCleanup(wid, cb, cleanup, arg1, arg2, arg3);
 }
 
@@ -247,7 +289,10 @@ void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCallback cb, void *arg1
 bool sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup,
                                             void *arg1, void *arg2, void *arg3)
 {
-    assert(wid < getWorkersCount());
+    if (UNLIKELY(workerMessageRejectUndeliverable(wid, cleanup, arg1, arg2, arg3)))
+    {
+        return false;
+    }
 
     if (UNLIKELY(isApplicationTerminating()))
     {
@@ -334,7 +379,12 @@ static void runTimedTask(wtimer_t *timer)
         return;
     }
 
-    worker_t               *worker = getWorker(getWID());
+    // The timer was armed on exactly one worker loop, so that loop identifies
+    // the owning worker; the current thread must be it.
+    const wid_t owner_wid = (wid_t) wloopGetWid(loop);
+    assert(currentThreadIsEventWorkerWID(owner_wid));
+
+    worker_t               *worker = getWorker(owner_wid);
     worker_message_queue_t *queue  = worker->message_queue;
     assert(queue != NULL);
     mutexLock(&(queue->mutex));
@@ -360,6 +410,9 @@ static void setupTimedTask(worker_t *worker, void *arg1, void *arg2, void *arg3)
     timed_worker_msg_t *timed_msg = (timed_worker_msg_t *) arg2;
     discard             arg3;
 
+    // Either called inline on the target worker or delivered as a worker
+    // message to it; both mean the timer is armed on its own loop's thread.
+    assert(currentThreadIsEventWorkerWID(worker->wid));
     assert(worker->loop != NULL);
     assert(worker->message_queue != NULL);
     if (UNLIKELY(isApplicationTerminating()))
@@ -413,13 +466,15 @@ void sendWorkerMessageTimed(wid_t wid, WorkerMessageCallback cb, uint32_t delay_
 void sendWorkerMessageTimedWithCleanup(wid_t wid, WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup,
                                        uint32_t delay_ms, void *arg1, void *arg2, void *arg3)
 {
-
-    assert(wid < getWorkersCount());
-
     // delay=0 means "run on next event-loop iteration", not immediate inline execution
     if (delay_ms == 0)
     {
         discard sendWorkerMessageForceQueueWithCleanup(wid, cb, cleanup, arg1, arg2, arg3);
+        return;
+    }
+
+    if (UNLIKELY(workerMessageRejectUndeliverable(wid, cleanup, arg1, arg2, arg3)))
+    {
         return;
     }
 
@@ -440,7 +495,9 @@ void sendWorkerMessageTimedWithCleanup(wid_t wid, WorkerMessageCallback cb, Work
 
     timed_worker_msg_t *msg = getWorkerMessage(cb, cleanup, arg1, arg2, arg3);
 
-    if (getWID() == wid)
+    // Arming the timer directly is only safe on the owning event worker's own
+    // thread; every other caller (including lwIP and device threads) queues.
+    if (currentThreadIsEventWorkerWID(wid))
     {
         setupTimedTask(worker, (void *) delay_ms_uiptr, msg, NULL);
         return;

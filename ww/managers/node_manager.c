@@ -283,7 +283,7 @@ static void initializeLineOnTargetWorker(void *worker, void *_tunnel, void *_lin
     tunnel_t *tunnel = (tunnel_t *) _tunnel;
     line_t   *line   = (line_t *) _line;
 
-    assert(lineGetWID(line) == getWID());
+    assert(lineIsOnCurrentEventWorker(line));
 
     tunnelNextUpStreamInit(tunnel, line);
     if (! lineIsAlive(line))
@@ -294,9 +294,9 @@ static void initializeLineOnTargetWorker(void *worker, void *_tunnel, void *_lin
          * teardown can no longer assume line state is structurally valid, so
          * this runs on a worker but must still hard-abort.
          */
-        LOGF("NodeManager: node startup failure: line initialization failed for node (\"%s\") on worker %d",
+        LOGF("NodeManager: node startup failure: line initialization failed for node (\"%s\") on worker %s",
              tunnel->node->name,
-             getWID());
+             workerWIDLabel(getWID()));
         abortProgramNow(1);
         return;
     }
@@ -809,7 +809,8 @@ void nodemanagerStopWorkerResources(wid_t wid)
         return;
     }
 
-    assert(wid == getWID());
+    // Called from the worker tearing itself down, for its own slot only.
+    assert(currentThreadIsEventWorkerWID(wid));
 
     c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
     {

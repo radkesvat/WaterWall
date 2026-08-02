@@ -1447,7 +1447,7 @@ void wioAttach(wloop_t *loop, wio_t *io)
 {
     assert((io->events & WW_READ) != WW_READ);
     assert((io->events & WW_WRITE) != WW_WRITE);
-    if (loop->wid != getWID())
+    if (! currentThreadIsEventWorkerWID((wid_t) loop->wid))
     {
         printError("wioAttach: loop wid %ld != current wid %ld", loop->wid, getWID());
         assert(false);
@@ -1583,7 +1583,7 @@ void wioReleaseNoClose(wio_t *io)
     bool     was_pending = io->pending;
 
     assert(loop != NULL);
-    assert((wid_t) loop->wid == getWID());
+    assert(currentThreadIsEventWorkerWID((wid_t) loop->wid));
 
     if (io->events != 0)
     {

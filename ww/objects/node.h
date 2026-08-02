@@ -4,6 +4,7 @@
  * Core node definition shared by node loading, chaining, and tunnel creation.
  */
 
+#include "global_state.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"
 #include "wlibc.h"
@@ -21,6 +22,79 @@ typedef struct api_result_s
 
 } api_result_t;
 
+/*
+ * ---------------------------------------------------------------------------
+ * Tunnel-API dispatch contract
+ * ---------------------------------------------------------------------------
+ *
+ * An ordinary `<node>TunnelApi()` entry point runs on an event worker. The
+ * caller hands over a request buffer taken from *that worker's* pool and the
+ * callee owns it: it either recycles it into the same pool or destroys it.
+ *
+ * A node whose API needs a different rule (TlsClient returns a generated buffer
+ * and must keep the originating pool through every error path) documents that
+ * on its own entry point. Everything else uses the helpers below, so no node
+ * repeats `bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), message)` and
+ * silently borrows worker 0's pool when the current thread has no worker slot.
+ */
+
+/*!
+ * @brief Releases a tunnel-API input buffer according to the contract above.
+ *
+ * @param message API input buffer; may be NULL.
+ * @return true when the buffer went back to its owning worker pool, false when
+ *         the caller is not an ordinary event worker and it was destroyed.
+ */
+static inline bool tunnelapiReleaseMessage(sbuf_t *message)
+{
+    if (UNLIKELY(! currentThreadIsEventWorker()))
+    {
+        /*
+         * An unregistered thread or the lwIP pseudo-worker owns no worker-local
+         * pool, and the buffer's real owner is not knowable from here, so free
+         * it rather than pushing it into a pool this thread does not own.
+         */
+        if (message != NULL)
+        {
+            sbufDestroy(message);
+        }
+        return false;
+    }
+
+    if (message != NULL)
+    {
+        bufferpoolReuseBuffer(getCurrentEventWorkerBufferPool(), message);
+    }
+    return true;
+}
+
+/*!
+ * @brief Consumes an API message a node does not act on, reporting success.
+ *
+ * @param message API input buffer; may be NULL.
+ * @return kApiResultOk, or kApiResultError when the caller was not an event worker.
+ */
+static inline api_result_t tunnelapiRecycleMessage(sbuf_t *message)
+{
+    if (UNLIKELY(! tunnelapiReleaseMessage(message)))
+    {
+        return (api_result_t) {.result_code = kApiResultError};
+    }
+    return (api_result_t) {.result_code = kApiResultOk};
+}
+
+/*!
+ * @brief Consumes an API message for a node that exposes no API, reporting failure.
+ *
+ * @param message API input buffer; may be NULL.
+ * @return kApiResultError.
+ */
+static inline api_result_t tunnelapiUnsupportedMessage(sbuf_t *message)
+{
+    discard tunnelapiReleaseMessage(message);
+    return (api_result_t) {.result_code = kApiResultError};
+}
+
 enum node_flags
 {
     // no flags (default)
@@ -33,7 +107,6 @@ enum node_flags
     kNodeFlagNoChain = (1 << 3),
     // this node should only have one instance in the whole chain config (singleton pattern)
     kNodeFlagSingleton = (1 << 4)
-
 };
 
 enum node_layer_group
@@ -42,7 +115,6 @@ enum node_layer_group
     kNodeLayer3        = (1 << 2),
     kNodeLayer4        = (1 << 3),
     kNodeLayerAnything = kNodeLayer3 | kNodeLayer4
-
 };
 
 typedef struct node_s node_t;

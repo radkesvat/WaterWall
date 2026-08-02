@@ -13,8 +13,6 @@ enum
     kBufferQueueQCap = 8 // Initial capacity of the queue
 };
 
-
-
 buffer_queue_t bufferqueueCreate(int init_capacity)
 {
     if (init_capacity < 1)
@@ -22,17 +20,18 @@ buffer_queue_t bufferqueueCreate(int init_capacity)
         init_capacity = kBufferQueueQCap;
     }
 
-    buffer_queue_t bq = {.q = ww_sbuffer_queue_t_with_capacity(init_capacity),.total_len = 0};
+    buffer_queue_t bq = {.q = ww_sbuffer_queue_t_with_capacity(init_capacity), .total_len = 0};
     return bq;
 }
 
-
 void bufferqueueDestroy(buffer_queue_t *self)
 {
-    wid_t wid = getWID();
+    // Queued buffers came from the owning worker's pool and are only released
+    // on that worker, so validate the identity once and reuse it.
+    buffer_pool_t *pool = getCurrentEventWorkerBufferPool();
     c_foreach(i, ww_sbuffer_queue_t, self->q)
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(wid), *i.ref);
+        bufferpoolReuseBuffer(pool, *i.ref);
     }
 
     ww_sbuffer_queue_t_drop(&self->q);
@@ -52,7 +51,6 @@ void bufferqueuePushFront(buffer_queue_t *self, sbuf_t *b)
     ww_sbuffer_queue_t_push_front(&self->q, b);
     self->total_len += sbufGetLength(b);
 }
-
 
 sbuf_t *bufferqueuePopFront(buffer_queue_t *self)
 {
@@ -74,12 +72,10 @@ const sbuf_t *bufferqueueFront(buffer_queue_t *self)
     return *ww_sbuffer_queue_t_front(&self->q);
 }
 
-
 size_t bufferqueueGetBufCount(buffer_queue_t *self)
 {
-    return (size_t)(ww_sbuffer_queue_t_size(&self->q));
+    return (size_t) (ww_sbuffer_queue_t_size(&self->q));
 }
-
 
 size_t bufferqueueGetBufLen(buffer_queue_t *self)
 {

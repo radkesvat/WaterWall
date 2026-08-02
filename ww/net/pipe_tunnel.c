@@ -60,7 +60,11 @@ static void pipeReleasePayloadForLine(line_t *line_to, sbuf_t *payload)
         return;
     }
 
-    if (getWID() == lineGetWID(line_to))
+    /*
+     * A pipe payload is dropped on either end, so the releasing thread is often
+     * not the target line's worker. Only its owner may return it to that pool.
+     */
+    if (lineIsOnCurrentEventWorker(line_to))
     {
         lineReuseBuffer(line_to, payload);
         return;
@@ -691,17 +695,17 @@ bool pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
 
     // we no longer need these checks, thank god all related bugs are fixed
 #ifdef DEBUG
-    if (wid_to == getWID())
+    if (! lineIsOnCurrentEventWorker(l))
     {
-        LOGF("PipeTunnel: Pipe to self is not allowed, line: %p, tunnel: %p", l, parent_tunnel);
+        LOGF("PipeTunnel: Pipe From different WID is not allowed, line: %p, tunnel: %p", l, parent_tunnel);
         LOGF("PipeTunnel: WID: %d, line WID: %d , to WID: %d", getWID(), lineGetWID(l), wid_to);
         assert(false);
         abortProgramNow(1);
         return false;
     }
-    if (wid != getWID())
+    if (! workerWIDIsEventWorker(wid_to) || wid_to == wid)
     {
-        LOGF("PipeTunnel: Pipe From different WID is not allowed, line: %p, tunnel: %p", l, parent_tunnel);
+        LOGF("PipeTunnel: Pipe target must be a different event worker, line: %p, tunnel: %p", l, parent_tunnel);
         LOGF("PipeTunnel: WID: %d, line WID: %d , to WID: %d", getWID(), lineGetWID(l), wid_to);
         assert(false);
         abortProgramNow(1);

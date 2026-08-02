@@ -49,6 +49,19 @@ bool currentThreadIsEventWorkerWID(wid_t wid)
     return currentThreadIsEventWorker() && (getWID() == wid);
 }
 
+const char *workerWIDLabel(wid_t wid)
+{
+    static thread_local char label[8];
+
+    if (wid == kInvalidWID)
+    {
+        return "unregistered";
+    }
+
+    discard snprintf(label, sizeof(label), "%u", (unsigned) wid);
+    return label;
+}
+
 void workerBindCurrentThread(worker_t *worker)
 {
     if (UNLIKELY(worker == NULL || ! GSTATE.flag_initialized || WORKERS == NULL))

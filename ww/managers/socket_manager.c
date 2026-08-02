@@ -158,7 +158,10 @@ local_idle_table_t *udpsockGetWorkerIdleTable(udpsock_t *socket)
     assert(socket != NULL);
     assert(socket->idle_tables != NULL);
 
-    wid_t wid = getWID();
+    // Worker-local table: one checked identity drives both the per-worker array
+    // and the loop the table is armed on. A non-event thread fails loudly here
+    // instead of quietly creating a table on worker 0's loop.
+    const wid_t wid = getCurrentEventWorkerWID();
     assert(wid < getWorkersCount());
 
     local_idle_table_t *table = socket->idle_tables[wid];
@@ -3107,7 +3110,13 @@ socket_manager_state_t *socketmanagerCreate(void)
     assert(socketmanager_gstate == NULL);
     socketmanager_gstate = memoryAllocateZero(sizeof(socket_manager_state_t));
 
-    assert(getWID() == 0);
+    // Startup-only: worker 0 is bound before managers are created, and the
+    // manager's own worker/wid fields are structurally worker-0 owned.
+    if (UNLIKELY(! currentThreadIsEventWorkerWID(0)))
+    {
+        LOGF("SocketManager: socketmanagerCreate() must run on worker 0, current worker: %s", workerWIDLabel(getWID()));
+        abortProgramNow(1);
+    }
     socketmanager_gstate->worker = getWorker(0);
     socketmanager_gstate->wid    = 0;
 
@@ -3208,7 +3217,8 @@ static void cleanupFilterUdpSockets(socket_filter_t *filter)
  */
 static void drainOneUdpSocketForWorker(udpsock_t *socket, wid_t wid)
 {
-    assert(wid == getWID());
+    // Runs as part of a worker tearing itself down, for its own slot only.
+    assert(currentThreadIsEventWorkerWID(wid));
 
     if (socket != NULL && socket->idle_tables != NULL && wid < getWorkersCount())
     {

@@ -7,9 +7,8 @@
 api_result_t tcpconnectorTunnelApi(tunnel_t *instance, sbuf_t *message)
 {
     (void) instance;
-    bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), message);
     // Implement the API here
-    return (api_result_t) {.result_code = kApiResultOk};
+    return tunnelapiRecycleMessage(message);
 }
 
 tunnel_t *tcpconnectorTunnelGetEntryTunnel(tunnel_t *t)

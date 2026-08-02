@@ -123,7 +123,7 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
  */
 static inline line_t *lineCreate(generic_pool_t **pools, wid_t wid)
 {
-    assert(wid == getWID());
+    assert(currentThreadIsEventWorkerWID(wid));
 
     return lineCreateForWorker(wid, pools, wid);
 }
@@ -154,7 +154,13 @@ static inline void lineUnRefInternal(line_t *const l)
 
     assert(l->alive == false);
 
-    wid_t wid = getWID();
+    /*
+     * The line goes back to the *releasing* worker's pool, not the owner's:
+     * lineCreateForWorker() may allocate on one worker for another, and every
+     * pool is fed by the same master pool. So this needs the current event
+     * worker's id, validated once and reused for both accesses below.
+     */
+    const wid_t wid = getCurrentEventWorkerWID();
 
     // there should not be any conn-state alive at this point
 
@@ -357,6 +363,24 @@ static inline void lineClearState(void *state, size_t size)
 static inline wid_t lineGetWID(const line_t *const line)
 {
     return line->wid;
+}
+
+/**
+ * @brief Whether the calling thread is the event worker that owns this line.
+ *
+ * This is the affinity question to ask before touching line-owned state: it is
+ * true only when the caller is a registered ordinary event worker *and* its WID
+ * equals the line owner. An unregistered thread and the lwIP pseudo-worker can
+ * never pass it, which a raw `lineGetWID(line) == getWID()` comparison cannot
+ * guarantee.
+ *
+ * @param line Line instance.
+ * @return true The caller owns the line and may touch its worker-local state.
+ * @return false The caller must post to lineGetWID(line) instead.
+ */
+static inline bool lineIsOnCurrentEventWorker(const line_t *const line)
+{
+    return currentThreadIsEventWorkerWID(lineGetWID(line));
 }
 
 /**

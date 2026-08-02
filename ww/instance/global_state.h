@@ -237,6 +237,127 @@ static inline struct wloop_s *getWorkerLoop(wid_t wid)
 }
 
 /*!
+ * @brief Reports a current-event-worker contract violation and aborts.
+ *
+ * Kept out of line so the checked accessors below stay small on hot paths. It
+ * logs the accessor name, the observed WID (or "unregistered"), and the OS
+ * thread id, which is what actually identifies the offending thread.
+ *
+ * @param accessor Name of the accessor whose contract was violated.
+ */
+WW_EXPORT _Noreturn void globalstateAbortNotEventWorker(const char *accessor);
+
+/*!
+ * @brief The worker owning the current thread, for event-worker-only callbacks.
+ *
+ * Use this in internal callbacks whose contract already guarantees an ordinary
+ * event worker (event-loop/timer/wio callbacks, worker-message callbacks, tunnel
+ * payload handlers). It never falls back to worker 0: an unregistered thread or
+ * the lwIP pseudo-worker aborts instead.
+ *
+ * Externally reachable or otherwise fallible code must branch on
+ * currentThreadIsEventWorker()/tryGetCurrentEventWorker() and fail cleanly
+ * rather than calling this.
+ *
+ * @return A pointer to the current thread's worker.
+ */
+static inline worker_t *getCurrentEventWorker(void)
+{
+    const wid_t wid = getWID();
+    if (UNLIKELY(! workerWIDIsEventWorker(wid)))
+    {
+        globalstateAbortNotEventWorker(__func__);
+    }
+    return &(WORKERS[wid]);
+}
+
+/*!
+ * @brief Nullable form of getCurrentEventWorker(), for fallible callers.
+ *
+ * @return The current thread's worker, or NULL when the caller is unregistered,
+ *         is the lwIP pseudo-worker, or runs before/after worker storage exists.
+ */
+static inline worker_t *tryGetCurrentEventWorker(void)
+{
+    const wid_t wid = getWID();
+    if (! workerWIDIsEventWorker(wid))
+    {
+        return NULL;
+    }
+    return &(WORKERS[wid]);
+}
+
+/*!
+ * @brief The current thread's own event-worker id, validated once.
+ *
+ * Prefer this over repeatedly reading getWID() when a callback needs its WID for
+ * both a per-worker array and a worker-local resource.
+ *
+ * @return The current worker ID. Aborts when the caller is not an event worker.
+ */
+static inline wid_t getCurrentEventWorkerWID(void)
+{
+    const wid_t wid = getWID();
+    if (UNLIKELY(! workerWIDIsEventWorker(wid)))
+    {
+        globalstateAbortNotEventWorker(__func__);
+    }
+    return wid;
+}
+
+/*!
+ * @brief The buffer pool owned by the current event worker.
+ *
+ * Same contract as getCurrentEventWorker(): callers that may run on an
+ * unregistered or lwIP thread must not use it.
+ *
+ * @return A pointer to the current worker's buffer pool.
+ */
+static inline buffer_pool_t *getCurrentEventWorkerBufferPool(void)
+{
+    const wid_t wid = getWID();
+    if (UNLIKELY(! workerWIDIsEventWorker(wid)))
+    {
+        globalstateAbortNotEventWorker(__func__);
+    }
+    return GSTATE.shortcut_buffer_pools[wid];
+}
+
+/*!
+ * @brief The context pool owned by the current event worker.
+ *
+ * @return A pointer to the current worker's context pool.
+ */
+static inline generic_pool_t *getCurrentEventWorkerContextPool(void)
+{
+    const wid_t wid = getWID();
+    if (UNLIKELY(! workerWIDIsEventWorker(wid)))
+    {
+        globalstateAbortNotEventWorker(__func__);
+    }
+    return GSTATE.shortcut_context_pools[wid];
+}
+
+/*!
+ * @brief The event loop owned by the current event worker.
+ *
+ * The worker role comes from `has_event_loop`, so this stays valid for a worker
+ * that is tearing down and has already detached `worker->loop`. Callers running
+ * during teardown must still tolerate a loop that no longer accepts work.
+ *
+ * @return A pointer to the current worker's event loop.
+ */
+static inline struct wloop_s *getCurrentEventWorkerLoop(void)
+{
+    const wid_t wid = getWID();
+    if (UNLIKELY(! workerWIDIsEventWorker(wid)))
+    {
+        globalstateAbortNotEventWorker(__func__);
+    }
+    return GSTATE.shortcut_loops[wid];
+}
+
+/*!
  * @brief Cached "now" in milliseconds for a worker's event loop.
  *
  * Reads the loop's cached timestamp (refreshed once per loop iteration by
@@ -340,7 +461,14 @@ WW_EXPORT void initTcpIpStack(void);
 WW_EXPORT void destroyGlobalState(void);
 
 /**
- * Recycles a buffer by returning it to the appropriate pool based on its size, and worker id.
+ * Recycles a buffer into the **current event worker's** pool.
+ *
+ * This is only correct when the calling thread owns the buffer's pool, which is
+ * why it rejects unregistered threads and the lwIP pseudo-worker instead of
+ * indexing a shortcut array. Cross-worker cleanup paths must not be converted to
+ * it: use lineReuseBuffer()/bufferpoolReuseBuffer() with the owning pool when the
+ * owner is known, or sbufDestroy() when it is not.
+ *
  * @param b The buffer to recycle.
  */
 WW_EXPORT void reuseBuffer(sbuf_t *b);

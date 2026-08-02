@@ -125,6 +125,16 @@ bool currentThreadIsEventWorker(void);
 bool currentThreadIsEventWorkerWID(wid_t wid);
 
 /**
+ * @brief Formats a WID for diagnostics, rendering kInvalidWID as "unregistered".
+ *
+ * For log lines that may run on any thread. Pair it with getTID() when the
+ * message needs to identify the actual OS thread. The returned pointer is either
+ * a string literal or a thread-local scratch buffer that the next call on the
+ * same thread overwrites, so print it, do not store it.
+ */
+const char *workerWIDLabel(wid_t wid);
+
+/**
  * @brief Test-only helper to bind the current thread to a test WID.
  */
 static inline void testWorkerBindWID(wid_t wid)
