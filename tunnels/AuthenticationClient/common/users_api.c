@@ -824,7 +824,7 @@ void authenticationclientRequestPull(tunnel_t *t)
         return;
     }
 
-    if (getWID() == 0)
+    if (currentThreadIsEventWorkerWID(0))
     {
         discard authenticationclientSendGetAllUsers(t);
         return;
@@ -840,7 +840,7 @@ void authenticationclientRequestPush(tunnel_t *t)
         return;
     }
 
-    if (getWID() == 0)
+    if (currentThreadIsEventWorkerWID(0))
     {
         discard authenticationclientSendPushUserStats(t);
         return;

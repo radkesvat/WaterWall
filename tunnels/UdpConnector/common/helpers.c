@@ -7,7 +7,10 @@ local_idle_table_t *udpconnectorGetWorkerIdleTable(udpconnector_tstate_t *ts)
     assert(ts != NULL);
     assert(ts->idle_tables != NULL);
 
-    wid_t wid = getWID();
+    // Worker-local table: one checked identity for both the per-worker array and
+    // the loop it is armed on. A non-event thread fails loudly instead of
+    // silently creating a table on worker 0's loop.
+    const wid_t wid = getCurrentEventWorkerWID();
     assert(wid < getWorkersCount());
 
     local_idle_table_t *table = ts->idle_tables[wid];
@@ -23,7 +26,7 @@ local_idle_table_t *udpconnectorGetWorkerIdleTable(udpconnector_tstate_t *ts)
 local_idle_table_t *udpconnectorGetLineIdleTable(udpconnector_tstate_t *ts, line_t *l)
 {
     assert(l != NULL);
-    assert(lineGetWID(l) == getWID());
+    assert(lineIsOnCurrentEventWorker(l));
     discard l;
     return udpconnectorGetWorkerIdleTable(ts);
 }

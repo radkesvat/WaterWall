@@ -21,7 +21,8 @@ void keepaliveclientTunnelOnStop(tunnel_t *t)
 
 void keepaliveclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
 {
-    assert(wid == getWID());
+    // onWorkerStop runs on the worker being stopped, for its own slot only.
+    assert(currentThreadIsEventWorkerWID(wid));
 
     keepaliveclient_tstate_t *ts = tunnelGetState(t);
     if (ts->worker_timers == NULL)

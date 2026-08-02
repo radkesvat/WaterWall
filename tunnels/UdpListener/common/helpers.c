@@ -47,7 +47,8 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
     uint16_t            real_localport = data->real_localport;
     local_idle_table_t *table          = udpsockGetWorkerIdleTable(sock);
 
-    assert(wid == getWID());
+    // The wio event carries the worker that owns this datagram's line.
+    assert(currentThreadIsEventWorkerWID(wid));
 
     // Key idle lines by (peer addr+port, local addr+port, selected tunnel). A single physical UDP socket can
     // serve more than one logical local endpoint (iptables multiport) AND more than one tunnel: exact endpoint

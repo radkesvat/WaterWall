@@ -67,7 +67,7 @@ static wio_t *udpstatelesssocketCreateUdpServer(udpstatelesssocket_tstate_t *sta
         return NULL;
     }
 
-    wio_t *io = wioGet(getWorkerLoop(getWID()), sockfd);
+    wio_t *io = wioGet(getCurrentEventWorkerLoop(), sockfd);
     if (io == NULL || wioIsClosed(io))
     {
         LOGE("UdpStatelessSocket: could not create event io");

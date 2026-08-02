@@ -9,7 +9,7 @@ static void streamtopacketsQueueWorkerPacketInit(void *worker, void *arg1, void 
     discard arg3;
 
     tunnel_t *t = arg1;
-    line_t   *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), getWID());
+    line_t   *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), getCurrentEventWorkerWID());
 
     tunnelNextUpStreamInit(t, l);
     assert(lineIsAlive(l));

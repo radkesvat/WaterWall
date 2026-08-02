@@ -1506,9 +1506,13 @@ void authenticationclientOpenControlLine(tunnel_t *t)
 {
     authenticationclient_tstate_t *ts = tunnelGetState(t);
 
-    if (UNLIKELY(getWID() != 0))
+    // The control line is structurally owned by worker 0; an unregistered or
+    // lwIP caller must never reach here (it queues in
+    // authenticationclientScheduleReconnect() instead).
+    if (UNLIKELY(! currentThreadIsEventWorkerWID(0)))
     {
-        LOGF("AuthenticationClient: control line must be opened on worker 0");
+        LOGF("AuthenticationClient: control line must be opened on worker 0, caller worker: %s",
+             workerWIDLabel(getWID()));
         abortProgramNow(1);
         return;
     }
@@ -1603,11 +1607,13 @@ void authenticationclientScheduleReconnect(tunnel_t *t)
     authenticationclient_tstate_t *ts              = tunnelGetState(t);
     bool                           should_schedule = false;
 
-    if (getWID() != 0)
+    // Anything that is not worker 0 itself - another event worker, lwIP, or an
+    // unregistered device thread - hands the reconnect to worker 0.
+    if (! currentThreadIsEventWorkerWID(0))
     {
         if (ts->verbose)
         {
-            LOGD("AuthenticationClient: queued reconnect on worker 0 from worker %u", (unsigned int) getWID());
+            LOGD("AuthenticationClient: queued reconnect on worker 0 from worker %s", workerWIDLabel(getWID()));
         }
         sendWorkerMessageForceQueue(0, authenticationclientOpenControlLineOnWorker0, t, NULL, NULL);
         return;

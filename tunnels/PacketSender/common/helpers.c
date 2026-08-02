@@ -366,7 +366,7 @@ static void packetsenderMarkWorkerComplete(packetsender_worker_state_t *slot)
 
 void packetsenderStopWorker(packetsender_worker_state_t *slot)
 {
-    assert(slot->wid == getWID());
+    assert(currentThreadIsEventWorkerWID(slot->wid));
 
     slot->stopped = true;
 

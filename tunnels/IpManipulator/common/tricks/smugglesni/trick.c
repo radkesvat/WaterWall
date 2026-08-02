@@ -339,7 +339,8 @@ static void smugglesnitrickCleanupDelayedBuffer(line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (getWID() == lineGetWID(l))
+    // Cross-worker cleanup destroys instead of touching the owner's pool.
+    if (lineIsOnCurrentEventWorker(l))
     {
         lineReuseBuffer(l, buf);
         return;
@@ -557,7 +558,7 @@ void smugglesnitrickSetFlowPassthrough(tunnel_t *t, uint32_t src_addr, uint32_t 
 
 void smugglesnitrickLogDownStreamServerHello(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineGetWID(l) == getWID());
+    assert(lineIsOnCurrentEventWorker(l));
     discard l;
 
     smugglesnitrick_tcp_packet_info_t info   = {0};
@@ -614,7 +615,7 @@ void smugglesnitrickLogDownStreamServerHello(tunnel_t *t, line_t *l, sbuf_t *buf
 
 bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineGetWID(l) == getWID());
+    assert(lineIsOnCurrentEventWorker(l));
 
     ipmanipulator_tstate_t           *state                    = tunnelGetState(t);
     smugglesnitrick_tcp_packet_info_t info                     = {0};

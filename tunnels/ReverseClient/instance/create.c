@@ -64,6 +64,22 @@ tunnel_t *reverseclientTunnelCreate(node_t *node)
     }
 
     // ts->min_unused_cons     = 1;
-    ts->starved_connections = idleTableCreate(getWorkerLoop(getWID()));
+
+    /*
+     * The starved-connection table is created during main-thread configuration,
+     * so it is structurally owned by worker 0: its sweep timer runs on worker 0's
+     * loop, and idle_table_t already dispatches each expiry to the item's own
+     * worker through the worker-message queue. Say worker 0 explicitly rather
+     * than inheriting whatever WID the creating thread happens to carry.
+     */
+    if (UNLIKELY(! currentThreadIsEventWorkerWID(0)))
+    {
+        LOGF("ReverseClient: node creation must run on worker 0, caller worker: %s", workerWIDLabel(getWID()));
+        reverseclientHandshakeDestroy(ts->handshake_bytes);
+        tunnelDestroy(t);
+        return NULL;
+    }
+
+    ts->starved_connections = idleTableCreate(getWorkerLoop(0));
     return t;
 }

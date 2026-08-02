@@ -137,7 +137,7 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
 finish:
     if (q != NULL)
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), q);
+        reuseBuffer(q);
     }
     return result;
 }
@@ -164,7 +164,7 @@ void wireguarddeviceHandleInnerPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (buf_len < sizeof(ip4_hdr_t))
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        lineReuseBuffer(l, buf);
         return;
     }
     wgd_tstate_t       *state = tunnelGetState(t);
@@ -174,7 +174,7 @@ void wireguarddeviceHandleInnerPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if ((version == 6) && (buf_len < sizeof(ip6_hdr_t)))
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        lineReuseBuffer(l, buf);
         return;
     }
 
@@ -205,7 +205,7 @@ void wireguarddeviceHandleInnerPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     else
     {
         LOGD("WireguardDevice cannot route a packet");
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        lineReuseBuffer(l, buf);
     }
 
     wireguarddeviceStateUnlock(state);

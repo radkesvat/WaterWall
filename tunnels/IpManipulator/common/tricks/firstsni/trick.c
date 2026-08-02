@@ -797,7 +797,7 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
 
 bool firstsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineGetWID(l) == getWID());
+    assert(lineIsOnCurrentEventWorker(l));
 
     firstsnitrick_tcp_packet_info_t info   = {0};
     uint64_t                        now_ms = getTickMS();

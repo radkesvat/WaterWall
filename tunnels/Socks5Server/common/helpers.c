@@ -345,9 +345,9 @@ static void socks5serverLogAuthRejected(tunnel_t *t, line_t *l, const uint8_t *u
     {
         char username_text[UINT8_MAX + 1U];
         socks5serverSanitizeUsername(username, username_len, username_text);
-        LOGW("Socks5Server: rejected SOCKS5 authentication for user \"%s\" on worker %u: %s",
+        LOGW("Socks5Server: rejected SOCKS5 authentication for user \"%s\" on worker %s: %s",
              username_text,
-             l != NULL ? (unsigned int) lineGetWID(l) : (unsigned int) getWID(),
+             l != NULL ? workerWIDLabel(lineGetWID(l)) : workerWIDLabel(getWID()),
              reason != NULL ? reason : "unknown");
         return;
     }

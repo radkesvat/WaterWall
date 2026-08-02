@@ -657,7 +657,10 @@ void packetstostreamHeartbeatTimerCallback(wtimer_t *timer)
         return;
     }
 
-    line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), getWID());
+    // The heartbeat timer is armed per worker on that worker's own loop.
+    const wid_t wid = getLoopEventWorkerWID(weventGetLoop(timer));
+
+    line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wid);
     if (packet_line == NULL || ! lineIsAlive(packet_line))
     {
         return;
@@ -693,10 +696,11 @@ void packetstostreamTimeoutTimerCallback(wtimer_t *timer)
         return;
     }
 
-    packetstostream_tstate_t *ts  = tunnelGetState(t);
-    const wid_t               wid = getWID();
+    packetstostream_tstate_t *ts = tunnelGetState(t);
+    // One checked identity for the packet line and the per-worker timer slot.
+    const wid_t wid = getLoopEventWorkerWID(weventGetLoop(timer));
 
-    line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), getWID());
+    line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wid);
     if (packet_line == NULL || ! lineIsAlive(packet_line))
     {
         ts->worker_timeout_timers[wid] = NULL;
@@ -710,7 +714,8 @@ void packetstostreamTimeoutTimerCallback(wtimer_t *timer)
         return;
     }
 
-    const uint64_t now = wloopNowMS(getWorkerLoop(lineGetWID(packet_line)));
+    assert(lineGetWID(packet_line) == wid);
+    const uint64_t now = wloopNowMS(weventGetLoop(timer));
     if (now < ls->pong_deadline_ms)
     {
         const uint64_t remaining_ms_u64 = ls->pong_deadline_ms - now;

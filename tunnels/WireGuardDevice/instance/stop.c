@@ -9,7 +9,7 @@ void wireguarddeviceTunnelOnStop(tunnel_t *t)
 
 void wireguarddeviceTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
 {
-    assert(wid == getWID());
+    assert(currentThreadIsEventWorkerWID(wid));
 
     if (wid != 0)
     {

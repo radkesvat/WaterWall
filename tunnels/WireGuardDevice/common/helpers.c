@@ -99,7 +99,7 @@ static void wireguarddeviceTransportLineInit(tunnel_t *t, line_t *line)
 line_t *wireguarddeviceEnsureTransportLine(wgd_tstate_t *state, wid_t wid)
 {
     assert(state != NULL);
-    assert(wid == getWID());
+    assert(currentThreadIsEventWorkerWID(wid));
 
     tunnel_t       *tunnel = state->tunnel;
     tunnel_chain_t *chain  = tunnelGetChain(tunnel);
@@ -133,7 +133,7 @@ line_t *wireguarddeviceEnsureTransportLine(wgd_tstate_t *state, wid_t wid)
 
 void wireguarddeviceCloseTransportLine(tunnel_t *t, wid_t wid)
 {
-    assert(wid == getWID());
+    assert(currentThreadIsEventWorkerWID(wid));
 
     wgd_tstate_t *state = tunnelGetState(t);
 
@@ -320,10 +320,10 @@ err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_pee
     bool          sent;
 
     wireguarddeviceStateUnlock(ts);
-    line = wireguarddeviceEnsureTransportLine(ts, getWID());
+    line = wireguarddeviceEnsureTransportLine(ts, getCurrentEventWorkerWID());
     if (line == NULL)
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), q);
+        reuseBuffer(q);
         wireguarddeviceStateLock(ts);
         return ERR_CONN;
     }
@@ -342,10 +342,10 @@ err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *q, const ip_ad
     bool          sent;
 
     wireguarddeviceStateUnlock(ts);
-    line = wireguarddeviceEnsureTransportLine(ts, getWID());
+    line = wireguarddeviceEnsureTransportLine(ts, getCurrentEventWorkerWID());
     if (line == NULL)
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), q);
+        reuseBuffer(q);
         wireguarddeviceStateLock(ts);
         return ERR_CONN;
     }
@@ -503,7 +503,7 @@ err_t wireguardifAddAllowedIp(wireguard_device_t *device, uint8_t peer_index, co
 void wireguardifSendKeepalive(wireguard_device_t *device, wireguard_peer_t *peer)
 {
     // Send a NULL packet as a keep-alive
-    sbuf_t *empty_buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(getWID()));
+    sbuf_t *empty_buf = bufferpoolGetSmallBuffer(getCurrentEventWorkerBufferPool());
     if (empty_buf != NULL)
     {
         wireguardifOutputToPeer(device, empty_buf, NULL, peer);

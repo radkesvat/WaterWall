@@ -10,7 +10,8 @@ void tcplistenerTunnelOnStop(tunnel_t *t)
 
 void tcplistenerTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
 {
-    assert(wid == getWID());
+    // onWorkerStop runs on the worker being stopped, for its own slot only.
+    assert(currentThreadIsEventWorkerWID(wid));
 
     tcplistener_tstate_t *ts = tunnelGetState(t);
     atomicStoreExplicit(&ts->stopping, true, memory_order_release);

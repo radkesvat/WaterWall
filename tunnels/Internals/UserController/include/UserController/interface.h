@@ -33,7 +33,7 @@ WW_EXPORT node_t nodeUserControllerGet(void);
  * rejection and must close/drop the line itself; it must not treat a non-OK line
  * as admitted. A non-OK call reserves nothing, so it is safe to retry later.
  *
- * Must be called on the line's owner worker (`lineGetWID(l) == getWID()`), and
+ * Must be called on the line's owner worker (`lineIsOnCurrentEventWorker(l)`), and
  * only on a line that has traversed this UserController instance (so its
  * UserController line state already exists). Do not call it on packet lines.
  *

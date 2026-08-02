@@ -53,12 +53,13 @@ static void ptcEmitPacketBuffer(tunnel_t *t, line_t *packet_line, sbuf_t *buf)
 
 static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
 {
-    discard worker;
     discard arg3;
 
-    tunnel_t              *t           = arg1;
-    ptc_packet_emit_msg_t *packet_msg  = arg2;
-    line_t                *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), getWID());
+    tunnel_t              *t          = arg1;
+    ptc_packet_emit_msg_t *packet_msg = arg2;
+    // The message was delivered to exactly one worker; take the packet line from
+    // that worker instead of re-reading TLS.
+    line_t        *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), worker->wid);
     buffer_pool_t         *pool        = lineGetBufferPool(packet_line);
     sbuf_t                *buf         = ptcAllocateBufferForPool(pool, packet_msg->len);
 
@@ -289,12 +290,16 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
 {
     discard ipaddr;
 
-    interface_route_context_t *route_ctx   = netif->state;
-    tunnel_t                  *t           = route_ctx->tunnel;
-    wid_t                      current_wid = getWID();
-    wid_t                      packet_wid  = route_ctx->packet_wid;
+    interface_route_context_t *route_ctx  = netif->state;
+    tunnel_t                  *t          = route_ctx->tunnel;
+    wid_t                      packet_wid = route_ctx->packet_wid;
 
-    if (current_wid == packet_wid)
+    /*
+     * Only the target packet worker itself may emit inline. lwIP's tcpip_thread
+     * is a registered pseudo-worker, not an event worker, so it must never take
+     * this branch and touch the packet line or its pool; it queues below.
+     */
+    if (currentThreadIsEventWorkerWID(packet_wid))
     {
         line_t        *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), packet_wid);
         buffer_pool_t *pool        = lineGetBufferPool(packet_line);

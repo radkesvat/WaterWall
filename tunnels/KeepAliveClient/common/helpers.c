@@ -211,7 +211,7 @@ void keepaliveclientWorkerTimerCallback(wtimer_t *timer)
     line_t                  **lines = NULL;
     size_t                    count = 0;
     size_t                    index = 0;
-    const wid_t               wid   = getWID();
+    const wid_t               wid   = getLoopEventWorkerWID(weventGetLoop(timer));
 
     mutexLock(&ts->lines_mutex);
 

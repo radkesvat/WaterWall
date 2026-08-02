@@ -9,7 +9,8 @@ void packetsenderTunnelOnStop(tunnel_t *t)
 
 void packetsenderTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
 {
-    assert(wid == getWID());
+    // onWorkerStop runs on the worker being stopped, for its own slot only.
+    assert(currentThreadIsEventWorkerWID(wid));
 
     packetsender_tstate_t *state = tunnelGetState(t);
     if (state->workers == NULL || wid >= state->workers_count)

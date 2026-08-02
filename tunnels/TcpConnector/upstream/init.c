@@ -173,7 +173,7 @@ static bool tcpconnectorBeginConnect(tunnel_t *t, line_t *l, tcpconnector_lstate
 
     // sockaddr_set_ipport(&(dest_ctx.addr), "127.0.0.1", 443);
 
-    wloop_t *loop = getWorkerLoop(getWID());
+    wloop_t *loop = getCurrentEventWorkerLoop();
 
     assert(dest_ctx->ip_address.type == IPADDR_TYPE_V4 || dest_ctx->ip_address.type == IPADDR_TYPE_V6);
     int addr_type = dest_ctx->ip_address.type == IPADDR_TYPE_V4 ? AF_INET : AF_INET6;

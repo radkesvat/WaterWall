@@ -9,7 +9,8 @@ void udpconnectorTunnelOnStop(tunnel_t *t)
 
 void udpconnectorTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
 {
-    assert(wid == getWID());
+    // onWorkerStop runs on the worker being stopped, for its own slot only.
+    assert(currentThreadIsEventWorkerWID(wid));
 
     udpconnector_tstate_t *ts = tunnelGetState(t);
     if (ts->idle_tables == NULL)

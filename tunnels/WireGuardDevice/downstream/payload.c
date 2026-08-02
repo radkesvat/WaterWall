@@ -50,7 +50,7 @@ static void wireguardifSendHandshakeCookie(wireguard_device_t *device, const uin
     }
 
     // Send this packet out!
-    buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(getWID()));
+    buf = bufferpoolGetSmallBuffer(getCurrentEventWorkerBufferPool());
     if (buf != NULL)
     {
         sbufSetLength(buf, sizeof(message_cookie_reply_t));
@@ -159,7 +159,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
         }
 
         // We don't know the unpadded size until we have decrypted the packet and validated/inspected the IP header
-        buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(getWID()));
+        buf = bufferpoolGetSmallBuffer(getCurrentEventWorkerBufferPool());
         if (buf)
         {
             // Decrypt the packet
@@ -212,7 +212,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
                         wireguarddeviceCheckPeerAllowedIp(peer, &source))
                     {
                         wgd_tstate_t *ts   = (wgd_tstate_t *) device;
-                        line_t       *line = tunnelchainGetWorkerPacketLine(ts->tunnel->chain, getWID());
+                        line_t       *line = tunnelchainGetWorkerPacketLine(ts->tunnel->chain, getCurrentEventWorkerWID());
 
                         sbufSetLength(buf, packet_len);
                         wireguarddeviceStateUnlock(ts);
@@ -226,13 +226,13 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
                 else
                 {
                     // This was a keep-alive packet
-                    bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+                    reuseBuffer(buf);
                     buf = NULL;
                 }
             }
             else
             {
-                bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+                reuseBuffer(buf);
                 buf = NULL;
             }
         }
@@ -244,7 +244,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
 finish:
     if (buf != NULL)
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        reuseBuffer(buf);
     }
 }
 
@@ -289,13 +289,13 @@ static void wireguardifSendHandshakeResponse(wireguard_device_t *device, wiregua
         }
 
         // Send this packet out!
-        buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(getWID()));
+        buf = bufferpoolGetSmallBuffer(getCurrentEventWorkerBufferPool());
 
         if (buf)
         {
             if (UNLIKELY(! wireguardStorePendingHandshake(peer, &packet, sizeof(packet))))
             {
-                bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+                reuseBuffer(buf);
                 LOGW("WireGuardDevice: failed to retain outbound handshake response");
                 return;
             }
@@ -500,24 +500,24 @@ static void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip
         break;
     }
     // Release data!
-    bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), p);
+    reuseBuffer(p);
 }
 
 void wireguarddeviceHandleTransportPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     wgd_tstate_t *state = tunnelGetState(t);
-    line_t       *line  = wireguarddeviceEnsureTransportLine(state, getWID());
+    line_t       *line  = wireguarddeviceEnsureTransportLine(state, getCurrentEventWorkerWID());
 
     if (line == NULL)
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        lineReuseBuffer(l, buf);
         return;
     }
 
     address_context_t *src_ctx = lineGetSourceAddressContext(l);
     if (! addresscontextIsIpType(src_ctx))
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        lineReuseBuffer(l, buf);
         return;
     }
 

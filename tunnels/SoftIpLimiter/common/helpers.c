@@ -24,7 +24,7 @@ uint64_t softiplimiterNowMs(void)
 {
     // Cached, syscall-free clock for the current worker loop. Granularity is one
     // loop iteration, which is well within the ms-scale tolerance this node uses.
-    return getWorkerNowMS(getWID());
+    return wloopNowMS(getCurrentEventWorkerLoop());
 }
 
 const char *softiplimiterIdentifierModeName(softiplimiter_identifier_mode_t mode)
@@ -574,10 +574,10 @@ static void softiplimiterLogLine(tunnel_t *t, line_t *l, const softiplimiter_lst
                                         : softiplimiterTableReasonName(result != NULL ? result->reason
                                                                                       : kSoftIpLimiterTableOk);
 
-    LOGW("SoftIpLimiter: %s on worker %u: mode=%s identifier=%" PRIu64
+    LOGW("SoftIpLimiter: %s on worker %s: mode=%s identifier=%" PRIu64
          " source-ip=%s reason=\"%s\" ip-count=%u limit=%u",
          action,
-         l != NULL ? (unsigned int) lineGetWID(l) : (unsigned int) getWID(),
+         l != NULL ? workerWIDLabel(lineGetWID(l)) : workerWIDLabel(getWID()),
          softiplimiterIdentifierModeName(ts->identifier_mode),
          ls != NULL ? (uint64_t) ls->identifier : 0,
          ip,

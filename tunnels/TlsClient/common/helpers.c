@@ -861,18 +861,23 @@ bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
         return false;
     }
 
-    wid_t wid = getWID();
-
-    if (wid >= getWorkersCount())
+    /*
+     * The scratch line state and the drained ClientHello both come from the
+     * calling worker's pool, so this needs an ordinary event worker. An
+     * unregistered thread or the lwIP pseudo-worker fails cleanly here instead
+     * of borrowing worker 0's pool.
+     */
+    if (! currentThreadIsEventWorker())
     {
         return false;
     }
+    buffer_pool_t *pool = getCurrentEventWorkerBufferPool();
 
     STACK_ALLOCATE_CACHE_ALIGNED(tlsclient_lstate_t, ls);
     memoryZero(ls, sizeof(*ls));
     const tlsrecordshaping_config_t no_record_shaping = {0};
     if (! tlsclientLinestateInitializeWithShaping(
-            ls, ssl_ctx, getWorkerBufferPool(wid), alpn_wire, alpn_wire_len, &no_record_shaping, false))
+            ls, ssl_ctx, pool, alpn_wire, alpn_wire_len, &no_record_shaping, false))
     {
         // the temporary line state released itself already, *out stays NULL
         return false;
@@ -894,7 +899,7 @@ bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
         return false;
     }
 
-    const bool drained = tlsclientDrainBioToBuffer(getWorkerBufferPool(wid), ls->wbio, out);
+    const bool drained = tlsclientDrainBioToBuffer(pool, ls->wbio, out);
     tlsclientLinestateDestroy(ls);
     return drained && *out != NULL;
 }
@@ -913,7 +918,9 @@ bool tlsclientCreateEchGreaseInnerClientHello(tlsclient_tstate_t *ts, wid_t wid,
         return true;
     }
 
-    if (wid >= getWorkersCount() || wid != getWID())
+    // Per-event-worker context array: the caller must be the event worker that
+    // owns `wid`, and `wid` must index a getWorkersCount()-sized array.
+    if (wid >= getWorkersCount() || ! currentThreadIsEventWorkerWID(wid))
     {
         return false;
     }

@@ -21,7 +21,8 @@ void usercontrollerTunnelOnStop(tunnel_t *t)
 
 void usercontrollerTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
 {
-    assert(wid == getWID());
+    // onWorkerStop runs on the worker being stopped, for its own slot only.
+    assert(currentThreadIsEventWorkerWID(wid));
 
     usercontroller_tstate_t *ts = tunnelGetState(t);
     if (ts->worker_states == NULL || wid >= ts->worker_count)

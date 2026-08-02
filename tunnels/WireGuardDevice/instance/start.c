@@ -24,12 +24,16 @@ static void loopHandle(wtimer_t *timer)
 
 static void wireguarddeviceQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3)
 {
-    discard worker;
     discard arg2;
     discard arg3;
 
+    // The message was delivered to exactly one worker; that worker owns the
+    // packet line this callback must initialize.
+    const wid_t wid = ((worker_t *) worker)->wid;
+    assert(currentThreadIsEventWorkerWID(wid));
+
     tunnel_t *t = arg1;
-    line_t   *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), getWID());
+    line_t   *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wid);
 
     tunnelNextUpStreamInit(t, l);
     if (! lineIsAlive(l))
@@ -41,9 +45,11 @@ static void wireguarddeviceQueueWorkerPacketInit(void *worker, void *arg1, void 
 
 static void wireguarddeviceQueueWorkerTransportLineInit(void *worker, void *arg1, void *arg2, void *arg3)
 {
-    discard worker;
     discard arg2;
     discard arg3;
+
+    const wid_t wid = ((worker_t *) worker)->wid;
+    assert(currentThreadIsEventWorkerWID(wid));
 
     tunnel_t     *t     = arg1;
     wgd_tstate_t *state = tunnelGetState(t);
@@ -54,7 +60,7 @@ static void wireguarddeviceQueueWorkerTransportLineInit(void *worker, void *arg1
      * reason. The slot stays NULL, the output paths treat that as ERR_CONN, and
      * wireguarddeviceEnsureTransportLine() retries on a later output.
      */
-    if (wireguarddeviceEnsureTransportLine(state, getWID()) == NULL)
+    if (wireguarddeviceEnsureTransportLine(state, wid) == NULL)
     {
         LOGW("WireGuardDevice: worker transport line was rejected at startup; it will be retried on demand");
         return;

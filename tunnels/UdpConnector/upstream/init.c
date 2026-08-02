@@ -232,7 +232,7 @@ static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_
         goto fail;
     }
 
-    wloop_t *loop = getWorkerLoop(getWID());
+    wloop_t *loop = getCurrentEventWorkerLoop();
     wio_t   *io   = wioGet(loop, sockfd);
     if (UNLIKELY(io == NULL || wioIsClosed(io)))
     {

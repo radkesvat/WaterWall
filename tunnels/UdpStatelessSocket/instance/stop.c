@@ -24,7 +24,8 @@ void udpstatelesssocketTunnelOnStop(tunnel_t *t)
 
 void udpstatelesssocketTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
 {
-    assert(wid == getWID());
+    // onWorkerStop runs on the worker being stopped, for its own slot only.
+    assert(currentThreadIsEventWorkerWID(wid));
 
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
     if (state->socket.idle_tables == NULL)

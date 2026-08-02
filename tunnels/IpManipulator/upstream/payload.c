@@ -13,7 +13,7 @@
 
 void ipmanipulatorUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineGetWID(l) == getWID());
+    assert(lineIsOnCurrentEventWorker(l));
 
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 

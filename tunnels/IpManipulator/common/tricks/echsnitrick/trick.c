@@ -851,7 +851,7 @@ static void echsnitrickRunDelayedOriginalRelease(worker_t *worker, void *arg1, v
         return;
     }
 
-    if (lineGetWID(batch[0].line) != getWID())
+    if (! lineIsOnCurrentEventWorker(batch[0].line))
     {
         for (uint8_t i = 0; i < taken; ++i)
         {
@@ -959,7 +959,7 @@ static void echsnitrickScheduleOriginalRelease(tunnel_t *t, const echsnitrick_fl
         .release_phase = release_phase,
     };
 
-    if (delay_ms == 0 && getWID() == wid)
+    if (delay_ms == 0 && currentThreadIsEventWorkerWID(wid))
     {
         echsnitrickRunDelayedOriginalRelease(NULL, t, NULL, release);
         return;
@@ -1354,7 +1354,7 @@ void echsnitrickDestroyState(tunnel_t *t)
 
 bool echsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineGetWID(l) == getWID());
+    assert(lineIsOnCurrentEventWorker(l));
 
     discard l;
 
@@ -1413,7 +1413,7 @@ bool echsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 bool echsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    assert(lineGetWID(l) == getWID());
+    assert(lineIsOnCurrentEventWorker(l));
 
     ipmanipulator_tstate_t       *state  = tunnelGetState(t);
     echsnitrick_tcp_packet_info_t info   = {0};

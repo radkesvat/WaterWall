@@ -358,6 +358,28 @@ static inline struct wloop_s *getCurrentEventWorkerLoop(void)
 }
 
 /*!
+ * @brief The event worker that owns @p loop, validated against the caller.
+ *
+ * The preferred source of identity inside a loop/io/timer callback: the event
+ * being dispatched already names its owning loop, so this reads the WID from the
+ * loop and only checks TLS to confirm the callback really is running on it.
+ * Derive it once and reuse the result for every per-worker array and resource in
+ * the callback.
+ *
+ * @param loop Loop the callback was dispatched from.
+ * @return The owning worker ID. Aborts when the caller does not own that loop.
+ */
+static inline wid_t getLoopEventWorkerWID(struct wloop_s *loop)
+{
+    const wid_t wid = (wid_t) wloopGetWID(loop);
+    if (UNLIKELY(! currentThreadIsEventWorkerWID(wid)))
+    {
+        globalstateAbortNotEventWorker(__func__);
+    }
+    return wid;
+}
+
+/*!
  * @brief Cached "now" in milliseconds for a worker's event loop.
  *
  * Reads the loop's cached timestamp (refreshed once per loop iteration by

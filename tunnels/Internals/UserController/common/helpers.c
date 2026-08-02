@@ -51,10 +51,10 @@ static void usercontrollerLogUserContext(tunnel_t *t, line_t *l, const usercontr
 
     if (! userHandleIsValid(&ls->handle))
     {
-        LOGW("UserController: %s on worker %u: %s (invalid user handle: user-id=%" PRIu64 ", generation=%" PRIu64
+        LOGW("UserController: %s on worker %s: %s (invalid user handle: user-id=%" PRIu64 ", generation=%" PRIu64
              ", ip-key-type=%u)",
              action,
-             l != NULL ? (unsigned int) lineGetWID(l) : (unsigned int) getWID(),
+             l != NULL ? workerWIDLabel(lineGetWID(l)) : workerWIDLabel(getWID()),
              reason != NULL ? reason : "unknown",
              ls->handle.user_id,
              ls->handle.generation,
@@ -62,9 +62,9 @@ static void usercontrollerLogUserContext(tunnel_t *t, line_t *l, const usercontr
         return;
     }
 
-    LOGW("UserController: %s on worker %u: %s (user-id=%" PRIu64 ", generation=%" PRIu64 ", ip-key-type=%u)",
+    LOGW("UserController: %s on worker %s: %s (user-id=%" PRIu64 ", generation=%" PRIu64 ", ip-key-type=%u)",
          action,
-         l != NULL ? (unsigned int) lineGetWID(l) : (unsigned int) getWID(),
+         l != NULL ? workerWIDLabel(lineGetWID(l)) : workerWIDLabel(getWID()),
          reason != NULL ? reason : "unknown",
          ls->handle.user_id,
          ls->handle.generation,
@@ -259,7 +259,7 @@ bool usercontrollerAccountDirectional(tunnel_t *t, usercontroller_lstate_t *ls, 
 // no-op (kUserAdmissionOk) for lines that carry no user, exactly like Init's passthrough behavior.
 user_admission_result_t usercontrollerTunnelTryManageLine(tunnel_t *t, line_t *l)
 {
-    assert(lineGetWID(l) == getWID());
+    assert(lineIsOnCurrentEventWorker(l));
 
     usercontroller_lstate_t *ls = lineGetState(l, t);
 
@@ -314,7 +314,7 @@ void usercontrollerSweepTimerCallback(wtimer_t *timer)
     }
 
     usercontroller_tstate_t       *ts = tunnelGetState(t);
-    usercontroller_worker_state_t *ws = usercontrollerGetWorkerState(t, getWID());
+    usercontroller_worker_state_t *ws = usercontrollerGetWorkerState(t, getCurrentEventWorkerWID());
     if (ws == NULL)
     {
         return;

@@ -21,7 +21,8 @@ void packetstostreamTunnelOnStop(tunnel_t *t)
 
 void packetstostreamTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
 {
-    assert(wid == getWID());
+    // onWorkerStop runs on the worker being stopped, for its own slot only.
+    assert(currentThreadIsEventWorkerWID(wid));
 
     packetstostream_tstate_t *ts = tunnelGetState(t);
 

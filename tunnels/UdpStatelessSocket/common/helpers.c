@@ -56,7 +56,7 @@ local_idle_table_t *udpstatelesssocketGetWorkerIdleTable(udpstatelesssocket_tsta
 local_idle_table_t *udpstatelesssocketGetLineIdleTable(udpstatelesssocket_tstate_t *ts, line_t *l)
 {
     assert(l != NULL);
-    assert(lineGetWID(l) == getWID());
+    assert(lineIsOnCurrentEventWorker(l));
     discard l;
     return udpstatelesssocketGetWorkerIdleTable(ts);
 }
@@ -198,11 +198,12 @@ static void udpstatelesssocketWriteOwnerPeer(tunnel_t *t, sbuf_t *buf, const soc
 {
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
 
-    assert(getWID() == state->io_wid);
+    // Only the worker owning the socket's wio may write to it.
+    assert(currentThreadIsEventWorkerWID(state->io_wid));
 
     if (UNLIKELY(isApplicationTerminating() || state->socket.io == NULL))
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        reuseBuffer(buf);
         return;
     }
 
@@ -248,7 +249,7 @@ static void udpstatelesssocketWriteOwnerPeer(tunnel_t *t, sbuf_t *buf, const soc
              sbufGetLength(buf));
     }
 
-    bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+    reuseBuffer(buf);
 }
 
 static void udpstatelesssocketSendToPeer(tunnel_t *t, sbuf_t *buf, const sockaddr_u *peer_addr)
@@ -257,11 +258,13 @@ static void udpstatelesssocketSendToPeer(tunnel_t *t, sbuf_t *buf, const sockadd
 
     if (UNLIKELY(isApplicationTerminating() || state->socket.io == NULL))
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        reuseBuffer(buf);
         return;
     }
 
-    if (getWID() == state->io_wid)
+    // Writing inline is only legal on the socket's owning event worker; every
+    // other caller hands the datagram to it as a worker message.
+    if (currentThreadIsEventWorkerWID(state->io_wid))
     {
         udpstatelesssocketWriteOwnerPeer(t, buf, peer_addr);
         return;
@@ -271,7 +274,7 @@ static void udpstatelesssocketSendToPeer(tunnel_t *t, sbuf_t *buf, const sockadd
     if (request == NULL)
     {
         LOGE("UdpStatelessSocket: failed to get cross-worker send request");
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        reuseBuffer(buf);
         return;
     }
 
@@ -579,7 +582,7 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
 
     if (asyncdnsStatusIsShutdown(status) || ! lineIsAlive(line))
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        lineReuseBuffer(line, buf);
         lineUnlock(line);
         udpstatelesssocketDnsRequestDestroy(request);
         return;
@@ -592,7 +595,7 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
                     "UdpStatelessSocket: async dns resolve failed for %s: %s",
                     request->domain,
                     error != NULL ? error : ares_strerror(status));
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        lineReuseBuffer(line, buf);
         lineUnlock(line);
         udpstatelesssocketDnsRequestDestroy(request);
         return;
@@ -608,7 +611,7 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
                     LOG_LEVEL_ERROR,
                     "UdpStatelessSocket: async dns resolve returned no usable address for %s",
                     request->domain);
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        lineReuseBuffer(line, buf);
         lineUnlock(line);
         udpstatelesssocketDnsRequestDestroy(request);
         return;
@@ -636,7 +639,7 @@ static bool udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
     if (dest_ctx->domain == NULL || ! addresscontextHasPort(dest_ctx))
     {
         LOGE("UdpStatelessSocket: outbound destination domain or port is not ready");
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        lineReuseBuffer(l, buf);
         return false;
     }
 
@@ -644,7 +647,7 @@ static bool udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
     if (request == NULL)
     {
         loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "UdpStatelessSocket: failed to allocate async dns request");
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        lineReuseBuffer(l, buf);
         return false;
     }
 
@@ -653,7 +656,7 @@ static bool udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
     {
         memoryFree(request);
         loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "UdpStatelessSocket: failed to copy async dns domain");
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        lineReuseBuffer(l, buf);
         return false;
     }
 
@@ -678,7 +681,7 @@ static bool udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
                     request->domain,
                     ares_strerror(rc));
         udpstatelesssocketDnsRequestDestroy(request);
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        lineReuseBuffer(l, buf);
         return false;
     }
 

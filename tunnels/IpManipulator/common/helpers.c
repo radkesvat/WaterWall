@@ -219,7 +219,9 @@ static void ipmanipulatorCleanupPacketBuffer(line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (getWID() == lineGetWID(l))
+    // Only the line's own worker may return the packet to its pool; anyone else
+    // (another worker, lwIP, a device thread) destroys the standalone buffer.
+    if (lineIsOnCurrentEventWorker(l))
     {
         lineReuseBuffer(l, buf);
         return;
@@ -252,7 +254,7 @@ static void ipmanipulatorCleanupCapturedPacketReuse(void *arg1, void *arg2, void
 
 static void ipmanipulatorScheduleCapturedPacketNormal(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    if (getWID() == lineGetWID(l))
+    if (lineIsOnCurrentEventWorker(l))
     {
         lineSetRecalculateChecksum(l, true);
         ipmanipulatorSendUpstreamFinal(t, l, buf);
@@ -270,7 +272,7 @@ static void ipmanipulatorScheduleCapturedPacketNormal(tunnel_t *t, line_t *l, sb
 
 static void ipmanipulatorScheduleCapturedPacketReuse(line_t *l, sbuf_t *buf)
 {
-    if (getWID() == lineGetWID(l))
+    if (lineIsOnCurrentEventWorker(l))
     {
         lineReuseBuffer(l, buf);
         return;
@@ -362,7 +364,7 @@ static void ipmanipulatorSchedulePrestartTimeout(tunnel_t *t, uint32_t slot_inde
                                                  .generation = generation,
     };
 
-    sendWorkerMessageTimedWithCleanup(getWID(),
+    sendWorkerMessageTimedWithCleanup(getCurrentEventWorkerWID(),
                                       (WorkerMessageCallback) ipmanipulatorReleasePendingPrestartOnWorker,
                                       ipmanipulatorCleanupPendingPrestartMessage,
                                       kIpManipulatorTlsPrestartTimeoutMs,
@@ -425,7 +427,7 @@ static void ipmanipulatorScheduleCaptureTimeout(tunnel_t *t, uint32_t slot_index
                                                 .generation = generation,
     };
 
-    sendWorkerMessageTimedWithCleanup(getWID(),
+    sendWorkerMessageTimedWithCleanup(getCurrentEventWorkerWID(),
                                       (WorkerMessageCallback) ipmanipulatorReleasePendingCaptureOnWorker,
                                       ipmanipulatorCleanupPendingCaptureMessage,
                                       kIpManipulatorTlsCaptureTimeoutMs,
@@ -1689,8 +1691,10 @@ static uint64_t ipmanipulatorDelayBarrierNow(void)
 
 static void ipmanipulatorDelayBarrierRunTimer(worker_t *worker, void *arg1, void *arg2, void *arg3)
 {
-    discard worker;
     discard arg3;
+
+    // Reschedules below must stay on the worker this message was delivered to.
+    assert(currentThreadIsEventWorkerWID(worker->wid));
 
     tunnel_t                            *t     = arg1;
     ipmanipulator_delay_timer_message_t *msg   = arg2;
@@ -1737,7 +1741,7 @@ static void ipmanipulatorDelayBarrierRunTimer(worker_t *worker, void *arg1, void
             {
                 uint64_t remaining = next->due_ms - now_ms;
                 uint32_t delay_ms  = remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining;
-                wid_t    wid       = getWID();
+                wid_t    wid       = worker->wid;
 
                 ipmanipulatorFlowShardUnlock(shard);
                 ipmanipulatorDelayBarrierSchedule(t, &msg->key, msg->kind, msg->generation, wid, delay_ms);
@@ -1754,7 +1758,7 @@ static void ipmanipulatorDelayBarrierRunTimer(worker_t *worker, void *arg1, void
         {
             uint64_t remaining = barrier->deadline_ms - now_ms;
             uint32_t delay_ms  = remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining;
-            wid_t    wid       = getWID();
+            wid_t    wid       = worker->wid;
 
             ipmanipulatorFlowShardUnlock(shard);
             ipmanipulatorDelayBarrierSchedule(t, &msg->key, msg->kind, msg->generation, wid, delay_ms);

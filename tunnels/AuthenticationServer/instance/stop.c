@@ -26,7 +26,8 @@ void authenticationserverTunnelOnStop(tunnel_t *t)
 
 void authenticationserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid)
 {
-    assert(wid == getWID());
+    // onWorkerStop runs on the worker being stopped, for its own slot only.
+    assert(currentThreadIsEventWorkerWID(wid));
 
     if (UNLIKELY(wid != 0))
     {

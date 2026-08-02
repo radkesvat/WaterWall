@@ -15,7 +15,7 @@ static void my_pbuf_free_custom(struct pbuf *p)
      * foreign thread also cannot mutate the originating worker-local pool, so
      * it destroys the standalone allocation instead.
      */
-    if (getWID() == custombuf->origin_wid)
+    if (currentThreadIsEventWorkerWID(custombuf->origin_wid))
     {
         bufferpoolReuseBuffer(custombuf->origin_pool, custombuf->sbuf);
     }
@@ -28,7 +28,9 @@ static void my_pbuf_free_custom(struct pbuf *p)
 
 static void passToTcpIp(sbuf_t *buf, struct netif *inp)
 {
-    const wid_t       origin_wid  = getWID();
+    // Runs on the packet line's event worker; record that identity with the
+    // pbuf so a later lwIP-thread free knows whose pool the sbuf came from.
+    const wid_t       origin_wid  = getCurrentEventWorkerWID();
     buffer_pool_t    *origin_pool = getWorkerBufferPool(origin_wid);
     my_custom_pbuf_t *custombuf   = (my_custom_pbuf_t *) LWIP_MEMPOOL_ALLOC(RX_POOL);
     if (custombuf == NULL)
