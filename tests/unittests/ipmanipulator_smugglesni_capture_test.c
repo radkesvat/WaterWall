@@ -87,6 +87,7 @@ enum
 
 typedef struct received_packet_record_s
 {
+    uint32_t arrival_order;
     uint32_t seq;
     uint16_t payload_len;
     uint16_t ip_len;
@@ -95,6 +96,7 @@ typedef struct received_packet_record_s
 } received_packet_record_t;
 
 static uint32_t                 generator_calls;
+static uint32_t                 packet_arrival_counter;
 static uint32_t                 normal_packets_count;
 static received_packet_record_t normal_packets[kMaxReceivedPackets];
 static uint32_t                 real_packets_count;
@@ -102,6 +104,9 @@ static received_packet_record_t real_packets[kMaxReceivedPackets];
 static uint32_t                 generated_hello_len;
 static uint32_t                 generated_record_len;
 static uint8_t                  generated_hello_pattern = 0xA5;
+static ipmanipulator_tstate_t  *observed_prestart_state;
+static uint32_t                 observed_prestart_seq;
+static bool                     observed_prestart_remainder;
 
 typedef enum test_tls_generator_mode_e
 {
@@ -211,10 +216,11 @@ static void recordReceivedPacket(received_packet_record_t *records, uint32_t *co
     const struct tcp_hdr     *tcp      = (const struct tcp_hdr *) (packet + ip_hlen);
     uint16_t                  tcp_hlen = (uint16_t) (TCPH_HDRLEN(tcp) * 4U);
 
-    rec->ip_len      = ip_len;
-    rec->seq         = lwip_ntohl(tcp->seqno);
-    rec->payload_len = (uint16_t) (ip_len - ip_hlen - tcp_hlen);
-    rec->tcp_flags   = TCPH_FLAGS(tcp);
+    rec->arrival_order = packet_arrival_counter++;
+    rec->ip_len        = ip_len;
+    rec->seq           = lwip_ntohl(tcp->seqno);
+    rec->payload_len   = (uint16_t) (ip_len - ip_hlen - tcp_hlen);
+    rec->tcp_flags     = TCPH_FLAGS(tcp);
 
     if (rec->payload_len > 0)
     {
@@ -223,6 +229,33 @@ static void recordReceivedPacket(received_packet_record_t *records, uint32_t *co
     }
 
     *count += 1;
+}
+
+static void observePrestartRemainder(void)
+{
+    if (observed_prestart_state == NULL)
+    {
+        return;
+    }
+
+    for (uint32_t i = 0; i < observed_prestart_state->tls_prestart_slots_count; ++i)
+    {
+        const ipmanipulator_tls_prestart_slot_t *slot = &observed_prestart_state->tls_prestart_slots[i];
+        if (! slot->active || slot->captured_packets_count != 1 || slot->captured_packets[0].buf == NULL)
+        {
+            continue;
+        }
+
+        const uint8_t        *packet  = sbufGetRawPtr(slot->captured_packets[0].buf);
+        const struct ip_hdr  *ip      = (const struct ip_hdr *) packet;
+        uint16_t              ip_hlen = (uint16_t) (IPH_HL(ip) * 4U);
+        const struct tcp_hdr *tcp     = (const struct tcp_hdr *) (packet + ip_hlen);
+        if (lwip_ntohl(tcp->seqno) == observed_prestart_seq)
+        {
+            observed_prestart_remainder = true;
+            return;
+        }
+    }
 }
 
 static void receiveNormal(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -236,6 +269,7 @@ static void receiveReal(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;
     recordReceivedPacket(real_packets, &real_packets_count, buf);
+    observePrestartRemainder();
     lineReuseBuffer(l, buf);
 }
 
@@ -419,11 +453,15 @@ static void destroyTestTunnel(tunnel_t *t)
 
 static void resetCounters(void)
 {
-    generator_calls      = 0;
-    normal_packets_count = 0;
-    real_packets_count   = 0;
-    generator_mode       = kTestTlsGeneratorModeValid;
-    generated_record_len = 0;
+    generator_calls             = 0;
+    packet_arrival_counter      = 0;
+    normal_packets_count        = 0;
+    real_packets_count          = 0;
+    generator_mode              = kTestTlsGeneratorModeValid;
+    generated_record_len        = 0;
+    observed_prestart_state     = NULL;
+    observed_prestart_seq       = 0;
+    observed_prestart_remainder = false;
     memoryZero(normal_packets, sizeof(normal_packets));
     memoryZero(real_packets, sizeof(real_packets));
 }
@@ -968,6 +1006,115 @@ static void testOverlapSniCompleteTranscriptOrdering(void)
     destroyTestTunnel(t);
 }
 
+static void testCompletedCaptureReleasesPrestartRemainderInOrder(void)
+{
+    enum
+    {
+        kClientHelloLen = 1600,
+        kSegment1Len    = 1400,
+        kSegment2Len    = kClientHelloLen - kSegment1Len,
+        kRemainderLen   = 128
+    };
+
+    tunnel_t  normal                           = {0};
+    tunnel_t  real                             = {0};
+    tunnel_t *t                                = createTestTunnel(&normal, &real);
+    line_t    line                             = makeTestLine();
+    uint8_t   hello_buf[kClientHelloLen]       = {0};
+    uint8_t   remainder_payload[kRemainderLen] = {0};
+    uint32_t  start_seq                        = 999;
+    uint32_t  segment1_seq                     = 1000;
+    uint32_t  segment2_seq                     = 2400;
+    uint32_t  remainder_seq                    = 2600;
+
+    buildTlsClientHelloPayload(hello_buf, sizeof(hello_buf), "prestart-remainder.example");
+    memorySet(remainder_payload, 0xE5, sizeof(remainder_payload));
+    resetCounters();
+    generated_hello_len = kClientHelloLen;
+    warmFlow(t, &line, start_seq);
+
+    require(smugglesnitrickUpStreamPayload(
+                t, &line, makeTcpPacketWithSeq(remainder_seq, TCP_ACK, remainder_payload, sizeof(remainder_payload))),
+            "prestart remainder packet was not consumed");
+    require(smugglesnitrickUpStreamPayload(
+                t, &line, makeTcpPacketWithSeq(segment2_seq, TCP_ACK, hello_buf + kSegment1Len, kSegment2Len)),
+            "second ClientHello segment was not retained in prestart");
+
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    require(state->tls_prestart_slots[0].active, "prestart FIFO was not active before ClientHello start");
+    require(state->tls_prestart_slots[0].captured_packets_count == 2,
+            "prestart FIFO did not retain both out-of-order packets");
+
+    observed_prestart_state = state;
+    observed_prestart_seq   = remainder_seq;
+
+    require(
+        smugglesnitrickUpStreamPayload(t, &line, makeTcpPacketWithSeq(segment1_seq, TCP_ACK, hello_buf, kSegment1Len)),
+        "first ClientHello segment did not complete capture from prestart");
+
+    observed_prestart_state = NULL;
+
+    require(observed_prestart_remainder,
+            "prestart remainder was not retained while real ClientHello packets were emitted");
+    require(real_packets_count == 2, "real ClientHello packet count mismatch after prestart drain");
+    require(real_packets[0].seq == segment1_seq && real_packets[1].seq == segment2_seq,
+            "real ClientHello packets were emitted out of order");
+    require(normal_packets_count == 3, "prestart remainder or generated ClientHello packet was lost");
+    require(normal_packets[0].seq == remainder_seq && normal_packets[0].payload_len == kRemainderLen,
+            "prestart remainder was not emitted before the generated ClientHello batch");
+    require(normal_packets[1].seq == segment1_seq && normal_packets[2].seq == segment2_seq,
+            "generated ClientHello packet order changed");
+    require(real_packets[1].arrival_order < normal_packets[0].arrival_order,
+            "prestart remainder overtook the real ClientHello packets");
+    requireNoActiveTlsSlots(state);
+
+    usleep(70000);
+    wloopProcessEvents(GSTATE.shortcut_loops[0], 0);
+    destroyTestTunnel(t);
+}
+
+static void testFinFlushesPendingPrestartBeforeClose(void)
+{
+    tunnel_t  normal       = {0};
+    tunnel_t  real         = {0};
+    tunnel_t *t            = createTestTunnel(&normal, &real);
+    line_t    line         = makeTestLine();
+    uint8_t   payload[128] = {0};
+    uint32_t  start_seq    = 50000;
+    uint32_t  payload_seq  = start_seq + 1;
+    uint32_t  fin_seq      = payload_seq + sizeof(payload);
+
+    memorySet(payload, 0xF6, sizeof(payload));
+    resetCounters();
+    warmFlow(t, &line, start_seq);
+
+    require(
+        smugglesnitrickUpStreamPayload(t, &line, makeTcpPacketWithSeq(payload_seq, TCP_ACK, payload, sizeof(payload))),
+        "prestart data packet was not consumed");
+
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    require(state->tls_prestart_slots[0].active, "FIN test did not activate a prestart slot");
+    require(state->tls_prestart_slots[0].captured_packets_count == 1,
+            "FIN test prestart slot did not retain one packet");
+
+    sbuf_t *fin = makeTcpPacketWithSeq(fin_seq, TCP_FIN | TCP_ACK, NULL, 0);
+    require(! smugglesnitrickUpStreamPayload(t, &line, fin), "FIN packet was consumed");
+    tunnelNextUpStreamPayload(t, &line, fin);
+
+    require(normal_packets_count == 2, "prestart data and FIN were not both forwarded");
+    require(normal_packets[0].seq == payload_seq && normal_packets[0].payload_len == sizeof(payload),
+            "FIN overtook the held prestart data");
+    require(normal_packets[1].seq == fin_seq && (normal_packets[1].tcp_flags & TCP_FIN) != 0,
+            "FIN was not forwarded after held prestart data");
+    require(normal_packets[0].arrival_order < normal_packets[1].arrival_order,
+            "held prestart data was emitted after FIN");
+    requireNoActiveTlsSlots(state);
+
+    usleep(70000);
+    wloopProcessEvents(GSTATE.shortcut_loops[0], 0);
+    destroyTestTunnel(t);
+}
+
 static void testPendingPrestartTimeoutEntersPassthrough(void)
 {
     tunnel_t  normal       = {0};
@@ -1377,6 +1524,8 @@ int main(void)
     testFirstSniFragmentedClientHelloCapture();
     testFirstSniRejectsIpv4Fragments();
     testFirstSniCompleteTranscriptOrdering();
+    testCompletedCaptureReleasesPrestartRemainderInOrder();
+    testFinFlushesPendingPrestartBeforeClose();
     testPendingPrestartTimeoutEntersPassthrough();
     testNonZeroDelayBatchOrdering();
     testOverlapSniCompleteTranscriptOrdering();
