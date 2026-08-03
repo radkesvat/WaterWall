@@ -50,7 +50,7 @@ typedef struct ipmanipulator_flow_entry_s
     uint32_t                           bucket_index;
     uint32_t                           heap_index;
     /* Aligned trick-record storage; use ipmanipulatorFlowEntryRecord(). */
-    max_align_t record_storage[];
+    ww_max_align_t record_storage[];
 } ipmanipulator_flow_entry_t;
 
 typedef struct ipmanipulator_flow_shard_s

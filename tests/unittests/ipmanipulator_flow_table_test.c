@@ -23,6 +23,14 @@ typedef struct test_record_s
     bool     live;
 } test_record_t;
 
+typedef void (*test_function_pointer_t)(void);
+
+_Static_assert(_Alignof(ww_max_align_t) >= _Alignof(long double), "ww_max_align_t must align long double");
+_Static_assert(_Alignof(ww_max_align_t) >= _Alignof(long long), "ww_max_align_t must align long long");
+_Static_assert(_Alignof(ww_max_align_t) >= _Alignof(void *), "ww_max_align_t must align object pointers");
+_Static_assert(_Alignof(ww_max_align_t) >= _Alignof(test_function_pointer_t),
+               "ww_max_align_t must align function pointers");
+
 static uint32_t destroy_calls;
 static uint32_t destroy_counts[kMaxRecordIds];
 static void    *expected_destructor_context;
@@ -80,6 +88,8 @@ static bool insertFlow(ipmanipulator_flow_table_t *table, uint32_t src_addr, uin
     if (entry != NULL)
     {
         test_record_t *record = (test_record_t *) ipmanipulatorFlowEntryRecord(entry);
+
+        require((uintptr_t) record % _Alignof(ww_max_align_t) == 0, "flow-table record storage is misaligned");
 
         record->id       = id;
         record->src_addr = src_addr;

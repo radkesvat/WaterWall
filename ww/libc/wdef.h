@@ -3,6 +3,23 @@
 
 #include "wplatform.h"
 
+/*
+ * Maximum natural alignment for ordinary scalar and pointer types. MSVC's C
+ * <stddef.h> does not provide max_align_t, so keep the compatibility definition
+ * here rather than in individual consumers. Explicitly over-aligned types still
+ * require matching aligned allocation.
+ */
+#if defined(COMPILER_MSVC)
+typedef union ww_max_align_u {
+    long double floating_value;
+    long long   integer_value;
+    void       *object_pointer_value;
+    void (*function_pointer_value)(void);
+} ww_max_align_t;
+#else
+typedef max_align_t ww_max_align_t;
+#endif
+
 #ifndef ABS
 #define ABS(n)              ((n) > 0 ? (n) : -(n))
 #endif
