@@ -109,7 +109,7 @@ bool ipv4packetviewTcpFlagsAreOpeningSyn(uint8_t tcp_flags, uint32_t tcp_payload
         return false;
     }
 
-    return (tcp_flags & (uint8_t) ~(TCP_SYN | TCP_ECE | TCP_CWR)) == 0;
+    return (tcp_flags & (uint8_t) (0xFFU & ~(TCP_SYN | TCP_ECE | TCP_CWR))) == 0;
 }
 
 bool ipv4packetviewIsOpeningTcpSyn(const ipv4_packet_view_t *view)
