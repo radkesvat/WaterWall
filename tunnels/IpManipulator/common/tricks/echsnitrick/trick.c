@@ -214,11 +214,11 @@ static bool echsnitrickFlowIsForward(const ipmanipulator_echsni_flow_t *flow, co
 
 static uint64_t echsnitrickNextGeneration(ipmanipulator_tstate_t *state)
 {
-    uint64_t generation = (uint64_t) atomicInc(&state->echsni_next_generation) + 1U;
+    uint64_t generation = atomicIncU64(&state->echsni_next_generation) + 1U;
 
     if (generation == 0)
     {
-        generation = (uint64_t) atomicInc(&state->echsni_next_generation) + 1U;
+        generation = atomicIncU64(&state->echsni_next_generation) + 1U;
     }
 
     return generation;
