@@ -182,6 +182,9 @@ static void capturedeviceNoteUnexpectedReaderExit(capture_device_t *cdev)
 
 static WTHREAD_ROUTINE(capturedeviceReaderThreadMain) // NOLINT
 {
+    // Auxiliary device thread: it must stay unregistered and use only
+    // device-owned pools/channels, posting work to explicit event workers.
+    assert(! currentThreadHasRegisteredWID());
     capture_device_t *cdev = userdata;
     discard           cdev->routine_reader(cdev);
     capturedeviceNoteUnexpectedReaderExit(cdev);

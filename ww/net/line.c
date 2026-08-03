@@ -512,8 +512,19 @@ int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const 
         return ARES_EFORMERR;
     }
 
+    /*
+     * Resolution runs on the line's own worker: it submits to that worker's
+     * resolver and the completion callback touches line state. Reject a foreign
+     * or unregistered caller before taking a line reference, so the rejection
+     * needs no unwind and cannot reach another worker's resolver in release
+     * builds.
+     */
+    if (UNLIKELY(! lineIsOnCurrentEventWorker(line)))
+    {
+        return ARES_ENOTINITIALIZED;
+    }
+
     lineLock(line);
-    assert(lineIsOnCurrentEventWorker(line));
 
     line_dns_resolve_msg_t *msg = memoryAllocate(sizeof(*msg));
     if (msg == NULL)

@@ -1817,7 +1817,13 @@ void ipmanipulatorDelayBarrierTestFire(tunnel_t *t, const ipmanipulator_flow_key
     ipmanipulator_delay_timer_message_t *msg = memoryAllocate(sizeof(*msg));
 
     *msg = (ipmanipulator_delay_timer_message_t) {.key = *key, .kind = kind, .generation = generation};
-    ipmanipulatorDelayBarrierRunTimer(NULL, t, msg, NULL);
+
+    /*
+     * Fire it exactly as the worker-message path would: the callback takes its
+     * identity from the worker it was delivered to, so the hook must hand over
+     * the current event worker rather than a null placeholder.
+     */
+    ipmanipulatorDelayBarrierRunTimer(getCurrentEventWorker(), t, msg, NULL);
 }
 #endif
 

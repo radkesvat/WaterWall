@@ -159,8 +159,7 @@ static bool softiplimiterTrojanPrefixCanBeTrojanBytes(const uint8_t *bytes, size
         return false;
     }
 
-    if (UNLIKELY(len > kSoftIpLimiterTrojanPasswordLen + 1U &&
-                 bytes[kSoftIpLimiterTrojanPasswordLen + 1U] != '\n'))
+    if (UNLIKELY(len > kSoftIpLimiterTrojanPasswordLen + 1U && bytes[kSoftIpLimiterTrojanPasswordLen + 1U] != '\n'))
     {
         return false;
     }
@@ -169,8 +168,7 @@ static bool softiplimiterTrojanPrefixCanBeTrojanBytes(const uint8_t *bytes, size
 }
 
 softiplimiter_extract_result_t softiplimiterTryExtractIdentifierFromBytes(softiplimiter_identifier_mode_t mode,
-                                                                          const uint8_t *bytes,
-                                                                          size_t len,
+                                                                          const uint8_t *bytes, size_t len,
                                                                           hash_t *identifier_out)
 {
     if (UNLIKELY(identifier_out == NULL))
@@ -224,7 +222,7 @@ softiplimiter_extract_result_t softiplimiterTryExtractIdentifierFromBytes(softip
 }
 
 softiplimiter_extract_result_t softiplimiterTryExtractIdentifierFromStream(softiplimiter_identifier_mode_t mode,
-                                                                           buffer_stream_t *stream,
+                                                                           buffer_stream_t                *stream,
                                                                            hash_t *identifier_out)
 {
     size_t available = bufferstreamGetBufLen(stream);
@@ -329,12 +327,12 @@ bool softiplimiterTableAdmit(softiplimiter_identity_map_t *table, hash_t identif
                              const softiplimiter_ip_key_t *ip_key, uint8_t limit, uint64_t tolerance_ms,
                              uint64_t now_ms, softiplimiter_table_result_t *result)
 {
-    softiplimiter_identity_map_t_iter it = softiplimiter_identity_map_t_find(table, identifier);
+    softiplimiter_identity_map_t_iter it    = softiplimiter_identity_map_t_find(table, identifier);
     softiplimiter_identity_entry_t   *entry = NULL;
 
     if (it.ref == softiplimiter_identity_map_t_end(table).ref)
     {
-        softiplimiter_identity_entry_t new_entry = {0};
+        softiplimiter_identity_entry_t      new_entry = {0};
         softiplimiter_identity_map_t_result insert_result =
             softiplimiter_identity_map_t_insert(table, identifier, new_entry);
         entry = &insert_result.ref->second;
@@ -363,8 +361,8 @@ bool softiplimiterTableAdmit(softiplimiter_identity_map_t *table, hash_t identif
     }
 
     softiplimiter_ip_row_t *row = &entry->ips[entry->ip_count];
-    row->ip_key = *ip_key;
-    row->refs   = 1;
+    row->ip_key                 = *ip_key;
+    row->refs                   = 1;
     atomicStoreU64Relaxed(&row->last_seen_ms, now_ms);
     entry->ip_count += 1U;
     softiplimiterTableResultSet(result, kSoftIpLimiterTableOk, entry->ip_count, limit);
@@ -408,8 +406,7 @@ bool softiplimiterTableTouch(softiplimiter_identity_map_t *table, hash_t identif
 // is absent or expired, signalling the caller to retry under the exclusive lock
 // where pruning, erase and rejection accounting happen.
 static bool softiplimiterTableTouchShared(softiplimiter_identity_map_t *table, hash_t identifier,
-                                          const softiplimiter_ip_key_t *ip_key, uint64_t tolerance_ms,
-                                          uint64_t now_ms)
+                                          const softiplimiter_ip_key_t *ip_key, uint64_t tolerance_ms, uint64_t now_ms)
 {
     softiplimiter_identity_map_t_iter it = softiplimiter_identity_map_t_find(table, identifier);
     if (it.ref == softiplimiter_identity_map_t_end(table).ref)
@@ -480,13 +477,8 @@ bool softiplimiterAdmitLine(tunnel_t *t, line_t *l, softiplimiter_lstate_t *ls, 
     ls->ip_key_valid = true;
 
     rwlockWriteLock(&ts->table_lock);
-    bool ok = softiplimiterTableAdmit(&ts->table,
-                                      ls->identifier,
-                                      &ls->ip_key,
-                                      ts->simultaneous_user_limit,
-                                      ts->tolerance_ms,
-                                      now_ms,
-                                      result);
+    bool ok = softiplimiterTableAdmit(
+        &ts->table, ls->identifier, &ls->ip_key, ts->simultaneous_user_limit, ts->tolerance_ms, now_ms, result);
     rwlockWriteUnlock(&ts->table_lock);
 
     if (ok)
@@ -510,8 +502,7 @@ bool softiplimiterTouchLine(tunnel_t *t, softiplimiter_lstate_t *ls, uint64_t no
     // Fast path: shared read lock + atomic refresh for the common active case, so
     // concurrent workers do not serialize on the table lock for every payload.
     rwlockReadLock(&ts->table_lock);
-    bool refreshed =
-        softiplimiterTableTouchShared(&ts->table, ls->identifier, &ls->ip_key, ts->tolerance_ms, now_ms);
+    bool refreshed = softiplimiterTableTouchShared(&ts->table, ls->identifier, &ls->ip_key, ts->tolerance_ms, now_ms);
     rwlockReadUnlock(&ts->table_lock);
     if (LIKELY(refreshed))
     {
@@ -522,13 +513,8 @@ bool softiplimiterTouchLine(tunnel_t *t, softiplimiter_lstate_t *ls, uint64_t no
     // Slow path: exclusive lock for pruning, erase and accurate rejection result.
     // Only reached when the row is missing or has expired (i.e. about to close).
     rwlockWriteLock(&ts->table_lock);
-    bool ok = softiplimiterTableTouch(&ts->table,
-                                      ls->identifier,
-                                      &ls->ip_key,
-                                      ts->simultaneous_user_limit,
-                                      ts->tolerance_ms,
-                                      now_ms,
-                                      result);
+    bool ok = softiplimiterTableTouch(
+        &ts->table, ls->identifier, &ls->ip_key, ts->simultaneous_user_limit, ts->tolerance_ms, now_ms, result);
     rwlockWriteUnlock(&ts->table_lock);
 
     return ok;
@@ -568,16 +554,16 @@ static void softiplimiterLogLine(tunnel_t *t, line_t *l, const softiplimiter_lst
         snprintf(ip, sizeof(ip), "<none>");
     }
 
-    uint8_t count = result != NULL ? result->count : 0;
-    uint8_t limit = result != NULL ? result->limit : ts->simultaneous_user_limit;
-    const char *detail = reason != NULL ? reason
-                                        : softiplimiterTableReasonName(result != NULL ? result->reason
-                                                                                      : kSoftIpLimiterTableOk);
+    uint8_t     count = result != NULL ? result->count : 0;
+    uint8_t     limit = result != NULL ? result->limit : ts->simultaneous_user_limit;
+    const char *detail =
+        reason != NULL ? reason : softiplimiterTableReasonName(result != NULL ? result->reason : kSoftIpLimiterTableOk);
 
+    worker_wid_label_t wid_label;
     LOGW("SoftIpLimiter: %s on worker %s: mode=%s identifier=%" PRIu64
          " source-ip=%s reason=\"%s\" ip-count=%u limit=%u",
          action,
-         l != NULL ? workerWIDLabel(lineGetWID(l)) : workerWIDLabel(getWID()),
+         workerWIDLabel(l != NULL ? lineGetWID(l) : getWID(), &wid_label),
          softiplimiterIdentifierModeName(ts->identifier_mode),
          ls != NULL ? (uint64_t) ls->identifier : 0,
          ip,
@@ -666,7 +652,7 @@ void softiplimiterHandleInitialPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     bufferstreamPush(&ls->in_stream, buf);
 
-    hash_t identifier = 0;
+    hash_t                         identifier = 0;
     softiplimiter_extract_result_t extract =
         softiplimiterTryExtractIdentifierFromStream(ts->identifier_mode, &ls->in_stream, &identifier);
 

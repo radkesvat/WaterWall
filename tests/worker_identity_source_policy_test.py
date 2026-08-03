@@ -43,6 +43,10 @@ RAW_WID_COMPARISON_RE = re.compile(
 # Tunnel APIs must consume their message through the shared helpers in node.h.
 TUNNEL_API_RECYCLE_RE = re.compile(r"\bbufferpoolReuseBuffer\s*\(\s*getWorkerBufferPool")
 
+# A tunnel API owns its input buffer. Discarding it without releasing it leaks
+# the buffer back to nobody, so the discard idioms are banned outright.
+TUNNEL_API_DISCARD_RE = re.compile(r"^\s*(?:discard\s+message|\(\s*void\s*\)\s*message)\s*;")
+
 ALLOWED_TL_WID_FILES = {
     (ROOT / "ww" / "instance" / "worker.c").resolve(),
     (ROOT / "ww" / "instance" / "worker.h").resolve(),
@@ -55,9 +59,18 @@ ALLOWED_PROD_BIND_PRODUCTION_FILES = {
     (ROOT / "ww" / "lwip" / "contrib" / "ports" / "unix" / "port" / "sys_arch.c").resolve(),
 }
 
-# The worker-context accessors are implemented in terms of getWID(), and
-# reuseBuffer()/the abort diagnostic live next to them.
-ALLOWED_WORKER_CONTEXT_FILES = {
+# The checked accessors are implemented in terms of getWID(), so the files that
+# define them are exempt from the nesting rule (rule 4).
+ALLOWED_NESTED_CURRENT_WORKER_FILES = {
+    (ROOT / "ww" / "instance" / "global_state.c").resolve(),
+    (ROOT / "ww" / "instance" / "global_state.h").resolve(),
+}
+
+# The identity predicates themselves compare getWID() against a WID; that is what
+# they exist to encapsulate. This is deliberately narrower than the rule-4 list -
+# worker.c is *not* exempt from rule 4, so a getWorkerXxx(getWID()) creeping back
+# into it is still caught.
+ALLOWED_RAW_WID_COMPARISON_FILES = {
     (ROOT / "ww" / "instance" / "worker.c").resolve(),
     (ROOT / "ww" / "instance" / "worker.h").resolve(),
     (ROOT / "ww" / "instance" / "global_state.c").resolve(),
@@ -115,21 +128,21 @@ def main() -> int:
                         continue
 
                     # Rule 4: No current-worker resource lookup through an unvalidated WID.
-                    if NESTED_CURRENT_WORKER_RE.search(line) and resolved_path not in ALLOWED_WORKER_CONTEXT_FILES:
+                    if NESTED_CURRENT_WORKER_RE.search(line) and resolved_path not in ALLOWED_NESTED_CURRENT_WORKER_FILES:
                         violations.append(
                             f"{path.relative_to(ROOT)}:{line_number}: getWorkerXxx(getWID()) nesting; "
                             f"use getCurrentEventWorkerXxx() so a non-event thread cannot index worker 0"
                         )
 
                     # Rule 5: Worker-0 ownership must be a named predicate, not raw equality.
-                    if RAW_WORKER_ZERO_RE.search(line) and resolved_path not in ALLOWED_WORKER_CONTEXT_FILES:
+                    if RAW_WORKER_ZERO_RE.search(line) and resolved_path not in ALLOWED_RAW_WID_COMPARISON_FILES:
                         violations.append(
                             f"{path.relative_to(ROOT)}:{line_number}: raw getWID() == 0 worker-0 decision; "
                             f"use currentThreadIsEventWorkerWID(0)"
                         )
 
                     # Rule 6: Affinity must be a named predicate, not raw equality.
-                    if RAW_WID_COMPARISON_RE.search(line) and resolved_path not in ALLOWED_WORKER_CONTEXT_FILES:
+                    if RAW_WID_COMPARISON_RE.search(line) and resolved_path not in ALLOWED_RAW_WID_COMPARISON_FILES:
                         violations.append(
                             f"{path.relative_to(ROOT)}:{line_number}: raw current-WID comparison; use "
                             f"currentThreadIsEventWorkerWID(wid) or lineIsOnCurrentEventWorker(line)"
@@ -140,6 +153,13 @@ def main() -> int:
                         violations.append(
                             f"{path.relative_to(ROOT)}:{line_number}: tunnel API recycles its message by hand; "
                             f"use tunnelapiRecycleMessage()/tunnelapiUnsupportedMessage()"
+                        )
+
+                    # Rule 8: A tunnel API owns its input buffer and must consume it.
+                    if is_tunnel_api and TUNNEL_API_DISCARD_RE.match(line):
+                        violations.append(
+                            f"{path.relative_to(ROOT)}:{line_number}: tunnel API discards its owned input buffer; "
+                            f"consume it with tunnelapiRecycleMessage()/tunnelapiUnsupportedMessage()"
                         )
 
     if violations:

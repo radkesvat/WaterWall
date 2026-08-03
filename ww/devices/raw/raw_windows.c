@@ -162,6 +162,9 @@ static void rawdeviceNoteUnexpectedWriterExit(raw_device_t *rdev)
 
 static WTHREAD_ROUTINE(rawdeviceWriterThreadMain) // NOLINT
 {
+    // Auxiliary device thread: it must stay unregistered and use only
+    // device-owned pools/channels, posting work to explicit event workers.
+    assert(! currentThreadHasRegisteredWID());
     raw_device_t *rdev = userdata;
     discard       rdev->routine_writer(rdev);
     rawdeviceNoteUnexpectedWriterExit(rdev);

@@ -49,12 +49,14 @@ static void usercontrollerLogUserContext(tunnel_t *t, line_t *l, const usercontr
         return;
     }
 
+    worker_wid_label_t wid_label;
+
     if (! userHandleIsValid(&ls->handle))
     {
         LOGW("UserController: %s on worker %s: %s (invalid user handle: user-id=%" PRIu64 ", generation=%" PRIu64
              ", ip-key-type=%u)",
              action,
-             l != NULL ? workerWIDLabel(lineGetWID(l)) : workerWIDLabel(getWID()),
+             workerWIDLabel(l != NULL ? lineGetWID(l) : getWID(), &wid_label),
              reason != NULL ? reason : "unknown",
              ls->handle.user_id,
              ls->handle.generation,
@@ -64,7 +66,7 @@ static void usercontrollerLogUserContext(tunnel_t *t, line_t *l, const usercontr
 
     LOGW("UserController: %s on worker %s: %s (user-id=%" PRIu64 ", generation=%" PRIu64 ", ip-key-type=%u)",
          action,
-         l != NULL ? workerWIDLabel(lineGetWID(l)) : workerWIDLabel(getWID()),
+         workerWIDLabel(l != NULL ? lineGetWID(l) : getWID(), &wid_label),
          reason != NULL ? reason : "unknown",
          ls->handle.user_id,
          ls->handle.generation,

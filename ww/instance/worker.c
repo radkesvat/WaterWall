@@ -49,17 +49,20 @@ bool currentThreadIsEventWorkerWID(wid_t wid)
     return currentThreadIsEventWorker() && (getWID() == wid);
 }
 
-const char *workerWIDLabel(wid_t wid)
+const char *workerWIDLabel(wid_t wid, worker_wid_label_t *storage)
 {
-    static thread_local char label[8];
-
     if (wid == kInvalidWID)
     {
         return "unregistered";
     }
 
-    discard snprintf(label, sizeof(label), "%u", (unsigned) wid);
-    return label;
+    if (UNLIKELY(storage == NULL))
+    {
+        return "?";
+    }
+
+    discard snprintf(storage->text, sizeof(storage->text), "%u", (unsigned) wid);
+    return storage->text;
 }
 
 void workerBindCurrentThread(worker_t *worker)
@@ -368,11 +371,25 @@ void workerRun(worker_t *worker)
 int workerResolveDomainServiceAsync(wid_t wid, const char *domain, const char *service, int socktype, dns_resolve_cb cb,
                                     void *userdata)
 {
-    assert(wid == getWID());
-    assert(wid < getWorkersCount());
+    /*
+     * The resolver channel is worker-local c-ares state with no internal
+     * locking, and its socket watches live on this worker's loop. Only the
+     * owning event worker may submit to it, and that has to hold in release
+     * builds too: a foreign worker or an unregistered device thread reaching
+     * another worker's resolver corrupts it silently. Fail with a c-ares status
+     * instead of relying on an assertion.
+     */
+    if (UNLIKELY(wid >= getWorkersCount() || ! currentThreadIsEventWorkerWID(wid)))
+    {
+        return ARES_ENOTINITIALIZED;
+    }
 
     worker_t *worker = getWorker(wid);
-    assert(worker->loop != NULL);
+    if (UNLIKELY(worker->loop == NULL))
+    {
+        // The worker is tearing down; its resolver was already cleaned up.
+        return ARES_ENOTINITIALIZED;
+    }
 
     return asyncdnsResolve(&worker->dns_resolver, domain, service, socktype, cb, userdata);
 }

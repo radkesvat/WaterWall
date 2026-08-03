@@ -56,7 +56,7 @@ err_t wireguardifStartHandshake(wireguard_device_t *device, wireguard_peer_t *pe
 
         peer->send_handshake     = false;
         peer->last_initiation_tx = getTickMS();
-        result                    = wireguardifPeerOutput(device, buf, peer);
+        result                   = wireguardifPeerOutput(device, buf, peer);
     }
     return result;
 }
@@ -73,10 +73,8 @@ err_t wireguardifRetryHandshake(wireguard_device_t *device, wireguard_peer_t *pe
     }
 
     pending = peer->pending_handshake;
-    if (wireguardGetMessageType(pending.packet, pending.packet_len) != pending.message_type ||
-        pending.sender == 0 ||
-        (pending.message_type != MESSAGE_HANDSHAKE_INITIATION &&
-         pending.message_type != MESSAGE_HANDSHAKE_RESPONSE))
+    if (wireguardGetMessageType(pending.packet, pending.packet_len) != pending.message_type || pending.sender == 0 ||
+        (pending.message_type != MESSAGE_HANDSHAKE_INITIATION && pending.message_type != MESSAGE_HANDSHAKE_RESPONSE))
     {
         return ERR_ARG;
     }

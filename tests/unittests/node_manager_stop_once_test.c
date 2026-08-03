@@ -17,6 +17,15 @@
 
 #include "managers/node_manager.c" // NOLINT: needs the private config containers
 
+#include "worker_registry_fixture.h"
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and nodemanagerStopWorkerResources()
+ * rejects this test's worker-local teardown call.
+ */
+static test_worker_registry_t g_test_worker_registry;
+
 static unsigned int stop_calls_first;
 static unsigned int stop_calls_second;
 static unsigned int worker_stop_calls;
@@ -86,6 +95,8 @@ int main(void)
 
     // Worker-local teardown is a separate concern and must still run for the
     // owning worker after the process-wide stop already happened.
+    GSTATE.workers_count = 2; // one ordinary event worker plus the lwIP slot
+    testWorkerRegistryInstall(&g_test_worker_registry);
     testWorkerBindWID(0);
     nodemanagerStopWorkerResources(0);
     require(worker_stop_calls == 2, "onWorkerStop did not run once per tunnel on the owning worker");
@@ -96,6 +107,10 @@ int main(void)
     vec_configs_t_drop(&manager->configs);
     memoryFree(manager);
     nodemanager_gstate = NULL;
+
+    testWorkerUnbindWID();
+    testWorkerRegistryRestore(&g_test_worker_registry);
+    GSTATE.workers_count = 0;
 
     return 0;
 }

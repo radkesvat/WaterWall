@@ -344,8 +344,8 @@ static void smugglefintrickDetachQueuedPacketsLocked(ipmanipulator_tstate_t *sta
                                                      ipmanipulator_smuggle_fin_queued_packet_t **queued_packets,
                                                      uint32_t                                   *queued_packets_count)
 {
-    ipmanipulator_smuggle_fin_flow_t *flow     = smugglefintrickEntryRecord(entry);
-    wid_t owner = flow->line != NULL ? lineGetWID(flow->line) : getCurrentEventWorkerWID();
+    ipmanipulator_smuggle_fin_flow_t *flow  = smugglefintrickEntryRecord(entry);
+    wid_t                             owner = flow->line != NULL ? lineGetWID(flow->line) : getCurrentEventWorkerWID();
     ipmanipulator_flow_key_t          flow_key = smugglefintrickMakeFlowKey(flow);
 
     *queued_packets       = flow->queued_packets;

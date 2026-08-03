@@ -257,6 +257,144 @@ static void testTunnelApiHelpersRejectNonEventWorkers(void)
 }
 
 // ---------------------------------------------------------------------------
+// Fallible APIs that must reject a bad worker in release builds too
+// ---------------------------------------------------------------------------
+
+/*
+ * These are the paths where an assertion is not enough: they are reachable from
+ * device threads and from cross-worker code, and in a release build an
+ * assert-only guard would let a foreign caller reach another worker's state.
+ */
+
+static void probeDnsResult(void *userdata, int status, const char *error, const dns_resolved_addr_t *addrs,
+                           size_t naddrs)
+{
+    discard userdata;
+    discard status;
+    discard error;
+    discard addrs;
+    discard naddrs;
+
+    require(false, "a rejected resolve request still invoked its callback");
+}
+
+static void probeLineDnsResult(tunnel_t *t, line_t *l, void *userdata, int status, const char *error,
+                               const dns_resolved_addr_t *addrs, size_t naddrs)
+{
+    discard t;
+    discard l;
+    discard userdata;
+    discard status;
+    discard error;
+    discard addrs;
+    discard naddrs;
+
+    require(false, "a rejected line resolve request still invoked its callback");
+}
+
+static WTHREAD_ROUTINE(unregisteredResolveRoutine)
+{
+    atomic_int *rc = userdata;
+
+    require(getWID() == kInvalidWID, "resolve probe thread was not unregistered");
+    atomicStoreRelaxed(rc, workerResolveDomainAsync(0, "example.invalid", probeDnsResult, NULL));
+    return 0;
+}
+
+static void testResolverRejectsForeignCallers(void)
+{
+    // Worker 0 asking worker 1's resolver: rejected, no resolver touched.
+    require(workerResolveDomainAsync(1, "example.invalid", probeDnsResult, NULL) == ARES_ENOTINITIALIZED,
+            "resolver accepted a foreign worker id");
+
+    // Out of range, and the lwIP pseudo-worker which has no resolver at all.
+    require(workerResolveDomainAsync(kInvalidWID, "example.invalid", probeDnsResult, NULL) == ARES_ENOTINITIALIZED,
+            "resolver accepted kInvalidWID");
+    require(workerResolveDomainAsync(getTotalWorkersCount() - 1, "example.invalid", probeDnsResult, NULL) ==
+                ARES_ENOTINITIALIZED,
+            "resolver accepted the lwIP pseudo-worker");
+
+    // An unregistered thread must be rejected without touching worker 0.
+    atomic_int rc;
+    atomicStoreRelaxed(&rc, 0);
+    wthread_t thread;
+    require(threadCreate(&thread, unregisteredResolveRoutine, &rc) == kWThreadErrorNone,
+            "failed to spawn resolve probe thread");
+    require(threadJoin(thread) == 0, "failed to join resolve probe thread");
+    require(atomicLoadRelaxed(&rc) == ARES_ENOTINITIALIZED, "resolver accepted an unregistered thread");
+}
+
+static void testLineResolverRejectsForeignCallers(void)
+{
+    // A line owned by worker 1, queried from worker 0: rejected before the
+    // line is even referenced, so a failed call cannot leak a lock.
+    line_t foreign_line = {.wid = 1, .alive = true};
+    atomicStoreRelaxed(&foreign_line.refc, 1);
+
+    require(lineResolveDomainAsync(&foreign_line, "example.invalid", probeLineDnsResult, NULL, NULL) ==
+                ARES_ENOTINITIALIZED,
+            "line resolver accepted a foreign worker");
+    require(atomicLoadRelaxed(&foreign_line.refc) == 1, "rejected line resolve leaked a line reference");
+
+    line_t lwip_line = {.wid = (wid_t) (getTotalWorkersCount() - 1), .alive = true};
+    atomicStoreRelaxed(&lwip_line.refc, 1);
+    require(lineResolveDomainAsync(&lwip_line, "example.invalid", probeLineDnsResult, NULL, NULL) ==
+                ARES_ENOTINITIALIZED,
+            "line resolver accepted a line owned by the lwIP pseudo-worker");
+    require(atomicLoadRelaxed(&lwip_line.refc) == 1, "rejected line resolve leaked a line reference");
+}
+
+static line_t *allocateLineForTunnel(tunnel_t *owner, wid_t wid)
+{
+    line_t *line = memoryAllocateCacheAlignedZero(sizeof(line_t) + tunnelGetLineStateSize(owner));
+    require(line != NULL, "failed to allocate a pipe test line");
+    atomicStoreRelaxed(&line->refc, 1);
+    line->alive = true;
+    line->wid   = wid;
+    return line;
+}
+
+static void testPipeToRejectsBadWorkers(void)
+{
+    tunnel_t *child = tunnelCreate(NULL, 0, 0);
+    require(child != NULL, "failed to create the pipe test child tunnel");
+
+    tunnel_t *pipe_tunnel = pipetunnelCreate(child);
+    require(pipe_tunnel != NULL, "failed to create the pipe tunnel");
+
+    // pipeTo() takes the child and reaches its parent through t->prev; the pipe
+    // line state sits at the parent's offset.
+    child->prev                = pipe_tunnel;
+    pipe_tunnel->lstate_offset = 0;
+
+    line_t *owned_line = allocateLineForTunnel(pipe_tunnel, 0);
+
+    /*
+     * Self-target, the lwIP pseudo-worker and an out-of-range slot must all be
+     * refused. In a release build these used to be unchecked, and pipeTo() would
+     * go on to create a pair line for a worker that cannot own it.
+     */
+    require(! pipeTo(child, owned_line, 0), "pipeTo accepted the current worker as its target");
+    require(! pipeTo(child, owned_line, (wid_t) (getTotalWorkersCount() - 1)),
+            "pipeTo accepted the lwIP pseudo-worker as its target");
+    require(! pipeTo(child, owned_line, kInvalidWID), "pipeTo accepted kInvalidWID as its target");
+    require(! pipeTo(child, owned_line, (wid_t) getTotalWorkersCount()),
+            "pipeTo accepted an out-of-range target worker");
+
+    // A source line this worker does not own is refused as well.
+    line_t *foreign_line = allocateLineForTunnel(pipe_tunnel, 1);
+    require(! pipeTo(child, foreign_line, 0), "pipeTo accepted a source line owned by another worker");
+
+    // Every rejection happened before any pair line was built.
+    require(atomicLoadRelaxed(&owned_line->refc) == 1, "rejected pipeTo leaked a source line reference");
+    require(atomicLoadRelaxed(&foreign_line->refc) == 1, "rejected pipeTo leaked a source line reference");
+
+    memoryFreeAligned(foreign_line);
+    memoryFreeAligned(owned_line);
+    tunnelDestroy(pipe_tunnel);
+}
+
+// ---------------------------------------------------------------------------
 // Contract aborts (checked in a child process)
 // ---------------------------------------------------------------------------
 
@@ -340,6 +478,9 @@ int main(void)
     testInvalidTargetsCleanUpExactlyOnce();
 
     testTunnelApiHelpersRejectNonEventWorkers();
+    testResolverRejectsForeignCallers();
+    testLineResolverRejectsForeignCallers();
+    testPipeToRejectsBadWorkers();
 
     shutdownTestGlobalState();
 

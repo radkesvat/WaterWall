@@ -441,6 +441,9 @@ static void handleFlowDeleted(tun_loopguard_t *guard, const WINDIVERT_ADDRESS *a
 
 static WTHREAD_ROUTINE(routineLoopGuard) // NOLINT
 {
+    // Auxiliary device thread: it must stay unregistered and use only
+    // device-owned pools/channels, posting work to explicit event workers.
+    assert(! currentThreadHasRegisteredWID());
     tun_loopguard_t *guard = userdata;
 
     while (atomicLoadRelaxed(&guard->running))

@@ -1161,11 +1161,12 @@ _Noreturn void terminateProgram(int exit_code)
     // pthread_exit()/ExitThread() here can strand locks held by the fatal path
     // and deadlock worker-0 cleanup while it joins this thread, and running full
     // teardown off-main is the original signal bug in another shape.
+    worker_wid_label_t current_label;
     printError("SignalManager: terminateProgram(%d) called off the main thread (tid=%llu wid=%s); registered cleanup "
                "is SKIPPED. This call site must migrate to requestProgramShutdown() or abortProgramNow().\n",
                exit_code,
                (unsigned long long) getTID(),
-               workerWIDLabel(getWID()));
+               workerWIDLabel(getWID(), &current_label));
 
 #if defined(DEBUG)
     assert(! "terminateProgram() called off the main thread; use requestProgramShutdown()/abortProgramNow()");

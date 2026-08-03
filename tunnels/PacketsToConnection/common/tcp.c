@@ -84,9 +84,11 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
     wid_t owner_wid = lineGetWID(ls->line);
     if (UNLIKELY(! currentThreadIsEventWorkerWID(owner_wid)))
     {
+        worker_wid_label_t current_label;
+        worker_wid_label_t owner_label;
         LOGW("PacketsToConnection: tcp recv callback arrived on worker %s for line owned by worker %s; closing flow",
-             workerWIDLabel(getWID()),
-             workerWIDLabel(owner_wid));
+             workerWIDLabel(getWID(), &current_label),
+             workerWIDLabel(owner_wid, &owner_label));
         pbuf_free(p);
         err_t ret = ERR_OK;
         ptcDetachTcpPcbLocked(ls);
@@ -148,10 +150,12 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
     const wid_t owner_wid = route_ctx->packet_wid;
     if (UNLIKELY(! currentThreadIsEventWorkerWID(owner_wid)))
     {
+        worker_wid_label_t current_label;
+        worker_wid_label_t owner_label;
         LOGW(
             "PacketsToConnection: tcp accept callback arrived on worker %s for route owned by worker %s; dropping flow",
-            workerWIDLabel(getWID()),
-            workerWIDLabel(owner_wid));
+            workerWIDLabel(getWID(), &current_label),
+            workerWIDLabel(owner_wid, &owner_label));
         tcp_abort(newpcb);
         return ERR_ABRT;
     }

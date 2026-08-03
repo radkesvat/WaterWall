@@ -60,8 +60,8 @@ static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
     // The message was delivered to exactly one worker; take the packet line from
     // that worker instead of re-reading TLS.
     line_t        *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), worker->wid);
-    buffer_pool_t         *pool        = lineGetBufferPool(packet_line);
-    sbuf_t                *buf         = ptcAllocateBufferForPool(pool, packet_msg->len);
+    buffer_pool_t *pool        = lineGetBufferPool(packet_line);
+    sbuf_t        *buf         = ptcAllocateBufferForPool(pool, packet_msg->len);
 
     sbufSetLength(buf, packet_msg->len);
     memoryCopy(sbufGetMutablePtr(buf), packet_msg->data, packet_msg->len);

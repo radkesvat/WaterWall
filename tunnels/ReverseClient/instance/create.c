@@ -39,8 +39,8 @@ tunnel_t *reverseclientTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (! reverseclientHandshakeBuildFromSettings(settings, "ReverseClient", &ts->handshake_bytes,
-                                                  &ts->handshake_length))
+    if (! reverseclientHandshakeBuildFromSettings(
+            settings, "ReverseClient", &ts->handshake_bytes, &ts->handshake_length))
     {
         tunnelDestroy(t);
         return NULL;
@@ -74,7 +74,9 @@ tunnel_t *reverseclientTunnelCreate(node_t *node)
      */
     if (UNLIKELY(! currentThreadIsEventWorkerWID(0)))
     {
-        LOGF("ReverseClient: node creation must run on worker 0, caller worker: %s", workerWIDLabel(getWID()));
+        worker_wid_label_t current_label;
+        LOGF("ReverseClient: node creation must run on worker 0, caller worker: %s",
+             workerWIDLabel(getWID(), &current_label));
         reverseclientHandshakeDestroy(ts->handshake_bytes);
         tunnelDestroy(t);
         return NULL;

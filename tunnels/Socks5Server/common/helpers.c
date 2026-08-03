@@ -331,23 +331,24 @@ static void socks5serverSanitizeUsername(const uint8_t *username, uint8_t userna
     for (uint8_t i = 0; i < username_len; ++i)
     {
         uint8_t ch = username[i];
-        out[i] = (ch >= 0x20U && ch <= 0x7EU && ch != '"') ? (char) ch : '?';
+        out[i]     = (ch >= 0x20U && ch <= 0x7EU && ch != '"') ? (char) ch : '?';
     }
     out[username_len] = '\0';
 }
 
 static void socks5serverLogAuthRejected(tunnel_t *t, line_t *l, const uint8_t *username, uint8_t username_len,
-                                         const char *reason)
+                                        const char *reason)
 {
     socks5server_tstate_t *ts = tunnelGetState(t);
 
     if (ts->verbose && username != NULL && username_len > 0)
     {
-        char username_text[UINT8_MAX + 1U];
+        char               username_text[UINT8_MAX + 1U];
+        worker_wid_label_t wid_label;
         socks5serverSanitizeUsername(username, username_len, username_text);
         LOGW("Socks5Server: rejected SOCKS5 authentication for user \"%s\" on worker %s: %s",
              username_text,
-             l != NULL ? workerWIDLabel(lineGetWID(l)) : workerWIDLabel(getWID()),
+             workerWIDLabel(l != NULL ? lineGetWID(l) : getWID(), &wid_label),
              reason != NULL ? reason : "unknown");
         return;
     }
@@ -405,7 +406,7 @@ static bool socks5serverAuthUserFromClient(tunnel_t *t, line_t *l, const uint8_t
     auth_password_buf[username_size] = ':';
     memoryCopy(auth_password_buf + username_size + 1U, password, password_size);
 
-    user_handle_t handle = userHandleEmpty();
+    user_handle_t                             handle = userHandleEmpty();
     authenticationclient_user_lookup_result_t result =
         authenticationclientGetUserByPasswordWithResult(ts->auth_client_tunnel, auth_password_buf, &handle);
     memoryZero(auth_password_buf, sizeof(auth_password_buf));
@@ -429,8 +430,8 @@ static socks5server_assoc_shard_t *socks5serverGetAssocShard(tunnel_t *t, hash_t
 
 static uint64_t socks5serverNextAssociationToken(tunnel_t *t)
 {
-    socks5server_tstate_t *ts = tunnelGetState(t);
-    uint64_t token = atomicAddU64Explicit(&ts->next_association_token, 1ULL, memory_order_relaxed) + 1ULL;
+    socks5server_tstate_t *ts    = tunnelGetState(t);
+    uint64_t               token = atomicAddU64Explicit(&ts->next_association_token, 1ULL, memory_order_relaxed) + 1ULL;
     if (UNLIKELY(token == 0))
     {
         token = atomicAddU64Explicit(&ts->next_association_token, 1ULL, memory_order_relaxed) + 1ULL;
@@ -597,13 +598,11 @@ static bool socks5serverLookupUdpAssociationByKey(tunnel_t *t, hash_t key, user_
         *user_handle_out = it.ref->second.user_handle;
         if (username_out != NULL)
         {
-            *username_out =
-                it.ref->second.auth_username != NULL ? stringDuplicate(it.ref->second.auth_username) : NULL;
+            *username_out = it.ref->second.auth_username != NULL ? stringDuplicate(it.ref->second.auth_username) : NULL;
         }
         if (password_out != NULL)
         {
-            *password_out =
-                it.ref->second.auth_password != NULL ? stringDuplicate(it.ref->second.auth_password) : NULL;
+            *password_out = it.ref->second.auth_password != NULL ? stringDuplicate(it.ref->second.auth_password) : NULL;
         }
         found = true;
     }
@@ -1041,19 +1040,19 @@ bool socks5serverWrapUdpPayloadForClient(line_t *l, sbuf_t **buf_io, const addre
 bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lstate_t *ls, sbuf_t *buf)
 {
     user_handle_t     user_handle = userHandleEmpty();
-    hash_t            assoc_key = 0;
-    address_context_t target    = {0};
-    size_t            addr_len  = 0;
-    const uint8_t    *raw       = sbufGetRawPtr(buf);
-    size_t            len       = sbufGetLength(buf);
+    hash_t            assoc_key   = 0;
+    address_context_t target      = {0};
+    size_t            addr_len    = 0;
+    const uint8_t    *raw         = sbufGetRawPtr(buf);
+    size_t            len         = sbufGetLength(buf);
 
     // Only fetch the (duplicated) credentials the first time we record a user on
     // this line; afterwards they already live on the line state.
     bool  need_creds = ! ls->user_handle_recorded;
     char *assoc_user = NULL;
     char *assoc_pass = NULL;
-    if (! socks5serverLookupUdpAssociation(t, l, &user_handle, &assoc_key, need_creds ? &assoc_user : NULL,
-                                           need_creds ? &assoc_pass : NULL))
+    if (! socks5serverLookupUdpAssociation(
+            t, l, &user_handle, &assoc_key, need_creds ? &assoc_user : NULL, need_creds ? &assoc_pass : NULL))
     {
         lineReuseBuffer(l, buf);
         socks5serverCloseUdpClientLine(t, l);
@@ -1192,7 +1191,8 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
 
             if (selected == kSocks5NoAcceptable)
             {
-                const char *reason = ts->no_auth ? "no-auth method not offered" : "username-password method not offered";
+                const char *reason =
+                    ts->no_auth ? "no-auth method not offered" : "username-password method not offered";
                 socks5serverLogAuthRejected(t, l, NULL, 0, reason);
                 socks5serverCloseControlLineBidirectional(t, l);
                 return false;
@@ -1239,10 +1239,10 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
                 return true;
             }
 
-            sbuf_t        *auth_buf = bufferstreamReadExact(&ls->in_stream, required);
-            const uint8_t *raw      = sbufGetRawPtr(auth_buf);
+            sbuf_t        *auth_buf    = bufferstreamReadExact(&ls->in_stream, required);
+            const uint8_t *raw         = sbufGetRawPtr(auth_buf);
             user_handle_t  user_handle = userHandleEmpty();
-            bool authenticated =
+            bool           authenticated =
                 socks5serverAuthUserFromClient(t, l, raw + 2, head[1], raw + 3 + head[1], plen, &user_handle);
             if (authenticated)
             {

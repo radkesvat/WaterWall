@@ -680,6 +680,26 @@ void pipetunnelDestroy(tunnel_t *t)
 }
 
 /**
+ * @brief Reports a pipeTo() worker-identity violation.
+ *
+ * Kept out of line so each label gets its own storage: workerWIDLabel() writes
+ * into caller-provided scratch, and printing three WIDs in one statement needs
+ * three distinct buffers.
+ */
+static void pipeTunnelLogWIDViolation(const char *reason, tunnel_t *parent_tunnel, line_t *l, wid_t wid_to)
+{
+    worker_wid_label_t current_label;
+    worker_wid_label_t line_label;
+    worker_wid_label_t target_label;
+
+    LOGE("PipeTunnel: %s, line: %p, tunnel: %p", reason, (void *) l, (void *) parent_tunnel);
+    LOGE("PipeTunnel: WID: %s, line WID: %s , to WID: %s",
+         workerWIDLabel(getWID(), &current_label),
+         workerWIDLabel(lineGetWID(l), &line_label),
+         workerWIDLabel(wid_to, &target_label));
+}
+
+/**
  * @brief Pipe to a specific WID.
  *
  * @param t Pointer to the tunnel.
@@ -693,31 +713,23 @@ bool pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
 
     wid_t wid = lineGetWID(l);
 
-    // we no longer need these checks, thank god all related bugs are fixed
-#ifdef DEBUG
-    if (! lineIsOnCurrentEventWorker(l))
+    /*
+     * These are runtime checks, not debug assertions: pipeTo() is fallible by
+     * contract and its result is already tested by every caller, and getting
+     * either WID wrong makes lineCreateForWorker() below allocate a line for a
+     * worker that cannot own it. Reject the call instead of building a
+     * cross-worker pair on top of a bad identity.
+     */
+    if (UNLIKELY(! lineIsOnCurrentEventWorker(l)))
     {
-        LOGF("PipeTunnel: Pipe From different WID is not allowed, line: %p, tunnel: %p", l, parent_tunnel);
-        LOGF("PipeTunnel: WID: %s, line WID: %s , to WID: %s",
-             workerWIDLabel(getWID()),
-             workerWIDLabel(lineGetWID(l)),
-             workerWIDLabel(wid_to));
-        assert(false);
-        abortProgramNow(1);
+        pipeTunnelLogWIDViolation("pipe source line is not owned by the calling worker", parent_tunnel, l, wid_to);
         return false;
     }
-    if (! workerWIDIsEventWorker(wid_to) || wid_to == wid)
+    if (UNLIKELY(! workerWIDIsEventWorker(wid_to) || wid_to == wid))
     {
-        LOGF("PipeTunnel: Pipe target must be a different event worker, line: %p, tunnel: %p", l, parent_tunnel);
-        LOGF("PipeTunnel: WID: %s, line WID: %s , to WID: %s",
-             workerWIDLabel(getWID()),
-             workerWIDLabel(lineGetWID(l)),
-             workerWIDLabel(wid_to));
-        assert(false);
-        abortProgramNow(1);
+        pipeTunnelLogWIDViolation("pipe target must be a different event worker", parent_tunnel, l, wid_to);
         return false;
     }
-#endif
 
     if (ls->pair_line)
     {

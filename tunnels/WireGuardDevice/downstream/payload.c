@@ -211,8 +211,8 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
                     if ((keypair != NULL) && wireguarddeviceGetPlaintextPacketMetadata(buf, &source, &packet_len) &&
                         wireguarddeviceCheckPeerAllowedIp(peer, &source))
                     {
-                        wgd_tstate_t *ts   = (wgd_tstate_t *) device;
-                        line_t       *line = tunnelchainGetWorkerPacketLine(ts->tunnel->chain, getCurrentEventWorkerWID());
+                        wgd_tstate_t *ts = (wgd_tstate_t *) device;
+                        line_t *line = tunnelchainGetWorkerPacketLine(ts->tunnel->chain, getCurrentEventWorkerWID());
 
                         sbufSetLength(buf, packet_len);
                         wireguarddeviceStateUnlock(ts);

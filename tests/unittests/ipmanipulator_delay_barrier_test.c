@@ -1,4 +1,12 @@
 #include "IpManipulator/structure.h"
+#include "worker_registry_fixture.h"
+
+/*
+ * Fake worker table for the stubbed GSTATE below. Without it the identity
+ * predicates correctly report "not an event worker" and the checked
+ * current-worker accessors reject this test.
+ */
+static test_worker_registry_t g_test_worker_registry;
 
 enum
 {
@@ -370,11 +378,18 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
 int main(void)
 {
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
+
+    GSTATE.workers_count = 2; // one ordinary event worker plus the lwIP slot
+    testWorkerRegistryInstall(&g_test_worker_registry);
     testWorkerBindWID(0);
 
     testKind(kIpManipulatorDelayBarrierFirstSni);
     testKind(kIpManipulatorDelayBarrierSmuggleSni);
     testKind(kIpManipulatorDelayBarrierOverlapSni);
+
+    testWorkerUnbindWID();
+    testWorkerRegistryRestore(&g_test_worker_registry);
+    GSTATE.workers_count = 0;
 
     globalstateDestroySecureRandom();
     return 0;
