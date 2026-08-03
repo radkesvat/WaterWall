@@ -80,12 +80,16 @@ static timed_message_t    timed_messages[kMaxTimedMessages];
 static uint32_t           timed_message_count;
 static forwarded_packet_t forwarded_packets[kMaxForwarded];
 static uint32_t           forwarded_count;
+static void (*forward_hook)(uint32_t index);
+static test_fixture_t *forward_hook_fixture;
+static test_fixture_t *before_fake_send_fixture;
 
 static void require(bool condition, const char *message);
 
 void ipmanipulatorEchSniTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                           WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                           void *arg2, void *arg3);
+void ipmanipulatorEchSniTestBeforeFakeSend(tunnel_t *t);
 
 /* helpers.c reaches for the Smuggle-SNI owner hook; ECH tests never use it. */
 void smugglesnitrickSetFlowPassthrough(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
@@ -126,6 +130,11 @@ void ipmanipulatorEchSniTestScheduleTimed(wid_t wid, WorkerMessageCallback callb
 static void recordForwardedPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;
+
+    if (forward_hook != NULL)
+    {
+        forward_hook(forwarded_count);
+    }
 
     require(forwarded_count < kMaxForwarded, "forwarded-packet capture overflow");
     require(lineGetWID(l) == getWID(), "packet emitted on a non-owner worker");
@@ -219,8 +228,11 @@ static void resetCaptures(void)
 {
     memoryZero(timed_messages, sizeof(timed_messages));
     memoryZero(forwarded_packets, sizeof(forwarded_packets));
-    timed_message_count = 0;
-    forwarded_count     = 0;
+    timed_message_count      = 0;
+    forwarded_count          = 0;
+    forward_hook             = NULL;
+    forward_hook_fixture     = NULL;
+    before_fake_send_fixture = NULL;
 }
 
 static test_fixture_t fixtureCreateWithSni(test_env_t *env, const char *configured_sni)
@@ -531,6 +543,21 @@ static bool feedDownstream(test_fixture_t *fixture, sbuf_t *buf)
         lineReuseBuffer(fixture->line, buf);
     }
     return consumed;
+}
+
+void ipmanipulatorEchSniTestBeforeFakeSend(tunnel_t *t)
+{
+    discard t;
+
+    if (before_fake_send_fixture == NULL)
+    {
+        return;
+    }
+
+    test_fixture_t *fixture  = before_fake_send_fixture;
+    before_fake_send_fixture = NULL;
+    require(! feedDownstream(fixture, makeServerPacket(fixture, 9000, TCP_RST | TCP_ACK)),
+            "downstream RST from the fake-send hook was consumed");
 }
 
 /*
@@ -1125,6 +1152,112 @@ static void startSuccessfulDelay(test_fixture_t *fixture, uint8_t *hello, uint16
     requireSuccessfulCapture(fixture, *hello_len, 2);
 }
 
+static void closeDuringFirstSecondPhaseEmission(uint32_t index)
+{
+    if (index != 2U)
+    {
+        return;
+    }
+
+    forward_hook = NULL;
+    require(forward_hook_fixture != NULL, "the phase-two close hook has no fixture");
+    require(! feedDownstream(forward_hook_fixture, makeServerPacket(forward_hook_fixture, 9000, TCP_RST | TCP_ACK)),
+            "downstream RST from the phase-two hook was consumed");
+}
+
+static void testDownstreamRstDuringSecondPhaseEmission(test_env_t *env)
+{
+    resetCaptures();
+
+    test_fixture_t fixture = fixtureCreate(env);
+    uint8_t        hello[1024];
+    uint16_t       hello_len = buildMatchingClientHello(hello, sizeof(hello));
+
+    openFlow(&fixture, TCP_SYN);
+    feedClientHelloSegments(&fixture, hello, hello_len, 4, false);
+    requireSuccessfulCapture(&fixture, hello_len, 4);
+
+    runTimedMessage(0);
+    require(forwarded_count == 2, "the first original did not emit before the phase-two close hook");
+
+    forward_hook_fixture = &fixture;
+    forward_hook         = closeDuringFirstSecondPhaseEmission;
+    runTimedMessage(1);
+    forward_hook_fixture = NULL;
+    forward_hook         = NULL;
+
+    require(forwarded_count == 3, "a phase-two close did not cancel the later pending originals");
+
+    fixtureDestroy(&fixture);
+}
+
+static void killLineDuringFirstSecondPhaseEmission(uint32_t index)
+{
+    if (index != 2U)
+    {
+        return;
+    }
+
+    forward_hook = NULL;
+    require(forward_hook_fixture != NULL, "the phase-two line-death hook has no fixture");
+    forward_hook_fixture->line->alive = false;
+}
+
+static void testDeadLineDuringSecondPhaseDrains(test_env_t *env)
+{
+    resetCaptures();
+
+    test_fixture_t fixture = fixtureCreate(env);
+    uint8_t        hello[1024];
+    uint16_t       hello_len = buildMatchingClientHello(hello, sizeof(hello));
+
+    openFlow(&fixture, TCP_SYN);
+    feedClientHelloSegments(&fixture, hello, hello_len, 4, false);
+    requireSuccessfulCapture(&fixture, hello_len, 4);
+    runTimedMessage(0);
+
+    forward_hook_fixture = &fixture;
+    forward_hook         = killLineDuringFirstSecondPhaseEmission;
+    runTimedMessage(1);
+    forward_hook_fixture = NULL;
+    forward_hook         = NULL;
+
+    ipmanipulator_echsni_flow_t flow = {0};
+    require(findClientFlow(&fixture, &flow), "line death removed the releasing ECH flow");
+    require(flow.phase == kIpManipulatorEchSniFlowPhasePassthrough,
+            "line death stranded the ECH flow in its releasing phase");
+    for (uint8_t i = 0; i < flow.pending_original_count; ++i)
+    {
+        require(flow.pending_original_packets[i].buf == NULL, "line death left a pending original undrained");
+    }
+
+    fixture.line->alive = true;
+    fixtureDestroy(&fixture);
+}
+
+static void testCloseDuringFakeInnerEmission(test_env_t *env)
+{
+    resetCaptures();
+
+    test_fixture_t fixture = fixtureCreate(env);
+    uint8_t        hello[1024];
+    uint16_t       hello_len = buildMatchingClientHello(hello, sizeof(hello));
+
+    openFlow(&fixture, TCP_SYN);
+    before_fake_send_fixture = &fixture;
+    feedClientHelloSegments(&fixture, hello, hello_len, 2, false);
+    before_fake_send_fixture = NULL;
+
+    require(forwarded_count == 0, "the fake inner packet emitted after its generation closed");
+    require(timed_message_count == 0, "the closed generation scheduled an original-release timer");
+    require(activeCaptureSlots(&fixture) == 0, "the fake-send close leaked a capture slot");
+
+    ipmanipulator_echsni_flow_t flow = {0};
+    require(! findClientFlow(&fixture, &flow), "the fake-send close left its flow record alive");
+
+    fixtureDestroy(&fixture);
+}
+
 static void testDownstreamRstBeforeFirstRelease(test_env_t *env)
 {
     resetCaptures();
@@ -1580,6 +1713,9 @@ int main(void)
     testCaptureOutOfOrderAndPartialOverlapFailOpen(&env);
     testSynClassification(&env);
     testInnerSniMatchingMatrix(&env);
+    testDownstreamRstDuringSecondPhaseEmission(&env);
+    testDeadLineDuringSecondPhaseDrains(&env);
+    testCloseDuringFakeInnerEmission(&env);
     testDownstreamRstBeforeFirstRelease(&env);
     testDownstreamFinBetweenReleases(&env);
     testUpstreamCloseDuringDelayPhases(&env);

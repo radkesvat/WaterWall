@@ -86,6 +86,7 @@ enum
 void ipmanipulatorEchSniTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                           WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                           void *arg2, void *arg3);
+void ipmanipulatorEchSniTestBeforeFakeSend(tunnel_t *t);
 #endif
 
 /* ---------------------------------------------------------------- packets -- */
@@ -759,23 +760,21 @@ static void echsnitrickScheduleOriginalRelease(tunnel_t *t, const echsnitrick_fl
                                                uint8_t release_phase, uint32_t delay_ms, uint32_t next_delay_ms);
 
 /*
- * Takes the originals that this release phase owns. Phase 0 takes exactly the
- * first packet; phase 1 takes packets 2 through N so they are emitted back to
- * back in stream order instead of racing on equal deadlines.
+ * Takes the one original this release phase owns next. Detaching a single packet
+ * per shard-lock acquisition keeps every later packet cancellable by a close that
+ * lands while the earlier ones are still being emitted.
  */
-static uint8_t echsnitrickTakeReleaseBatch(tunnel_t *t, const echsnitrick_flow_identity_t *identity,
-                                           uint8_t release_phase, ipmanipulator_captured_packet_t *out,
-                                           uint8_t out_capacity, bool *schedule_next)
+static bool echsnitrickTakeNextReleasePacket(tunnel_t *t, const echsnitrick_flow_identity_t *identity,
+                                             uint8_t release_phase, ipmanipulator_captured_packet_t *out,
+                                             bool *schedule_next)
 {
     ipmanipulator_tstate_t *state = tunnelGetState(t);
-    uint8_t                 taken = 0;
-
-    *schedule_next = false;
+    bool                    taken = false;
 
     ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->echsni_table, &identity->key);
     if (shard == NULL)
     {
-        return 0;
+        return false;
     }
 
     ipmanipulator_flow_entry_t *entry = echsnitrickFindByIdentityLocked(state, shard, identity);
@@ -787,17 +786,15 @@ static uint8_t echsnitrickTakeReleaseBatch(tunnel_t *t, const echsnitrick_flow_i
         {
             uint8_t first = release_phase == kEchSniReleasePhaseFirst ? 0U : 1U;
             uint8_t last  = release_phase == kEchSniReleasePhaseFirst ? 1U : flow->pending_original_count;
+            uint8_t index = flow->next_release_index;
 
-            if (flow->next_release_index == first)
+            if (index >= first && index < last && index < flow->pending_original_count)
             {
-                for (uint8_t i = first; i < last && i < flow->pending_original_count && taken < out_capacity; ++i)
-                {
-                    out[taken++]                      = flow->pending_original_packets[i];
-                    flow->pending_original_packets[i] = (ipmanipulator_captured_packet_t) {0};
-                }
-
-                flow->next_release_index = (uint8_t) (first + taken);
+                *out                                  = flow->pending_original_packets[index];
+                flow->pending_original_packets[index] = (ipmanipulator_captured_packet_t) {0};
+                flow->next_release_index              = (uint8_t) (index + 1U);
                 *schedule_next = release_phase == kEchSniReleasePhaseFirst && flow->pending_original_count > 1U;
+                taken          = true;
 
                 if (flow->next_release_index >= flow->pending_original_count)
                 {
@@ -820,18 +817,14 @@ static void echsnitrickRunDelayedOriginalRelease(worker_t *worker, void *arg1, v
     discard worker;
     discard arg2;
 
-    tunnel_t                       *t       = arg1;
-    echsnitrick_delayed_release_t  *release = arg3;
-    ipmanipulator_captured_packet_t batch[kIpManipulatorTlsCaptureMaxPackets];
-    bool                            schedule_next = false;
+    tunnel_t                      *t       = arg1;
+    echsnitrick_delayed_release_t *release = arg3;
 
     if (t == NULL || release == NULL)
     {
         memoryFree(release);
         return;
     }
-
-    memoryZero(batch, sizeof(batch));
 
     echsnitrick_flow_identity_t identity = {
         .generation = release->generation,
@@ -842,47 +835,46 @@ static void echsnitrickRunDelayedOriginalRelease(worker_t *worker, void *arg1, v
         .dst_port = release->dst_port,
     };
 
-    uint8_t taken = echsnitrickTakeReleaseBatch(
-        t, &identity, release->release_phase, batch, (uint8_t) ARRAY_SIZE(batch), &schedule_next);
+    bool     alive         = true;
+    bool     schedule_next = false;
+    bool     emitted_any   = false;
+    uint32_t next_delay_ms = release->next_delay_ms;
 
-    if (taken == 0)
+    for (uint8_t i = 0; i < kIpManipulatorTlsCaptureMaxPackets; ++i)
     {
-        memoryFree(release);
-        return;
-    }
+        ipmanipulator_captured_packet_t packet = {0};
 
-    if (! lineIsOnCurrentEventWorker(batch[0].line))
-    {
-        for (uint8_t i = 0; i < taken; ++i)
+        if (! echsnitrickTakeNextReleasePacket(t, &identity, release->release_phase, &packet, &schedule_next))
         {
-            echsnitrickDestroyCapturedPacket(&batch[i]);
+            break;
         }
 
-        memoryFree(release);
-        LOGF("IpManipulator: ech-sni-trick original release ran on the wrong worker");
-        abortProgramNow(1);
-    }
+        if (! lineIsOnCurrentEventWorker(packet.line))
+        {
+            echsnitrickDestroyCapturedPacket(&packet);
+            memoryFree(release);
+            LOGF("IpManipulator: ech-sni-trick original release ran on the wrong worker");
+            abortProgramNow(1);
+        }
 
-    bool alive = true;
-    for (uint8_t i = 0; i < taken; ++i)
-    {
+        emitted_any = true;
+
         if (alive)
         {
-            alive = echsnitrickSendUpstreamDirect(t, batch[i].line, batch[i].buf);
+            alive = echsnitrickSendUpstreamDirect(t, packet.line, packet.buf);
         }
         else
         {
-            lineReuseBuffer(batch[i].line, batch[i].buf);
+            lineReuseBuffer(packet.line, packet.buf);
         }
 
-        batch[i].line = NULL;
-        batch[i].buf  = NULL;
+        packet.line = NULL;
+        packet.buf  = NULL;
     }
 
-    uint32_t next_delay_ms = release->next_delay_ms;
     memoryFree(release);
 
-    if (alive && schedule_next)
+    if (emitted_any && alive && schedule_next)
     {
         echsnitrickScheduleOriginalRelease(t, &identity, kEchSniReleasePhaseRest, next_delay_ms, 0);
     }
@@ -931,6 +923,29 @@ static bool echsnitrickGetPendingReleaseWorker(tunnel_t *t, const echsnitrick_fl
 
     ipmanipulatorFlowShardUnlock(shard);
     return found;
+}
+
+/* Confirms the generation still owns its pending originals before anything is emitted. */
+static bool echsnitrickGenerationIsReleasing(tunnel_t *t, const echsnitrick_flow_identity_t *identity)
+{
+    ipmanipulator_tstate_t     *state     = tunnelGetState(t);
+    bool                        releasing = false;
+    ipmanipulator_flow_shard_t *shard     = ipmanipulatorFlowTableLockShard(&state->echsni_table, &identity->key);
+
+    if (shard == NULL)
+    {
+        return false;
+    }
+
+    ipmanipulator_flow_entry_t *entry = echsnitrickFindByIdentityLocked(state, shard, identity);
+
+    if (entry != NULL)
+    {
+        releasing = echsnitrickEntryRecord(entry)->phase == kIpManipulatorEchSniFlowPhaseReleasing;
+    }
+
+    ipmanipulatorFlowShardUnlock(shard);
+    return releasing;
 }
 
 static void echsnitrickScheduleOriginalRelease(tunnel_t *t, const echsnitrick_flow_identity_t *identity,
@@ -1236,6 +1251,18 @@ static void echsnitrickProcessCompletedCapture(tunnel_t *t, const echsnitrick_fl
          (unsigned int) original_count,
          state->trick_ech_sni_shard1_delay_ms,
          state->trick_ech_sni_shard2_delay_ms);
+
+#ifdef IPMANIPULATOR_ECHSNI_TEST_HOOKS
+    ipmanipulatorEchSniTestBeforeFakeSend(t);
+#endif
+
+    if (! echsnitrickGenerationIsReleasing(t, identity))
+    {
+        /* A concurrent close destroyed the originals through the record destructor. */
+        echsnitrickDestroyStandalonePacket(&inner_packet);
+        LOGD("IpManipulator: ech-sni-trick dropped the fake inner ClientHello because the generation closed");
+        return;
+    }
 
     discard echsnitrickSendUpstreamDirect(t, line, inner_packet);
 
