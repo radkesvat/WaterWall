@@ -2,6 +2,10 @@
 #include "worker_registry_fixture.h"
 #include "wwapi.h"
 
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+#include "WireGuardDevice/structure.h"
+#endif
+
 /*
  * Fake worker table for the stubbed GSTATE below. Without it the identity
  * predicates correctly report "not an event worker" and the checked
@@ -95,15 +99,51 @@ static wid_t affinityOf(const sbuf_t *buf)
     return wid;
 }
 
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+static void requireWireGuardAffinityMatches(const sbuf_t *buf)
+{
+    wid_t expected = affinityOf(buf);
+
+    for (wid_t current_wid = 0; current_wid < getWorkersCount(); ++current_wid)
+    {
+        wid_t target_wid = kInvalidWID;
+        bool  should_hop =
+            wireguarddeviceInnerPacketTargetWID(sbufGetRawPtr(buf), sbufGetLength(buf), current_wid, &target_wid);
+
+        require(target_wid == expected, "WireGuard selected a different flow-affine worker");
+        require(should_hop == (target_wid != current_wid), "WireGuard made the wrong same-worker decision");
+    }
+}
+
+static void requireWireGuardKeepsMalformedHere(const uint8_t *packet, uint32_t length)
+{
+    wid_t target_wid = kInvalidWID;
+
+    require(! wireguarddeviceInnerPacketTargetWID(packet, length, 2, &target_wid),
+            "WireGuard tried to hop an unparseable inner packet");
+    require(target_wid == 2, "WireGuard changed the worker for an unparseable inner packet");
+}
+#endif
+
 static void testIpv4SymmetryAndFragments(void)
 {
     sbuf_t *forward = makeIpv4Packet(0x0A000001, 12345, 0xC0000201, 443, 6, 0);
     sbuf_t *reverse = makeIpv4Packet(0xC0000201, 443, 0x0A000001, 12345, 6, 0);
     require(affinityOf(forward) == affinityOf(reverse), "IPv4 TCP flow was not symmetric");
 
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+    requireWireGuardAffinityMatches(forward);
+    requireWireGuardAffinityMatches(reverse);
+#endif
+
     sbuf_t *udp_forward = makeIpv4Packet(0x0A000002, 5353, 0xC6336401, 53, 17, 0);
     sbuf_t *udp_reverse = makeIpv4Packet(0xC6336401, 53, 0x0A000002, 5353, 17, 0);
     require(affinityOf(udp_forward) == affinityOf(udp_reverse), "IPv4 UDP flow was not symmetric");
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+    requireWireGuardAffinityMatches(udp_forward);
+    requireWireGuardAffinityMatches(udp_reverse);
+#endif
 
     sbuf_t *first_fragment = makeIpv4Packet(0x0A000003, 1000, 0xCB007101, 2000, 6, 0x2000);
     sbuf_t *later_fragment = makeIpv4Packet(0x0A000003, 9999, 0xCB007101, 8888, 6, 185);
@@ -112,10 +152,20 @@ static void testIpv4SymmetryAndFragments(void)
     require(affinityOf(first_fragment) == affinityOf(later_fragment),
             "first and later IPv4 fragments of one datagram selected different workers");
 
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+    requireWireGuardAffinityMatches(first_fragment);
+    requireWireGuardAffinityMatches(later_fragment);
+#endif
+
     sbuf_t *fragment_forward = makeIpv4Packet(0x0A000003, 1000, 0xCB007101, 2000, 6, 1);
     sbuf_t *fragment_reverse = makeIpv4Packet(0xCB007101, 9999, 0x0A000003, 8888, 6, 1);
     require(affinityOf(fragment_forward) == affinityOf(fragment_reverse),
             "non-initial IPv4 fragments incorrectly depended on payload bytes");
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+    requireWireGuardAffinityMatches(fragment_forward);
+    requireWireGuardAffinityMatches(fragment_reverse);
+#endif
 
     sbufDestroy(fragment_reverse);
     sbufDestroy(fragment_forward);
@@ -136,9 +186,19 @@ static void testIpv6Symmetry(void)
     sbuf_t *tcp_reverse = makeIpv6Packet(dst, 443, src, 23456, 6);
     require(affinityOf(tcp_forward) == affinityOf(tcp_reverse), "IPv6 TCP flow was not symmetric");
 
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+    requireWireGuardAffinityMatches(tcp_forward);
+    requireWireGuardAffinityMatches(tcp_reverse);
+#endif
+
     sbuf_t *udp_forward = makeIpv6Packet(src, 5353, dst, 53, 17);
     sbuf_t *udp_reverse = makeIpv6Packet(dst, 53, src, 5353, 17);
     require(affinityOf(udp_forward) == affinityOf(udp_reverse), "IPv6 UDP flow was not symmetric");
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+    requireWireGuardAffinityMatches(udp_forward);
+    requireWireGuardAffinityMatches(udp_reverse);
+#endif
 
     sbufDestroy(udp_reverse);
     sbufDestroy(udp_forward);
@@ -156,6 +216,12 @@ static void testMalformedPacketsAndSingleWorker(void)
     require(! deviceFlowAffineWID(truncated_ipv4, sizeof(truncated_ipv4), &wid), "truncated IPv4 packet parsed");
     require(! deviceFlowAffineWID(truncated_ipv6, sizeof(truncated_ipv6), &wid), "truncated IPv6 packet parsed");
     require(! deviceFlowAffineWID(garbage, sizeof(garbage), &wid), "non-IP packet parsed");
+
+#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
+    requireWireGuardKeepsMalformedHere(truncated_ipv4, sizeof(truncated_ipv4));
+    requireWireGuardKeepsMalformedHere(truncated_ipv6, sizeof(truncated_ipv6));
+    requireWireGuardKeepsMalformedHere(garbage, sizeof(garbage));
+#endif
 
     GSTATE.workers_count = 2;
     testWorkerRegistryInstall(&g_test_worker_registry);

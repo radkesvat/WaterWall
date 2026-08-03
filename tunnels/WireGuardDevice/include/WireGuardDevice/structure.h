@@ -78,6 +78,8 @@ void              wireguarddeviceHandleTransportPayload(tunnel_t *t, line_t *l, 
 wireguard_peer_t *wireguarddevicePeerLookupByAllowedIp(wireguard_device_t *device, const ip_addr_t *ipaddr);
 bool              wireguarddeviceCheckPeerAllowedIp(const wireguard_peer_t *peer, const ip_addr_t *ipaddr);
 
+bool wireguarddeviceInnerPacketTargetWID(const uint8_t *packet, uint32_t length, wid_t current_wid, wid_t *target_wid);
+
 /***************************************** WireGuard Interface ****************************************** */
 
 /* wireguard device cycle is the heart of the device that is by defalut runs every 400 ms*/

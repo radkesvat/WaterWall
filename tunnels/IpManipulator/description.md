@@ -1,5 +1,5 @@
 <!--
-Documentation version: 117
+Documentation version: 118
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx, and both files must keep the same documentation version.
 -->
 
@@ -725,6 +725,10 @@ If `preserve-tcp-bitflags` is enabled:
 ### Stateful flow tables
 
 Every stateful trick keeps its records in its own bounded, sharded flow table:
+
+Packet delivery into a layer-3 chain is flow-affine on both device and WireGuard
+paths, so both directions of a parseable flow mutate its records on the same
+owner worker.
 
 - the canonical key normalizes the two endpoints, so a forward packet and its
   reverse select the same hash, the same shard and the same record

@@ -127,6 +127,13 @@ if(TARGET ww)
 
   add_executable(device_flow_affinity_test device_flow_affinity_test.c)
   target_link_libraries(device_flow_affinity_test PRIVATE ww)
+  if(TARGET WireGuardDevice)
+    target_compile_definitions(device_flow_affinity_test PRIVATE DEVICE_FLOW_AFFINITY_TEST_WIREGUARD=1)
+    target_include_directories(device_flow_affinity_test PRIVATE
+      ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice
+    )
+    target_link_libraries(device_flow_affinity_test PRIVATE WireGuardDevice)
+  endif()
   add_dependencies(waterwall_unit_tests device_flow_affinity_test)
 
   add_waterwall_unit_test(

@@ -1,5 +1,6 @@
 #include "structure.h"
 
+#include "devices/device_flow_affinity.h"
 #include "loggers/network_logger.h"
 
 static uint8_t wireguarddeviceCountMaskBits32(uint32_t value)
@@ -242,7 +243,7 @@ bool wireguarddeviceForwardTransportPacket(wgd_tstate_t *state, line_t *line, sb
     return true;
 }
 
-void wireguarddeviceForwardInnerPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf)
+static void wireguarddeviceForwardInnerPacketHere(wgd_tstate_t *state, line_t *line, sbuf_t *buf)
 {
     tunnel_t *tunnel = state->tunnel;
 
@@ -253,6 +254,82 @@ void wireguarddeviceForwardInnerPacket(wgd_tstate_t *state, line_t *line, sbuf_t
     }
 
     tunnelNextUpStreamPayload(tunnel, line, buf);
+}
+
+bool wireguarddeviceInnerPacketTargetWID(const uint8_t *packet, uint32_t length, wid_t current_wid, wid_t *target_wid)
+{
+    if (target_wid == NULL)
+    {
+        return false;
+    }
+
+    *target_wid = current_wid;
+    return deviceFlowAffineWID(packet, length, target_wid) && *target_wid != current_wid;
+}
+
+static void wireguarddeviceReplayInnerPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    wgd_tstate_t *state = arg1;
+    line_t       *line  = arg2;
+    sbuf_t       *buf   = arg3;
+
+    assert(worker != NULL);
+    assert(worker->wid == lineGetWID(line));
+    discard worker;
+
+    if (lineIsAlive(line))
+    {
+        wireguarddeviceForwardInnerPacketHere(state, line, buf);
+    }
+    else
+    {
+        lineReuseBuffer(line, buf);
+    }
+
+    lineUnlock(line);
+}
+
+static void wireguarddeviceCleanupInnerPacket(void *arg1, void *arg2, void *arg3)
+{
+    discard arg1;
+
+    line_t *line = arg2;
+    sbuf_t *buf  = arg3;
+
+    if (lineIsOnCurrentEventWorker(line))
+    {
+        lineReuseBuffer(line, buf);
+    }
+    else
+    {
+        sbufDestroy(buf);
+    }
+
+    lineUnlock(line);
+}
+
+void wireguarddeviceForwardInnerPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf)
+{
+    wid_t target_wid = 0;
+
+    assert(lineIsOnCurrentEventWorker(line));
+
+    if (! wireguarddeviceInnerPacketTargetWID(sbufGetRawPtr(buf), sbufGetLength(buf), lineGetWID(line), &target_wid))
+    {
+        wireguarddeviceForwardInnerPacketHere(state, line, buf);
+        return;
+    }
+
+    line_t *target = tunnelchainGetWorkerPacketLine(state->tunnel->chain, target_wid);
+
+    assert(target != NULL);
+    lineLock(target);
+    discard sendWorkerMessageForceQueueWithCleanup(target_wid,
+                                                   (WorkerMessageCallback) wireguarddeviceReplayInnerPacketOnWorker,
+                                                   wireguarddeviceCleanupInnerPacket,
+                                                   state,
+                                                   target,
+                                                   buf);
 }
 
 wireguard_peer_t *wireguarddevicePeerLookupByAllowedIp(wireguard_device_t *device, const ip_addr_t *ipaddr)
