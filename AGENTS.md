@@ -67,6 +67,10 @@ A correct tunnel is never "just" a parser or encoder. It must preserve callback
     `PacketReceiver` are absorbers, not fatal anchors. Never `lineDestroy()` in
     any category.
 12. **Validate through the CMake preset**, not hand-rolled compiler commands.
+    Prefer a focused set of tests selected for the files, tunnel, and behavior
+    changed; the full suite takes roughly 10–15 minutes and is not the default for
+    basic or narrowly scoped tasks. Running the full suite is allowed whenever the
+    scope, risk, or nature of the change warrants it.
 13. **Worker identity is explicit (`WID`) and invalid by default (`kInvalidWID`).**
     WID represents a registered worker slot index (`0 .. WORKERS_COUNT - 1`), not
     an OS thread ID (`getTID()`). Unregistered threads (device reader/writer
@@ -438,9 +442,11 @@ cmake --build --preset linux -j8
 # focused build of one changed tunnel (fast iteration)
 cmake --build --preset linux --target TlsClient -j8
 
-# tests: all, or one case by registered name
-ctest --preset linux --output-on-failure
+# preferred: run the registered test(s) related to the change
 ctest --preset linux --output-on-failure -R '^waterwall\.tls_roundtrip$'
+
+# allowed when broader validation is warranted: run the full suite (about 10-15 min)
+ctest --preset linux --output-on-failure
 
 # run a single integration case directly while debugging
 tests/run_waterwall_case.sh build/linux/Release/Waterwall tests/cases/tls_roundtrip 60
@@ -449,6 +455,12 @@ tests/run_waterwall_case.sh build/linux/Release/Waterwall tests/cases/tls_roundt
 Build/validation rules:
 
 - The binary is at `build/linux/Release/Waterwall` (also `Debug/`, `RelWithDebInfo/`).
+- **Prefer focused, task-relevant tests over the full test suite.** Select the
+  smallest meaningful set that covers the changed tunnel, code path, and likely
+  regressions. The full suite takes roughly 10–15 minutes, so do not run it by
+  default for basic or narrowly scoped work. It remains fully allowed when broad
+  changes, shared core contracts, cross-tunnel effects, release-level confidence,
+  or an agent's technical judgment make it useful.
 - **Run clang-format on every C/header file you modify**, using the project's
   `.clang-format` file. The executable in this environment is `clang-format-19`:
 
@@ -490,7 +502,8 @@ Build/validation rules:
 6. **Implement the smallest change** that preserves composition. Avoid speculative
    abstractions.
 7. **Add/update a focused test** — ideally one that fails if a direction is reversed.
-8. **Validate** with the preset build and relevant tests.
+8. **Validate** with the preset build and a focused set of relevant tests by
+   default; expand to the full suite when the scope or risk warrants it.
 
 ---
 
@@ -519,7 +532,9 @@ Build/validation rules:
 - Packet lines stay alive at runtime; packet-line state treated as worker-local;
   packet-line init source verified.
 - No `initialized` flag added that the source does not require.
-- Tests exercise the intended direction; validation used preset build metadata.
+- The chosen tests cover the changed behavior and likely regressions; the full
+  suite was used only when broader validation was warranted. Validation used
+  preset build metadata.
 
 ---
 
