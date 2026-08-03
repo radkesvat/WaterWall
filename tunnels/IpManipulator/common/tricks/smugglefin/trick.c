@@ -150,7 +150,7 @@ static bool smugglefintrickFlowIsReverse(const ipmanipulator_smuggle_fin_flow_t 
 static bool smugglefintrickExpectedFinMatches(const ipmanipulator_smuggle_fin_flow_t  *flow,
                                               const smugglefintrick_tcp_packet_info_t *info)
 {
-    uint8_t flags_without_ecn = (uint8_t) (info->tcp_flags & (uint8_t) ~(TCP_ECE | TCP_CWR));
+    uint32_t flags_without_ecn = (uint32_t) info->tcp_flags & ~(TCP_ECE | TCP_CWR);
 
     return flow->paused && info->tcp_payload_len == 0 && flags_without_ecn == (TCP_FIN | TCP_ACK) &&
            info->src_addr == flow->expected_src_addr && info->dst_addr == flow->expected_dst_addr &&
