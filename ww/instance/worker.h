@@ -124,34 +124,20 @@ bool currentThreadIsEventWorker(void);
  */
 bool currentThreadIsEventWorkerWID(wid_t wid);
 
-enum
-{
-    kWorkerWIDLabelSize = 8
-};
-
 /**
- * @brief Scratch storage for one formatted WID label.
+ * @brief Diagnostic integer conversion for worker IDs, rendering kInvalidWID as -1.
+ *
+ * Diagnostic logging helper only. Preserves every valid WID (including the lwIP
+ * pseudo-worker) numerically and converts kInvalidWID to -1 for formatters using %d.
+ * Does not validate whether a non-sentinel WID is currently registered.
+ *
+ * @param wid Worker ID to convert.
+ * @return Integer representation of @p wid, or -1 for kInvalidWID.
  */
-typedef struct worker_wid_label_s
+static inline int workerWIDForLog(wid_t wid)
 {
-    char text[kWorkerWIDLabelSize];
-} worker_wid_label_t;
-
-/**
- * @brief Formats a WID for diagnostics, rendering kInvalidWID as "unregistered".
- *
- * For log lines that may run on any thread. Pair it with getTID() when the
- * message needs to identify the actual OS thread.
- *
- * The caller supplies the storage on purpose: a shared scratch buffer would make
- * two labels in one log statement alias, printing the same WID twice. Give each
- * label in an expression its own @p storage.
- *
- * @param wid Worker id to format.
- * @param storage Caller-owned scratch, valid for as long as the label is used.
- * @return @p storage->text, or a string literal for kInvalidWID.
- */
-const char *workerWIDLabel(wid_t wid, worker_wid_label_t *storage);
+    return wid == kInvalidWID ? -1 : (int) wid;
+}
 
 /**
  * @brief Test-only helper to bind the current thread to a test WID.

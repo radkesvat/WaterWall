@@ -3114,9 +3114,8 @@ socket_manager_state_t *socketmanagerCreate(void)
     // manager's own worker/wid fields are structurally worker-0 owned.
     if (UNLIKELY(! currentThreadIsEventWorkerWID(0)))
     {
-        worker_wid_label_t current_label;
-        LOGF("SocketManager: socketmanagerCreate() must run on worker 0, current worker: %s",
-             workerWIDLabel(getWID(), &current_label));
+        LOGF("SocketManager: socketmanagerCreate() must run on worker 0, current worker: %d",
+             workerWIDForLog(getWID()));
         abortProgramNow(1);
     }
     socketmanager_gstate->worker = getWorker(0);

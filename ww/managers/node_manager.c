@@ -294,10 +294,9 @@ static void initializeLineOnTargetWorker(void *worker, void *_tunnel, void *_lin
          * teardown can no longer assume line state is structurally valid, so
          * this runs on a worker but must still hard-abort.
          */
-        worker_wid_label_t current_label;
-        LOGF("NodeManager: node startup failure: line initialization failed for node (\"%s\") on worker %s",
+        LOGF("NodeManager: node startup failure: line initialization failed for node (\"%s\") on worker %d",
              tunnel->node->name,
-             workerWIDLabel(getWID(), &current_label));
+             workerWIDForLog(getWID()));
         abortProgramNow(1);
         return;
     }

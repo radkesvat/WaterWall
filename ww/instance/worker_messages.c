@@ -170,11 +170,9 @@ static bool workerMessageRejectUndeliverable(wid_t wid, WorkerMessageCleanupCall
         return false;
     }
 
-    worker_wid_label_t target_label;
-    worker_wid_label_t caller_label;
-    LOGE("worker message dropped: target WID %s is not an ordinary event worker (posted from worker %s, tid %llu)",
-         workerWIDLabel(wid, &target_label),
-         workerWIDLabel(getWID(), &caller_label),
+    LOGE("worker message dropped: target WID %d is not an ordinary event worker (posted from worker %d, tid %llu)",
+         workerWIDForLog(wid),
+         workerWIDForLog(getWID()),
          (unsigned long long) getTID());
 
     if (cleanup != NULL)

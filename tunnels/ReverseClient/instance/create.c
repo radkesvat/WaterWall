@@ -74,9 +74,7 @@ tunnel_t *reverseclientTunnelCreate(node_t *node)
      */
     if (UNLIKELY(! currentThreadIsEventWorkerWID(0)))
     {
-        worker_wid_label_t current_label;
-        LOGF("ReverseClient: node creation must run on worker 0, caller worker: %s",
-             workerWIDLabel(getWID(), &current_label));
+        LOGF("ReverseClient: node creation must run on worker 0, caller worker: %d", workerWIDForLog(getWID()));
         reverseclientHandshakeDestroy(ts->handshake_bytes);
         tunnelDestroy(t);
         return NULL;

@@ -612,10 +612,9 @@ _Noreturn void globalstateAbortNotEventWorker(const char *accessor)
 {
     const wid_t wid = getWID();
 
-    worker_wid_label_t wid_label;
-    LOGF("%s: caller is not an ordinary event worker (wid %s, tid %llu)",
+    LOGF("%s: caller is not an ordinary event worker (wid %d, tid %llu)",
          accessor,
-         workerWIDLabel(wid, &wid_label),
+         workerWIDForLog(wid),
          (unsigned long long) getTID());
 
     abortProgramNow(1);

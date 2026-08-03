@@ -90,6 +90,11 @@ static void testPredicatesRejectUnregisteredAndLwip(void)
     require(tryGetCurrentEventWorker() == NULL, "lwIP pseudo-worker got an event worker");
     require(! currentThreadIsEventWorkerWID(0), "lwIP pseudo-worker claimed to own worker 0");
     require(! currentThreadIsEventWorkerWID(lwip_wid), "lwIP pseudo-worker passed an event-worker check");
+    require(workerWIDForLog(0) == 0, "workerWIDForLog(0) did not return 0");
+    require(workerWIDForLog(1) == 1, "workerWIDForLog(1) did not return 1");
+    require(workerWIDForLog(lwip_wid) == (int) lwip_wid, "workerWIDForLog did not preserve lwIP WID numerically");
+    require(workerWIDForLog(lwip_wid) != -1, "workerWIDForLog mapped lwIP WID to -1");
+    require(workerWIDForLog(kInvalidWID) == -1, "workerWIDForLog(kInvalidWID) did not return -1");
 
     testWorkerBindWID(0);
 }

@@ -857,7 +857,7 @@ MANIFEST = [
     # initialization invalidates the assumptions orderly teardown relies on.
     # ------------------------------------------------------------------
     ("ww/managers/node_manager.c", "initializeLineOnTargetWorker", 1,
-     ("NodeManager: node startup failure: line initialization failed for node (\\\"%s\\\") on worker %s",),
+     ("NodeManager: node startup failure: line initialization failed for node (\\\"%s\\\") on worker %d",),
      "worker-task invariant: NodeManager persistent packet line died during chain init"),
 ]
 

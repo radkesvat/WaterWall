@@ -559,11 +559,10 @@ static void softiplimiterLogLine(tunnel_t *t, line_t *l, const softiplimiter_lst
     const char *detail =
         reason != NULL ? reason : softiplimiterTableReasonName(result != NULL ? result->reason : kSoftIpLimiterTableOk);
 
-    worker_wid_label_t wid_label;
-    LOGW("SoftIpLimiter: %s on worker %s: mode=%s identifier=%" PRIu64
+    LOGW("SoftIpLimiter: %s on worker %d: mode=%s identifier=%" PRIu64
          " source-ip=%s reason=\"%s\" ip-count=%u limit=%u",
          action,
-         workerWIDLabel(l != NULL ? lineGetWID(l) : getWID(), &wid_label),
+         workerWIDForLog(l != NULL ? lineGetWID(l) : getWID()),
          softiplimiterIdentifierModeName(ts->identifier_mode),
          ls != NULL ? (uint64_t) ls->identifier : 0,
          ip,

@@ -1511,9 +1511,8 @@ void authenticationclientOpenControlLine(tunnel_t *t)
     // authenticationclientScheduleReconnect() instead).
     if (UNLIKELY(! currentThreadIsEventWorkerWID(0)))
     {
-        worker_wid_label_t current_label;
-        LOGF("AuthenticationClient: control line must be opened on worker 0, caller worker: %s",
-             workerWIDLabel(getWID(), &current_label));
+        LOGF("AuthenticationClient: control line must be opened on worker 0, caller worker: %d",
+             workerWIDForLog(getWID()));
         abortProgramNow(1);
         return;
     }
@@ -1614,9 +1613,7 @@ void authenticationclientScheduleReconnect(tunnel_t *t)
     {
         if (ts->verbose)
         {
-            worker_wid_label_t current_label;
-            LOGD("AuthenticationClient: queued reconnect on worker 0 from worker %s",
-                 workerWIDLabel(getWID(), &current_label));
+            LOGD("AuthenticationClient: queued reconnect on worker 0 from worker %d", workerWIDForLog(getWID()));
         }
         sendWorkerMessageForceQueue(0, authenticationclientOpenControlLineOnWorker0, t, NULL, NULL);
         return;

@@ -1449,10 +1449,9 @@ void wioAttach(wloop_t *loop, wio_t *io)
     assert((io->events & WW_WRITE) != WW_WRITE);
     if (! currentThreadIsEventWorkerWID((wid_t) loop->wid))
     {
-        worker_wid_label_t current_label;
-        printError("wioAttach: loop wid %ld is not owned by the current worker (wid %s)",
+        printError("wioAttach: loop wid %ld is not owned by the current worker (wid %d)",
                    loop->wid,
-                   workerWIDLabel(getWID(), &current_label));
+                   workerWIDForLog(getWID()));
         assert(false);
         // Category D: attaching an io to a loop owned by another worker is a
         // lifecycle-corruption bug; unwinding from here is not provably safe.

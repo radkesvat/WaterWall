@@ -681,22 +681,14 @@ void pipetunnelDestroy(tunnel_t *t)
 
 /**
  * @brief Reports a pipeTo() worker-identity violation.
- *
- * Kept out of line so each label gets its own storage: workerWIDLabel() writes
- * into caller-provided scratch, and printing three WIDs in one statement needs
- * three distinct buffers.
  */
 static void pipeTunnelLogWIDViolation(const char *reason, tunnel_t *parent_tunnel, line_t *l, wid_t wid_to)
 {
-    worker_wid_label_t current_label;
-    worker_wid_label_t line_label;
-    worker_wid_label_t target_label;
-
     LOGE("PipeTunnel: %s, line: %p, tunnel: %p", reason, (void *) l, (void *) parent_tunnel);
-    LOGE("PipeTunnel: WID: %s, line WID: %s , to WID: %s",
-         workerWIDLabel(getWID(), &current_label),
-         workerWIDLabel(lineGetWID(l), &line_label),
-         workerWIDLabel(wid_to, &target_label));
+    LOGE("PipeTunnel: WID: %d, line WID: %d , to WID: %d",
+         workerWIDForLog(getWID()),
+         workerWIDForLog(lineGetWID(l)),
+         workerWIDForLog(wid_to));
 }
 
 /**

@@ -61,12 +61,10 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
     const wid_t owner_wid = route_ctx->packet_wid;
     if (UNLIKELY(! currentThreadIsEventWorkerWID(owner_wid)))
     {
-        worker_wid_label_t current_label;
-        worker_wid_label_t owner_label;
-        LOGW("PacketsToConnection: udp recv callback arrived on worker %s for route owned by worker %s; dropping "
+        LOGW("PacketsToConnection: udp recv callback arrived on worker %d for route owned by worker %d; dropping "
              "datagram",
-             workerWIDLabel(getWID(), &current_label),
-             workerWIDLabel(owner_wid, &owner_label));
+             workerWIDForLog(getWID()),
+             workerWIDForLog(owner_wid));
         pbuf_free(p);
         return;
     }
