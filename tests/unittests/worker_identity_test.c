@@ -4,6 +4,7 @@
 
 #if defined(__unix__) || defined(__APPLE__) || defined(UNIX)
 #include <pthread.h>
+#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #define HAS_UNIX_FORK    1
@@ -61,6 +62,22 @@ static void testUnregisteredDefaults(void)
     require(! currentThreadIsEventWorker(), "main test thread reported event worker before setup");
     require(! workerWIDIsRegistered(kInvalidWID), "kInvalidWID was reported as registered");
     require(! workerWIDIsEventWorker(kInvalidWID), "kInvalidWID was reported as event worker");
+}
+
+static void testWorkerWIDForLog(void)
+{
+    require(workerWIDForLog(0) == 0, "workerWIDForLog(0) did not return 0");
+    require(workerWIDForLog(1) == 1, "workerWIDForLog(1) did not return 1");
+    require(workerWIDForLog(42) == 42, "workerWIDForLog(42) did not return 42");
+
+    const wid_t lwip_wid = 99;
+    require(workerWIDForLog(lwip_wid) == (int) lwip_wid, "workerWIDForLog did not preserve lwIP WID numerically");
+    require(workerWIDForLog(lwip_wid) != -1, "workerWIDForLog mapped lwIP WID to -1");
+
+    require(workerWIDForLog(kInvalidWID) == -1, "workerWIDForLog(kInvalidWID) did not return -1");
+
+    require(workerWIDForLog(0) == 0 && workerWIDForLog(2) == 2 && workerWIDForLog(kInvalidWID) == -1,
+            "multiple workerWIDForLog calls in single expression failed");
 }
 
 static void testPlainAndNativeThreadsUnregistered(void)
@@ -203,14 +220,20 @@ static void testInvalidAccessorAssertion(void)
 
     int status = 0;
     require(waitpid(pid, &status, 0) == pid, "waitpid failed for testInvalidAccessorAssertion");
+#if defined(DEBUG)
+    require(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT,
+            "getWorkerBufferPool(kInvalidWID) did not terminate through its Debug assertion");
+#else
     require(WIFEXITED(status) && WEXITSTATUS(status) == 1,
             "getWorkerBufferPool(kInvalidWID) did not exit cleanly via abortProgramNow(1)");
+#endif
 }
 #endif
 
 int main(void)
 {
     testUnregisteredDefaults();
+    testWorkerWIDForLog();
     testPlainAndNativeThreadsUnregistered();
     testWorkerBindingAndPredicates();
 #if defined(HAS_UNIX_FORK)
