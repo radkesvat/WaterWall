@@ -42,6 +42,9 @@ RAW_WID_COMPARISON_RE = re.compile(
 
 # Tunnel APIs must consume their message through the shared helpers in node.h.
 TUNNEL_API_RECYCLE_RE = re.compile(r"\bbufferpoolReuseBuffer\s*\(\s*getWorkerBufferPool")
+TUNNEL_API_SHARED_HELPER_RE = re.compile(
+    r"^\s*return\s+tunnelapi(?:RecycleMessage|UnsupportedMessage)\s*\(\s*message\s*\)\s*;\s*$"
+)
 
 # A tunnel API owns its input buffer. Discarding it without releasing it leaks
 # the buffer back to nobody, so the discard idioms are banned outright.
@@ -66,15 +69,13 @@ ALLOWED_NESTED_CURRENT_WORKER_FILES = {
     (ROOT / "ww" / "instance" / "global_state.h").resolve(),
 }
 
-# The identity predicates themselves compare getWID() against a WID; that is what
-# they exist to encapsulate. This is deliberately narrower than the rule-4 list -
-# worker.c is *not* exempt from rule 4, so a getWorkerXxx(getWID()) creeping back
-# into it is still caught.
-ALLOWED_RAW_WID_COMPARISON_FILES = {
-    (ROOT / "ww" / "instance" / "worker.c").resolve(),
-    (ROOT / "ww" / "instance" / "worker.h").resolve(),
-    (ROOT / "ww" / "instance" / "global_state.c").resolve(),
-    (ROOT / "ww" / "instance" / "global_state.h").resolve(),
+# The identity predicate itself must compare getWID() against the requested WID.
+# Exempt that function, not its whole file: an assert-only affinity check added to
+# another worker.c function must still be rejected by rules 5 and 6.
+ALLOWED_RAW_WID_COMPARISON_REGIONS = {
+    (ROOT / "ww" / "instance" / "worker.c").resolve(): re.compile(
+        r"\bbool\s+currentThreadIsEventWorkerWID\s*\([^)]*\)\s*\{[^{}]*\}", re.DOTALL
+    ),
 }
 
 # Tunnel API entry points that legitimately manage their own pool ownership.
@@ -88,6 +89,21 @@ ALLOWED_TUNNEL_API_FILES = {
 def is_comment(line: str) -> bool:
     stripped = line.lstrip()
     return stripped.startswith("//") or stripped.startswith("*") or stripped.startswith("/*")
+
+
+def allowed_raw_wid_comparison_lines(path: Path, text: str) -> set[int]:
+    """Return lines inside the one reviewed identity-predicate implementation."""
+
+    region_re = ALLOWED_RAW_WID_COMPARISON_REGIONS.get(path)
+    if region_re is None:
+        return set()
+
+    allowed: set[int] = set()
+    for match in region_re.finditer(text):
+        first_line = text.count("\n", 0, match.start()) + 1
+        last_line = text.count("\n", 0, match.end()) + 1
+        allowed.update(range(first_line, last_line + 1))
+    return allowed
 
 
 def main() -> int:
@@ -104,6 +120,7 @@ def main() -> int:
 
                 text = path.read_text(encoding="utf-8", errors="replace")
                 lines = text.splitlines()
+                allowed_raw_wid_lines = allowed_raw_wid_comparison_lines(resolved_path, text)
 
                 for line_number, line in enumerate(lines, 1):
                     # Rule 1: No direct assignment to tl_wid outside worker.c and worker.h
@@ -135,21 +152,26 @@ def main() -> int:
                         )
 
                     # Rule 5: Worker-0 ownership must be a named predicate, not raw equality.
-                    if RAW_WORKER_ZERO_RE.search(line) and resolved_path not in ALLOWED_RAW_WID_COMPARISON_FILES:
+                    raw_comparison_allowed = line_number in allowed_raw_wid_lines
+                    if RAW_WORKER_ZERO_RE.search(line) and not raw_comparison_allowed:
                         violations.append(
                             f"{path.relative_to(ROOT)}:{line_number}: raw getWID() == 0 worker-0 decision; "
                             f"use currentThreadIsEventWorkerWID(0)"
                         )
 
                     # Rule 6: Affinity must be a named predicate, not raw equality.
-                    if RAW_WID_COMPARISON_RE.search(line) and resolved_path not in ALLOWED_RAW_WID_COMPARISON_FILES:
+                    if RAW_WID_COMPARISON_RE.search(line) and not raw_comparison_allowed:
                         violations.append(
                             f"{path.relative_to(ROOT)}:{line_number}: raw current-WID comparison; use "
                             f"currentThreadIsEventWorkerWID(wid) or lineIsOnCurrentEventWorker(line)"
                         )
 
                     # Rule 7: Tunnel APIs consume their message through node.h's shared helpers.
-                    if is_tunnel_api and TUNNEL_API_RECYCLE_RE.search(line) and resolved_path not in ALLOWED_TUNNEL_API_FILES:
+                    if (
+                        is_tunnel_api
+                        and TUNNEL_API_RECYCLE_RE.search(line)
+                        and resolved_path not in ALLOWED_TUNNEL_API_FILES
+                    ):
                         violations.append(
                             f"{path.relative_to(ROOT)}:{line_number}: tunnel API recycles its message by hand; "
                             f"use tunnelapiRecycleMessage()/tunnelapiUnsupportedMessage()"
@@ -161,6 +183,18 @@ def main() -> int:
                             f"{path.relative_to(ROOT)}:{line_number}: tunnel API discards its owned input buffer; "
                             f"consume it with tunnelapiRecycleMessage()/tunnelapiUnsupportedMessage()"
                         )
+
+                # Rule 9: Every ordinary tunnel API must visibly consume its
+                # actual input parameter through a shared ownership helper.
+                if (
+                    is_tunnel_api
+                    and resolved_path not in ALLOWED_TUNNEL_API_FILES
+                    and not any(TUNNEL_API_SHARED_HELPER_RE.match(line) for line in lines if not is_comment(line))
+                ):
+                    violations.append(
+                        f"{path.relative_to(ROOT)}: tunnel API does not consume its message through "
+                        f"tunnelapiRecycleMessage(message)/tunnelapiUnsupportedMessage(message)"
+                    )
 
     if violations:
         print("\n".join(violations), file=sys.stderr)
