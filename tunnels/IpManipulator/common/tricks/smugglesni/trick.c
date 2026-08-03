@@ -573,6 +573,8 @@ void smugglesnitrickLogDownStreamServerHello(tunnel_t *t, line_t *l, sbuf_t *buf
     {
         ipmanipulatorFlushMatchingCaptureSlot(
             t, info.dst_addr, info.src_addr, info.dst_port, info.src_port, kIpManipulatorTlsCaptureKindSmuggleSni);
+        ipmanipulatorFlushMatchingPrestartSlot(
+            t, info.dst_addr, info.src_addr, info.dst_port, info.src_port, kIpManipulatorTlsCaptureKindSmuggleSni);
 
         ipmanipulator_tstate_t     *state = tunnelGetState(t);
         ipmanipulator_flow_key_t    key   = smugglesnitrickMakeKey(&info);
@@ -650,6 +652,9 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             /* A replacement SYN invalidates held bytes from either old orientation. */
             ipmanipulatorRecycleCapturedTlsPackets(t, &replaced_capture);
         }
+
+        ipmanipulatorRecycleMatchingPrestartSlot(
+            t, info.src_addr, info.dst_addr, info.src_port, info.dst_port, kIpManipulatorTlsCaptureKindSmuggleSni);
     }
 
     ipmanipulator_flow_key_t    key   = smugglesnitrickMakeKey(&info);
@@ -753,6 +758,8 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         ipmanipulatorFlowShardUnlock(shard);
         ipmanipulatorFlushMatchingCaptureSlot(
             t, info.src_addr, info.dst_addr, info.src_port, info.dst_port, kIpManipulatorTlsCaptureKindSmuggleSni);
+        ipmanipulatorFlushMatchingPrestartSlot(
+            t, info.src_addr, info.dst_addr, info.src_port, info.dst_port, kIpManipulatorTlsCaptureKindSmuggleSni);
         return false;
     }
 
@@ -847,6 +854,8 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
 
         ipmanipulatorReleaseCapturedPacketsNormal(t, &captured_slot);
+        ipmanipulatorFlushMatchingPrestartSlot(
+            t, info.src_addr, info.dst_addr, info.src_port, info.dst_port, kIpManipulatorTlsCaptureKindSmuggleSni);
         smugglesnitrickMarkPassthrough(state, &key, 0);
         return true;
     }
@@ -875,6 +884,9 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
     }
     captured_slot.captured_packets_count = 0;
+
+    ipmanipulatorFlushMatchingPrestartSlot(
+        t, info.src_addr, info.dst_addr, info.src_port, info.dst_port, kIpManipulatorTlsCaptureKindSmuggleSni);
 
     smugglesnitrickStartOrderedFakeBatch(t, &key, batch, now_ms);
     return true;

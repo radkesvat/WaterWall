@@ -608,6 +608,10 @@ void ipmanipulatorReleaseCapturedPacketsNormal(tunnel_t *t, ipmanipulator_tls_ca
 void ipmanipulatorReleasePendingCaptureOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3);
 bool ipmanipulatorFlushMatchingCaptureSlot(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
                                            uint16_t dst_port, ipmanipulator_tls_capture_kind_e kind);
+bool ipmanipulatorFlushMatchingPrestartSlot(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
+                                            uint16_t dst_port, ipmanipulator_tls_capture_kind_e kind);
+bool ipmanipulatorRecycleMatchingPrestartSlot(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
+                                              uint16_t dst_port, ipmanipulator_tls_capture_kind_e kind);
 void ipmanipulatorRecycleCapturedTlsPackets(tunnel_t *t, ipmanipulator_tls_capture_slot_t *slot);
 void ipmanipulatorDestroyCapturedTlsPackets(ipmanipulator_tls_capture_slot_t *slot);
 void ipmanipulatorDestroyTlsCaptureState(tunnel_t *t);

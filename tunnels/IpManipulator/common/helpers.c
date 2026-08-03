@@ -158,13 +158,15 @@ static void ipmanipulatorTakeCapturedSlot(ipmanipulator_tls_capture_slot_t *dest
 
 static void ipmanipulatorResetPrestartSlot(ipmanipulator_tls_prestart_slot_t *slot)
 {
+    assert(slot->captured_packets_count == 0);
     memoryZero(slot, sizeof(*slot));
 }
 
 static void ipmanipulatorTakePrestartSlot(ipmanipulator_tls_prestart_slot_t *dest,
                                           ipmanipulator_tls_prestart_slot_t *src)
 {
-    *dest = *src;
+    *dest                       = *src;
+    src->captured_packets_count = 0;
     ipmanipulatorResetPrestartSlot(src);
 }
 
@@ -256,6 +258,12 @@ static void ipmanipulatorScheduleCapturedPacketNormal(tunnel_t *t, line_t *l, sb
 {
     if (lineIsOnCurrentEventWorker(l))
     {
+        if (! lineIsAlive(l))
+        {
+            lineReuseBuffer(l, buf);
+            return;
+        }
+
         lineSetRecalculateChecksum(l, true);
         ipmanipulatorSendUpstreamFinal(t, l, buf);
         return;
@@ -312,6 +320,33 @@ static void ipmanipulatorReleasePrestartPacketsNormal(tunnel_t *t, ipmanipulator
         prestart_entry->buf  = NULL;
     }
 
+    slot->captured_packets_count = 0;
+    ipmanipulatorResetPrestartSlot(slot);
+}
+
+static void ipmanipulatorRecyclePrestartPackets(tunnel_t *t, ipmanipulator_tls_prestart_slot_t *slot)
+{
+    discard t;
+
+    if (slot == NULL)
+    {
+        return;
+    }
+
+    for (uint8_t i = 0; i < slot->captured_packets_count; ++i)
+    {
+        ipmanipulator_captured_packet_t *entry = &slot->captured_packets[i];
+
+        if (entry->line != NULL && entry->buf != NULL)
+        {
+            ipmanipulatorScheduleCapturedPacketReuse(entry->line, entry->buf);
+        }
+
+        entry->line = NULL;
+        entry->buf  = NULL;
+    }
+
+    slot->captured_packets_count = 0;
     ipmanipulatorResetPrestartSlot(slot);
 }
 
@@ -468,6 +503,26 @@ void ipmanipulatorReleaseCapturedPacketsNormal(tunnel_t *t, ipmanipulator_tls_ca
     slot->active                 = false;
 }
 
+static ipmanipulator_tls_capture_status_e ipmanipulatorFinishCaptureAndRelease(
+    tunnel_t *t, ipmanipulator_tls_capture_slot_t *evicted_capture, ipmanipulator_tls_prestart_slot_t *evicted_prestart,
+    ipmanipulator_tls_prestart_slot_t *matched_prestart, ipmanipulator_tls_capture_status_e status)
+{
+    if (evicted_capture->active)
+    {
+        ipmanipulatorReleaseCapturedPacketsNormal(t, evicted_capture);
+    }
+    if (evicted_prestart->active)
+    {
+        ipmanipulatorReleasePrestartPacketsNormal(t, evicted_prestart);
+    }
+    if (matched_prestart->active)
+    {
+        ipmanipulatorReleasePrestartPacketsNormal(t, matched_prestart);
+    }
+
+    return status;
+}
+
 bool ipmanipulatorTakeMatchingCaptureSlot(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
                                           uint16_t dst_port, ipmanipulator_tls_capture_kind_e kind,
                                           uint64_t owner_generation, bool match_any_generation,
@@ -534,6 +589,77 @@ bool ipmanipulatorFlushMatchingCaptureSlot(tunnel_t *t, uint32_t src_addr, uint3
     }
 
     ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
+    return true;
+}
+
+static bool ipmanipulatorTakeMatchingPrestartSlot(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
+                                                  uint16_t dst_port, ipmanipulator_tls_capture_kind_e kind,
+                                                  ipmanipulator_tls_prestart_slot_t *out_slot)
+{
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+    if (out_slot == NULL)
+    {
+        return false;
+    }
+
+    memoryZero(out_slot, sizeof(*out_slot));
+
+    if (state->tls_prestart_slots == NULL)
+    {
+        return false;
+    }
+
+    mutexLock(&state->tls_capture_mutex);
+
+    for (uint32_t i = 0; i < state->tls_prestart_slots_count; ++i)
+    {
+        ipmanipulator_tls_prestart_slot_t *slot = &state->tls_prestart_slots[i];
+
+        if (! slot->active || slot->kind != kind)
+        {
+            continue;
+        }
+
+        if ((slot->src_addr == src_addr && slot->dst_addr == dst_addr && slot->src_port == src_port &&
+             slot->dst_port == dst_port) ||
+            (slot->src_addr == dst_addr && slot->dst_addr == src_addr && slot->src_port == dst_port &&
+             slot->dst_port == src_port))
+        {
+            ipmanipulatorTakePrestartSlot(out_slot, slot);
+            break;
+        }
+    }
+
+    mutexUnlock(&state->tls_capture_mutex);
+    return out_slot->active;
+}
+
+bool ipmanipulatorFlushMatchingPrestartSlot(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
+                                            uint16_t dst_port, ipmanipulator_tls_capture_kind_e kind)
+{
+    ipmanipulator_tls_prestart_slot_t release_slot = {0};
+
+    if (! ipmanipulatorTakeMatchingPrestartSlot(t, src_addr, dst_addr, src_port, dst_port, kind, &release_slot))
+    {
+        return false;
+    }
+
+    ipmanipulatorReleasePrestartPacketsNormal(t, &release_slot);
+    return true;
+}
+
+bool ipmanipulatorRecycleMatchingPrestartSlot(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
+                                              uint16_t dst_port, ipmanipulator_tls_capture_kind_e kind)
+{
+    ipmanipulator_tls_prestart_slot_t recycle_slot = {0};
+
+    if (! ipmanipulatorTakeMatchingPrestartSlot(t, src_addr, dst_addr, src_port, dst_port, kind, &recycle_slot))
+    {
+        return false;
+    }
+
+    ipmanipulatorRecyclePrestartPackets(t, &recycle_slot);
     return true;
 }
 
@@ -767,6 +893,7 @@ static void ipmanipulatorDestroyPrestartPackets(ipmanipulator_tls_prestart_slot_
         ipmanipulatorDestroyCapturedPacketEntry(&slot->captured_packets[i]);
     }
 
+    slot->captured_packets_count = 0;
     ipmanipulatorResetPrestartSlot(slot);
 }
 
@@ -951,7 +1078,10 @@ static void ipmanipulatorDrainPrestartPacketsIntoCaptureSlot(ipmanipulator_tls_p
 
             if (*complete)
             {
-                ipmanipulatorResetPrestartSlot(prestart_slot);
+                if (prestart_slot->captured_packets_count == 0)
+                {
+                    ipmanipulatorResetPrestartSlot(prestart_slot);
+                }
                 return;
             }
 
@@ -1858,8 +1988,7 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
     ipmanipulator_tcp_packet_info_t   info                  = {0};
     ipmanipulator_tls_capture_slot_t  release_slot          = {0};
     ipmanipulator_tls_prestart_slot_t release_prestart_slot = {0};
-    bool                              have_release          = false;
-    bool                              have_prestart_release = false;
+    ipmanipulator_tls_prestart_slot_t matched_prestart_slot = {0};
     bool                              allow_prestart        = ipmanipulatorTlsCaptureKindAllowsPrestart(kind);
 
     ipmanipulatorResetCapturedSlot(out_slot);
@@ -1886,10 +2015,9 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
 
         if (now_ms - slot->last_update_ms >= kIpManipulatorTlsCaptureTimeoutMs)
         {
-            if (! have_release)
+            if (! release_slot.active)
             {
                 ipmanipulatorTakeCapturedSlot(&release_slot, slot);
-                have_release = true;
             }
             continue;
         }
@@ -1914,10 +2042,9 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
 
             if (now_ms - slot->last_update_ms >= kIpManipulatorTlsPrestartTimeoutMs)
             {
-                if (! have_prestart_release)
+                if (! release_prestart_slot.active)
                 {
                     ipmanipulatorTakePrestartSlot(&release_prestart_slot, slot);
-                    have_prestart_release = true;
                 }
                 continue;
             }
@@ -1941,14 +2068,11 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
             ipmanipulatorScheduleCaptureTimeout(t, (uint32_t) matched_index, slot->generation);
             mutexUnlock(&state->tls_capture_mutex);
 
-            if (have_release)
-            {
-                ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-            }
-            if (have_prestart_release)
-            {
-                ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-            }
+            discard ipmanipulatorFinishCaptureAndRelease(t,
+                                                         &release_slot,
+                                                         &release_prestart_slot,
+                                                         &matched_prestart_slot,
+                                                         kIpManipulatorTlsCaptureStatusPending);
 
             /* The already-held segment is the original; recycle this duplicate. */
             ipmanipulatorScheduleCapturedPacketReuse(l, buf);
@@ -1959,8 +2083,14 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
 
         if (appended && prestart_index >= 0 && ! complete)
         {
-            ipmanipulatorDrainPrestartPacketsIntoCaptureSlot(
-                &state->tls_prestart_slots[prestart_index], slot, &complete);
+            ipmanipulator_tls_prestart_slot_t *prestart_slot = &state->tls_prestart_slots[prestart_index];
+
+            ipmanipulatorDrainPrestartPacketsIntoCaptureSlot(prestart_slot, slot, &complete);
+
+            if (prestart_slot->active)
+            {
+                ipmanipulatorSchedulePrestartTimeout(t, (uint32_t) prestart_index, prestart_slot->generation);
+            }
         }
 
         if (appended && complete)
@@ -1973,16 +2103,8 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
             ipmanipulatorTakeCapturedSlot(out_slot, slot);
             mutexUnlock(&state->tls_capture_mutex);
 
-            if (have_release)
-            {
-                ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-            }
-            if (have_prestart_release)
-            {
-                ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-            }
-
-            return kIpManipulatorTlsCaptureStatusReady;
+            return ipmanipulatorFinishCaptureAndRelease(
+                t, &release_slot, &release_prestart_slot, &matched_prestart_slot, kIpManipulatorTlsCaptureStatusReady);
         }
 
         if (appended)
@@ -1990,32 +2112,35 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
             ipmanipulatorScheduleCaptureTimeout(t, (uint32_t) matched_index, slot->generation);
             mutexUnlock(&state->tls_capture_mutex);
 
-            if (have_release)
-            {
-                ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-            }
-            if (have_prestart_release)
-            {
-                ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-            }
-
-            return kIpManipulatorTlsCaptureStatusPending;
+            return ipmanipulatorFinishCaptureAndRelease(t,
+                                                        &release_slot,
+                                                        &release_prestart_slot,
+                                                        &matched_prestart_slot,
+                                                        kIpManipulatorTlsCaptureStatusPending);
         }
 
         ipmanipulatorTakeCapturedSlot(out_slot, slot);
+        if (prestart_index >= 0)
+        {
+            ipmanipulatorTakePrestartSlot(&matched_prestart_slot, &state->tls_prestart_slots[prestart_index]);
+        }
         mutexUnlock(&state->tls_capture_mutex);
 
-        if (have_release)
+        if (release_slot.active)
         {
             ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
         }
-        if (have_prestart_release)
+        if (release_prestart_slot.active)
         {
             ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
         }
 
         ipmanipulatorReleaseCapturedPacketsNormal(t, out_slot);
         ipmanipulatorResetCapturedSlot(out_slot);
+        if (matched_prestart_slot.active)
+        {
+            ipmanipulatorReleasePrestartPacketsNormal(t, &matched_prestart_slot);
+        }
         ipmanipulatorScheduleCapturedPacketNormal(t, l, buf);
         return kIpManipulatorTlsCaptureStatusBypassed;
     }
@@ -2029,18 +2154,14 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
         sbuf_t *assembled = ipmanipulatorCreateStandalonePacketBuffer(buf, start.tcp.ip_total_len);
         if (assembled == NULL)
         {
+            if (prestart_index >= 0)
+            {
+                ipmanipulatorTakePrestartSlot(&matched_prestart_slot, &state->tls_prestart_slots[prestart_index]);
+            }
             mutexUnlock(&state->tls_capture_mutex);
 
-            if (have_release)
-            {
-                ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-            }
-            if (have_prestart_release)
-            {
-                ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-            }
-
-            return kIpManipulatorTlsCaptureStatusMiss;
+            return ipmanipulatorFinishCaptureAndRelease(
+                t, &release_slot, &release_prestart_slot, &matched_prestart_slot, kIpManipulatorTlsCaptureStatusMiss);
         }
 
         memoryCopyLarge(sbufGetMutablePtr(assembled), start.tcp.packet, start.tcp.ip_total_len);
@@ -2066,16 +2187,8 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
 
         mutexUnlock(&state->tls_capture_mutex);
 
-        if (have_release)
-        {
-            ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-        }
-        if (have_prestart_release)
-        {
-            ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-        }
-
-        return kIpManipulatorTlsCaptureStatusReady;
+        return ipmanipulatorFinishCaptureAndRelease(
+            t, &release_slot, &release_prestart_slot, &matched_prestart_slot, kIpManipulatorTlsCaptureStatusReady);
     }
 
     bool capture_partial_ech =
@@ -2087,48 +2200,32 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
         {
             mutexUnlock(&state->tls_capture_mutex);
 
-            if (have_release)
-            {
-                ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-            }
-            if (have_prestart_release)
-            {
-                ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-            }
-
-            return kIpManipulatorTlsCaptureStatusMiss;
+            return ipmanipulatorFinishCaptureAndRelease(
+                t, &release_slot, &release_prestart_slot, &matched_prestart_slot, kIpManipulatorTlsCaptureStatusMiss);
         }
 
         if (start_status == kIpManipulatorTlsClientHelloStartUnsupported)
         {
+            if (prestart_index >= 0)
+            {
+                ipmanipulatorTakePrestartSlot(&matched_prestart_slot, &state->tls_prestart_slots[prestart_index]);
+            }
             mutexUnlock(&state->tls_capture_mutex);
 
-            if (have_release)
-            {
-                ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-            }
-            if (have_prestart_release)
-            {
-                ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-            }
-
-            return kIpManipulatorTlsCaptureStatusMiss;
+            return ipmanipulatorFinishCaptureAndRelease(
+                t, &release_slot, &release_prestart_slot, &matched_prestart_slot, kIpManipulatorTlsCaptureStatusMiss);
         }
 
         if (info.tcp_payload_len == 0)
         {
+            if (prestart_index >= 0)
+            {
+                ipmanipulatorTakePrestartSlot(&matched_prestart_slot, &state->tls_prestart_slots[prestart_index]);
+            }
             mutexUnlock(&state->tls_capture_mutex);
 
-            if (have_release)
-            {
-                ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-            }
-            if (have_prestart_release)
-            {
-                ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-            }
-
-            return kIpManipulatorTlsCaptureStatusMiss;
+            return ipmanipulatorFinishCaptureAndRelease(
+                t, &release_slot, &release_prestart_slot, &matched_prestart_slot, kIpManipulatorTlsCaptureStatusMiss);
         }
 
         if (prestart_index >= 0)
@@ -2137,49 +2234,33 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
 
             if (! ipmanipulatorAppendPacketToPrestartSlot(slot, l, buf, &info))
             {
+                ipmanipulatorTakePrestartSlot(&matched_prestart_slot, slot);
+                prestart_index = -1;
                 mutexUnlock(&state->tls_capture_mutex);
 
-                if (have_release)
-                {
-                    ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-                }
-                if (have_prestart_release)
-                {
-                    ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-                }
-
-                return kIpManipulatorTlsCaptureStatusMiss;
+                return ipmanipulatorFinishCaptureAndRelease(t,
+                                                            &release_slot,
+                                                            &release_prestart_slot,
+                                                            &matched_prestart_slot,
+                                                            kIpManipulatorTlsCaptureStatusMiss);
             }
 
             ipmanipulatorSchedulePrestartTimeout(t, (uint32_t) prestart_index, slot->generation);
             mutexUnlock(&state->tls_capture_mutex);
 
-            if (have_release)
-            {
-                ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-            }
-            if (have_prestart_release)
-            {
-                ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-            }
-
-            return kIpManipulatorTlsCaptureStatusPending;
+            return ipmanipulatorFinishCaptureAndRelease(t,
+                                                        &release_slot,
+                                                        &release_prestart_slot,
+                                                        &matched_prestart_slot,
+                                                        kIpManipulatorTlsCaptureStatusPending);
         }
 
         if (info.tcp_payload_len < kIpManipulatorTlsPrestartMinPayloadLen)
         {
             mutexUnlock(&state->tls_capture_mutex);
 
-            if (have_release)
-            {
-                ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-            }
-            if (have_prestart_release)
-            {
-                ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-            }
-
-            return kIpManipulatorTlsCaptureStatusMiss;
+            return ipmanipulatorFinishCaptureAndRelease(
+                t, &release_slot, &release_prestart_slot, &matched_prestart_slot, kIpManipulatorTlsCaptureStatusMiss);
         }
 
         int candidate_prestart_index = -1;
@@ -2205,11 +2286,10 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
         if (candidate_prestart_index < 0)
         {
             candidate_prestart_index = oldest_prestart_index;
-            if (candidate_prestart_index >= 0 && ! have_prestart_release)
+            if (candidate_prestart_index >= 0 && ! release_prestart_slot.active)
             {
                 ipmanipulatorTakePrestartSlot(&release_prestart_slot,
                                               &state->tls_prestart_slots[candidate_prestart_index]);
-                have_prestart_release = true;
             }
         }
 
@@ -2234,46 +2314,28 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
                 ipmanipulatorResetPrestartSlot(slot);
                 mutexUnlock(&state->tls_capture_mutex);
 
-                if (have_release)
-                {
-                    ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-                }
-                if (have_prestart_release)
-                {
-                    ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-                }
-
-                return kIpManipulatorTlsCaptureStatusMiss;
+                return ipmanipulatorFinishCaptureAndRelease(t,
+                                                            &release_slot,
+                                                            &release_prestart_slot,
+                                                            &matched_prestart_slot,
+                                                            kIpManipulatorTlsCaptureStatusMiss);
             }
 
             ipmanipulatorSchedulePrestartTimeout(t, (uint32_t) candidate_prestart_index, slot->generation);
 
             mutexUnlock(&state->tls_capture_mutex);
 
-            if (have_release)
-            {
-                ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-            }
-            if (have_prestart_release)
-            {
-                ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-            }
-
-            return kIpManipulatorTlsCaptureStatusPending;
+            return ipmanipulatorFinishCaptureAndRelease(t,
+                                                        &release_slot,
+                                                        &release_prestart_slot,
+                                                        &matched_prestart_slot,
+                                                        kIpManipulatorTlsCaptureStatusPending);
         }
 
         mutexUnlock(&state->tls_capture_mutex);
 
-        if (have_release)
-        {
-            ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-        }
-        if (have_prestart_release)
-        {
-            ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-        }
-
-        return kIpManipulatorTlsCaptureStatusMiss;
+        return ipmanipulatorFinishCaptureAndRelease(
+            t, &release_slot, &release_prestart_slot, &matched_prestart_slot, kIpManipulatorTlsCaptureStatusMiss);
     }
 
     int candidate_index = -1;
@@ -2301,24 +2363,19 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
         if (candidate_index >= 0)
         {
             ipmanipulatorTakeCapturedSlot(&release_slot, &state->tls_capture_slots[candidate_index]);
-            have_release = true;
         }
     }
 
     if (candidate_index < 0)
     {
+        if (prestart_index >= 0)
+        {
+            ipmanipulatorTakePrestartSlot(&matched_prestart_slot, &state->tls_prestart_slots[prestart_index]);
+        }
         mutexUnlock(&state->tls_capture_mutex);
 
-        if (have_release)
-        {
-            ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-        }
-        if (have_prestart_release)
-        {
-            ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-        }
-
-        return kIpManipulatorTlsCaptureStatusMiss;
+        return ipmanipulatorFinishCaptureAndRelease(
+            t, &release_slot, &release_prestart_slot, &matched_prestart_slot, kIpManipulatorTlsCaptureStatusMiss);
     }
 
     ipmanipulator_tls_capture_slot_t *slot = &state->tls_capture_slots[candidate_index];
@@ -2367,18 +2424,15 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
             slot->assembled_packet = NULL;
         }
         ipmanipulatorResetCapturedSlot(slot);
+        if (prestart_index >= 0)
+        {
+            ipmanipulatorTakePrestartSlot(&matched_prestart_slot, &state->tls_prestart_slots[prestart_index]);
+            prestart_index = -1;
+        }
         mutexUnlock(&state->tls_capture_mutex);
 
-        if (have_release)
-        {
-            ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-        }
-        if (have_prestart_release)
-        {
-            ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-        }
-
-        return kIpManipulatorTlsCaptureStatusMiss;
+        return ipmanipulatorFinishCaptureAndRelease(
+            t, &release_slot, &release_prestart_slot, &matched_prestart_slot, kIpManipulatorTlsCaptureStatusMiss);
     }
 
     if (prestart_index >= 0)
@@ -2405,31 +2459,15 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
         ipmanipulatorTakeCapturedSlot(out_slot, slot);
         mutexUnlock(&state->tls_capture_mutex);
 
-        if (have_release)
-        {
-            ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-        }
-        if (have_prestart_release)
-        {
-            ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-        }
-
-        return kIpManipulatorTlsCaptureStatusReady;
+        return ipmanipulatorFinishCaptureAndRelease(
+            t, &release_slot, &release_prestart_slot, &matched_prestart_slot, kIpManipulatorTlsCaptureStatusReady);
     }
 
     ipmanipulatorScheduleCaptureTimeout(t, (uint32_t) candidate_index, slot->generation);
     mutexUnlock(&state->tls_capture_mutex);
 
-    if (have_release)
-    {
-        ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
-    }
-    if (have_prestart_release)
-    {
-        ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
-    }
-
-    return kIpManipulatorTlsCaptureStatusPending;
+    return ipmanipulatorFinishCaptureAndRelease(
+        t, &release_slot, &release_prestart_slot, &matched_prestart_slot, kIpManipulatorTlsCaptureStatusPending);
 }
 
 void ipmanipulatorDestroyTlsCaptureState(tunnel_t *t)
