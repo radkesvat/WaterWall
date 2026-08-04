@@ -53,20 +53,23 @@ typedef struct forwarded_packet_s
 {
     uint32_t seq;
     uint16_t payload_len;
+    wid_t    wid;
     uint8_t  flags;
     uint8_t  payload[kMaxPayloadRecord];
 } forwarded_packet_t;
 
 typedef struct test_env_s
 {
-    master_pool_t *large_master;
-    master_pool_t *small_master;
-    master_pool_t *messages_master;
-    buffer_pool_t *buffer_pool;
-    buffer_pool_t *buffer_pools[1];
-    wloop_t       *loops[1];
-    worker_t       workers[1];
-    line_t        *line;
+    master_pool_t             *large_master;
+    master_pool_t             *small_master;
+    master_pool_t             *messages_master;
+    master_pool_t             *wios_master;
+    buffer_pool_t             *buffer_pools[2];
+    threadsafe_generic_pool_t *wios_pools[2];
+    wloop_t                   *loops[2];
+    worker_t                   workers[3];
+    line_t                    *lines[2];
+    line_t                    *line;
 } test_env_t;
 
 typedef struct test_fixture_s
@@ -157,6 +160,7 @@ static void recordForwardedPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     record->seq         = lwip_ntohl(tcp->seqno);
     record->payload_len = payload_len;
+    record->wid         = lineGetWID(l);
     record->flags       = TCPH_FLAGS(tcp);
 
     if (payload_len > 0)
@@ -174,23 +178,39 @@ static void envSetup(test_env_t *env)
     env->large_master    = masterpoolCreateWithCapacity(128);
     env->small_master    = masterpoolCreateWithCapacity(128);
     env->messages_master = masterpoolCreateWithCapacity(128);
+    env->wios_master     = masterpoolCreateWithCapacity(128);
     workerMessagesInstallMasterPoolCallbacks(env->messages_master);
-    env->buffer_pool     = bufferpoolCreate(env->large_master, env->small_master, 64, 8192, 4096);
-    env->buffer_pools[0] = env->buffer_pool;
 
-    env->loops[0] = wloopCreate(0, env->buffer_pool, 0);
-    iowatcherInit(env->loops[0]);
+    for (wid_t wid = 0; wid < 2; ++wid)
+    {
+        env->buffer_pools[wid] = bufferpoolCreate(env->large_master, env->small_master, 64, 8192, 4096);
+        env->wios_pools[wid] =
+            threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wios_master, sizeof(wio_t), 64);
+        env->loops[wid]         = wloopCreate(0, env->buffer_pools[wid], wid);
+        env->loops[wid]->status = WLOOP_STATUS_RUNNING;
+        iowatcherInit(env->loops[wid]);
 
-    env->workers[0].wid            = 0;
-    env->workers[0].loop           = env->loops[0];
-    env->workers[0].buffer_pool    = env->buffer_pool;
-    env->workers[0].has_event_loop = true;
-    workerMessagesInit(&env->workers[0]);
+        env->workers[wid].wid            = wid;
+        env->workers[wid].loop           = env->loops[wid];
+        env->workers[wid].buffer_pool    = env->buffer_pools[wid];
+        env->workers[wid].wios_pool      = env->wios_pools[wid];
+        env->workers[wid].has_event_loop = true;
+        workerMessagesInit(&env->workers[wid]);
+
+        env->lines[wid] = memoryAllocateZero(sizeof(*env->lines[wid]));
+        require(env->lines[wid] != NULL, "failed to allocate a packet line");
+        atomicStoreRelaxed(&env->lines[wid]->refc, 1);
+        env->lines[wid]->alive = true;
+        env->lines[wid]->wid   = wid;
+    }
+    env->workers[2].wid = 2;
+    env->line           = env->lines[0];
 
     testWorkerRegistryInstallTable(&g_test_worker_registry, env->workers);
-    GSTATE.workers_count                 = 2;
+    GSTATE.workers_count                 = 3;
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;
     GSTATE.shortcut_loops                = env->loops;
+    GSTATE.shortcut_wios_pools           = env->wios_pools;
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
     GSTATE.masterpool_messages           = env->messages_master;
@@ -199,37 +219,41 @@ static void envSetup(test_env_t *env)
 
     /* Bounded flow tables refuse to run without a secure hash seed. */
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
-
-    env->line = memoryAllocateZero(sizeof(line_t));
-    require(env->line != NULL, "failed to allocate packet line");
-    atomicStoreRelaxed(&env->line->refc, 1);
-    env->line->alive = true;
-    env->line->wid   = 0;
 }
 
 static void envTeardown(test_env_t *env)
 {
     globalstateDestroySecureRandom();
+    testWorkerBindWID(0);
     workerMessagesDestroy(&env->workers[0]);
+    workerMessagesDestroy(&env->workers[1]);
     wloopDestroy(&env->loops[0]);
+    wloopDestroy(&env->loops[1]);
 
     testWorkerRegistryRestore(&g_test_worker_registry);
     GSTATE.workers_count                 = 0;
     GSTATE.shortcut_buffer_pools         = NULL;
     GSTATE.shortcut_loops                = NULL;
+    GSTATE.shortcut_wios_pools           = NULL;
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
     GSTATE.masterpool_messages           = NULL;
     GSTATE.mtu_size                      = 0;
 
-    memoryFree(env->line);
-    bufferpoolDestroy(env->buffer_pool);
+    memoryFree(env->lines[0]);
+    memoryFree(env->lines[1]);
+    bufferpoolDestroy(env->buffer_pools[0]);
+    bufferpoolDestroy(env->buffer_pools[1]);
+    threadsafegenericpoolDestroy(env->wios_pools[0]);
+    threadsafegenericpoolDestroy(env->wios_pools[1]);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
     masterpoolMakeEmpty(env->messages_master);
+    masterpoolMakeEmpty(env->wios_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
     masterpoolDestroy(env->messages_master);
+    masterpoolDestroy(env->wios_master);
 }
 
 static void resetCaptures(void)
@@ -289,6 +313,7 @@ static void cleanupTimedMessages(void)
         timed_message_t *message = &timed_messages[i];
         if (! message->consumed)
         {
+            testWorkerBindWID(message->wid);
             message->cleanup(message->arg1, message->arg2, message->arg3);
             message->consumed = true;
         }
@@ -597,6 +622,30 @@ static bool findClientFlow(test_fixture_t *fixture, ipmanipulator_echsni_flow_t 
     return found;
 }
 
+static void replacePendingOriginalWorker(test_fixture_t *fixture, uint8_t index, line_t *foreign_line,
+                                         sbuf_t *foreign_buf)
+{
+    ipmanipulator_tstate_t  *state = tunnelGetState(fixture->t);
+    ipmanipulator_flow_key_t key =
+        ipmanipulatorFlowKeyMake(lwip_htonl(kClientAddr), kClientPort, lwip_htonl(kServerAddr), kServerPort);
+    ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->echsni_table, &key);
+
+    require(shard != NULL, "ECH foreign-owner fixture could not lock its flow shard");
+    ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->echsni_table, shard, &key);
+    require(entry != NULL, "ECH foreign-owner fixture lost its flow");
+
+    ipmanipulator_echsni_flow_t *flow = ipmanipulatorFlowEntryRecord(entry);
+    require(flow->phase == kIpManipulatorEchSniFlowPhaseReleasing && index < flow->pending_original_count,
+            "ECH foreign-owner fixture has no pending original at the requested index");
+    ipmanipulator_captured_packet_t *pending = &flow->pending_original_packets[index];
+    require(pending->line != NULL && pending->buf != NULL, "ECH foreign-owner fixture found an empty original");
+    require(lineIsOnCurrentEventWorker(pending->line), "ECH original replacement ran off the original owner worker");
+
+    lineReuseBuffer(pending->line, pending->buf);
+    *pending = (ipmanipulator_captured_packet_t) {.line = foreign_line, .buf = foreign_buf};
+    ipmanipulatorFlowShardUnlock(shard);
+}
+
 static uint32_t activeCaptureSlots(test_fixture_t *fixture)
 {
     ipmanipulator_tstate_t *state  = tunnelGetState(fixture->t);
@@ -653,6 +702,7 @@ static void cleanupTimedMessage(uint32_t index)
     timed_message_t *message = &timed_messages[index];
     require(! message->consumed, "timed message cleanup ran twice");
     message->consumed = true;
+    testWorkerBindWID(message->wid);
     message->cleanup(message->arg1, message->arg2, message->arg3);
 }
 
@@ -1159,6 +1209,99 @@ static void startSuccessfulDelay(test_fixture_t *fixture, uint8_t *hello, uint16
     openFlow(fixture, TCP_SYN);
     feedClientHelloSegments(fixture, hello, *hello_len, 2, false);
     requireSuccessfulCapture(fixture, *hello_len, 2);
+}
+
+static void testForeignWorkerReleaseDrainForwardsOnOwner(test_env_t *env)
+{
+    resetCaptures();
+
+    test_fixture_t fixture = fixtureCreate(env);
+    uint8_t        hello[1024];
+    uint16_t       hello_len = 0;
+
+    startSuccessfulDelay(&fixture, hello, &hello_len);
+    uint16_t first_len = (uint16_t) (hello_len / 2U);
+
+    testWorkerBindWID(1);
+    sbuf_t *foreign_first = makeTcpPacket(env->lines[1],
+                                          kClientAddr,
+                                          kClientPort,
+                                          kServerAddr,
+                                          kServerPort,
+                                          kClientHelloSeq,
+                                          TCP_ACK | TCP_PSH,
+                                          hello,
+                                          first_len);
+    testWorkerBindWID(0);
+    replacePendingOriginalWorker(&fixture, 0, env->lines[1], foreign_first);
+
+    runTimedMessage(0);
+    require(forwarded_count == 1, "foreign ECH original was emitted inline on the release worker");
+
+    testWorkerBindWID(1);
+    wloopProcessEvents(env->loops[1], 0);
+    require(forwarded_count == 2 && forwarded_packets[1].wid == 1 && forwarded_packets[1].seq == kClientHelloSeq &&
+                forwarded_packets[1].payload_len == first_len,
+            "foreign ECH original was not replayed on its owner worker");
+    require(memoryCompare(forwarded_packets[1].payload, hello, first_len) == 0,
+            "foreign ECH original changed during owner-worker replay");
+
+    runTimedMessage(1);
+    require(forwarded_count == 3 && forwarded_packets[2].wid == 0 &&
+                forwarded_packets[2].seq == (uint32_t) kClientHelloSeq + first_len,
+            "owner ECH original did not remain on the release worker");
+
+    testWorkerBindWID(0);
+    fixtureDestroy(&fixture);
+}
+
+static void testGracefulCloseDrainsForeignOriginalOnOwner(test_env_t *env)
+{
+    resetCaptures();
+
+    test_fixture_t fixture = fixtureCreate(env);
+    uint8_t        hello[1024];
+    uint16_t       hello_len = 0;
+
+    startSuccessfulDelay(&fixture, hello, &hello_len);
+    uint16_t first_len = (uint16_t) (hello_len / 2U);
+
+    testWorkerBindWID(1);
+    sbuf_t *foreign_first = makeTcpPacket(env->lines[1],
+                                          kClientAddr,
+                                          kClientPort,
+                                          kServerAddr,
+                                          kServerPort,
+                                          kClientHelloSeq,
+                                          TCP_ACK | TCP_PSH,
+                                          hello,
+                                          first_len);
+    testWorkerBindWID(0);
+    replacePendingOriginalWorker(&fixture, 0, env->lines[1], foreign_first);
+
+    require(
+        ! feedUpstream(&fixture, makeClientPacket(&fixture, kClientHelloSeq + hello_len, TCP_FIN | TCP_ACK, NULL, 0)),
+        "graceful close with a foreign ECH original was swallowed");
+    require(forwarded_count == 3 && forwarded_packets[1].wid == 0 &&
+                forwarded_packets[1].seq == (uint32_t) kClientHelloSeq + first_len &&
+                (forwarded_packets[2].flags & TCP_FIN) != 0,
+            "graceful close did not emit owner-local bytes before FIN");
+
+    testWorkerBindWID(1);
+    wloopProcessEvents(env->loops[1], 0);
+    require(forwarded_count == 4 && forwarded_packets[3].wid == 1 && forwarded_packets[3].seq == kClientHelloSeq &&
+                forwarded_packets[3].payload_len == first_len,
+            "graceful close did not replay the foreign original on its owner worker");
+    require(memoryCompare(forwarded_packets[3].payload, hello, first_len) == 0,
+            "graceful-close replay changed the foreign ECH original");
+
+    ipmanipulator_echsni_flow_t flow = {0};
+    require(! findClientFlow(&fixture, &flow), "graceful close left its ECH flow alive");
+    runTimedMessage(0);
+    require(forwarded_count == 4, "stale ECH timer replayed a foreign original twice");
+
+    testWorkerBindWID(0);
+    fixtureDestroy(&fixture);
 }
 
 static void closeDuringFirstSecondPhaseEmission(uint32_t index)
@@ -1798,6 +1941,8 @@ int main(void)
     testCaptureOutOfOrderAndPartialOverlapFailOpen(&env);
     testSynClassification(&env);
     testInnerSniMatchingMatrix(&env);
+    testForeignWorkerReleaseDrainForwardsOnOwner(&env);
+    testGracefulCloseDrainsForeignOriginalOnOwner(&env);
     testDownstreamRstDuringSecondPhaseEmission(&env);
     testDeadLineDuringSecondPhaseDrains(&env);
     testCloseDuringFakeInnerEmission(&env);

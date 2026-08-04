@@ -200,6 +200,38 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     uint64_t generation     = barrier->generation;
     bool     needs_schedule = false;
 
+    line_t foreign_line = {0};
+    atomicStoreRelaxed(&foreign_line.refc, 1);
+    foreign_line.alive = true;
+    foreign_line.wid   = 1;
+
+    require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, makePacket(250), false, &needs_schedule),
+            "owner-worker FIFO packet was not retained");
+    sbuf_t *foreign_packet = makePacket(251);
+    require(! ipmanipulatorDelayBarrierTryEnqueue(barrier, &foreign_line, foreign_packet, false, &needs_schedule),
+            "mixed-worker FIFO packet was retained");
+    require(barrier->owner_wid == 0, "delay barrier did not stamp its first packet owner");
+    sbufDestroy(foreign_packet);
+
+    ipmanipulator_delay_batch_t ownership_batch = {0};
+    ipmanipulatorDelayBarrierTake(barrier, &ownership_batch);
+    captured_count = 0;
+    require(ipmanipulatorDelayBatchSendUpstream(t, &ownership_batch),
+            "owner-worker FIFO fail-open unexpectedly killed the line");
+    require(captured_count == 1 && captured_ids[0] == 250, "owner-worker FIFO release changed its packet set");
+
+    ipmanipulatorDelayBarrierInitialize(state, barrier, 100);
+    ipmanipulator_ordered_output_t mixed_outputs[] = {
+        {.line = &line, .buf = makePacket(252), .send = capturePacket, .due_ms = 100},
+        {.line = &foreign_line, .buf = makePacket(253), .send = capturePacket, .due_ms = 100},
+    };
+    require(! ipmanipulatorDelayBarrierInstallOrdered(barrier, mixed_outputs, 2, &needs_schedule),
+            "mixed-worker ordered outputs were installed");
+    require(barrier->owner_wid == kInvalidWID, "rejected ordered outputs changed the barrier owner");
+    sbufDestroy(mixed_outputs[0].buf);
+    sbufDestroy(mixed_outputs[1].buf);
+    generation = barrier->generation;
+
     require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, makePacket(1), false, &needs_schedule) &&
                 needs_schedule,
             "first FIFO packet did not arm the one release action");

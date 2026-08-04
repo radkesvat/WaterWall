@@ -1,5 +1,6 @@
 #include "IpManipulator/structure.h"
 #include "TlsClient/interface.h"
+#include "iowatcher.h"
 #include "tricks/synfinsni/trick.h"
 #include "worker_registry_fixture.h"
 
@@ -33,17 +34,24 @@ typedef struct timed_message_s
 typedef struct captured_packet_s
 {
     uint16_t len;
+    wid_t    wid;
     uint8_t  bytes[kMaxPacketLength];
 } captured_packet_t;
 
 typedef struct test_env_s
 {
-    master_pool_t *large_master;
-    master_pool_t *small_master;
-    buffer_pool_t *buffer_pool;
-    tunnel_t      *t;
-    tunnel_t      *sink;
-    line_t        *line;
+    master_pool_t             *large_master;
+    master_pool_t             *small_master;
+    master_pool_t             *messages_master;
+    master_pool_t             *wios_master;
+    buffer_pool_t             *buffer_pools[2];
+    threadsafe_generic_pool_t *wios_pools[2];
+    wloop_t                   *loops[2];
+    worker_t                   workers[3];
+    tunnel_t                  *t;
+    tunnel_t                  *sink;
+    line_t                    *lines[2];
+    line_t                    *line;
 } test_env_t;
 
 typedef struct flow_snapshot_s
@@ -135,7 +143,9 @@ static void captureUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
     require(captured_packet_count < kMaxCaptured, "upstream packet capture overflow");
     captured_packet_t *capture = &captured_packets[captured_packet_count++];
     capture->len               = (uint16_t) sbufGetLength(buf);
+    capture->wid               = lineGetWID(l);
     require(capture->len <= kMaxPacketLength, "captured packet is too large");
+    require(lineIsOnCurrentEventWorker(l), "upstream packet was emitted on a non-owner worker");
     memoryCopy(capture->bytes, sbufGetRawPtr(buf), capture->len);
     lineSetRecalculateChecksum(l, false);
     lineReuseBuffer(l, buf);
@@ -153,7 +163,7 @@ static void resetCaptures(void)
 static sbuf_t *makeTcpPacket(test_env_t *env, uint32_t seq, uint8_t flags, const uint8_t *payload, uint16_t payload_len)
 {
     uint16_t packet_len = (uint16_t) (sizeof(struct ip_hdr) + sizeof(struct tcp_hdr) + payload_len);
-    sbuf_t  *buf        = bufferpoolGetSmallBuffer(env->buffer_pool);
+    sbuf_t  *buf        = bufferpoolGetSmallBuffer(lineGetBufferPool(env->line));
     sbufSetLength(buf, packet_len);
 
     uint8_t *packet = sbufGetMutablePtr(buf);
@@ -252,6 +262,7 @@ static void fireTimedMessage(uint32_t index)
     require(index < timed_message_count && ! timed_messages[index].consumed, "invalid timed-message callback");
     timed_message_t *message = &timed_messages[index];
     message->consumed        = true;
+    testWorkerBindWID(message->wid);
     message->callback(NULL, message->arg1, message->arg2, message->arg3);
 }
 
@@ -260,6 +271,7 @@ static void cleanupTimedMessage(uint32_t index)
     require(index < timed_message_count && ! timed_messages[index].consumed, "invalid timed-message cleanup");
     timed_message_t *message = &timed_messages[index];
     message->consumed        = true;
+    testWorkerBindWID(message->wid);
     message->cleanup(message->arg1, message->arg2, message->arg3);
 }
 
@@ -268,18 +280,46 @@ static void setupEnv(test_env_t *env)
     memoryZero(env, sizeof(*env));
     resetCaptures();
 
-    env->large_master                    = masterpoolCreateWithCapacity(64);
-    env->small_master                    = masterpoolCreateWithCapacity(64);
-    env->buffer_pool                     = bufferpoolCreate(env->large_master, env->small_master, 64, 4096, 512);
-    GSTATE.shortcut_buffer_pools         = &env->buffer_pool;
+    env->large_master    = masterpoolCreateWithCapacity(64);
+    env->small_master    = masterpoolCreateWithCapacity(64);
+    env->messages_master = masterpoolCreateWithCapacity(64);
+    env->wios_master     = masterpoolCreateWithCapacity(64);
+    workerMessagesInstallMasterPoolCallbacks(env->messages_master);
+
+    for (wid_t wid = 0; wid < 2; ++wid)
+    {
+        env->buffer_pools[wid] = bufferpoolCreate(env->large_master, env->small_master, 64, 4096, 512);
+        env->wios_pools[wid] =
+            threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wios_master, sizeof(wio_t), 64);
+        env->loops[wid]         = wloopCreate(0, env->buffer_pools[wid], wid);
+        env->loops[wid]->status = WLOOP_STATUS_RUNNING;
+        iowatcherInit(env->loops[wid]);
+
+        env->workers[wid].wid            = wid;
+        env->workers[wid].loop           = env->loops[wid];
+        env->workers[wid].buffer_pool    = env->buffer_pools[wid];
+        env->workers[wid].wios_pool      = env->wios_pools[wid];
+        env->workers[wid].has_event_loop = true;
+        workerMessagesInit(&env->workers[wid]);
+
+        env->lines[wid] = memoryAllocateZero(sizeof(*env->lines[wid]));
+        require(env->lines[wid] != NULL, "failed to allocate a synfin-sni test line");
+        atomicStoreRelaxed(&env->lines[wid]->refc, 1);
+        env->lines[wid]->alive = true;
+        env->lines[wid]->wid   = wid;
+    }
+    env->workers[2].wid = 2;
+    env->line           = env->lines[0];
+
+    GSTATE.workers_count                 = 3;
+    GSTATE.shortcut_buffer_pools         = env->buffer_pools;
+    GSTATE.shortcut_loops                = env->loops;
+    GSTATE.shortcut_wios_pools           = env->wios_pools;
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
-
-    env->line = memoryAllocateZero(sizeof(*env->line));
-    require(env->line != NULL, "failed to allocate the synfin-sni test line");
-    atomicStoreRelaxed(&env->line->refc, 1);
-    env->line->alive = true;
-    env->line->wid   = 0;
+    GSTATE.masterpool_messages           = env->messages_master;
+    testWorkerRegistryInstallTable(&g_test_worker_registry, env->workers);
+    testWorkerBindWID(0);
 
     static node_t node = {.name = (char *) "ipmanipulator-synfin-hold-test", .type = (char *) "TestTunnel"};
     env->t             = tunnelCreate(&node, sizeof(ipmanipulator_tstate_t), 0);
@@ -299,6 +339,7 @@ static void setupEnv(test_env_t *env)
 
 static void destroyEnv(test_env_t *env)
 {
+    testWorkerBindWID(0);
     for (uint32_t i = 0; i < timed_message_count; ++i)
     {
         if (! timed_messages[i].consumed)
@@ -308,19 +349,38 @@ static void destroyEnv(test_env_t *env)
     }
 
     synfinsnitrickDestroyState(env->t);
-    require(atomicLoadRelaxed(&env->line->refc) == 1, "synfin-sni leaked a line reference");
+    require(atomicLoadRelaxed(&env->lines[0]->refc) == 1 && atomicLoadRelaxed(&env->lines[1]->refc) == 1,
+            "synfin-sni leaked a line reference");
     tunnelDestroy(env->sink);
     tunnelDestroy(env->t);
-    memoryFree(env->line);
+    memoryFree(env->lines[0]);
+    memoryFree(env->lines[1]);
 
+    workerMessagesDestroy(&env->workers[0]);
+    workerMessagesDestroy(&env->workers[1]);
+    wloopDestroy(&env->loops[0]);
+    wloopDestroy(&env->loops[1]);
+    testWorkerRegistryRestore(&g_test_worker_registry);
+
+    GSTATE.workers_count                 = 0;
     GSTATE.shortcut_buffer_pools         = NULL;
+    GSTATE.shortcut_loops                = NULL;
+    GSTATE.shortcut_wios_pools           = NULL;
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
-    bufferpoolDestroy(env->buffer_pool);
+    GSTATE.masterpool_messages           = NULL;
+    bufferpoolDestroy(env->buffer_pools[0]);
+    bufferpoolDestroy(env->buffer_pools[1]);
+    threadsafegenericpoolDestroy(env->wios_pools[0]);
+    threadsafegenericpoolDestroy(env->wios_pools[1]);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
+    masterpoolMakeEmpty(env->messages_master);
+    masterpoolMakeEmpty(env->wios_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
+    masterpoolDestroy(env->messages_master);
+    masterpoolDestroy(env->wios_master);
 }
 
 static void testCompleteAndNonTlsPayloadsPassImmediately(void)
@@ -373,6 +433,45 @@ static void testFragmentedHoldCancelsOnSecondSegment(void)
             "second segment did not cancel the hold");
     fireTimedMessage(0);
     require(captured_packet_count == 4, "stale timer forwarded the canceled hold");
+    destroyEnv(&env);
+}
+
+static void testCrossWorkerCompletionFailsOpenOnOwnerWorkers(void)
+{
+    test_env_t env;
+    setupEnv(&env);
+    warmFlow(&env);
+
+    uint8_t first[20];
+    uint8_t second[44];
+    makeFragmentedClientHelloPrefix(first);
+    memorySet(second, 0x5A, sizeof(second));
+    sendUpstream(&env, kInitialSequence + 1U, TCP_ACK, first, sizeof(first));
+    require(snapshotFlow(&env).has_held_packet, "cross-worker synfin fixture did not retain its first segment");
+
+    testWorkerBindWID(1);
+    env.line = env.lines[1];
+    sendUpstream(&env, kInitialSequence + 1U + sizeof(first), TCP_ACK, second, sizeof(second));
+
+    require(captured_packet_count == 3 && captured_packets[2].wid == 1,
+            "cross-worker synfin completion was not forwarded on its owner worker");
+    require(memoryCompare(captured_packets[2].bytes + sizeof(struct ip_hdr) + sizeof(struct tcp_hdr),
+                          second,
+                          sizeof(second)) == 0,
+            "cross-worker synfin completion changed the current segment");
+    flow_snapshot_t flow = snapshotFlow(&env);
+    require(flow.exists && flow.phase == kIpManipulatorSynfinFlowPhasePassthrough && ! flow.has_held_packet,
+            "cross-worker synfin completion did not fail open");
+
+    testWorkerBindWID(0);
+    wloopProcessEvents(env.loops[0], 0);
+    require(captured_packet_count == 4 && captured_packets[3].wid == 0,
+            "cross-worker synfin hold was not replayed on its owner worker");
+    require(memoryCompare(
+                captured_packets[3].bytes + sizeof(struct ip_hdr) + sizeof(struct tcp_hdr), first, sizeof(first)) == 0,
+            "cross-worker synfin fail-open changed the held segment");
+
+    env.line = env.lines[0];
     destroyEnv(&env);
 }
 
@@ -476,24 +575,18 @@ static void testDroppedScheduleReleasesHold(void)
 
 int main(void)
 {
-    const uint32_t saved_workers_count = GSTATE.workers_count;
-
-    GSTATE.workers_count = 1;
-    testWorkerRegistryInstall(&g_test_worker_registry);
-    testWorkerBindWID(0);
     checkSumInit();
     require(globalstateInitializeSecureRandom(), "the operating system random source is unavailable");
 
     testCompleteAndNonTlsPayloadsPassImmediately();
     testFragmentedHoldCancelsOnSecondSegment();
+    testCrossWorkerCompletionFailsOpenOnOwnerWorkers();
     testTimeoutFailsOpenAndPreservesPayload();
     testDeadLineTimeoutRecycles();
     testStaleGenerationAndCleanup();
     testDroppedScheduleReleasesHold();
 
     globalstateDestroySecureRandom();
-    GSTATE.workers_count = saved_workers_count;
-    testWorkerRegistryRestore(&g_test_worker_registry);
     printf("ALL unit tests passed!\n");
     return 0;
 }

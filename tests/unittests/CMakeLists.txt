@@ -1406,7 +1406,7 @@ if(TARGET IpManipulator)
   add_waterwall_unit_test(
     waterwall.ipmanipulator_delay_barrier_unit
     ipmanipulator_delay_barrier_test
-    "unit;tunnels;ipmanipulator;firstsni;smugglesni;overlapsni;delay;fifo;lifecycle"
+    "unit;tunnels;ipmanipulator;firstsni;smugglesni;overlapsni;delay;fifo;lifecycle;worker;ownership"
   )
 
   add_executable(ipmanipulator_config_validation_test ipmanipulator_config_validation_test.c)
@@ -1489,7 +1489,7 @@ if(TARGET IpManipulator)
   add_waterwall_unit_test(
     waterwall.ipmanipulator_echsni_delay_unit
     ipmanipulator_echsni_delay_test
-    "unit;tunnels;ipmanipulator;echsni;delay;lifecycle"
+    "unit;tunnels;ipmanipulator;echsni;delay;lifecycle;worker;ownership"
   )
 
   add_executable(ipmanipulator_smugglesni_capture_test ipmanipulator_smugglesni_capture_test.c)
@@ -1504,7 +1504,7 @@ if(TARGET IpManipulator)
   add_waterwall_unit_test(
     waterwall.ipmanipulator_smugglesni_capture_unit
     ipmanipulator_smugglesni_capture_test
-    "unit;tunnels;ipmanipulator;smugglesni;tls"
+    "unit;tunnels;ipmanipulator;smugglesni;tls;worker;ownership"
   )
 
   add_executable(ipmanipulator_smugglefin_pause_test
@@ -1551,7 +1551,7 @@ if(TARGET IpManipulator)
   add_waterwall_unit_test(
     waterwall.ipmanipulator_overlap_hold_unit
     ipmanipulator_overlap_hold_test
-    "unit;tunnels;ipmanipulator;overlapsni;timeout;lifecycle"
+    "unit;tunnels;ipmanipulator;overlapsni;timeout;lifecycle;worker;ownership"
   )
 
   add_executable(ipmanipulator_synfin_hold_test
@@ -1575,7 +1575,7 @@ if(TARGET IpManipulator)
   add_waterwall_unit_test(
     waterwall.ipmanipulator_synfin_hold_unit
     ipmanipulator_synfin_hold_test
-    "unit;tunnels;ipmanipulator;synfinsni;timeout;lifecycle"
+    "unit;tunnels;ipmanipulator;synfinsni;timeout;lifecycle;worker;ownership"
   )
 
   add_executable(ipmanipulator_synfin_output_test

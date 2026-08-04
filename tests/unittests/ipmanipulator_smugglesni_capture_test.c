@@ -16,13 +16,14 @@ static void require(bool condition, const char *message);
 
 typedef struct test_env_s
 {
-    master_pool_t *large_master;
-    master_pool_t *small_master;
-    master_pool_t *messages_master;
-    buffer_pool_t *buffer_pool;
-    buffer_pool_t *buffer_pools[1];
-    wloop_t       *loops[1];
-    worker_t       workers[1];
+    master_pool_t             *large_master;
+    master_pool_t             *small_master;
+    master_pool_t             *messages_master;
+    master_pool_t             *wios_master;
+    buffer_pool_t             *buffer_pools[2];
+    threadsafe_generic_pool_t *wios_pools[2];
+    wloop_t                   *loops[2];
+    worker_t                   workers[3];
 } test_env_t;
 
 static void envSetup(test_env_t *env)
@@ -31,23 +32,32 @@ static void envSetup(test_env_t *env)
     env->large_master    = masterpoolCreateWithCapacity(32);
     env->small_master    = masterpoolCreateWithCapacity(32);
     env->messages_master = masterpoolCreateWithCapacity(32);
+    env->wios_master     = masterpoolCreateWithCapacity(32);
     workerMessagesInstallMasterPoolCallbacks(env->messages_master);
-    env->buffer_pool     = bufferpoolCreate(env->large_master, env->small_master, 32, 8192, 4096);
-    env->buffer_pools[0] = env->buffer_pool;
 
-    env->loops[0] = wloopCreate(0, env->buffer_pool, 0);
-    iowatcherInit(env->loops[0]);
+    for (wid_t wid = 0; wid < 2; ++wid)
+    {
+        env->buffer_pools[wid] = bufferpoolCreate(env->large_master, env->small_master, 32, 8192, 4096);
+        env->wios_pools[wid] =
+            threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wios_master, sizeof(wio_t), 32);
+        env->loops[wid]         = wloopCreate(0, env->buffer_pools[wid], wid);
+        env->loops[wid]->status = WLOOP_STATUS_RUNNING;
+        iowatcherInit(env->loops[wid]);
 
-    env->workers[0].wid            = 0;
-    env->workers[0].loop           = env->loops[0];
-    env->workers[0].buffer_pool    = env->buffer_pool;
-    env->workers[0].has_event_loop = true;
-    workerMessagesInit(&env->workers[0]);
+        env->workers[wid].wid            = wid;
+        env->workers[wid].loop           = env->loops[wid];
+        env->workers[wid].buffer_pool    = env->buffer_pools[wid];
+        env->workers[wid].wios_pool      = env->wios_pools[wid];
+        env->workers[wid].has_event_loop = true;
+        workerMessagesInit(&env->workers[wid]);
+    }
+    env->workers[2].wid = 2;
 
     testWorkerRegistryInstallTable(&g_test_worker_registry, env->workers);
-    GSTATE.workers_count                 = 2;
+    GSTATE.workers_count                 = 3;
     GSTATE.shortcut_buffer_pools         = env->buffer_pools;
     GSTATE.shortcut_loops                = env->loops;
+    GSTATE.shortcut_wios_pools           = env->wios_pools;
     GSTATE.masterpool_buffer_pools_large = env->large_master;
     GSTATE.masterpool_buffer_pools_small = env->small_master;
     GSTATE.masterpool_messages           = env->messages_master;
@@ -60,24 +70,34 @@ static void envSetup(test_env_t *env)
 static void envTeardown(test_env_t *env)
 {
     globalstateDestroySecureRandom();
-    workerMessagesDestroy(&env->workers[0]);
-    wloopDestroy(&env->loops[0]);
+    testWorkerBindWID(0);
+    for (wid_t wid = 0; wid < 2; ++wid)
+    {
+        workerMessagesDestroy(&env->workers[wid]);
+        wloopDestroy(&env->loops[wid]);
+    }
 
     testWorkerRegistryRestore(&g_test_worker_registry);
     GSTATE.workers_count                 = 0;
     GSTATE.shortcut_buffer_pools         = NULL;
     GSTATE.shortcut_loops                = NULL;
+    GSTATE.shortcut_wios_pools           = NULL;
     GSTATE.masterpool_buffer_pools_large = NULL;
     GSTATE.masterpool_buffer_pools_small = NULL;
     GSTATE.masterpool_messages           = NULL;
 
-    bufferpoolDestroy(env->buffer_pool);
+    bufferpoolDestroy(env->buffer_pools[0]);
+    bufferpoolDestroy(env->buffer_pools[1]);
+    threadsafegenericpoolDestroy(env->wios_pools[0]);
+    threadsafegenericpoolDestroy(env->wios_pools[1]);
     masterpoolMakeEmpty(env->large_master);
     masterpoolMakeEmpty(env->small_master);
     masterpoolMakeEmpty(env->messages_master);
+    masterpoolMakeEmpty(env->wios_master);
     masterpoolDestroy(env->large_master);
     masterpoolDestroy(env->small_master);
     masterpoolDestroy(env->messages_master);
+    masterpoolDestroy(env->wios_master);
 }
 
 enum
@@ -91,6 +111,7 @@ typedef struct received_packet_record_s
     uint32_t seq;
     uint16_t payload_len;
     uint16_t ip_len;
+    wid_t    wid;
     uint8_t  tcp_flags;
     uint8_t  payload[2048];
 } received_packet_record_t;
@@ -201,7 +222,7 @@ sbuf_t *tlsclientTunnelGenerateClientHello(tunnel_t *instance, line_t *caller_li
     return hello;
 }
 
-static void recordReceivedPacket(received_packet_record_t *records, uint32_t *count, const sbuf_t *buf)
+static void recordReceivedPacket(received_packet_record_t *records, uint32_t *count, line_t *line, const sbuf_t *buf)
 {
     if (*count >= kMaxReceivedPackets)
     {
@@ -220,6 +241,7 @@ static void recordReceivedPacket(received_packet_record_t *records, uint32_t *co
     rec->ip_len        = ip_len;
     rec->seq           = lwip_ntohl(tcp->seqno);
     rec->payload_len   = (uint16_t) (ip_len - ip_hlen - tcp_hlen);
+    rec->wid           = lineGetWID(line);
     rec->tcp_flags     = TCPH_FLAGS(tcp);
 
     if (rec->payload_len > 0)
@@ -261,25 +283,32 @@ static void observePrestartRemainder(void)
 static void receiveNormal(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;
-    recordReceivedPacket(normal_packets, &normal_packets_count, buf);
+    require(lineIsOnCurrentEventWorker(l), "normal packet was emitted on a non-owner worker");
+    recordReceivedPacket(normal_packets, &normal_packets_count, l, buf);
     lineReuseBuffer(l, buf);
 }
 
 static void receiveReal(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;
-    recordReceivedPacket(real_packets, &real_packets_count, buf);
+    require(lineIsOnCurrentEventWorker(l), "real packet was emitted on a non-owner worker");
+    recordReceivedPacket(real_packets, &real_packets_count, l, buf);
     observePrestartRemainder();
     lineReuseBuffer(l, buf);
 }
 
-static line_t makeTestLine(void)
+static line_t makeTestLineForWorker(wid_t wid)
 {
     line_t line = {0};
     atomicStoreRelaxed(&line.refc, 1);
     line.alive = true;
-    line.wid   = 0;
+    line.wid   = wid;
     return line;
+}
+
+static line_t makeTestLine(void)
+{
+    return makeTestLineForWorker(0);
 }
 
 static sbuf_t *makeTcpPacketForSourcePort(uint16_t src_port, uint32_t seq, uint8_t flags, const uint8_t *payload,
@@ -860,6 +889,63 @@ static void testTwoSegmentChromeSizedClientHello(void)
 
     require(memcmp(concat_payloads, expected_gen_buf, total_hello_len) == 0,
             "concatenated fake segment payloads do not match generated ClientHello record byte-for-byte");
+
+    destroyTestTunnel(t);
+}
+
+static void testCrossWorkerCaptureFailsOpenOnOwnerWorkers(void)
+{
+    tunnel_t  normal          = {0};
+    tunnel_t  real            = {0};
+    tunnel_t *t               = createTestTunnel(&normal, &real);
+    line_t    owner_line      = makeTestLineForWorker(0);
+    line_t    foreign_line    = makeTestLineForWorker(1);
+    uint8_t   hello_buf[1705] = {0};
+    uint16_t  total_hello_len = buildTlsClientHelloPayload(hello_buf, sizeof(hello_buf), "worker.real.example");
+    uint16_t  first_len       = 900;
+    uint16_t  second_len      = (uint16_t) (total_hello_len - first_len);
+    uint32_t  start_seq       = 24000;
+    uint32_t  first_seq       = start_seq + 1U;
+    uint32_t  second_seq      = first_seq + first_len;
+
+    resetCounters();
+    generated_hello_len = total_hello_len;
+
+    testWorkerBindWID(0);
+    warmFlow(t, &owner_line, start_seq);
+    require(
+        smugglesnitrickUpStreamPayload(t, &owner_line, makeTcpPacketWithSeq(first_seq, TCP_ACK, hello_buf, first_len)),
+        "owner-worker ClientHello segment was not retained");
+    require(normal_packets_count == 0, "owner-worker ClientHello segment was emitted before mismatch");
+
+    testWorkerBindWID(1);
+    require(smugglesnitrickUpStreamPayload(
+                t, &foreign_line, makeTcpPacketWithSeq(second_seq, TCP_ACK, hello_buf + first_len, second_len)),
+            "foreign-worker ClientHello segment did not fail open");
+    require(normal_packets_count == 1 && normal_packets[0].wid == 1 && normal_packets[0].seq == second_seq,
+            "foreign-worker ClientHello segment was not forwarded on its owner worker");
+
+    testWorkerBindWID(0);
+    wloopProcessEvents(GSTATE.shortcut_loops[0], 0);
+
+    require(normal_packets_count == 2 && normal_packets[1].wid == 0 && normal_packets[1].seq == first_seq,
+            "retained ClientHello segment was not replayed on its owner worker");
+    require(normal_packets[1].payload_len == first_len &&
+                memoryCompare(normal_packets[1].payload, hello_buf, first_len) == 0,
+            "retained ClientHello segment changed during cross-worker fail-open");
+    require(normal_packets[0].payload_len == second_len &&
+                memoryCompare(normal_packets[0].payload, hello_buf + first_len, second_len) == 0,
+            "foreign ClientHello segment changed during cross-worker fail-open");
+    require(generator_calls == 0 && real_packets_count == 0,
+            "cross-worker fail-open generated a fake or real-SNI transcript");
+
+    ipmanipulator_smuggle_flow_t flow = {0};
+    require(findFlowForSourcePort(tunnelGetState(t), 12345, &flow), "cross-worker smuggle flow disappeared");
+    require(flow.phase == kIpManipulatorSmuggleFlowPhasePassthrough,
+            "cross-worker smuggle flow did not enter passthrough");
+    requireNoActiveTlsSlots(tunnelGetState(t));
+    require(atomicLoadRelaxed(&owner_line.refc) == 1 && atomicLoadRelaxed(&foreign_line.refc) == 1,
+            "cross-worker capture leaked a line reference");
 
     destroyTestTunnel(t);
 }
@@ -1536,6 +1622,7 @@ int main(void)
     testGeneratedRecordWithTrailingBytesFailsOpen();
     testTrailingPayloadAfterClientHello();
     testTwoSegmentChromeSizedClientHello();
+    testCrossWorkerCaptureFailsOpenOnOwnerWorkers();
     testThreeSegmentSequenceWrapping();
     testFragmentDiscontinuityFailsOpen();
     testPendingPrestartEvictionEntersPassthrough();
