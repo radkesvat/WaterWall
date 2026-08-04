@@ -1,6 +1,6 @@
 #include "IpManipulator/structure.h"
 
-void ipmanipulatorSynfinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
+bool ipmanipulatorSynfinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                           WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                           void *arg2, void *arg3);
 
@@ -25,7 +25,7 @@ void ipmanipulatorForwardCapturedPacketNormal(tunnel_t *t, line_t *l, sbuf_t *bu
     lineReuseBuffer(l, buf);
 }
 
-void ipmanipulatorSynfinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
+bool ipmanipulatorSynfinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                           WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                           void *arg2, void *arg3)
 {
@@ -33,4 +33,5 @@ void ipmanipulatorSynfinTestScheduleTimed(wid_t wid, WorkerMessageCallback callb
     discard callback;
     discard delay_ms;
     cleanup(arg1, arg2, arg3);
+    return false;
 }

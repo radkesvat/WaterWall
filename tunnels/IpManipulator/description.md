@@ -1,5 +1,5 @@
 <!--
-Documentation version: 120
+Documentation version: 121
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx, and both files must keep the same documentation version.
 -->
 
@@ -275,7 +275,7 @@ the same replacement number.
 
   A one-packet capture therefore uses only `data-shard-1-delay` and arms no second timer, a two-packet capture keeps the previous byte-for-byte and timing behaviour, and a three-or-more-packet capture never creates independently scheduled equal-deadline messages that could reorder.
 
-  During the release window only an exact retransmission of a still-pending original segment is swallowed. ACK-only packets, non-overlapping later application data, and any partial or ambiguous overlap pass through unchanged. TCP `FIN` and `RST` packets are connection-lifecycle traffic and are never swallowed. A matching close in either direction cancels every original packet that is still pending release; an upstream close during an incomplete capture releases the held originals before forwarding the close packet, while a downstream close disposes of the incomplete capture without any later injection.
+  During the release window only an exact retransmission of a still-pending original segment is swallowed. ACK-only packets, non-overlapping later application data, and any partial or ambiguous overlap pass through unchanged. TCP `FIN` and `RST` packets are connection-lifecycle traffic and are never swallowed. During release, an upstream graceful `FIN` flushes every pending original ahead of itself, while an upstream `RST` discards pending originals. A downstream close cancels pending originals, and an upstream close during an incomplete capture releases the held originals before forwarding the close packet while a downstream close disposes of that incomplete capture without later injection.
 
   Each delayed original and each capture is bound to the nonzero generation of the ECH flow that captured it as well as its 4-tuple. Reusing the same 4-tuple starts a new generation and invalidates the previous generation's capture and pending originals first, so a timer or capture left from the previous connection cannot release stale ClientHello data.
 
@@ -778,6 +778,9 @@ a reused tuple. Release detaches the batch under the shard lock and forwards it
 outside the lock. Count/byte exhaustion fails open in order: queued packets are
 detached first, followed by the current packet. Flow reset, timeout, and table
 destruction recycle all retained buffers.
+
+Every delayed release has a fail-open path: if its timer cannot be armed, held
+bytes are flushed immediately and in order instead of being stranded.
 
 `smuggle-fin` additionally keeps a per-worker paused-flow registry holding one
 tuple plus pause generation, so the rule that a worker does not start a second

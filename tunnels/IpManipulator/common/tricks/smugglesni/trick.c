@@ -302,12 +302,15 @@ static void smugglesnitrickStartOrderedFakeBatch(tunnel_t *t, const ipmanipulato
         if (needs_schedule)
         {
             uint64_t remaining = due_ms > now_ms ? due_ms - now_ms : 0;
-            ipmanipulatorDelayBarrierSchedule(t,
-                                              key,
-                                              kIpManipulatorDelayBarrierSmuggleSni,
-                                              generation,
-                                              wid,
-                                              remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining);
+            if (! ipmanipulatorDelayBarrierSchedule(t,
+                                                    key,
+                                                    kIpManipulatorDelayBarrierSmuggleSni,
+                                                    generation,
+                                                    wid,
+                                                    remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining))
+            {
+                ipmanipulatorDelayBarrierFailOpen(t, key, kIpManipulatorDelayBarrierSmuggleSni, generation);
+            }
         }
     }
     else
@@ -727,12 +730,15 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (needs_schedule)
         {
             uint64_t remaining = barrier_deadline > now_ms ? barrier_deadline - now_ms : 0;
-            ipmanipulatorDelayBarrierSchedule(t,
-                                              &key,
-                                              kIpManipulatorDelayBarrierSmuggleSni,
-                                              barrier_generation,
-                                              lineGetWID(l),
-                                              remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining);
+            if (! ipmanipulatorDelayBarrierSchedule(t,
+                                                    &key,
+                                                    kIpManipulatorDelayBarrierSmuggleSni,
+                                                    barrier_generation,
+                                                    lineGetWID(l),
+                                                    remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining))
+            {
+                ipmanipulatorDelayBarrierFailOpen(t, &key, kIpManipulatorDelayBarrierSmuggleSni, barrier_generation);
+            }
         }
 
         if (! send_current_after_batch)

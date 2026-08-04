@@ -580,15 +580,24 @@ bool ipmanipulatorDelayBarrierInstallOrdered(ipmanipulator_delay_barrier_t  *bar
                                              bool *needs_schedule);
 bool ipmanipulatorDelayBarrierHasPendingOrdered(const ipmanipulator_delay_barrier_t *barrier);
 void ipmanipulatorDelayBarrierTake(ipmanipulator_delay_barrier_t *barrier, ipmanipulator_delay_batch_t *batch);
-void ipmanipulatorDelayBarrierSchedule(tunnel_t *t, const ipmanipulator_flow_key_t *key,
+bool ipmanipulatorDelayBarrierSchedule(tunnel_t *t, const ipmanipulator_flow_key_t *key,
                                        ipmanipulator_delay_barrier_kind_e kind, uint64_t generation, wid_t wid,
                                        uint32_t delay_ms);
+/*
+ * Flushes a barrier whose timer could not be armed. Detaches under the shard
+ * lock, then emits everything the barrier still owns in order. Generation-guarded
+ * and safe to call more than once: a barrier that was already taken yields
+ * nothing. Must run on the worker that owns the retained lines.
+ */
+void ipmanipulatorDelayBarrierFailOpen(tunnel_t *t, const ipmanipulator_flow_key_t *key,
+                                       ipmanipulator_delay_barrier_kind_e kind, uint64_t generation);
 bool ipmanipulatorDelayBatchSendUpstream(tunnel_t *t, ipmanipulator_delay_batch_t *batch);
 bool ipmanipulatorShouldLogEgressWarning(ipmanipulator_tstate_t *state);
 
 uint64_t ipmanipulatorAllocateFlowGeneration(ipmanipulator_tstate_t *state);
 #ifdef IPMANIPULATOR_DELAY_BARRIER_TEST_HOOKS
 void ipmanipulatorDelayBarrierTestSetNow(uint64_t now_ms);
+void ipmanipulatorDelayBarrierTestSetScheduleFailure(bool should_fail);
 void ipmanipulatorDelayBarrierTestFire(tunnel_t *t, const ipmanipulator_flow_key_t *key,
                                        ipmanipulator_delay_barrier_kind_e kind, uint64_t generation);
 #endif

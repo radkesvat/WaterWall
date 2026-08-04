@@ -272,6 +272,59 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
             "overdue ordered scheduler released the barrier before earlier transcript outputs");
     require(atomicLoadRelaxed(&line.refc) == 1, "ordered transcript release leaked retained line references");
 
+    /* A schedule rejected before acceptance must flush the complete barrier. */
+    removeEntry(state, kind, &key);
+    discard reserveEntry(state, kind, &key);
+    barrier = findBarrierLocked(state, kind, &key, &shard);
+    ipmanipulatorDelayBarrierInitialize(state, barrier, 800);
+    ipmanipulator_ordered_output_t rejected_outputs[] = {
+        {.line = &line, .buf = makePacket(40), .send = capturePacket, .due_ms = 700},
+        {.line = &line, .buf = makePacket(41), .send = capturePacket, .due_ms = 750},
+    };
+    require(ipmanipulatorDelayBarrierInstallOrdered(barrier, rejected_outputs, 2, &needs_schedule) && needs_schedule,
+            "rejected-schedule fixture did not arm its scheduler");
+    require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, makePacket(42), false, &needs_schedule) &&
+                ! needs_schedule,
+            "rejected-schedule fixture did not retain its FIFO tail");
+    generation = barrier->generation;
+    ipmanipulatorFlowShardUnlock(shard);
+
+    captured_count = 0;
+    ipmanipulatorDelayBarrierTestSetScheduleFailure(true);
+    require(! ipmanipulatorDelayBarrierSchedule(t, &key, kind, generation, 0, 1),
+            "forced delay-barrier scheduling failure reported success");
+    ipmanipulatorDelayBarrierFailOpen(t, &key, kind, generation);
+    ipmanipulatorDelayBarrierTestSetScheduleFailure(false);
+    require(captured_count == 3 && captured_ids[0] == 40 && captured_ids[1] == 41 && captured_ids[2] == 42,
+            "rejected delay-barrier scheduling did not flush in order");
+    require(atomicLoadRelaxed(&line.refc) == 1, "rejected delay-barrier scheduling leaked line references");
+
+    /* A failed self-reschedule flushes all outputs that are not due yet. */
+    removeEntry(state, kind, &key);
+    discard reserveEntry(state, kind, &key);
+    barrier = findBarrierLocked(state, kind, &key, &shard);
+    ipmanipulatorDelayBarrierInitialize(state, barrier, 900);
+    ipmanipulator_ordered_output_t reschedule_outputs[] = {
+        {.line = &line, .buf = makePacket(50), .send = capturePacket, .due_ms = 800},
+        {.line = &line, .buf = makePacket(51), .send = capturePacket, .due_ms = 850},
+    };
+    require(ipmanipulatorDelayBarrierInstallOrdered(barrier, reschedule_outputs, 2, &needs_schedule) && needs_schedule,
+            "reschedule-failure fixture did not arm its scheduler");
+    require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, makePacket(52), false, &needs_schedule) &&
+                ! needs_schedule,
+            "reschedule-failure fixture did not retain its FIFO tail");
+    generation = barrier->generation;
+    ipmanipulatorFlowShardUnlock(shard);
+
+    captured_count = 0;
+    ipmanipulatorDelayBarrierTestSetNow(800);
+    ipmanipulatorDelayBarrierTestSetScheduleFailure(true);
+    ipmanipulatorDelayBarrierTestFire(t, &key, kind, generation);
+    ipmanipulatorDelayBarrierTestSetScheduleFailure(false);
+    require(captured_count == 3 && captured_ids[0] == 50 && captured_ids[1] == 51 && captured_ids[2] == 52,
+            "failed delay-barrier self-reschedule did not flush the remainder in order");
+    require(atomicLoadRelaxed(&line.refc) == 1, "failed self-reschedule leaked line references");
+
     /* Model packet A immediately before the deadline and packet B arriving
      * after it while the timer callback is still pending. The call sites take
      * and send the older batch before they forward the current packet. */

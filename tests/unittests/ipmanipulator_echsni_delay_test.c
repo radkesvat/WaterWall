@@ -80,13 +80,14 @@ static timed_message_t    timed_messages[kMaxTimedMessages];
 static uint32_t           timed_message_count;
 static forwarded_packet_t forwarded_packets[kMaxForwarded];
 static uint32_t           forwarded_count;
+static bool               g_schedule_should_fail;
 static void (*forward_hook)(uint32_t index);
 static test_fixture_t *forward_hook_fixture;
 static test_fixture_t *before_fake_send_fixture;
 
 static void require(bool condition, const char *message);
 
-void ipmanipulatorEchSniTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
+bool ipmanipulatorEchSniTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                           WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                           void *arg2, void *arg3);
 void ipmanipulatorEchSniTestBeforeFakeSend(tunnel_t *t);
@@ -111,10 +112,16 @@ static void require(bool condition, const char *message)
     }
 }
 
-void ipmanipulatorEchSniTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
+bool ipmanipulatorEchSniTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                           WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                           void *arg2, void *arg3)
 {
+    if (g_schedule_should_fail)
+    {
+        cleanup(arg1, arg2, arg3);
+        return false;
+    }
+
     require(timed_message_count < kMaxTimedMessages, "timed-message capture overflow");
     timed_messages[timed_message_count++] = (timed_message_t) {
         .wid      = wid,
@@ -125,6 +132,7 @@ void ipmanipulatorEchSniTestScheduleTimed(wid_t wid, WorkerMessageCallback callb
         .arg2     = arg2,
         .arg3     = arg3,
     };
+    return true;
 }
 
 static void recordForwardedPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -230,6 +238,7 @@ static void resetCaptures(void)
     memoryZero(forwarded_packets, sizeof(forwarded_packets));
     timed_message_count      = 0;
     forwarded_count          = 0;
+    g_schedule_should_fail   = false;
     forward_hook             = NULL;
     forward_hook_fixture     = NULL;
     before_fake_send_fixture = NULL;
@@ -1307,7 +1316,68 @@ static void testDownstreamFinBetweenReleases(test_env_t *env)
     fixtureDestroy(&fixture);
 }
 
-static void testUpstreamCloseDuringDelayPhases(test_env_t *env)
+static void testGracefulFinFlushesPendingOriginals(test_env_t *env)
+{
+    resetCaptures();
+
+    test_fixture_t fixture = fixtureCreate(env);
+    uint8_t        hello[1024];
+    uint16_t       hello_len = 0;
+
+    startSuccessfulDelay(&fixture, hello, &hello_len);
+    require(
+        ! feedUpstream(&fixture, makeClientPacket(&fixture, kClientHelloSeq + hello_len, TCP_FIN | TCP_ACK, NULL, 0)),
+        "upstream FIN was swallowed during release");
+
+    uint16_t first_len = (uint16_t) (hello_len / 2U);
+    require(forwarded_count == 4, "graceful FIN did not flush both originals before itself");
+    require(forwarded_packets[1].seq == kClientHelloSeq && forwarded_packets[1].payload_len == first_len,
+            "graceful FIN did not flush the first original first");
+    require(forwarded_packets[2].seq == (uint32_t) kClientHelloSeq + first_len &&
+                forwarded_packets[2].payload_len == hello_len - first_len,
+            "graceful FIN did not flush the second original second");
+    require((forwarded_packets[3].flags & TCP_FIN) != 0, "graceful FIN was not forwarded after the originals");
+
+    ipmanipulator_echsni_flow_t flow = {0};
+    require(! findClientFlow(&fixture, &flow), "upstream FIN did not remove the ECH flow");
+
+    runTimedMessage(0);
+    require(forwarded_count == 4, "a stale timer emitted after an upstream FIN");
+
+    fixtureDestroy(&fixture);
+}
+
+static void testGracefulFinAfterPartialReleaseFlushesRemainder(test_env_t *env)
+{
+    resetCaptures();
+
+    test_fixture_t fixture = fixtureCreate(env);
+    uint8_t        hello[1024];
+    uint16_t       hello_len = 0;
+
+    startSuccessfulDelay(&fixture, hello, &hello_len);
+    runTimedMessage(0);
+    require(forwarded_count == 2, "the first original did not emit before the partial-release FIN");
+
+    require(
+        ! feedUpstream(&fixture, makeClientPacket(&fixture, kClientHelloSeq + hello_len, TCP_FIN | TCP_ACK, NULL, 0)),
+        "upstream FIN was swallowed after the first release");
+
+    uint16_t first_len = (uint16_t) (hello_len / 2U);
+    require(forwarded_count == 4, "partial-release FIN did not flush the remaining original before itself");
+    require(forwarded_packets[2].seq == (uint32_t) kClientHelloSeq + first_len &&
+                forwarded_packets[2].payload_len == hello_len - first_len,
+            "partial-release FIN duplicated the first original or skipped the second");
+    require((forwarded_packets[3].flags & TCP_FIN) != 0,
+            "partial-release FIN was not forwarded after the remaining original");
+
+    runTimedMessage(1);
+    require(forwarded_count == 4, "a stale second-phase timer emitted after an upstream FIN");
+
+    fixtureDestroy(&fixture);
+}
+
+static void testRstStillDiscardsPendingOriginals(test_env_t *env)
 {
     resetCaptures();
 
@@ -1318,31 +1388,16 @@ static void testUpstreamCloseDuringDelayPhases(test_env_t *env)
     startSuccessfulDelay(&fixture, hello, &hello_len);
     discard hello_len;
 
-    require(! feedUpstream(&fixture, makeClientPacket(&fixture, 9000, TCP_FIN | TCP_ACK, NULL, 0)),
-            "upstream FIN was swallowed during the first delay phase");
+    require(! feedUpstream(&fixture, makeClientPacket(&fixture, 9000, TCP_RST | TCP_ACK, NULL, 0)),
+            "upstream RST was swallowed during release");
+    require(forwarded_count == 2 && (forwarded_packets[1].flags & TCP_RST) != 0,
+            "upstream RST did not discard pending originals");
 
     ipmanipulator_echsni_flow_t flow = {0};
-    require(! findClientFlow(&fixture, &flow), "upstream FIN did not remove the ECH flow");
-
-    uint32_t forwarded_after_fin = forwarded_count;
-    runTimedMessage(0);
-    require(forwarded_count == forwarded_after_fin, "a stale timer emitted after an upstream FIN");
-
-    fixtureDestroy(&fixture);
-
-    resetCaptures();
-
-    fixture = fixtureCreate(env);
-    startSuccessfulDelay(&fixture, hello, &hello_len);
-    runTimedMessage(0);
-
-    require(! feedUpstream(&fixture, makeClientPacket(&fixture, 9000, TCP_RST | TCP_ACK, NULL, 0)),
-            "upstream RST was swallowed during the second delay phase");
     require(! findClientFlow(&fixture, &flow), "upstream RST did not remove the ECH flow");
 
-    uint32_t forwarded_after_rst = forwarded_count;
-    runTimedMessage(1);
-    require(forwarded_count == forwarded_after_rst, "the second release phase emitted after an upstream RST");
+    runTimedMessage(0);
+    require(forwarded_count == 2, "a stale timer emitted after an upstream RST");
 
     fixtureDestroy(&fixture);
 }
@@ -1624,8 +1679,8 @@ static void testIdleExpiryCannotDestroyDelayedOriginals(test_env_t *env)
     require(shard != NULL, "could not lock the delayed-release flow shard");
 
     ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->echsni_table, shard, &key);
-    require(entry != NULL && entry->deadline_ms == UINT64_MAX,
-            "a releasing ECH flow retained an idle-expiring deadline");
+    require(entry != NULL && entry->deadline_ms > getTickMS() + kFlowIdleTimeoutMs,
+            "a releasing ECH flow did not retain enough watchdog slack");
 
     uint32_t expired = ipmanipulatorFlowShardExpire(
         &state->echsni_table, shard, getTickMS() + kFlowIdleTimeoutMs + 1U, kIpManipulatorFlowCleanupBudget);
@@ -1647,7 +1702,7 @@ static void testIdleExpiryCannotDestroyDelayedOriginals(test_env_t *env)
     fixtureDestroy(&fixture);
 }
 
-static void testTimerCleanupOnlyFreesIdentity(test_env_t *env)
+static void testTimerCleanupDrainsPendingOriginals(test_env_t *env)
 {
     resetCaptures();
 
@@ -1661,12 +1716,42 @@ static void testTimerCleanupOnlyFreesIdentity(test_env_t *env)
     line_refc_t refc = fixture.line->refc;
 
     cleanupTimedMessage(0);
-    require(fixture.line->refc == refc, "identity-only timer cleanup changed the packet-line reference count");
+    require(fixture.line->refc == refc, "timer cleanup changed the packet-line reference count");
 
     ipmanipulator_echsni_flow_t flow = {0};
     require(findClientFlow(&fixture, &flow), "timer cleanup removed the flow");
-    require(flow.pending_original_count == 2, "timer cleanup touched flow-owned original buffers");
-    require(forwarded_count == 1, "timer cleanup emitted a packet");
+    require(flow.pending_original_count == 0 && flow.phase == kIpManipulatorEchSniFlowPhasePassthrough,
+            "target-worker timer cleanup did not drain the originals");
+    require(forwarded_count == 3, "target-worker timer cleanup did not emit both originals");
+
+    fixtureDestroy(&fixture);
+}
+
+static void testDroppedScheduleReleasesEchOriginals(test_env_t *env)
+{
+    resetCaptures();
+
+    test_fixture_t fixture = fixtureCreate(env);
+    uint8_t        hello[1024];
+    uint16_t       hello_len = 0;
+
+    g_schedule_should_fail = true;
+    hello_len              = buildMatchingClientHello(hello, sizeof(hello));
+    openFlow(&fixture, TCP_SYN);
+    feedClientHelloSegments(&fixture, hello, hello_len, 2, false);
+
+    uint16_t first_len = (uint16_t) (hello_len / 2U);
+    require(timed_message_count == 0, "a rejected ECH release schedule was recorded as accepted");
+    require(forwarded_count == 3, "a rejected ECH release schedule did not flush both originals");
+    require(forwarded_packets[1].seq == kClientHelloSeq && forwarded_packets[1].payload_len == first_len,
+            "rejected ECH release reordered the first original");
+    require(forwarded_packets[2].seq == (uint32_t) kClientHelloSeq + first_len,
+            "rejected ECH release reordered the second original");
+
+    ipmanipulator_echsni_flow_t flow = {0};
+    require(findClientFlow(&fixture, &flow), "rejected ECH release removed the flow");
+    require(flow.phase == kIpManipulatorEchSniFlowPhasePassthrough && flow.pending_original_count == 0,
+            "rejected ECH release left pending originals");
 
     fixtureDestroy(&fixture);
 }
@@ -1718,7 +1803,9 @@ int main(void)
     testCloseDuringFakeInnerEmission(&env);
     testDownstreamRstBeforeFirstRelease(&env);
     testDownstreamFinBetweenReleases(&env);
-    testUpstreamCloseDuringDelayPhases(&env);
+    testGracefulFinFlushesPendingOriginals(&env);
+    testGracefulFinAfterPartialReleaseFlushesRemainder(&env);
+    testRstStillDiscardsPendingOriginals(&env);
     testUpstreamFinFlushesIncompleteCapture(&env);
     testDownstreamRstCancelsIncompleteCapture(&env);
     testTupleReuseInvalidatesOldGeneration(&env);
@@ -1726,7 +1813,8 @@ int main(void)
     testCaptureTimeoutReleasesAndFailsOpen(&env);
     testLaterTrafficDuringDelay(&env);
     testIdleExpiryCannotDestroyDelayedOriginals(&env);
-    testTimerCleanupOnlyFreesIdentity(&env);
+    testTimerCleanupDrainsPendingOriginals(&env);
+    testDroppedScheduleReleasesEchOriginals(&env);
     testFlowLimitFailsOpen(&env);
 
     envTeardown(&env);

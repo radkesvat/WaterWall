@@ -382,21 +382,27 @@ static void ipmanipulatorCleanupPendingPrestartMessage(void *arg1, void *arg2, v
     memoryFree(arg2);
 }
 
-static void ipmanipulatorSchedulePrestartTimeout(tunnel_t *t, uint32_t slot_index, uint32_t generation)
+static bool ipmanipulatorSchedulePrestartTimeout(tunnel_t *t, uint32_t slot_index, uint32_t generation)
 {
     ipmanipulator_tls_prestart_timeout_msg_t *msg = memoryAllocate(sizeof(*msg));
-    *msg                                          = (ipmanipulator_tls_prestart_timeout_msg_t) {
-                                                 .slot_index = slot_index,
-                                                 .generation = generation,
+
+    if (msg == NULL)
+    {
+        return false;
+    }
+
+    *msg = (ipmanipulator_tls_prestart_timeout_msg_t) {
+        .slot_index = slot_index,
+        .generation = generation,
     };
 
-    sendWorkerMessageTimedWithCleanup(getCurrentEventWorkerWID(),
-                                      (WorkerMessageCallback) ipmanipulatorReleasePendingPrestartOnWorker,
-                                      ipmanipulatorCleanupPendingPrestartMessage,
-                                      kIpManipulatorTlsPrestartTimeoutMs,
-                                      t,
-                                      msg,
-                                      NULL);
+    return sendWorkerMessageTimedWithCleanup(getCurrentEventWorkerWID(),
+                                             (WorkerMessageCallback) ipmanipulatorReleasePendingPrestartOnWorker,
+                                             ipmanipulatorCleanupPendingPrestartMessage,
+                                             kIpManipulatorTlsPrestartTimeoutMs,
+                                             t,
+                                             msg,
+                                             NULL);
 }
 
 void ipmanipulatorReleasePendingCaptureOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
@@ -440,26 +446,32 @@ static void ipmanipulatorCleanupPendingCaptureMessage(void *arg1, void *arg2, vo
     memoryFree(arg2);
 }
 
-static void ipmanipulatorScheduleCaptureTimeout(tunnel_t *t, uint32_t slot_index, uint32_t generation)
+static bool ipmanipulatorScheduleCaptureTimeout(tunnel_t *t, uint32_t slot_index, uint32_t generation)
 {
     if (getWorkersCount() == 0 || GSTATE.workers == NULL)
     {
-        return;
+        return false;
     }
 
     ipmanipulator_tls_capture_timeout_msg_t *msg = memoryAllocate(sizeof(*msg));
-    *msg                                         = (ipmanipulator_tls_capture_timeout_msg_t) {
-                                                .slot_index = slot_index,
-                                                .generation = generation,
+
+    if (msg == NULL)
+    {
+        return false;
+    }
+
+    *msg = (ipmanipulator_tls_capture_timeout_msg_t) {
+        .slot_index = slot_index,
+        .generation = generation,
     };
 
-    sendWorkerMessageTimedWithCleanup(getCurrentEventWorkerWID(),
-                                      (WorkerMessageCallback) ipmanipulatorReleasePendingCaptureOnWorker,
-                                      ipmanipulatorCleanupPendingCaptureMessage,
-                                      kIpManipulatorTlsCaptureTimeoutMs,
-                                      t,
-                                      msg,
-                                      NULL);
+    return sendWorkerMessageTimedWithCleanup(getCurrentEventWorkerWID(),
+                                             (WorkerMessageCallback) ipmanipulatorReleasePendingCaptureOnWorker,
+                                             ipmanipulatorCleanupPendingCaptureMessage,
+                                             kIpManipulatorTlsCaptureTimeoutMs,
+                                             t,
+                                             msg,
+                                             NULL);
 }
 
 void ipmanipulatorReleaseCapturedPacketsNormal(tunnel_t *t, ipmanipulator_tls_capture_slot_t *slot)
@@ -1471,6 +1483,7 @@ typedef struct ipmanipulator_delay_timer_message_s
     ipmanipulator_flow_key_t           key;
     ipmanipulator_delay_barrier_kind_e kind;
     uint64_t                           generation;
+    wid_t                              wid;
 } ipmanipulator_delay_timer_message_t;
 
 uint64_t ipmanipulatorAllocateFlowGeneration(ipmanipulator_tstate_t *state)
@@ -1789,20 +1802,75 @@ static void ipmanipulatorDelayBarrierClearWindow(void *record, ipmanipulator_del
     }
 }
 
+void ipmanipulatorDelayBarrierFailOpen(tunnel_t *t, const ipmanipulator_flow_key_t *key,
+                                       ipmanipulator_delay_barrier_kind_e kind, uint64_t generation)
+{
+    ipmanipulator_tstate_t     *state = tunnelGetState(t);
+    ipmanipulator_flow_table_t *table = ipmanipulatorDelayBarrierTable(state, kind);
+
+    if (table == NULL)
+    {
+        return;
+    }
+
+    ipmanipulator_delay_batch_t release_batch = {0};
+    ipmanipulator_flow_shard_t *shard         = ipmanipulatorFlowTableLockShard(table, key);
+
+    if (shard == NULL)
+    {
+        return;
+    }
+
+    ipmanipulator_flow_entry_t    *entry = ipmanipulatorFlowShardFind(table, shard, key);
+    ipmanipulator_delay_barrier_t *barrier =
+        entry != NULL ? ipmanipulatorDelayBarrierFromRecord(ipmanipulatorFlowEntryRecord(entry), kind) : NULL;
+
+    if (barrier == NULL || barrier->generation != generation || ! barrier->timer_armed)
+    {
+        ipmanipulatorFlowShardUnlock(shard);
+        return;
+    }
+
+    bool  remove_after_release = barrier->remove_after_release;
+    void *record               = ipmanipulatorFlowEntryRecord(entry);
+
+    ipmanipulatorDelayBarrierTake(barrier, &release_batch);
+    ipmanipulatorDelayBarrierClearWindow(record, kind);
+    if (remove_after_release)
+    {
+        ipmanipulatorFlowShardRemove(table, shard, entry);
+    }
+
+    ipmanipulatorFlowShardUnlock(shard);
+    discard ipmanipulatorDelayBatchSendUpstream(t, &release_batch);
+}
+
 static void ipmanipulatorDelayBarrierCleanupTimer(void *arg1, void *arg2, void *arg3)
 {
-    discard arg1;
     discard arg3;
 
-    memoryFree(arg2);
+    tunnel_t                            *t   = arg1;
+    ipmanipulator_delay_timer_message_t *msg = arg2;
+
+    if (currentThreadIsEventWorkerWID(msg->wid))
+    {
+        ipmanipulatorDelayBarrierFailOpen(t, &msg->key, msg->kind, msg->generation);
+    }
+    memoryFree(msg);
 }
 
 #ifdef IPMANIPULATOR_DELAY_BARRIER_TEST_HOOKS
 static uint64_t ipmanipulator_delay_barrier_test_now_ms;
+static bool     ipmanipulator_delay_barrier_test_schedule_should_fail;
 
 void ipmanipulatorDelayBarrierTestSetNow(uint64_t now_ms)
 {
     ipmanipulator_delay_barrier_test_now_ms = now_ms;
+}
+
+void ipmanipulatorDelayBarrierTestSetScheduleFailure(bool should_fail)
+{
+    ipmanipulator_delay_barrier_test_schedule_should_fail = should_fail;
 }
 
 static uint64_t ipmanipulatorDelayBarrierNow(void)
@@ -1871,7 +1939,10 @@ static void ipmanipulatorDelayBarrierRunTimer(worker_t *worker, void *arg1, void
                 wid_t    wid       = worker->wid;
 
                 ipmanipulatorFlowShardUnlock(shard);
-                ipmanipulatorDelayBarrierSchedule(t, &msg->key, msg->kind, msg->generation, wid, delay_ms);
+                if (! ipmanipulatorDelayBarrierSchedule(t, &msg->key, msg->kind, msg->generation, wid, delay_ms))
+                {
+                    ipmanipulatorDelayBarrierFailOpen(t, &msg->key, msg->kind, msg->generation);
+                }
                 memoryFree(msg);
                 return;
             }
@@ -1888,7 +1959,10 @@ static void ipmanipulatorDelayBarrierRunTimer(worker_t *worker, void *arg1, void
             wid_t    wid       = worker->wid;
 
             ipmanipulatorFlowShardUnlock(shard);
-            ipmanipulatorDelayBarrierSchedule(t, &msg->key, msg->kind, msg->generation, wid, delay_ms);
+            if (! ipmanipulatorDelayBarrierSchedule(t, &msg->key, msg->kind, msg->generation, wid, delay_ms))
+            {
+                ipmanipulatorDelayBarrierFailOpen(t, &msg->key, msg->kind, msg->generation);
+            }
             memoryFree(msg);
             return;
         }
@@ -1943,7 +2017,8 @@ void ipmanipulatorDelayBarrierTestFire(tunnel_t *t, const ipmanipulator_flow_key
 {
     ipmanipulator_delay_timer_message_t *msg = memoryAllocate(sizeof(*msg));
 
-    *msg = (ipmanipulator_delay_timer_message_t) {.key = *key, .kind = kind, .generation = generation};
+    *msg = (ipmanipulator_delay_timer_message_t) {
+        .key = *key, .kind = kind, .generation = generation, .wid = getCurrentEventWorkerWID()};
 
     /*
      * Fire it exactly as the worker-message path would: the callback takes its
@@ -1954,20 +2029,32 @@ void ipmanipulatorDelayBarrierTestFire(tunnel_t *t, const ipmanipulator_flow_key
 }
 #endif
 
-void ipmanipulatorDelayBarrierSchedule(tunnel_t *t, const ipmanipulator_flow_key_t *key,
+bool ipmanipulatorDelayBarrierSchedule(tunnel_t *t, const ipmanipulator_flow_key_t *key,
                                        ipmanipulator_delay_barrier_kind_e kind, uint64_t generation, wid_t wid,
                                        uint32_t delay_ms)
 {
+#ifdef IPMANIPULATOR_DELAY_BARRIER_TEST_HOOKS
+    if (ipmanipulator_delay_barrier_test_schedule_should_fail)
+    {
+        return false;
+    }
+#endif
+
     ipmanipulator_delay_timer_message_t *msg = memoryAllocate(sizeof(*msg));
 
-    *msg = (ipmanipulator_delay_timer_message_t) {.key = *key, .kind = kind, .generation = generation};
-    sendWorkerMessageTimedWithCleanup(wid,
-                                      (WorkerMessageCallback) ipmanipulatorDelayBarrierRunTimer,
-                                      ipmanipulatorDelayBarrierCleanupTimer,
-                                      delay_ms,
-                                      t,
-                                      msg,
-                                      NULL);
+    if (msg == NULL)
+    {
+        return false;
+    }
+
+    *msg = (ipmanipulator_delay_timer_message_t) {.key = *key, .kind = kind, .generation = generation, .wid = wid};
+    return sendWorkerMessageTimedWithCleanup(wid,
+                                             (WorkerMessageCallback) ipmanipulatorDelayBarrierRunTimer,
+                                             ipmanipulatorDelayBarrierCleanupTimer,
+                                             delay_ms,
+                                             t,
+                                             msg,
+                                             NULL);
 }
 
 ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(tunnel_t *t, line_t *l, sbuf_t *buf,
@@ -1984,6 +2071,7 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
     ipmanipulator_tstate_t           *state                 = tunnelGetState(t);
     ipmanipulator_tcp_packet_info_t   info                  = {0};
     ipmanipulator_tls_capture_slot_t  release_slot          = {0};
+    ipmanipulator_tls_capture_slot_t  failed_capture_slot   = {0};
     ipmanipulator_tls_prestart_slot_t release_prestart_slot = {0};
     ipmanipulator_tls_prestart_slot_t matched_prestart_slot = {0};
     bool                              allow_prestart        = ipmanipulatorTlsCaptureKindAllowsPrestart(kind);
@@ -2062,8 +2150,16 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
         if (kind == kIpManipulatorTlsCaptureKindEchSni && ipmanipulatorCaptureSlotHasExactRetransmission(slot, &info))
         {
             slot->last_update_ms = now_ms;
-            ipmanipulatorScheduleCaptureTimeout(t, (uint32_t) matched_index, slot->generation);
+            if (! ipmanipulatorScheduleCaptureTimeout(t, (uint32_t) matched_index, slot->generation))
+            {
+                ipmanipulatorTakeCapturedSlot(&failed_capture_slot, slot);
+            }
             mutexUnlock(&state->tls_capture_mutex);
+
+            if (failed_capture_slot.active)
+            {
+                ipmanipulatorReleaseCapturedPacketsNormal(t, &failed_capture_slot);
+            }
 
             discard ipmanipulatorFinishCaptureAndRelease(t,
                                                          &release_slot,
@@ -2086,7 +2182,11 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
 
             if (prestart_slot->active)
             {
-                ipmanipulatorSchedulePrestartTimeout(t, (uint32_t) prestart_index, prestart_slot->generation);
+                if (! ipmanipulatorSchedulePrestartTimeout(t, (uint32_t) prestart_index, prestart_slot->generation))
+                {
+                    ipmanipulatorTakePrestartSlot(&matched_prestart_slot, prestart_slot);
+                    prestart_index = -1;
+                }
             }
         }
 
@@ -2106,8 +2206,16 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
 
         if (appended)
         {
-            ipmanipulatorScheduleCaptureTimeout(t, (uint32_t) matched_index, slot->generation);
+            if (! ipmanipulatorScheduleCaptureTimeout(t, (uint32_t) matched_index, slot->generation))
+            {
+                ipmanipulatorTakeCapturedSlot(&failed_capture_slot, slot);
+            }
             mutexUnlock(&state->tls_capture_mutex);
+
+            if (failed_capture_slot.active)
+            {
+                ipmanipulatorReleaseCapturedPacketsNormal(t, &failed_capture_slot);
+            }
 
             return ipmanipulatorFinishCaptureAndRelease(t,
                                                         &release_slot,
@@ -2242,7 +2350,11 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
                                                             kIpManipulatorTlsCaptureStatusMiss);
             }
 
-            ipmanipulatorSchedulePrestartTimeout(t, (uint32_t) prestart_index, slot->generation);
+            if (! ipmanipulatorSchedulePrestartTimeout(t, (uint32_t) prestart_index, slot->generation))
+            {
+                ipmanipulatorTakePrestartSlot(&matched_prestart_slot, slot);
+                prestart_index = -1;
+            }
             mutexUnlock(&state->tls_capture_mutex);
 
             return ipmanipulatorFinishCaptureAndRelease(t,
@@ -2318,7 +2430,10 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
                                                             kIpManipulatorTlsCaptureStatusMiss);
             }
 
-            ipmanipulatorSchedulePrestartTimeout(t, (uint32_t) candidate_prestart_index, slot->generation);
+            if (! ipmanipulatorSchedulePrestartTimeout(t, (uint32_t) candidate_prestart_index, slot->generation))
+            {
+                ipmanipulatorTakePrestartSlot(&matched_prestart_slot, slot);
+            }
 
             mutexUnlock(&state->tls_capture_mutex);
 
@@ -2442,7 +2557,11 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
 
         if (prestart_slot->active)
         {
-            ipmanipulatorSchedulePrestartTimeout(t, (uint32_t) prestart_index, prestart_slot->generation);
+            if (! ipmanipulatorSchedulePrestartTimeout(t, (uint32_t) prestart_index, prestart_slot->generation))
+            {
+                ipmanipulatorTakePrestartSlot(&matched_prestart_slot, prestart_slot);
+                prestart_index = -1;
+            }
         }
     }
 
@@ -2460,8 +2579,16 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
             t, &release_slot, &release_prestart_slot, &matched_prestart_slot, kIpManipulatorTlsCaptureStatusReady);
     }
 
-    ipmanipulatorScheduleCaptureTimeout(t, (uint32_t) candidate_index, slot->generation);
+    if (! ipmanipulatorScheduleCaptureTimeout(t, (uint32_t) candidate_index, slot->generation))
+    {
+        ipmanipulatorTakeCapturedSlot(&failed_capture_slot, slot);
+    }
     mutexUnlock(&state->tls_capture_mutex);
+
+    if (failed_capture_slot.active)
+    {
+        ipmanipulatorReleaseCapturedPacketsNormal(t, &failed_capture_slot);
+    }
 
     return ipmanipulatorFinishCaptureAndRelease(
         t, &release_slot, &release_prestart_slot, &matched_prestart_slot, kIpManipulatorTlsCaptureStatusPending);

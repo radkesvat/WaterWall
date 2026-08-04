@@ -70,8 +70,9 @@ static uint8_t             replay_directions[kExpectedSmuggleFinQueueCapacity * 
 static uint32_t            replay_sequences[kExpectedSmuggleFinQueueCapacity * 2U];
 static uint32_t            replay_count;
 static bool                reject_immediate_messages;
+static bool                g_schedule_should_fail;
 
-void ipmanipulatorSmuggleFinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
+bool ipmanipulatorSmuggleFinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                               WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                               void *arg2, void *arg3);
 bool ipmanipulatorSmuggleFinTestScheduleImmediate(wid_t wid, WorkerMessageCallback callback,
@@ -108,10 +109,16 @@ static void require(bool condition, const char *message)
     }
 }
 
-void ipmanipulatorSmuggleFinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
+bool ipmanipulatorSmuggleFinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                               WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                               void *arg2, void *arg3)
 {
+    if (g_schedule_should_fail)
+    {
+        cleanup(arg1, arg2, arg3);
+        return false;
+    }
+
     require(timed_message_count < kMaxTimedMessages, "timed-message capture overflow");
     timed_messages[timed_message_count++] = (timed_message_t) {
         .wid      = wid,
@@ -122,6 +129,7 @@ void ipmanipulatorSmuggleFinTestScheduleTimed(wid_t wid, WorkerMessageCallback c
         .arg2     = arg2,
         .arg3     = arg3,
     };
+    return true;
 }
 
 bool ipmanipulatorSmuggleFinTestScheduleImmediate(wid_t wid, WorkerMessageCallback callback,
@@ -468,6 +476,7 @@ static void resetCounters(void)
     mirrored_fin_packets                 = 0;
     replay_count                         = 0;
     reject_immediate_messages            = false;
+    g_schedule_should_fail               = false;
     memoryZero(replayed_upstream_sequences, sizeof(replayed_upstream_sequences));
     memoryZero(replayed_upstream_checksum_intents, sizeof(replayed_upstream_checksum_intents));
     memoryZero(replayed_downstream_sequences, sizeof(replayed_downstream_sequences));
@@ -1072,6 +1081,32 @@ static void testReverseOrientationReuseCancelsPausedFlow(void)
     destroyTestTunnel(t);
 }
 
+static void testDroppedScheduleReleasesPause(void)
+{
+    tunnel_t                normal_upstream   = {0};
+    tunnel_t                normal_downstream = {0};
+    tunnel_t                fin_branch        = {0};
+    tunnel_t               *t                 = createTestTunnel(&normal_upstream, &normal_downstream, &fin_branch);
+    line_t                  line;
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    initializeLine(&line, 0);
+
+    resetCounters();
+    g_schedule_should_fail = true;
+
+    sbuf_t *packet = makeTcpPacket(0, 0x0A000001, 12345, 0xC0000201, 443, 100, 200, TCP_ACK | TCP_PSH, 10);
+    require(smugglefintrickUpStreamPayload(t, &line, packet), "schedule-failure packet did not enter smuggle-fin");
+
+    ipmanipulator_smuggle_fin_flow_t *flow = findPausedFixtureFlow(state);
+    require(timed_message_count == 0, "a rejected smuggle-fin release schedule was recorded as accepted");
+    require(flow != NULL && ! flow->paused && flow->queued_packets_count == 0,
+            "a rejected smuggle-fin release schedule left the flow paused");
+    require(normal_upstream_packets == 1, "a rejected smuggle-fin release schedule did not replay the queued packet");
+    require(atomicLoadRelaxed(&line.refc) == 1, "rejected smuggle-fin release scheduling leaked a line reference");
+
+    destroyTestTunnel(t);
+}
+
 int main(void)
 {
     checkSumInit();
@@ -1091,6 +1126,7 @@ int main(void)
     testUnconfirmedFlowIsReclaimed();
     testPauseGenerationSurvivesSlotReuse();
     testReverseOrientationReuseCancelsPausedFlow();
+    testDroppedScheduleReleasesPause();
     envTeardown(&env);
     return 0;
 }

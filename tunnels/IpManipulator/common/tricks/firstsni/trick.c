@@ -309,12 +309,15 @@ static void firstsnitrickStartDelayBarrier(tunnel_t *t, line_t *l, sbuf_t **pack
         if (needs_schedule)
         {
             uint64_t remaining = first_action_ms > now_ms ? first_action_ms - now_ms : 0;
-            ipmanipulatorDelayBarrierSchedule(t,
-                                              &key,
-                                              kIpManipulatorDelayBarrierFirstSni,
-                                              generation,
-                                              lineGetWID(l),
-                                              remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining);
+            if (! ipmanipulatorDelayBarrierSchedule(t,
+                                                    &key,
+                                                    kIpManipulatorDelayBarrierFirstSni,
+                                                    generation,
+                                                    lineGetWID(l),
+                                                    remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining))
+            {
+                ipmanipulatorDelayBarrierFailOpen(t, &key, kIpManipulatorDelayBarrierFirstSni, generation);
+            }
         }
         return;
     }
@@ -644,12 +647,15 @@ static bool firstsnitrickMaybeDelayFlowPacket(tunnel_t *t, line_t *l, sbuf_t *bu
     if (needs_schedule)
     {
         uint64_t remaining = deadline_ms > now_ms ? deadline_ms - now_ms : 0;
-        ipmanipulatorDelayBarrierSchedule(t,
-                                          &key,
-                                          kIpManipulatorDelayBarrierFirstSni,
-                                          generation,
-                                          lineGetWID(l),
-                                          remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining);
+        if (! ipmanipulatorDelayBarrierSchedule(t,
+                                                &key,
+                                                kIpManipulatorDelayBarrierFirstSni,
+                                                generation,
+                                                lineGetWID(l),
+                                                remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining))
+        {
+            ipmanipulatorDelayBarrierFailOpen(t, &key, kIpManipulatorDelayBarrierFirstSni, generation);
+        }
     }
 
     if (send_current_after_batch)

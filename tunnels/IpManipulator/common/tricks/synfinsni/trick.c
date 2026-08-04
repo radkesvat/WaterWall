@@ -50,7 +50,7 @@ static synfinsnitrick_test_recycle_hook_t synfinsnitrick_test_recycle_hook;
 
 void ipmanipulatorSynfinTestSetRecycleHook(synfinsnitrick_test_recycle_hook_t hook);
 void ipmanipulatorSynfinTestSendOutputs(tunnel_t *t, line_t *l, sbuf_t **packets, uint16_t count);
-void ipmanipulatorSynfinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
+bool ipmanipulatorSynfinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                           WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                           void *arg2, void *arg3);
 #endif
@@ -486,23 +486,33 @@ static void synfinsnitrickRunHoldTimeout(worker_t *worker, void *arg1, void *arg
 
 static void synfinsnitrickCleanupHoldTimeout(void *arg1, void *arg2, void *arg3)
 {
-    discard arg1;
+    tunnel_t                      *t       = arg1;
+    line_t                        *l       = arg2;
+    synfinsnitrick_hold_timeout_t *context = arg3;
 
-    memoryFree(arg3);
-    lineUnlock((line_t *) arg2);
+    if (lineIsOnCurrentEventWorker(l))
+    {
+        synfinsnitrickReleaseTimedOutHold(t, &context->key, context->generation);
+    }
+    memoryFree(context);
+    lineUnlock(l);
 }
 
-static void synfinsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipmanipulator_flow_key_t *key,
+static bool synfinsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipmanipulator_flow_key_t *key,
                                               uint64_t generation, uint32_t delay_ms)
 {
     /* Configuration rejects zero; keep direct/internal state fail-open too. */
-    delay_ms = max(delay_ms, 1U);
+    delay_ms                     = max(delay_ms, 1U);
+    const bool recover_on_caller = lineIsOnCurrentEventWorker(l);
 
     synfinsnitrick_hold_timeout_t *context = memoryAllocate(sizeof(*context));
     if (context == NULL)
     {
-        synfinsnitrickReleaseTimedOutHold(t, key, generation);
-        return;
+        if (recover_on_caller)
+        {
+            synfinsnitrickReleaseTimedOutHold(t, key, generation);
+        }
+        return false;
     }
 
     *context = (synfinsnitrick_hold_timeout_t) {
@@ -513,22 +523,27 @@ static void synfinsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipma
     /* The queued message owns a separate reference from the held flow record. */
     lineLock(l);
 #ifdef IPMANIPULATOR_SYNFIN_TEST_HOOKS
-    ipmanipulatorSynfinTestScheduleTimed(lineGetWID(l),
-                                         (WorkerMessageCallback) synfinsnitrickRunHoldTimeout,
-                                         synfinsnitrickCleanupHoldTimeout,
-                                         delay_ms,
-                                         t,
-                                         l,
-                                         context);
+    bool scheduled = ipmanipulatorSynfinTestScheduleTimed(lineGetWID(l),
+                                                          (WorkerMessageCallback) synfinsnitrickRunHoldTimeout,
+                                                          synfinsnitrickCleanupHoldTimeout,
+                                                          delay_ms,
+                                                          t,
+                                                          l,
+                                                          context);
 #else
-    sendWorkerMessageTimedWithCleanup(lineGetWID(l),
-                                      (WorkerMessageCallback) synfinsnitrickRunHoldTimeout,
-                                      synfinsnitrickCleanupHoldTimeout,
-                                      delay_ms,
-                                      t,
-                                      l,
-                                      context);
+    bool scheduled = sendWorkerMessageTimedWithCleanup(lineGetWID(l),
+                                                       (WorkerMessageCallback) synfinsnitrickRunHoldTimeout,
+                                                       synfinsnitrickCleanupHoldTimeout,
+                                                       delay_ms,
+                                                       t,
+                                                       l,
+                                                       context);
 #endif
+    if (! scheduled && recover_on_caller)
+    {
+        synfinsnitrickReleaseTimedOutHold(t, key, generation);
+    }
+    return scheduled;
 }
 
 static sbuf_t *synfinsnitrickGenerateTlsClientHello(tunnel_t *t, line_t *l)

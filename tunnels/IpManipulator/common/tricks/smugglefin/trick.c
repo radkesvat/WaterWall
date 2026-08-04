@@ -50,7 +50,7 @@ typedef struct smugglefintrick_handoff_message_s
 } smugglefintrick_handoff_message_t;
 
 #ifdef IPMANIPULATOR_SMUGGLEFIN_TEST_HOOKS
-void ipmanipulatorSmuggleFinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
+bool ipmanipulatorSmuggleFinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                               WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                               void *arg2, void *arg3);
 bool ipmanipulatorSmuggleFinTestScheduleImmediate(wid_t wid, WorkerMessageCallback callback,
@@ -520,40 +520,56 @@ static void smugglefintrickRunDelayedRelease(worker_t *worker, void *arg1, void 
 
 static void smugglefintrickCleanupDelayedRelease(void *arg1, void *arg2, void *arg3)
 {
-    discard arg1;
+    tunnel_t                          *t       = arg1;
+    line_t                            *l       = arg2;
+    smugglefintrick_release_context_t *context = arg3;
 
-    memoryFree(arg3);
-    lineUnlock((line_t *) arg2);
+    if (lineIsOnCurrentEventWorker(l) && lineIsAlive(l))
+    {
+        context->force = true;
+        smugglefintrickReleaseQueuedPacketsNow(t, l, context);
+    }
+    memoryFree(context);
+    lineUnlock(l);
 }
 
-static void smugglefintrickScheduleQueuedRelease(tunnel_t *t, line_t *l, uint32_t delay_ms,
+static bool smugglefintrickScheduleQueuedRelease(tunnel_t *t, line_t *l, uint32_t delay_ms,
                                                  smugglefintrick_release_context_t *context)
 {
     if (delay_ms == 0 && lineIsOnCurrentEventWorker(l))
     {
         smugglefintrickReleaseQueuedPacketsNow(t, l, context);
         memoryFree(context);
-        return;
+        return true;
     }
+
+    smugglefintrick_release_context_t recovery_context = *context;
+    recovery_context.force                             = true;
+    const bool recover_on_caller                       = lineIsOnCurrentEventWorker(l) && lineIsAlive(l);
 
     lineLock(l);
 #ifdef IPMANIPULATOR_SMUGGLEFIN_TEST_HOOKS
-    ipmanipulatorSmuggleFinTestScheduleTimed(lineGetWID(l),
-                                             (WorkerMessageCallback) smugglefintrickRunDelayedRelease,
-                                             smugglefintrickCleanupDelayedRelease,
-                                             delay_ms,
-                                             t,
-                                             l,
-                                             context);
+    bool scheduled = ipmanipulatorSmuggleFinTestScheduleTimed(lineGetWID(l),
+                                                              (WorkerMessageCallback) smugglefintrickRunDelayedRelease,
+                                                              smugglefintrickCleanupDelayedRelease,
+                                                              delay_ms,
+                                                              t,
+                                                              l,
+                                                              context);
 #else
-    sendWorkerMessageTimedWithCleanup(lineGetWID(l),
-                                      (WorkerMessageCallback) smugglefintrickRunDelayedRelease,
-                                      smugglefintrickCleanupDelayedRelease,
-                                      delay_ms,
-                                      t,
-                                      l,
-                                      context);
+    bool scheduled = sendWorkerMessageTimedWithCleanup(lineGetWID(l),
+                                                       (WorkerMessageCallback) smugglefintrickRunDelayedRelease,
+                                                       smugglefintrickCleanupDelayedRelease,
+                                                       delay_ms,
+                                                       t,
+                                                       l,
+                                                       context);
 #endif
+    if (! scheduled && recover_on_caller)
+    {
+        smugglefintrickReleaseQueuedPacketsNow(t, l, &recovery_context);
+    }
+    return scheduled;
 }
 
 static void smugglefintrickForceReleaseAfterQueueLimit(tunnel_t *t, line_t *l,

@@ -59,7 +59,7 @@ typedef struct overlapsnitrick_hold_timeout_s
 } overlapsnitrick_hold_timeout_t;
 
 #ifdef IPMANIPULATOR_OVERLAP_TEST_HOOKS
-void ipmanipulatorOverlapTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
+bool ipmanipulatorOverlapTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                            WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                            void *arg2, void *arg3);
 #endif
@@ -434,23 +434,33 @@ static void overlapsnitrickRunHoldTimeout(worker_t *worker, void *arg1, void *ar
 
 static void overlapsnitrickCleanupHoldTimeout(void *arg1, void *arg2, void *arg3)
 {
-    discard arg1;
+    tunnel_t                       *t       = arg1;
+    line_t                         *l       = arg2;
+    overlapsnitrick_hold_timeout_t *context = arg3;
 
-    memoryFree(arg3);
-    lineUnlock((line_t *) arg2);
+    if (lineIsOnCurrentEventWorker(l))
+    {
+        overlapsnitrickReleaseTimedOutHold(t, &context->key, context->generation);
+    }
+    memoryFree(context);
+    lineUnlock(l);
 }
 
-static void overlapsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipmanipulator_flow_key_t *key,
+static bool overlapsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipmanipulator_flow_key_t *key,
                                                uint64_t generation, uint32_t delay_ms)
 {
     /* Configuration rejects zero; keep direct/internal state fail-open too. */
-    delay_ms = max(delay_ms, 1U);
+    delay_ms                     = max(delay_ms, 1U);
+    const bool recover_on_caller = lineIsOnCurrentEventWorker(l);
 
     overlapsnitrick_hold_timeout_t *context = memoryAllocate(sizeof(*context));
     if (context == NULL)
     {
-        overlapsnitrickReleaseTimedOutHold(t, key, generation);
-        return;
+        if (recover_on_caller)
+        {
+            overlapsnitrickReleaseTimedOutHold(t, key, generation);
+        }
+        return false;
     }
 
     *context = (overlapsnitrick_hold_timeout_t) {
@@ -461,22 +471,27 @@ static void overlapsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipm
     /* The queued message owns a separate reference from the held flow record. */
     lineLock(l);
 #ifdef IPMANIPULATOR_OVERLAP_TEST_HOOKS
-    ipmanipulatorOverlapTestScheduleTimed(lineGetWID(l),
-                                          (WorkerMessageCallback) overlapsnitrickRunHoldTimeout,
-                                          overlapsnitrickCleanupHoldTimeout,
-                                          delay_ms,
-                                          t,
-                                          l,
-                                          context);
+    bool scheduled = ipmanipulatorOverlapTestScheduleTimed(lineGetWID(l),
+                                                           (WorkerMessageCallback) overlapsnitrickRunHoldTimeout,
+                                                           overlapsnitrickCleanupHoldTimeout,
+                                                           delay_ms,
+                                                           t,
+                                                           l,
+                                                           context);
 #else
-    sendWorkerMessageTimedWithCleanup(lineGetWID(l),
-                                      (WorkerMessageCallback) overlapsnitrickRunHoldTimeout,
-                                      overlapsnitrickCleanupHoldTimeout,
-                                      delay_ms,
-                                      t,
-                                      l,
-                                      context);
+    bool scheduled = sendWorkerMessageTimedWithCleanup(lineGetWID(l),
+                                                       (WorkerMessageCallback) overlapsnitrickRunHoldTimeout,
+                                                       overlapsnitrickCleanupHoldTimeout,
+                                                       delay_ms,
+                                                       t,
+                                                       l,
+                                                       context);
 #endif
+    if (! scheduled && recover_on_caller)
+    {
+        overlapsnitrickReleaseTimedOutHold(t, key, generation);
+    }
+    return scheduled;
 }
 
 static sbuf_t *overlapsnitrickGenerateTlsClientHello(tunnel_t *t, line_t *l)
@@ -1444,12 +1459,15 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (needs_schedule)
         {
             uint64_t remaining = barrier_deadline > now_ms ? barrier_deadline - now_ms : 0;
-            ipmanipulatorDelayBarrierSchedule(t,
-                                              &key,
-                                              kIpManipulatorDelayBarrierOverlapSni,
-                                              barrier_generation,
-                                              lineGetWID(l),
-                                              remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining);
+            if (! ipmanipulatorDelayBarrierSchedule(t,
+                                                    &key,
+                                                    kIpManipulatorDelayBarrierOverlapSni,
+                                                    barrier_generation,
+                                                    lineGetWID(l),
+                                                    remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining))
+            {
+                ipmanipulatorDelayBarrierFailOpen(t, &key, kIpManipulatorDelayBarrierOverlapSni, barrier_generation);
+            }
         }
 
         if (! send_current_after_batch)
@@ -1627,12 +1645,15 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (transcript_needs_schedule)
         {
             uint64_t remaining = first_action_ms > now_ms ? first_action_ms - now_ms : 0;
-            ipmanipulatorDelayBarrierSchedule(t,
-                                              &key,
-                                              kIpManipulatorDelayBarrierOverlapSni,
-                                              transcript_generation,
-                                              lineGetWID(l),
-                                              remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining);
+            if (! ipmanipulatorDelayBarrierSchedule(t,
+                                                    &key,
+                                                    kIpManipulatorDelayBarrierOverlapSni,
+                                                    transcript_generation,
+                                                    lineGetWID(l),
+                                                    remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining))
+            {
+                ipmanipulatorDelayBarrierFailOpen(t, &key, kIpManipulatorDelayBarrierOverlapSni, transcript_generation);
+            }
         }
 
         overlapsnitrickSendOutputs(t, l, &result.normal_sequence, result.crafted_server_hello);

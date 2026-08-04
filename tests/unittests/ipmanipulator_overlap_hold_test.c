@@ -59,8 +59,9 @@ static timed_message_t   timed_messages[kMaxTimedMessages];
 static captured_packet_t captured_packets[kMaxCaptured];
 static uint32_t          timed_message_count;
 static uint32_t          captured_packet_count;
+static bool              g_schedule_should_fail;
 
-void ipmanipulatorOverlapTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
+bool ipmanipulatorOverlapTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                            WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                            void *arg2, void *arg3);
 
@@ -73,10 +74,16 @@ static void require(bool condition, const char *message)
     }
 }
 
-void ipmanipulatorOverlapTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
+bool ipmanipulatorOverlapTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                            WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                            void *arg2, void *arg3)
 {
+    if (g_schedule_should_fail)
+    {
+        cleanup(arg1, arg2, arg3);
+        return false;
+    }
+
     require(timed_message_count < kMaxTimedMessages, "timed-message capture overflow");
     timed_messages[timed_message_count++] = (timed_message_t) {
         .wid      = wid,
@@ -87,6 +94,7 @@ void ipmanipulatorOverlapTestScheduleTimed(wid_t wid, WorkerMessageCallback call
         .arg2     = arg2,
         .arg3     = arg3,
     };
+    return true;
 }
 
 void smugglesnitrickSetFlowPassthrough(tunnel_t *t, uint32_t src_addr, uint32_t dst_addr, uint16_t src_port,
@@ -137,8 +145,9 @@ static void resetCaptures(void)
 {
     memoryZero(timed_messages, sizeof(timed_messages));
     memoryZero(captured_packets, sizeof(captured_packets));
-    timed_message_count   = 0;
-    captured_packet_count = 0;
+    timed_message_count    = 0;
+    captured_packet_count  = 0;
+    g_schedule_should_fail = false;
 }
 
 static sbuf_t *makeTcpPacket(test_env_t *env, bool downstream, uint32_t seq, uint8_t flags, const uint8_t *payload,
@@ -481,7 +490,7 @@ static void testDownstreamRstReleasesHeldSegment(void)
     destroyEnv(&env);
 }
 
-static void testTimerCleanupOnlyReleasesTimerReference(void)
+static void testTimerCleanupReleasesHold(void)
 {
     test_env_t env;
     setupEnv(&env);
@@ -494,9 +503,30 @@ static void testTimerCleanupOnlyReleasesTimerReference(void)
 
     cleanupTimedMessage(0);
     flow_snapshot_t flow = snapshotFlow(&env);
-    require(atomicLoadRelaxed(&env.line->refc) == 2, "timer cleanup released the flow record's reference");
-    require(flow.phase == kIpManipulatorOverlapFlowPhaseHoldThird && flow.timer_armed && flow.has_held_packet,
-            "timer cleanup touched the flow record");
+    require(atomicLoadRelaxed(&env.line->refc) == 1, "timer cleanup leaked a held-packet reference");
+    require(flow.phase == kIpManipulatorOverlapFlowPhasePassthrough && ! flow.timer_armed && ! flow.has_held_packet,
+            "target-worker timer cleanup did not fail open");
+    require(captured_packet_count == 3, "target-worker timer cleanup did not release the held segment");
+    destroyEnv(&env);
+}
+
+static void testDroppedScheduleReleasesHold(void)
+{
+    test_env_t env;
+    setupEnv(&env);
+    warmFlow(&env);
+
+    uint8_t first[20];
+    makeFragmentedClientHelloPrefix(first);
+    g_schedule_should_fail = true;
+    sendUpstream(&env, kInitialSequence + 1U, TCP_ACK, first, sizeof(first));
+
+    flow_snapshot_t flow = snapshotFlow(&env);
+    require(timed_message_count == 0, "a rejected overlap hold schedule was recorded as accepted");
+    require(captured_packet_count == 3, "a rejected overlap hold schedule did not release the segment");
+    require(flow.phase == kIpManipulatorOverlapFlowPhasePassthrough && ! flow.timer_armed && ! flow.has_held_packet,
+            "a rejected overlap hold schedule left the flow held");
+    require(atomicLoadRelaxed(&env.line->refc) == 1, "rejected overlap hold scheduling leaked a line reference");
     destroyEnv(&env);
 }
 
@@ -517,7 +547,8 @@ int main(void)
     testDeadLineTimeoutRecycles();
     testStaleGenerationTimerIsIgnored();
     testDownstreamRstReleasesHeldSegment();
-    testTimerCleanupOnlyReleasesTimerReference();
+    testTimerCleanupReleasesHold();
+    testDroppedScheduleReleasesHold();
 
     globalstateDestroySecureRandom();
     GSTATE.workers_count = saved_workers_count;

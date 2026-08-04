@@ -565,7 +565,7 @@ static void forceDelayBarrierDue(tunnel_t *t, uint16_t src_port, ipmanipulator_d
     uint64_t generation  = barrier->generation;
     ipmanipulatorFlowShardUnlock(shard);
 
-    ipmanipulatorDelayBarrierSchedule(t, &key, kind, generation, 0, 1);
+    discard ipmanipulatorDelayBarrierSchedule(t, &key, kind, generation, 0, 1);
     usleep(2000);
     wloopProcessEvents(GSTATE.shortcut_loops[0], 0);
 }
