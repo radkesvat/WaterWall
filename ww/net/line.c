@@ -470,13 +470,13 @@ void lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t 
     line_task_msg_t *msg = lineTaskMessageCreate(line, t);
     msg->callback.no_buf = task;
 
-    sendWorkerMessageTimedWithCleanup(lineGetWID(line),
-                                      (WorkerMessageCallback) lineRunScheduledTaskNoBuf,
-                                      lineCleanupScheduledTaskNoBuf,
-                                      delay_ms,
-                                      (void *) msg,
-                                      NULL,
-                                      NULL);
+    discard sendWorkerMessageTimedWithCleanup(lineGetWID(line),
+                                              (WorkerMessageCallback) lineRunScheduledTaskNoBuf,
+                                              lineCleanupScheduledTaskNoBuf,
+                                              delay_ms,
+                                              (void *) msg,
+                                              NULL,
+                                              NULL);
 }
 
 void lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, uint32_t delay_ms, tunnel_t *t,
@@ -495,13 +495,13 @@ void lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, 
     msg->callback.with_buf = task;
     msg->buf               = buf;
 
-    sendWorkerMessageTimedWithCleanup(lineGetWID(line),
-                                      (WorkerMessageCallback) lineRunScheduledTaskWithBuf,
-                                      lineCleanupScheduledTaskWithBuf,
-                                      delay_ms,
-                                      (void *) msg,
-                                      NULL,
-                                      NULL);
+    discard sendWorkerMessageTimedWithCleanup(lineGetWID(line),
+                                              (WorkerMessageCallback) lineRunScheduledTaskWithBuf,
+                                              lineCleanupScheduledTaskWithBuf,
+                                              delay_ms,
+                                              (void *) msg,
+                                              NULL,
+                                              NULL);
 }
 
 int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const char *service, int socktype,

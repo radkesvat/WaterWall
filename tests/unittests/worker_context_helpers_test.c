@@ -224,7 +224,7 @@ static void testInvalidTargetsCleanUpExactlyOnce(void)
         require(probeCleanups() == 1, "undeliverable target did not run cleanup exactly once");
 
         probeReset();
-        sendWorkerMessageTimedWithCleanup(
+        discard sendWorkerMessageTimedWithCleanup(
             bad_targets[i], (WorkerMessageCallback) probeCallback, probeCleanup, 25, NULL, NULL, NULL);
         require(probeRuns() == 0, "undeliverable timed target still ran the callback");
         require(probeCleanups() == 1, "undeliverable timed target did not run cleanup exactly once");

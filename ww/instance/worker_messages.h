@@ -34,5 +34,15 @@ bool sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
 // Note, order of execution is not guaranteed for messages with the same delay, so if you need to guarantee order,
 // use your own FIFO queue.
 void sendWorkerMessageTimed(wid_t wid, WorkerMessageCallback cb, uint32_t delay_ms, void *arg1, void *arg2, void *arg3);
-void sendWorkerMessageTimedWithCleanup(wid_t wid, WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup,
+/*
+ * Returns false when the message was rejected before it was accepted anywhere; the
+ * cleanup callback has already run, on the calling thread, and the caller owns
+ * recovery.
+ *
+ * Returns true when the message was accepted. A late failure can still drop it
+ * after that point, in which case the cleanup callback runs on the target worker --
+ * so a cleanup that needs to forward packets may do so when, and only when, it
+ * confirms it is on that worker.
+ */
+bool sendWorkerMessageTimedWithCleanup(wid_t wid, WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup,
                                        uint32_t delay_ms, void *arg1, void *arg2, void *arg3);

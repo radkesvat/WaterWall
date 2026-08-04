@@ -403,7 +403,7 @@ static void runTimedTask(wtimer_t *timer)
     wtimerDelete(timer);
 }
 
-static void setupTimedTask(worker_t *worker, void *arg1, void *arg2, void *arg3)
+static bool setupTimedTaskChecked(worker_t *worker, void *arg1, void *arg2, void *arg3)
 {
 
     uint32_t            delay_ms  = (uint32_t) (uintptr_t) arg1;
@@ -418,7 +418,7 @@ static void setupTimedTask(worker_t *worker, void *arg1, void *arg2, void *arg3)
     if (UNLIKELY(isApplicationTerminating()))
     {
         cleanupWorkerMessage(timed_msg);
-        return;
+        return false;
     }
 
     wtimer_t *k_timer = wtimerAdd(worker->loop, runTimedTask, delay_ms, 1);
@@ -429,7 +429,7 @@ static void setupTimedTask(worker_t *worker, void *arg1, void *arg2, void *arg3)
         cb(worker, timed_msg->base.arg1, timed_msg->base.arg2, timed_msg->base.arg3);
         timed_msg->cleanup = NULL;
         reuseWorkerMessage(timed_msg);
-        return;
+        return true;
     }
 
     timed_msg->deadline_us = wloopNowUS(worker->loop) + ((uint64_t) delay_ms * 1000ULL);
@@ -445,7 +445,7 @@ static void setupTimedTask(worker_t *worker, void *arg1, void *arg2, void *arg3)
         weventSetUserData(k_timer, NULL);
         wtimerDelete(k_timer);
         cleanupWorkerMessage(timed_msg);
-        return;
+        return false;
     }
     if (UNLIKELY(worker_msg_deque_t_push_back(&(queue->timed), timed_msg) == NULL))
     {
@@ -453,29 +453,34 @@ static void setupTimedTask(worker_t *worker, void *arg1, void *arg2, void *arg3)
         weventSetUserData(k_timer, NULL);
         wtimerDelete(k_timer);
         cleanupWorkerMessage(timed_msg);
-        return;
+        return false;
     }
     mutexUnlock(&(queue->mutex));
+    return true;
+}
+
+static void setupTimedTask(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard setupTimedTaskChecked(worker, arg1, arg2, arg3);
 }
 
 void sendWorkerMessageTimed(wid_t wid, WorkerMessageCallback cb, uint32_t delay_ms, void *arg1, void *arg2, void *arg3)
 {
-    sendWorkerMessageTimedWithCleanup(wid, cb, NULL, delay_ms, arg1, arg2, arg3);
+    discard sendWorkerMessageTimedWithCleanup(wid, cb, NULL, delay_ms, arg1, arg2, arg3);
 }
 
-void sendWorkerMessageTimedWithCleanup(wid_t wid, WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup,
+bool sendWorkerMessageTimedWithCleanup(wid_t wid, WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup,
                                        uint32_t delay_ms, void *arg1, void *arg2, void *arg3)
 {
     // delay=0 means "run on next event-loop iteration", not immediate inline execution
     if (delay_ms == 0)
     {
-        discard sendWorkerMessageForceQueueWithCleanup(wid, cb, cleanup, arg1, arg2, arg3);
-        return;
+        return sendWorkerMessageForceQueueWithCleanup(wid, cb, cleanup, arg1, arg2, arg3);
     }
 
     if (UNLIKELY(workerMessageRejectUndeliverable(wid, cleanup, arg1, arg2, arg3)))
     {
-        return;
+        return false;
     }
 
     uintptr_t delay_ms_uiptr = (uintptr_t) delay_ms;
@@ -486,7 +491,7 @@ void sendWorkerMessageTimedWithCleanup(wid_t wid, WorkerMessageCallback cb, Work
         {
             cleanup(arg1, arg2, arg3);
         }
-        return;
+        return false;
     }
 
     worker_t *worker = getWorker(wid);
@@ -499,8 +504,7 @@ void sendWorkerMessageTimedWithCleanup(wid_t wid, WorkerMessageCallback cb, Work
     // thread; every other caller (including lwIP and device threads) queues.
     if (currentThreadIsEventWorkerWID(wid))
     {
-        setupTimedTask(worker, (void *) delay_ms_uiptr, msg, NULL);
-        return;
+        return setupTimedTaskChecked(worker, (void *) delay_ms_uiptr, msg, NULL);
     }
 
     // Queue setupTimedTask manually so both wrapper and payload are reclaimed on post failure.
@@ -511,6 +515,7 @@ void sendWorkerMessageTimedWithCleanup(wid_t wid, WorkerMessageCallback cb, Work
                                                                  msg,
                                                                  NULL)))
     {
-        return;
+        return false;
     }
+    return true;
 }
