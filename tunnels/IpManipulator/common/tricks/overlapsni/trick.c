@@ -154,6 +154,7 @@ static bool overlapsnitrickTakeHeldPacketLocked(ipmanipulator_overlap_flow_t    
 
     *held_packet           = flow->held_packet;
     flow->held_packet      = (ipmanipulator_captured_packet_t) {0};
+    flow->held_wid         = kInvalidWID;
     flow->hold_timer_armed = false;
     flow->hold_generation  = 0;
     return held_packet->line != NULL || held_packet->buf != NULL;
@@ -186,6 +187,7 @@ static void overlapsnitrickResetFlow(ipmanipulator_overlap_flow_t *flow)
     uint64_t barrier_generation = flow->delay_barrier.generation;
     memoryZero(flow, sizeof(*flow));
     flow->delay_barrier.generation = barrier_generation;
+    flow->held_wid                 = kInvalidWID;
 }
 
 static void overlapsnitrickDestroyFlow(ipmanipulator_overlap_flow_t *flow)
@@ -222,6 +224,7 @@ static void overlapsnitrickInitializeFlow(ipmanipulator_overlap_flow_t          
         .src_port         = info->src_port,
         .dst_port         = info->dst_port,
         .phase            = kIpManipulatorOverlapFlowPhaseWarmup,
+        .held_wid         = kInvalidWID,
     };
 }
 
@@ -1366,11 +1369,14 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     ipmanipulator_captured_packet_t held_packet              = {0};
     sbuf_t                         *synack_packet            = NULL;
     bool                            bypass_current           = false;
+    bool                            held_owner_mismatch      = false;
     ipmanipulator_delay_batch_t     release_batch            = {0};
     bool                            needs_schedule           = false;
     bool                            send_current_after_batch = false;
     uint64_t                        barrier_generation       = 0;
     uint64_t                        barrier_deadline         = 0;
+    wid_t                           barrier_owner_wid        = kInvalidWID;
+    wid_t                           transcript_owner_wid     = kInvalidWID;
 
     ipmanipulator_flow_key_t    key   = overlapsnitrickMakeKey(&info);
     ipmanipulator_flow_shard_t *shard = overlapsnitrickLockShard(state, &key, now_ms);
@@ -1441,6 +1447,7 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         {
             barrier_generation = flow->delay_barrier.generation;
             barrier_deadline   = flow->delay_barrier.deadline_ms;
+            barrier_owner_wid  = flow->delay_barrier.owner_wid;
         }
         else
         {
@@ -1463,7 +1470,7 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                                                     &key,
                                                     kIpManipulatorDelayBarrierOverlapSni,
                                                     barrier_generation,
-                                                    lineGetWID(l),
+                                                    barrier_owner_wid,
                                                     remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining))
             {
                 ipmanipulatorDelayBarrierFailOpen(t, &key, kIpManipulatorDelayBarrierOverlapSni, barrier_generation);
@@ -1491,7 +1498,12 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (flow->phase == kIpManipulatorOverlapFlowPhaseHoldThird)
         {
-            bypass_current = overlapsnitrickTakeHeldPacketLocked(flow, &held_packet);
+            held_owner_mismatch = ! ipmanipulatorPacketJoinsOwner(flow->held_wid, l);
+            bypass_current      = overlapsnitrickTakeHeldPacketLocked(flow, &held_packet);
+            if (held_owner_mismatch)
+            {
+                overlapsnitrickDestroyStandalonePacket(&flow->synack_packet);
+            }
         }
 
         ipmanipulatorFlowShardRemove(&state->overlap_table, shard, entry);
@@ -1503,6 +1515,28 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
 
         line_t *held_line = held_packet.line;
+        if (held_owner_mismatch)
+        {
+            LOGD("IpManipulator: overlap-sni held packet arrived on worker %d; owner worker is %d; failing open",
+                 workerWIDForLog(lineGetWID(l)),
+                 workerWIDForLog(held_packet.line != NULL ? lineGetWID(held_packet.line) : kInvalidWID));
+            if (held_line != NULL && held_packet.buf != NULL)
+            {
+                ipmanipulatorForwardCapturedPacketNormal(t, held_line, held_packet.buf);
+                held_packet.buf = NULL;
+            }
+            else if (held_packet.buf != NULL)
+            {
+                sbufDestroy(held_packet.buf);
+                held_packet.buf = NULL;
+            }
+            if (held_line != NULL)
+            {
+                lineUnlock(held_line);
+            }
+            overlapsnitrickSendNormalNow(t, l, buf);
+            return true;
+        }
         overlapsnitrickSendHeldThenCurrentNormal(t, &held_packet, l, buf);
         if (held_line != NULL)
         {
@@ -1554,6 +1588,7 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
 
         flow->phase            = kIpManipulatorOverlapFlowPhaseHoldThird;
+        flow->held_wid         = lineGetWID(l);
         flow->held_packet      = (ipmanipulator_captured_packet_t) {.line = l, .buf = buf};
         flow->hold_generation  = ipmanipulatorAllocateFlowGeneration(state);
         flow->hold_timer_armed = true;
@@ -1579,7 +1614,39 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         uint64_t                        transcript_generation     = 0;
         uint64_t                        first_action_ms           = 0;
 
+        bool held_worker_mismatch = ! ipmanipulatorPacketJoinsOwner(flow->held_wid, l);
+
         discard overlapsnitrickTakeHeldPacketLocked(flow, &held_packet);
+
+        if (held_worker_mismatch)
+        {
+            line_t *held_line = held_packet.line;
+
+            flow->phase = kIpManipulatorOverlapFlowPhasePassthrough;
+            overlapsnitrickDestroyStandalonePacket(&flow->synack_packet);
+            ipmanipulatorFlowShardUnlock(shard);
+
+            LOGD("IpManipulator: overlap-sni held packet completed on worker %d; owner worker is %d; failing open",
+                 workerWIDForLog(lineGetWID(l)),
+                 workerWIDForLog(held_line != NULL ? lineGetWID(held_line) : kInvalidWID));
+            if (held_line != NULL && held_packet.buf != NULL)
+            {
+                ipmanipulatorForwardCapturedPacketNormal(t, held_line, held_packet.buf);
+                held_packet.buf = NULL;
+            }
+            else if (held_packet.buf != NULL)
+            {
+                sbufDestroy(held_packet.buf);
+                held_packet.buf = NULL;
+            }
+            if (held_line != NULL)
+            {
+                lineUnlock(held_line);
+            }
+            overlapsnitrickSendNormalNow(t, l, buf);
+            return true;
+        }
+
         synack_packet       = flow->synack_packet;
         flow->synack_packet = NULL;
 
@@ -1636,6 +1703,7 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                         result.normal_sequence.packets[i] = NULL;
                     }
                     transcript_generation = final_flow->delay_barrier.generation;
+                    transcript_owner_wid  = final_flow->delay_barrier.owner_wid;
                 }
                 overlapsnitrickTouchLocked(shard, entry, getTickMS());
             }
@@ -1649,7 +1717,7 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                                                     &key,
                                                     kIpManipulatorDelayBarrierOverlapSni,
                                                     transcript_generation,
-                                                    lineGetWID(l),
+                                                    transcript_owner_wid,
                                                     remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining))
             {
                 ipmanipulatorDelayBarrierFailOpen(t, &key, kIpManipulatorDelayBarrierOverlapSni, transcript_generation);

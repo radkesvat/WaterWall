@@ -188,6 +188,7 @@ static bool synfinsnitrickTakeHeldPacketLocked(ipmanipulator_synfin_flow_t     *
 
     *held_packet           = flow->held_packet;
     flow->held_packet      = (ipmanipulator_captured_packet_t) {0};
+    flow->held_wid         = kInvalidWID;
     flow->hold_timer_armed = false;
     flow->hold_generation  = 0;
     return held_packet->line != NULL || held_packet->buf != NULL;
@@ -253,6 +254,7 @@ static void synfinsnitrickResetFlow(ipmanipulator_synfin_flow_t *flow)
     }
 
     memoryZero(flow, sizeof(*flow));
+    flow->held_wid = kInvalidWID;
 }
 
 static void synfinsnitrickDestroyFlow(ipmanipulator_synfin_flow_t *flow)
@@ -295,6 +297,7 @@ static void synfinsnitrickInitializeFlow(ipmanipulator_synfin_flow_t            
         .src_port            = info->src_port,
         .dst_port            = info->dst_port,
         .phase               = kIpManipulatorSynfinFlowPhaseWarmup,
+        .held_wid            = kInvalidWID,
         .syn_packet_template = syn_packet_template,
     };
 }
@@ -1403,6 +1406,7 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     ipmanipulator_captured_packet_t held_packet         = {0};
     bool                            bypass_current      = false;
+    bool                            held_owner_mismatch = false;
     sbuf_t                         *syn_packet_template = NULL;
 
     ipmanipulator_flow_key_t    key   = synfinsnitrickMakeKey(&info);
@@ -1463,7 +1467,12 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (flow->phase == kIpManipulatorSynfinFlowPhaseHoldThird)
         {
-            bypass_current = synfinsnitrickTakeHeldPacketLocked(flow, &held_packet);
+            held_owner_mismatch = ! ipmanipulatorPacketJoinsOwner(flow->held_wid, l);
+            bypass_current      = synfinsnitrickTakeHeldPacketLocked(flow, &held_packet);
+            if (held_owner_mismatch)
+            {
+                synfinsnitrickDestroyStandalonePacket(&flow->syn_packet_template);
+            }
         }
 
         ipmanipulatorFlowShardRemove(&state->synfin_table, shard, entry);
@@ -1475,6 +1484,28 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
 
         line_t *held_line = held_packet.line;
+        if (held_owner_mismatch)
+        {
+            LOGD("IpManipulator: synfin-sni held packet arrived on worker %d; owner worker is %d; failing open",
+                 workerWIDForLog(lineGetWID(l)),
+                 workerWIDForLog(held_packet.line != NULL ? lineGetWID(held_packet.line) : kInvalidWID));
+            if (held_line != NULL && held_packet.buf != NULL)
+            {
+                ipmanipulatorForwardCapturedPacketNormal(t, held_line, held_packet.buf);
+                held_packet.buf = NULL;
+            }
+            else if (held_packet.buf != NULL)
+            {
+                sbufDestroy(held_packet.buf);
+                held_packet.buf = NULL;
+            }
+            if (held_line != NULL)
+            {
+                lineUnlock(held_line);
+            }
+            synfinsnitrickSendNormalNow(t, l, buf);
+            return true;
+        }
         synfinsnitrickSendHeldThenCurrentNormal(t, &held_packet, l, buf);
         if (held_line != NULL)
         {
@@ -1526,6 +1557,7 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
 
         flow->phase            = kIpManipulatorSynfinFlowPhaseHoldThird;
+        flow->held_wid         = lineGetWID(l);
         flow->held_packet      = (ipmanipulator_captured_packet_t) {.line = l, .buf = buf};
         flow->hold_generation  = ipmanipulatorAllocateFlowGeneration(state);
         flow->hold_timer_armed = true;
@@ -1545,9 +1577,39 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return true;
 
     case kIpManipulatorSynfinFlowPhaseHoldThird: {
-        bool block_flow = false;
+        bool block_flow           = false;
+        bool held_worker_mismatch = ! ipmanipulatorPacketJoinsOwner(flow->held_wid, l);
 
         discard synfinsnitrickTakeHeldPacketLocked(flow, &held_packet);
+
+        if (held_worker_mismatch)
+        {
+            line_t *held_line = held_packet.line;
+
+            flow->phase = kIpManipulatorSynfinFlowPhasePassthrough;
+            synfinsnitrickDestroyStandalonePacket(&flow->syn_packet_template);
+            ipmanipulatorFlowShardUnlock(shard);
+
+            LOGD("IpManipulator: synfin-sni held packet completed on worker %d; owner worker is %d; failing open",
+                 workerWIDForLog(lineGetWID(l)),
+                 workerWIDForLog(held_line != NULL ? lineGetWID(held_line) : kInvalidWID));
+            if (held_line != NULL && held_packet.buf != NULL)
+            {
+                ipmanipulatorForwardCapturedPacketNormal(t, held_line, held_packet.buf);
+                held_packet.buf = NULL;
+            }
+            else if (held_packet.buf != NULL)
+            {
+                sbufDestroy(held_packet.buf);
+                held_packet.buf = NULL;
+            }
+            if (held_line != NULL)
+            {
+                lineUnlock(held_line);
+            }
+            synfinsnitrickSendNormalNow(t, l, buf);
+            return true;
+        }
 
         line_t *held_line = held_packet.line;
 

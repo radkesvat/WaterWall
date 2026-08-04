@@ -176,6 +176,7 @@ static void echsnitrickReleasePendingOriginalsLocked(ipmanipulator_echsni_flow_t
     flow->next_release_index     = 0;
     flow->shard1_release_at_ms   = 0;
     flow->shard2_release_at_ms   = 0;
+    flow->owner_wid              = kInvalidWID;
 }
 
 static uint8_t echsnitrickTakePendingOriginalsLocked(ipmanipulator_echsni_flow_t     *flow,
@@ -208,6 +209,7 @@ static uint8_t echsnitrickTakePendingOriginalsLocked(ipmanipulator_echsni_flow_t
     flow->next_release_index     = 0;
     flow->shard1_release_at_ms   = 0;
     flow->shard2_release_at_ms   = 0;
+    flow->owner_wid              = kInvalidWID;
     return count;
 }
 
@@ -220,6 +222,7 @@ static void echsnitrickDestroyFlow(ipmanipulator_echsni_flow_t *flow)
 
     echsnitrickReleasePendingOriginalsLocked(flow);
     memoryZero(flow, sizeof(*flow));
+    flow->owner_wid = kInvalidWID;
 }
 
 /* Runs under the shard lock: dispose only, never forward or call the tunnel. */
@@ -272,6 +275,7 @@ static void echsnitrickInitializeFlow(ipmanipulator_tstate_t *state, ipmanipulat
         .dst_addr         = info->dst_addr,
         .src_port         = info->src_port,
         .dst_port         = info->dst_port,
+        .owner_wid        = kInvalidWID,
         .phase            = kIpManipulatorEchSniFlowPhaseAwaitingClientHello,
     };
 }
@@ -803,10 +807,15 @@ static void echsnitrickDrainPendingOriginals(tunnel_t *t, const echsnitrick_flow
  */
 static bool echsnitrickTakeNextReleasePacket(tunnel_t *t, const echsnitrick_flow_identity_t *identity,
                                              uint8_t release_phase, ipmanipulator_captured_packet_t *out,
-                                             bool *schedule_next)
+                                             bool *schedule_next, bool *foreign_owner)
 {
     ipmanipulator_tstate_t *state = tunnelGetState(t);
     bool                    taken = false;
+
+    if (foreign_owner != NULL)
+    {
+        *foreign_owner = false;
+    }
 
     ipmanipulator_flow_shard_t *shard = ipmanipulatorFlowTableLockShard(&state->echsni_table, &identity->key);
     if (shard == NULL)
@@ -829,7 +838,20 @@ static bool echsnitrickTakeNextReleasePacket(tunnel_t *t, const echsnitrick_flow
             {
                 *out                                  = flow->pending_original_packets[index];
                 flow->pending_original_packets[index] = (ipmanipulator_captured_packet_t) {0};
-                flow->next_release_index              = (uint8_t) (index + 1U);
+                if (! ipmanipulatorPacketJoinsOwner(flow->owner_wid, out->line))
+                {
+                    wid_t packet_wid = out->line != NULL ? lineGetWID(out->line) : kInvalidWID;
+
+                    if (foreign_owner != NULL)
+                    {
+                        *foreign_owner = true;
+                    }
+                    LOGD("IpManipulator: ech-sni-trick pending original arrived on worker %d; owner worker is %d; "
+                         "failing open",
+                         workerWIDForLog(packet_wid),
+                         workerWIDForLog(flow->owner_wid));
+                }
+                flow->next_release_index = (uint8_t) (index + 1U);
                 *schedule_next = release_phase == kEchSniReleasePhaseFirst && flow->pending_original_count > 1U;
                 taken          = true;
 
@@ -840,6 +862,7 @@ static bool echsnitrickTakeNextReleasePacket(tunnel_t *t, const echsnitrick_flow
                     flow->next_release_index     = 0;
                     flow->shard1_release_at_ms   = 0;
                     flow->shard2_release_at_ms   = 0;
+                    flow->owner_wid              = kInvalidWID;
                     flow->last_activity_ms       = getTickMS();
                     ipmanipulatorFlowShardTouch(shard, entry, flow->last_activity_ms + kEchSniIdleTimeoutMs);
                 }
@@ -865,21 +888,30 @@ static void echsnitrickDrainPendingOriginals(tunnel_t *t, const echsnitrick_flow
 
     for (uint8_t i = 0; i < kIpManipulatorTlsCaptureMaxPackets; ++i)
     {
-        ipmanipulator_captured_packet_t packet = {0};
+        ipmanipulator_captured_packet_t packet        = {0};
+        bool                            foreign_owner = false;
 
-        if (! echsnitrickTakeNextReleasePacket(t, identity, release_phase, &packet, &schedule_next))
+        if (! echsnitrickTakeNextReleasePacket(t, identity, release_phase, &packet, &schedule_next, &foreign_owner))
         {
             break;
         }
 
-        if (! lineIsOnCurrentEventWorker(packet.line))
-        {
-            echsnitrickDestroyCapturedPacket(&packet);
-            LOGF("IpManipulator: ech-sni-trick original release ran on the wrong worker");
-            abortProgramNow(1);
-        }
-
         emitted_any = true;
+
+        if (foreign_owner || ! lineIsOnCurrentEventWorker(packet.line))
+        {
+            if (packet.line != NULL && packet.buf != NULL)
+            {
+                ipmanipulatorForwardCapturedPacketNormal(t, packet.line, packet.buf);
+                packet.buf = NULL;
+            }
+            else
+            {
+                echsnitrickDestroyCapturedPacket(&packet);
+            }
+            packet.line = NULL;
+            continue;
+        }
 
         if (alive)
         {
@@ -983,7 +1015,7 @@ static bool echsnitrickGetPendingReleaseWorker(tunnel_t *t, const echsnitrick_fl
             first < flow->pending_original_count && flow->pending_original_packets[first].line != NULL &&
             flow->pending_original_packets[first].buf != NULL)
         {
-            *wid  = lineGetWID(flow->pending_original_packets[first].line);
+            *wid  = flow->owner_wid;
             found = true;
         }
     }
@@ -1108,6 +1140,7 @@ static bool echsnitrickInstallPendingOriginals(tunnel_t *t, const echsnitrick_fl
 
         if (eligible && flow->pending_original_count == 0)
         {
+            flow->owner_wid = slot->owner_wid;
             for (uint8_t i = 0; i < slot->captured_packets_count; ++i)
             {
                 flow->pending_original_packets[i] = slot->captured_packets[i];
@@ -1638,14 +1671,34 @@ bool echsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             }
             else if (packet->buf != NULL)
             {
-                assert(lineIsOnCurrentEventWorker(packet->line));
                 if (alive)
                 {
-                    alive = echsnitrickSendUpstreamDirect(t, packet->line, packet->buf);
+                    if (lineIsOnCurrentEventWorker(packet->line))
+                    {
+                        alive = echsnitrickSendUpstreamDirect(t, packet->line, packet->buf);
+                    }
+                    else
+                    {
+                        LOGD("IpManipulator: ech-sni-trick graceful close packet arrived on worker %d; owner worker is "
+                             "%d; "
+                             "forwarding normally",
+                             workerWIDForLog(getCurrentEventWorkerWID()),
+                             workerWIDForLog(lineGetWID(packet->line)));
+                        ipmanipulatorForwardCapturedPacketNormal(t, packet->line, packet->buf);
+                        packet->buf = NULL;
+                    }
                 }
                 else
                 {
-                    lineReuseBuffer(packet->line, packet->buf);
+                    if (lineIsOnCurrentEventWorker(packet->line))
+                    {
+                        lineReuseBuffer(packet->line, packet->buf);
+                    }
+                    else
+                    {
+                        ipmanipulatorForwardCapturedPacketNormal(t, packet->line, packet->buf);
+                        packet->buf = NULL;
+                    }
                 }
             }
 

@@ -196,16 +196,20 @@ static void firstsnitrickSendOrderedNow(tunnel_t *t, ipmanipulator_ordered_outpu
             continue;
         }
 
-        lineLock(output->line);
-        if (lineIsAlive(output->line))
+        if (! lineIsOnCurrentEventWorker(output->line))
         {
+            ipmanipulatorForwardCapturedPacketNormal(t, output->line, output->buf);
+        }
+        else if (lineIsAlive(output->line))
+        {
+            lineLock(output->line);
             output->send(t, output->line, output->buf);
+            lineUnlock(output->line);
         }
         else
         {
             lineReuseBuffer(output->line, output->buf);
         }
-        lineUnlock(output->line);
         output->line = NULL;
         output->buf  = NULL;
     }
@@ -303,6 +307,7 @@ static void firstsnitrickStartDelayBarrier(tunnel_t *t, line_t *l, sbuf_t **pack
         }
 
         uint64_t generation = flow->delay_barrier.generation;
+        wid_t    owner_wid  = flow->delay_barrier.owner_wid;
         firstsnitrickTouchLocked(shard, entry, flow, now_ms);
         ipmanipulatorFlowShardUnlock(shard);
 
@@ -313,7 +318,7 @@ static void firstsnitrickStartDelayBarrier(tunnel_t *t, line_t *l, sbuf_t **pack
                                                     &key,
                                                     kIpManipulatorDelayBarrierFirstSni,
                                                     generation,
-                                                    lineGetWID(l),
+                                                    owner_wid,
                                                     remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining))
             {
                 ipmanipulatorDelayBarrierFailOpen(t, &key, kIpManipulatorDelayBarrierFirstSni, generation);
@@ -570,6 +575,7 @@ static bool firstsnitrickMaybeDelayFlowPacket(tunnel_t *t, line_t *l, sbuf_t *bu
     bool                        send_current_after_batch = false;
     uint64_t                    generation               = 0;
     uint64_t                    deadline_ms              = 0;
+    wid_t                       barrier_owner_wid        = kInvalidWID;
 
     if (! ipmanipulatorFlowTableIsReady(&state->first_sni_table) || tail_delay_ms == 0 || info == NULL)
     {
@@ -623,8 +629,9 @@ static bool firstsnitrickMaybeDelayFlowPacket(tunnel_t *t, line_t *l, sbuf_t *bu
                 &flow->delay_barrier, l, buf, firstsnitrickHasFinOrRst(info), &needs_schedule);
             if (queued)
             {
-                generation  = flow->delay_barrier.generation;
-                deadline_ms = flow->delay_barrier.deadline_ms;
+                generation        = flow->delay_barrier.generation;
+                deadline_ms       = flow->delay_barrier.deadline_ms;
+                barrier_owner_wid = flow->delay_barrier.owner_wid;
             }
             else
             {
@@ -651,7 +658,7 @@ static bool firstsnitrickMaybeDelayFlowPacket(tunnel_t *t, line_t *l, sbuf_t *bu
                                                 &key,
                                                 kIpManipulatorDelayBarrierFirstSni,
                                                 generation,
-                                                lineGetWID(l),
+                                                barrier_owner_wid,
                                                 remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining))
         {
             ipmanipulatorDelayBarrierFailOpen(t, &key, kIpManipulatorDelayBarrierFirstSni, generation);

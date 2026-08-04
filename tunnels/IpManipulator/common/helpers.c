@@ -139,6 +139,7 @@ static void ipmanipulatorResetCapturedSlot(ipmanipulator_tls_capture_slot_t *slo
     }
     memoryZero(slot, sizeof(*slot));
     slot->generation = gen;
+    slot->owner_wid  = kInvalidWID;
 }
 
 static void ipmanipulatorTakeCapturedSlot(ipmanipulator_tls_capture_slot_t *dest, ipmanipulator_tls_capture_slot_t *src)
@@ -151,6 +152,7 @@ static void ipmanipulatorResetPrestartSlot(ipmanipulator_tls_prestart_slot_t *sl
 {
     assert(slot->captured_packets_count == 0);
     memoryZero(slot, sizeof(*slot));
+    slot->owner_wid = kInvalidWID;
 }
 
 static void ipmanipulatorTakePrestartSlot(ipmanipulator_tls_prestart_slot_t *dest,
@@ -504,6 +506,7 @@ void ipmanipulatorReleaseCapturedPacketsNormal(tunnel_t *t, ipmanipulator_tls_ca
 
     slot->captured_packets_count = 0;
     slot->active                 = false;
+    slot->owner_wid              = kInvalidWID;
 }
 
 static ipmanipulator_tls_capture_status_e ipmanipulatorFinishCaptureAndRelease(
@@ -539,6 +542,7 @@ bool ipmanipulatorTakeMatchingCaptureSlot(tunnel_t *t, uint32_t src_addr, uint32
     }
 
     memoryZero(out_slot, sizeof(*out_slot));
+    out_slot->owner_wid = kInvalidWID;
 
     if (state->tls_capture_slots == NULL)
     {
@@ -607,6 +611,7 @@ static bool ipmanipulatorTakeMatchingPrestartSlot(tunnel_t *t, uint32_t src_addr
     }
 
     memoryZero(out_slot, sizeof(*out_slot));
+    out_slot->owner_wid = kInvalidWID;
 
     if (state->tls_prestart_slots == NULL)
     {
@@ -686,6 +691,7 @@ void ipmanipulatorDestroyCapturedTlsPackets(ipmanipulator_tls_capture_slot_t *sl
 
     slot->captured_packets_count = 0;
     slot->active                 = false;
+    slot->owner_wid              = kInvalidWID;
 }
 
 void ipmanipulatorRecycleCapturedTlsPackets(tunnel_t *t, ipmanipulator_tls_capture_slot_t *slot)
@@ -718,6 +724,7 @@ void ipmanipulatorRecycleCapturedTlsPackets(tunnel_t *t, ipmanipulator_tls_captu
 
     slot->captured_packets_count = 0;
     slot->active                 = false;
+    slot->owner_wid              = kInvalidWID;
 }
 
 static bool ipmanipulatorParseTcpPacketInfo(const uint8_t *packet, uint32_t packet_length,
@@ -879,6 +886,12 @@ static bool ipmanipulatorAppendPacketToPrestartSlot(ipmanipulator_tls_prestart_s
         return false;
     }
 
+    if (slot->owner_wid == kInvalidWID)
+    {
+        slot->owner_wid = lineGetWID(l);
+    }
+    assert(lineGetWID(l) == slot->owner_wid);
+
     slot->captured_packets[slot->captured_packets_count++] = (ipmanipulator_captured_packet_t) {.line = l, .buf = buf};
     slot->last_update_ms                                   = getTickMS();
     slot->generation += 1;
@@ -935,6 +948,12 @@ static bool ipmanipulatorAppendPacketToCaptureSlot(ipmanipulator_tls_capture_slo
     {
         return false;
     }
+
+    if (slot->owner_wid == kInvalidWID)
+    {
+        slot->owner_wid = lineGetWID(l);
+    }
+    assert(lineGetWID(l) == slot->owner_wid);
 
     uint32_t new_payload_len = slot->captured_payload_len + info->tcp_payload_len;
     uint32_t prefix_len      = min(new_payload_len, 9U);
@@ -1049,6 +1068,15 @@ static void ipmanipulatorDrainPrestartPacketsIntoCaptureSlot(ipmanipulator_tls_p
 {
     if (prestart_slot == NULL || capture_slot == NULL || complete == NULL)
     {
+        return;
+    }
+
+    if (capture_slot->owner_wid != kInvalidWID && prestart_slot->owner_wid != kInvalidWID &&
+        capture_slot->owner_wid != prestart_slot->owner_wid)
+    {
+        LOGD("IpManipulator: prestart worker %d does not match capture owner %d; not draining",
+             workerWIDForLog(prestart_slot->owner_wid),
+             workerWIDForLog(capture_slot->owner_wid));
         return;
     }
 
@@ -1535,6 +1563,7 @@ void ipmanipulatorDelayBarrierDestroy(ipmanipulator_delay_barrier_t *barrier)
     memoryFree(barrier->ordered_outputs);
 
     memoryZero(barrier, sizeof(*barrier));
+    barrier->owner_wid = kInvalidWID;
 }
 
 void ipmanipulatorDelayBarrierInitialize(ipmanipulator_tstate_t *state, ipmanipulator_delay_barrier_t *barrier,
@@ -1553,6 +1582,7 @@ void ipmanipulatorDelayBarrierInitialize(ipmanipulator_tstate_t *state, ipmanipu
 
     barrier->generation  = ipmanipulatorAllocateFlowGeneration(state);
     barrier->deadline_ms = deadline_ms;
+    barrier->owner_wid   = kInvalidWID;
 }
 
 bool ipmanipulatorDelayBarrierTryEnqueue(ipmanipulator_delay_barrier_t *barrier, line_t *l, sbuf_t *buf,
@@ -1568,11 +1598,24 @@ bool ipmanipulatorDelayBarrierTryEnqueue(ipmanipulator_delay_barrier_t *barrier,
         return false;
     }
 
+    if (barrier->owner_wid != kInvalidWID && ! ipmanipulatorPacketJoinsOwner(barrier->owner_wid, l))
+    {
+        LOGD("IpManipulator: delayed packet arrived on worker %d; barrier owner is %d; failing open",
+             workerWIDForLog(lineGetWID(l)),
+             workerWIDForLog(barrier->owner_wid));
+        return false;
+    }
+
     uint32_t packet_len = sbufGetLength(buf);
     if (barrier->count >= kIpManipulatorDelayBarrierMaxPackets ||
         packet_len > kIpManipulatorDelayBarrierMaxBytes - barrier->retained_bytes)
     {
         return false;
+    }
+
+    if (barrier->owner_wid == kInvalidWID)
+    {
+        barrier->owner_wid = lineGetWID(l);
     }
 
     lineLock(l);
@@ -1617,11 +1660,31 @@ bool ipmanipulatorDelayBarrierInstallOrdered(ipmanipulator_delay_barrier_t  *bar
         }
     }
 
+    wid_t owner_wid = lineGetWID(outputs[0].line);
+    for (uint32_t i = 1; i < count; ++i)
+    {
+        if (lineGetWID(outputs[i].line) != owner_wid)
+        {
+            LOGD("IpManipulator: delayed transcript has mixed owner workers %d and %d; failing open",
+                 workerWIDForLog(owner_wid),
+                 workerWIDForLog(lineGetWID(outputs[i].line)));
+            return false;
+        }
+    }
+    if (barrier->owner_wid != kInvalidWID && barrier->owner_wid != owner_wid)
+    {
+        LOGD("IpManipulator: delayed transcript worker %d does not match barrier owner %d; failing open",
+             workerWIDForLog(owner_wid),
+             workerWIDForLog(barrier->owner_wid));
+        return false;
+    }
     ipmanipulator_ordered_output_t *owned_outputs = memoryAllocateZero(sizeof(*owned_outputs) * count);
     if (owned_outputs == NULL)
     {
         return false;
     }
+
+    barrier->owner_wid = owner_wid;
 
     for (uint32_t i = 0; i < count; ++i)
     {
@@ -1671,6 +1734,62 @@ void ipmanipulatorDelayBarrierTake(ipmanipulator_delay_barrier_t *barrier, ipman
     }
 
     memoryZero(barrier, sizeof(*barrier));
+    barrier->owner_wid = kInvalidWID;
+}
+
+static bool ipmanipulatorDelayOrderedOutputSendUpstream(tunnel_t *t, ipmanipulator_ordered_output_t *output)
+{
+    if (output == NULL)
+    {
+        return true;
+    }
+
+    if (output->line == NULL)
+    {
+        if (output->buf != NULL)
+        {
+            sbufDestroy(output->buf);
+        }
+        output->buf = NULL;
+        return true;
+    }
+
+    if (output->buf == NULL)
+    {
+        lineUnlock(output->line);
+        output->line = NULL;
+        return true;
+    }
+
+    if (! lineIsOnCurrentEventWorker(output->line))
+    {
+        LOGD("IpManipulator: delayed output released on worker %d; owner worker is %d; forwarding normally",
+             workerWIDForLog(getCurrentEventWorkerWID()),
+             workerWIDForLog(lineGetWID(output->line)));
+        ipmanipulatorForwardCapturedPacketNormal(t, output->line, output->buf);
+        lineUnlock(output->line);
+        output->line = NULL;
+        output->buf  = NULL;
+        return true;
+    }
+
+    assert(lineIsOnCurrentEventWorker(output->line));
+
+    bool alive = lineIsAlive(output->line);
+    if (alive)
+    {
+        output->send(t, output->line, output->buf);
+        alive = lineIsAlive(output->line);
+    }
+    else
+    {
+        lineReuseBuffer(output->line, output->buf);
+    }
+
+    lineUnlock(output->line);
+    output->line = NULL;
+    output->buf  = NULL;
+    return alive;
 }
 
 bool ipmanipulatorDelayBatchSendUpstream(tunnel_t *t, ipmanipulator_delay_batch_t *batch)
@@ -1686,31 +1805,7 @@ bool ipmanipulatorDelayBatchSendUpstream(tunnel_t *t, ipmanipulator_delay_batch_
     {
         ipmanipulator_ordered_output_t *output = &batch->ordered_outputs[i];
 
-        if (output->line == NULL)
-        {
-            if (output->buf != NULL)
-            {
-                sbufDestroy(output->buf);
-            }
-        }
-        else if (output->buf != NULL)
-        {
-            if (lineIsAlive(output->line))
-            {
-                output->send(t, output->line, output->buf);
-                all_alive &= lineIsAlive(output->line);
-            }
-            else
-            {
-                lineReuseBuffer(output->line, output->buf);
-                all_alive = false;
-            }
-
-            lineUnlock(output->line);
-        }
-
-        output->line = NULL;
-        output->buf  = NULL;
+        all_alive &= ipmanipulatorDelayOrderedOutputSendUpstream(t, output);
     }
 
     memoryFree(batch->ordered_outputs);
@@ -1721,6 +1816,23 @@ bool ipmanipulatorDelayBatchSendUpstream(tunnel_t *t, ipmanipulator_delay_batch_
     for (uint8_t i = 0; i < batch->count; ++i)
     {
         ipmanipulator_captured_packet_t *packet = &batch->packets[i];
+
+        if (packet->line != NULL && ! lineIsOnCurrentEventWorker(packet->line))
+        {
+            LOGD("IpManipulator: delayed packet released on worker %d; owner worker is %d; forwarding normally",
+                 workerWIDForLog(getCurrentEventWorkerWID()),
+                 workerWIDForLog(lineGetWID(packet->line)));
+            if (packet->buf != NULL)
+            {
+                ipmanipulatorForwardCapturedPacketNormal(t, packet->line, packet->buf);
+            }
+            lineUnlock(packet->line);
+            packet->line = NULL;
+            packet->buf  = NULL;
+            continue;
+        }
+
+        assert(packet->line == NULL || lineIsOnCurrentEventWorker(packet->line));
 
         if (packet->line == NULL)
         {
@@ -1888,7 +2000,8 @@ static void ipmanipulatorDelayBarrierRunTimer(worker_t *worker, void *arg1, void
 {
     discard arg3;
 
-    // Reschedules below must stay on the worker this message was delivered to.
+    // The callback must run on a registered event worker; each live barrier
+    // below additionally verifies that this is its recorded owner worker.
     assert(currentThreadIsEventWorkerWID(worker->wid));
 
     tunnel_t                            *t     = arg1;
@@ -1928,6 +2041,19 @@ static void ipmanipulatorDelayBarrierRunTimer(worker_t *worker, void *arg1, void
             return;
         }
 
+        if (worker->wid != barrier->owner_wid)
+        {
+            LOGD("IpManipulator: delay timer ran on worker %d; barrier owner is %d; failing open",
+                 workerWIDForLog(worker->wid),
+                 workerWIDForLog(barrier->owner_wid));
+            ipmanipulatorFlowShardUnlock(shard);
+            ipmanipulatorDelayBarrierFailOpen(t, &msg->key, msg->kind, msg->generation);
+            memoryFree(msg);
+            return;
+        }
+
+        assert(worker->wid == barrier->owner_wid);
+
         if (ipmanipulatorDelayBarrierHasPendingOrdered(barrier))
         {
             ipmanipulator_ordered_output_t *next = &barrier->ordered_outputs[barrier->next_ordered_output];
@@ -1936,7 +2062,9 @@ static void ipmanipulatorDelayBarrierRunTimer(worker_t *worker, void *arg1, void
             {
                 uint64_t remaining = next->due_ms - now_ms;
                 uint32_t delay_ms  = remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining;
-                wid_t    wid       = worker->wid;
+                wid_t    wid       = barrier->owner_wid;
+
+                assert(worker->wid == barrier->owner_wid);
 
                 ipmanipulatorFlowShardUnlock(shard);
                 if (! ipmanipulatorDelayBarrierSchedule(t, &msg->key, msg->kind, msg->generation, wid, delay_ms))
@@ -1956,7 +2084,9 @@ static void ipmanipulatorDelayBarrierRunTimer(worker_t *worker, void *arg1, void
         {
             uint64_t remaining = barrier->deadline_ms - now_ms;
             uint32_t delay_ms  = remaining > UINT32_MAX ? UINT32_MAX : (uint32_t) remaining;
-            wid_t    wid       = worker->wid;
+            wid_t    wid       = barrier->owner_wid;
+
+            assert(worker->wid == barrier->owner_wid);
 
             ipmanipulatorFlowShardUnlock(shard);
             if (! ipmanipulatorDelayBarrierSchedule(t, &msg->key, msg->kind, msg->generation, wid, delay_ms))
@@ -1982,26 +2112,7 @@ static void ipmanipulatorDelayBarrierRunTimer(worker_t *worker, void *arg1, void
 
         if (have_due_output)
         {
-            if (due_output.line == NULL)
-            {
-                if (due_output.buf != NULL)
-                {
-                    sbufDestroy(due_output.buf);
-                }
-            }
-            else if (due_output.buf != NULL)
-            {
-                if (lineIsAlive(due_output.line))
-                {
-                    due_output.send(t, due_output.line, due_output.buf);
-                }
-                else
-                {
-                    lineReuseBuffer(due_output.line, due_output.buf);
-                }
-                lineUnlock(due_output.line);
-            }
-
+            discard ipmanipulatorDelayOrderedOutputSendUpstream(t, &due_output);
             continue;
         }
 
@@ -2140,6 +2251,59 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
                 break;
             }
         }
+    }
+
+    bool capture_owner_mismatch =
+        matched_index >= 0 && ! ipmanipulatorPacketJoinsOwner(state->tls_capture_slots[matched_index].owner_wid, l);
+    bool prestart_owner_mismatch =
+        prestart_index >= 0 && ! ipmanipulatorPacketJoinsOwner(state->tls_prestart_slots[prestart_index].owner_wid, l);
+
+    if (capture_owner_mismatch || prestart_owner_mismatch)
+    {
+        if (capture_owner_mismatch)
+        {
+            ipmanipulator_tls_capture_slot_t *slot = &state->tls_capture_slots[matched_index];
+
+            LOGD("IpManipulator: %s capture tuple arrived on worker %d; owner worker is %d; failing open",
+                 ipmanipulatorTlsCaptureKindName(kind),
+                 workerWIDForLog(lineGetWID(l)),
+                 workerWIDForLog(slot->owner_wid));
+            ipmanipulatorTakeCapturedSlot(out_slot, slot);
+        }
+
+        if (prestart_owner_mismatch)
+        {
+            ipmanipulator_tls_prestart_slot_t *slot = &state->tls_prestart_slots[prestart_index];
+
+            LOGD("IpManipulator: %s prestart tuple arrived on worker %d; owner worker is %d; failing open",
+                 ipmanipulatorTlsCaptureKindName(kind),
+                 workerWIDForLog(lineGetWID(l)),
+                 workerWIDForLog(slot->owner_wid));
+            ipmanipulatorTakePrestartSlot(&matched_prestart_slot, slot);
+        }
+
+        mutexUnlock(&state->tls_capture_mutex);
+
+        if (release_slot.active)
+        {
+            ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
+        }
+        if (release_prestart_slot.active)
+        {
+            ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
+        }
+        if (out_slot->active)
+        {
+            ipmanipulatorReleaseCapturedPacketsNormal(t, out_slot);
+            ipmanipulatorResetCapturedSlot(out_slot);
+        }
+        if (matched_prestart_slot.active)
+        {
+            ipmanipulatorReleasePrestartPacketsNormal(t, &matched_prestart_slot);
+        }
+
+        ipmanipulatorForwardCapturedPacketNormal(t, l, buf);
+        return kIpManipulatorTlsCaptureStatusBypassed;
     }
 
     if (matched_index >= 0)
@@ -2287,6 +2451,7 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
         out_slot->captured_packets_count  = 1;
         out_slot->kind                    = kind;
         out_slot->owner_generation        = owner_generation;
+        out_slot->owner_wid               = lineGetWID(l);
         out_slot->active                  = true;
         out_slot->captured_packets[0]     = (ipmanipulator_captured_packet_t) {.line = l, .buf = buf};
 
@@ -2413,6 +2578,7 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
                 .src_port               = info.src_port,
                 .dst_port               = info.dst_port,
                 .generation             = 1,
+                .owner_wid              = lineGetWID(l),
                 .captured_packets_count = 0,
                 .kind                   = kind,
                 .active                 = true,
@@ -2510,6 +2676,7 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
         .captured_packets_count  = 0,
         .kind                    = kind,
         .owner_generation        = owner_generation,
+        .owner_wid               = lineGetWID(l),
         .active                  = true,
     };
 

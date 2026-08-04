@@ -5,6 +5,16 @@
 #include "flow_table.h"
 #include "ipv4_packet_view.h"
 
+/*
+ * True when a packet line may join a retained group owned by @p owner_wid.
+ * An invalid owner means that the group is empty and the caller must stamp the
+ * line's worker before retaining it.
+ */
+static inline bool ipmanipulatorPacketJoinsOwner(wid_t owner_wid, const line_t *l)
+{
+    return owner_wid == kInvalidWID || (l != NULL && lineGetWID(l) == owner_wid);
+}
+
 enum tcp_bit_action_dynamic_value
 {
     kDvsNoAction = kDvsEmpty,
@@ -162,6 +172,7 @@ typedef struct ipmanipulator_delay_barrier_s
     uint64_t                        generation;
     uint64_t                        deadline_ms;
     uint32_t                        retained_bytes;
+    wid_t                           owner_wid;
     uint8_t                         count;
     bool                            timer_armed;
     bool                            remove_after_release;
@@ -195,7 +206,9 @@ typedef struct ipmanipulator_tls_capture_slot_s
      * it zero; ECH copies the generation from its bounded flow entry so a
      * timeout, eviction, close or tuple reuse can never touch a replacement.
      */
-    uint64_t                         owner_generation;
+    uint64_t owner_generation;
+    /* Every retained packet in this slot must belong to this worker. */
+    wid_t                            owner_wid;
     uint32_t                         generation;
     uint32_t                         next_seq;
     uint32_t                         tls_record_total_len;
@@ -216,7 +229,9 @@ typedef struct ipmanipulator_tls_capture_slot_s
 
 typedef struct ipmanipulator_tls_prestart_slot_s
 {
-    uint64_t                         last_update_ms;
+    uint64_t last_update_ms;
+    /* Every retained packet in this slot must belong to this worker. */
+    wid_t                            owner_wid;
     uint32_t                         src_addr;
     uint32_t                         dst_addr;
     uint16_t                         src_port;
@@ -293,6 +308,7 @@ typedef struct ipmanipulator_overlap_flow_s
     ipmanipulator_overlap_flow_phase_e phase;
     bool                               ignore_expected_downstream_packet;
     bool                               hold_timer_armed;
+    wid_t                              held_wid;
     ipmanipulator_captured_packet_t    held_packet;
     sbuf_t                            *synack_packet;
     ipmanipulator_delay_barrier_t      delay_barrier;
@@ -318,6 +334,7 @@ typedef struct ipmanipulator_synfin_flow_s
     uint8_t                           warmup_packets_seen;
     ipmanipulator_synfin_flow_phase_e phase;
     bool                              hold_timer_armed;
+    wid_t                             held_wid;
     ipmanipulator_captured_packet_t   held_packet;
     sbuf_t                           *syn_packet_template;
 } ipmanipulator_synfin_flow_t;
@@ -347,6 +364,7 @@ typedef struct ipmanipulator_echsni_flow_s
     uint32_t dst_addr;
     uint16_t src_port;
     uint16_t dst_port;
+    wid_t    owner_wid;
     /* Bounded batch of unmodified originals owned by this flow generation. */
     uint8_t                           pending_original_count;
     uint8_t                           next_release_index;

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 121
+Documentation version: 122
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx, and both files must keep the same documentation version.
 -->
 
@@ -744,9 +744,11 @@ If `preserve-tcp-bitflags` is enabled:
 
 Every stateful trick keeps its records in its own bounded, sharded flow table:
 
-Packet delivery into a layer-3 chain is flow-affine on both device and WireGuard
-paths, so both directions of a parseable flow mutate its records on the same
-owner worker.
+Retained packets are pinned to the worker that opened their capture, delay
+barrier, or held-packet group. A same-tuple packet arriving on another worker
+makes that trick fail open for the flow; it is forwarded normally on its own
+worker. This is relevant when a non-flow-affine producer such as
+`StreamToPackets` precedes IpManipulator.
 
 - the canonical key normalizes the two endpoints, so a forward packet and its
   reverse select the same hash, the same shard and the same record
