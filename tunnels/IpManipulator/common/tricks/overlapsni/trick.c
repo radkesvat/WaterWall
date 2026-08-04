@@ -52,6 +52,20 @@ typedef struct overlapsnitrick_handle_result_s
     sbuf_t                           *crafted_server_hello;
 } overlapsnitrick_handle_result_t;
 
+typedef struct overlapsnitrick_hold_timeout_s
+{
+    ipmanipulator_flow_key_t key;
+    uint64_t                 generation;
+} overlapsnitrick_hold_timeout_t;
+
+#ifdef IPMANIPULATOR_OVERLAP_TEST_HOOKS
+void ipmanipulatorOverlapTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
+                                           WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
+                                           void *arg2, void *arg3);
+#endif
+
+static void overlapsnitrickSendNormalNow(tunnel_t *t, line_t *l, sbuf_t *buf);
+
 static sbuf_t *overlapsnitrickDuplicateStandalonePacket(const sbuf_t *source)
 {
     uint32_t packet_len = sbufGetLength((sbuf_t *) source);
@@ -129,6 +143,39 @@ static void overlapsnitrickDestroyStandalonePacket(sbuf_t **packet)
     *packet = NULL;
 }
 
+/* The caller owns the record's retained line reference after a successful take. */
+static bool overlapsnitrickTakeHeldPacketLocked(ipmanipulator_overlap_flow_t    *flow,
+                                                ipmanipulator_captured_packet_t *held_packet)
+{
+    if (flow == NULL || held_packet == NULL)
+    {
+        return false;
+    }
+
+    *held_packet           = flow->held_packet;
+    flow->held_packet      = (ipmanipulator_captured_packet_t) {0};
+    flow->hold_timer_armed = false;
+    flow->hold_generation  = 0;
+    return held_packet->line != NULL || held_packet->buf != NULL;
+}
+
+static void overlapsnitrickDestroyHeldPacketLocked(ipmanipulator_overlap_flow_t *flow)
+{
+    ipmanipulator_captured_packet_t held_packet = {0};
+
+    if (! overlapsnitrickTakeHeldPacketLocked(flow, &held_packet))
+    {
+        return;
+    }
+
+    line_t *held_line = held_packet.line;
+    overlapsnitrickDestroyCapturedPacket(&held_packet);
+    if (held_line != NULL)
+    {
+        lineUnlock(held_line);
+    }
+}
+
 static void overlapsnitrickResetFlow(ipmanipulator_overlap_flow_t *flow)
 {
     if (flow == NULL)
@@ -148,7 +195,7 @@ static void overlapsnitrickDestroyFlow(ipmanipulator_overlap_flow_t *flow)
         return;
     }
 
-    overlapsnitrickDestroyCapturedPacket(&flow->held_packet);
+    overlapsnitrickDestroyHeldPacketLocked(flow);
     overlapsnitrickDestroyStandalonePacket(&flow->synack_packet);
     ipmanipulatorDelayBarrierDestroy(&flow->delay_barrier);
     overlapsnitrickResetFlow(flow);
@@ -162,7 +209,7 @@ static void overlapsnitrickInitializeFlow(ipmanipulator_overlap_flow_t          
         return;
     }
 
-    overlapsnitrickDestroyCapturedPacket(&flow->held_packet);
+    overlapsnitrickDestroyHeldPacketLocked(flow);
     overlapsnitrickDestroyStandalonePacket(&flow->synack_packet);
     ipmanipulatorDelayBarrierDestroy(&flow->delay_barrier);
     overlapsnitrickResetFlow(flow);
@@ -187,7 +234,7 @@ static void overlapsnitrickFinalizeFlowLocked(ipmanipulator_tstate_t *state, ipm
         return;
     }
 
-    overlapsnitrickDestroyCapturedPacket(&flow->held_packet);
+    overlapsnitrickDestroyHeldPacketLocked(flow);
     overlapsnitrickDestroyStandalonePacket(&flow->synack_packet);
     flow->warmup_packets_seen = kOverlapSniWarmupPackets;
     flow->phase = block_flow ? kIpManipulatorOverlapFlowPhaseBlocked : kIpManipulatorOverlapFlowPhasePassthrough;
@@ -321,6 +368,115 @@ static ipmanipulator_flow_entry_t *overlapsnitrickReserveLocked(ipmanipulator_ts
 
     overlapsnitrickInitializeFlow(overlapsnitrickEntryRecord(entry), info, now_ms);
     return entry;
+}
+
+static void overlapsnitrickReleaseTimedOutHold(tunnel_t *t, const ipmanipulator_flow_key_t *key, uint64_t generation)
+{
+    ipmanipulator_tstate_t         *state       = tunnelGetState(t);
+    ipmanipulator_captured_packet_t held_packet = {0};
+    ipmanipulator_flow_shard_t     *shard       = ipmanipulatorFlowTableLockShard(&state->overlap_table, key);
+
+    if (shard != NULL)
+    {
+        ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->overlap_table, shard, key);
+
+        if (entry != NULL)
+        {
+            ipmanipulator_overlap_flow_t *flow = overlapsnitrickEntryRecord(entry);
+
+            if (flow->phase == kIpManipulatorOverlapFlowPhaseHoldThird && flow->hold_timer_armed &&
+                flow->hold_generation == generation)
+            {
+                discard overlapsnitrickTakeHeldPacketLocked(flow, &held_packet);
+                flow->phase = kIpManipulatorOverlapFlowPhasePassthrough;
+                overlapsnitrickDestroyStandalonePacket(&flow->synack_packet);
+                overlapsnitrickTouchLocked(shard, entry, getTickMS());
+            }
+        }
+
+        ipmanipulatorFlowShardUnlock(shard);
+    }
+
+    if (held_packet.line != NULL || held_packet.buf != NULL)
+    {
+        LOGD("IpManipulator: overlap-sni hold timed out after %u ms; releasing the segment unchanged",
+             state->trick_overlap_sni_hold_timeout_ms);
+
+        line_t *held_line = held_packet.line;
+        if (held_line != NULL && held_packet.buf != NULL)
+        {
+            overlapsnitrickSendNormalNow(t, held_line, held_packet.buf);
+        }
+        else if (held_packet.buf != NULL)
+        {
+            sbufDestroy(held_packet.buf);
+        }
+
+        if (held_line != NULL)
+        {
+            lineUnlock(held_line);
+        }
+    }
+}
+
+static void overlapsnitrickRunHoldTimeout(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+
+    tunnel_t                       *t       = arg1;
+    line_t                         *l       = arg2;
+    overlapsnitrick_hold_timeout_t *context = arg3;
+
+    overlapsnitrickReleaseTimedOutHold(t, &context->key, context->generation);
+    memoryFree(context);
+    lineUnlock(l);
+}
+
+static void overlapsnitrickCleanupHoldTimeout(void *arg1, void *arg2, void *arg3)
+{
+    discard arg1;
+
+    memoryFree(arg3);
+    lineUnlock((line_t *) arg2);
+}
+
+static void overlapsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipmanipulator_flow_key_t *key,
+                                               uint64_t generation, uint32_t delay_ms)
+{
+    /* Configuration rejects zero; keep direct/internal state fail-open too. */
+    delay_ms = max(delay_ms, 1U);
+
+    overlapsnitrick_hold_timeout_t *context = memoryAllocate(sizeof(*context));
+    if (context == NULL)
+    {
+        overlapsnitrickReleaseTimedOutHold(t, key, generation);
+        return;
+    }
+
+    *context = (overlapsnitrick_hold_timeout_t) {
+        .key        = *key,
+        .generation = generation,
+    };
+
+    /* The queued message owns a separate reference from the held flow record. */
+    lineLock(l);
+#ifdef IPMANIPULATOR_OVERLAP_TEST_HOOKS
+    ipmanipulatorOverlapTestScheduleTimed(lineGetWID(l),
+                                          (WorkerMessageCallback) overlapsnitrickRunHoldTimeout,
+                                          overlapsnitrickCleanupHoldTimeout,
+                                          delay_ms,
+                                          t,
+                                          l,
+                                          context);
+#else
+    sendWorkerMessageTimedWithCleanup(lineGetWID(l),
+                                      (WorkerMessageCallback) overlapsnitrickRunHoldTimeout,
+                                      overlapsnitrickCleanupHoldTimeout,
+                                      delay_ms,
+                                      t,
+                                      l,
+                                      context);
+#endif
 }
 
 static sbuf_t *overlapsnitrickGenerateTlsClientHello(tunnel_t *t, line_t *l)
@@ -716,6 +872,7 @@ static bool overlapsnitrickSendHelperPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 static void overlapsnitrickSendNormalNow(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    /* Stateful-SNI validation forbids same-instance packet duplication. */
     discard overlapsnitrickSendUpstreamDirect(t, l, buf);
 }
 
@@ -1085,11 +1242,12 @@ bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     assert(lineIsOnCurrentEventWorker(l));
 
-    ipmanipulator_tstate_t           *state   = tunnelGetState(t);
-    overlapsnitrick_tcp_packet_info_t info    = {0};
-    const uint8_t                    *packet  = (const uint8_t *) sbufGetRawPtr(buf);
-    uint64_t                          now_ms  = getTickMS();
-    bool                              drop_it = false;
+    ipmanipulator_tstate_t           *state       = tunnelGetState(t);
+    overlapsnitrick_tcp_packet_info_t info        = {0};
+    const uint8_t                    *packet      = (const uint8_t *) sbufGetRawPtr(buf);
+    uint64_t                          now_ms      = getTickMS();
+    bool                              drop_it     = false;
+    ipmanipulator_captured_packet_t   held_packet = {0};
 
     if (! overlapsnitrickParseTcpPacketInfo(packet, sbufGetLength(buf), &info))
     {
@@ -1125,6 +1283,7 @@ bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
         else if (overlapsnitrickHasFinOrRst(&info))
         {
+            discard overlapsnitrickTakeHeldPacketLocked(flow, &held_packet);
             ipmanipulatorFlowShardRemove(&state->overlap_table, shard, entry);
         }
         else if (flow->synack_packet == NULL && overlapsnitrickIsSynAck(&info))
@@ -1134,6 +1293,38 @@ bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     ipmanipulatorFlowShardUnlock(shard);
+
+    if (held_packet.line != NULL || held_packet.buf != NULL)
+    {
+        line_t *held_line = held_packet.line;
+
+        if (held_line != NULL && held_packet.buf != NULL)
+        {
+            if (lineIsOnCurrentEventWorker(held_line))
+            {
+                overlapsnitrickSendNormalNow(t, held_line, held_packet.buf);
+            }
+            else
+            {
+                /*
+                 * Cross-worker replay must first return to the held line's
+                 * owner worker. Valid configuration still makes this a
+                 * single-send path because packet duplication is incompatible
+                 * with stateful SNI in the same instance.
+                 */
+                ipmanipulatorForwardCapturedPacketNormal(t, held_line, held_packet.buf);
+            }
+        }
+        else if (held_packet.buf != NULL)
+        {
+            sbufDestroy(held_packet.buf);
+        }
+
+        if (held_line != NULL)
+        {
+            lineUnlock(held_line);
+        }
+    }
 
     if (! drop_it)
     {
@@ -1282,9 +1473,7 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (flow->phase == kIpManipulatorOverlapFlowPhaseHoldThird)
         {
-            held_packet       = flow->held_packet;
-            flow->held_packet = (ipmanipulator_captured_packet_t) {0};
-            bypass_current    = true;
+            bypass_current = overlapsnitrickTakeHeldPacketLocked(flow, &held_packet);
         }
 
         ipmanipulatorFlowShardRemove(&state->overlap_table, shard, entry);
@@ -1295,7 +1484,12 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return false;
         }
 
+        line_t *held_line = held_packet.line;
         overlapsnitrickSendHeldThenCurrentNormal(t, &held_packet, l, buf);
+        if (held_line != NULL)
+        {
+            lineUnlock(held_line);
+        }
         return true;
     }
 
@@ -1320,9 +1514,39 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return true;
         }
 
-        flow->phase       = kIpManipulatorOverlapFlowPhaseHoldThird;
-        flow->held_packet = (ipmanipulator_captured_packet_t) {.line = l, .buf = buf};
+        uint32_t                                     tls_record_total_len = 0;
+        ipmanipulator_tls_clienthello_start_status_e start_status = ipmanipulatorInspectTlsPayloadClientHelloStart(
+            info.packet + info.payload_offset, info.tcp_payload_len, &tls_record_total_len);
+
+        discard tls_record_total_len;
+
+        /*
+         * The transcript needs two contiguous payload segments. Anything that
+         * is complete already, or is not a ClientHello, cannot be completed by
+         * a follow-up segment and must pass without waiting for an RTO.
+         */
+        if (start_status != kIpManipulatorTlsClientHelloStartPartial &&
+            start_status != kIpManipulatorTlsClientHelloStartFragmented)
+        {
+            flow->phase = kIpManipulatorOverlapFlowPhasePassthrough;
+            ipmanipulatorFlowShardUnlock(shard);
+
+            overlapsnitrickSendNormalNow(t, l, buf);
+            return true;
+        }
+
+        flow->phase            = kIpManipulatorOverlapFlowPhaseHoldThird;
+        flow->held_packet      = (ipmanipulator_captured_packet_t) {.line = l, .buf = buf};
+        flow->hold_generation  = ipmanipulatorAllocateFlowGeneration(state);
+        flow->hold_timer_armed = true;
+
+        uint64_t hold_generation = flow->hold_generation;
+
+        /* The flow record retains the packet line until the hold is detached. */
+        lineLock(l);
         ipmanipulatorFlowShardUnlock(shard);
+
+        overlapsnitrickScheduleHoldTimeout(t, l, &key, hold_generation, state->trick_overlap_sni_hold_timeout_ms);
         return true;
 
     case kIpManipulatorOverlapFlowPhasePassthrough: {
@@ -1337,14 +1561,20 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         uint64_t                        transcript_generation     = 0;
         uint64_t                        first_action_ms           = 0;
 
-        held_packet         = flow->held_packet;
+        discard overlapsnitrickTakeHeldPacketLocked(flow, &held_packet);
         synack_packet       = flow->synack_packet;
-        flow->held_packet   = (ipmanipulator_captured_packet_t) {0};
         flow->synack_packet = NULL;
+
+        line_t *held_line = held_packet.line;
 
         ipmanipulatorFlowShardUnlock(shard);
 
         bool handled = overlapsnitrickHandleHeldPair(t, l, &held_packet, synack_packet, buf, &info, &result);
+
+        if (held_line != NULL)
+        {
+            lineUnlock(held_line);
+        }
 
         /* The entry pointer did not survive the unlock; resolve the tuple again. */
         shard = ipmanipulatorFlowTableLockShard(&state->overlap_table, &key);

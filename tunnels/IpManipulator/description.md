@@ -1,5 +1,5 @@
 <!--
-Documentation version: 118
+Documentation version: 120
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx, and both files must keep the same documentation version.
 -->
 
@@ -28,8 +28,8 @@ The current implementation provides these classes of tricks:
 - Reads raw packet payload on the upstream and downstream packet paths.
 - Applies enabled packet tricks in place.
 - Can inject a crafted mirrored FIN/ACK packet on a dedicated upstream helper branch.
-- Can hold the third upstream TLS ClientHello packet, overlap it with a crafted fake ClientHello after the fourth packet arrives, send a crafted server-side TLS packet on a helper upstream branch, emit a fake TCP SYN on the same 4-tuple, and then flush the remaining real ClientHello bytes.
-- Can hold the third upstream TLS ClientHello packet, complete it with the fourth packet, then emit an enlarged real first TLS chunk, a client-looking FIN packet, a fake TCP SYN, a full crafted fake ClientHello, one valid generated TLS-looking filler packet, and the remaining real TLS bytes immediately on the normal upstream path.
+- Can hold the third upstream packet only when it begins an incomplete TLS ClientHello, overlap it with a crafted fake ClientHello after the contiguous completing packet arrives, send a crafted server-side TLS packet on a helper upstream branch, emit a fake TCP SYN on the same 4-tuple, and then flush the remaining real ClientHello bytes. If completion does not arrive within the overlap hold timeout, the held packet is released unchanged.
+- Can hold the third upstream packet only when it begins an incomplete TLS ClientHello, complete it with the contiguous following packet, then emit an enlarged real first TLS chunk, a client-looking FIN packet, a fake TCP SYN, a full crafted fake ClientHello, one valid generated TLS-looking filler packet, and the remaining real TLS bytes immediately on the normal upstream path. If completion does not arrive within the synfin hold timeout, the held packet is released unchanged.
 - Can capture an upstream TLS ClientHello across one or more TCP segments regardless of packet ordinal, locate a fake TLS ClientHello embedded inside the `encrypted_client_hello` payload, send that byte range first as an out-of-order TCP segment, and then release the original captured ClientHello packets after a delay without changing the TLS bytes.
 - Optionally duplicates the final outgoing packet after all other enabled tricks.
 - Updates IPv4 header and TCP checksums in place for protocol swaps and simple TCP flag changes; size-changing or payload-crafting tricks request full checksum recalculation.
@@ -198,7 +198,7 @@ the same replacement number.
 - `overlap-sni` `(string)`
   Enables the `overlap-sni` trick and sets the SNI that will be written into the crafted Chrome-like TLS ClientHello.
 
-  In the current implementation, the first two upstream packets pass unchanged, the third packet is held, and the fourth packet completes the captured real TLS ClientHello. `IpManipulator` then generates its own Chrome-like TLS ClientHello, rejects the flow if the real SNI starts before the generated hello length, otherwise sends:
+  In the current implementation, the first two upstream packets pass unchanged. The third packet is held only when its payload begins an incomplete TLS ClientHello record, and the contiguous fourth packet completes that record. Complete ClientHellos and non-TLS payloads pass immediately. If the completing segment does not arrive within `overlap-sni-hold-timeout-ms`, the held packet is released unchanged and the flow becomes passthrough. `IpManipulator` then generates its own Chrome-like TLS ClientHello, rejects the flow if the real SNI starts before the generated hello length, otherwise sends:
   - packet `Y` with the first generated-length bytes from the real captured ClientHello
   - one crafted server-side TLS packet through `crafted-server-hello-upstream-node`, built from the real downstream `SYN|ACK` header and a built-in server-hello payload
   - one fake zero-payload TCP `SYN` packet on the same 4-tuple
@@ -217,6 +217,15 @@ the same replacement number.
   Later packets use that flow's absolute window deadline and a bounded FIFO,
   rather than each receiving a fresh copy of the configured delay. The crafted
   overlap tail is scheduled before the FIFO can release.
+
+- `overlap-sni-hold-timeout-ms` `(integer)`
+  Optional.
+
+  Maximum time in milliseconds to hold an incomplete first ClientHello segment while waiting for its contiguous completion. Expiry fails open by releasing the segment unchanged.
+
+  Valid range: greater than `0`
+
+  Defaults to `50`.
 
 - `overlap-sni-syn-ttl` `(integer)`
   Optional.
@@ -293,7 +302,7 @@ the same replacement number.
 - `synfin-sni` `(string)`
   Enables the `synfin-sni` trick and sets the SNI that will be written into the crafted Chrome-like TLS ClientHello.
 
-  In the current implementation, the first two upstream packets pass unchanged, the third packet is held, and the fourth packet completes the captured real TLS ClientHello. `IpManipulator` then generates its own Chrome-like TLS ClientHello, rejects the flow if the real SNI starts before the generated hello length, otherwise sends:
+  In the current implementation, the first two upstream packets pass unchanged. The third packet is held only when its payload begins an incomplete TLS ClientHello record, and the contiguous fourth packet completes that record. Complete ClientHellos and non-TLS payloads pass immediately. If the completing segment does not arrive within `synfin-sni-hold-timeout-ms`, the held packet is released unchanged and the flow becomes passthrough. `IpManipulator` then generates its own Chrome-like TLS ClientHello, rejects the flow if the real SNI starts before the generated hello length, otherwise sends:
   - one real TLS data packet carrying the first `generated-length + extra-range` bytes from the captured real ClientHello on the original TCP sequence range
   - one zero-payload client-side close packet on the sequence number immediately after that first real chunk
   - one fake zero-payload TCP `SYN` packet on the same 4-tuple
@@ -307,6 +316,15 @@ the same replacement number.
 
   The complete crafted sequence is emitted immediately in that order. There is
   no artificial per-packet 20 ms sleep or configurable pacing delay.
+
+- `synfin-sni-hold-timeout-ms` `(integer)`
+  Optional.
+
+  Maximum time in milliseconds to hold an incomplete first ClientHello segment while waiting for its contiguous completion. Expiry fails open by releasing the segment unchanged.
+
+  Valid range: greater than `0`
+
+  Defaults to `50`.
 
 - `synfin-sni-additional-range-min` `(integer)`
   Optional.
@@ -744,6 +762,14 @@ owner worker.
   cross-worker messages carry the normalized tuple plus a flow generation
 - record destructors run under the shard mutex and only dispose of owned
   buffers; they never forward a packet or call into a tunnel
+
+Overlap-SNI and SynFIN-SNI holds are bounded by per-flow fail-open timers keyed
+by the normalized tuple plus a nonzero hold generation. Timeout releases the
+held segment unchanged outside the shard lock. An upstream close releases either
+trick's live hold, and Overlap-SNI also releases it on a downstream close.
+If idle expiry or table teardown removes the record before its timer callback,
+the record destructor deliberately disposes of the held packet instead of
+forwarding from under the shard lock or during shutdown.
 
 First-SNI, Smuggle-SNI, and Overlap-SNI delay windows use a per-flow FIFO capped
 at 16 packets and 256 KiB. A tunnel-wide generation binds the one release action

@@ -37,6 +37,12 @@ typedef struct synfinsnitrick_packet_sequence_s
     uint16_t count;
 } synfinsnitrick_packet_sequence_t;
 
+typedef struct synfinsnitrick_hold_timeout_s
+{
+    ipmanipulator_flow_key_t key;
+    uint64_t                 generation;
+} synfinsnitrick_hold_timeout_t;
+
 #ifdef IPMANIPULATOR_SYNFIN_TEST_HOOKS
 typedef void (*synfinsnitrick_test_recycle_hook_t)(sbuf_t *buf);
 
@@ -44,7 +50,12 @@ static synfinsnitrick_test_recycle_hook_t synfinsnitrick_test_recycle_hook;
 
 void ipmanipulatorSynfinTestSetRecycleHook(synfinsnitrick_test_recycle_hook_t hook);
 void ipmanipulatorSynfinTestSendOutputs(tunnel_t *t, line_t *l, sbuf_t **packets, uint16_t count);
+void ipmanipulatorSynfinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
+                                          WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
+                                          void *arg2, void *arg3);
 #endif
+
+static void synfinsnitrickSendNormalNow(tunnel_t *t, line_t *l, sbuf_t *buf);
 
 static void synfinsnitrickFinalizePacketChecksum(sbuf_t *packet_buf, uint16_t ip_header_len, bool random_checksum)
 {
@@ -166,6 +177,39 @@ static void synfinsnitrickDestroyStandalonePacket(sbuf_t **packet)
     *packet = NULL;
 }
 
+/* The caller owns the record's retained line reference after a successful take. */
+static bool synfinsnitrickTakeHeldPacketLocked(ipmanipulator_synfin_flow_t     *flow,
+                                               ipmanipulator_captured_packet_t *held_packet)
+{
+    if (flow == NULL || held_packet == NULL)
+    {
+        return false;
+    }
+
+    *held_packet           = flow->held_packet;
+    flow->held_packet      = (ipmanipulator_captured_packet_t) {0};
+    flow->hold_timer_armed = false;
+    flow->hold_generation  = 0;
+    return held_packet->line != NULL || held_packet->buf != NULL;
+}
+
+static void synfinsnitrickDestroyHeldPacketLocked(ipmanipulator_synfin_flow_t *flow)
+{
+    ipmanipulator_captured_packet_t held_packet = {0};
+
+    if (! synfinsnitrickTakeHeldPacketLocked(flow, &held_packet))
+    {
+        return;
+    }
+
+    line_t *held_line = held_packet.line;
+    synfinsnitrickDestroyCapturedPacket(&held_packet);
+    if (held_line != NULL)
+    {
+        lineUnlock(held_line);
+    }
+}
+
 static void synfinsnitrickRecycleCapturedPacket(ipmanipulator_captured_packet_t *packet)
 {
     if (packet == NULL)
@@ -218,7 +262,7 @@ static void synfinsnitrickDestroyFlow(ipmanipulator_synfin_flow_t *flow)
         return;
     }
 
-    synfinsnitrickDestroyCapturedPacket(&flow->held_packet);
+    synfinsnitrickDestroyHeldPacketLocked(flow);
     synfinsnitrickDestroyStandalonePacket(&flow->syn_packet_template);
     synfinsnitrickResetFlow(flow);
 }
@@ -239,7 +283,7 @@ static void synfinsnitrickInitializeFlow(ipmanipulator_synfin_flow_t            
         syn_packet_template = synfinsnitrickDuplicateStandalonePacket(syn_packet_buf);
     }
 
-    synfinsnitrickDestroyCapturedPacket(&flow->held_packet);
+    synfinsnitrickDestroyHeldPacketLocked(flow);
     synfinsnitrickDestroyStandalonePacket(&flow->syn_packet_template);
     synfinsnitrickResetFlow(flow);
 
@@ -262,7 +306,7 @@ static void synfinsnitrickFinalizeFlowLocked(ipmanipulator_synfin_flow_t *flow, 
         return;
     }
 
-    synfinsnitrickDestroyCapturedPacket(&flow->held_packet);
+    synfinsnitrickDestroyHeldPacketLocked(flow);
     flow->warmup_packets_seen = kSynfinSniWarmupPackets;
     flow->phase = block_flow ? kIpManipulatorSynfinFlowPhaseBlocked : kIpManipulatorSynfinFlowPhasePassthrough;
 }
@@ -376,6 +420,115 @@ static ipmanipulator_flow_entry_t *synfinsnitrickReserveLocked(ipmanipulator_tst
 
     synfinsnitrickInitializeFlow(synfinsnitrickEntryRecord(entry), info, syn_packet_buf, now_ms);
     return entry;
+}
+
+static void synfinsnitrickReleaseTimedOutHold(tunnel_t *t, const ipmanipulator_flow_key_t *key, uint64_t generation)
+{
+    ipmanipulator_tstate_t         *state       = tunnelGetState(t);
+    ipmanipulator_captured_packet_t held_packet = {0};
+    ipmanipulator_flow_shard_t     *shard       = ipmanipulatorFlowTableLockShard(&state->synfin_table, key);
+
+    if (shard != NULL)
+    {
+        ipmanipulator_flow_entry_t *entry = ipmanipulatorFlowShardFind(&state->synfin_table, shard, key);
+
+        if (entry != NULL)
+        {
+            ipmanipulator_synfin_flow_t *flow = synfinsnitrickEntryRecord(entry);
+
+            if (flow->phase == kIpManipulatorSynfinFlowPhaseHoldThird && flow->hold_timer_armed &&
+                flow->hold_generation == generation)
+            {
+                discard synfinsnitrickTakeHeldPacketLocked(flow, &held_packet);
+                flow->phase = kIpManipulatorSynfinFlowPhasePassthrough;
+                synfinsnitrickDestroyStandalonePacket(&flow->syn_packet_template);
+                synfinsnitrickTouchLocked(shard, entry, getTickMS());
+            }
+        }
+
+        ipmanipulatorFlowShardUnlock(shard);
+    }
+
+    if (held_packet.line != NULL || held_packet.buf != NULL)
+    {
+        LOGD("IpManipulator: synfin-sni hold timed out after %u ms; releasing the segment unchanged",
+             state->trick_synfin_sni_hold_timeout_ms);
+
+        line_t *held_line = held_packet.line;
+        if (held_line != NULL && held_packet.buf != NULL)
+        {
+            synfinsnitrickSendNormalNow(t, held_line, held_packet.buf);
+        }
+        else if (held_packet.buf != NULL)
+        {
+            sbufDestroy(held_packet.buf);
+        }
+
+        if (held_line != NULL)
+        {
+            lineUnlock(held_line);
+        }
+    }
+}
+
+static void synfinsnitrickRunHoldTimeout(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+
+    tunnel_t                      *t       = arg1;
+    line_t                        *l       = arg2;
+    synfinsnitrick_hold_timeout_t *context = arg3;
+
+    synfinsnitrickReleaseTimedOutHold(t, &context->key, context->generation);
+    memoryFree(context);
+    lineUnlock(l);
+}
+
+static void synfinsnitrickCleanupHoldTimeout(void *arg1, void *arg2, void *arg3)
+{
+    discard arg1;
+
+    memoryFree(arg3);
+    lineUnlock((line_t *) arg2);
+}
+
+static void synfinsnitrickScheduleHoldTimeout(tunnel_t *t, line_t *l, const ipmanipulator_flow_key_t *key,
+                                              uint64_t generation, uint32_t delay_ms)
+{
+    /* Configuration rejects zero; keep direct/internal state fail-open too. */
+    delay_ms = max(delay_ms, 1U);
+
+    synfinsnitrick_hold_timeout_t *context = memoryAllocate(sizeof(*context));
+    if (context == NULL)
+    {
+        synfinsnitrickReleaseTimedOutHold(t, key, generation);
+        return;
+    }
+
+    *context = (synfinsnitrick_hold_timeout_t) {
+        .key        = *key,
+        .generation = generation,
+    };
+
+    /* The queued message owns a separate reference from the held flow record. */
+    lineLock(l);
+#ifdef IPMANIPULATOR_SYNFIN_TEST_HOOKS
+    ipmanipulatorSynfinTestScheduleTimed(lineGetWID(l),
+                                         (WorkerMessageCallback) synfinsnitrickRunHoldTimeout,
+                                         synfinsnitrickCleanupHoldTimeout,
+                                         delay_ms,
+                                         t,
+                                         l,
+                                         context);
+#else
+    sendWorkerMessageTimedWithCleanup(lineGetWID(l),
+                                      (WorkerMessageCallback) synfinsnitrickRunHoldTimeout,
+                                      synfinsnitrickCleanupHoldTimeout,
+                                      delay_ms,
+                                      t,
+                                      l,
+                                      context);
+#endif
 }
 
 static sbuf_t *synfinsnitrickGenerateTlsClientHello(tunnel_t *t, line_t *l)
@@ -900,6 +1053,7 @@ static bool synfinsnitrickSendUpstreamDirect(tunnel_t *t, line_t *l, sbuf_t *buf
 
 static void synfinsnitrickSendNormalNow(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    /* Stateful-SNI validation forbids same-instance packet duplication. */
     discard synfinsnitrickSendUpstreamDirect(t, l, buf);
 }
 
@@ -1294,9 +1448,7 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (flow->phase == kIpManipulatorSynfinFlowPhaseHoldThird)
         {
-            held_packet       = flow->held_packet;
-            flow->held_packet = (ipmanipulator_captured_packet_t) {0};
-            bypass_current    = true;
+            bypass_current = synfinsnitrickTakeHeldPacketLocked(flow, &held_packet);
         }
 
         ipmanipulatorFlowShardRemove(&state->synfin_table, shard, entry);
@@ -1307,7 +1459,12 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return false;
         }
 
+        line_t *held_line = held_packet.line;
         synfinsnitrickSendHeldThenCurrentNormal(t, &held_packet, l, buf);
+        if (held_line != NULL)
+        {
+            lineUnlock(held_line);
+        }
         return true;
     }
 
@@ -1332,9 +1489,39 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return true;
         }
 
-        flow->phase       = kIpManipulatorSynfinFlowPhaseHoldThird;
-        flow->held_packet = (ipmanipulator_captured_packet_t) {.line = l, .buf = buf};
+        uint32_t                                     tls_record_total_len = 0;
+        ipmanipulator_tls_clienthello_start_status_e start_status = ipmanipulatorInspectTlsPayloadClientHelloStart(
+            info.packet + info.payload_offset, info.tcp_payload_len, &tls_record_total_len);
+
+        discard tls_record_total_len;
+
+        /*
+         * The transcript needs two contiguous payload segments. Anything that
+         * is complete already, or is not a ClientHello, cannot be completed by
+         * a follow-up segment and must pass without waiting for an RTO.
+         */
+        if (start_status != kIpManipulatorTlsClientHelloStartPartial &&
+            start_status != kIpManipulatorTlsClientHelloStartFragmented)
+        {
+            flow->phase = kIpManipulatorSynfinFlowPhasePassthrough;
+            ipmanipulatorFlowShardUnlock(shard);
+
+            synfinsnitrickSendNormalNow(t, l, buf);
+            return true;
+        }
+
+        flow->phase            = kIpManipulatorSynfinFlowPhaseHoldThird;
+        flow->held_packet      = (ipmanipulator_captured_packet_t) {.line = l, .buf = buf};
+        flow->hold_generation  = ipmanipulatorAllocateFlowGeneration(state);
+        flow->hold_timer_armed = true;
+
+        uint64_t hold_generation = flow->hold_generation;
+
+        /* The flow record retains the packet line until the hold is detached. */
+        lineLock(l);
         ipmanipulatorFlowShardUnlock(shard);
+
+        synfinsnitrickScheduleHoldTimeout(t, l, &key, hold_generation, state->trick_synfin_sni_hold_timeout_ms);
         return true;
 
     case kIpManipulatorSynfinFlowPhasePassthrough:
@@ -1345,8 +1532,9 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     case kIpManipulatorSynfinFlowPhaseHoldThird: {
         bool block_flow = false;
 
-        held_packet       = flow->held_packet;
-        flow->held_packet = (ipmanipulator_captured_packet_t) {0};
+        discard synfinsnitrickTakeHeldPacketLocked(flow, &held_packet);
+
+        line_t *held_line = held_packet.line;
 
         /*
          * Take ownership of the SYN template: the entry pointer does not survive
@@ -1359,6 +1547,11 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         ipmanipulatorFlowShardUnlock(shard);
 
         bool handled = synfinsnitrickHandleHeldPair(t, l, &held_packet, syn_packet_template, buf, &info, &block_flow);
+
+        if (held_line != NULL)
+        {
+            lineUnlock(held_line);
+        }
 
         synfinsnitrickDestroyStandalonePacket(&syn_packet_template);
 

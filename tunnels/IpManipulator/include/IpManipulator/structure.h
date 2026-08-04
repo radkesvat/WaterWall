@@ -69,6 +69,15 @@ typedef enum ipmanipulator_tls_capture_status_e
     kIpManipulatorTlsCaptureStatusBypassed
 } ipmanipulator_tls_capture_status_e;
 
+typedef enum ipmanipulator_tls_clienthello_start_status_e
+{
+    kIpManipulatorTlsClientHelloStartMiss = 0,
+    kIpManipulatorTlsClientHelloStartPartial,
+    kIpManipulatorTlsClientHelloStartComplete,
+    kIpManipulatorTlsClientHelloStartFragmented,
+    kIpManipulatorTlsClientHelloStartUnsupported
+} ipmanipulator_tls_clienthello_start_status_e;
+
 enum
 {
     kSniBlenderTrickMinPacketsCount        = 2,
@@ -272,6 +281,7 @@ typedef struct ipmanipulator_overlap_flow_s
     uint64_t                           created_ms;
     uint64_t                           last_activity_ms;
     uint64_t                           delay_window_until_ms;
+    uint64_t                           hold_generation; /* Current HoldThird fail-open timer identity. */
     uint32_t                           src_addr;
     uint32_t                           dst_addr;
     uint32_t                           expected_downstream_seq;
@@ -282,6 +292,7 @@ typedef struct ipmanipulator_overlap_flow_s
     uint8_t                            warmup_packets_seen;
     ipmanipulator_overlap_flow_phase_e phase;
     bool                               ignore_expected_downstream_packet;
+    bool                               hold_timer_armed;
     ipmanipulator_captured_packet_t    held_packet;
     sbuf_t                            *synack_packet;
     ipmanipulator_delay_barrier_t      delay_barrier;
@@ -299,12 +310,14 @@ typedef struct ipmanipulator_synfin_flow_s
 {
     uint64_t                          created_ms;
     uint64_t                          last_activity_ms;
+    uint64_t                          hold_generation; /* Current HoldThird fail-open timer identity. */
     uint32_t                          src_addr;
     uint32_t                          dst_addr;
     uint16_t                          src_port;
     uint16_t                          dst_port;
     uint8_t                           warmup_packets_seen;
     ipmanipulator_synfin_flow_phase_e phase;
+    bool                              hold_timer_armed;
     ipmanipulator_captured_packet_t   held_packet;
     sbuf_t                           *syn_packet_template;
 } ipmanipulator_synfin_flow_t;
@@ -438,6 +451,7 @@ typedef struct ipmanipulator_tstate_s
     char     *trick_overlap_sni_value;
     uint16_t  trick_overlap_sni_value_len;
     uint32_t  trick_overlap_sni_delay_ms;
+    uint32_t  trick_overlap_sni_hold_timeout_ms;
     int       trick_overlap_sni_syn_ttl;
     node_t   *trick_overlap_sni_server_hello_upstream_node;
     tunnel_t *trick_overlap_sni_server_hello_upstream_tunnel;
@@ -445,6 +459,7 @@ typedef struct ipmanipulator_tstate_s
 
     char     *trick_synfin_sni_value;
     uint16_t  trick_synfin_sni_value_len;
+    uint32_t  trick_synfin_sni_hold_timeout_ms;
     uint16_t  trick_synfin_sni_additional_range_min;
     uint16_t  trick_synfin_sni_additional_range_max;
     int       trick_synfin_sni_syn_ttl;
@@ -570,6 +585,8 @@ void ipmanipulatorDelayBarrierSchedule(tunnel_t *t, const ipmanipulator_flow_key
                                        uint32_t delay_ms);
 bool ipmanipulatorDelayBatchSendUpstream(tunnel_t *t, ipmanipulator_delay_batch_t *batch);
 bool ipmanipulatorShouldLogEgressWarning(ipmanipulator_tstate_t *state);
+
+uint64_t ipmanipulatorAllocateFlowGeneration(ipmanipulator_tstate_t *state);
 #ifdef IPMANIPULATOR_DELAY_BARRIER_TEST_HOOKS
 void ipmanipulatorDelayBarrierTestSetNow(uint64_t now_ms);
 void ipmanipulatorDelayBarrierTestFire(tunnel_t *t, const ipmanipulator_flow_key_t *key,
@@ -583,7 +600,17 @@ bool     portghosttrickRestore(tunnel_t *t, line_t *l, sbuf_t **buf_ptr);
 sbuf_t *clonePacketWithLength(line_t *l, sbuf_t *buf, uint32_t new_len);
 bool    parseTlsRecordSni(const uint8_t *tls, uint32_t tls_len, sni_match_t *match);
 bool    parseClientHelloSni(const uint8_t *packet, uint32_t packet_length, sni_match_t *match);
-sbuf_t *smugglesnitrickGenerateTlsClientHello(tunnel_t *t, line_t *l);
+/*
+ * Reports whether a TCP payload begins a TLS ClientHello and whether the whole
+ * record fits in this segment. Tricks that combine two contiguous segments use
+ * it to avoid holding a segment that nothing can complete.
+ */
+ipmanipulator_tls_clienthello_start_status_e ipmanipulatorInspectTlsPayloadClientHelloStart(
+    const uint8_t *payload, uint32_t payload_len, uint32_t *tls_record_total_len_out);
+
+void ipmanipulatorForwardCapturedPacketNormal(tunnel_t *t, line_t *l, sbuf_t *buf);
+
+sbuf_t                            *smugglesnitrickGenerateTlsClientHello(tunnel_t *t, line_t *l);
 ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(tunnel_t *t, line_t *l, sbuf_t *buf,
                                                                       ipmanipulator_tls_capture_kind_e  kind,
                                                                       ipmanipulator_tls_capture_slot_t *out_slot);

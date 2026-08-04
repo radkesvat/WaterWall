@@ -1529,8 +1529,58 @@ if(TARGET IpManipulator)
     "unit;tunnels;ipmanipulator;smugglefin;timeout;affinity"
   )
 
+  add_executable(ipmanipulator_overlap_hold_test
+    ipmanipulator_overlap_hold_test.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/flow_table.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/helpers.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/overlapsni/crafted_server_hello_bytes.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/overlapsni/trick.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/portghost/trick.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/protoswap/trick.c
+  )
+  target_include_directories(ipmanipulator_overlap_hold_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include/IpManipulator
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include
+  )
+  target_compile_definitions(ipmanipulator_overlap_hold_test PRIVATE IPMANIPULATOR_OVERLAP_TEST_HOOKS=1)
+  target_link_libraries(ipmanipulator_overlap_hold_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests ipmanipulator_overlap_hold_test)
+
+  add_waterwall_unit_test(
+    waterwall.ipmanipulator_overlap_hold_unit
+    ipmanipulator_overlap_hold_test
+    "unit;tunnels;ipmanipulator;overlapsni;timeout;lifecycle"
+  )
+
+  add_executable(ipmanipulator_synfin_hold_test
+    ipmanipulator_synfin_hold_test.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/flow_table.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/helpers.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/synfinsni/trick.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/portghost/trick.c
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/protoswap/trick.c
+  )
+  target_include_directories(ipmanipulator_synfin_hold_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include/IpManipulator
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common
+    ${CMAKE_SOURCE_DIR}/tunnels/TlsClient/include
+  )
+  target_compile_definitions(ipmanipulator_synfin_hold_test PRIVATE IPMANIPULATOR_SYNFIN_TEST_HOOKS=1)
+  target_link_libraries(ipmanipulator_synfin_hold_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests ipmanipulator_synfin_hold_test)
+
+  add_waterwall_unit_test(
+    waterwall.ipmanipulator_synfin_hold_unit
+    ipmanipulator_synfin_hold_test
+    "unit;tunnels;ipmanipulator;synfinsni;timeout;lifecycle"
+  )
+
   add_executable(ipmanipulator_synfin_output_test
     ipmanipulator_synfin_output_test.c
+    ipmanipulator_synfin_output_link_stubs.c
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/flow_table.c
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/synfinsni/trick.c
   )

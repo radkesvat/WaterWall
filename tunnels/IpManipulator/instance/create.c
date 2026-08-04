@@ -299,6 +299,8 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     state->trick_synfin_sni_fake_ttl             = -1;
     state->trick_synfin_sni_additional_range_min = 0;
     state->trick_synfin_sni_additional_range_max = 0;
+    state->trick_overlap_sni_hold_timeout_ms     = 50;
+    state->trick_synfin_sni_hold_timeout_ms      = 50;
     state->trick_ech_sni_shard1_delay_ms         = 0;
     state->trick_ech_sni_shard2_delay_ms         = 0;
     atomicStoreU64Relaxed(&state->delay_barrier_next_generation, 0);
@@ -573,6 +575,7 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     {
         char  *server_hello_upstream_node_name = NULL;
         int    overlap_sni_delay_ms            = 0;
+        int    overlap_sni_hold_timeout_ms     = 50;
         int    overlap_sni_syn_ttl             = -1;
         size_t overlap_sni_len                 = stringLength(state->trick_overlap_sni_value);
 
@@ -586,6 +589,14 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         if (overlap_sni_len > UINT16_MAX)
         {
             LOGF("IpManipulator: overlap-sni field \"overlap-sni\" must fit in 16-bit TLS length fields");
+            tunnelDestroy(t);
+            return NULL;
+        }
+
+        if (getIntFromJsonObject(&overlap_sni_hold_timeout_ms, settings, "overlap-sni-hold-timeout-ms") &&
+            overlap_sni_hold_timeout_ms <= 0)
+        {
+            LOGF("IpManipulator: overlap-sni field \"overlap-sni-hold-timeout-ms\" must be greater than zero");
             tunnelDestroy(t);
             return NULL;
         }
@@ -647,6 +658,7 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
 
         state->trick_overlap_sni_value_len                  = (uint16_t) overlap_sni_len;
         state->trick_overlap_sni_delay_ms                   = (uint32_t) overlap_sni_delay_ms;
+        state->trick_overlap_sni_hold_timeout_ms            = (uint32_t) overlap_sni_hold_timeout_ms;
         state->trick_overlap_sni_syn_ttl                    = overlap_sni_syn_ttl;
         state->trick_overlap_sni_server_hello_upstream_node = server_hello_upstream_node;
         state->trick_overlap_sni                            = true;
@@ -658,6 +670,7 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         size_t synfin_sni_len                  = stringLength(state->trick_synfin_sni_value);
         int    synfin_sni_additional_range_min = 0;
         int    synfin_sni_additional_range_max = 0;
+        int    synfin_sni_hold_timeout_ms      = 50;
         bool   has_synfin_sni_additional_range_min =
             getIntFromJsonObject(&synfin_sni_additional_range_min, settings, "synfin-sni-additional-range-min");
         bool has_synfin_sni_additional_range_max =
@@ -673,6 +686,14 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         if (synfin_sni_len > UINT16_MAX)
         {
             LOGF("IpManipulator: synfin-sni field \"synfin-sni\" must fit in 16-bit TLS length fields");
+            tunnelDestroy(t);
+            return NULL;
+        }
+
+        if (getIntFromJsonObject(&synfin_sni_hold_timeout_ms, settings, "synfin-sni-hold-timeout-ms") &&
+            synfin_sni_hold_timeout_ms <= 0)
+        {
+            LOGF("IpManipulator: synfin-sni field \"synfin-sni-hold-timeout-ms\" must be greater than zero");
             tunnelDestroy(t);
             return NULL;
         }
@@ -742,6 +763,7 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         getBoolFromJsonObject(&state->trick_synfin_sni_use_rst, settings, "synfin-sni-use-rst");
 
         state->trick_synfin_sni_value_len            = (uint16_t) synfin_sni_len;
+        state->trick_synfin_sni_hold_timeout_ms      = (uint32_t) synfin_sni_hold_timeout_ms;
         state->trick_synfin_sni_additional_range_min = (uint16_t) synfin_sni_additional_range_min;
         state->trick_synfin_sni_additional_range_max = (uint16_t) synfin_sni_additional_range_max;
         state->trick_synfin_sni                      = true;

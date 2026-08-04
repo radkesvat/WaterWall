@@ -54,15 +54,6 @@ typedef struct ipmanipulator_tls_clienthello_start_s
     uint32_t                        tls_record_total_len;
 } ipmanipulator_tls_clienthello_start_t;
 
-typedef enum ipmanipulator_tls_clienthello_start_status_e
-{
-    kIpManipulatorTlsClientHelloStartMiss = 0,
-    kIpManipulatorTlsClientHelloStartPartial,
-    kIpManipulatorTlsClientHelloStartComplete,
-    kIpManipulatorTlsClientHelloStartFragmented,
-    kIpManipulatorTlsClientHelloStartUnsupported
-} ipmanipulator_tls_clienthello_start_status_t;
-
 uint8_t ipmanipulatorResolveTransportProtocol(const ipmanipulator_tstate_t *state, uint8_t packet_protocol)
 {
     /*
@@ -254,7 +245,7 @@ static void ipmanipulatorCleanupCapturedPacketReuse(void *arg1, void *arg2, void
     lineUnlock(l);
 }
 
-static void ipmanipulatorScheduleCapturedPacketNormal(tunnel_t *t, line_t *l, sbuf_t *buf)
+void ipmanipulatorForwardCapturedPacketNormal(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     if (lineIsOnCurrentEventWorker(l))
     {
@@ -313,7 +304,7 @@ static void ipmanipulatorReleasePrestartPacketsNormal(tunnel_t *t, ipmanipulator
 
         if (prestart_entry->line != NULL && prestart_entry->buf != NULL)
         {
-            ipmanipulatorScheduleCapturedPacketNormal(t, prestart_entry->line, prestart_entry->buf);
+            ipmanipulatorForwardCapturedPacketNormal(t, prestart_entry->line, prestart_entry->buf);
         }
 
         prestart_entry->line = NULL;
@@ -492,7 +483,7 @@ void ipmanipulatorReleaseCapturedPacketsNormal(tunnel_t *t, ipmanipulator_tls_ca
 
         if (entry->line != NULL && entry->buf != NULL)
         {
-            ipmanipulatorScheduleCapturedPacketNormal(t, entry->line, entry->buf);
+            ipmanipulatorForwardCapturedPacketNormal(t, entry->line, entry->buf);
         }
 
         entry->line = NULL;
@@ -744,7 +735,7 @@ static bool ipmanipulatorParseTcpPacketInfo(const uint8_t *packet, uint32_t pack
     return true;
 }
 
-static ipmanipulator_tls_clienthello_start_status_t ipmanipulatorInspectTlsClientHelloPrefix(
+static ipmanipulator_tls_clienthello_start_status_e ipmanipulatorInspectTlsClientHelloPrefix(
     const uint8_t *payload, uint32_t payload_len, uint32_t *tls_record_total_len_out)
 {
     *tls_record_total_len_out = 0;
@@ -798,7 +789,13 @@ static ipmanipulator_tls_clienthello_start_status_t ipmanipulatorInspectTlsClien
                                                     : kIpManipulatorTlsClientHelloStartFragmented;
 }
 
-static ipmanipulator_tls_clienthello_start_status_t ipmanipulatorInspectTlsClientHelloStart(
+ipmanipulator_tls_clienthello_start_status_e ipmanipulatorInspectTlsPayloadClientHelloStart(
+    const uint8_t *payload, uint32_t payload_len, uint32_t *tls_record_total_len_out)
+{
+    return ipmanipulatorInspectTlsClientHelloPrefix(payload, payload_len, tls_record_total_len_out);
+}
+
+static ipmanipulator_tls_clienthello_start_status_e ipmanipulatorInspectTlsClientHelloStart(
     const uint8_t *packet, uint32_t packet_length, ipmanipulator_tls_clienthello_start_t *start)
 {
     ipmanipulator_tcp_packet_info_t tcp = {0};
@@ -809,7 +806,7 @@ static ipmanipulator_tls_clienthello_start_status_t ipmanipulatorInspectTlsClien
     }
 
     uint32_t                                     tls_record_total_len = 0;
-    ipmanipulator_tls_clienthello_start_status_t status =
+    ipmanipulator_tls_clienthello_start_status_e status =
         ipmanipulatorInspectTlsClientHelloPrefix(tcp.payload, tcp.tcp_payload_len, &tls_record_total_len);
 
     *start = (ipmanipulator_tls_clienthello_start_t) {
@@ -942,7 +939,7 @@ static bool ipmanipulatorAppendPacketToCaptureSlot(ipmanipulator_tls_capture_slo
     }
 
     uint32_t                                     inferred_total_len = 0;
-    ipmanipulator_tls_clienthello_start_status_t prefix_status =
+    ipmanipulator_tls_clienthello_start_status_e prefix_status =
         ipmanipulatorInspectTlsClientHelloPrefix(prefix, prefix_len, &inferred_total_len);
 
     if (prefix_status == kIpManipulatorTlsClientHelloStartMiss ||
@@ -1476,7 +1473,7 @@ typedef struct ipmanipulator_delay_timer_message_s
     uint64_t                           generation;
 } ipmanipulator_delay_timer_message_t;
 
-static uint64_t ipmanipulatorAllocateDelayGeneration(ipmanipulator_tstate_t *state)
+uint64_t ipmanipulatorAllocateFlowGeneration(ipmanipulator_tstate_t *state)
 {
     uint64_t generation = 0;
 
@@ -1541,7 +1538,7 @@ void ipmanipulatorDelayBarrierInitialize(ipmanipulator_tstate_t *state, ipmanipu
         return;
     }
 
-    barrier->generation  = ipmanipulatorAllocateDelayGeneration(state);
+    barrier->generation  = ipmanipulatorAllocateFlowGeneration(state);
     barrier->deadline_ms = deadline_ms;
 }
 
@@ -2141,12 +2138,12 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
         {
             ipmanipulatorReleasePrestartPacketsNormal(t, &matched_prestart_slot);
         }
-        ipmanipulatorScheduleCapturedPacketNormal(t, l, buf);
+        ipmanipulatorForwardCapturedPacketNormal(t, l, buf);
         return kIpManipulatorTlsCaptureStatusBypassed;
     }
 
     ipmanipulator_tls_clienthello_start_t        start = {0};
-    ipmanipulator_tls_clienthello_start_status_t start_status =
+    ipmanipulator_tls_clienthello_start_status_e start_status =
         ipmanipulatorInspectTlsClientHelloStart((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &start);
 
     if (start_status == kIpManipulatorTlsClientHelloStartComplete)

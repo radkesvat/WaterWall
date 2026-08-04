@@ -415,6 +415,28 @@ static void testSniBlenderPacketRange(void)
     }
 }
 
+static void testSniHoldTimeoutValidation(void)
+{
+    const int rejected[] = {0, -1};
+
+    for (uint32_t i = 0; i < ARRAY_SIZE(rejected); ++i)
+    {
+        cJSON *overlap = cJSON_CreateObject();
+        require(overlap != NULL && cJSON_AddStringToObject(overlap, "overlap-sni", "cover.test") != NULL &&
+                    cJSON_AddNumberToObject(overlap, "overlap-sni-hold-timeout-ms", rejected[i]) != NULL,
+                "failed to build rejected overlap-sni hold-timeout fixture");
+        require(! createSucceeds(overlap, "ipm-overlap-hold-timeout-reject"),
+                "overlap-sni accepted a non-positive hold timeout");
+
+        cJSON *synfin = cJSON_CreateObject();
+        require(synfin != NULL && cJSON_AddStringToObject(synfin, "synfin-sni", "cover.test") != NULL &&
+                    cJSON_AddNumberToObject(synfin, "synfin-sni-hold-timeout-ms", rejected[i]) != NULL,
+                "failed to build rejected synfin-sni hold-timeout fixture");
+        require(! createSucceeds(synfin, "ipm-synfin-hold-timeout-reject"),
+                "synfin-sni accepted a non-positive hold timeout");
+    }
+}
+
 static void testNodeLayerMetadata(void)
 {
     node_t          node  = nodeIpManipulatorGet();
@@ -455,6 +477,7 @@ int main(void)
     testEchHostnameLengthBoundary();
     testCreateRejectsIncompatibleCombinations();
     testSniBlenderPacketRange();
+    testSniHoldTimeoutValidation();
     testNodeLayerMetadata();
 
     globalstateDestroySecureRandom();
