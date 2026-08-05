@@ -132,7 +132,9 @@ typedef enum ipmanipulator_config_validation_e
      */
     kIpManipulatorConfigRejectSniBlenderWithStatefulSni,
     /* Same reasoning as above for the final packet-duplication stage. */
-    kIpManipulatorConfigRejectPacketDuplicateWithStatefulSni
+    kIpManipulatorConfigRejectPacketDuplicateWithStatefulSni,
+    /* Port ghost intentionally skips IPv4 fragments, which SNI Blender emits. */
+    kIpManipulatorConfigRejectSniBlenderWithPortGhost
 } ipmanipulator_config_validation_e;
 
 typedef struct ipmanipulator_captured_packet_s

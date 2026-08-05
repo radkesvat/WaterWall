@@ -207,6 +207,33 @@ static void testSniBlenderPreservationRules(void)
             "sni-blender with preservation and downstream-only actions was rejected");
 }
 
+static void testSniBlenderRejectsPortGhost(void)
+{
+    const char *const port_ghost_names[] = {
+        "source-port-ghost",
+        "dest-port-ghost",
+    };
+
+    for (uint32_t i = 0; i < ARRAY_SIZE(port_ghost_names); ++i)
+    {
+        ipmanipulator_tstate_t state = {.trick_sni_blender = true};
+
+        if (i == 0)
+        {
+            state.trick_source_port_ghost = true;
+        }
+        else
+        {
+            state.trick_dest_port_ghost = true;
+        }
+
+        char message[160];
+        snprintf(message, sizeof(message), "sni-blender with %s was accepted", port_ghost_names[i]);
+        require(ipmanipulatorValidateTrickCompatibility(&state) == kIpManipulatorConfigRejectSniBlenderWithPortGhost,
+                message);
+    }
+}
+
 static void testTcpBitOnlyConfigurationsRemainValid(void)
 {
     for (uint32_t i = 0; i < ARRAY_SIZE(kUpstreamActionCases); ++i)
@@ -366,6 +393,12 @@ static void testCreateRejectsIncompatibleCombinations(void)
     require(createSucceeds(blender_plain, "ipm-blender-plain"),
             "sni-blender with a simple upstream action and no preservation was rejected");
 
+    cJSON *blender_with_port_ghost = cJSON_Parse(
+        "{\"sni-blender\":true,\"sni-blender-packets\":4,\"source-port-ghost\":true,\"dest-port-ghost\":true}");
+    require(blender_with_port_ghost != NULL, "failed to build sni-blender/port-ghost JSON fixture");
+    require(! createSucceeds(blender_with_port_ghost, "ipm-blender-port-ghost"),
+            "the JSON create path accepted sni-blender with port ghost");
+
     cJSON *first_sni_preserved = cJSON_CreateObject();
     require(first_sni_preserved != NULL &&
                 cJSON_AddStringToObject(first_sni_preserved, "first-sni", "cover.test") != NULL &&
@@ -472,6 +505,7 @@ int main(void)
     testStatefulSniAcceptsDownstreamOnlyActions();
     testStatefulSniAcceptsPreservationWithoutActions();
     testSniBlenderPreservationRules();
+    testSniBlenderRejectsPortGhost();
     testTcpBitOnlyConfigurationsRemainValid();
     testStatefulSniCompositionMatrix();
     testEchHostnameLengthBoundary();

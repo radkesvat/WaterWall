@@ -82,6 +82,17 @@ ipmanipulator_config_validation_e ipmanipulatorValidateTrickCompatibility(const 
         return kIpManipulatorConfigRejectPacketDuplicateWithStatefulSni;
     }
 
+    /*
+     * SNI Blender emits IPv4 fragments for the real ClientHello, while port
+     * ghost deliberately skips fragments in both apply and restore paths.
+     * Accepting the pair would ghost the SYN and ordinary packets but not the
+     * ClientHello fragments of the very same flow.
+     */
+    if (state->trick_sni_blender && (state->trick_source_port_ghost || state->trick_dest_port_ghost))
+    {
+        return kIpManipulatorConfigRejectSniBlenderWithPortGhost;
+    }
+
     if (! tcpbitchangetrickHasUpstreamActions(state))
     {
         /*
@@ -143,6 +154,12 @@ static bool reportTrickCompatibility(const ipmanipulator_tstate_t *state)
              "emits its packets directly and they never reach a later same-instance duplication stage. Put the "
              "operations in separate IpManipulator nodes, with the stateful SNI node first and the "
              "\"packet-duplicate\" node as its next node");
+        return false;
+
+    case kIpManipulatorConfigRejectSniBlenderWithPortGhost:
+        LOGF("IpManipulator: \"sni-blender\" cannot be combined with \"source-port-ghost\" or \"dest-port-ghost\" "
+             "in one node; SNI Blender creates IPv4 fragments while port ghost deliberately skips fragments in both "
+             "directions. Choose one of these tricks for the node");
         return false;
 
     case kIpManipulatorConfigValid:
