@@ -625,10 +625,6 @@ static bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_
 
     if (UNLIKELY(addons_len != 0))
     {
-        if (UNLIKELY(available < command_at))
-        {
-            return true;
-        }
         vlessserverCloseLineBidirectional(t, l);
         return false;
     }
