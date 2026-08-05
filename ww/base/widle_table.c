@@ -58,6 +58,10 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct idle_table_s
 
 void idleCallBack(wtimer_t *timer);
 
+// Detaching the table hands the item memory to whoever observes NULL, and that observer frees it
+// without holding the mutex. The release/acquire pair is what keeps the detaching thread's last
+// writes into the item from sinking past the store and landing in an already freed block. These two
+// must not be weakened to relaxed.
 static idle_table_t *idleItemGetTable(const idle_item_t *item)
 {
     return (idle_table_t *) (uintptr_t) atomicLoadExplicit(&(item->table), memory_order_acquire);
@@ -88,20 +92,23 @@ static void idleItemSetWorkerMessagePending(idle_item_t *item, bool pending)
     atomicStoreExplicit(&(item->worker_message_pending), pending, memory_order_release);
 }
 
+// The expiration stamp gates no other memory: every reader wants the timestamp itself and nothing
+// that was written before it, so relaxed is enough. Item lifetime is published by the table pointer
+// and the table mutex, not by this field.
 static uint64_t idleItemGetExpireAt(const idle_item_t *item)
 {
-    return atomicLoadU64Explicit(&(item->expire_at_ms), memory_order_acquire);
+    return atomicLoadU64Explicit(&(item->expire_at_ms), memory_order_relaxed);
 }
 
 static void idleItemSetExpireAt(idle_item_t *item, uint64_t expire_at_ms)
 {
-    atomicStoreU64Explicit(&(item->expire_at_ms), expire_at_ms, memory_order_release);
+    atomicStoreU64Explicit(&(item->expire_at_ms), expire_at_ms, memory_order_relaxed);
 }
 
 static bool idleItemCompareExchangeExpireAt(idle_item_t *item, uint64_t *expected, uint64_t desired)
 {
-    return atomicCompareExchangeWeakU64Explicit(&(item->expire_at_ms), expected, desired, memory_order_acq_rel,
-                                                memory_order_acquire);
+    return atomicCompareExchangeWeakU64Explicit(&(item->expire_at_ms), expected, desired, memory_order_relaxed,
+                                                memory_order_relaxed);
 }
 
 static void idleItemKeepExpireAtForAtleast(idle_item_t *item, uint64_t expire_at_ms)
