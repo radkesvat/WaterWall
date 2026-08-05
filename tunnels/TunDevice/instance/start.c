@@ -41,7 +41,14 @@ void tundeviceTunnelOnStart(tunnel_t *t)
     }
 
 #ifdef OS_LINUX
-    if (state->system_route_enabled && ! tundeviceDisableReversePathFiltering(state->name))
+    /*
+     * Reverse path filtering drops packets whose source address does not route
+     * back out of the interface they arrived on. Traffic injected into the TUN
+     * regularly trips that check, and it does so whether or not this instance
+     * installs the system routes itself, so disable it for every Linux TUN
+     * rather than only for the native-system-route configuration.
+     */
+    if (! tundeviceDisableReversePathFiltering(state->name))
     {
         LOGW("TunDevice: could not disable Linux reverse path filtering for %s; continuing", state->name);
     }

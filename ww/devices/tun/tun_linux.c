@@ -10,14 +10,17 @@
 #include "tun_linux_internal.h"
 #include "watomic.h"
 #include "wchan.h"
+#include "wplatform.h"
 #include "wproc.h"
 #include "wthread.h"
+#include "wtime.h"
 
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -377,6 +380,13 @@ bool tundeviceDetectDefaultInterface(tun_default_route_t *out)
 #endif
 
 #ifdef OS_LINUX
+enum
+{
+    kTunRpFilterPollMs   = 10,
+    kTunRpFilterStableMs = 300,
+    kTunRpFilterBudgetMs = 2000
+};
+
 static bool tunReversePathFilterScopeIsSafe(const char *scope)
 {
     if (scope == NULL || scope[0] == '\0' || stringCompare(scope, ".") == 0 || stringCompare(scope, "..") == 0)
@@ -480,12 +490,106 @@ static bool tunWriteReversePathFilterValue(const char *path, int value)
     return ok;
 }
 
-static bool tunDisableReversePathFilterScope(const char *scope)
+static int tunReadReversePathFilterValue(const char *path)
+{
+    int fd;
+    do
+    {
+        fd = open(path, O_RDONLY | O_CLOEXEC);
+    } while (fd < 0 && errno == EINTR);
+
+    if (fd < 0)
+    {
+        return -1;
+    }
+
+    char    value_buf[16];
+    ssize_t nread;
+    do
+    {
+        nread = read(fd, value_buf, sizeof(value_buf) - 1);
+    } while (nread < 0 && errno == EINTR);
+
+    close(fd);
+
+    if (nread <= 0)
+    {
+        return -1;
+    }
+
+    value_buf[nread] = '\0';
+    return (int) strtol(value_buf, NULL, 10);
+}
+
+/*
+ * Writing the per-interface entry once is not enough on a freshly created
+ * device. udev fires an "add" event for every new interface, and the systemd
+ * rule that ships with 99-systemd.rules answers it by running
+ *
+ *     systemd-sysctl --prefix=/net/ipv4/conf/<ifname> ...
+ *
+ * which re-applies the "net.ipv4.conf.*.rp_filter" pattern from sysctl.d and
+ * puts the distribution default straight back. That pass lands a few
+ * milliseconds after the interface appears, so it reliably lands after the
+ * write here. It is a one-shot per device, so re-apply the value until it has
+ * survived untouched for kTunRpFilterStableMs and the udev pass is provably
+ * over.
+ */
+static bool tunHoldReversePathFilterValue(const char *path, int value)
+{
+    if (! tunWriteReversePathFilterValue(path, value))
+    {
+        return false;
+    }
+
+    const unsigned int started_at   = getTickMS();
+    unsigned int       stable_since = started_at;
+
+    for (;;)
+    {
+        unsigned int now = getTickMS();
+        if (now - stable_since >= kTunRpFilterStableMs)
+        {
+            return true;
+        }
+
+        if (now - started_at >= kTunRpFilterBudgetMs)
+        {
+            LOGE("TunDevice: %s keeps being reset by the system; reverse path filtering stays enabled", path);
+            return false;
+        }
+
+        wwSleepMS(kTunRpFilterPollMs);
+
+        int current = tunReadReversePathFilterValue(path);
+        if (current < 0)
+        {
+            // The entry went away with the interface; nothing left to hold down.
+            return true;
+        }
+
+        if (current != value)
+        {
+            if (! tunWriteReversePathFilterValue(path, value))
+            {
+                return false;
+            }
+            stable_since = getTickMS();
+        }
+    }
+}
+
+static bool tunDisableReversePathFilterScope(const char *scope, bool hold)
 {
     char path[256];
     if (! tunReversePathFilterPath(scope, path, sizeof(path)))
     {
         return false;
+    }
+
+    if (hold)
+    {
+        return tunHoldReversePathFilterValue(path, 0);
     }
 
     return tunWriteReversePathFilterValue(path, 0);
@@ -495,8 +599,14 @@ bool tundeviceDisableReversePathFiltering(const char *ifname)
 {
     bool ok = true;
 
-    ok = tunDisableReversePathFilterScope("all") && ok;
-    ok = tunDisableReversePathFilterScope(ifname) && ok;
+    /*
+     * The kernel filters on max(conf.all.rp_filter, conf.<ifname>.rp_filter),
+     * so both scopes have to reach 0 before packets arriving on the TUN stop
+     * being dropped. Only the per-interface entry races the udev pass described
+     * above, so only that one is held down.
+     */
+    ok = tunDisableReversePathFilterScope("all", false) && ok;
+    ok = tunDisableReversePathFilterScope(ifname, true) && ok;
     if (ok)
     {
         LOGI("TunDevice: disabled Linux reverse path filtering for all and %s", ifname);
