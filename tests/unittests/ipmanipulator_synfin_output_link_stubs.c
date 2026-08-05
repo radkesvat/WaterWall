@@ -1,5 +1,15 @@
 #include "IpManipulator/structure.h"
 
+void ipmanipulatorLogCrossWorkerFlowFailure(tunnel_t *t, const char *trick_name, const char *retained_state_name,
+                                            wid_t packet_wid, wid_t owner_wid)
+{
+    discard t;
+    discard trick_name;
+    discard retained_state_name;
+    discard packet_wid;
+    discard owner_wid;
+}
+
 bool ipmanipulatorSynfinTestScheduleTimed(wid_t wid, WorkerMessageCallback callback,
                                           WorkerMessageCleanupCallback cleanup, uint32_t delay_ms, void *arg1,
                                           void *arg2, void *arg3);
