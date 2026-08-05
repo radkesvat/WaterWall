@@ -130,7 +130,8 @@ the same replacement number.
 - `packet-duplicate` `(integer)`
   Optional.
 
-  Duplicates each final outgoing packet this many times, then sends the original packet once.
+  Duplicates each final outgoing packet this many times, then sends the original packet once. Values must be between 1
+  and 16.
 
   This is applied as the last step of `IpManipulator`, after all other enabled tricks have finished shaping the packet.
 
@@ -166,9 +167,9 @@ the same TCP connection. The full packet flow is described under "first-sni" in
 - `first-sni-count` `(integer)`
   Optional.
 
-  Number of decoy ClientHello copies sent before the original ClientHello.
+  Number of decoy ClientHello copies sent before the original ClientHello. Values must be between 1 and 16.
 
-  Valid range: greater than `0`
+  Valid range: `1` through `16`
 
   Defaults to `1`.
 

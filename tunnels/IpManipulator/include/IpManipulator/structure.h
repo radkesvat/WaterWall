@@ -92,6 +92,8 @@ enum
 {
     kSniBlenderTrickMinPacketsCount        = 2,
     kSniBlenderTrickMaxPacketsCount        = 16,
+    kPacketDuplicateTrickMaxCount          = 16,
+    kFirstSniTrickMaxCount                 = 16,
     kIpManipulatorTlsCaptureSlotsPerWorker = 16,
     kIpManipulatorTlsCaptureMaxPackets     = 16,
     kIpManipulatorDelayBarrierMaxPackets   = 16,

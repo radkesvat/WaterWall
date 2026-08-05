@@ -400,9 +400,10 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
 
     if (getIntFromJsonObject(&state->trick_packet_duplicate_count, settings, "packet-duplicate"))
     {
-        if (state->trick_packet_duplicate_count <= 0)
+        if (state->trick_packet_duplicate_count <= 0 ||
+            state->trick_packet_duplicate_count > kPacketDuplicateTrickMaxCount)
         {
-            LOGF("IpManipulator: packet-duplicate must be greater than zero");
+            LOGF("IpManipulator: packet-duplicate must be between 1 and %d", kPacketDuplicateTrickMaxCount);
             tunnelDestroy(t);
             return NULL;
         }
@@ -452,9 +453,10 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
 
         if (getIntFromJsonObject(&first_sni_count, settings, "first-sni-count"))
         {
-            if (first_sni_count <= 0)
+            if (first_sni_count <= 0 || first_sni_count > kFirstSniTrickMaxCount)
             {
-                LOGF("IpManipulator: first-sni field \"first-sni-count\" must be greater than zero");
+                LOGF("IpManipulator: first-sni field \"first-sni-count\" must be between 1 and %d",
+                     kFirstSniTrickMaxCount);
                 tunnelDestroy(t);
                 return NULL;
             }

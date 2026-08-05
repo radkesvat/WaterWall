@@ -448,6 +448,53 @@ static void testSniBlenderPacketRange(void)
     }
 }
 
+static void testPacketAmplificationCountRanges(void)
+{
+    const int duplicate_rejected[] = {0, -1, kPacketDuplicateTrickMaxCount + 1};
+    for (uint32_t i = 0; i < ARRAY_SIZE(duplicate_rejected); ++i)
+    {
+        cJSON *settings = cJSON_CreateObject();
+        require(settings != NULL &&
+                    cJSON_AddNumberToObject(settings, "packet-duplicate", duplicate_rejected[i]) != NULL,
+                "failed to build rejected packet-duplicate fixture");
+        require(! createSucceeds(settings, "ipm-packet-duplicate-range-reject"),
+                "packet-duplicate accepted a count outside 1..16");
+    }
+
+    const int duplicate_accepted[] = {1, kPacketDuplicateTrickMaxCount};
+    for (uint32_t i = 0; i < ARRAY_SIZE(duplicate_accepted); ++i)
+    {
+        cJSON *settings = cJSON_CreateObject();
+        require(settings != NULL &&
+                    cJSON_AddNumberToObject(settings, "packet-duplicate", duplicate_accepted[i]) != NULL,
+                "failed to build accepted packet-duplicate fixture");
+        require(createSucceeds(settings, "ipm-packet-duplicate-range-accept"),
+                "packet-duplicate rejected a count inside 1..16");
+    }
+
+    const int first_sni_rejected[] = {0, -1, kFirstSniTrickMaxCount + 1};
+    for (uint32_t i = 0; i < ARRAY_SIZE(first_sni_rejected); ++i)
+    {
+        cJSON *settings = cJSON_CreateObject();
+        require(settings != NULL && cJSON_AddStringToObject(settings, "first-sni", "cover.test") != NULL &&
+                    cJSON_AddNumberToObject(settings, "first-sni-count", first_sni_rejected[i]) != NULL,
+                "failed to build rejected first-sni-count fixture");
+        require(! createSucceeds(settings, "ipm-first-sni-count-range-reject"),
+                "first-sni-count accepted a count outside 1..16");
+    }
+
+    const int first_sni_accepted[] = {1, kFirstSniTrickMaxCount};
+    for (uint32_t i = 0; i < ARRAY_SIZE(first_sni_accepted); ++i)
+    {
+        cJSON *settings = cJSON_CreateObject();
+        require(settings != NULL && cJSON_AddStringToObject(settings, "first-sni", "cover.test") != NULL &&
+                    cJSON_AddNumberToObject(settings, "first-sni-count", first_sni_accepted[i]) != NULL,
+                "failed to build accepted first-sni-count fixture");
+        require(createSucceeds(settings, "ipm-first-sni-count-range-accept"),
+                "first-sni-count rejected a count inside 1..16");
+    }
+}
+
 static void testSniHoldTimeoutValidation(void)
 {
     const int rejected[] = {0, -1};
@@ -520,6 +567,7 @@ int main(void)
     testEchHostnameLengthBoundary();
     testCreateRejectsIncompatibleCombinations();
     testSniBlenderPacketRange();
+    testPacketAmplificationCountRanges();
     testSniHoldTimeoutValidation();
     testOverlapSniStandaloneConfiguration();
     testNodeLayerMetadata();

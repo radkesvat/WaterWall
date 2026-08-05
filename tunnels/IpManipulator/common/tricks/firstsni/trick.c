@@ -791,9 +791,24 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
         return true;
     }
 
-    uint32_t                        ordered_capacity = state->trick_first_sni_count - 1U;
-    ipmanipulator_ordered_output_t *ordered_outputs  = memoryAllocateZero(sizeof(*ordered_outputs) * ordered_capacity);
-    uint32_t                        ordered_count    = 0;
+    uint32_t ordered_capacity = state->trick_first_sni_count - 1U;
+    /* Keep this multiplication safe on every supported 32-bit or 64-bit build. */
+    if (ordered_capacity > UINT32_MAX / sizeof(ipmanipulator_ordered_output_t))
+    {
+        firstsnitrickSendOriginalPacket(t, l, buf);
+        lineUnlock(l);
+        return true;
+    }
+
+    ipmanipulator_ordered_output_t *ordered_outputs = memoryAllocateZero(sizeof(*ordered_outputs) * ordered_capacity);
+    if (ordered_outputs == NULL)
+    {
+        firstsnitrickSendOriginalPacket(t, l, buf);
+        lineUnlock(l);
+        return true;
+    }
+
+    uint32_t ordered_count = 0;
 
     for (uint32_t replay_index = 1; replay_index < state->trick_first_sni_count; ++replay_index)
     {
