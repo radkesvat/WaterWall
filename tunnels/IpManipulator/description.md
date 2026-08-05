@@ -1,5 +1,5 @@
 <!--
-Documentation version: 128
+Documentation version: 131
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx, and both files must keep the same documentation version.
 -->
 
@@ -218,21 +218,53 @@ the same TCP connection. The full packet flow is described under "first-sni" in
 ### smuggle-sni settings
 
 - `smuggle-sni` `(string)`
-  Enables the `smuggle-sni` trick and sets the SNI that will be written into the delayed fake TLS ClientHello copy.
+  Enables the trick and supplies the host name for the generated ClientHello
+  sent on the normal branch. The effective accepted length is `1` through `255`
+  bytes because the internal `TlsClient` generator enforces the TLS host-name
+  limit during node creation.
+
+  Omit this setting to disable the trick; it has no host-name default.
+
+  The generated record is not the real ClientHello with only SNI replaced. It
+  uses the internal `TlsClient` fingerprint, default ALPN order `h2`,
+  `http/1.1`, and has `x25519mlkem768` disabled. A flow is transformed only when
+  this complete generated record has exactly the same byte length as the real
+  ClientHello record.
 
 - `smuggle-sni-delay-ms` `(integer)`
   Optional.
 
-  Delay in milliseconds between sending the real captured ClientHello to `real-sni-upstream-node` and sending the crafted `smuggle-sni` packet to the normal next tunnel.
+  Time after successful capture at which the generated packet batch becomes
+  eligible for transmission on the normal `next` branch. The real captured
+  batch is sent to `real-sni-upstream-node` first.
+
+  Valid range: `0` or greater
 
   Defaults to `0`.
+
+  This setting does not control how long later upstream packets are retained.
+  After a successful transcript, Smuggle-SNI keeps a separate ordering window
+  until `max(50000, smuggle-sni-delay-ms + 1)` milliseconds after capture. At
+  `0`, the fake batch is sent synchronously, but later packets can still wait
+  until the 50-second window ends.
 
 - `real-sni-upstream-node` `(string)`
   Required when `smuggle-sni` is enabled.
 
-  Names another node in the same config that will receive the real captured ClientHello on the upstream path.
+  Names the auxiliary upstream branch that receives the original captured
+  ClientHello packets after capture completes. The named node must exist, must
+  not be this `IpManipulator`, and at chain construction must differ from the
+  normal `next` and be available for binding from this node.
 
-  In the current design this should be a dedicated branch head, not the same node as the normal `next`.
+  The branch topology, not this setting, determines which devices and endpoint
+  receive the real ClientHello and whether it later rejoins the normal path.
+
+`smuggle-sni` requires a normal top-level `next` in addition to the helper.
+The shared `stateful-flow-limit` bounds its flow table, accepts `32` through
+`1048576`, and defaults to `65536`. The 50 ms speculative prestart timeout,
+1500 ms fragmented-record timeout, 50-second ordering window, capture limits,
+generated fingerprint, and packet headers have no Smuggle-SNI-specific
+settings.
 
 ### overlap-sni settings
 
@@ -372,22 +404,16 @@ branch setting.
 ### synfin-sni settings
 
 - `synfin-sni` `(string)`
-  Enables the `synfin-sni` trick and sets the SNI that will be written into the crafted Chrome-like TLS ClientHello.
+  Enables the trick and supplies the host name for the generated decoy
+  ClientHello. The effective accepted length is `1` through `255` bytes because
+  the internal `TlsClient` that generates the record enforces the TLS host-name
+  limit.
 
-  In the current implementation, the first two upstream packets pass unchanged. The third packet is held only when its payload begins an incomplete TLS ClientHello record, and the contiguous fourth packet completes that record. Complete ClientHellos and non-TLS payloads pass immediately. If the completing segment does not arrive within `synfin-sni-hold-timeout-ms`, the held packet is released unchanged and the flow becomes passthrough. `IpManipulator` then generates its own Chrome-like TLS ClientHello, rejects the flow if the real SNI starts before the generated hello length, otherwise sends:
-  - one real TLS data packet carrying the first `generated-length + extra-range` bytes from the captured real ClientHello on the original TCP sequence range
-  - one zero-payload client-side close packet on the sequence number immediately after that first real chunk
-  - one fake zero-payload TCP `SYN` packet on the same 4-tuple
-  - one full crafted TLS data packet carrying the generated fake ClientHello on the original captured first-data TCP sequence range
-  - one additional valid generated TLS-looking data packet whose payload length fills only that extra configured overlap range immediately after the crafted fake ClientHello on that same original sequence space
-  - the remaining real captured ClientHello bytes in additional immediate TCP packets
-
-  By default that close packet is `FIN|ACK`. When `synfin-sni-use-rst` is enabled, `IpManipulator` sends `RST|ACK` instead on the same post-fake-data sequence number.
-
-  The fake `SYN` is rebuilt from the original captured `SYN` header template for that flow, so when checksum randomization is disabled it preserves the original SYN-style TCP header shape instead of cloning a later data packet. `IpManipulator` first sends the real first-data chunk so the destination server consumes the real beginning of the ClientHello, then emits the close packet and fake `SYN`, and only after that sends the generated fake ClientHello plus one valid generated TLS-looking filler packet on the original captured first-data sequence range. The configured extra overlap is chosen randomly per flow and is clamped so the real first-data chunk still stops before the real SNI hostname bytes.
-
-  The complete crafted sequence is emitted immediately in that order. There is
-  no artificial per-packet 20 ms sleep or configurable pacing delay.
+  The generated record uses the internal `TlsClient` defaults, including ALPN
+  order `h2`, `http/1.1`, with `x25519mlkem768` disabled. It is not a copy of the
+  real client's fingerprint. Its complete TLS record must be no more than 900
+  bytes and must fit before the real SNI position in the selected two-segment
+  ClientHello; see "synfin-sni" under "Detailed Behavior".
 
 - `synfin-sni-hold-timeout-ms` `(integer)`
   Optional.
@@ -401,9 +427,12 @@ branch setting.
 - `synfin-sni-additional-range-min` `(integer)`
   Optional.
 
-  Minimum number of extra real ClientHello payload bytes to append to the first real `packet_y` chunk beyond the crafted fake ClientHello length.
+  Requested minimum number of bytes by which the real-first overlap interval is
+  extended beyond the generated ClientHello length.
 
-  When present without `synfin-sni-additional-range-max`, this value is also used as the fixed extra overlap length.
+  When present without `synfin-sni-additional-range-max`, this value is also used
+  as the requested fixed extra overlap length; runtime safety clamping can still
+  reduce it.
 
   Valid range: `0` to `65535`
 
@@ -412,9 +441,18 @@ branch setting.
 - `synfin-sni-additional-range-max` `(integer)`
   Optional.
 
-  Maximum number of extra real ClientHello payload bytes to append to the first real `packet_y` chunk beyond the crafted fake ClientHello length.
+  Requested maximum extension of the real-first overlap interval. If only this
+  maximum is configured, the minimum remains `0`. The minimum must not exceed
+  the maximum.
 
-  `IpManipulator` chooses one random value per flow inside the configured range, then clamps it so the enlarged real first chunk still ends before the real SNI hostname bytes and before the captured ClientHello payload ends. That same chosen extra length is then filled on the original captured sequence range by one valid generated TLS-looking data packet sent immediately after `packet_x`.
+  `IpManipulator` clamps both ends to what the captured ClientHello permits, then
+  chooses one inclusive random value per successful flow. The resulting real-
+  first packet ends no later than the first byte of the real SNI and no later
+  than the captured data. A value smaller than `5` produces that many random
+  filler bytes in the later fake view; a value of at least `5` produces one TLS
+  1.2-style Application Data record header followed by random bytes. The
+  configured minimum is therefore a request, not a guarantee, when the safe
+  range is smaller.
 
   Valid range: `0` to `65535`
 
@@ -427,7 +465,9 @@ branch setting.
 
   Valid range: `0` to `255`
 
-  When omitted, the crafted `SYN` keeps the captured packet TTL.
+  When omitted, the fake `SYN` normally keeps the opening `SYN`'s TTL. If the
+  opening-header copy could not be retained, construction falls back to the held
+  ClientHello segment and its TTL.
 
 - `synfin-sni-fin-ttl` `(integer)`
   Optional.
@@ -436,46 +476,59 @@ branch setting.
 
   Valid range: `0` to `255`
 
-  When omitted, the crafted `FIN` keeps the captured packet TTL.
+  When omitted, the close packet keeps the held ClientHello segment's TTL.
 
 - `synfin-sni-fake-ttl` `(integer)`
   Optional.
 
-  When present, overrides the IPv4 TTL of the full crafted fake ClientHello packet that carries the generated `synfin-sni` payload bytes.
+  When present, overrides the IPv4 TTL of packet `X`, the complete generated
+  ClientHello at the original first-data sequence number.
 
-  This does not affect the enlarged real first TLS data packet, the generated TLS-looking filler packet after `packet_x`, or the remaining real captured ClientHello tails.
+  This does not affect the real-first packet, the optional random/TLS-looking
+  filler packet after `X`, or the real continuation packets. Those keep the TTL
+  of their own header templates.
 
   Valid range: `0` to `255`
 
-  When omitted, the full crafted fake ClientHello packet keeps the captured packet TTL.
+  When omitted, packet `X` keeps the held ClientHello segment's TTL.
 
 - `synfin-sni-random-syn-checksum` `(boolean)`
   Optional.
 
-  When `true`, the crafted `SYN` is sent with randomized IPv4 and TCP checksum fields instead of a recomputed valid checksum.
+  When `true`, the fake `SYN` receives arbitrary randomized IPv4 and TCP
+  checksum fields instead of recomputed valid values. They will normally be
+  invalid, although a random field can coincidentally equal the correct value.
 
   Defaults to `false`.
 
 - `synfin-sni-random-fin-checksum` `(boolean)`
   Optional.
 
-  When `true`, the crafted close packet is sent with randomized IPv4 and TCP checksum fields instead of a recomputed valid checksum.
+  Applies the same arbitrary-checksum behavior to the synthetic close packet.
+  It does not affect packet `Y`, packet `X`, filler, or real continuations.
 
   Defaults to `false`.
 
 - `synfin-sni-random-syn-sequence` `(boolean)`
   Optional.
 
-  When `true`, the crafted `SYN` uses a fresh random TCP sequence number.
+  When `true`, the fake `SYN` uses a fresh random 32-bit TCP sequence number.
+  Packet `X` still starts at the real first-data sequence, so it will no longer
+  be `SYN.seq + 1` except by chance.
 
-  When `false` or omitted, the crafted `SYN` uses the captured sequence pattern (`real_seq - 1`).
+  Defaults to `false`, which uses `S - 1` when the selected real ClientHello
+  starts at sequence `S`.
 
 - `synfin-sni-random-fin-sequence` `(boolean)`
   Optional.
 
-  When `true`, the crafted close packet uses a fresh random TCP sequence number.
+  When `true`, the synthetic close uses a fresh random 32-bit sequence number.
+  This may keep it outside the destination's receive window, but also makes the
+  close less coherent to a sequence-aware middlebox.
 
-  When `false` or omitted, the crafted close packet uses the TCP sequence number immediately after the fake generated ClientHello payload.
+  Defaults to `false`, which places the close at `S + Y`, immediately after the
+  entire real-first/fake-plus-filler overlap interval, not merely after the
+  generated ClientHello.
 
 - `synfin-sni-use-rst` `(boolean)`
   Optional.
@@ -486,32 +539,65 @@ branch setting.
 
 `0` is a real IPv4 TTL override, not a sentinel for "leave the original TTL unchanged". Omit the TTL field entirely if you want `IpManipulator` to preserve the captured packet TTL for that packet class.
 
+The complete replacement transcript is emitted synchronously and back to back;
+none of these settings adds pacing. The shared `stateful-flow-limit` bounds the
+SynFIN flow table and defaults to `65536`. This trick also requires a normal top-
+level `next` and has no helper-branch setting.
+
 ### smuggle-fin settings
 
 - `smuggle-fin` `(boolean)`
-  Enables the `smuggle-fin` trick.
+  Enables the trick when `true`. The feature does not parse TLS or SNI despite
+  the `fin-sni-delay-ms` setting name. Any eligible IPv4/TCP data
+  packet can trigger it.
+
+  Defaults to `false`/absent.
 
 - `fin-sni-delay-ms` `(integer)`
   Optional.
 
-  Delay in milliseconds between receiving the expected downstream echoed `FIN|ACK` and replaying the queued packets through the normal pipeline.
+  Delay in milliseconds between consuming the exact downstream echoed
+  `FIN|ACK` and replaying the queued packets through the normal pipeline.
+
+  Valid range: `0` or greater
 
   Defaults to `0`.
+
+  This is a post-echo delay, not the maximum pause. The original
+  `fin-pause-timeout-ms` timer remains armed; if it expires first, it releases
+  the queue early. At `0`, release is immediate on the owner worker (or queued
+  immediately to that worker when the echo arrived elsewhere).
 
 - `fin-pause-timeout-ms` `(integer)`
   Optional.
 
-  Maximum time in milliseconds that a flow waits for the expected echoed `FIN|ACK`. If the echo does not arrive,
-  `IpManipulator` releases that flow's queued packets through the normal pipeline.
+  Hard maximum pause measured from the triggering data packet. If no exact echo
+  arrives, or the post-echo delay would run longer, this deadline releases the
+  queued flow through the normal pipeline. If the timer cannot be armed, the
+  queue is released immediately instead.
+
+  Valid range: greater than `0`
 
   Defaults to `1000`.
 
 - `real-fin-upstream-node` `(string)`
   Required when `smuggle-fin` is enabled.
 
-  Names another node in the same config that will receive the crafted mirrored FIN/ACK packet on the upstream path.
+  Names the auxiliary upstream branch that receives the synthetic reverse
+  `FIN|ACK`. The named node must exist, must not be this `IpManipulator`, and at
+  chain construction must differ from the normal `next` and be available for
+  binding from this node.
 
-  In the current design this should be a dedicated branch head, not the same node as the normal `next`.
+  The branch topology must cause a semantically matching `FIN|ACK` to return on
+  this `IpManipulator`'s downstream path if echo-confirmed release is expected.
+  A normal TCP ACK response to the FIN does not match; see the detailed packet
+  flow below.
+
+`smuggle-fin` requires a normal top-level `next` in addition to the helper
+branch. The shared `stateful-flow-limit` bounds its flow table and defaults to
+`65536`. There is no setting for the mirrored FIN's TTL, sequence numbers,
+flags, or checksum: they are derived from the triggering packet and its checksum
+is recomputed.
 
 ### TCP flag rewrite settings
 
@@ -913,22 +999,272 @@ the oldest capture is abandoned and its held segments are released unchanged.
 
 ### smuggle-sni
 
-This trick is upstream-only and applies to IPv4 TCP packets carrying a TLS ClientHello record with an SNI extension.
+`smuggle-sni` creates a path-dependent split view of one TLS ClientHello. After
+capturing the real ClientHello, it sends the client's original TCP segments on
+`real-sni-upstream-node`. It sends a separately generated, equal-length
+ClientHello carrying the configured host name on the normal `next` branch. The
+two views occupy the same TCP sequence ranges, but they are routed to different
+branch entries rather than deliberately sent as an ordered overlap on one
+branch.
 
-Behavior:
+The intended topology lets an inspection device on the normal branch parse the
+generated SNI while the destination receives the real ClientHello through the
+helper branch. The technique does not itself ensure that separation. If the
+branches converge at the wrong point, packets are reordered, or the destination
+accepts the generated view, the connection can fail.
 
-- captures and reassembles a TLS ClientHello record across single or multi-segment TCP payloads (up to 16 segments / 16 KB) on the 4-tuple
-- generates a fake TLS ClientHello of total record length `L` matching the captured ClientHello total record length `R`
-- constructs a multi-segment fake batch that strictly preserves original TCP segment boundaries, original TCP segment payload lengths, original TCP sequence numbers, and any trailing payload bytes beyond the ClientHello record
-- sends the original captured ClientHello segments immediately to `real-sni-upstream-node` in order
-- schedules the generated fake segment batch to the normal next tunnel after `smuggle-sni-delay-ms`
-- if record length mismatch (`L != R`), segment sequence discontinuity, timeout, or generation failure occurs, `smuggle-sni` fails open immediately, forwarding original captured packets to the normal path without delay or modification
+#### Which flow and ClientHello are selected
 
-Later flow packets inside the delay window enter the same bounded,
-absolute-deadline FIFO. The fake transcript is scheduled ahead of that FIFO,
-and `FIN`/`RST` stays behind already queued data.
+Smuggle-SNI operates only on whole, non-fragmented IPv4 TCP packets and creates
+a flow record only after seeing a payload-free opening `SYN`. The accepted
+opener has `SYN` plus an optional combination of `ECE` and `CWR`; `ACK`, `FIN`,
+`RST`, `PSH`, `URG`, any other flag, or TCP Fast Open payload makes it
+ineligible. If this node did not observe that opener, later packets on the tuple
+pass without Smuggle-SNI processing.
 
-If the ClientHello contains a TLS 1.3 `pre_shared_key` extension with PSK binders and the configured `smuggle-sni` would actually change the SNI bytes, the trick skips crafting the fake packet and leaves the original packet on the normal path. `IpManipulator` does not have the PSK secret required to recompute valid binders.
+The first two upstream packets in a tracked flow pass normally and count as
+warmup. Normally they are the opening `SYN` and the client's final handshake
+`ACK`; the downstream `SYN|ACK` is not counted. Capture begins with the next
+upstream packet. This ordinal rule means a ClientHello sent in the second
+upstream packet is not transformed on that transmission; only a later eligible
+copy, such as a retransmission after warmup, could become the capture candidate.
+
+At the capture point, the TCP payload must begin a TLS handshake record whose
+handshake is a ClientHello with a usable first `host_name` SNI entry. A complete
+one-segment record is accepted immediately. An incomplete record is retained
+while exact contiguous continuations are collected. The starting segment must
+contain at least the first nine TLS bytes so the record and ClientHello lengths
+are known; a shorter prefix does not start capture.
+
+- every continuation must have nonzero payload and sequence
+  `previous.seq + previous.payload_len`, using normal 32-bit TCP sequence
+  arithmetic
+- the complete capture may use at most 16 TCP packets
+- the complete TLS record, including its five-byte record header, may be at
+  most 16,384 bytes
+- the ClientHello handshake must exactly fill that one TLS record; a
+  ClientHello split across TLS records or followed by another handshake message
+  in the same record is unsupported
+- capture expires 1500 ms after the last captured fragment if no valid
+  continuation advances it
+
+An ACK-only packet, retransmission, gap, overlap, or out-of-order continuation
+does not get merged into an active capture. It ends the attempt and releases
+the retained packets followed by the current packet on the normal path. IPv4
+fragments and unparseable packets bypass this capture and can overtake held
+segments; the capture remains pending until a valid continuation or timeout.
+
+Smuggle-SNI also has a speculative prestart queue for packet reordering. If the
+first capture candidate has nonzero payload of at least 128 bytes, has no
+recognizable ClientHello prefix, and is not an explicitly unsupported TLS
+layout, it can be held until 50 ms after the last speculative update in case an
+earlier-sequence ClientHello start arrives afterward. Up to 16 distinct
+sequence-numbered packets can be retained. Once a start arrives, only packets
+that form the exact next sequence are drained into the ClientHello capture;
+unrelated remainder packets are released normally. Timeout, duplicate sequence,
+capacity pressure, or replacement of the speculative slot releases the held
+packets unchanged and makes that flow passthrough. A short non-TLS packet or an
+ACK-only candidate is not speculatively held and selects passthrough
+immediately. The prestart queue has no separate byte cap beyond its 16-packet
+bound and the size of each IPv4 packet.
+
+Capture and prestart slots come from tunnel-wide pools sized at 16 of each per
+configured worker and shared with the other tricks that use TLS capture. If a
+pool is full, its oldest active slot is released unchanged to admit the new
+capture. All fragments of a capture must stay on one WaterWall worker. A
+cross-worker continuation fails open: each retained packet is returned through
+its owner worker, but original global arrival order cannot be guaranteed.
+
+#### How the two ClientHello views are built
+
+Let the real ClientHello TLS record have length `R`, including its five-byte TLS
+record header. Let captured TCP packets `P0 ... Pn` carry contiguous payload
+lengths `L0 ... Ln`, beginning at TCP sequence `S`. The final captured packet
+may also contain bytes after the end of the ClientHello record, so
+`L0 + ... + Ln` can be greater than `R`.
+
+After capture, the internal `TlsClient` creates a complete new ClientHello with
+the configured `smuggle-sni`. This is not an in-place SNI edit or a clone of the
+client's fingerprint. The generated record uses the internal client's TLS
+randomness, extensions, key share, default ALPN order `h2`, `http/1.1`, and has
+`x25519mlkem768` disabled. It must parse as exactly one ClientHello record, must
+contain the configured host name, and its complete length `G` must satisfy
+`G = R`. Changing the configured host can change `G` and therefore whether the
+equality succeeds, although generated padding and extension choices mean the
+length relationship is not necessarily one-for-one.
+
+For every captured packet `Pi`, `IpManipulator` makes one normal-branch packet
+`Fi` by copying the entire original IPv4/TCP packet and replacing only the
+portion of its TCP payload that intersects the first `R` stream bytes with the
+corresponding generated bytes. Therefore, before final egress processing:
+
+- `Fi` has the same source and destination addresses and ports, TCP sequence and
+  acknowledgement numbers, payload length, TCP flags, window and options, IPv4
+  identification and TTL, and packet boundary as `Pi`
+- concatenating the first `R` payload bytes of `F0 ... Fn` yields the generated
+  ClientHello exactly
+- payload bytes after the real ClientHello record are copied unchanged from the
+  original packet
+- checksums are recalculated because the TLS payload changed
+
+The original `P0 ... Pn` packets are then sent, in reconstructed sequence order,
+through `real-sni-upstream-node`. That helper send preserves the original tuple
+and does not apply this node's port-ghost trailer. The generated `F0 ... Fn`
+batch uses the normal `next` branch, where compatible final protocol swap,
+port-ghost, checksum, and MTU handling can still run. Final MTU shaping may split
+an oversized packet, so the captured boundaries are preserved only up to that
+egress stage.
+
+The helper originals and normal generated batch bypass the remaining
+Smuggle-SNI/stateful-SNI pipeline rather than being inspected again. Same-node
+packet duplication, SNI Blender, other stateful SNI tricks, and upstream TCP-bit
+rewrites are configuration-incompatible with Smuggle-SNI. Protocol swap, port
+ghost, downstream-only TCP-bit actions, and Smuggle-FIN may coexist subject to
+their own behavior; the real helper packets still use the tuple-preserving path
+described above.
+
+#### Branch order, delay, and the 50-second barrier
+
+The first captured segment may already have waited for the remainder of the
+ClientHello. Once capture and generation succeed, the observable transcript is:
+
+```text
+t0:        send real P0 ... Pn to real-sni-upstream-node
+t0 + D:    send generated F0 ... Fn to normal next
+t0 + W:    release later queued upstream packets to normal next
+
+D = smuggle-sni-delay-ms
+W = max(50000, D + 1) milliseconds
+```
+
+All real packets are submitted to the helper before the fake batch becomes
+eligible. At `D = 0`, the complete fake batch is emitted synchronously after the
+real batch. There is no pacing between segments inside either batch. Branches
+can have different latency, however, so this submission order is not a guarantee
+of arrival order after they traverse the network.
+
+The `D` setting delays only the generated batch. It does not set the release
+time for later client traffic. A separate ordering barrier remains open until
+`t0 + W`; this is 50 seconds for every delay through 49,999 ms, including zero,
+and one millisecond after the fake due time for larger delays. Parseable
+same-flow upstream packets arriving during that window—including ACKs,
+retransmissions, application data, and `FIN`/`RST`—enter a FIFO behind the
+complete generated batch. Downstream packets are never put in this barrier.
+Unparseable packets, IPv4 fragments, and unrelated flows bypass it and can
+overtake retained traffic.
+
+The follow-on FIFO holds at most 16 packets and 256 KiB. If it reaches either
+limit, a packet arrives on a different worker, the deadline is already past, or
+a timer cannot be scheduled, the barrier fails open: any unsent generated
+packets leave first, then the retained FIFO, then the current packet. This
+preserves per-owner-worker order but can send the generated transcript earlier
+than configured. A queued upstream `FIN` or `RST` remains behind earlier data
+and removes the flow record after release.
+
+Speculative prestart packets that are not incorporated into the contiguous
+ClientHello are outside this post-success barrier. They are released through the
+normal path when prestart processing finishes and, in reordering cases, can
+appear before the generated batch.
+
+#### What each participant may see
+
+- **Client:** sends only the real ClientHello segments. WaterWall suppresses
+  those segments from the normal branch, sends them through the helper, and can
+  hold later client packets for the ordering window. The added capture and
+  barrier delays can trigger TCP retransmissions, RTO backoff, congestion-window
+  changes, or an application-visible stall.
+- **Normal-path middlebox:** is intended to reconstruct the generated record at
+  the client's real sequence numbers and parse the configured SNI. Because its
+  segment sizes, flags, acknowledgement values, and general header shape are
+  copied from the client packets, the TCP envelope resembles the captured flow,
+  although the TLS fingerprint and cryptographic contents come from WaterWall's
+  internal `TlsClient`.
+- **Helper-path device or destination:** receives the original ClientHello
+  segments after capture completes. If the helper route reaches the destination
+  while the generated packets are kept from it, the server sees the client's
+  real TLS random, extensions, key share, SNI, and transcript. Equal record
+  lengths keep subsequent TCP sequence numbers aligned when traffic later uses
+  the normal path again.
+
+If the destination receives only the generated ClientHello, its ServerHello and
+key schedule correspond to WaterWall's independent ClientHello, not to the
+client's TLS state, so the client will generally be unable to continue the
+handshake. If it receives both views, they are conflicting bytes on identical
+sequence ranges; first-arrival/last-arrival reassembly, loss, retransmission,
+normalization, and path ordering determine which view survives. The real batch
+is submitted first, but that does not make server-side first-arrival behavior
+safe across separate branches.
+
+The trick therefore depends on topology: the observer intended to see the fake
+must be on the normal branch, the endpoint intended to complete TLS must see the
+real branch view, and later traffic and responses must rejoin coherently. NAT,
+firewall state, asymmetric routing, anti-spoofing, TCP normalization, and
+different MTUs on the two branches can all defeat that arrangement.
+
+#### Fail-open behavior, closes, and flow lifetime
+
+Before any real packet is sent to the helper, the attempt fails open to the
+normal branch when the flow opener was not observed or its table record cannot
+be admitted, the capture candidate is unsupported, the record is malformed or
+lacks SNI, sequence continuity or worker affinity is lost, a capture/prestart
+timeout or limit is reached, memory or timer setup fails, or the generated
+record is invalid or has a length other than `R`. Retained originals are
+forwarded unchanged by Smuggle-SNI through normal egress. On same-worker paths
+they are released in capture order; cross-worker recovery cannot promise global
+wire order.
+
+If the real ClientHello contains a TLS 1.3 `pre_shared_key` extension with PSK
+binders and the configured SNI differs from the real SNI, Smuggle-SNI also fails
+open. WaterWall does not have the resumption secret needed to recompute binders
+for an altered ClientHello. The source applies this guard only when the SNI
+would change; an equal configured SNI is not rejected by this condition, though
+all other generated-record validation and equal-length requirements still
+apply.
+
+Once the helper originals have been sent, a delay-scheduler failure cannot undo
+that branch transmission. It instead releases the generated batch immediately
+on the normal branch. Tunnel or flow-table destruction disposes of still-held
+capture, fake, and FIFO buffers rather than forwarding them during teardown.
+
+An upstream `FIN` or `RST` during prestart or ClientHello capture flushes held
+originals to the normal path and removes the flow. On the normal same-worker
+path, those held packets are submitted before the close; cross-worker recovery
+cannot guarantee global order. During the post-success barrier, the close is
+queued behind earlier upstream traffic. A downstream `FIN` or `RST` is never
+delayed; it flushes an unfinished capture but removes a post-success flow
+immediately, which disposes of any still-delayed generated or follow-on upstream
+packets. Other downstream traffic is unchanged. A lightweight downstream hook
+can log a ServerHello that begins in one whole TCP payload, but it does not
+validate the branch outcome or alter the packet.
+
+Downstream TCP-bit rewrites are allowed in the same node and run before that
+logging/close hook. Consequently, adding or removing `FIN`/`RST` with a
+`dw-tcp-bit-*` setting also changes whether Smuggle-SNI observes a downstream
+close and performs this cleanup.
+
+For an admitted tracked flow, either success or ordinary fail-open leaves the
+normalized four-tuple in passthrough state and Smuggle-SNI does not retry.
+Activity can retain that record for up to 20 minutes of idle time. A valid new
+opening `SYN` starts a new generation; it discards any old capture/prestart
+packets and destroys an old delay barrier rather than replaying those stale
+bytes. An upstream or downstream `FIN`/`RST` normally removes the record as
+described above.
+
+#### How smuggle-sni differs from the other tricks
+
+- `first-sni` edits the real ClientHello's SNI and length fields in extra copies
+  and sends both decoy and original on the normal branch. Smuggle-SNI generates
+  the whole alternate record, requires equal record length, and routes the real
+  packets through a helper.
+- `overlap-sni` and `synfin-sni` emit conflicting sequence ranges and synthetic
+  TCP control packets on the normal branch. Smuggle-SNI uses no fake `SYN`,
+  `FIN`, or `RST`; its split view comes from branch routing.
+- `ech-sni-trick` extracts a byte-identical decoy already embedded by
+  `TlsClient` and sends it out of order. Smuggle-SNI creates a new conventional
+  ClientHello from its configured host name.
+- `sni-blender` fragments and shuffles the real packet at IPv4 without creating
+  another TLS transcript. `smuggle-fin` does not inspect TLS at all and routes a
+  synthetic reverse `FIN|ACK` while holding normal traffic.
 
 ### overlap-sni
 
@@ -1424,32 +1760,466 @@ it closes, is replaced, or expires after 20 minutes of inactivity.
   operations that must shape its emitted packets belong in a following
   `IpManipulator` node.
 
+### synfin-sni
+
+`synfin-sni` is an upstream-only, stateful TCP overlap trick for a TLS
+ClientHello split across exactly two selected data segments. It suppresses those
+two original packets and emits a replacement transcript containing real bytes,
+a synthetic close, a fake `SYN`, a generated decoy ClientHello, optional filler,
+and the remaining real bytes. Downstream packets are not inspected or modified
+by this trick.
+
+#### What the trick is for
+
+The intended split view uses both TCP connection state and conflicting overlap
+policy. A destination that retains the first bytes received for a sequence range
+can reconstruct the real ClientHello. An intermediate device may instead treat
+the close and following `SYN` as a flow boundary, or prefer the later bytes in an
+overlap, and parse the generated ClientHello carrying `synfin-sni`.
+
+This is more invasive than merely sending a decoy first. It deliberately places
+two different payloads on the same TCP sequence interval and injects a close and
+new `SYN` into an established four-tuple. Its result depends on receive-window
+checks, checksum validation, TTL, overlap policy, TCP normalization, and how a
+device associates packets with flow generations. No particular server or
+middlebox view is guaranteed.
+
+#### Which flow and packets are selected
+
+1. A record is created only when this node sees a payload-free opening `SYN`.
+   `ECE` and `CWR` may accompany `SYN`; `ACK`, `FIN`, `RST`, any other flag, or
+   TCP Fast Open payload makes the opener ineligible. Packets on an untracked
+   tuple pass unchanged.
+2. The first two non-close upstream packets pass unchanged and count as warmup.
+   Normally they are the opening `SYN` and the client's final handshake `ACK`;
+   the downstream `SYN|ACK` is not counted. Therefore the third upstream packet
+   is normally the first ClientHello segment.
+3. If that third packet is payload-free, is not the beginning of a recognizable
+   TLS ClientHello, or already contains the complete first TLS record, it passes
+   immediately and the flow becomes passthrough. Only a partial or fragmented
+   one-record ClientHello beginning is held.
+4. The very next upstream packet must have nonzero payload and begin exactly at
+   `held.seq + held.payload_len`. The combined bytes must contain a parseable
+   ClientHello whose handshake exactly fills one TLS record and has a usable
+   first `host_name` SNI entry. An ACK, exact retransmission, gap, overlap,
+   out-of-order segment, still-incomplete record, or malformed layout releases
+   the held packet followed by the current packet unchanged and selects
+   passthrough. The trick never waits for a third data segment.
+
+The declared first TLS record may not exceed 16,384 bytes. If the completing
+segment contains bytes after that record, those bytes remain part of the real
+combined payload and are preserved in the real continuation. The hold is bounded
+by `synfin-sni-hold-timeout-ms`; timeout releases the retained segment unchanged
+and makes the flow passthrough.
+
+#### Successful TCP transcript
+
+Let:
+
+- `S` be the held segment's first TCP sequence number
+- `H` be the held segment's payload length
+- `R` be the two real payload lengths combined
+- `G` be the generated decoy ClientHello record length
+- `O` be the real SNI host name's offset from the beginning of the combined TCP
+  payload
+- `A` be the chosen additional range, after runtime clamping
+- `Y = G + A` be the length of the deliberately overlapping interval
+
+Generation succeeds only when `0 < G <= 900`, `G <= R`, and `O >= G`. `A` is
+chosen inclusively from the configured range after both ends are clamped so that
+`0 <= A <= min(R - G, O - G)`. Consequently `Y <= O`: packet `Y` can end exactly
+before the first real SNI byte, but never contains a byte of the real host name.
+
+The original held and completing packets are recycled. Before any later egress
+segmentation, five through seven replacement packets are sent synchronously in
+this order:
+
+1. **Real packet Y** — real bytes `[0, Y)` at sequence `S`. It uses the held
+   packet's IP/TCP header and exact TCP flags. Its payload can cross the original
+   boundary at `H`, so it may coalesce bytes from both selected segments.
+2. **Synthetic close** — a header-only `FIN|ACK`, or `RST|ACK` when
+   `synfin-sni-use-rst` is true. Its default sequence is `S + Y`, immediately
+   after packet Y. It copies the held packet's acknowledgement number, window,
+   TCP options, addresses, and ports.
+3. **Fake SYN** — a header-only packet with only `SYN` set, acknowledgement `0`,
+   and default sequence `S - 1`. It normally uses the captured opening `SYN` as
+   its header template, preserving the SYN-style TCP options and window. If that
+   template copy was unavailable, it falls back to the held data packet's header
+   shape.
+4. **Fake packet X** — the complete generated ClientHello, length `G`, at
+   sequence `S`. Its flags preserve `CWR`, `ECE`, `URG`, and `ACK` from the held
+   segment and add `PSH`; `SYN`, `FIN`, and `RST` are omitted. Thus X conflicts
+   byte-for-byte in sequence space with real packet Y over `[S, S + G)`.
+5. **Optional fake filler** — when `A > 0`, one packet covers
+   `[S + G, S + Y)`. For `A >= 5`, its payload is a complete TLS Application Data
+   record header (`17 03 03`, length `A - 5`) followed by random bytes. For
+   `A < 5`, all `A` bytes are random and cannot form that complete record header.
+6. **One or two real tails** — real bytes `[Y, R)` complete the original stream.
+   If `Y < H`, the remainder of the held segment is emitted first at `S + Y`,
+   followed by the completing segment at `S + H`. Otherwise only the unused
+   suffix of the completing segment is sent at `S + Y`.
+
+Packet Y starts with the held packet's IPv4 identification. The close, fake
+`SYN`, X, filler, and tails use consecutively increasing identifications; the
+completing packet's original identification is not retained. Rebuilt packets
+normally have valid IPv4/TCP checksums. A held-segment tail followed by a second
+tail keeps only `CWR`, `ECE`, `URG`, and `ACK`; the final tail uses the completing
+segment's flags.
+
+There is no pacing between these outputs. The hold timeout controls only how long
+the first data segment can wait for its pair. Compatible final-egress behavior,
+such as port ghost, protocol swap, or MTU-driven TCP segmentation, runs after the
+transcript is built and can change the final wrapper or increase the on-wire
+packet count.
+
+#### What the client, middlebox, and destination may see
+
+- The client sent two ordinary ClientHello segments, but WaterWall replaces them
+  on the wire. Synthetic control packets and conflicting data can elicit
+  duplicate ACKs, challenge ACKs, SACK changes, or a reset. If acknowledgement
+  progress does not match what the client's TCP stack sent, it may retransmit
+  the original segment boundaries; those later retransmissions are not hidden.
+- A stateful middlebox first sees a real prefix that ends before the real host
+  name, followed by a close and another `SYN`. With default sequences, the new
+  `SYN` at `S - 1` makes X at `S` look like the first data of a new flow. Such a
+  device may parse the decoy SNI, followed by the optional TLS-looking filler.
+  A device that ignores the controls but uses last-arrival-wins overlap can also
+  reconstruct X. A strict first-arrival-wins reassembler instead retains Y.
+- The destination is intended to retain real packet Y for `[S, S + Y)`, ignore
+  X and filler as conflicting duplicates, and append the real tail, producing
+  the original ClientHello. This requires Y to arrive first and the synthetic
+  close and `SYN` not to terminate or reset destination-side state. A valid,
+  in-window `FIN` at `S + Y` can close the receive stream exactly where the real
+  tail begins; an accepted `RST` terminates the connection immediately.
+
+TTL, checksum, and random-sequence settings are ways to try to make a nearby
+observer process the controls or X while a farther endpoint expires or rejects
+them. They are not selectors for a specific device. Some middleboxes validate
+checksums and receive windows; some destinations or intervening equipment repair,
+normalize, or discard unusual packets. With all defaults, the synthetic packets
+have valid checksums, coherent sequences, and the captured TTL, so they will
+normally be capable of reaching and affecting the destination.
+
+#### Effect of the control settings
+
+- `synfin-sni-syn-ttl`, `synfin-sni-fin-ttl`, and `synfin-sni-fake-ttl` are
+  independent. The last applies only to X, not to filler. Lower values shorten
+  the relevant packet's path; `0` is put literally in the IPv4 header and will
+  normally be discarded before routing beyond the local link.
+- Random SYN/close checksums make both IPv4 and TCP checksum fields arbitrary.
+  A passive classifier might still inspect such a packet while a validating
+  endpoint drops it, but a validating middlebox drops it too. These settings do
+  not damage the data packets' checksums. A later egress operation that must
+  rebuild a packet, such as port-ghost tailing or MTU segmentation, can repair
+  an arbitrary checksum, so use a separate stage carefully when bad checksums
+  are essential to the experiment.
+- `synfin-sni-random-syn-sequence` moves only the SYN. X remains at `S`, so the
+  otherwise coherent `SYN(S - 1) -> data(S)` relationship is lost. This may keep
+  the SYN out of a destination window but can also prevent a sequence-aware
+  middlebox from accepting X as new-flow data.
+- `synfin-sni-random-fin-sequence` moves only the close. It can make the close
+  less likely to be in-window at the destination but less credible to a
+  sequence-aware observer. `synfin-sni-use-rst` changes the control semantics,
+  not its default position: `RST|ACK` is generally more destructive if accepted
+  and, unlike FIN, does not represent an orderly end consuming one sequence
+  number.
+- Increasing the additional range makes Y's first-arrival real coverage larger
+  and adds the same amount of later fake filler. This can move the real tail and
+  close farther into the ClientHello, but it can never cross the real SNI start.
+  Runtime clamping can reduce even the configured minimum to fit the actual
+  record.
+
+#### Failure, retransmission, and flow lifetime
+
+Most unsupported cases fail open. Timeout, an invalid pair, a still-incomplete or
+malformed ClientHello, missing SNI, generation failure, `G > 900`, `G > R`, packet
+allocation failure, table-admission failure, or worker-affinity mismatch releases
+or forwards the available packets without the crafted transcript and makes the
+flow passthrough. If the hold timer itself cannot be armed, the held segment is
+released immediately.
+
+There is one intentional fail-closed case. If the real host name starts before
+the generated record ends (`O < G`), the trick logs the mismatch, drops both
+selected real packets, and marks the upstream flow blocked. Every later upstream
+packet is dropped. An upstream `FIN` or `RST` removes the record but is also
+dropped. A new valid opening `SYN` on the tuple starts a replacement generation.
+The usual symptom is a stalled connection, not an explicit locally generated
+reset.
+
+During the initial hold, an upstream `FIN` or `RST` releases the held data before
+forwarding the close and removes the record. After success the flow immediately
+enters passthrough: later ACKs, application data, original-segment
+retransmissions, and closes are not queued behind the crafted sequence. An
+upstream `FIN` or `RST` removes the passthrough record. Downstream traffic,
+including downstream `FIN`/`RST`, passes without SynFIN inspection and does not
+remove SynFIN state; otherwise-unused records expire after 20 minutes of
+inactivity.
+
+Every retained pair must remain on one WaterWall worker. A cross-worker
+completion fails open; the current packet continues on its worker and the held
+packet is returned to its owner worker, so cross-worker release cannot promise
+the original wire order. A new opening `SYN` on a reused tuple invalidates old
+timer generations and starts warmup again; if it replaces an active hold, the old
+held buffer is disposed rather than injected into the new connection.
+
+#### How synfin-sni differs from the other SNI tricks
+
+- `first-sni` clones the real ClientHello, changes its host name, and tries to
+  keep the decoy away from the server with TTL or a random sequence. It can work
+  on one ClientHello segment and injects no connection-state controls.
+- `smuggle-sni` captures up to 16 segments and sends the real originals through
+  a helper branch while a generated hello uses the normal branch after a delay.
+  SynFIN accepts exactly one held segment plus its immediate contiguous
+  completion, uses no helper branch, and emits all views back to back.
+- `overlap-sni` uses the same two-segment selection and real-Y/fake-X overlap,
+  but it injects only a fake `SYN`, fixes the overlap length at `G`, and schedules
+  X and real tails with delays. SynFIN adds a preceding `FIN|ACK`/`RST|ACK`, can
+  enlarge the overlap with filler, offers checksum and sequence controls, and
+  has no post-transcript delay window.
+- `ech-sni-trick` sends an out-of-order, byte-identical copy of a decoy already
+  embedded by `TlsClient`; it creates no conflicting TCP bytes or control
+  packets. `sni-blender` fragments and shuffles the real packet at IPv4 rather
+  than replacing TCP segmentation or generating another ClientHello.
+
+#### Limitations and side effects
+
+- Only whole, non-fragmented IPv4 TCP packets are eligible. IPv6, IPv4 fragments,
+  and TCP Fast Open SYN data pass unchanged.
+- The trick works only when the ClientHello begins on the third upstream packet
+  and is incomplete there but parseable after exactly one contiguous data
+  segment. A one-segment ClientHello is deliberately not transformed.
+- The generated ClientHello uses the internal `TlsClient` fingerprint and
+  default ALPN list rather than the client's fingerprint. Its SNI must be 1 to
+  255 bytes, and the generated record, the real record's extension order, and
+  real SNI offset must satisfy the `G`, `R`, and `O` constraints above.
+- The original two packet boundaries and the completing packet's IPv4
+  identification are discarded. Rebuilt large TCP packets may be segmented by
+  final egress to respect `GLOBAL_MTU_SIZE`, further changing the nominal five-
+  to-seven-packet transcript.
+- Valid close or SYN packets on an established connection are protocol-invasive
+  and can be normalized, challenged, rate-limited, or treated as an attack by
+  hosts, firewalls, NATs, load balancers, SYN proxies, and intrusion systems.
+- The bounded flow table uses `stateful-flow-limit` and requires flow affinity.
+  Admission pressure fails open; active holds retain packet memory until paired,
+  timed out, closed upstream, replaced, or destroyed.
+- A normal top-level `next` is required. The trick cannot share one
+  `IpManipulator` with another stateful SNI trick, `sni-blender`,
+  `packet-duplicate`, or an upstream TCP-bit action. Put compatible later packet
+  shaping in another node and account for its effect on TTL, checksums, tuple,
+  segmentation, and packet order.
+
 ### smuggle-fin
 
-This trick is upstream-only and only applies to whole IPv4 TCP packets that already carry ACK and transport payload.
+`smuggle-fin` is a two-branch ordering trick. It holds an ordinary data packet
+on the normal path, sends a plausible reverse-direction `FIN|ACK` through a
+separate helper path, and waits for an exact copy of that FIN to return on the
+downstream path. The intent is to let a stateful device on the helper path see a
+connection-closing signal before the original data is released. Whether that
+changes classification or connection state depends on the topology and the
+device; the trick does not guarantee that any middlebox will echo, accept, or
+act on the FIN.
 
-Behavior:
+Despite the name `fin-sni-delay-ms`, this trick does not parse TLS, a
+ClientHello, or SNI. It can trigger on any whole, non-fragmented IPv4 TCP packet
+that has `ACK`, has at least one byte of TCP payload, and has none of `SYN`,
+`FIN`, or `RST`. Flags such as `PSH`, `ECE`, `CWR`, and `URG` do not disqualify
+an otherwise eligible packet. IPv6, IPv4 fragments, non-TCP packets, ACK-only
+packets, and TCP Fast Open SYN data pass without starting this trick.
 
-- clone the original IPv4 and TCP headers into a header-only packet
-- swap the copied packet's source and destination IPv4 addresses
-- swap the copied packet's TCP source and destination ports
-- turn the copied packet into a pure `FIN|ACK` packet with no transport payload
-- mirror the TCP sequence and acknowledgement numbers from the original packet so the crafted packet looks like the reverse direction
-- send the crafted packet immediately through `real-fin-upstream-node`
-- pause the flow on its owner worker inside `IpManipulator`
-- queue later upstream and downstream packets on that owner worker instead of forwarding them immediately, including matching reverse packets that arrive on another worker
-- ignore the first downstream packet that exactly matches the crafted `FIN|ACK`
-- wait `fin-sni-delay-ms`
-- replay the queued packets in arrival order through the normal pipeline
-- preserve each queued packet's checksum-recalculation intent independently
-- keep the remembered flow in the internal table after that success so the expected echoed `FIN|ACK` is not treated as a real connection-closing FIN event for this trick
+#### Trigger packet and mirrored FIN
 
-Upstream replay restarts at the upstream entry because `smuggle-fin` is the
-first upstream stage. Downstream replay resumes immediately after
-`smuggle-fin`, because protocol and port-ghost restoration already ran before
-the packet was queued and must not run twice.
+Let the triggering packet be:
 
-Packets without TCP payload, packets that are already `SYN`, `FIN`, or `RST`, and non-TCP or fragmented IPv4 packets are left alone.
+```text
+client A:a -> server B:b
+SEQ = S, ACK = K, payload length = L
+```
+
+`IpManipulator` first retains that complete packet instead of forwarding it on
+the normal `next` branch. It then copies the packet's IPv4 and TCP headers,
+removes all TCP payload, swaps both IP addresses and both TCP ports, and emits:
+
+```text
+server B:b -> client A:a
+SEQ = K, ACK = S + L, flags = FIN|ACK, payload length = 0
+```
+
+Sequence arithmetic is TCP's 32-bit sequence arithmetic. The trigger cannot
+contain `SYN` or `FIN`, so only its payload length advances the acknowledgement.
+The copied header retains such fields as the trigger's IPv4 identification and
+TTL and its TCP header length, options, and window. IPv4 total length is reduced
+to the header-only length, the flags and sequence fields are replaced as shown,
+and valid IPv4/TCP checksums are requested for egress. No setting changes the
+FIN's TTL, flags, sequence numbers, or acknowledgement number.
+
+The reverse numbers are chosen to look plausible for the same live connection:
+`K` is the next server sequence the client said it expected, while `S + L`
+acknowledges all bytes in the held client packet. The client itself sent only
+the original data packet; it did not send this FIN. If the helper path actually
+delivers the spoofed reverse packet to the client and the client's TCP stack
+accepts it as in-window, the FIN can half-close the receive direction, advance
+the expected server sequence by one, provoke an ACK, or otherwise disrupt the
+connection. That endpoint effect is possible, not required by the trick.
+
+The crafted packet is sent immediately through `real-fin-upstream-node`. It
+does not traverse this node's upstream TCP-bit, stateful-SNI, SNI Blender, packet
+duplication, or port-ghost stages. Protocol swap and final checksum handling can
+still apply. The original data packet remains queued for the normal path and,
+when released, continues through those later configured stages in their usual
+order.
+
+#### Echo recognition and release timing
+
+For echo-confirmed release, the helper topology must return the crafted FIN as
+a downstream packet through this `IpManipulator`. After downstream protocol and
+port-ghost restoration, a packet matches only when all of these are true:
+
+- it is a whole, non-fragmented IPv4 TCP packet in direction `B:b -> A:a`
+- it has zero TCP payload
+- its sequence is exactly `K` and its acknowledgement is exactly `S + L`
+- after ignoring only `ECE` and `CWR`, its flags are exactly `FIN|ACK`
+
+IPv4 identification, TTL, TCP window, and TCP options are not compared. A
+normal TCP response to a FIN is normally an `ACK` with different direction and
+sequence semantics, so it is not the required echo. Any additional flag other
+than `ECE` or `CWR` also prevents a match.
+
+The first exact echo is consumed and never forwarded toward the client. Exact
+duplicates received while release is pending are consumed too. On the first
+match, `fin-sni-delay-ms` schedules release of the queue. The hard
+`fin-pause-timeout-ms` timer started when the trigger was captured remains
+active, however, so the effective sequence is:
+
+```text
+t0: trigger is queued; hard timeout starts; mirrored FIN is sent
+te: exact echoed FIN is consumed, if one arrives
+release: earlier of (te + fin-sni-delay-ms) and
+         (t0 + fin-pause-timeout-ms)
+```
+
+Consequently, the pause timeout must exceed the expected helper round trip plus
+the desired post-echo delay if the full delay is important. A delay of `0`
+releases immediately on the owner worker. If no echo arrives, the hard timeout
+still releases the flow. Failure to arm the initial hard timer releases the
+queued trigger immediately before the helper FIN is sent; failure to arrange a
+cross-worker post-echo release leaves the original hard timer as the fallback.
+Timer callbacks are tied to the exact pause generation, so a stale callback
+cannot release a newer use of the same tuple. Once release has completed, a
+later packet matching the old FIN is ordinary downstream traffic and is no
+longer consumed by Smuggle-FIN.
+
+#### What is queued and how it is replayed
+
+While the pause is active in the normal packet-chain orientation, every
+parseable upstream packet on the forward tuple and every parseable downstream
+packet on its reverse tuple is held, regardless of flags or payload. This
+includes retransmitted data, ACKs, later application data, and real `FIN` or
+`RST` packets. The trigger is the first queue entry; the exact synthetic-FIN
+echo is the exception because it is consumed as the release signal. Unparseable
+or fragmented packets bypass the queue and can therefore overtake held traffic.
+Unrelated flows are never held behind this flow.
+
+The queue holds at most 256 packets and has no separate byte limit. If a 257th
+packet arrives, or the queue cannot grow, the existing batch is forcibly
+released in queue order, the current packet follows normally, and the flow is
+marked confirmed so it is not paused again. Timeout and other forced-release
+paths have the same no-retry behavior.
+
+One flow-owner worker maintains the queue. Reverse packets received on another
+worker are copied to the owner worker before being queued. Replay order is the
+order in which the owner worker accepted the entries, which need not equal a
+single global wire-arrival order when multiple workers are involved. If a
+cross-worker handoff cannot be created or submitted, that reverse packet passes
+on its current worker while the pause remains active, so it can overtake the
+queue. Only one flow may be paused by `smuggle-fin` on each worker at a time; a
+new eligible packet for another flow on that worker passes normally.
+
+Each queue entry remembers whether its checksum needed recalculation. On
+release, entries are replayed one at a time in the saved mixed-direction order:
+
+- upstream packets restart at the beginning of the upstream
+  `IpManipulator` pipeline; the now-confirmed Smuggle-FIN record prevents
+  reinjection, and later upstream tricks and normal egress run once
+- downstream packets resume immediately after `smuggle-fin`, because protocol
+  and port-ghost restoration already ran before they were queued; later
+  downstream stages run once
+
+Smuggle-FIN does not split, overlap, rewrite, or reorder bytes within the
+original TCP packets. Its deliberate ordering change is temporal: the synthetic
+reverse FIN leaves before the held original data, and unrelated or bypassed
+traffic may pass during the pause. Holding both directions can add latency and
+can trigger retransmission timers, delayed-ACK behavior, congestion-window or
+receive-window changes, and application-visible stalls.
+
+#### Expected views and why the trick may work
+
+- **Client:** sends its original data normally and sees none of WaterWall's
+  queueing directly. It may receive the spoofed FIN if the helper path routes it
+  there; accepting that FIN can disturb or close the connection as described
+  above. It can retransmit held data when the pause approaches its RTO.
+- **Helper-path middlebox:** can see a server-to-client `FIN|ACK` with sequence
+  and acknowledgement values derived from current client data before that data
+  appears on the normal branch. A device that accepts this packet for its flow
+  state may mark one direction closed, discard later packets, change its parser
+  state, or produce the exact downstream echo used by WaterWall. Stateless
+  devices and devices that validate a different path, window, checksum, or flow
+  history may simply ignore it.
+- **Destination server:** is normally intended to receive the original client
+  data later through `next`, unchanged by Smuggle-FIN itself. The synthetic
+  packet has the reverse tuple and uses the helper branch, but routing and branch
+  design ultimately determine whether it reaches a real endpoint or server-side
+  observer.
+
+The technique therefore relies on a path-specific difference: an intermediate
+device must treat the early plausible FIN as meaningful while the actual
+end-to-end connection remains usable long enough for the delayed original data
+to succeed. TCP normalization, asymmetric routing, NAT state, SYN/FIN proxies,
+sequence-window validation, anti-spoofing, checksum offload or validation, and
+endpoint behavior can invalidate that assumption.
+
+#### Flow lifetime, interactions, and limitations
+
+After an exact echo or any forced release, the normalized four-tuple remains
+confirmed and bypasses further Smuggle-FIN injection. Activity keeps a confirmed
+record for up to 20 minutes of idle time. A same-orientation `SYN`, `FIN`, or
+`RST` does not explicitly reset that record, so rapid reuse of exactly the same
+tuple can continue to bypass the trick until it expires. In unusual chains where
+an eligible reverse-oriented data packet is delivered through the upstream
+callback, the sole canonical record can be reoriented; an active old queue is
+then discarded rather than replayed.
+
+Because the exact echo is identified only by tuple, flags, payload length,
+sequence, and acknowledgement, a legitimate server `FIN|ACK` that happens to
+match all those fields is indistinguishable and will be consumed. Conversely,
+minor helper changes to sequence numbers or flags prevent confirmation and make
+the flow wait for the hard timeout. Tunnel shutdown disposes of retained packets
+rather than forwarding them during teardown.
+
+`stateful-flow-limit` bounds the Smuggle-FIN table independently of the other
+stateful tables. Admission pressure fails open, leaving the candidate packet on
+the normal path without sending a mirrored FIN. The helper branch and normal
+`next` must be distinct and must preserve a topology in which an exact echo can
+return downstream. Flow-affinity changes are tolerated specially for reverse
+packets through owner-worker handoff, but introduce the ordering qualifications
+above.
+
+Unlike the TLS/SNI tricks, `smuggle-fin` neither locates nor changes a
+ClientHello. Unlike `smuggle-sni`, it sends a newly constructed header-only FIN
+through the helper branch and withholds the original data; `smuggle-sni` sends
+captured real ClientHello packets through its helper. Unlike `synfin-sni`, it
+does not generate a TLS record, fake `SYN`, same-direction close, or overlapping
+TCP sequence ranges. Unlike packet duplication, its helper packet has the
+reverse tuple, different flags and sequence fields, no payload, and a different
+release schedule.
+
+It may be configured alongside a stateful SNI trick, SNI Blender, TCP-bit
+rewrites, port ghost, protocol swap, or packet duplication when their own
+compatibility rules permit it. This does not mean the stages operate on the
+synthetic FIN: the helper FIN follows the bypass path described above, whereas
+the released original packets enter the ordinary pipeline. The added pause and
+replay timing can still change how those later stateful tricks classify a flow.
+Final MTU shaping may segment a released oversized TCP data packet even though
+Smuggle-FIN itself did not split it.
 
 ### TCP flag rewriting
 
@@ -1481,11 +2251,13 @@ If `preserve-tcp-bitflags` is enabled:
 Every stateful trick keeps its records in its own bounded, sharded flow table:
 
 Retained packets are pinned to the worker that opened their capture, delay
-barrier, or held-packet group. A same-tuple packet arriving on another worker
-makes that trick fail open for the flow; it is forwarded normally on its own
-worker. This is relevant only when an upstream producer does not preserve the
-shared flow affinity. `StreamToPackets` does preserve it by re-affinitizing each
-decoded packet from its inner tuple before forwarding it.
+barrier, or held-packet group. Most stateful SNI holds fail open when a needed
+same-tuple packet arrives on another worker. Smuggle-FIN is the exception for
+reverse traffic during its pause: it copies that packet to the flow-owner worker
+and queues it there, subject to the ordering and handoff limitations in the
+dedicated section. This distinction matters only when an upstream producer does
+not preserve shared flow affinity. `StreamToPackets` does preserve it by
+re-affinitizing each decoded packet from its inner tuple before forwarding it.
 
 - the canonical key normalizes the two endpoints, so a forward packet and its
   reverse select the same hash, the same shard and the same record
@@ -1524,9 +2296,9 @@ bytes are flushed immediately and in order instead of being stranded.
 `smuggle-fin` additionally keeps a per-worker paused-flow registry holding one
 tuple plus pause generation, so the rule that a worker does not start a second
 pause while it already owns one no longer requires a full-table scan. The
-registry is only written by the flow-owner worker and is validated against the
-table before use, so a cross-worker release simply leaves an entry that the
-owner worker clears on its next packet.
+registry is written and cleared by the flow-owner worker and is validated
+against the table before use. Exact echoes and reverse packets may arrive on
+another worker, but release and queue replay are returned to the owner.
 
 ### Port ghost tailing
 
@@ -1563,12 +2335,18 @@ When `source-port-ghost` and/or `dest-port-ghost` are enabled:
   remain `kNodeLayerAnything` for flexible packet-chain composition.
 - Only IPv4 packets are modified by the current implementation.
 - `first-sni` is upstream-only, rewrites the first TLS host-name entry in the crafted copy, and immediately fails open on traffic without a recognizable ClientHello start.
-- `smuggle-sni` is upstream-only and sends the real matching ClientHello immediately to `real-sni-upstream-node`, then delays the crafted `smuggle-sni` copy to the normal `next` branch.
+- `smuggle-sni` sends captured real ClientHello segments to
+  `real-sni-upstream-node`, emits an equal-length generated ClientHello on the
+  normal `next` branch after `smuggle-sni-delay-ms`, and holds later upstream
+  traffic behind its separate ordering deadline.
 - `overlap-sni` needs the flow's opening `SYN` and an incomplete first
   ClientHello segment; anything else passes through. When the real host name
   begins before the generated hello ends, it blocks the flow on purpose and
   drops its later upstream packets instead of failing open.
-- `smuggle-fin` is upstream-only and injects a crafted mirrored FIN/ACK packet to `real-fin-upstream-node`, then temporarily queues later packets on the flow-owner worker until the expected downstream echo is seen and the optional `fin-sni-delay-ms` window expires.
+- `smuggle-fin` starts upstream and injects a crafted mirrored FIN/ACK packet to
+  `real-fin-upstream-node`, then queues both flow directions on the owner worker
+  until the expected downstream echo plus optional `fin-sni-delay-ms` completes
+  or the hard `fin-pause-timeout-ms` releases them.
 - `sni-blender` is upstream-only. The downstream half of that trick is currently a no-op.
 - `ech-sni-trick` capture is sequence aware rather than ordinal based, is bounded to 16 packets and a 16384-byte TLS record, ignores ACK-only packets, and fails open on timeout, gaps, limits and any inner-SNI mismatch.
 - More than one stateful SNI trick, or a stateful SNI trick with same-instance
