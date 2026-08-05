@@ -1,5 +1,5 @@
 <!--
-Documentation version: 122
+Documentation version: 123
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpManipulator.mdx, and both files must keep the same documentation version.
 -->
 
@@ -747,8 +747,9 @@ Every stateful trick keeps its records in its own bounded, sharded flow table:
 Retained packets are pinned to the worker that opened their capture, delay
 barrier, or held-packet group. A same-tuple packet arriving on another worker
 makes that trick fail open for the flow; it is forwarded normally on its own
-worker. This is relevant when a non-flow-affine producer such as
-`StreamToPackets` precedes IpManipulator.
+worker. This is relevant only when an upstream producer does not preserve the
+shared flow affinity. `StreamToPackets` does preserve it by re-affinitizing each
+decoded packet from its inner tuple before forwarding it.
 
 - the canonical key normalizes the two endpoints, so a forward packet and its
   reverse select the same hash, the same shard and the same record
