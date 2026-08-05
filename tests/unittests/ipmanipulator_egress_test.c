@@ -33,8 +33,8 @@ typedef struct test_env_s
 
 static sbuf_t   *captured[kCapturedPackets];
 static uint32_t  captured_count;
-static tunnel_t *init_targets[4];
-static uint32_t  init_counts[4];
+static tunnel_t *init_targets[3];
+static uint32_t  init_counts[3];
 
 sbuf_t *tlsclientTunnelGenerateClientHello(tunnel_t *instance, line_t *caller_line, const uint8_t *hostname,
                                            uint32_t hostname_length);
@@ -879,12 +879,11 @@ static void countInit(tunnel_t *t, line_t *l)
     require(false, "unexpected Init target");
 }
 
-static void resetInitCounters(tunnel_t *normal, tunnel_t *helper1, tunnel_t *helper2, tunnel_t *helper3)
+static void resetInitCounters(tunnel_t *normal, tunnel_t *helper1, tunnel_t *helper2)
 {
     init_targets[0] = normal;
     init_targets[1] = helper1;
     init_targets[2] = helper2;
-    init_targets[3] = helper3;
     memoryZero(init_counts, sizeof(init_counts));
 }
 
@@ -893,37 +892,28 @@ static void testHelperInitDeduplication(test_env_t *env)
     tunnel_t  normal              = {.fnInitU = countInit};
     tunnel_t  helper1             = {.fnInitU = countInit};
     tunnel_t  helper2             = {.fnInitU = countInit};
-    tunnel_t  helper3             = {.fnInitU = countInit};
     tunnel_t *t                   = createTestTunnel();
     t->next                       = &normal;
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
-    resetInitCounters(&normal, &helper1, &helper2, &helper3);
-    state->trick_overlap_sni_server_hello_upstream_tunnel = &helper3;
+    resetInitCounters(&normal, &helper1, &helper2);
+    state->trick_real_sni_upstream_tunnel = &helper1;
+    state->trick_real_fin_upstream_tunnel = &helper2;
     ipmanipulatorUpStreamInit(t, env->line);
-    require(init_counts[0] == 1 && init_counts[3] == 1, "overlap-only helper Init count is wrong");
-
-    resetInitCounters(&normal, &helper1, &helper2, &helper3);
-    state->trick_real_sni_upstream_tunnel                 = &helper1;
-    state->trick_real_fin_upstream_tunnel                 = &helper2;
-    state->trick_overlap_sni_server_hello_upstream_tunnel = &helper3;
-    ipmanipulatorUpStreamInit(t, env->line);
-    require(init_counts[0] == 1 && init_counts[1] == 1 && init_counts[2] == 1 && init_counts[3] == 1,
+    require(init_counts[0] == 1 && init_counts[1] == 1 && init_counts[2] == 1,
             "distinct helper branches were not initialized once each");
 
-    resetInitCounters(&normal, &helper1, &helper2, &helper3);
-    state->trick_real_sni_upstream_tunnel                 = &helper1;
-    state->trick_real_fin_upstream_tunnel                 = NULL;
-    state->trick_overlap_sni_server_hello_upstream_tunnel = &helper1;
+    resetInitCounters(&normal, &helper1, &helper2);
+    state->trick_real_sni_upstream_tunnel = &helper1;
+    state->trick_real_fin_upstream_tunnel = &helper1;
     ipmanipulatorUpStreamInit(t, env->line);
     require(init_counts[0] == 1 && init_counts[1] == 1, "aliased helper branch received duplicate Init");
 
-    resetInitCounters(&normal, &helper1, &helper2, &helper3);
-    state->trick_real_sni_upstream_tunnel                 = NULL;
-    state->trick_real_fin_upstream_tunnel                 = NULL;
-    state->trick_overlap_sni_server_hello_upstream_tunnel = NULL;
+    resetInitCounters(&normal, &helper1, &helper2);
+    state->trick_real_sni_upstream_tunnel = NULL;
+    state->trick_real_fin_upstream_tunnel = NULL;
     ipmanipulatorUpStreamInit(t, env->line);
-    require(init_counts[0] == 1 && init_counts[1] == 0 && init_counts[2] == 0 && init_counts[3] == 0,
+    require(init_counts[0] == 1 && init_counts[1] == 0 && init_counts[2] == 0,
             "empty helper configuration initialized a helper");
 
     destroyTestTunnel(t);

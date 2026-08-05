@@ -470,6 +470,15 @@ static void testSniHoldTimeoutValidation(void)
     }
 }
 
+static void testOverlapSniStandaloneConfiguration(void)
+{
+    cJSON *settings = cJSON_CreateObject();
+    require(settings != NULL && cJSON_AddStringToObject(settings, "overlap-sni", "cover.test") != NULL,
+            "failed to build standalone overlap-sni fixture");
+    require(createSucceeds(settings, "ipm-overlap-standalone"),
+            "overlap-sni unexpectedly requires an auxiliary branch");
+}
+
 static void testNodeLayerMetadata(void)
 {
     node_t          node  = nodeIpManipulatorGet();
@@ -512,6 +521,7 @@ int main(void)
     testCreateRejectsIncompatibleCombinations();
     testSniBlenderPacketRange();
     testSniHoldTimeoutValidation();
+    testOverlapSniStandaloneConfiguration();
     testNodeLayerMetadata();
 
     globalstateDestroySecureRandom();

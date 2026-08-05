@@ -1558,7 +1558,6 @@ if(TARGET IpManipulator)
     ipmanipulator_overlap_hold_test.c
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/flow_table.c
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/helpers.c
-    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/overlapsni/crafted_server_hello_bytes.c
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/overlapsni/trick.c
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/portghost/trick.c
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common/tricks/protoswap/trick.c
