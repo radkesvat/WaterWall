@@ -284,9 +284,29 @@ static void idlePostedCloseMessageCleanup(void *arg1, void *arg2, void *arg3)
     memoryFree(item);
 }
 
+/**
+ * @brief Drain active idle items owned by one worker.
+ *
+ * Must run on worker @p wid, because the expiration callbacks it invokes touch that worker's
+ * line pools.
+ *
+ * Items that a posted expiration message already owns (worker_message_pending) are only detached
+ * here, never called back and never freed: that message frees them. Doing anything else to such an
+ * item after the mutex is released would race with the free on the message side.
+ */
 void idletableDrainWorkerItems(idle_table_t *self, wid_t wid)
 {
     assert(self != NULL);
+
+    // The expiration callbacks below run inline on the caller and reach into worker wid's line
+    // pools, so draining from any other thread corrupts them.
+    if (UNLIKELY(! currentThreadIsEventWorkerWID(wid)))
+    {
+        LOGF("IdleTable: drain of worker %d items was called on worker %d", workerWIDForLog(wid),
+             workerWIDForLog(getWID()));
+        abortProgramNow(1);
+        return;
+    }
 
     mutexLock(&(self->mutex));
 
@@ -322,6 +342,13 @@ void idletableDrainWorkerItems(idle_table_t *self, wid_t wid)
     {
         idle_item_t *item = items[i].item;
         idletableEraseItemFromMapLocked(self, item);
+
+        if (items[i].worker_message_pending)
+        {
+            // Hand the item over to the posted message while still holding the mutex, exactly like
+            // idletableRemoveIdleItemByHash does. After the unlock this pointer is not ours to touch.
+            idleItemSetTable(item, NULL);
+        }
     }
 
     heapq_idles_t kept = heapq_idles_t_with_capacity(heapq_idles_t_size(&(self->hqueue)));
@@ -343,19 +370,21 @@ void idletableDrainWorkerItems(idle_table_t *self, wid_t wid)
 
     for (size_t i = 0; i < items_count; ++i)
     {
+        if (items[i].worker_message_pending)
+        {
+            // Detached above and owned by the posted message. Its expiration callback is skipped for
+            // the same reason a removed item's is: removal is not expiration.
+            continue;
+        }
+
+        // Erased from the map and lifted out of the heap under the mutex, and not pending, so this
+        // item is unreachable from every other path and we are its only owner.
         idle_item_t *item = items[i].item;
         if (item->cb != NULL)
         {
             item->cb(item);
         }
-        if (! items[i].worker_message_pending)
-        {
-            memoryFree(item);
-        }
-        else
-        {
-            idleItemSetTable(item, NULL);
-        }
+        memoryFree(item);
     }
 
     memoryFree(items);
@@ -382,7 +411,9 @@ static void beforeCloseWorkerMessage(void *worker_arg, void *arg1, void *arg2, v
         return;
     }
 
-    idleItemSetWorkerMessagePending(item, false);
+    // worker_message_pending stays set for as long as this message holds the item. It is what tells
+    // every table path that the memory is ours, so none of them frees it underneath us. It is cleared
+    // only under the mutex, at the moment the item is handed back to the heap.
     bool removed = idleItemIsRemoved(item);
 
     if (removed)
@@ -397,6 +428,7 @@ static void beforeCloseWorkerMessage(void *worker_arg, void *arg1, void *arg2, v
         mutexLock(&(table->mutex));
         if (! idleItemIsRemoved(item) && idleItemGetTable(item) == table)
         {
+            idleItemSetWorkerMessagePending(item, false);
             heapq_idles_t_push(&(table->hqueue), item);
         }
         else
@@ -427,6 +459,7 @@ static void beforeCloseWorkerMessage(void *worker_arg, void *arg1, void *arg2, v
     removed = idleItemIsRemoved(item) || idleItemGetTable(item) != table;
     if (! removed && keep_alive)
     {
+        idleItemSetWorkerMessagePending(item, false);
         heapq_idles_t_push(&(table->hqueue), item);
     }
     else if (! removed)

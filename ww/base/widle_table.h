@@ -105,6 +105,10 @@ void idletableKeepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint
  *
  * Invokes each item's expiration callback and releases the idle item. This is
  * intended for worker shutdown, before that worker's line pools are destroyed.
+ * Must be called on worker @p wid, since the callbacks run inline on the caller.
+ *
+ * Items whose expiration message is already posted are detached and left to that
+ * message, so their callback is not invoked here.
  *
  * @param self Pointer to the idle table.
  * @param wid Worker ID whose active items should be drained.
