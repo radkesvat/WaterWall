@@ -1,5 +1,5 @@
 <!--
-Documentation version: 109
+Documentation version: 110
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HttpClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -238,13 +238,6 @@ support can change.
   Current limitation:
   `HttpClient` does not implement WebSocket extensions internally. If the peer negotiates any extension in the handshake response, the connection is rejected.
 
-- `full-duplex` `(boolean)`
-  Optional config-symmetry flag for HTTP transport mode.
-  Default: `false`
-
-  Current implementation note:
-  `HttpClient` already keeps the HTTP/1.1 request body open with chunked transfer encoding until Waterwall upstream `Finish`, so request and response bodies can stream at the same time without extra client-side state changes. The matching `HttpServer` option controls whether request-end is reflected into Waterwall `Finish`.
-
 - `http1-mode` `(string)`
   Selects the HTTP/1.1 transport shape.
 
@@ -253,6 +246,8 @@ support can change.
   - `"split"`: two HTTP/1.1 connections, one upload request and one download request
 
   Default: `"single"`
+
+  `HttpClient` and `HttpServer` are always full duplex in single mode. Waterwall `Finish` is a full teardown with no half-close, so an HTTP request or response body ending never closes the tunnel line on its own. `http1-mode = "split"` is the only shape where a body end propagates: the upload half is a separate connection, and its end is the in-band signal that the peer stopped sending.
 
 - `split` `(object)`
   Optional settings for `http1-mode = "split"`.
@@ -369,6 +364,10 @@ That means:
 - each upstream payload buffer becomes one or more chunked body pieces
 - upstream `Finish` sends the final `0\r\n\r\n` chunk
 - response body bytes may arrive before that final chunk, so HTTP/1.1 request and response bodies can stream concurrently on the same connection
+
+Completing a framed response body is recorded internally. The Waterwall line remains open until the transport closes.
+
+If the remote HTTP peer keeps the transport open after completing the response, for example with HTTP keep-alive, the Waterwall line also remains open until the peer closes it or the downstream transport's configured idle timeout expires. The matching Waterwall `HttpServer` normally closes after its single tunneled response.
 
 For `http-version = both` plus `upgrade = true`:
 

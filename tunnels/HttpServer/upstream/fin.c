@@ -7,6 +7,11 @@ void httpserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     httpserver_lstate_t *ls = lineGetState(l, t);
     httpserver_tstate_t *ts = tunnelGetState(t);
 
+    /*
+     * A split main line begins at HttpServer and is driven downstream by next,
+     * so it cannot legitimately receive an upstream Finish. Transport halves
+     * do enter here and are handled by the split lifecycle owner below.
+     */
     if (ls->split_role == kHttpServerSplitRoleUnknown || ls->split_role == kHttpServerSplitRoleUpload ||
         ls->split_role == kHttpServerSplitRoleDownload)
     {
@@ -18,9 +23,11 @@ void httpserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     if (ls->next_finished)
     {
-        // Re-entrant upstream Finish: our own downStreamFinish is currently flushing the
-        // final response bytes toward prev and has already finished next. That frame owns
-        // the line-state destruction, and next must not receive another Finish.
+        /*
+         * In single mode next_finished is set only by downStreamFinish or by
+         * httpserverTransportCloseDirections. Both paths own state destruction;
+         * this is the re-entrant upstream Finish they can trigger while flushing.
+         */
         ls->prev_finished = true;
         lineUnlock(l);
         return;

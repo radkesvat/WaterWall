@@ -115,6 +115,18 @@ void httpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    if (ls->runtime_proto == kHttpServerRuntimeHttp1 && ls->h1_request_finished)
+    {
+        if (ts->verbose && ! ls->h1_trailing_bytes_logged)
+        {
+            LOGD("HttpServer: ignoring bytes after the HTTP/1.1 request body");
+            ls->h1_trailing_bytes_logged = true;
+        }
+        lineReuseBuffer(l, buf);
+        lineUnlock(l);
+        return;
+    }
+
     bufferstreamPush(&ls->in_stream, buf);
 
     if (! httpserverTransportDetectRuntimeProtocol(t, l, ls))

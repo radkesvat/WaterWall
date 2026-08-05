@@ -386,8 +386,8 @@ Practical rule:
 - `halfduplex_roundtrip`
   Verifies that `HalfDuplexClient` and `HalfDuplexServer` split and reconstruct one logical line correctly.
 - `http1_bidirectional_roundtrip`
-  Verifies that `HttpClient(http1)` and `HttpServer(http1, full-duplex=true)` can stream request and response bodies at
-  the same time when chained directly.
+  Verifies that single-mode `HttpClient(http1)` and `HttpServer(http1)` can stream request and response bodies at the
+  same time when chained directly.
 - `http1_bidirectional_tcp_loopback`
   Verifies the same HTTP/1.1 bidirectional body-streaming behavior across a real TCP loopback transport.
 - `http1_split_roundtrip`
@@ -524,7 +524,7 @@ For tunnels that are meant to prove real bidirectional overlap, the test harness
 - `TesterServer.settings.streaming-response=true`
 
 Those options let response bytes arrive before the client has finished sending the full request sequence, which is
-important for validating full-duplex transports such as the HTTP cases above.
+important for validating bidirectional transports such as the HTTP cases above.
 
 ## Running locally
 

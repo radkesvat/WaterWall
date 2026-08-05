@@ -20,7 +20,6 @@
         "method": "POST",
         "http-version": "both",
         "upgrade": true,
-        "full-duplex": true,
         "upgrade-request-headers": {
           "x-h2c-upgrade": "client-probe"
         },
@@ -40,7 +39,6 @@
         "path": "/ww/upgrade",
         "method": "POST",
         "status": 200,
-        "full-duplex": true,
         "upgrade-request-headers": {
           "x-h2c-upgrade": "client-probe"
         },

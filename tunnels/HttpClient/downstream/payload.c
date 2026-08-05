@@ -23,6 +23,18 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     lineLock(l);
 
+    if (ls->runtime_proto == kHttpClientRuntimeHttp1 && ls->response_complete)
+    {
+        if (ts->verbose && ! ls->h1_trailing_bytes_logged)
+        {
+            LOGD("HttpClient: ignoring bytes after the HTTP/1.1 response body");
+            ls->h1_trailing_bytes_logged = true;
+        }
+        lineReuseBuffer(l, buf);
+        lineUnlock(l);
+        return;
+    }
+
     if (ls->runtime_proto == kHttpClientRuntimeHttp2)
     {
         if (! httpclientTransportFeedHttp2Input(t, l, ls, buf))
@@ -31,13 +43,6 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             lineUnlock(l);
             return;
         }
-        if (ls->response_complete && ! ls->prev_finished)
-        {
-            httpclientTransportCloseBothDirections(t, l, ls);
-            lineUnlock(l);
-            return;
-        }
-
         if (ts->websocket_enabled && ls->websocket_active && ls->websocket_close_received)
         {
             httpclientTransportCloseBothDirections(t, l, ls);
@@ -96,13 +101,6 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (ls->response_complete && ! ls->prev_finished)
-    {
-        httpclientTransportCloseBothDirections(t, l, ls);
-        lineUnlock(l);
-        return;
-    }
-
     if (ls->runtime_proto == kHttpClientRuntimeHttp2)
     {
         while (! bufferstreamIsEmpty(&ls->in_stream))
@@ -117,13 +115,6 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
             if (! lineIsAlive(l))
             {
-                lineUnlock(l);
-                return;
-            }
-
-            if (ls->response_complete && ! ls->prev_finished)
-            {
-                httpclientTransportCloseBothDirections(t, l, ls);
                 lineUnlock(l);
                 return;
             }
@@ -149,12 +140,10 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (ls->response_complete && ! ls->prev_finished)
-    {
-        httpclientTransportCloseBothDirections(t, l, ls);
-        lineUnlock(l);
-        return;
-    }
+    /*
+     * response_complete is an HTTP framing boundary, not a Waterwall half-close.
+     * Keep the line open until the transport delivers downstream Finish.
+     */
 
     if (ts->websocket_enabled && ls->websocket_active && ls->websocket_close_received)
     {

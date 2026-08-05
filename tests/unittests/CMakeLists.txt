@@ -1810,6 +1810,22 @@ function(waterwall_line_failure_test_use_tunnel test_target tunnel_target)
 endfunction()
 
 if(TARGET HttpClient)
+  add_executable(httpclient_chunked_terminator_test
+    httpclient_chunked_terminator_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(httpclient_chunked_terminator_test HttpClient)
+  target_link_options(httpclient_chunked_terminator_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(httpclient_chunked_terminator_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests httpclient_chunked_terminator_test)
+
+  add_waterwall_unit_test(
+    waterwall.httpclient_chunked_terminator_unit
+    httpclient_chunked_terminator_test
+    "unit;tunnels;httpclient;chunked;framing"
+  )
+  set_tests_properties(waterwall.httpclient_chunked_terminator_unit PROPERTIES TIMEOUT 30)
+
   add_executable(httpclient_reentrant_finish_test
     httpclient_reentrant_finish_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES}
@@ -1830,6 +1846,22 @@ if(TARGET HttpClient)
 endif()
 
 if(TARGET HttpServer)
+  add_executable(httpserver_chunked_terminator_test
+    httpserver_chunked_terminator_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(httpserver_chunked_terminator_test HttpServer)
+  target_link_options(httpserver_chunked_terminator_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(httpserver_chunked_terminator_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests httpserver_chunked_terminator_test)
+
+  add_waterwall_unit_test(
+    waterwall.httpserver_chunked_terminator_unit
+    httpserver_chunked_terminator_test
+    "unit;tunnels;httpserver;chunked;framing"
+  )
+  set_tests_properties(waterwall.httpserver_chunked_terminator_unit PROPERTIES TIMEOUT 30)
+
   add_executable(httpserver_reentrant_finish_test
     httpserver_reentrant_finish_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES}

@@ -19,8 +19,7 @@
         "scheme": "http",
         "port": 23650,
         "method": "POST",
-        "http-version": "1.1",
-        "full-duplex": true
+        "http-version": "1.1"
       },
       "next": "tcp-connector"
     },
@@ -76,8 +75,7 @@
         "host": "api.route.example.test",
         "path": "/ww/sniffrouter",
         "method": "POST",
-        "status": 200,
-        "full-duplex": true
+        "status": 200
       },
       "next": "tester-server"
     },

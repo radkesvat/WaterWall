@@ -106,7 +106,7 @@ static bool parseHttp1TransportMode(httpserver_tstate_t *ts, const cJSON *settin
         return true;
     }
 
-    static const char *const single_aliases[] = {"single", "classic", "full-duplex", "legacy"};
+    static const char *const single_aliases[] = {"single", "classic", "legacy"};
     static const char *const split_aliases[]  = {"split", "half-duplex", "dual", "dual-connection"};
 
     if (stringAsciiCaseEqualsAny(mode->valuestring, single_aliases, ARRAY_SIZE(single_aliases)))
@@ -344,7 +344,6 @@ static void parseUpgradeMode(httpserver_tstate_t *ts, const cJSON *settings)
 static void parseWebSocketMode(httpserver_tstate_t *ts, const cJSON *settings)
 {
     getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
-    getBoolFromJsonObjectOrDefault(&ts->full_duplex, settings, "full-duplex", false);
     getBoolFromJsonObjectOrDefault(&ts->websocket_enabled, settings, "websocket", false);
 
     if (ts->websocket_enabled)

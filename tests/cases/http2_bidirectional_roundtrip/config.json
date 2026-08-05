@@ -18,8 +18,7 @@
         "scheme": "http",
         "port": 8443,
         "method": "POST",
-        "http-version": "2",
-        "full-duplex": true
+        "http-version": "2"
       },
       "next": "http-server"
     },
@@ -31,8 +30,7 @@
         "host": "[::1]",
         "path": "/ww/h2",
         "method": "POST",
-        "status": 200,
-        "full-duplex": true
+        "status": 200
       },
       "next": "tester-server"
     },

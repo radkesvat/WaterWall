@@ -18,8 +18,7 @@
         "scheme": "http",
         "port": 20750,
         "method": "POST",
-        "http-version": "2",
-        "full-duplex": true
+        "http-version": "2"
       },
       "next": "tcp-connector"
     },
@@ -51,8 +50,7 @@
         "host": "h2.example.test",
         "path": "/ww/h2",
         "method": "POST",
-        "status": 200,
-        "full-duplex": true
+        "status": 200
       },
       "next": "tester-server"
     },

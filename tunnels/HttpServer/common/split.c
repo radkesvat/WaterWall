@@ -587,10 +587,12 @@ static void splitCloseMain(tunnel_t *t, line_t *main_line, bool send_next_finish
     {
         return;
     }
-    httpserver_lstate_t *main_ls = lineGetState(main_line, t);
+    httpserver_lstate_t *main_ls          = lineGetState(main_line, t);
+    const bool           already_finished = main_ls->next_finished;
+
     splitDetachLine(t, main_line, main_ls);
     httpserverLinestateDestroy(main_ls);
-    if (send_next_finish)
+    if (send_next_finish && ! already_finished)
     {
         tunnelNextUpStreamFinish(t, main_line);
     }
@@ -902,6 +904,19 @@ void httpserverSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     httpserver_lstate_t *ls = lineGetState(l, t);
     lineLock(l);
+
+    if (ls->h1_request_finished)
+    {
+        httpserver_tstate_t *ts = tunnelGetState(t);
+        if (ts->verbose && ! ls->h1_trailing_bytes_logged)
+        {
+            LOGD("HttpServer: ignoring trailing bytes on a completed split HTTP/1.1 request");
+            ls->h1_trailing_bytes_logged = true;
+        }
+        lineReuseBuffer(l, buf);
+        lineUnlock(l);
+        return;
+    }
 
     bufferstreamPush(&ls->in_stream, buf);
 

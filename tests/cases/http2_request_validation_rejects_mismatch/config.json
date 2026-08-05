@@ -19,8 +19,7 @@
         "scheme": "http",
         "port": 80,
         "method": "GET",
-        "http-version": "2",
-        "full-duplex": true
+        "http-version": "2"
       },
       "next": "http-server"
     },
@@ -32,8 +31,7 @@
         "host": "expected-h2.example.test",
         "path": "/expected/h2",
         "method": "POST",
-        "status": 200,
-        "full-duplex": true
+        "status": 200
       },
       "next": "tester-server"
     },

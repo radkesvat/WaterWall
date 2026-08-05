@@ -526,6 +526,16 @@ static line_t *httpserverUpstreamTargetLine(httpserver_lstate_t *ls, line_t *fal
     return fallback;
 }
 
+/*
+ * Waterwall Finish is a full teardown; there is no half-close. An HTTP body end
+ * therefore reflects into Finish only for a split upload, where that upload is
+ * a separate connection and body end is the in-band end-of-sender signal.
+ */
+static bool httpserverRequestEndReflectsFinish(const httpserver_lstate_t *ls)
+{
+    return ls->split_role == kHttpServerSplitRoleUpload;
+}
+
 static bool httpserverForwardUpstreamPayload(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, sbuf_t *buf)
 {
     line_t *target = httpserverUpstreamTargetLine(ls, l);
@@ -540,10 +550,23 @@ static bool httpserverForwardUpstreamPayload(tunnel_t *t, line_t *l, httpserver_
 static void httpserverForwardUpstreamFinish(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
     line_t *target = httpserverUpstreamTargetLine(ls, l);
-    if (target != NULL && lineIsAlive(target))
+    if (target == NULL || ! lineIsAlive(target))
     {
-        tunnelNextUpStreamFinish(t, target);
+        return;
     }
+
+    /*
+     * A split upload targets the created main line rather than l. Keep the
+     * finished marker on that target so splitCloseMain cannot send Finish twice.
+     */
+    httpserver_lstate_t *target_ls = lineGetState(target, t);
+    if (target_ls->next_finished)
+    {
+        return;
+    }
+    target_ls->next_finished = true;
+
+    tunnelNextUpStreamFinish(t, target);
 }
 
 static const char *statusReasonPhrase(int status_code)
@@ -1608,23 +1631,11 @@ static int httpserverOnFrameRecvCallback(nghttp2_session *session, const nghttp2
         httpserver_tstate_t *ts = tunnelGetState(ls->tunnel);
         if (ts->verbose)
         {
-            LOGD("HttpServer: received HTTP/2 END_STREAM stream_id=%d websocket=%s full-duplex=%s",
+            LOGD("HttpServer: received HTTP/2 END_STREAM stream_id=%d websocket=%s",
                  frame->hd.stream_id,
-                 boolToTrueFalse(ts->websocket_enabled),
-                 boolToTrueFalse(ts->full_duplex));
+                 boolToTrueFalse(ts->websocket_enabled));
         }
-        if (! ls->h2_request_finished)
-        {
-            ls->h2_request_finished = true;
-            if (! ts->websocket_enabled && ! ts->full_duplex)
-            {
-                // This queued Finish is delivered to next by drainUpEvents; mark the
-                // direction finished now so later pause/resume and close paths do not send a
-                // second, reflected Finish toward the already-finished next.
-                ls->next_finished = true;
-                contextqueuePush(&ls->events_up, contextCreateFin(ls->line));
-            }
-        }
+        ls->h2_request_finished = true;
     }
 
     return 0;
@@ -1643,17 +1654,9 @@ static int httpserverOnStreamClosedCallback(nghttp2_session *session, int32_t st
 
     httpserver_lstate_t *ls = (httpserver_lstate_t *) userdata;
 
-    if (stream_id == ls->h2_stream_id && ! ls->h2_request_finished)
+    if (stream_id == ls->h2_stream_id)
     {
         ls->h2_request_finished = true;
-        httpserver_tstate_t *ts = tunnelGetState(ls->tunnel);
-        if (! ts->websocket_enabled && ! ts->full_duplex)
-        {
-            // Same as the END_STREAM path: mark next finished before queueing the Finish so
-            // later pause/resume and close paths cannot reflect a second Finish toward next.
-            ls->next_finished = true;
-            contextqueuePush(&ls->events_up, contextCreateFin(ls->line));
-        }
     }
 
     return 0;
@@ -2562,9 +2565,8 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
         if (ls->h1_body_remaining == 0)
         {
             ls->h1_request_finished = true;
-            if (! ts->full_duplex && ! ls->next_finished)
+            if (httpserverRequestEndReflectsFinish(ls))
             {
-                ls->next_finished = true;
                 memoryFree(header_text);
                 httpserverForwardUpstreamFinish(t, l, ls);
                 return true;
@@ -2575,9 +2577,8 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
     {
         ls->h1_body_mode        = kHttpServerH1BodyNone;
         ls->h1_request_finished = true;
-        if (! ts->full_duplex && ! ls->next_finished)
+        if (httpserverRequestEndReflectsFinish(ls))
         {
-            ls->next_finished = true;
             memoryFree(header_text);
             httpserverForwardUpstreamFinish(t, l, ls);
             return true;
@@ -2629,8 +2630,6 @@ static bool parseChunkSizeLine(sbuf_t *line_buf, uint64_t *chunk_len)
 
 bool httpserverTransportDrainHttp1ChunkedRequestBody(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
-    httpserver_tstate_t *ts = tunnelGetState(t);
-
     while (true)
     {
         if (ls->h1_chunk_expected < 0)
@@ -2654,35 +2653,35 @@ bool httpserverTransportDrainHttp1ChunkedRequestBody(tunnel_t *t, line_t *l, htt
             }
 
             ls->h1_chunk_expected = (int64_t) chunk_len;
+        }
 
-            if (ls->h1_chunk_expected == 0)
+        if (ls->h1_chunk_expected == 0)
+        {
+            /*
+             * The terminating chunk may be split from its trailer block. Zero
+             * is the durable trailer-scan state, so the next payload resumes
+             * here instead of spinning without consuming input.
+             */
+            while (true)
             {
-                while (true)
+                size_t trailer_line_end = 0;
+                if (! bufferstreamFindCRLF(&ls->in_stream, &trailer_line_end))
                 {
-                    size_t trailer_line_end = 0;
-                    if (! bufferstreamFindCRLF(&ls->in_stream, &trailer_line_end))
+                    return true;
+                }
+
+                sbuf_t *trailer_line = bufferstreamReadExact(&ls->in_stream, trailer_line_end + 2);
+                bool    done         = (trailer_line_end == 0);
+                lineReuseBuffer(l, trailer_line);
+
+                if (done)
+                {
+                    ls->h1_request_finished = true;
+                    if (httpserverRequestEndReflectsFinish(ls))
                     {
-                        return true;
+                        httpserverForwardUpstreamFinish(t, l, ls);
                     }
-
-                    sbuf_t *trailer_line = bufferstreamReadExact(&ls->in_stream, trailer_line_end + 2);
-                    bool    done         = (trailer_line_end == 0);
-                    lineReuseBuffer(l, trailer_line);
-
-                    if (done)
-                    {
-                        if (! ls->next_finished)
-                        {
-                            ls->h1_request_finished = true;
-                            if (! ts->full_duplex)
-                            {
-                                ls->next_finished = true;
-                                httpserverForwardUpstreamFinish(t, l, ls);
-                            }
-                        }
-
-                        return true;
-                    }
+                    return true;
                 }
             }
         }
@@ -2727,10 +2726,18 @@ bool httpserverTransportDrainHttp1ChunkedRequestBody(tunnel_t *t, line_t *l, htt
 
 bool httpserverTransportDrainHttp1RequestBody(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
-    httpserver_tstate_t *ts = tunnelGetState(t);
-
-    if (ls->h1_body_mode == kHttpServerH1BodyNone || ls->next_finished)
+    if (ls->h1_body_mode == kHttpServerH1BodyNone || ls->next_finished || ls->h1_request_finished)
     {
+        /*
+         * splitApplyParsedHeader() marks a bodyless split upload complete before
+         * it can be paired. Once pairing supplies the main line, this call is
+         * what forwards that already-recorded request end exactly once.
+         */
+        if (ls->h1_body_mode == kHttpServerH1BodyNone && ls->h1_request_finished &&
+            httpserverRequestEndReflectsFinish(ls))
+        {
+            httpserverForwardUpstreamFinish(t, l, ls);
+        }
         return true;
     }
 
@@ -2762,9 +2769,8 @@ bool httpserverTransportDrainHttp1RequestBody(tunnel_t *t, line_t *l, httpserver
     if (ls->h1_body_remaining == 0 && ! ls->next_finished)
     {
         ls->h1_request_finished = true;
-        if (! ts->full_duplex)
+        if (httpserverRequestEndReflectsFinish(ls))
         {
-            ls->next_finished = true;
             httpserverForwardUpstreamFinish(t, l, ls);
         }
         return true;

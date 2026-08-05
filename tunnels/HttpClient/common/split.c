@@ -381,6 +381,20 @@ void httpclientSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     lineLock(l);
     lineLock(main_line);
 
+    if (ls->response_complete)
+    {
+        httpclient_tstate_t *ts = tunnelGetState(t);
+        if (ts->verbose && ! ls->h1_trailing_bytes_logged)
+        {
+            LOGD("HttpClient: ignoring bytes after the split HTTP/1.1 response body");
+            ls->h1_trailing_bytes_logged = true;
+        }
+        lineReuseBuffer(l, buf);
+        lineUnlock(main_line);
+        lineUnlock(l);
+        return;
+    }
+
     bufferstreamPush(&ls->in_stream, buf);
 
     bool ok = httpclientTransportHandleHttp1ResponseHeaderPhase(t, l, ls);
@@ -389,16 +403,11 @@ void httpclientSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         ok = httpclientTransportDrainHttp1Body(t, l, ls);
     }
 
-    bool done = ok && lineIsAlive(l) && lineIsAlive(main_line) && ls->response_complete;
+    /* A complete response body is framing state; transport Finish closes the split trio. */
 
     if (! ok && lineIsAlive(l))
     {
         // Error path: close proactively, finishing both main's prev and this transport's next.
-        httpclientSplitCloseFromTransport(t, l, true, true);
-    }
-    else if (done)
-    {
-        // Response fully relayed: close proactively, finishing main's prev and this next.
         httpclientSplitCloseFromTransport(t, l, true, true);
     }
 

@@ -113,7 +113,6 @@ typedef struct httpclient_tstate_s
     atomic_ullong                  split_identifier;
     bool                           enable_upgrade;
     bool                           websocket_enabled;
-    bool                           full_duplex;
     bool                           split_cache_bypass;
     bool                           verbose;
 } httpclient_tstate_t;
@@ -142,6 +141,7 @@ typedef struct httpclient_lstate_s
     bool                      h1_headers_parsed;
     bool                      h1_response_chunked;
     bool                      h1_upgrade_accepted;
+    bool                      h1_trailing_bytes_logged;
     httpclient_h1_body_mode_t h1_body_mode;
 
     bool h2_headers_received;

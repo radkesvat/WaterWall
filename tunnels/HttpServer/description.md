@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HttpServer.mdx, and both files must keep the same documentation version.
 -->
 
@@ -19,7 +19,7 @@ This tunnel does not terminate TLS by itself. If your wire protocol is HTTPS, yo
 - Parses HTTP/1.1 request headers.
 - Accepts direct HTTP/2 preface or optional `h2c` upgrade.
 - Forwards only request body payload upstream.
-- Emits upstream `Finish` when the request body is complete.
+- In split mode, emits upstream `Finish` when the separate upload body is complete.
 - Wraps downstream response payload as HTTP/1.1 chunked response body or HTTP/2 DATA frames.
 - Can accept WebSocket over HTTP/1.1 upgrade or direct HTTP/2 extended CONNECT.
 
@@ -184,17 +184,6 @@ If omitted, the current implementation defaults to:
 - `websocket-subprotocol` `(string)`
   Optional subprotocol to require and echo back in the handshake response.
 
-- `full-duplex` `(boolean)`
-  Keeps HTTP request-end from being reflected into Waterwall upstream `Finish`.
-  Default: `false`
-
-  When enabled:
-  - HTTP/1.1 request-body completion is tracked internally
-  - direct HTTP/2 or upgraded h2c request `END_STREAM` is tracked internally
-  - the service-facing Waterwall line remains open until the real transport line finishes
-
-  This is the mode to use when you want plain HTTP/1.1 or h2c to behave more like a bidirectional transport instead of a strict request-end-driven service boundary.
-
 - `http1-mode` `(string)`
   Selects the HTTP/1.1 transport shape.
 
@@ -203,6 +192,8 @@ If omitted, the current implementation defaults to:
   - `"split"`: pair separate upload and download HTTP/1.1 connections into one logical Waterwall line
 
   Default: `"single"`
+
+  `HttpClient` and `HttpServer` are always full duplex in single mode. Waterwall `Finish` is a full teardown with no half-close, so an HTTP request or response body ending never closes the tunnel line on its own. `http1-mode = "split"` is the only shape where a body end propagates: the upload half is a separate connection, and its end is the in-band signal that the peer stopped sending.
 
 - `split` `(object)`
   Optional settings for `http1-mode = "split"`.
@@ -229,7 +220,7 @@ If omitted, the current implementation defaults to:
 
   Rejections and protocol errors are still logged even when this is `false`.
 
-` `no-split-upload-buffering-limit` `(boolean)`
+- `no-split-upload-buffering-limit` `(boolean)`
   When enabled, SplitHttp will not close connections if the upload side sends too much data before the corresponding download connection has joined.
 
   This option is currently considered mainly useful for multi-worker test scenarios, such as http1_bidirectional_tcp_loopback, where the TestClient sends all chunks immediately after the connection is established.
@@ -281,7 +272,7 @@ Supported request body styles are:
 Behavior after header parsing:
 
 - no body:
-  with `full-duplex = false`, the next tunnel immediately receives upstream `Finish`
+  request completion is recorded internally
 - `Content-Length` body:
   exactly that many bytes are forwarded upstream
 - chunked body:
@@ -289,11 +280,7 @@ Behavior after header parsing:
 
 Trailer blocks are consumed internally.
 
-With `full-duplex = true`:
-
-- request-body completion is remembered internally instead of immediately sending Waterwall upstream `Finish`
-- response bytes may continue to flow downstream on the same line
-- chunked HTTP/1.1 requests can therefore behave like a long-lived bidirectional transport
+In single mode, request-body completion is remembered internally and response bytes may continue to flow downstream on the same line. The line stays open until its transport closes.
 
 ### Split HTTP/1.1 mode
 
@@ -303,6 +290,8 @@ With `http1-mode = "split"`, `HttpServer` treats incoming HTTP/1.1 connections a
 - download request: it receives the response body as a chunked HTTP/1.1 response
 
 The server pairs both halves by the configured identifier and direction metadata, then creates one normal Waterwall line toward the next node. The download response headers may be sent before the upload half arrives, which keeps CDN/proxy download requests visibly active.
+
+When the separate upload body ends, split mode propagates upstream `Finish` on the logical main line. This is the only HTTP body-end that is used as a Waterwall lifecycle signal.
 
 Example:
 
@@ -380,7 +369,7 @@ Current session settings include:
 - `MAX_FRAME_SIZE = 32 KiB`
 
 Request DATA frames are forwarded upstream as plain payload.
-`END_STREAM` on the request becomes upstream `Finish` only when `full-duplex = false`.
+Request `END_STREAM` is recorded internally and does not become upstream `Finish`; the line stays open until the transport closes.
 
 Incoming HTTP/2 bytes are fed to nghttp2 in 16 KiB slices. This is intentionally smaller than 32 KiB so large Waterwall
 buffers cannot trigger old nghttp2 receive-side stalls observed with oversized `nghttp2_session_mem_recv2()` calls.

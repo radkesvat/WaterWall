@@ -89,6 +89,7 @@ typedef struct httpserver_lstate_s
     bool                      h1_headers_parsed;
     bool                      h1_request_chunked;
     bool                      h1_request_finished;
+    bool                      h1_trailing_bytes_logged;
     bool                      h1_response_headers_sent;
     httpserver_h1_body_mode_t h1_body_mode;
 
@@ -175,7 +176,6 @@ typedef struct httpserver_tstate_s
     httpserver_split_placement_t   split_token_placement;
     bool                           enable_upgrade;
     bool                           websocket_enabled;
-    bool                           full_duplex;
     bool                           split_cache_bypass;
     bool                           split_maps_initialized;
     bool                           no_split_upload_buffering_limit;

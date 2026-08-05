@@ -2889,29 +2889,33 @@ bool httpclientTransportDrainHttp1ChunkedBody(tunnel_t *t, line_t *l, httpclient
             }
 
             ls->h1_chunk_expected = (int64_t) chunk_len;
+        }
 
-            if (ls->h1_chunk_expected == 0)
+        if (ls->h1_chunk_expected == 0)
+        {
+            /*
+             * Zero is the durable trailer-scan state. A trailer block split
+             * across payloads resumes here rather than spinning without input.
+             */
+            while (true)
             {
-                while (true)
+                size_t trailer_line_end = 0;
+                if (! bufferstreamFindCRLF(&ls->in_stream, &trailer_line_end))
                 {
-                    size_t trailer_line_end = 0;
-                    if (! bufferstreamFindCRLF(&ls->in_stream, &trailer_line_end))
-                    {
-                        return true;
-                    }
+                    return true;
+                }
 
-                    sbuf_t *trailer_line = bufferstreamReadExact(&ls->in_stream, trailer_line_end + 2);
-                    bool    done         = (trailer_line_end == 0);
-                    lineReuseBuffer(l, trailer_line);
+                sbuf_t *trailer_line = bufferstreamReadExact(&ls->in_stream, trailer_line_end + 2);
+                bool    done         = (trailer_line_end == 0);
+                lineReuseBuffer(l, trailer_line);
 
-                    if (done)
+                if (done)
+                {
+                    if (! ls->prev_finished)
                     {
-                        if (! ls->prev_finished)
-                        {
-                            ls->response_complete = true;
-                        }
-                        return true;
+                        ls->response_complete = true;
                     }
+                    return true;
                 }
             }
         }
@@ -2956,7 +2960,7 @@ bool httpclientTransportDrainHttp1ChunkedBody(tunnel_t *t, line_t *l, httpclient
 
 bool httpclientTransportDrainHttp1Body(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
 {
-    if (ls->prev_finished || ls->h1_body_mode == kHttpClientH1BodyNone)
+    if (ls->prev_finished || ls->h1_body_mode == kHttpClientH1BodyNone || ls->response_complete)
     {
         return true;
     }

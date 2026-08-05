@@ -105,7 +105,7 @@ static bool parseHttp1TransportMode(httpclient_tstate_t *ts, const cJSON *settin
         return true;
     }
 
-    static const char *const single_aliases[] = {"single", "classic", "full-duplex", "legacy"};
+    static const char *const single_aliases[] = {"single", "classic", "legacy"};
     static const char *const split_aliases[]  = {"split", "half-duplex", "dual", "dual-connection"};
 
     if (stringAsciiCaseEqualsAny(mode->valuestring, single_aliases, ARRAY_SIZE(single_aliases)))
@@ -343,7 +343,6 @@ static void parseUserAgentAndWebSocket(httpclient_tstate_t *ts, const cJSON *set
 {
     getStringFromJsonObjectOrDefault(&ts->user_agent, settings, "user-agent", "WaterWall/1.x");
     getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
-    getBoolFromJsonObjectOrDefault(&ts->full_duplex, settings, "full-duplex", false);
 
     getBoolFromJsonObjectOrDefault(&ts->websocket_enabled, settings, "websocket", false);
 
