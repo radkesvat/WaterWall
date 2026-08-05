@@ -279,7 +279,8 @@ static test_fixture_t fixtureCreateWithSni(test_env_t *env, const char *configur
     t->next          = next;
     next->fnPayloadU = recordForwardedPacket;
 
-    ipmanipulator_tstate_t *state        = tunnelGetState(t);
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+    atomicLogRateLimiterInitialize(&state->worker_mismatch_guidance_limiter);
     state->trick_ech_sni                 = true;
     state->trick_ech_sni_value           = stringDuplicate(configured_sni);
     state->trick_ech_sni_value_len       = (uint16_t) stringLength(configured_sni);

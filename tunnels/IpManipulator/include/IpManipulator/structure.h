@@ -517,7 +517,8 @@ typedef struct ipmanipulator_tstate_s
     ipmanipulator_flow_table_t echsni_table;
     atomic_ullong              echsni_next_generation;
     atomic_ullong              delay_barrier_next_generation;
-    atomic_ullong              egress_last_warning_ms;
+    atomic_log_rate_limiter_t  egress_warning_limiter;
+    atomic_log_rate_limiter_t  worker_mismatch_guidance_limiter;
 
     ipmanipulator_flow_table_t                smuggle_fin_table;
     atomic_uint                               smuggle_fin_next_pause_generation;
@@ -588,12 +589,16 @@ void ipmanipulatorEmitUpstream(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWi
 void ipmanipulatorEmitUpstreamPreservingTuple(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward);
 bool ipmanipulatorSendWithForwardMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *buf, LineTaskFnWithBuf forward);
 bool ipmanipulatorSendUpstreamMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *buf);
+void ipmanipulatorLogCrossWorkerFlowFailure(tunnel_t *t, const char *trick_name, const char *retained_state_name,
+                                            wid_t packet_wid, wid_t owner_wid);
 void ipmanipulatorDelayBarrierInitialize(ipmanipulator_tstate_t *state, ipmanipulator_delay_barrier_t *barrier,
                                          uint64_t deadline_ms);
 void ipmanipulatorDelayBarrierDestroy(ipmanipulator_delay_barrier_t *barrier);
-bool ipmanipulatorDelayBarrierTryEnqueue(ipmanipulator_delay_barrier_t *barrier, line_t *l, sbuf_t *buf,
+bool ipmanipulatorDelayBarrierTryEnqueue(tunnel_t *t, ipmanipulator_delay_barrier_kind_e kind,
+                                         ipmanipulator_delay_barrier_t *barrier, line_t *l, sbuf_t *buf,
                                          bool remove_after_release, bool *needs_schedule);
-bool ipmanipulatorDelayBarrierInstallOrdered(ipmanipulator_delay_barrier_t  *barrier,
+bool ipmanipulatorDelayBarrierInstallOrdered(tunnel_t *t, ipmanipulator_delay_barrier_kind_e kind,
+                                             ipmanipulator_delay_barrier_t  *barrier,
                                              ipmanipulator_ordered_output_t *outputs, uint32_t count,
                                              bool *needs_schedule);
 bool ipmanipulatorDelayBarrierHasPendingOrdered(const ipmanipulator_delay_barrier_t *barrier);

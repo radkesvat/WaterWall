@@ -1464,6 +1464,21 @@ if(TARGET IpManipulator)
     "unit;tunnels;ipmanipulator;protoswap;portghost;sniblender;checksum;lifecycle"
   )
 
+  add_executable(ipmanipulator_worker_mismatch_log_test ipmanipulator_worker_mismatch_log_test.c)
+  target_include_directories(ipmanipulator_worker_mismatch_log_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include/IpManipulator
+    ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/common
+  )
+  target_link_libraries(ipmanipulator_worker_mismatch_log_test PRIVATE IpManipulator ww)
+  add_dependencies(waterwall_unit_tests ipmanipulator_worker_mismatch_log_test)
+
+  add_waterwall_unit_test(
+    waterwall.ipmanipulator_worker_mismatch_log_unit
+    ipmanipulator_worker_mismatch_log_test
+    "unit;tunnels;ipmanipulator;logging;workers"
+  )
+
   add_executable(ipmanipulator_firstsni_offsets_test ipmanipulator_firstsni_offsets_test.c)
   target_include_directories(ipmanipulator_firstsni_offsets_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tunnels/IpManipulator/include

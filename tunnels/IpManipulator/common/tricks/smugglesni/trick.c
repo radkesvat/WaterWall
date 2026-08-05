@@ -282,8 +282,8 @@ static void smugglesnitrickStartOrderedFakeBatch(tunnel_t *t, const ipmanipulato
             flow->phase                 = kIpManipulatorSmuggleFlowPhasePassthrough;
             flow->delay_window_until_ms = deadline_ms;
             ipmanipulatorDelayBarrierInitialize(state, &flow->delay_barrier, deadline_ms);
-            installed =
-                ipmanipulatorDelayBarrierInstallOrdered(&flow->delay_barrier, outputs, batch->count, &needs_schedule);
+            installed = ipmanipulatorDelayBarrierInstallOrdered(
+                t, kIpManipulatorDelayBarrierSmuggleSni, &flow->delay_barrier, outputs, batch->count, &needs_schedule);
             generation = flow->delay_barrier.generation;
             owner_wid  = flow->delay_barrier.owner_wid;
 
@@ -714,8 +714,13 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             flow->delay_window_until_ms = 0;
             send_current_after_batch    = true;
         }
-        else if (ipmanipulatorDelayBarrierTryEnqueue(
-                     &flow->delay_barrier, l, buf, smugglesnitrickHasFinOrRst(&info), &needs_schedule))
+        else if (ipmanipulatorDelayBarrierTryEnqueue(t,
+                                                     kIpManipulatorDelayBarrierSmuggleSni,
+                                                     &flow->delay_barrier,
+                                                     l,
+                                                     buf,
+                                                     smugglesnitrickHasFinOrRst(&info),
+                                                     &needs_schedule))
         {
             barrier_generation = flow->delay_barrier.generation;
             barrier_deadline   = flow->delay_barrier.deadline_ms;

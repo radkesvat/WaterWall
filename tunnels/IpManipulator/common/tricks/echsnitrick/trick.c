@@ -846,10 +846,8 @@ static bool echsnitrickTakeNextReleasePacket(tunnel_t *t, const echsnitrick_flow
                     {
                         *foreign_owner = true;
                     }
-                    LOGD("IpManipulator: ech-sni-trick pending original arrived on worker %d; owner worker is %d; "
-                         "failing open",
-                         workerWIDForLog(packet_wid),
-                         workerWIDForLog(flow->owner_wid));
+                    ipmanipulatorLogCrossWorkerFlowFailure(
+                        t, "ech-sni-trick", "pending original packet state", packet_wid, flow->owner_wid);
                 }
                 flow->next_release_index = (uint8_t) (index + 1U);
                 *schedule_next = release_phase == kEchSniReleasePhaseFirst && flow->pending_original_count > 1U;
@@ -1679,11 +1677,11 @@ bool echsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                     }
                     else
                     {
-                        LOGD("IpManipulator: ech-sni-trick graceful close packet arrived on worker %d; owner worker is "
-                             "%d; "
-                             "forwarding normally",
-                             workerWIDForLog(getCurrentEventWorkerWID()),
-                             workerWIDForLog(lineGetWID(packet->line)));
+                        ipmanipulatorLogCrossWorkerFlowFailure(t,
+                                                               "ech-sni-trick",
+                                                               "pending graceful-close packet state",
+                                                               getCurrentEventWorkerWID(),
+                                                               lineGetWID(packet->line));
                         ipmanipulatorForwardCapturedPacketNormal(t, packet->line, packet->buf);
                         packet->buf = NULL;
                     }

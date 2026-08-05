@@ -188,6 +188,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     ipmanipulator_tstate_t *state      = tunnelGetState(t);
     state->trick_proto_swap_tcp_number = -1;
     state->trick_proto_swap_udp_number = -1;
+    atomicLogRateLimiterInitialize(&state->worker_mismatch_guidance_limiter);
     atomicStoreU64Relaxed(&state->delay_barrier_next_generation, 0);
     initializeTable(state, kind);
 
@@ -205,11 +206,12 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     foreign_line.alive = true;
     foreign_line.wid   = 1;
 
-    require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, makePacket(250), false, &needs_schedule),
+    require(ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, makePacket(250), false, &needs_schedule),
             "owner-worker FIFO packet was not retained");
     sbuf_t *foreign_packet = makePacket(251);
-    require(! ipmanipulatorDelayBarrierTryEnqueue(barrier, &foreign_line, foreign_packet, false, &needs_schedule),
-            "mixed-worker FIFO packet was retained");
+    require(
+        ! ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &foreign_line, foreign_packet, false, &needs_schedule),
+        "mixed-worker FIFO packet was retained");
     require(barrier->owner_wid == 0, "delay barrier did not stamp its first packet owner");
     sbufDestroy(foreign_packet);
 
@@ -225,20 +227,20 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
         {.line = &line, .buf = makePacket(252), .send = capturePacket, .due_ms = 100},
         {.line = &foreign_line, .buf = makePacket(253), .send = capturePacket, .due_ms = 100},
     };
-    require(! ipmanipulatorDelayBarrierInstallOrdered(barrier, mixed_outputs, 2, &needs_schedule),
+    require(! ipmanipulatorDelayBarrierInstallOrdered(t, kind, barrier, mixed_outputs, 2, &needs_schedule),
             "mixed-worker ordered outputs were installed");
     require(barrier->owner_wid == kInvalidWID, "rejected ordered outputs changed the barrier owner");
     sbufDestroy(mixed_outputs[0].buf);
     sbufDestroy(mixed_outputs[1].buf);
     generation = barrier->generation;
 
-    require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, makePacket(1), false, &needs_schedule) &&
+    require(ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, makePacket(1), false, &needs_schedule) &&
                 needs_schedule,
             "first FIFO packet did not arm the one release action");
-    require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, makePacket(2), false, &needs_schedule) &&
+    require(ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, makePacket(2), false, &needs_schedule) &&
                 ! needs_schedule,
             "second FIFO packet armed a duplicate release action");
-    require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, makePacket(3), true, &needs_schedule),
+    require(ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, makePacket(3), true, &needs_schedule),
             "terminal FIFO packet was not retained");
     ipmanipulatorFlowShardUnlock(shard);
 
@@ -256,7 +258,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     barrier = findBarrierLocked(state, kind, &key, &shard);
     ipmanipulatorDelayBarrierInitialize(state, barrier, 200);
     uint64_t old_generation = barrier->generation;
-    require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, makePacket(4), false, &needs_schedule),
+    require(ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, makePacket(4), false, &needs_schedule),
             "old tuple generation could not retain a packet");
     ipmanipulatorFlowShardUnlock(shard);
     removeEntry(state, kind, &key);
@@ -267,7 +269,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     ipmanipulatorDelayBarrierInitialize(state, barrier, 200);
     uint64_t new_generation = barrier->generation;
     require(new_generation != old_generation, "tuple reuse repeated a delay-barrier generation");
-    require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, makePacket(5), false, &needs_schedule),
+    require(ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, makePacket(5), false, &needs_schedule),
             "new tuple generation could not retain a packet");
     ipmanipulatorFlowShardUnlock(shard);
 
@@ -289,9 +291,10 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
         {.line = &line, .buf = makePacket(30), .send = capturePacket, .due_ms = 400},
         {.line = &line, .buf = makePacket(31), .send = capturePacket, .due_ms = 500},
     };
-    require(ipmanipulatorDelayBarrierInstallOrdered(barrier, ordered_outputs, 2, &needs_schedule) && needs_schedule,
+    require(ipmanipulatorDelayBarrierInstallOrdered(t, kind, barrier, ordered_outputs, 2, &needs_schedule) &&
+                needs_schedule,
             "ordered transcript did not arm its single scheduler");
-    require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, makePacket(32), false, &needs_schedule) &&
+    require(ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, makePacket(32), false, &needs_schedule) &&
                 ! needs_schedule,
             "barrier tail armed a timer independent from its transcript scheduler");
     generation = barrier->generation;
@@ -313,9 +316,10 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
         {.line = &line, .buf = makePacket(40), .send = capturePacket, .due_ms = 700},
         {.line = &line, .buf = makePacket(41), .send = capturePacket, .due_ms = 750},
     };
-    require(ipmanipulatorDelayBarrierInstallOrdered(barrier, rejected_outputs, 2, &needs_schedule) && needs_schedule,
+    require(ipmanipulatorDelayBarrierInstallOrdered(t, kind, barrier, rejected_outputs, 2, &needs_schedule) &&
+                needs_schedule,
             "rejected-schedule fixture did not arm its scheduler");
-    require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, makePacket(42), false, &needs_schedule) &&
+    require(ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, makePacket(42), false, &needs_schedule) &&
                 ! needs_schedule,
             "rejected-schedule fixture did not retain its FIFO tail");
     generation = barrier->generation;
@@ -340,9 +344,10 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
         {.line = &line, .buf = makePacket(50), .send = capturePacket, .due_ms = 800},
         {.line = &line, .buf = makePacket(51), .send = capturePacket, .due_ms = 850},
     };
-    require(ipmanipulatorDelayBarrierInstallOrdered(barrier, reschedule_outputs, 2, &needs_schedule) && needs_schedule,
+    require(ipmanipulatorDelayBarrierInstallOrdered(t, kind, barrier, reschedule_outputs, 2, &needs_schedule) &&
+                needs_schedule,
             "reschedule-failure fixture did not arm its scheduler");
-    require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, makePacket(52), false, &needs_schedule) &&
+    require(ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, makePacket(52), false, &needs_schedule) &&
                 ! needs_schedule,
             "reschedule-failure fixture did not retain its FIFO tail");
     generation = barrier->generation;
@@ -364,7 +369,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     discard reserveEntry(state, kind, &key);
     barrier = findBarrierLocked(state, kind, &key, &shard);
     ipmanipulatorDelayBarrierInitialize(state, barrier, 250);
-    require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, makePacket(6), false, &needs_schedule),
+    require(ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, makePacket(6), false, &needs_schedule),
             "pre-deadline packet A was not retained");
     ipmanipulatorFlowShardUnlock(shard);
 
@@ -388,12 +393,12 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     ipmanipulatorDelayBarrierInitialize(state, barrier, 300);
     for (uint8_t id = 0; id < kIpManipulatorDelayBarrierMaxPackets; ++id)
     {
-        require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, makePacket(id), false, &needs_schedule),
+        require(ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, makePacket(id), false, &needs_schedule),
                 "FIFO filled before the packet-count bound");
     }
 
     sbuf_t *current = makePacket(kIpManipulatorDelayBarrierMaxPackets);
-    require(! ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, current, false, &needs_schedule),
+    require(! ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, current, false, &needs_schedule),
             "FIFO accepted a packet past its count bound");
     ipmanipulator_delay_batch_t batch = {0};
     ipmanipulatorDelayBarrierTake(barrier, &batch);
@@ -416,7 +421,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     ipmanipulatorDelayBarrierInitialize(state, barrier, 350);
     sbuf_t *too_large = sbufCreate(kIpManipulatorDelayBarrierMaxBytes + 1U);
     sbufSetLength(too_large, kIpManipulatorDelayBarrierMaxBytes + 1U);
-    require(! ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, too_large, false, &needs_schedule),
+    require(! ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, too_large, false, &needs_schedule),
             "FIFO accepted a packet past its retained-byte bound");
     require(barrier->count == 0 && barrier->retained_bytes == 0, "retained-byte rejection partially mutated the FIFO");
     ipmanipulatorFlowShardUnlock(shard);
@@ -429,10 +434,10 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     sbuf_t *byte_limit_packet = sbufCreate(kIpManipulatorDelayBarrierMaxBytes);
     sbufSetLength(byte_limit_packet, kIpManipulatorDelayBarrierMaxBytes);
     *(uint8_t *) sbufGetMutablePtr(byte_limit_packet) = 20;
-    require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, byte_limit_packet, false, &needs_schedule),
+    require(ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, byte_limit_packet, false, &needs_schedule),
             "FIFO rejected a packet at its retained-byte bound");
     current = makePacket(21);
-    require(! ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, current, false, &needs_schedule),
+    require(! ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, current, false, &needs_schedule),
             "FIFO accepted a packet past its retained-byte bound");
     memoryZero(&batch, sizeof(batch));
     ipmanipulatorDelayBarrierTake(barrier, &batch);
@@ -450,7 +455,7 @@ static void testKind(ipmanipulator_delay_barrier_kind_e kind)
     discard reserveEntry(state, kind, &key);
     barrier = findBarrierLocked(state, kind, &key, &shard);
     ipmanipulatorDelayBarrierInitialize(state, barrier, 400);
-    require(ipmanipulatorDelayBarrierTryEnqueue(barrier, &line, makePacket(9), false, &needs_schedule),
+    require(ipmanipulatorDelayBarrierTryEnqueue(t, kind, barrier, &line, makePacket(9), false, &needs_schedule),
             "destruction fixture could not retain a packet");
     ipmanipulatorFlowShardUnlock(shard);
     require(atomicLoadRelaxed(&line.refc) == 2, "armed barrier did not retain its line");

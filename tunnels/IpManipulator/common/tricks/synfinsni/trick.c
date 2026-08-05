@@ -1486,9 +1486,11 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         line_t *held_line = held_packet.line;
         if (held_owner_mismatch)
         {
-            LOGD("IpManipulator: synfin-sni held packet arrived on worker %d; owner worker is %d; failing open",
-                 workerWIDForLog(lineGetWID(l)),
-                 workerWIDForLog(held_packet.line != NULL ? lineGetWID(held_packet.line) : kInvalidWID));
+            ipmanipulatorLogCrossWorkerFlowFailure(t,
+                                                   "synfin-sni",
+                                                   "held packet state",
+                                                   lineGetWID(l),
+                                                   held_line != NULL ? lineGetWID(held_line) : kInvalidWID);
             if (held_line != NULL && held_packet.buf != NULL)
             {
                 ipmanipulatorForwardCapturedPacketNormal(t, held_line, held_packet.buf);
@@ -1590,9 +1592,11 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             synfinsnitrickDestroyStandalonePacket(&flow->syn_packet_template);
             ipmanipulatorFlowShardUnlock(shard);
 
-            LOGD("IpManipulator: synfin-sni held packet completed on worker %d; owner worker is %d; failing open",
-                 workerWIDForLog(lineGetWID(l)),
-                 workerWIDForLog(held_line != NULL ? lineGetWID(held_line) : kInvalidWID));
+            ipmanipulatorLogCrossWorkerFlowFailure(t,
+                                                   "synfin-sni",
+                                                   "held packet state",
+                                                   lineGetWID(l),
+                                                   held_line != NULL ? lineGetWID(held_line) : kInvalidWID);
             if (held_line != NULL && held_packet.buf != NULL)
             {
                 ipmanipulatorForwardCapturedPacketNormal(t, held_line, held_packet.buf);

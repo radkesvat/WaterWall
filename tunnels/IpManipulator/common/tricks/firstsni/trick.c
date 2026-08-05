@@ -267,8 +267,12 @@ static void firstsnitrickStartDelayBarrier(tunnel_t *t, line_t *l, sbuf_t **pack
         if (ordered_outputs_count > 0)
         {
             first_action_ms = ordered_outputs[0].due_ms;
-            ordered_ok      = ipmanipulatorDelayBarrierInstallOrdered(
-                &flow->delay_barrier, ordered_outputs, ordered_outputs_count, &needs_schedule);
+            ordered_ok      = ipmanipulatorDelayBarrierInstallOrdered(t,
+                                                                 kIpManipulatorDelayBarrierFirstSni,
+                                                                 &flow->delay_barrier,
+                                                                 ordered_outputs,
+                                                                 ordered_outputs_count,
+                                                                 &needs_schedule);
         }
 
         if (! ordered_ok)
@@ -285,8 +289,13 @@ static void firstsnitrickStartDelayBarrier(tunnel_t *t, line_t *l, sbuf_t **pack
         for (uint8_t i = 0; i < count; ++i)
         {
             bool packet_needs_schedule = false;
-            if (! ipmanipulatorDelayBarrierTryEnqueue(
-                    &flow->delay_barrier, l, packets[i], false, &packet_needs_schedule))
+            if (! ipmanipulatorDelayBarrierTryEnqueue(t,
+                                                      kIpManipulatorDelayBarrierFirstSni,
+                                                      &flow->delay_barrier,
+                                                      l,
+                                                      packets[i],
+                                                      false,
+                                                      &packet_needs_schedule))
             {
                 enqueue_ok = false;
                 break;
@@ -625,8 +634,13 @@ static bool firstsnitrickMaybeDelayFlowPacket(tunnel_t *t, line_t *l, sbuf_t *bu
         }
         else if (delay_active)
         {
-            queued = ipmanipulatorDelayBarrierTryEnqueue(
-                &flow->delay_barrier, l, buf, firstsnitrickHasFinOrRst(info), &needs_schedule);
+            queued = ipmanipulatorDelayBarrierTryEnqueue(t,
+                                                         kIpManipulatorDelayBarrierFirstSni,
+                                                         &flow->delay_barrier,
+                                                         l,
+                                                         buf,
+                                                         firstsnitrickHasFinOrRst(info),
+                                                         &needs_schedule);
             if (queued)
             {
                 generation        = flow->delay_barrier.generation;

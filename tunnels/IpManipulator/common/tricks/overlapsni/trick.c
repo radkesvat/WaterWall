@@ -1442,8 +1442,13 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             flow->delay_window_until_ms = 0;
             send_current_after_batch    = true;
         }
-        else if (ipmanipulatorDelayBarrierTryEnqueue(
-                     &flow->delay_barrier, l, buf, overlapsnitrickHasFinOrRst(&info), &needs_schedule))
+        else if (ipmanipulatorDelayBarrierTryEnqueue(t,
+                                                     kIpManipulatorDelayBarrierOverlapSni,
+                                                     &flow->delay_barrier,
+                                                     l,
+                                                     buf,
+                                                     overlapsnitrickHasFinOrRst(&info),
+                                                     &needs_schedule))
         {
             barrier_generation = flow->delay_barrier.generation;
             barrier_deadline   = flow->delay_barrier.deadline_ms;
@@ -1517,9 +1522,11 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         line_t *held_line = held_packet.line;
         if (held_owner_mismatch)
         {
-            LOGD("IpManipulator: overlap-sni held packet arrived on worker %d; owner worker is %d; failing open",
-                 workerWIDForLog(lineGetWID(l)),
-                 workerWIDForLog(held_packet.line != NULL ? lineGetWID(held_packet.line) : kInvalidWID));
+            ipmanipulatorLogCrossWorkerFlowFailure(t,
+                                                   "overlap-sni",
+                                                   "held packet state",
+                                                   lineGetWID(l),
+                                                   held_line != NULL ? lineGetWID(held_line) : kInvalidWID);
             if (held_line != NULL && held_packet.buf != NULL)
             {
                 ipmanipulatorForwardCapturedPacketNormal(t, held_line, held_packet.buf);
@@ -1626,9 +1633,11 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             overlapsnitrickDestroyStandalonePacket(&flow->synack_packet);
             ipmanipulatorFlowShardUnlock(shard);
 
-            LOGD("IpManipulator: overlap-sni held packet completed on worker %d; owner worker is %d; failing open",
-                 workerWIDForLog(lineGetWID(l)),
-                 workerWIDForLog(held_line != NULL ? lineGetWID(held_line) : kInvalidWID));
+            ipmanipulatorLogCrossWorkerFlowFailure(t,
+                                                   "overlap-sni",
+                                                   "held packet state",
+                                                   lineGetWID(l),
+                                                   held_line != NULL ? lineGetWID(held_line) : kInvalidWID);
             if (held_line != NULL && held_packet.buf != NULL)
             {
                 ipmanipulatorForwardCapturedPacketNormal(t, held_line, held_packet.buf);
@@ -1693,9 +1702,12 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                     };
                 }
 
-                if (output_count > 0 &&
-                    ipmanipulatorDelayBarrierInstallOrdered(
-                        &final_flow->delay_barrier, outputs, output_count, &transcript_needs_schedule))
+                if (output_count > 0 && ipmanipulatorDelayBarrierInstallOrdered(t,
+                                                                                kIpManipulatorDelayBarrierOverlapSni,
+                                                                                &final_flow->delay_barrier,
+                                                                                outputs,
+                                                                                output_count,
+                                                                                &transcript_needs_schedule))
                 {
                     first_action_ms = outputs[0].due_ms;
                     for (uint8_t i = 2; i < result.normal_sequence.count; ++i)

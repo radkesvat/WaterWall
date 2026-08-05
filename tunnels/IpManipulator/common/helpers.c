@@ -6,11 +6,12 @@
 
 enum
 {
-    kIpManipulatorTlsCaptureTimeoutMs      = 1500,
-    kIpManipulatorTlsPrestartTimeoutMs     = 50,
-    kIpManipulatorTlsPrestartMinPayloadLen = 128,
-    kIpManipulatorTlsCaptureMaxRecordLen   = 16384,
-    kIpManipulatorEgressWarningIntervalMs  = 5000
+    kIpManipulatorTlsCaptureTimeoutMs              = 1500,
+    kIpManipulatorTlsPrestartTimeoutMs             = 50,
+    kIpManipulatorTlsPrestartMinPayloadLen         = 128,
+    kIpManipulatorTlsCaptureMaxRecordLen           = 16384,
+    kIpManipulatorEgressWarningIntervalMs          = 5000,
+    kIpManipulatorWorkerMismatchGuidanceIntervalMs = 30000
 };
 
 typedef struct ipmanipulator_tcp_packet_info_s
@@ -31,20 +32,28 @@ typedef struct ipmanipulator_tcp_packet_info_s
 
 bool ipmanipulatorShouldLogEgressWarning(ipmanipulator_tstate_t *state)
 {
-    uint64_t now_ms   = max(getTickMS(), 1ULL);
-    uint64_t observed = atomicLoadU64Relaxed(&state->egress_last_warning_ms);
+    return atomicLogRateLimiterShouldLog(&state->egress_warning_limiter, kIpManipulatorEgressWarningIntervalMs);
+}
 
-    for (;;)
+void ipmanipulatorLogCrossWorkerFlowFailure(tunnel_t *t, const char *trick_name, const char *retained_state_name,
+                                            wid_t packet_wid, wid_t owner_wid)
+{
+    ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+    LOGW("IpManipulator: %s abandoned %s for one flow because a packet segment arrived on worker %d while the "
+         "retained state belongs to worker %d; the stateful trick is failing open, releasing retained traffic "
+         "through normal forwarding, and stopping this cross-worker operation",
+         trick_name,
+         retained_state_name,
+         workerWIDForLog(packet_wid),
+         workerWIDForLog(owner_wid));
+
+    if (atomicLogRateLimiterShouldLog(&state->worker_mismatch_guidance_limiter,
+                                      kIpManipulatorWorkerMismatchGuidanceIntervalMs))
     {
-        if (observed != 0 && now_ms >= observed && now_ms - observed < kIpManipulatorEgressWarningIntervalMs)
-        {
-            return false;
-        }
-
-        if (atomicCompareExchangeU64(&state->egress_last_warning_ms, &observed, now_ms))
-        {
-            return true;
-        }
+        LOGW("IpManipulator: configuration guidance: stateful SNI tricks require every packet of one flow to stay "
+             "on the same worker. If the packet source before IpManipulator cannot preserve flow affinity, set "
+             "misc.workers to 1 in core.json and restart WaterWall");
     }
 }
 
@@ -102,6 +111,21 @@ static const char *ipmanipulatorTlsCaptureKindName(ipmanipulator_tls_capture_kin
         return "ech-sni-trick";
     default:
         return "unknown";
+    }
+}
+
+static const char *ipmanipulatorDelayBarrierKindName(ipmanipulator_delay_barrier_kind_e kind)
+{
+    switch (kind)
+    {
+    case kIpManipulatorDelayBarrierFirstSni:
+        return "first-sni";
+    case kIpManipulatorDelayBarrierSmuggleSni:
+        return "smuggle-sni";
+    case kIpManipulatorDelayBarrierOverlapSni:
+        return "overlap-sni";
+    default:
+        return "unknown-sni-trick";
     }
 }
 
@@ -1062,7 +1086,8 @@ static bool ipmanipulatorCaptureSlotHasExactRetransmission(const ipmanipulator_t
     return false;
 }
 
-static void ipmanipulatorDrainPrestartPacketsIntoCaptureSlot(ipmanipulator_tls_prestart_slot_t *prestart_slot,
+static void ipmanipulatorDrainPrestartPacketsIntoCaptureSlot(tunnel_t                          *t,
+                                                             ipmanipulator_tls_prestart_slot_t *prestart_slot,
                                                              ipmanipulator_tls_capture_slot_t  *capture_slot,
                                                              bool                              *complete)
 {
@@ -1074,9 +1099,11 @@ static void ipmanipulatorDrainPrestartPacketsIntoCaptureSlot(ipmanipulator_tls_p
     if (capture_slot->owner_wid != kInvalidWID && prestart_slot->owner_wid != kInvalidWID &&
         capture_slot->owner_wid != prestart_slot->owner_wid)
     {
-        LOGD("IpManipulator: prestart worker %d does not match capture owner %d; not draining",
-             workerWIDForLog(prestart_slot->owner_wid),
-             workerWIDForLog(capture_slot->owner_wid));
+        ipmanipulatorLogCrossWorkerFlowFailure(t,
+                                               ipmanipulatorTlsCaptureKindName(capture_slot->kind),
+                                               "TLS ClientHello prestart capture",
+                                               prestart_slot->owner_wid,
+                                               capture_slot->owner_wid);
         return;
     }
 
@@ -1585,7 +1612,8 @@ void ipmanipulatorDelayBarrierInitialize(ipmanipulator_tstate_t *state, ipmanipu
     barrier->owner_wid   = kInvalidWID;
 }
 
-bool ipmanipulatorDelayBarrierTryEnqueue(ipmanipulator_delay_barrier_t *barrier, line_t *l, sbuf_t *buf,
+bool ipmanipulatorDelayBarrierTryEnqueue(tunnel_t *t, ipmanipulator_delay_barrier_kind_e kind,
+                                         ipmanipulator_delay_barrier_t *barrier, line_t *l, sbuf_t *buf,
                                          bool remove_after_release, bool *needs_schedule)
 {
     if (needs_schedule != NULL)
@@ -1600,9 +1628,8 @@ bool ipmanipulatorDelayBarrierTryEnqueue(ipmanipulator_delay_barrier_t *barrier,
 
     if (barrier->owner_wid != kInvalidWID && ! ipmanipulatorPacketJoinsOwner(barrier->owner_wid, l))
     {
-        LOGD("IpManipulator: delayed packet arrived on worker %d; barrier owner is %d; failing open",
-             workerWIDForLog(lineGetWID(l)),
-             workerWIDForLog(barrier->owner_wid));
+        ipmanipulatorLogCrossWorkerFlowFailure(
+            t, ipmanipulatorDelayBarrierKindName(kind), "delayed packet barrier", lineGetWID(l), barrier->owner_wid);
         return false;
     }
 
@@ -1636,7 +1663,8 @@ bool ipmanipulatorDelayBarrierTryEnqueue(ipmanipulator_delay_barrier_t *barrier,
     return true;
 }
 
-bool ipmanipulatorDelayBarrierInstallOrdered(ipmanipulator_delay_barrier_t  *barrier,
+bool ipmanipulatorDelayBarrierInstallOrdered(tunnel_t *t, ipmanipulator_delay_barrier_kind_e kind,
+                                             ipmanipulator_delay_barrier_t  *barrier,
                                              ipmanipulator_ordered_output_t *outputs, uint32_t count,
                                              bool *needs_schedule)
 {
@@ -1665,17 +1693,18 @@ bool ipmanipulatorDelayBarrierInstallOrdered(ipmanipulator_delay_barrier_t  *bar
     {
         if (lineGetWID(outputs[i].line) != owner_wid)
         {
-            LOGD("IpManipulator: delayed transcript has mixed owner workers %d and %d; failing open",
-                 workerWIDForLog(owner_wid),
-                 workerWIDForLog(lineGetWID(outputs[i].line)));
+            ipmanipulatorLogCrossWorkerFlowFailure(t,
+                                                   ipmanipulatorDelayBarrierKindName(kind),
+                                                   "delayed transcript",
+                                                   lineGetWID(outputs[i].line),
+                                                   owner_wid);
             return false;
         }
     }
     if (barrier->owner_wid != kInvalidWID && barrier->owner_wid != owner_wid)
     {
-        LOGD("IpManipulator: delayed transcript worker %d does not match barrier owner %d; failing open",
-             workerWIDForLog(owner_wid),
-             workerWIDForLog(barrier->owner_wid));
+        ipmanipulatorLogCrossWorkerFlowFailure(
+            t, ipmanipulatorDelayBarrierKindName(kind), "delayed transcript", owner_wid, barrier->owner_wid);
         return false;
     }
     ipmanipulator_ordered_output_t *owned_outputs = memoryAllocateZero(sizeof(*owned_outputs) * count);
@@ -2264,10 +2293,11 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
         {
             ipmanipulator_tls_capture_slot_t *slot = &state->tls_capture_slots[matched_index];
 
-            LOGD("IpManipulator: %s capture tuple arrived on worker %d; owner worker is %d; failing open",
-                 ipmanipulatorTlsCaptureKindName(kind),
-                 workerWIDForLog(lineGetWID(l)),
-                 workerWIDForLog(slot->owner_wid));
+            ipmanipulatorLogCrossWorkerFlowFailure(t,
+                                                   ipmanipulatorTlsCaptureKindName(kind),
+                                                   "fragmented TLS ClientHello capture",
+                                                   lineGetWID(l),
+                                                   slot->owner_wid);
             ipmanipulatorTakeCapturedSlot(out_slot, slot);
         }
 
@@ -2275,10 +2305,11 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
         {
             ipmanipulator_tls_prestart_slot_t *slot = &state->tls_prestart_slots[prestart_index];
 
-            LOGD("IpManipulator: %s prestart tuple arrived on worker %d; owner worker is %d; failing open",
-                 ipmanipulatorTlsCaptureKindName(kind),
-                 workerWIDForLog(lineGetWID(l)),
-                 workerWIDForLog(slot->owner_wid));
+            ipmanipulatorLogCrossWorkerFlowFailure(t,
+                                                   ipmanipulatorTlsCaptureKindName(kind),
+                                                   "TLS ClientHello prestart capture",
+                                                   lineGetWID(l),
+                                                   slot->owner_wid);
             ipmanipulatorTakePrestartSlot(&matched_prestart_slot, slot);
         }
 
@@ -2342,7 +2373,7 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
         {
             ipmanipulator_tls_prestart_slot_t *prestart_slot = &state->tls_prestart_slots[prestart_index];
 
-            ipmanipulatorDrainPrestartPacketsIntoCaptureSlot(prestart_slot, slot, &complete);
+            ipmanipulatorDrainPrestartPacketsIntoCaptureSlot(t, prestart_slot, slot, &complete);
 
             if (prestart_slot->active)
             {
@@ -2719,7 +2750,7 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
         ipmanipulator_tls_prestart_slot_t *prestart_slot = &state->tls_prestart_slots[prestart_index];
         if (! complete)
         {
-            ipmanipulatorDrainPrestartPacketsIntoCaptureSlot(prestart_slot, slot, &complete);
+            ipmanipulatorDrainPrestartPacketsIntoCaptureSlot(t, prestart_slot, slot, &complete);
         }
 
         if (prestart_slot->active)

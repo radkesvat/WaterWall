@@ -304,7 +304,8 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     state->trick_ech_sni_shard1_delay_ms         = 0;
     state->trick_ech_sni_shard2_delay_ms         = 0;
     atomicStoreU64Relaxed(&state->delay_barrier_next_generation, 0);
-    atomicStoreU64Relaxed(&state->egress_last_warning_ms, 0);
+    atomicLogRateLimiterInitialize(&state->egress_warning_limiter);
+    atomicLogRateLimiterInitialize(&state->worker_mismatch_guidance_limiter);
 
     if (! parseStatefulFlowLimit(state, settings))
     {

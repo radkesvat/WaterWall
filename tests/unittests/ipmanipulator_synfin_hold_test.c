@@ -329,7 +329,8 @@ static void setupEnv(test_env_t *env)
     env->sink->prev       = env->t;
     env->sink->fnPayloadU = captureUpstream;
 
-    ipmanipulator_tstate_t *state           = tunnelGetState(env->t);
+    ipmanipulator_tstate_t *state = tunnelGetState(env->t);
+    atomicLogRateLimiterInitialize(&state->worker_mismatch_guidance_limiter);
     state->trick_stateful_flow_limit        = kIpManipulatorFlowLimitMin;
     state->trick_synfin_sni                 = true;
     state->trick_synfin_sni_hold_timeout_ms = 50;

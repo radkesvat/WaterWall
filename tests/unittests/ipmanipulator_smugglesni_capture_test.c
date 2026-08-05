@@ -451,6 +451,7 @@ static tunnel_t *createTestTunnel(tunnel_t *normal, tunnel_t *real)
     real->fnPayloadU              = receiveReal;
     ipmanipulator_tstate_t *state = tunnelGetState(t);
 
+    atomicLogRateLimiterInitialize(&state->worker_mismatch_guidance_limiter);
     mutexInit(&state->tls_capture_mutex);
     state->tls_capture_slots_count = 16;
     state->tls_capture_slots = memoryAllocateZero(sizeof(*state->tls_capture_slots) * state->tls_capture_slots_count);
