@@ -41,6 +41,22 @@ static bool tlsclientAddConfiguredApplicationSettings(SSL *ssl, const uint8_t *a
     return true;
 }
 
+bool tlsclientConfigureClientHelloExtensions(SSL *ssl, const uint8_t *alpn_wire, size_t alpn_wire_len)
+{
+    if (ssl == NULL || ! tlsclientAddConfiguredApplicationSettings(ssl, alpn_wire, alpn_wire_len))
+    {
+        return false;
+    }
+
+    // Enable ECH GREASE to match Chrome's behavior.
+    SSL_set_enable_ech_grease(ssl, 1);
+
+    // Configure the remaining Chrome-like ClientHello extensions.
+    SSL_enable_ocsp_stapling(ssl);
+    SSL_enable_signed_cert_timestamps(ssl);
+    return true;
+}
+
 /**
  * Release a line state that failed somewhere inside tlsclientLinestateInitialize().
  *
@@ -97,25 +113,12 @@ bool tlsclientLinestateInitializeWithShaping(tlsclient_lstate_t *ls, SSL_CTX *sc
         return false;
     }
 
-    // Register Chrome-like ALPS values only for matching protocols in the configured ALPN offer.
-    if (! tlsclientAddConfiguredApplicationSettings(ls->ssl, alpn_wire, alpn_wire_len))
+    if (! tlsclientConfigureClientHelloExtensions(ls->ssl, alpn_wire, alpn_wire_len))
     {
-        LOGE("Failed to add configured ALPS values (part of matching Chrome)");
+        LOGE("Failed to configure TlsClient ClientHello extensions");
         tlsclientLinestateReleasePartial(ls);
         return false;
     }
-
-    // Enable ECH GREASE to match Chrome's behavior
-    // This sends a fake ECH extension to prevent fingerprinting
-    SSL_set_enable_ech_grease(ls->ssl, 1);
-
-    // Configure additional Chrome-like extensions
-
-    // Enable OCSP stapling (status_request extension)
-    SSL_enable_ocsp_stapling(ls->ssl);
-
-    // Enable Signed Certificate Timestamp extension
-    SSL_enable_signed_cert_timestamps(ls->ssl);
 
     return true;
 }

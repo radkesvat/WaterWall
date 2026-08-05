@@ -273,6 +273,19 @@ static cJSON *createTlsSettings(const char *sni, const char *ech_sni)
     return settings;
 }
 
+static cJSON *createTlsSettingsWithAlpnWireLength(size_t alpn_wire_len, const char *ech_sni)
+{
+    cJSON *settings      = createTlsSettings("example.com", ech_sni);
+    cJSON *alpn_settings = createAlpnSettingsWithWireLength(alpn_wire_len);
+    cJSON *alpns         = cJSON_GetObjectItemCaseSensitive(alpn_settings, "alpns");
+    cJSON *alpn_copy     = cJSON_Duplicate(alpns, true);
+
+    require(alpn_copy != NULL && cJSON_AddItemToObject(settings, "alpns", alpn_copy),
+            "failed to install the ClientHello framing ALPN fixture");
+    cJSON_Delete(alpn_settings);
+    return settings;
+}
+
 static tunnel_t *createTlsClientFromSettings(node_t *node, cJSON *settings)
 {
     *node = (node_t) {.node_settings_json = settings};
@@ -303,6 +316,40 @@ static void testConfiguredSniLengthBounds(void)
 
     settings = createTlsSettings("example.com", oversized_sni);
     require(createTlsClientFromSettings(&node, settings) == NULL, "oversized TlsClient ECH SNI was accepted");
+    cJSON_Delete(settings);
+
+    GSTATE.workers_count = saved_workers_count;
+    testWorkerRegistryRestore(&g_test_worker_registry);
+}
+
+static void testConfiguredClientHelloFramingBounds(void)
+{
+    const uint32_t saved_workers_count = GSTATE.workers_count;
+
+    GSTATE.workers_count = 2;
+    testWorkerRegistryInstall(&g_test_worker_registry);
+
+    node_t    node     = {0};
+    cJSON    *settings = createTlsSettingsWithAlpnWireLength(kTestLargeAlpnWireSize, NULL);
+    tunnel_t *tunnel   = createTlsClientFromSettings(&node, settings);
+    require(tunnel != NULL, "a frameable large ALPN configuration was rejected");
+    tlsclientTunnelDestroy(tunnel);
+    cJSON_Delete(settings);
+
+    settings = createTlsSettingsWithAlpnWireLength(kTlsClientMaxAlpnWireLength, NULL);
+    require(createTlsClientFromSettings(&node, settings) == NULL,
+            "an ALPN list that cannot fit the complete ClientHello was accepted");
+    cJSON_Delete(settings);
+
+    settings = createTlsSettingsWithAlpnWireLength(kTestLargeAlpnWireSize, "inner.example.com");
+    require(createTlsClientFromSettings(&node, settings) == NULL,
+            "an ECH override containing an oversized ClientHello was accepted");
+    cJSON_Delete(settings);
+
+    settings = createTlsSettingsWithAlpnWireLength(16, "inner.example.com");
+    tunnel   = createTlsClientFromSettings(&node, settings);
+    require(tunnel != NULL, "a frameable ECH ClientHello configuration was rejected");
+    tlsclientTunnelDestroy(tunnel);
     cJSON_Delete(settings);
 
     GSTATE.workers_count = saved_workers_count;
@@ -809,6 +856,7 @@ int main(void)
     testInvalidListsAreRejected();
     testTotalWireLengthBounds();
     testConfiguredSniLengthBounds();
+    testConfiguredClientHelloFramingBounds();
     testGeneratedLargeClientHelloIsComplete();
     testOrdinaryLargeClientHelloIsCompletelyDrained();
     testApiSniLengthBounds();

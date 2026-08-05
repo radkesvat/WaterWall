@@ -330,6 +330,172 @@ static bool createSslContextPool(SSL_CTX ***out_contexts, const uint8_t *alpn_wi
     return true;
 }
 
+/*
+ * Ask BoringSSL to serialize one complete ClientHello without using a worker
+ * buffer pool. A successful WANT_IO result with bytes in the write BIO proves
+ * that every nested TLS length field accepted this exact configuration.
+ */
+static bool tlsclientPreflightClientHello(SSL_CTX *ssl_ctx, const char *sni, const uint8_t *alpn_wire,
+                                          size_t alpn_wire_len, const uint8_t *ech_grease_override_payload,
+                                          size_t ech_grease_override_payload_len, uint8_t **out_payload,
+                                          size_t *out_payload_len)
+{
+    if (ssl_ctx == NULL || sni == NULL || ((out_payload == NULL) != (out_payload_len == NULL)))
+    {
+        return false;
+    }
+
+    if (out_payload != NULL)
+    {
+        *out_payload     = NULL;
+        *out_payload_len = 0;
+    }
+
+    SSL     *ssl           = NULL;
+    BIO     *rbio          = NULL;
+    BIO     *wbio          = NULL;
+    uint8_t *payload       = NULL;
+    bool     ssl_owns_bios = false;
+    bool     success       = false;
+
+    ERR_clear_error();
+
+    ssl  = SSL_new(ssl_ctx);
+    rbio = BIO_new(BIO_s_mem());
+    wbio = BIO_new(BIO_s_mem());
+    if (ssl == NULL || rbio == NULL || wbio == NULL ||
+        ! tlsclientConfigureClientHelloExtensions(ssl, alpn_wire, alpn_wire_len))
+    {
+        goto cleanup;
+    }
+
+    /* tlsclientConfigureSslForConnect transfers both BIOs before any fallible setting. */
+    ssl_owns_bios = true;
+    if (! tlsclientConfigureSslForConnect(
+            ssl, rbio, wbio, sni, ech_grease_override_payload, ech_grease_override_payload_len))
+    {
+        goto cleanup;
+    }
+
+    if (getSslStatus(ssl, SSL_connect(ssl)) != kSslstatusWantIo)
+    {
+        goto cleanup;
+    }
+
+    const size_t pending = BIO_ctrl_pending(wbio);
+    if (pending == 0 || pending > INT_MAX)
+    {
+        goto cleanup;
+    }
+
+    if (out_payload != NULL)
+    {
+        payload = memoryAllocate(pending);
+        if (payload == NULL)
+        {
+            goto cleanup;
+        }
+
+        size_t offset = 0;
+        while (offset < pending)
+        {
+            const int n = BIO_read(wbio, payload + offset, (int) (pending - offset));
+            if (n <= 0)
+            {
+                goto cleanup;
+            }
+            offset += (size_t) n;
+        }
+
+        if (BIO_ctrl_pending(wbio) != 0)
+        {
+            goto cleanup;
+        }
+
+        *out_payload     = payload;
+        *out_payload_len = pending;
+        payload          = NULL;
+    }
+
+    success = true;
+
+cleanup:
+    memoryFree(payload);
+    SSL_free(ssl);
+    if (! ssl_owns_bios)
+    {
+        BIO_free(rbio);
+        BIO_free(wbio);
+    }
+
+    if (! success)
+    {
+        ERR_clear_error();
+    }
+    return success;
+}
+
+/*
+ * Default ECH GREASE uses a random 144, 176, 208, or 240-byte payload in the
+ * vendored BoringSSL. Supplying 240 zero bytes is valid because an override is
+ * intentionally opaque, and validates the largest runtime wire image.
+ */
+static bool tlsclientPreflightConfiguredClientHello(const tlsclient_tstate_t *ts)
+{
+    if (ts == NULL || ts->threadlocal_ssl_contexts == NULL || ts->threadlocal_ssl_contexts[0] == NULL ||
+        ts->sni == NULL)
+    {
+        return false;
+    }
+
+    static const uint8_t kMaximumEchGreasePayload[kTlsClientMaxEchGreasePayloadLength] = {0};
+
+    if (ts->ech_grease_sni_override == NULL)
+    {
+        return tlsclientPreflightClientHello(ts->threadlocal_ssl_contexts[0],
+                                             ts->sni,
+                                             ts->alpn_wire,
+                                             ts->alpn_wire_len,
+                                             kMaximumEchGreasePayload,
+                                             sizeof(kMaximumEchGreasePayload),
+                                             NULL,
+                                             NULL);
+    }
+
+    if (ts->threadlocal_ech_grease_inner_ssl_contexts == NULL ||
+        ts->threadlocal_ech_grease_inner_ssl_contexts[0] == NULL)
+    {
+        return false;
+    }
+
+    uint8_t *inner_payload     = NULL;
+    size_t   inner_payload_len = 0;
+    bool     success           = tlsclientPreflightClientHello(ts->threadlocal_ech_grease_inner_ssl_contexts[0],
+                                                 ts->ech_grease_sni_override,
+                                                 ts->alpn_wire,
+                                                 ts->alpn_wire_len,
+                                                 kMaximumEchGreasePayload,
+                                                 sizeof(kMaximumEchGreasePayload),
+                                                 &inner_payload,
+                                                 &inner_payload_len);
+    if (! success || inner_payload_len > UINT16_MAX)
+    {
+        memoryFree(inner_payload);
+        return false;
+    }
+
+    success = tlsclientPreflightClientHello(ts->threadlocal_ssl_contexts[0],
+                                            ts->sni,
+                                            ts->alpn_wire,
+                                            ts->alpn_wire_len,
+                                            inner_payload,
+                                            inner_payload_len,
+                                            NULL,
+                                            NULL);
+    memoryFree(inner_payload);
+    return success;
+}
+
 tunnel_t *tlsclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(tlsclient_tstate_t), sizeof(tlsclient_lstate_t));
@@ -382,6 +548,12 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
         tlsclientTunnelstateDestroy(ts);
         tunnelDestroy(t);
         return NULL;
+    }
+
+    if (! tlsclientPreflightConfiguredClientHello(ts))
+    {
+        LOGF("TlsClient: configured ALPN and ECH settings do not fit a complete ClientHello");
+        goto fail;
     }
 
     if (ts->verbose)

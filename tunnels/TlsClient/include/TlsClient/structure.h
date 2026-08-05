@@ -77,7 +77,12 @@ enum tlsclient_record_e
     kTlsClientMaxRecordBody    = SSL3_RT_MAX_ENCRYPTED_LENGTH,
     kTlsClientMaxSniLength     = TLSEXT_MAXLEN_host_name,
     // The ALPN extension body also contains a two-byte ProtocolNameList length.
+    // tlsclientTunnelCreate additionally preflights the complete ClientHello,
+    // which has tighter limits once the other extensions are present.
     kTlsClientMaxAlpnWireLength = UINT16_MAX - 2U,
+    // BoringSSL's GREASE ECH payload is 128..224 bytes rounded to 32, plus
+    // the 16-byte AEAD tag. Keep startup preflight at its largest wire size.
+    kTlsClientMaxEchGreasePayloadLength = 240U,
 };
 
 static enum sslstatus getSslStatus(SSL *ssl, int n)
@@ -136,6 +141,7 @@ bool tlsclientLinestateInitializeWithShaping(tlsclient_lstate_t *ls, SSL_CTX *sc
                                              const tlsrecordshaping_config_t *record_shaping, bool verbose);
 void tlsclientLinestateDestroy(tlsclient_lstate_t *ls);
 void tlsclientLinestateRelease(tlsclient_lstate_t *ls);
+bool tlsclientConfigureClientHelloExtensions(SSL *ssl, const uint8_t *alpn_wire, size_t alpn_wire_len);
 void tlsclientCloseLineBidirectional(tunnel_t *t, line_t *l);
 bool tlsclientTakeoverTryReadRecord(tlsclient_lstate_t *ls, sbuf_t **record, bool *invalid);
 /*
