@@ -135,8 +135,6 @@ local_idle_table_t *localIdleTableCreate(wloop_t *loop)
         abortProgramNow(1);
     }
 
-    wloopUpdateTime(loop);
-
     const size_t        required_size = sizeof(local_idle_table_t);
     local_idle_table_t *newtable      = memoryAllocateCacheAligned(required_size);
     if (newtable == NULL)

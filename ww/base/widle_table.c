@@ -119,7 +119,6 @@ static void idleItemKeepExpireAtForAtleast(idle_item_t *item, uint64_t expire_at
 
 idle_table_t *idleTableCreate(wloop_t *loop)
 {
-    wloopUpdateTime(loop);
     // assert(sizeof(idle_table_t) <= kCpuLineCacheSize); promotion to 128 bytes
     const size_t  required_size = sizeof(idle_table_t);
     idle_table_t *newtable      = memoryAllocateCacheAligned(required_size);
