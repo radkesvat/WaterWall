@@ -80,28 +80,38 @@ sbuf_t *sbufCreate(uint32_t minimum_capacity)
     return sbufCreateWithPadding(minimum_capacity, 0);
 }
 
-void sbufDuplicateTo(sbuf_t *b, sbuf_t *dest)
+bool sbufDuplicateTo(const sbuf_t *b, sbuf_t *dest)
 {
+    assert(b != NULL && dest != NULL);
 
-    if (b->curpos >= sbufGetTotalCapacity(dest))
+    const uint32_t source_curpos = b->curpos;
+    const uint32_t source_length = sbufGetLength(b);
+    const uint32_t dest_capacity = sbufGetTotalCapacity(dest);
+
+    if (UNLIKELY(source_curpos > dest_capacity || source_length > dest_capacity - source_curpos))
     {
-        printError(
-            "Buffer duplication failed: source buffer's current position exceeds destination buffer's total capacity.");
-        return;
+        return false;
     }
 
-    dest->curpos = b->curpos;
-
-    uint32_t copy_length = min(sbufGetLength(b), sbufGetMaximumWriteableSize(dest));
-    sbufSetLength(dest, copy_length);
-    memoryCopyLarge(sbufGetMutablePtr(dest), sbufGetRawPtr(b), copy_length);
+    dest->curpos = source_curpos;
+    sbufSetLength(dest, source_length);
+    if (source_length > 0)
+    {
+        memoryCopyLarge(sbufGetMutablePtr(dest), sbufGetRawPtr(b), source_length);
+    }
+    return true;
 }
 
 sbuf_t *sbufDuplicate(sbuf_t *b)
 {
     sbuf_t *newbuf = sbufCreateWithPadding(sbufGetTotalCapacityNoPadding(b), b->l_pad);
 
-    sbufDuplicateTo(b, newbuf);
+    if (UNLIKELY(! sbufDuplicateTo(b, newbuf)))
+    {
+        sbufDestroy(newbuf);
+        printError("sbuf: an exactly sized duplicate buffer could not represent its source");
+        abortProgramNow(1);
+    }
     return newbuf;
 }
 

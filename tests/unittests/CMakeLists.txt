@@ -251,6 +251,16 @@ if(TARGET ww)
     "unit;bufio;sbuf;bufferpool;capacity;overflow"
   )
 
+  add_executable(bufio_contract_test bufio_contract_test.c)
+  target_link_libraries(bufio_contract_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests bufio_contract_test)
+
+  add_waterwall_unit_test(
+    waterwall.bufio_contract_unit
+    bufio_contract_test
+    "unit;bufio;sbuf;buffer-stream;invariant"
+  )
+
   add_executable(system_load_semantics_test system_load_semantics_test.c)
   target_link_libraries(system_load_semantics_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests system_load_semantics_test)

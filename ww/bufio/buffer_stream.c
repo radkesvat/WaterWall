@@ -171,7 +171,16 @@ sbuf_t *bufferstreamIdealRead(buffer_stream_t *self)
 
 uint8_t bufferstreamViewByteAt(buffer_stream_t *self, size_t at)
 {
-    assert(self && self->size > at && self->size != 0);
+    if (UNLIKELY(self == NULL))
+    {
+        printError("BufferStream: cannot view a byte from a NULL stream");
+        abortProgramNow(1);
+    }
+    if (UNLIKELY(at >= self->size))
+    {
+        printError("BufferStream: byte index %zu is out of range for %zu buffered bytes", at, self->size);
+        abortProgramNow(1);
+    }
 
     size_t offset = at;
     c_foreach(i, bs_doublequeue_t, self->q)
@@ -186,7 +195,9 @@ uint8_t bufferstreamViewByteAt(buffer_stream_t *self, size_t at)
 
         offset -= blen;
     }
-    return 0;
+
+    printError("BufferStream: size accounting is inconsistent while viewing byte %zu of %zu", at, self->size);
+    abortProgramNow(1);
 }
 
 void bufferstreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, size_t len)

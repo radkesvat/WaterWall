@@ -251,12 +251,17 @@ sbuf_t *sbufSlice(sbuf_t *b, uint32_t bytes);
 sbuf_t *sbufDuplicate(sbuf_t *b);
 
 /**
- * @brief Copy payload and cursor layout into an existing destination buffer.
+ * @brief Copy the complete payload and cursor layout into an existing destination buffer.
+ *
+ * The destination is left unchanged when it cannot represent the source's
+ * cursor and complete payload.
  *
  * @param b Source buffer.
  * @param dest Destination buffer.
+ * @return true when the complete source was copied; false when the destination
+ *         is too small.
  */
-void sbufDuplicateTo(sbuf_t *b, sbuf_t *dest);
+bool sbufDuplicateTo(const sbuf_t *b, sbuf_t *dest);
 
 /**
  * Gets total capacity of the buffer. (Total capacity is a constant value that will not change)

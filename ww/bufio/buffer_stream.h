@@ -84,9 +84,14 @@ sbuf_t *bufferstreamReadAtLeast(buffer_stream_t *self, size_t bytes);
 sbuf_t *bufferstreamIdealRead(buffer_stream_t *self);
 
 /**
- * Views a byte at a specific position in the buffer stream.
- * @param self The buffer stream.
- * @param at The position to view the byte.
+ * Views a byte at a valid position in the buffer stream.
+ *
+ * The caller must provide a non-NULL stream and guarantee
+ * `at < bufferstreamGetBufLen(self)`. Violating this precondition, or detecting
+ * inconsistent internal size accounting, terminates the program in every build.
+ *
+ * @param self The non-NULL buffer stream.
+ * @param at A valid byte position smaller than the stream length.
  * @return The byte at the specified position.
  */
 uint8_t bufferstreamViewByteAt(buffer_stream_t *self, size_t at);

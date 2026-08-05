@@ -353,7 +353,8 @@ sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restri
 
 sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b)
 {
-    sbuf_t *bnew;
+    const uint32_t source_length = sbufGetLength(b);
+    sbuf_t        *bnew;
     if (sbufGetTotalCapacityNoPadding(b) == pool->large_buffers_size)
     {
         bnew = bufferpoolGetLargeBuffer(pool);
@@ -366,8 +367,15 @@ sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b)
     {
         return sbufDuplicate(b);
     }
-    sbufSetLength(bnew, sbufGetLength(b));
-    sbufWriteBuf(bnew, b, sbufGetLength(b));
+
+    if (UNLIKELY(source_length > sbufGetMaximumWriteableSize(bnew)))
+    {
+        bufferpoolReuseBuffer(pool, bnew);
+        return sbufDuplicate(b);
+    }
+
+    sbufSetLength(bnew, source_length);
+    sbufWriteBuf(bnew, b, source_length);
     return bnew;
 }
 
