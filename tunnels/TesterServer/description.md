@@ -1,5 +1,5 @@
 <!--
-Documentation version: 107
+Documentation version: 108
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TesterServer.mdx, and both files must keep the same documentation version.
 -->
 
@@ -237,6 +237,12 @@ Packet mode with synthetic IPv4 packets:
   - `ttl` `(integer)`
     IPv4 TTL written into synthetic response headers.
     Default: `64`
+  - `worker-affine-flow` `(boolean)`
+    Derives the per-worker request source port the same way `TesterClient` does, so a chain that restores
+    inner-flow worker affinity delivers each worker's flow to the matching worker on this side too. Both nodes must
+    set it, and both must use the same `source-ip`, `dest-ip` and `transport`. Requires `transport` to be `tcp` or
+    `udp`.
+    Default: `false`
 
 ## Detailed Behavior
 

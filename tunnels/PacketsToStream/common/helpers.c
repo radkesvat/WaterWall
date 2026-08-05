@@ -2,6 +2,11 @@
 
 #include "loggers/network_logger.h"
 
+// Kept in its own block below the logger: device_flow_affinity.h pulls in the
+// internal logger, and whichever logger a translation unit sees first is the
+// one every LOGx in it reports to.
+#include "devices/device_flow_affinity.h"
+
 // Builds a self-contained, fully valid IPv4 heartbeat packet. Because the on-wire format is
 // now a raw concatenation of IPv4 packets (no length prefix), control frames must themselves be
 // valid IPv4 packets so the size-based extractor on the peer keeps its framing. The heartbeat is
@@ -542,6 +547,97 @@ bool packetstostreamTryReadIPv4Packet(buffer_stream_t *stream, sbuf_t **packet_o
         // IPv6 / garbage / inconsistent head: re-synchronize and retry.
         packetstostreamDropResyncBytes(stream);
     }
+}
+
+/*
+ * Cross-worker handoff of one decoded inner packet.
+ *
+ * The outer stream line's worker is whatever the socket manager happened to pick
+ * for the connection, so it says nothing about which worker owns the inner flow.
+ * The packet line is persistent, but a queued message still holds a temporary
+ * reference so the target cannot disappear underneath the callback.
+ */
+static void packetstostreamReplayDecodedPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    tunnel_t *t           = arg1;
+    line_t   *packet_line = arg2;
+    sbuf_t   *buf         = arg3;
+
+    assert(worker != NULL);
+    assert(worker->wid == lineGetWID(packet_line));
+    discard worker;
+
+    if (LIKELY(lineIsAlive(packet_line)))
+    {
+        tunnelPrevDownStreamPayload(t, packet_line, buf);
+    }
+    else
+    {
+        lineReuseBuffer(packet_line, buf);
+    }
+
+    lineUnlock(packet_line);
+}
+
+static void packetstostreamCleanupDecodedPacket(void *arg1, void *arg2, void *arg3)
+{
+    discard arg1;
+
+    line_t *packet_line = arg2;
+    sbuf_t *buf         = arg3;
+
+    // A pooled buffer may only go back to a pool this thread owns.
+    if (lineIsOnCurrentEventWorker(packet_line))
+    {
+        lineReuseBuffer(packet_line, buf);
+    }
+    else
+    {
+        sbufDestroy(buf);
+    }
+
+    lineUnlock(packet_line);
+}
+
+/*
+ * Restores inner-flow worker affinity for one decoded return packet and hands it
+ * to the packet chain. Takes ownership of @p packet on every path.
+ *
+ * @p stream_line is only used to recycle the buffer into the current worker's
+ * pool when the packet cannot be placed; it is never the routing decision.
+ */
+void packetstostreamForwardDecodedPacket(tunnel_t *t, line_t *stream_line, sbuf_t *packet)
+{
+    uint64_t flow_hash = 0;
+
+    if (UNLIKELY(! deviceFlowAffinityHash(sbufGetRawPtr(packet), sbufGetLength(packet), &flow_hash)))
+    {
+        // Framing already accepted this as an IPv4 packet, so a hash failure means
+        // its stateful worker ownership cannot be established. Round-robin would
+        // scatter one flow across workers, so drop it instead.
+        LOGW("PacketsToStream: dropping a decoded packet whose inner flow could not be hashed");
+        lineReuseBuffer(stream_line, packet);
+        return;
+    }
+
+    const wid_t target_wid  = (wid_t) (flow_hash % getWorkersCount());
+    line_t     *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), target_wid);
+
+    assert(packet_line != NULL);
+
+    if (lineIsOnCurrentEventWorker(packet_line))
+    {
+        tunnelPrevDownStreamPayload(t, packet_line, packet);
+        return;
+    }
+
+    lineLock(packet_line);
+    discard sendWorkerMessageForceQueueWithCleanup(target_wid,
+                                                   (WorkerMessageCallback) packetstostreamReplayDecodedPacketOnWorker,
+                                                   packetstostreamCleanupDecodedPacket,
+                                                   t,
+                                                   packet_line,
+                                                   packet);
 }
 
 void packetstostreamScheduleRecreateOutputLine(tunnel_t *t, line_t *packet_line, packetstostream_lstate_t *ls)

@@ -4,11 +4,7 @@
 
 void streamtopacketsTunnelUpStreamPause(tunnel_t *t, line_t *l)
 {
-    line_t                 *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), lineGetWID(l));
-    streamtopackets_lstate_t *ls        = lineGetState(packet_line, t);
-
-    if (ls->line == l)
-    {
-        ls->paused = true;
-    }
+    // Backpressure is per stream line, never global: the remaining active lines
+    // of this source keep carrying their flows.
+    streamtopacketsSetLinePaused(t, l, true);
 }

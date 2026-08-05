@@ -77,8 +77,13 @@ tunnel_t *streamtopacketsTunnelCreate(node_t *node)
     ts->packet_validation_level = kStreamToPacketsPacketValidationNone;
     ts->sensitive_mode          = false;
 
+    streamtopacketsOwnershipInitialize(ts);
+
     if (! streamtopacketsLoadSettings(ts, node->node_settings_json))
     {
+        // onDestroy is not invoked on this path, so the registry lock this
+        // function initialized has to be released here.
+        rwlockDestroy(&ts->lines_lock);
         tunnelDestroy(t);
         return NULL;
     }

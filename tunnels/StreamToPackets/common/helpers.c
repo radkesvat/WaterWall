@@ -2,6 +2,11 @@
 
 #include "loggers/network_logger.h"
 
+// Kept in its own block below the logger: device_flow_affinity.h pulls in the
+// internal logger, and whichever logger a translation unit sees first is the
+// one every LOGx in it reports to.
+#include "devices/device_flow_affinity.h"
+
 // Detects a heartbeat packet: a minimal IPv4 packet tagged with kHeartbeatProtocol whose payload
 // is filled with fill_byte. Real traffic is extremely unlikely to collide with this signature.
 bool streamtopacketsFrameMatchesFillByte(const sbuf_t *packet, uint8_t fill_byte)
@@ -34,7 +39,8 @@ bool streamtopacketsReadStreamIsOverflowed(buffer_stream_t *read_stream)
 {
     if (bufferstreamGetBufLen(read_stream) > kMaxBufferSize)
     {
-        LOGW("StreamToPackets: read stream overflow, size: %zu, limit: %zu", bufferstreamGetBufLen(read_stream),
+        LOGW("StreamToPackets: read stream overflow, size: %zu, limit: %zu",
+             bufferstreamGetBufLen(read_stream),
              (size_t) kMaxBufferSize);
         return true;
     }
@@ -60,8 +66,10 @@ static const char *streamtopacketsValidationLevelName(streamtopackets_packet_val
 static bool streamtopacketsDropInvalidPacket(streamtopackets_packet_validation_level_t level, const char *direction,
                                              const char *reason)
 {
-    LOGW("StreamToPackets: dropping packet during %s packet validation (%s): %s", direction,
-         streamtopacketsValidationLevelName(level), reason);
+    LOGW("StreamToPackets: dropping packet during %s packet validation (%s): %s",
+         direction,
+         streamtopacketsValidationLevelName(level),
+         reason);
     return false;
 }
 
@@ -117,8 +125,8 @@ static bool streamtopacketsValidateIpv4PacketHeader(streamtopackets_packet_valid
 
     if (total_len < packet_len)
     {
-        return streamtopacketsDropInvalidPacket(level, direction,
-                                                "IPv4 total length is smaller than the packet buffer");
+        return streamtopacketsDropInvalidPacket(
+            level, direction, "IPv4 total length is smaller than the packet buffer");
     }
 
     if (total_len > packet_len)
@@ -126,15 +134,14 @@ static bool streamtopacketsValidateIpv4PacketHeader(streamtopackets_packet_valid
         return streamtopacketsDropInvalidPacket(level, direction, "buffer is shorter than the IPv4 total length");
     }
 
-    *iphdr_out       = iphdr;
-    *header_len_out  = header_len;
-    *total_len_out   = total_len;
+    *iphdr_out      = iphdr;
+    *header_len_out = header_len;
+    *total_len_out  = total_len;
     return true;
 }
 
 static bool streamtopacketsValidateIpv4HeaderChecksum(streamtopackets_packet_validation_level_t level,
-                                                       struct ip_hdr *iphdr, uint16_t header_len,
-                                                       const char *direction)
+                                                      struct ip_hdr *iphdr, uint16_t header_len, const char *direction)
 {
     uint16_t original_checksum = IPH_CHKSUM(iphdr);
 
@@ -207,8 +214,8 @@ static bool streamtopacketsValidateUdpChecksum(streamtopackets_packet_validation
 
     uint16_t original_checksum = udphdr->chksum;
     udphdr->chksum             = 0;
-    uint16_t expected_checksum = calcGenericChecksum(
-        transport, udp_len, streamtopacketsChecksumPseudoHeader(iphdr, IP_PROTO_UDP, udp_len));
+    uint16_t expected_checksum =
+        calcGenericChecksum(transport, udp_len, streamtopacketsChecksumPseudoHeader(iphdr, IP_PROTO_UDP, udp_len));
     udphdr->chksum = original_checksum;
 
     if (expected_checksum == 0)
@@ -239,7 +246,7 @@ static bool streamtopacketsValidateIcmpChecksum(streamtopackets_packet_validatio
     uint16_t original_checksum = icmphdr->chksum;
     icmphdr->chksum            = 0;
     uint16_t expected_checksum = calcGenericChecksum(transport, transport_len, 0);
-    icmphdr->chksum = original_checksum;
+    icmphdr->chksum            = original_checksum;
 
     if (original_checksum != expected_checksum)
     {
@@ -314,8 +321,8 @@ void streamtopacketsRecalculateChecksumIfRequested(line_t *l, sbuf_t *buf)
 static inline bool streamtopacketsIpv4HeaderLooksValid(const uint8_t *header, uint16_t *total_len_out)
 {
     const uint8_t  version    = (uint8_t) (header[0] >> 4);
-    const uint8_t  header_len  = (uint8_t) ((header[0] & 0x0FU) * 4U);
-    const uint16_t total_len   = (uint16_t) (((uint16_t) header[2] << 8) | (uint16_t) header[3]);
+    const uint8_t  header_len = (uint8_t) ((header[0] & 0x0FU) * 4U);
+    const uint16_t total_len  = (uint16_t) (((uint16_t) header[2] << 8) | (uint16_t) header[3]);
 
     *total_len_out = total_len;
 
@@ -413,6 +420,137 @@ bool streamtopacketsTryReadIPv4Packet(buffer_stream_t *stream, sbuf_t **packet_o
         // IPv6 / garbage / inconsistent head: re-synchronize and retry.
         streamtopacketsDropResyncBytes(stream);
     }
+}
+
+/*
+ * Cross-worker handoff of one decoded inner packet, carrying the source
+ * generation it was authorized under.
+ *
+ * The outer stream line's worker was chosen by the socket manager and says
+ * nothing about which worker owns the inner flow, so affinity has to be restored
+ * from the packet itself. The packet line is persistent, but a queued message
+ * still holds a temporary reference so the target cannot disappear underneath the
+ * callback.
+ */
+typedef struct streamtopackets_packet_msg_s
+{
+    tunnel_t *tunnel;
+    line_t   *packet_line;
+    sbuf_t   *buf;
+    uint64_t  generation;
+} streamtopackets_packet_msg_t;
+
+static void streamtopacketsReplayDecodedPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    streamtopackets_packet_msg_t *msg = arg1;
+    discard                       arg2;
+    discard                       arg3;
+
+    assert(worker != NULL);
+    assert(worker->wid == lineGetWID(msg->packet_line));
+    discard worker;
+
+    streamtopackets_tstate_t *ts = tunnelGetState(msg->tunnel);
+
+    if (! lineIsAlive(msg->packet_line))
+    {
+        lineReuseBuffer(msg->packet_line, msg->buf);
+    }
+    else if (streamtopacketsPublishedGeneration(ts) != msg->generation)
+    {
+        // A takeover linearized after this packet was queued: the epoch that
+        // authorized it no longer owns the tunnel, so it must not be injected.
+        LOGD("StreamToPackets: dropping a queued packet from a superseded source generation");
+        lineReuseBuffer(msg->packet_line, msg->buf);
+    }
+    else
+    {
+        tunnelNextUpStreamPayload(msg->tunnel, msg->packet_line, msg->buf);
+    }
+
+    lineUnlock(msg->packet_line);
+    memoryFree(msg);
+}
+
+static void streamtopacketsCleanupDecodedPacket(void *arg1, void *arg2, void *arg3)
+{
+    streamtopackets_packet_msg_t *msg = arg1;
+    discard                       arg2;
+    discard                       arg3;
+
+    // A pooled buffer may only go back to a pool this thread owns.
+    if (lineIsOnCurrentEventWorker(msg->packet_line))
+    {
+        lineReuseBuffer(msg->packet_line, msg->buf);
+    }
+    else
+    {
+        sbufDestroy(msg->buf);
+    }
+
+    lineUnlock(msg->packet_line);
+    memoryFree(msg);
+}
+
+/*
+ * Restores inner-flow worker affinity for one decoded upstream packet and hands
+ * it to the packet chain. Takes ownership of @p packet on every path.
+ *
+ * @p generation is the token streamtopacketsAuthorizeLine() returned for this
+ * packet; both the direct and the queued path re-check it, so an epoch that was
+ * superseded between authorization and delivery fails closed.
+ */
+void streamtopacketsForwardDecodedPacket(tunnel_t *t, line_t *stream_line, sbuf_t *packet, uint64_t generation)
+{
+    streamtopackets_tstate_t *ts        = tunnelGetState(t);
+    uint64_t                  flow_hash = 0;
+
+    if (UNLIKELY(! deviceFlowAffinityHash(sbufGetRawPtr(packet), sbufGetLength(packet), &flow_hash)))
+    {
+        // Framing and validation already accepted this as an IPv4 packet, so a
+        // hash failure means its stateful worker ownership cannot be established.
+        // Round-robin would scatter one flow across workers, so drop it instead.
+        LOGW("StreamToPackets: dropping a decoded packet whose inner flow could not be hashed");
+        lineReuseBuffer(stream_line, packet);
+        return;
+    }
+
+    const wid_t target_wid  = (wid_t) (flow_hash % getWorkersCount());
+    line_t     *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), target_wid);
+
+    assert(packet_line != NULL);
+
+    if (lineIsOnCurrentEventWorker(packet_line))
+    {
+        if (UNLIKELY(streamtopacketsPublishedGeneration(ts) != generation))
+        {
+            lineReuseBuffer(packet_line, packet);
+            return;
+        }
+
+        tunnelNextUpStreamPayload(t, packet_line, packet);
+        return;
+    }
+
+    streamtopackets_packet_msg_t *msg = memoryAllocate(sizeof(*msg));
+
+    if (UNLIKELY(msg == NULL))
+    {
+        LOGE("StreamToPackets: failed to allocate a cross-worker packet message");
+        lineReuseBuffer(stream_line, packet);
+        return;
+    }
+
+    *msg = (streamtopackets_packet_msg_t) {
+        .tunnel = t, .packet_line = packet_line, .buf = packet, .generation = generation};
+
+    lineLock(packet_line);
+    discard sendWorkerMessageForceQueueWithCleanup(target_wid,
+                                                   (WorkerMessageCallback) streamtopacketsReplayDecodedPacketOnWorker,
+                                                   streamtopacketsCleanupDecodedPacket,
+                                                   msg,
+                                                   NULL,
+                                                   NULL);
 }
 
 // Builds and sends a heartbeat pong. The on-wire format is a raw concatenation of IPv4 packets, so

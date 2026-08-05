@@ -35,6 +35,7 @@ typedef struct testerserver_tstate_s
     bool                                 packet_init_on_start;
     bool                                 streaming_response;
     bool                                 packet_ipv4_mode;
+    bool                                 packet_ipv4_worker_affine_flow;
     uint32_t                             packet_ipv4_source_addr;
     uint32_t                             packet_ipv4_dest_addr;
     uint32_t                             max_payload_size;

@@ -2050,6 +2050,51 @@ if(TARGET MuxServer)
   )
 endif()
 
+# StreamToPackets active-source ownership and per-flow return-line selection.
+# Built like the line-failure tests so the buffer ledger and the worker
+# environment see the tunnel's own (never-IPO) translation units.
+if(TARGET StreamToPackets)
+  add_executable(streamtopackets_ownership_test
+    streamtopackets_ownership_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(streamtopackets_ownership_test StreamToPackets)
+  # Eviction has to keep its "every old-source line is closed" promise even when a
+  # worker message cannot be posted, which only an injected rejection can reach.
+  target_link_options(streamtopackets_ownership_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
+  )
+  target_link_libraries(streamtopackets_ownership_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests streamtopackets_ownership_test)
+
+  add_waterwall_unit_test(
+    waterwall.streamtopackets_ownership_unit
+    streamtopackets_ownership_test
+    "unit;tunnels;streamtopackets;ownership;affinity;lifetime"
+  )
+endif()
+
+# Cross-worker inner-flow affinity restoration in both stream/packet bridge
+# decoders. One executable per tunnel: several tunnels ship a structure.h and one
+# translation unit must only ever see the tunnel it is testing.
+if(TARGET PacketsToStream)
+  add_executable(packetstostream_bridge_affinity_test
+    packetstostream_bridge_affinity_test.c
+    ${WATERWALL_LINE_FAILURE_WW_SOURCES}
+  )
+  waterwall_line_failure_test_use_tunnel(packetstostream_bridge_affinity_test PacketsToStream)
+  target_link_options(packetstostream_bridge_affinity_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_libraries(packetstostream_bridge_affinity_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests packetstostream_bridge_affinity_test)
+
+  add_waterwall_unit_test(
+    waterwall.packetstostream_bridge_affinity_unit
+    packetstostream_bridge_affinity_test
+    "unit;tunnels;packetstostream;affinity"
+  )
+endif()
+
 # Category-B orderly-shutdown failure injection. One executable per tunnel so
 # that only one tunnel's structure.h is ever visible in a translation unit.
 # wtimerAdd is wrapped alongside the process APIs wherever the injected failure

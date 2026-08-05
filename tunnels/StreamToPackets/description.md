@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/StreamToPackets.mdx, and both files must keep the same documentation version.
 -->
 
@@ -21,10 +21,12 @@ Non-IPv4 payloads (including IPv6) are dropped in both directions.
 
 - Accepts a normal data line from the previous side.
 - Buffers incoming stream bytes until a full IPv4 packet is available.
-- Extracts packet payload and forwards it to the next side.
-- Tracks one active upstream data line per worker.
-- On return path, validates the packet is a self-consistent IPv4 packet and sends it raw back to the stream side (IPv6 is dropped).
-- Drops packet output while the upstream data side is paused.
+- Extracts packet payload and dispatches it to the worker that owns the inner flow.
+- Tracks one active source IP globally; several validated stream lines from that IP may be used together.
+- On return path, validates the packet is a self-consistent IPv4 packet and sends it raw back to one active stream
+  line chosen per inner flow (IPv6 is dropped).
+- Excludes a paused stream line from selection and remaps its flows to the rest of the pool; packet output is
+  dropped only when no active, unpaused line is available.
 
 This tunnel is useful when transport is stream-oriented but packet boundaries must be preserved explicitly.
 
@@ -120,11 +122,53 @@ for fragments because transport checksums can only be fully verified after reass
 
 ## Detailed Behavior
 
-### Active data line per worker
+### One active source, many lines
 
-When a data line is initialized from the previous side, `StreamToPackets` stores that line as the active line for the worker and creates a read stream parser.
+Ownership is global to the tunnel instance, not per worker.
 
-If another upstream line replaces it on the same worker, parser state is reset so partial frame bytes do not leak across lines.
+When a data line is initialized from the previous side, `StreamToPackets` creates a read stream parser for it and
+registers it as a **candidate**. A candidate is tracked but not selectable: it carries no return traffic until it
+produces its first valid IPv4 packet, or a valid sensitive-mode heartbeat.
+
+The source identity is the concrete source IP from the line's source address context. The port is deliberately not
+part of it: `TcpListener` stores the local listener port there, and reconnects use fresh ephemeral ports. Lines with
+no concrete source IP - a directly composed in-process `PacketsToStream -> StreamToPackets` pair, for example -
+share one explicit anonymous identity, so such compositions keep working, at the cost of not being able to tell two
+anonymous peers apart.
+
+Once a candidate is validated:
+
+- if there is no active source, it becomes the active source and opens a new source generation
+- if its source matches the active source, it simply joins that generation; every validated line from that IP stays
+  usable at the same time
+- if its source differs, it takes ownership: a new generation is published, and every line of the previous source,
+  including idle candidates, is closed on its own worker through the previous side
+
+Malformed bytes, buffer overflow and failed validation are never protocol proof, so they can neither activate a
+candidate nor trigger a takeover. A line evicted by a takeover can never reclaim ownership, but a genuinely new
+connection from the old IP can take over again once it produces valid traffic. This is **validated newest source
+wins**: expose the listener only behind authentication or allowlisting on untrusted networks.
+
+When the last active line of a generation finishes, the active source is cleared and return traffic is dropped until
+a new line is validated.
+
+Once the node manager begins stopping this instance, no line may be registered and no candidate may be promoted;
+lines that are already active keep draining. A shutdown therefore never opens a new ownership epoch or queues
+eviction work onto workers that are already going away.
+
+An evicted line is closed by a task posted to its own worker. If that post fails for a reason other than shutdown -
+an exhausted message pool, a loop that refuses a wakeup - and the takeover happens to be running on that line's own
+worker, it is closed there instead. If it is not, there is no second channel to that worker and no way to close the
+line, so the node fails closed: it requests an orderly program shutdown, falling back to an immediate abort if
+worker 0 will not take the handoff. An old-source connection is never left running.
+
+### Inner-flow worker affinity
+
+The worker that owns an outer connection is chosen by the socket manager and is unrelated to the worker that owns an
+inner IP flow. `StreamToPackets` therefore re-derives affinity from each decoded packet: it computes the shared
+symmetric flow hash and dispatches the packet to `packet_line[hash % workers]`, forwarding directly when that is the
+current worker and queueing to the target worker otherwise. Both directions of one flow reach the same packet
+worker.
 
 ### Data flow direction
 
@@ -162,24 +206,39 @@ guaranteed on every step.
 When packet payload arrives back from the next side:
 
 - optional IPv4 checksum recalculation is applied if requested by line state
-- the packet is written raw to the active upstream data line if it is a self-consistent IPv4 packet (IPv6/malformed is dropped)
+- the packet must be a self-consistent IPv4 packet (IPv6/malformed is dropped)
+- the same symmetric flow hash selects one carrier from the active, unpaused lines of the current generation by
+  rendezvous hashing, so one flow stays on one line while that pool is unchanged and different flows spread across
+  the pool
+- the packet is written raw to that line, on that line's own worker
+
+Adding, pausing, resuming or removing a line changes the eligible pool and can move some flows to a different
+carrier, so a small amount of reordering is possible around those transitions: a packet sent on the new carrier can
+overtake one still in flight on the old one. This is a packet path, and the inner protocol is responsible for
+ordering, exactly as it is over any network. A peer that requires strictly ordered delivery of the packets it gets
+back must not depend on this node while stream lines are joining or leaving. Steady-state per-packet round-robin is
+never used.
 
 ### Pause and resume behavior
 
-When the upstream data line is paused:
+Pause is per stream line, not global:
 
-- packet-side output back toward the stream side is dropped
-
-When resumed:
-
-- normal forwarding continues
+- a paused line is excluded from new flow selection, and its flows move to the remaining active lines
+- when every active line is paused, return packets are dropped rather than queued into an unbounded global buffer
+- resume makes the line selectable again, which restores its previous rendezvous winners
 
 ### Finish behavior
 
-When the active upstream data line finishes:
+When an upstream data line finishes:
 
-- active line reference is cleared
-- parser buffer is reset
+- it is removed from the line registry
+- its parser state is destroyed
+- nothing is sent back toward the previous side, which is the sender of that `Finish`
+- if it was the last active line of the current generation, the active source is cleared and queued return writes
+  from that generation become stale
+
+Incoming stream lines are borrowed: `StreamToPackets` never destroys one, and it never finishes or destroys a worker
+packet line.
 
 ### Sensitive mode heartbeat
 
@@ -206,3 +265,7 @@ If buffered data exceeds that size, the read stream is emptied.
 - It is IPv4-only; IPv6 and non-IPv4 payloads are dropped in both directions.
 - It should usually be paired with `PacketsToStream` on the opposite side.
 - Upstream `est` plus downstream `init`, `fin`, `pause`, and `resume` are not part of the intended normal callback path for this tunnel.
+- Ownership is one active source IP for the whole node, not one last line per worker. Put authentication or
+  allowlisting in front of it on untrusted listeners.
+- Return traffic can arrive on any line of the active source's pool, so the peer must be able to accept a decoded
+  packet on any of its lines. `PacketsToStream` does exactly that.

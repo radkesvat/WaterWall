@@ -48,6 +48,7 @@ typedef struct testerclient_tstate_s
     bool                                 packet_stateless;
     bool                                 packet_start_immediately;
     bool                                 packet_ipv4_mode;
+    bool                                 packet_ipv4_worker_affine_flow;
     uint32_t                             packet_ipv4_source_addr;
     uint32_t                             packet_ipv4_dest_addr;
     uint32_t                             max_payload_size;

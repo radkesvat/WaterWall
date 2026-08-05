@@ -81,6 +81,7 @@ bool packetstostreamFrameMatchesFillByte(const sbuf_t *packet, uint8_t fill_byte
 bool packetstostreamValidatePacket(packetstostream_packet_validation_level_t level, sbuf_t *packet,
                                    const char *direction);
 void packetstostreamRecalculateChecksumIfRequested(line_t *l, sbuf_t *buf);
+void packetstostreamForwardDecodedPacket(tunnel_t *t, line_t *stream_line, sbuf_t *packet);
 void packetstostreamRecreateOutputLineTask(tunnel_t *t, line_t *packet_line);
 void packetstostreamHeartbeatTimerCallback(wtimer_t *timer);
 void packetstostreamTimeoutTimerCallback(wtimer_t *timer);

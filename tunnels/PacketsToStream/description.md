@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketsToStream.mdx, and both files must keep the same documentation version.
 -->
 
@@ -19,7 +19,8 @@ Non-IPv4 payloads (including IPv6) are dropped in both directions.
 - Creates and maintains one stream-facing line per worker toward the next node.
 - For each outgoing packet, validates it is a self-consistent IPv4 packet and forwards it raw (IPv6 is dropped).
 - Buffers return stream data and extracts complete IPv4 packets using the IPv4 total-length field.
-- Sends each reconstructed packet back to the previous side.
+- Sends each reconstructed packet back to the previous side on the worker that owns that packet's inner flow.
+- Accepts return traffic for any inner flow on any of its stream lines.
 - Recreates the stream-facing line if that line is closed.
 
 This tunnel is a packet-to-stream adapter based on IPv4 header parsing, not explicit length framing.
@@ -170,9 +171,20 @@ The tunnel then:
 - waits for at least a full minimum IPv4 header
 - reads the IPv4 total-length field
 - waits until the whole packet (`total length`) is available
-- emits one packet back to the previous side
+- computes the shared symmetric inner-flow hash of the decoded packet
+- emits the packet back to the previous side on `packet_line[hash % workers]`,
+  directly when that is the current worker and queued to the target worker otherwise
 
 Packet boundary recovery is based on the IPv4 total-length field.
+
+The outer stream line's worker is not used to pick the packet line. A peer such as
+`StreamToPackets` chooses a return carrier per inner flow out of its active line
+pool, so any flow can arrive on any of these lines; re-deriving affinity from the
+inner tuple is what makes that safe. A decoded packet whose flow cannot be hashed
+is logged and dropped rather than round-robined.
+
+The parser, the heartbeat state, and output-line recreation all stay owned by the
+stream line's own worker. Only the decoded packets are re-affinitized.
 
 ### Garbage Resilience
 
@@ -238,4 +250,5 @@ If buffered return data grows beyond that limit, the read stream is emptied.
 - This node is IPv4-length based (no framing header), not `2-byte length + payload` based.
 - It is IPv4-only; IPv6 and non-IPv4 payloads are dropped in both directions.
 - Pair it with `StreamToPackets` on the other side to restore packet boundaries.
+- It still owns one stream output line per packet worker on the send side; only the receive side is re-affinitized.
 - Upstream `est`, `pause`, `resume`, and `finish`, plus downstream `init`, are not part of the intended normal callback path for this tunnel.

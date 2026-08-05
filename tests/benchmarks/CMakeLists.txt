@@ -14,4 +14,9 @@ if(TARGET ww AND UNIX)
 
   add_executable(users_benchmark EXCLUDE_FROM_ALL users_benchmark.c)
   target_link_libraries(users_benchmark PRIVATE ww)
+
+  if(TARGET StreamToPackets)
+    add_executable(streamtopackets_selection_benchmark EXCLUDE_FROM_ALL streamtopackets_selection_benchmark.c)
+    target_link_libraries(streamtopackets_selection_benchmark PRIVATE StreamToPackets ww)
+  endif()
 endif()

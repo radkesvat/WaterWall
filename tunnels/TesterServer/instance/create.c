@@ -125,10 +125,11 @@ static bool testerserverLoadPacketIpv4Settings(testerserver_tstate_t *ts, const 
 {
     const cJSON *packet_ipv4 = cJSON_GetObjectItemCaseSensitive(settings, "packet-ipv4");
 
-    ts->packet_ipv4_mode      = false;
-    ts->packet_ipv4_protocol  = kTesterServerPacketIpv4ProtocolDefault;
-    ts->packet_ipv4_ttl       = kTesterServerPacketIpv4TtlDefault;
-    ts->packet_ipv4_transport = kTesterServerPacketIpv4TransportNone;
+    ts->packet_ipv4_mode               = false;
+    ts->packet_ipv4_worker_affine_flow = false;
+    ts->packet_ipv4_protocol           = kTesterServerPacketIpv4ProtocolDefault;
+    ts->packet_ipv4_ttl                = kTesterServerPacketIpv4TtlDefault;
+    ts->packet_ipv4_transport          = kTesterServerPacketIpv4TransportNone;
     atomicStoreRelaxed(&ts->packet_ipv4_identification, 0);
 
     if (packet_ipv4 == NULL)
@@ -186,6 +187,19 @@ static bool testerserverLoadPacketIpv4Settings(testerserver_tstate_t *ts, const 
         }
 
         ts->packet_ipv4_protocol = transport_protocol;
+    }
+
+    getBoolFromJsonObjectOrDefault(&ts->packet_ipv4_worker_affine_flow, packet_ipv4, "worker-affine-flow", false);
+
+    /*
+     * A worker-affine flow is selected by varying the request source port, which
+     * only participates in flow affinity for the port-carrying transports.
+     */
+    if (ts->packet_ipv4_worker_affine_flow && ts->packet_ipv4_transport != kTesterServerPacketIpv4TransportTcp &&
+        ts->packet_ipv4_transport != kTesterServerPacketIpv4TransportUdp)
+    {
+        LOGF("TesterServer: settings->packet-ipv4->worker-affine-flow requires transport tcp or udp");
+        return false;
     }
 
     ts->packet_ipv4_mode = true;

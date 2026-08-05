@@ -4,17 +4,27 @@
 
 void streamtopacketsTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
-    line_t                   *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), lineGetWID(l));
-    streamtopackets_lstate_t *packet_ls   = lineGetState(packet_line, t);
-    streamtopackets_lstate_t *line_ls     = lineGetState(l, t);
+    streamtopackets_lstate_t *line_ls = lineGetState(l, t);
 
     if (line_ls->read_stream.pool == NULL)
     {
         streamtopacketsLinestateInitialize(line_ls, lineGetBufferPool(l));
     }
 
-    packet_ls->paused = false;
-    packet_ls->line   = l;
+    /*
+     * Registration alone neither changes the active source nor makes this line
+     * selectable: it stays a candidate until it produces a valid IPv4 packet or a
+     * valid sensitive-mode heartbeat.
+     */
+    if (UNLIKELY(! streamtopacketsRegisterCandidateLine(t, l)))
+    {
+        // An untracked line could never be authorized, so close it rather than
+        // keep a connection that can only ever drop traffic. The line is
+        // borrowed, so its owner performs the destruction.
+        streamtopacketsLinestateDestroy(line_ls);
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
 
     discard withLineLocked(l, tunnelPrevDownStreamEst, t);
 }

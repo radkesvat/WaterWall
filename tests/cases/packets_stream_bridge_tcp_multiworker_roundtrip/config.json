@@ -1,0 +1,66 @@
+{
+  "name": "packets-stream-bridge-tcp-multiworker-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "packet-mode": true,
+        "chunk-count": 1,
+        "packet-ipv4": {
+          "source-ip": "10.92.0.1",
+          "dest-ip": "10.92.0.2",
+          "transport": "tcp",
+          "ttl": 64,
+          "worker-affine-flow": true
+        }
+      },
+      "next": "packets-to-stream"
+    },
+    {
+      "name": "packets-to-stream",
+      "type": "PacketsToStream",
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26210,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26210,
+        "nodelay": true
+      },
+      "next": "stream-to-packets"
+    },
+    {
+      "name": "stream-to-packets",
+      "type": "StreamToPackets",
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "packet-mode": true,
+        "chunk-count": 1,
+        "packet-ipv4": {
+          "source-ip": "10.92.0.1",
+          "dest-ip": "10.92.0.2",
+          "transport": "tcp",
+          "ttl": 64,
+          "worker-affine-flow": true
+        }
+      }
+    }
+  ]
+}

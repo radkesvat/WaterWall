@@ -4,15 +4,15 @@
 
 void streamtopacketsTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 {
-    line_t                   *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), lineGetWID(l));
-    streamtopackets_lstate_t *packet_ls   = lineGetState(packet_line, t);
-    streamtopackets_lstate_t *line_ls     = lineGetState(l, t);
+    streamtopackets_lstate_t *line_ls = lineGetState(l, t);
 
-    if (packet_ls->line == l)
-    {
-        packet_ls->line   = NULL;
-        packet_ls->paused = false;
-    }
+    /*
+     * The previous side is the sender here, so nothing is sent back toward it and
+     * nothing is sent toward the packet side. This borrowed line is only removed
+     * from the registry - if it was the last active line of the current source
+     * generation, the registry clears the active owner and stales queued writes.
+     */
+    streamtopacketsUnregisterLine(t, l);
 
     if (line_ls->read_stream.pool != NULL)
     {

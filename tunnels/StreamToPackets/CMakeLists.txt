@@ -11,6 +11,7 @@ add_library(StreamToPackets STATIC
                     instance/index.c
                     common/helpers.c
                     common/line_state.c
+                    common/ownership.c
                     upstream/init.c
                     upstream/est.c
                     upstream/fin.c

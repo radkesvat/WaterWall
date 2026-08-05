@@ -4,7 +4,7 @@
 
 void packetstostreamTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    packetstostream_tstate_t *ts         = tunnelGetState(t);
+    packetstostream_tstate_t *ts          = tunnelGetState(t);
     line_t                   *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), lineGetWID(l));
     packetstostream_lstate_t *ls          = lineGetState(packet_line, t);
 
@@ -22,6 +22,15 @@ void packetstostreamTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    /*
+     * Delivering a decoded packet runs an inter-tunnel callback that can close
+     * this stream line re-entrantly, so hold a reference across the extraction
+     * loop and re-check the line's logical state before touching parser state
+     * again. The parser, heartbeat and output-line recreation state stay owned by
+     * this stream line's worker; only the decoded packets are re-affinitized.
+     */
+    lineLock(l);
+
     while (true)
     {
         sbuf_t *packet_buffer = NULL;
@@ -33,14 +42,14 @@ void packetstostreamTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (ts->sensitive_mode && packetstostreamFrameMatchesFillByte(packet_buffer, kSensitivePongByte))
         {
-            const uint64_t now = wloopNowMS(getWorkerLoop(lineGetWID(packet_line)));
-            const uint64_t elapsed_ms =
-                (ls->awaiting_pong && ls->ping_sent_at_ms > 0 && now >= ls->ping_sent_at_ms) ?
-                    (now - ls->ping_sent_at_ms) :
-                    0;
+            const uint64_t now        = wloopNowMS(getWorkerLoop(lineGetWID(packet_line)));
+            const uint64_t elapsed_ms = (ls->awaiting_pong && ls->ping_sent_at_ms > 0 && now >= ls->ping_sent_at_ms)
+                                            ? (now - ls->ping_sent_at_ms)
+                                            : 0;
 
             LOGD("PacketsToStream: received sensitive-mode pong after %llums (limit=%u ms)",
-                 (unsigned long long) elapsed_ms, (unsigned int) ts->tolerance_ms);
+                 (unsigned long long) elapsed_ms,
+                 (unsigned int) ts->tolerance_ms);
             lineReuseBuffer(l, packet_buffer);
 
             if (ls->awaiting_pong && elapsed_ms >= ts->tolerance_ms)
@@ -48,6 +57,7 @@ void packetstostreamTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 LOGW("PacketsToStream: sensitive-mode pong exceeded tolerance after %llums, resetting connection",
                      (unsigned long long) elapsed_ms);
                 packetstostreamCloseOutputLineAndScheduleRecreate(t, packet_line, ls);
+                lineUnlock(l);
                 return;
             }
 
@@ -63,6 +73,19 @@ void packetstostreamTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             continue;
         }
 
-        tunnelPrevDownStreamPayload(t, packet_line, packet_buffer);
+        /*
+         * The peer may return any inner flow on any of its stream lines, so this
+         * outer line's worker cannot decide packet-side ownership. Re-affinitize
+         * from the inner tuple instead of assuming packet_line[lineGetWID(l)].
+         */
+        packetstostreamForwardDecodedPacket(t, l, packet_buffer);
+
+        if (! lineIsAlive(l) || ls->line != l || ls->read_stream.pool == NULL)
+        {
+            lineUnlock(l);
+            return;
+        }
     }
+
+    lineUnlock(l);
 }

@@ -2,6 +2,11 @@
 
 #include "loggers/network_logger.h"
 
+// Kept in its own block below the logger: device_flow_affinity.h pulls in the
+// internal logger, and whichever logger a translation unit sees first is the
+// one every LOGx in it reports to.
+#include "devices/device_flow_affinity.h"
+
 static const uint32_t kTesterServerChunkSizes[kTesterServerChunkCount] = {
     1U,
     2U,
@@ -61,7 +66,11 @@ static const uint32_t kTesterServerPacketIpv4TransportChunkSizes[kTesterServerCh
 enum
 {
     kTesterServerPacketIpv4RequestSourcePort = 40123,
-    kTesterServerPacketIpv4RequestDestPort   = 40234
+    kTesterServerPacketIpv4RequestDestPort   = 40234,
+    // Minimal IPv4 header plus the two transport ports: everything the shared
+    // flow-affinity hash reads for a port-carrying transport.
+    kTesterServerPacketIpv4AffinityProbeSize = 24,
+    kTesterServerPacketIpv4AffinityPortScan  = 4096
 };
 
 static inline uint16_t testerserverPacketIpv4HeaderLength(void)
@@ -188,18 +197,76 @@ static void testerserverPacketIpv4DirectionAddrs(const testerserver_tstate_t *ts
     *dest_addr = ts->packet_ipv4_source_addr;
 }
 
-static void testerserverPacketIpv4DirectionPorts(testerserver_direction_e direction, uint16_t *src_port,
-                                                 uint16_t *dest_port)
+/*
+ * Optional worker-affine request flow.
+ *
+ * The default synthetic flow is byte-identical on every worker, so a chain that
+ * restores inner-flow worker affinity funnels all of them onto one worker and the
+ * per-worker request/response state machines stop lining up. With
+ * packet-ipv4->worker-affine-flow enabled, each worker instead uses the first
+ * request source port whose flow selects that same worker. The flow hash is
+ * symmetric, so the response direction resolves to the same worker, and both
+ * testers derive the port identically from settings they already share.
+ *
+ * Every caller runs on the line's own event worker, which for a packet line is
+ * the worker whose flow this is.
+ */
+static uint16_t testerserverPacketIpv4WorkerSourcePort(const testerserver_tstate_t *ts)
 {
+    if (! ts->packet_ipv4_worker_affine_flow)
+    {
+        return (uint16_t) kTesterServerPacketIpv4RequestSourcePort;
+    }
+
+    const wid_t wid = getCurrentEventWorkerWID();
+    uint8_t     probe[kTesterServerPacketIpv4AffinityProbeSize];
+
+    memoryZero(probe, sizeof(probe));
+    probe[0] = 0x45;
+    probe[9] = ts->packet_ipv4_protocol;
+    // The hash only trusts bytes inside the declared total length, so the probe
+    // has to declare its own size or its ports are not read at all.
+    PUT_BE16(probe + 2, (uint16_t) kTesterServerPacketIpv4AffinityProbeSize);
+    memoryCopy(probe + 12, &ts->packet_ipv4_source_addr, sizeof(ts->packet_ipv4_source_addr));
+    memoryCopy(probe + 16, &ts->packet_ipv4_dest_addr, sizeof(ts->packet_ipv4_dest_addr));
+    PUT_BE16(probe + 22, (uint16_t) kTesterServerPacketIpv4RequestDestPort);
+
+    for (uint32_t offset = 0; offset < kTesterServerPacketIpv4AffinityPortScan; ++offset)
+    {
+        const uint16_t candidate = (uint16_t) (kTesterServerPacketIpv4RequestSourcePort + offset);
+        wid_t          selected  = 0;
+
+        if (candidate == (uint16_t) kTesterServerPacketIpv4RequestDestPort)
+        {
+            continue;
+        }
+
+        PUT_BE16(probe + 20, candidate);
+
+        if (deviceFlowAffineWID(probe, sizeof(probe), &selected) && selected == wid)
+        {
+            return candidate;
+        }
+    }
+
+    LOGF("TesterServer: no request source port in the scan window maps to worker %u", (unsigned int) wid);
+    abortProgramNow(1);
+}
+
+static void testerserverPacketIpv4DirectionPorts(const testerserver_tstate_t *ts, testerserver_direction_e direction,
+                                                 uint16_t *src_port, uint16_t *dest_port)
+{
+    const uint16_t request_source_port = testerserverPacketIpv4WorkerSourcePort(ts);
+
     if (direction == kTesterServerDirectionRequest)
     {
-        *src_port  = kTesterServerPacketIpv4RequestSourcePort;
-        *dest_port = kTesterServerPacketIpv4RequestDestPort;
+        *src_port  = request_source_port;
+        *dest_port = (uint16_t) kTesterServerPacketIpv4RequestDestPort;
         return;
     }
 
-    *src_port  = kTesterServerPacketIpv4RequestDestPort;
-    *dest_port = kTesterServerPacketIpv4RequestSourcePort;
+    *src_port  = (uint16_t) kTesterServerPacketIpv4RequestDestPort;
+    *dest_port = request_source_port;
 }
 
 static void testerserverWritePacketIpv4Header(testerserver_tstate_t *ts, sbuf_t *buf,
@@ -238,7 +305,7 @@ static void testerserverWritePacketIpv4Transport(testerserver_tstate_t *ts, sbuf
     uint16_t src_port      = 0;
     uint16_t dest_port     = 0;
 
-    testerserverPacketIpv4DirectionPorts(direction, &src_port, &dest_port);
+    testerserverPacketIpv4DirectionPorts(ts, direction, &src_port, &dest_port);
 
     switch (ts->packet_ipv4_transport)
     {
@@ -295,7 +362,7 @@ static bool testerserverVerifyPacketIpv4Transport(testerserver_tstate_t *ts, sbu
         return true;
     }
 
-    testerserverPacketIpv4DirectionPorts(direction, &src_port, &dest_port);
+    testerserverPacketIpv4DirectionPorts(ts, direction, &src_port, &dest_port);
 
     switch (ts->packet_ipv4_transport)
     {
