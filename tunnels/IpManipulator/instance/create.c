@@ -591,11 +591,10 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     bool has_overlap_sni = getStringFromJsonObject(&state->trick_overlap_sni_value, settings, "overlap-sni");
     if (has_overlap_sni)
     {
-        char  *server_hello_upstream_node_name = NULL;
-        int    overlap_sni_delay_ms            = 0;
-        int    overlap_sni_hold_timeout_ms     = 50;
-        int    overlap_sni_syn_ttl             = -1;
-        size_t overlap_sni_len                 = stringLength(state->trick_overlap_sni_value);
+        int    overlap_sni_delay_ms        = 0;
+        int    overlap_sni_hold_timeout_ms = 50;
+        int    overlap_sni_syn_ttl         = -1;
+        size_t overlap_sni_len             = stringLength(state->trick_overlap_sni_value);
 
         if (overlap_sni_len == 0)
         {
@@ -626,34 +625,6 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
             return NULL;
         }
 
-        if (! getStringFromJsonObject(&server_hello_upstream_node_name, settings, "crafted-server-hello-upstream-node"))
-        {
-            LOGF("IpManipulator: overlap-sni requires \"crafted-server-hello-upstream-node\"");
-            tunnelDestroy(t);
-            return NULL;
-        }
-
-        node_t *server_hello_upstream_node =
-            nodemanagerGetConfigNodeByName(node->node_manager_config, server_hello_upstream_node_name);
-
-        if (server_hello_upstream_node == NULL)
-        {
-            LOGF("IpManipulator: crafted-server-hello-upstream-node \"%s\" not found", server_hello_upstream_node_name);
-            memoryFree(server_hello_upstream_node_name);
-            tunnelDestroy(t);
-            return NULL;
-        }
-
-        if (server_hello_upstream_node == node)
-        {
-            LOGF("IpManipulator: crafted-server-hello-upstream-node must not point back to IpManipulator itself");
-            memoryFree(server_hello_upstream_node_name);
-            tunnelDestroy(t);
-            return NULL;
-        }
-
-        memoryFree(server_hello_upstream_node_name);
-
         if (getIntFromJsonObject(&overlap_sni_delay_ms, settings, "overlap-sni-delay-ms"))
         {
             if (overlap_sni_delay_ms < 0)
@@ -674,12 +645,11 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
             }
         }
 
-        state->trick_overlap_sni_value_len                  = (uint16_t) overlap_sni_len;
-        state->trick_overlap_sni_delay_ms                   = (uint32_t) overlap_sni_delay_ms;
-        state->trick_overlap_sni_hold_timeout_ms            = (uint32_t) overlap_sni_hold_timeout_ms;
-        state->trick_overlap_sni_syn_ttl                    = overlap_sni_syn_ttl;
-        state->trick_overlap_sni_server_hello_upstream_node = server_hello_upstream_node;
-        state->trick_overlap_sni                            = true;
+        state->trick_overlap_sni_value_len       = (uint16_t) overlap_sni_len;
+        state->trick_overlap_sni_delay_ms        = (uint32_t) overlap_sni_delay_ms;
+        state->trick_overlap_sni_hold_timeout_ms = (uint32_t) overlap_sni_hold_timeout_ms;
+        state->trick_overlap_sni_syn_ttl         = overlap_sni_syn_ttl;
+        state->trick_overlap_sni                 = true;
     }
 
     bool has_synfin_sni = getStringFromJsonObject(&state->trick_synfin_sni_value, settings, "synfin-sni");

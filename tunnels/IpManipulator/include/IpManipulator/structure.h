@@ -301,18 +301,13 @@ typedef struct ipmanipulator_overlap_flow_s
     uint64_t                           hold_generation; /* Current HoldThird fail-open timer identity. */
     uint32_t                           src_addr;
     uint32_t                           dst_addr;
-    uint32_t                           expected_downstream_seq;
     uint16_t                           src_port;
     uint16_t                           dst_port;
-    uint16_t                           expected_downstream_ip_total_len;
-    uint16_t                           expected_downstream_fingerprint;
     uint8_t                            warmup_packets_seen;
     ipmanipulator_overlap_flow_phase_e phase;
-    bool                               ignore_expected_downstream_packet;
     bool                               hold_timer_armed;
     wid_t                              held_wid;
     ipmanipulator_captured_packet_t    held_packet;
-    sbuf_t                            *synack_packet;
     ipmanipulator_delay_barrier_t      delay_barrier;
 } ipmanipulator_overlap_flow_t;
 
@@ -473,8 +468,6 @@ typedef struct ipmanipulator_tstate_s
     uint32_t  trick_overlap_sni_delay_ms;
     uint32_t  trick_overlap_sni_hold_timeout_ms;
     int       trick_overlap_sni_syn_ttl;
-    node_t   *trick_overlap_sni_server_hello_upstream_node;
-    tunnel_t *trick_overlap_sni_server_hello_upstream_tunnel;
     tunnel_t *trick_overlap_sni_tls_client_tunnel;
 
     char     *trick_synfin_sni_value;

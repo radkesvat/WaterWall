@@ -28,7 +28,6 @@ add_library(IpManipulator STATIC
                     downstream/est.c
                     common/tricks/protoswap/trick.c
                     common/tricks/firstsni/trick.c
-                    common/tricks/overlapsni/crafted_server_hello_bytes.c
                     common/tricks/overlapsni/trick.c
                     common/tricks/smugglefin/trick.c
                     common/tricks/smugglesni/trick.c

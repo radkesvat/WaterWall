@@ -1,7 +1,6 @@
 #include "trick.h"
 
 #include "TlsClient/interface.h"
-#include "crafted_server_hello_bytes.h"
 #include "loggers/network_logger.h"
 
 enum
@@ -19,7 +18,6 @@ typedef struct overlapsnitrick_tcp_packet_info_s
 {
     const uint8_t *packet;
     uint32_t       seq;
-    uint32_t       ack;
     uint16_t       payload_offset;
     uint16_t       ip_total_len;
     uint16_t       ip_header_len;
@@ -44,12 +42,7 @@ typedef struct overlapsnitrick_handle_result_s
 {
     bool                              block_flow;
     bool                              start_delay_window;
-    bool                              set_downstream_marker;
-    uint32_t                          expected_downstream_seq;
-    uint16_t                          expected_downstream_ip_total_len;
-    uint16_t                          expected_downstream_fingerprint;
     overlapsnitrick_packet_sequence_t normal_sequence;
-    sbuf_t                           *crafted_server_hello;
 } overlapsnitrick_handle_result_t;
 
 typedef struct overlapsnitrick_hold_timeout_s
@@ -65,21 +58,6 @@ bool ipmanipulatorOverlapTestScheduleTimed(wid_t wid, WorkerMessageCallback call
 #endif
 
 static void overlapsnitrickSendNormalNow(tunnel_t *t, line_t *l, sbuf_t *buf);
-
-static sbuf_t *overlapsnitrickDuplicateStandalonePacket(const sbuf_t *source)
-{
-    uint32_t packet_len = sbufGetLength((sbuf_t *) source);
-    sbuf_t  *copy       = sbufCreateWithPadding(packet_len, sbufGetLeftPadding((sbuf_t *) source));
-
-    if (copy == NULL)
-    {
-        return NULL;
-    }
-
-    sbufSetLength(copy, packet_len);
-    memoryCopyLarge(sbufGetMutablePtr(copy), sbufGetRawPtr((sbuf_t *) source), packet_len);
-    return copy;
-}
 
 static void overlapsnitrickDestroyCapturedPacket(ipmanipulator_captured_packet_t *packet)
 {
@@ -130,17 +108,6 @@ static void overlapsnitrickDestroyPacketSequence(overlapsnitrick_packet_sequence
     }
 
     sequence->count = 0;
-}
-
-static void overlapsnitrickDestroyStandalonePacket(sbuf_t **packet)
-{
-    if (packet == NULL || *packet == NULL)
-    {
-        return;
-    }
-
-    sbufDestroy(*packet);
-    *packet = NULL;
 }
 
 /* The caller owns the record's retained line reference after a successful take. */
@@ -198,7 +165,6 @@ static void overlapsnitrickDestroyFlow(ipmanipulator_overlap_flow_t *flow)
     }
 
     overlapsnitrickDestroyHeldPacketLocked(flow);
-    overlapsnitrickDestroyStandalonePacket(&flow->synack_packet);
     ipmanipulatorDelayBarrierDestroy(&flow->delay_barrier);
     overlapsnitrickResetFlow(flow);
 }
@@ -212,7 +178,6 @@ static void overlapsnitrickInitializeFlow(ipmanipulator_overlap_flow_t          
     }
 
     overlapsnitrickDestroyHeldPacketLocked(flow);
-    overlapsnitrickDestroyStandalonePacket(&flow->synack_packet);
     ipmanipulatorDelayBarrierDestroy(&flow->delay_barrier);
     overlapsnitrickResetFlow(flow);
 
@@ -238,7 +203,6 @@ static void overlapsnitrickFinalizeFlowLocked(ipmanipulator_tstate_t *state, ipm
     }
 
     overlapsnitrickDestroyHeldPacketLocked(flow);
-    overlapsnitrickDestroyStandalonePacket(&flow->synack_packet);
     flow->warmup_packets_seen = kOverlapSniWarmupPackets;
     flow->phase = block_flow ? kIpManipulatorOverlapFlowPhaseBlocked : kIpManipulatorOverlapFlowPhasePassthrough;
     uint64_t transcript_delay_ms =
@@ -248,10 +212,6 @@ static void overlapsnitrickFinalizeFlowLocked(ipmanipulator_tstate_t *state, ipm
                                       ? now_ms + max((uint64_t) kOverlapSniDelayWindowMs, transcript_delay_ms)
                                       : 0;
     ipmanipulatorDelayBarrierInitialize(state, &flow->delay_barrier, flow->delay_window_until_ms);
-    flow->ignore_expected_downstream_packet = result != NULL && result->set_downstream_marker;
-    flow->expected_downstream_seq           = result != NULL ? result->expected_downstream_seq : 0;
-    flow->expected_downstream_ip_total_len  = result != NULL ? result->expected_downstream_ip_total_len : 0;
-    flow->expected_downstream_fingerprint   = result != NULL ? result->expected_downstream_fingerprint : 0;
 }
 
 static bool overlapsnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t packet_length,
@@ -266,7 +226,6 @@ static bool overlapsnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t pa
     *info = (overlapsnitrick_tcp_packet_info_t) {
         .packet            = packet,
         .seq               = packet_view.tcp_sequence,
-        .ack               = packet_view.tcp_acknowledgment,
         .payload_offset    = packet_view.payload_offset,
         .ip_total_len      = packet_view.ip_total_length,
         .ip_header_len     = packet_view.ip_header_length,
@@ -287,13 +246,6 @@ static bool overlapsnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t pa
 static bool overlapsnitrickIsPureSyn(const overlapsnitrick_tcp_packet_info_t *info)
 {
     return info != NULL && ipmanipulatorIsFlowOpeningSyn(info->tcp_flags, info->tcp_payload_len);
-}
-
-static bool overlapsnitrickIsSynAck(const overlapsnitrick_tcp_packet_info_t *info)
-{
-    return info != NULL && info->tcp_payload_len == 0 &&
-           (info->tcp_flags & (TCP_SYN | TCP_ACK)) == (TCP_SYN | TCP_ACK) &&
-           (info->tcp_flags & (TCP_FIN | TCP_RST)) == 0;
 }
 
 static bool overlapsnitrickHasFinOrRst(const overlapsnitrick_tcp_packet_info_t *info)
@@ -392,7 +344,6 @@ static void overlapsnitrickReleaseTimedOutHold(tunnel_t *t, const ipmanipulator_
             {
                 discard overlapsnitrickTakeHeldPacketLocked(flow, &held_packet);
                 flow->phase = kIpManipulatorOverlapFlowPhasePassthrough;
-                overlapsnitrickDestroyStandalonePacket(&flow->synack_packet);
                 overlapsnitrickTouchLocked(shard, entry, getTickMS());
             }
         }
@@ -504,11 +455,6 @@ static sbuf_t *overlapsnitrickGenerateTlsClientHello(tunnel_t *t, line_t *l)
                                               l,
                                               (const uint8_t *) state->trick_overlap_sni_value,
                                               state->trick_overlap_sni_value_len);
-}
-
-static uint16_t overlapsnitrickFingerprintPacket(const uint8_t *packet, uint16_t packet_len)
-{
-    return calcGenericChecksum(packet, packet_len, 0);
 }
 
 static sbuf_t *overlapsnitrickBuildCombinedPacket(line_t *l, const ipmanipulator_captured_packet_t *held_packet,
@@ -629,63 +575,6 @@ static sbuf_t *overlapsnitrickBuildFakeSynPacket(tunnel_t *t, line_t *l,
     TCPH_FLAGS_SET(tcp_header, TCP_SYN);
 
     return syn_packet;
-}
-
-static sbuf_t *overlapsnitrickBuildCraftedServerHelloPacket(line_t *l, sbuf_t *synack_packet,
-                                                            const overlapsnitrick_tcp_packet_info_t *synack_info,
-                                                            uint32_t client_ack, uint32_t *server_seq_out,
-                                                            uint16_t *packet_len_out, uint16_t *fingerprint_out)
-{
-    if (l == NULL || synack_packet == NULL || synack_info == NULL || server_seq_out == NULL || packet_len_out == NULL ||
-        fingerprint_out == NULL)
-    {
-        return NULL;
-    }
-
-    if (GLOBAL_MTU_SIZE <= synack_info->headers_len)
-    {
-        return NULL;
-    }
-
-    uint32_t payload_len = min((uint32_t) kOverlapSniCraftedServerHelloBytesLen,
-                               (uint32_t) GLOBAL_MTU_SIZE - (uint32_t) synack_info->headers_len);
-    uint32_t packet_len  = (uint32_t) synack_info->headers_len + payload_len;
-
-    if (payload_len == 0 || packet_len > UINT16_MAX)
-    {
-        return NULL;
-    }
-
-    sbuf_t *packet_buf = clonePacketWithLength(l, synack_packet, packet_len);
-    if (packet_buf == NULL)
-    {
-        return NULL;
-    }
-
-    sbufSetLength(packet_buf, packet_len);
-
-    uint8_t *packet     = sbufGetMutablePtr(packet_buf);
-    uint32_t server_seq = synack_info->seq + 1U;
-
-    memoryCopyLarge(packet, synack_info->packet, synack_info->headers_len);
-    memoryCopyLarge(packet + synack_info->headers_len, kOverlapSniCraftedServerHelloBytes, payload_len);
-
-    struct ip_hdr  *ipheader   = (struct ip_hdr *) packet;
-    struct tcp_hdr *tcp_header = (struct tcp_hdr *) (packet + synack_info->ip_header_len);
-
-    IPH_LEN_SET(ipheader, lwip_htons((uint16_t) packet_len));
-    IPH_ID_SET(ipheader, lwip_htons((uint16_t) (synack_info->ip_identification + 1U)));
-    IPH_OFFSET_SET(ipheader, lwip_htons((uint16_t) (lwip_ntohs(IPH_OFFSET(ipheader)) & ~(IP_MF | IP_OFFMASK))));
-    tcp_header->seqno = lwip_htonl(server_seq);
-    tcp_header->ackno = lwip_htonl(client_ack);
-    TCPH_FLAGS_SET(tcp_header, TCP_ACK | TCP_PSH);
-
-    calcFullPacketChecksum(packet, packet_len);
-
-    *server_seq_out  = server_seq;
-    *packet_len_out  = (uint16_t) packet_len;
-    *fingerprint_out = overlapsnitrickFingerprintPacket(packet, (uint16_t) packet_len);
-    return packet_buf;
 }
 
 static bool overlapsnitrickAppendPacket(overlapsnitrick_packet_sequence_t *sequence, sbuf_t *packet)
@@ -847,47 +736,6 @@ static bool overlapsnitrickSendUpstreamDirect(tunnel_t *t, line_t *l, sbuf_t *bu
     return lineIsAlive(l);
 }
 
-static void overlapsnitrickForwardHelperPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
-{
-    ipmanipulator_tstate_t *state = tunnelGetState(t);
-
-    tunnelUpStreamPayload(state->trick_overlap_sni_server_hello_upstream_tunnel, l, buf);
-}
-
-static bool overlapsnitrickSendHelperPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
-{
-    if (l == NULL || buf == NULL)
-    {
-        if (buf != NULL)
-        {
-            sbufDestroy(buf);
-        }
-        return l != NULL ? lineIsAlive(l) : false;
-    }
-
-    if (! lineIsAlive(l))
-    {
-        lineReuseBuffer(l, buf);
-        return false;
-    }
-
-    ipmanipulator_tstate_t *state = tunnelGetState(t);
-    if (state->trick_overlap_sni_server_hello_upstream_tunnel == NULL)
-    {
-        lineReuseBuffer(l, buf);
-        return lineIsAlive(l);
-    }
-
-    /*
-     * This dedicated branch is built from the captured downstream SYN|ACK and
-     * must retain that original tuple. Apply checksum/protocol egress ordering
-     * without adding a portghost trailer.
-     */
-    lineSetRecalculateChecksum(l, true);
-    ipmanipulatorEmitUpstreamPreservingTuple(t, l, buf, overlapsnitrickForwardHelperPacket);
-    return lineIsAlive(l);
-}
-
 static void overlapsnitrickSendNormalNow(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     /* Stateful-SNI validation forbids same-instance packet duplication. */
@@ -948,13 +796,11 @@ static void overlapsnitrickSendHeldThenCurrentNormal(tunnel_t *t, ipmanipulator_
     lineUnlock(line);
 }
 
-static void overlapsnitrickSendOutputs(tunnel_t *t, line_t *l, overlapsnitrick_packet_sequence_t *normal_sequence,
-                                       sbuf_t *crafted_server_hello)
+static void overlapsnitrickSendOutputs(tunnel_t *t, line_t *l, overlapsnitrick_packet_sequence_t *normal_sequence)
 {
     if (l == NULL || normal_sequence == NULL)
     {
         overlapsnitrickDestroyPacketSequence(normal_sequence);
-        overlapsnitrickDestroyStandalonePacket(&crafted_server_hello);
         return;
     }
 
@@ -973,20 +819,6 @@ static void overlapsnitrickSendOutputs(tunnel_t *t, line_t *l, overlapsnitrick_p
             lineReuseBuffer(l, normal_sequence->packets[0]);
         }
         normal_sequence->packets[0] = NULL;
-    }
-
-    if (crafted_server_hello != NULL)
-    {
-        if (alive)
-        {
-            alive = overlapsnitrickSendHelperPacket(t, l, crafted_server_hello);
-        }
-        else
-        {
-            lineReuseBuffer(l, crafted_server_hello);
-        }
-
-        crafted_server_hello = NULL;
     }
 
     if (normal_sequence->count > 1 && normal_sequence->packets[1] != NULL)
@@ -1044,12 +876,10 @@ static void overlapsnitrickLogRejectedFlow(const sbuf_t *combined_packet, const 
 }
 
 static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_captured_packet_t *held_packet,
-                                          sbuf_t *synack_packet, sbuf_t *current_buf,
-                                          const overlapsnitrick_tcp_packet_info_t *current_info,
-                                          overlapsnitrick_handle_result_t         *result)
+                                          sbuf_t *current_buf, const overlapsnitrick_tcp_packet_info_t *current_info,
+                                          overlapsnitrick_handle_result_t *result)
 {
-    overlapsnitrick_tcp_packet_info_t held_info   = {0};
-    overlapsnitrick_tcp_packet_info_t synack_info = {0};
+    overlapsnitrick_tcp_packet_info_t held_info = {0};
 
     if (result != NULL)
     {
@@ -1064,8 +894,6 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
             overlapsnitrickRecycleCapturedPacket(held_packet);
         }
 
-        overlapsnitrickDestroyStandalonePacket(&synack_packet);
-
         if (current_buf != NULL)
         {
             overlapsnitrickSendNormalNow(t, l, current_buf);
@@ -1078,7 +906,6 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
             (const uint8_t *) sbufGetRawPtr(held_packet->buf), sbufGetLength(held_packet->buf), &held_info))
     {
         overlapsnitrickRecycleCapturedPacket(held_packet);
-        overlapsnitrickDestroyStandalonePacket(&synack_packet);
         overlapsnitrickSendNormalNow(t, l, current_buf);
         return true;
     }
@@ -1086,7 +913,6 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
     if ((uint32_t) current_info->seq != held_info.seq + (uint32_t) held_info.tcp_payload_len ||
         held_info.tcp_payload_len == 0 || current_info->tcp_payload_len == 0)
     {
-        overlapsnitrickDestroyStandalonePacket(&synack_packet);
         overlapsnitrickSendHeldThenCurrentNormal(t, held_packet, l, current_buf);
         return true;
     }
@@ -1095,7 +921,6 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
         overlapsnitrickBuildCombinedPacket(held_packet->line, held_packet, &held_info, current_info);
     if (combined_packet == NULL)
     {
-        overlapsnitrickDestroyStandalonePacket(&synack_packet);
         overlapsnitrickSendHeldThenCurrentNormal(t, held_packet, l, current_buf);
         return true;
     }
@@ -1104,7 +929,6 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
     if (generated_hello == NULL)
     {
         sbufDestroy(combined_packet);
-        overlapsnitrickDestroyStandalonePacket(&synack_packet);
         overlapsnitrickSendHeldThenCurrentNormal(t, held_packet, l, current_buf);
         return true;
     }
@@ -1124,7 +948,6 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
 
         reuseBuffer(generated_hello);
         sbufDestroy(combined_packet);
-        overlapsnitrickDestroyStandalonePacket(&synack_packet);
         overlapsnitrickSendHeldThenCurrentNormal(t, held_packet, l, current_buf);
         return true;
     }
@@ -1136,7 +959,6 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
     {
         reuseBuffer(generated_hello);
         sbufDestroy(combined_packet);
-        overlapsnitrickDestroyStandalonePacket(&synack_packet);
         overlapsnitrickSendHeldThenCurrentNormal(t, held_packet, l, current_buf);
         return true;
     }
@@ -1153,7 +975,6 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
 
         reuseBuffer(generated_hello);
         sbufDestroy(combined_packet);
-        overlapsnitrickDestroyStandalonePacket(&synack_packet);
         overlapsnitrickRecycleCapturedPacket(held_packet);
         lineReuseBuffer(l, current_buf);
         return true;
@@ -1177,7 +998,6 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
         reuseBuffer(generated_hello);
         sbufDestroy(combined_packet);
         overlapsnitrickDestroyPacketSequence(&sequence);
-        overlapsnitrickDestroyStandalonePacket(&synack_packet);
         overlapsnitrickSendHeldThenCurrentNormal(t, held_packet, l, current_buf);
         return true;
     }
@@ -1187,43 +1007,18 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
         result->start_delay_window = true;
     }
 
-    sbuf_t *crafted_server_hello = NULL;
-    if (synack_packet != NULL &&
-        overlapsnitrickParseTcpPacketInfo(
-            (const uint8_t *) sbufGetRawPtr(synack_packet), sbufGetLength(synack_packet), &synack_info) &&
-        overlapsnitrickIsSynAck(&synack_info))
-    {
-        uint32_t server_seq  = 0;
-        uint16_t packet_len  = 0;
-        uint16_t fingerprint = 0;
-        uint32_t client_ack  = held_info.seq + generated_payload_len;
-
-        crafted_server_hello = overlapsnitrickBuildCraftedServerHelloPacket(
-            held_packet->line, synack_packet, &synack_info, client_ack, &server_seq, &packet_len, &fingerprint);
-
-        if (crafted_server_hello != NULL && result != NULL)
-        {
-            result->set_downstream_marker            = true;
-            result->expected_downstream_seq          = server_seq;
-            result->expected_downstream_ip_total_len = packet_len;
-            result->expected_downstream_fingerprint  = fingerprint;
-        }
-    }
-
     reuseBuffer(generated_hello);
     sbufDestroy(combined_packet);
-    overlapsnitrickDestroyStandalonePacket(&synack_packet);
     overlapsnitrickRecycleCapturedPacket(held_packet);
     lineReuseBuffer(l, current_buf);
 
     if (result != NULL)
     {
-        result->normal_sequence      = sequence;
-        result->crafted_server_hello = crafted_server_hello;
+        result->normal_sequence = sequence;
     }
     else
     {
-        overlapsnitrickSendOutputs(t, l, &sequence, crafted_server_hello);
+        overlapsnitrickSendOutputs(t, l, &sequence);
     }
     return true;
 }
@@ -1259,15 +1054,14 @@ void overlapsnitrickDestroyState(tunnel_t *t)
 bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     assert(lineIsOnCurrentEventWorker(l));
+    discard l;
 
     ipmanipulator_tstate_t           *state       = tunnelGetState(t);
     overlapsnitrick_tcp_packet_info_t info        = {0};
-    const uint8_t                    *packet      = (const uint8_t *) sbufGetRawPtr(buf);
     uint64_t                          now_ms      = getTickMS();
-    bool                              drop_it     = false;
     ipmanipulator_captured_packet_t   held_packet = {0};
 
-    if (! overlapsnitrickParseTcpPacketInfo(packet, sbufGetLength(buf), &info))
+    if (! overlapsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
     {
         return false;
     }
@@ -1289,24 +1083,10 @@ bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         overlapsnitrickTouchLocked(shard, entry, now_ms);
 
-        if (flow->ignore_expected_downstream_packet && info.ip_total_len == flow->expected_downstream_ip_total_len &&
-            info.seq == flow->expected_downstream_seq &&
-            overlapsnitrickFingerprintPacket(packet, info.ip_total_len) == flow->expected_downstream_fingerprint)
-        {
-            flow->ignore_expected_downstream_packet = false;
-            flow->expected_downstream_seq           = 0;
-            flow->expected_downstream_ip_total_len  = 0;
-            flow->expected_downstream_fingerprint   = 0;
-            drop_it                                 = true;
-        }
-        else if (overlapsnitrickHasFinOrRst(&info))
+        if (overlapsnitrickHasFinOrRst(&info))
         {
             discard overlapsnitrickTakeHeldPacketLocked(flow, &held_packet);
             ipmanipulatorFlowShardRemove(&state->overlap_table, shard, entry);
-        }
-        else if (flow->synack_packet == NULL && overlapsnitrickIsSynAck(&info))
-        {
-            flow->synack_packet = overlapsnitrickDuplicateStandalonePacket(buf);
         }
     }
 
@@ -1344,13 +1124,7 @@ bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
     }
 
-    if (! drop_it)
-    {
-        return false;
-    }
-
-    lineReuseBuffer(l, buf);
-    return true;
+    return false;
 }
 
 bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -1367,7 +1141,6 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     ipmanipulator_captured_packet_t held_packet              = {0};
-    sbuf_t                         *synack_packet            = NULL;
     bool                            bypass_current           = false;
     bool                            held_owner_mismatch      = false;
     ipmanipulator_delay_batch_t     release_batch            = {0};
@@ -1505,10 +1278,6 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         {
             held_owner_mismatch = ! ipmanipulatorPacketJoinsOwner(flow->held_wid, l);
             bypass_current      = overlapsnitrickTakeHeldPacketLocked(flow, &held_packet);
-            if (held_owner_mismatch)
-            {
-                overlapsnitrickDestroyStandalonePacket(&flow->synack_packet);
-            }
         }
 
         ipmanipulatorFlowShardRemove(&state->overlap_table, shard, entry);
@@ -1630,7 +1399,6 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             line_t *held_line = held_packet.line;
 
             flow->phase = kIpManipulatorOverlapFlowPhasePassthrough;
-            overlapsnitrickDestroyStandalonePacket(&flow->synack_packet);
             ipmanipulatorFlowShardUnlock(shard);
 
             ipmanipulatorLogCrossWorkerFlowFailure(t,
@@ -1656,14 +1424,11 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return true;
         }
 
-        synack_packet       = flow->synack_packet;
-        flow->synack_packet = NULL;
-
         line_t *held_line = held_packet.line;
 
         ipmanipulatorFlowShardUnlock(shard);
 
-        bool handled = overlapsnitrickHandleHeldPair(t, l, &held_packet, synack_packet, buf, &info, &result);
+        bool handled = overlapsnitrickHandleHeldPair(t, l, &held_packet, buf, &info, &result);
 
         if (held_line != NULL)
         {
@@ -1736,7 +1501,7 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             }
         }
 
-        overlapsnitrickSendOutputs(t, l, &result.normal_sequence, result.crafted_server_hello);
+        overlapsnitrickSendOutputs(t, l, &result.normal_sequence);
 
         return handled;
     }

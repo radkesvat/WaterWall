@@ -14,7 +14,6 @@ void ipmanipulatorUpStreamInit(tunnel_t *t, line_t *l)
     tunnel_t *helpers[] = {
         ts->trick_real_sni_upstream_tunnel,
         ts->trick_real_fin_upstream_tunnel,
-        ts->trick_overlap_sni_server_hello_upstream_tunnel,
     };
 
     for (uint32_t i = 0; i < ARRAY_SIZE(helpers); ++i)
