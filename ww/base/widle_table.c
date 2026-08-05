@@ -53,6 +53,8 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct idle_table_s
     heapq_idles_t hqueue;
     hmap_idles_t  hmap;
     wmutex_t      mutex;
+    size_t        posted_messages;   ///< Queued expiration messages; each one pins this table alive.
+    bool          destroy_requested; ///< idletableDestroy ran and left teardown to the last message.
 
 } GNU_ATTR_ALIGNED_LINE_CACHE idle_table_t;
 
@@ -262,26 +264,64 @@ bool idletableRemoveIdleItemByHash(wid_t wid, idle_table_t *self, hash_t key)
     return true;
 }
 
-static void idlePostedCloseMessageCleanup(void *arg1, void *arg2, void *arg3)
+/**
+ * @brief Release the table storage. The caller must hold the last reference to it.
+ */
+static void idletableFreeResources(idle_table_t *self)
 {
-    discard arg2;
-    discard arg3;
+    heapq_idles_t_drop(&(self->hqueue));
+    hmap_idles_t_drop(&(self->hmap));
+    mutexDestroy(&(self->mutex));
+    memoryFreeAligned(self);
+}
 
-    idle_item_t *item = arg1;
-    if (item == NULL)
+/**
+ * @brief Drop one posted-message reference to the table.
+ *
+ * Every queued expiration message owns one reference, taken under the mutex before the message is
+ * posted. That is what keeps the table -- and therefore the mutex the message is about to lock --
+ * alive for as long as the message can still run, no matter when idletableDestroy is called. The
+ * last reference out after a destroy request performs the real teardown.
+ */
+static void idletableReleaseMessageRef(idle_table_t *self)
+{
+    if (self == NULL)
     {
         return;
     }
 
-    idle_table_t *table = idleItemGetTable(item);
-    if (table != NULL)
+    mutexLock(&(self->mutex));
+    assert(self->posted_messages > 0);
+    self->posted_messages -= 1;
+    const bool destroy_now = self->posted_messages == 0 && self->destroy_requested;
+    mutexUnlock(&(self->mutex));
+
+    if (destroy_now)
     {
-        mutexLock(&(table->mutex));
-        idletableEraseItemFromMapLocked(table, item);
-        idleItemSetWorkerMessagePending(item, false);
-        mutexUnlock(&(table->mutex));
+        idletableFreeResources(self);
     }
-    memoryFree(item);
+}
+
+static void idlePostedCloseMessageCleanup(void *arg1, void *arg2, void *arg3)
+{
+    discard arg3;
+
+    idle_item_t  *item  = arg1;
+    idle_table_t *table = arg2; // carried by the message, so it is reachable even once item detaches
+
+    if (item != NULL)
+    {
+        if (table != NULL)
+        {
+            mutexLock(&(table->mutex));
+            idletableEraseItemFromMapLocked(table, item);
+            mutexUnlock(&(table->mutex));
+        }
+        // worker_message_pending is still set, so no table path will race us to this free.
+        memoryFree(item);
+    }
+
+    idletableReleaseMessageRef(table);
 }
 
 /**
@@ -399,32 +439,23 @@ void idletableDrainWorkerItems(idle_table_t *self, wid_t wid)
 static void beforeCloseWorkerMessage(void *worker_arg, void *arg1, void *arg2, void *arg3)
 {
     worker_t *worker = worker_arg;
-    discard   arg2;
     discard   arg3;
 
-    idle_item_t *item = arg1;
-
-    idle_table_t *table = idleItemGetTable(item);
-    if (UNLIKELY(table == NULL))
-    {
-        memoryFree(item);
-        return;
-    }
+    idle_item_t  *item  = arg1;
+    idle_table_t *table = arg2; // pinned by this message's reference, so the mutex below is alive
 
     // worker_message_pending stays set for as long as this message holds the item. It is what tells
     // every table path that the memory is ours, so none of them frees it underneath us. It is cleared
     // only under the mutex, at the moment the item is handed back to the heap.
-    bool removed = idleItemIsRemoved(item);
+    bool should_free = false;
 
-    if (removed)
+    if (UNLIKELY(idleItemGetTable(item) != table || idleItemIsRemoved(item)))
     {
-        memoryFree(item);
-        return;
+        // Detached or removed while we sat in the queue; that path left the item to us.
+        should_free = true;
     }
-
-    if (idleItemGetExpireAt(item) > wloopNowMS(worker->loop))
+    else if (idleItemGetExpireAt(item) > wloopNowMS(worker->loop))
     {
-        bool should_free = false;
         mutexLock(&(table->mutex));
         if (! idleItemIsRemoved(item) && idleItemGetTable(item) == table)
         {
@@ -436,43 +467,45 @@ static void beforeCloseWorkerMessage(void *worker_arg, void *arg1, void *arg2, v
             should_free = true;
         }
         mutexUnlock(&(table->mutex));
-        if (should_free)
+    }
+    else
+    {
+        // LOGD("item expired, wid: %ld, hash: %lx", item->wid, item->hash);
+
+        const uint64_t old_expire_at_ms = idleItemGetExpireAt(item);
+
+        if (item->cb)
         {
-            memoryFree(item);
+            item->cb(item);
         }
-        return;
+
+        const uint64_t new_expire_at_ms = idleItemGetExpireAt(item);
+        const bool     keep_alive = old_expire_at_ms != new_expire_at_ms && new_expire_at_ms > wloopNowMS(worker->loop);
+
+        mutexLock(&(table->mutex));
+        const bool removed = idleItemIsRemoved(item) || idleItemGetTable(item) != table;
+        if (! removed && keep_alive)
+        {
+            idleItemSetWorkerMessagePending(item, false);
+            heapq_idles_t_push(&(table->hqueue), item);
+        }
+        else
+        {
+            if (! removed)
+            {
+                idletableEraseItemFromMapLocked(table, item);
+            }
+            should_free = true;
+        }
+        mutexUnlock(&(table->mutex));
     }
 
-    // LOGD("item expired, wid: %ld, hash: %lx", item->wid, item->hash);
-
-    uint64_t old_expire_at_ms = idleItemGetExpireAt(item);
-
-    if (item->cb)
-    {
-        item->cb(item);
-    }
-
-    const uint64_t new_expire_at_ms = idleItemGetExpireAt(item);
-    const bool     keep_alive = old_expire_at_ms != new_expire_at_ms && new_expire_at_ms > wloopNowMS(worker->loop);
-
-    mutexLock(&(table->mutex));
-    removed = idleItemIsRemoved(item) || idleItemGetTable(item) != table;
-    if (! removed && keep_alive)
-    {
-        idleItemSetWorkerMessagePending(item, false);
-        heapq_idles_t_push(&(table->hqueue), item);
-    }
-    else if (! removed)
-    {
-        idletableEraseItemFromMapLocked(table, item);
-        removed = true;
-    }
-    mutexUnlock(&(table->mutex));
-
-    if (removed)
+    if (should_free)
     {
         memoryFree(item);
     }
+
+    idletableReleaseMessageRef(table);
 }
 
 void idleCallBack(wtimer_t *timer)
@@ -515,6 +548,12 @@ void idleCallBack(wtimer_t *timer)
                     idleItemSetWorkerMessagePending(item, false);
                     memoryFree(item);
                 }
+                else
+                {
+                    // Pin the table for the message posted below. Exactly one of its callback or its
+                    // cleanup always runs, and whichever it is drops this reference.
+                    self->posted_messages += 1;
+                }
             }
         }
         else
@@ -529,7 +568,7 @@ void idleCallBack(wtimer_t *timer)
     {
         idle_item_t *item = idle_item_deque_t_pull_front(&expired_items);
         discard      sendWorkerMessageForceQueueWithCleanup(
-            item->wid, beforeCloseWorkerMessage, idlePostedCloseMessageCleanup, item, NULL, NULL);
+            item->wid, beforeCloseWorkerMessage, idlePostedCloseMessageCleanup, item, self, NULL);
     }
     idle_item_deque_t_drop(&expired_items);
 
@@ -549,6 +588,8 @@ void idletableDestroy(idle_table_t *self)
 
     // Free heap-owned idle items before dropping the containers.
     mutexLock(&(self->mutex));
+
+    self->destroy_requested = true;
 
     // Posted close messages carry their own item pointer and will free it from
     // the worker callback or worker-message cleanup path.
@@ -572,10 +613,16 @@ void idletableDestroy(idle_table_t *self)
         }
     }
 
+    // A queued message is still going to lock this mutex, so the table has to outlive us. The last
+    // message out sees destroy_requested and frees it instead.
+    const bool defer_teardown = self->posted_messages > 0;
+
     mutexUnlock(&(self->mutex));
 
-    heapq_idles_t_drop(&self->hqueue);
-    hmap_idles_t_drop(&self->hmap);
-    mutexDestroy(&self->mutex);
-    memoryFreeAligned(self);
+    if (defer_teardown)
+    {
+        return;
+    }
+
+    idletableFreeResources(self);
 }
