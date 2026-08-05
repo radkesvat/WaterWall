@@ -1,5 +1,5 @@
 <!--
-Documentation version: 110
+Documentation version: 111
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TunDevice.mdx, and both files must keep the same documentation version.
 -->
 
@@ -175,7 +175,7 @@ During `onStart`, `TunDevice`:
 - creates the TUN device
 - assigns the configured IP/subnet
 - brings the device up
-- on Linux, disables IPv4 reverse-path filtering for `all` and the TUN interface when native system routes are enabled
+- on Linux, disables IPv4 reverse-path filtering for `all` and the TUN interface, always, and holds the interface value down until it sticks
 - optionally installs native system routes
 - optionally runs `post-up-script`
 
@@ -250,7 +250,8 @@ Most connection-style callbacks such as `init`, `est`, `finish`, `pause`, and `r
 - On Windows, the implementation requires administrative privileges to load and manage the tunnel driver.
 - On macOS, the requested name should be an `utunN` name; if no concrete `utun` unit is requested, macOS assigns the actual interface name.
 - Native system route setup is disabled by default. If enabled, routes are removed during destroy in reverse install order.
-- On Linux, enabling native system routes also writes `0` to `/proc/sys/net/ipv4/conf/all/rp_filter` and the TUN interface's `rp_filter` so reverse-path filtering does not drop packets routed through the TUN. Other interface-specific `rp_filter` files are left untouched. These sysctl changes are not restored on stop or destroy. If the sysctl files are read-only, startup logs a warning and continues.
+- On Linux, startup always writes `0` to `/proc/sys/net/ipv4/conf/all/rp_filter` and to the TUN interface's own `rp_filter` so reverse-path filtering does not drop packets routed through the TUN. This happens for every Linux TUN, not only when native system routes are enabled, because the kernel filters on `max(all, <interface>)` and both must be `0` for the TUN to be exempt. Other interface-specific `rp_filter` files are left untouched, so any interface carrying its own non-zero value keeps filtering; an interface left at `0` while only `all` was non-zero does become unfiltered as a side effect. These sysctl changes are not restored on stop or destroy. If the sysctl files are read-only, startup logs a warning and continues.
+- The interface-specific write is re-applied until it sticks. On systemd distributions, udev answers the new interface's `add` event by running `systemd-sysctl --prefix=/net/ipv4/conf/<interface>`, which re-applies patterns such as the `net.ipv4.conf.*.rp_filter` line in `/usr/lib/sysctl.d/50-default.conf` and would otherwise overwrite the value a few milliseconds after it is written. Startup therefore holds the value down until it has stayed `0` for 300 ms, which adds roughly that much to TUN bring-up, and gives up with an error log after 2 s.
 - DNS setup is optional. If configured, invalid IPv4 values are rejected during node creation and failed platform DNS application stops startup.
 - On Windows and macOS, `route-table` values other than `"main"` or `"auto"` are rejected.
 - Platform support depends on build and operating system support for TUN devices.
