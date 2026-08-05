@@ -9,7 +9,7 @@
 
 ## Overview
 
-A simple networking core for tunneling and direct user–server connections.
+A simple networking core for tunneling or direct client–server connections.
 Built on high-performance, fully customizable nodes, it allows you to create a wide range of protocols without writing low-level implementation code.
 *(Though admittedly, it might make things feel more complex depending on how you use it.)*
 
