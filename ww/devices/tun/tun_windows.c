@@ -13,7 +13,6 @@
 #include "wplatform.h"
 #include "wproc.h"
 #include "wthread.h"
-#include "wtime.h"
 #include <ctype.h>
 #include <errno.h>
 #include <iphlpapi.h>
@@ -25,12 +24,14 @@
 #include "devices/device_reader_session.h"
 #include "devices/device_writer_channel.h"
 #include "loggers/internal_logger.h"
+#include "loggers/log_rate_limiter.h"
 
 enum
 {
     kTunWriteChannelQueueMax     = 4096,
     kMaxReadDistributeQueueSize  = 128,
-    kTunReaderStopFallbackWaitMs = 500
+    kTunReaderStopFallbackWaitMs = 500,
+    kTunDiscardReportIntervalMs  = 1000
 };
 
 static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "TUN read batch count must fit in the reader session");
@@ -68,7 +69,7 @@ struct tun_device_s
 
     // Reader-thread-owned accounting for oversized receive packets that are
     // dropped instead of terminating the process.
-    tun_oversized_read_discard_stats_t oversized_read_discard;
+    log_rate_limiter_t oversized_read_discard_limiter;
 
     atomic_int lifecycle;
 
@@ -486,8 +487,8 @@ static bool tundeviceReaderStopRequested(tun_device_t *tdev, DWORD *routine_resu
 // Only the reader thread calls this, so the counters need no atomics.
 static void tunWindowsRecordOversizedReadDiscard(tun_device_t *tdev)
 {
-    tun_oversized_read_discard_report_t report =
-        tunWindowsAccountOversizedReadDiscard(&tdev->oversized_read_discard, getTimeOfDayMS());
+    log_rate_limiter_report_t report =
+        logRateLimiterRecord(&tdev->oversized_read_discard_limiter, kTunDiscardReportIntervalMs);
 
     if (! report.should_log)
     {
@@ -495,7 +496,7 @@ static void tunWindowsRecordOversizedReadDiscard(tun_device_t *tdev)
     }
 
     LOGW("TunDevice: ReadThread: discarded %llu packet(s) larger than configured MTU %u over %llums (total=%llu)",
-         LLU(report.discarded),
+         LLU(report.events),
          (unsigned int) tunDeviceMtu(tdev),
          LLU(report.elapsed_ms),
          LLU(report.total));
@@ -504,8 +505,7 @@ static void tunWindowsRecordOversizedReadDiscard(tun_device_t *tdev)
 // Flushes any still-suppressed oversized-read drops once, e.g. on reader exit.
 static void tunWindowsReportPendingOversizedReadDiscards(tun_device_t *tdev)
 {
-    tun_oversized_read_discard_report_t report =
-        tunWindowsAccountPendingOversizedReadDiscards(&tdev->oversized_read_discard);
+    log_rate_limiter_report_t report = logRateLimiterFlush(&tdev->oversized_read_discard_limiter);
 
     if (! report.should_log)
     {
@@ -514,7 +514,7 @@ static void tunWindowsReportPendingOversizedReadDiscards(tun_device_t *tdev)
 
     LOGW(
         "TunDevice: ReadThread: discarded %llu packet(s) larger than configured MTU %u before reader exit (total=%llu)",
-        LLU(report.discarded),
+        LLU(report.events),
         (unsigned int) tunDeviceMtu(tdev),
         LLU(report.total));
 }
@@ -1485,21 +1485,21 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
     *tdev = (tun_device_t) {
-        .name                   = stringDuplicate(name),
-        .routine_reader         = routineReadFromTun,
-        .routine_writer         = routineWriteToTun,
-        .read_event_callback    = cb,
-        .userdata               = userdata,
-        .reader_session         = NULL,
-        .reader_buffer_pool     = reader_bpool,
-        .writer_buffer_pool     = writer_bpool,
-        .adapter_handle         = NULL,
-        .session_handle         = NULL,
-        .stop_event             = NULL,
-        .read_thread            = NULL,
-        .write_thread           = NULL,
-        .mtu                    = mtu,
-        .oversized_read_discard = {0},
+        .name                           = stringDuplicate(name),
+        .routine_reader                 = routineReadFromTun,
+        .routine_writer                 = routineWriteToTun,
+        .read_event_callback            = cb,
+        .userdata                       = userdata,
+        .reader_session                 = NULL,
+        .reader_buffer_pool             = reader_bpool,
+        .writer_buffer_pool             = writer_bpool,
+        .adapter_handle                 = NULL,
+        .session_handle                 = NULL,
+        .stop_event                     = NULL,
+        .read_thread                    = NULL,
+        .write_thread                   = NULL,
+        .mtu                            = mtu,
+        .oversized_read_discard_limiter = {0},
     };
     atomic_init(&tdev->lifecycle, kTunLifecycleDown);
 

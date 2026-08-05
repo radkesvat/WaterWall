@@ -6,7 +6,6 @@
 #include "raw_linux_send_policy.h"
 #include "wchan.h"
 #include "worker.h"
-#include "wtime.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -57,10 +56,6 @@ static void rawdeviceLogSocketBufferSize(int socket_fd, int option, const char *
 
 static void rawdeviceRecordDiscard(raw_device_t *rdev, rawdevice_discard_reason_t reason, int send_error)
 {
-    unsigned long long now_ms = getTimeOfDayMS();
-
-    rdev->discarded_packet_total++;
-    rdev->discarded_packet_suppressed++;
     if (reason == kRawDeviceDiscardOversized)
     {
         rdev->oversized_packet_total++;
@@ -82,14 +77,8 @@ static void rawdeviceRecordDiscard(raw_device_t *rdev, rawdevice_discard_reason_
         rdev->last_discard_error = (uint32_t) send_error;
     }
 
-    if (rdev->discard_last_report_ms == 0)
-    {
-        rdev->discard_last_report_ms = now_ms;
-        return;
-    }
-
-    unsigned long long elapsed_ms = now_ms - rdev->discard_last_report_ms;
-    if (elapsed_ms < 1000)
+    log_rate_limiter_report_t report = logRateLimiterRecord(&rdev->discard_log_limiter, kRawDiscardReportIntervalMs);
+    if (! report.should_log)
     {
         return;
     }
@@ -97,22 +86,21 @@ static void rawdeviceRecordDiscard(raw_device_t *rdev, rawdevice_discard_reason_
     LOGW("RawDevice: discarded %llu packet(s) over %llums "
          "(total=%llu, exceeding kMaxAllowedPacketLength=%u: %llu, EMSGSIZE=%llu, "
          "other packet-local send errors=%llu, transient send errors=%llu, last errno=%u)",
-         LLU(rdev->discarded_packet_suppressed),
-         LLU(elapsed_ms),
-         LLU(rdev->discarded_packet_total),
+         LLU(report.events),
+         LLU(report.elapsed_ms),
+         LLU(report.total),
          (unsigned int) kMaxAllowedPacketLength,
          LLU(rdev->oversized_packet_total),
          LLU(rdev->message_too_large_packet_total),
          LLU(rdev->packet_local_send_error_total),
          LLU(rdev->transient_send_error_total),
          rdev->last_discard_error);
-    rdev->discarded_packet_suppressed = 0;
-    rdev->discard_last_report_ms      = now_ms;
 }
 
 static void rawdeviceReportPendingDiscards(raw_device_t *rdev)
 {
-    if (rdev->discarded_packet_suppressed == 0)
+    log_rate_limiter_report_t report = logRateLimiterFlush(&rdev->discard_log_limiter);
+    if (! report.should_log)
     {
         return;
     }
@@ -120,15 +108,14 @@ static void rawdeviceReportPendingDiscards(raw_device_t *rdev)
     LOGW("RawDevice: discarded %llu packet(s) before writer exit "
          "(total=%llu, exceeding kMaxAllowedPacketLength=%u: %llu, EMSGSIZE=%llu, "
          "other packet-local send errors=%llu, transient send errors=%llu, last errno=%u)",
-         LLU(rdev->discarded_packet_suppressed),
-         LLU(rdev->discarded_packet_total),
+         LLU(report.events),
+         LLU(report.total),
          (unsigned int) kMaxAllowedPacketLength,
          LLU(rdev->oversized_packet_total),
          LLU(rdev->message_too_large_packet_total),
          LLU(rdev->packet_local_send_error_total),
          LLU(rdev->transient_send_error_total),
          rdev->last_discard_error);
-    rdev->discarded_packet_suppressed = 0;
 }
 
 static bool rawdevicePrepareSendMessage(raw_device_t *rdev, sbuf_t *buf, struct mmsghdr *msg, struct iovec *iov,

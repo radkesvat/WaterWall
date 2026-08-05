@@ -221,6 +221,16 @@ if(TARGET ww)
     "unit;net;tun;windows;receive;drop"
   )
 
+  add_executable(log_rate_limiter_test log_rate_limiter_test.c)
+  target_link_libraries(log_rate_limiter_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests log_rate_limiter_test)
+
+  add_waterwall_unit_test(
+    waterwall.log_rate_limiter_unit
+    log_rate_limiter_test
+    "unit;logger;rate-limit"
+  )
+
   add_executable(raw_windows_send_policy_test raw_windows_send_policy_test.c)
   target_include_directories(raw_windows_send_policy_test PRIVATE ${CMAKE_SOURCE_DIR}/ww/devices/raw)
   add_dependencies(waterwall_unit_tests raw_windows_send_policy_test)

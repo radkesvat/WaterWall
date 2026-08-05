@@ -545,7 +545,7 @@ static void testRawSendErrorPolicyEndsOnTerminalFailure(test_env_t *env)
     bufferpoolReuseBuffer(env->worker_buffer_pool, after_failure);
 
     require(rawdeviceBringDown(&rdev), "bring-down after terminal sendmmsg() failure failed");
-    require(rdev.discarded_packet_total == 5, "recoverable raw send errors recorded the wrong discard total");
+    require(rdev.discard_log_limiter.total == 5, "recoverable raw send errors recorded the wrong discard total");
     require(rdev.transient_send_error_total == 2, "raw resource-pressure discard accounting is wrong");
     require(rdev.message_too_large_packet_total == 1, "raw EMSGSIZE discard accounting is wrong");
     require(rdev.packet_local_send_error_total == 2, "raw packet-local discard accounting is wrong");

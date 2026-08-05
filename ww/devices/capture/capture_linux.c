@@ -54,8 +54,9 @@ enum
     // BringDown's join always completes and its failure becomes observable
     // instead of hanging. An idle capture device therefore wakes twice a second,
     // and a lost wake token costs at most one timeout of shutdown latency.
-    kCaptureReaderPollTimeoutMs  = 500,
-    kCaptureReaderReadyTimeoutMs = 5000
+    kCaptureReaderPollTimeoutMs     = 500,
+    kCaptureReaderReadyTimeoutMs    = 5000,
+    kCaptureDiscardReportIntervalMs = 1000
 };
 
 static_assert(SMALL_BUFFER_SIZE >= kNetfilterReadBufferSize, "Linux capture requires 4096-byte small buffers");
@@ -1168,42 +1169,30 @@ static netfilter_packet_result_t netfilterGetPacket(capture_device_t *cdev, int 
 
 static void capturedeviceRecordNetfilterDiscard(capture_device_t *cdev)
 {
-    unsigned long long now_ms = getTimeOfDayMS();
-
-    cdev->netfilter_discarded_total++;
-    cdev->netfilter_discarded_suppressed++;
-
-    if (cdev->netfilter_discard_last_report_ms == 0)
-    {
-        cdev->netfilter_discard_last_report_ms = now_ms;
-        return;
-    }
-
-    unsigned long long elapsed_ms = now_ms - cdev->netfilter_discard_last_report_ms;
-    if (elapsed_ms < 1000)
+    log_rate_limiter_report_t report =
+        logRateLimiterRecord(&cdev->netfilter_discard_log_limiter, kCaptureDiscardReportIntervalMs);
+    if (! report.should_log)
     {
         return;
     }
 
     LOGW("CaptureDevice: discarded %llu truncated or oversized netfilter packet(s) over %llums (total=%llu)",
-         LLU(cdev->netfilter_discarded_suppressed),
-         LLU(elapsed_ms),
-         LLU(cdev->netfilter_discarded_total));
-    cdev->netfilter_discarded_suppressed   = 0;
-    cdev->netfilter_discard_last_report_ms = now_ms;
+         LLU(report.events),
+         LLU(report.elapsed_ms),
+         LLU(report.total));
 }
 
 static void capturedeviceReportPendingNetfilterDiscards(capture_device_t *cdev)
 {
-    if (cdev->netfilter_discarded_suppressed == 0)
+    log_rate_limiter_report_t report = logRateLimiterFlush(&cdev->netfilter_discard_log_limiter);
+    if (! report.should_log)
     {
         return;
     }
 
     LOGW("CaptureDevice: discarded %llu truncated or oversized netfilter packet(s) before reader exit (total=%llu)",
-         LLU(cdev->netfilter_discarded_suppressed),
-         LLU(cdev->netfilter_discarded_total));
-    cdev->netfilter_discarded_suppressed = 0;
+         LLU(report.events),
+         LLU(report.total));
 }
 
 bool captureLinuxReaderPublishReady(capture_device_t *cdev, int *reader_socket)

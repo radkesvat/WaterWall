@@ -9,7 +9,6 @@
 #include "wloop.h"
 #include "worker.h"
 #include "wplatform.h"
-#include "wtime.h"
 
 #include "loggers/internal_logger.h"
 
@@ -35,10 +34,6 @@ typedef enum rawdevice_discard_reason_e
 
 static void rawdeviceRecordDiscard(raw_device_t *rdev, rawdevice_discard_reason_t reason, unsigned long send_error)
 {
-    unsigned long long now_ms = getTimeOfDayMS();
-
-    rdev->discarded_packet_total++;
-    rdev->discarded_packet_suppressed++;
     if (reason == kRawDeviceDiscardOversized)
     {
         rdev->oversized_packet_total++;
@@ -49,14 +44,8 @@ static void rawdeviceRecordDiscard(raw_device_t *rdev, rawdevice_discard_reason_
         rdev->last_discard_error = (uint32_t) send_error;
     }
 
-    if (rdev->discard_last_report_ms == 0)
-    {
-        rdev->discard_last_report_ms = now_ms;
-        return;
-    }
-
-    unsigned long long elapsed_ms = now_ms - rdev->discard_last_report_ms;
-    if (elapsed_ms < 1000)
+    log_rate_limiter_report_t report = logRateLimiterRecord(&rdev->discard_log_limiter, kRawDiscardReportIntervalMs);
+    if (! report.should_log)
     {
         return;
     }
@@ -64,20 +53,19 @@ static void rawdeviceRecordDiscard(raw_device_t *rdev, rawdevice_discard_reason_
     LOGW("RawDevice: discarded %llu packet(s) over %llums "
          "(total=%llu, exceeding kMaxAllowedPacketLength=%u: %llu, "
          "packet-local WinDivertSend errors=%llu, last error=%u)",
-         LLU(rdev->discarded_packet_suppressed),
-         LLU(elapsed_ms),
-         LLU(rdev->discarded_packet_total),
+         LLU(report.events),
+         LLU(report.elapsed_ms),
+         LLU(report.total),
          (unsigned int) kMaxAllowedPacketLength,
          LLU(rdev->oversized_packet_total),
          LLU(rdev->packet_local_send_error_total),
          rdev->last_discard_error);
-    rdev->discarded_packet_suppressed = 0;
-    rdev->discard_last_report_ms      = now_ms;
 }
 
 static void rawdeviceReportPendingDiscards(raw_device_t *rdev)
 {
-    if (rdev->discarded_packet_suppressed == 0)
+    log_rate_limiter_report_t report = logRateLimiterFlush(&rdev->discard_log_limiter);
+    if (! report.should_log)
     {
         return;
     }
@@ -85,13 +73,12 @@ static void rawdeviceReportPendingDiscards(raw_device_t *rdev)
     LOGW("RawDevice: discarded %llu packet(s) before writer exit "
          "(total=%llu, exceeding kMaxAllowedPacketLength=%u: %llu, "
          "packet-local WinDivertSend errors=%llu, last error=%u)",
-         LLU(rdev->discarded_packet_suppressed),
-         LLU(rdev->discarded_packet_total),
+         LLU(report.events),
+         LLU(report.total),
          (unsigned int) kMaxAllowedPacketLength,
          LLU(rdev->oversized_packet_total),
          LLU(rdev->packet_local_send_error_total),
          rdev->last_discard_error);
-    rdev->discarded_packet_suppressed = 0;
 }
 
 static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT

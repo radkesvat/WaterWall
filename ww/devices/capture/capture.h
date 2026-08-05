@@ -5,6 +5,7 @@
 #include "buffer_pool.h"
 #include "devices/capture/capture_lifecycle.h"
 #include "devices/device_reader_session.h"
+#include "loggers/log_rate_limiter.h"
 #include "wmutex.h"
 #include "worker.h"
 #include "wthread.h"
@@ -58,9 +59,7 @@ typedef struct capture_device_s
     bool               close_queue_on_reader_exit;
     atomic_bool        capture_active;
     int                netfilter_queue_number;
-    uint64_t           netfilter_discarded_total;
-    uint64_t           netfilter_discarded_suppressed;
-    unsigned long long netfilter_discard_last_report_ms;
+    log_rate_limiter_t netfilter_discard_log_limiter;
 #endif
     bool      drop_captured_packet;
     void     *userdata;

@@ -2,6 +2,8 @@
 
 #include "wwapi.h"
 
+#include "loggers/log_rate_limiter.h"
+
 /*
  * A bounded, sharded IPv4/TCP flow table shared by every stateful IpManipulator
  * trick.
@@ -63,7 +65,7 @@ typedef struct ipmanipulator_flow_shard_s
     uint32_t                     heap_count;
     uint32_t                     count;
     uint32_t                     limit;
-    uint64_t                     last_full_warn_ms;
+    atomic_log_rate_limiter_t    full_warning_limiter;
     uint64_t                     rejected_admissions;
 } ipmanipulator_flow_shard_t;
 

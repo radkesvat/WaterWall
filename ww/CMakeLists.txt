@@ -158,6 +158,7 @@ add_library(ww STATIC
 
     
     # Loggers
+    loggers/log_rate_limiter.c
     loggers/core_logger.c
     loggers/network_logger.c
     loggers/dns_logger.c

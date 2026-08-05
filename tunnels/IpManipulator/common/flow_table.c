@@ -246,6 +246,7 @@ bool ipmanipulatorFlowTableInitWithSeed(ipmanipulator_flow_table_t *table, const
         shard->limit        = shard_limit;
         shard->bucket_count = flowtableRoundUpPowerOfTwo(shard_limit);
         shard->bucket_mask  = shard->bucket_count - 1U;
+        atomicLogRateLimiterInitialize(&shard->full_warning_limiter);
 
         size_t buckets_size = 0;
         size_t heap_size    = 0;
@@ -464,9 +465,8 @@ ipmanipulator_flow_entry_t *ipmanipulatorFlowShardReserve(ipmanipulator_flow_tab
     {
         shard->rejected_admissions += 1U;
 
-        if (now_ms - shard->last_full_warn_ms >= kIpManipulatorFlowFullWarnMs)
+        if (atomicLogRateLimiterShouldLogAt(&shard->full_warning_limiter, kIpManipulatorFlowFullWarnMs, now_ms))
         {
-            shard->last_full_warn_ms = now_ms;
             LOGW("IpManipulator: %s flow table shard is full (%u/%u active, %llu admissions failed open so far)",
                  table->name != NULL ? table->name : "stateful",
                  shard->count,

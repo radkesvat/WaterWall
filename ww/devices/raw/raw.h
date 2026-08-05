@@ -4,10 +4,16 @@
 
 #include "buffer_pool.h"
 #include "devices/device_writer_channel.h"
+#include "loggers/log_rate_limiter.h"
 #include "raw_lifecycle.h"
 #include "wthread.h"
 
 struct raw_device_s;
+
+enum
+{
+    kRawDiscardReportIntervalMs = 1000
+};
 
 typedef struct raw_device_s
 {
@@ -17,13 +23,11 @@ typedef struct raw_device_s
 #else
     int socket;
 #endif
-    uint64_t           discarded_packet_total;
-    uint64_t           discarded_packet_suppressed;
+    log_rate_limiter_t discard_log_limiter;
     uint64_t           oversized_packet_total;
     uint64_t           message_too_large_packet_total;
     uint64_t           packet_local_send_error_total;
     uint64_t           transient_send_error_total;
-    unsigned long long discard_last_report_ms;
     uint32_t           last_discard_error;
     uint32_t           mark;
     void              *userdata;
