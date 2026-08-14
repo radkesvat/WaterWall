@@ -38,6 +38,11 @@ pnpm-debug.log*
 # CTest scratch output, created wherever ctest runs outside a build directory
 Testing/
 
+# Python test/tool caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
 # Generated test runner artifacts.
 # The case runners now build these inside a private run directory under TMPDIR,
 # so a normal `ctest` run leaves the source tree untouched. These entries still
