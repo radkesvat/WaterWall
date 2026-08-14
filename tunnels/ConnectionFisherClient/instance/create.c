@@ -25,6 +25,11 @@ static bool connectionfisherclientLoadTries(connectionfisherclient_tstate_t *ts,
 tunnel_t *connectionfisherclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(connectionfisherclient_tstate_t), sizeof(connectionfisherclient_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
+
     connectionfisherclient_tstate_t *ts = tunnelGetState(t);
 
     t->fnInitU    = &connectionfisherclientTunnelUpStreamInit;

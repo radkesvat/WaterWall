@@ -42,7 +42,9 @@ typedef struct line_user_auth_s
     if for example a write on the Down-end blocks, it pauses the Up-end and vice versa
 
     each context creation will increase refc on the line, so the line will never gets destroyed
-    before the contexts that reference it
+    before the contexts that reference it. Every decrement is an acquire-release operation, so
+    the final releaser acquires that release sequence before reading or reclaiming line state. This
+    reference-count edge is what publishes owner teardown to a foreign final releaser.
 
     line holds all the info such as dest and src contexts, it also contains each tunnel per connection state
     in tunnels_line_state[(tunnel_index)]
@@ -59,6 +61,12 @@ typedef struct routing_context_s
 
 } routing_context_t;
 
+/*
+ * line_t is part of the external-node ABI. External node libraries receive it
+ * through flow callbacks and use the inline accessors in this header. Reordering
+ * or inserting members requires an explicit ABI decision and compatibility
+ * plan.
+ */
 typedef struct line_s
 {
     line_refc_t       refc;
@@ -141,39 +149,15 @@ static inline bool lineIsAlive(const line_t *const line)
 }
 
 /**
- * @brief Decreases the reference count of the line and frees it if the count reaches zero.
+ * @brief Release one reference and free the line if the count reaches zero.
+ *
+ * The decrement publishes all preceding writes to the line. Its acquire
+ * semantics let the final releaser observe the release sequence before it inspects
+ * logical-death state, tunnel storage, routing metadata, or credentials.
  *
  * @param l Pointer to the line.
  */
-static inline void lineUnRefInternal(line_t *const l)
-{
-    if (atomicDecRelaxed(&l->refc) > 1)
-    {
-        return;
-    }
-
-    assert(l->alive == false);
-
-    /*
-     * The line goes back to the *releasing* worker's pool, not the owner's:
-     * lineCreateForWorker() may allocate on one worker for another, and every
-     * pool is fed by the same master pool. So this needs the current event
-     * worker's id, validated once and reused for both accesses below.
-     */
-    const wid_t wid = getCurrentEventWorkerWID();
-
-    // there should not be any conn-state alive at this point
-
-    debugAssertZeroBuf(&l->tunnels_line_state[0], genericpoolGetItemSize(l->pools[wid]) - sizeof(line_t));
-
-    if (l->routing_context.dest_ctx.domain != NULL && ! l->routing_context.dest_ctx.domain_constant)
-    {
-        memoryFree(l->routing_context.dest_ctx.domain);
-    }
-
-    lineClearUsers(l);
-    genericpoolReuseItem(l->pools[wid], l);
-}
+void lineUnRefInternal(line_t *l);
 
 /**
  * @brief Increases the reference count of the line.
@@ -495,8 +479,12 @@ typedef void (*LineDnsResolveFn)(tunnel_t *t, line_t *l, void *userdata, int sta
  * @param line Target line.
  * @param task Task callback.
  * @param t Tunnel argument forwarded to callback.
+ * @return true if the task was queued; false if the worker refused it, in which
+ *         case the line reference has already been released and the task will
+ *         never run. Callers that track "a retry is already pending" need this
+ *         to avoid latching that state on a message nobody will deliver.
  */
-void lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t);
+bool lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t);
 
 /**
  * @brief Schedule a task with a payload buffer on the line's worker loop.
@@ -505,8 +493,10 @@ void lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t);
  * @param task Task callback.
  * @param t Tunnel argument forwarded to callback.
  * @param buf Buffer argument forwarded to callback.
+ * @return true if the task was queued; false if admission failed. On false the
+ *         scheduler has already released the line reference and recycled buf.
  */
-void lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t, sbuf_t *buf);
+bool lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t, sbuf_t *buf);
 
 /**
  * @brief Schedule a delayed no-buffer task on the line's worker thread.
@@ -521,7 +511,7 @@ void lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_
  * @param delay_ms Minimum delay before execution.
  * @param t Tunnel argument forwarded to callback.
  */
-void lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms, tunnel_t *t);
+bool lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms, tunnel_t *t);
 
 /**
  * @brief Schedule a delayed task with a buffer on the line's worker thread.
@@ -537,7 +527,7 @@ void lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t 
  * @param t Tunnel argument forwarded to callback.
  * @param buf Buffer argument forwarded to callback.
  */
-void lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, uint32_t delay_ms, tunnel_t *t,
+bool lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, uint32_t delay_ms, tunnel_t *t,
                                     sbuf_t *buf);
 
 /**

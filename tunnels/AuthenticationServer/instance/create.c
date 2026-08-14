@@ -279,15 +279,21 @@ static bool authenticationserverParseSettings(authenticationserver_tstate_t *ts,
 tunnel_t *authenticationserverTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(authenticationserver_tstate_t), sizeof(authenticationserver_lstate_t));
-    if (UNLIKELY(t == NULL))
+    if (! t)
     {
+        return NULL;
+    }
+
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+    if (UNLIKELY(! rwlockTryInit(&ts->state_lock)))
+    {
+        LOGF("AuthenticationServer: failed to initialize state lock");
+        tunnelDestroy(t);
         return NULL;
     }
 
     authenticationserverInitializeCallbacks(t);
 
-    authenticationserver_tstate_t *ts = tunnelGetState(t);
-    rwlockinit(&ts->state_lock);
     ts->store.config_revision = 1U;
     ts->store.stats_revision  = 1U;
 

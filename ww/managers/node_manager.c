@@ -54,6 +54,82 @@ typedef struct node_manager_s
 
 static node_manager_t *nodemanager_gstate;
 
+static void normalizeLegacyTunnelCallbacks(tunnel_t *tunnel)
+{
+    /*
+     * onPreStop was added in historical pre-state padding.  A node library
+     * built against the preceding ABI returns zero in that padding, which is
+     * the legacy representation of the newly introduced no-op hook.  Normalize
+     * that one slot at the construction boundary; every callback is total
+     * after this point and lifecycle invocation remains unconditional.
+     */
+    if (tunnel->onPreStop == NULL)
+    {
+        tunnel->onPreStop = tunnelDefaultOnPreStop;
+    }
+}
+
+static const char *findMissingTunnelCallback(const tunnel_t *tunnel)
+{
+#define RETURN_MISSING_TUNNEL_CALLBACK(slot)                                                                           \
+    if (tunnel->slot == NULL)                                                                                          \
+    {                                                                                                                  \
+        return #slot;                                                                                                  \
+    }
+
+    RETURN_MISSING_TUNNEL_CALLBACK(fnInitU)
+    RETURN_MISSING_TUNNEL_CALLBACK(fnInitD)
+    RETURN_MISSING_TUNNEL_CALLBACK(fnPayloadU)
+    RETURN_MISSING_TUNNEL_CALLBACK(fnPayloadD)
+    RETURN_MISSING_TUNNEL_CALLBACK(fnEstU)
+    RETURN_MISSING_TUNNEL_CALLBACK(fnEstD)
+    RETURN_MISSING_TUNNEL_CALLBACK(fnFinU)
+    RETURN_MISSING_TUNNEL_CALLBACK(fnFinD)
+    RETURN_MISSING_TUNNEL_CALLBACK(fnPauseU)
+    RETURN_MISSING_TUNNEL_CALLBACK(fnPauseD)
+    RETURN_MISSING_TUNNEL_CALLBACK(fnResumeU)
+    RETURN_MISSING_TUNNEL_CALLBACK(fnResumeD)
+    RETURN_MISSING_TUNNEL_CALLBACK(onChain)
+    RETURN_MISSING_TUNNEL_CALLBACK(onIndex)
+    RETURN_MISSING_TUNNEL_CALLBACK(onPrepare)
+    RETURN_MISSING_TUNNEL_CALLBACK(onStart)
+    RETURN_MISSING_TUNNEL_CALLBACK(onPreStop)
+    RETURN_MISSING_TUNNEL_CALLBACK(onStop)
+    RETURN_MISSING_TUNNEL_CALLBACK(onWorkerStop)
+    RETURN_MISSING_TUNNEL_CALLBACK(onDestroy)
+
+#undef RETURN_MISSING_TUNNEL_CALLBACK
+
+    return NULL;
+}
+
+tunnel_t *nodemanagerCreateTunnelInstance(node_t *node)
+{
+    if (node == NULL || node->createHandle == NULL)
+    {
+        LOGF("NodeManager: node instance construction received an invalid node or createHandle");
+        terminateProgram(1);
+        return NULL;
+    }
+
+    tunnel_t *tunnel = node->createHandle(node);
+    if (tunnel == NULL)
+    {
+        return NULL;
+    }
+
+    normalizeLegacyTunnelCallbacks(tunnel);
+
+    const char *missing_callback = findMissingTunnelCallback(tunnel);
+    if (missing_callback != NULL)
+    {
+        LOGF("NodeManager: node (\"%s\") returned an instance with NULL callback \"%s\"", node->name, missing_callback);
+        terminateProgram(1);
+    }
+
+    return tunnel;
+}
+
 /**
  * @brief Create tunnel instances for all nodes in a config.
  *
@@ -85,7 +161,7 @@ static int createTunnelInstances(node_manager_config_t *cfg, tunnel_t **t_array,
             terminateProgram(1);
         }
 
-        t_array[index++] = n1->instance = n1->createHandle(n1);
+        t_array[index++] = n1->instance = nodemanagerCreateTunnelInstance(n1);
 
         if (cfg->node_map_phase != kNodeMapPhaseFrozen || map_node_t_size(&cfg->node_map) != expected_map_size ||
             map_node_t_bucket_count(&cfg->node_map) != expected_map_bucket_count)
@@ -119,6 +195,12 @@ static void assignChainsToTunnels(tunnel_t **t_array, int tunnels_count)
         if (tunnel->chain == NULL)
         {
             tunnel_chain_t *tc = tunnelchainCreate(getWorkersCount());
+            if (UNLIKELY(tc == NULL))
+            {
+                LOGF("NodeManager: failed to allocate tunnel-chain metadata for node \"%s\"", tunnel->node->name);
+                terminateProgram(1);
+                return;
+            }
             tunnel->onChain(tunnel, tc);
         }
     }
@@ -171,7 +253,14 @@ static void finalizeTunnelChains(node_manager_config_t *cfg, tunnel_t **t_array,
             }
 
             tunnelchainFinalize(chain);
-            vec_chains_t_push(&cfg->chains, chain);
+            const isize_t size_before = vec_chains_t_size(&cfg->chains);
+            if (UNLIKELY(vec_chains_t_push(&cfg->chains, chain) == NULL ||
+                         vec_chains_t_size(&cfg->chains) != size_before + 1))
+            {
+                LOGF("NodeManager: failed to publish finalized tunnel chain");
+                terminateProgram(1);
+                return;
+            }
         }
     }
 }
@@ -273,7 +362,7 @@ static void startTunnels(node_manager_config_t *cfg)
     }
 }
 
-static void initializeLineOnTargetWorker(void *worker, void *_tunnel, void *_line, void *arg3)
+void nodemanagerInitializeLineOnTargetWorker(void *worker, void *_tunnel, void *_line, void *arg3)
 {
     discard worker;
     discard arg3;
@@ -285,8 +374,7 @@ static void initializeLineOnTargetWorker(void *worker, void *_tunnel, void *_lin
 
     assert(lineIsOnCurrentEventWorker(line));
 
-    tunnelNextUpStreamInit(tunnel, line);
-    if (! lineIsAlive(line))
+    if (! withLineLocked(line, tunnelNextUpStreamInit, tunnel))
     {
         /*
          * Category D: a persistent worker packet line is process-lifetime state
@@ -308,7 +396,7 @@ static void initializeLineOnTargetWorker(void *worker, void *_tunnel, void *_lin
  * @param t_array Tunnel instance array.
  * @param tunnels_count Number of tunnel instances.
  */
-static void initializePacketTunnels(tunnel_t **t_array, int tunnels_count)
+static bool initializePacketTunnels(tunnel_t **t_array, int tunnels_count)
 {
     for (int i = 0; i < tunnels_count; i++)
     {
@@ -319,14 +407,33 @@ static void initializePacketTunnels(tunnel_t **t_array, int tunnels_count)
         {
             assert(tunnelGetChain(tunnel)->packet_chain_init_sent == false);
 
-            tunnelGetChain(tunnel)->packet_chain_init_sent = true;
+            bool admitted_all = true;
             for (wid_t wi = 0; wi < getWorkersCount(); wi++)
             {
                 line_t *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(tunnel), wi);
-                sendWorkerMessageForceQueue(wi, &initializeLineOnTargetWorker, tunnel, l, NULL);
+                if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(
+                        wi, &nodemanagerInitializeLineOnTargetWorker, NULL, tunnel, l, NULL)))
+                {
+                    admitted_all = false;
+                    LOGF("NodeManager: failed to admit packet-chain Init for node \"%s\" on worker %d",
+                         tunnel->node->name,
+                         workerWIDForLog(wi));
+                    break;
+                }
             }
+
+            if (UNLIKELY(! admitted_all))
+            {
+                return false;
+            }
+
+            /* Worker loops are still behind workers_run_flag, so publication
+             * follows complete admission while execution remains deferred
+             * until after every prepare/start hook. */
+            tunnelGetChain(tunnel)->packet_chain_init_sent = true;
         }
     }
+    return true;
 }
 
 /**
@@ -348,7 +455,14 @@ static void runNodes(node_manager_config_t *cfg)
     assignChainsToTunnels(t_array, tunnels_count);
     finalizeTunnelChains(cfg, t_array, tunnels_count);
     validateTunnelChains(t_array, tunnels_count);
-    initializePacketTunnels(t_array, tunnels_count);
+    if (UNLIKELY(! initializePacketTunnels(t_array, tunnels_count)))
+    {
+        /* Already-admitted messages remain owned by their worker queues and are
+         * reclaimed by startup-failure teardown. Packet lines themselves stay
+         * chain-owned and are released only by tunnelchainDestroy(). */
+        terminateProgram(1);
+        return;
+    }
 
     prepareTunnels(cfg);
     startTunnels(cfg);
@@ -480,7 +594,13 @@ static void parseNodeJsonFields(cJSON *node_json, node_manager_config_t *cfg, ch
 static node_t *createAndLoadNode(const char *node_type, hash_t hash_type)
 {
     node_t *new_node = nodemanagerNewNode();
-    *new_node        = nodelibraryLoadByTypeHash(hash_type);
+    if (UNLIKELY(new_node == NULL))
+    {
+        LOGF("NodeManager: failed to allocate node metadata for type \"%s\"", node_type);
+        terminateProgram(1);
+        return NULL;
+    }
+    *new_node = nodelibraryLoadByTypeHash(hash_type);
 
     if (new_node->hash_type != hash_type)
     {
@@ -724,16 +844,26 @@ void nodemanagerSetState(struct node_manager_s *new_state)
 static node_manager_config_t *createNodeManagerConfig(config_file_t *config_file)
 {
     node_manager_config_t *cfg = memoryAllocateZero(sizeof(node_manager_config_t));
-    cfg->config_file           = config_file;
-    cfg->node_map              = map_node_t_init();
-    cfg->chains                = vec_chains_t_init();
-    cfg->node_map_phase        = kNodeMapPhaseCollecting;
+    if (UNLIKELY(cfg == NULL))
+    {
+        LOGF("NodeManager: failed to allocate config metadata");
+        return NULL;
+    }
+    cfg->config_file    = config_file;
+    cfg->node_map       = map_node_t_init();
+    cfg->chains         = vec_chains_t_init();
+    cfg->node_map_phase = kNodeMapPhaseCollecting;
 
     if (! map_node_t_reserve(&cfg->node_map, kMaxNodesPerConfig) ||
-        map_node_t_capacity(&cfg->node_map) < kMaxNodesPerConfig)
+        map_node_t_capacity(&cfg->node_map) < kMaxNodesPerConfig ||
+        ! vec_chains_t_reserve(&cfg->chains, kMaxNodesPerConfig) ||
+        vec_chains_t_capacity(&cfg->chains) < kMaxNodesPerConfig)
     {
-        LOGF("NodeManager: failed to reserve fixed capacity for %d config nodes", kMaxNodesPerConfig);
-        terminateProgram(1);
+        LOGF("NodeManager: failed to reserve fixed config registries for %d nodes", kMaxNodesPerConfig);
+        map_node_t_drop(&cfg->node_map);
+        vec_chains_t_drop(&cfg->chains);
+        memoryFree(cfg);
+        return NULL;
     }
 
     cfg->node_map_bucket_count = map_node_t_bucket_count(&cfg->node_map);
@@ -743,21 +873,47 @@ static node_manager_config_t *createNodeManagerConfig(config_file_t *config_file
 void nodemanagerRunConfigFile(config_file_t *config_file)
 {
     node_manager_config_t *cfg = createNodeManagerConfig(config_file);
-    vec_configs_t_push(&(nodemanager_gstate->configs), cfg);
+    if (UNLIKELY(cfg == NULL))
+    {
+        configfileDestroy(config_file);
+        terminateProgram(1);
+        return;
+    }
+
+    const isize_t size_before = vec_configs_t_size(&nodemanager_gstate->configs);
+    if (UNLIKELY(vec_configs_t_push(&nodemanager_gstate->configs, cfg) == NULL ||
+                 vec_configs_t_size(&nodemanager_gstate->configs) != size_before + 1))
+    {
+        nodemanagerDestroyConfig(cfg);
+        LOGF("NodeManager: failed to publish config metadata");
+        terminateProgram(1);
+        return;
+    }
     startInstallingConfigFile(cfg);
 }
 
-void nodemanagerStopNode(node_t *node)
+static void nodemanagerPreStopConfig(node_manager_config_t *cfg)
 {
-    if (node == NULL || node->instance == NULL)
+    if (cfg == NULL)
     {
         return;
     }
 
-    node->instance->onStop(node->instance);
+    c_foreach(chain, vec_chains_t, cfg->chains)
+    {
+        tunnel_chain_t *tunnel_chain = *chain.ref;
+        assert(tunnel_chain != NULL);
+
+        for (uint16_t i = 0; i < tunnel_chain->tunnels.len; i++)
+        {
+            tunnel_t *tunnel = tunnel_chain->tunnels.tuns[i];
+            assert(tunnel != NULL);
+            tunnel->onPreStop(tunnel);
+        }
+    }
 }
 
-void nodemanagerStopConfig(node_manager_config_t *cfg)
+static void nodemanagerStopConfigHooks(node_manager_config_t *cfg)
 {
     if (cfg == NULL)
     {
@@ -796,14 +952,26 @@ void nodemanagerStop(void)
         return;
     }
 
+    /* Close every producer gate before any neighbour can complete onStop. */
     c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
     {
-        nodemanagerStopConfig(*conf.ref);
+        nodemanagerPreStopConfig(*conf.ref);
+    }
+    c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
+    {
+        nodemanagerStopConfigHooks(*conf.ref);
     }
 }
 
 void nodemanagerStopWorkerResources(wid_t wid)
 {
+    /*
+     * The worker has already closed producer/message admission and drained
+     * autonomous source-owner inventories (notably SocketManager's UdpListener
+     * flows). Consequently these chain hooks may tear down internal owned lines
+     * and require borrowed child sets to be empty. The event loop, tail adapters,
+     * tunnel state, and line/buffer pools are still alive throughout this pass.
+     */
     if (nodemanager_gstate == NULL)
     {
         return;
@@ -829,10 +997,7 @@ void nodemanagerStopWorkerResources(wid_t wid)
             {
                 tunnel_t *tunnel = tunnel_chain->tunnels.tuns[i];
                 assert(tunnel != NULL);
-                if (tunnel->onWorkerStop != NULL)
-                {
-                    tunnel->onWorkerStop(tunnel, wid);
-                }
+                tunnel->onWorkerStop(tunnel, wid);
             }
         }
     }
@@ -842,12 +1007,24 @@ node_manager_t *nodemanagerCreate(void)
 {
     assert(nodemanager_gstate == NULL);
 
-    nodemanager_gstate = memoryAllocateZero(sizeof(node_manager_t));
+    node_manager_t *state = memoryAllocateZero(sizeof(*state));
+    if (UNLIKELY(state == NULL))
+    {
+        return NULL;
+    }
 
-    nodemanager_gstate->configs = vec_configs_t_with_capacity(kNmConfigsVectorCap);
-    atomicStoreRelaxed(&nodemanager_gstate->stop_started, false);
+    state->configs = vec_configs_t_init();
+    if (UNLIKELY(! vec_configs_t_reserve(&state->configs, kNmConfigsVectorCap) ||
+                 vec_configs_t_capacity(&state->configs) < kNmConfigsVectorCap))
+    {
+        vec_configs_t_drop(&state->configs);
+        memoryFree(state);
+        return NULL;
+    }
+    atomicStoreRelaxed(&state->stop_started, false);
 
-    return nodemanager_gstate;
+    nodemanager_gstate = state;
+    return state;
 }
 
 void nodemanagerDestroyNode(node_t *node)

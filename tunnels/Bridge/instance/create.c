@@ -5,6 +5,10 @@
 tunnel_t *bridgeTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(bridge_tstate_t), sizeof(bridge_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &bridgeTunnelUpStreamInit;
     t->fnEstU     = &bridgeTunnelUpStreamEst;

@@ -1,4 +1,5 @@
 #include "tun.h"
+#include "tun_windows_internal.h"
 #include "tun_windows_lifetime.h"
 #include "tun_windows_receive_policy.h"
 
@@ -19,6 +20,7 @@
 #include <netioapi.h>
 
 #include <tchar.h>
+#include <wchar.h>
 
 #include "devices/device_flow_affinity.h"
 #include "devices/device_reader_session.h"
@@ -81,21 +83,85 @@ struct tun_device_s
 extern unsigned char wintun_dll[];
 extern unsigned int  wintun_dll_len;
 
-// Function pointers for Wintun functions
-static WINTUN_CREATE_ADAPTER_FUNC             *WintunCreateAdapter;
-static WINTUN_CLOSE_ADAPTER_FUNC              *WintunCloseAdapter;
-static WINTUN_OPEN_ADAPTER_FUNC               *WintunOpenAdapter;
-static WINTUN_GET_ADAPTER_LUID_FUNC           *WintunGetAdapterLUID;
-static WINTUN_GET_RUNNING_DRIVER_VERSION_FUNC *WintunGetRunningDriverVersion;
-static WINTUN_DELETE_DRIVER_FUNC              *WintunDeleteDriver;
-static WINTUN_SET_LOGGER_FUNC                 *WintunSetLogger;
-static WINTUN_START_SESSION_FUNC              *WintunStartSession;
-static WINTUN_END_SESSION_FUNC                *WintunEndSession;
-static WINTUN_GET_READ_WAIT_EVENT_FUNC        *WintunGetReadWaitEvent;
-static WINTUN_RECEIVE_PACKET_FUNC             *WintunReceivePacket;
-static WINTUN_RELEASE_RECEIVE_PACKET_FUNC     *WintunReleaseReceivePacket;
-static WINTUN_ALLOCATE_SEND_PACKET_FUNC       *WintunAllocateSendPacket;
-static WINTUN_SEND_PACKET_FUNC                *WintunSendPacket;
+typedef struct wintun_api_s
+{
+    WINTUN_CREATE_ADAPTER_FUNC             *create_adapter;
+    WINTUN_CLOSE_ADAPTER_FUNC              *close_adapter;
+    WINTUN_OPEN_ADAPTER_FUNC               *open_adapter;
+    WINTUN_GET_ADAPTER_LUID_FUNC           *get_adapter_luid;
+    WINTUN_GET_RUNNING_DRIVER_VERSION_FUNC *get_running_driver_version;
+    WINTUN_DELETE_DRIVER_FUNC              *delete_driver;
+    WINTUN_SET_LOGGER_FUNC                 *set_logger;
+    WINTUN_START_SESSION_FUNC              *start_session;
+    WINTUN_END_SESSION_FUNC                *end_session;
+    WINTUN_GET_READ_WAIT_EVENT_FUNC        *get_read_wait_event;
+    WINTUN_RECEIVE_PACKET_FUNC             *receive_packet;
+    WINTUN_RELEASE_RECEIVE_PACKET_FUNC     *release_receive_packet;
+    WINTUN_ALLOCATE_SEND_PACKET_FUNC       *allocate_send_packet;
+    WINTUN_SEND_PACKET_FUNC                *send_packet;
+} wintun_api_t;
+
+static wintun_api_t wintun_api;
+
+typedef struct tun_windows_pending_cleanup_s
+{
+    HANDLE   file;
+    HMODULE  module;
+    wchar_t *path;
+    wchar_t  inline_path[MAX_PATH];
+} tun_windows_pending_cleanup_t;
+
+// Process-lifecycle ownership for one incomplete loader transaction. Startup is
+// serialized and refuses to create a second transaction until this slot is
+// empty, so cleanup failures cannot grow an unbounded resource list.
+static tun_windows_pending_cleanup_t wintun_pending_cleanup;
+
+static const tun_windows_loader_ops_t default_wintun_loader_ops = {
+    .get_temp_path_w      = GetTempPathW,
+    .get_temp_file_name_w = GetTempFileNameW,
+    .create_file_w        = CreateFileW,
+    .write_file           = WriteFile,
+    .close_handle         = CloseHandle,
+    .delete_file_w        = DeleteFileW,
+    .move_file_ex_w       = MoveFileExW,
+    .load_library_ex_w    = LoadLibraryExW,
+    .get_proc_address     = GetProcAddress,
+    .free_library         = FreeLibrary,
+    .get_last_error       = GetLastError,
+    .allocate             = memoryAllocate,
+    .deallocate           = memoryFree,
+};
+
+static tun_windows_loader_ops_t wintun_loader_ops = {
+    .get_temp_path_w      = GetTempPathW,
+    .get_temp_file_name_w = GetTempFileNameW,
+    .create_file_w        = CreateFileW,
+    .write_file           = WriteFile,
+    .close_handle         = CloseHandle,
+    .delete_file_w        = DeleteFileW,
+    .move_file_ex_w       = MoveFileExW,
+    .load_library_ex_w    = LoadLibraryExW,
+    .get_proc_address     = GetProcAddress,
+    .free_library         = FreeLibrary,
+    .get_last_error       = GetLastError,
+    .allocate             = memoryAllocate,
+    .deallocate           = memoryFree,
+};
+
+#define WintunCreateAdapter           (wintun_api.create_adapter)
+#define WintunCloseAdapter            (wintun_api.close_adapter)
+#define WintunOpenAdapter             (wintun_api.open_adapter)
+#define WintunGetAdapterLUID          (wintun_api.get_adapter_luid)
+#define WintunGetRunningDriverVersion (wintun_api.get_running_driver_version)
+#define WintunDeleteDriver            (wintun_api.delete_driver)
+#define WintunSetLogger               (wintun_api.set_logger)
+#define WintunStartSession            (wintun_api.start_session)
+#define WintunEndSession              (wintun_api.end_session)
+#define WintunGetReadWaitEvent        (wintun_api.get_read_wait_event)
+#define WintunReceivePacket           (wintun_api.receive_packet)
+#define WintunReleaseReceivePacket    (wintun_api.release_receive_packet)
+#define WintunAllocateSendPacket      (wintun_api.allocate_send_packet)
+#define WintunSendPacket              (wintun_api.send_packet)
 
 static inline uint16_t tunDeviceMtu(const tun_device_t *tdev)
 {
@@ -359,87 +425,310 @@ static bool tunWindowsParseRouteCidr(const char *cidr, SOCKADDR_INET *addr, UINT
     return false;
 }
 
+typedef enum tun_windows_delete_outcome_e
+{
+    kTunWindowsDeleteImmediate = 0,
+    kTunWindowsDeleteDeferred,
+    kTunWindowsDeleteOutstanding,
+} tun_windows_delete_outcome_t;
+
+static bool tunWindowsDeleteErrorMeansAbsent(DWORD error)
+{
+    return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+}
+
+static tun_windows_delete_outcome_t tunWindowsDeleteOrSchedule(const wchar_t *path, const char *context)
+{
+    if (wintun_loader_ops.delete_file_w(path))
+    {
+        return kTunWindowsDeleteImmediate;
+    }
+    const DWORD delete_error = wintun_loader_ops.get_last_error();
+    if (tunWindowsDeleteErrorMeansAbsent(delete_error))
+    {
+        return kTunWindowsDeleteImmediate;
+    }
+    if (wintun_loader_ops.move_file_ex_w(path, NULL, MOVEFILE_DELAY_UNTIL_REBOOT))
+    {
+        LOGW("TunDevice: failed to delete temporary Wintun DLL %s, code: %lu; deletion is scheduled",
+             context,
+             delete_error);
+        return kTunWindowsDeleteDeferred;
+    }
+
+    const DWORD schedule_error = wintun_loader_ops.get_last_error();
+    if (tunWindowsDeleteErrorMeansAbsent(schedule_error))
+    {
+        LOGW("TunDevice: temporary Wintun DLL disappeared while scheduling cleanup %s; original delete code: %lu",
+             context,
+             delete_error);
+        return kTunWindowsDeleteImmediate;
+    }
+    LOGE("TunDevice: temporary Wintun DLL remains owned by the OS %s; delete code: %lu, schedule code: %lu",
+         context,
+         delete_error,
+         schedule_error);
+    return kTunWindowsDeleteOutstanding;
+}
+
+static bool tunWindowsPendingCleanupIsEmpty(void)
+{
+    return wintun_pending_cleanup.file == NULL && wintun_pending_cleanup.module == NULL &&
+           wintun_pending_cleanup.path == NULL && wintun_pending_cleanup.inline_path[0] == L'\0';
+}
+
+static const wchar_t *tunWindowsPendingCleanupPath(void)
+{
+    if (wintun_pending_cleanup.path != NULL)
+    {
+        return wintun_pending_cleanup.path;
+    }
+    return wintun_pending_cleanup.inline_path[0] == L'\0' ? NULL : wintun_pending_cleanup.inline_path;
+}
+
+static void tunWindowsPendingCleanupAdopt(HANDLE file, HMODULE module, wchar_t *owned_path, const wchar_t *inline_path)
+{
+    assert(tunWindowsPendingCleanupIsEmpty());
+    assert(owned_path == NULL || inline_path == NULL);
+
+    wintun_pending_cleanup.file   = file;
+    wintun_pending_cleanup.module = module;
+    wintun_pending_cleanup.path   = owned_path;
+    if (inline_path != NULL)
+    {
+        const size_t length = wcslen(inline_path);
+        assert(length < ARRAY_SIZE(wintun_pending_cleanup.inline_path));
+        memoryCopy(wintun_pending_cleanup.inline_path, inline_path, (length + 1U) * sizeof(*inline_path));
+    }
+}
+
+static bool tunWindowsPendingCleanupTry(const char *context)
+{
+    if (wintun_pending_cleanup.file != NULL)
+    {
+        if (! wintun_loader_ops.close_handle(wintun_pending_cleanup.file))
+        {
+            LOGE("TunDevice: retained temporary Wintun file handle %s after close failed, code: %lu",
+                 context,
+                 wintun_loader_ops.get_last_error());
+            return false;
+        }
+        wintun_pending_cleanup.file = NULL;
+    }
+
+    if (wintun_pending_cleanup.module != NULL)
+    {
+        if (! wintun_loader_ops.free_library(wintun_pending_cleanup.module))
+        {
+            LOGE("TunDevice: retained Wintun module %s after unload failed, code: %lu",
+                 context,
+                 wintun_loader_ops.get_last_error());
+            return false;
+        }
+        wintun_pending_cleanup.module = NULL;
+    }
+
+    const wchar_t *path = tunWindowsPendingCleanupPath();
+    if (path != NULL)
+    {
+        if (tunWindowsDeleteOrSchedule(path, context) == kTunWindowsDeleteOutstanding)
+        {
+            return false;
+        }
+        if (wintun_pending_cleanup.path != NULL)
+        {
+            wintun_loader_ops.deallocate(wintun_pending_cleanup.path);
+            wintun_pending_cleanup.path = NULL;
+        }
+        wintun_pending_cleanup.inline_path[0] = L'\0';
+    }
+
+    return true;
+}
+
 /**
  * Writes the Wintun DLL bytes to a temporary file on disk
  * @param dllBytes Pointer to the DLL binary data
  * @param dllSize Size of the DLL data in bytes
- * @return Path to the temporary file or NULL on failure
+ * @param path_out Receives an owned UTF-16 path on success.
+ * @return true on success.
  */
-static TCHAR *writeDllToTempFile(const unsigned char *dllBytes, size_t dllSize)
+static bool writeDllToTempFile(const unsigned char *dllBytes, size_t dllSize, wchar_t **path_out)
 {
-    TCHAR tempPath[MAX_PATH];
-    TCHAR tempFileName[MAX_PATH];
+    wchar_t  temp_path[MAX_PATH];
+    wchar_t  temp_file_name[MAX_PATH];
+    bool     file_created = false;
+    HANDLE   file         = INVALID_HANDLE_VALUE;
+    wchar_t *owned_path   = NULL;
+    DWORD    error        = ERROR_SUCCESS;
 
-    // Get the system's temporary directory
-    if (GetTempPath(MAX_PATH, tempPath) == 0)
+    *path_out = NULL;
+    if (dllSize > UINT32_MAX)
     {
-        LOGE("TunDevice: Failed to get temporary path");
-        return NULL;
+        LOGE("TunDevice: embedded Wintun DLL is too large");
+        return false;
     }
 
-    // Generate a unique temporary file name
-    if (GetTempFileName(tempPath, _T("dll"), 0, tempFileName) == 0)
+    DWORD temp_path_len = wintun_loader_ops.get_temp_path_w((DWORD) ARRAY_SIZE(temp_path), temp_path);
+    if (temp_path_len == 0 || temp_path_len >= ARRAY_SIZE(temp_path))
     {
-        LOGE("TunDevice: Failed to create temporary filename");
-        return NULL;
+        error = temp_path_len == 0 ? wintun_loader_ops.get_last_error() : ERROR_INSUFFICIENT_BUFFER;
+        LOGE("TunDevice: failed to get temporary path, code: %lu", error);
+        return false;
     }
 
-    // Open the temporary file for writing
-    HANDLE hFile = CreateFile(tempFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hFile == INVALID_HANDLE_VALUE)
+    if (wintun_loader_ops.get_temp_file_name_w(temp_path, L"dll", 0, temp_file_name) == 0)
     {
-        LOGE("TunDevice: Failed to create temporary file");
-        return NULL;
+        error = wintun_loader_ops.get_last_error();
+        LOGE("TunDevice: failed to create temporary filename, code: %lu", error);
+        return false;
+    }
+    file_created = true;
+
+    size_t path_bytes;
+    if (! memoryTryComputeArraySize(wcslen(temp_file_name) + 1U, sizeof(*temp_file_name), &path_bytes))
+    {
+        error = ERROR_ARITHMETIC_OVERFLOW;
+        goto fail;
     }
 
-    // Write the DLL bytes to the file
-    DWORD bytesWritten;
-    if (! WriteFile(hFile, dllBytes, (DWORD) dllSize, &bytesWritten, NULL) || bytesWritten != (DWORD) dllSize)
+    owned_path = wintun_loader_ops.allocate(path_bytes);
+    if (owned_path == NULL)
     {
-        LOGE("TunDevice: Failed to write temporary file");
-        CloseHandle(hFile);
-        DeleteFile(tempFileName);
-        return NULL;
+        error = ERROR_NOT_ENOUGH_MEMORY;
+        goto fail;
+    }
+    memoryCopy(owned_path, temp_file_name, path_bytes);
+
+    file = wintun_loader_ops.create_file_w(
+        temp_file_name, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, NULL);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        error = wintun_loader_ops.get_last_error();
+        goto fail;
     }
 
-    // Close the file handle
-    CloseHandle(hFile);
+    DWORD bytes_written = 0;
+    if (! wintun_loader_ops.write_file(file, dllBytes, (DWORD) dllSize, &bytes_written, NULL) ||
+        bytes_written != (DWORD) dllSize)
+    {
+        error = wintun_loader_ops.get_last_error();
+        if (error == ERROR_SUCCESS)
+        {
+            error = ERROR_WRITE_FAULT;
+        }
+        goto fail;
+    }
 
-    // Return the path to the temporary file
-    return _tcsdup(tempFileName);
+    if (! wintun_loader_ops.close_handle(file))
+    {
+        error = wintun_loader_ops.get_last_error();
+        goto fail;
+    }
+    file      = INVALID_HANDLE_VALUE;
+    *path_out = owned_path;
+    return true;
+
+fail:
+    assert(tunWindowsPendingCleanupIsEmpty());
+    tunWindowsPendingCleanupAdopt(file == INVALID_HANDLE_VALUE ? NULL : file,
+                                  NULL,
+                                  owned_path,
+                                  file_created && owned_path == NULL ? temp_file_name : NULL);
+    if (! tunWindowsPendingCleanupTry("after extraction error"))
+    {
+        LOGW("TunDevice: temporary Wintun extraction resources remain pending after cleanup failure");
+    }
+    LOGE("TunDevice: failed to extract Wintun DLL, code: %lu", error);
+    return false;
 }
 
-/**
- * Initializes the Windows TUN device system
- * Loads the Wintun DLL and required functions
- */
-static void tunWindowsStartup(void)
+static bool tunWindowsLoadFunction(HMODULE module, const char *function_name, void *target, size_t target_size,
+                                   DWORD *error_out)
 {
-    // Write the embedded DLL to a temporary file
-    TCHAR *tempDllPath = writeDllToTempFile(&wintun_dll[0], wintun_dll_len);
-    if (! tempDllPath)
+    FARPROC proc = wintun_loader_ops.get_proc_address(module, function_name);
+    if (proc == NULL)
     {
-        LOGE("TunDevice: Failed to write DLL to temporary file");
-        return;
+        *error_out = wintun_loader_ops.get_last_error();
+        return false;
+    }
+    assert(target_size == sizeof(proc));
+    memoryCopy(target, &proc, target_size);
+    return true;
+}
+
+static bool tunWindowsStartup(void)
+{
+    wchar_t     *temp_dll_path = NULL;
+    HMODULE      module        = NULL;
+    wintun_api_t api           = {0};
+    DWORD        error         = ERROR_SUCCESS;
+    const char  *operation     = "extract embedded DLL";
+
+    if (! tunWindowsPendingCleanupTry("before Wintun startup"))
+    {
+        LOGE("TunDevice: refusing Wintun startup while an earlier loader transaction still owns resources");
+        return false;
     }
 
-    // Convert TCHAR path to wide string and load the DLL
-    WCHAR widePath[MAX_PATH];
-    MultiByteToWideChar(CP_ACP, 0, tempDllPath, -1, widePath, MAX_PATH);
-    HMODULE hModule = LoadLibraryExW(widePath, NULL, 0);
-    if (! hModule)
+    if (! writeDllToTempFile(&wintun_dll[0], wintun_dll_len, &temp_dll_path))
     {
-        LOGE("TunDevice: Failed to load DLL: error %lu", GetLastError());
-        DeleteFile(tempDllPath);
-        free(tempDllPath);
-        return;
+        return false;
     }
 
-    LOGD("TunDevice: DLL loaded successfully");
+    module = wintun_loader_ops.load_library_ex_w(
+        temp_dll_path, NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (module == NULL)
+    {
+        error     = wintun_loader_ops.get_last_error();
+        operation = "load extracted DLL";
+        goto fail;
+    }
 
-    GSTATE.wintun_dll_handle = hModule;
-    DeleteFile(tempDllPath);
-    free(tempDllPath);
+#define LOAD_WINTUN_FUNCTION(member, symbol)                                                                           \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        operation = "resolve " symbol;                                                                                 \
+        if (! tunWindowsLoadFunction(module, symbol, &api.member, sizeof(api.member), &error))                         \
+        {                                                                                                              \
+            goto fail;                                                                                                 \
+        }                                                                                                              \
+    } while (0)
+
+    LOAD_WINTUN_FUNCTION(create_adapter, "WintunCreateAdapter");
+    LOAD_WINTUN_FUNCTION(close_adapter, "WintunCloseAdapter");
+    LOAD_WINTUN_FUNCTION(open_adapter, "WintunOpenAdapter");
+    LOAD_WINTUN_FUNCTION(get_adapter_luid, "WintunGetAdapterLUID");
+    LOAD_WINTUN_FUNCTION(get_running_driver_version, "WintunGetRunningDriverVersion");
+    LOAD_WINTUN_FUNCTION(delete_driver, "WintunDeleteDriver");
+    LOAD_WINTUN_FUNCTION(set_logger, "WintunSetLogger");
+    LOAD_WINTUN_FUNCTION(start_session, "WintunStartSession");
+    LOAD_WINTUN_FUNCTION(end_session, "WintunEndSession");
+    LOAD_WINTUN_FUNCTION(get_read_wait_event, "WintunGetReadWaitEvent");
+    LOAD_WINTUN_FUNCTION(receive_packet, "WintunReceivePacket");
+    LOAD_WINTUN_FUNCTION(release_receive_packet, "WintunReleaseReceivePacket");
+    LOAD_WINTUN_FUNCTION(allocate_send_packet, "WintunAllocateSendPacket");
+    LOAD_WINTUN_FUNCTION(send_packet, "WintunSendPacket");
+
+#undef LOAD_WINTUN_FUNCTION
+
+    /* Publish the module, path and complete API as one serialized commit. */
+    wintun_api                             = api;
+    GSTATE.wintun_dll_handle               = module;
+    GSTATE.wintun_dll_path                 = temp_dll_path;
+    GSTATE.flag_tundev_windows_initialized = true;
+    LOGD("TunDevice: Wintun DLL loaded successfully");
+    return true;
+
+fail:
+    assert(tunWindowsPendingCleanupIsEmpty());
+    tunWindowsPendingCleanupAdopt(NULL, module, temp_dll_path, NULL);
+    if (! tunWindowsPendingCleanupTry("after startup error"))
+    {
+        LOGW("TunDevice: Wintun startup resources remain pending after cleanup failure");
+    }
+    LOGE("TunDevice: failed to %s, code: %lu", operation, error);
+    return false;
 }
 
 static void reuseTunReadBuffers(tun_device_t *tdev, sbuf_t **bufs, unsigned int count)
@@ -583,7 +872,11 @@ static WTHREAD_ROUTINE(routineReadFromTun)
                 {
                     goto cleanup;
                 }
-                deviceFlowAffinityPostBatch(tdev->reader_session, &bufs[0], queued_count);
+                if (! deviceFlowAffinityPostBatch(tdev->reader_session, &bufs[0], queued_count))
+                {
+                    queued_count = 0;
+                    goto cleanup;
+                }
                 queued_count = 0;
             }
         }
@@ -619,7 +912,11 @@ static WTHREAD_ROUTINE(routineReadFromTun)
                 {
                     goto cleanup;
                 }
-                deviceFlowAffinityPostBatch(tdev->reader_session, &bufs[0], queued_count);
+                if (! deviceFlowAffinityPostBatch(tdev->reader_session, &bufs[0], queued_count))
+                {
+                    queued_count = 0;
+                    goto cleanup;
+                }
                 queued_count = 0;
                 continue;
             }
@@ -800,7 +1097,11 @@ static bool tundeviceJoinReader(void *context)
     {
         return false;
     }
+    // Close, join, retire: End poisons the fragment generation but leaves its
+    // staged reader buffers alone, because the reader still owned this pool.
+    // Only here does the lifecycle thread own it.
     bufferpoolResetThreadOwnership(tdev->reader_buffer_pool);
+    deviceReaderSessionRetireGenerationBuffers(tdev->reader_session);
     return true;
 }
 
@@ -1384,19 +1685,6 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 //     // Sleep(2200);
 // }
 
-// Function to load a function pointer from a DLL
-static bool loadFunctionFromDLL(const char *function_name, void *target)
-{
-    FARPROC proc = GetProcAddress(GSTATE.wintun_dll_handle, function_name);
-    if (proc == NULL)
-    {
-        LOGE("TunDevice: Error: Failed to load function '%s' from WinTun DLL.", function_name);
-        return false;
-    }
-    memoryCopy(target, &proc, sizeof(FARPROC));
-    return true;
-}
-
 tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb)
 {
     discard offload;
@@ -1410,45 +1698,13 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
 
     if (! GSTATE.flag_tundev_windows_initialized)
     {
-        tunWindowsStartup();
-        GSTATE.flag_tundev_windows_initialized = true;
+        if (! tunWindowsStartup())
+        {
+            return NULL;
+        }
     }
 
-    if (GSTATE.wintun_dll_handle == NULL)
-    {
-        LOGE("TunDevice: Wintun DLL not loaded");
-        return NULL;
-    }
-
-    // Load each function pointer and check for NULL
-    if (! loadFunctionFromDLL("WintunCreateAdapter", &WintunCreateAdapter))
-        return NULL;
-    if (! loadFunctionFromDLL("WintunCloseAdapter", &WintunCloseAdapter))
-        return NULL;
-    if (! loadFunctionFromDLL("WintunOpenAdapter", &WintunOpenAdapter))
-        return NULL;
-    if (! loadFunctionFromDLL("WintunGetAdapterLUID", &WintunGetAdapterLUID))
-        return NULL;
-    if (! loadFunctionFromDLL("WintunGetRunningDriverVersion", &WintunGetRunningDriverVersion))
-        return NULL;
-    if (! loadFunctionFromDLL("WintunDeleteDriver", &WintunDeleteDriver))
-        return NULL;
-    if (! loadFunctionFromDLL("WintunSetLogger", &WintunSetLogger))
-        return NULL;
-    if (! loadFunctionFromDLL("WintunStartSession", &WintunStartSession))
-        return NULL;
-    if (! loadFunctionFromDLL("WintunEndSession", &WintunEndSession))
-        return NULL;
-    if (! loadFunctionFromDLL("WintunGetReadWaitEvent", &WintunGetReadWaitEvent))
-        return NULL;
-    if (! loadFunctionFromDLL("WintunReceivePacket", &WintunReceivePacket))
-        return NULL;
-    if (! loadFunctionFromDLL("WintunReleaseReceivePacket", &WintunReleaseReceivePacket))
-        return NULL;
-    if (! loadFunctionFromDLL("WintunAllocateSendPacket", &WintunAllocateSendPacket))
-        return NULL;
-    if (! loadFunctionFromDLL("WintunSendPacket", &WintunSendPacket))
-        return NULL;
+    assert(GSTATE.wintun_dll_handle != NULL);
 
     LOGI("TunDevice: WinTun loaded successfully");
 
@@ -1472,6 +1728,11 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
                                                    worker_small_buffer_size
 
     );
+    if (UNLIKELY(reader_bpool == NULL))
+    {
+        LOGE("TunDevice: failed to construct reader buffer pool");
+        return NULL;
+    }
 
     buffer_pool_t *writer_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
                                                    GSTATE.masterpool_buffer_pools_small,
@@ -1481,11 +1742,32 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
                                                    worker_small_buffer_size
 
     );
+    if (UNLIKELY(writer_bpool == NULL))
+    {
+        LOGE("TunDevice: failed to construct writer buffer pool");
+        bufferpoolDestroy(reader_bpool);
+        return NULL;
+    }
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
+    if (UNLIKELY(tdev == NULL))
+    {
+        bufferpoolDestroy(reader_bpool);
+        bufferpoolDestroy(writer_bpool);
+        return NULL;
+    }
+
+    char *device_name = stringDuplicate(name);
+    if (UNLIKELY(device_name == NULL))
+    {
+        memoryFree(tdev);
+        bufferpoolDestroy(reader_bpool);
+        bufferpoolDestroy(writer_bpool);
+        return NULL;
+    }
 
     *tdev = (tun_device_t) {
-        .name                           = stringDuplicate(name),
+        .name                           = device_name,
         .routine_reader                 = routineReadFromTun,
         .routine_writer                 = routineWriteToTun,
         .read_event_callback            = cb,
@@ -1506,6 +1788,16 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
     deviceWriterChannelInit(&tdev->writer_channel);
     tdev->reader_session =
         deviceReaderSessionCreate(RAM_PROFILE * 2, kMaxReadDistributeQueueSize, tdev, tunDeliverPacket, reader_bpool);
+    if (UNLIKELY(tdev->reader_session == NULL))
+    {
+        LOGE("TunDevice: failed to allocate reader session");
+        discard deviceWriterChannelDestroy(&tdev->writer_channel);
+        memoryFree(tdev->name);
+        bufferpoolDestroy(tdev->reader_buffer_pool);
+        bufferpoolDestroy(tdev->writer_buffer_pool);
+        memoryFree(tdev);
+        return NULL;
+    }
 
     tdev->stop_event = CreateEventW(NULL, TRUE, FALSE, NULL);
     if (tdev->stop_event == NULL)
@@ -1523,7 +1815,14 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         return NULL;
     }
 
-    tdev->name_w = (wchar_t *) memoryAllocate(wide_size * sizeof(wchar_t));
+    size_t wide_bytes;
+    if (! memoryTryComputeArraySize((size_t) wide_size, sizeof(wchar_t), &wide_bytes))
+    {
+        LOGE("TunDevice: UTF-16 adapter name is too large");
+        tundeviceDestroy(tdev);
+        return NULL;
+    }
+    tdev->name_w = (wchar_t *) memoryAllocate(wide_bytes);
     if (! tdev->name_w)
     {
         LOGE("TunDevice: Memory allocation failed!");
@@ -1601,9 +1900,79 @@ void tundeviceDestroy(tun_device_t *tdev)
 
     memoryFree(tdev->name);
     memoryFree(tdev->name_w);
+    deviceReaderSessionRetireProducerBuffers(tdev->reader_session);
     bufferpoolDestroy(tdev->reader_buffer_pool);
     bufferpoolDestroy(tdev->writer_buffer_pool);
     deviceReaderSessionUnref(tdev->reader_session);
 
     memoryFree(tdev);
+}
+
+void tundevicePlatformShutdown(void)
+{
+    HMODULE  module   = (HMODULE) GSTATE.wintun_dll_handle;
+    wchar_t *dll_path = (wchar_t *) GSTATE.wintun_dll_path;
+
+    /* Stop publication first; global teardown is serialized after all devices. */
+    GSTATE.flag_tundev_windows_initialized = false;
+    GSTATE.wintun_dll_handle               = NULL;
+    GSTATE.wintun_dll_path                 = NULL;
+    wintun_api                             = (wintun_api_t) {0};
+
+    if (module != NULL || dll_path != NULL)
+    {
+        assert(tunWindowsPendingCleanupIsEmpty());
+        tunWindowsPendingCleanupAdopt(NULL, module, dll_path, NULL);
+    }
+
+    if (! tunWindowsPendingCleanupTry("during platform shutdown"))
+    {
+        LOGE("TunDevice: Wintun platform cleanup remains pending and will be retried before another startup");
+    }
+}
+
+void tunWindowsSetLoaderOpsForTest(const tun_windows_loader_ops_t *ops)
+{
+    assert(ops != NULL);
+    assert(! GSTATE.flag_tundev_windows_initialized && GSTATE.wintun_dll_handle == NULL &&
+           GSTATE.wintun_dll_path == NULL && tunWindowsPendingCleanupIsEmpty());
+    assert(ops->get_temp_path_w != NULL && ops->get_temp_file_name_w != NULL && ops->create_file_w != NULL &&
+           ops->write_file != NULL && ops->close_handle != NULL && ops->delete_file_w != NULL &&
+           ops->move_file_ex_w != NULL && ops->load_library_ex_w != NULL && ops->get_proc_address != NULL &&
+           ops->free_library != NULL && ops->get_last_error != NULL && ops->allocate != NULL &&
+           ops->deallocate != NULL);
+    wintun_loader_ops = *ops;
+}
+
+void tunWindowsResetLoaderOpsForTest(void)
+{
+    assert(! GSTATE.flag_tundev_windows_initialized && GSTATE.wintun_dll_handle == NULL &&
+           GSTATE.wintun_dll_path == NULL && tunWindowsPendingCleanupIsEmpty());
+    wintun_loader_ops = default_wintun_loader_ops;
+}
+
+bool tunWindowsStartupForTest(void)
+{
+    if (GSTATE.flag_tundev_windows_initialized || GSTATE.wintun_dll_handle != NULL || GSTATE.wintun_dll_path != NULL)
+    {
+        return false;
+    }
+    return tunWindowsStartup();
+}
+
+bool tunWindowsLoaderIsPublishedForTest(void)
+{
+    return GSTATE.flag_tundev_windows_initialized && GSTATE.wintun_dll_handle != NULL &&
+           GSTATE.wintun_dll_path != NULL && wintun_api.create_adapter != NULL && wintun_api.close_adapter != NULL &&
+           wintun_api.open_adapter != NULL && wintun_api.get_adapter_luid != NULL &&
+           wintun_api.get_running_driver_version != NULL && wintun_api.delete_driver != NULL &&
+           wintun_api.set_logger != NULL && wintun_api.start_session != NULL && wintun_api.end_session != NULL &&
+           wintun_api.get_read_wait_event != NULL && wintun_api.receive_packet != NULL &&
+           wintun_api.release_receive_packet != NULL && wintun_api.allocate_send_packet != NULL &&
+           wintun_api.send_packet != NULL;
+}
+
+bool tunWindowsLoaderHasPendingCleanupForTest(void)
+{
+    return ! tunWindowsPendingCleanupIsEmpty();
 }

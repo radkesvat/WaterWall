@@ -49,13 +49,19 @@ bool deviceWriterChannelOpen(device_writer_channel_t *writer_channel, size_t que
     }
 
     device_writer_generation_t *generation = memoryAllocate(sizeof(*generation));
-    generation->channel                    = chanOpen(sizeof(void *), (uint32_t) queue_capacity);
-    if (generation->channel == NULL)
+    if (UNLIKELY(generation == NULL))
+    {
+        return false;
+    }
+
+    wchan_t *channel = chanTryOpen(sizeof(void *), (uint32_t) queue_capacity);
+    if (UNLIKELY(channel == NULL))
     {
         memoryFree(generation);
         return false;
     }
 
+    generation->channel            = channel;
     generation->next               = NULL;
     generation->queue_capacity     = queue_capacity;
     writer_channel->current        = generation;

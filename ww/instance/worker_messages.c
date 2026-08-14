@@ -21,11 +21,59 @@ struct worker_message_queue_s
 {
     worker_msg_deque_t queued;
     worker_msg_deque_t timed;
-    wmutex_t           mutex;
-    bool               wakeup_pending;
+    /* Lock order: worker_t::control_mutex, then this mutex. */
+    wmutex_t mutex;
+    bool     wakeup_pending;
 };
 
 static void workerMessageReceived(wevent_t *ev);
+
+#ifdef WW_WORKER_MESSAGE_TEST_SEAM
+static worker_message_init_test_failure_e    g_worker_message_init_failure;
+static worker_message_enqueue_test_failure_e g_worker_message_enqueue_failure;
+
+void workerMessagesInitTestSetFailure(worker_message_init_test_failure_e failure)
+{
+    g_worker_message_init_failure = failure;
+}
+
+void workerMessagesEnqueueTestSetFailure(worker_message_enqueue_test_failure_e failure)
+{
+    g_worker_message_enqueue_failure = failure;
+}
+
+static bool workerMessagesInitTestRefuse(worker_message_init_test_failure_e failure)
+{
+    if (g_worker_message_init_failure != failure)
+    {
+        return false;
+    }
+    g_worker_message_init_failure = kWorkerMessageInitFailNone;
+    return true;
+}
+
+static bool workerMessagesEnqueueTestRefuse(worker_message_enqueue_test_failure_e failure)
+{
+    if (g_worker_message_enqueue_failure != failure)
+    {
+        return false;
+    }
+    g_worker_message_enqueue_failure = kWorkerMessageEnqueueFailNone;
+    return true;
+}
+#else
+static bool workerMessagesInitTestRefuse(int failure)
+{
+    discard failure;
+    return false;
+}
+
+static bool workerMessagesEnqueueTestRefuse(int failure)
+{
+    discard failure;
+    return false;
+}
+#endif
 
 static master_pool_item_t *allocWorkerMessage(void *userdata)
 {
@@ -42,7 +90,7 @@ static timed_worker_msg_t *getWorkerMessage(WorkerMessageCallback cb, WorkerMess
                                             void *arg2, void *arg3)
 {
     timed_worker_msg_t *msg;
-    masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
+    masterpoolGetItems(GSTATE.masterpool_messages, (void **) &(msg), 1, NULL);
     *msg = (timed_worker_msg_t) {
         .base    = {.callback = cb, .arg1 = arg1, .arg2 = arg2, .arg3 = arg3},
         .cleanup = cleanup,
@@ -187,23 +235,89 @@ void workerMessagesInstallMasterPoolCallbacks(master_pool_t *pool)
     masterpoolInstallCallBacks(pool, allocWorkerMessage, destroyWorkerMessage);
 }
 
-void workerMessagesInit(worker_t *worker)
+bool workerMessagesInit(worker_t *worker)
 {
     assert(worker != NULL);
+    assert(worker->message_queue == NULL);
+    atomicStoreExplicit(&worker->message_admission_open, false, memory_order_release);
+
+    if (workerMessagesInitTestRefuse(kWorkerMessageInitFailOuterAllocation))
+    {
+        return false;
+    }
     worker_message_queue_t *queue = memoryAllocate(sizeof(*queue));
-    *queue                        = (worker_message_queue_t) {
-                               .queued = worker_msg_deque_t_with_capacity(32),
-                               .timed  = worker_msg_deque_t_with_capacity(32),
+    if (UNLIKELY(queue == NULL))
+    {
+        return false;
+    }
+    *queue = (worker_message_queue_t) {
+        .queued = worker_msg_deque_t_init(),
+        .timed  = worker_msg_deque_t_init(),
     };
-    mutexInit(&(queue->mutex));
+
+    const bool queued_ready = ! workerMessagesInitTestRefuse(kWorkerMessageInitFailQueuedReserve) &&
+                              worker_msg_deque_t_reserve(&queue->queued, 32);
+    const bool timed_ready = queued_ready && ! workerMessagesInitTestRefuse(kWorkerMessageInitFailTimedReserve) &&
+                             worker_msg_deque_t_reserve(&queue->timed, 32);
+    if (UNLIKELY(! timed_ready))
+    {
+        worker_msg_deque_t_drop(&queue->queued);
+        worker_msg_deque_t_drop(&queue->timed);
+        memoryFree(queue);
+        return false;
+    }
+
+    if (UNLIKELY(! mutexTryInit(&queue->mutex)))
+    {
+        worker_msg_deque_t_drop(&queue->queued);
+        worker_msg_deque_t_drop(&queue->timed);
+        memoryFree(queue);
+        return false;
+    }
     worker->message_queue = queue;
+    return true;
 }
 
-void workerMessagesCleanupPending(worker_t *worker)
+bool workerMessagesOpenAdmission(worker_t *worker)
+{
+    if (worker == NULL)
+    {
+        return false;
+    }
+
+    mutexLock(&worker->control_mutex);
+    const bool ready = worker->has_event_loop && worker->loop != NULL && worker->message_queue != NULL &&
+                       ! atomicLoadExplicit(&worker->resources_destroyed, memory_order_acquire) &&
+                       atomicLoadExplicit(&worker->lifecycle, memory_order_acquire) ==
+                           (w_atomic_int_value_t) kWorkerLifecycleInitialized &&
+                       ! atomicLoadExplicit(&worker->message_admission_open, memory_order_acquire);
+    if (! ready)
+    {
+        mutexUnlock(&worker->control_mutex);
+        return false;
+    }
+    atomicStoreExplicit(&worker->message_admission_open, true, memory_order_release);
+    mutexUnlock(&worker->control_mutex);
+    return true;
+}
+
+void workerMessagesCloseAdmissionAndDetach(worker_t *worker, wloop_t **loop, worker_message_queue_t **queue)
 {
     assert(worker != NULL);
+    assert(loop != NULL);
+    assert(queue != NULL);
 
-    worker_message_queue_t *queue = worker->message_queue;
+    mutexLock(&worker->control_mutex);
+    atomicStoreExplicit(&worker->message_admission_open, false, memory_order_release);
+    *loop                 = worker->loop;
+    *queue                = worker->message_queue;
+    worker->loop          = NULL;
+    worker->message_queue = NULL;
+    mutexUnlock(&worker->control_mutex);
+}
+
+void workerMessagesCleanupPendingDetached(worker_message_queue_t *queue)
+{
     if (queue == NULL)
     {
         return;
@@ -240,23 +354,38 @@ void workerMessagesCleanupPending(worker_t *worker)
     mutexUnlock(&(queue->mutex));
 }
 
-void workerMessagesDestroy(worker_t *worker)
+void workerMessagesCleanupPending(worker_t *worker)
 {
     assert(worker != NULL);
+    workerMessagesCleanupPendingDetached(worker->message_queue);
+}
 
-    worker_message_queue_t *queue = worker->message_queue;
+void workerMessagesDestroyDetached(worker_message_queue_t *queue)
+{
     if (queue == NULL)
     {
         return;
     }
 
-    workerMessagesCleanupPending(worker);
-    worker->message_queue = NULL;
+    workerMessagesCleanupPendingDetached(queue);
 
     worker_msg_deque_t_drop(&(queue->queued));
     worker_msg_deque_t_drop(&(queue->timed));
     mutexDestroy(&(queue->mutex));
     memoryFree(queue);
+}
+
+void workerMessagesDestroy(worker_t *worker)
+{
+    assert(worker != NULL);
+
+    wloop_t                *loop  = NULL;
+    worker_message_queue_t *queue = NULL;
+    workerMessagesCloseAdmissionAndDetach(worker, &loop, &queue);
+    /* Test fixtures own and destroy their local loop separately. Production
+     * teardown uses workerDestroyOwnResources(), which consumes both values. */
+    discard loop;
+    workerMessagesDestroyDetached(queue);
 }
 
 void sendWorkerMessage(wid_t wid, WorkerMessageCallback cb, void *arg1, void *arg2, void *arg3)
@@ -267,6 +396,22 @@ void sendWorkerMessage(wid_t wid, WorkerMessageCallback cb, void *arg1, void *ar
 void sendWorkerMessageWithCleanup(wid_t wid, WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup, void *arg1,
                                   void *arg2, void *arg3)
 {
+    if (UNLIKELY(workerMessageRejectUndeliverable(wid, cleanup, arg1, arg2, arg3)))
+    {
+        return;
+    }
+
+    worker_t *worker = getWorker(wid);
+    if (UNLIKELY(! atomicLoadExplicit(&worker->message_admission_open, memory_order_acquire) ||
+                 isApplicationTerminating()))
+    {
+        if (cleanup != NULL)
+        {
+            cleanup(arg1, arg2, arg3);
+        }
+        return;
+    }
+
     /*
      * Inline execution is only legal when this thread *is* the target event
      * worker. An unregistered device thread and the lwIP pseudo-worker both fall
@@ -274,69 +419,135 @@ void sendWorkerMessageWithCleanup(wid_t wid, WorkerMessageCallback cb, WorkerMes
      */
     if (currentThreadIsEventWorkerWID(wid))
     {
-        cb(getWorker(wid), arg1, arg2, arg3);
+        cb(worker, arg1, arg2, arg3);
         return;
     }
 
-    discard sendWorkerMessageForceQueueWithCleanup(wid, cb, cleanup, arg1, arg2, arg3);
+    const bool admitted = sendWorkerMessageForceQueueWithCleanup(wid, cb, cleanup, arg1, arg2, arg3);
+    discard    admitted;
 }
 
-void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCallback cb, void *arg1, void *arg2, void *arg3)
+void sendWorkerMessageForceQueueBestEffort(wid_t wid, WorkerMessageCallback cb, void *arg1, void *arg2, void *arg3)
 {
-    discard sendWorkerMessageForceQueueWithCleanup(wid, cb, NULL, arg1, arg2, arg3);
+    const bool admitted = sendWorkerMessageForceQueueWithCleanup(wid, cb, NULL, arg1, arg2, arg3);
+    discard    admitted;
 }
 
-bool sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup,
-                                            void *arg1, void *arg2, void *arg3)
+void sendWorkerMessageForceQueueBestEffortWithCleanup(wid_t wid, WorkerMessageCallback cb,
+                                                      WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
+                                                      void *arg3)
 {
-    if (UNLIKELY(workerMessageRejectUndeliverable(wid, cleanup, arg1, arg2, arg3)))
+    const bool admitted = sendWorkerMessageForceQueueWithCleanup(wid, cb, cleanup, arg1, arg2, arg3);
+    discard    admitted;
+}
+
+static bool sendWorkerMessageForceQueueTransactional(wid_t wid, WorkerMessageCallback cb,
+                                                     WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
+                                                     void *arg3, bool retain_on_refusal)
+{
+    WorkerMessageCleanupCallback refusal_cleanup = retain_on_refusal ? NULL : cleanup;
+
+    if (UNLIKELY(workerMessageRejectUndeliverable(wid, refusal_cleanup, arg1, arg2, arg3)))
     {
         return false;
     }
 
     if (UNLIKELY(isApplicationTerminating()))
     {
-        if (cleanup != NULL)
+        if (refusal_cleanup != NULL)
         {
-            cleanup(arg1, arg2, arg3);
+            refusal_cleanup(arg1, arg2, arg3);
         }
         return false;
     }
 
-    worker_t               *worker = getWorker(wid);
-    worker_message_queue_t *queue  = worker->message_queue;
-    assert(worker->loop != NULL);
-    assert(queue != NULL);
-
-    timed_worker_msg_t *msg = getWorkerMessage(cb, cleanup, arg1, arg2, arg3);
-
-    mutexLock(&(queue->mutex));
-    assert(worker->message_queue == queue);
-    assert(worker->loop != NULL);
-    if (UNLIKELY(isApplicationTerminating()))
+    worker_t *worker = getWorker(wid);
+    if (UNLIKELY(! atomicLoadExplicit(&worker->message_admission_open, memory_order_acquire)))
     {
-        mutexUnlock(&(queue->mutex));
-        cleanupWorkerMessage(msg);
+        if (refusal_cleanup != NULL)
+        {
+            refusal_cleanup(arg1, arg2, arg3);
+        }
         return false;
     }
 
-    if (UNLIKELY(worker_msg_deque_t_push_back(&(queue->queued), msg) == NULL))
+    timed_worker_msg_t *msg = getWorkerMessage(cb, cleanup, arg1, arg2, arg3);
+
+#ifdef WW_WORKER_MESSAGE_TEST_SEAM
+    workerMessageEnqueueTestSeam(worker, kWorkerMessageEnqueueBeforeLifetimeLock);
+#endif
+
+    /*
+     * control_mutex protects the lifetime of both pointers through enqueue and
+     * wakeup posting. Teardown detaches both under this same lock. The nested
+     * order is always control_mutex then queue->mutex.
+     */
+    mutexLock(&(worker->control_mutex));
+    worker_message_queue_t *queue = worker->message_queue;
+    if (UNLIKELY(! atomicLoadExplicit(&worker->message_admission_open, memory_order_acquire) || worker->loop == NULL ||
+                 queue == NULL))
+    {
+        mutexUnlock(&(worker->control_mutex));
+        if (retain_on_refusal)
+        {
+            reuseWorkerMessage(msg);
+        }
+        else
+        {
+            cleanupWorkerMessage(msg);
+        }
+        return false;
+    }
+
+#ifdef WW_WORKER_MESSAGE_TEST_SEAM
+    workerMessageEnqueueTestSeam(worker, kWorkerMessageEnqueueBeforeQueueLock);
+#endif
+
+    mutexLock(&(queue->mutex));
+    if (UNLIKELY(isApplicationTerminating()))
     {
         mutexUnlock(&(queue->mutex));
-        cleanupWorkerMessage(msg);
+        mutexUnlock(&(worker->control_mutex));
+        if (retain_on_refusal)
+        {
+            reuseWorkerMessage(msg);
+        }
+        else
+        {
+            cleanupWorkerMessage(msg);
+        }
+        return false;
+    }
+
+    if (UNLIKELY(workerMessagesEnqueueTestRefuse(kWorkerMessageEnqueueFailDequeGrowth) ||
+                 worker_msg_deque_t_push_back(&(queue->queued), msg) == NULL))
+    {
+        mutexUnlock(&(queue->mutex));
+        mutexUnlock(&(worker->control_mutex));
+        if (retain_on_refusal)
+        {
+            reuseWorkerMessage(msg);
+        }
+        else
+        {
+            cleanupWorkerMessage(msg);
+        }
         return false;
     }
 
     if (queue->wakeup_pending)
     {
         mutexUnlock(&(queue->mutex));
+        mutexUnlock(&(worker->control_mutex));
         return true;
     }
 
     queue->wakeup_pending = true;
-    if (LIKELY(workerMessagePostWakeup(worker)))
+    if (LIKELY(! workerMessagesEnqueueTestRefuse(kWorkerMessageEnqueueFailWakeupPost) &&
+               workerMessagePostWakeup(worker)))
     {
         mutexUnlock(&(queue->mutex));
+        mutexUnlock(&(worker->control_mutex));
         return true;
     }
 
@@ -345,9 +556,30 @@ bool sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
     assert(queued_msg == msg);
     discard queued_msg;
     mutexUnlock(&(queue->mutex));
+    mutexUnlock(&(worker->control_mutex));
 
-    cleanupWorkerMessage(msg);
+    if (retain_on_refusal)
+    {
+        reuseWorkerMessage(msg);
+    }
+    else
+    {
+        cleanupWorkerMessage(msg);
+    }
     return false;
+}
+
+bool sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup,
+                                            void *arg1, void *arg2, void *arg3)
+{
+    return sendWorkerMessageForceQueueTransactional(wid, cb, cleanup, arg1, arg2, arg3, false);
+}
+
+bool sendWorkerMessageForceQueueRetainOnRefusal(wid_t wid, WorkerMessageCallback cb,
+                                                WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
+                                                void *arg3)
+{
+    return sendWorkerMessageForceQueueTransactional(wid, cb, cleanup, arg1, arg2, arg3, true);
 }
 
 static void runTimedTask(wtimer_t *timer)
@@ -413,9 +645,8 @@ static bool setupTimedTaskChecked(worker_t *worker, void *arg1, void *arg2, void
     // Either called inline on the target worker or delivered as a worker
     // message to it; both mean the timer is armed on its own loop's thread.
     assert(currentThreadIsEventWorkerWID(worker->wid));
-    assert(worker->loop != NULL);
-    assert(worker->message_queue != NULL);
-    if (UNLIKELY(isApplicationTerminating()))
+    if (UNLIKELY(! atomicLoadExplicit(&worker->message_admission_open, memory_order_acquire) || worker->loop == NULL ||
+                 worker->message_queue == NULL || isApplicationTerminating()))
     {
         cleanupWorkerMessage(timed_msg);
         return false;
@@ -424,12 +655,11 @@ static bool setupTimedTaskChecked(worker_t *worker, void *arg1, void *arg2, void
     wtimer_t *k_timer = wtimerAdd(worker->loop, runTimedTask, delay_ms, 1);
     if (UNLIKELY(k_timer == NULL))
     {
-        // fallback to immediate execution if timer creation fails
-        WorkerMessageCallback cb = timed_msg->base.callback;
-        cb(worker, timed_msg->base.arg1, timed_msg->base.arg2, timed_msg->base.arg3);
-        timed_msg->cleanup = NULL;
-        reuseWorkerMessage(timed_msg);
-        return true;
+        /* A delayed callback may depend on a minimum delay and may schedule
+         * itself again. Running it inline turns allocation pressure into
+         * unbounded recursion and violates the timer contract. */
+        cleanupWorkerMessage(timed_msg);
+        return false;
     }
 
     timed_msg->deadline_us = wloopNowUS(worker->loop) + ((uint64_t) delay_ms * 1000ULL);
@@ -466,7 +696,8 @@ static void setupTimedTask(worker_t *worker, void *arg1, void *arg2, void *arg3)
 
 void sendWorkerMessageTimed(wid_t wid, WorkerMessageCallback cb, uint32_t delay_ms, void *arg1, void *arg2, void *arg3)
 {
-    discard sendWorkerMessageTimedWithCleanup(wid, cb, NULL, delay_ms, arg1, arg2, arg3);
+    const bool admitted = sendWorkerMessageTimedWithCleanup(wid, cb, NULL, delay_ms, arg1, arg2, arg3);
+    discard    admitted;
 }
 
 bool sendWorkerMessageTimedWithCleanup(wid_t wid, WorkerMessageCallback cb, WorkerMessageCleanupCallback cleanup,
@@ -495,8 +726,14 @@ bool sendWorkerMessageTimedWithCleanup(wid_t wid, WorkerMessageCallback cb, Work
     }
 
     worker_t *worker = getWorker(wid);
-    assert(worker->loop != NULL);
-    assert(worker->message_queue != NULL);
+    if (UNLIKELY(! atomicLoadExplicit(&worker->message_admission_open, memory_order_acquire)))
+    {
+        if (cleanup != NULL)
+        {
+            cleanup(arg1, arg2, arg3);
+        }
+        return false;
+    }
 
     timed_worker_msg_t *msg = getWorkerMessage(cb, cleanup, arg1, arg2, arg3);
 

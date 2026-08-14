@@ -65,6 +65,9 @@ void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *main_l)
         return;
     }
 
-    lineScheduleDelayedTask(main_l, connectionfisherclientTimeoutTask, kConnectionFisherTimeoutMs, t);
+    if (UNLIKELY(! lineScheduleDelayedTask(main_l, connectionfisherclientTimeoutTask, kConnectionFisherTimeoutMs, t)))
+    {
+        connectionfisherclientCloseMainLine(t, main_l);
+    }
     lineUnlock(main_l);
 }

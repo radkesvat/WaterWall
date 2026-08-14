@@ -53,29 +53,34 @@ void setDnsLogger(logger_t *newlogger)
 logger_t *createDnsLogger(const char *log_file, bool console)
 {
     assert(dns_logger == NULL);
-    dns_logger         = loggerCreate();
-    bool path_accepted = ((log_file != NULL) && loggerSetFile(dns_logger, log_file)) != 0;
+    logger_t *logger = loggerCreate();
+    if (UNLIKELY(logger == NULL))
+    {
+        return NULL;
+    }
+    bool path_accepted = ((log_file != NULL) && loggerSetFile(logger, log_file)) != 0;
     if (console)
     {
         if (path_accepted)
         {
-            loggerSetHandler(dns_logger, dnsLoggerHandleWithStdStream);
+            loggerSetHandler(logger, dnsLoggerHandleWithStdStream);
         }
         else
         {
 
-            loggerSetHandler(dns_logger, dnsLoggerHandleOnlyStdStream);
+            loggerSetHandler(logger, dnsLoggerHandleOnlyStdStream);
         }
     }
     else if (path_accepted)
     {
-        loggerSetHandler(dns_logger, dnsLoggerHandle);
+        loggerSetHandler(logger, dnsLoggerHandle);
     }
     else
     {
         // no logger
     }
-    return dns_logger;
+    dns_logger = logger;
+    return logger;
 }
 
 logger_handler getDnsLoggerHandle(void)

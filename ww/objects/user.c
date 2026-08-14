@@ -1156,8 +1156,15 @@ bool userCreate(User *user, const char *password)
     }
 
     memoryZero(user, sizeof(*user));
-    rwlockinit(&user->lock);
-    rwlockinit(&user->stats_lock);
+    if (UNLIKELY(! rwlockTryInit(&user->lock)))
+    {
+        return false;
+    }
+    if (UNLIKELY(! rwlockTryInit(&user->stats_lock)))
+    {
+        rwlockDestroy(&user->lock);
+        return false;
+    }
 
     user->initialized = true;
 
@@ -1190,8 +1197,17 @@ bool userCopy(User *dest, const User *src)
     }
 
     memoryZero(dest, sizeof(*dest));
-    rwlockinit(&dest->lock);
-    rwlockinit(&dest->stats_lock);
+    if (UNLIKELY(! rwlockTryInit(&dest->lock)))
+    {
+        userSnapshotDestroy(&snapshot);
+        return false;
+    }
+    if (UNLIKELY(! rwlockTryInit(&dest->stats_lock)))
+    {
+        rwlockDestroy(&dest->lock);
+        userSnapshotDestroy(&snapshot);
+        return false;
+    }
 
     dest->initialized = true;
 

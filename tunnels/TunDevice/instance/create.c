@@ -30,26 +30,23 @@ static void tundevicePublishEgressPinIfNeeded(tundevice_tstate_t *state)
 
 tunnel_t *tundeviceTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(tundevice_tstate_t), sizeof(tundevice_lstate_t));
+    tunnel_t *t = packettunnelCreate(node, sizeof(tundevice_tstate_t), 0);
+    if (! t)
+    {
+        return NULL;
+    }
 
-    t->fnInitU    = &tundeviceTunnelUpStreamInit;
-    t->fnEstU     = &tundeviceTunnelUpStreamEst;
-    t->fnFinU     = &tundeviceTunnelUpStreamFinish;
-    t->fnPayloadU = &tundeviceTunnelUpStreamPayload;
-    t->fnPauseU   = &tundeviceTunnelUpStreamPause;
-    t->fnResumeU  = &tundeviceTunnelUpStreamResume;
-
-    t->fnInitD    = &tundeviceTunnelDownStreamInit;
-    t->fnEstD     = &tundeviceTunnelDownStreamEst;
-    t->fnFinD     = &tundeviceTunnelDownStreamFinish;
-    t->fnPayloadD = &tundeviceTunnelDownStreamPayload;
-    t->fnPauseD   = &tundeviceTunnelDownStreamPause;
-    t->fnResumeD  = &tundeviceTunnelDownStreamResume;
-
-    t->onPrepare = &tundeviceTunnelOnPrepair;
     t->onStart   = &tundeviceTunnelOnStart;
     t->onStop    = &tundeviceTunnelOnStop;
     t->onDestroy = &tundeviceTunnelDestroy;
+
+    const packet_lifecycle_anchor_direction_t direction =
+        node->hash_next != 0 ? kPacketLifecycleAnchorPublishUpstream : kPacketLifecycleAnchorPublishDownstream;
+    if (! packettunnelConfigureLifecycleAnchor(t, "TunDevice", tundeviceTunnelWritePayload, direction))
+    {
+        tunnelDestroy(t);
+        return NULL;
+    }
 
     tundevice_tstate_t *state = tunnelGetState(t);
 
@@ -77,29 +74,34 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
     ip_addr_t parsed_mask;
     uint8_t   parsed_prefix = 0;
     int parsed_family = parseIPWithSubnetMaskAndPrefix(state->ip_subnet, &parsed_ip, &parsed_mask, &parsed_prefix);
-    if (parsed_family != 4 && parsed_family != 6)
+    if (parsed_family != 4)
     {
-        LOGF("TunDevice: device-ip must be a valid IPv4 or IPv6 CIDR");
+        LOGF("TunDevice: device-ip must be a valid IPv4 CIDR");
         return tundeviceTunnelCreateFail(t);
     }
 
     const char *slash  = stringChr(state->ip_subnet, '/');
     size_t      ip_len = (size_t) (slash - state->ip_subnet);
     state->ip_present  = memoryAllocate(ip_len + 1U);
+    if (UNLIKELY(state->ip_present == NULL))
+    {
+        LOGF("TunDevice: failed to allocate the parsed device IPv4 address");
+        return tundeviceTunnelCreateFail(t);
+    }
     memoryCopy(state->ip_present, state->ip_subnet, ip_len);
     state->ip_present[ip_len] = '\0';
 
     state->subnet_mask = (int) parsed_prefix;
 
-    int dev_mtu = 0;
-    getIntFromJsonObjectOrDefault(&dev_mtu, settings, "device-mtu", GLOBAL_MTU_SIZE);
-    if (dev_mtu <= 0 || dev_mtu > UINT16_MAX)
+    int64_t             dev_mtu    = GLOBAL_MTU_SIZE;
+    json_value_status_t mtu_status = jsonGetObjectIntegerInRange(settings, "device-mtu", 68, UINT16_MAX, &dev_mtu);
+    if (mtu_status == kJsonValueInvalid || dev_mtu < 68 || dev_mtu > UINT16_MAX)
     {
-        LOGF("JSON Error: TunDevice->settings->device-mtu must be between 1 and %u", UINT16_MAX);
+        LOGF("JSON Error: TunDevice->settings->device-mtu must be an integer between 68 and %u", UINT16_MAX);
         return tundeviceTunnelCreateFail(t);
     }
 
-    state->mtu = dev_mtu;
+    state->mtu = (uint16_t) dev_mtu;
 
     if (! tundeviceLoadRouteSettings(state, settings))
     {

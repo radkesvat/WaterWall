@@ -2,23 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-static sbuf_t *ptcAllocateTcpReadBuffer(line_t *line, uint32_t len)
-{
-    buffer_pool_t *pool = lineGetBufferPool(line);
-
-    if (len <= bufferpoolGetSmallBufferSize(pool))
-    {
-        return bufferpoolGetSmallBuffer(pool);
-    }
-
-    if (len <= bufferpoolGetLargeBufferSize(pool))
-    {
-        return bufferpoolGetLargeBuffer(pool);
-    }
-
-    return sbufCreateWithPadding(len, bufferpoolGetLargeBufferPadding(pool));
-}
-
 void lwipThreadPtcTcpConnectionErrorCallback(void *arg, err_t err)
 {
     ptc_lstate_t *ls = arg;
@@ -37,7 +20,10 @@ void lwipThreadPtcTcpConnectionErrorCallback(void *arg, err_t err)
 
     if (lineIsAlive(ls->line))
     {
-        lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel);
+        if (! lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel))
+        {
+            discard ptcRequiredControlRefusedLocked(ls, "TCP error close");
+        }
     }
 }
 
@@ -54,72 +40,86 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
         return ERR_OK;
     }
 
-    if (err != ERR_OK || p == NULL)
+    if (err != ERR_OK)
     {
         if (p != NULL)
         {
             pbuf_free(p);
         }
 
-        err_t ret = ERR_OK;
         ptcDetachTcpPcbLocked(ls);
         if (tpcb != NULL)
         {
-            if (tcp_close(tpcb) != ERR_OK)
-            {
-                tcp_abort(tpcb);
-                // lwIP requires the recv callback to return ERR_ABRT after tcp_abort(),
-                // otherwise tcp_input() keeps dereferencing the now-freed pcb.
-                ret = ERR_ABRT;
-            }
+            tcp_abort(tpcb);
         }
 
         if (lineIsAlive(ls->line))
         {
-            lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel);
+            if (! lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel))
+            {
+                discard ptcRequiredControlRefusedLocked(ls, "TCP receive-error close");
+            }
         }
-        return ret;
+        return ERR_ABRT;
+    }
+
+    if (p == NULL)
+    {
+        if (lineIsAlive(ls->line) && ! lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel))
+        {
+            if (ptcRequiredControlRefusedLocked(ls, "TCP peer-FIN close"))
+            {
+                return ERR_ABRT;
+            }
+        }
+        return ERR_OK;
     }
 
     wid_t owner_wid = lineGetWID(ls->line);
     if (UNLIKELY(! currentThreadIsEventWorkerWID(owner_wid)))
     {
-        LOGW("PacketsToConnection: tcp recv callback arrived on worker %d for line owned by worker %d; closing flow",
-             workerWIDForLog(getWID()),
-             workerWIDForLog(owner_wid));
-        pbuf_free(p);
-        err_t ret = ERR_OK;
-        ptcDetachTcpPcbLocked(ls);
-        if (tcp_close(tpcb) != ERR_OK)
+        if (! ls->refused_retry_queued)
         {
-            tcp_abort(tpcb);
-            // lwIP requires the recv callback to return ERR_ABRT after tcp_abort(),
-            // otherwise tcp_input() keeps dereferencing the now-freed pcb.
-            ret = ERR_ABRT;
+            ls->refused_retry_queued = true;
+            if (! lineIsAlive(ls->line) || ! lineScheduleTask(ls->line, ptcRefusedDataRetryTask, ls->tunnel))
+            {
+                ls->refused_retry_queued = false;
+                if (ptcRequiredControlRefusedLocked(ls, "refused TCP data replay"))
+                {
+                    return ERR_ABRT;
+                }
+            }
         }
-
-        if (lineIsAlive(ls->line))
-        {
-            lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel);
-        }
-        return ret;
+        return ERR_MEM;
     }
 
-    sbuf_t *buf = ptcAllocateTcpReadBuffer(ls->line, p->tot_len);
+    buffer_pool_t *pool = lineGetBufferPool(ls->line);
+    sbuf_t        *buf  = bufferpoolGetBestFit(pool, p->tot_len, bufferpoolGetLargeBufferPadding(pool));
 
     sbufSetLength(buf, p->tot_len);
     pbuf_copy_partial(p, sbufGetMutablePtr(buf), p->tot_len, 0);
-    pbuf_free(p);
 
-    if (lineIsAlive(ls->line))
-    {
-        lineScheduleTaskWithBuf(ls->line, ptcDeliverPayloadTask, ls->tunnel, buf);
-    }
-    else
+    if (! lineIsAlive(ls->line))
     {
         lineReuseBuffer(ls->line, buf);
+        return ERR_MEM;
     }
 
+    if (! ptcReceiveCreditAccumulateLocked(ls, p->tot_len))
+    {
+        lineReuseBuffer(ls->line, buf);
+        pbuf_free(p);
+        return ERR_ABRT;
+    }
+
+    if (! lineScheduleTaskWithBuf(ls->line, ptcDeliverPayloadTask, ls->tunnel, buf))
+    {
+        /* Scheduler cleanup owns the copied sbuf; lwIP retains and replays p. */
+        ptcReceiveCreditRollbackLocked(ls, p->tot_len);
+        return ERR_MEM;
+    }
+
+    pbuf_free(p);
     return ERR_OK;
 }
 
@@ -160,7 +160,18 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
     line_t       *l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), owner_wid);
     ptc_lstate_t *ls = lineGetState(l, t);
 
-    ptcLinestateInitialize(ls, t, l, kPtcLineKindTcp, newpcb);
+    if (UNLIKELY(! ptcLinestateInitialize(ls, t, l, kPtcLineKindTcp, newpcb)))
+    {
+        /*
+         * One flow's bookkeeping could not be allocated. The line never became
+         * usable, so it is destroyed here and the peer sees a reset - every other
+         * flow on this node keeps running.
+         */
+        LOGW("PacketsToConnection: out of memory accepting a tcp flow; resetting it");
+        lineDestroy(l);
+        tcp_abort(newpcb);
+        return ERR_ABRT;
+    }
 
     addresscontextSetIpPortProtocol(
         lineGetSourceAddressContext(l), &newpcb->remote_ip, newpcb->remote_port, IP_PROTO_TCP);
@@ -193,6 +204,10 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
              (unsigned int) newpcb->remote_port);
     }
 
-    lineScheduleTask(l, ptcOpenLineTask, t);
+    if (! lineScheduleTask(l, ptcOpenLineTask, t))
+    {
+        discard ptcRequiredControlRefusedLocked(ls, "TCP accepted-line Init");
+        return ERR_ABRT;
+    }
     return ERR_OK;
 }

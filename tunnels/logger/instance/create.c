@@ -154,7 +154,7 @@ static bool loggertunnelInitializeFilePaths(loggertunnel_tstate_t *state)
 tunnel_t *loggertunnelTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(loggertunnel_tstate_t), 0);
-    if (t == NULL)
+    if (! t)
     {
         return NULL;
     }
@@ -179,7 +179,12 @@ tunnel_t *loggertunnelTunnelCreate(node_t *node)
     const cJSON           *settings = node->node_settings_json;
     loggertunnel_tstate_t *state    = tunnelGetState(t);
 
-    mutexInit(&state->file_mutex);
+    if (UNLIKELY(! mutexTryInit(&state->file_mutex)))
+    {
+        LOGF("LoggerTunnel: failed to initialize file mutex");
+        tunnelDestroy(t);
+        return NULL;
+    }
 
     if (! checkJsonIsObjectAndHasChild(settings))
     {

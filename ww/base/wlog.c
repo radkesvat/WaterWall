@@ -73,7 +73,7 @@ static bool loggerFilePathDisablesFile(const char *filepath)
  *
  * @param logger Logger instance to initialize.
  */
-static void initLogger(logger_t *logger)
+static bool initLogger(logger_t *logger)
 {
     logger->handler = NULL;
     logger->bufsize = DEFAULT_LOG_MAX_BUFSIZE;
@@ -92,10 +92,23 @@ static void initLogger(logger_t *logger)
     logger->cur_logfile[0]  = '\0';
     logger->last_logfile_ts = 0;
     logger->can_write_cnt   = -1;
-    mutexInit(&logger->mutex_);
-    mutexInit(&logger->handler_mutex_);
-    mutexInit(&logger->write_mutex_);
+    if (UNLIKELY(! mutexTryInit(&logger->mutex_)))
+    {
+        return false;
+    }
+    if (UNLIKELY(! mutexTryInit(&logger->handler_mutex_)))
+    {
+        mutexDestroy(&logger->mutex_);
+        return false;
+    }
+    if (UNLIKELY(! mutexTryInit(&logger->write_mutex_)))
+    {
+        mutexDestroy(&logger->handler_mutex_);
+        mutexDestroy(&logger->mutex_);
+        return false;
+    }
     loggerSetFile(logger, DEFAULT_LOG_FILE);
+    return true;
 }
 
 logger_t *loggerCreate(void)
@@ -126,7 +139,11 @@ logger_t *loggerCreate(void)
     {
         return NULL;
     }
-    initLogger(logger);
+    if (UNLIKELY(! initLogger(logger)))
+    {
+        memoryFree(logger);
+        return NULL;
+    }
     return logger;
 }
 

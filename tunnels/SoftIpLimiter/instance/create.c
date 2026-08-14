@@ -77,7 +77,7 @@ static bool softiplimiterParseRequiredInt(int *out, const cJSON *settings, const
 static bool softiplimiterParseSettings(softiplimiter_tstate_t *ts, const cJSON *settings)
 {
     int simultaneous_user_limit = 0;
-    int tolerance_ms = 0;
+    int tolerance_ms            = 0;
 
     if (! softiplimiterParseIdentifierMode(ts, settings) ||
         ! softiplimiterParseIdentificationFailureAction(ts, settings) ||
@@ -109,6 +109,10 @@ static bool softiplimiterParseSettings(softiplimiter_tstate_t *ts, const cJSON *
 tunnel_t *softiplimiterTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(softiplimiter_tstate_t), sizeof(softiplimiter_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &softiplimiterTunnelUpStreamInit;
     t->fnEstU     = &softiplimiterTunnelUpStreamEst;
@@ -135,7 +139,12 @@ tunnel_t *softiplimiterTunnelCreate(node_t *node)
     }
 
     softiplimiter_tstate_t *ts = tunnelGetState(t);
-    softiplimiterTunnelstateInitialize(ts);
+    if (UNLIKELY(! softiplimiterTunnelstateInitialize(ts)))
+    {
+        LOGF("SoftIpLimiter: failed to initialize identity table");
+        tunnelDestroy(t);
+        return NULL;
+    }
 
     if (! softiplimiterParseSettings(ts, settings))
     {

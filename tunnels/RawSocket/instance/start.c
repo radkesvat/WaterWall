@@ -33,15 +33,10 @@ void rawsocketOnStart(tunnel_t *t)
 {
     rawsocket_tstate_t *state = tunnelGetState(t);
 
-    if (nodeIsLastInChain(t->node))
+    if (! packettunnelLifecycleAnchorBind(t))
     {
-        state->WriteReceivedPacket = t->prev->fnPayloadD;
-        state->write_tunnel        = t->prev;
-    }
-    else
-    {
-        state->WriteReceivedPacket = t->next->fnPayloadU;
-        state->write_tunnel        = t->next;
+        LOGF("RawSocket: packet publication side is not chained");
+        terminateProgram(1);
     }
 
     state->capture_device = caputredeviceCreate(

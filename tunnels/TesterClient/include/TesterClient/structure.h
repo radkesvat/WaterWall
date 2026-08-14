@@ -95,6 +95,7 @@ WW_EXPORT api_result_t testerclientTunnelApi(tunnel_t *instance, sbuf_t *message
 void testerclientTunnelOnPrepair(tunnel_t *t);
 void testerclientTunnelOnStart(tunnel_t *t);
 void testerclientTunnelOnStop(tunnel_t *t);
+void testerclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
 
 void testerclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void testerclientTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -113,7 +114,7 @@ void testerclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void     testerclientLinestateInitialize(testerclient_lstate_t *ls, buffer_pool_t *pool);
 void     testerclientLinestateDestroy(testerclient_lstate_t *ls);
 void     testerclientFail(tunnel_t *t, line_t *l, const char *reason);
-void     testerclientFailOwnedLine(tunnel_t *t, line_t *l, const char *reason);
+void     testerclientFailOwnedLine(tunnel_t *t, line_t *l, const char *reason, bool send_upstream_finish);
 uint8_t  testerclientGetChunkCount(tunnel_t *t);
 uint32_t testerclientGetChunkSize(tunnel_t *t, uint8_t index);
 uint64_t testerclientGetRemainingBytes(tunnel_t *t, uint8_t index);

@@ -172,7 +172,7 @@ tunnel_t *packetreceiverTunnelCreate(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(packetreceiver_tstate_t), 0);
 
-    if (t == NULL)
+    if (! t)
     {
         return NULL;
     }
@@ -199,7 +199,12 @@ tunnel_t *packetreceiverTunnelCreate(node_t *node)
     packetreceiver_tstate_t *state    = tunnelGetState(t);
     const cJSON             *settings = node->node_settings_json;
 
-    mutexInit(&state->state_mutex);
+    if (UNLIKELY(! mutexTryInit(&state->state_mutex)))
+    {
+        LOGF("PacketReceiver: failed to initialize state mutex");
+        tunnelDestroy(t);
+        return NULL;
+    }
 
     if (! checkJsonIsObjectAndHasChild(settings))
     {

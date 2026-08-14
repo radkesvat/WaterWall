@@ -224,6 +224,10 @@ cleanup:
 tunnel_t *encryptionclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(encryptionclient_tstate_t), sizeof(encryptionclient_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &encryptionclientTunnelUpStreamInit;
     t->fnEstU     = &encryptionclientTunnelUpStreamEst;

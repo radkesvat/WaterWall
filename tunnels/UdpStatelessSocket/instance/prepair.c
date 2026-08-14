@@ -103,6 +103,9 @@ void udpstatelesssocketTunnelOnPrepair(tunnel_t *t)
     char                         interface_ip[INET_ADDRSTRLEN] = {0};
     const char                  *bind_address                  = state->listen_address;
 
+    /* The singleton socket and every WIO operation on it belong to worker 0. */
+    assert(currentThreadIsEventWorkerWID(0));
+
     if (state->interface_name != NULL && ! state->source_ip_configured && ! socketOptionBindToDeviceSupported())
     {
         if (! getInterfaceIpString(state->interface_name, interface_ip, sizeof(interface_ip)))
@@ -122,13 +125,15 @@ void udpstatelesssocketTunnelOnPrepair(tunnel_t *t)
     }
 
     udpstatelesssocketRefreshLocalAddress(state->socket.io);
-    state->io_wid       = wloopGetWid(weventGetLoop(state->socket.io));
+    state->io_wid = wloopGetWid(weventGetLoop(state->socket.io));
+    assert(state->io_wid == 0);
     state->is_chain_end = nodeIsLastInChain(t->node);
 
-    weventSetUserData(state->socket.io, t);
+    weventSetUserData(state->socket.io, state->async_session);
     wioSetCallBackRead(state->socket.io, udpstatelesssocketOnRecvFrom);
     if (UNLIKELY(wioRead(state->socket.io) != 0))
     {
+        wioClose(state->socket.io);
         state->socket.io = NULL;
         LOGF("UdpStatelessSocket: could not register udp socket with the event loop");
         terminateProgram(1);

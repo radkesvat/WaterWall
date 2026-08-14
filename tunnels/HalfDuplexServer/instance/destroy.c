@@ -6,12 +6,20 @@ void halfduplexserverTunnelDestroy(tunnel_t *t)
 {
     halfduplexserver_tstate_t *ts = tunnelGetState(t);
 
-    mutexDestroy(&ts->download_line_map_mutex);
-    mutexDestroy(&ts->upload_line_map_mutex);
+    if (ts->download_line_map_mutex_initialized)
+    {
+        mutexDestroy(&ts->download_line_map_mutex);
+        ts->download_line_map_mutex_initialized = false;
+    }
+    if (ts->upload_line_map_mutex_initialized)
+    {
+        mutexDestroy(&ts->upload_line_map_mutex);
+        ts->upload_line_map_mutex_initialized = false;
+    }
     c_foreach(k, hmap_cons_t, ts->download_line_map)
     {
         halfduplexserver_lstate_t *ls = k.ref->second;
-        discard ls;
+        discard                    ls;
         assert(ls->buffering == NULL);
     }
     c_foreach(k, hmap_cons_t, ts->upload_line_map)
@@ -19,7 +27,7 @@ void halfduplexserverTunnelDestroy(tunnel_t *t)
         halfduplexserver_lstate_t *ls = k.ref->second;
         if (ls->buffering)
         {
-            LOGD("houeou");
+            LOGD("HalfDuplexServer: releasing buffered upload payload during destruction");
             sbufDestroy(ls->buffering);
         }
     }

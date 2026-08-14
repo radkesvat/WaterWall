@@ -13,7 +13,7 @@ static void localAsyncCloseLineDownStream(tunnel_t *t, line_t *l)
         lineReuseBuffer(l, ls->buffering);
     }
     halfduplexserverLinestateDestroy(ls);
-    tunnelPrevDownStreamFinish(t, l);  
+    tunnelPrevDownStreamFinish(t, l);
 }
 
 void halfduplexserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
@@ -38,6 +38,9 @@ void halfduplexserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     halfduplexserverLinestateDestroy(ls_main_line);
 
-    lineScheduleTask(upload_line, localAsyncCloseLineDownStream, t);
+    if (! lineScheduleTask(upload_line, localAsyncCloseLineDownStream, t) && lineIsAlive(upload_line))
+    {
+        localAsyncCloseLineDownStream(t, upload_line);
+    }
     lineDestroy(l);
 }

@@ -6,6 +6,9 @@ void udpstatelesssocketTunnelDestroy(tunnel_t *t)
 {
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
 
+    /* Partial-start/failure cleanup may reach destruction without pre-stop. */
+    udpstatelesssocketTunnelOnStop(t);
+
     if (state->socket.idle_tables != NULL)
     {
         for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
@@ -25,7 +28,11 @@ void udpstatelesssocketTunnelDestroy(tunnel_t *t)
     {
         for (wid_t wid = 0; wid < getTotalWorkersCount(); ++wid)
         {
-            threadsafegenericpoolDestroy(state->send_request_pools[wid]);
+            if (state->send_request_pools[wid] != NULL)
+            {
+                threadsafegenericpoolDestroy(state->send_request_pools[wid]);
+                state->send_request_pools[wid] = NULL;
+            }
         }
         memoryFree(state->send_request_pools);
         state->send_request_pools = NULL;
@@ -38,14 +45,7 @@ void udpstatelesssocketTunnelDestroy(tunnel_t *t)
         state->send_request_master_pool = NULL;
     }
 
-    udpstatelesssocket_dns_cache_entry_t *entry = state->dns_cache;
-    while (entry != NULL)
-    {
-        udpstatelesssocket_dns_cache_entry_t *next = entry->next;
-        memoryFree(entry->domain);
-        memoryFree(entry);
-        entry = next;
-    }
+    udpstatelesssocketDnsCacheClear(state);
     mutexDestroy(&state->dns_cache_mutex);
 
     if (state->listen_address)
@@ -55,6 +55,13 @@ void udpstatelesssocketTunnelDestroy(tunnel_t *t)
     if (state->interface_name)
     {
         memoryFree(state->interface_name);
+    }
+
+    if (state->async_session != NULL)
+    {
+        tunnelasyncsessionDetach(state->async_session);
+        tunnelasyncsessionUnref(state->async_session);
+        state->async_session = NULL;
     }
 
     tunnelDestroy(t);

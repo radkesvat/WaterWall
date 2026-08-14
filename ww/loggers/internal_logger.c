@@ -54,26 +54,31 @@ void setInternalLogger(logger_t *newlogger)
 logger_t *createInternalLogger(const char *log_file, bool console)
 {
     assert(internal_logger == NULL);
-    internal_logger    = loggerCreate();
-    bool path_accepted = ((log_file != NULL) && loggerSetFile(internal_logger, log_file)) != 0;
+    logger_t *logger = loggerCreate();
+    if (UNLIKELY(logger == NULL))
+    {
+        return NULL;
+    }
+    bool path_accepted = ((log_file != NULL) && loggerSetFile(logger, log_file)) != 0;
     if (console)
     {
         if (path_accepted)
         {
-            loggerSetHandler(internal_logger, internalLoggerHandleWithStdStream);
+            loggerSetHandler(logger, internalLoggerHandleWithStdStream);
         }
         else
         {
 
-            loggerSetHandler(internal_logger, internalLoggerHandleOnlyStdStream);
+            loggerSetHandler(logger, internalLoggerHandleOnlyStdStream);
         }
     }
     else if (path_accepted)
     {
-        loggerSetHandler(internal_logger, internalLoggerHandle);
+        loggerSetHandler(logger, internalLoggerHandle);
     }
 
-    return internal_logger;
+    internal_logger = logger;
+    return logger;
 }
 
 logger_handler getInternalLoggerHandle(void)
@@ -89,6 +94,10 @@ logger_t *loggerGetDefaultLogger(void)
         // we dont want to lock a mutex for everylog, so crash if asked before init.
         printError("DefaultLogger Get() called before runtime init");
         internal_logger = loggerCreate();
+        if (UNLIKELY(internal_logger == NULL))
+        {
+            abort();
+        }
         loggerSetHandler(internal_logger, internalLoggerHandleOnlyStdStream);
     }
     return internal_logger;

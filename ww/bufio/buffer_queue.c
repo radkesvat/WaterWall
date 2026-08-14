@@ -13,15 +13,50 @@ enum
     kBufferQueueQCap = 8 // Initial capacity of the queue
 };
 
-buffer_queue_t bufferqueueCreate(int init_capacity)
+void bufferqueueInitEmpty(buffer_queue_t *self)
+{
+    self->q         = ww_sbuffer_queue_t_init();
+    self->total_len = 0;
+}
+
+/*
+ * STC's _with_capacity() is not usable here. It computes the ring size first and
+ * only then allocates, so a refused allocation publishes {cbuf == NULL,
+ * capmask != 0} - a queue that reports storage it does not have, and whose first
+ * insertion writes through NULL. _init() plus a checked _reserve() is the only
+ * construction that cannot produce that state.
+ */
+bool bufferqueueInit(buffer_queue_t *self, int init_capacity)
 {
     if (init_capacity < 1)
     {
         init_capacity = kBufferQueueQCap;
     }
 
-    buffer_queue_t bq = {.q = ww_sbuffer_queue_t_with_capacity(init_capacity), .total_len = 0};
+    bufferqueueInitEmpty(self);
+    return ww_sbuffer_queue_t_reserve(&self->q, init_capacity);
+}
+
+buffer_queue_t bufferqueueCreate(int init_capacity)
+{
+    buffer_queue_t bq;
+
+    // The empty queue left behind by a refused reservation is valid and will
+    // allocate again on first use, so this stays best effort by design.
+    discard bufferqueueInit(&bq, init_capacity);
     return bq;
+}
+
+bool bufferqueueReserveExtra(buffer_queue_t *self, size_t extra)
+{
+    const size_t size = (size_t) ww_sbuffer_queue_t_size(&self->q);
+
+    if (UNLIKELY(extra > (size_t) PTRDIFF_MAX - size))
+    {
+        return false;
+    }
+
+    return ww_sbuffer_queue_t_reserve(&self->q, (isize_t) (size + extra));
 }
 
 void bufferqueueDestroy(buffer_queue_t *self)
@@ -45,19 +80,75 @@ void bufferqueueDestroy(buffer_queue_t *self)
     ww_sbuffer_queue_t_drop(&self->q);
 }
 
-void bufferqueuePushBack(buffer_queue_t *self, sbuf_t *b)
+/*
+ * Reserving one slot first makes the insertion below infallible: STC only grows
+ * when the ring is full, and after the reserve it provably is not. A NULL here
+ * would mean the container itself is corrupt, not that memory ran out, and by
+ * that point the Debug replacement has already destroyed the caller's original -
+ * so there is nothing left to hand back and no honest failure to report.
+ */
+static void bufferqueueInsertReserved(sbuf_t *slot, const char *where)
 {
-    BUFFER_WONT_BE_REUSED(b);
-    ww_sbuffer_queue_t_push_back(&self->q, b);
-    self->total_len += sbufGetLength(b);
+    if (UNLIKELY(slot == NULL))
+    {
+        printError("buffer queue: %s failed after a successful reservation", where);
+        abortProgramNow(1);
+    }
 }
 
-void bufferqueuePushFront(buffer_queue_t *self, sbuf_t *b)
+bool bufferqueueTryPushBack(buffer_queue_t *self, sbuf_t **b)
 {
-    BUFFER_WONT_BE_REUSED(b);
+    if (UNLIKELY(! bufferqueueReserveExtra(self, 1)))
+    {
+        return false;
+    }
 
-    ww_sbuffer_queue_t_push_front(&self->q, b);
-    self->total_len += sbufGetLength(b);
+    sbuf_t *entry = *b;
+
+    // Only now: this destroys the caller's allocation in Debug builds.
+    BUFFER_WONT_BE_REUSED(entry);
+    bufferqueueInsertReserved((sbuf_t *) ww_sbuffer_queue_t_push_back(&self->q, entry), "push back");
+    self->total_len += sbufGetLength(entry);
+    *b = entry;
+    return true;
+}
+
+bool bufferqueueTryPushFront(buffer_queue_t *self, sbuf_t **b)
+{
+    if (UNLIKELY(! bufferqueueReserveExtra(self, 1)))
+    {
+        return false;
+    }
+
+    sbuf_t *entry = *b;
+
+    BUFFER_WONT_BE_REUSED(entry);
+    bufferqueueInsertReserved((sbuf_t *) ww_sbuffer_queue_t_push_front(&self->q, entry), "push front");
+    self->total_len += sbufGetLength(entry);
+    *b = entry;
+    return true;
+}
+
+sbuf_t *bufferqueuePushBack(buffer_queue_t *self, sbuf_t *b)
+{
+    if (UNLIKELY(! bufferqueueTryPushBack(self, &b)))
+    {
+        printError("buffer queue: out of memory queueing %u byte(s) with no per-flow recovery path",
+                   (unsigned int) sbufGetLength(b));
+        abortProgramNow(1);
+    }
+    return b;
+}
+
+sbuf_t *bufferqueuePushFront(buffer_queue_t *self, sbuf_t *b)
+{
+    if (UNLIKELY(! bufferqueueTryPushFront(self, &b)))
+    {
+        printError("buffer queue: out of memory requeueing %u byte(s) with no per-flow recovery path",
+                   (unsigned int) sbufGetLength(b));
+        abortProgramNow(1);
+    }
+    return b;
 }
 
 sbuf_t *bufferqueuePopFront(buffer_queue_t *self)

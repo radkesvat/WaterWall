@@ -109,8 +109,8 @@ static void idleItemSetExpireAt(idle_item_t *item, uint64_t expire_at_ms)
 
 static bool idleItemCompareExchangeExpireAt(idle_item_t *item, uint64_t *expected, uint64_t desired)
 {
-    return atomicCompareExchangeWeakU64Explicit(&(item->expire_at_ms), expected, desired, memory_order_relaxed,
-                                                memory_order_relaxed);
+    return atomicCompareExchangeWeakU64Explicit(
+        &(item->expire_at_ms), expected, desired, memory_order_relaxed, memory_order_relaxed);
 }
 
 static void idleItemKeepExpireAtForAtleast(idle_item_t *item, uint64_t expire_at_ms)
@@ -137,10 +137,20 @@ idle_table_t *idleTableCreate(wloop_t *loop)
         abortProgramNow(1);
     }
 
-    *newtable = (idle_table_t) {.loop   = loop,
-                                .hqueue = heapq_idles_t_with_capacity(kIdleTableCap),
-                                .hmap   = hmap_idles_t_with_capacity(kIdleTableCap)};
-    mutexInit(&(newtable->mutex));
+    *newtable = (idle_table_t) {
+        .loop = loop,
+    };
+    newtable->hqueue = heapq_idles_t_init();
+    newtable->hmap   = hmap_idles_t_init();
+    if (UNLIKELY(! heapq_idles_t_reserve(&newtable->hqueue, kIdleTableCap) ||
+                 ! hmap_idles_t_reserve(&newtable->hmap, kIdleTableCap) || ! mutexTryInit(&(newtable->mutex))))
+    {
+        heapq_idles_t_drop(&(newtable->hqueue));
+        hmap_idles_t_drop(&(newtable->hmap));
+        memoryFreeAligned(newtable);
+        printError("IdleTable: failed to initialize table storage");
+        abortProgramNow(1);
+    }
 
     newtable->idle_handle = wtimerAdd(loop, idleCallBack, kDefaultTimeout, INFINITE);
     if (UNLIKELY(newtable->idle_handle == NULL))
@@ -342,7 +352,8 @@ void idletableDrainWorkerItems(idle_table_t *self, wid_t wid)
     // pools, so draining from any other thread corrupts them.
     if (UNLIKELY(! currentThreadIsEventWorkerWID(wid)))
     {
-        LOGF("IdleTable: drain of worker %d items was called on worker %d", workerWIDForLog(wid),
+        LOGF("IdleTable: drain of worker %d items was called on worker %d",
+             workerWIDForLog(wid),
              workerWIDForLog(getWID()));
         abortProgramNow(1);
         return;
@@ -567,7 +578,7 @@ void idleCallBack(wtimer_t *timer)
     while (! idle_item_deque_t_is_empty(&expired_items))
     {
         idle_item_t *item = idle_item_deque_t_pull_front(&expired_items);
-        discard      sendWorkerMessageForceQueueWithCleanup(
+        sendWorkerMessageForceQueueBestEffortWithCleanup(
             item->wid, beforeCloseWorkerMessage, idlePostedCloseMessageCleanup, item, self, NULL);
     }
     idle_item_deque_t_drop(&expired_items);

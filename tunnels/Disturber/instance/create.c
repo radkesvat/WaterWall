@@ -5,6 +5,10 @@
 tunnel_t *disturberTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(disturber_tstate_t), sizeof(disturber_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &disturberTunnelUpStreamInit;
     t->fnEstU     = &disturberTunnelUpStreamEst;

@@ -22,8 +22,10 @@ typedef struct netfilter_packet_view_s
     uint32_t       payload_length;
     uint32_t       capture_length;
     uint32_t       packet_id;
+    uint32_t       skb_info;
     bool           has_capture_length;
     bool           has_packet_id;
+    bool           has_skb_info;
 } netfilter_packet_view_t;
 
 netfilter_packet_parse_result_t captureLinuxNetfilterParsePacket(uint8_t *message, size_t copied_len,
@@ -66,8 +68,8 @@ bool capturedeviceSelectUnusedQueueNumber(const char *input_rules, uint16_t star
 // unit test can drive them without a real NFQUEUE socket or root.
 struct capture_device_s;
 
-// Make the stop pipe's read end nonblocking, preserving its other flags.
-bool capturedeviceMakeStopPipeNonblocking(int read_fd);
+// Make one stop-pipe descriptor nonblocking, preserving its other flags.
+bool capturedeviceMakeStopPipeNonblocking(int pipe_fd);
 
 // Read the stop pipe until empty. Retries on EINTR, treats EAGAIN/EWOULDBLOCK as
 // successful completion, and reports EOF or any other error as a failure. Never
@@ -82,5 +84,9 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine);
 // Publish the readiness handshake after a reader has taken a stable queue-socket
 // reference and is about to enter its poll loop. Test readers use the same seam.
 bool captureLinuxReaderPublishReady(struct capture_device_s *cdev, int *reader_socket);
+
+// Bounded verdict seam for the Linux constructor/lifecycle fault harness.
+bool captureLinuxNetfilterSendVerdictForTest(int netfilter_socket, uint16_t queue_number, uint32_t packet_id,
+                                             uint32_t verdict);
 
 #endif

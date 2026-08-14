@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-static void onUdpConnectonExpire(local_idle_item_t *idle_udp)
+void udplistenerOnConnectionExpire(local_idle_item_t *idle_udp)
 {
     udplistener_lstate_t *ls = idle_udp->userdata;
     assert(ls != NULL && ls->tunnel != NULL);
@@ -80,7 +80,7 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
     // and add it to the idle table
     if (idle == NULL)
     {
-        idle = localidletableCreateItem(table, idle_key, NULL, onUdpConnectonExpire, kUdpInitExpireTime);
+        idle = localidletableCreateItem(table, idle_key, NULL, udplistenerOnConnectionExpire, kUdpInitExpireTime);
         // if idle is NULL, it means we failed to create a new idle item (duplicate hash, etc)
         if (! idle)
         {

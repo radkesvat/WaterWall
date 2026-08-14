@@ -1,5 +1,5 @@
 <!--
-Documentation version: 113
+Documentation version: 118
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx, and both files must keep the same documentation version.
 -->
 
@@ -117,14 +117,32 @@ During `onPrepare`, `RawSocket`:
 When a packet is captured:
 
 - the packet is checked for IP version
+- checksum provenance is consumed at the backend boundary. WinDivert's checksum/direction flags and Linux NFQUEUE's
+  `NFQA_SKB_INFO` independently classify IPv4, TCP, and UDP checksums as metadata-proven valid, explicitly
+  not-ready/offloaded, or untrusted. Trusted unfragmented offload is materialized on the captured copy, including the
+  TCP/UDP pseudoheader checksum; untrusted corrupt bytes are dropped rather than repaired
+- fragmented packets are never given a transport checksum calculated over one fragment. A fragmented L4-offload packet
+  is dropped; an IP-header-only offload may repair that header while preserving a demonstrably valid transport checksum
 - only IPv4 packets are currently forwarded by this path
 - the packet is forwarded through the chosen adjacent side using the worker packet line
+
+Fragment affinity follows the captured packet buffer through forwarding, delay, one-to-one copies, duplication, worker
+handoff, and cleanup rather than ending at queue admission or callback return. Copies share one counted settlement
+claim, and the reader session remains alive until the last copy is consumed. If an identity expires or its reader
+generation ends with a claim outstanding, late copies are refused before lwIP and the key remains poisoned until its
+factual or conservative final settlement. If publication is only partially admitted, producer admission closes
+immediately, the capture reader exits (allowing Linux NFQUEUE's `--queue-bypass` lifecycle to take over), and orderly
+shutdown is requested. This prevents later same-ID packets from completing a hybrid datagram with fragments already
+queued to lwIP.
 
 ### Output path
 
 When payload reaches `RawSocket` from upstream or downstream:
 
 - the payload is treated as a raw IP packet
+- the complete packet is structurally validated as exact IPv4, even when no
+  checksum recalculation was requested; trailing bytes and malformed or
+  truncated packets are dropped
 - checksum recalculation is performed if requested by the line
 - the packet is written through the raw device
 
@@ -172,6 +190,16 @@ Before writing a packet, `RawSocket` checks line flags:
 The current `RawSocket` implementation is focused on capturing inbound IPv4 traffic that matches a source-IP filter and injecting raw IPv4 packets.
 
 If you need a virtual interface model or packet handling that is closer to routed interface traffic, `TunDevice` is usually the better match.
+
+### Callback and line lifecycle
+
+Payload is the meaningful callback path. Ordinary connection lifecycle
+callbacks (`Init`, `Est`, `Pause`, and `Resume`) are terminal absorbers at this
+packet adapter. An unexpected `Finish` in either direction is a fatal packet-line
+lifecycle violation and aborts the program; it is not a no-op.
+
+The chain owns one persistent packet line per worker. `RawSocket` never destroys
+those lines and has zero bytes of line state.
 
 ## Notes And Caveats
 

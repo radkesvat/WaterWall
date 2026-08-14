@@ -90,7 +90,7 @@ static bool vlessserverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
         return false;
     }
 
-    ts->user_controller_tunnel = ts->user_controller_node.createHandle(&ts->user_controller_node);
+    ts->user_controller_tunnel = nodemanagerCreateTunnelInstance(&ts->user_controller_node);
     if (ts->user_controller_tunnel == NULL)
     {
         LOGF("VlessServer: failed to create internal UserController");
@@ -338,7 +338,12 @@ static bool vlessserverParseAuthMode(vlessserver_tstate_t *ts, tunnel_t *t, node
 
 tunnel_t *vlessserverTunnelCreate(node_t *node)
 {
-    tunnel_t             *t        = tunnelCreate(node, sizeof(vlessserver_tstate_t), sizeof(vlessserver_lstate_t));
+    tunnel_t *t = tunnelCreate(node, sizeof(vlessserver_tstate_t), sizeof(vlessserver_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
+
     vlessserver_tstate_t *ts       = tunnelGetState(t);
     const cJSON          *settings = node->node_settings_json;
 

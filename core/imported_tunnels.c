@@ -48,6 +48,10 @@
 #include "PacketsToConnection/interface.h"
 #endif
 
+#ifdef INCLUDE_CONNECTION_TO_PACKETS
+#include "ConnectionToPackets/interface.h"
+#endif
+
 #ifdef INCLUDE_PACKETS_TO_STREAM
 #include "PacketsToStream/interface.h"
 #endif
@@ -381,6 +385,10 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_PACKET_TO_CONNECTION
     USING(PacketsToConnection);
+#endif
+
+#ifdef INCLUDE_CONNECTION_TO_PACKETS
+    USING(ConnectionToPackets);
 #endif
 
 #ifdef INCLUDE_PACKETS_TO_STREAM

@@ -4,17 +4,28 @@
 
 static void udpstatelesssocketStopIo(udpstatelesssocket_tstate_t *state)
 {
+    if (state->async_session != NULL)
+    {
+        tunnelasyncsessionCloseAndQuiesce(state->async_session);
+    }
+
     wio_t *io = state->socket.io;
     if (io == NULL)
     {
         return;
     }
 
+    /* Normal construction is pinned to worker 0; never lose a foreign WIO. */
+    assert(state->io_wid == 0);
+    assert(currentThreadIsEventWorkerWID(state->io_wid));
+    assert(getWorker(state->io_wid)->loop != NULL);
+    wioClose(io);
     state->socket.io = NULL;
-    if (getTID() == getWorker(state->io_wid)->tid && getWorker(state->io_wid)->loop != NULL)
-    {
-        wioClose(io);
-    }
+}
+
+void udpstatelesssocketTunnelOnPreStop(tunnel_t *t)
+{
+    udpstatelesssocketStopIo(tunnelGetState(t));
 }
 
 void udpstatelesssocketTunnelOnStop(tunnel_t *t)

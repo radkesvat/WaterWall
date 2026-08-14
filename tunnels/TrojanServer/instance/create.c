@@ -90,7 +90,7 @@ static bool trojanserverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
         return false;
     }
 
-    ts->user_controller_tunnel = ts->user_controller_node.createHandle(&ts->user_controller_node);
+    ts->user_controller_tunnel = nodemanagerCreateTunnelInstance(&ts->user_controller_node);
     if (ts->user_controller_tunnel == NULL)
     {
         LOGF("TrojanServer: failed to create internal UserController");
@@ -335,7 +335,12 @@ static bool trojanserverParseAuthMode(trojanserver_tstate_t *ts, tunnel_t *t, no
 
 tunnel_t *trojanserverTunnelCreate(node_t *node)
 {
-    tunnel_t              *t        = tunnelCreate(node, sizeof(trojanserver_tstate_t), sizeof(trojanserver_lstate_t));
+    tunnel_t *t = tunnelCreate(node, sizeof(trojanserver_tstate_t), sizeof(trojanserver_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
+
     trojanserver_tstate_t *ts       = tunnelGetState(t);
     const cJSON           *settings = node->node_settings_json;
 

@@ -506,9 +506,11 @@ void testerclientFail(tunnel_t *t, line_t *l, const char *reason)
  * dead, then report the verdict.
  *
  * Never call this for packet mode: that line belongs to the chain and outlives
- * every verdict.
+ * every verdict. Proactive failures pass send_upstream_finish=true so every
+ * initialized neighbor releases its state. The downstream Finish handler passes
+ * false because that next side is the sender and must not receive a reflection.
  */
-void testerclientFailOwnedLine(tunnel_t *t, line_t *l, const char *reason)
+void testerclientFailOwnedLine(tunnel_t *t, line_t *l, const char *reason, bool send_upstream_finish)
 {
     testerclient_tstate_t       *ts   = tunnelGetState(t);
     testerclient_worker_state_t *slot = &ts->workers[lineGetWID(l)];
@@ -531,6 +533,11 @@ void testerclientFailOwnedLine(tunnel_t *t, line_t *l, const char *reason)
     slot->closed          = true;
 
     testerclientLinestateDestroy(ls);
+
+    if (send_upstream_finish && lineIsAlive(l))
+    {
+        tunnelNextUpStreamFinish(t, l);
+    }
 
     if (lineIsAlive(l))
     {
@@ -730,7 +737,19 @@ void testerclientScheduleRequestSend(tunnel_t *t, line_t *l, testerclient_lstate
     }
 
     ls->request_send_scheduled = true;
-    lineScheduleTask(l, testerclientRequestSendTask, t);
+    if (UNLIKELY(! lineScheduleTask(l, testerclientRequestSendTask, t)))
+    {
+        ls->request_send_scheduled = false;
+        testerclient_tstate_t *ts  = tunnelGetState(t);
+        if (ts->packet_mode)
+        {
+            testerclientFail(t, l, "failed to schedule request progress");
+        }
+        else
+        {
+            testerclientFailOwnedLine(t, l, "failed to schedule request progress", true);
+        }
+    }
 }
 
 void testerclientRequestSendTask(tunnel_t *t, line_t *l)
@@ -788,11 +807,34 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
                 ls->request_send_scheduled = true;
                 if (ts->split_payload_delay_ms == 0)
                 {
-                    lineScheduleTask(l, testerclientRequestSendTask, t);
+                    if (UNLIKELY(! lineScheduleTask(l, testerclientRequestSendTask, t)))
+                    {
+                        ls->request_send_scheduled = false;
+                        if (ts->packet_mode)
+                        {
+                            testerclientFail(t, l, "failed to schedule split request progress");
+                        }
+                        else
+                        {
+                            testerclientFailOwnedLine(t, l, "failed to schedule split request progress", true);
+                        }
+                    }
                 }
                 else
                 {
-                    lineScheduleDelayedTask(l, testerclientRequestSendTask, ts->split_payload_delay_ms, t);
+                    if (UNLIKELY(
+                            ! lineScheduleDelayedTask(l, testerclientRequestSendTask, ts->split_payload_delay_ms, t)))
+                    {
+                        ls->request_send_scheduled = false;
+                        if (ts->packet_mode)
+                        {
+                            testerclientFail(t, l, "failed to schedule delayed split request progress");
+                        }
+                        else
+                        {
+                            testerclientFailOwnedLine(t, l, "failed to schedule delayed split request progress", true);
+                        }
+                    }
                 }
                 return;
             }
@@ -835,7 +877,11 @@ static void testerclientScheduleCompletedStreamCloseOnWorker(void *worker, void 
     if (slot->line != NULL && slot->completed && ! slot->close_scheduled && ! slot->closed)
     {
         slot->close_scheduled = true;
-        lineScheduleTask(slot->line, testerclientCloseCompletedStreamTask, t);
+        if (UNLIKELY(! lineScheduleTask(slot->line, testerclientCloseCompletedStreamTask, t)))
+        {
+            slot->close_scheduled = false;
+            testerclientFailOwnedLine(t, slot->line, "failed to schedule completed-line close", true);
+        }
     }
 }
 
@@ -848,13 +894,17 @@ static void testerclientScheduleCompletedStreamClose(tunnel_t *t)
         // A line and its worker slot have the same owner worker. Queue the slot
         // inspection there so a concurrent Finish cannot destroy the line
         // between a foreign worker's pointer load and lineScheduleTask().
-        sendWorkerMessageForceQueue(wi, testerclientScheduleCompletedStreamCloseOnWorker, t, NULL, NULL);
+        if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(
+                wi, testerclientScheduleCompletedStreamCloseOnWorker, NULL, t, NULL, NULL)))
+        {
+            LOGE("TesterClient: failed to schedule completed-line inspection on worker %u", (unsigned int) wi);
+            if (! requestProgramShutdown(1))
+            {
+                abortProgramNow(1);
+            }
+            return;
+        }
     }
-}
-
-static bool testerclientShouldCloseCompletedStreams(tunnel_t *t)
-{
-    return t->next != NULL && t->next->node != NULL && stringCompare(t->next->node->type, "TcpOverUdpClient") == 0;
 }
 
 /*
@@ -886,8 +936,8 @@ void testerclientCloseCompletedOwnedLine(tunnel_t *t, line_t *l, bool send_upstr
     assert(! slot->closed);
     assert(slot->line == l);
 
-    // Detach before destroying the line. The TcpOverUdp completion sweep runs
-    // on this worker and must observe either this closed slot or a live line.
+    // Detach before destroying the line. The completion sweep runs on this
+    // worker and must observe either this closed slot or a live line.
     slot->line            = NULL;
     slot->close_scheduled = true;
     slot->closed          = true;
@@ -902,11 +952,6 @@ void testerclientCloseCompletedOwnedLine(tunnel_t *t, line_t *l, bool send_upstr
     if (lineIsAlive(l))
     {
         lineDestroy(l);
-    }
-
-    if (! testerclientShouldCloseCompletedStreams(t))
-    {
-        return;
     }
 
     unsigned int closed = (unsigned int) atomicIncRelaxed(&ts->closed_workers) + 1U;
@@ -940,8 +985,14 @@ void testerclientCloseCompletedStreamTask(tunnel_t *t, line_t *l)
     if (! ls->request_complete)
     {
         slot->close_scheduled = false;
-        lineScheduleDelayedTask(l, testerclientCloseCompletedStreamTask, kTesterClientSplitPayloadDelayMs, t);
-        slot->close_scheduled = true;
+        if (lineScheduleDelayedTask(l, testerclientCloseCompletedStreamTask, kTesterClientSplitPayloadDelayMs, t))
+        {
+            slot->close_scheduled = true;
+        }
+        else
+        {
+            testerclientFailOwnedLine(t, l, "failed to reschedule completed-line close", true);
+        }
         return;
     }
 
@@ -972,7 +1023,7 @@ void testerclientMarkWorkerComplete(tunnel_t *t, line_t *l)
 
     if (done == (unsigned int) tc->workers_count)
     {
-        if (! ts->packet_mode && testerclientShouldCloseCompletedStreams(t))
+        if (! ts->packet_mode)
         {
             testerclientScheduleCompletedStreamClose(t);
             return;

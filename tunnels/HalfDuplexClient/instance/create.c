@@ -5,6 +5,10 @@
 tunnel_t *halfduplexclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(halfduplexclient_tstate_t), sizeof(halfduplexclient_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &halfduplexclientTunnelUpStreamInit;
     t->fnEstU     = &halfduplexclientTunnelUpStreamEst;

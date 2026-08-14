@@ -55,8 +55,7 @@ static bool udpconnectorCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
     udpconnector_tstate_t *ts = tunnelGetState(t);
 
-    ts->domain_resolver_settings =
-        udpconnectorCreateDomainResolverSettings((enum domain_strategy) ts->domain_strategy);
+    ts->domain_resolver_settings = udpconnectorCreateDomainResolverSettings((enum domain_strategy) ts->domain_strategy);
     if (ts->domain_resolver_settings == NULL)
     {
         LOGF("UdpConnector: failed to create internal DomainResolver settings");
@@ -74,7 +73,7 @@ static bool udpconnectorCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return false;
     }
 
-    ts->domain_resolver_tunnel = ts->domain_resolver_node.createHandle(&ts->domain_resolver_node);
+    ts->domain_resolver_tunnel = nodemanagerCreateTunnelInstance(&ts->domain_resolver_node);
     if (ts->domain_resolver_tunnel == NULL)
     {
         LOGF("UdpConnector: failed to create internal DomainResolver");
@@ -426,6 +425,10 @@ static bool parseDestinationArray(udpconnector_tstate_t *state, const cJSON *set
 tunnel_t *udpconnectorTunnelCreate(node_t *node)
 {
     tunnel_t *t = adapterCreate(node, sizeof(udpconnector_tstate_t), sizeof(udpconnector_lstate_t), kAdapterChainEnd);
+    if (! t)
+    {
+        return NULL;
+    }
 
     initializeTunnelCallbacks(t);
 

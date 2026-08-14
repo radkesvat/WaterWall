@@ -13,10 +13,41 @@
 #include "wplatform.h"
 #include "wtime.h"
 
+#include <stdlib.h>
+
+/* Unit tests may provide this hook to refuse an exact construction stage. */
+#if defined(WW_SYNC_INIT_TEST_SEAM)
+bool wSyncInitTestShouldFail(void);
+void wSyncInitTestResourceAcquired(void);
+void wSyncInitTestResourceDestroyed(void);
+#define W_SYNC_INIT_TEST_REFUSED()       wSyncInitTestShouldFail()
+#define W_SYNC_TEST_RESOURCE_ACQUIRED()  wSyncInitTestResourceAcquired()
+#define W_SYNC_TEST_RESOURCE_DESTROYED() wSyncInitTestResourceDestroyed()
+#else
+#define W_SYNC_INIT_TEST_REFUSED()       false
+#define W_SYNC_TEST_RESOURCE_ACQUIRED()  ((void) 0)
+#define W_SYNC_TEST_RESOURCE_DESTROYED() ((void) 0)
+#endif
+
+static inline void wSyncInitRequire(bool initialized)
+{
+    if (! initialized)
+    {
+        abort();
+    }
+}
+
 #ifdef OS_WIN // Windows-specific definitions
 
-#define wmutex_t     CRITICAL_SECTION
-#define mutexInit    InitializeCriticalSection
+#define wmutex_t CRITICAL_SECTION
+static inline bool mutexTryInit(wmutex_t *mutex)
+{
+    return ! W_SYNC_INIT_TEST_REFUSED() && InitializeCriticalSectionEx(mutex, 0, 0) != FALSE;
+}
+static inline void mutexInit(wmutex_t *mutex)
+{
+    wSyncInitRequire(mutexTryInit(mutex));
+}
 #define mutexDestroy DeleteCriticalSection
 #define mutexLock    EnterCriticalSection
 #define mutexUnlock  LeaveCriticalSection
@@ -34,8 +65,20 @@
 #define spinlockLock        EnterCriticalSection
 #define spinlockUnlock      LeaveCriticalSection
 
-#define wrwlock_t  SRWLOCK
-#define rwlockinit InitializeSRWLock
+#define wrwlock_t SRWLOCK
+static inline bool rwlockTryInit(wrwlock_t *lock)
+{
+    if (W_SYNC_INIT_TEST_REFUSED())
+    {
+        return false;
+    }
+    InitializeSRWLock(lock);
+    return true;
+}
+static inline void rwlockinit(wrwlock_t *lock)
+{
+    wSyncInitRequire(rwlockTryInit(lock));
+}
 #define rwlockDestroy(plock)
 #define rwlockReadLock    AcquireSRWLockShared
 #define rwlockReadUnlock  ReleaseSRWLockShared
@@ -94,22 +137,50 @@ static inline void wonce(wonce_t *once, wonce_fn fn)
     InitOnceExecuteOnce(once, s_once_func, *(void **) (&fn), &dummy);
 }
 
-#define wsem_t                     HANDLE
-#define semaphoreInit(psem, value) (*(psem) = CreateSemaphore(NULL, value, value + 100000, NULL))
-#define semaphoreDestroy(psem)     CloseHandle(*(psem))
-#define semaphoreWait(psem)        WaitForSingleObject(*(psem), INFINITE)
-#define semaphorePost(psem)        ReleaseSemaphore(*(psem), 1, NULL)
+#define wsem_t HANDLE
+static inline bool semaphoreTryInit(wsem_t *semaphore, unsigned int value)
+{
+    if (W_SYNC_INIT_TEST_REFUSED())
+    {
+        return false;
+    }
+    *semaphore = CreateSemaphore(NULL, (LONG) value, (LONG) value + 100000, NULL);
+    if (*semaphore == NULL)
+    {
+        return false;
+    }
+    W_SYNC_TEST_RESOURCE_ACQUIRED();
+    return true;
+}
+static inline void semaphoreInit(wsem_t *semaphore, unsigned int value)
+{
+    wSyncInitRequire(semaphoreTryInit(semaphore, value));
+}
+static inline void semaphoreDestroy(wsem_t *semaphore)
+{
+    CloseHandle(*semaphore);
+    W_SYNC_TEST_RESOURCE_DESTROYED();
+}
+#define semaphoreWait(psem) WaitForSingleObject(*(psem), INFINITE)
+#define semaphorePost(psem) ReleaseSemaphore(*(psem), 1, NULL)
 // true:  WAIT_OBJECT_0
 // false: WAIT_OBJECT_TIMEOUT
 #define semaphoreWaitFor(psem, ms) (WaitForSingleObject(*(psem), ms) == WAIT_OBJECT_0)
 
 #else // POSIX-specific definitions
 
-#define wmutex_t          pthread_mutex_t
-#define mutexInit(pmutex) pthread_mutex_init(pmutex, NULL)
-#define mutexDestroy      pthread_mutex_destroy
-#define mutexLock         pthread_mutex_lock
-#define mutexUnlock       pthread_mutex_unlock
+#define wmutex_t     pthread_mutex_t
+static inline bool mutexTryInit(wmutex_t *mutex)
+{
+    return ! W_SYNC_INIT_TEST_REFUSED() && pthread_mutex_init(mutex, NULL) == 0;
+}
+static inline void mutexInit(wmutex_t *mutex)
+{
+    wSyncInitRequire(mutexTryInit(mutex));
+}
+#define mutexDestroy pthread_mutex_destroy
+#define mutexLock    pthread_mutex_lock
+#define mutexUnlock  pthread_mutex_unlock
 
 #define wrecursive_mutex_t pthread_mutex_t
 #define recursivemutexInit(pmutex)                                                                                     \
@@ -138,13 +209,29 @@ static inline void wonce(wonce_t *once, wonce_fn fn)
 #define spinlockUnlock       pthread_mutex_unlock
 #endif // HAVE_PTHREAD_SPIN_LOCK
 
-#define wrwlock_t           pthread_rwlock_t
-#define rwlockinit(prwlock) pthread_rwlock_init(prwlock, NULL)
-#define rwlockDestroy       pthread_rwlock_destroy
-#define rwlockReadLock      pthread_rwlock_rdlock
-#define rwlockReadUnlock    pthread_rwlock_unlock
-#define rwlockWriteLock     pthread_rwlock_wrlock
-#define rwlockWriteUnlock   pthread_rwlock_unlock
+#define wrwlock_t         pthread_rwlock_t
+static inline bool rwlockTryInit(wrwlock_t *lock)
+{
+    if (W_SYNC_INIT_TEST_REFUSED() || pthread_rwlock_init(lock, NULL) != 0)
+    {
+        return false;
+    }
+    W_SYNC_TEST_RESOURCE_ACQUIRED();
+    return true;
+}
+static inline void rwlockinit(wrwlock_t *lock)
+{
+    wSyncInitRequire(rwlockTryInit(lock));
+}
+static inline void rwlockDestroy(wrwlock_t *lock)
+{
+    discard pthread_rwlock_destroy(lock);
+    W_SYNC_TEST_RESOURCE_DESTROYED();
+}
+#define rwlockReadLock    pthread_rwlock_rdlock
+#define rwlockReadUnlock  pthread_rwlock_unlock
+#define rwlockWriteLock   pthread_rwlock_wrlock
+#define rwlockWriteUnlock pthread_rwlock_unlock
 
 #define wtimed_mutex_t         pthread_mutex_t
 #define timedmutexInit(pmutex) pthread_mutex_init(pmutex, NULL)
@@ -230,10 +317,26 @@ static inline int condvarWaitFor(wcondvar_t *cond, wmutex_t *mutex, unsigned int
 #if defined(__MACH__) // macOS-specific semaphore implementation
 
 #include <mach/mach.h>
-#define wsem_t semaphore_t
-#define semaphoreInit(psem, value)                                                                                     \
-    semaphore_create(mach_task_self(), psem, SYNC_POLICY_FIFO, value) // (KERN_SUCCESS == 0 like linux)
-#define semaphoreDestroy(psem) semaphore_destroy(mach_task_self(), *psem);
+#define wsem_t         semaphore_t
+static inline bool semaphoreTryInit(wsem_t *semaphore, unsigned int value)
+{
+    if (W_SYNC_INIT_TEST_REFUSED() ||
+        semaphore_create(mach_task_self(), semaphore, SYNC_POLICY_FIFO, (int) value) != KERN_SUCCESS)
+    {
+        return false;
+    }
+    W_SYNC_TEST_RESOURCE_ACQUIRED();
+    return true;
+}
+static inline void semaphoreInit(wsem_t *semaphore, unsigned int value)
+{
+    wSyncInitRequire(semaphoreTryInit(semaphore, value));
+}
+static inline void semaphoreDestroy(wsem_t *semaphore)
+{
+    discard semaphore_destroy(mach_task_self(), *semaphore);
+    W_SYNC_TEST_RESOURCE_DESTROYED();
+}
 
 /**
  * @brief Wait indefinitely on a Mach semaphore.
@@ -273,8 +376,8 @@ static bool semaphorePost(wsem_t *sp)
     }
     return rc == KERN_SUCCESS;
 }
-#define USECS_IN_1_SEC         1000000
-#define NSECS_IN_1_SEC         1000000000
+#define USECS_IN_1_SEC 1000000
+#define NSECS_IN_1_SEC 1000000000
 /**
  * @brief Wait on a Mach semaphore with microsecond timeout.
  *
@@ -309,9 +412,25 @@ static bool semaphoreWaitFor(wsem_t *sp, uint64_t timeout_usecs)
 #else // Linux-specific semaphore implementation
 
 #include <semaphore.h>
-#define wsem_t                     sem_t
-#define semaphoreInit(psem, value) sem_init(psem, 0, value)
-#define semaphoreDestroy           sem_destroy
+#define wsem_t sem_t
+static inline bool semaphoreTryInit(wsem_t *semaphore, unsigned int value)
+{
+    if (W_SYNC_INIT_TEST_REFUSED() || sem_init(semaphore, 0, value) != 0)
+    {
+        return false;
+    }
+    W_SYNC_TEST_RESOURCE_ACQUIRED();
+    return true;
+}
+static inline void semaphoreInit(wsem_t *semaphore, unsigned int value)
+{
+    wSyncInitRequire(semaphoreTryInit(semaphore, value));
+}
+static inline void semaphoreDestroy(wsem_t *semaphore)
+{
+    discard sem_destroy(semaphore);
+    W_SYNC_TEST_RESOURCE_DESTROYED();
+}
 
 /**
  * @brief Wait indefinitely on a POSIX semaphore.
@@ -365,12 +484,18 @@ static inline int semaphoreWaitFor(wsem_t *sem, unsigned int ms)
 
 #endif // OS_WIN
 
-// YIELD_THREAD() yields for other threads to be scheduled on the current CPU by the OS
+// YIELD_THREAD() asks the OS scheduler to run another runnable thread on this
+// CPU. It has to be a real scheduler call on every platform: it was a no-op on
+// Windows, so every wait loop that needed an actual yield there open-coded
+// SwitchToThread() beside it and the platform branch was duplicated at each
+// site. Kept deliberately separate from YIELD_CPU(), which only relaxes the
+// core's pipeline and never enters the scheduler, so a wait loop still chooses
+// between them on purpose.
 #if (defined(WIN32) || defined(_WIN32))
-#define YIELD_THREAD() ((void) 0)
+#define YIELD_THREAD() ((void) SwitchToThread())
 #else
 #include <sched.h>
-#define YIELD_THREAD() sched_yield()
+#define YIELD_THREAD() ((void) sched_yield())
 #endif
 
 // YIELD_CPU() yields for other work on a CPU core
@@ -420,27 +545,27 @@ typedef struct hlsem_s
  * @param initcount Initial token count.
  * @return `false` only when system semaphore init fails.
  */
-bool   leightweightsemaphoreInit(wlsem_t *, uint32_t initcount); // returns false if system impl failed (rare)
+bool leightweightsemaphoreInit(wlsem_t *, uint32_t initcount); // returns false if system impl failed (rare)
 /**
  * @brief Destroy a lightweight semaphore.
  *
  * @param s Semaphore object.
  */
-void   leightweightsemaphoreDestroy(wlsem_t *);
+void leightweightsemaphoreDestroy(wlsem_t *);
 /**
  * @brief Wait for one token.
  *
  * @param s Semaphore object.
  * @return `true` when a token was acquired.
  */
-bool   leightweightsemaphoreWait(wlsem_t *);
+bool leightweightsemaphoreWait(wlsem_t *);
 /**
  * @brief Try to acquire one token without blocking.
  *
  * @param s Semaphore object.
  * @return `true` when a token was acquired.
  */
-bool   leightweightsemaphoreTryWait(wlsem_t *);
+bool leightweightsemaphoreTryWait(wlsem_t *);
 /**
  * @brief Wait for one token with timeout.
  *
@@ -448,14 +573,14 @@ bool   leightweightsemaphoreTryWait(wlsem_t *);
  * @param timeout_usecs Timeout in microseconds.
  * @return `true` when a token was acquired before timeout.
  */
-bool   leightweightsemaphoreTimedWait(wlsem_t *, uint64_t timeout_usecs);
+bool leightweightsemaphoreTimedWait(wlsem_t *, uint64_t timeout_usecs);
 /**
  * @brief Release one or more tokens.
  *
  * @param s Semaphore object.
  * @param count Number of tokens to release (`> 0`).
  */
-void   leightweightsemaphoreSignal(wlsem_t *, uint32_t count /*must be >0*/);
+void leightweightsemaphoreSignal(wlsem_t *, uint32_t count /*must be >0*/);
 /**
  * @brief Get approximate available token count.
  *
@@ -485,11 +610,16 @@ typedef struct
  * @param m Mutex object.
  * @return `true` on successful semaphore initialization.
  */
-static inline bool hybridmutexInit(whybrid_mutex_t *m)
+static inline bool hybridmutexTryInit(whybrid_mutex_t *m)
 {
     m->flag  = false;
     m->nwait = 0;
-    return semaphoreInit(&m->sema, 0);
+    return semaphoreTryInit(&m->sema, 0);
+}
+
+static inline void hybridmutexInit(whybrid_mutex_t *m)
+{
+    wSyncInitRequire(hybridmutexTryInit(m));
 }
 
 /**
@@ -578,6 +708,7 @@ static inline void hybridmutexUnlock(whybrid_mutex_t *m)
 
 #undef wmutex_t
 #undef mutexInit
+#undef mutexTryInit
 #undef mutexDestroy
 #undef mutexLock
 #undef mutexTryLock
@@ -585,6 +716,7 @@ static inline void hybridmutexUnlock(whybrid_mutex_t *m)
 
 #define wmutex_t     whybrid_mutex_t
 #define mutexInit    hybridmutexInit
+#define mutexTryInit hybridmutexTryInit
 #define mutexDestroy hybridmutexDestroy
 #define mutexLock    hybridmutexLock
 #define mutexTryLock hybridmutexTryLock

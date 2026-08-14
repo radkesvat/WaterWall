@@ -1,6 +1,6 @@
 #include "core_settings.h"
-#include "wwapi.h"
 #include "wplatform.h"
+#include "wwapi.h"
 
 // Default logging configurations
 #define DEFAULT_INTERNAL_LOG_LEVEL      "INFO"
@@ -23,7 +23,26 @@
 #define DEFAULT_TRY_ENABLING_BBR false
 #endif
 
-#define DEFAULT_MTU_PROFILE             1500
+#define DEFAULT_MTU_PROFILE 1500
+
+/*
+ * The MTU range every node may assume.
+ *
+ * The upper bound is what the uint16_t field can hold, so the value a node reads
+ * is always the value that was configured. The lower bound is RFC 791's minimum
+ * IPv4 MTU: nodes hand this straight to an lwIP netif, and lwIP sizes fragments
+ * as `(mtu - IP_HLEN) / 8`, which is zero below 28 and would make ip4_frag() spin
+ * without progress while holding the global core lock.
+ */
+#define MIN_MTU_PROFILE 68
+#define MAX_MTU_PROFILE 65535
+
+/*
+ * Legacy numeric ram-profile aliases. 0 and 1 both mean the smallest profile,
+ * which predates the named forms and is kept working deliberately.
+ */
+#define MIN_RAM_PROFILE_INDEX 0
+#define MAX_RAM_PROFILE_INDEX 6
 
 enum settings_ram_profiles
 {
@@ -43,6 +62,20 @@ static void initCoreSettings(void)
     assert(settings == NULL);
 
     settings = memoryAllocateZero(sizeof(struct core_settings_s));
+
+    /*
+     * Seeded here rather than only in the misc parser.
+     *
+     * parseMiscPartOfJson() has two branches and only the one that sees a
+     * non-empty object assigned these. An omitted or empty "misc" block left both
+     * at the zero-allocation's zero, and neither is a usable value: a zero MTU
+     * either fails a node's own range check or reaches an lwIP netif that derives
+     * its fragment size from `(mtu - IP_HLEN) / 8`, and a zero ram-profile sizes
+     * every pool in the process to nothing. A present valid value overrides
+     * these; a present invalid one is still an error.
+     */
+    settings->mtu_size    = DEFAULT_MTU_PROFILE;
+    settings->ram_profile = DEFAULT_RAM_PROFILE;
 
     settings->config_paths = vec_config_path_t_with_capacity(2);
 }
@@ -271,9 +304,8 @@ static void dnsJsonParseFlags(const cJSON *dns_obj, asyncdns_options_t *options)
     enum
     {
         kSupportedDnsFlags = ARES_FLAG_USEVC | ARES_FLAG_PRIMARY | ARES_FLAG_IGNTC | ARES_FLAG_NORECURSE |
-                             ARES_FLAG_STAYOPEN | ARES_FLAG_NOSEARCH | ARES_FLAG_NOALIASES |
-                             ARES_FLAG_NOCHECKRESP | ARES_FLAG_EDNS | ARES_FLAG_NO_DFLT_SVR |
-                             ARES_FLAG_DNS0x20
+                             ARES_FLAG_STAYOPEN | ARES_FLAG_NOSEARCH | ARES_FLAG_NOALIASES | ARES_FLAG_NOCHECKRESP |
+                             ARES_FLAG_EDNS | ARES_FLAG_NO_DFLT_SVR | ARES_FLAG_DNS0x20
     };
 
     const cJSON *flags_json = cJSON_GetObjectItemCaseSensitive(dns_obj, "flags");
@@ -369,8 +401,7 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
     int                 value   = 0;
 
     const cJSON *domain_strategy_json = cJSON_GetObjectItemCaseSensitive(dns_obj, "domain-strategy");
-    if (domain_strategy_json != NULL &&
-        ! getDomainStrategyFromJson(domain_strategy_json, &settings->domain_strategy))
+    if (domain_strategy_json != NULL && ! getDomainStrategyFromJson(domain_strategy_json, &settings->domain_strategy))
     {
         dnsJsonError("domain-strategy",
                      "must be one of \"accept-dns-returned-order\", \"prefer-ipv4\", \"prefer-ipv6\", "
@@ -554,12 +585,12 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
     const cJSON *internal_obj = cJSON_GetObjectItemCaseSensitive(log_obj, "internal");
     if (cJSON_IsObject(internal_obj) && (internal_obj->child != NULL))
     {
-        getStringFromJsonObjectOrDefault(&(settings->internal_log_level), internal_obj, "loglevel",
-                                         DEFAULT_INTERNAL_LOG_LEVEL);
-        getStringFromJsonObjectOrDefault(&(settings->internal_log_file), internal_obj, "file",
-                                         DEFAULT_INTERNAL_LOG_FILE);
-        getBoolFromJsonObjectOrDefault(&(settings->internal_log_console), internal_obj, "console",
-                                       DEFAULT_INTERNAL_ENABLE_CONSOLE);
+        getStringFromJsonObjectOrDefault(
+            &(settings->internal_log_level), internal_obj, "loglevel", DEFAULT_INTERNAL_LOG_LEVEL);
+        getStringFromJsonObjectOrDefault(
+            &(settings->internal_log_file), internal_obj, "file", DEFAULT_INTERNAL_LOG_FILE);
+        getBoolFromJsonObjectOrDefault(
+            &(settings->internal_log_console), internal_obj, "console", DEFAULT_INTERNAL_ENABLE_CONSOLE);
     }
     else
     {
@@ -585,11 +616,11 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
     const cJSON *network_obj = cJSON_GetObjectItemCaseSensitive(log_obj, "network");
     if (cJSON_IsObject(network_obj) && (network_obj->child != NULL))
     {
-        getStringFromJsonObjectOrDefault(&(settings->network_log_level), network_obj, "loglevel",
-                                         DEFAULT_NETWORK_LOG_LEVEL);
+        getStringFromJsonObjectOrDefault(
+            &(settings->network_log_level), network_obj, "loglevel", DEFAULT_NETWORK_LOG_LEVEL);
         getStringFromJsonObjectOrDefault(&(settings->network_log_file), network_obj, "file", DEFAULT_NETWORK_LOG_FILE);
-        getBoolFromJsonObjectOrDefault(&(settings->network_log_console), network_obj, "console",
-                                       DEFAULT_NETWORK_ENABLE_CONSOLE);
+        getBoolFromJsonObjectOrDefault(
+            &(settings->network_log_console), network_obj, "console", DEFAULT_NETWORK_ENABLE_CONSOLE);
     }
     else
     {
@@ -677,103 +708,209 @@ static void parseConfigPartOfJson(const cJSON *config_array)
     }
 }
 
-static void parseMiscPartOfJson(cJSON *misc_obj)
+/*
+ * Validated as a wide integer before it is narrowed. The field is a uint16_t, so
+ * a plain cast turned 70000 into 4464 and 65536 into 0, and both reached lwIP
+ * netifs: nodes assign this value directly, and lwIP derives its fragment size
+ * from `(mtu - IP_HLEN) / 8`, which is zero for an MTU of 20..27 and makes
+ * ip4_frag() loop without progress while holding the global core lock. An
+ * out-of-range value is refused rather than replaced by the default, because
+ * silently running a topology at an MTU nobody asked for is the failure this
+ * guards against. An absent key keeps the default seeded in initCoreSettings().
+ */
+static void parseMtuOfMiscJson(const cJSON *misc_obj)
 {
-    if (cJSON_IsObject(misc_obj) && (misc_obj->child != NULL))
+    int64_t                   mtu_size = DEFAULT_MTU_PROFILE;
+    const json_value_status_t mtu_status =
+        jsonGetObjectIntegerInRange(misc_obj, "mtu", MIN_MTU_PROFILE, MAX_MTU_PROFILE, &mtu_size);
+
+    if (mtu_status == kJsonValueInvalid)
     {
-        int mtu_size = DEFAULT_MTU_PROFILE;
-        getIntFromJsonObjectOrDefault(&mtu_size, misc_obj, "mtu", DEFAULT_MTU_PROFILE);
-        if (mtu_size <= 0)
-        {
-            printError("CoreSettings: mtu-size must be greater than 0, using default value %d\n", DEFAULT_MTU_PROFILE);
-            mtu_size = DEFAULT_MTU_PROFILE;
-        }
-        settings->mtu_size = (uint16_t) mtu_size;
+        printError(
+            "CoreSettings: \"mtu\" must be a whole number between %d and %d\n", MIN_MTU_PROFILE, MAX_MTU_PROFILE);
+        terminateProgram(1);
+    }
 
-        getBoolFromJsonObjectOrDefault(&settings->try_enabling_bbr, misc_obj, "try-enabling-bbr",
-                                       DEFAULT_TRY_ENABLING_BBR);
-        getStringFromJsonObjectOrDefault(&(settings->libs_path), misc_obj, "libs-path", DEFAULT_LIBS_PATH);
-        if (! getIntFromJsonObjectOrDefault((int *) &(settings->workers_count), misc_obj, "workers", getNCPU()))
+    settings->mtu_size = (uint16_t) mtu_size;
+}
+
+/*
+ * The documented rule for every `misc` field that is not `mtu` or `ram-profile`:
+ * absent means the default, present means it has to be the documented type.
+ *
+ * These used to read through the defaulting helpers, which answer a wrong type
+ * exactly like an absent key. `"workers": 4.5` became four workers and
+ * `"try-enabling-bbr": "yes"` became false, both silently - the same class of
+ * substitution the mtu and ram-profile validation already refuses, and the
+ * opposite of what core/readme.md promises.
+ */
+static void parseWorkersOfMiscJson(const cJSON *misc_obj)
+{
+    int64_t                   workers = 0;
+    const json_value_status_t worker_status =
+        jsonGetObjectIntegerInRange(misc_obj, "workers", INT32_MIN, INT32_MAX, &workers);
+
+    if (worker_status == kJsonValueInvalid)
+    {
+        printError("CoreSettings: \"workers\" must be a whole number\n");
+        terminateProgram(1);
+    }
+
+    if (worker_status == kJsonValueMissing)
+    {
+        settings->workers_count = (unsigned int) getNCPU();
+        printf("workers unspecified in json (misc), fallback to cpu cores: %d\n", settings->workers_count);
+        return;
+    }
+
+    // Documented behaviour, not a substitution: "use as many as this machine
+    // has" is what a non-positive count is defined to mean.
+    settings->workers_count = (workers <= 0) ? (unsigned int) getNCPU() : (unsigned int) workers;
+}
+
+static void parseRamProfileOfMiscJson(const cJSON *misc_obj)
+{
+    const cJSON *json_ram_profile = cJSON_GetObjectItemCaseSensitive(misc_obj, "ram-profile");
+    if (cJSON_IsNumber(json_ram_profile))
+    {
+        /*
+         * Validated as a whole number in range before it is switched on.
+         * cJSON's `valueint` is already truncated, so reading it directly
+         * turned 1.9 into profile 1 - a process sized for a target the
+         * operator did not ask for, and the exact class of silent
+         * substitution the MTU validation above exists to prevent.
+         */
+        int64_t                   wide = 0;
+        const json_value_status_t ram_status =
+            jsonGetObjectIntegerInRange(misc_obj, "ram-profile", MIN_RAM_PROFILE_INDEX, MAX_RAM_PROFILE_INDEX, &wide);
+
+        if (ram_status != kJsonValuePresent)
         {
-            printf("workers unspecified in json (misc), fallback to cpu cores: %d\n", settings->workers_count);
-        }
-        // user could just enter 0 as value
-        if (settings->workers_count <= 0)
-        {
-            settings->workers_count = (unsigned int) getNCPU();
+            printError("CoreSettings: ram-profile must be a whole number between %d and %d, "
+                       "or one of \"server\", \"client\", \"client-larger\", \"minimal\", \"ultralow\"\n",
+                       MIN_RAM_PROFILE_INDEX,
+                       MAX_RAM_PROFILE_INDEX);
+            terminateProgram(1);
         }
 
-        const cJSON *json_ram_profile = cJSON_GetObjectItemCaseSensitive(misc_obj, "ram-profile");
-        if (cJSON_IsNumber(json_ram_profile))
+        int profile = (int) wide;
+
+        switch (profile)
         {
-            int profile = (int) json_ram_profile->valueint;
-
-            switch (profile)
-            {
-            case 0:
-            case 1:
-                settings->ram_profile = kRamProfileS1Memory;
-                break;
-            case 2:
-                settings->ram_profile = kRamProfileS2Memory;
-                break;
-            case 3:
-                settings->ram_profile = kRamProfileM1Memory;
-                break;
-            case 4:
-                settings->ram_profile = kRamProfileM2Memory;
-                break;
-            case 5:
-                settings->ram_profile = kRamProfileL1Memory;
-                break;
-            case 6:
-                settings->ram_profile = kRamProfileL2Memory;
-                break;
-            default:
-                printError("CoreSettings: ram-profile must be in range [1 - 6]\n");
-                terminateProgram(1);
-                break;
-            }
+        case 0:
+        case 1:
+            settings->ram_profile = kRamProfileS1Memory;
+            break;
+        case 2:
+            settings->ram_profile = kRamProfileS2Memory;
+            break;
+        case 3:
+            settings->ram_profile = kRamProfileM1Memory;
+            break;
+        case 4:
+            settings->ram_profile = kRamProfileM2Memory;
+            break;
+        case 5:
+            settings->ram_profile = kRamProfileL1Memory;
+            break;
+        case 6:
+            settings->ram_profile = kRamProfileL2Memory;
+            break;
+        default:
+            printError("CoreSettings: ram-profile must be a whole number between %d and %d\n",
+                       MIN_RAM_PROFILE_INDEX,
+                       MAX_RAM_PROFILE_INDEX);
+            terminateProgram(1);
+            break;
         }
-        else if (cJSON_IsString(json_ram_profile))
+    }
+    else if (cJSON_IsString(json_ram_profile))
+    {
+        char *string_ram_profile = NULL;
+        int   parsed_ram_profile = 0;
+        getStringFromJsonObject(&string_ram_profile, misc_obj, "ram-profile");
+        stringLowerCase(string_ram_profile);
+
+        if (0 == strcmp(string_ram_profile, "server"))
         {
-            char *string_ram_profile = NULL;
-            getStringFromJsonObject(&string_ram_profile, misc_obj, "ram-profile");
-            stringLowerCase(string_ram_profile);
-
-            if (0 == strcmp(string_ram_profile, "server"))
-            {
-                settings->ram_profile = kRamProfileServer;
-            }
-            else if (0 == strcmp(string_ram_profile, "client"))
-            {
-                settings->ram_profile = kRamProfileClientGeneric;
-            }
-            else if (0 == strcmp(string_ram_profile, "client-larger"))
-            {
-                settings->ram_profile = kRamProfileClientLarger;
-            }
-            else if (0 == strcmp(string_ram_profile, "ultralow") || 0 == strcmp(string_ram_profile, "minimal"))
-            {
-                settings->ram_profile = kRamProfileMinimal;
-            }
-
-            if (settings->ram_profile <= 0)
-            {
-                printError("CoreSettings: ram-profile can hold \"server\" or \"client\" "
-                           "or \"client-larger\" or \"minimal\" or \"ultralow\" \n");
-
-                terminateProgram(1);
-            }
-            memoryFree(string_ram_profile);
+            parsed_ram_profile = kRamProfileServer;
         }
-        else
+        else if (0 == strcmp(string_ram_profile, "client"))
         {
-            settings->ram_profile = DEFAULT_RAM_PROFILE;
+            parsed_ram_profile = kRamProfileClientGeneric;
         }
+        else if (0 == strcmp(string_ram_profile, "client-larger"))
+        {
+            parsed_ram_profile = kRamProfileClientLarger;
+        }
+        else if (0 == strcmp(string_ram_profile, "ultralow") || 0 == strcmp(string_ram_profile, "minimal"))
+        {
+            parsed_ram_profile = kRamProfileMinimal;
+        }
+
+        if (parsed_ram_profile <= 0)
+        {
+            printError("CoreSettings: ram-profile can hold \"server\" or \"client\" "
+                       "or \"client-larger\" or \"minimal\" or \"ultralow\" \n");
+
+            terminateProgram(1);
+        }
+        settings->ram_profile = (unsigned int) parsed_ram_profile;
+        memoryFree(string_ram_profile);
+    }
+    else if (json_ram_profile == NULL)
+    {
+        settings->ram_profile = DEFAULT_RAM_PROFILE;
     }
     else
     {
+        printError("CoreSettings: ram-profile must be a string alias or an integer in range [0 - 6]\n");
+        terminateProgram(1);
+    }
+}
+
+static void parseMiscPartOfJson(cJSON *misc_obj)
+{
+    /*
+     * An absent block means defaults. A block that is present but is not an
+     * object is a configuration mistake - `"misc": []` used to be indistinguishable
+     * from omitting it, so every field it was meant to carry silently reverted.
+     */
+    if (misc_obj != NULL && ! cJSON_IsObject(misc_obj))
+    {
+        printError("CoreSettings: \"misc\" must be an object\n");
+        terminateProgram(1);
+    }
+
+    if (cJSON_IsObject(misc_obj) && (misc_obj->child != NULL))
+    {
+        parseMtuOfMiscJson(misc_obj);
+
+        const cJSON *json_bbr = cJSON_GetObjectItemCaseSensitive(misc_obj, "try-enabling-bbr");
+        if (json_bbr != NULL && ! cJSON_IsBool(json_bbr))
+        {
+            printError("CoreSettings: \"try-enabling-bbr\" must be true or false\n");
+            terminateProgram(1);
+        }
+        getBoolFromJsonObjectOrDefault(
+            &settings->try_enabling_bbr, misc_obj, "try-enabling-bbr", DEFAULT_TRY_ENABLING_BBR);
+
+        const cJSON *json_libs_path = cJSON_GetObjectItemCaseSensitive(misc_obj, "libs-path");
+        if (json_libs_path != NULL && ! cJSON_IsString(json_libs_path))
+        {
+            printError("CoreSettings: \"libs-path\" must be a string\n");
+            terminateProgram(1);
+        }
+        getStringFromJsonObjectOrDefault(&(settings->libs_path), misc_obj, "libs-path", DEFAULT_LIBS_PATH);
+
+        parseWorkersOfMiscJson(misc_obj);
+
+        parseRamProfileOfMiscJson(misc_obj);
+    }
+    else
+    {
+        // mtu_size and ram_profile are not repeated here: initCoreSettings()
+        // already seeded them, and this branch has no object to override from.
         settings->try_enabling_bbr = DEFAULT_TRY_ENABLING_BBR;
         settings->libs_path        = stringDuplicate(DEFAULT_LIBS_PATH);
         settings->workers_count    = (unsigned int) getNCPU();
@@ -835,7 +972,8 @@ void destroyCoreSettings(void)
     {
         return;
     }
-    c_foreach(k, vec_config_path_t, settings->config_paths){
+    c_foreach(k, vec_config_path_t, settings->config_paths)
+    {
         memoryFree(*k.ref);
     }
 

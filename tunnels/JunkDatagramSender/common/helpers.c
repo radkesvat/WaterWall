@@ -116,7 +116,9 @@ static bool junkdatagramsenderSendOne(tunnel_t *t, line_t *l, junkdatagramsender
     {
         sbuf_t  *scheduled = sbufDuplicateByPool(lineGetBufferPool(l), buf);
         uint32_t delay_ms  = fastRandRange32(1, ts->keep_sending_max_ms);
-        lineScheduleDelayedTaskWithBuf(l, junkdatagramsenderDelayedPayloadFn(direction), delay_ms, t, scheduled);
+        /* Synthetic junk traffic is intentionally lossy on timer refusal. */
+        discard lineScheduleDelayedTaskWithBuf(
+            l, junkdatagramsenderDelayedPayloadFn(direction), delay_ms, t, scheduled);
     }
 
     if (direction == kJunkDatagramSenderDirectionUpstream)

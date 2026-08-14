@@ -187,12 +187,15 @@ void workerDestroyOwnResources(worker_t *worker)
         return;
     }
 
-    // Detach the loop under control_mutex so no concurrent workerRequestStop()
-    // can be holding it while it is destroyed below.
-    mutexLock(&worker->control_mutex);
-    wloop_t *loop = worker->loop;
-    worker->loop  = NULL;
-    mutexUnlock(&worker->control_mutex);
+    /*
+     * Detach message admission and loop access atomically. Foreign posters use
+     * the same lifetime lock and then the queue mutex, so after this unlock no
+     * new poster can hold either detached resource. Already accepted messages
+     * remain in `message_queue` and are cleaned exactly once below.
+     */
+    wloop_t                *loop          = NULL;
+    worker_message_queue_t *message_queue = NULL;
+    workerMessagesCloseAdmissionAndDetach(worker, &loop, &message_queue);
 
     if (loop != NULL)
     {
@@ -202,18 +205,25 @@ void workerDestroyOwnResources(worker_t *worker)
         }
 
         /*
-         * Keep this order: asyncdnsCleanup() still owns timers and c-ares
-         * socket watches registered on the loop, so it must run while the
-         * event loop and its wio/timer storage are still alive.
+         * Source-owner inventories drain before any tunnel worker-stop hook.
+         * SocketManager is the authoritative inventory for UdpListener lines;
+         * draining it first lets each real owner close its borrowed path while
+         * every middle/end tunnel, the loop, and all line/buffer pools remain
+         * alive. Middle tunnels may then require their borrowed child set to be
+         * empty in onWorkerStop without enumerating those children themselves.
+         *
+         * Keep asyncdnsCleanup() later: it still owns timers and c-ares socket
+         * watches registered on the loop, so it must run while the event loop
+         * and its wio/timer storage are alive.
          */
-        nodemanagerStopWorkerResources(worker->wid);
         socketmanagerDrainUdpIdleForWorker(worker->wid);
+        nodemanagerStopWorkerResources(worker->wid);
         socketmanagerCloseListenersForLoop(loop);
         asyncdnsCleanup(&worker->dns_resolver);
-        workerMessagesCleanupPending(worker);
+        workerMessagesCleanupPendingDetached(message_queue);
         wloopDestroy(&loop);
     }
-    workerMessagesDestroy(worker);
+    workerMessagesDestroyDetached(message_queue);
     if (worker->wios_pool)
     {
         threadsafegenericpoolDestroy(worker->wios_pool);
@@ -254,6 +264,46 @@ bool workerExitJoin(worker_t *worker)
     return workerJoin(worker);
 }
 
+bool workerTryCreateCorePools(worker_t *worker)
+{
+    assert(worker != NULL);
+
+    threadsafe_generic_pool_t *wios_pool =
+        threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(GSTATE.masterpool_wios, sizeof(wio_t), RAM_PROFILE);
+    generic_pool_t *context_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(
+        GSTATE.masterpool_context_pools, sizeof(context_t), RAM_PROFILE);
+
+    if (UNLIKELY(wios_pool == NULL || context_pool == NULL))
+    {
+        threadsafegenericpoolDestroy(wios_pool);
+        genericpoolDestroy(context_pool);
+        return false;
+    }
+
+    worker->wios_pool    = wios_pool;
+    worker->context_pool = context_pool;
+    return true;
+}
+
+bool workerTryCreateBufferPool(worker_t *worker)
+{
+    assert(worker != NULL);
+    assert(worker->buffer_pool == NULL);
+
+    buffer_pool_t *pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+                                           GSTATE.masterpool_buffer_pools_small,
+                                           RAM_PROFILE,
+                                           PROPER_LARGE_BUFFER_SIZE(RAM_PROFILE),
+                                           SMALL_BUFFER_SIZE);
+    if (UNLIKELY(pool == NULL))
+    {
+        return false;
+    }
+
+    worker->buffer_pool = pool;
+    return true;
+}
+
 void workerInit(worker_t *worker, wid_t wid, bool eventloop)
 {
     *worker = (worker_t) {.wid = wid, .has_event_loop = eventloop};
@@ -261,20 +311,26 @@ void workerInit(worker_t *worker, wid_t wid, bool eventloop)
     mutexInit(&worker->control_mutex);
     atomicStoreRelaxed(&worker->lifecycle, (w_atomic_int_value_t) kWorkerLifecycleInitialized);
     atomicStoreRelaxed(&worker->resources_destroyed, false);
+    atomicStoreRelaxed(&worker->loop_stopped, false);
+    atomicStoreRelaxed(&worker->message_admission_open, false);
 
-    workerMessagesInit(worker);
+    if (UNLIKELY(! workerMessagesInit(worker)))
+    {
+        LOGF("Worker %d: failed to construct worker-message queue metadata", (int) wid);
+        abortProgramNow(1);
+    }
 
-    worker->wios_pool =
-        threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(GSTATE.masterpool_wios, sizeof(wio_t), RAM_PROFILE);
+    if (UNLIKELY(! workerTryCreateCorePools(worker)))
+    {
+        LOGF("Worker %d: failed to construct WIO/context pool metadata", (int) wid);
+        abortProgramNow(1);
+    }
 
-    worker->context_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(
-        GSTATE.masterpool_context_pools, sizeof(context_t), RAM_PROFILE);
-
-    worker->buffer_pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
-                                           GSTATE.masterpool_buffer_pools_small,
-                                           RAM_PROFILE,
-                                           PROPER_LARGE_BUFFER_SIZE(RAM_PROFILE),
-                                           SMALL_BUFFER_SIZE);
+    if (UNLIKELY(! workerTryCreateBufferPool(worker)))
+    {
+        LOGF("Worker %d: failed to construct buffer-pool metadata", (int) wid);
+        abortProgramNow(1);
+    }
 
     if (eventloop)
     {
@@ -290,6 +346,11 @@ void workerInit(worker_t *worker, wid_t wid, bool eventloop)
                         wid,
                         ares_strerror(dns_rc));
             terminateProgram(1);
+        }
+        if (UNLIKELY(! workerMessagesOpenAdmission(worker)))
+        {
+            LOGF("Worker %d: message admission could not be opened from the initialized state", (int) wid);
+            abortProgramNow(1);
         }
     }
     else
@@ -324,6 +385,11 @@ void workerRun(worker_t *worker)
     }
 
     int loop_result = wloopRun(worker->loop);
+    atomicStoreExplicit(&worker->loop_stopped, true, memory_order_release);
+    if (UNLIKELY(worker->loop_stopped_test_seam != NULL))
+    {
+        worker->loop_stopped_test_seam(worker);
+    }
     if (UNLIKELY(loop_result != kWLoopRunOk && ! isApplicationTerminating()))
     {
         /*

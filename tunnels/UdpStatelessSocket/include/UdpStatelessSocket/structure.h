@@ -1,10 +1,12 @@
 #pragma once
 
+#include "net/tunnel_async_session.h"
 #include "wwapi.h"
 
 enum
 {
     kUdpStatelessSocketDnsRefreshIntervalMs = 30 * 60 * 1000,
+    kUdpStatelessSocketDnsCacheCapacity     = 256,
     kUdpStatelessSocketInitExpireTime       = 30 * 1000,
     kUdpStatelessSocketKeepExpireTime       = 300 * 1000
 };
@@ -25,15 +27,16 @@ struct udpstatelesssocket_dns_cache_entry_s
 struct udpstatelesssocket_send_request_s
 {
     threadsafe_generic_pool_t *pool;
-    tunnel_t                  *tunnel;
+    tunnel_async_session_t    *session;
     sbuf_t                    *buf;
     sockaddr_u                 peer_addr;
 };
 
 typedef struct udpstatelesssocket_tstate_s
 {
-    udpsock_t socket; // UDP socket side-data, including worker-local peer idle tables
-    master_pool_t             *send_request_master_pool;
+    udpsock_t                   socket; // UDP socket side-data, including worker-local peer idle tables
+    tunnel_async_session_t     *async_session;
+    master_pool_t              *send_request_master_pool;
     threadsafe_generic_pool_t **send_request_pools;
 
     // These fields are read from json
@@ -52,6 +55,7 @@ typedef struct udpstatelesssocket_tstate_s
 
     wmutex_t                              dns_cache_mutex;
     udpstatelesssocket_dns_cache_entry_t *dns_cache;
+    uint32_t                              dns_cache_count;
 } udpstatelesssocket_tstate_t;
 
 typedef struct udpstatelesssocket_lstate_s
@@ -76,6 +80,7 @@ WW_EXPORT api_result_t udpstatelesssocketTunnelApi(tunnel_t *instance, sbuf_t *m
 
 void udpstatelesssocketTunnelOnPrepair(tunnel_t *t);
 void udpstatelesssocketTunnelOnStart(tunnel_t *t);
+void udpstatelesssocketTunnelOnPreStop(tunnel_t *t);
 void udpstatelesssocketTunnelOnStop(tunnel_t *t);
 void udpstatelesssocketTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
 
@@ -102,6 +107,18 @@ bool                udpstatelesssocketLinestateOwnsLine(tunnel_t *t, line_t *l, 
 local_idle_table_t *udpstatelesssocketGetWorkerIdleTable(udpstatelesssocket_tstate_t *ts);
 local_idle_table_t *udpstatelesssocketGetLineIdleTable(udpstatelesssocket_tstate_t *ts, line_t *l);
 void                udpstatelesssocketCloseOwnedLineFromAdjacent(tunnel_t *t, line_t *l, bool is_chain_end);
-void udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf);
-void udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void udpstatelesssocketLocalThreadSocketUpStream(void *worker, void *arg1, void *arg2, void *arg3);
+void                udpstatelesssocketReleaseWrittenBuffer(sbuf_t *buf, bool detached_from_origin_worker);
+void                udpstatelesssocketDispatchToPeer(tunnel_t *t, sbuf_t *buf, const sockaddr_u *peer_addr);
+void                udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf);
+void                udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void                udpstatelesssocketLocalThreadSocketUpStream(void *worker, void *arg1, void *arg2, void *arg3);
+bool udpstatelesssocketDnsCacheLookup(udpstatelesssocket_tstate_t *state, const char *domain, uint16_t port,
+                                      int strategy, sockaddr_u *addr_out);
+void udpstatelesssocketDnsCacheStore(udpstatelesssocket_tstate_t *state, const char *domain, uint16_t port,
+                                     int strategy, const sockaddr_u *peer_addr);
+void udpstatelesssocketDnsCacheClear(udpstatelesssocket_tstate_t *state);
+
+#ifdef UDPSTATELESSSOCKET_DISPATCH_TEST_HOOKS
+typedef void (*UdpStatelessSocketForeignAdmissionHook)(void *context);
+void udpstatelesssocketInstallForeignAdmissionHook(UdpStatelessSocketForeignAdmissionHook hook, void *context);
+#endif

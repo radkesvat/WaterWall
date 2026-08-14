@@ -120,6 +120,7 @@ typedef struct system_load_state_s
     bool     unsupported_logged;
 } system_load_state_t;
 
+bool systemLoadSamplerTryInit(system_load_state_t *state);
 void systemLoadSamplerInit(system_load_state_t *state);
 bool systemLoadSamplerStart(system_load_state_t *state, wloop_t *loop);
 void systemLoadSamplerStop(system_load_state_t *state);

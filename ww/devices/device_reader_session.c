@@ -1,5 +1,6 @@
 #include "devices/device_reader_session.h"
 
+#include "devices/device_frag_affinity.h"
 #include "global_state.h"
 #include "worker_messages.h"
 
@@ -8,13 +9,18 @@ typedef struct device_reader_message_s
     device_reader_session_t *session;
     uint32_t                 generation;
     uint16_t                 count;
-    sbuf_t                  *bufs[];
+    struct
+    {
+        sbuf_t                            *buf;
+        device_frag_affinity_publication_t publication;
+    } items[];
 } device_reader_message_t;
 
 static master_pool_item_t *deviceReaderMessageCreate(void *userdata)
 {
     const device_reader_session_t *session = userdata;
-    const size_t size = sizeof(device_reader_message_t) + (size_t) session->batch_capacity * sizeof(sbuf_t *);
+    const size_t                   size    = sizeof(device_reader_message_t) +
+                        (size_t) session->batch_capacity * sizeof(((device_reader_message_t *) NULL)->items[0]);
     return memoryAllocate(size);
 }
 
@@ -41,7 +47,9 @@ static void deviceReaderSessionCleanupMessage(device_reader_message_t *message)
     device_reader_session_t *session = message->session;
     for (unsigned int i = 0; i < message->count; i++)
     {
-        sbufDestroy(message->bufs[i]);
+        deviceFragAffinitySettlePublication(
+            session->frag_affinity, &message->items[i].publication, kDeviceFragSettlementUnknown);
+        sbufDestroy(message->items[i].buf);
     }
     masterpoolReuseItems(session->message_pool, (void **) &message, 1);
     deviceReaderSessionUnref(session);
@@ -56,15 +64,37 @@ device_reader_session_t *deviceReaderSessionCreate(uint32_t pool_capacity, uint1
     assert(reader_buffer_pool != NULL);
 
     device_reader_session_t *session = memoryAllocate(sizeof(*session));
-    *session                         = (device_reader_session_t) {
-                                .refcount           = 1,
-                                .generation         = 0,
-                                .message_pool       = masterpoolCreateWithCapacity(pool_capacity),
-                                .batch_capacity     = batch_capacity,
-                                .device             = device,
-                                .deliver            = deliver,
-                                .reader_buffer_pool = reader_buffer_pool,
+    if (UNLIKELY(session == NULL))
+    {
+        return NULL;
+    }
+
+    master_pool_t *message_pool = masterpoolCreateWithCapacity(pool_capacity);
+    if (UNLIKELY(message_pool == NULL))
+    {
+        memoryFree(session);
+        return NULL;
+    }
+    device_frag_affinity_table_t *frag_affinity = deviceFragAffinityCreate(reader_buffer_pool);
+    if (UNLIKELY(frag_affinity == NULL))
+    {
+        masterpoolDestroy(message_pool);
+        memoryFree(session);
+        return NULL;
+    }
+
+    *session = (device_reader_session_t) {
+        .refcount           = 1,
+        .generation         = 0,
+        .producer_admission = false,
+        .message_pool       = message_pool,
+        .batch_capacity     = batch_capacity,
+        .device             = device,
+        .deliver            = deliver,
+        .reader_buffer_pool = reader_buffer_pool,
+        .frag_affinity      = frag_affinity,
     };
+    atomic_init(&session->producer_admission, false);
     deviceLifetimeGateInit(&session->delivery_gate);
     masterpoolInstallCallBacks(session->message_pool, deviceReaderMessageCreate, deviceReaderMessageDestroy);
     return session;
@@ -91,6 +121,10 @@ void deviceReaderSessionRef(device_reader_session_t *session)
 
 static void deviceReaderSessionDestroyInternal(device_reader_session_t *session)
 {
+    /* Device teardown retires staged buffers before its pool dies. A session
+     * used outside a device may still own a live pool at its final reference. */
+    deviceFragAffinityDestroy(session->frag_affinity);
+    session->frag_affinity = NULL;
     masterpoolMakeEmpty(session->message_pool);
     masterpoolDestroy(session->message_pool);
     memoryFree(session);
@@ -126,6 +160,9 @@ uint32_t deviceReaderSessionBegin(device_reader_session_t *session)
         return 0;
     }
 
+    /* Poisoned identities survive a reopen until their post-settlement quarantine ends. */
+    bufferpoolResetThreadOwnership(session->reader_buffer_pool);
+
     const uint32_t generation = previous + UINT32_C(1);
     atomicStoreRelaxed(&session->generation, (w_atomic_uint_value_t) generation);
     if (UNLIKELY(! deviceLifetimeGateOpen(&session->delivery_gate)))
@@ -135,12 +172,52 @@ uint32_t deviceReaderSessionBegin(device_reader_session_t *session)
         atomicStoreRelaxed(&session->generation, (w_atomic_uint_value_t) previous);
         return 0;
     }
+    deviceFragAffinityBeginGeneration(session->frag_affinity);
+    atomicStoreExplicit(&session->producer_admission, true, memory_order_release);
     return generation;
 }
 
+/*
+ * Closes the generation for both producers: the workers this session posts to,
+ * and the reader thread that classifies fragments before it posts anything.
+ *
+ * Deliberately waits on neither the reader thread nor a producer gate. The fatal
+ * partial-publication path in deviceFlowAffinityPostBatch() calls this from the
+ * reader thread itself, so anything End waited for there would be a self-join.
+ * Closing the fragment generation under the table's own lock is enough: an offer
+ * already inside it finishes, and every later one is refused.
+ */
 void deviceReaderSessionEnd(device_reader_session_t *session)
 {
+    atomicStoreExplicit(&session->producer_admission, false, memory_order_release);
     deviceLifetimeGateCloseAndQuiesce(&session->delivery_gate, deviceLifetimeYieldThread, NULL);
+    /* A late receipt holds the delivery gate across its final admission, lwIP
+     * input, and exact residue query. Closing the fragment generation only after
+     * those entrants leave makes "may enter" atomic with generation shutdown. */
+    deviceFragAffinityEndGeneration(session->frag_affinity);
+}
+
+void deviceReaderSessionRetireGenerationBuffers(device_reader_session_t *session)
+{
+    assert(deviceLifetimeGateIsClosedAndQuiesced(&session->delivery_gate));
+
+    if (session->reader_buffer_pool == NULL)
+    {
+        return;
+    }
+
+    deviceFragAffinityReleaseStagedBuffers(session->frag_affinity);
+}
+
+void deviceReaderSessionRetireProducerBuffers(device_reader_session_t *session)
+{
+    assert(deviceLifetimeGateIsClosedAndQuiesced(&session->delivery_gate));
+    assert(session->reader_buffer_pool != NULL);
+
+    deviceFragAffinityRetireReleasePool(session->frag_affinity);
+    assert(deviceFragAffinityStagedCount(session->frag_affinity) == 0);
+    assert(deviceFragAffinityStagedBytes(session->frag_affinity) == 0);
+    session->reader_buffer_pool = NULL;
 }
 
 uint32_t deviceReaderSessionGeneration(const device_reader_session_t *session)
@@ -168,7 +245,19 @@ void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *arg2, vo
     {
         for (unsigned int i = 0; i < message->count; i++)
         {
-            session->deliver(session->device, message->bufs[i], wid);
+            const bool tracked = message->items[i].publication.valid;
+            if (tracked &&
+                ! deviceFragClaimAttach(session, generation, &message->items[i].publication, message->items[i].buf))
+            {
+                /* Without a persistent receipt, a delaying transform could let
+                 * this packet enter lwIP after the fallback quarantine ended. */
+                deviceFragAffinitySettlePublication(
+                    session->frag_affinity, &message->items[i].publication, kDeviceFragSettlementUnknown);
+                bufferpoolReuseBuffer(getWorkerBufferPool(wid), message->items[i].buf);
+                continue;
+            }
+
+            session->deliver(session->device, message->items[i].buf, wid);
         }
         deviceLifetimeGateLeave(&session->delivery_gate);
     }
@@ -180,7 +269,9 @@ void deviceReaderSessionMessageReceived(void *worker, void *arg1, void *arg2, vo
         }
         for (unsigned int i = 0; i < message->count; i++)
         {
-            bufferpoolReuseBuffer(getWorkerBufferPool(wid), message->bufs[i]);
+            deviceFragAffinitySettlePublication(
+                session->frag_affinity, &message->items[i].publication, kDeviceFragSettlementUnknown);
+            bufferpoolReuseBuffer(getWorkerBufferPool(wid), message->items[i].buf);
         }
     }
 
@@ -197,38 +288,66 @@ void deviceReaderSessionCleanupPostedMessage(void *arg1, void *arg2, void *arg3)
     deviceReaderSessionCleanupMessage(message);
 }
 
-void deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs, unsigned int count)
+bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs, unsigned int count)
 {
+    return deviceReaderSessionPostTracked(session, target_wid, bufs, NULL, count);
+}
+
+bool deviceReaderSessionPostTracked(device_reader_session_t *session, wid_t target_wid, sbuf_t **bufs,
+                                    const device_frag_affinity_publication_t *publications, unsigned int count)
+{
+    assert(session->reader_buffer_pool != NULL);
     if (UNLIKELY(count == 0 || count > session->batch_capacity))
     {
         LOGE("DeviceReaderSession: refusing to post %u buffer(s); batch capacity is %u",
              count,
              (unsigned int) session->batch_capacity);
+        for (unsigned int i = 0; i < count; ++i)
+        {
+            if (publications != NULL)
+            {
+                deviceFragAffinitySettlePublication(
+                    session->frag_affinity, &publications[i], kDeviceFragSettlementUnknown);
+            }
+        }
         deviceReaderSessionReuseReaderBuffers(session, bufs, count);
-        return;
+        return false;
     }
 
     assert(count > 0);
     assert(count <= session->batch_capacity);
 
-    if (UNLIKELY(isApplicationTerminating() || GSTATE.shortcut_loops == NULL))
+    if (UNLIKELY(! atomicLoadExplicit(&session->producer_admission, memory_order_acquire) ||
+                 isApplicationTerminating() || GSTATE.shortcut_loops == NULL))
     {
+        for (unsigned int i = 0; i < count; ++i)
+        {
+            if (publications != NULL)
+            {
+                deviceFragAffinitySettlePublication(
+                    session->frag_affinity, &publications[i], kDeviceFragSettlementUnknown);
+            }
+        }
         deviceReaderSessionReuseReaderBuffers(session, bufs, count);
-        return;
+        return false;
     }
 
+    master_pool_item_t      *pool_item;
     device_reader_message_t *message;
-    masterpoolGetItems(session->message_pool, (const void **) &message, 1, session);
+    masterpoolGetItems(session->message_pool, &pool_item, 1, session);
+    message = pool_item;
 
     message->session    = session;
     message->generation = deviceReaderSessionGeneration(session);
     message->count      = (uint16_t) count;
     for (unsigned int i = 0; i < count; i++)
     {
-        message->bufs[i] = bufs[i];
+        message->items[i].buf = bufs[i];
+        message->items[i].publication =
+            publications != NULL ? publications[i] : (device_frag_affinity_publication_t) {0};
     }
 
     deviceReaderSessionRef(session);
-    discard sendWorkerMessageForceQueueWithCleanup(
+    return sendWorkerMessageForceQueueWithCleanup(
         target_wid, deviceReaderSessionMessageReceived, deviceReaderSessionCleanupPostedMessage, message, NULL, NULL);
 }

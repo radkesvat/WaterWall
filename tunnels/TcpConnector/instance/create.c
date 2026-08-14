@@ -55,8 +55,7 @@ static bool tcpconnectorCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
     tcpconnector_tstate_t *ts = tunnelGetState(t);
 
-    ts->domain_resolver_settings =
-        tcpconnectorCreateDomainResolverSettings((enum domain_strategy) ts->domain_strategy);
+    ts->domain_resolver_settings = tcpconnectorCreateDomainResolverSettings((enum domain_strategy) ts->domain_strategy);
     if (ts->domain_resolver_settings == NULL)
     {
         LOGF("TcpConnector: failed to create internal DomainResolver settings");
@@ -74,7 +73,7 @@ static bool tcpconnectorCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return false;
     }
 
-    ts->domain_resolver_tunnel = ts->domain_resolver_node.createHandle(&ts->domain_resolver_node);
+    ts->domain_resolver_tunnel = nodemanagerCreateTunnelInstance(&ts->domain_resolver_node);
     if (ts->domain_resolver_tunnel == NULL)
     {
         LOGF("TcpConnector: failed to create internal DomainResolver");
@@ -464,6 +463,10 @@ static bool parseDestinationArray(tcpconnector_tstate_t *state, const cJSON *set
 tunnel_t *tcpconnectorTunnelCreate(node_t *node)
 {
     tunnel_t *t = adapterCreate(node, sizeof(tcpconnector_tstate_t), sizeof(tcpconnector_lstate_t), kAdapterChainEnd);
+    if (! t)
+    {
+        return NULL;
+    }
 
     initializeTunnelCallbacks(t);
 

@@ -1,6 +1,7 @@
 #include "raw.h"
 
 #include "buffer_pool.h"
+#include "devices/device_frag_affinity.h"
 #include "global_state.h"
 #include "managers/windivert_manager.h"
 #include "master_pool.h"
@@ -87,11 +88,9 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
     sbuf_t           *buf;
     struct wchan_s   *writer_channel = deviceWriterChannelGetConsumerChannel(&rdev->writer_channel);
     WINDIVERT_ADDRESS addr           = {
-                  .Layer       = WINDIVERT_LAYER_NETWORK,
-                  .Outbound    = 1,
-                  .IPChecksum  = 1,
-                  .TCPChecksum = 1,
-                  .UDPChecksum = 1,
+                  .Layer      = WINDIVERT_LAYER_NETWORK,
+                  .Outbound   = 1,
+                  .IPChecksum = 1,
     };
 
     while (rawLifecycleIsActive(rawLifecycleLoad(&rdev->lifecycle)))
@@ -109,6 +108,21 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
             bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
             continue;
         }
+
+        /*
+         * WinDivert reads a set checksum-valid bit as an assertion that the
+         * checksum in the packet is already correct, and skips computing it.
+         * Deriving that from structure - "it is IPv4, so the IP checksum is
+         * fine" - asserts something the bytes were never asked about, and a
+         * packet a node emitted with a stale or unset checksum then leaves the
+         * host uncorrected. A cleared bit costs one driver-side computation and
+         * is always accepted, so anything unproven stays clear.
+         */
+        const device_packet_checksum_validity_t validity = deviceIpv4ChecksumValidity(sbufGetRawPtr(buf), packet_len);
+
+        addr.IPChecksum  = validity.ipv4 ? 1 : 0;
+        addr.TCPChecksum = validity.tcp ? 1 : 0;
+        addr.UDPChecksum = validity.udp ? 1 : 0;
 
         if (! windivertSend(rdev->handle, sbufGetRawPtr(buf), packet_len, NULL, &addr))
         {
@@ -330,8 +344,6 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
         return FALSE;
     }
 
-    raw_device_t *rdev = memoryAllocate(sizeof(raw_device_t));
-
     /*
      * Device bring-up/creation runs on an event worker even though the reader
      * and writer threads it manages stay unregistered. Read that worker's pool
@@ -347,8 +359,31 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
                                                    bufferpoolGetSmallBufferSize(worker_pool)
 
     );
+    if (UNLIKELY(writer_bpool == NULL))
+    {
+        LOGE("RawDevice: failed to construct writer buffer pool");
+        windivertClose(handle);
+        return NULL;
+    }
 
-    *rdev = (raw_device_t) {.name               = stringDuplicate(name),
+    raw_device_t *rdev = memoryAllocate(sizeof(raw_device_t));
+    if (UNLIKELY(rdev == NULL))
+    {
+        bufferpoolDestroy(writer_bpool);
+        windivertClose(handle);
+        return NULL;
+    }
+
+    char *device_name = stringDuplicate(name);
+    if (UNLIKELY(device_name == NULL))
+    {
+        memoryFree(rdev);
+        bufferpoolDestroy(writer_bpool);
+        windivertClose(handle);
+        return NULL;
+    }
+
+    *rdev = (raw_device_t) {.name               = device_name,
                             .routine_writer     = routineWriteToRaw,
                             .handle             = handle,
                             .mark               = mark,

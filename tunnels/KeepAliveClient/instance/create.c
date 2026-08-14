@@ -24,6 +24,11 @@ static bool keepaliveclientLoadPingInterval(keepaliveclient_tstate_t *ts, const 
 tunnel_t *keepaliveclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(keepaliveclient_tstate_t), sizeof(keepaliveclient_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
+
     keepaliveclient_tstate_t *ts = tunnelGetState(t);
 
     t->fnInitU    = &keepaliveclientTunnelUpStreamInit;
@@ -46,10 +51,22 @@ tunnel_t *keepaliveclientTunnelCreate(node_t *node)
     t->onWorkerStop = &keepaliveclientTunnelOnWorkerStop;
     t->onDestroy    = &keepaliveclientTunnelDestroy;
 
-    mutexInit(&ts->lines_mutex);
+    if (UNLIKELY(! mutexTryInit(&ts->lines_mutex)))
+    {
+        LOGF("KeepAliveClient: failed to initialize line-registry mutex");
+        tunnelDestroy(t);
+        return NULL;
+    }
     ts->lines_head       = NULL;
     ts->worker_timers    = memoryAllocateZero(sizeof(wtimer_t *) * getWorkersCount());
     ts->ping_interval_ms = kKeepAliveDefaultPingMs;
+
+    if (UNLIKELY(ts->worker_timers == NULL))
+    {
+        LOGF("KeepAliveClient: failed to allocate worker timers");
+        keepaliveclientTunnelDestroy(t);
+        return NULL;
+    }
 
     if (! keepaliveclientLoadPingInterval(ts, node->node_settings_json))
     {

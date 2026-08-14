@@ -678,11 +678,15 @@ static void tlsserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
     if (tlsserverFallbackPendingCount(ls) > 0 && ! ls->fallback_delay_scheduled)
     {
         ls->fallback_delay_scheduled = true;
-        lineScheduleDelayedTask(
-            l,
-            tlsserverDelayedFallbackPayloadTask,
-            fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
-            t);
+        if (UNLIKELY(! lineScheduleDelayedTask(
+                l,
+                tlsserverDelayedFallbackPayloadTask,
+                fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
+                t)))
+        {
+            ls->fallback_delay_scheduled = false;
+            tlsserverCloseLineFatal(t, l);
+        }
         return;
     }
 
@@ -712,11 +716,16 @@ bool tlsserverSendFallbackPayload(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls
     if (! ls->fallback_delay_scheduled)
     {
         ls->fallback_delay_scheduled = true;
-        lineScheduleDelayedTask(
-            l,
-            tlsserverDelayedFallbackPayloadTask,
-            fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
-            t);
+        if (UNLIKELY(! lineScheduleDelayedTask(
+                l,
+                tlsserverDelayedFallbackPayloadTask,
+                fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
+                t)))
+        {
+            ls->fallback_delay_scheduled = false;
+            tlsserverCloseLineFatal(t, l);
+            return false;
+        }
     }
 
     return true;

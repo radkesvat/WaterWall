@@ -8,30 +8,6 @@
 #include "loggers/internal_logger.h"
 #include "managers/node_manager.h"
 
-void adapterDefaultOnChainHead(tunnel_t *t, tunnel_chain_t *tc)
-{
-    tunnelDefaultOnChain(t, tc);
-}
-
-void adapterDefaultOnChainEnd(tunnel_t *t, tunnel_chain_t *tc)
-{
-    tunnelDefaultOnChain(t, tc);
-}
-
-void adapterDefaultOnIndexChainHead(tunnel_t *t, uint16_t index, uint32_t *mem_offset)
-{
-    t->chain_index   = index;
-    t->lstate_offset = *mem_offset;
-    *mem_offset += t->lstate_size;
-}
-
-void adapterDefaultOnIndexChainEnd(tunnel_t *t, uint16_t index, uint32_t *mem_offset)
-{
-    t->chain_index   = index;
-    t->lstate_offset = *mem_offset;
-    *mem_offset += t->lstate_size;
-}
-
 /**
  * @brief Guard routine used to block invalid payload calls on adapters.
  *
@@ -64,16 +40,21 @@ static void disabledRoutine(tunnel_t *t, line_t *line)
     abortProgramNow(1);
 }
 
-tunnel_t *adapterCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size, adapter_edge_t edge)
+tunnel_t *adapterCreate(node_t *node, size_t tstate_size, size_t lstate_size, adapter_edge_t edge)
 {
     tunnel_t *t = tunnelCreate(node, tstate_size, lstate_size);
+
+    // tunnelCreate() is nullable by contract: it returns NULL on a state-size
+    // overflow or an allocation failure. Callers unwind from a NULL create
+    // handle, so the failure has to survive as far as them.
+    if (! t)
+    {
+        return NULL;
+    }
 
     switch (edge)
     {
     case kAdapterChainHead:
-        t->onChain = adapterDefaultOnChainHead;
-        t->onIndex = adapterDefaultOnIndexChainHead;
-
         t->fnPauseU   = disabledRoutine;
         t->fnResumeU  = disabledRoutine;
         t->fnInitU    = disabledRoutine;
@@ -83,9 +64,6 @@ tunnel_t *adapterCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size
         break;
 
     case kAdapterChainEnd:
-        t->onChain = adapterDefaultOnChainEnd;
-        t->onIndex = adapterDefaultOnIndexChainEnd;
-
         t->fnPauseD   = disabledRoutine;
         t->fnResumeD  = disabledRoutine;
         t->fnInitD    = disabledRoutine;

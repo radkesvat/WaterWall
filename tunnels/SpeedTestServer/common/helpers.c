@@ -366,7 +366,11 @@ void speedtestserverScheduleSend(tunnel_t *t, line_t *l, speedtestserver_lstate_
     }
 
     ls->send_scheduled = true;
-    lineScheduleTask(l, speedtestserverSendTask, ls->tunnel);
+    if (UNLIKELY(! lineScheduleTask(l, speedtestserverSendTask, ls->tunnel)))
+    {
+        ls->send_scheduled = false;
+        speedtestserverFailLine(t, l, "failed to schedule send progress");
+    }
 }
 
 void speedtestserverScheduleReport(tunnel_t *t, line_t *l, speedtestserver_lstate_t *ls)
@@ -377,7 +381,11 @@ void speedtestserverScheduleReport(tunnel_t *t, line_t *l, speedtestserver_lstat
     }
 
     ls->report_scheduled = true;
-    lineScheduleDelayedTask(l, speedtestserverReportTask, ls->report_interval_ms, t);
+    if (UNLIKELY(! lineScheduleDelayedTask(l, speedtestserverReportTask, ls->report_interval_ms, t)))
+    {
+        ls->report_scheduled = false;
+        speedtestserverFailLine(t, l, "failed to schedule report progress");
+    }
 }
 
 static bool speedtestserverShouldWaitForPace(speedtestserver_lstate_t *ls, uint64_t now_us, uint32_t *delay_ms_out)
@@ -467,7 +475,11 @@ void speedtestserverSendTask(tunnel_t *t, line_t *l)
         if (speedtestserverShouldWaitForPace(ls, now_us, &delay_ms))
         {
             ls->send_scheduled = true;
-            lineScheduleDelayedTask(l, speedtestserverSendTask, delay_ms, t);
+            if (UNLIKELY(! lineScheduleDelayedTask(l, speedtestserverSendTask, delay_ms, t)))
+            {
+                ls->send_scheduled = false;
+                speedtestserverFailLine(t, l, "failed to schedule paced send");
+            }
             return;
         }
 

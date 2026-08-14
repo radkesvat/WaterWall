@@ -10,6 +10,10 @@ tunnel_t *reverseserverTunnelCreate(node_t *node)
     tunnel_t *t = tunnelCreate(node,
                                sizeof(reverseserver_tstate_t) + (wc * sizeof(reverseserver_thread_box_t)),
                                sizeof(reverseserver_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &reverseserverTunnelUpStreamInit;
     t->fnEstU     = &reverseserverTunnelUpStreamEst;
@@ -39,13 +43,20 @@ tunnel_t *reverseserverTunnelCreate(node_t *node)
     }
 
     reverseserver_tstate_t *ts = tunnelGetState(t);
-    if (! reverseclientHandshakeBuildFromSettings(settings, "ReverseServer", &ts->handshake_bytes,
-                                                  &ts->handshake_length))
+    if (! reverseclientHandshakeBuildFromSettings(
+            settings, "ReverseServer", &ts->handshake_bytes, &ts->handshake_length))
     {
         tunnelDestroy(t);
         return NULL;
     }
 
     tunnel_t *pipe_tunnel = pipetunnelCreate(t);
+    if (! pipe_tunnel)
+    {
+        // The wrapper never took ownership, so the child is still this call's.
+        tunnelDestroy(t);
+        return NULL;
+    }
+
     return pipe_tunnel;
 }

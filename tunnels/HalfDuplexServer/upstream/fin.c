@@ -96,7 +96,12 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
             ls_upload_line->main_line                 = NULL;
             ls_upload_line->download_line             = NULL;
 
-            lineScheduleTask(upload_line, localAsyncCloseLineUpStream, t);
+            if (! lineScheduleTask(upload_line, localAsyncCloseLineUpStream, t) && lineIsAlive(upload_line))
+            {
+                /* Direct companions are paired only when both belong to this
+                 * worker; cross-worker pairs use PipeTunnel instead. */
+                localAsyncCloseLineUpStream(t, upload_line);
+            }
         }
 
         halfduplexserverLinestateDestroy(ls_download_line);
@@ -128,7 +133,10 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
             ls_download_line->main_line                 = NULL;
             ls_download_line->upload_line               = NULL;
 
-            lineScheduleTask(download_line, localAsyncCloseLineUpStream, t);
+            if (! lineScheduleTask(download_line, localAsyncCloseLineUpStream, t) && lineIsAlive(download_line))
+            {
+                localAsyncCloseLineUpStream(t, download_line);
+            }
         }
 
         halfduplexserverLinestateDestroy(ls_upload_line);

@@ -191,7 +191,7 @@ static bool findVariablesObjectRange(const char *json_text, size_t *start_out, s
                                      bool *found_out)
 {
     *found_out = false;
-    int depth = 0;
+    int depth  = 0;
 
     for (size_t i = 0; json_text[i] != '\0'; ++i)
     {
@@ -423,7 +423,8 @@ static char *substituteVariables(const char *json_text, const cJSON *variables, 
 
         memoryCopy(variable_name, json_text + i + 1, variable_name_len);
         variable_name[variable_name_len] = '\0';
-        const cJSON *variable_value = variables != NULL ? cJSON_GetObjectItemCaseSensitive(variables, variable_name) : NULL;
+        const cJSON *variable_value =
+            variables != NULL ? cJSON_GetObjectItemCaseSensitive(variables, variable_name) : NULL;
         if (variable_value == NULL)
         {
             LOGF("JSON Error: config file \"%s\" references undefined variable \"%s\"", file_path, variable_name);
@@ -541,9 +542,25 @@ void commitChangesSoft(config_file_t *state)
 config_file_t *configfileParse(const char *const file_path)
 {
     config_file_t *state = memoryAllocateZero(sizeof(config_file_t));
-    mutexInit(&(state->guard));
+    if (UNLIKELY(state == NULL))
+    {
+        LOGF("Config file: failed to allocate parser state");
+        return NULL;
+    }
+    if (UNLIKELY(! mutexTryInit(&(state->guard))))
+    {
+        LOGF("Config file: failed to initialize parser mutex");
+        memoryFree(state);
+        return NULL;
+    }
 
     state->file_path = memoryAllocate(strlen(file_path) + 1);
+    if (UNLIKELY(state->file_path == NULL))
+    {
+        LOGF("Config file: failed to allocate file path");
+        configfileDestroy(state);
+        return NULL;
+    }
     stringCopy(state->file_path, file_path);
 
     char *data_json = readFile(file_path);
@@ -574,7 +591,7 @@ config_file_t *configfileParse(const char *const file_path)
         return NULL;
     }
 
-    char  *resolved_json  = substituteVariables(json_without_comments, variables_json, file_path);
+    char *resolved_json = substituteVariables(json_without_comments, variables_json, file_path);
     cJSON_Delete(variables_json);
     memoryFree(json_without_comments);
 

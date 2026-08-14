@@ -102,16 +102,28 @@ static bool authenticationclientParseSettings(authenticationclient_tstate_t *ts,
 tunnel_t *authenticationclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(authenticationclient_tstate_t), sizeof(authenticationclient_lstate_t));
-    if (UNLIKELY(t == NULL))
+    if (! t)
     {
+        return NULL;
+    }
+
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    if (UNLIKELY(! mutexTryInit(&ts->control_mutex)))
+    {
+        LOGF("AuthenticationClient: failed to initialize control mutex");
+        tunnelDestroy(t);
+        return NULL;
+    }
+    if (UNLIKELY(! rwlockTryInit(&ts->users_lock)))
+    {
+        LOGF("AuthenticationClient: failed to initialize users lock");
+        mutexDestroy(&ts->control_mutex);
+        tunnelDestroy(t);
         return NULL;
     }
 
     authenticationclientInitializeCallbacks(t);
 
-    authenticationclient_tstate_t *ts = tunnelGetState(t);
-    mutexInit(&ts->control_mutex);
-    rwlockinit(&ts->users_lock);
     ts->next_correlation_id = 1U;
     ts->users_generation    = 1U;
 

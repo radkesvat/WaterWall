@@ -119,6 +119,7 @@ void streamtopacketsTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_off
 void streamtopacketsTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void streamtopacketsTunnelOnPrepair(tunnel_t *t);
 void streamtopacketsTunnelOnStart(tunnel_t *t);
+void streamtopacketsQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3);
 void streamtopacketsTunnelOnStop(tunnel_t *t);
 
 void streamtopacketsTunnelUpStreamInit(tunnel_t *t, line_t *l);
@@ -153,7 +154,7 @@ void streamtopacketsForwardDecodedPacket(tunnel_t *t, line_t *stream_line, sbuf_
 // Active-source ownership (common/ownership.c)
 // ---------------------------------------------------------------------------
 
-void     streamtopacketsOwnershipInitialize(streamtopackets_tstate_t *ts);
+bool     streamtopacketsOwnershipInitialize(streamtopackets_tstate_t *ts);
 void     streamtopacketsOwnershipDestroy(tunnel_t *t);
 void     streamtopacketsOwnershipStop(tunnel_t *t);
 uint64_t streamtopacketsPublishedGeneration(streamtopackets_tstate_t *ts);

@@ -51,7 +51,7 @@ static uint32_t obfuscatorclientGetSkipLength(tunnel_t *t, sbuf_t *buf)
             return ip_header_length;
         }
 
-        struct tcp_hdr *tcp_header = (struct tcp_hdr *) (((uint8_t *) sbufGetRawPtr(buf)) + ip_header_length);
+        struct tcp_hdr *tcp_header        = (struct tcp_hdr *) (((uint8_t *) sbufGetRawPtr(buf)) + ip_header_length);
         uint32_t        tcp_header_length = TCPH_HDRLEN_BYTES(tcp_header);
 
         if (tcp_header_length < sizeof(struct tcp_hdr) || packet_length < ip_header_length + tcp_header_length)
@@ -112,6 +112,7 @@ static sbuf_t *obfuscatorclientCloneBufferWithPadding(line_t *l, sbuf_t *buf)
 
     sbufSetLength(clone, payload_len);
     sbufWriteBuf(clone, buf, payload_len);
+    sbufTransferLifetime(buf, clone);
     lineReuseBuffer(l, buf);
 
     return clone;
@@ -119,7 +120,7 @@ static sbuf_t *obfuscatorclientCloneBufferWithPadding(line_t *l, sbuf_t *buf)
 
 bool obfuscatorclientWrapTlsRecordHeader(line_t *l, sbuf_t **buf_io)
 {
-    sbuf_t   *buf        = *buf_io;
+    sbuf_t  *buf         = *buf_io;
     uint32_t payload_len = sbufGetLength(buf);
 
     if (payload_len > UINT16_MAX)
@@ -177,8 +178,8 @@ bool obfuscatorclientStripTlsRecordHeader(line_t *l, sbuf_t *buf)
 
     if (payload_len != expected_payload_len)
     {
-        LOGW("ObfuscatorClient: TLS-like record length mismatch (%u != %u), dropped", payload_len,
-             expected_payload_len);
+        LOGW(
+            "ObfuscatorClient: TLS-like record length mismatch (%u != %u), dropped", payload_len, expected_payload_len);
         lineReuseBuffer(l, buf);
         return false;
     }

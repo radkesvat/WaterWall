@@ -3368,7 +3368,10 @@ bool usersCreate(users_t *users)
     }
 
     memoryZero(users, sizeof(*users));
-    rwlockinit(&users->lock);
+    if (UNLIKELY(! rwlockTryInit(&users->lock)))
+    {
+        return false;
+    }
     if (UNLIKELY(! usersSHA224TableCreateIfNeeded(users) || ! usersSHA256TableCreateIfNeeded(users) ||
                  ! usersUUIDTableCreateIfNeeded(users) || ! usersWireGuardPublicKeyTableCreateIfNeeded(users) ||
                  ! usersIDTableCreateIfNeeded(users) || ! usersNameTableCreateIfNeeded(users) ||

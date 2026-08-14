@@ -28,9 +28,11 @@ typedef struct halfduplexserver_tstate_s
 {
     wmutex_t    upload_line_map_mutex;
     hmap_cons_t upload_line_map;
+    bool        upload_line_map_mutex_initialized;
 
     wmutex_t    download_line_map_mutex;
     hmap_cons_t download_line_map;
+    bool        download_line_map_mutex_initialized;
 } halfduplexserver_tstate_t;
 
 typedef struct halfduplexserver_lstate_s

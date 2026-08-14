@@ -5,6 +5,10 @@
 tunnel_t *udpovertcpclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(udpovertcpclient_tstate_t), sizeof(udpovertcpclient_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &udpovertcpclientTunnelUpStreamInit;
     t->fnEstU     = &udpovertcpclientTunnelUpStreamEst;

@@ -1,5 +1,6 @@
 #include "devices/device_flow_affinity.h"
 
+#include "devices/device_frag_affinity.h"
 #include "global_state.h"
 
 enum
@@ -7,7 +8,14 @@ enum
     kDeviceFlowAffinityMaxBatch          = 512,
     kDeviceFlowAffinityBuckets           = UINT8_MAX + 1,
     kDeviceFlowAffinityIpv4MoreFragments = 0x2000,
-    kDeviceFlowAffinityIpv4OffsetMask    = 0x1FFF
+    kDeviceFlowAffinityIpv4OffsetMask    = 0x1FFF,
+
+    /*
+     * One chunk can emit more packets than it took in: a fragment zero releases
+     * the tails that were waiting for it, and those may have arrived in an
+     * earlier chunk. The staging cap bounds how many that can be.
+     */
+    kDeviceFlowAffinityMaxDispatch = kDeviceFlowAffinityMaxBatch + kDeviceFragAffinityMaxStaged
 };
 
 static uint64_t deviceFlowAffinityMix64(uint64_t value)
@@ -208,49 +216,181 @@ static wid_t deviceFlowAffinitySelectWID(const sbuf_t *buf)
     return getNextDistributionWID();
 }
 
-void deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs, unsigned int count)
+/*
+ * One packet's worth of dispatch, and the fragments it may have unblocked.
+ *
+ * The fragment table can both withhold a packet and hand back several, so this
+ * appends to the pending list rather than filling one slot: `dispatch` grows by
+ * zero entries for a staged tail, and by more than one for the fragment zero
+ * that releases them. Everything else is the ordinary one-in, one-out case.
+ */
+static unsigned int deviceFlowAffinityAppend(device_reader_session_t *session, sbuf_t *buf, sbuf_t **dispatch,
+                                             uint8_t *dispatch_wids, unsigned int filled,
+                                             device_frag_affinity_publication_t *dispatch_publications)
+{
+    device_frag_affinity_result_t frag;
+
+    const device_frag_affinity_action_t action =
+        deviceFragAffinityOffer(session->frag_affinity, sbufGetRawPtr(buf), sbufGetLength(buf), buf, &frag);
+
+    if (action == kDeviceFragAffinityNotFragment)
+    {
+        // Only a confirmed non-fragment may use the ordinary flow hash.
+        dispatch[filled]              = buf;
+        dispatch_wids[filled]         = (uint8_t) deviceFlowAffinitySelectWID(buf);
+        dispatch_publications[filled] = (device_frag_affinity_publication_t) {0};
+        return filled + 1;
+    }
+
+    if (action == kDeviceFragAffinityConsumedDrop)
+    {
+        return filled;
+    }
+
+    // The tails go out ahead of the fragment zero that decided their worker,
+    // which is the order they arrived in.
+    for (uint8_t i = 0; i < frag.released_count; ++i)
+    {
+        dispatch[filled]                                 = frag.released[i];
+        dispatch_wids[filled]                            = (uint8_t) frag.wid;
+        dispatch_publications[filled]                    = frag.publication;
+        dispatch_publications[filled].count              = 1;
+        dispatch_publications[filled].completes_datagram = false;
+        ++filled;
+    }
+
+    if (action == kDeviceFragAffinityStaged)
+    {
+        // The table owns it until its fragment zero shows up, or the caps do.
+        return filled;
+    }
+
+    assert(action == kDeviceFragAffinityDispatch);
+    dispatch[filled]                    = buf;
+    dispatch_wids[filled]               = (uint8_t) frag.wid;
+    dispatch_publications[filled]       = frag.publication;
+    dispatch_publications[filled].count = 1;
+    return filled + 1;
+}
+
+/*
+ * Groups an already-decided dispatch list by worker and posts one batch each.
+ *
+ * A counting sort rather than a per-packet post: the buffers keep their relative
+ * order inside every bucket, which is what a receiving worker needs from packets
+ * of one flow, and each worker's queue is touched once.
+ */
+static bool deviceFlowAffinityPostSorted(device_reader_session_t *session, sbuf_t **dispatch, const uint8_t *wids,
+                                         const device_frag_affinity_publication_t *publications,
+                                         unsigned int                              dispatch_count)
+{
+    uint16_t                           counts[kDeviceFlowAffinityBuckets]  = {0};
+    uint16_t                           offsets[kDeviceFlowAffinityBuckets] = {0};
+    uint16_t                           positions[kDeviceFlowAffinityBuckets];
+    sbuf_t                            *sorted[kDeviceFlowAffinityMaxDispatch];
+    device_frag_affinity_publication_t sorted_publications[kDeviceFlowAffinityMaxDispatch];
+
+    for (unsigned int i = 0; i < dispatch_count; ++i)
+    {
+        counts[wids[i]]++;
+    }
+
+    uint16_t offset = 0;
+    for (unsigned int wid = 0; wid < kDeviceFlowAffinityBuckets; ++wid)
+    {
+        offsets[wid]   = offset;
+        positions[wid] = offset;
+        offset         = (uint16_t) (offset + counts[wid]);
+    }
+    assert(offset == dispatch_count);
+
+    for (unsigned int i = 0; i < dispatch_count; ++i)
+    {
+        const uint16_t position       = positions[wids[i]]++;
+        sorted[position]              = dispatch[i];
+        sorted_publications[position] = publications[i];
+    }
+
+    for (unsigned int wid = 0; wid < kDeviceFlowAffinityBuckets; ++wid)
+    {
+        uint16_t remaining = counts[wid];
+        uint16_t posted    = 0;
+        while (remaining > 0)
+        {
+            const uint16_t chunk = min(remaining, session->batch_capacity);
+            if (! deviceReaderSessionPostTracked(session,
+                                                 (wid_t) wid,
+                                                 &sorted[offsets[wid] + posted],
+                                                 &sorted_publications[offsets[wid] + posted],
+                                                 chunk))
+            {
+                /* The refused chunk was consumed by message cleanup; these were never posted. */
+                const unsigned int first_unposted = (unsigned int) offsets[wid] + posted + chunk;
+                for (unsigned int i = first_unposted; i < dispatch_count; ++i)
+                {
+                    deviceFragAffinitySettlePublication(
+                        session->frag_affinity, &sorted_publications[i], kDeviceFragSettlementUnknown);
+                    bufferpoolReuseBuffer(session->reader_buffer_pool, sorted[i]);
+                }
+                return false;
+            }
+            posted    = (uint16_t) (posted + chunk);
+            remaining = (uint16_t) (remaining - chunk);
+        }
+    }
+    return true;
+}
+
+bool deviceFlowAffinityPostBatch(device_reader_session_t *session, sbuf_t **bufs, unsigned int count)
 {
     assert(session != NULL);
     assert(bufs != NULL);
 
     while (count > 0)
     {
-        unsigned int chunk_count                         = min(count, (unsigned int) kDeviceFlowAffinityMaxBatch);
-        uint16_t     counts[kDeviceFlowAffinityBuckets]  = {0};
-        uint16_t     offsets[kDeviceFlowAffinityBuckets] = {0};
-        uint16_t     positions[kDeviceFlowAffinityBuckets];
-        uint8_t      wids[kDeviceFlowAffinityMaxBatch];
-        sbuf_t      *sorted[kDeviceFlowAffinityMaxBatch];
+        const unsigned int                 chunk_count = min(count, (unsigned int) kDeviceFlowAffinityMaxBatch);
+        uint8_t                            wids[kDeviceFlowAffinityMaxDispatch];
+        sbuf_t                            *dispatch[kDeviceFlowAffinityMaxDispatch];
+        device_frag_affinity_publication_t publications[kDeviceFlowAffinityMaxDispatch];
+        unsigned int                       dispatch_count           = 0;
+        bool                               has_fragment_publication = false;
 
         for (unsigned int i = 0; i < chunk_count; ++i)
         {
-            wids[i] = deviceFlowAffinitySelectWID(bufs[i]);
-            counts[wids[i]]++;
-        }
-
-        uint16_t offset = 0;
-        for (unsigned int wid = 0; wid < kDeviceFlowAffinityBuckets; ++wid)
-        {
-            offsets[wid]   = offset;
-            positions[wid] = offset;
-            offset         = (uint16_t) (offset + counts[wid]);
-        }
-        assert(offset == chunk_count);
-
-        for (unsigned int i = 0; i < chunk_count; ++i)
-        {
-            sorted[positions[wids[i]]++] = bufs[i];
-        }
-
-        for (unsigned int wid = 0; wid < kDeviceFlowAffinityBuckets; ++wid)
-        {
-            if (counts[wid] > 0)
+            const unsigned int previous_count = dispatch_count;
+            dispatch_count = deviceFlowAffinityAppend(session, bufs[i], dispatch, wids, dispatch_count, publications);
+            for (unsigned int publication_index = previous_count; publication_index < dispatch_count;
+                 ++publication_index)
             {
-                deviceReaderSessionPost(session, (wid_t) wid, &sorted[offsets[wid]], counts[wid]);
+                has_fragment_publication = has_fragment_publication || publications[publication_index].valid;
             }
+        }
+
+        const bool admitted = deviceFlowAffinityPostSorted(session, dispatch, wids, publications, dispatch_count);
+
+        if (! admitted)
+        {
+            /* Buffers after this parsing chunk are still owned by the reader. */
+            for (unsigned int i = chunk_count; i < count; ++i)
+            {
+                bufferpoolReuseBuffer(session->reader_buffer_pool, bufs[i]);
+            }
+
+            if (has_fragment_publication)
+            {
+                /* Partial fragment publication cannot be retried without risking hybrid reassembly. */
+                deviceReaderSessionEnd(session);
+                if (! requestProgramShutdown(1))
+                {
+                    abortProgramNow(1);
+                }
+                return false;
+            }
+            return true;
         }
 
         bufs += chunk_count;
         count -= chunk_count;
     }
+    return true;
 }

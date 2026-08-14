@@ -78,25 +78,24 @@ node_t *nodemanagerNewNode(void);
 void nodemanagerCreateNodeInstance(node_manager_config_t *cfg, cJSON *node_json);
 
 /**
+ * @brief Construct one top-level or private child tunnel and validate its callback table.
+ *
+ * A constructor may return NULL for an ordinary allocation/configuration
+ * failure. A non-NULL tunnel with a missing flow or lifecycle callback violates
+ * the tunnel contract and terminates startup before onChain can run.
+ *
+ * @param node Node whose createHandle is invoked.
+ * @return tunnel_t* Constructed, callback-complete tunnel, or NULL on normal
+ *         construction failure.
+ */
+tunnel_t *nodemanagerCreateTunnelInstance(node_t *node);
+
+/**
  * @brief Run a parsed config file through node manager pipeline.
  *
  * @param config_file Parsed config file.
  */
 void nodemanagerRunConfigFile(config_file_t *config_file);
-
-/**
- * @brief Stop one node runtime instance without destroying owned memory.
- *
- * @param node Node object.
- */
-void nodemanagerStopNode(node_t *node);
-
-/**
- * @brief Stop all chained tunnel runtime instances in one config.
- *
- * @param cfg Config object.
- */
-void nodemanagerStopConfig(node_manager_config_t *cfg);
 
 /**
  * @brief Stop all loaded chained tunnel runtime instances.
@@ -112,6 +111,10 @@ void nodemanagerStop(void);
  * @param wid Worker whose local tunnel resources should be stopped.
  */
 void nodemanagerStopWorkerResources(wid_t wid);
+
+/* Internal worker task, exposed so the packet-line death contract can be
+ * exercised against the production callback rather than a copied model. */
+void nodemanagerInitializeLineOnTargetWorker(void *worker, void *tunnel, void *line, void *unused);
 
 /**
  * @brief Get global node manager state pointer.

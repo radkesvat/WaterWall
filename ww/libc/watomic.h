@@ -102,28 +102,28 @@ typedef __attribute__((aligned(8))) unsigned long long atomic_ullong;
 #endif
 typedef unsigned long long w_atomic_ullong_value_t;
 typedef intptr_t           atomic_wchar_t;
-typedef intptr_t atomic_int_least8_t;
-typedef intptr_t atomic_uint_least8_t;
-typedef intptr_t atomic_int_least16_t;
-typedef intptr_t atomic_uint_least16_t;
-typedef intptr_t atomic_int_least32_t;
-typedef intptr_t atomic_uint_least32_t;
-typedef intptr_t atomic_int_least64_t;
-typedef intptr_t atomic_uint_least64_t;
-typedef intptr_t atomic_int_fast8_t;
-typedef intptr_t atomic_uint_fast8_t;
-typedef intptr_t atomic_int_fast16_t;
-typedef intptr_t atomic_uint_fast16_t;
-typedef intptr_t atomic_int_fast32_t;
-typedef intptr_t atomic_uint_fast32_t;
-typedef intptr_t atomic_int_fast64_t;
-typedef intptr_t atomic_uint_fast64_t;
-typedef intptr_t atomic_intptr_t;
-typedef intptr_t atomic_uintptr_t;
-typedef intptr_t atomic_size_t;
-typedef intptr_t atomic_ptrdiff_t;
-typedef intptr_t atomic_intmax_t;
-typedef intptr_t atomic_uintmax_t;
+typedef intptr_t           atomic_int_least8_t;
+typedef intptr_t           atomic_uint_least8_t;
+typedef intptr_t           atomic_int_least16_t;
+typedef intptr_t           atomic_uint_least16_t;
+typedef intptr_t           atomic_int_least32_t;
+typedef intptr_t           atomic_uint_least32_t;
+typedef intptr_t           atomic_int_least64_t;
+typedef intptr_t           atomic_uint_least64_t;
+typedef intptr_t           atomic_int_fast8_t;
+typedef intptr_t           atomic_uint_fast8_t;
+typedef intptr_t           atomic_int_fast16_t;
+typedef intptr_t           atomic_uint_fast16_t;
+typedef intptr_t           atomic_int_fast32_t;
+typedef intptr_t           atomic_uint_fast32_t;
+typedef intptr_t           atomic_int_fast64_t;
+typedef intptr_t           atomic_uint_fast64_t;
+typedef intptr_t           atomic_intptr_t;
+typedef intptr_t           atomic_uintptr_t;
+typedef intptr_t           atomic_size_t;
+typedef intptr_t           atomic_ptrdiff_t;
+typedef intptr_t           atomic_intmax_t;
+typedef intptr_t           atomic_uintmax_t;
 
 #define _Atomic(x)              intptr_t
 #define W_ATOMIC_UINT_VALUE_MAX INTPTR_MAX
@@ -213,7 +213,8 @@ static inline int w_atomicCompareExchangePtrWidth(intptr_t *object, intptr_t *ex
 
 #ifdef _WIN64
 
-#define atomic_fetch_add(object, operand) (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedExchangeAdd64(object, operand))
+#define atomic_fetch_add(object, operand)                                                                              \
+    (W_ATOMIC_REQUIRE_PTR_WIDTH(object), InterlockedExchangeAdd64(object, operand))
 
 // negated as unsigned: -(operand) is signed overflow when operand is the signed minimum, and
 // the C11 branch subtracts modularly for every operand, so this keeps the two branches agreeing
@@ -444,7 +445,7 @@ static inline bool atomicCompareExchangeU64Explicit(atomic_ullong *object, uint6
 {
     (void) success;
     (void) failure;
-    const uint64_t old      = *expected;
+    const uint64_t old = *expected;
     const uint64_t previous =
         (uint64_t) InterlockedCompareExchange64((LONG64 volatile *) object, (LONG64) desired, (LONG64) old);
     *expected = previous;
@@ -460,16 +461,16 @@ static inline bool atomicCompareExchangeWeakU64Explicit(atomic_ullong *object, u
 
 #endif
 
-#define atomicLoadU64(x)            atomicLoadU64Explicit((x), memory_order_seq_cst)
-#define atomicStoreU64(x, y)        atomicStoreU64Explicit((x), (y), memory_order_seq_cst)
-#define atomicExchangeU64(x, y)     atomicExchangeU64Explicit((x), (y), memory_order_seq_cst)
-#define atomicAddU64(x, y)          atomicAddU64Explicit((x), (y), memory_order_seq_cst)
-#define atomicSubU64(x, y)          atomicSubU64Explicit((x), (y), memory_order_seq_cst)
-#define atomicIncU64(x)             atomicAddU64((x), 1)
-#define atomicDecU64(x)             atomicSubU64((x), 1)
+#define atomicLoadU64(x)        atomicLoadU64Explicit((x), memory_order_seq_cst)
+#define atomicStoreU64(x, y)    atomicStoreU64Explicit((x), (y), memory_order_seq_cst)
+#define atomicExchangeU64(x, y) atomicExchangeU64Explicit((x), (y), memory_order_seq_cst)
+#define atomicAddU64(x, y)      atomicAddU64Explicit((x), (y), memory_order_seq_cst)
+#define atomicSubU64(x, y)      atomicSubU64Explicit((x), (y), memory_order_seq_cst)
+#define atomicIncU64(x)         atomicAddU64((x), 1)
+#define atomicDecU64(x)         atomicSubU64((x), 1)
 
-#define atomicIncU64Explicit(x, y)  atomicAddU64Explicit((x), 1, (y))
-#define atomicDecU64Explicit(x, y)  atomicSubU64Explicit((x), 1, (y))
+#define atomicIncU64Explicit(x, y) atomicAddU64Explicit((x), 1, (y))
+#define atomicDecU64Explicit(x, y) atomicSubU64Explicit((x), 1, (y))
 
 #define atomicLoadU64Relaxed(x)     atomicLoadU64Explicit((x), memory_order_relaxed)
 #define atomicStoreU64Relaxed(x, y) atomicStoreU64Explicit((x), (y), memory_order_relaxed)

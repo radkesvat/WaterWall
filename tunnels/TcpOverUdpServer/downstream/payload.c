@@ -10,7 +10,6 @@ static void pauseDownSide(tunnel_t *t, line_t *l)
     {
         tunnelNextUpStreamPause(t, l);
     }
-
 }
 
 void tcpoverudpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -26,13 +25,16 @@ void tcpoverudpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
     if (ikcp_waitsnd(ls->k_handle) > tcpoverudpserverGetKcpSendBufferLimit(ls))
     {
         ls->write_paused = true;
-        lineScheduleTask(l, pauseDownSide, t);
+        if (UNLIKELY(! lineScheduleTask(l, pauseDownSide, t)))
+        {
+            pauseDownSide(t, l);
+        }
     }
 
     // Break buffer into chunks of less than 4096 bytes and send in order
 
-    tcpoverudpserver_tstate_t *ts = tunnelGetState(t);
-    int                       kcp_write_mtu = tcpoverudpserverGetKcpWriteMtu(ts);
+    tcpoverudpserver_tstate_t *ts            = tunnelGetState(t);
+    int                        kcp_write_mtu = tcpoverudpserverGetKcpWriteMtu(ts);
 
     if (UNLIKELY(kcp_write_mtu <= 0))
     {
@@ -53,5 +55,5 @@ void tcpoverudpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
     lineReuseBuffer(l, buf);
 
     // Update KCP state after sending to trigger immediate transmission
-    tcpoverudpserverUpdateKcp(ls,false);
+    tcpoverudpserverUpdateKcp(ls, false);
 }

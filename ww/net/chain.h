@@ -52,6 +52,38 @@ typedef struct tunnel_chain_s
 } tunnel_chain_t;
 
 /**
+ * @brief Add one raw left-padding requirement without narrowing or alignment overflow.
+ *
+ * The returned sum remains unaligned; it is guaranteed that the buffer pool's
+ * 32-byte alignment can still represent it as uint16_t.
+ */
+static inline bool tunnelchainTryAddPadding(uint16_t current, uint16_t additional, uint16_t *sum)
+{
+    const uint32_t wide_sum    = (uint32_t) current + (uint32_t) additional;
+    const uint32_t aligned_sum = (wide_sum + 31U) & ~UINT32_C(31);
+    if (sum == NULL || wide_sum > UINT16_MAX || aligned_sum > UINT16_MAX)
+    {
+        return false;
+    }
+
+    *sum = (uint16_t) wide_sum;
+    return true;
+}
+
+/**
+ * Compute the complete generic-pool item size for one line without narrowing.
+ *
+ * Line-state offsets and generic-pool item sizes are intentionally 32-bit. A
+ * state aggregate that leaves no room for line_t must be rejected before a
+ * chain publishes it.
+ */
+bool tunnelchainTryComputeLineItemSize(uint32_t aggregate_lstate_size, uint32_t *item_size);
+
+/** Pure boundary seam used to verify narrower target allocation limits. */
+bool tunnelchainTryComputeLineItemSizeForLimit(uint32_t aggregate_lstate_size, uint64_t allocation_size_limit,
+                                               uint32_t *item_size);
+
+/**
  * @brief Allocate a new empty tunnel chain for all workers.
  *
  * @param workers_count Total worker count.
@@ -64,14 +96,14 @@ tunnel_chain_t *tunnelchainCreate(wid_t workers_count);
  *
  * @param tc Chain instance.
  */
-void            tunnelchainFinalize(tunnel_chain_t *tc);
+void tunnelchainFinalize(tunnel_chain_t *tc);
 
 /**
  * @brief Destroy a chain and release all worker line resources.
  *
  * @param tc Chain instance.
  */
-void            tunnelchainDestroy(tunnel_chain_t *tc);
+void tunnelchainDestroy(tunnel_chain_t *tc);
 
 /**
  * @brief Merge all tunnels from source into destination and destroy source.
@@ -79,7 +111,7 @@ void            tunnelchainDestroy(tunnel_chain_t *tc);
  * @param destination Destination chain that keeps ownership.
  * @param source Source chain to consume.
  */
-void            tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source);
+void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source);
 
 /**
  * @brief Append a tunnel to a tunnel array.
@@ -119,8 +151,6 @@ static inline generic_pool_t *tunnelchainGetWorkerLinePool(tunnel_chain_t *tc, w
 {
     return tc->line_pools[wid];
 }
-
-
 
 /**
  * @brief Return the packet helper line for a specific worker.

@@ -2,13 +2,28 @@
 
 static threadsafe_generic_pool_t *allocateThreadSafeGenericPool(generic_pool_t *inner_pool)
 {
+    if (inner_pool == NULL)
+    {
+        return NULL;
+    }
+
     threadsafe_generic_pool_t *pool = memoryAllocate(sizeof(*pool));
+    if (pool == NULL)
+    {
+        genericpoolDestroy(inner_pool);
+        return NULL;
+    }
 
     *pool = (threadsafe_generic_pool_t) {
         .inner_pool = inner_pool,
     };
 
-    mutexInit(&(pool->mutex));
+    if (UNLIKELY(! mutexTryInit(&pool->mutex)))
+    {
+        genericpoolDestroy(pool->inner_pool);
+        memoryFree(pool);
+        return NULL;
+    }
 
 #if POOL_THREAD_CHECK
     pool->inner_pool->no_thread_check = true;

@@ -61,7 +61,7 @@ static bool vlessclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return false;
     }
 
-    ts->domain_resolver_tunnel = ts->domain_resolver_node.createHandle(&ts->domain_resolver_node);
+    ts->domain_resolver_tunnel = nodemanagerCreateTunnelInstance(&ts->domain_resolver_node);
     if (ts->domain_resolver_tunnel == NULL)
     {
         LOGF("VlessClient: failed to create internal DomainResolver");
@@ -278,7 +278,12 @@ static bool parseDomainStrategy(vlessclient_tstate_t *ts, const cJSON *settings)
 
 tunnel_t *vlessclientTunnelCreate(node_t *node)
 {
-    tunnel_t             *t        = tunnelCreate(node, sizeof(vlessclient_tstate_t), sizeof(vlessclient_lstate_t));
+    tunnel_t *t = tunnelCreate(node, sizeof(vlessclient_tstate_t), sizeof(vlessclient_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
+
     vlessclient_tstate_t *ts       = tunnelGetState(t);
     const cJSON          *settings = node->node_settings_json;
 

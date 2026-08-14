@@ -572,6 +572,14 @@ static void splitCloseTransport(tunnel_t *t, line_t *l, bool send_down_finish)
         return;
     }
     httpserver_lstate_t *ls = lineGetState(l, t);
+    if (send_down_finish && ls->prev_finished)
+    {
+        /* This transport's upstream Finish frame is already active and owns
+         * its teardown. A final-byte send on its peer re-entered the split
+         * lifecycle; leave both state destruction and propagation to that
+         * outer frame. */
+        return;
+    }
     splitRemoveFromMaps(t, ls);
     splitDetachLine(t, l, ls);
     httpserverLinestateDestroy(ls);
@@ -949,6 +957,14 @@ void httpserverSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 void httpserverSplitUpStreamFinish(tunnel_t *t, line_t *l)
 {
     httpserver_lstate_t *ls = lineGetState(l, t);
+
+    /*
+     * Mark the sender before any split teardown can emit final response bytes.
+     * That send is re-entrant: a paired transport can fail and try to close this
+     * line as its peer. In that case splitCloseTransport must not reflect Finish
+     * toward the prev side that is already inside this Finish callback.
+     */
+    ls->prev_finished = true;
 
     if (ls->split_role == kHttpServerSplitRoleUpload && (ls->h1_request_finished || ls->next_finished))
     {

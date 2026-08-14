@@ -26,6 +26,9 @@ typedef struct wgd_tstate_s
 
 } wgd_tstate_t;
 
+bool wireguarddeviceComputeTransportLineStorageSize(uint64_t workers_count, uint64_t size_limit, size_t pointer_size,
+                                                    uint64_t *bytes_out);
+
 typedef struct wgd_lstate_s
 {
     int unused;
@@ -45,6 +48,7 @@ void wireguarddeviceTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_off
 void wireguarddeviceTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void wireguarddeviceTunnelOnPrepair(tunnel_t *t);
 void wireguarddeviceTunnelOnStart(tunnel_t *t);
+void wireguarddeviceQueueWorkerPacketInit(void *worker, void *arg1, void *arg2, void *arg3);
 void wireguarddeviceTunnelOnStop(tunnel_t *t);
 void wireguarddeviceTunnelOnWorkerStop(tunnel_t *t, wid_t wid);
 

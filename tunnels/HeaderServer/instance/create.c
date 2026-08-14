@@ -5,7 +5,7 @@
 tunnel_t *headerserverTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(headerserver_tstate_t), sizeof(headerserver_lstate_t));
-    if (t == NULL)
+    if (! t)
     {
         return NULL;
     }

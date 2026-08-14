@@ -5,6 +5,10 @@
 tunnel_t *templateTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(template_tstate_t), sizeof(template_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &templateTunnelUpStreamInit;
     t->fnEstU     = &templateTunnelUpStreamEst;

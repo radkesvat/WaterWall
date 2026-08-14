@@ -188,6 +188,16 @@ program_shutdown_phase_e signalmanagerGetShutdownPhase(void);
 bool signalmanagerIsTerminating(void);
 
 /**
+ * @brief Request shutdown for a local failure without racing an accepted result.
+ *
+ * Unlike requestProgramShutdown(), a non-zero @p exit_code is not recorded when
+ * another thread already completed the shutdown handoff. This is for terminal
+ * reconciliation whose own queue refusal can be caused by that accepted
+ * shutdown. It returns false only when no orderly handoff exists.
+ */
+bool signalmanagerRequestShutdownPreservingAcceptedStatus(int exit_code);
+
+/**
  * @brief Arbitrate @p exit_code into the process exit status.
  *
  * The first non-zero code wins; zero never overwrites a recorded error. Safe to

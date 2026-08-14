@@ -30,49 +30,83 @@ static void defaultDestroyHandle(master_pool_item_t *item)
     abortProgramNow(1);
 }
 
-master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
+bool masterpoolTryComputeGeometryForLimit(uint32_t pool_width, uint64_t allocation_limit, uint32_t *capacity_out,
+                                          uint64_t *allocation_size_out)
 {
+    if (capacity_out == NULL || allocation_size_out == NULL)
+    {
+        return false;
+    }
 
     pool_width = max((uint32_t) 1, pool_width);
     // half of the pool is used, other half is free at startup
-    pool_width = 2 * pool_width;
-
-    // Calculate all sizes in size_t.
-    const uint64_t container_len64 = ((uint64_t) pool_width) * ((uint64_t) sizeof(master_pool_item_t *));
-    if (container_len64 > ((uint64_t) SIZE_MAX))
+    if (pool_width > UINT32_MAX / 2U)
     {
-        printError("buffer size out of range");
+        return false;
+    }
+    const uint32_t capacity = pool_width * 2U;
+
+    const uint64_t container_len = (uint64_t) capacity * (uint64_t) sizeof(master_pool_item_t *);
+    if (container_len > UINT64_MAX - (uint64_t) sizeof(master_pool_t))
+    {
+        return false;
+    }
+    const uint64_t required_size = (uint64_t) sizeof(master_pool_t) + container_len;
+    if (! memoryAlignedAllocationSizeIsRepresentableForLimit(required_size, kCpuLineCacheSize, allocation_limit))
+    {
+        return false;
+    }
+
+    *capacity_out        = capacity;
+    *allocation_size_out = required_size;
+    return true;
+}
+
+master_pool_item_t *masterpoolRequireCreatedItem(master_pool_t *pool, master_pool_item_t *item, void *userdata)
+{
+    if (UNLIKELY(item == NULL))
+    {
+        printError("MasterPool: item creation returned NULL (pool=%p, userdata=%p)", (void *) pool, userdata);
         abortProgramNow(1);
     }
-    const size_t container_len = (size_t) container_len64;
+    return item;
+}
 
-    if (container_len > (SIZE_MAX - sizeof(master_pool_t)))
+master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
+{
+    uint32_t capacity;
+    uint64_t required_size64;
+    if (! masterpoolTryComputeGeometryForLimit(pool_width, SIZE_MAX, &capacity, &required_size64))
     {
-        printError("buffer size out of range");
-        abortProgramNow(1);
+        return NULL;
     }
-    const size_t required_size = sizeof(master_pool_t) + container_len;
+    const size_t required_size = (size_t) required_size64;
 
     // allocate memory, placing master_pool_t at a line cache address boundary
     master_pool_t *pool_ptr = memoryAllocateCacheAligned(required_size);
     if (pool_ptr == NULL)
     {
-        printError("buffer size out of range");
-        abortProgramNow(1);
+        return NULL;
     }
 
 #ifdef DEBUG
     memorySet(pool_ptr, 0xEB, required_size);
 #endif
 
-    master_pool_t pool = {.cap                 = pool_width,
+    master_pool_t pool = {.cap                 = capacity,
                           .len                 = 0,
+                          .checked_out         = 0,
                           .create_item_handle  = defaultCreateHandle,
                           .destroy_item_handle = defaultDestroyHandle};
 
     memoryCopy(pool_ptr, &pool, sizeof(master_pool_t));
-    mutexInit(&(pool_ptr->mutex));
+    if (UNLIKELY(! mutexTryInit(&pool_ptr->mutex)))
+    {
+        memoryFree(pool_ptr);
+        return NULL;
+    }
     atomicStoreExplicit(&(pool_ptr->len), 0, memory_order_relaxed);
+    atomicStoreExplicit(&(pool_ptr->checked_out), 0, memory_order_relaxed);
 
     return pool_ptr;
 }
@@ -88,6 +122,10 @@ void masterpoolInstallCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle 
 
 void masterpoolMakeEmpty(master_pool_t *pool)
 {
+    if (pool == NULL)
+    {
+        return;
+    }
     mutexLock(&(pool->mutex));
     const uint32_t current_len = (uint32_t) atomicLoadExplicit(&(pool->len), memory_order_relaxed);
     for (uint32_t i = 0; i < current_len; i++)
@@ -100,7 +138,16 @@ void masterpoolMakeEmpty(master_pool_t *pool)
 
 void masterpoolDestroy(master_pool_t *pool)
 {
+    if (pool == NULL)
+    {
+        return;
+    }
     mutexLock(&(pool->mutex));
+    if (masterpoolGetCheckedOut(pool) != 0)
+    {
+        printError("MasterPool: destroying a pool with %zu checked-out item(s)", masterpoolGetCheckedOut(pool));
+        abortProgramNow(1);
+    }
     if (pool->len != 0)
     {
         // wmutex_t* wbs = NULL; some bullshit code that was used to debug

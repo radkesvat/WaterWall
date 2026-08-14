@@ -423,6 +423,10 @@ static bool buildUpgradeSettings(httpclient_tstate_t *ts)
 tunnel_t *httpclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(httpclient_tstate_t), sizeof(httpclient_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &httpclientTunnelUpStreamInit;
     t->fnEstU     = &httpclientTunnelUpStreamEst;

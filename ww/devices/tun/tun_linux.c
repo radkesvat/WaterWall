@@ -728,12 +728,9 @@ static void tunDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
 // Hands whatever the drain cycle has already read to the reader session. Every
 // exit from tunDrainPackets() goes through this, so a device error never
 // strands packets that were read successfully before it.
-static void tunFlushReadBatch(tun_device_t *tdev, sbuf_t **bufs, uint16_t queued_count)
+static bool tunFlushReadBatch(tun_device_t *tdev, sbuf_t **bufs, uint16_t queued_count)
 {
-    if (queued_count > 0)
-    {
-        deviceFlowAffinityPostBatch(tdev->reader_session, bufs, queued_count);
-    }
+    return queued_count == 0 || deviceFlowAffinityPostBatch(tdev->reader_session, bufs, queued_count);
 }
 
 // Drains packets from the TUN device after POLLIN. Every accumulated buffer is
@@ -763,8 +760,7 @@ static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
         if (nread == 0)
         {
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
-            tunFlushReadBatch(tdev, bufs, queued_count);
-            return kTunDrainEndOfStream;
+            return tunFlushReadBatch(tdev, bufs, queued_count) ? kTunDrainEndOfStream : kTunDrainDeviceError;
         }
 
         if (nread < 0)
@@ -773,7 +769,10 @@ static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
             // loggers below can both overwrite it.
             const int saved_errno = errno;
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
-            tunFlushReadBatch(tdev, bufs, queued_count);
+            if (! tunFlushReadBatch(tdev, bufs, queued_count))
+            {
+                return kTunDrainDeviceError;
+            }
 
             if (tunIoErrnoIsTransient(saved_errno))
             {
@@ -817,7 +816,7 @@ static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
              * path. tundeviceNoteUnexpectedThreadExit() then publishes the
              * failure and owns the shutdown decision.
              */
-            tunFlushReadBatch(tdev, bufs, queued_count);
+            discard tunFlushReadBatch(tdev, bufs, queued_count);
             return kTunDrainDeviceError;
         }
 
@@ -825,7 +824,10 @@ static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
     }
 
     // Distribute all accumulated packets in one batch
-    tunFlushReadBatch(tdev, bufs, queued_count);
+    if (! tunFlushReadBatch(tdev, bufs, queued_count))
+    {
+        return kTunDrainDeviceError;
+    }
 
     return kTunDrainAgain;
 }
@@ -1643,7 +1645,11 @@ rollback:
         {
             tundeviceDrainStopPipe(tdev);
             tdev->reader_joinable = false;
+            // Close, join, retire: End poisons the fragment generation but leaves
+            // its staged reader buffers alone, because the reader still owned this
+            // pool. Only here does the lifecycle thread own it.
             bufferpoolResetThreadOwnership(tdev->reader_buffer_pool);
+            deviceReaderSessionRetireGenerationBuffers(tdev->reader_session);
         }
         else
         {
@@ -1714,7 +1720,11 @@ bool tundeviceBringDown(tun_device_t *tdev)
         {
             tundeviceDrainStopPipe(tdev);
             tdev->reader_joinable = false;
+            // Close, join, retire: End poisons the fragment generation but leaves
+            // its staged reader buffers alone, because the reader still owned this
+            // pool. Only here does the lifecycle thread own it.
             bufferpoolResetThreadOwnership(tdev->reader_buffer_pool);
+            deviceReaderSessionRetireGenerationBuffers(tdev->reader_session);
         }
         else
         {
@@ -1794,8 +1804,13 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         return NULL;
     }
 
-    // Set TUN fd non-blocking (BSD)
-    tunSetNonBlocking(fd);
+    // The reader drains until EAGAIN after every readiness notification, so a
+    // blocking descriptor cannot be published safely.
+    if (! tunSetNonBlocking(fd))
+    {
+        close(fd);
+        return NULL;
+    }
 
 #else
 
@@ -1828,8 +1843,13 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         return NULL;
     }
 
-    // Set TUN fd non-blocking (Linux)
-    tunSetNonBlocking(fd);
+    // The reader drains until EAGAIN after every readiness notification, so a
+    // blocking descriptor cannot be published safely.
+    if (! tunSetNonBlocking(fd))
+    {
+        close(fd);
+        return NULL;
+    }
 #endif
 
     /*
@@ -1851,6 +1871,12 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
                                                    worker_small_buffer_size
 
     );
+    if (UNLIKELY(reader_bpool == NULL))
+    {
+        LOGE("TunDevice: failed to construct reader buffer pool");
+        close(fd);
+        return NULL;
+    }
 
     buffer_pool_t *writer_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
                                                    GSTATE.masterpool_buffer_pools_small,
@@ -1859,10 +1885,34 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
                                                    worker_small_buffer_size
 
     );
+    if (UNLIKELY(writer_bpool == NULL))
+    {
+        LOGE("TunDevice: failed to construct writer buffer pool");
+        bufferpoolDestroy(reader_bpool);
+        close(fd);
+        return NULL;
+    }
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
+    if (UNLIKELY(tdev == NULL))
+    {
+        bufferpoolDestroy(reader_bpool);
+        bufferpoolDestroy(writer_bpool);
+        close(fd);
+        return NULL;
+    }
 
-    *tdev = (tun_device_t) {.name                = stringDuplicate(ifr.ifr_name),
+    char *device_name = stringDuplicate(ifr.ifr_name);
+    if (UNLIKELY(device_name == NULL))
+    {
+        memoryFree(tdev);
+        bufferpoolDestroy(reader_bpool);
+        bufferpoolDestroy(writer_bpool);
+        close(fd);
+        return NULL;
+    }
+
+    *tdev = (tun_device_t) {.name                = device_name,
                             .routine_reader      = routineReadFromTun,
                             .routine_writer      = routineWriteToTun,
                             .handle              = fd,
@@ -1876,11 +1926,23 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
     deviceWriterChannelInit(&tdev->writer_channel);
     tdev->reader_session =
         deviceReaderSessionCreate(RAM_PROFILE * 2, kMaxReadDistributeQueueSize, tdev, tunDeliverPacket, reader_bpool);
+    if (UNLIKELY(tdev->reader_session == NULL))
+    {
+        LOGE("TunDevice: failed to allocate reader session");
+        discard deviceWriterChannelDestroy(&tdev->writer_channel);
+        memoryFree(tdev->name);
+        bufferpoolDestroy(tdev->reader_buffer_pool);
+        bufferpoolDestroy(tdev->writer_buffer_pool);
+        close(tdev->handle);
+        memoryFree(tdev);
+        return NULL;
+    }
 
     if (pipe(tdev->linux_pipe_fds) != 0)
     {
         LOGE("TunDevice: failed to create pipe for linux_pipe_fds");
         memoryFree(tdev->name);
+        deviceReaderSessionRetireProducerBuffers(tdev->reader_session);
         bufferpoolDestroy(tdev->reader_buffer_pool);
         bufferpoolDestroy(tdev->writer_buffer_pool);
         deviceReaderSessionUnref(tdev->reader_session);
@@ -1917,6 +1979,7 @@ void tundeviceDestroy(tun_device_t *tdev)
         abortProgramNow(1);
     }
     memoryFree(tdev->name);
+    deviceReaderSessionRetireProducerBuffers(tdev->reader_session);
     bufferpoolDestroy(tdev->reader_buffer_pool);
     bufferpoolDestroy(tdev->writer_buffer_pool);
     close(tdev->handle);
@@ -1951,6 +2014,13 @@ void tunLinuxSetWriterRoutine(tun_device_t *tdev, wthread_routine routine)
 tun_lifecycle_state_t tunLinuxLifecycleState(const tun_device_t *tdev)
 {
     return tunLifecycleLoad(&tdev->lifecycle);
+}
+
+bool tunLinuxWriterChannelIsUnpublished(const tun_device_t *tdev)
+{
+    return ! deviceWriterChannelHasCurrent(&tdev->writer_channel) && tdev->writer_channel.retired == NULL &&
+           tdev->writer_channel.retired_generation_count == 0 &&
+           atomicLoadExplicit(&tdev->writer_channel.published_generation, memory_order_acquire) == (uintptr_t) NULL;
 }
 
 #endif

@@ -14,6 +14,5 @@ void muxclientTunnelDestroy(tunnel_t *t)
     {
         memoryFree(ts->fixed_next_parent_indexes);
     }
-
     tunnelDestroy(t);
 }

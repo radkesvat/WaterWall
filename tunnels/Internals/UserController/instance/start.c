@@ -20,7 +20,11 @@ static void usercontrollerStartWorkerTimer(void *worker_ptr, void *arg1, void *a
     if (timer == NULL)
     {
         LOGF("UserController: failed to create sweep timer on worker %u", (unsigned int) worker->wid);
-        terminateProgram(1);
+        ts->worker_states[worker->wid].sweep_timer = NULL;
+        if (! requestProgramShutdown(1))
+        {
+            abortProgramNow(1);
+        }
         return;
     }
 
@@ -32,6 +36,12 @@ void usercontrollerTunnelOnStart(tunnel_t *t)
 {
     for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
     {
-        sendWorkerMessageForceQueue(wid, usercontrollerStartWorkerTimer, t, NULL, NULL);
+        if (UNLIKELY(
+                ! sendWorkerMessageForceQueueWithCleanup(wid, usercontrollerStartWorkerTimer, NULL, t, NULL, NULL)))
+        {
+            LOGF("UserController: failed to admit required sweep timer on worker %u", (unsigned int) wid);
+            terminateProgram(1);
+            return;
+        }
     }
 }

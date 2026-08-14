@@ -20,8 +20,8 @@ static void exitHandle(void *userdata, int signum)
 
 static bool isVersionArgument(const char *arg)
 {
-    return stringCompare(arg, "-v") == 0 || stringCompare(arg, "-version") == 0 || stringCompare(arg, "--version") == 0 ||
-           stringCompare(arg, "--v") == 0 || stringCompare(arg, "version") == 0;
+    return stringCompare(arg, "-v") == 0 || stringCompare(arg, "-version") == 0 ||
+           stringCompare(arg, "--version") == 0 || stringCompare(arg, "--v") == 0 || stringCompare(arg, "version") == 0;
 }
 
 int waterwallInnerMain(int argc, char **argv);
@@ -55,7 +55,8 @@ int waterwallInnerMain(int argc, char **argv)
 
     if (core_file_content == NULL)
     {
-        printError("Waterwall version %s\nCould not read core settings file \"%s\" \n", TOSTRING(WATERWALL_VERSION),
+        printError("Waterwall version %s\nCould not read core settings file \"%s\" \n",
+                   TOSTRING(WATERWALL_VERSION),
                    core_file_name);
         terminateProgram(1);
     }
@@ -66,7 +67,7 @@ int waterwallInnerMain(int argc, char **argv)
     createDirIfNotExists(getCoreSettings()->log_path);
 
     ww_construction_data_t runtime_data = {
-        .workers_count = getCoreSettings()->workers_count,
+        .workers_count   = getCoreSettings()->workers_count,
         .ram_profile     = getCoreSettings()->ram_profile,
         .mtu_size        = getCoreSettings()->mtu_size,
         .dns_options     = getCoreSettings()->dns_options,
@@ -93,6 +94,18 @@ int waterwallInnerMain(int argc, char **argv)
     // core logger is available after ww setup
     createGlobalState(runtime_data);
 #if defined(WATERWALL_TEST_HOOKS)
+    const char *expected_ram_profile = getenv("WATERWALL_TEST_EXPECT_RAM_PROFILE");
+    if (expected_ram_profile != NULL)
+    {
+        char actual_ram_profile[32];
+        snprintf(actual_ram_profile, sizeof(actual_ram_profile), "%u", GSTATE.ram_profile);
+        if (stringCompare(expected_ram_profile, actual_ram_profile) != 0)
+        {
+            printError(
+                "test hook: expected effective ram profile %s, got %s\n", expected_ram_profile, actual_ram_profile);
+            terminateProgram(1);
+        }
+    }
     if (getenv("WATERWALL_TEST_FORCE_SYSTEM_LOAD") != NULL)
     {
         systemLoadSamplerSetForceUnderLoad(GSTATE.system_load, true);

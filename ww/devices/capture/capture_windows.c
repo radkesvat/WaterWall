@@ -1,8 +1,10 @@
 #include "capture.h"
+#include "capture_windows_checksum.h"
 #include "capture_windows_lifetime.h"
 
 #include "buffer_pool.h"
 #include "devices/device_flow_affinity.h"
+#include "devices/device_frag_affinity.h"
 #include "global_state.h"
 #include "managers/windivert_manager.h"
 #include "master_pool.h"
@@ -37,19 +39,41 @@ static void capturedeviceFormatIpv4(uint32_t addr_host, char *dest, size_t dest_
                   addr_host & 0xFFU);
 }
 
+static bool capturedeviceAppendFilter(char *filter, size_t filter_len, size_t *offset, const char *format, ...)
+{
+    if (*offset >= filter_len)
+    {
+        return false;
+    }
+
+    va_list args;
+    va_start(args, format);
+    const int written = vsnprintf(filter + *offset, filter_len - *offset, format, args);
+    va_end(args);
+    if (written < 0 || (size_t) written >= filter_len - *offset)
+    {
+        return false;
+    }
+    *offset += (size_t) written;
+    return true;
+}
+
 static char *capturedeviceBuildWinDivertFilter(const ipmask_t *ranges, uint32_t range_count)
 {
-    size_t filter_len = 10U; // "ip and (" + ")" + NUL
-
-    for (uint32_t i = 0; i < range_count; ++i)
+    uint64_t ranges_size;
+    if (! memoryTryComputeArraySizeForLimit(range_count, 80U, SIZE_MAX - 10U, &ranges_size))
     {
-        filter_len += 80U;
+        return NULL;
     }
+    const size_t filter_len = 10U + (size_t) ranges_size; // "ip and (" + ")" + NUL
 
     char  *filter = memoryAllocate(filter_len);
     size_t offset = 0;
-
-    offset += (size_t) stringNPrintf(filter + offset, filter_len - offset, "ip and (");
+    if (filter == NULL || ! capturedeviceAppendFilter(filter, filter_len, &offset, "ip and ("))
+    {
+        memoryFree(filter);
+        return NULL;
+    }
 
     for (uint32_t i = 0; i < range_count; ++i)
     {
@@ -64,23 +88,36 @@ static char *capturedeviceBuildWinDivertFilter(const ipmask_t *ranges, uint32_t 
         capturedeviceFormatIpv4(min_host, min_ip, sizeof(min_ip));
         capturedeviceFormatIpv4(max_host, max_ip, sizeof(max_ip));
 
-        if (i > 0)
+        if (i > 0 && ! capturedeviceAppendFilter(filter, filter_len, &offset, " or "))
         {
-            offset += (size_t) stringNPrintf(filter + offset, filter_len - offset, " or ");
+            memoryFree(filter);
+            return NULL;
         }
 
         if (capturedeviceIpv4MaskPrefixLength(&ranges[i].mask) == 32)
         {
-            offset += (size_t) stringNPrintf(filter + offset, filter_len - offset, "ip.SrcAddr == %s", min_ip);
+            if (! capturedeviceAppendFilter(filter, filter_len, &offset, "ip.SrcAddr == %s", min_ip))
+            {
+                memoryFree(filter);
+                return NULL;
+            }
         }
         else
         {
-            offset += (size_t) stringNPrintf(
-                filter + offset, filter_len - offset, "(ip.SrcAddr >= %s and ip.SrcAddr <= %s)", min_ip, max_ip);
+            if (! capturedeviceAppendFilter(
+                    filter, filter_len, &offset, "(ip.SrcAddr >= %s and ip.SrcAddr <= %s)", min_ip, max_ip))
+            {
+                memoryFree(filter);
+                return NULL;
+            }
         }
     }
 
-    stringNPrintf(filter + offset, filter_len - offset, ")");
+    if (! capturedeviceAppendFilter(filter, filter_len, &offset, ")"))
+    {
+        memoryFree(filter);
+        return NULL;
+    }
 
     return filter;
 }
@@ -91,15 +128,16 @@ static void captureDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
     cdev->read_event_callback(cdev, cdev->userdata, buf, wid);
 }
 
-static void distributePacketPayload(capture_device_t *cdev, sbuf_t *buf)
+static bool distributePacketPayload(capture_device_t *cdev, sbuf_t *buf)
 {
-    deviceFlowAffinityPostBatch(cdev->reader_session, &buf, 1);
+    return deviceFlowAffinityPostBatch(cdev->reader_session, &buf, 1);
 }
 static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 {
     capture_device_t *cdev = userdata;
     sbuf_t           *buf;
     UINT              read_packet_len = 0;
+    WINDIVERT_ADDRESS address         = {0};
     HANDLE            handle          = cdev->handle;
 
     assert(handle != NULL && handle != INVALID_HANDLE_VALUE);
@@ -110,7 +148,8 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
         buf = sbufReserveSpace(buf, kMaxAllowedPacketLength);
 
-        if (! windivertRecv(handle, sbufGetMutablePtr(buf), kMaxAllowedPacketLength, &read_packet_len, NULL))
+        memoryZero(&address, sizeof(address));
+        if (! windivertRecv(handle, sbufGetMutablePtr(buf), kMaxAllowedPacketLength, &read_packet_len, &address))
         {
             DWORD recv_error = GetLastError();
             bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
@@ -145,6 +184,20 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
         sbufSetLength(buf, read_packet_len);
 
+        const device_packet_checksum_provenance_t checksum_provenance =
+            captureWindowsChecksumProvenance(address.IPChecksum != 0,
+                                             address.TCPChecksum != 0,
+                                             address.UDPChecksum != 0,
+                                             address.Outbound != 0,
+                                             address.Loopback != 0,
+                                             address.Impostor != 0);
+        if (! deviceIpv4PreparePacketChecksums(sbufGetMutablePtr(buf), sbufGetLength(buf), checksum_provenance))
+        {
+            bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+            LOGW("CaptureDevice: discarded an IPv4 packet with invalid or unavailable checksums");
+            continue;
+        }
+
         if (UNLIKELY(sbufGetLength(buf) > kMaxAllowedPacketLength))
         {
             // we are capturing packets and this can happen, so we just log it
@@ -156,7 +209,10 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
             continue;
         }
 
-        distributePacketPayload(cdev, buf);
+        if (! distributePacketPayload(cdev, buf))
+        {
+            break;
+        }
     }
 
     return 0;
@@ -292,7 +348,11 @@ static capture_windows_join_result_e capturedeviceJoinReader(void *context)
 
     cdev->read_thread           = NULL;
     cdev->reader_exit_confirmed = false;
+    // Close, join, retire: End poisons the fragment generation but leaves its
+    // staged reader buffers alone, because the reader still owned this pool.
+    // Only here does the lifecycle thread own it.
     bufferpoolResetThreadOwnership(cdev->reader_buffer_pool);
+    deviceReaderSessionRetireGenerationBuffers(cdev->reader_session);
     return kCaptureWindowsJoinResultStopped;
 }
 
@@ -467,10 +527,32 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
                                                    bufferpoolGetSmallBufferSize(worker_pool)
 
     );
+    if (UNLIKELY(reader_bpool == NULL))
+    {
+        LOGE("CaptureDevice: failed to construct reader buffer pool");
+        return NULL;
+    }
+
+    char *device_name = stringDuplicate(name);
+    char *filter      = capturedeviceBuildWinDivertFilter(capture_ranges, capture_range_count);
+    if (UNLIKELY(device_name == NULL || filter == NULL))
+    {
+        memoryFree(device_name);
+        memoryFree(filter);
+        bufferpoolDestroy(reader_bpool);
+        return NULL;
+    }
 
     capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
+    if (UNLIKELY(cdev == NULL))
+    {
+        memoryFree(device_name);
+        memoryFree(filter);
+        bufferpoolDestroy(reader_bpool);
+        return NULL;
+    }
 
-    *cdev = (capture_device_t) {.name                  = stringDuplicate(name),
+    *cdev = (capture_device_t) {.name                  = device_name,
                                 .running               = false,
                                 .up                    = false,
                                 .routine_reader        = routineReadFromCapture,
@@ -480,11 +562,20 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
                                 .read_event_callback   = cb,
                                 .userdata              = userdata,
                                 .reader_session        = NULL,
-                                .reader_buffer_pool    = reader_bpool};
+                                .reader_buffer_pool    = reader_bpool,
+                                .filter                = filter};
     atomic_init(&cdev->lifecycle, kCaptureLifecycleDown);
 
-    cdev->filter         = capturedeviceBuildWinDivertFilter(capture_ranges, capture_range_count);
     cdev->reader_session = deviceReaderSessionCreate(RAM_PROFILE * 2, 1, cdev, captureDeliverPacket, reader_bpool);
+    if (UNLIKELY(cdev->reader_session == NULL))
+    {
+        LOGE("CaptureDevice: failed to allocate reader session");
+        memoryFree(cdev->name);
+        memoryFree(cdev->filter);
+        bufferpoolDestroy(cdev->reader_buffer_pool);
+        memoryFree(cdev);
+        return NULL;
+    }
 
     return cdev;
 }
@@ -508,6 +599,7 @@ void capturedeviceDestroy(capture_device_t *cdev)
 
     memoryFree(cdev->name);
     memoryFree(cdev->filter);
+    deviceReaderSessionRetireProducerBuffers(cdev->reader_session);
     bufferpoolDestroy(cdev->reader_buffer_pool);
     deviceReaderSessionUnref(cdev->reader_session);
 

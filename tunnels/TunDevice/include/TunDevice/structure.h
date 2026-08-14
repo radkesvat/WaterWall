@@ -2,15 +2,22 @@
 
 #include "wwapi.h"
 
+#ifndef LOG_PACKET_INFO
 #define LOG_PACKET_INFO 0
-#define LOG_SSDP        0
-#define LOG_MDNS        0
-#define LOG_V6          0
+#endif
+#ifndef LOG_SSDP
+#define LOG_SSDP 0
+#endif
+#ifndef LOG_MDNS
+#define LOG_MDNS 0
+#endif
+#ifndef LOG_V6
+#define LOG_V6 0
+#endif
 
 typedef struct tundevice_tstate_s
 {
-    TunnelFlowRoutinePayload WriteReceivedPacket; // function to give received data to the next/prev tunnel
-    tunnel_t                *write_tunnel;        // tunnel to write data to
+    packet_lifecycle_anchor_t lifecycle_anchor;
 
     // settings form json
     char    *name;        // name of the device
@@ -38,43 +45,20 @@ typedef struct tundevice_tstate_s
 
 } tundevice_tstate_t;
 
-typedef struct tundevice_lstate_s
-{
-    int unused;
-} tundevice_lstate_t;
+_Static_assert(offsetof(tundevice_tstate_t, lifecycle_anchor) == 0,
+               "TunDevice lifecycle anchor must remain the tunnel-state prefix");
 
 enum
 {
-    kTunnelStateSize = sizeof(tundevice_tstate_t),
-    kLineStateSize   = sizeof(tundevice_lstate_t)
+    kTunnelStateSize = sizeof(tundevice_tstate_t)
 };
 
 WW_EXPORT void         tundeviceTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *tundeviceTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tundeviceTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void tundeviceTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset);
-void tundeviceTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-void tundeviceTunnelOnPrepair(tunnel_t *t);
 void tundeviceTunnelOnStart(tunnel_t *t);
 void tundeviceTunnelOnStop(tunnel_t *t);
-
-void tundeviceTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void tundeviceTunnelUpStreamEst(tunnel_t *t, line_t *l);
-void tundeviceTunnelUpStreamFinish(tunnel_t *t, line_t *l);
-void tundeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void tundeviceTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void tundeviceTunnelUpStreamResume(tunnel_t *t, line_t *l);
-
-void tundeviceTunnelDownStreamInit(tunnel_t *t, line_t *l);
-void tundeviceTunnelDownStreamEst(tunnel_t *t, line_t *l);
-void tundeviceTunnelDownStreamFinish(tunnel_t *t, line_t *l);
-void tundeviceTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void tundeviceTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void tundeviceTunnelDownStreamResume(tunnel_t *t, line_t *l);
-
-void tundeviceLinestateInitialize(tundevice_lstate_t *ls);
-void tundeviceLinestateDestroy(tundevice_lstate_t *ls);
 
 bool tundeviceLoadRouteSettings(tundevice_tstate_t *state, const cJSON *settings);
 bool tundeviceApplySystemRoutes(tundevice_tstate_t *state);

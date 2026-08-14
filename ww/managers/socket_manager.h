@@ -4,8 +4,8 @@
  * Socket manager interfaces for TCP/UDP listener registration and dispatch.
  */
 
-#include "shiftbuffer.h"
 #include "local_widle_table.h"
+#include "shiftbuffer.h"
 #include "socket_filter_option.h"
 #include "tunnel.h"
 #include "widle_table.h"
@@ -42,6 +42,15 @@ typedef struct udpsock_s
  * @brief Get the current worker's UDP idle table for a listener socket.
  */
 local_idle_table_t *udpsockGetWorkerIdleTable(udpsock_t *socket);
+
+/**
+ * @brief Drain and release one UDP listener socket's idle table for a worker.
+ *
+ * This is the per-socket primitive used by the global worker-shutdown drain.
+ * It is exposed so lifecycle tests can exercise the real owner callbacks
+ * without constructing a listening OS socket.
+ */
+void socketmanagerDrainUdpSocketForWorker(udpsock_t *socket, wid_t wid);
 
 /*
  * UDP packet result delivered to the selected listener tunnel after filtering.

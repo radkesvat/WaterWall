@@ -61,8 +61,13 @@ static bool parseSettings(usercontroller_tstate_t *ts, node_t *node, const cJSON
 
 tunnel_t *usercontrollerTunnelCreate(node_t *node)
 {
-    tunnel_t                *t  = tunnelCreate(node, sizeof(usercontroller_tstate_t), sizeof(usercontroller_lstate_t));
-    usercontroller_tstate_t *ts = tunnelGetState(t);
+    tunnel_t *t = tunnelCreate(node, sizeof(usercontroller_tstate_t), sizeof(usercontroller_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
+
+    usercontroller_tstate_t *ts       = tunnelGetState(t);
     const cJSON             *settings = node->node_settings_json;
 
     t->fnInitU    = &usercontrollerTunnelUpStreamInit;

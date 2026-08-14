@@ -337,14 +337,26 @@ static void systemLoadTimerHandle(wtimer_t *timer)
     systemLoadSamplerUpdate(state);
 }
 
-void systemLoadSamplerInit(system_load_state_t *state)
+bool systemLoadSamplerTryInit(system_load_state_t *state)
 {
-    assert(state != NULL);
+    if (state == NULL)
+    {
+        return false;
+    }
     *state = (system_load_state_t) {0};
-    mutexInit(&state->mutex);
+    if (UNLIKELY(! mutexTryInit(&state->mutex)))
+    {
+        return false;
+    }
     state->initialized = true;
     state->supported   = true;
     discard systemLoadSamplerUpdate(state);
+    return true;
+}
+
+void systemLoadSamplerInit(system_load_state_t *state)
+{
+    wSyncInitRequire(systemLoadSamplerTryInit(state));
 }
 
 bool systemLoadSamplerStart(system_load_state_t *state, wloop_t *loop)

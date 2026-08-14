@@ -6,26 +6,31 @@
 #include "mimalloc.h"
 #include "wmutex.h"
 
-
 static bool memoryAlignmentIsValid(size_t alignment)
 {
     return alignment != 0 && (alignment & (alignment - 1)) == 0;
 }
 
-void *memoryAllocateAligned(size_t size, size_t alignment)
+bool memoryAlignedAllocationSizeIsRepresentableForLimit(uint64_t size, size_t alignment, uint64_t size_limit)
 {
     if (! memoryAlignmentIsValid(alignment))
+    {
+        return false;
+    }
+
+    const uint64_t effective_alignment = max((uint64_t) alignment, (uint64_t) sizeof(void *));
+    return effective_alignment <= size_limit && size <= size_limit - effective_alignment;
+}
+
+void *memoryAllocateAligned(size_t size, size_t alignment)
+{
+    if (! memoryAlignedAllocationSizeIsRepresentableForLimit((uint64_t) size, alignment, (uint64_t) SIZE_MAX))
     {
         return NULL;
     }
 
     // promote so the padding gap below is always at least one pointer wide
     alignment = max(alignment, sizeof(void *));
-
-    if (size > SIZE_MAX - alignment)
-    {
-        return NULL;
-    }
 
     // over-allocate by exactly `alignment` (1 + (alignment - 1)): aligning
     // (base + 1) up lands a non-zero multiple of sizeof(void *) past base,
@@ -129,7 +134,10 @@ void *memoryAllocate(size_t size)
 {
     void *ptr = mi_malloc(size);
 #ifdef DEBUG
-    memorySet(ptr, 0XBE, size);
+    if (ptr != NULL)
+    {
+        memorySet(ptr, 0XBE, size);
+    }
 #endif
     return ptr;
 }
@@ -204,7 +212,10 @@ void *memoryAllocate(size_t size)
 {
     void *ptr = malloc(size);
 #ifdef DEBUG
-    memorySet(ptr, 0XBE, size);
+    if (ptr != NULL)
+    {
+        memorySet(ptr, 0XBE, size);
+    }
 #endif
     return ptr;
 }

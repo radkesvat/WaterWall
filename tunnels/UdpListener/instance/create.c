@@ -307,6 +307,11 @@ static void setupFilterOptions(socket_filter_option_t *filter_opt, udplistener_t
 tunnel_t *udplistenerTunnelCreate(node_t *node)
 {
     tunnel_t *t = adapterCreate(node, sizeof(udplistener_tstate_t), sizeof(udplistener_lstate_t), kAdapterChainHead);
+    if (! t)
+    {
+        return NULL;
+    }
+
     setupTunnelCallbacks(t);
 
     const cJSON          *settings = node->node_settings_json;

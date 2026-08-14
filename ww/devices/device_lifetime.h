@@ -227,12 +227,19 @@ static inline void deviceLifetimeYieldThread(void *context)
     discard context;
 
     YIELD_CPU();
+
+    /*
+     * Cadence is deliberately not uniform across platforms and is preserved as
+     * it was: Windows' scheduler yield is far more expensive than a POSIX one,
+     * so this loop only enters the scheduler every 64th pass there. Only the
+     * platform selection moved into YIELD_THREAD().
+     */
 #ifdef OS_WIN
     static thread_local unsigned int windows_yield_count;
     windows_yield_count++;
     if (windows_yield_count % 64 == 0)
     {
-        SwitchToThread();
+        YIELD_THREAD();
     }
 #else
     YIELD_THREAD();

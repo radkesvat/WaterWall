@@ -31,11 +31,22 @@ void domainresolverTunnelSetPrepareHook(tunnel_t *t, tunnel_t *owner, uint32_t u
         abortProgramNow(1);
     }
 
-    domainresolver_tstate_t *ts = tunnelGetState(t);
-    uint32_t aligned_user_size  = user_lstate_size > 0 ? tunnelGetCorrectAlignedLineStateSize(user_lstate_size) : 0;
+    domainresolver_tstate_t *ts                = tunnelGetState(t);
+    uint32_t                 aligned_user_size = 0;
+    if (UNLIKELY(! tunnelTryAlignStateSize((size_t) user_lstate_size, &aligned_user_size)))
+    {
+        LOGF("DomainResolver: prepare hook line state is too large");
+        abortProgramNow(1);
+    }
 
-    if (UNLIKELY(aligned_user_size >
-                 UINT32_MAX - tunnelGetCorrectAlignedLineStateSize(sizeof(domainresolver_lstate_t))))
+    uint32_t resolver_state_size = 0;
+    if (UNLIKELY(! tunnelTryAlignStateSize(sizeof(domainresolver_lstate_t), &resolver_state_size)))
+    {
+        LOGF("DomainResolver: internal line state is too large");
+        abortProgramNow(1);
+    }
+
+    if (UNLIKELY(aligned_user_size > UINT32_MAX - resolver_state_size))
     {
         LOGF("DomainResolver: prepare hook line state is too large");
         abortProgramNow(1);
@@ -44,7 +55,7 @@ void domainresolverTunnelSetPrepareHook(tunnel_t *t, tunnel_t *owner, uint32_t u
     ts->prepare_owner       = owner;
     ts->prepare             = prepare;
     ts->user_lstate_destroy = destroy;
-    ts->user_lstate_offset  = tunnelGetCorrectAlignedLineStateSize(sizeof(domainresolver_lstate_t));
+    ts->user_lstate_offset  = resolver_state_size;
     ts->user_lstate_size    = aligned_user_size;
 
     t->lstate_size = ts->user_lstate_offset + ts->user_lstate_size;

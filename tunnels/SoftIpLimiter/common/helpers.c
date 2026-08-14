@@ -2,15 +2,25 @@
 
 #include "loggers/network_logger.h"
 
-void softiplimiterTunnelstateInitialize(softiplimiter_tstate_t *ts)
+bool softiplimiterTunnelstateInitialize(softiplimiter_tstate_t *ts)
 {
-    rwlockinit(&ts->table_lock);
-    ts->table                         = softiplimiter_identity_map_t_with_capacity(kSoftIpLimiterInitialTableCap);
+    if (UNLIKELY(! rwlockTryInit(&ts->table_lock)))
+    {
+        return false;
+    }
+    ts->table = softiplimiter_identity_map_t_init();
+    if (UNLIKELY(! softiplimiter_identity_map_t_reserve(&ts->table, kSoftIpLimiterInitialTableCap)))
+    {
+        softiplimiter_identity_map_t_drop(&ts->table);
+        rwlockDestroy(&ts->table_lock);
+        return false;
+    }
     ts->identifier_mode               = kSoftIpLimiterIdentifierNone;
     ts->identification_failure_action = kSoftIpLimiterIdentificationFailurePassthrough;
     ts->tolerance_ms                  = 0;
     ts->simultaneous_user_limit       = 0;
     ts->verbose                       = false;
+    return true;
 }
 
 void softiplimiterTunnelstateDestroy(softiplimiter_tstate_t *ts)

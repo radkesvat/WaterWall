@@ -545,12 +545,12 @@ void streamtopacketsForwardDecodedPacket(tunnel_t *t, line_t *stream_line, sbuf_
         .tunnel = t, .packet_line = packet_line, .buf = packet, .generation = generation};
 
     lineLock(packet_line);
-    discard sendWorkerMessageForceQueueWithCleanup(target_wid,
-                                                   (WorkerMessageCallback) streamtopacketsReplayDecodedPacketOnWorker,
-                                                   streamtopacketsCleanupDecodedPacket,
-                                                   msg,
-                                                   NULL,
-                                                   NULL);
+    sendWorkerMessageForceQueueBestEffortWithCleanup(target_wid,
+                                                     (WorkerMessageCallback) streamtopacketsReplayDecodedPacketOnWorker,
+                                                     streamtopacketsCleanupDecodedPacket,
+                                                     msg,
+                                                     NULL,
+                                                     NULL);
 }
 
 // Builds and sends a heartbeat pong. The on-wire format is a raw concatenation of IPv4 packets, so

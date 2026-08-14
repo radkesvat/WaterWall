@@ -2,23 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-static sbuf_t *ptcAllocateUdpReadBuffer(line_t *line, uint32_t len)
-{
-    buffer_pool_t *pool = lineGetBufferPool(line);
-
-    if (len <= bufferpoolGetSmallBufferSize(pool))
-    {
-        return bufferpoolGetSmallBuffer(pool);
-    }
-
-    if (len <= bufferpoolGetLargeBufferSize(pool))
-    {
-        return bufferpoolGetLargeBuffer(pool);
-    }
-
-    return sbufCreateWithPadding(len, bufferpoolGetLargeBufferPadding(pool));
-}
-
 void ptcUdpAccept(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_addr_t *addr, u16_t port)
 {
     discard p;
@@ -32,7 +15,11 @@ void ptcUdpAccept(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_addr
         return;
     }
 
-    upcb->netif_idx = netif_get_index(&route_ctx->netif);
+    if (udp_bind_netif(upcb, &route_ctx->netif) != ERR_OK)
+    {
+        udp_remove(upcb);
+        return;
+    }
     udp_recv(upcb, ptcUdpReceived, route_ctx);
 }
 
@@ -76,9 +63,10 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
         .dest_port         = upcb->local_port,
     };
 
-    tunnel_t               *t       = route_ctx->tunnel;
-    line_t                 *line    = NULL;
-    ptc_udp_flow_map_t_iter flow_it = ptc_udp_flow_map_t_find(&route_ctx->udp_flows, key);
+    tunnel_t               *t        = route_ctx->tunnel;
+    line_t                 *line     = NULL;
+    bool                    new_flow = false;
+    ptc_udp_flow_map_t_iter flow_it  = ptc_udp_flow_map_t_find(&route_ctx->udp_flows, key);
 
     if (flow_it.ref != ptc_udp_flow_map_t_end(&route_ctx->udp_flows).ref)
     {
@@ -97,7 +85,13 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
         ptc_lstate_t *ls = lineGetState(line, t);
         ip_addr_t     local_ip;
 
-        ptcLinestateInitialize(ls, t, line, kPtcLineKindUdp, upcb);
+        if (UNLIKELY(! ptcLinestateInitialize(ls, t, line, kPtcLineKindUdp, upcb)))
+        {
+            LOGW("PacketsToConnection: out of memory accepting a udp flow; dropping it");
+            lineDestroy(line);
+            pbuf_free(p);
+            return;
+        }
 
         ls->route_ctx      = route_ctx;
         ls->udp_flow_key   = key;
@@ -125,10 +119,15 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
             // line still owns its lwIP refs. Defer the full teardown to the owner worker;
             // ptcCloseLineFromNetwork() detaches the lwIP state and destroys the line state
             // outside the core lock. next_init was never sent, so no Finish is propagated.
-            lineScheduleTask(line, ptcCloseLineTask, t);
+            if (! lineScheduleTask(line, ptcCloseLineTask, t))
+            {
+                discard ptcRequiredControlRefusedLocked(ls, "duplicate UDP-flow close");
+            }
             pbuf_free(p);
             return;
         }
+
+        new_flow = true;
 
         if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
         {
@@ -146,14 +145,24 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
         }
     }
 
-    sbuf_t *buf = ptcAllocateUdpReadBuffer(line, p->tot_len);
+    if (new_flow && ! lineScheduleTask(line, ptcOpenLineTask, t))
+    {
+        /* Init is required control: publishing payload without it strands an owned line. */
+        discard ptcRequiredControlRefusedLocked(lineGetState(line, t), "UDP-flow open");
+        pbuf_free(p);
+        return;
+    }
+
+    buffer_pool_t *pool = lineGetBufferPool(line);
+    sbuf_t        *buf  = bufferpoolGetBestFit(pool, p->tot_len, bufferpoolGetLargeBufferPadding(pool));
     sbufSetLength(buf, p->tot_len);
     pbuf_copy_partial(p, sbufGetMutablePtr(buf), p->tot_len, 0);
     pbuf_free(p);
 
     if (lineIsAlive(line))
     {
-        lineScheduleTaskWithBuf(line, ptcDeliverPayloadTask, t, buf);
+        /* UDP is intentionally lossy when the worker queue refuses admission. */
+        discard lineScheduleTaskWithBuf(line, ptcDeliverPayloadTask, t, buf);
     }
     else
     {

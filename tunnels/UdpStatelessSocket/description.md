@@ -1,5 +1,5 @@
 <!--
-Documentation version: 107
+Documentation version: 108
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpStatelessSocket.mdx, and both files must keep the same documentation version.
 -->
 
@@ -123,6 +123,8 @@ When payload is sent through `UdpStatelessSocket`:
 - if the line was created for an inbound peer, the datagram is sent back to that stored peer endpoint
 - otherwise, the tunnel reads the destination address from `l->routing_context.dest_ctx`
 - unresolved routing-context domains are resolved asynchronously
+- async results are cached by domain, port, and strategy for 30 minutes in a fixed 256-entry FIFO. Existing keys
+  refresh in place, expired entries are reclaimed before insertion, and the oldest entry is evicted when the cap is full
 - the destination IP and port are converted to a socket address and sent through the bound socket
 
 This keeps compatibility with packet-line producers such as `WireGuardDevice` while allowing inbound peers to keep distinct return paths.

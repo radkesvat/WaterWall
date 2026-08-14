@@ -102,7 +102,8 @@ static void muxserverParentStatsLogTask(tunnel_t *t, line_t *parent_l)
 
     if (! parent_ls->parent_finishing)
     {
-        lineScheduleDelayedTask(parent_l, muxserverParentStatsLogTask, kMuxMainLineStatsLogIntervalMs, t);
+        /* Optional statistics sampling is intentionally lossy under pressure. */
+        discard lineScheduleDelayedTask(parent_l, muxserverParentStatsLogTask, kMuxMainLineStatsLogIntervalMs, t);
     }
 }
 
@@ -115,7 +116,8 @@ void muxserverScheduleParentStatsLog(tunnel_t *t, line_t *parent_l)
         return;
     }
 
-    lineScheduleDelayedTask(parent_l, muxserverParentStatsLogTask, kMuxMainLineStatsLogIntervalMs, t);
+    /* Optional statistics sampling is intentionally lossy under pressure. */
+    discard lineScheduleDelayedTask(parent_l, muxserverParentStatsLogTask, kMuxMainLineStatsLogIntervalMs, t);
 }
 
 void muxserverCloseChildKeepParent(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls,

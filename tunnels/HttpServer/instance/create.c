@@ -284,10 +284,31 @@ static bool parseHttp1SplitSettings(httpserver_tstate_t *ts, const cJSON *settin
         ts->split_download_headers = cJSON_GetObjectItemCaseSensitive(download, "headers");
     }
 
-    mutexInit(&ts->split_upload_map_mutex);
-    mutexInit(&ts->split_download_map_mutex);
-    ts->split_upload_map       = hmap_httpserver_split_t_with_capacity(64);
-    ts->split_download_map     = hmap_httpserver_split_t_with_capacity(64);
+    ts->split_upload_map   = hmap_httpserver_split_t_init();
+    ts->split_download_map = hmap_httpserver_split_t_init();
+    if (UNLIKELY(! hmap_httpserver_split_t_reserve(&ts->split_upload_map, 64) ||
+                 ! hmap_httpserver_split_t_reserve(&ts->split_download_map, 64)))
+    {
+        hmap_httpserver_split_t_drop(&ts->split_upload_map);
+        hmap_httpserver_split_t_drop(&ts->split_download_map);
+        LOGF("HttpServer: failed to reserve split-session maps");
+        return false;
+    }
+    if (UNLIKELY(! mutexTryInit(&ts->split_upload_map_mutex)))
+    {
+        hmap_httpserver_split_t_drop(&ts->split_upload_map);
+        hmap_httpserver_split_t_drop(&ts->split_download_map);
+        LOGF("HttpServer: failed to initialize split upload-map mutex");
+        return false;
+    }
+    if (UNLIKELY(! mutexTryInit(&ts->split_download_map_mutex)))
+    {
+        mutexDestroy(&ts->split_upload_map_mutex);
+        hmap_httpserver_split_t_drop(&ts->split_upload_map);
+        hmap_httpserver_split_t_drop(&ts->split_download_map);
+        LOGF("HttpServer: failed to initialize split download-map mutex");
+        return false;
+    }
     ts->split_maps_initialized = true;
     return true;
 }
@@ -382,6 +403,10 @@ static bool initializeNghttp2State(httpserver_tstate_t *ts)
 tunnel_t *httpserverTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(httpserver_tstate_t), sizeof(httpserver_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &httpserverTunnelUpStreamInit;
     t->fnEstU     = &httpserverTunnelUpStreamEst;
@@ -436,7 +461,14 @@ tunnel_t *httpserverTunnelCreate(node_t *node)
 
     if (ts->h1_transport_mode == kHttpServerH1TransportSplit)
     {
-        return pipetunnelCreate(t);
+        tunnel_t *pipe_tunnel = pipetunnelCreate(t);
+        if (! pipe_tunnel)
+        {
+            /* pipetunnelCreate() did not take ownership of the child. */
+            httpserverTunnelDestroy(t);
+            return NULL;
+        }
+        return pipe_tunnel;
     }
 
     return t;

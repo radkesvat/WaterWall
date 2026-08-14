@@ -6,7 +6,7 @@ tunnel_t *speedtestserverTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(speedtestserver_tstate_t), sizeof(speedtestserver_lstate_t));
 
-    if (t == NULL)
+    if (! t)
     {
         return NULL;
     }
@@ -34,7 +34,12 @@ tunnel_t *speedtestserverTunnelCreate(node_t *node)
     const cJSON              *settings           = node->node_settings_json;
     int                       report_interval_ms = kSpeedTestServerDefaultIntervalMs;
 
-    mutexInit(&state->aggregate_mutex);
+    if (UNLIKELY(! mutexTryInit(&state->aggregate_mutex)))
+    {
+        LOGF("SpeedTestServer: failed to initialize aggregate mutex");
+        tunnelDestroy(t);
+        return NULL;
+    }
     getBoolFromJsonObjectOrDefault(&state->json_summary, settings, "json-summary", false);
     getBoolFromJsonObjectOrDefault(&state->quiet, settings, "quiet", false);
     getIntFromJsonObjectOrDefault(

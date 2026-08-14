@@ -5,6 +5,10 @@
 tunnel_t *connectionfisherserverTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(connectionfisherserver_tstate_t), sizeof(connectionfisherserver_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &connectionfisherserverTunnelUpStreamInit;
     t->fnEstU     = &connectionfisherserverTunnelUpStreamEst;

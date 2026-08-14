@@ -32,7 +32,7 @@ static bool domainresolverParseStrategy(domainresolver_tstate_t *ts, const cJSON
 tunnel_t *domainresolverTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(domainresolver_tstate_t), sizeof(domainresolver_lstate_t));
-    if (UNLIKELY(t == NULL))
+    if (! t)
     {
         return NULL;
     }

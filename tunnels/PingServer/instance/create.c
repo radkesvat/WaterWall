@@ -224,6 +224,10 @@ static bool pingserverLoadSwapProtocol(uint8_t *dest, const cJSON *settings)
 tunnel_t *pingserverCreate(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(pingserver_tstate_t), 0);
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &pingserverUpStreamInit;
     t->fnEstU     = &pingserverUpStreamEst;

@@ -42,7 +42,7 @@ tunnel_t *blackholeTunnelCreate(node_t *node)
     }
 
     tunnel_t *t = adapterCreate(node, sizeof(blackhole_tstate_t), 0, kAdapterChainEnd);
-    if (t == NULL)
+    if (! t)
     {
         return NULL;
     }

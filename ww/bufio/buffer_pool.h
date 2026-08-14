@@ -32,13 +32,31 @@
 typedef struct buffer_pool_s buffer_pool_t;
 
 /**
+ * Validate buffer-pool metadata geometry without allocating it.  The input is
+ * the requested per-tier width; the published capacity is twice that width.
+ * Outputs are unchanged on failure.
+ *
+ * @param pool_width Requested per-tier width. Must be nonzero.
+ * @param allocation_limit Synthetic target size_t limit.
+ * @param capacity_out Doubled container capacity.
+ * @param free_threshold_out Shrink threshold derived from the capacity.
+ * @param pointer_array_size_out Bytes required by each pointer array.
+ * @return true when every independent metadata allocation is representable.
+ */
+bool bufferpoolTryComputeGeometryForLimit(uint32_t pool_width, uint64_t allocation_limit, uint32_t *capacity_out,
+                                          uint32_t *free_threshold_out, uint64_t *pointer_array_size_out);
+
+/**
  * Creates a buffer pool with specified parameters.
  * @param mp_large The master pool for large buffers.
  * @param mp_small The master pool for small buffers.
  * @param bufcount The number of buffers to preallocate.
  * @param large_buffer_size The size of each large buffer.
  * @param small_buffer_size The size of each small buffer.
- * @return A pointer to the created buffer pool.
+ * @return A pointer to the completely constructed buffer pool, or NULL when
+ *         the input geometry, either master pool, or any metadata allocation
+ *         cannot be satisfied. Nothing is published and no master-pool
+ *         callback is installed on failure.
  */
 buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small, uint32_t bufcount,
                                 uint32_t large_buffer_size, uint32_t small_buffer_size);

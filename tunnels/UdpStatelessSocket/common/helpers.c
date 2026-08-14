@@ -6,17 +6,29 @@
 
 typedef struct udpstatelesssocket_dns_request_s
 {
-    tunnel_t *tunnel;
-    line_t   *line;
-    sbuf_t   *buf;
-    char     *domain;
-    uint16_t  port;
-    int       strategy;
+    tunnel_async_session_t *session;
+    line_t                 *line;
+    sbuf_t                 *buf;
+    char                   *domain;
+    uint16_t                port;
+    int                     strategy;
 } udpstatelesssocket_dns_request_t;
 
 static void udpstatelesssocketCleanupSendRequest(void *arg1, void *arg2, void *arg3);
 
-static udpstatelesssocket_send_request_t *udpstatelesssocketSendRequestCreate(udpstatelesssocket_tstate_t *state)
+#ifdef UDPSTATELESSSOCKET_DISPATCH_TEST_HOOKS
+static UdpStatelessSocketForeignAdmissionHook udpstatelesssocket_foreign_admission_hook;
+static void                                  *udpstatelesssocket_foreign_admission_context;
+
+void udpstatelesssocketInstallForeignAdmissionHook(UdpStatelessSocketForeignAdmissionHook hook, void *context)
+{
+    udpstatelesssocket_foreign_admission_hook    = hook;
+    udpstatelesssocket_foreign_admission_context = context;
+}
+#endif
+
+static udpstatelesssocket_send_request_t *udpstatelesssocketSendRequestCreate(udpstatelesssocket_tstate_t *state,
+                                                                              tunnel_async_session_t      *session)
 {
     assert(state != NULL);
     assert(state->send_request_pools != NULL);
@@ -27,8 +39,10 @@ static udpstatelesssocket_send_request_t *udpstatelesssocketSendRequestCreate(ud
 
     udpstatelesssocket_send_request_t *request =
         (udpstatelesssocket_send_request_t *) threadsafegenericpoolGetItem(pool);
+    tunnelasyncsessionRef(session);
     *request = (udpstatelesssocket_send_request_t) {
-        .pool = pool,
+        .pool    = pool,
+        .session = session,
     };
     return request;
 }
@@ -40,11 +54,14 @@ static void udpstatelesssocketSendRequestReuse(udpstatelesssocket_send_request_t
         return;
     }
 
-    threadsafe_generic_pool_t *pool = request->pool;
+    threadsafe_generic_pool_t *pool    = request->pool;
+    tunnel_async_session_t    *session = request->session;
     assert(pool != NULL);
+    assert(session != NULL);
 
     *request = (udpstatelesssocket_send_request_t) {0};
     threadsafegenericpoolReuseItem(pool, request);
+    tunnelasyncsessionUnref(session);
 }
 
 local_idle_table_t *udpstatelesssocketGetWorkerIdleTable(udpstatelesssocket_tstate_t *ts)
@@ -194,23 +211,43 @@ static bool udpstatelesssocketGetLinePeerAddr(line_t *l, sockaddr_u *addr_out)
     return true;
 }
 
-static void udpstatelesssocketWriteOwnerPeer(tunnel_t *t, sbuf_t *buf, const sockaddr_u *peer_addr)
+void udpstatelesssocketReleaseWrittenBuffer(sbuf_t *buf, bool detached_from_origin_worker)
+{
+    if (detached_from_origin_worker)
+    {
+        sbufDestroy(buf);
+    }
+    else
+    {
+        reuseBuffer(buf);
+    }
+}
+
+static wio_t *udpstatelesssocketGetOwnerIo(udpstatelesssocket_tstate_t *state)
+{
+    assert(currentThreadIsEventWorkerWID(state->io_wid));
+    return state->socket.io;
+}
+
+static void udpstatelesssocketWriteOwnerPeer(tunnel_t *t, sbuf_t *buf, const sockaddr_u *peer_addr,
+                                             bool detached_from_origin_worker)
 {
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    wio_t                       *io    = udpstatelesssocketGetOwnerIo(state);
 
     // Only the worker owning the socket's wio may write to it.
     assert(currentThreadIsEventWorkerWID(state->io_wid));
 
-    if (UNLIKELY(isApplicationTerminating() || state->socket.io == NULL))
+    if (UNLIKELY(isApplicationTerminating() || io == NULL))
     {
-        reuseBuffer(buf);
+        udpstatelesssocketReleaseWrittenBuffer(buf, detached_from_origin_worker);
         return;
     }
 
     ssize_t nwrite;
     do
     {
-        nwrite = sendto(wioGetFD(state->socket.io),
+        nwrite = sendto(wioGetFD(io),
                         sbufGetRawPtr(buf),
                         (size_t) sbufGetLength(buf),
                         0,
@@ -249,15 +286,24 @@ static void udpstatelesssocketWriteOwnerPeer(tunnel_t *t, sbuf_t *buf, const soc
              sbufGetLength(buf));
     }
 
-    reuseBuffer(buf);
+    udpstatelesssocketReleaseWrittenBuffer(buf, detached_from_origin_worker);
 }
 
-static void udpstatelesssocketSendToPeer(tunnel_t *t, sbuf_t *buf, const sockaddr_u *peer_addr)
+void udpstatelesssocketDispatchToPeer(tunnel_t *t, sbuf_t *buf, const sockaddr_u *peer_addr)
 {
-    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    tunnel_async_session_t *session = ((udpstatelesssocket_tstate_t *) tunnelGetState(t))->async_session;
+    tunnel_t               *observed_tunnel;
 
-    if (UNLIKELY(isApplicationTerminating() || state->socket.io == NULL))
+    if (UNLIKELY(session == NULL || ! tunnelasyncsessionEnter(session, &observed_tunnel)))
     {
+        reuseBuffer(buf);
+        return;
+    }
+
+    udpstatelesssocket_tstate_t *state = tunnelGetState(observed_tunnel);
+    if (UNLIKELY(isApplicationTerminating()))
+    {
+        tunnelasyncsessionLeave(session);
         reuseBuffer(buf);
         return;
     }
@@ -266,21 +312,29 @@ static void udpstatelesssocketSendToPeer(tunnel_t *t, sbuf_t *buf, const sockadd
     // other caller hands the datagram to it as a worker message.
     if (currentThreadIsEventWorkerWID(state->io_wid))
     {
-        udpstatelesssocketWriteOwnerPeer(t, buf, peer_addr);
+        udpstatelesssocketWriteOwnerPeer(observed_tunnel, buf, peer_addr, false);
+        tunnelasyncsessionLeave(session);
         return;
     }
 
-    udpstatelesssocket_send_request_t *request = udpstatelesssocketSendRequestCreate(state);
-    if (request == NULL)
+#ifdef UDPSTATELESSSOCKET_DISPATCH_TEST_HOOKS
+    if (udpstatelesssocket_foreign_admission_hook != NULL)
     {
-        LOGE("UdpStatelessSocket: failed to get cross-worker send request");
+        udpstatelesssocket_foreign_admission_hook(udpstatelesssocket_foreign_admission_context);
+    }
+#endif
+    /* Pre-stop can close admission while this already-entered callback is
+     * paused. Do not extend that callback into a newly queued request. */
+    if (UNLIKELY(! tunnelasyncsessionIsAccepting(session)))
+    {
+        tunnelasyncsessionLeave(session);
         reuseBuffer(buf);
         return;
     }
 
-    request->tunnel    = t;
-    request->buf       = buf;
-    request->peer_addr = *peer_addr;
+    udpstatelesssocket_send_request_t *request = udpstatelesssocketSendRequestCreate(state, session);
+    request->buf                               = buf;
+    request->peer_addr                         = *peer_addr;
 
     sendWorkerMessageWithCleanup(state->io_wid,
                                  udpstatelesssocketLocalThreadSocketUpStream,
@@ -288,6 +342,7 @@ static void udpstatelesssocketSendToPeer(tunnel_t *t, sbuf_t *buf, const sockadd
                                  request,
                                  NULL,
                                  NULL);
+    tunnelasyncsessionLeave(session);
 }
 
 static void udpstatelesssocketCleanupSendRequest(void *arg1, void *arg2, void *arg3)
@@ -309,19 +364,8 @@ static void udpstatelesssocketCleanupSendRequest(void *arg1, void *arg2, void *a
     udpstatelesssocketSendRequestReuse(request);
 }
 
-void udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf)
+static void udpstatelesssocketHandleRecvFrom(tunnel_t *t, wio_t *io, sbuf_t *buf, wid_t wid)
 {
-    tunnel_t                    *t   = (tunnel_t *) (weventGetUserdata(io));
-    wid_t                        wid = wloopGetWid(weventGetLoop(io));
-    udpstatelesssocket_tstate_t *state;
-
-    if (UNLIKELY(t == NULL))
-    {
-        assert(false);
-        bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
-        return;
-    }
-
     if (UNLIKELY(isApplicationTerminating()))
     {
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
@@ -338,7 +382,7 @@ void udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf)
         return;
     }
 
-    state = tunnelGetState(t);
+    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
 
     if (UNLIKELY(wid != state->io_wid))
     {
@@ -423,6 +467,22 @@ void udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf)
     udpstatelesssocketForwardPeerPayload(t, ls, buf);
 }
 
+void udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf)
+{
+    wid_t                   wid     = wloopGetWid(weventGetLoop(io));
+    tunnel_async_session_t *session = (tunnel_async_session_t *) weventGetUserdata(io);
+    tunnel_t               *t;
+
+    if (UNLIKELY(session == NULL || ! tunnelasyncsessionEnter(session, &t)))
+    {
+        bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+        return;
+    }
+
+    udpstatelesssocketHandleRecvFrom(t, io, buf, wid);
+    tunnelasyncsessionLeave(session);
+}
+
 void udpstatelesssocketLocalThreadSocketUpStream(void *worker, void *arg1, void *arg2, void *arg3)
 {
     discard worker;
@@ -430,18 +490,27 @@ void udpstatelesssocketLocalThreadSocketUpStream(void *worker, void *arg1, void 
     discard arg3;
 
     udpstatelesssocket_send_request_t *request = (udpstatelesssocket_send_request_t *) arg1;
-    tunnel_t                          *t       = request->tunnel;
-    sbuf_t                            *buf     = request->buf;
-    udpstatelesssocket_tstate_t       *state   = tunnelGetState(t);
+    tunnel_t                          *t;
 
-    if (UNLIKELY(isApplicationTerminating() || state->socket.io == NULL))
+    if (UNLIKELY(! tunnelasyncsessionEnter(request->session, &t)))
     {
         udpstatelesssocketCleanupSendRequest(request, NULL, NULL);
         return;
     }
 
+    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    wio_t                       *io    = udpstatelesssocketGetOwnerIo(state);
+    if (UNLIKELY(isApplicationTerminating() || io == NULL))
+    {
+        tunnelasyncsessionLeave(request->session);
+        udpstatelesssocketCleanupSendRequest(request, NULL, NULL);
+        return;
+    }
+
+    sbuf_t *buf  = request->buf;
     request->buf = NULL;
-    udpstatelesssocketWriteOwnerPeer(t, buf, &request->peer_addr);
+    udpstatelesssocketWriteOwnerPeer(t, buf, &request->peer_addr, true);
+    tunnelasyncsessionLeave(request->session);
     udpstatelesssocketSendRequestReuse(request);
 }
 
@@ -477,6 +546,7 @@ static void udpstatelesssocketDnsRequestDestroy(udpstatelesssocket_dns_request_t
         return;
     }
 
+    tunnelasyncsessionUnref(request->session);
     memoryFree(request->domain);
     memoryFree(request);
 }
@@ -493,8 +563,8 @@ static bool udpstatelesssocketDnsCacheEntryIsFresh(const udpstatelesssocket_dns_
     return (unsigned int) (now_ms - entry->resolved_at_ms) < (unsigned int) kUdpStatelessSocketDnsRefreshIntervalMs;
 }
 
-static bool udpstatelesssocketDnsCacheLookup(udpstatelesssocket_tstate_t *state, const char *domain, uint16_t port,
-                                             int strategy, sockaddr_u *addr_out)
+bool udpstatelesssocketDnsCacheLookup(udpstatelesssocket_tstate_t *state, const char *domain, uint16_t port,
+                                      int strategy, sockaddr_u *addr_out)
 {
     if (domain == NULL)
     {
@@ -522,8 +592,53 @@ static bool udpstatelesssocketDnsCacheLookup(udpstatelesssocket_tstate_t *state,
     return found;
 }
 
-static void udpstatelesssocketDnsCacheStore(udpstatelesssocket_tstate_t *state, const char *domain, uint16_t port,
-                                            int strategy, const sockaddr_u *peer_addr)
+static void udpstatelesssocketDnsCacheEntryDestroy(udpstatelesssocket_dns_cache_entry_t *entry)
+{
+    memoryFree(entry->domain);
+    memoryFree(entry);
+}
+
+static void udpstatelesssocketDnsCacheReclaimExpiredLocked(udpstatelesssocket_tstate_t *state, unsigned int now_ms)
+{
+    udpstatelesssocket_dns_cache_entry_t **slot = &state->dns_cache;
+    while (*slot != NULL)
+    {
+        udpstatelesssocket_dns_cache_entry_t *entry = *slot;
+        if (udpstatelesssocketDnsCacheEntryIsFresh(entry, now_ms))
+        {
+            slot = &entry->next;
+            continue;
+        }
+
+        *slot = entry->next;
+        assert(state->dns_cache_count != 0);
+        --state->dns_cache_count;
+        udpstatelesssocketDnsCacheEntryDestroy(entry);
+    }
+}
+
+static void udpstatelesssocketDnsCacheEvictOldestLocked(udpstatelesssocket_tstate_t *state)
+{
+    udpstatelesssocket_dns_cache_entry_t **slot = &state->dns_cache;
+    if (*slot == NULL)
+    {
+        return;
+    }
+
+    while ((*slot)->next != NULL)
+    {
+        slot = &(*slot)->next;
+    }
+
+    udpstatelesssocket_dns_cache_entry_t *oldest = *slot;
+    *slot                                        = NULL;
+    assert(state->dns_cache_count != 0);
+    --state->dns_cache_count;
+    udpstatelesssocketDnsCacheEntryDestroy(oldest);
+}
+
+void udpstatelesssocketDnsCacheStore(udpstatelesssocket_tstate_t *state, const char *domain, uint16_t port,
+                                     int strategy, const sockaddr_u *peer_addr)
 {
     if (domain == NULL || peer_addr == NULL)
     {
@@ -532,15 +647,23 @@ static void udpstatelesssocketDnsCacheStore(udpstatelesssocket_tstate_t *state, 
 
     mutexLock(&state->dns_cache_mutex);
 
+    const unsigned int now_ms = getTickMS();
+    udpstatelesssocketDnsCacheReclaimExpiredLocked(state, now_ms);
+
     for (udpstatelesssocket_dns_cache_entry_t *entry = state->dns_cache; entry != NULL; entry = entry->next)
     {
         if (udpstatelesssocketDnsCacheEntryMatches(entry, domain, port, strategy))
         {
             entry->peer_addr      = *peer_addr;
-            entry->resolved_at_ms = getTickMS();
+            entry->resolved_at_ms = now_ms;
             mutexUnlock(&state->dns_cache_mutex);
             return;
         }
+    }
+
+    if (state->dns_cache_count == kUdpStatelessSocketDnsCacheCapacity)
+    {
+        udpstatelesssocketDnsCacheEvictOldestLocked(state);
     }
 
     udpstatelesssocket_dns_cache_entry_t *entry = memoryAllocate(sizeof(*entry));
@@ -565,12 +688,29 @@ static void udpstatelesssocketDnsCacheStore(udpstatelesssocket_tstate_t *state, 
         .port           = port,
         .strategy       = strategy,
         .peer_addr      = *peer_addr,
-        .resolved_at_ms = getTickMS(),
+        .resolved_at_ms = now_ms,
         .next           = state->dns_cache,
     };
     state->dns_cache = entry;
+    ++state->dns_cache_count;
 
     mutexUnlock(&state->dns_cache_mutex);
+}
+
+void udpstatelesssocketDnsCacheClear(udpstatelesssocket_tstate_t *state)
+{
+    mutexLock(&state->dns_cache_mutex);
+    udpstatelesssocket_dns_cache_entry_t *entry = state->dns_cache;
+    state->dns_cache                            = NULL;
+    state->dns_cache_count                      = 0;
+    mutexUnlock(&state->dns_cache_mutex);
+
+    while (entry != NULL)
+    {
+        udpstatelesssocket_dns_cache_entry_t *next = entry->next;
+        udpstatelesssocketDnsCacheEntryDestroy(entry);
+        entry = next;
+    }
 }
 
 static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const char *error,
@@ -579,8 +719,9 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
     udpstatelesssocket_dns_request_t *request = userdata;
     line_t                           *line    = request->line;
     sbuf_t                           *buf     = request->buf;
+    tunnel_t                         *t;
 
-    if (asyncdnsStatusIsShutdown(status) || ! lineIsAlive(line))
+    if (asyncdnsStatusIsShutdown(status) || ! lineIsAlive(line) || ! tunnelasyncsessionEnter(request->session, &t))
     {
         lineReuseBuffer(line, buf);
         lineUnlock(line);
@@ -595,6 +736,7 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
                     "UdpStatelessSocket: async dns resolve failed for %s: %s",
                     request->domain,
                     error != NULL ? error : ares_strerror(status));
+        tunnelasyncsessionLeave(request->session);
         lineReuseBuffer(line, buf);
         lineUnlock(line);
         udpstatelesssocketDnsRequestDestroy(request);
@@ -611,6 +753,7 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
                     LOG_LEVEL_ERROR,
                     "UdpStatelessSocket: async dns resolve returned no usable address for %s",
                     request->domain);
+        tunnelasyncsessionLeave(request->session);
         lineReuseBuffer(line, buf);
         lineUnlock(line);
         udpstatelesssocketDnsRequestDestroy(request);
@@ -627,9 +770,9 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
                     SOCKADDR_STR(&peer_addr, peeraddrstr));
     }
 
-    udpstatelesssocketDnsCacheStore(
-        tunnelGetState(request->tunnel), request->domain, request->port, request->strategy, &peer_addr);
-    udpstatelesssocketSendToPeer(request->tunnel, buf, &peer_addr);
+    udpstatelesssocketDnsCacheStore(tunnelGetState(t), request->domain, request->port, request->strategy, &peer_addr);
+    udpstatelesssocketDispatchToPeer(t, buf, &peer_addr);
+    tunnelasyncsessionLeave(request->session);
     lineUnlock(line);
     udpstatelesssocketDnsRequestDestroy(request);
 }
@@ -661,7 +804,7 @@ static bool udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
     }
 
     *request = (udpstatelesssocket_dns_request_t) {
-        .tunnel   = t,
+        .session  = ((udpstatelesssocket_tstate_t *) tunnelGetState(t))->async_session,
         .line     = l,
         .buf      = buf,
         .domain   = domain_copy,
@@ -669,6 +812,7 @@ static bool udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
         .strategy = dest_ctx->domain_strategy,
     };
 
+    tunnelasyncsessionRef(request->session);
     lineLock(l);
     int rc = workerResolveDomainServiceAsync(
         lineGetWID(l), request->domain, NULL, SOCK_DGRAM, udpstatelesssocketOnDnsResolved, request);
@@ -698,7 +842,7 @@ void udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         localidletableKeepIdleItemForAtleast(
             udpstatelesssocketGetLineIdleTable(state, l), ls->idle_handle, kUdpStatelessSocketKeepExpireTime);
-        udpstatelesssocketSendToPeer(t, buf, &ls->peer_addr);
+        udpstatelesssocketDispatchToPeer(t, buf, &ls->peer_addr);
         return;
     }
 
@@ -719,7 +863,7 @@ void udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                                 dest_ctx->domain,
                                 SOCKADDR_STR(&cached_addr, peeraddrstr));
                 }
-                udpstatelesssocketSendToPeer(t, buf, &cached_addr);
+                udpstatelesssocketDispatchToPeer(t, buf, &cached_addr);
                 return;
             }
         }
@@ -742,5 +886,5 @@ void udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         LOGD("UdpStatelessSocket: %u bytes Packet to => [%s]", sbufGetLength(buf), SOCKADDR_STR(&addr, peeraddrstr));
     }
 
-    udpstatelesssocketSendToPeer(t, buf, &addr);
+    udpstatelesssocketDispatchToPeer(t, buf, &addr);
 }

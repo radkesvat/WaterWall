@@ -1,6 +1,26 @@
 #include "structure.h"
 
+#include "ipv4_packet_view.h"
 #include "loggers/network_logger.h"
+
+#include "loggers/log_rate_limiter.h"
+
+enum
+{
+    kTunDeviceChecksumLogIntervalMs = 5U * 1000U
+};
+
+/* Shared by every packet worker writing this device. */
+static atomic_log_rate_limiter_t tundevice_checksum_failure_log;
+static atomic_log_rate_limiter_t tundevice_invalid_packet_log;
+
+static bool tundevicePacketIsExactIpv4(const sbuf_t *buf)
+{
+    ipv4_packet_view_t packet = {0};
+    const uint32_t     length = sbufGetLength(buf);
+
+    return ipv4packetviewParse(sbufGetRawPtr(buf), length, &packet) && packet.ip_total_length == length;
+}
 
 static void logPacket(tun_device_t *tdev, tunnel_t *t, sbuf_t *buf, wid_t wid)
 {
@@ -61,37 +81,21 @@ void tundeviceOnIPPacketReceived(tun_device_t *tdev, void *userdata, sbuf_t *buf
         return;
     }
 
-    logPacket(tdev, t, buf, wid);
-
-    tundevice_tstate_t *state = tunnelGetState(t);
-
-    struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
-
-    if (IPH_V(ipheader) != 4)
+    /* Validate before logging or any typed header access. */
+    if (UNLIKELY(! tundevicePacketIsExactIpv4(buf)))
     {
-        // LOGW("TunDevice: Received packet with unsupported IP version %d", IPH_V(ipheader));
+        if (atomicLogRateLimiterShouldLog(&tundevice_invalid_packet_log, kTunDeviceChecksumLogIntervalMs))
+        {
+            LOGW("TunDevice: dropping malformed or unsupported IP input");
+        }
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
         return;
     }
 
+    logPacket(tdev, t, buf, wid);
+
     line_t *l = tunnelchainGetWorkerPacketLine(t->chain, wid);
-#ifdef DEBUG
-    lineLock(l);
-#endif
-
-    state->WriteReceivedPacket(state->write_tunnel, l, buf);
-
-#ifdef DEBUG
-    if (! lineIsAlive(l))
-    {
-        // Invariant violation reached while this thread still holds the line
-        // lock (lineUnlock is below), so unwinding is not provably safe.
-        LOGF("TunDevice: line is not alive, rule of packet tunnels is violated");
-        abortProgramNow(1);
-    }
-
-    lineUnlock(l);
-#endif
+    packettunnelLifecycleAnchorPublish(t, l, buf);
 }
 
 void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -106,16 +110,19 @@ void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     // // Calculate and set the checksum
     // IPH_CHKSUM_SET(ip_header, inet_chksum(ip_header, IP_HLEN));
 
-#if LOG_PACKET_INFO
-    struct ip_hdr *ip_header = (struct ip_hdr *) sbufGetMutablePtr(buf);
-    printIPPacketInfo("TunDevice write", (const unsigned char *) ip_header);
-#endif
-
-    if (UNLIKELY(l->recalculate_checksum))
+    if (UNLIKELY(! packettunnelConsumeChecksumRequest(l, buf)))
     {
-        calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
-        l->recalculate_checksum = false;
+        if (atomicLogRateLimiterShouldLog(&tundevice_checksum_failure_log, kTunDeviceChecksumLogIntervalMs))
+        {
+            LOGW("TunDevice: dropping malformed, unsupported, or unchecksummable output");
+        }
+        lineReuseBuffer(l, buf);
+        return;
     }
+
+#if LOG_PACKET_INFO
+    printIPPacketInfo("TunDevice write", sbufGetRawPtr(buf));
+#endif
 
     if (UNLIKELY(isApplicationTerminating()))
     {

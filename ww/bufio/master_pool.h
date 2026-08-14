@@ -70,9 +70,41 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct master_pool_s
     MasterPoolItemCreateHandle  create_item_handle;
     MasterPoolItemDestroyHandle destroy_item_handle;
     atomic_uint                 len;
+    atomic_size_t               checked_out;
     const uint32_t              cap;
     void                       *available[];
 } GNU_ATTR_ALIGNED_LINE_CACHE master_pool_t;
+
+/** Account for an item leaving/returning to this family of local pools. */
+static inline void masterpoolRecordCheckout(master_pool_t *const pool)
+{
+    atomicAddExplicit(&pool->checked_out, 1, memory_order_relaxed);
+}
+
+static inline void masterpoolRecordReturn(master_pool_t *const pool)
+{
+    assert(atomicLoadExplicit(&pool->checked_out, memory_order_relaxed) > 0);
+    atomicSubExplicit(&pool->checked_out, 1, memory_order_release);
+}
+
+static inline size_t masterpoolGetCheckedOut(const master_pool_t *const pool)
+{
+    return atomicLoadExplicit(&((master_pool_t *) pool)->checked_out, memory_order_acquire);
+}
+
+/**
+ * Validate the internally doubled capacity and allocation size without
+ * allocating. Outputs are unchanged on failure.
+ */
+bool masterpoolTryComputeGeometryForLimit(uint32_t pool_width, uint64_t allocation_limit, uint32_t *capacity_out,
+                                          uint64_t *allocation_size_out);
+
+/**
+ * Enforce the ordinary pooled-item allocation contract. Metadata constructors
+ * are nullable, but once a valid pool is published, ordinary item acquisition
+ * is fail-fast and never returns or stores a NULL item.
+ */
+master_pool_item_t *masterpoolRequireCreatedItem(master_pool_t *pool, master_pool_item_t *item, void *userdata);
 
 /**
  * Retrieves a specified number of items from the master pool.
@@ -81,8 +113,8 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct master_pool_s
  * @param count The number of items to retrieve.
  * @param userdata User data passed to the create handler.
  */
-static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_item_t const **const iptr,
-                                      const uint32_t count, void *userdata)
+static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_item_t **const iptr, const uint32_t count,
+                                      void *userdata)
 {
     uint32_t i = 0;
 
@@ -109,7 +141,7 @@ static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_ite
 
     for (; i < count; i++)
     {
-        iptr[i] = pool->create_item_handle(userdata);
+        iptr[i] = masterpoolRequireCreatedItem(pool, pool->create_item_handle(userdata), userdata);
     }
 }
 
@@ -165,7 +197,9 @@ void masterpoolInstallCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle 
 /**
  * Creates a master pool with a specified capacity.
  * @param pool_width The width of the pool.
- * @return A pointer to the created master pool.
+ * @return A pointer to the created master pool, or NULL when its metadata
+ *         geometry or allocation cannot be satisfied. Callers must check the
+ *         result before publication.
  */
 master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width);
 

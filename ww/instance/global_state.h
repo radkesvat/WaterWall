@@ -68,6 +68,7 @@ typedef struct ww_global_state_s
     secure_random_state_t       secure_random;
     system_load_state_t        *system_load;
     void                       *wintun_dll_handle;
+    void                       *wintun_dll_path;
     void                       *windivert_dll_handle;
     uint32_t                    workers_count;
     uint32_t                    ram_profile;

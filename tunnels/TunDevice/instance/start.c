@@ -4,41 +4,38 @@
 
 void tundeviceTunnelOnStart(tunnel_t *t)
 {
-    tundevice_tstate_t *state = tunnelGetState(t);
-    if (nodeIsLastInChain(t->node))
+    tundevice_tstate_t *state          = tunnelGetState(t);
+    bool                device_up      = false;
+    bool                routes_applied = false;
+    bool                dns_applied    = false;
+    const char         *failure        = NULL;
+
+    if (! packettunnelLifecycleAnchorBind(t))
     {
-        state->WriteReceivedPacket = t->prev->fnPayloadD;
-        state->write_tunnel        = t->prev;
-    }
-    else
-    {
-        state->WriteReceivedPacket = t->next->fnPayloadU;
-        state->write_tunnel        = t->next;
+        LOGF("TunDevice: packet publication side is not chained");
+        terminateProgram(1);
     }
 
     state->tdev = tundeviceCreate(state->name, false, state->mtu, t, tundeviceOnIPPacketReceived);
 
     if (state->tdev == NULL)
     {
-        LOGF("TunDevice: could not create device");
-        terminateProgram(1);
+        failure = "TunDevice: could not create device";
+        goto rollback;
     }
 
     if (! tundeviceAssignIP(state->tdev, state->ip_present, (unsigned int) state->subnet_mask))
     {
-        tundeviceDestroy(state->tdev);
-        state->tdev = NULL;
-        LOGF("TunDevice: could not assign device IP");
-        terminateProgram(1);
+        failure = "TunDevice: could not assign device IP";
+        goto rollback;
     }
 
     if (! tundeviceBringUp(state->tdev))
     {
-        tundeviceDestroy(state->tdev);
-        state->tdev = NULL;
-        LOGF("TunDevice: could not bring device up");
-        terminateProgram(1);
+        failure = "TunDevice: could not bring device up";
+        goto rollback;
     }
+    device_up = true;
 
 #ifdef OS_LINUX
     /*
@@ -56,31 +53,44 @@ void tundeviceTunnelOnStart(tunnel_t *t)
 
     if (! tundeviceApplySystemRoutes(state))
     {
-        tundeviceClearEgressPinIfPublished(state);
-        tundeviceDestroy(state->tdev);
-        state->tdev = NULL;
-        LOGF("TunDevice: could not install system routes");
-        terminateProgram(1);
+        failure = "TunDevice: could not install system routes";
+        goto rollback;
     }
+    routes_applied = true;
 
     if (! tundeviceApplyDnsSettings(state))
     {
-        tundeviceCleanupSystemRoutes(state);
-        tundeviceClearEgressPinIfPublished(state);
-        tundeviceDestroy(state->tdev);
-        state->tdev = NULL;
-        LOGF("TunDevice: could not configure DNS servers");
-        terminateProgram(1);
+        failure = "TunDevice: could not configure DNS servers";
+        goto rollback;
     }
+    dns_applied = true;
 
     if (state->post_up_script != NULL && execCmd(state->post_up_script).exit_code != 0)
     {
+        failure = "TunDevice: post-up-script failed";
+        goto rollback;
+    }
+    return;
+
+rollback:
+    if (dns_applied)
+    {
         tundeviceCleanupDnsSettings(state);
+    }
+    if (routes_applied)
+    {
         tundeviceCleanupSystemRoutes(state);
-        tundeviceClearEgressPinIfPublished(state);
+    }
+    tundeviceClearEgressPinIfPublished(state);
+    if (device_up && ! tundeviceBringDown(state->tdev))
+    {
+        LOGW("TunDevice: bring-down during startup rollback completed with cleanup errors");
+    }
+    if (state->tdev != NULL)
+    {
         tundeviceDestroy(state->tdev);
         state->tdev = NULL;
-        LOGF("TunDevice: post-up-script failed");
-        terminateProgram(1);
     }
+    LOGF("%s", failure);
+    terminateProgram(1);
 }

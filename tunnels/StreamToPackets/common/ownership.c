@@ -173,9 +173,12 @@ uint64_t streamtopacketsPublishedGeneration(streamtopackets_tstate_t *ts)
     return atomicLoadU64Explicit(&ts->published_generation, memory_order_acquire);
 }
 
-void streamtopacketsOwnershipInitialize(streamtopackets_tstate_t *ts)
+bool streamtopacketsOwnershipInitialize(streamtopackets_tstate_t *ts)
 {
-    rwlockinit(&ts->lines_lock);
+    if (UNLIKELY(! rwlockTryInit(&ts->lines_lock)))
+    {
+        return false;
+    }
 
     ts->lines_head        = NULL;
     ts->active_source_set = false;
@@ -185,6 +188,7 @@ void streamtopacketsOwnershipInitialize(streamtopackets_tstate_t *ts)
     ts->next_generation   = 0;
     memoryZero(&ts->active_source, sizeof(ts->active_source));
     atomicStoreU64Explicit(&ts->published_generation, 0, memory_order_release);
+    return true;
 }
 
 void streamtopacketsOwnershipStop(tunnel_t *t)
@@ -822,12 +826,12 @@ void streamtopacketsQueueSelectedWrite(tunnel_t *t, streamtopackets_selected_lin
                                                .line_id    = selected->line_id,
                                                .generation = selected->generation};
 
-    discard sendWorkerMessageForceQueueWithCleanup(selected->wid,
-                                                   (WorkerMessageCallback) streamtopacketsWriteSelectedLineOnWorker,
-                                                   streamtopacketsCleanupSelectedWrite,
-                                                   msg,
-                                                   NULL,
-                                                   NULL);
+    sendWorkerMessageForceQueueBestEffortWithCleanup(selected->wid,
+                                                     (WorkerMessageCallback) streamtopacketsWriteSelectedLineOnWorker,
+                                                     streamtopacketsCleanupSelectedWrite,
+                                                     msg,
+                                                     NULL,
+                                                     NULL);
 }
 
 /*

@@ -50,13 +50,16 @@ void speedtestclientTunnelOnStart(tunnel_t *t)
         }
         *stream_id_ptr = stream_id;
 
-        wid_t   wid = (wid_t) (stream_id % chain->workers_count);
-        discard sendWorkerMessageTimedWithCleanup(wid,
-                                                  speedtestclientStartStream,
-                                                  speedtestclientCleanupStartStream,
-                                                  state->start_delay_ms,
-                                                  t,
-                                                  stream_id_ptr,
-                                                  NULL);
+        wid_t wid = (wid_t) (stream_id % chain->workers_count);
+        if (UNLIKELY(! sendWorkerMessageTimedWithCleanup(wid,
+                                                         speedtestclientStartStream,
+                                                         speedtestclientCleanupStartStream,
+                                                         state->start_delay_ms,
+                                                         t,
+                                                         stream_id_ptr,
+                                                         NULL)))
+        {
+            return;
+        }
     }
 }

@@ -268,7 +268,12 @@ bool ipmanipulatorFlowTableInitWithSeed(ipmanipulator_flow_table_t *table, const
             return false;
         }
 
-        mutexInit(&shard->mutex);
+        if (UNLIKELY(! mutexTryInit(&shard->mutex)))
+        {
+            flowtableShardDestroyStorage(shard);
+            ipmanipulatorFlowTableDestroy(table);
+            return false;
+        }
     }
 
     return true;

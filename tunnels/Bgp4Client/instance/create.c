@@ -5,7 +5,7 @@
 tunnel_t *bgp4clientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(bgp4client_tstate_t), sizeof(bgp4client_lstate_t));
-    if (t == NULL)
+    if (! t)
     {
         return NULL;
     }

@@ -1,0 +1,61 @@
+{
+  "schema": "waterwall.cmake-dependencies/v1",
+  "dependencies": [
+    {
+      "name": "komihash",
+      "kind": "git",
+      "url": "https://github.com/avaneev/komihash.git",
+      "commit": "8d531367eae59100687ab84393963b9e8f4345f8"
+    },
+    {
+      "name": "stc",
+      "kind": "git",
+      "url": "https://github.com/radkesvat/STC",
+      "commit": "bf1d20e3dd903cde66c301587e017c4dd234a620"
+    },
+    {
+      "name": "cares",
+      "kind": "git",
+      "url": "https://github.com/c-ares/c-ares",
+      "commit": "3ac47ee46edd8ea40370222f91613fc16c434853"
+    },
+    {
+      "name": "nghttp2",
+      "kind": "git",
+      "url": "https://github.com/nghttp2/nghttp2.git",
+      "commit": "ac22e0efe3f82f43c1366961c89a50ee821cfba3"
+    },
+    {
+      "name": "maxminddb",
+      "kind": "git",
+      "url": "https://github.com/maxmind/libmaxminddb.git",
+      "commit": "09a0540fea89a16e5c6a9e21e93ee9aece6639e3"
+    },
+    {
+      "name": "libsodium",
+      "kind": "git",
+      "url": "https://github.com/robinlinden/libsodium-cmake.git",
+      "commit": "24f829c6d1bf88adb05ff3ee594abc367ffc0590"
+    },
+    {
+      "name": "openssl-cmake",
+      "kind": "git",
+      "url": "https://github.com/jimmy-park/openssl-cmake.git",
+      "commit": "aff15a0f64d14ba185f1c1c0c16b974875eec2f8"
+    },
+    {
+      "name": "openssl-source",
+      "kind": "archive",
+      "url": "https://github.com/openssl/openssl/releases/download/openssl-4.0.0/openssl-4.0.0.tar.gz",
+      "sha256": "c32cf49a959c4f345f9606982dd36e7d28f7c58b19c2e25d75624d2b3d2f79ac",
+      "tree_sha256": "557dee8bed9922dd8cc4b1c22899966b8eda03ce13f55286f79246db5340bbf9",
+      "strip_components": 1
+    },
+    {
+      "name": "lwip",
+      "kind": "git",
+      "url": "https://github.com/lwip-tcpip/lwip.git",
+      "commit": "77dcd25a72509eb83f72b033d219b1d40cd8eb95"
+    }
+  ]
+}

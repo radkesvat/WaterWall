@@ -216,7 +216,7 @@ static bool createInternalTlsClient(tunnel_t *t, node_t *owner, const char *sni,
 
     state->internal_tls_client_node.flags |= kNodeFlagNoChain;
     state->internal_tls_client_node.can_have_next = false;
-    state->internal_tls_client_tunnel = state->internal_tls_client_node.createHandle(&state->internal_tls_client_node);
+    state->internal_tls_client_tunnel             = nodemanagerCreateTunnelInstance(&state->internal_tls_client_node);
     if (state->internal_tls_client_tunnel == NULL)
     {
         LOGF("IpManipulator: failed to create internal TlsClient child tunnel");
@@ -294,6 +294,10 @@ static bool initializeStatefulTrickTables(tunnel_t *t)
 tunnel_t *ipmanipulatorCreate(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(ipmanipulator_tstate_t), 0);
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &ipmanipulatorUpStreamInit;
     t->fnInitD    = &ipmanipulatorDownStreamInit;
@@ -962,7 +966,12 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
 
     if (state->trick_first_sni || state->trick_smuggle_sni || state->trick_ech_sni)
     {
-        mutexInit(&state->tls_capture_mutex);
+        if (UNLIKELY(! mutexTryInit(&state->tls_capture_mutex)))
+        {
+            LOGF("IpManipulator: failed to initialize TLS ClientHello capture mutex");
+            ipmanipulatorDestroy(t);
+            return NULL;
+        }
         state->tls_capture_slots_count = (uint32_t) getTotalWorkersCount() * kIpManipulatorTlsCaptureSlotsPerWorker;
         state->tls_capture_slots =
             memoryAllocateZero(sizeof(*state->tls_capture_slots) * state->tls_capture_slots_count);

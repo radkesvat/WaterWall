@@ -182,6 +182,62 @@ static inline json_value_status_t jsonGetObjectIntegerInRange(const cJSON *objec
     return kJsonValueInvalid;
 }
 
+/*
+ * Presence-aware strict readers, the boolean and string counterparts of
+ * jsonGetObjectIntegerInRange().
+ *
+ * The ...OrDefault() helpers below cannot tell an omitted field from a present
+ * one of the wrong type: both answer false and both write the default. That is
+ * fine where a default is the intent, and wrong where a configuration mistake
+ * should be reported - `"enabled": "yes"` silently enabling a feature reads
+ * exactly like `"enabled"` having been left out.
+ */
+static inline json_value_status_t jsonGetObjectBoolean(const cJSON *object, const char *key, bool *value_out)
+{
+    if (object == NULL || key == NULL)
+    {
+        return kJsonValueMissing;
+    }
+
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, key);
+    if (item == NULL)
+    {
+        return kJsonValueMissing;
+    }
+
+    if (cJSON_IsBool(item) == 0 || value_out == NULL)
+    {
+        return kJsonValueInvalid;
+    }
+
+    *value_out = cJSON_IsTrue(item) != 0;
+    return kJsonValuePresent;
+}
+
+/* Borrows the cJSON-owned string; it stays valid for the document's lifetime. */
+static inline json_value_status_t jsonGetObjectNonEmptyString(const cJSON *object, const char *key,
+                                                              const char **value_out)
+{
+    if (object == NULL || key == NULL)
+    {
+        return kJsonValueMissing;
+    }
+
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, key);
+    if (item == NULL)
+    {
+        return kJsonValueMissing;
+    }
+
+    if (cJSON_IsString(item) == 0 || item->valuestring == NULL || item->valuestring[0] == '\0' || value_out == NULL)
+    {
+        return kJsonValueInvalid;
+    }
+
+    *value_out = item->valuestring;
+    return kJsonValuePresent;
+}
+
 static inline bool getIntFromJsonObject(int *dest, const cJSON *json_obj, const char *key)
 {
     assert(dest != NULL);

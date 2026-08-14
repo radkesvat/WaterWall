@@ -312,6 +312,10 @@ static bool loadRoutes(sniffrouter_tstate_t *ts, node_t *node, const cJSON *sett
 tunnel_t *sniffrouterTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(sniffrouter_tstate_t), sizeof(sniffrouter_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &sniffrouterTunnelUpStreamInit;
     t->fnEstU     = &sniffrouterTunnelUpStreamEst;
@@ -350,8 +354,8 @@ tunnel_t *sniffrouterTunnelCreate(node_t *node)
     }
 
     sniffrouter_tstate_t *ts = tunnelGetState(t);
-    if (! reverseclientHandshakeBuildFromSettings(settings, "SniffRouter", &ts->reverse_handshake_bytes,
-                                                  &ts->reverse_handshake_length))
+    if (! reverseclientHandshakeBuildFromSettings(
+            settings, "SniffRouter", &ts->reverse_handshake_bytes, &ts->reverse_handshake_length))
     {
         sniffrouterTunnelDestroy(t);
         return NULL;

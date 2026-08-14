@@ -493,7 +493,7 @@ static bool wakeWorker0Shutdown(void)
 #endif
 }
 
-bool requestProgramShutdown(int exit_code)
+static bool requestProgramShutdownInternal(int exit_code, bool update_accepted_status)
 {
     signal_manager_t *sm = signalmanager_gstate;
     if (sm == NULL)
@@ -502,8 +502,6 @@ bool requestProgramShutdown(int exit_code)
         // orderly sequence, so the caller must use its documented fallback.
         return false;
     }
-
-    signalmanagerSetExitCode(exit_code);
 
     /*
      * The claim and the handoff are a single decision and must be serialized.
@@ -521,12 +519,18 @@ bool requestProgramShutdown(int exit_code)
 
     if (signalmanagerGetShutdownPhase() != kProgramShutdownRunning)
     {
+        if (update_accepted_status)
+        {
+            signalmanagerSetExitCode(exit_code);
+        }
         // A shutdown was already accepted and is in flight: REQUESTED with a
         // successful handoff behind it, or STOPPING/FINALIZING. This request
         // coalesces into it and needs no second wakeup.
         mutexUnlock(&(sm->request_mutex));
         return true;
     }
+
+    signalmanagerSetExitCode(exit_code);
 
     // Claim RUNNING -> REQUESTED.
     w_atomic_int_value_t expected = (w_atomic_int_value_t) kProgramShutdownRunning;
@@ -566,6 +570,16 @@ bool requestProgramShutdown(int exit_code)
 
     mutexUnlock(&(sm->request_mutex));
     return true;
+}
+
+bool requestProgramShutdown(int exit_code)
+{
+    return requestProgramShutdownInternal(exit_code, true);
+}
+
+bool signalmanagerRequestShutdownPreservingAcceptedStatus(int exit_code)
+{
+    return requestProgramShutdownInternal(exit_code, false);
 }
 
 _Noreturn void abortProgramNow(int exit_code)
@@ -1016,35 +1030,50 @@ void signalmanagerStart(void)
 signal_manager_t *signalmanagerCreate(void)
 {
     assert(signalmanager_gstate == NULL);
-    signalmanager_gstate = memoryAllocate(sizeof(signal_manager_t));
+    signal_manager_t *state = memoryAllocate(sizeof(*state));
+    if (UNLIKELY(state == NULL))
+    {
+        return NULL;
+    }
 
-    *signalmanager_gstate = (signal_manager_t) {.handlers_len     = 0,
-                                                .exit_code        = 0,
-                                                .shutdown_phase   = (w_atomic_int_value_t) kProgramShutdownRunning,
-                                                .callbacks_frozen = false,
-                                                .started          = false,
-                                                .raise_defaults   = true,
-                                                .handle_sigint    = true,
-                                                .handle_sigquit   = true,
-                                                .handle_sighup    = false, // exits after ssh closed even with nohup
-                                                .handle_sigill    = false,
-                                                .handle_sigfpe    = true,
-                                                .handle_sigabrt   = false,
-                                                .handle_sigsegv   = false,
-                                                .handle_sigterm   = true,
-                                                .handle_sigpipe   = true,
-                                                .handle_sigalrm   = true};
+    *state = (signal_manager_t) {.handlers_len     = 0,
+                                 .exit_code        = 0,
+                                 .shutdown_phase   = (w_atomic_int_value_t) kProgramShutdownRunning,
+                                 .callbacks_frozen = false,
+                                 .started          = false,
+                                 .raise_defaults   = true,
+                                 .handle_sigint    = true,
+                                 .handle_sigquit   = true,
+                                 .handle_sighup    = false, // exits after ssh closed even with nohup
+                                 .handle_sigill    = false,
+                                 .handle_sigfpe    = true,
+                                 .handle_sigabrt   = false,
+                                 .handle_sigsegv   = false,
+                                 .handle_sigterm   = true,
+                                 .handle_sigpipe   = true,
+                                 .handle_sigalrm   = true};
 
 #if defined(OS_WIN)
-    signalmanager_gstate->shutdown_complete_event = NULL;
+    state->shutdown_complete_event = NULL;
 #else
-    signalmanager_gstate->shutdown_pipe[SHUTDOWN_PIPE_READ]  = -1;
-    signalmanager_gstate->shutdown_pipe[SHUTDOWN_PIPE_WRITE] = -1;
+    state->shutdown_pipe[SHUTDOWN_PIPE_READ]  = -1;
+    state->shutdown_pipe[SHUTDOWN_PIPE_WRITE] = -1;
 #endif
 
-    mutexInit(&(signalmanager_gstate->mutex));
-    mutexInit(&(signalmanager_gstate->request_mutex));
-    return signalmanager_gstate;
+    if (UNLIKELY(! mutexTryInit(&state->mutex)))
+    {
+        memoryFree(state);
+        return NULL;
+    }
+    if (UNLIKELY(! mutexTryInit(&state->request_mutex)))
+    {
+        mutexDestroy(&state->mutex);
+        memoryFree(state);
+        return NULL;
+    }
+
+    signalmanager_gstate = state;
+    return state;
 }
 
 signal_manager_t *signalmanagerGet(void)

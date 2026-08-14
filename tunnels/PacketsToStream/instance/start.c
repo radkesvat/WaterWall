@@ -47,6 +47,12 @@ void packetstostreamTunnelOnStart(tunnel_t *t)
 
     for (wid_t wi = 0; wi < getWorkersCount(); ++wi)
     {
-        sendWorkerMessageForceQueue(wi, packetstostreamStartWorkerTimer, t, NULL, NULL);
+        if (UNLIKELY(
+                ! sendWorkerMessageForceQueueWithCleanup(wi, packetstostreamStartWorkerTimer, NULL, t, NULL, NULL)))
+        {
+            LOGF("PacketsToStream: failed to admit required timer startup on worker %u", (unsigned int) wi);
+            terminateProgram(1);
+            return;
+        }
     }
 }

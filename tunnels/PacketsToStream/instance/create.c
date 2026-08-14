@@ -79,6 +79,11 @@ static bool packetstostreamLoadSettings(packetstostream_tstate_t *ts, const cJSO
 tunnel_t *packetstostreamTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(packetstostream_tstate_t), sizeof(packetstostream_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
+
     packetstostream_tstate_t *ts = tunnelGetState(t);
 
     t->fnInitU    = &packetstostreamTunnelUpStreamInit;
@@ -116,8 +121,32 @@ tunnel_t *packetstostreamTunnelCreate(node_t *node)
 
     if (ts->sensitive_mode)
     {
-        ts->worker_timers         = memoryAllocateZero(sizeof(wtimer_t *) * getWorkersCount());
-        ts->worker_timeout_timers = memoryAllocateZero(sizeof(wtimer_t *) * getWorkersCount());
+        const int workers_count = getWorkersCount();
+        size_t    timer_array_bytes;
+        if (workers_count <= 0 ||
+            ! memoryTryComputeArraySize((size_t) workers_count, sizeof(wtimer_t *), &timer_array_bytes))
+        {
+            LOGF("PacketsToStream: worker timer geometry is not representable");
+            tunnelDestroy(t);
+            return NULL;
+        }
+
+        wtimer_t **worker_timers         = memoryAllocateZero(timer_array_bytes);
+        wtimer_t **worker_timeout_timers = NULL;
+        if (worker_timers != NULL)
+        {
+            worker_timeout_timers = memoryAllocateZero(timer_array_bytes);
+        }
+        if (worker_timers == NULL || worker_timeout_timers == NULL)
+        {
+            memoryFree(worker_timers);
+            memoryFree(worker_timeout_timers);
+            tunnelDestroy(t);
+            return NULL;
+        }
+
+        ts->worker_timers         = worker_timers;
+        ts->worker_timeout_timers = worker_timeout_timers;
     }
 
     return t;

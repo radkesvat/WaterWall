@@ -248,6 +248,10 @@ static bool ipoverriderParseDirectionalSettings(ipoverrider_tstate_t *state, con
 tunnel_t *ipoverriderCreate(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(ipoverrider_tstate_t), 0);
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitD    = &ipoverriderDownStreamInit;
     t->fnPayloadU = &ipoverriderUpStreamPayload;

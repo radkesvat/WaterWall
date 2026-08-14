@@ -21,7 +21,8 @@ project(Waterwall
   LANGUAGES C CXX
 )
 
-file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/ww/cmake/version.txt" "${PROJECT_VERSION}\n")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/ww/cmake")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/ww/cmake/version.txt" "${PROJECT_VERSION}\n")
 
 #--------------------------------------------------------------------------------
 # Build Type Configuration
@@ -143,6 +144,7 @@ option(INCLUDE_AUTHENTICATION_CLIENT    "link AuthenticationClient staticly to t
 option(INCLUDE_AUTHENTICATION_SERVER    "link AuthenticationServer staticly to the core"                            TRUE)
 option(INCLUDE_WIREGUARD_DEVICE         "link WireGuardDevice staticly to the core"                                 TRUE)
 option(INCLUDE_PACKET_TO_CONNECTION     "link PacketsToConnection staticly to the core"                             TRUE)
+option(INCLUDE_CONNECTION_TO_PACKETS    "link ConnectionToPackets staticly to the core"                             TRUE)
 option(INCLUDE_STREAM_TO_PACKETS        "link StreamToPackets staticly to the core"                                 TRUE)
 option(INCLUDE_PACKETS_TO_STREAM        "link PacketsToStream staticly to the core"                                 TRUE)
 option(INCLUDE_PACKET_SPLIT_STREAM      "link PacketSplitStream staticly to the core"                               TRUE)
@@ -214,7 +216,7 @@ option(INCLUDE_SOFT_IP_LIMITER          "link SoftIpLimiter staticly to the core
 option(INCLUDE_DOMAIN_RESOLVER          "link DomainResolver staticly to the core"                                  TRUE)
 option(INCLUDE_USER_CONTROLLER          "link UserController staticly to the core"                                  TRUE)
 
-if((INCLUDE_TCPCONNECTOR OR INCLUDE_UDP_CONNECTOR OR INCLUDE_SOCKS5_CLIENT OR INCLUDE_VLESS_CLIENT OR INCLUDE_TROJAN_CLIENT OR INCLUDE_ROUTER) AND NOT INCLUDE_DOMAIN_RESOLVER)
+if((INCLUDE_TCPCONNECTOR OR INCLUDE_UDP_CONNECTOR OR INCLUDE_SOCKS5_CLIENT OR INCLUDE_VLESS_CLIENT OR INCLUDE_TROJAN_CLIENT OR INCLUDE_ROUTER OR INCLUDE_CONNECTION_TO_PACKETS) AND NOT INCLUDE_DOMAIN_RESOLVER)
   message(STATUS "Forcing DomainResolver because connector/client/router tunnels use it internally")
   set(INCLUDE_DOMAIN_RESOLVER TRUE CACHE BOOL "link DomainResolver staticly to the core" FORCE)
 endif()
@@ -488,6 +490,14 @@ if(INCLUDE_PACKET_TO_CONNECTION)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketsToConnection)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketsToConnection)
   target_link_libraries(Waterwall PacketsToConnection)
+endif()
+
+#connection to packets
+if(INCLUDE_CONNECTION_TO_PACKETS)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_CONNECTION_TO_PACKETS=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ConnectionToPackets)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ConnectionToPackets)
+  target_link_libraries(Waterwall ConnectionToPackets)
 endif()
 
 #data as packet

@@ -53,31 +53,36 @@ void setCoreLogger(logger_t *newlogger)
 logger_t *createCoreLogger(const char *log_file, bool console)
 {
     assert(core_logger == NULL);
-    core_logger = loggerCreate();
+    logger_t *logger = loggerCreate();
+    if (UNLIKELY(logger == NULL))
+    {
+        return NULL;
+    }
 
-    bool path_accepted = ((log_file != NULL) && loggerSetFile(core_logger, log_file)) != 0;
+    bool path_accepted = ((log_file != NULL) && loggerSetFile(logger, log_file)) != 0;
     if (console)
     {
         if (path_accepted)
         {
-            loggerSetHandler(core_logger, coreLoggerHandleWithStdStream);
+            loggerSetHandler(logger, coreLoggerHandleWithStdStream);
         }
         else
         {
 
-            loggerSetHandler(core_logger, coreLoggerHandleOnlyStdStream);
+            loggerSetHandler(logger, coreLoggerHandleOnlyStdStream);
         }
     }
     else if (path_accepted)
     {
-        loggerSetHandler(core_logger, coreLoggerHandle);
+        loggerSetHandler(logger, coreLoggerHandle);
     }
     else
     {
         // no logger
     }
 
-    return core_logger;
+    core_logger = logger;
+    return logger;
 }
 
 logger_handler getCoreLoggerHandle(void)

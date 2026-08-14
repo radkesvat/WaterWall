@@ -25,7 +25,61 @@ void sbufDestroy(sbuf_t *b)
         return;
     }
 
+    sbufReleaseLifetime(b);
     memoryFreeAligned(b);
+}
+
+void sbufAttachLifetime(sbuf_t *b, sbuf_lifetime_t *lifetime)
+{
+    assert(b != NULL);
+    assert(b->lifetime == NULL);
+    b->lifetime = lifetime;
+}
+
+sbuf_lifetime_t *sbufTakeLifetime(sbuf_t *b)
+{
+    assert(b != NULL);
+
+    sbuf_lifetime_t *lifetime = b->lifetime;
+    b->lifetime               = NULL;
+    return lifetime;
+}
+
+sbuf_lifetime_t *sbufGetLifetime(const sbuf_t *b)
+{
+    assert(b != NULL);
+    return b->lifetime;
+}
+
+void sbufTransferLifetime(sbuf_t *source, sbuf_t *destination)
+{
+    assert(source != NULL && destination != NULL && source != destination);
+    assert(destination->lifetime == NULL);
+    destination->lifetime = sbufTakeLifetime(source);
+}
+
+void sbufCloneLifetime(const sbuf_t *source, sbuf_t *destination)
+{
+    assert(source != NULL && destination != NULL && source != destination);
+    assert(destination->lifetime == NULL);
+
+    sbuf_lifetime_t *lifetime = source->lifetime;
+    if (lifetime != NULL)
+    {
+        assert(lifetime->retain != NULL && lifetime->release != NULL);
+        lifetime->retain(lifetime);
+        destination->lifetime = lifetime;
+    }
+}
+
+void sbufReleaseLifetime(sbuf_t *b)
+{
+    sbuf_lifetime_t *lifetime = sbufTakeLifetime(b);
+    if (lifetime != NULL)
+    {
+        assert(lifetime->release != NULL);
+        lifetime->release(lifetime);
+    }
 }
 
 sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
@@ -71,6 +125,7 @@ sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
     b->curpos       = pad_left;
     b->capacity     = real_cap;
     b->l_pad        = pad_left;
+    b->lifetime     = NULL;
 
     return b;
 }
@@ -83,6 +138,7 @@ sbuf_t *sbufCreate(uint32_t minimum_capacity)
 bool sbufDuplicateTo(const sbuf_t *b, sbuf_t *dest)
 {
     assert(b != NULL && dest != NULL);
+    assert(b != dest);
 
     const uint32_t source_curpos = b->curpos;
     const uint32_t source_length = sbufGetLength(b);
@@ -99,6 +155,8 @@ bool sbufDuplicateTo(const sbuf_t *b, sbuf_t *dest)
     {
         memoryCopyLarge(sbufGetMutablePtr(dest), sbufGetRawPtr(b), source_length);
     }
+    sbufReleaseLifetime(dest);
+    sbufCloneLifetime(b, dest);
     return true;
 }
 
@@ -154,5 +212,6 @@ sbuf_t *sbufSlice(sbuf_t *const b, const uint32_t bytes)
 {
     sbuf_t *newbuf = sbufCreateWithPadding(sbufGetTotalCapacityNoPadding(b), b->l_pad);
     sbufMoveTo(newbuf, b, bytes);
+    sbufCloneLifetime(b, newbuf);
     return newbuf;
 }

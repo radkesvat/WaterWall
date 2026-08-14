@@ -4,12 +4,13 @@ add_library(PacketsToConnection STATIC
                     instance/destroy.c
                     instance/api.c
                     instance/node.c
-                    instance/prepair.c
                     instance/start.c
+                    instance/pre_stop.c
                     instance/stop.c
-                    instance/chain.c
-                    instance/index.c
                     common/helpers.c
+                    common/netif.c
+                    common/credit.c
+                    common/drain.c
                     common/fake_dns.c
                     common/line_state.c
                     common/tcp.c

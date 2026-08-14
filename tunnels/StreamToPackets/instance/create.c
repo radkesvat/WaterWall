@@ -53,6 +53,11 @@ static bool streamtopacketsLoadSettings(streamtopackets_tstate_t *ts, const cJSO
 tunnel_t *streamtopacketsTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(streamtopackets_tstate_t), sizeof(streamtopackets_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
+
     streamtopackets_tstate_t *ts = tunnelGetState(t);
 
     t->fnInitU    = &streamtopacketsTunnelUpStreamInit;
@@ -77,7 +82,12 @@ tunnel_t *streamtopacketsTunnelCreate(node_t *node)
     ts->packet_validation_level = kStreamToPacketsPacketValidationNone;
     ts->sensitive_mode          = false;
 
-    streamtopacketsOwnershipInitialize(ts);
+    if (UNLIKELY(! streamtopacketsOwnershipInitialize(ts)))
+    {
+        LOGF("StreamToPackets: failed to initialize ownership lock");
+        tunnelDestroy(t);
+        return NULL;
+    }
 
     if (! streamtopacketsLoadSettings(ts, node->node_settings_json))
     {

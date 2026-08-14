@@ -5,7 +5,7 @@
 tunnel_t *junkdatagramsenderTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(junkdatagramsender_tstate_t), kLineStateSize);
-    if (t == NULL)
+    if (! t)
     {
         return NULL;
     }

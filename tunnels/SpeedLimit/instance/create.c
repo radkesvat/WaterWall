@@ -185,6 +185,10 @@ tunnel_t *speedlimitTunnelCreate(node_t *node)
     tunnel_t *t = tunnelCreate(node,
                                sizeof(speedlimit_tstate_t) + ((uint32_t) workers_count * sizeof(speedlimit_bucket_t)),
                                sizeof(speedlimit_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &speedlimitTunnelUpStreamInit;
     t->fnEstU     = &speedlimitTunnelUpStreamEst;

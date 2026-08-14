@@ -41,6 +41,12 @@ void keepaliveclientTunnelOnStart(tunnel_t *t)
 {
     for (wid_t wi = 0; wi < getWorkersCount(); ++wi)
     {
-        sendWorkerMessageForceQueue(wi, keepaliveclientStartWorkerTimer, t, NULL, NULL);
+        if (UNLIKELY(
+                ! sendWorkerMessageForceQueueWithCleanup(wi, keepaliveclientStartWorkerTimer, NULL, t, NULL, NULL)))
+        {
+            LOGF("KeepAliveClient: failed to admit required timer startup on worker %u", (unsigned int) wi);
+            terminateProgram(1);
+            return;
+        }
     }
 }

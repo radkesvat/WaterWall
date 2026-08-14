@@ -324,12 +324,12 @@ void wireguarddeviceForwardInnerPacket(wgd_tstate_t *state, line_t *line, sbuf_t
 
     assert(target != NULL);
     lineLock(target);
-    discard sendWorkerMessageForceQueueWithCleanup(target_wid,
-                                                   (WorkerMessageCallback) wireguarddeviceReplayInnerPacketOnWorker,
-                                                   wireguarddeviceCleanupInnerPacket,
-                                                   state,
-                                                   target,
-                                                   buf);
+    sendWorkerMessageForceQueueBestEffortWithCleanup(target_wid,
+                                                     (WorkerMessageCallback) wireguarddeviceReplayInnerPacketOnWorker,
+                                                     wireguarddeviceCleanupInnerPacket,
+                                                     state,
+                                                     target,
+                                                     buf);
 }
 
 wireguard_peer_t *wireguarddevicePeerLookupByAllowedIp(wireguard_device_t *device, const ip_addr_t *ipaddr)

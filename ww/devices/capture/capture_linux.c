@@ -1,6 +1,8 @@
 #include "capture.h"
+#include "capture_linux_checksum.h"
 #include "capture_linux_internal.h"
 #include "devices/device_flow_affinity.h"
+#include "devices/device_frag_affinity.h"
 #include "generic_pool.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
@@ -56,14 +58,48 @@ enum
     // and a lost wake token costs at most one timeout of shutdown latency.
     kCaptureReaderPollTimeoutMs     = 500,
     kCaptureReaderReadyTimeoutMs    = 5000,
-    kCaptureDiscardReportIntervalMs = 1000
+    kCaptureDiscardReportIntervalMs = 1000,
+
+    // Configuration and verdict traffic shares the queue socket with the
+    // reader. Keep every individual netlink transaction short so a full kernel
+    // send buffer cannot hold device teardown indefinitely. Residual teardown
+    // uses one such absolute deadline for the whole drain, plus a modest packet
+    // budget, instead of renewing this allowance for every queued packet.
+    kNetfilterIoDeadlineMs         = 250,
+    kNetfilterResidualPacketBudget = 4096,
+    kNetfilterAckBufferSize        = 4096,
+
+    // A deterministic syscall seam or a signal storm may return EINTR without
+    // advancing the monotonic clock. Bound consecutive interrupted attempts in
+    // addition to every absolute deadline/Stop predicate.
+    kCaptureInterruptedRetryBudget = 64
 };
+
+#define NETFILTER_MAX_PAYLOAD_SIZE sizeof(struct nfqnl_msg_verdict_hdr)
+#define NETFILTER_MESSAGE_BUFFER_SIZE                                                                                  \
+    (NLMSG_ALIGN(NLMSG_LENGTH(sizeof(struct nfgenmsg))) + NFA_ALIGN(NFA_LENGTH(NETFILTER_MAX_PAYLOAD_SIZE)))
 
 static_assert(SMALL_BUFFER_SIZE >= kNetfilterReadBufferSize, "Linux capture requires 4096-byte small buffers");
 static_assert(kCaptureCommandTimeoutMs > kCaptureIptablesLockWaitSeconds * 1000,
               "the parent command deadline must stay strictly longer than the numeric xtables lock wait");
 static_assert(kMaxAllowedPacketLength <= kNetfilterReadBufferSize, "packet policy must fit in netlink read buffer");
 static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "capture read batch count must fit in the reader session");
+static_assert(sizeof(struct nfqnl_msg_config_cmd) <= NETFILTER_MAX_PAYLOAD_SIZE,
+              "NFQUEUE command payload must fit in message storage");
+static_assert(sizeof(struct nfqnl_msg_config_params) <= NETFILTER_MAX_PAYLOAD_SIZE,
+              "NFQUEUE parameter payload must fit in message storage");
+static_assert(sizeof(uint32_t) <= NETFILTER_MAX_PAYLOAD_SIZE,
+              "NFQUEUE queue-length payload must fit in message storage");
+static_assert(_Alignof(ww_max_align_t) >= _Alignof(struct nlmsghdr), "netlink storage must align nlmsghdr");
+static_assert(_Alignof(ww_max_align_t) >= _Alignof(struct nlmsgerr), "netlink storage must align nlmsgerr");
+static_assert(_Alignof(ww_max_align_t) >= _Alignof(struct nfgenmsg), "netlink storage must align nfgenmsg");
+static_assert(_Alignof(ww_max_align_t) >= _Alignof(struct nfattr), "netlink storage must align nfattr");
+static_assert(NLMSG_HDRLEN % _Alignof(struct nfgenmsg) == 0, "nfgenmsg geometry must preserve alignment");
+static_assert(NLMSG_HDRLEN % _Alignof(struct nlmsgerr) == 0, "nlmsgerr geometry must preserve alignment");
+static_assert(NLMSG_ALIGN(NLMSG_LENGTH(sizeof(struct nfgenmsg))) % _Alignof(struct nfattr) == 0,
+              "nfattr geometry must preserve alignment");
+
+static atomic_uint netfilter_sequence = ATOMIC_VAR_INIT(0);
 
 typedef enum netfilter_packet_result_e
 {
@@ -107,14 +143,13 @@ static const capturedevice_sysctl_setting_t sysctl_settings[] = {{"net.core.rmem
 // token left behind by one BringDown would be consumed by the *next* BringUp's
 // reader, which would then exit immediately while the device still reported
 // success. Both lifecycle boundaries therefore enforce the same invariant: the
-// pipe is empty. The read end is nonblocking so draining can never block the
-// caller, and the write end stays blocking because the serialized
-// BringUp/BringDown contract keeps at most one small token outstanding.
+// pipe is empty. Both ends are nonblocking so neither draining nor a corrupted
+// or unexpectedly full wake channel can block lifecycle teardown.
 
-// Make the stop pipe's read end nonblocking while preserving its other flags.
-bool capturedeviceMakeStopPipeNonblocking(int read_fd)
+// Make one stop-pipe descriptor nonblocking while preserving its other flags.
+bool capturedeviceMakeStopPipeNonblocking(int pipe_fd)
 {
-    int flags = fcntl(read_fd, F_GETFL, 0);
+    int flags = fcntl(pipe_fd, F_GETFL, 0);
     if (flags < 0)
     {
         LOGE("CaptureDevice: failed to read stop pipe flags: %s", strerror(errno));
@@ -124,9 +159,20 @@ bool capturedeviceMakeStopPipeNonblocking(int read_fd)
     {
         return true;
     }
-    if (fcntl(read_fd, F_SETFL, flags | O_NONBLOCK) < 0)
+    if (fcntl(pipe_fd, F_SETFL, flags | O_NONBLOCK) < 0)
     {
         LOGE("CaptureDevice: failed to set the stop pipe nonblocking: %s", strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+static bool capturedeviceRetryInterrupted(uint32_t *interruptions)
+{
+    *interruptions += 1U;
+    if (*interruptions >= (uint32_t) kCaptureInterruptedRetryBudget)
+    {
+        errno = EINTR;
         return false;
     }
     return true;
@@ -138,6 +184,7 @@ bool capturedeviceMakeStopPipeNonblocking(int read_fd)
 // pipe, and is reported as such.
 bool capturedeviceDrainStopPipe(capture_device_t *cdev)
 {
+    uint32_t interruptions = 0;
     for (;;)
     {
         char    drain_buffer[64];
@@ -153,6 +200,11 @@ bool capturedeviceDrainStopPipe(capture_device_t *cdev)
         }
         if (errno == EINTR)
         {
+            if (! capturedeviceRetryInterrupted(&interruptions))
+            {
+                LOGE("CaptureDevice: stop-pipe drain exceeded its interrupted-syscall budget");
+                return false;
+            }
             continue;
         }
         if (errno == EAGAIN || errno == EWOULDBLOCK)
@@ -167,6 +219,7 @@ bool capturedeviceDrainStopPipe(capture_device_t *cdev)
 // Write exactly one wake token so a reader blocked in poll() leaves its loop.
 static bool capturedeviceWriteStopToken(capture_device_t *cdev)
 {
+    uint32_t interruptions = 0;
     for (;;)
     {
         ssize_t written = write(cdev->linux_pipe_fds[1], "x", 1);
@@ -176,6 +229,11 @@ static bool capturedeviceWriteStopToken(capture_device_t *cdev)
         }
         if (written < 0 && errno == EINTR)
         {
+            if (! capturedeviceRetryInterrupted(&interruptions))
+            {
+                LOGE("CaptureDevice: stop-token delivery exceeded its interrupted-syscall budget");
+                return false;
+            }
             continue;
         }
         LOGE("CaptureDevice: failed to wake the reader through the stop pipe: wrote %zd, errno %d (%s)",
@@ -497,6 +555,10 @@ bool capturedeviceSelectUnusedQueueNumber(const char *input_rules, uint16_t star
     }
 
     bool *used = memoryAllocateZero(((size_t) UINT16_MAX + 1U) * sizeof(*used));
+    if (UNLIKELY(used == NULL))
+    {
+        return false;
+    }
     capturedeviceMarkQueueOption(input_rules, "--queue-num", false, used);
     capturedeviceMarkQueueOption(input_rules, "--queue-balance", true, used);
 
@@ -535,7 +597,6 @@ static bool capturedeviceChooseQueueNumber(uint16_t *selected)
         return false;
     }
 
-    GSTATE.capturedevice_queue_start_number = (uint16_t) ((uint32_t) *selected + 1U);
     return true;
 }
 
@@ -716,14 +777,231 @@ static void captureDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
     cdev->read_event_callback(cdev, cdev->userdata, buf, wid);
 }
 
-/*
- * Send a message to the netfilter system and wait for an acknowledgement.
- */
-static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa_type, uint16_t res_id, bool ack,
-                                 void *msg, size_t size)
+static bool netfilterPollUntil(int netfilter_socket, short events, uint64_t deadline_us)
 {
-    size_t  nl_size = NLMSG_ALIGN(NLMSG_LENGTH(sizeof(struct nfgenmsg))) + NFA_ALIGN(NFA_LENGTH(size));
-    uint8_t buff[nl_size];
+    for (;;)
+    {
+        const uint64_t now_us = (uint64_t) getHRTimeUs();
+        if (now_us >= deadline_us)
+        {
+            errno = ETIMEDOUT;
+            return false;
+        }
+
+        const uint64_t remaining_us = deadline_us - now_us;
+        const int      timeout_ms   = (int) min((remaining_us + 999U) / 1000U, (uint64_t) INT_MAX);
+        struct pollfd  pfd          = {
+                      .fd     = netfilter_socket,
+                      .events = events,
+        };
+        int result = poll(&pfd, 1, max(timeout_ms, 1));
+        if (result < 0 && errno == EINTR)
+        {
+            continue;
+        }
+        if (result < 0)
+        {
+            return false;
+        }
+        if (result == 0)
+        {
+            errno = ETIMEDOUT;
+            return false;
+        }
+        if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+        {
+            errno = EIO;
+            return false;
+        }
+        if ((pfd.revents & events) != 0)
+        {
+            return true;
+        }
+    }
+}
+
+static bool netfilterRetryInterruptedUntil(uint64_t deadline_us, uint32_t *interruptions)
+{
+    *interruptions += 1U;
+    if (*interruptions >= (uint32_t) kCaptureInterruptedRetryBudget || (uint64_t) getHRTimeUs() >= deadline_us)
+    {
+        errno = ETIMEDOUT;
+        return false;
+    }
+    return true;
+}
+
+static bool netfilterSendBounded(int netfilter_socket, const void *message, size_t size,
+                                 const struct sockaddr_nl *nl_addr, uint64_t deadline_us)
+{
+    uint32_t interruptions = 0;
+    for (;;)
+    {
+        ssize_t result =
+            sendto(netfilter_socket, message, size, MSG_DONTWAIT, (const struct sockaddr *) nl_addr, sizeof(*nl_addr));
+        if (result == (ssize_t) size)
+        {
+            return true;
+        }
+        if (result >= 0)
+        {
+            errno = EIO;
+            return false;
+        }
+        if (errno == EINTR)
+        {
+            if (! netfilterRetryInterruptedUntil(deadline_us, &interruptions))
+            {
+                return false;
+            }
+            continue;
+        }
+        if (errno != EAGAIN && errno != EWOULDBLOCK)
+        {
+            return false;
+        }
+        if (! netfilterPollUntil(netfilter_socket, POLLOUT, deadline_us))
+        {
+            return false;
+        }
+    }
+}
+
+static bool netfilterWaitForAck(int netfilter_socket, uint32_t sequence, uint64_t deadline_us)
+{
+    _Alignas(ww_max_align_t) uint8_t ack_buff[kNetfilterAckBufferSize];
+    uint32_t                         interruptions = 0;
+
+    for (;;)
+    {
+        if (! netfilterPollUntil(netfilter_socket, POLLIN, deadline_us))
+        {
+            return false;
+        }
+
+        struct sockaddr_nl nl_addr;
+        struct iovec       iov = {.iov_base = ack_buff, .iov_len = sizeof(ack_buff)};
+        struct msghdr      msg = {
+                 .msg_name    = &nl_addr,
+                 .msg_namelen = sizeof(nl_addr),
+                 .msg_iov     = &iov,
+                 .msg_iovlen  = 1,
+        };
+        ssize_t result = recvmsg(netfilter_socket, &msg, MSG_DONTWAIT | MSG_TRUNC);
+        if (result < 0 && errno == EINTR)
+        {
+            if (! netfilterRetryInterruptedUntil(deadline_us, &interruptions))
+            {
+                return false;
+            }
+            continue;
+        }
+        if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        {
+            continue;
+        }
+        if (result < 0)
+        {
+            return false;
+        }
+        if ((msg.msg_flags & MSG_TRUNC) != 0 || result > (ssize_t) sizeof(ack_buff))
+        {
+            errno = EMSGSIZE;
+            return false;
+        }
+        if (msg.msg_namelen != sizeof(nl_addr) || nl_addr.nl_family != AF_NETLINK || nl_addr.nl_pid != 0 ||
+            nl_addr.nl_groups != 0)
+        {
+            errno = EBADMSG;
+            return false;
+        }
+        bool   matching_ack_seen  = false;
+        int    matching_ack_error = 0;
+        size_t offset             = 0;
+        while (offset < (size_t) result)
+        {
+            const size_t remaining = (size_t) result - offset;
+            if (remaining < sizeof(struct nlmsghdr))
+            {
+                errno = EBADMSG;
+                return false;
+            }
+
+            struct nlmsghdr nl_hdr;
+            memoryCopy(&nl_hdr, ack_buff + offset, sizeof(nl_hdr));
+            if (nl_hdr.nlmsg_len < sizeof(nl_hdr) || nl_hdr.nlmsg_len > remaining)
+            {
+                errno = EBADMSG;
+                return false;
+            }
+
+            if (nl_hdr.nlmsg_type == NLMSG_ERROR && nl_hdr.nlmsg_len < NLMSG_LENGTH(sizeof(struct nlmsgerr)))
+            {
+                errno = EBADMSG;
+                return false;
+            }
+
+            if (nl_hdr.nlmsg_seq == sequence)
+            {
+                if (matching_ack_seen || nl_hdr.nlmsg_type != NLMSG_ERROR ||
+                    nl_hdr.nlmsg_len < NLMSG_LENGTH(sizeof(struct nlmsgerr)) || (nl_hdr.nlmsg_flags & NLM_F_MULTI) != 0)
+                {
+                    errno = EBADMSG;
+                    return false;
+                }
+
+                struct nlmsgerr ack;
+                memoryCopy(&ack, ack_buff + offset + NLMSG_HDRLEN, sizeof(ack));
+                if (ack.error > 0)
+                {
+                    errno = EBADMSG;
+                    return false;
+                }
+                matching_ack_seen  = true;
+                matching_ack_error = ack.error;
+            }
+
+            const size_t aligned_length = NLMSG_ALIGN((size_t) nl_hdr.nlmsg_len);
+            if (aligned_length > remaining)
+            {
+                // A final message need not carry bytes beyond nlmsg_len. Any
+                // other short alignment gap would make another header
+                // impossible and is therefore malformed.
+                if ((size_t) nl_hdr.nlmsg_len == remaining)
+                {
+                    offset = (size_t) result;
+                    break;
+                }
+                errno = EBADMSG;
+                return false;
+            }
+            offset += aligned_length;
+        }
+
+        if (matching_ack_seen)
+        {
+            if (matching_ack_error == 0)
+            {
+                return true;
+            }
+            errno = matching_ack_error == INT_MIN ? EIO : -matching_ack_error;
+            return false;
+        }
+    }
+}
+
+/* Send one message and, for configuration requests, its matching ACK before an absolute deadline. */
+static bool netfilterSendMessageUntil(int netfilter_socket, uint16_t nl_type, int nfa_type, uint16_t res_id, bool ack,
+                                      const void *msg, size_t size, uint64_t deadline_us)
+{
+    if (size > NETFILTER_MAX_PAYLOAD_SIZE)
+    {
+        errno = EMSGSIZE;
+        return false;
+    }
+
+    const size_t nl_size = NLMSG_ALIGN(NLMSG_LENGTH(sizeof(struct nfgenmsg))) + NFA_ALIGN(NFA_LENGTH(size));
+    _Alignas(ww_max_align_t) uint8_t buff[NETFILTER_MESSAGE_BUFFER_SIZE];
     memoryZero(buff, nl_size);
     struct nlmsghdr *nl_hdr = (struct nlmsghdr *) buff;
 
@@ -731,7 +1009,10 @@ static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa
     nl_hdr->nlmsg_flags = NLM_F_REQUEST | (ack ? NLM_F_ACK : 0);
     nl_hdr->nlmsg_type  = (NFNL_SUBSYS_QUEUE << 8) | nl_type;
     nl_hdr->nlmsg_pid   = 0;
-    nl_hdr->nlmsg_seq   = 0;
+    do
+    {
+        nl_hdr->nlmsg_seq = (uint32_t) atomicAddExplicit(&netfilter_sequence, 1, memory_order_relaxed) + 1U;
+    } while (nl_hdr->nlmsg_seq == 0);
 
     struct nfgenmsg *nl_gen_msg = (struct nfgenmsg *) (nl_hdr + 1);
     nl_gen_msg->version         = NFNETLINK_V0;
@@ -750,18 +1031,8 @@ static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa
     memoryZero(&nl_addr, sizeof(nl_addr));
     nl_addr.nl_family = AF_NETLINK;
 
-    ssize_t send_result;
-    do
+    if (! netfilterSendBounded(netfilter_socket, buff, nl_size, &nl_addr, deadline_us))
     {
-        send_result = sendto(netfilter_socket, buff, sizeof(buff), 0, (struct sockaddr *) &nl_addr, sizeof(nl_addr));
-    } while (send_result < 0 && errno == EINTR);
-
-    if (send_result != (ssize_t) sizeof(buff))
-    {
-        if (send_result >= 0)
-        {
-            errno = EIO;
-        }
         return false;
     }
 
@@ -770,36 +1041,15 @@ static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa
         return true;
     }
 
-    uint8_t   ack_buff[64];
-    socklen_t nl_addr_len;
-    ssize_t   result;
-    do
-    {
-        nl_addr_len = sizeof(nl_addr);
-        result = recvfrom(netfilter_socket, ack_buff, sizeof(ack_buff), 0, (struct sockaddr *) &nl_addr, &nl_addr_len);
-    } while (result < 0 && errno == EINTR);
+    return netfilterWaitForAck(netfilter_socket, nl_hdr->nlmsg_seq, deadline_us);
+}
 
-    nl_hdr = (struct nlmsghdr *) ack_buff;
-
-    if (result < 0)
-    {
-        return false;
-    }
-
-    if (nl_addr_len != sizeof(nl_addr) || nl_addr.nl_pid != 0)
-    {
-        errno = EINVAL;
-        return false;
-    }
-
-    if (NLMSG_OK(nl_hdr, result) && nl_hdr->nlmsg_type == NLMSG_ERROR)
-    {
-        errno = -(*(int *) NLMSG_DATA(nl_hdr));
-        return (errno == 0);
-    }
-
-    errno = EBADMSG;
-    return false;
+/* Send one independently bounded message on the normal configuration/reader path. */
+static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa_type, uint16_t res_id, bool ack,
+                                 const void *msg, size_t size)
+{
+    const uint64_t deadline_us = (uint64_t) getHRTimeUs() + (uint64_t) kNetfilterIoDeadlineMs * 1000U;
+    return netfilterSendMessageUntil(netfilter_socket, nl_type, nfa_type, res_id, ack, msg, size, deadline_us);
 }
 
 /*
@@ -949,6 +1199,17 @@ netfilter_packet_parse_result_t captureLinuxNetfilterParsePacket(uint8_t *messag
             view->capture_length = ntohl(raw_capture_length);
             break;
         }
+        case NFQA_SKB_INFO: {
+            uint32_t raw_skb_info = 0;
+            if (view->has_skb_info || nl_attr_payload != (int) sizeof(raw_skb_info))
+            {
+                return kNetfilterPacketParseMalformed;
+            }
+            memoryCopy(&raw_skb_info, NFA_DATA(nl_attr), sizeof(raw_skb_info));
+            view->skb_info     = ntohl(raw_skb_info);
+            view->has_skb_info = true;
+            break;
+        }
         default:
             // Ignore other attributes
             break;
@@ -1054,20 +1315,39 @@ void captureLinuxNetfilterExposePacket(sbuf_t *buff, const uint8_t *message, con
     sbufSetLength(buff, view->payload_length);
 }
 
-static bool netfilterSendVerdict(int netfilter_socket, uint16_t qnumber, uint32_t packet_id, uint32_t verdict)
+static bool netfilterSendVerdictUntil(int netfilter_socket, uint16_t qnumber, uint32_t packet_id, uint32_t verdict,
+                                      uint64_t deadline_us)
 {
     struct nfqnl_msg_verdict_hdr nl_verdict;
     nl_verdict.verdict = htonl(verdict);
     nl_verdict.id      = packet_id;
-    return netfilterSendMessage(
-        netfilter_socket, NFQNL_MSG_VERDICT, NFQA_VERDICT_HDR, qnumber, false, &nl_verdict, sizeof(nl_verdict));
+    return netfilterSendMessageUntil(netfilter_socket,
+                                     NFQNL_MSG_VERDICT,
+                                     NFQA_VERDICT_HDR,
+                                     qnumber,
+                                     false,
+                                     &nl_verdict,
+                                     sizeof(nl_verdict),
+                                     deadline_us);
+}
+
+static bool netfilterSendVerdict(int netfilter_socket, uint16_t qnumber, uint32_t packet_id, uint32_t verdict)
+{
+    const uint64_t deadline_us = (uint64_t) getHRTimeUs() + (uint64_t) kNetfilterIoDeadlineMs * 1000U;
+    return netfilterSendVerdictUntil(netfilter_socket, qnumber, packet_id, verdict, deadline_us);
+}
+
+bool captureLinuxNetfilterSendVerdictForTest(int netfilter_socket, uint16_t queue_number, uint32_t packet_id,
+                                             uint32_t verdict)
+{
+    return netfilterSendVerdict(netfilter_socket, queue_number, packet_id, verdict);
 }
 
 /*
  * Get a packet from netfilter.
  */
-static netfilter_packet_result_t netfilterGetPacket(capture_device_t *cdev, int netfilter_socket, uint16_t qnumber,
-                                                    sbuf_t *buff)
+static netfilter_packet_result_t netfilterGetPacketUntil(capture_device_t *cdev, int netfilter_socket, uint16_t qnumber,
+                                                         sbuf_t *buff, uint64_t verdict_deadline_us)
 {
     assert(sbufGetMaximumWriteableSize(buff) >= kNetfilterReadBufferSize);
     if (UNLIKELY(sbufGetMaximumWriteableSize(buff) < kNetfilterReadBufferSize))
@@ -1083,12 +1363,21 @@ static netfilter_packet_result_t netfilterGetPacket(capture_device_t *cdev, int 
     struct iovec  iov     = {.iov_base = message, .iov_len = kNetfilterReadBufferSize};
     struct msghdr msg     = {.msg_name = &nl_addr, .msg_iov = &iov, .msg_iovlen = 1};
     ssize_t       result;
-    do
+    uint32_t      interruptions = 0;
+    for (;;)
     {
         msg.msg_namelen = sizeof(nl_addr);
         msg.msg_flags   = 0;
         result          = recvmsg(netfilter_socket, &msg, MSG_DONTWAIT | MSG_TRUNC);
-    } while (result < 0 && errno == EINTR);
+        if (result >= 0 || errno != EINTR)
+        {
+            break;
+        }
+        if (! netfilterRetryInterruptedUntil(verdict_deadline_us, &interruptions))
+        {
+            return kNetfilterPacketError;
+        }
+    }
 
     if (result < 0)
     {
@@ -1122,7 +1411,8 @@ static netfilter_packet_result_t netfilterGetPacket(capture_device_t *cdev, int 
             return kNetfilterPacketError;
         }
         const bool active = atomicLoadRelaxed(&cdev->capture_active);
-        if (! netfilterSendVerdict(netfilter_socket, qnumber, packet_id, active ? NF_DROP : NF_ACCEPT))
+        if (! netfilterSendVerdictUntil(
+                netfilter_socket, qnumber, packet_id, active ? NF_DROP : NF_ACCEPT, verdict_deadline_us))
         {
             return kNetfilterPacketError;
         }
@@ -1141,7 +1431,8 @@ static netfilter_packet_result_t netfilterGetPacket(capture_device_t *cdev, int 
             return kNetfilterPacketError;
         }
         const bool active = atomicLoadRelaxed(&cdev->capture_active);
-        if (! netfilterSendVerdict(netfilter_socket, qnumber, packet_view.packet_id, active ? NF_DROP : NF_ACCEPT))
+        if (! netfilterSendVerdictUntil(
+                netfilter_socket, qnumber, packet_view.packet_id, active ? NF_DROP : NF_ACCEPT, verdict_deadline_us))
         {
             return kNetfilterPacketError;
         }
@@ -1149,7 +1440,8 @@ static netfilter_packet_result_t netfilterGetPacket(capture_device_t *cdev, int 
     }
 
     const bool active = atomicLoadRelaxed(&cdev->capture_active);
-    if (! netfilterSendVerdict(netfilter_socket, qnumber, packet_view.packet_id, active ? NF_DROP : NF_ACCEPT))
+    if (! netfilterSendVerdictUntil(
+            netfilter_socket, qnumber, packet_view.packet_id, active ? NF_DROP : NF_ACCEPT, verdict_deadline_us))
     {
         return kNetfilterPacketError;
     }
@@ -1164,7 +1456,21 @@ static netfilter_packet_result_t netfilterGetPacket(capture_device_t *cdev, int 
     }
 
     captureLinuxNetfilterExposePacket(buff, message, &packet_view);
+
+    const device_packet_checksum_provenance_t checksum_provenance =
+        captureLinuxChecksumProvenance(packet_view.has_skb_info, packet_view.skb_info);
+    if (! deviceIpv4PreparePacketChecksums(sbufGetMutablePtr(buff), sbufGetLength(buff), checksum_provenance))
+    {
+        return kNetfilterPacketDiscarded;
+    }
     return kNetfilterPacketReady;
+}
+
+static netfilter_packet_result_t netfilterGetPacket(capture_device_t *cdev, int netfilter_socket, uint16_t qnumber,
+                                                    sbuf_t *buff)
+{
+    const uint64_t deadline_us = (uint64_t) getHRTimeUs() + (uint64_t) kNetfilterIoDeadlineMs * 1000U;
+    return netfilterGetPacketUntil(cdev, netfilter_socket, qnumber, buff, deadline_us);
 }
 
 static void capturedeviceRecordNetfilterDiscard(capture_device_t *cdev)
@@ -1350,6 +1656,14 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
             // Drain multiple packets while the socket remains readable
             for (uint32_t i = 0; i < RAM_PROFILE && queued_count < kMaxReadDistributeQueueSize; ++i)
             {
+                // Stop may be requested after poll() made the socket readable.
+                // Observe it before every packet so one wakeup cannot multiply
+                // the verdict deadline across an entire RAM_PROFILE batch.
+                if (! atomicLoadExplicit(&cdev->running, memory_order_acquire))
+                {
+                    break;
+                }
+
                 bool leave_drain_loop = false;
                 bufs[queued_count]    = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
                 bufs[queued_count]    = sbufReserveSpace(bufs[queued_count], kNetfilterReadBufferSize);
@@ -1391,7 +1705,10 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     if (queued_count > 0)
                     {
-                        deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count);
+                        if (! deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count))
+                        {
+                            return 0;
+                        }
                         queued_count = 0;
                     }
                     leave_drain_loop = true;
@@ -1401,7 +1718,10 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     if (queued_count > 0)
                     {
-                        deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count);
+                        if (! deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count))
+                        {
+                            return 0;
+                        }
                         queued_count = 0;
                     }
                     capturedeviceReportPendingNetfilterDiscards(cdev);
@@ -1414,7 +1734,10 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     if (queued_count > 0)
                     {
-                        deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count);
+                        if (! deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count))
+                        {
+                            return 0;
+                        }
                         queued_count = 0;
                     }
                     LOGW("CaptureDevice: failed to read a packet from netfilter socket, errno is %d (%s)",
@@ -1434,7 +1757,10 @@ WTHREAD_ROUTINE(captureLinuxReadRoutine) // NOLINT
             // Distribute all accumulated packets in one batch
             if (queued_count > 0)
             {
-                deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count);
+                if (! deviceFlowAffinityPostBatch(cdev->reader_session, bufs, queued_count))
+                {
+                    return 0;
+                }
             }
             continue;
         }
@@ -1474,7 +1800,7 @@ static void capturedeviceDeactivate(capture_device_t *cdev)
 // exclusive use of the descriptor and no synchronization is needed.
 // `capture_active` is already false by then, so netfilterGetPacket() issues
 // NF_ACCEPT for each packet on its own.
-static bool capturedeviceDrainResidualQueue(capture_device_t *cdev, int socket_fd)
+static bool capturedeviceDrainResidualQueue(capture_device_t *cdev, int socket_fd, uint64_t deadline_us)
 {
     // A standalone buffer rather than one from cdev->reader_buffer_pool: that
     // pool is bound to the reader thread on first use, and this runs on the
@@ -1482,15 +1808,32 @@ static bool capturedeviceDrainResidualQueue(capture_device_t *cdev, int socket_f
     // reused for the whole drain and released on the way out.
     sbuf_t *buf = sbufCreate(kNetfilterReadBufferSize);
 
-    // The kernel cannot hold more than the queue length configured at bring-up,
-    // so that is the natural bound. The extra iteration is an emptiness probe:
-    // draining exactly a full queue is successful only after EAGAIN confirms it.
     for (uint32_t drained = 0;; ++drained)
     {
+        if ((uint64_t) getHRTimeUs() >= deadline_us)
+        {
+            errno = ETIMEDOUT;
+            LOGW("CaptureDevice: residual acceptance deadline expired for queue %u after %u packet(s)",
+                 cdev->queue_number,
+                 drained);
+            sbufDestroy(buf);
+            return false;
+        }
+        if (drained >= (uint32_t) kNetfilterResidualPacketBudget)
+        {
+            errno = EOVERFLOW;
+            LOGW("CaptureDevice: residual acceptance budget for queue %u ended after %u packet(s)",
+                 cdev->queue_number,
+                 drained);
+            sbufDestroy(buf);
+            return false;
+        }
+
         sbufReset(buf);
         buf = sbufReserveSpace(buf, kNetfilterReadBufferSize);
 
-        const netfilter_packet_result_t packet_result = netfilterGetPacket(cdev, socket_fd, cdev->queue_number, buf);
+        const netfilter_packet_result_t packet_result =
+            netfilterGetPacketUntil(cdev, socket_fd, cdev->queue_number, buf, deadline_us);
 
         // The drain never dispatches: the reader session is already ended, and a
         // verdict was sent for every result except WouldBlock/Eof/Error.
@@ -1509,15 +1852,6 @@ static bool capturedeviceDrainResidualQueue(capture_device_t *cdev, int socket_f
                  cdev->queue_number,
                  strerror(errno));
             sbufDestroy(buf);
-            return false;
-        }
-
-        if (drained == (uint32_t) kNetfilterQueueLen)
-        {
-            sbufDestroy(buf);
-            LOGW("CaptureDevice: residual drain of queue %u exceeded its %d-packet bound",
-                 cdev->queue_number,
-                 kNetfilterQueueLen);
             return false;
         }
     }
@@ -1568,13 +1902,19 @@ static bool capturedeviceStopReader(capture_device_t *cdev)
             }
             pthread_mutex_unlock(&cdev->reader_state_mutex);
 
+            // Close, join, retire: End poisons the fragment generation but
+            // leaves its staged reader buffers alone, because the reader still
+            // owned this pool. Only here does the lifecycle thread own it.
             bufferpoolResetThreadOwnership(cdev->reader_buffer_pool);
+            deviceReaderSessionRetireGenerationBuffers(cdev->reader_session);
 
             // Must precede the close below: closing the queue socket makes the
             // kernel drop whatever is still enqueued.
             if (drain_fd >= 0)
             {
-                const bool drain_ok = capturedeviceDrainResidualQueue(cdev, drain_fd);
+                const uint64_t teardown_deadline_us =
+                    (uint64_t) getHRTimeUs() + (uint64_t) kNetfilterIoDeadlineMs * 1000U;
+                const bool drain_ok = capturedeviceDrainResidualQueue(cdev, drain_fd, teardown_deadline_us);
                 result              = drain_ok && result;
                 if (! drain_ok)
                 {
@@ -1677,8 +2017,8 @@ static bool capturedeviceStartReader(capture_device_t *cdev)
     {
         LOGE("CaptureDevice: reader failed or did not become ready within %u ms",
              (unsigned int) kCaptureReaderReadyTimeoutMs);
-        discard capturedeviceStopReader(cdev);
         capturedeviceDeactivate(cdev);
+        discard capturedeviceStopReader(cdev);
         capturedeviceDisableQueue(cdev, "reader readiness failure");
         return false;
     }
@@ -1901,24 +2241,30 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         return NULL;
     }
 
-    // Best-effort: avoid ENOBUFS notifications waking us up and set non-blocking
+    int flags = fcntl(socket_netfilter, F_GETFL, 0);
+    if (flags < 0)
+    {
+        const int saved_errno = errno;
+        LOGE("CaptureDevice: failed to get NFQUEUE socket flags for O_NONBLOCK: %s", strerror(saved_errno));
+        close(socket_netfilter);
+        errno = saved_errno;
+        return NULL;
+    }
+    if (fcntl(socket_netfilter, F_SETFL, flags | O_NONBLOCK) < 0)
+    {
+        const int saved_errno = errno;
+        LOGE("CaptureDevice: failed to set O_NONBLOCK on NFQUEUE socket: %s", strerror(saved_errno));
+        close(socket_netfilter);
+        errno = saved_errno;
+        return NULL;
+    }
+
+    // Best-effort: avoid ENOBUFS notifications waking us up.
     {
         int one = 1;
         if (setsockopt(socket_netfilter, SOL_NETLINK, NETLINK_NO_ENOBUFS, &one, sizeof(one)) < 0)
         {
             LOGW("CaptureDevice: failed to set NETLINK_NO_ENOBUFS: %s", strerror(errno));
-        }
-        int flags = fcntl(socket_netfilter, F_GETFL, 0);
-        if (flags >= 0)
-        {
-            if (fcntl(socket_netfilter, F_SETFL, flags | O_NONBLOCK) < 0)
-            {
-                LOGW("CaptureDevice: failed to set O_NONBLOCK: %s", strerror(errno));
-            }
-        }
-        else
-        {
-            LOGW("CaptureDevice: failed to get socket flags for O_NONBLOCK: %s", strerror(errno));
         }
     }
 
@@ -1942,7 +2288,20 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     }
     int queue_number = selected_queue_number;
 
-    char **capture_cidrs = memoryAllocateZero((size_t) capture_range_count * sizeof(*capture_cidrs));
+    size_t capture_cidrs_size;
+    if (! memoryTryComputeArraySize(capture_range_count, sizeof(char *), &capture_cidrs_size))
+    {
+        LOGE("CaptureDevice: capture range vector is too large");
+        close(socket_netfilter);
+        return NULL;
+    }
+    char **capture_cidrs = memoryAllocateZero(capture_cidrs_size);
+    if (UNLIKELY(capture_cidrs == NULL))
+    {
+        LOGE("CaptureDevice: failed to allocate capture range vector");
+        close(socket_netfilter);
+        return NULL;
+    }
 
     for (uint32_t i = 0; i < capture_range_count; ++i)
     {
@@ -2008,6 +2367,13 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
                                                    bufferpoolGetSmallBufferSize(worker_pool)
 
     );
+    if (UNLIKELY(reader_bpool == NULL))
+    {
+        LOGE("CaptureDevice: failed to construct reader buffer pool");
+        close(socket_netfilter);
+        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
+        return NULL;
+    }
     if (UNLIKELY(bufferpoolGetSmallBufferSize(reader_bpool) < kNetfilterReadBufferSize))
     {
         LOGE("CaptureDevice: Linux capture requires small buffers of at least %u bytes, configured size is %u",
@@ -2029,10 +2395,38 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         return NULL;
     }
 
-    capture_rule_state_t *rule_states = memoryAllocateZero((size_t) capture_range_count * sizeof(*rule_states));
+    size_t rule_states_size;
+    if (! memoryTryComputeArraySize(capture_range_count, sizeof(capture_rule_state_t), &rule_states_size))
+    {
+        bufferpoolDestroy(reader_bpool);
+        close(socket_netfilter);
+        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
+        return NULL;
+    }
+    capture_rule_state_t *rule_states = memoryAllocateZero(rule_states_size);
     capture_device_t     *cdev        = memoryAllocate(sizeof(capture_device_t));
+    if (UNLIKELY(rule_states == NULL || cdev == NULL))
+    {
+        memoryFree(rule_states);
+        memoryFree(cdev);
+        bufferpoolDestroy(reader_bpool);
+        close(socket_netfilter);
+        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
+        return NULL;
+    }
 
-    *cdev = (capture_device_t) {.name                   = stringDuplicate(name),
+    char *device_name = stringDuplicate(name);
+    if (UNLIKELY(device_name == NULL))
+    {
+        memoryFree(rule_states);
+        memoryFree(cdev);
+        bufferpoolDestroy(reader_bpool);
+        close(socket_netfilter);
+        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
+        return NULL;
+    }
+
+    *cdev = (capture_device_t) {.name                   = device_name,
                                 .running                = false,
                                 .up                     = false,
                                 .routine_reader         = captureLinuxReadRoutine,
@@ -2086,10 +2480,12 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         return NULL;
     }
 
-    // The read end must be nonblocking so the lifecycle drain can never block.
-    // The write end stays blocking: the serialized BringUp/BringDown contract
-    // keeps at most one small token outstanding.
-    if (! capturedeviceMakeStopPipeNonblocking(cdev->linux_pipe_fds[0]))
+    // Both ends are nonblocking. The read side makes lifecycle draining safe;
+    // the write side ensures wake delivery can fail observably instead of
+    // blocking before the reader join. The reader also observes `running` on a
+    // bounded poll, so one best-effort token is sufficient.
+    if (! capturedeviceMakeStopPipeNonblocking(cdev->linux_pipe_fds[0]) ||
+        ! capturedeviceMakeStopPipeNonblocking(cdev->linux_pipe_fds[1]))
     {
         close(cdev->linux_pipe_fds[0]);
         close(cdev->linux_pipe_fds[1]);
@@ -2106,6 +2502,24 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
 
     cdev->reader_session = deviceReaderSessionCreate(
         RAM_PROFILE * 2, kMaxReadDistributeQueueSize, cdev, captureDeliverPacket, reader_bpool);
+    if (UNLIKELY(cdev->reader_session == NULL))
+    {
+        LOGE("CaptureDevice: failed to allocate reader session");
+        close(cdev->linux_pipe_fds[0]);
+        close(cdev->linux_pipe_fds[1]);
+        pthread_cond_destroy(&cdev->reader_state_changed);
+        pthread_mutex_destroy(&cdev->reader_state_mutex);
+        memoryFree(cdev->name);
+        capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
+        memoryFree(cdev->rule_states);
+        bufferpoolDestroy(cdev->reader_buffer_pool);
+        close(cdev->socket);
+        memoryFree(cdev);
+        return NULL;
+    }
+
+    /* Queue-number ownership is published only with the complete device. */
+    GSTATE.capturedevice_queue_start_number = (uint16_t) ((uint32_t) selected_queue_number + 1U);
 
     return cdev;
 }
@@ -2159,6 +2573,7 @@ void capturedeviceDestroy(capture_device_t *cdev)
     memoryFree(cdev->name);
     capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
     memoryFree(cdev->rule_states);
+    deviceReaderSessionRetireProducerBuffers(cdev->reader_session);
     bufferpoolDestroy(cdev->reader_buffer_pool);
     deviceReaderSessionUnref(cdev->reader_session);
     close(cdev->linux_pipe_fds[0]);

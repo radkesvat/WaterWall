@@ -810,6 +810,17 @@ void testerserverHandlePacketStatelessRequestPayload(tunnel_t *t, line_t *l, sbu
     testerserverScheduleResponseSend(t, l, ls);
 }
 
+static void testerserverFailResponseProgressAdmission(tunnel_t *t, line_t *l, testerserver_lstate_t *ls)
+{
+    LOGF("TesterServer: response progress cannot continue after required task admission failed");
+    testerserverLinestateDestroy(ls);
+    tunnelPrevDownStreamFinish(t, l);
+    if (! requestProgramShutdown(1))
+    {
+        abortProgramNow(1);
+    }
+}
+
 void testerserverScheduleResponseSend(tunnel_t *t, line_t *l, testerserver_lstate_t *ls)
 {
     testerserver_tstate_t *ts = tunnelGetState(t);
@@ -838,7 +849,12 @@ void testerserverScheduleResponseSend(tunnel_t *t, line_t *l, testerserver_lstat
     }
 
     ls->response_send_scheduled = true;
-    lineScheduleTask(l, testerserverResponseSendTask, t);
+    if (UNLIKELY(! lineScheduleTask(l, testerserverResponseSendTask, t)))
+    {
+        ls->response_send_scheduled = false;
+        LOGE("TesterServer: failed to schedule response progress");
+        testerserverFailResponseProgressAdmission(t, l, ls);
+    }
 }
 
 void testerserverResponseSendTask(tunnel_t *t, line_t *l)
@@ -925,11 +941,22 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
                 ls->response_send_scheduled = true;
                 if (ts->split_payload_delay_ms == 0)
                 {
-                    lineScheduleTask(l, testerserverResponseSendTask, t);
+                    if (UNLIKELY(! lineScheduleTask(l, testerserverResponseSendTask, t)))
+                    {
+                        ls->response_send_scheduled = false;
+                        LOGE("TesterServer: failed to schedule split response progress");
+                        testerserverFailResponseProgressAdmission(t, l, ls);
+                    }
                 }
                 else
                 {
-                    lineScheduleDelayedTask(l, testerserverResponseSendTask, ts->split_payload_delay_ms, t);
+                    if (UNLIKELY(
+                            ! lineScheduleDelayedTask(l, testerserverResponseSendTask, ts->split_payload_delay_ms, t)))
+                    {
+                        ls->response_send_scheduled = false;
+                        LOGE("TesterServer: failed to schedule delayed split response progress");
+                        testerserverFailResponseProgressAdmission(t, l, ls);
+                    }
                 }
                 return;
             }

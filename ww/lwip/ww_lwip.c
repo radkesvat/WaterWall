@@ -1,7 +1,19 @@
 #include "ww_lwip.h"
 
 #include "loggers/network_logger.h"
+#include "lwip/memp.h"
 #include "lwip/priv/tcp_priv.h"
+
+/*
+ * The pooled heap's hot class must actually be able to hold a full-MSS segment
+ * copy. lwippools.h computes what such an allocation costs; this is where that
+ * arithmetic is checked, because an x-macro list cannot assert. If a change to
+ * transport headroom or MEM_ALIGNMENT pushes the request past the class, every
+ * normal TCP write silently skips it and falls forward into the far smaller
+ * classes above - which is exactly how the previous 1536-byte class went unused.
+ */
+_Static_assert(WW_LWIP_FULL_MSS_ALLOC <= WW_LWIP_FULL_MSS_BLOCK,
+               "the lwIP heap's full-MSS class is smaller than a full-MSS PBUF_RAM allocation");
 
 #define IP_PROTO_STR(proto)                                                                                            \
     (((proto) == IP_PROTO_TCP)    ? "TCP"                                                                              \
@@ -96,8 +108,13 @@ void printIPPacketInfo(const char *prefix, const unsigned char *buffer)
 
         stringCopyN(src_ip, ip4addr_ntoa(&src_addr), 40);
         stringCopyN(dst_ip, ip4addr_ntoa(&dst_addr), 40);
-        ret = snprintf(ptr, (size_t) rem, "%s : Packet v4 %s From %s to %s, Data: ", prefix,
-                       IP_PROTO_STR(ip_header->_proto), src_ip, dst_ip);
+        ret = snprintf(ptr,
+                       (size_t) rem,
+                       "%s : Packet v4 %s From %s to %s, Data: ",
+                       prefix,
+                       IP_PROTO_STR(ip_header->_proto),
+                       src_ip,
+                       dst_ip);
     }
     else if (version == 6)
     {
@@ -110,8 +127,13 @@ void printIPPacketInfo(const char *prefix, const unsigned char *buffer)
 
         stringCopyN(src_ip, ip6addr_ntoa(&src_addr), 40);
         stringCopyN(dst_ip, ip6addr_ntoa(&dst_addr), 40);
-        ret = snprintf(ptr, (size_t) rem, "%s : Packet v6 %s From %s to %s, Data: ", prefix,
-                       IP_PROTO_STR(ip6_header->_nexth), src_ip, dst_ip);
+        ret = snprintf(ptr,
+                       (size_t) rem,
+                       "%s : Packet v6 %s From %s to %s, Data: ",
+                       prefix,
+                       IP_PROTO_STR(ip6_header->_nexth),
+                       src_ip,
+                       dst_ip);
     }
     else
     {
@@ -172,7 +194,8 @@ void printTcpPacketInfo(struct tcp_hdr *tcphdr)
 {
     printDebug("TCP header:\n");
     printDebug("+-------------------------------+\n");
-    printDebug("|    %5" U16_F "      |    %5" U16_F "      | (src port, dest port)\n", lwip_ntohs(tcphdr->src),
+    printDebug("|    %5" U16_F "      |    %5" U16_F "      | (src port, dest port)\n",
+               lwip_ntohs(tcphdr->src),
                lwip_ntohs(tcphdr->dest));
     printDebug("+-------------------------------+\n");
     printDebug("|           %010" U32_F "          | (seq no)\n", lwip_ntohl(tcphdr->seqno));
@@ -181,13 +204,19 @@ void printTcpPacketInfo(struct tcp_hdr *tcphdr)
     printDebug("+-------------------------------+\n");
     printDebug("| %2" U16_F " |   |%" U16_F "%" U16_F "%" U16_F "%" U16_F "%" U16_F "%" U16_F "|     %5" U16_F
                "     | (hdrlen, flags ( ",
-               TCPH_HDRLEN(tcphdr), (u16_t) (TCPH_FLAGS(tcphdr) >> 5 & 1), (u16_t) (TCPH_FLAGS(tcphdr) >> 4 & 1),
-               (u16_t) (TCPH_FLAGS(tcphdr) >> 3 & 1), (u16_t) (TCPH_FLAGS(tcphdr) >> 2 & 1),
-               (u16_t) (TCPH_FLAGS(tcphdr) >> 1 & 1), (u16_t) (TCPH_FLAGS(tcphdr) & 1), lwip_ntohs(tcphdr->wnd));
+               TCPH_HDRLEN(tcphdr),
+               (u16_t) (TCPH_FLAGS(tcphdr) >> 5 & 1),
+               (u16_t) (TCPH_FLAGS(tcphdr) >> 4 & 1),
+               (u16_t) (TCPH_FLAGS(tcphdr) >> 3 & 1),
+               (u16_t) (TCPH_FLAGS(tcphdr) >> 2 & 1),
+               (u16_t) (TCPH_FLAGS(tcphdr) >> 1 & 1),
+               (u16_t) (TCPH_FLAGS(tcphdr) & 1),
+               lwip_ntohs(tcphdr->wnd));
     printTcpPacketFlagsInfoNoNewLIne(TCPH_FLAGS(tcphdr));
     printDebug("), win)\n");
     printDebug("+-------------------------------+\n");
-    printDebug("|    0x%04" X16_F "     |     %5" U16_F "     | (chksum, urgp)\n", lwip_ntohs(tcphdr->chksum),
+    printDebug("|    0x%04" X16_F "     |     %5" U16_F "     | (chksum, urgp)\n",
+               lwip_ntohs(tcphdr->chksum),
                lwip_ntohs(tcphdr->urgp));
     printDebug("+-------------------------------+\n");
 }

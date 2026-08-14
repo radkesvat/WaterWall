@@ -54,7 +54,7 @@ static bool tcpudplistenerCreateChildTunnels(tunnel_t *t, node_t *node)
         return false;
     }
 
-    ts->tcp_listener = ts->tcp_node.createHandle(&ts->tcp_node);
+    ts->tcp_listener = nodemanagerCreateTunnelInstance(&ts->tcp_node);
     if (ts->tcp_listener == NULL)
     {
         LOGF("TcpUdpListener: failed to create internal TcpListener");
@@ -62,7 +62,7 @@ static bool tcpudplistenerCreateChildTunnels(tunnel_t *t, node_t *node)
     }
     ts->tcp_node.instance = ts->tcp_listener;
 
-    ts->udp_listener = ts->udp_node.createHandle(&ts->udp_node);
+    ts->udp_listener = nodemanagerCreateTunnelInstance(&ts->udp_node);
     if (ts->udp_listener == NULL)
     {
         LOGF("TcpUdpListener: failed to create internal UdpListener");
@@ -76,6 +76,11 @@ static bool tcpudplistenerCreateChildTunnels(tunnel_t *t, node_t *node)
 tunnel_t *tcpudplistenerTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(tcpudplistener_tstate_t), 0);
+    if (! t)
+    {
+        return NULL;
+    }
+
     tcpudplistenerConfigureCallbacks(t);
 
     if (! nodeHasNext(node))

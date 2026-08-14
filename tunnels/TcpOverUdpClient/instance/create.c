@@ -134,6 +134,10 @@ static bool tcpoverudpclientParseSettings(tcpoverudpclient_tstate_t *ts, node_t 
 tunnel_t *tcpoverudpclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(tcpoverudpclient_tstate_t), sizeof(tcpoverudpclient_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &tcpoverudpclientTunnelUpStreamInit;
     t->fnEstU     = &tcpoverudpclientTunnelUpStreamEst;

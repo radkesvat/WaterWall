@@ -19,9 +19,9 @@ void ptcTunnelDownStreamResume(tunnel_t *t, line_t *l)
     }
 
     LOCK_TCPIP_CORE();
-    if (ls->tcp_pcb != NULL)
+    const uint32_t paused = ls->read_paused_len;
+    if (ptcReturnReceiveCreditLocked(ls, paused))
     {
-        tcp_recved(ls->tcp_pcb, ls->read_paused_len);
         ls->read_paused_len = 0;
         tcp_output(ls->tcp_pcb);
     }

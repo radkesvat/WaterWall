@@ -30,19 +30,6 @@ typedef void pool_item_t;
 typedef pool_item_t *(*PoolItemCreateHandle)(generic_pool_t *pool);
 typedef void (*PoolItemDestroyHandle)(pool_item_t *item);
 
-#if POOL_DEBUG == 1
-#define GENERIC_POOL_FIELDS                                                                                            \
-    uint32_t              len;                                                                                         \
-    uint32_t              cap;                                                                                         \
-    uint32_t              free_threshold;                                                                              \
-    uint32_t              item_size;                                                                                   \
-    atomic_size_t         in_use;                                                                                      \
-    PoolItemCreateHandle  create_item_handle;                                                                          \
-    PoolItemDestroyHandle destroy_item_handle;                                                                         \
-    master_pool_t        *mp;                                                                                          \
-    pool_item_t          *available[];
-#else
-
 #define GENERIC_POOL_FIELDS                                                                                            \
     uint32_t              len;                                                                                         \
     uint32_t              cap;                                                                                         \
@@ -52,8 +39,6 @@ typedef void (*PoolItemDestroyHandle)(pool_item_t *item);
     PoolItemDestroyHandle destroy_item_handle;                                                                         \
     master_pool_t        *mp;                                                                                          \
     pool_item_t          *available[];
-
-#endif
 
 struct generic_pool_s
 {
@@ -116,25 +101,34 @@ void genericpoolShrink(generic_pool_t *pool);
  */
 static inline pool_item_t *genericpoolGetItem(generic_pool_t *pool)
 {
+    masterpoolRecordCheckout(pool->mp);
 #if BYPASS_GENERIC_POOL == 1
-    return pool->create_item_handle(pool);
+    return masterpoolRequireCreatedItem(pool->mp, pool->create_item_handle(pool), pool);
 #endif
 
-#if POOL_DEBUG == 1
-    pool->in_use += 1;
-#endif
     genericpoolDebugCheckThreadAccess(pool);
 
+    pool_item_t *item;
     if (LIKELY(pool->len > 0))
     {
         --(pool->len);
-        return pool->available[pool->len];
+        item = pool->available[pool->len];
     }
-
-    genericpoolReCharge(pool);
-    --(pool->len);
-    return pool->available[pool->len];
+    else
+    {
+        genericpoolReCharge(pool);
+        --(pool->len);
+        item = pool->available[pool->len];
+    }
+    return item;
 }
+
+/**
+ * Validate the internally doubled capacity, metadata size, and free threshold
+ * without allocating. Outputs are unchanged on failure.
+ */
+bool genericpoolTryComputeGeometryForLimit(uint32_t pool_width, uint64_t allocation_limit, uint32_t *capacity_out,
+                                           uint32_t *free_threshold_out, uint64_t *allocation_size_out);
 
 /**
  * Reuses an item by returning it to the pool.
@@ -145,12 +139,10 @@ static inline void genericpoolReuseItem(generic_pool_t *pool, pool_item_t *b)
 {
 #if BYPASS_GENERIC_POOL == 1
     pool->destroy_item_handle(b);
+    masterpoolRecordReturn(pool->mp);
     return;
 #endif
 
-#if POOL_DEBUG == 1
-    pool->in_use -= 1;
-#endif
     genericpoolDebugCheckThreadAccess(pool);
 
     if (pool->len > pool->free_threshold)
@@ -159,6 +151,20 @@ static inline void genericpoolReuseItem(generic_pool_t *pool, pool_item_t *b)
     }
 
     pool->available[(pool->len)++] = b;
+    masterpoolRecordReturn(pool->mp);
+}
+
+/**
+ * Return an item through the shared master pool without touching worker-local
+ * storage. This is the terminal path for a pooled object whose final reference
+ * is released by a foreign or pseudo-worker thread.
+ */
+void genericpoolReuseItemShared(generic_pool_t *pool, pool_item_t *item);
+
+/** Family-wide checked-out items whose terminal return has not completed. */
+static inline size_t genericpoolGetInUse(const generic_pool_t *pool)
+{
+    return masterpoolGetCheckedOut(pool->mp);
 }
 
 /**
@@ -186,7 +192,8 @@ static inline void genericpoolSetItemSize(generic_pool_t *pool, uint32_t item_si
  * @param mp The master pool.
  * @param create_h The handler to create pool items.
  * @param destroy_h The handler to destroy pool items.
- * @return A pointer to the created generic pool.
+ * @return A pointer to the created generic pool, or NULL when metadata geometry
+ *         or allocation fails. Callers must check the result before publication.
  */
 generic_pool_t *genericpoolCreate(master_pool_t *mp, PoolItemCreateHandle create_h, PoolItemDestroyHandle destroy_h);
 
@@ -196,7 +203,7 @@ generic_pool_t *genericpoolCreate(master_pool_t *mp, PoolItemCreateHandle create
  * @param pool_width The width of the pool.
  * @param create_h The handler to create pool items.
  * @param destroy_h The handler to destroy pool items.
- * @return A pointer to the created generic pool.
+ * @return A pointer to the created generic pool, or NULL on metadata failure.
  */
 generic_pool_t *genericpoolCreateWithCapacity(master_pool_t *mp, uint32_t pool_width, PoolItemCreateHandle create_h,
                                               PoolItemDestroyHandle destroy_h);
@@ -205,7 +212,7 @@ generic_pool_t *genericpoolCreateWithCapacity(master_pool_t *mp, uint32_t pool_w
  * Creates a generic pool with a default allocator.
  * @param mp The master pool.
  * @param item_size The size of each item in the pool.
- * @return A pointer to the created generic pool.
+ * @return A pointer to the created generic pool, or NULL on metadata failure.
  */
 generic_pool_t *genericpoolCreateWithDefaultAllocator(master_pool_t *mp, uint32_t item_size);
 
@@ -214,7 +221,7 @@ generic_pool_t *genericpoolCreateWithDefaultAllocator(master_pool_t *mp, uint32_
  * @param mp The master pool.
  * @param item_size The size of each item in the pool.
  * @param pool_width The width of the pool.
- * @return A pointer to the created generic pool.
+ * @return A pointer to the created generic pool, or NULL on metadata failure.
  */
 generic_pool_t *genericpoolCreateWithDefaultAllocatorAndCapacity(master_pool_t *mp, uint32_t item_size,
                                                                  uint32_t pool_width);
@@ -224,7 +231,7 @@ generic_pool_t *genericpoolCreateWithDefaultAllocatorAndCapacity(master_pool_t *
  * @param mp The master pool.
  * @param item_size The size of each item in the pool.
  * @param pool_width The width of the pool.
- * @return A pointer to the created generic pool.
+ * @return A pointer to the created generic pool, or NULL on metadata failure.
  */
 generic_pool_t *genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(master_pool_t *mp, uint32_t item_size,
                                                                              uint32_t pool_width);

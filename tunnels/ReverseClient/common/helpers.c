@@ -1,6 +1,7 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
+#include "managers/signal_manager.h"
 
 static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg1, void *arg2, void *arg3)
 {
@@ -50,6 +51,13 @@ void reverseclientInitiateConnectOnWorker(tunnel_t *t, wid_t wid, bool delay)
 
     reverseclient_tstate_t *ts = tunnelGetState(t);
 
+    /* A disconnect observed while an orderly shutdown is already accepted is
+     * terminal cleanup, not demand for a replacement idle connection. */
+    if (signalmanagerGetShutdownPhase() != kProgramShutdownRunning)
+    {
+        return;
+    }
+
     if (ts->threadlocal_pool[wid].unused_cons_count + ts->threadlocal_pool[wid].connecting_cons_count >=
         ts->min_unused_cons)
     {
@@ -57,7 +65,24 @@ void reverseclientInitiateConnectOnWorker(tunnel_t *t, wid_t wid, bool delay)
     }
     ts->threadlocal_pool[wid].connecting_cons_count += 1;
 
-    sendWorkerMessageForceQueue(wid, (WorkerMessageCallback) reverseclientBeginConnectMessageReceived, t, NULL, NULL);
+    if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(
+            wid, (WorkerMessageCallback) reverseclientBeginConnectMessageReceived, NULL, t, NULL, NULL)))
+    {
+        ts->threadlocal_pool[wid].connecting_cons_count -= 1;
+        if (! signalmanagerRequestShutdownPreservingAcceptedStatus(1))
+        {
+            abortProgramNow(1);
+        }
+        if (signalmanagerGetExitCode() != 0)
+        {
+            LOGF("ReverseClient: failed to admit required connection-start task on worker %u", (unsigned int) wid);
+        }
+        else
+        {
+            LOGD("ReverseClient: skipped replacement connection on worker %u during accepted shutdown",
+                 (unsigned int) wid);
+        }
+    }
 }
 
 void reverseclientOnStarvedConnectionExpire(idle_item_t *idle_con)

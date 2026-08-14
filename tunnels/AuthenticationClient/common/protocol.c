@@ -1602,6 +1602,15 @@ void authenticationclientCloseControlLine(tunnel_t *t, line_t *l, bool propagate
     lineDestroy(l);
 }
 
+static void authenticationclientFailReconnectTaskAdmission(void)
+{
+    LOGF("AuthenticationClient: failed to admit required reconnect task on worker 0");
+    if (! requestProgramShutdown(1))
+    {
+        abortProgramNow(1);
+    }
+}
+
 void authenticationclientScheduleReconnect(tunnel_t *t)
 {
     authenticationclient_tstate_t *ts              = tunnelGetState(t);
@@ -1615,7 +1624,11 @@ void authenticationclientScheduleReconnect(tunnel_t *t)
         {
             LOGD("AuthenticationClient: queued reconnect on worker 0 from worker %d", workerWIDForLog(getWID()));
         }
-        sendWorkerMessageForceQueue(0, authenticationclientOpenControlLineOnWorker0, t, NULL, NULL);
+        if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(
+                0, authenticationclientOpenControlLineOnWorker0, NULL, t, NULL, NULL)))
+        {
+            authenticationclientFailReconnectTaskAdmission();
+        }
         return;
     }
 

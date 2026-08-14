@@ -617,6 +617,11 @@ static SSL_CTX *createServerSslContext(tlsserver_tstate_t *ts)
 tunnel_t *tlsserverTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(tlsserver_tstate_t), sizeof(tlsserver_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
+
     configureTunnelCallbacks(t);
 
     tlsserver_tstate_t *ts       = tunnelGetState(t);

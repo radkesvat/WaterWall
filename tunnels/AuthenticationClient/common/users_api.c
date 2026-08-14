@@ -734,7 +734,12 @@ static authenticationclient_first_usage_push_result_t authenticationclientReques
 
     if (result == kAuthenticationClientFirstUsagePushQueued)
     {
-        sendWorkerMessageForceQueue(0, authenticationclientFirstUsagePushOnWorker0, t, NULL, NULL);
+        if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(
+                0, authenticationclientFirstUsagePushOnWorker0, NULL, t, NULL, NULL)))
+        {
+            authenticationclientResetFirstUsagePushState(t);
+            result = kAuthenticationClientFirstUsagePushNotReady;
+        }
     }
     return result;
 }
@@ -830,7 +835,9 @@ void authenticationclientRequestPull(tunnel_t *t)
         return;
     }
 
-    sendWorkerMessageForceQueue(0, authenticationclientRequestPullOnWorker0, t, NULL, NULL);
+    /* An external pull request is an explicit best-effort observation; the
+     * periodic synchronization timer remains the required progress owner. */
+    sendWorkerMessageForceQueueBestEffort(0, authenticationclientRequestPullOnWorker0, t, NULL, NULL);
 }
 
 void authenticationclientRequestPush(tunnel_t *t)
@@ -846,5 +853,7 @@ void authenticationclientRequestPush(tunnel_t *t)
         return;
     }
 
-    sendWorkerMessageForceQueue(0, authenticationclientRequestPushOnWorker0, t, NULL, NULL);
+    /* See authenticationclientRequestPull(): this ad-hoc request owns no
+     * latched progress state and may be superseded by the periodic push. */
+    sendWorkerMessageForceQueueBestEffort(0, authenticationclientRequestPushOnWorker0, t, NULL, NULL);
 }

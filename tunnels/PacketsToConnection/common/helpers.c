@@ -2,327 +2,32 @@
 
 #include "loggers/network_logger.h"
 
-typedef struct ptc_packet_emit_msg_s
+bool ptcNextGateEnter(tunnel_t *t)
 {
-    uint32_t len;
-    uint8_t  data[];
-} ptc_packet_emit_msg_t;
+    ptc_tstate_t *state = tunnelGetState(t);
 
-static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3);
-
-static void ptcEmitPacketCleanup(void *arg1, void *arg2, void *arg3)
-{
-    discard arg1;
-    discard arg3;
-    memoryFree(arg2);
+    if (UNLIKELY(ptcTunnelIsStopping(t) || isApplicationTerminating() || ! deviceLifetimeGateEnter(&state->next_gate)))
+    {
+        return false;
+    }
+    if (UNLIKELY(ptcTunnelIsStopping(t) || isApplicationTerminating()))
+    {
+        deviceLifetimeGateLeave(&state->next_gate);
+        return false;
+    }
+    return true;
 }
 
-static sbuf_t *ptcAllocateBufferForPool(buffer_pool_t *pool, uint32_t len)
+void ptcNextGateLeave(tunnel_t *t)
 {
-    if (len <= bufferpoolGetSmallBufferSize(pool))
-    {
-        return bufferpoolGetSmallBuffer(pool);
-    }
-
-    if (len <= bufferpoolGetLargeBufferSize(pool))
-    {
-        return bufferpoolGetLargeBuffer(pool);
-    }
-
-    return sbufCreateWithPadding(len, bufferpoolGetLargeBufferPadding(pool));
+    ptc_tstate_t *state = tunnelGetState(t);
+    deviceLifetimeGateLeave(&state->next_gate);
 }
 
-static void ptcEmitPacketBuffer(tunnel_t *t, line_t *packet_line, sbuf_t *buf)
+bool ptcTunnelIsStopping(tunnel_t *t)
 {
-#ifdef DEBUG
-    lineLock(packet_line);
-#endif
-
-    tunnelPrevDownStreamPayload(t, packet_line, buf);
-
-#ifdef DEBUG
-    if (! lineIsAlive(packet_line))
-    {
-        LOGF("PacketsToConnection: packet line died during runtime, packet tunnel contract was violated");
-        abortProgramNow(1);
-    }
-
-    lineUnlock(packet_line);
-#endif
-}
-
-static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
-{
-    discard arg3;
-
-    tunnel_t              *t          = arg1;
-    ptc_packet_emit_msg_t *packet_msg = arg2;
-    // The message was delivered to exactly one worker; take the packet line from
-    // that worker instead of re-reading TLS.
-    line_t        *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), worker->wid);
-    buffer_pool_t *pool        = lineGetBufferPool(packet_line);
-    sbuf_t        *buf         = ptcAllocateBufferForPool(pool, packet_msg->len);
-
-    sbufSetLength(buf, packet_msg->len);
-    memoryCopy(sbufGetMutablePtr(buf), packet_msg->data, packet_msg->len);
-    memoryFree(packet_msg);
-
-    ptcEmitPacketBuffer(t, packet_line, buf);
-}
-
-static err_t interfaceInit(struct netif *netif)
-{
-    netif->flags |= NETIF_FLAG_PRETEND;
-    netif->output = ptcNetifOutput;
-    return ERR_OK;
-}
-
-static void ptcDestroyUdpFlowPcbs(interface_route_context_t *route)
-{
-    c_foreach(i, ptc_udp_flow_map_t, route->udp_flows)
-    {
-        line_t *line = i.ref->second;
-        if (line != NULL && lineIsAlive(line))
-        {
-            ptc_lstate_t *ls = lineGetState(line, route->tunnel);
-            if (ls->kind == kPtcLineKindUdp && ls->udp_pcb != NULL)
-            {
-                udp_recv(ls->udp_pcb, NULL, NULL);
-                udp_remove(ls->udp_pcb);
-                ls->udp_pcb   = NULL;
-                ls->route_ctx = NULL;
-            }
-        }
-    }
-}
-
-void ptcDestroyRouteContexts(interface_route_context_t *route_head)
-{
-    interface_route_context_t *route = route_head->next;
-    route_head->next                 = NULL;
-
-    while (route != NULL)
-    {
-        interface_route_context_t *next = route->next;
-
-        ptcDestroyUdpFlowPcbs(route);
-        ptc_udp_flow_map_t_drop(&route->udp_flows);
-        if (route->tcp_pcb != NULL)
-        {
-            tcp_arg(route->tcp_pcb, NULL);
-            tcp_accept(route->tcp_pcb, NULL);
-            if (tcp_close(route->tcp_pcb) != ERR_OK)
-            {
-                tcp_abort(route->tcp_pcb);
-            }
-        }
-        if (route->udp_pcb != NULL)
-        {
-            udp_recv(route->udp_pcb, NULL, NULL);
-            udp_remove(route->udp_pcb);
-        }
-        netif_remove(&route->netif);
-        memoryFree(route);
-
-        route = next;
-    }
-}
-
-interface_route_context_t *ptcFindOrCreateRouteContextV4(tunnel_t *t, wid_t packet_wid, const ip4_addr_t *dest_ip)
-{
-    discard dest_ip;
-
-    ptc_tstate_t              *state = tunnelGetState(t);
-    interface_route_context_t *cur   = state->route_context4.next;
-
-    while (cur != NULL)
-    {
-        if (cur->packet_wid == packet_wid)
-        {
-            return cur;
-        }
-
-        cur = cur->next;
-    }
-
-    cur             = memoryAllocateZero(sizeof(interface_route_context_t));
-    cur->tunnel     = t;
-    cur->packet_wid = packet_wid;
-    cur->udp_flows  = ptc_udp_flow_map_t_with_capacity(64);
-
-    if (netif_add_noaddr(&cur->netif, cur, interfaceInit, ip_input) == NULL)
-    {
-        ptc_udp_flow_map_t_drop(&cur->udp_flows);
-        memoryFree(cur);
-        return NULL;
-    }
-
-    ip4_addr_t addr;
-    ip4_addr_t mask;
-    ip4_addr_t gw;
-
-    ip4_addr_set_loopback(&addr);
-    ip4_addr_set_any(&mask);
-    ip4_addr_set_any(&gw);
-    netif_set_addr(&cur->netif, &addr, &mask, &gw);
-
-    netif_set_up(&cur->netif);
-    netif_set_link_up(&cur->netif);
-    cur->next                  = state->route_context4.next;
-    state->route_context4.next = cur;
-
-    return cur;
-}
-
-err_t ptcEnsureTcpListener(interface_route_context_t *route_ctx, tunnel_t *t, const ip_addr_t *dest_ip,
-                           uint16_t dest_port)
-{
-    discard t;
-    discard dest_ip;
-    discard dest_port;
-
-    if (route_ctx->tcp_pcb != NULL)
-    {
-        return ERR_OK;
-    }
-
-    struct tcp_pcb *pcb = tcp_new_ip_type(IPADDR_TYPE_ANY);
-    err_t           err = ERR_OK;
-
-    if (pcb == NULL)
-    {
-        return ERR_MEM;
-    }
-
-    tcp_bind_netif(pcb, &route_ctx->netif);
-
-    err = tcp_bind(pcb, NULL, 0);
-    if (err != ERR_OK)
-    {
-        tcp_close(pcb);
-        return err;
-    }
-
-    pcb = tcp_listen_with_backlog_and_err(pcb, TCP_DEFAULT_LISTEN_BACKLOG, &err);
-    if (pcb == NULL || err != ERR_OK)
-    {
-        return err != ERR_OK ? err : ERR_MEM;
-    }
-
-    route_ctx->tcp_pcb = pcb;
-    tcp_arg(pcb, route_ctx);
-    tcp_accept(pcb, lwipThreadPtcTcpAccptCallback);
-
-    return ERR_OK;
-}
-
-err_t ptcEnsureUdpListener(interface_route_context_t *route_ctx, tunnel_t *t, const ip_addr_t *dest_ip,
-                           uint16_t dest_port)
-{
-    discard t;
-    discard dest_ip;
-    discard dest_port;
-
-    if (route_ctx->udp_pcb != NULL)
-    {
-        return ERR_OK;
-    }
-
-    struct udp_pcb *pcb = udp_new_ip_type(IPADDR_TYPE_ANY);
-    err_t           err;
-
-    if (pcb == NULL)
-    {
-        return ERR_MEM;
-    }
-
-    udp_bind_netif(pcb, &route_ctx->netif);
-    err = udp_bind(pcb, NULL, 0);
-    if (err != ERR_OK)
-    {
-        udp_remove(pcb);
-        return err;
-    }
-
-    route_ctx->udp_pcb = pcb;
-    udp_recv(pcb, ptcUdpAccept, route_ctx);
-
-    return ERR_OK;
-}
-
-void updateCheckSumTcp(u16_t *_hc, const void *_orig, const void *_new, int n)
-{
-    const u16_t *orig = _orig;
-    const u16_t *new  = _new;
-    u16_t hc          = ~*_hc;
-
-    while (n--)
-    {
-        u32_t s = (u32_t) hc + ((~*orig) & 0xffffU) + *new;
-        while (s & 0xffff0000U)
-        {
-            s = (s & 0xffffU) + (s >> 16);
-        }
-
-        hc = (u16_t) s;
-        ++orig;
-        ++new;
-    }
-
-    *_hc = ~hc;
-}
-
-void updateCheckSumUdp(u16_t *hc, const void *orig, const void *new, int n)
-{
-    if (! *hc)
-    {
-        return;
-    }
-
-    updateCheckSumTcp(hc, orig, new, n);
-    if (! *hc)
-    {
-        *hc = 0xffffU;
-    }
-}
-
-err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr)
-{
-    discard ipaddr;
-
-    interface_route_context_t *route_ctx  = netif->state;
-    tunnel_t                  *t          = route_ctx->tunnel;
-    wid_t                      packet_wid = route_ctx->packet_wid;
-
-    /*
-     * Only the target packet worker itself may emit inline. lwIP's tcpip_thread
-     * is a registered pseudo-worker, not an event worker, so it must never take
-     * this branch and touch the packet line or its pool; it queues below.
-     */
-    if (currentThreadIsEventWorkerWID(packet_wid))
-    {
-        line_t        *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), packet_wid);
-        buffer_pool_t *pool        = lineGetBufferPool(packet_line);
-        sbuf_t        *buf         = ptcAllocateBufferForPool(pool, p->tot_len);
-
-        sbufSetLength(buf, p->tot_len);
-        pbufLargeCopyToPtr(p, sbufGetMutablePtr(buf));
-
-        ptcEmitPacketBuffer(t, packet_line, buf);
-        return ERR_OK;
-    }
-
-    ptc_packet_emit_msg_t *packet_msg = memoryAllocate(sizeof(*packet_msg) + p->tot_len);
-    packet_msg->len                   = p->tot_len;
-    pbufLargeCopyToPtr(p, packet_msg->data);
-
-    if (! sendWorkerMessageForceQueueWithCleanup(
-            packet_wid, (WorkerMessageCallback) ptcEmitPacketOnWorker, ptcEmitPacketCleanup, t, packet_msg, NULL))
-    {
-        return ERR_MEM;
-    }
-
-    return ERR_OK;
+    ptc_tstate_t *state = tunnelGetState(t);
+    return atomicLoadRelaxed(&state->stopping);
 }
 
 void ptcDetachTcpPcbLocked(ptc_lstate_t *ls)
@@ -337,8 +42,12 @@ void ptcDetachTcpPcbLocked(ptc_lstate_t *ls)
     tcp_arg(pcb, NULL);
     tcp_recv(pcb, NULL);
     tcp_sent(pcb, NULL);
+    tcp_poll(pcb, NULL, 0);
     tcp_err(pcb, NULL);
-    ls->tcp_pcb = NULL;
+    ls->write_poll_armed     = false;
+    ls->write_retry_queued   = false;
+    ls->refused_retry_queued = false;
+    ls->tcp_pcb              = NULL;
 }
 
 void ptcDetachUdpFlowLocked(ptc_lstate_t *ls)
@@ -359,6 +68,10 @@ void ptcDetachUdpFlowLocked(ptc_lstate_t *ls)
 
     if (ls->udp_pcb != NULL)
     {
+        if (route_ctx->udp_pcb == ls->udp_pcb)
+        {
+            route_ctx->udp_pcb = NULL;
+        }
         udp_recv(ls->udp_pcb, NULL, NULL);
         udp_remove(ls->udp_pcb);
     }
@@ -367,49 +80,330 @@ void ptcDetachUdpFlowLocked(ptc_lstate_t *ls)
     ls->udp_pcb   = NULL;
 }
 
-void ptcFlushWriteQueue(ptc_lstate_t *ls)
+void ptcOwnedLineRegister(ptc_lstate_t *ls)
+{
+    ptc_tstate_t *state = tunnelGetState(ls->tunnel);
+    const wid_t   wid   = lineGetWID(ls->line);
+
+    assert(state->owned_lines != NULL);
+    assert(wid < state->owned_worker_count);
+    assert(! ls->owned_registered);
+
+    mutexLock(&state->owned_lines_lock);
+    line_t *head   = state->owned_lines[wid];
+    ls->owned_prev = NULL;
+    ls->owned_next = head;
+    if (head != NULL)
+    {
+        ptc_lstate_t *head_state = lineGetState(head, ls->tunnel);
+        head_state->owned_prev   = ls->line;
+    }
+    state->owned_lines[wid] = ls->line;
+    ls->owned_registered    = true;
+    mutexUnlock(&state->owned_lines_lock);
+}
+
+void ptcOwnedLineUnregister(ptc_lstate_t *ls)
+{
+    if (! ls->owned_registered)
+    {
+        return;
+    }
+
+    ptc_tstate_t *state = tunnelGetState(ls->tunnel);
+    const wid_t   wid   = lineGetWID(ls->line);
+
+    mutexLock(&state->owned_lines_lock);
+    if (ls->owned_prev != NULL)
+    {
+        ptc_lstate_t *previous = lineGetState(ls->owned_prev, ls->tunnel);
+        previous->owned_next   = ls->owned_next;
+    }
+    else
+    {
+        assert(state->owned_lines[wid] == ls->line);
+        state->owned_lines[wid] = ls->owned_next;
+    }
+    if (ls->owned_next != NULL)
+    {
+        ptc_lstate_t *next = lineGetState(ls->owned_next, ls->tunnel);
+        next->owned_prev   = ls->owned_prev;
+    }
+    ls->owned_prev       = NULL;
+    ls->owned_next       = NULL;
+    ls->owned_registered = false;
+    mutexUnlock(&state->owned_lines_lock);
+}
+
+/* Called with lwIP's core lock held after both callback gates are closed. */
+void ptcDetachOwnedLinePcbsLocked(tunnel_t *t)
+{
+    ptc_tstate_t *state = tunnelGetState(t);
+
+    if (state->owned_lines == NULL)
+    {
+        return;
+    }
+
+    mutexLock(&state->owned_lines_lock);
+    for (uint32_t wid = 0; wid < state->owned_worker_count; ++wid)
+    {
+        for (line_t *line = state->owned_lines[wid]; line != NULL;)
+        {
+            ptc_lstate_t *ls = lineGetState(line, t);
+            line             = ls->owned_next;
+
+            if (ls->kind == kPtcLineKindTcp && ls->tcp_pcb != NULL)
+            {
+                struct tcp_pcb *pcb = ls->tcp_pcb;
+                ptcDetachTcpPcbLocked(ls);
+                tcp_abort(pcb);
+            }
+            else if (ls->kind == kPtcLineKindUdp)
+            {
+                ptcDetachUdpFlowLocked(ls);
+            }
+        }
+    }
+    mutexUnlock(&state->owned_lines_lock);
+}
+
+/*
+ * The acknowledgement queue and the pause queue are two views of the same
+ * ordered payloads. Every record whose buffer is still unwritten sits in a
+ * contiguous suffix of `ack_queue`, in exactly the order `pause_queue` holds
+ * those buffers - a payload only becomes "paused" after every earlier one
+ * already is. So the record owning the front paused buffer is at this index, and
+ * no search is needed. The previous linear association made both admission and
+ * teardown quadratic in the number of retained payloads.
+ */
+static size_t ptcFrontPauseAckIndex(const ptc_lstate_t *ls)
+{
+    const size_t records = (size_t) sbuf_ack_queue_t_size(&ls->ack_queue);
+    const size_t paused  = bufferqueueGetBufCount((buffer_queue_t *) (uintptr_t) &ls->pause_queue);
+
+    assert(paused <= records);
+    return records - paused;
+}
+
+#ifdef PTC_ASSOCIATION_COST_SEAM
+uint64_t g_ptc_association_steps;
+#endif
+
+sbuf_ack_t *ptcPauseAckRecordAt(ptc_lstate_t *ls, size_t index)
+{
+#ifdef PTC_ASSOCIATION_COST_SEAM
+    ++g_ptc_association_steps;
+#endif
+    assert(index < (size_t) sbuf_ack_queue_t_size(&ls->ack_queue));
+    return sbuf_ack_queue_t_at_mut(&ls->ack_queue, (isize_t) index);
+}
+
+size_t ptcFrontPauseAckIndexOf(const ptc_lstate_t *ls)
+{
+    return ptcFrontPauseAckIndex(ls);
+}
+
+bool ptcReserveWriteSlots(ptc_lstate_t *ls)
+{
+    /*
+     * One acknowledgement record, plus the one pause slot the payload needs if
+     * lwIP will not take all of it. Reserving both before any ownership moves is
+     * what makes the write path transactional: after this succeeds, neither
+     * insertion can fail, and before it succeeds nothing has been handed over.
+     */
+    if (! sbuf_ack_queue_t_reserve(&ls->ack_queue, sbuf_ack_queue_t_size(&ls->ack_queue) + 1))
+    {
+        return false;
+    }
+    return bufferqueueReserveExtra(&ls->pause_queue, 1);
+}
+
+void ptcAckQueuePushBack(ptc_lstate_t *ls, sbuf_t *buf, uint32_t total)
+{
+    /* ptcReserveWriteSlots() ran first, so this insertion cannot allocate. */
+    sbuf_ack_t *record =
+        sbuf_ack_queue_t_push_back(&ls->ack_queue, ((sbuf_ack_t) {.buf = buf, .written = 0, .total = total}));
+
+    if (UNLIKELY(record == NULL))
+    {
+        LOGF("PacketsToConnection: acknowledgement record insertion failed after a successful reservation");
+        abortProgramNow(1);
+        return;
+    }
+
+    /*
+     * The caller admitted these bytes against the limit before handing over
+     * ownership, so the sum cannot pass a `uint32_t` here.
+     */
+    assert(ls->pending_bytes <= UINT32_MAX - total);
+    ls->pending_bytes += total;
+}
+
+void ptcAckQueuePopFront(ptc_lstate_t *ls)
+{
+    const sbuf_ack_t *ack = sbuf_ack_queue_t_front(&ls->ack_queue);
+
+    /*
+     * Release must reconcile even if the invariant were broken: a counter that
+     * ran low would otherwise wrap and make the next admission check accept an
+     * unbounded backlog - exactly the failure the limit exists to prevent.
+     */
+    assert(ls->pending_bytes >= ack->total);
+    ls->pending_bytes = (ls->pending_bytes >= ack->total) ? (ls->pending_bytes - ack->total) : 0;
+    sbuf_ack_queue_t_pop_front(&ls->ack_queue);
+}
+
+bool ptcPendingBytesWouldOverflow(const ptc_tstate_t *ts, const ptc_lstate_t *ls, uint32_t len)
+{
+    if (UNLIKELY(ls->pending_bytes > ts->max_pending_bytes))
+    {
+        assert(false);
+        return true;
+    }
+    return len > ts->max_pending_bytes - ls->pending_bytes;
+}
+
+bool ptcPendingEntriesExhausted(const ptc_tstate_t *ts, const ptc_lstate_t *ls)
+{
+    /*
+     * A byte limit does not bound allocations: each retained payload owns a whole
+     * pooled sbuf whatever its length, so one-byte callbacks reach the byte limit
+     * only after retaining hundreds of thousands of buffers.
+     */
+    return (size_t) sbuf_ack_queue_t_size(&ls->ack_queue) >= (size_t) ts->max_pending_entries;
+}
+
+/*
+ * A payload is paused only after its own record was just appended, so the record
+ * that owns it is the last one - and appending to the back of `pause_queue`
+ * keeps it the last element of the unwritten suffix too.
+ */
+void ptcPauseQueuePushBack(ptc_lstate_t *ls, sbuf_t *buf)
+{
+    /* Reserved by ptcReserveWriteSlots(), so this cannot allocate. */
+    if (UNLIKELY(! bufferqueueTryPushBack(&ls->pause_queue, &buf)))
+    {
+        LOGF("PacketsToConnection: pause insertion failed after a successful reservation");
+        abortProgramNow(1);
+        return;
+    }
+
+    assert(ptcFrontPauseAckIndex(ls) + bufferqueueGetBufCount(&ls->pause_queue) ==
+           (size_t) sbuf_ack_queue_t_size(&ls->ack_queue));
+    sbuf_ack_queue_t_back_mut(&ls->ack_queue)->buf = buf;
+}
+
+/* Reinsertion of a buffer this queue just yielded; the slot is still free. */
+void ptcPauseQueuePushFront(ptc_lstate_t *ls, sbuf_t *buf)
+{
+    if (UNLIKELY(! bufferqueueTryPushFront(&ls->pause_queue, &buf)))
+    {
+        LOGF("PacketsToConnection: pause reinsertion failed on a slot it had just released");
+        abortProgramNow(1);
+        return;
+    }
+
+    ptcPauseAckRecordAt(ls, ptcFrontPauseAckIndex(ls))->buf = buf;
+}
+
+bool ptcRequiredControlRefusedLocked(ptc_lstate_t *ls, const char *operation)
+{
+    tunnel_t     *t       = ls->tunnel;
+    ptc_tstate_t *state   = tunnelGetState(t);
+    bool          aborted = false;
+
+    /* The caller already owns lwIP's core lock. Stop the exact producer before
+     * publishing the allocation-free owner-worker reconciliation. */
+    if (ls->kind == kPtcLineKindTcp)
+    {
+        struct tcp_pcb *pcb = ls->tcp_pcb;
+        ptcDetachTcpPcbLocked(ls);
+        if (pcb != NULL)
+        {
+            tcp_abort(pcb);
+            aborted = true;
+        }
+    }
+    else if (ls->kind == kPtcLineKindUdp)
+    {
+        ptcDetachUdpFlowLocked(ls);
+    }
+
+    mutexLock(&state->owned_lines_lock);
+    ls->terminal_required = true;
+    mutexUnlock(&state->owned_lines_lock);
+
+    LOGE("PacketsToConnection: required owner control '%s' was refused; flow detached", operation);
+    if (! requestProgramShutdown(1))
+    {
+        abortProgramNow(1);
+    }
+    return aborted;
+}
+
+ptc_flush_result_t ptcFlushWriteQueue(ptc_lstate_t *ls)
 {
     struct tcp_pcb *tpcb      = ls->tcp_pcb;
     bool            wrote_any = false;
 
     if (tpcb == NULL)
     {
-        return;
+        return kPtcFlushTerminal;
     }
 
     while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
     {
-        sbuf_t  *buf       = bufferqueuePopFront(&ls->pause_queue);
-        uint32_t buf_len   = sbufGetLength(buf);
-        uint16_t available = tcp_sndbuf(tpcb);
+        /* Read before the pop: the pop is what shifts the suffix by one. */
+        sbuf_ack_t *ack       = ptcPauseAckRecordAt(ls, ptcFrontPauseAckIndexOf(ls));
+        sbuf_t     *buf       = bufferqueuePopFront(&ls->pause_queue);
+        uint32_t    buf_len   = sbufGetLength(buf);
+        uint16_t    available = tcp_sndbuf(tpcb);
+
+        assert(ack->buf == buf);
 
         if (available == 0)
         {
             ls->write_paused = true;
-            bufferqueuePushFront(&ls->pause_queue, buf);
+            ptcPauseQueuePushFront(ls, buf);
             break;
         }
 
         uint16_t write_len = (uint16_t) min((uint32_t) available, buf_len);
         err_t    err       = tcp_write(tpcb, sbufGetMutablePtr(buf), write_len, TCP_WRITE_FLAG_COPY);
 
-        if (err != ERR_OK)
+        if (err == ERR_MEM)
         {
             ls->write_paused = true;
-            bufferqueuePushFront(&ls->pause_queue, buf);
+            ptcPauseQueuePushFront(ls, buf);
             break;
+        }
+        if (err != ERR_OK)
+        {
+            ptcPauseQueuePushFront(ls, buf);
+            tcp_poll(tpcb, NULL, 0);
+            ls->write_poll_armed = false;
+            return kPtcFlushTerminal;
         }
 
         wrote_any = true;
 
         if (write_len == buf_len)
         {
+            /*
+             * TCP_WRITE_FLAG_COPY means lwIP owns its own copy of every byte, so
+             * holding this allocation until the peer acknowledges them buys
+             * nothing. The record stays to carry the unacknowledged byte count;
+             * only the storage goes back now.
+             */
+            ack->buf = NULL;
+            lineReuseBuffer(ls->line, buf);
             continue;
         }
 
         sbufShiftRight(buf, write_len);
         ls->write_paused = true;
-        bufferqueuePushFront(&ls->pause_queue, buf);
+        ptcPauseQueuePushFront(ls, buf);
         break;
     }
 
@@ -421,7 +415,20 @@ void ptcFlushWriteQueue(ptc_lstate_t *ls)
     if (bufferqueueGetBufCount(&ls->pause_queue) == 0)
     {
         ls->write_paused = false;
+        if (ls->write_poll_armed)
+        {
+            tcp_poll(tpcb, NULL, 0);
+            ls->write_poll_armed = false;
+        }
+        return kPtcFlushComplete;
     }
+
+    if (! ls->write_poll_armed)
+    {
+        tcp_poll(tpcb, ptcTcpPollCallback, kPtcWritePollInterval);
+        ls->write_poll_armed = true;
+    }
+    return kPtcFlushRetryable;
 }
 
 err_t ptcTcpSendCompleteCallback(void *arg, struct tcp_pcb *tpcb, u16_t len)
@@ -438,51 +445,165 @@ err_t ptcTcpSendCompleteCallback(void *arg, struct tcp_pcb *tpcb, u16_t len)
 
     while (len > 0 && ! sbuf_ack_queue_t_is_empty(&ls->ack_queue))
     {
-        sbuf_ack_t *ack       = sbuf_ack_queue_t_front_mut(&ls->ack_queue);
-        uint16_t    remaining = (uint16_t) (ack->total - ack->written);
-        uint16_t    cost      = min(remaining, len);
+        sbuf_ack_t *ack = sbuf_ack_queue_t_front_mut(&ls->ack_queue);
+
+        /* A corrupt record must not turn the sent callback into an infinite loop. */
+        assert(ack->written <= ack->total);
+        if (UNLIKELY(ack->written > ack->total))
+        {
+            break;
+        }
+
+        const uint32_t remaining = ack->total - ack->written;
+        const uint16_t cost      = (uint16_t) min(remaining, (uint32_t) len);
+
+        if (UNLIKELY(cost == 0))
+        {
+            /* Completed records are normally removed by the write that completed them. */
+            assert(remaining != 0);
+            break;
+        }
 
         ack->written += cost;
         len -= cost;
 
         if (ack->written == ack->total)
         {
-            if (ack->buf != NULL)
+            /*
+             * A record can only be fully acknowledged once every one of its bytes
+             * reached lwIP, and the flush releases the allocation at that moment -
+             * so a completed record never still owns a buffer. The branch stays as
+             * a Release-safe backstop rather than a leak.
+             */
+            assert(ack->buf == NULL);
+            if (UNLIKELY(ack->buf != NULL))
             {
                 lineReuseBuffer(ls->line, ack->buf);
             }
-            sbuf_ack_queue_t_pop_front(&ls->ack_queue);
+            ptcAckQueuePopFront(ls);
         }
     }
 
     if (ls->write_paused)
     {
-        ptcFlushWriteQueue(ls);
+        const ptc_flush_result_t result = ptcFlushWriteQueue(ls);
+        if (result == kPtcFlushTerminal)
+        {
+            struct tcp_pcb *pcb = ls->tcp_pcb;
+            ptcDetachTcpPcbLocked(ls);
+            if (pcb != NULL)
+            {
+                tcp_abort(pcb);
+            }
+            if (lineIsAlive(ls->line) && ! lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel))
+            {
+                discard ptcRequiredControlRefusedLocked(ls, "terminal-write close");
+            }
+            return ERR_ABRT;
+        }
         if (! ls->write_paused && lineIsAlive(ls->line))
         {
-            lineScheduleTask(ls->line, ptcResumeUpstreamTask, ls->tunnel);
+            if (! lineScheduleTask(ls->line, ptcResumeUpstreamTask, ls->tunnel))
+            {
+                if (ptcRequiredControlRefusedLocked(ls, "write Resume"))
+                {
+                    return ERR_ABRT;
+                }
+            }
         }
     }
 
     return ERR_OK;
 }
 
-void ptcArmUdpIdleOnOwnerThread(ptc_lstate_t *ls)
+err_t ptcTcpPollCallback(void *arg, struct tcp_pcb *tpcb)
 {
-    if (ls->kind != kPtcLineKindUdp)
+    ptc_lstate_t *ls = arg;
+
+    if (ls == NULL || ls->tcp_pcb != tpcb || ls->kind != kPtcLineKindTcp)
+    {
+        return ERR_OK;
+    }
+    if (ls->write_retry_queued)
+    {
+        return ERR_OK;
+    }
+
+    ls->write_retry_queued = true;
+    if (! lineIsAlive(ls->line) || ! lineScheduleTask(ls->line, ptcWriteRetryTask, ls->tunnel))
+    {
+        ls->write_retry_queued = false;
+        tcp_poll(tpcb, NULL, 0);
+        ls->write_poll_armed = false;
+        if (ptcRequiredControlRefusedLocked(ls, "TCP write retry"))
+        {
+            return ERR_ABRT;
+        }
+    }
+    return ERR_OK;
+}
+
+static void ptcUdpIdleTimerCallback(wtimer_t *timer)
+{
+    ptc_lstate_t *ls = weventGetUserdata(timer);
+    if (ls == NULL)
     {
         return;
     }
 
-    ptc_tstate_t *ts  = tunnelGetState(ls->tunnel);
-    uint64_t      now = wloopNowMS(getWorkerLoop(lineGetWID(ls->line)));
+    line_t   *l        = ls->line;
+    tunnel_t *t        = ls->tunnel;
+    ls->udp_idle_timer = NULL;
 
-    ls->udp_idle_deadline_ms = now + ts->udp_idle_timeout_ms;
-    if (! ls->udp_idle_scheduled)
+    if (lineIsAlive(l))
     {
-        ls->udp_idle_scheduled = true;
-        lineScheduleDelayedTask(ls->line, ptcUdpIdleTask, ts->udp_idle_timeout_ms, ls->tunnel);
+        if (ptcNextGateEnter(t))
+        {
+            ptcCloseLineFromNetwork(t, l);
+            ptcNextGateLeave(t);
+        }
+        else
+        {
+            ptcCloseLineForStop(t, l);
+        }
     }
+    lineUnlock(l);
+}
+
+bool ptcArmUdpIdleOnOwnerThread(ptc_lstate_t *ls)
+{
+    if (ls->kind != kPtcLineKindUdp)
+    {
+        return true;
+    }
+
+    ptc_tstate_t *ts = tunnelGetState(ls->tunnel);
+    if (ls->udp_idle_timer != NULL)
+    {
+        wtimerReset(ls->udp_idle_timer, ts->udp_idle_timeout_ms);
+        return true;
+    }
+
+    ls->udp_idle_timer = wtimerAdd(getCurrentEventWorkerLoop(), ptcUdpIdleTimerCallback, ts->udp_idle_timeout_ms, 1);
+    if (ls->udp_idle_timer == NULL)
+    {
+        return false;
+    }
+    weventSetUserData(ls->udp_idle_timer, ls);
+    lineLock(ls->line);
+    return true;
+}
+
+void ptcCancelUdpIdleTimer(ptc_lstate_t *ls)
+{
+    if (ls->udp_idle_timer == NULL)
+    {
+        return;
+    }
+    weventSetUserData(ls->udp_idle_timer, NULL);
+    wtimerDelete(ls->udp_idle_timer);
+    ls->udp_idle_timer = NULL;
+    lineUnlock(ls->line);
 }
 
 bool ptcEnsureNextInit(tunnel_t *t, line_t *l, ptc_lstate_t *ls)
@@ -498,20 +619,46 @@ bool ptcEnsureNextInit(tunnel_t *t, line_t *l, ptc_lstate_t *ls)
 
 void ptcOpenLineTask(tunnel_t *t, line_t *l)
 {
+    if (! ptcNextGateEnter(t))
+    {
+        ptcCloseLineForStop(t, l);
+        return;
+    }
+
     ptc_lstate_t *ls = lineGetState(l, t);
 
-    discard ptcEnsureNextInit(t, l, ls);
+    if (! ptcEnsureNextInit(t, l, ls))
+    {
+        ptcNextGateLeave(t);
+        return;
+    }
+
+    ls = lineGetState(l, t);
+    if (ls->kind == kPtcLineKindUdp && ! ptcArmUdpIdleOnOwnerThread(ls))
+    {
+        ptcCloseLineFromNetwork(t, l);
+    }
+    ptcNextGateLeave(t);
 }
 
 void ptcDeliverPayloadTask(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    buffer_pool_t *pool     = lineGetBufferPool(l);
-    ptc_lstate_t  *ls       = lineGetState(l, t);
-    uint32_t       tcp_read = sbufGetLength(buf);
+    buffer_pool_t *pool = lineGetBufferPool(l);
+
+    if (! ptcNextGateEnter(t))
+    {
+        bufferpoolReuseBuffer(pool, buf);
+        ptcCloseLineForStop(t, l);
+        return;
+    }
+
+    ptc_lstate_t *ls       = lineGetState(l, t);
+    uint32_t      tcp_read = sbufGetLength(buf);
 
     if (! ptcEnsureNextInit(t, l, ls))
     {
         bufferpoolReuseBuffer(pool, buf);
+        ptcNextGateLeave(t);
         return;
     }
 
@@ -519,16 +666,24 @@ void ptcDeliverPayloadTask(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->kind == kPtcLineKindUdp)
     {
-        ptcArmUdpIdleOnOwnerThread(ls);
+        if (! ptcArmUdpIdleOnOwnerThread(ls))
+        {
+            bufferpoolReuseBuffer(pool, buf);
+            ptcCloseLineFromNetwork(t, l);
+            ptcNextGateLeave(t);
+            return;
+        }
         if (ls->read_paused)
         {
             lineReuseBuffer(l, buf);
+            ptcNextGateLeave(t);
             return;
         }
     }
 
     if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf))
     {
+        ptcNextGateLeave(t);
         return;
     }
 
@@ -538,20 +693,22 @@ void ptcDeliverPayloadTask(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (ls->read_paused)
         {
-            ls->read_paused_len += tcp_read;
+            LOCK_TCPIP_CORE();
+            const bool accumulated = ptcPausedReadAccumulateLocked(ls, tcp_read);
+            UNLOCK_TCPIP_CORE();
+            ptcNextGateLeave(t);
+            discard accumulated;
             return;
         }
 
         LOCK_TCPIP_CORE();
-        if (ls->tcp_pcb != NULL)
-        {
-            tcp_recved(ls->tcp_pcb, tcp_read);
-        }
+        discard ptcReturnReceiveCreditLocked(ls, tcp_read);
         UNLOCK_TCPIP_CORE();
     }
+    ptcNextGateLeave(t);
 }
 
-void ptcCloseLineFromNetwork(tunnel_t *t, line_t *l)
+static void ptcCloseOwnedLine(tunnel_t *t, line_t *l, bool graceful_tcp, bool finish_next)
 {
     if (! lineIsAlive(l))
     {
@@ -565,11 +722,19 @@ void ptcCloseLineFromNetwork(tunnel_t *t, line_t *l)
     LOCK_TCPIP_CORE();
     if (ls->kind == kPtcLineKindTcp && ls->tcp_pcb != NULL)
     {
-        struct tcp_pcb *pcb = ls->tcp_pcb;
-        ptcDetachTcpPcbLocked(ls);
-        if (tcp_close(pcb) != ERR_OK)
+        bool                               drain_aborted = false;
+        const ptc_tcp_drain_adopt_result_t adopted =
+            graceful_tcp ? ptcTcpDrainAdoptLocked(t, ls, &drain_aborted) : kPtcTcpDrainFailed;
+        discard drain_aborted;
+
+        if (adopted != kPtcTcpDrainAdopted)
         {
-            tcp_abort(pcb);
+            struct tcp_pcb *pcb = ls->tcp_pcb;
+            ptcDetachTcpPcbLocked(ls);
+            if (pcb != NULL)
+            {
+                tcp_abort(pcb);
+            }
         }
     }
     else if (ls->kind == kPtcLineKindUdp)
@@ -578,7 +743,7 @@ void ptcCloseLineFromNetwork(tunnel_t *t, line_t *l)
     }
     UNLOCK_TCPIP_CORE();
 
-    const bool send_finish = ls->next_init_sent;
+    const bool send_finish = finish_next && ls->next_init_sent;
     ptcLinestateDestroy(ls);
 
     if (send_finish)
@@ -594,7 +759,85 @@ void ptcCloseLineFromNetwork(tunnel_t *t, line_t *l)
     lineUnlock(l);
 }
 
+void ptcCloseLineFromNetwork(tunnel_t *t, line_t *l)
+{
+    ptcCloseOwnedLine(t, l, true, true);
+}
+
 void ptcCloseLineFromDownstream(tunnel_t *t, line_t *l)
+{
+    /* next sent Finish, so this close must never reflect a callback to next. */
+    ptcCloseOwnedLine(t, l, true, false);
+}
+
+void ptcCloseLineOverPendingLimit(tunnel_t *t, line_t *l)
+{
+    /*
+     * next is still open and produced the excess, so it gets exactly one
+     * Finish. The PCB is reset instead of drained - see the header note.
+     */
+    ptcCloseOwnedLine(t, l, false, true);
+}
+
+void ptcCloseLineTask(tunnel_t *t, line_t *l)
+{
+    if (! ptcNextGateEnter(t))
+    {
+        ptcCloseLineForStop(t, l);
+        return;
+    }
+    ptcCloseLineFromNetwork(t, l);
+    ptcNextGateLeave(t);
+}
+
+void ptcResumeUpstreamTask(tunnel_t *t, line_t *l)
+{
+    if (! ptcNextGateEnter(t))
+    {
+        ptcCloseLineForStop(t, l);
+        return;
+    }
+    discard withLineLocked(l, tunnelNextUpStreamResume, t);
+    ptcNextGateLeave(t);
+}
+
+void ptcWriteRetryTask(tunnel_t *t, line_t *l)
+{
+    ptc_lstate_t      *ls;
+    ptc_flush_result_t result = kPtcFlushTerminal;
+
+    if (! lineIsAlive(l))
+    {
+        return;
+    }
+
+    ls = lineGetState(l, t);
+    LOCK_TCPIP_CORE();
+    ls->write_retry_queued = false;
+    if (ls->tcp_pcb != NULL)
+    {
+        result = ptcFlushWriteQueue(ls);
+        if (result == kPtcFlushTerminal)
+        {
+            struct tcp_pcb *pcb = ls->tcp_pcb;
+            ptcDetachTcpPcbLocked(ls);
+            tcp_abort(pcb);
+        }
+    }
+    UNLOCK_TCPIP_CORE();
+
+    if (result == kPtcFlushTerminal)
+    {
+        ptcCloseLineTask(t, l);
+        return;
+    }
+    if (result == kPtcFlushComplete)
+    {
+        ptcResumeUpstreamTask(t, l);
+    }
+}
+
+void ptcRefusedDataRetryTask(tunnel_t *t, line_t *l)
 {
     if (! lineIsAlive(l))
     {
@@ -602,62 +845,94 @@ void ptcCloseLineFromDownstream(tunnel_t *t, line_t *l)
     }
 
     ptc_lstate_t *ls = lineGetState(l, t);
-
     LOCK_TCPIP_CORE();
-    if (ls->kind == kPtcLineKindTcp && ls->tcp_pcb != NULL)
+    ls->refused_retry_queued = false;
+    if (ls->kind == kPtcLineKindTcp && ls->tcp_pcb != NULL && ! ptcTunnelIsStopping(t))
     {
-        struct tcp_pcb *pcb = ls->tcp_pcb;
-        ptcFlushWriteQueue(ls);
-        ptcDetachTcpPcbLocked(ls);
-        if (tcp_close(pcb) != ERR_OK)
-        {
-            tcp_abort(pcb);
-        }
-    }
-    else if (ls->kind == kPtcLineKindUdp)
-    {
-        ptcDetachUdpFlowLocked(ls);
+        discard tcp_process_refused_data(ls->tcp_pcb);
     }
     UNLOCK_TCPIP_CORE();
-
-    ptcLinestateDestroy(ls);
-    lineDestroy(l);
 }
 
-void ptcCloseLineTask(tunnel_t *t, line_t *l)
+void ptcCloseLineForStop(tunnel_t *t, line_t *l)
 {
-    ptcCloseLineFromNetwork(t, l);
+    /*
+     * PTC owns this normal line.  Pre-stop has already blocked ordinary next
+     * callbacks, but chain hooks stop PTC before its next tunnel.  An Init that
+     * completed therefore still needs exactly one teardown Finish before the
+     * owned line becomes dead and the next tunnel's line state is reclaimed.
+     */
+    ptcCloseOwnedLine(t, l, false, true);
 }
 
-void ptcResumeUpstreamTask(tunnel_t *t, line_t *l)
+void ptcDrainOwnedLinesOnCurrentWorker(tunnel_t *t, wid_t wid)
 {
-    discard withLineLocked(l, tunnelNextUpStreamResume, t);
-}
+    ptc_tstate_t *state = tunnelGetState(t);
 
-void ptcUdpIdleTask(tunnel_t *t, line_t *l)
-{
-    ptc_lstate_t *ls = lineGetState(l, t);
-
-    if (ls->kind != kPtcLineKindUdp)
+    assert(currentThreadIsEventWorkerWID(wid));
+    if (state->owned_lines == NULL || wid >= state->owned_worker_count)
     {
-        ls->udp_idle_scheduled = false;
         return;
     }
 
-    uint64_t now = wloopNowMS(getWorkerLoop(lineGetWID(l)));
-    if (now < ls->udp_idle_deadline_ms)
+    for (;;)
     {
-        uint64_t remaining_ms = ls->udp_idle_deadline_ms - now;
-        if (remaining_ms == 0)
+        mutexLock(&state->owned_lines_lock);
+        line_t *line = state->owned_lines[wid];
+        if (line != NULL)
         {
-            remaining_ms = 1;
+            lineLock(line);
+        }
+        mutexUnlock(&state->owned_lines_lock);
+
+        if (line == NULL)
+        {
+            return;
         }
 
-        lineScheduleDelayedTask(
-            l, ptcUdpIdleTask, (remaining_ms > UINT32_MAX) ? UINT32_MAX : (uint32_t) remaining_ms, t);
+        ptcCloseLineForStop(t, line);
+        lineUnlock(line);
+    }
+}
+
+void ptcDrainTerminalLinesOnCurrentWorker(tunnel_t *t, wid_t wid)
+{
+    ptc_tstate_t *state = tunnelGetState(t);
+
+    assert(currentThreadIsEventWorkerWID(wid));
+    if (state->owned_lines == NULL || wid >= state->owned_worker_count)
+    {
         return;
     }
 
-    ls->udp_idle_scheduled = false;
-    ptcCloseLineFromNetwork(t, l);
+    for (;;)
+    {
+        line_t *terminal = NULL;
+
+        mutexLock(&state->owned_lines_lock);
+        for (line_t *line = state->owned_lines[wid]; line != NULL;)
+        {
+            ptc_lstate_t *ls = lineGetState(line, t);
+            if (ls->terminal_required)
+            {
+                ls->terminal_required = false;
+                lineLock(line);
+                terminal = line;
+                break;
+            }
+            line = ls->owned_next;
+        }
+        mutexUnlock(&state->owned_lines_lock);
+
+        if (terminal == NULL)
+        {
+            return;
+        }
+
+        /* The producer PCB/map was already detached under the core lock. The
+         * owner now performs line-state teardown, directionally legal Finish
+         * (only if Init was sent), and the owner-only lineDestroy(). */
+        ptcCloseLineForStop(t, terminal);
+        lineUnlock(terminal);
+    }
 }

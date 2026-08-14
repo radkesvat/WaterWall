@@ -3,6 +3,7 @@
  */
 
 #include "buffer_pool.h"
+#include "buffer_pool_internal.h"
 #include "loggers/internal_logger.h"
 #include "shiftbuffer.h"
 #include "wmath.h"
@@ -123,6 +124,30 @@ static void destroySmallBufHandle(master_pool_item_t *item)
     sbufDestroy(item);
 }
 
+static bool bufferMatchesGeometry(const sbuf_t *buf, uint32_t payload_capacity, uint16_t left_padding)
+{
+    return sbufGetTotalCapacityNoPadding((sbuf_t *) buf) == payload_capacity && sbufGetLeftPadding(buf) == left_padding;
+}
+
+static bool bufferpoolTiersHaveIdenticalGeometry(const buffer_pool_t *pool)
+{
+    return pool->large_buffers_size == pool->small_buffers_size &&
+           pool->large_buffer_left_padding == pool->small_buffer_left_padding;
+}
+
+static sbuf_t *requireExactMasterBuffer(buffer_pool_t *pool, master_pool_t *master, sbuf_t *buf,
+                                        uint32_t payload_capacity, uint16_t left_padding,
+                                        MasterPoolItemCreateHandle create_handle)
+{
+    if (LIKELY(bufferMatchesGeometry(buf, payload_capacity, left_padding)))
+    {
+        return buf;
+    }
+
+    sbufDestroy(buf);
+    return (sbuf_t *) masterpoolRequireCreatedItem(master, create_handle(pool), pool);
+}
+
 /**
  * Recharges the large buffers in the buffer pool by preallocating a number of buffers.
  * @param pool The buffer pool.
@@ -131,10 +156,19 @@ static void reChargeLargeBuffers(buffer_pool_t *pool)
 {
     const uint32_t increase = min((pool->cap - pool->large_buffers_container_len), pool->cap / 2);
 
-    masterpoolGetItems(pool->large_buffers_mp,
-                       (void const **) &(pool->large_buffers[pool->large_buffers_container_len]),
-                       increase,
-                       pool);
+    masterpoolGetItems(
+        pool->large_buffers_mp, (void **) &(pool->large_buffers[pool->large_buffers_container_len]), increase, pool);
+
+    for (uint32_t i = 0; i < increase; ++i)
+    {
+        const uint32_t index       = pool->large_buffers_container_len + i;
+        pool->large_buffers[index] = requireExactMasterBuffer(pool,
+                                                              pool->large_buffers_mp,
+                                                              pool->large_buffers[index],
+                                                              pool->large_buffers_size,
+                                                              pool->large_buffer_left_padding,
+                                                              createLargeBufHandle);
+    }
 
     pool->large_buffers_container_len += increase;
 #if BUFFER_POOL_DEBUG == 1
@@ -150,10 +184,19 @@ static void reChargeSmallBuffers(buffer_pool_t *pool)
 {
     const uint32_t increase = min((pool->cap - pool->small_buffers_container_len), pool->cap / 2);
 
-    masterpoolGetItems(pool->small_buffers_mp,
-                       (void const **) &(pool->small_buffers[pool->small_buffers_container_len]),
-                       increase,
-                       pool);
+    masterpoolGetItems(
+        pool->small_buffers_mp, (void **) &(pool->small_buffers[pool->small_buffers_container_len]), increase, pool);
+
+    for (uint32_t i = 0; i < increase; ++i)
+    {
+        const uint32_t index       = pool->small_buffers_container_len + i;
+        pool->small_buffers[index] = requireExactMasterBuffer(pool,
+                                                              pool->small_buffers_mp,
+                                                              pool->small_buffers[index],
+                                                              pool->small_buffers_size,
+                                                              pool->small_buffer_left_padding,
+                                                              createSmallBufHandle);
+    }
 
     pool->small_buffers_container_len += increase;
 #if BUFFER_POOL_DEBUG == 1
@@ -218,7 +261,8 @@ static void shrinkSmallBuffers(buffer_pool_t *pool)
 sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
 {
 #if BYPASS_BUFFERPOOL == 1
-    return sbufCreateWithPadding(pool->large_buffers_size, pool->large_buffer_left_padding);
+    return masterpoolRequireCreatedItem(
+        pool->large_buffers_mp, sbufCreateWithPadding(pool->large_buffers_size, pool->large_buffer_left_padding), pool);
 #endif
 
 #if BUFFER_POOL_DEBUG == 1
@@ -232,6 +276,11 @@ sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
         --(pool->large_buffers_container_len);
         return pool->large_buffers[pool->large_buffers_container_len];
     }
+    if (bufferpoolTiersHaveIdenticalGeometry(pool) && pool->small_buffers_container_len > 0)
+    {
+        --(pool->small_buffers_container_len);
+        return pool->small_buffers[pool->small_buffers_container_len];
+    }
     reChargeLargeBuffers(pool);
 
     --(pool->large_buffers_container_len);
@@ -241,7 +290,8 @@ sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
 sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
 {
 #if BYPASS_BUFFERPOOL == 1
-    return sbufCreateWithPadding(pool->small_buffers_size, pool->small_buffer_left_padding);
+    return masterpoolRequireCreatedItem(
+        pool->small_buffers_mp, sbufCreateWithPadding(pool->small_buffers_size, pool->small_buffer_left_padding), pool);
 #endif
 
 #if BUFFER_POOL_DEBUG == 1
@@ -254,6 +304,11 @@ sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
     {
         --(pool->small_buffers_container_len);
         return pool->small_buffers[pool->small_buffers_container_len];
+    }
+    if (bufferpoolTiersHaveIdenticalGeometry(pool) && pool->large_buffers_container_len > 0)
+    {
+        --(pool->large_buffers_container_len);
+        return pool->large_buffers[pool->large_buffers_container_len];
     }
     reChargeSmallBuffers(pool);
 
@@ -376,6 +431,7 @@ sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b)
 
     sbufSetLength(bnew, source_length);
     sbufWriteBuf(bnew, b, source_length);
+    sbufCloneLifetime(b, bnew);
     return bnew;
 }
 
@@ -407,52 +463,128 @@ void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buff
  * currently passes a small constant, so it was not reachable, but a duplicate of
  * arithmetic that has already been wrong once does not need to stay.
  *
- * There is no failure channel out of bufferpoolCreate() and no valid smaller
- * answer, so an unrepresentable geometry is Category D.
+ * bufferpoolCreate() is nullable, so an unrepresentable geometry is rejected
+ * transactionally before callbacks or metadata are published.
  */
-static uint32_t bufferpoolRoundBufferSize(uint32_t requested)
+static bool bufferpoolTryRoundBufferSize(uint32_t requested, uint32_t *rounded_out)
 {
     uint32_t rounded = 0;
     if (! sbufTryComputeCapacity(requested, 0, &rounded))
     {
-        printError("BufferPool: buffer size %u cannot be represented", requested);
-        abortProgramNow(1);
+        return false;
     }
-    return rounded;
+    *rounded_out = rounded;
+    return true;
+}
+
+bool bufferpoolTryComputeGeometryForLimit(uint32_t pool_width, uint64_t allocation_limit, uint32_t *capacity_out,
+                                          uint32_t *free_threshold_out, uint64_t *pointer_array_size_out)
+{
+    if (pool_width == 0 || capacity_out == NULL || free_threshold_out == NULL || pointer_array_size_out == NULL ||
+        pool_width > UINT32_MAX / 2U)
+    {
+        return false;
+    }
+
+    const uint32_t capacity           = pool_width * 2U;
+    const uint64_t pointer_array_size = (uint64_t) capacity * (uint64_t) sizeof(sbuf_t *);
+    if ((uint64_t) sizeof(buffer_pool_t) > allocation_limit || pointer_array_size > allocation_limit)
+    {
+        return false;
+    }
+
+    /* floor(2 * capacity / 3), without the overflowing 32-bit multiply. */
+    const uint32_t two_thirds = (capacity / 3U) * 2U + ((capacity % 3U) * 2U) / 3U;
+    const uint32_t threshold  = max(capacity / 2U, two_thirds);
+
+    *capacity_out           = capacity;
+    *free_threshold_out     = threshold;
+    *pointer_array_size_out = pointer_array_size;
+    return true;
+}
+
+uint64_t bufferpoolMetadataSizeForTest(void)
+{
+    return (uint64_t) sizeof(buffer_pool_t);
+}
+
+void bufferpoolCachedTierCountsForTest(const buffer_pool_t *pool, uint32_t *large_count, uint32_t *small_count)
+{
+    assert(pool != NULL);
+    assert(large_count != NULL);
+    assert(small_count != NULL);
+    *large_count = pool->large_buffers_container_len;
+    *small_count = pool->small_buffers_container_len;
 }
 
 buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small, uint32_t bufcount,
                                 uint32_t large_buffer_size, uint32_t small_buffer_size)
 {
-    // stop using pool if you want less, simply uncomment lines in popbuffer and bufferpoolReuseBuffer
-    assert(bufcount >= 1);
-    assert(bufcount <= (UINT32_MAX / 2));
+    uint32_t capacity;
+    uint32_t free_threshold;
+    uint64_t container_len64;
+    uint32_t rounded_large_buffer_size;
+    uint32_t rounded_small_buffer_size;
 
-    bufcount = 2 * bufcount;
+    if (mp_large == NULL || mp_small == NULL ||
+        ! bufferpoolTryComputeGeometryForLimit(bufcount, SIZE_MAX, &capacity, &free_threshold, &container_len64) ||
+        ! bufferpoolTryRoundBufferSize(large_buffer_size, &rounded_large_buffer_size) ||
+        ! bufferpoolTryRoundBufferSize(small_buffer_size, &rounded_small_buffer_size))
+    {
+        return NULL;
+    }
 
-    large_buffer_size = bufferpoolRoundBufferSize(large_buffer_size);
-    small_buffer_size = bufferpoolRoundBufferSize(small_buffer_size);
+    const size_t container_len = (size_t) container_len64;
 
 #ifdef DEBUG
-    sbuf_t *test_large_buf = sbufCreateWithPadding(large_buffer_size, 0);
-    sbuf_t *test_small_buf = sbufCreateWithPadding(small_buffer_size, 0);
-    assert(sbufGetTotalCapacityNoPadding(test_large_buf) == large_buffer_size);
+    sbuf_t *test_large_buf = sbufCreateWithPadding(rounded_large_buffer_size, 0);
+    sbuf_t *test_small_buf = sbufCreateWithPadding(rounded_small_buffer_size, 0);
+    if (test_large_buf == NULL || test_small_buf == NULL)
+    {
+        if (test_large_buf != NULL)
+        {
+            sbufDestroy(test_large_buf);
+        }
+        if (test_small_buf != NULL)
+        {
+            sbufDestroy(test_small_buf);
+        }
+        return NULL;
+    }
+    assert(sbufGetTotalCapacityNoPadding(test_large_buf) == rounded_large_buffer_size);
     assert(sbufGetLeftPadding(test_large_buf) == 0);
-    assert(sbufGetTotalCapacityNoPadding(test_small_buf) == small_buffer_size);
+    assert(sbufGetTotalCapacityNoPadding(test_small_buf) == rounded_small_buffer_size);
     assert(sbufGetLeftPadding(test_small_buf) == 0);
     sbufDestroy(test_large_buf);
     sbufDestroy(test_small_buf);
 #endif
 
-    const unsigned long container_len = bufcount * sizeof(sbuf_t *);
-
     buffer_pool_t *ptr_pool = memoryAllocate(sizeof(buffer_pool_t));
+    if (ptr_pool == NULL)
+    {
+        return NULL;
+    }
+
+    sbuf_t **large_buffers = (sbuf_t **) memoryAllocate(container_len);
+    if (large_buffers == NULL)
+    {
+        memoryFree(ptr_pool);
+        return NULL;
+    }
+
+    sbuf_t **small_buffers = (sbuf_t **) memoryAllocate(container_len);
+    if (small_buffers == NULL)
+    {
+        memoryFree(large_buffers);
+        memoryFree(ptr_pool);
+        return NULL;
+    }
 
     *ptr_pool = (buffer_pool_t) {
-        .cap                = bufcount,
-        .large_buffers_size = large_buffer_size,
-        .small_buffers_size = small_buffer_size,
-        .free_threshold     = max(bufcount / 2, (bufcount * 2) / 3),
+        .cap                = capacity,
+        .large_buffers_size = rounded_large_buffer_size,
+        .small_buffers_size = rounded_small_buffer_size,
+        .free_threshold     = free_threshold,
 
 #if BUFFER_POOL_DEBUG == 1
         .in_use = 0,
@@ -462,9 +594,9 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small
         .tid = 0,
 #endif
         .large_buffers_mp = mp_large,
-        .large_buffers    = (sbuf_t **) memoryAllocate(container_len),
+        .large_buffers    = large_buffers,
         .small_buffers_mp = mp_small,
-        .small_buffers    = (sbuf_t **) memoryAllocate(container_len),
+        .small_buffers    = small_buffers,
     };
 
     masterpoolInstallCallBacks(ptr_pool->large_buffers_mp, createLargeBufHandle, destroyLargeBufHandle);
@@ -481,6 +613,10 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small
 
 void bufferpoolDestroy(buffer_pool_t *pool)
 {
+    if (pool == NULL)
+    {
+        return;
+    }
     for (uint32_t s_i = 0; s_i < pool->small_buffers_container_len; s_i++)
     {
         sbufDestroy(pool->small_buffers[s_i]);

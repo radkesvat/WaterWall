@@ -523,11 +523,15 @@ static void trojanserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
     if (trojanserverFallbackPendingCount(ls) > 0 && ! ls->fallback_delay_scheduled)
     {
         ls->fallback_delay_scheduled = true;
-        lineScheduleDelayedTask(
-            l,
-            trojanserverDelayedFallbackPayloadTask,
-            fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
-            t);
+        if (UNLIKELY(! lineScheduleDelayedTask(
+                l,
+                trojanserverDelayedFallbackPayloadTask,
+                fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
+                t)))
+        {
+            ls->fallback_delay_scheduled = false;
+            trojanserverCloseLineBidirectional(t, l);
+        }
         return;
     }
 
@@ -566,11 +570,16 @@ bool trojanserverSendFallbackPayload(tunnel_t *t, line_t *l, trojanserver_lstate
     if (! ls->fallback_delay_scheduled)
     {
         ls->fallback_delay_scheduled = true;
-        lineScheduleDelayedTask(
-            l,
-            trojanserverDelayedFallbackPayloadTask,
-            fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
-            t);
+        if (UNLIKELY(! lineScheduleDelayedTask(
+                l,
+                trojanserverDelayedFallbackPayloadTask,
+                fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
+                t)))
+        {
+            ls->fallback_delay_scheduled = false;
+            trojanserverCloseLineBidirectional(t, l);
+            return false;
+        }
     }
 
     return true;

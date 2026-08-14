@@ -121,6 +121,11 @@ typedef struct node_s node_t;
 
 typedef tunnel_t *(*TunnelCreateHandle)(node_t *node);
 
+/*
+ * node_t is part of the external-node ABI. Dynamically loaded node libraries
+ * receive this structure from the core and may read its public metadata. Do not
+ * change its layout without an explicit ABI compatibility plan.
+ */
 struct node_s
 {
     char           *name;

@@ -58,6 +58,12 @@ typedef void (*TunnelFlowRoutineResume)(tunnel_t *, line_t *line);
 typedef splice_retcode_t (*TunnelFlowRoutineSplice)(tunnel_t *, line_t *line, int pipe_fd, size_t len);
 
 /*
+    tunnel_t is part of the external-node ABI. External node libraries allocate
+    tunnels through tunnelCreate(), assign these public callbacks directly, and
+    access the aligned flexible state through the inline helpers below. Do not
+    move historical members. A new member must occupy proven alignment padding
+    or be introduced as an explicit, versioned ABI break.
+
     Tunnel is just a doubly linked list, it has its own state, per connection state is stored in line structure
     which later gets accessed by the chain_index which is fixed.
 
@@ -97,6 +103,20 @@ struct tunnel_s
     node_t         *node;
     tunnel_chain_t *chain;
 
+    /*
+     * Producer admission closes here before any tunnel's onStop runs. This
+     * member deliberately occupies historical pre-state alignment padding so
+     * every older public member and the state[] offset retain their ABI.
+     */
+    TunnelStatusCb onPreStop;
+
+    /*
+     * Current factories initialize every callback.  At the external-node
+     * boundary only, NodeManager also accepts NULL in this padding-backed slot
+     * as the frozen pre-onPreStop ABI representation and normalizes it to the
+     * framework no-op before validating the otherwise-total callback table.
+     */
+
     // tunnel itself will be aligned to cache line when allocating memory
     MSVC_ATTR_ALIGNED_LINE_CACHE uint8_t state[] GNU_ATTR_ALIGNED_LINE_CACHE;
 };
@@ -109,7 +129,7 @@ struct tunnel_s
  * @param lstate_size Size of the line state.
  * @return tunnel_t* Pointer to the created tunnel.
  */
-tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size);
+tunnel_t *tunnelCreate(node_t *node, size_t tstate_size, size_t lstate_size);
 
 /**
  * @brief Destroys a tunnel instance.
@@ -315,6 +335,7 @@ void tunnelDefaultOnStart(tunnel_t *t);
  * @param t Pointer to the tunnel.
  */
 void tunnelDefaultOnStop(tunnel_t *t);
+void tunnelDefaultOnPreStop(tunnel_t *t);
 
 /**
  * @brief Default function to stop worker-local tunnel resources.
@@ -380,14 +401,45 @@ static uint32_t tunnelGetLineStateSize(tunnel_t *self)
 }
 
 /**
+ * @brief True when rounding @p size up to a cache line would wrap.
+ *
+ * The rounding below is 32-bit arithmetic, so UINT32_MAX became zero and
+ * tunnelCreate() returned a tunnel whose state sizes were both zero instead of
+ * reporting the overflow its contract promises. Callers must reject first.
+ */
+static inline bool tunnelTryAlignStateSize(size_t size, uint32_t *aligned_size)
+{
+    const size_t maximum = (size_t) UINT32_MAX - ((size_t) kCpuLineCacheSize - 1U);
+    if (size > maximum || aligned_size == NULL)
+    {
+        return false;
+    }
+
+    *aligned_size = (uint32_t) ((size + (size_t) kCpuLineCacheSize - 1U) & ~((size_t) kCpuLineCacheSize - 1U));
+    return true;
+}
+
+static bool tunnelStateSizeOverflows(uint32_t size)
+{
+    uint32_t aligned_size;
+    return ! tunnelTryAlignStateSize((size_t) size, &aligned_size);
+}
+
+/**
  * @brief Retrieves the correctly aligned state size.
+ *
+ * Only valid for a size that tunnelStateSizeOverflows() does not reject; the caller is
+ * responsible for that check because this cannot report a failure.
  *
  * @param size Size to be aligned.
  * @return uint32_t Correctly aligned state size.
  */
 static uint32_t tunnelGetCorrectAlignedStateSize(uint32_t size)
 {
-    return (size + (uint32_t) kCpuLineCacheSize - 1U) & ~((uint32_t) kCpuLineCacheSize - 1U);
+    uint32_t   aligned_size = 0;
+    const bool valid        = tunnelTryAlignStateSize((size_t) size, &aligned_size);
+    assert(valid);
+    return aligned_size;
 }
 
 /**
@@ -398,7 +450,10 @@ static uint32_t tunnelGetCorrectAlignedStateSize(uint32_t size)
  */
 static uint32_t tunnelGetCorrectAlignedLineStateSize(uint32_t size)
 {
-    return (size + (uint32_t) kCpuLineCacheSize - 1U) & ~((uint32_t) kCpuLineCacheSize - 1U);
+    uint32_t   aligned_size = 0;
+    const bool valid        = tunnelTryAlignStateSize((size_t) size, &aligned_size);
+    assert(valid);
+    return aligned_size;
 }
 
 /**

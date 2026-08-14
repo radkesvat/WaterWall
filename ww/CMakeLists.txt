@@ -80,6 +80,8 @@ add_library(ww STATIC
 
     # Device lifetime primitives
     devices/device_flow_affinity.c
+    devices/device_frag_affinity.c
+    devices/device_frag_settlement.c
     devices/device_lifetime.c
     devices/device_reader_session.c
     devices/device_writer_channel.c
@@ -132,6 +134,7 @@ add_library(ww STATIC
     net/dns_strategy.c
     net/adapter.c
     net/tunnel.c
+    net/tunnel_async_session.c
     net/line.c
     net/chain.c
     net/context.c
@@ -643,11 +646,52 @@ endif()
 include(cmake/CPM.cmake)
 set(BUILD_SHARED_LIBS OFF)
 
+# Dependency identity has one authority. CMake-specific build options remain
+# beside each consumer below, while URLs/commits/archive hashes come only from
+# the machine-readable lock used by the integrity coordinator as well.
+set(WW_DEPENDENCY_LOCK "${CMAKE_SOURCE_DIR}/tests/tools/cmake_dependency_lock.json")
+file(READ "${WW_DEPENDENCY_LOCK}" WW_DEPENDENCY_LOCK_JSON)
+string(JSON WW_DEPENDENCY_LOCK_SCHEMA GET "${WW_DEPENDENCY_LOCK_JSON}" schema)
+if(NOT WW_DEPENDENCY_LOCK_SCHEMA STREQUAL "waterwall.cmake-dependencies/v1")
+    message(FATAL_ERROR "Unsupported WaterWall dependency-lock schema")
+endif()
+string(JSON WW_DEPENDENCY_LOCK_COUNT LENGTH "${WW_DEPENDENCY_LOCK_JSON}" dependencies)
+
+function(ww_dependency_identity NAME)
+    set(WW_MATCH_COUNT 0)
+    math(EXPR WW_DEPENDENCY_LOCK_LAST "${WW_DEPENDENCY_LOCK_COUNT} - 1")
+    foreach(WW_INDEX RANGE 0 ${WW_DEPENDENCY_LOCK_LAST})
+        string(JSON WW_NAME GET "${WW_DEPENDENCY_LOCK_JSON}" dependencies ${WW_INDEX} name)
+        if(WW_NAME STREQUAL NAME)
+            math(EXPR WW_MATCH_COUNT "${WW_MATCH_COUNT} + 1")
+            string(JSON WW_KIND GET "${WW_DEPENDENCY_LOCK_JSON}" dependencies ${WW_INDEX} kind)
+            string(JSON WW_URL GET "${WW_DEPENDENCY_LOCK_JSON}" dependencies ${WW_INDEX} url)
+            set(WW_DEPENDENCY_KIND "${WW_KIND}" PARENT_SCOPE)
+            set(WW_DEPENDENCY_URL "${WW_URL}" PARENT_SCOPE)
+            if(WW_KIND STREQUAL "git")
+                string(JSON WW_COMMIT GET "${WW_DEPENDENCY_LOCK_JSON}" dependencies ${WW_INDEX} commit)
+                set(WW_DEPENDENCY_COMMIT "${WW_COMMIT}" PARENT_SCOPE)
+            elseif(WW_KIND STREQUAL "archive")
+                string(JSON WW_SHA256 GET "${WW_DEPENDENCY_LOCK_JSON}" dependencies ${WW_INDEX} sha256)
+                set(WW_DEPENDENCY_SHA256 "${WW_SHA256}" PARENT_SCOPE)
+            else()
+                message(FATAL_ERROR "Dependency ${NAME} has unsupported kind ${WW_KIND}")
+            endif()
+        endif()
+    endforeach()
+    if(NOT WW_MATCH_COUNT EQUAL 1)
+        message(FATAL_ERROR "Dependency ${NAME} must have exactly one lock recipe")
+    endif()
+endfunction()
+
 # KomiHash library
+ww_dependency_identity(komihash)
 CPMAddPackage(
     NAME komihash
-    GIT_REPOSITORY https://github.com/avaneev/komihash.git
-    GIT_TAG 5.10
+    GIT_REPOSITORY ${WW_DEPENDENCY_URL}
+    # Immutable commit behind the upstream 5.10 release tag. Dependency
+    # provenance must not depend on a movable tag in a warm CPM cache.
+    GIT_TAG ${WW_DEPENDENCY_COMMIT}
     DOWNLOAD_ONLY True
 )
 if(komihash_ADDED)
@@ -656,10 +700,11 @@ if(komihash_ADDED)
 endif()
 
 # STC library
+ww_dependency_identity(stc)
 CPMAddPackage(
     NAME stc
-    GIT_REPOSITORY https://github.com/radkesvat/STC
-    GIT_TAG bf1d20e3dd903cde66c301587e017c4dd234a620
+    GIT_REPOSITORY ${WW_DEPENDENCY_URL}
+    GIT_TAG ${WW_DEPENDENCY_COMMIT}
     DOWNLOAD_ONLY True
 )
 if(stc_ADDED)
@@ -678,10 +723,11 @@ target_compile_definitions(ww PUBLIC CJSON_HIDE_SYMBOLS)
 target_compile_definitions(ww PUBLIC ENABLE_TARGET_EXPORT=OFF)
 
 # C-Ares library
+ww_dependency_identity(cares)
 CPMAddPackage(
     NAME cares
-    GIT_REPOSITORY https://github.com/c-ares/c-ares
-    GIT_TAG v1.34.6
+    GIT_REPOSITORY ${WW_DEPENDENCY_URL}
+    GIT_TAG ${WW_DEPENDENCY_COMMIT}
     OPTIONS
         "CARES_INSTALL OFF"
         "CARES_BUILD_TESTS OFF"
@@ -720,10 +766,11 @@ endif()
 
 # nghttp2 library
 if(PROJECT_REQUIRES_NGHTTP2)
+    ww_dependency_identity(nghttp2)
     CPMAddPackage(
         NAME nghttp2
-        GIT_TAG v1.66.0
-        GITHUB_REPOSITORY nghttp2/nghttp2
+        GIT_TAG ${WW_DEPENDENCY_COMMIT}
+        GIT_REPOSITORY ${WW_DEPENDENCY_URL}
         OPTIONS
             "ENABLE_APP OFF"
             "ENABLE_HPACK_TOOLS OFF"
@@ -755,10 +802,11 @@ endif()
 
 
 # libmaxminddb library
+ww_dependency_identity(maxminddb)
 CPMAddPackage(
     NAME maxminddb
-    GITHUB_REPOSITORY maxmind/libmaxminddb
-    GIT_TAG 1.13.3
+    GIT_REPOSITORY ${WW_DEPENDENCY_URL}
+    GIT_TAG ${WW_DEPENDENCY_COMMIT}
     OPTIONS
         "BUILD_SHARED_LIBS OFF"
         "BUILD_TESTING OFF"
@@ -777,10 +825,11 @@ endif()
 
 # LibSodium library
 if(WCRYPTO_BACKEND_SODIUM)
+    ww_dependency_identity(libsodium)
     CPMAddPackage(
         NAME libsodium
-        GITHUB_REPOSITORY robinlinden/libsodium-cmake
-        GIT_TAG 24f829c6d1bf88adb05ff3ee594abc367ffc0590
+        GIT_REPOSITORY ${WW_DEPENDENCY_URL}
+        GIT_TAG ${WW_DEPENDENCY_COMMIT}
         OPTIONS
             "SODIUM_MINIMAL ON"
             "SODIUM_DISABLE_TESTS ON"
@@ -932,10 +981,23 @@ if(PROJECT_REQUIRES_OPENSSL)
             set(ENV{RANLIB} "${CMAKE_RANLIB}")
         endif()
 
-        # add openssl (default version is latest 3.3.0 +)
+        # Materialize the archive through the canonical recipe first. The
+        # wrapper then consumes that exact local tree and cannot substitute its
+        # own URL/hash declaration.
+        ww_dependency_identity(openssl-source)
+        CPMAddPackage(
+            NAME openssl-source
+            URL ${WW_DEPENDENCY_URL}
+            URL_HASH SHA256=${WW_DEPENDENCY_SHA256}
+            DOWNLOAD_ONLY True
+        )
+        set(OPENSSL_SOURCE "${openssl-source_SOURCE_DIR}")
+
+        ww_dependency_identity(openssl-cmake)
         CPMAddPackage(
             NAME openssl-cmake
-            URL https://github.com/jimmy-park/openssl-cmake/archive/main.tar.gz
+            GIT_REPOSITORY ${WW_DEPENDENCY_URL}
+            GIT_TAG ${WW_DEPENDENCY_COMMIT}
             OPTIONS
             ${WW_OPENSSL_CPM_OPTIONS}
         )
@@ -1077,10 +1139,11 @@ set(LIBS ${LIBS} libuuid)
 ################################################################################
 # updating lwip may cause our patching to fail or be incorrect. check with
 # https://github.com/heiher/lwip
+ww_dependency_identity(lwip)
 CPMAddPackage(
     NAME lwip
-    GIT_REPOSITORY https://github.com/lwip-tcpip/lwip.git
-    GIT_TAG STABLE-2_2_1_RELEASE
+    GIT_REPOSITORY ${WW_DEPENDENCY_URL}
+    GIT_TAG ${WW_DEPENDENCY_COMMIT}
     DOWNLOAD_ONLY True
 )
 if(NOT lwip_ADDED)
@@ -1089,15 +1152,48 @@ endif()
 
 set(LWIP_ORIGINAL_DIR ${lwip_SOURCE_DIR})
 set(LWIP_DIR ${CMAKE_BINARY_DIR}/patched-deps/lwip)
-set(LWIP_PATCH_STAMP ${LWIP_DIR}/.waterwall-pretend-patch)
-if(NOT EXISTS ${LWIP_PATCH_STAMP} OR ${CMAKE_CURRENT_SOURCE_DIR}/lwip/pretend_patch.cmake IS_NEWER_THAN ${LWIP_PATCH_STAMP})
-    file(REMOVE_RECURSE ${LWIP_DIR})
-    file(MAKE_DIRECTORY ${LWIP_DIR})
-    file(COPY ${LWIP_ORIGINAL_DIR}/ DESTINATION ${LWIP_DIR} PATTERN ".git" EXCLUDE)
-    include(${CMAKE_CURRENT_SOURCE_DIR}/lwip/pretend_patch.cmake)
-    ww_apply_lwip_pretend_patch(${LWIP_DIR})
-    file(WRITE ${LWIP_PATCH_STAMP} "patched\n")
+set(LWIP_PATCH_SENTINEL ${LWIP_DIR}/.waterwall-lwip-patch-version)
+set(LWIP_SOURCE_PROVENANCE ${LWIP_DIR}/.waterwall-lwip-source-provenance)
+
+# Recipe overrides exist only for the disposable repeatability harness. A
+# production configure selects the three indexed recipes before any include or
+# worker process can observe a cache-provided spelling.
+option(WW_LWIP_ALLOW_NONAUTHORITATIVE_RECIPE_OVERRIDE
+       "Allow isolated lwIP recipe override tests; never authoritative" OFF)
+if(WW_LWIP_ALLOW_NONAUTHORITATIVE_RECIPE_OVERRIDE)
+  set(WW_LWIP_NONAUTHORITATIVE_RECIPE_OVERRIDE ON CACHE INTERNAL
+      "This configure cannot produce authority evidence" FORCE)
+else()
+  set(WW_LWIP_PATCH_RECIPE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/pretend_patch.cmake")
+  set(WW_LWIP_GENERATOR_RECIPE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/generate_patched_lwip.cmake")
+  set(WW_LWIP_GENERATOR_WORKER_FILE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/generate_patched_lwip_worker.cmake")
+  set(WW_LWIP_NONAUTHORITATIVE_RECIPE_OVERRIDE OFF CACHE INTERNAL
+      "This configure cannot produce authority evidence" FORCE)
 endif()
+
+if(NOT DEFINED WW_LWIP_PATCH_RECIPE_FILE)
+    set(WW_LWIP_PATCH_RECIPE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/pretend_patch.cmake")
+endif()
+file(REAL_PATH "${WW_LWIP_PATCH_RECIPE_FILE}" WW_LWIP_PATCH_RECIPE_FILE)
+set(WW_LWIP_AUTHORITY_PATCH_RECIPE_FILE
+    "${WW_LWIP_PATCH_RECIPE_FILE}"
+    CACHE INTERNAL "Configured lwIP patch recipe used by the authoritative build" FORCE
+)
+include("${WW_LWIP_PATCH_RECIPE_FILE}")
+
+if(NOT DEFINED WW_LWIP_GENERATOR_RECIPE_FILE)
+    set(WW_LWIP_GENERATOR_RECIPE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/generate_patched_lwip.cmake")
+endif()
+file(REAL_PATH "${WW_LWIP_GENERATOR_RECIPE_FILE}" WW_LWIP_GENERATOR_RECIPE_FILE)
+include("${WW_LWIP_GENERATOR_RECIPE_FILE}")
+set(WW_LWIP_AUTHORITY_GENERATOR_RECIPE_FILE
+    "${WW_LWIP_GENERATOR_RECIPE_FILE}"
+    CACHE INTERNAL "Configured lwIP generator recipe used by the authoritative build" FORCE
+)
+set(WW_LWIP_AUTHORITY_GENERATOR_WORKER_FILE
+    "${WW_LWIP_GENERATOR_WORKER_FILE}"
+    CACHE INTERNAL "Configured lwIP generator worker used by the authoritative build" FORCE
+)
 
 set(WPDPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/)
 set(LWIPOPTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lwip)
@@ -1113,7 +1209,90 @@ set(LWIP_INCLUDE_DIRS
     "${LWIP_DIR}/contrib"
     "${LWIPOPTS_DIR}"
 )
-set(LWIP_DEFINITIONS ${LWIP_DEFINITIONS} WW_LWIP_HAVE_ERRNO_H=$<IF:${HAVE_ERRNO_H},1,0>)
+set(LWIP_DEFINITIONS ${LWIP_DEFINITIONS}
+    WW_LWIP_HAVE_ERRNO_H=$<IF:${HAVE_ERRNO_H},1,0>
+    WW_LWIP_HAVE_STDATOMIC_H=$<IF:${HAVE_STDATOMIC_H},1,0>
+)
+
+# lwIP's pools are static arrays whose sizes are baked into ww_lwip *and* into
+# every tunnel that includes lwipopts.h, so these capacity knobs must be one
+# value for the whole build. Forwarding them through LWIP_DEFINITIONS, which
+# ww_lwip publishes PUBLIC and ww re-exports, is what guarantees that: a bare
+# -DWW_LWIP_MAX_TCP_FLOWS on one target would silently disagree with the rest.
+# lwipopts.h defaults each of them, so an unset cache entry changes nothing.
+set(WW_LWIP_MAX_TCP_FLOWS "" CACHE STRING
+    "Concurrent lwIP TCP flows to size the global pools for (blank = lwipopts.h default)")
+set(WW_LWIP_MAX_UDP_FLOWS "" CACHE STRING
+    "Concurrent lwIP UDP flows to size the global pools for (blank = lwipopts.h default)")
+set(WW_LWIP_MAX_REASS_DATAGRAMS "" CACHE STRING
+    "Simultaneously reassembling fragmented IP datagrams (blank = lwipopts.h default)")
+set(WW_LWIP_MAX_TCP_LISTENERS "" CACHE STRING
+    "Concurrent lwIP TCP listener PCBs, one per packet worker that sees TCP (blank = lwipopts.h default)")
+
+# WW_LWIP_MAX_REASS_FRAGS_PER_DATAGRAM is deliberately not a cache variable: it
+# describes the fragment shape the budget assumes rather than a capacity a
+# deployment tunes, and exposing both halves of the product invites overrides
+# that multiply past what lwIP's counters can index.
+
+foreach(ww_lwip_capacity_knob
+        WW_LWIP_MAX_TCP_FLOWS
+        WW_LWIP_MAX_UDP_FLOWS
+        WW_LWIP_MAX_REASS_DATAGRAMS
+        WW_LWIP_MAX_TCP_LISTENERS)
+    if(NOT "${${ww_lwip_capacity_knob}}" STREQUAL "")
+        if(NOT "${${ww_lwip_capacity_knob}}" MATCHES "^[1-9][0-9]*$")
+            message(FATAL_ERROR
+                "${ww_lwip_capacity_knob} must be a positive integer, got '${${ww_lwip_capacity_knob}}'")
+        endif()
+        set(LWIP_DEFINITIONS ${LWIP_DEFINITIONS} ${ww_lwip_capacity_knob}=${${ww_lwip_capacity_knob}})
+    endif()
+endforeach()
+
+# lwIP stores every pool count in a u16_t. The preprocessor guards in lwipopts.h
+# catch an overflow too, but only after a full configure and part of a build, so
+# the derived products are checked here where the mistake was made. The ratios
+# must track lwipopts.h.
+set(ww_lwip_tcp_flows "${WW_LWIP_MAX_TCP_FLOWS}")
+set(ww_lwip_udp_flows "${WW_LWIP_MAX_UDP_FLOWS}")
+set(ww_lwip_reass "${WW_LWIP_MAX_REASS_DATAGRAMS}")
+set(ww_lwip_listeners "${WW_LWIP_MAX_TCP_LISTENERS}")
+if(ww_lwip_tcp_flows STREQUAL "")
+    set(ww_lwip_tcp_flows 2048)
+endif()
+if(ww_lwip_udp_flows STREQUAL "")
+    set(ww_lwip_udp_flows 2048)
+endif()
+if(ww_lwip_reass STREQUAL "")
+    set(ww_lwip_reass 32)
+endif()
+if(ww_lwip_listeners STREQUAL "")
+    set(ww_lwip_listeners 320)
+endif()
+
+math(EXPR ww_lwip_tcp_seg "${ww_lwip_tcp_flows} * 16")
+math(EXPR ww_lwip_reass_pbufs "${ww_lwip_reass} * 16")
+math(EXPR ww_lwip_pbuf_pool "${ww_lwip_reass_pbufs} * 3")
+# Mirrors WW_LWIP_RX_WRAPPER_POOL_SIZE in lwipopts.h; the two must agree.
+math(EXPR ww_lwip_rx_wrappers "${ww_lwip_reass_pbufs} + ${ww_lwip_tcp_flows} + 256")
+
+foreach(ww_lwip_derived
+        "WW_LWIP_MAX_TCP_FLOWS:MEMP_NUM_TCP_SEG:${ww_lwip_tcp_seg}"
+        "WW_LWIP_MAX_UDP_FLOWS:MEMP_NUM_UDP_PCB:${ww_lwip_udp_flows}"
+        "WW_LWIP_MAX_TCP_LISTENERS:MEMP_NUM_TCP_PCB_LISTEN:${ww_lwip_listeners}"
+        "WW_LWIP_MAX_REASS_DATAGRAMS:IP_REASS_MAX_PBUFS:${ww_lwip_reass_pbufs}"
+        "WW_LWIP_MAX_REASS_DATAGRAMS:PBUF_POOL_SIZE:${ww_lwip_pbuf_pool}"
+        "WW_LWIP_MAX_REASS_DATAGRAMS:WW_LWIP_RX_WRAPPER_POOL_SIZE:${ww_lwip_rx_wrappers}"
+        "WW_LWIP_MAX_TCP_FLOWS:WW_LWIP_RX_WRAPPER_POOL_SIZE:${ww_lwip_rx_wrappers}")
+    string(REPLACE ":" ";" ww_lwip_derived_parts "${ww_lwip_derived}")
+    list(GET ww_lwip_derived_parts 0 ww_lwip_derived_knob)
+    list(GET ww_lwip_derived_parts 1 ww_lwip_derived_name)
+    list(GET ww_lwip_derived_parts 2 ww_lwip_derived_value)
+    if(ww_lwip_derived_value GREATER 65535)
+        message(FATAL_ERROR
+            "${ww_lwip_derived_knob} makes ${ww_lwip_derived_name} ${ww_lwip_derived_value}, "
+            "which exceeds the 65535 lwIP's pool counters can index")
+    endif()
+endforeach()
 
 if(NOT APPLE)
     set(LWIP_DEFINITIONS ${LWIP_DEFINITIONS} LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
@@ -1139,6 +1318,25 @@ target_compile_definitions(ww_lwip PUBLIC $<$<CONFIG:Debug>:LWIP_DEBUG=1>)
 # copy here is what let ww_lwip build while the upstream targets did not.
 target_include_directories(ww_lwip PUBLIC ${LWIP_INCLUDE_DIRS})
 target_compile_definitions(ww_lwip PUBLIC ${LWIP_DEFINITIONS})
+
+option(
+    WW_LWIP_FORCE_WINDOWS_ATOMIC_BACKEND_TEST
+    "Force the production ww_lwip target through its Interlocked atomic backend"
+    OFF
+)
+if(WW_LWIP_FORCE_WINDOWS_ATOMIC_BACKEND_TEST)
+    if(NOT WIN32)
+        message(FATAL_ERROR "WW_LWIP_FORCE_WINDOWS_ATOMIC_BACKEND_TEST requires a native Windows build")
+    endif()
+    target_compile_definitions(ww_lwip PRIVATE WW_LWIP_ATOMIC_FORCE_WINDOWS=1)
+endif()
+# Multi-config Visual Studio generators do not emit compile_commands.json.
+# Publish the evaluated production target definitions so CI can prove that the
+# native epoch test links the forced backend rather than a standalone probe.
+file(GENERATE
+    OUTPUT "${CMAKE_BINARY_DIR}/ww_lwip_compile_definitions_$<CONFIG>.txt"
+    CONTENT "$<JOIN:$<TARGET_PROPERTY:ww_lwip,COMPILE_DEFINITIONS>,\n>\n"
+)
 
 # Set the platform-specific sys_arch.c property explicitly.
 if(UNIX)
@@ -1431,18 +1629,22 @@ endif()
 ################################################################################
 if(ENABLE_ASAN)
     target_compile_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=address>)
+    target_compile_options(ww_lwip PRIVATE $<$<CONFIG:Debug>:-fsanitize=address>)
     target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=address>)
 endif()
 if(ENABLE_TSAN)
     target_compile_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=thread>)
+    target_compile_options(ww_lwip PRIVATE $<$<CONFIG:Debug>:-fsanitize=thread>)
     target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=thread>)
 endif()
 if(ENABLE_LSAN)
     target_compile_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=leak>)
+    target_compile_options(ww_lwip PRIVATE $<$<CONFIG:Debug>:-fsanitize=leak>)
     target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=leak>)
 endif()
 if(ENABLE_USAN)
     target_compile_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=undefined>)
+    target_compile_options(ww_lwip PRIVATE $<$<CONFIG:Debug>:-fsanitize=undefined>)
     target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=undefined>)
 endif()
 

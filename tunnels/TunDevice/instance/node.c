@@ -13,7 +13,7 @@ node_t nodeTunDeviceGet(void)
              .hash_name             = 0,
              .hash_type             = calcHashBytes(type_name, stringLength(type_name)),
              .hash_next             = 0,
-             .version               = 0001,
+             .version               = 0003,
              .createHandle          = tundeviceTunnelCreate,
              .node_json             = NULL,
              .node_settings_json    = NULL,

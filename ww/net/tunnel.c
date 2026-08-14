@@ -206,6 +206,11 @@ void tunnelDefaultOnStop(tunnel_t *t)
     discard t;
 }
 
+void tunnelDefaultOnPreStop(tunnel_t *t)
+{
+    discard t;
+}
+
 void tunnelDefaultOnWorkerStop(tunnel_t *t, wid_t wid)
 {
     discard t;
@@ -213,12 +218,25 @@ void tunnelDefaultOnWorkerStop(tunnel_t *t, wid_t wid)
 }
 
 // Creates a new tunnel instance
-tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
+tunnel_t *tunnelCreate(node_t *node, size_t tstate_size, size_t lstate_size)
 {
-    tstate_size = tunnelGetCorrectAlignedStateSize(tstate_size);
-    lstate_size = tunnelGetCorrectAlignedLineStateSize(lstate_size);
+    /*
+     * Before alignment, not after: rounding up to a cache line is 32-bit
+     * arithmetic, so a size near UINT32_MAX wrapped to zero and produced a
+     * perfectly valid-looking tunnel with no state at all. The contract says
+     * NULL on a size overflow, and a constructor that gets a tunnel back is
+     * entitled to assume its state fields are the ones it asked for.
+     */
+    uint32_t aligned_tstate_size;
+    uint32_t aligned_lstate_size;
+    if (UNLIKELY(! tunnelTryAlignStateSize(tstate_size, &aligned_tstate_size) ||
+                 ! tunnelTryAlignStateSize(lstate_size, &aligned_lstate_size)))
+    {
+        return NULL;
+    }
 
-    const size_t required_size = sizeof(tunnel_t) + (size_t) tstate_size;
+    /* Still needed on a 32-bit build, where size_t is no wider than uint32_t. */
+    const size_t required_size = sizeof(tunnel_t) + (size_t) aligned_tstate_size;
     if (required_size < sizeof(tunnel_t))
     {
         return NULL;
@@ -232,28 +250,29 @@ tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
         return NULL;
     }
 
-    *tunnel_ptr = (tunnel_t) {.fnInitU     = &tunnelDefaultUpStreamInit,
-                              .fnInitD     = &tunnelDefaultDownStreamInit,
-                              .fnPayloadU  = &tunnelDefaultUpStreamPayload,
-                              .fnPayloadD  = &tunnelDefaultDownStreamPayload,
-                              .fnEstU      = &tunnelDefaultUpStreamEst,
-                              .fnEstD      = &tunnelDefaultDownStreamEst,
-                              .fnFinU      = &tunnelDefaultUpStreamFin,
-                              .fnFinD      = &tunnelDefaultDownStreamFinish,
-                              .fnPauseU    = &tunnelDefaultUpStreamPause,
-                              .fnPauseD    = &tunnelDefaultDownStreamPause,
-                              .fnResumeU   = &tunnelDefaultUpStreamResume,
-                              .fnResumeD   = &tunnelDefaultDownStreamResume,
-                              .onChain     = &tunnelDefaultOnChain,
-                              .onIndex     = &tunnelDefaultOnIndex,
-                              .onPrepare   = &tunnelDefaultOnPrepare,
-                              .onStart     = &tunnelDefaultOnStart,
-                              .onStop      = &tunnelDefaultOnStop,
+    *tunnel_ptr = (tunnel_t) {.fnInitU      = &tunnelDefaultUpStreamInit,
+                              .fnInitD      = &tunnelDefaultDownStreamInit,
+                              .fnPayloadU   = &tunnelDefaultUpStreamPayload,
+                              .fnPayloadD   = &tunnelDefaultDownStreamPayload,
+                              .fnEstU       = &tunnelDefaultUpStreamEst,
+                              .fnEstD       = &tunnelDefaultDownStreamEst,
+                              .fnFinU       = &tunnelDefaultUpStreamFin,
+                              .fnFinD       = &tunnelDefaultDownStreamFinish,
+                              .fnPauseU     = &tunnelDefaultUpStreamPause,
+                              .fnPauseD     = &tunnelDefaultDownStreamPause,
+                              .fnResumeU    = &tunnelDefaultUpStreamResume,
+                              .fnResumeD    = &tunnelDefaultDownStreamResume,
+                              .onChain      = &tunnelDefaultOnChain,
+                              .onIndex      = &tunnelDefaultOnIndex,
+                              .onPrepare    = &tunnelDefaultOnPrepare,
+                              .onStart      = &tunnelDefaultOnStart,
+                              .onPreStop    = &tunnelDefaultOnPreStop,
+                              .onStop       = &tunnelDefaultOnStop,
                               .onWorkerStop = &tunnelDefaultOnWorkerStop,
-                              .onDestroy   = &tunnelDestroy,
-                              .tstate_size = tstate_size,
-                              .lstate_size = lstate_size,
-                              .node        = node};
+                              .onDestroy    = &tunnelDestroy,
+                              .tstate_size  = aligned_tstate_size,
+                              .lstate_size  = aligned_lstate_size,
+                              .node         = node};
 
     return tunnel_ptr;
 }

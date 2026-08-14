@@ -18,5 +18,6 @@ void tunLinuxSetWriterRoutine(tun_device_t *tdev, wthread_routine routine);
 
 /* Test-only lifecycle observation for exact rollback-state assertions. */
 tun_lifecycle_state_t tunLinuxLifecycleState(const tun_device_t *tdev);
+bool                  tunLinuxWriterChannelIsUnpublished(const tun_device_t *tdev);
 
 #endif

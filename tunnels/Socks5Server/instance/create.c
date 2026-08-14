@@ -139,7 +139,7 @@ static bool socks5serverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
         return false;
     }
 
-    ts->user_controller_tunnel = ts->user_controller_node.createHandle(&ts->user_controller_node);
+    ts->user_controller_tunnel = nodemanagerCreateTunnelInstance(&ts->user_controller_node);
     if (ts->user_controller_tunnel == NULL)
     {
         LOGF("Socks5Server: failed to create internal UserController");
@@ -152,7 +152,12 @@ static bool socks5serverCreateUserControllerTunnel(tunnel_t *t, node_t *node)
 
 tunnel_t *socks5serverTunnelCreate(node_t *node)
 {
-    tunnel_t              *t        = tunnelCreate(node, sizeof(socks5server_tstate_t), sizeof(socks5server_lstate_t));
+    tunnel_t *t = tunnelCreate(node, sizeof(socks5server_tstate_t), sizeof(socks5server_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
+
     socks5server_tstate_t *ts       = tunnelGetState(t);
     const cJSON           *settings = node->node_settings_json;
 
@@ -195,8 +200,34 @@ tunnel_t *socks5serverTunnelCreate(node_t *node)
     ts->no_auth       = false;
     for (uint32_t i = 0; i < kSocks5ServerAssocShardCount; ++i)
     {
-        rwlockinit(&ts->assoc_shards[i].lock);
-        ts->assoc_shards[i].map = socks5server_assoc_map_t_with_capacity(kSocks5ServerAssocShardInitialCap);
+        ts->assoc_shards[i].map = socks5server_assoc_map_t_init();
+        if (UNLIKELY(! rwlockTryInit(&ts->assoc_shards[i].lock)))
+        {
+            socks5server_assoc_map_t_drop(&ts->assoc_shards[i].map);
+            while (i > 0)
+            {
+                --i;
+                socks5server_assoc_map_t_drop(&ts->assoc_shards[i].map);
+                rwlockDestroy(&ts->assoc_shards[i].lock);
+            }
+            LOGF("Socks5Server: failed to initialize UDP association shard lock");
+            tunnelDestroy(t);
+            return NULL;
+        }
+        if (UNLIKELY(! socks5server_assoc_map_t_reserve(&ts->assoc_shards[i].map, kSocks5ServerAssocShardInitialCap)))
+        {
+            socks5server_assoc_map_t_drop(&ts->assoc_shards[i].map);
+            rwlockDestroy(&ts->assoc_shards[i].lock);
+            while (i > 0)
+            {
+                --i;
+                socks5server_assoc_map_t_drop(&ts->assoc_shards[i].map);
+                rwlockDestroy(&ts->assoc_shards[i].lock);
+            }
+            LOGF("Socks5Server: failed to reserve UDP association shard map");
+            tunnelDestroy(t);
+            return NULL;
+        }
     }
 
     getBoolFromJsonObjectOrDefault(&ts->allow_connect, settings, "connect", true);

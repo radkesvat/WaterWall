@@ -54,29 +54,34 @@ void setNetworkLogger(logger_t *newlogger)
 logger_t *createNetworkLogger(const char *log_file, bool console)
 {
     assert(network_logger == NULL);
-    network_logger     = loggerCreate();
-    bool path_accepted = ((log_file != NULL) && loggerSetFile(network_logger, log_file)) != 0;
+    logger_t *logger = loggerCreate();
+    if (UNLIKELY(logger == NULL))
+    {
+        return NULL;
+    }
+    bool path_accepted = ((log_file != NULL) && loggerSetFile(logger, log_file)) != 0;
     if (console)
     {
         if (path_accepted)
         {
-            loggerSetHandler(network_logger, networkLoggerHandleWithStdStream);
+            loggerSetHandler(logger, networkLoggerHandleWithStdStream);
         }
         else
         {
 
-            loggerSetHandler(network_logger, networkLoggerHandleOnlyStdStream);
+            loggerSetHandler(logger, networkLoggerHandleOnlyStdStream);
         }
     }
     else if (path_accepted)
     {
-        loggerSetHandler(network_logger, networkLoggerHandle);
+        loggerSetHandler(logger, networkLoggerHandle);
     }
     else
     {
         // no logger
     }
-    return network_logger;
+    network_logger = logger;
+    return logger;
 }
 
 logger_handler getNetworkLoggerHandle(void)

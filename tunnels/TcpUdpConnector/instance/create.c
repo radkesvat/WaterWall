@@ -54,7 +54,7 @@ static bool tcpudpconnectorCreateChildTunnels(tunnel_t *t, node_t *node)
         return false;
     }
 
-    ts->tcp_connector = ts->tcp_node.createHandle(&ts->tcp_node);
+    ts->tcp_connector = nodemanagerCreateTunnelInstance(&ts->tcp_node);
     if (ts->tcp_connector == NULL)
     {
         LOGF("TcpUdpConnector: failed to create internal TcpConnector");
@@ -62,7 +62,7 @@ static bool tcpudpconnectorCreateChildTunnels(tunnel_t *t, node_t *node)
     }
     ts->tcp_node.instance = ts->tcp_connector;
 
-    ts->udp_connector = ts->udp_node.createHandle(&ts->udp_node);
+    ts->udp_connector = nodemanagerCreateTunnelInstance(&ts->udp_node);
     if (ts->udp_connector == NULL)
     {
         LOGF("TcpUdpConnector: failed to create internal UdpConnector");
@@ -76,6 +76,11 @@ static bool tcpudpconnectorCreateChildTunnels(tunnel_t *t, node_t *node)
 tunnel_t *tcpudpconnectorTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(tcpudpconnector_tstate_t), sizeof(tcpudpconnector_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
+
     tcpudpconnectorConfigureCallbacks(t);
 
     if (nodeHasNext(node))

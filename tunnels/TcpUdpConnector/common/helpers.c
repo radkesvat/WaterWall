@@ -2,24 +2,17 @@
 
 #include "loggers/network_logger.h"
 
-static bool tcpudpconnectorContextHasAnyProtocol(const address_context_t *ctx)
-{
-    return ctx->proto_tcp || ctx->proto_udp || ctx->proto_icmp || ctx->proto_packet;
-}
-
 static tunnel_t *tcpudpconnectorSelectFromContext(tcpudpconnector_tstate_t *ts, const address_context_t *ctx)
 {
-    if (ctx->proto_tcp && ! ctx->proto_udp && ! ctx->proto_icmp && ! ctx->proto_packet)
+    switch (addresscontextClassifyTransport(ctx))
     {
+    case kAddressContextTransportTcp:
         return tcpconnectorTunnelGetEntryTunnel(ts->tcp_connector);
-    }
-
-    if (ctx->proto_udp && ! ctx->proto_tcp && ! ctx->proto_icmp && ! ctx->proto_packet)
-    {
+    case kAddressContextTransportUdp:
         return udpconnectorTunnelGetEntryTunnel(ts->udp_connector);
+    default:
+        return NULL;
     }
-
-    return NULL;
 }
 
 static void tcpudpconnectorLogUnsupportedContext(const char *label, const address_context_t *ctx)
@@ -40,7 +33,7 @@ tunnel_t *tcpudpconnectorSelectUpStreamTunnel(tunnel_t *t, line_t *l)
     const address_context_t  *src_ctx   = lineGetSourceAddressContext(l);
     tunnel_t                 *connector = NULL;
 
-    if (tcpudpconnectorContextHasAnyProtocol(dest_ctx))
+    if (addresscontextClassifyTransport(dest_ctx) != kAddressContextTransportNone)
     {
         connector = tcpudpconnectorSelectFromContext(ts, dest_ctx);
         if (connector != NULL)
@@ -59,7 +52,7 @@ tunnel_t *tcpudpconnectorSelectUpStreamTunnel(tunnel_t *t, line_t *l)
         return connector;
     }
 
-    if (tcpudpconnectorContextHasAnyProtocol(src_ctx))
+    if (addresscontextClassifyTransport(src_ctx) != kAddressContextTransportNone)
     {
         tcpudpconnectorLogUnsupportedContext("source", src_ctx);
     }

@@ -503,9 +503,19 @@ tun_loopguard_t *tunLoopGuardStart(uint64_t tun_luid_value)
     }
 
     tun_loopguard_t *guard = memoryAllocateZero(sizeof(tun_loopguard_t));
-    guard->pid             = GetCurrentProcessId();
-    guard->tun_luid        = tun_luid_value;
-    mutexInit(&guard->lock);
+    if (guard == NULL)
+    {
+        LOGE("TunLoopGuard: allocation failed, self-traffic loop protection disabled");
+        return NULL;
+    }
+    guard->pid      = GetCurrentProcessId();
+    guard->tun_luid = tun_luid_value;
+    if (! mutexTryInit(&guard->lock))
+    {
+        LOGE("TunLoopGuard: lock initialization failed, self-traffic loop protection disabled");
+        memoryFree(guard);
+        return NULL;
+    }
 
     guard->have_v4 = captureDefaultRoute(AF_INET, &guard->v4_if_luid, &guard->v4_gateway);
     guard->have_v6 = captureDefaultRoute(AF_INET6, &guard->v6_if_luid, &guard->v6_gateway);

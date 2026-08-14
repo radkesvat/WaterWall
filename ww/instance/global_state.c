@@ -11,6 +11,10 @@
 #include "managers/socket_manager.h"
 #include "objects/user_handle.h"
 
+#if defined(OS_WIN)
+#include "devices/tun/tun.h"
+#endif
+
 #include <ares.h>
 
 #if defined(OS_UNIX) && ! (defined(OS_DARWIN) || defined(OS_BSD))
@@ -38,36 +42,79 @@ static err_t wwDefaultInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp)
 
 static void initializeMasterPools(void)
 {
-    GSTATE.masterpool_buffer_pools_large = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
-    GSTATE.masterpool_buffer_pools_small = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
-    GSTATE.masterpool_wios               = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
-    GSTATE.masterpool_context_pools      = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
-    GSTATE.masterpool_messages           = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    master_pool_t *large    = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    master_pool_t *small    = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    master_pool_t *wios     = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    master_pool_t *contexts = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    master_pool_t *messages = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+
+    if (UNLIKELY(large == NULL || small == NULL || wios == NULL || contexts == NULL || messages == NULL))
+    {
+        masterpoolDestroy(large);
+        masterpoolDestroy(small);
+        masterpoolDestroy(wios);
+        masterpoolDestroy(contexts);
+        masterpoolDestroy(messages);
+        printError("GlobalState: failed to construct master-pool metadata");
+        abortProgramNow(1);
+    }
+
+    GSTATE.masterpool_buffer_pools_large = large;
+    GSTATE.masterpool_buffer_pools_small = small;
+    GSTATE.masterpool_wios               = wios;
+    GSTATE.masterpool_context_pools      = contexts;
+    GSTATE.masterpool_messages           = messages;
 
     workerMessagesInstallMasterPoolCallbacks(GSTATE.masterpool_messages);
 }
 
-static void initializeShortCuts(void)
+static bool checkedSizeProduct(size_t count, size_t element_size, size_t *out)
 {
-    static const int kShortcutsCount = 4;
-
-    const uintptr_t total_workers = (uintptr_t) WORKERS_COUNT;
-
-    void **space = (void **) memoryAllocate(sizeof(void *) * (uintptr_t) kShortcutsCount * total_workers);
-
-    GSTATE.shortcut_loops         = (wloop_t **) (space + (0 * total_workers));
-    GSTATE.shortcut_buffer_pools  = (buffer_pool_t **) (space + (1 * total_workers));
-    GSTATE.shortcut_wios_pools    = (threadsafe_generic_pool_t **) (space + (2 * total_workers));
-    GSTATE.shortcut_context_pools = (generic_pool_t **) (space + (3 * total_workers));
-
-    for (unsigned int wid = 0; wid < total_workers; wid++)
+    if (element_size != 0 && count > SIZE_MAX / element_size)
     {
-
-        GSTATE.shortcut_buffer_pools[wid]  = WORKERS[wid].buffer_pool;
-        GSTATE.shortcut_loops[wid]         = WORKERS[wid].loop;
-        GSTATE.shortcut_wios_pools[wid]    = WORKERS[wid].wios_pool;
-        GSTATE.shortcut_context_pools[wid] = WORKERS[wid].context_pool;
+        return false;
     }
+    *out = count * element_size;
+    return true;
+}
+
+static bool initializeShortCuts(void)
+{
+    static const size_t kShortcutsCount = 4;
+
+    const size_t total_workers = (size_t) WORKERS_COUNT;
+    size_t       shortcut_slots;
+    size_t       shortcut_bytes;
+    if (UNLIKELY(! checkedSizeProduct(total_workers, kShortcutsCount, &shortcut_slots) ||
+                 ! checkedSizeProduct(shortcut_slots, sizeof(void *), &shortcut_bytes)))
+    {
+        return false;
+    }
+
+    void **space = memoryAllocate(shortcut_bytes);
+    if (UNLIKELY(space == NULL))
+    {
+        return false;
+    }
+
+    wloop_t                   **loops         = (wloop_t **) (space + (0 * total_workers));
+    buffer_pool_t             **buffer_pools  = (buffer_pool_t **) (space + (1 * total_workers));
+    threadsafe_generic_pool_t **wios_pools    = (threadsafe_generic_pool_t **) (space + (2 * total_workers));
+    generic_pool_t            **context_pools = (generic_pool_t **) (space + (3 * total_workers));
+
+    for (size_t wid = 0; wid < total_workers; wid++)
+    {
+        buffer_pools[wid]  = WORKERS[wid].buffer_pool;
+        loops[wid]         = WORKERS[wid].loop;
+        wios_pools[wid]    = WORKERS[wid].wios_pool;
+        context_pools[wid] = WORKERS[wid].context_pool;
+    }
+
+    GSTATE.shortcut_loops         = loops;
+    GSTATE.shortcut_buffer_pools  = buffer_pools;
+    GSTATE.shortcut_wios_pools    = wios_pools;
+    GSTATE.shortcut_context_pools = context_pools;
+    return true;
 }
 
 /*
@@ -368,23 +415,43 @@ void createGlobalState(const ww_construction_data_t init_data)
     {
         GSTATE.internal_logger = createInternalLogger(init_data.internal_logger_data.log_file_path,
                                                       init_data.internal_logger_data.log_console);
+        if (UNLIKELY(GSTATE.internal_logger == NULL))
+        {
+            printError("GlobalState: failed to construct internal logger\n");
+            terminateProgram(1);
+        }
         stringUpperCase(init_data.internal_logger_data.log_level);
         setInternalLoggerLevelByStr(init_data.internal_logger_data.log_level);
 
         GSTATE.core_logger =
             createCoreLogger(init_data.core_logger_data.log_file_path, init_data.core_logger_data.log_console);
+        if (UNLIKELY(GSTATE.core_logger == NULL))
+        {
+            printError("GlobalState: failed to construct core logger\n");
+            terminateProgram(1);
+        }
 
         stringUpperCase(init_data.core_logger_data.log_level);
         setCoreLoggerLevelByStr(init_data.core_logger_data.log_level);
 
         GSTATE.network_logger =
             createNetworkLogger(init_data.network_logger_data.log_file_path, init_data.network_logger_data.log_console);
+        if (UNLIKELY(GSTATE.network_logger == NULL))
+        {
+            printError("GlobalState: failed to construct network logger\n");
+            terminateProgram(1);
+        }
 
         stringUpperCase(init_data.network_logger_data.log_level);
         setNetworkLoggerLevelByStr(init_data.network_logger_data.log_level);
 
         GSTATE.dns_logger =
             createDnsLogger(init_data.dns_logger_data.log_file_path, init_data.dns_logger_data.log_console);
+        if (UNLIKELY(GSTATE.dns_logger == NULL))
+        {
+            printError("GlobalState: failed to construct DNS logger\n");
+            terminateProgram(1);
+        }
 
         stringUpperCase(init_data.dns_logger_data.log_level);
         setDnsLoggerLevelByStr(init_data.dns_logger_data.log_level);
@@ -408,7 +475,19 @@ void createGlobalState(const ww_construction_data_t init_data)
         }
         WORKERS_COUNT += WORKER_ADDITIONS;
 
-        WORKERS = (worker_t *) memoryAllocate(sizeof(worker_t) * (WORKERS_COUNT));
+        size_t worker_bytes;
+        if (UNLIKELY(! checkedSizeProduct((size_t) WORKERS_COUNT, sizeof(worker_t), &worker_bytes)))
+        {
+            LOGF("GlobalState: worker registry size overflow");
+            terminateProgram(1);
+        }
+        worker_t *workers = memoryAllocate(worker_bytes);
+        if (UNLIKELY(workers == NULL))
+        {
+            LOGF("GlobalState: failed to allocate worker registry");
+            terminateProgram(1);
+        }
+        WORKERS = workers;
 
         initializeMasterPools();
 
@@ -430,13 +509,26 @@ void createGlobalState(const ww_construction_data_t init_data)
 
         workerBindCurrentThread(worker0);
 
-        initializeShortCuts();
-
-        GSTATE.system_load = memoryAllocateZero(sizeof(*GSTATE.system_load));
-        systemLoadSamplerInit(GSTATE.system_load);
-        if (UNLIKELY(! systemLoadSamplerStart(GSTATE.system_load, getWorkerLoop(0))))
+        if (UNLIKELY(! initializeShortCuts()))
         {
-            LOGW("System load sampler could not start; overload checks will use fail-closed cache semantics");
+            LOGF("GlobalState: failed to allocate worker shortcut registry");
+            terminateProgram(1);
+        }
+
+        system_load_state_t *system_load = memoryAllocateZero(sizeof(*system_load));
+        if (system_load != NULL && systemLoadSamplerTryInit(system_load))
+        {
+            GSTATE.system_load = system_load;
+            if (UNLIKELY(! systemLoadSamplerStart(system_load, getWorkerLoop(0))))
+            {
+                LOGW("System load sampler could not start; overload checks will use fail-closed cache semantics");
+            }
+        }
+        else
+        {
+            memoryFree(system_load);
+            GSTATE.system_load = NULL;
+            LOGW("System load sampler metadata is unavailable; overload checks are disabled");
         }
     }
 
@@ -445,6 +537,11 @@ void createGlobalState(const ww_construction_data_t init_data)
         GSTATE.signal_manager = signalmanagerCreate();
         GSTATE.socekt_manager = socketmanagerCreate();
         GSTATE.node_manager   = nodemanagerCreate();
+        if (UNLIKELY(GSTATE.signal_manager == NULL || GSTATE.socekt_manager == NULL || GSTATE.node_manager == NULL))
+        {
+            LOGF("GlobalState: failed to construct mandatory manager metadata");
+            terminateProgram(1);
+        }
     }
     // misc
     {
@@ -548,6 +645,9 @@ WW_EXPORT void destroyGlobalState(void)
 {
     socketmanagerDestroy();
     nodemanagerDestroy();
+#if defined(OS_WIN)
+    tundevicePlatformShutdown();
+#endif
     wCryptoGlobalCleanup();
 
     coreloggerDestroy();

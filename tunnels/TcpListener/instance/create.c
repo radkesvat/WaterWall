@@ -334,6 +334,10 @@ static void setupFilterOptions(socket_filter_option_t *filter_opt, tcplistener_t
 tunnel_t *tcplistenerTunnelCreate(node_t *node)
 {
     tunnel_t *t = adapterCreate(node, sizeof(tcplistener_tstate_t), sizeof(tcplistener_lstate_t), kAdapterChainHead);
+    if (! t)
+    {
+        return NULL;
+    }
 
     initializeTunnelCallbacks(t);
 

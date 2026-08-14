@@ -287,12 +287,12 @@ void ipmanipulatorForwardCapturedPacketNormal(tunnel_t *t, line_t *l, sbuf_t *bu
     }
 
     lineLock(l);
-    sendWorkerMessageForceQueueWithCleanup(lineGetWID(l),
-                                           (WorkerMessageCallback) ipmanipulatorReplayCapturedPacketOnWorker,
-                                           ipmanipulatorCleanupCapturedPacketNormal,
-                                           t,
-                                           l,
-                                           buf);
+    sendWorkerMessageForceQueueBestEffortWithCleanup(lineGetWID(l),
+                                                     (WorkerMessageCallback) ipmanipulatorReplayCapturedPacketOnWorker,
+                                                     ipmanipulatorCleanupCapturedPacketNormal,
+                                                     t,
+                                                     l,
+                                                     buf);
 }
 
 static void ipmanipulatorScheduleCapturedPacketReuse(line_t *l, sbuf_t *buf)
@@ -304,12 +304,12 @@ static void ipmanipulatorScheduleCapturedPacketReuse(line_t *l, sbuf_t *buf)
     }
 
     lineLock(l);
-    sendWorkerMessageForceQueueWithCleanup(lineGetWID(l),
-                                           (WorkerMessageCallback) ipmanipulatorRecycleCapturedPacketOnWorker,
-                                           ipmanipulatorCleanupCapturedPacketReuse,
-                                           l,
-                                           buf,
-                                           NULL);
+    sendWorkerMessageForceQueueBestEffortWithCleanup(lineGetWID(l),
+                                                     (WorkerMessageCallback) ipmanipulatorRecycleCapturedPacketOnWorker,
+                                                     ipmanipulatorCleanupCapturedPacketReuse,
+                                                     l,
+                                                     buf,
+                                                     NULL);
 }
 
 static void ipmanipulatorReleasePrestartPacketsNormal(tunnel_t *t, ipmanipulator_tls_prestart_slot_t *slot)

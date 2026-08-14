@@ -632,12 +632,12 @@ void packetstostreamForwardDecodedPacket(tunnel_t *t, line_t *stream_line, sbuf_
     }
 
     lineLock(packet_line);
-    discard sendWorkerMessageForceQueueWithCleanup(target_wid,
-                                                   (WorkerMessageCallback) packetstostreamReplayDecodedPacketOnWorker,
-                                                   packetstostreamCleanupDecodedPacket,
-                                                   t,
-                                                   packet_line,
-                                                   packet);
+    sendWorkerMessageForceQueueBestEffortWithCleanup(target_wid,
+                                                     (WorkerMessageCallback) packetstostreamReplayDecodedPacketOnWorker,
+                                                     packetstostreamCleanupDecodedPacket,
+                                                     t,
+                                                     packet_line,
+                                                     packet);
 }
 
 void packetstostreamScheduleRecreateOutputLine(tunnel_t *t, line_t *packet_line, packetstostream_lstate_t *ls)
@@ -648,7 +648,12 @@ void packetstostreamScheduleRecreateOutputLine(tunnel_t *t, line_t *packet_line,
     }
 
     ls->recreate_scheduled = true;
-    lineScheduleTask(packet_line, packetstostreamRecreateOutputLineTask, t);
+    if (UNLIKELY(! lineScheduleTask(packet_line, packetstostreamRecreateOutputLineTask, t)))
+    {
+        /* Leave the packet worker retryable; the next packet/heartbeat may
+         * schedule another attempt instead of permanently latching blackhole. */
+        ls->recreate_scheduled = false;
+    }
 }
 
 void packetstostreamResetOutputLineState(tunnel_t *t, line_t *packet_line, packetstostream_lstate_t *ls)

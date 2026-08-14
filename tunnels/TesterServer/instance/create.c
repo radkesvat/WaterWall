@@ -209,6 +209,10 @@ static bool testerserverLoadPacketIpv4Settings(testerserver_tstate_t *ts, const 
 tunnel_t *testerserverTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(testerserver_tstate_t), sizeof(testerserver_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &testerserverTunnelUpStreamInit;
     t->fnEstU     = &testerserverTunnelUpStreamEst;

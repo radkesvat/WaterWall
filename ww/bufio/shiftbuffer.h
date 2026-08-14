@@ -12,6 +12,20 @@
     it will be aligned to 32 bytes boundary which will help memoryCopyAVX2 to use Aligned memory copy
 */
 
+typedef struct sbuf_lifetime_s sbuf_lifetime_t;
+
+/*
+ * Optional ownership metadata that follows a buffer through asynchronous
+ * packet transforms.  The buffer owns one reference while attached.  Generic
+ * buffer code deliberately knows nothing about the metadata's concrete type:
+ * duplication retains it, and reset/destruction releases it.
+ */
+struct sbuf_lifetime_s
+{
+    void (*retain)(sbuf_lifetime_t *lifetime);
+    void (*release)(sbuf_lifetime_t *lifetime);
+};
+
 struct sbuf_s
 {
     uint32_t curpos;
@@ -23,6 +37,8 @@ struct sbuf_s
     bool is_temporary; // if true, this buffer will not be freed or reused in pools (like stack buffer)
 
     uint8_t _padding1; // padding to align to 8 bytes
+
+    sbuf_lifetime_t *lifetime;
 
     MSVC_ATTR_ALIGNED_32 uint8_t buf[] GNU_ATTR_ALIGNED_32;
 };
@@ -185,6 +201,14 @@ uint16_t sbufAlignLeftPadding(uint16_t pad_left);
  */
 void sbufDestroy(sbuf_t *b);
 
+/* Attach/detach the one optional lifetime reference owned by a buffer. */
+void             sbufAttachLifetime(sbuf_t *b, sbuf_lifetime_t *lifetime);
+sbuf_lifetime_t *sbufTakeLifetime(sbuf_t *b);
+sbuf_lifetime_t *sbufGetLifetime(const sbuf_t *b);
+void             sbufTransferLifetime(sbuf_t *source, sbuf_t *destination);
+void             sbufCloneLifetime(const sbuf_t *source, sbuf_t *destination);
+void             sbufReleaseLifetime(sbuf_t *b);
+
 /**
  * @brief Reset a buffer for pool reuse.
  *
@@ -193,6 +217,7 @@ void sbufDestroy(sbuf_t *b);
 static inline void sbufReset(sbuf_t *b)
 {
     assert(! b->is_temporary);
+    sbufReleaseLifetime(b);
     b->len    = 0;
     b->curpos = b->l_pad;
 }
@@ -432,6 +457,7 @@ static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const uint32_t bytes)
         sbuf_t  *bigger_buf      = sbufCreateWithPadding(needed_writable, b->l_pad);
         sbufSetLength(bigger_buf, current_length);
         sbufWriteBuf(bigger_buf, b, current_length);
+        sbufTransferLifetime(b, bigger_buf);
         sbufDestroy(b);
         return bigger_buf;
     }
@@ -597,7 +623,9 @@ static inline void sbufWriteUI16(sbuf_t *const b, const uint16_t data)
  */
 static sbuf_t *debugBufferWontBeReused(sbuf_t *b)
 {
-    sbuf_t *nbuf = sbufDuplicate(b);
+    sbuf_lifetime_t *lifetime = sbufTakeLifetime(b);
+    sbuf_t          *nbuf     = sbufDuplicate(b);
+    sbufAttachLifetime(nbuf, lifetime);
     sbufDestroy(b);
     return nbuf;
 }

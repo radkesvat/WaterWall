@@ -98,7 +98,7 @@ static line_t **muxclientFixedParentSlot(muxclient_tstate_t *ts, wid_t wid, uint
     return &ts->fixed_parent_lines[((size_t) wid * (size_t) ts->fixed_connections_count) + (size_t) index];
 }
 
-void muxclientForgetParentLine(muxclient_tstate_t *ts, wid_t wid, line_t *parent_l)
+void muxclientForgetParentSelection(muxclient_tstate_t *ts, wid_t wid, line_t *parent_l)
 {
     if (ts->concurrency_mode == kConcurrencyModeFixedConnectionsCount)
     {
@@ -172,7 +172,8 @@ static void muxclientParentStatsLogTask(tunnel_t *t, line_t *parent_l)
 
     if (! parent_ls->parent_finishing)
     {
-        lineScheduleDelayedTask(parent_l, muxclientParentStatsLogTask, kMuxMainLineStatsLogIntervalMs, t);
+        /* Optional statistics sampling is intentionally lossy under pressure. */
+        discard lineScheduleDelayedTask(parent_l, muxclientParentStatsLogTask, kMuxMainLineStatsLogIntervalMs, t);
     }
 }
 
@@ -185,24 +186,25 @@ void muxclientScheduleParentStatsLog(tunnel_t *t, line_t *parent_l)
         return;
     }
 
-    lineScheduleDelayedTask(parent_l, muxclientParentStatsLogTask, kMuxMainLineStatsLogIntervalMs, t);
+    /* Optional statistics sampling is intentionally lossy under pressure. */
+    discard lineScheduleDelayedTask(parent_l, muxclientParentStatsLogTask, kMuxMainLineStatsLogIntervalMs, t);
 }
 
-static bool muxclientCreateParentLine(tunnel_t *t, wid_t wid, line_t **parent_l_out)
+static bool muxclientCreateParentLine(tunnel_t *t, wid_t wid, line_t **selection_slot)
 {
     line_t             *parent_l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
     muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
 
     muxclientLinestateInitialize(parent_ls, parent_l, false, 0);
+    assert(*selection_slot == NULL);
+    *selection_slot = parent_l;
 
     if (! withLineLocked(parent_l, tunnelNextUpStreamInit, t))
     {
-        *parent_l_out = NULL;
         return false;
     }
 
     muxclientScheduleParentStatsLog(t, parent_l);
-    *parent_l_out = parent_l;
     return true;
 }
 
@@ -212,7 +214,7 @@ void muxclientCloseIdleExhaustedParentLine(tunnel_t *t, muxclient_tstate_t *ts, 
     assert(parent_ls->is_child == false);
     assert(parent_ls->children_count == 0);
 
-    muxclientForgetParentLine(ts, wid, parent_l);
+    muxclientForgetParentSelection(ts, wid, parent_l);
     muxclientLinestateDestroy(parent_ls);
     tunnelNextUpStreamFinish(t, parent_l);
 
@@ -234,12 +236,10 @@ static line_t *muxclientGetFixedParentLineForNewChild(tunnel_t *t, muxclient_tst
             continue;
         }
 
-        line_t *parent_l = NULL;
-        if (! muxclientCreateParentLine(t, wid, &parent_l))
+        if (! muxclientCreateParentLine(t, wid, slot))
         {
             return NULL;
         }
-        *slot = parent_l;
     }
 
     uint32_t start_index = ts->fixed_next_parent_indexes[wid] % ts->fixed_connections_count;
@@ -307,13 +307,10 @@ line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l)
 
     if (ts->unsatisfied_lines[wid] == NULL)
     {
-        line_t *parent_l = NULL;
-        if (! muxclientCreateParentLine(t, wid, &parent_l))
+        if (! muxclientCreateParentLine(t, wid, &ts->unsatisfied_lines[wid]))
         {
             return NULL;
         }
-
-        ts->unsatisfied_lines[wid] = parent_l;
     }
 
     return ts->unsatisfied_lines[wid];

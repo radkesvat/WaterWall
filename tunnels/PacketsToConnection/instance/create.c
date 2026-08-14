@@ -4,24 +4,48 @@
 
 static bool ptcLoadSettings(ptc_tstate_t *ts, const cJSON *settings)
 {
-    int udp_idle_timeout_ms = (int) kPtcDefaultUdpIdleTimeoutMs;
+    /*
+     * Present but invalid is an error, not a default. getIntFromJsonObjectOrDefault()
+     * cannot separate the two, so `"udp-idle-timeout-ms": "60000"` silently
+     * configured the default and `60000.5` silently truncated.
+     */
+    int64_t udp_idle_timeout_ms = (int64_t) kPtcDefaultUdpIdleTimeoutMs;
 
-    getIntFromJsonObjectOrDefault(
-        &udp_idle_timeout_ms, settings, "udp-idle-timeout-ms", (int) kPtcDefaultUdpIdleTimeoutMs);
-
-    if (udp_idle_timeout_ms < 1)
+    if (! ptcLoadOptionalInteger(settings,
+                                 "udp-idle-timeout-ms",
+                                 1,
+                                 (int64_t) UINT32_MAX,
+                                 &udp_idle_timeout_ms,
+                                 "PacketsToConnection->settings->udp-idle-timeout-ms"))
     {
-        LOGF("JSON Error: PacketsToConnection->settings->udp-idle-timeout-ms (int field) : expected a value >= 1");
         return false;
     }
 
     ts->udp_idle_timeout_ms = (uint32_t) udp_idle_timeout_ms;
+
+    int64_t max_pending_bytes = (int64_t) kPtcDefaultMaxPendingBytes;
+
+    if (! ptcLoadOptionalInteger(settings,
+                                 "max-pending-bytes",
+                                 (int64_t) kPtcMinMaxPendingBytes,
+                                 (int64_t) kPtcMaxMaxPendingBytes,
+                                 &max_pending_bytes,
+                                 "PacketsToConnection->settings->max-pending-bytes"))
+    {
+        return false;
+    }
+
+    ts->max_pending_bytes = (uint32_t) max_pending_bytes;
     return ptcFakeDnsLoadSettings(ts, settings);
 }
 
 tunnel_t *ptcTunnelCreate(node_t *node)
 {
-    tunnel_t     *t        = tunnelCreate(node, sizeof(ptc_tstate_t), sizeof(ptc_lstate_t));
+    tunnel_t *t = tunnelCreate(node, sizeof(ptc_tstate_t), sizeof(ptc_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
     ptc_tstate_t *ts       = tunnelGetState(t);
     const cJSON  *settings = node->node_settings_json;
 
@@ -40,19 +64,17 @@ tunnel_t *ptcTunnelCreate(node_t *node)
     t->fnPauseD   = &ptcTunnelDownStreamPause;
     t->fnResumeD  = &ptcTunnelDownStreamResume;
 
-    t->onPrepare = &ptcTunnelOnPrepair;
-    t->onStart   = &ptcTunnelOnStart;
-    t->onStop    = &ptcTunnelOnStop;
-    t->onDestroy = &ptcTunnelDestroy;
+    t->onStart      = &ptcTunnelOnStart;
+    t->onPreStop    = &ptcTunnelOnPreStop;
+    t->onStop       = &ptcTunnelOnStop;
+    t->onWorkerStop = &ptcTunnelOnWorkerStop;
+    t->onDestroy    = &ptcTunnelDestroy;
 
     *ts = (ptc_tstate_t) {
-        .route_context4      = {0},
-        .route_context6      = {0},
+        .max_pending_bytes   = kPtcDefaultMaxPendingBytes,
+        .max_pending_entries = kPtcMaxPendingEntries,
         .udp_idle_timeout_ms = kPtcDefaultUdpIdleTimeoutMs,
-        .ipv4_identification = 0,
     };
-    atomic_init(&ts->stopping, false);
-
     if (settings != NULL && ! cJSON_IsObject(settings))
     {
         LOGF("JSON Error: PacketsToConnection->settings (object field) : expected an object");
@@ -66,8 +88,26 @@ tunnel_t *ptcTunnelCreate(node_t *node)
         return NULL;
     }
 
+    deviceLifetimeGateInit(&ts->output_gate);
+    deviceLifetimeGateInit(&ts->next_gate);
+    atomic_init(&ts->config_drain_remaining, 0);
+    atomic_init(&ts->stopping, false);
+    if (UNLIKELY(! mutexTryInit(&ts->owned_lines_lock)))
+    {
+        ptcTunnelDestroy(t);
+        return NULL;
+    }
+    ts->owned_lines_lock_initialized = true;
+
     initTcpIpStack();
-    LWIP_MEMPOOL_INIT(RX_POOL);
+    ptcRxWrapperPoolInitializeOnce();
+
+    ts->async_session = tunnelasyncsessionCreate(t, "PacketsToConnection");
+    if (UNLIKELY(ts->async_session == NULL))
+    {
+        ptcTunnelDestroy(t);
+        return NULL;
+    }
 
     return t;
 }

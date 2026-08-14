@@ -88,5 +88,9 @@ void authenticationclientTunnelOnStart(tunnel_t *t)
         LOGD("AuthenticationClient: queueing startup control task on worker 0");
     }
 
-    sendWorkerMessageForceQueue(0, authenticationclientStartOnWorker0, t, NULL, NULL);
+    if (UNLIKELY(! sendWorkerMessageForceQueueWithCleanup(0, authenticationclientStartOnWorker0, NULL, t, NULL, NULL)))
+    {
+        LOGF("AuthenticationClient: failed to admit required worker-0 startup control task");
+        terminateProgram(1);
+    }
 }

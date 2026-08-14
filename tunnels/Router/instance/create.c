@@ -46,7 +46,7 @@ static bool routerCreateInternalDomainResolver(tunnel_t *t, node_t *node)
     }
     ts->domain_resolver_node.flags = kNodeFlagNone;
 
-    ts->domain_resolver_tunnel = ts->domain_resolver_node.createHandle(&ts->domain_resolver_node);
+    ts->domain_resolver_tunnel = nodemanagerCreateTunnelInstance(&ts->domain_resolver_node);
     if (ts->domain_resolver_tunnel == NULL)
     {
         LOGF("Router: failed to create internal DomainResolver");
@@ -61,6 +61,10 @@ static bool routerCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 tunnel_t *routerTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(router_tstate_t), sizeof(router_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &routerTunnelUpStreamInit;
     t->fnEstU     = &routerTunnelUpStreamEst;

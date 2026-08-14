@@ -115,15 +115,24 @@ static int bufferedChanOpen(wchan_t *chan, size_t capacity)
 
 static int unbufferedChanOpen(wchan_t *chan)
 {
-    mutexInit(&chan->w_mu);
-
-    mutexInit(&chan->r_mu);
-
-    mutexInit(&chan->m_mu);
+    if (! mutexTryInit(&chan->w_mu))
+    {
+        return -1;
+    }
+    if (! mutexTryInit(&chan->r_mu))
+    {
+        mutexDestroy(&chan->w_mu);
+        return -1;
+    }
+    if (! mutexTryInit(&chan->m_mu))
+    {
+        mutexDestroy(&chan->r_mu);
+        mutexDestroy(&chan->w_mu);
+        return -1;
+    }
 
     condvarInit(&chan->r_cond);
     condvarInit(&chan->w_cond);
-  
 
     chan->closed    = 0;
     chan->r_waiting = 0;
@@ -319,7 +328,7 @@ typedef struct
 } select_op_t;
 
 int chanSelect(wchan_t *recvChans[], int recvCount, void **recvOut, wchan_t *sendChans[], int sendCount,
-                void *sendMsgs[])
+               void *sendMsgs[])
 {
     select_op_t candidates[recvCount + sendCount];
     int         count = 0;

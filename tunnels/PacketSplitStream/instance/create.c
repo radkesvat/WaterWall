@@ -5,6 +5,10 @@
 tunnel_t *packetsplitstreamTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(packetsplitstream_tstate_t), sizeof(packetsplitstream_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &packetsplitstreamTunnelUpStreamInit;
     t->fnEstU     = &packetsplitstreamTunnelUpStreamEst;

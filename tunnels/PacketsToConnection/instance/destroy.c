@@ -11,8 +11,9 @@ void ptcDestroyLwipResources(tunnel_t *t)
     }
 
     LOCK_TCPIP_CORE();
-    ptcDestroyRouteContexts(&state->route_context4);
-    ptcDestroyRouteContexts(&state->route_context6);
+    ptcDetachOwnedLinePcbsLocked(t);
+    ptcTcpDrainDestroyAllLocked(t);
+    ptcDestroyRouteContexts(t);
     ptcFakeDnsDestroy(state);
     state->lwip_resources_destroyed = true;
     UNLOCK_TCPIP_CORE();
@@ -20,7 +21,30 @@ void ptcDestroyLwipResources(tunnel_t *t)
 
 void ptcTunnelDestroy(tunnel_t *t)
 {
-    ptcDestroyLwipResources(t);
+    ptcTunnelOnStop(t);
+
+    ptc_tstate_t *state = tunnelGetState(t);
+    if (state->owned_lines != NULL)
+    {
+        for (uint32_t wid = 0; wid < state->owned_worker_count; ++wid)
+        {
+            assert(state->owned_lines[wid] == NULL);
+        }
+        memoryFree(state->owned_lines);
+        state->owned_lines = NULL;
+    }
+    if (state->owned_lines_lock_initialized)
+    {
+        mutexDestroy(&state->owned_lines_lock);
+        state->owned_lines_lock_initialized = false;
+    }
+
+    if (state->async_session != NULL)
+    {
+        tunnelasyncsessionDetach(state->async_session);
+        tunnelasyncsessionUnref(state->async_session);
+        state->async_session = NULL;
+    }
 
     tunnelDestroy(t);
 }

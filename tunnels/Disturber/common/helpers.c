@@ -12,7 +12,7 @@ static bool disturberDirectionIsEnabled(const disturber_tstate_t *ts, disturber_
     return direction == kDisturberPayloadDirectionUpstream ? ts->disturb_upstream : ts->disturb_downstream;
 }
 
-static disturber_direction_lstate_t *disturberGetDirectionState(disturber_lstate_t *ls,
+static disturber_direction_lstate_t *disturberGetDirectionState(disturber_lstate_t           *ls,
                                                                 disturber_payload_direction_e direction)
 {
     return direction == kDisturberPayloadDirectionUpstream ? &ls->upstream : &ls->downstream;
@@ -26,7 +26,7 @@ static LineTaskFnWithBuf disturberGetForwardPayloadFn(disturber_payload_directio
 static void disturberScheduleForwardPayload(tunnel_t *t, line_t *l, sbuf_t *buf,
                                             disturber_payload_direction_e direction)
 {
-    lineScheduleTaskWithBuf(l, disturberGetForwardPayloadFn(direction), t, buf);
+    discard lineScheduleTaskWithBuf(l, disturberGetForwardPayloadFn(direction), t, buf);
 }
 
 bool disturberIsWorkerPacketLine(tunnel_t *t, line_t *l)
@@ -49,11 +49,11 @@ static void disturberCloseNormalLine(tunnel_t *t, line_t *l)
 
 void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_payload_direction_e direction)
 {
-    disturber_tstate_t          *ts       = tunnelGetState(t);
-    disturber_lstate_t          *ls       = lineGetState(l, t);
-    disturber_direction_lstate_t *dir_ls  = disturberGetDirectionState(ls, direction);
-    LineTaskFnWithBuf            forward = disturberGetForwardPayloadFn(direction);
-    const char                  *dir_name = disturberDirectionName(direction);
+    disturber_tstate_t           *ts       = tunnelGetState(t);
+    disturber_lstate_t           *ls       = lineGetState(l, t);
+    disturber_direction_lstate_t *dir_ls   = disturberGetDirectionState(ls, direction);
+    LineTaskFnWithBuf             forward  = disturberGetForwardPayloadFn(direction);
+    const char                   *dir_name = disturberDirectionName(direction);
 
     if (! disturberDirectionIsEnabled(ts, direction))
     {
@@ -114,10 +114,11 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
 
     if (dir_ls->held_payload != NULL)
     {
-        LOGD("Disturber: Sending held %s payload before current one (chance: %d%%)", dir_name,
+        LOGD("Disturber: Sending held %s payload before current one (chance: %d%%)",
+             dir_name,
              ts->chance_payload_out_of_order);
 
-        sbuf_t *held_buf = dir_ls->held_payload;
+        sbuf_t *held_buf     = dir_ls->held_payload;
         dir_ls->held_payload = NULL;
 
         if (dup_buf != NULL)
@@ -150,7 +151,8 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
         }
         int delay_ms = ts->delay_min_ms + ((int) fastRand() % delay_range);
         LOGD("Disturber: Delaying %s payload by %d ms (chance: %d%%)", dir_name, delay_ms, ts->chance_payload_delay);
-        lineScheduleDelayedTaskWithBuf(l, forward, delay_ms, t, buf);
+        /* Fault-injection delay traffic is intentionally lossy on refusal. */
+        discard lineScheduleDelayedTaskWithBuf(l, forward, delay_ms, t, buf);
         if (dup_buf != NULL)
         {
             disturberScheduleForwardPayload(t, l, dup_buf, direction);
@@ -160,8 +162,7 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
 
     if (roll100(ts->chance_connection_deadhang))
     {
-        LOGD("Disturber: Putting %s direction into deadhang (chance: %d%%)", dir_name,
-             ts->chance_connection_deadhang);
+        LOGD("Disturber: Putting %s direction into deadhang (chance: %d%%)", dir_name, ts->chance_connection_deadhang);
         dir_ls->is_deadhang = true;
         lineReuseBuffer(l, buf);
         if (dup_buf != NULL)

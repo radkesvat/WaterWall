@@ -499,6 +499,10 @@ static bool tlsclientPreflightConfiguredClientHello(const tlsclient_tstate_t *ts
 tunnel_t *tlsclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(tlsclient_tstate_t), sizeof(tlsclient_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     configureTunnelCallbacks(t);
 

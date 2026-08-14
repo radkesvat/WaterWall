@@ -40,6 +40,11 @@ bool          tundeviceWrite(tun_device_t *tdev, sbuf_t *buf);
 bool          tundeviceDetectDefaultInterface(tun_default_route_t *out);
 bool          tundeviceDisableReversePathFiltering(const char *ifname);
 
+#if defined(OS_WIN)
+/* Releases the process-wide Wintun module after every device has stopped. */
+void tundevicePlatformShutdown(void);
+#endif
+
 // Retrieves the OS interface LUID value of the device (Windows NET_LUID.Value).
 // Returns false on platforms that have no such identifier; *out is set to 0 then.
 bool tundeviceGetLuid(tun_device_t *tdev, uint64_t *out);

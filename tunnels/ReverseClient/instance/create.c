@@ -9,6 +9,10 @@ tunnel_t *reverseclientTunnelCreate(node_t *node)
     tunnel_t *t  = tunnelCreate(node,
                                sizeof(reverseclient_tstate_t) + (wc * sizeof(reverseclient_thread_box_t)),
                                sizeof(reverseclient_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
 
     t->fnInitU    = &reverseclientTunnelUpStreamInit;
     t->fnEstU     = &reverseclientTunnelUpStreamEst;

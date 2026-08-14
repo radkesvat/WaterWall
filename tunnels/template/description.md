@@ -86,6 +86,15 @@ Current defaults:
 - no JSON parsing
 - no tunnel-specific start or prepare behavior
 
+### Stop lifecycle
+
+The framework supplies a no-op `onPreStop` by default. A tunnel that starts
+producers should override it to close admission and quiesce new callbacks. The
+node manager completes this pre-stop pass across every configuration before any
+`onStop` hook runs. `onStop` may then join, detach, and release shared resources,
+but it must also remain safe when partial-start cleanup reaches it without the
+global prepass. Worker-local `onWorkerStop` teardown is a separate phase.
+
 ### Why this folder matters
 
 The useful part of `Template` is the project structure it demonstrates:

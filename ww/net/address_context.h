@@ -477,6 +477,52 @@ static inline int addresscontextGetSockAddrFamily(const address_context_t *conte
  *
  * Returns 0 when the context has no single TCP or UDP protocol selection.
  */
+/**
+ * @brief How one address context names a transport, considering every protocol flag.
+ *
+ * addresscontextGetSockType() deliberately looks only at TCP versus UDP, so it
+ * reports SOCK_STREAM for a context that also carries the ICMP or packet flag.
+ * Nodes that hand a line to a real TCP or UDP socket need the stricter reading -
+ * exactly one transport flag and nothing else - which is what this returns.
+ */
+typedef enum address_context_transport_e
+{
+    /* No protocol flag is set: the caller may fall back to another context. */
+    kAddressContextTransportNone = 0,
+    /* Exactly TCP, and no other protocol flag. */
+    kAddressContextTransportTcp,
+    /* Exactly UDP, and no other protocol flag. */
+    kAddressContextTransportUdp,
+    /* ICMP, packet, or a combination: not something a TCP/UDP node can serve. */
+    kAddressContextTransportUnsupported
+} address_context_transport_t;
+
+/**
+ * @brief Classify one context's transport exactly.
+ *
+ * Pure: it reads flags and nothing else, so the caller keeps its own
+ * destination-before-source policy and its own diagnostics.
+ */
+static inline address_context_transport_t addresscontextClassifyTransport(const address_context_t *context)
+{
+    if (! context->proto_tcp && ! context->proto_udp && ! context->proto_icmp && ! context->proto_packet)
+    {
+        return kAddressContextTransportNone;
+    }
+
+    if (context->proto_tcp && ! context->proto_udp && ! context->proto_icmp && ! context->proto_packet)
+    {
+        return kAddressContextTransportTcp;
+    }
+
+    if (context->proto_udp && ! context->proto_tcp && ! context->proto_icmp && ! context->proto_packet)
+    {
+        return kAddressContextTransportUdp;
+    }
+
+    return kAddressContextTransportUnsupported;
+}
+
 static inline int addresscontextGetSockType(const address_context_t *context)
 {
     if (context->proto_tcp && ! context->proto_udp)

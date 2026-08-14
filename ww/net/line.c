@@ -153,6 +153,52 @@ void lineClearUsers(line_t *const line)
     line->user_count = 0;
 }
 
+void lineUnRefInternal(line_t *l)
+{
+    /*
+     * Reference-count publication is the lifetime edge for a line.  In
+     * particular, the owner may zero tunnel state and mark the line dead on
+     * one thread, release 2 -> 1, and leave a foreign refusal-cleanup thread
+     * to release 1 -> 0 and reclaim the allocation.  Every decrement therefore
+     * publishes preceding line writes; the final releaser acquires the release
+     * sequence before inspecting any non-atomic line state.
+     */
+    const w_atomic_uint_value_t previous = atomicSubExplicit(&l->refc, 1, memory_order_acq_rel);
+    assert(previous != 0);
+    if (previous > 1)
+    {
+        return;
+    }
+    assert(! l->alive);
+
+    /* Every line pool in a chain has one item geometry and one shared master.
+     * Pool zero is therefore stable allocator metadata even when the line's
+     * routing owner differs. It also avoids indexing by pseudo/invalid TLS. */
+    generic_pool_t *const provenance_pool = l->pools[0];
+    debugAssertZeroBuf(&l->tunnels_line_state[0], genericpoolGetItemSize(provenance_pool) - sizeof(line_t));
+
+    if (l->routing_context.dest_ctx.domain != NULL && ! l->routing_context.dest_ctx.domain_constant)
+    {
+        memoryFree(l->routing_context.dest_ctx.domain);
+        l->routing_context.dest_ctx.domain = NULL;
+    }
+
+    lineClearUsers(l);
+
+    worker_t *current = tryGetCurrentEventWorker();
+    if (current != NULL && current->wid == l->wid)
+    {
+        genericpoolReuseItem(l->pools[current->wid], l);
+        return;
+    }
+
+    /* Refusal cleanup can run synchronously on an lwIP/device/plain thread or
+     * on the event worker that attempted a cross-worker admission. Neither may
+     * mutate the allocation owner's worker-local pool, so return through the
+     * pool family's thread-safe master instead. */
+    genericpoolReuseItemShared(provenance_pool, l);
+}
+
 const user_handle_t *lineGetCurrentUser(const line_t *const line)
 {
     assert(line != NULL);
@@ -284,7 +330,7 @@ static line_task_msg_t *lineTaskMessageCreate(line_t *line, tunnel_t *t)
 {
     line_task_msg_t *msg;
 
-    masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
+    masterpoolGetItems(GSTATE.masterpool_messages, (void **) &(msg), 1, NULL);
     *msg = (line_task_msg_t) {.tunnel = t, .line = line, .buf = NULL};
 
     return msg;
@@ -425,22 +471,24 @@ static void lineRunScheduledTaskWithBuf(worker_t *worker, void *arg1, void *arg2
     lineTaskMessageRelease(msg);
 }
 
-void lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
+bool lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
 {
     lineLock(line);
 
     line_task_msg_t *msg = lineTaskMessageCreate(line, t);
     msg->callback.no_buf = task;
 
-    sendWorkerMessageForceQueueWithCleanup(lineGetWID(line),
-                                           (WorkerMessageCallback) lineRunScheduledTaskNoBuf,
-                                           lineCleanupScheduledTaskNoBuf,
-                                           msg,
-                                           NULL,
-                                           NULL);
+    // A refusal has already run lineCleanupScheduledTaskNoBuf(), so the lock
+    // above and the message are both released; only the answer is left to give.
+    return sendWorkerMessageForceQueueWithCleanup(lineGetWID(line),
+                                                  (WorkerMessageCallback) lineRunScheduledTaskNoBuf,
+                                                  lineCleanupScheduledTaskNoBuf,
+                                                  msg,
+                                                  NULL,
+                                                  NULL);
 }
 
-void lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t, sbuf_t *buf)
+bool lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t, sbuf_t *buf)
 {
     lineLock(line);
 
@@ -448,21 +496,21 @@ void lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_
     msg->callback.with_buf = task;
     msg->buf               = buf;
 
-    sendWorkerMessageForceQueueWithCleanup(lineGetWID(line),
-                                           (WorkerMessageCallback) lineRunScheduledTaskWithBuf,
-                                           lineCleanupScheduledTaskWithBuf,
-                                           msg,
-                                           NULL,
-                                           NULL);
+    return sendWorkerMessageForceQueueWithCleanup(lineGetWID(line),
+                                                  (WorkerMessageCallback) lineRunScheduledTaskWithBuf,
+                                                  lineCleanupScheduledTaskWithBuf,
+                                                  msg,
+                                                  NULL,
+                                                  NULL);
 }
 
-void lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms, tunnel_t *t)
+bool lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms, tunnel_t *t)
 {
     if (! lineIsOnCurrentEventWorker(line))
     {
         LOGF("Attempted to schedule a delayed task on a line from a thread that does not own it");
         abortProgramNow(1);
-        return;
+        return false;
     }
 
     lineLock(line);
@@ -470,23 +518,23 @@ void lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t 
     line_task_msg_t *msg = lineTaskMessageCreate(line, t);
     msg->callback.no_buf = task;
 
-    discard sendWorkerMessageTimedWithCleanup(lineGetWID(line),
-                                              (WorkerMessageCallback) lineRunScheduledTaskNoBuf,
-                                              lineCleanupScheduledTaskNoBuf,
-                                              delay_ms,
-                                              (void *) msg,
-                                              NULL,
-                                              NULL);
+    return sendWorkerMessageTimedWithCleanup(lineGetWID(line),
+                                             (WorkerMessageCallback) lineRunScheduledTaskNoBuf,
+                                             lineCleanupScheduledTaskNoBuf,
+                                             delay_ms,
+                                             (void *) msg,
+                                             NULL,
+                                             NULL);
 }
 
-void lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, uint32_t delay_ms, tunnel_t *t,
+bool lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, uint32_t delay_ms, tunnel_t *t,
                                     sbuf_t *buf)
 {
     if (! lineIsOnCurrentEventWorker(line))
     {
         LOGF("Attempted to schedule a delayed task on a line from a thread that does not own it");
         abortProgramNow(1);
-        return;
+        return false;
     }
 
     lineLock(line);
@@ -495,13 +543,13 @@ void lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, 
     msg->callback.with_buf = task;
     msg->buf               = buf;
 
-    discard sendWorkerMessageTimedWithCleanup(lineGetWID(line),
-                                              (WorkerMessageCallback) lineRunScheduledTaskWithBuf,
-                                              lineCleanupScheduledTaskWithBuf,
-                                              delay_ms,
-                                              (void *) msg,
-                                              NULL,
-                                              NULL);
+    return sendWorkerMessageTimedWithCleanup(lineGetWID(line),
+                                             (WorkerMessageCallback) lineRunScheduledTaskWithBuf,
+                                             lineCleanupScheduledTaskWithBuf,
+                                             delay_ms,
+                                             (void *) msg,
+                                             NULL,
+                                             NULL);
 }
 
 int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const char *service, int socktype,

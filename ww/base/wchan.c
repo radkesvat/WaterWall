@@ -297,11 +297,7 @@ static void thr_drain_signals(Thr *t)
     while (atomicLoadExplicit(&t->signals, memory_order_acquire) != 0)
     {
         YIELD_CPU();
-#ifdef OS_WIN
-        SwitchToThread();
-#else
         YIELD_THREAD();
-#endif
     }
 }
 
@@ -858,19 +854,17 @@ static bool chan_recv_direct(wchan_t *c, void *dstelemptr, Thr *sendert)
     return ok;
 }
 
-wchan_t *chanOpen(size_t elemsize, uint32_t cap)
+wchan_t *chanTryOpen(size_t elemsize, uint32_t cap)
 {
     if (elemsize != 0 && (size_t) cap > (SIZE_MAX / elemsize))
     {
-        printError("buffer size out of range");
-        abortProgramNow(1);
+        return NULL;
     }
     const size_t buffer_size = ((size_t) cap) * elemsize;
 
     if (buffer_size > (SIZE_MAX - sizeof(wchan_t)))
     {
-        printError("buffer size out of range");
-        abortProgramNow(1);
+        return NULL;
     }
     const size_t required_size = sizeof(wchan_t) + buffer_size;
 
@@ -878,8 +872,7 @@ wchan_t *chanOpen(size_t elemsize, uint32_t cap)
     wchan_t *c = memoryAllocateCacheAlignedZero(required_size);
     if (c == NULL)
     {
-        printError("buffer size out of range");
-        abortProgramNow(1);
+        return NULL;
     }
 
     c->elemsize = elemsize;
@@ -892,6 +885,17 @@ wchan_t *chanOpen(size_t elemsize, uint32_t cap)
 #endif
 
     return c;
+}
+
+wchan_t *chanOpen(size_t elemsize, uint32_t cap)
+{
+    wchan_t *channel = chanTryOpen(elemsize, cap);
+    if (UNLIKELY(channel == NULL))
+    {
+        printError("channel allocation or geometry failure");
+        abortProgramNow(1);
+    }
+    return channel;
 }
 
 void chanClose(wchan_t *c)

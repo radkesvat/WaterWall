@@ -1,5 +1,5 @@
 <!--
-Documentation version: 111
+Documentation version: 115
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TunDevice.mdx, and both files must keep the same documentation version.
 -->
 
@@ -83,7 +83,8 @@ Full-route example with local ranges excluded:
   Name of the TUN interface to create or open.
 
 - `device-ip` `(string)`
-  Interface IP and subnet in CIDR form.
+  IPv4 interface address and subnet in CIDR form. IPv6 is rejected because the
+  packet datapath is IPv4-only.
   Example: `"10.10.0.1/24"`
 
   The current implementation splits this into:
@@ -93,7 +94,8 @@ Full-route example with local ranges excluded:
 ## Optional `settings` Fields
 
 - `device-mtu` `(integer)`
-  MTU to configure on the TUN device.
+  MTU to configure on the TUN device, in the inclusive range `68..65535`.
+  Fractional numbers, strings, booleans, and `null` are rejected.
 
   Default: global MTU size used by WaterWall.
 
@@ -115,7 +117,7 @@ Full-route example with local ranges excluded:
 - `route-cidrs` `(array of strings)`
   CIDRs to route toward the TUN interface when routing is enabled.
 
-  Default: full route for the family of `device-ip`, either `"0.0.0.0/0"` or `"::/0"`.
+  Default: the IPv4 full route, `"0.0.0.0/0"`.
   Default routes are installed as split `/1` routes so the existing system default route does not need to be replaced.
 
 - `route-exclude-cidrs` `(array of strings)`
@@ -186,19 +188,34 @@ The actual device creation is deferred until start time because the tunnel needs
 When the TUN device produces a packet:
 
 - the packet is received on a worker
-- the tunnel validates the packet format
+- the kernel TUN contract supplies packet bytes without checksum-offload provenance. Unfragmented kernel-produced
+  packets are trusted at this adapter boundary and are validated by their downstream consumer; fragmented IPv4
+  packets pass the common fragment parser, which validates their structure and header checksum before association
 - only IPv4 packets are currently accepted by this path
 - the packet is forwarded through the chosen adjacent tunnel using the worker's packet line
 
 If the device is down, the packet is dropped.
+
+Fragment affinity follows the packet buffer through ordinary forwarding, delay, one-to-one copies, duplication, worker
+handoff, and cleanup rather than ending at queue admission or callback return. Copies share one counted settlement
+claim, and the reader session remains alive until the last copy is consumed. If an identity expires or its reader
+generation ends while a claim is outstanding, late copies are refused before lwIP and the identity remains poisoned;
+the final factual stack result or conservative cleanup settlement decides when its reassembly-timeout hold can end. If
+publication is only partially admitted, producer admission closes immediately, the reader loop exits, and orderly
+shutdown is requested. This fail-closed path prevents later same-ID packets from completing a hybrid datagram with
+fragments already queued to lwIP.
 
 ### Packet output path
 
 When payload reaches `TunDevice` from upstream or downstream:
 
 - the payload is treated as an IP packet
+- the complete packet is structurally validated as exact IPv4, even when no
+  checksum recalculation was requested; trailing bytes and malformed or
+  truncated packets are dropped
 - checksum recalculation is performed if the line requests it
-- the packet is written to the TUN device
+- the packet is written to the TUN device only if requested checksum recalculation succeeds; malformed or truncated
+  packets that cannot be recalculated are dropped with a rate-limited warning
 
 Both upstream and downstream payload handlers write to the same TUN device.
 
@@ -209,6 +226,8 @@ Before writing a packet, `TunDevice` checks line flags:
 - if `recalculate_checksum` is set, the packet checksum is recomputed
 - full packet checksum recalculation is attempted
 - for fragmented IPv4 packets, transport checksum recalculation is skipped automatically and only the IP header checksum is recomputed
+- if the requested calculation cannot validate the available packet structure, the request flag is cleared and the
+  buffer is recycled without calling the OS TUN writer
 
 ### Self-traffic loop protection
 
@@ -241,7 +260,13 @@ restart WaterWall or configure explicit interfaces/routes.
 
 ### Callback behavior
 
-Most connection-style callbacks such as `init`, `est`, `finish`, `pause`, and `resume` are ignored by this adapter. The important behavior is packet read and packet write.
+Payload is the meaningful callback path. Ordinary connection lifecycle
+callbacks (`Init`, `Est`, `Pause`, and `Resume`) are terminal absorbers at this
+packet adapter. An unexpected `Finish` in either direction is a fatal packet-line
+lifecycle violation and aborts the program; it is not a no-op.
+
+The chain owns one persistent packet line per worker. `TunDevice` never destroys
+those lines and has zero bytes of line state.
 
 ## Notes And Caveats
 

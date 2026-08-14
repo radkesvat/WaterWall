@@ -61,7 +61,7 @@ static bool socks5clientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return false;
     }
 
-    ts->domain_resolver_tunnel = ts->domain_resolver_node.createHandle(&ts->domain_resolver_node);
+    ts->domain_resolver_tunnel = nodemanagerCreateTunnelInstance(&ts->domain_resolver_node);
     if (ts->domain_resolver_tunnel == NULL)
     {
         LOGF("Socks5Client: failed to create internal DomainResolver");
@@ -299,7 +299,12 @@ static bool parseDomainStrategy(socks5client_tstate_t *ts, const cJSON *settings
 
 tunnel_t *socks5clientTunnelCreate(node_t *node)
 {
-    tunnel_t              *t        = tunnelCreate(node, sizeof(socks5client_tstate_t), sizeof(socks5client_lstate_t));
+    tunnel_t *t = tunnelCreate(node, sizeof(socks5client_tstate_t), sizeof(socks5client_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
+
     socks5client_tstate_t *ts       = tunnelGetState(t);
     const cJSON           *settings = node->node_settings_json;
 

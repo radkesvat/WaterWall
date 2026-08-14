@@ -93,7 +93,7 @@ static bool decodeAndInitializeDevice(wireguard_device_t *device, const char *pr
 static tunnel_t *createBaseTunnel(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(wgd_tstate_t), 0);
-    if (t == NULL)
+    if (! t)
     {
         return NULL;
     }
@@ -120,7 +120,12 @@ static tunnel_t *createBaseTunnel(node_t *node)
 
     wgd_tstate_t *state = tunnelGetState(t);
     state->tunnel       = t;
-    mutexInit(&state->mutex);
+    if (UNLIKELY(! mutexTryInit(&state->mutex)))
+    {
+        LOGF("WireGuardDevice: failed to initialize state mutex");
+        tunnelDestroy(t);
+        return NULL;
+    }
 
     return t;
 }
@@ -491,7 +496,7 @@ static bool wireguarddeviceCreateUserControllerTunnel(tunnel_t *t, node_t *node,
         return false;
     }
 
-    state->user_controller_tunnel = state->user_controller_node.createHandle(&state->user_controller_node);
+    state->user_controller_tunnel = nodemanagerCreateTunnelInstance(&state->user_controller_node);
     if (state->user_controller_tunnel == NULL)
     {
         LOGF("WireGuardDevice: failed to create internal UserController");

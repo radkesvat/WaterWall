@@ -4,11 +4,11 @@
 
 enum
 {
-    kSoftIpLimiterMaxIps             = 6,
-    kSoftIpLimiterVlessVersion       = 0x00,
-    kSoftIpLimiterVlessUuidLen       = 16,
-    kSoftIpLimiterTrojanPasswordLen  = 56,
-    kSoftIpLimiterInitialTableCap    = 64,
+    kSoftIpLimiterMaxIps            = 6,
+    kSoftIpLimiterVlessVersion      = 0x00,
+    kSoftIpLimiterVlessUuidLen      = 16,
+    kSoftIpLimiterTrojanPasswordLen = 56,
+    kSoftIpLimiterInitialTableCap   = 64,
 };
 
 typedef enum softiplimiter_identifier_mode_e
@@ -68,7 +68,7 @@ typedef struct softiplimiter_ip_row_s
     // under a shared read lock without serializing the data plane. All structural
     // mutations (insert/prune/erase/swap-remove) stay under the exclusive write
     // lock, so these copies never race with the atomic refresh.
-    atomic_ullong          last_seen_ms;
+    atomic_ullong last_seen_ms;
 } softiplimiter_ip_row_t;
 
 typedef struct softiplimiter_identity_entry_s
@@ -91,25 +91,25 @@ typedef struct softiplimiter_table_result_s
 
 typedef struct softiplimiter_tstate_s
 {
-    wrwlock_t                                         table_lock;
-    softiplimiter_identity_map_t                      table;
-    softiplimiter_identifier_mode_t                   identifier_mode;
-    softiplimiter_identification_failure_action_t     identification_failure_action;
-    uint64_t                                          tolerance_ms;
-    uint8_t                                           simultaneous_user_limit;
-    bool                                              verbose;
+    wrwlock_t                                     table_lock;
+    softiplimiter_identity_map_t                  table;
+    softiplimiter_identifier_mode_t               identifier_mode;
+    softiplimiter_identification_failure_action_t identification_failure_action;
+    uint64_t                                      tolerance_ms;
+    uint8_t                                       simultaneous_user_limit;
+    bool                                          verbose;
 } softiplimiter_tstate_t;
 
 typedef struct softiplimiter_lstate_s
 {
-    buffer_stream_t          in_stream;
-    hash_t                   identifier;
-    softiplimiter_ip_key_t   ip_key;
-    softiplimiter_phase_t    phase;
-    bool                     closing;
-    bool                     admitted;
-    bool                     next_init_sent;
-    bool                     ip_key_valid;
+    buffer_stream_t        in_stream;
+    hash_t                 identifier;
+    softiplimiter_ip_key_t ip_key;
+    softiplimiter_phase_t  phase;
+    bool                   closing;
+    bool                   admitted;
+    bool                   next_init_sent;
+    bool                   ip_key_valid;
 } softiplimiter_lstate_t;
 
 enum
@@ -139,25 +139,24 @@ void softiplimiterTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void softiplimiterLinestateInitialize(softiplimiter_lstate_t *ls, line_t *l);
 void softiplimiterLinestateDestroy(softiplimiter_lstate_t *ls);
 
-void     softiplimiterTunnelstateInitialize(softiplimiter_tstate_t *ts);
+bool     softiplimiterTunnelstateInitialize(softiplimiter_tstate_t *ts);
 void     softiplimiterTunnelstateDestroy(softiplimiter_tstate_t *ts);
 uint64_t softiplimiterNowMs(void);
 
-const char *softiplimiterIdentifierModeName(softiplimiter_identifier_mode_t mode);
+const char        *softiplimiterIdentifierModeName(softiplimiter_identifier_mode_t mode);
 static inline bool softiplimiterPhaseForwards(softiplimiter_phase_t phase)
 {
     return phase == kSoftIpLimiterPhaseEstablished || phase == kSoftIpLimiterPhasePassthrough;
 }
-bool        softiplimiterIpKeyEqual(const softiplimiter_ip_key_t *a, const softiplimiter_ip_key_t *b);
-bool        softiplimiterBuildIpKey(line_t *l, softiplimiter_ip_key_t *out);
-void        softiplimiterFormatIpKey(const softiplimiter_ip_key_t *ip_key, char *out, size_t out_len);
+bool softiplimiterIpKeyEqual(const softiplimiter_ip_key_t *a, const softiplimiter_ip_key_t *b);
+bool softiplimiterBuildIpKey(line_t *l, softiplimiter_ip_key_t *out);
+void softiplimiterFormatIpKey(const softiplimiter_ip_key_t *ip_key, char *out, size_t out_len);
 
 softiplimiter_extract_result_t softiplimiterTryExtractIdentifierFromBytes(softiplimiter_identifier_mode_t mode,
-                                                                          const uint8_t *bytes,
-                                                                          size_t len,
+                                                                          const uint8_t *bytes, size_t len,
                                                                           hash_t *identifier_out);
 softiplimiter_extract_result_t softiplimiterTryExtractIdentifierFromStream(softiplimiter_identifier_mode_t mode,
-                                                                           buffer_stream_t *stream,
+                                                                           buffer_stream_t                *stream,
                                                                            hash_t *identifier_out);
 
 bool softiplimiterTableAdmit(softiplimiter_identity_map_t *table, hash_t identifier,

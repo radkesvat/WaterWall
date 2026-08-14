@@ -1,6 +1,7 @@
 #include "generic_pool.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
+#include "net/ipv4_packet_view.h"
 #include "raw.h"
 #include "raw_linux_internal.h"
 #include "raw_linux_send_policy.h"
@@ -121,7 +122,7 @@ static void rawdeviceReportPendingDiscards(raw_device_t *rdev)
 static bool rawdevicePrepareSendMessage(raw_device_t *rdev, sbuf_t *buf, struct mmsghdr *msg, struct iovec *iov,
                                         struct sockaddr_in *addr)
 {
-    uint32_t packet_len = sbufGetLength(buf);
+    const uint32_t packet_len = sbufGetLength(buf);
     if (UNLIKELY(packet_len > kMaxAllowedPacketLength))
     {
         rawdeviceRecordDiscard(rdev, kRawDeviceDiscardOversized, 0);
@@ -129,13 +130,25 @@ static bool rawdevicePrepareSendMessage(raw_device_t *rdev, sbuf_t *buf, struct 
         return false;
     }
 
-    struct iphdr *ip_header = (struct iphdr *) sbufGetRawPtr(buf);
+    /*
+     * Keep a defensive check below the tunnel boundary: writer-channel callers
+     * are asynchronous, and this avoids both a short read and Linux's unaligned
+     * `struct iphdr` access if a future producer bypasses the tunnel helper.
+     */
+    ipv4_packet_view_t packet = {0};
+    if (UNLIKELY(! ipv4packetviewParse(sbufGetRawPtr(buf), packet_len, &packet) ||
+                 packet.ip_total_length != packet_len))
+    {
+        rawdeviceRecordDiscard(rdev, kRawDeviceDiscardPacketLocalSendError, EINVAL);
+        bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
+        return false;
+    }
 
     memoryZero(addr, sizeof(*addr));
     addr->sin_family      = AF_INET;
-    addr->sin_addr.s_addr = ip_header->daddr;
+    addr->sin_addr.s_addr = packet.destination_address;
 
-    iov->iov_base = (void *) ip_header;
+    iov->iov_base = (void *) sbufGetRawPtr(buf);
     iov->iov_len  = packet_len;
 
     memoryZero(msg, sizeof(*msg));
@@ -532,8 +545,9 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
     int one = 1;
     if (setsockopt(rsocket, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0)
     {
-        perror("setsockopt IP_HDRINCL");
-        terminateProgram(1);
+        LOGE("RawDevice: unable to enable IP_HDRINCL: %s", strerror(errno));
+        close(rsocket);
+        return NULL;
     }
     int flags = fcntl(rsocket, F_GETFL, 0);
     if (flags < 0)
@@ -556,8 +570,6 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
     }
     rawdeviceLogSocketBufferSize(rsocket, SO_SNDBUF, "SO_SNDBUF");
 
-    raw_device_t *rdev = memoryAllocate(sizeof(raw_device_t));
-
     /*
      * Device bring-up/creation runs on an event worker even though the reader
      * and writer threads it manages stay unregistered. Read that worker's pool
@@ -573,8 +585,31 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
                                                    bufferpoolGetSmallBufferSize(worker_pool)
 
     );
+    if (UNLIKELY(writer_bpool == NULL))
+    {
+        LOGE("RawDevice: failed to construct writer buffer pool");
+        close(rsocket);
+        return NULL;
+    }
 
-    *rdev = (raw_device_t) {.name               = stringDuplicate(name),
+    raw_device_t *rdev = memoryAllocate(sizeof(raw_device_t));
+    if (UNLIKELY(rdev == NULL))
+    {
+        bufferpoolDestroy(writer_bpool);
+        close(rsocket);
+        return NULL;
+    }
+
+    char *device_name = stringDuplicate(name);
+    if (UNLIKELY(device_name == NULL))
+    {
+        memoryFree(rdev);
+        bufferpoolDestroy(writer_bpool);
+        close(rsocket);
+        return NULL;
+    }
+
+    *rdev = (raw_device_t) {.name               = device_name,
                             .routine_writer     = rawLinuxWriteRoutine,
                             .socket             = rsocket,
                             .mark               = mark,

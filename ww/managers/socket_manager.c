@@ -143,6 +143,10 @@ typedef struct socket_manager_s
 
 static socket_manager_state_t *socketmanager_gstate = NULL;
 
+#ifdef WW_SOCKET_MANAGER_CONSTRUCTOR_TEST_SEAM
+bool socketManagerConstructorTestFailAfterMutex(void);
+#endif
+
 static void distributeTcpSocket(wio_t *io, uint16_t local_port, const ip_addr_t *local_addr);
 
 static void distributeUdpPayload(udp_payload_t pl);
@@ -180,10 +184,17 @@ local_idle_table_t *udpsockGetWorkerIdleTable(udpsock_t *socket)
 static udpsock_t *createUdpSocketSideData(wio_t *io)
 {
     udpsock_t *socket = memoryAllocate(sizeof(*socket));
-    assert(socket != NULL);
+    if (UNLIKELY(socket == NULL))
+    {
+        return NULL;
+    }
 
     socket->idle_tables = memoryAllocateZero(sizeof(*socket->idle_tables) * getWorkersCount());
-    assert(socket->idle_tables != NULL);
+    if (UNLIKELY(socket->idle_tables == NULL))
+    {
+        memoryFree(socket);
+        return NULL;
+    }
 
     socket->io = io;
     return socket;
@@ -926,7 +937,11 @@ static void queueIptablesRule(uint8_t protocol, socket_filter_t *filter, uint16_
 
     rule.sort_rank = socketManagerComputeRedirectRuleRank(rule.has_dest, rule.iface_name != NULL);
 
-    pending_rules_t_push(&socketmanager_gstate->pending_rules, rule);
+    if (UNLIKELY(pending_rules_t_push(&socketmanager_gstate->pending_rules, rule) == NULL))
+    {
+        LOGF("SocketManager: failed to record a required pending iptables rule");
+        terminateProgram(1);
+    }
 }
 
 /**
@@ -1220,8 +1235,27 @@ static idle_table_t *getOrCreateBalanceTable(const char *balance_group_name)
 
     if (find_result.ref == balancegroup_registry_t_end(&(socketmanager_gstate->balance_groups)).ref)
     {
+        const isize_t required = balancegroup_registry_t_size(&socketmanager_gstate->balance_groups) + 1;
+        if (UNLIKELY(! balancegroup_registry_t_reserve(&socketmanager_gstate->balance_groups, required) ||
+                     balancegroup_registry_t_capacity(&socketmanager_gstate->balance_groups) < required))
+        {
+            mutexUnlock(&(socketmanager_gstate->mutex));
+            return NULL;
+        }
+
         b_table = idleTableCreate(socketmanager_gstate->worker->loop);
-        balancegroup_registry_t_insert(&(socketmanager_gstate->balance_groups), name_hash, b_table);
+        if (UNLIKELY(b_table == NULL))
+        {
+            mutexUnlock(&(socketmanager_gstate->mutex));
+            return NULL;
+        }
+        balancegroup_registry_t_result inserted =
+            balancegroup_registry_t_insert(&(socketmanager_gstate->balance_groups), name_hash, b_table);
+        if (UNLIKELY(inserted.ref == NULL || ! inserted.inserted))
+        {
+            idletableDestroy(b_table);
+            b_table = NULL;
+        }
     }
     else
     {
@@ -1244,15 +1278,39 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
     socket_filter_t *filter   = memoryAllocate(sizeof(socket_filter_t));
     unsigned int     priority = calculateFilterPriority(option);
 
+    if (UNLIKELY(filter == NULL))
+    {
+        LOGF("SocketManager: failed to allocate listener filter metadata");
+        terminateProgram(1);
+        return;
+    }
+
     if (option.balance_group_name)
     {
         option.shared_balance_table = getOrCreateBalanceTable(option.balance_group_name);
+        if (UNLIKELY(option.shared_balance_table == NULL))
+        {
+            memoryFree(filter);
+            LOGF("SocketManager: failed to create balance-group metadata");
+            terminateProgram(1);
+            return;
+        }
     }
 
     *filter = (socket_filter_t) {.tunnel = tunnel, .option = option, .cb = cb, .listen_io = NULL};
 
     mutexLock(&(socketmanager_gstate->mutex));
-    filters_t_push(&(socketmanager_gstate->filters[priority]), filter);
+    filters_t *filters  = &socketmanager_gstate->filters[priority];
+    isize_t    required = filters_t_size(filters) + 1;
+    if (UNLIKELY(! filters_t_reserve(filters, required) || filters_t_capacity(filters) < required ||
+                 filters_t_push(filters, filter) == NULL))
+    {
+        mutexUnlock(&(socketmanager_gstate->mutex));
+        memoryFree(filter);
+        LOGF("SocketManager: failed to publish listener filter metadata");
+        terminateProgram(1);
+        return;
+    }
     if (option.fwmark >= 0)
     {
         socketmanager_gstate->any_fwmark = true;
@@ -1949,7 +2007,11 @@ static void endpointRegistryReserve(endpoint_registry_t *reg, uint8_t protocol, 
     ep.send_buffer_size = filter->option.send_buffer_size;
     ep.recv_buffer_size = filter->option.recv_buffer_size;
 
-    endpoint_registry_t_push(reg, ep);
+    if (UNLIKELY(endpoint_registry_t_push(reg, ep) == NULL))
+    {
+        LOGF("SocketManager: failed to publish ownership for a bound listener endpoint");
+        terminateProgram(1);
+    }
 }
 
 /**
@@ -2200,7 +2262,13 @@ static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
 {
     const int length   = (int) (port_max - port_min + 1);
     filter->listen_ios = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
-    int i              = 0;
+    if (UNLIKELY(filter->listen_ios == NULL))
+    {
+        LOGF("SocketManager: failed to allocate TCP range listener ownership slots");
+        terminateProgram(1);
+        return;
+    }
+    int i = 0;
 
     for (uint32_t p = port_min; p <= port_max; ++p)
     {
@@ -2225,7 +2293,8 @@ static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
             LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, port);
             continue;
         }
-        filter->listen_ios[i] = io;
+        filter->listen_ios[i]    = io;
+        filter->listen_ios_count = (size_t) i + 1U;
         endpointRegistryReserve(reg, IPPROTO_TCP, filter, port, io, NULL);
         filter->v6_dualstack = wioGetLocaladdr(io)->sa_family == AF_INET6;
 
@@ -2243,7 +2312,13 @@ static void listenTcpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
 {
     const isize length = vec_listener_port_t_size(ports);
     filter->listen_ios = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
-    int i              = 0;
+    if (UNLIKELY(filter->listen_ios == NULL))
+    {
+        LOGF("SocketManager: failed to allocate TCP list listener ownership slots");
+        terminateProgram(1);
+        return;
+    }
+    int i = 0;
 
     for (isize pi = 0; pi < length; ++pi)
     {
@@ -2268,7 +2343,8 @@ static void listenTcpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
             LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p);
             continue;
         }
-        filter->listen_ios[i] = io;
+        filter->listen_ios[i]    = io;
+        filter->listen_ios_count = (size_t) i + 1U;
         endpointRegistryReserve(reg, IPPROTO_TCP, filter, p, io, NULL);
         filter->v6_dualstack = wioGetLocaladdr(io)->sa_family == AF_INET6;
 
@@ -2747,11 +2823,20 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
     }
     if (UNLIKELY(! startUdpListener(filter->listen_io, onUdpPacketReceived)))
     {
+        wioClose(filter->listen_io);
         filter->listen_io = NULL;
         LOGF("SocketManager: could not register UDP listener on %s:[%u]", host, port);
         terminateProgram(1);
     }
-    udpsock_t *socket         = createUdpSocketSideData(filter->listen_io);
+    udpsock_t *socket = createUdpSocketSideData(filter->listen_io);
+    if (UNLIKELY(socket == NULL))
+    {
+        wioClose(filter->listen_io);
+        filter->listen_io = NULL;
+        LOGF("SocketManager: failed to allocate UDP listener side data");
+        terminateProgram(1);
+        return;
+    }
     filter->listen_udp_socket = socket;
     weventSetUserData(filter->listen_io, socket);
     endpointRegistryReserve(reg, IPPROTO_UDP, filter, port, filter->listen_io, socket);
@@ -2802,11 +2887,20 @@ static void listenUdpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
 
     if (UNLIKELY(! startUdpListener(filter->listen_io, onUdpPacketReceivedMultiPort)))
     {
+        wioClose(filter->listen_io);
         filter->listen_io = NULL;
         LOGF("SocketManager: could not register UDP redirect listener on %s:[%d]", host, main_port);
         terminateProgram(1);
     }
-    udpsock_t *socket         = createUdpSocketSideData(filter->listen_io);
+    udpsock_t *socket = createUdpSocketSideData(filter->listen_io);
+    if (UNLIKELY(socket == NULL))
+    {
+        wioClose(filter->listen_io);
+        filter->listen_io = NULL;
+        LOGF("SocketManager: failed to allocate redirected UDP listener side data");
+        terminateProgram(1);
+        return;
+    }
     filter->listen_udp_socket = socket;
     weventSetUserData(filter->listen_io, socket);
     endpointRegistryReserve(reg, IPPROTO_UDP, filter, (uint16_t) main_port, filter->listen_io, socket);
@@ -2824,7 +2918,17 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
     const int length           = (int) (port_max - port_min + 1);
     filter->listen_ios         = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
     filter->listen_udp_sockets = (udpsock_t **) memoryAllocateZero(sizeof(udpsock_t *) * (size_t) length);
-    int i                      = 0;
+    if (UNLIKELY(filter->listen_ios == NULL || filter->listen_udp_sockets == NULL))
+    {
+        memoryFree(filter->listen_ios);
+        memoryFree(filter->listen_udp_sockets);
+        filter->listen_ios         = NULL;
+        filter->listen_udp_sockets = NULL;
+        LOGF("SocketManager: failed to allocate UDP range listener ownership slots");
+        terminateProgram(1);
+        return;
+    }
+    int i = 0;
 
     for (uint32_t p = port_min; p <= port_max; ++p)
     {
@@ -2846,6 +2950,7 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
 
         if (UNLIKELY(! startUdpListener(udp_io, onUdpPacketReceived)))
         {
+            wioClose(udp_io);
             LOGW("SocketManager: could not register UDP listener on %s:[%u], skipped...", host, port);
             continue;
         }
@@ -2853,8 +2958,18 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
         filter->listen_ios[i] = udp_io;
         filter->v6_dualstack  = wioGetLocaladdr(udp_io)->sa_family == AF_INET6;
 
-        udpsock_t *socket             = createUdpSocketSideData(udp_io);
-        filter->listen_udp_sockets[i] = socket;
+        udpsock_t *socket = createUdpSocketSideData(udp_io);
+        if (UNLIKELY(socket == NULL))
+        {
+            wioClose(udp_io);
+            filter->listen_ios[i] = NULL;
+            LOGF("SocketManager: failed to allocate UDP range listener side data");
+            terminateProgram(1);
+            return;
+        }
+        filter->listen_udp_sockets[i]    = socket;
+        filter->listen_ios_count         = (size_t) i + 1U;
+        filter->listen_udp_sockets_count = (size_t) i + 1U;
         weventSetUserData(udp_io, socket);
         endpointRegistryReserve(reg, IPPROTO_UDP, filter, port, udp_io, socket);
 
@@ -2874,7 +2989,17 @@ static void listenUdpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
     const isize length         = vec_listener_port_t_size(ports);
     filter->listen_ios         = (wio_t **) memoryAllocateZero(sizeof(wio_t *) * ((size_t) length + 1));
     filter->listen_udp_sockets = (udpsock_t **) memoryAllocateZero(sizeof(udpsock_t *) * (size_t) length);
-    int i                      = 0;
+    if (UNLIKELY(filter->listen_ios == NULL || filter->listen_udp_sockets == NULL))
+    {
+        memoryFree(filter->listen_ios);
+        memoryFree(filter->listen_udp_sockets);
+        filter->listen_ios         = NULL;
+        filter->listen_udp_sockets = NULL;
+        LOGF("SocketManager: failed to allocate UDP list listener ownership slots");
+        terminateProgram(1);
+        return;
+    }
+    int i = 0;
 
     for (isize pi = 0; pi < length; ++pi)
     {
@@ -2897,6 +3022,7 @@ static void listenUdpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
 
         if (UNLIKELY(! startUdpListener(udp_io, onUdpPacketReceived)))
         {
+            wioClose(udp_io);
             LOGW("SocketManager: could not register UDP listener on %s:[%u], skipped...", host, p);
             continue;
         }
@@ -2904,8 +3030,18 @@ static void listenUdpPortListSockets(wloop_t *loop, socket_filter_t *filter, cha
         filter->listen_ios[i] = udp_io;
         filter->v6_dualstack  = wioGetLocaladdr(udp_io)->sa_family == AF_INET6;
 
-        udpsock_t *socket             = createUdpSocketSideData(udp_io);
-        filter->listen_udp_sockets[i] = socket;
+        udpsock_t *socket = createUdpSocketSideData(udp_io);
+        if (UNLIKELY(socket == NULL))
+        {
+            wioClose(udp_io);
+            filter->listen_ios[i] = NULL;
+            LOGF("SocketManager: failed to allocate UDP list listener side data");
+            terminateProgram(1);
+            return;
+        }
+        filter->listen_udp_sockets[i]    = socket;
+        filter->listen_ios_count         = (size_t) i + 1U;
+        filter->listen_udp_sockets_count = (size_t) i + 1U;
         weventSetUserData(udp_io, socket);
         endpointRegistryReserve(reg, IPPROTO_UDP, filter, p, udp_io, socket);
 
@@ -3025,7 +3161,7 @@ void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf, sockaddr_u 
 
     *item = (udp_payload_t) {.sock = socket_io, .buf = buf, .wid = wid_from, .peer_addr = peer_addr};
 
-    discard sendWorkerMessageForceQueueWithCleanup(
+    sendWorkerMessageForceQueueBestEffortWithCleanup(
         socketmanager_gstate->wid, runUdpWriteCallback, cleanupUdpWriteDispatch, item, NULL, NULL);
 }
 
@@ -3040,6 +3176,34 @@ void socketmanagerSet(struct socket_manager_s *new_state)
     socketmanager_gstate = new_state;
 }
 
+static isize_t socketmanagerListenerReservationBound(void)
+{
+    uint64_t total = 0;
+    for (size_t level = 0; level < kFilterLevels; ++level)
+    {
+        c_foreach(it, filters_t, socketmanager_gstate->filters[level])
+        {
+            const socket_filter_t *filter = *it.ref;
+            const isize_t          listed = vec_listener_port_t_size(&filter->option.ports);
+            uint64_t               count  = 1;
+            if (listed > 0)
+            {
+                count = (uint64_t) listed;
+            }
+            else if (filter->option.port_max >= filter->option.port_min)
+            {
+                count = (uint64_t) filter->option.port_max - (uint64_t) filter->option.port_min + 1U;
+            }
+            if (UNLIKELY(total > (uint64_t) PTRDIFF_MAX - count))
+            {
+                return -1;
+            }
+            total += count;
+        }
+    }
+    return (isize_t) total;
+}
+
 void socketmanagerStart(void)
 {
     assert(socketmanager_gstate != NULL);
@@ -3052,6 +3216,21 @@ void socketmanagerStart(void)
 
     // Record only successful binds, so failed attempts never block later endpoint setup.
     endpoint_registry_t registry = endpoint_registry_t_init();
+
+    const isize_t listener_bound = socketmanagerListenerReservationBound();
+    if (UNLIKELY(
+            listener_bound < 0 ||
+            (listener_bound > 0 && (! endpoint_registry_t_reserve(&registry, listener_bound) ||
+                                    endpoint_registry_t_capacity(&registry) < listener_bound ||
+                                    ! pending_rules_t_reserve(&socketmanager_gstate->pending_rules, listener_bound) ||
+                                    pending_rules_t_capacity(&socketmanager_gstate->pending_rules) < listener_bound))))
+    {
+        endpoint_registry_t_drop(&registry);
+        mutexUnlock(&(socketmanager_gstate->mutex));
+        LOGF("SocketManager: failed to reserve listener ownership metadata before binding");
+        terminateProgram(1);
+        return;
+    }
 
     listenTcp(socketmanager_gstate->worker->loop, &registry);
     listenUdp(socketmanager_gstate->worker->loop, &registry);
@@ -3068,47 +3247,76 @@ void socketmanagerStart(void)
 /**
  * @brief Allocate and initialize worker-specific TCP/UDP object pools.
  */
-static void initializeSocketManagerPools(void)
+static bool initializeSocketManagerPools(socket_manager_state_t *state)
 {
-    socketmanager_gstate->udp_pools =
-        memoryAllocateZero(sizeof(*socketmanager_gstate->udp_pools) * getTotalWorkersCount());
+    const wid_t                 workers   = getTotalWorkersCount();
+    threadsafe_generic_pool_t **udp_pools = memoryAllocateZero(sizeof(*udp_pools) * workers);
+    threadsafe_generic_pool_t **tcp_pools = memoryAllocateZero(sizeof(*tcp_pools) * workers);
+    master_pool_t              *mp_udp    = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
+    master_pool_t              *mp_tcp    = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
 
-    socketmanager_gstate->tcp_pools =
-        memoryAllocateZero(sizeof(*socketmanager_gstate->tcp_pools) * getTotalWorkersCount());
-
-    socketmanager_gstate->mp_udp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
-    socketmanager_gstate->mp_tcp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
-
-    for (unsigned int i = 0; i < getTotalWorkersCount(); ++i)
+    if (UNLIKELY(udp_pools == NULL || tcp_pools == NULL || mp_udp == NULL || mp_tcp == NULL))
     {
-        socketmanager_gstate->udp_pools[i] = threadsafegenericpoolCreateWithCapacity(
-            socketmanager_gstate->mp_udp, (8) + RAM_PROFILE, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);
-
-        socketmanager_gstate->tcp_pools[i] = threadsafegenericpoolCreateWithCapacity(socketmanager_gstate->mp_tcp,
-                                                                                     (8) + RAM_PROFILE,
-                                                                                     allocTcpResultObjectPoolHandle,
-                                                                                     destroyTcpResultObjectPoolHandle);
+        memoryFree(udp_pools);
+        memoryFree(tcp_pools);
+        masterpoolDestroy(mp_udp);
+        masterpoolDestroy(mp_tcp);
+        return false;
     }
+
+    for (wid_t i = 0; i < workers; ++i)
+    {
+        udp_pools[i] = threadsafegenericpoolCreateWithCapacity(
+            mp_udp, (8) + RAM_PROFILE, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);
+        tcp_pools[i] = threadsafegenericpoolCreateWithCapacity(
+            mp_tcp, (8) + RAM_PROFILE, allocTcpResultObjectPoolHandle, destroyTcpResultObjectPoolHandle);
+
+        if (UNLIKELY(udp_pools[i] == NULL || tcp_pools[i] == NULL))
+        {
+            for (wid_t cleanup = 0; cleanup <= i; ++cleanup)
+            {
+                threadsafegenericpoolDestroy(udp_pools[cleanup]);
+                threadsafegenericpoolDestroy(tcp_pools[cleanup]);
+            }
+            memoryFree(udp_pools);
+            memoryFree(tcp_pools);
+            masterpoolDestroy(mp_udp);
+            masterpoolDestroy(mp_tcp);
+            return false;
+        }
+    }
+
+    state->udp_pools = udp_pools;
+    state->tcp_pools = tcp_pools;
+    state->mp_udp    = mp_udp;
+    state->mp_tcp    = mp_tcp;
+    return true;
 }
 
 /**
  * @brief Detect runtime availability of external socket-routing tools.
  */
-static void detectSystemCapabilities(void)
+static void detectSystemCapabilities(socket_manager_state_t *state)
 {
 #ifdef OS_UNIX
-    socketmanager_gstate->iptables_installed = checkCommandAvailable("iptables");
-    socketmanager_gstate->lsof_installed     = checkCommandAvailable("lsof");
+    state->iptables_installed = checkCommandAvailable("iptables");
+    state->lsof_installed     = checkCommandAvailable("lsof");
 #if SUPPORT_V6
-    socketmanager_gstate->ip6tables_installed = checkCommandAvailable("ip6tables");
+    state->ip6tables_installed = checkCommandAvailable("ip6tables");
 #endif
+#else
+    discard state;
 #endif
 }
 
 socket_manager_state_t *socketmanagerCreate(void)
 {
     assert(socketmanager_gstate == NULL);
-    socketmanager_gstate = memoryAllocateZero(sizeof(socket_manager_state_t));
+    socket_manager_state_t *state = memoryAllocateZero(sizeof(*state));
+    if (UNLIKELY(state == NULL))
+    {
+        return NULL;
+    }
 
     // Startup-only: worker 0 is bound before managers are created, and the
     // manager's own worker/wid fields are structurally worker-0 owned.
@@ -3118,23 +3326,53 @@ socket_manager_state_t *socketmanagerCreate(void)
              workerWIDForLog(getWID()));
         abortProgramNow(1);
     }
-    socketmanager_gstate->worker = getWorker(0);
-    socketmanager_gstate->wid    = 0;
+    state->worker = getWorker(0);
+    state->wid    = 0;
 
     for (size_t i = 0; i < kFilterLevels; i++)
     {
-        socketmanager_gstate->filters[i] = filters_t_init();
+        state->filters[i] = filters_t_init();
     }
-    socketmanager_gstate->balance_groups = balancegroup_registry_t_with_capacity(8);
-    socketmanager_gstate->pending_rules  = pending_rules_t_init();
+    state->balance_groups = balancegroup_registry_t_init();
+    state->pending_rules  = pending_rules_t_init();
 
-    socketmanager_gstate->iptables_owner_lease_fd = -1;
+    state->iptables_owner_lease_fd = -1;
 
-    mutexInit(&socketmanager_gstate->mutex);
-    initializeSocketManagerPools();
-    detectSystemCapabilities();
+    if (UNLIKELY(! balancegroup_registry_t_reserve(&state->balance_groups, 8) ||
+                 balancegroup_registry_t_capacity(&state->balance_groups) < 8 ||
+                 ! pending_rules_t_reserve(&state->pending_rules, 8) ||
+                 pending_rules_t_capacity(&state->pending_rules) < 8 || ! mutexTryInit(&state->mutex)))
+    {
+        balancegroup_registry_t_drop(&state->balance_groups);
+        pending_rules_t_drop(&state->pending_rules);
+        for (size_t i = 0; i < kFilterLevels; ++i)
+        {
+            filters_t_drop(&state->filters[i]);
+        }
+        memoryFree(state);
+        return NULL;
+    }
 
-    return socketmanager_gstate;
+    bool fail_after_mutex = false;
+#ifdef WW_SOCKET_MANAGER_CONSTRUCTOR_TEST_SEAM
+    fail_after_mutex = socketManagerConstructorTestFailAfterMutex();
+#endif
+    if (UNLIKELY(fail_after_mutex || ! initializeSocketManagerPools(state)))
+    {
+        mutexDestroy(&state->mutex);
+        balancegroup_registry_t_drop(&state->balance_groups);
+        pending_rules_t_drop(&state->pending_rules);
+        for (size_t i = 0; i < kFilterLevels; ++i)
+        {
+            filters_t_drop(&state->filters[i]);
+        }
+        memoryFree(state);
+        return NULL;
+    }
+    detectSystemCapabilities(state);
+
+    socketmanager_gstate = state;
+    return state;
 }
 
 /**
@@ -3216,7 +3454,7 @@ static void cleanupFilterUdpSockets(socket_filter_t *filter)
 /**
  * @brief Drain active UDP listener idle entries for one socket/worker pair.
  */
-static void drainOneUdpSocketForWorker(udpsock_t *socket, wid_t wid)
+void socketmanagerDrainUdpSocketForWorker(udpsock_t *socket, wid_t wid)
 {
     // Runs as part of a worker tearing itself down, for its own slot only.
     assert(currentThreadIsEventWorkerWID(wid));
@@ -3247,12 +3485,12 @@ static void drainFilterUdpSocketsForWorker(socket_filter_t *filter, wid_t wid)
     {
         for (size_t i = 0; i < filter->listen_udp_sockets_count; ++i)
         {
-            drainOneUdpSocketForWorker(filter->listen_udp_sockets[i], wid);
+            socketmanagerDrainUdpSocketForWorker(filter->listen_udp_sockets[i], wid);
         }
         return;
     }
 
-    drainOneUdpSocketForWorker(filter->listen_udp_socket, wid);
+    socketmanagerDrainUdpSocketForWorker(filter->listen_udp_socket, wid);
 }
 
 void socketmanagerDrainUdpIdleForWorker(wid_t wid)
@@ -3400,6 +3638,10 @@ void socketmanagerDestroy(void)
     destroyBalanceGroups();
     pending_rules_t_drop(&socketmanager_gstate->pending_rules);
     destroyPools();
+    /* Construction publishes the manager only after this hybrid mutex owns
+     * its backing synchronization resource. All users are quiesced above, so
+     * release that resource before freeing the state. */
+    mutexDestroy(&socketmanager_gstate->mutex);
     memoryFree(socketmanager_gstate);
     socketmanager_gstate = NULL;
 }

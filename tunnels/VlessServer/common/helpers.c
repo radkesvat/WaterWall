@@ -363,11 +363,15 @@ static void vlessserverDelayedFallbackPayloadTask(tunnel_t *t, line_t *l)
     if (vlessserverFallbackPendingCount(ls) > 0 && ! ls->fallback_delay_scheduled)
     {
         ls->fallback_delay_scheduled = true;
-        lineScheduleDelayedTask(l,
-                                vlessserverDelayedFallbackPayloadTask,
-                                fastRandJittered32(ts->fallback_intentional_delay_ms,
-                                                   ts->fallback_intentional_delay_jitter_ms),
-                                t);
+        if (UNLIKELY(! lineScheduleDelayedTask(
+                l,
+                vlessserverDelayedFallbackPayloadTask,
+                fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
+                t)))
+        {
+            ls->fallback_delay_scheduled = false;
+            vlessserverCloseLineBidirectional(t, l);
+        }
         return;
     }
 
@@ -406,11 +410,16 @@ bool vlessserverSendFallbackPayload(tunnel_t *t, line_t *l, vlessserver_lstate_t
     if (! ls->fallback_delay_scheduled)
     {
         ls->fallback_delay_scheduled = true;
-        lineScheduleDelayedTask(l,
-                                vlessserverDelayedFallbackPayloadTask,
-                                fastRandJittered32(ts->fallback_intentional_delay_ms,
-                                                   ts->fallback_intentional_delay_jitter_ms),
-                                t);
+        if (UNLIKELY(! lineScheduleDelayedTask(
+                l,
+                vlessserverDelayedFallbackPayloadTask,
+                fastRandJittered32(ts->fallback_intentional_delay_ms, ts->fallback_intentional_delay_jitter_ms),
+                t)))
+        {
+            ls->fallback_delay_scheduled = false;
+            vlessserverCloseLineBidirectional(t, l);
+            return false;
+        }
     }
 
     return true;

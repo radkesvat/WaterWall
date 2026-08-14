@@ -188,16 +188,25 @@ Omitted logger objects use their defaults.
 
 The `misc` object controls process-wide runtime settings.
 
-When `misc` is present and non-empty, omitted fields use the defaults below. If
-the whole block is omitted, Waterwall still falls back to CPU core count for
-`workers` and `"libs/"` for `libs-path`, but real deployments should keep this
-block explicit so `mtu` and `ram-profile` are never accidental.
+Every field below has a real default, and those defaults apply whether `misc` is
+an empty object or absent entirely. Keeping the block explicit is still good
+practice, but an omitted one no longer leaves `mtu` or `ram-profile` unusable.
+
+A `misc` that is present but is not an object - `"misc": []`, say - is a
+configuration error rather than a synonym for absent. Treating the two alike
+meant every field the block was meant to carry silently reverted.
+
+Invalid values are refused rather than replaced: a wrong type, a fractional
+number, or a number outside the documented range terminates startup with the
+field named. Silently substituting a default would run the whole topology at a
+setting nobody chose. This applies to every field in the table, not only to
+`mtu` and `ram-profile`.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `workers` | integer | CPU core count | Number of worker threads. Values less than or equal to `0` fall back to CPU core count. Values above `254` are reduced to `254`. |
-| `ram-profile` | string or integer | `"server"` | Memory pool sizing profile. |
-| `mtu` | integer | `1500` | Global MTU value. Values less than or equal to `0` fall back to `1500`. |
+| `workers` | integer | CPU core count | Number of worker threads. Must be a whole number in the signed 32-bit range when present. Within that range, values less than or equal to `0` mean "as many as this machine has" and values above `254` are reduced to `254`. |
+| `ram-profile` | string or integer | `"server"` | Memory pool sizing profile. A number must be a whole number in `0..6`; `0` and `1` are legacy aliases for the smallest profile. |
+| `mtu` | integer | `1500` | Global MTU, inherited by nodes that do not carry their own. Must be a whole number in `68..65535` - RFC 791's minimum IPv4 MTU up to what the field can hold. |
 | `try-enabling-bbr` | boolean | `true` on Linux; `false` otherwise | Linux-only best-effort startup attempt to enable TCP BBR. |
 | `libs-path` | string | `"libs/"` | Directory used when loading external tunnel libraries. |
 

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 106
+Documentation version: 107
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/MuxClient.mdx, and both files must keep the same documentation version.
 -->
 
@@ -202,6 +202,16 @@ Frame flags:
 - `4`: `Data`
 
 Payload length is the framed data length after the header.
+
+`65,527` bytes is the maximum payload of one `Data` frame, not a limit on one
+child `Payload` callback. The encoder splits a larger callback payload into
+consecutive `Data` frames of at most `65,527` bytes and preserves the exact byte
+order. The checked aggregate encoded size (payload plus every 8-byte frame
+header and an optional `Open` frame) must fit in `uint32_t`. If it does not, the
+input buffer is recycled and only that child is closed; no partial frame is
+published. Allocation of the checked aggregate buffer follows the shift-buffer
+fail-fast allocation contract, so an actual allocator refusal terminates rather
+than forwarding a truncated encoding.
 
 ### Data flow direction
 

@@ -27,11 +27,11 @@ void genericpoolReCharge(generic_pool_t *pool)
 {
     const uint32_t increase = min((pool->cap - pool->len), (pool->cap) / 2);
 
-    masterpoolGetItems(pool->mp, (void const **) &(pool->available[pool->len]), increase, pool);
+    masterpoolGetItems(pool->mp, &(pool->available[pool->len]), increase, pool);
 
     pool->len += increase;
 #if POOL_DEBUG == 1
-    wlogd("BufferPool: allocated %d new buffers, %zu are in use", increase, pool->in_use);
+    wlogd("BufferPool: allocated %d new buffers, %zu are in use", increase, genericpoolGetInUse(pool));
 #endif
 }
 
@@ -44,7 +44,7 @@ void genericpoolShrink(generic_pool_t *pool)
     pool->len -= decrease;
 
 #if POOL_DEBUG == 1
-    wlogd("BufferPool: freed %d buffers, %zu are in use", decrease, pool->in_use);
+    wlogd("BufferPool: freed %d buffers, %zu are in use", decrease, genericpoolGetInUse(pool));
 #endif
 }
 
@@ -55,6 +55,38 @@ void genericpoolShrink(generic_pool_t *pool)
 static void poolFirstCharge(generic_pool_t *pool)
 {
     genericpoolReCharge(pool);
+}
+
+bool genericpoolTryComputeGeometryForLimit(uint32_t pool_width, uint64_t allocation_limit, uint32_t *capacity_out,
+                                           uint32_t *free_threshold_out, uint64_t *allocation_size_out)
+{
+    if (capacity_out == NULL || free_threshold_out == NULL || allocation_size_out == NULL)
+    {
+        return false;
+    }
+
+    pool_width = max((uint32_t) 1, pool_width);
+    if (pool_width > UINT32_MAX / 2U)
+    {
+        return false;
+    }
+    const uint32_t capacity = pool_width * 2U;
+
+    const uint64_t container_len = (uint64_t) capacity * (uint64_t) sizeof(pool_item_t *);
+    if (container_len > UINT64_MAX - (uint64_t) sizeof(generic_pool_t))
+    {
+        return false;
+    }
+    const uint64_t required_size = (uint64_t) sizeof(generic_pool_t) + container_len;
+    if (required_size > allocation_limit || required_size > SIZE_MAX)
+    {
+        return false;
+    }
+
+    *capacity_out        = capacity;
+    *free_threshold_out  = (uint32_t) (((uint64_t) capacity * 2U) / 3U);
+    *allocation_size_out = required_size;
+    return true;
 }
 
 /**
@@ -70,20 +102,26 @@ static void poolFirstCharge(generic_pool_t *pool)
 static generic_pool_t *allocateGenericPool(master_pool_t *mp, uint32_t item_size, uint32_t pool_width,
                                            PoolItemCreateHandle create_h, PoolItemDestroyHandle destroy_h)
 {
-
-    pool_width = max((uint32_t) 1, pool_width);
-
-    // half of the pool is used, other half is free at startup
-    pool_width = 2 * pool_width;
-
-    const unsigned long container_len = pool_width * sizeof(pool_item_t *);
-    generic_pool_t     *pool_ptr      = memoryAllocate(sizeof(generic_pool_t) + container_len);
+    uint32_t capacity;
+    uint32_t free_threshold;
+    uint64_t required_size64;
+    if (mp == NULL || create_h == NULL || destroy_h == NULL ||
+        ! genericpoolTryComputeGeometryForLimit(pool_width, SIZE_MAX, &capacity, &free_threshold, &required_size64))
+    {
+        return NULL;
+    }
+    const size_t    required_size = (size_t) required_size64;
+    generic_pool_t *pool_ptr      = memoryAllocate(required_size);
+    if (pool_ptr == NULL)
+    {
+        return NULL;
+    }
 #ifdef DEBUG
-    memorySet(pool_ptr, 0xEB, sizeof(generic_pool_t) + container_len);
+    memorySet(pool_ptr, 0xEB, required_size);
 #endif
     *pool_ptr = (generic_pool_t) {
-        .cap                 = pool_width,
-        .free_threshold      = max(pool_width / 2, (pool_width * 2) / 3),
+        .cap                 = capacity,
+        .free_threshold      = free_threshold,
         .item_size           = item_size,
         .mp                  = mp,
         .create_item_handle  = create_h,
@@ -92,10 +130,6 @@ static generic_pool_t *allocateGenericPool(master_pool_t *mp, uint32_t item_size
 #if POOL_THREAD_CHECK
         .tid             = 0,
         .no_thread_check = false,
-#endif
-
-#if POOL_DEBUG == 1
-        .in_use = 0,
 #endif
 
     };
@@ -173,9 +207,34 @@ generic_pool_t *genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(mas
 
 void genericpoolDestroy(generic_pool_t *pool)
 {
+    if (pool == NULL)
+    {
+        return;
+    }
+
     for (uint32_t i = 0; i < pool->len; ++i)
     {
         pool->destroy_item_handle(pool->available[i]);
     }
     memoryFree(pool);
+}
+
+void genericpoolReuseItemShared(generic_pool_t *pool, pool_item_t *item)
+{
+    assert(pool != NULL);
+    assert(item != NULL);
+
+#if BYPASS_GENERIC_POOL == 1
+    pool->destroy_item_handle(item);
+    masterpoolRecordReturn(pool->mp);
+    return;
+#endif
+
+    assert(genericpoolGetInUse(pool) > 0);
+
+    /* Keep the family-wide checked-out count non-zero until the shared return
+     * is complete. A concurrent owner teardown therefore cannot release either
+     * this metadata or its master pool while they are still in use. */
+    masterpoolReuseItems(pool->mp, &item, 1);
+    masterpoolRecordReturn(pool->mp);
 }

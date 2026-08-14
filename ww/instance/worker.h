@@ -43,19 +43,40 @@ typedef struct worker_s
     // functions like wloopPostEvent allocate WIO from target wid loop.
     threadsafe_generic_pool_t *wios_pool;
 
+    /*
+     * `loop` and `message_queue` are published and detached together. Foreign
+     * posters must hold control_mutex while reading either pointer and while
+     * using the referenced object. If both locks are needed, the global order
+     * is control_mutex followed by worker_message_queue_s::mutex.
+     */
     wloop_t                *loop;          // Event loop associated with the worker.
     dns_resolver_t          dns_resolver;  // Worker-local async DNS resolver.
     buffer_pool_t          *buffer_pool;   // Buffer pool for managing memory buffers.
     generic_pool_t         *context_pool;  // Generic pool for managing context objects.
     worker_message_queue_t *message_queue; // Worker-owned queued/timed messages.
     wthread_t               thread;        // Thread associated with the worker.
-    // Serializes a remote workerRequestStop() against this worker detaching its
-    // own loop in workerDestroyOwnResources(), so a stop request can never touch
-    // a loop that is being destroyed.
+    // Lifetime lock for loop and message_queue. It serializes remote stop/event
+    // posting and message admission against workerDestroyOwnResources().
     wmutex_t    control_mutex;
     atomic_int  lifecycle;           // worker_lifecycle_e
     atomic_bool resources_destroyed; // guards one-shot own-resource teardown
-    bool        thread_valid;        // True only after native thread handle creation succeeds.
+    /*
+     * Published immediately after wloopRun() returns and before resource
+     * teardown takes control_mutex. Tests use this one-way state to order the
+     * enqueue-wins race without timing assumptions.
+     */
+    atomic_bool loop_stopped;
+    /* Optional test seam run after loop_stopped publication and before own
+     * resource teardown. Production workers leave this NULL. */
+    void (*loop_stopped_test_seam)(struct worker_s *worker);
+    /*
+     * The authoritative admission gate for every worker-message delivery
+     * shape: inline, queued, and timed. It is closed before loop/queue
+     * detachment, so teardown callbacks cannot re-admit work merely because
+     * they still execute with this worker's TLS identity.
+     */
+    atomic_bool message_admission_open;
+    bool        thread_valid; // True only after native thread handle creation succeeds.
     // True when this worker owns an event loop. Pseudo-workers (currently the
     // lwIP worker) do not, and must be identified by this flag rather than by a
     // null `loop`, which a normal worker also clears while tearing down.
@@ -74,6 +95,13 @@ extern thread_local wid_t tl_wid; // Thread-local worker ID. */
  * @param eventloop  create eventloop for this thread
  */
 void workerInit(worker_t *worker, wid_t wid, bool eventloop);
+
+/**
+ * Transactionally construct the worker's WIO and context pool metadata.
+ * Returns false without publishing either pool when any constructor fails.
+ */
+bool workerTryCreateCorePools(worker_t *worker);
+bool workerTryCreateBufferPool(worker_t *worker);
 
 /**
  * @brief Runs the worker.

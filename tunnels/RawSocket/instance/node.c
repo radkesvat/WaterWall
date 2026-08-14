@@ -9,7 +9,7 @@ node_t nodeRawSocketGet(void)
     node_t      node_rawsocket = {
              .type                  = stringDuplicate(type_name),
              .hash_type             = calcHashBytes(type_name, stringLength(type_name)),
-             .version               = 0001,
+             .version               = 0003,
              .createHandle          = rawsocketCreate,
              .node_json             = NULL,
              .node_settings_json    = NULL,

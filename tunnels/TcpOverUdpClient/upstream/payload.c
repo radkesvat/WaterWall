@@ -25,13 +25,16 @@ void tcpoverudpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (ikcp_waitsnd(ls->k_handle) > tcpoverudpclientGetKcpSendBufferLimit(ls))
     {
         ls->write_paused = true;
-        lineScheduleTask(l, pauseDownSide, t);
+        if (UNLIKELY(! lineScheduleTask(l, pauseDownSide, t)))
+        {
+            pauseDownSide(t, l);
+        }
     }
 
     // Break buffer into chunks of less than 4096 bytes and send in order
 
-    tcpoverudpclient_tstate_t *ts = tunnelGetState(t);
-    int                       kcp_write_mtu = tcpoverudpclientGetKcpWriteMtu(ts);
+    tcpoverudpclient_tstate_t *ts            = tunnelGetState(t);
+    int                        kcp_write_mtu = tcpoverudpclientGetKcpWriteMtu(ts);
 
     if (UNLIKELY(kcp_write_mtu <= 0))
     {

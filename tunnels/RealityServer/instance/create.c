@@ -252,6 +252,11 @@ cleanup:
 tunnel_t *realityserverTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(realityserver_tstate_t), sizeof(realityserver_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
+
     configureTunnelCallbacks(t);
 
     realityserver_tstate_t *ts = tunnelGetState(t);
