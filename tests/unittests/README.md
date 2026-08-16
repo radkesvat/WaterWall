@@ -44,28 +44,44 @@ These tests exercise small library-level behavior without launching the `Waterwa
 
 ## Running Unit Tests
 
-Unit-test executables are excluded from the default project build and compile
-without IPO/LTO. The production libraries and `Waterwall` executable keep the
-optimization policy selected by the active preset. Build tests explicitly with
-one of the targets below.
+Unit tests use a dedicated Release/no-LTO build tree. They retain normal
+Release optimization, `NDEBUG`, ABI, and feature definitions; only IPO/LTO is
+disabled. The production Release tree remains IPO/LTO-enabled and must not be
+reused for native unit tests. The Debug unit preset is available for diagnosis,
+but Release/no-LTO is the canonical validation lane.
 
 Build and run only the unit tests:
 
 ```sh
-cmake --preset linux-gcc-x64
-cmake --build --preset linux-gcc-x64 --target check_waterwall_unit_tests
+cmake --preset linux-unit-tests
+cmake --build --preset linux-unit-release
+ctest --preset linux-unit-release --output-on-failure
 ```
 
-Equivalent two-step form:
+The registered no-LTO policy is intentionally small. It checks the configured
+unit-tree options, the reachable compile/link commands, and representative
+artifacts from WaterWall, lwIP, and TlsClient. It is a regression check for the
+property that caused the slow links; it is not a toolchain attestation or a
+reproducible-build system.
+
+Optional Debug diagnostics (not equivalent to the canonical Release/no-LTO run):
 
 ```sh
-cmake --build --preset linux-gcc-x64 --target waterwall_unit_tests
-ctest --preset linux-gcc --output-on-failure -L unit
+cmake --build --preset linux-unit-debug
+ctest --preset linux-unit-debug --output-on-failure
 ```
 
 The unit CTest entries run through `run_unit_test.cmake`, which brings the requested unit executable up to date for the
-active CTest configuration before running it. This keeps direct CTest and IDE runs correct when sources changed or when
-they select `Debug` while only `Release` unit executables had previously been built.
+active CTest configuration before running it. A complete validation also builds
+the normal production Release lane and runs its integration, smoke, and policy
+coverage against the IPO/LTO-enabled `Waterwall` executable.
+
+The exhaustive network-runner source/workflow analyzer runs in the production
+lane and is not repeated in the unit tree.
+
+On macOS and Windows, `waterwall_platform_unit_tests` is the corresponding
+native aggregate. CI builds that aggregate, runs the same direct no-LTO policy,
+and then executes the registered tests carrying the `unit` label.
 
 ## Adding A Unit Test
 

@@ -528,31 +528,47 @@ important for validating bidirectional transports such as the HTTP cases above.
 
 ## Running locally
 
+Production integration tests and native unit tests deliberately use separate
+Release build trees. The production tree keeps IPO/LTO enabled; the unit tree
+keeps all otherwise-normal Release behavior while disabling IPO/LTO.
+
 ```sh
+# Complete production Release lane: integration, smoke, and source-policy coverage.
 cmake --preset linux-gcc-x64
-cmake --build --preset linux-gcc-x64 --target check_waterwall_tests
+cmake --build --preset linux-gcc-x64 --config Release --target check_waterwall_tests
+
+# Canonical native unit-test lane: Release without IPO/LTO.
+cmake --preset linux-unit-tests
+cmake --build --preset linux-unit-release
+ctest --preset linux-unit-release --output-on-failure
 ```
 
 Important:
 
 - run commands from the repo root
-- `ctest --preset linux-gcc` always reads the `build/linux-gcc-x64` tree, so if your IDE or CMake menu is building a
-  different preset or build directory you may be testing a different binary than the one your menu just ran
-- the Linux CTest presets use `Release`, matching the default Linux build preset
+- `ctest --preset linux-gcc` reads the production `build/linux-gcc-x64` tree,
+  while `ctest --preset linux-unit-release` reads `build/linux-unit-tests`; do
+  not mix the two lanes
+- `linux-gcc` and `linux-unit-release` select `Release`; `linux-unit-debug`
+  intentionally selects `Debug` for diagnostics
 - direct `ctest` runs do not build missing executables.
-  Build `waterwall_unit_tests`, `Waterwall`, or one of the `check_waterwall_*` targets first depending on the scope you
-  want to run.
+  The Release unit preset builds `waterwall_unit_tests`. The registered policy
+  directly checks that the unit tree has IPO disabled, reachable build commands
+  do not enable LTO, and representative linked artifacts contain no embedded
+  LTO IR. Build `Waterwall`, or one of the `check_waterwall_*` targets first,
+  only when the scope requires the production lane too.
 
-Run only unit tests:
+Run only the canonical Release/no-LTO unit tests:
 
 ```sh
-cmake --build --preset linux-gcc-x64 --target check_waterwall_unit_tests
+cmake --build --preset linux-unit-release
+ctest --preset linux-unit-release --output-on-failure
 ```
 
 Run only integration tests:
 
 ```sh
-cmake --build --preset linux-gcc-x64 --target check_waterwall_integration_tests
+cmake --build --preset linux-gcc-x64 --config Release --target check_waterwall_integration_tests
 ```
 
 ## What `run_waterwall_case.sh` does
