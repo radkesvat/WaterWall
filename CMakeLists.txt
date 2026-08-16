@@ -78,15 +78,57 @@ include(CTest)
 #--------------------------------------------------------------------------------
 # Interprocedural Optimization (IPO)
 #--------------------------------------------------------------------------------
-include(CheckIPOSupported)
-check_ipo_supported(RESULT ipo_supported OUTPUT ipo_output)
+option(WW_ENABLE_IPO "Enable interprocedural optimization for production targets" ON)
+option(WW_BUILD_UNIT_TESTS "Register compiled native unit-test targets" OFF)
+option(WW_NATIVE_UNIT_TEST_EXECUTABLE_RUNNABLE
+  "The selected native unit-test binaries are runnable on this CI host" OFF)
 
-if(ipo_supported)
-  message(STATUS "IPO is supported")
-  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+if(WW_BUILD_UNIT_TESTS AND NOT BUILD_TESTING)
+  message(FATAL_ERROR "WW_BUILD_UNIT_TESTS=ON requires BUILD_TESTING=ON")
+endif()
+
+if(WW_BUILD_UNIT_TESTS AND WW_ENABLE_IPO)
+  message(FATAL_ERROR
+    "WW_BUILD_UNIT_TESTS=ON requires WW_ENABLE_IPO=OFF; configure the dedicated no-LTO unit-test tree")
+endif()
+
+if(WW_ENABLE_IPO)
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT ipo_supported OUTPUT ipo_output)
+
+  if(ipo_supported)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+    set(WW_EFFECTIVE_RELEASE_IPO ON)
+  else()
+    message(WARNING "IPO is not supported: ${ipo_output}")
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE FALSE)
+    set(WW_EFFECTIVE_RELEASE_IPO OFF)
+  endif()
 else()
-  message(WARNING "IPO is not supported: ${ipo_output}")
+  # This must happen before ww, lwIP, dependencies, tunnels, or tests create a
+  # target. A per-test property cannot turn LTO archives back into native code.
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF)
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE FALSE)
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF)
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)
+  set(WW_EFFECTIVE_RELEASE_IPO OFF)
+endif()
+message(STATUS "IPO policy: requested=${WW_ENABLE_IPO}; Release effective=${WW_EFFECTIVE_RELEASE_IPO}")
+
+# Linux owns the comprehensive aggregate in tests/unittests. Other native
+# platforms register their portable/runtime tests from this root file, so give
+# those configurations an equivalent build aggregate. Production trees never
+# create either target.
+if(WW_BUILD_UNIT_TESTS AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING))
+  add_custom_target(waterwall_platform_unit_tests)
+
+  function(waterwall_register_platform_native_unit test_name target_name labels)
+    if(NOT TARGET ${target_name})
+      message(FATAL_ERROR "platform native-unit target is missing: ${target_name}")
+    endif()
+    add_dependencies(waterwall_platform_unit_tests ${target_name})
+  endfunction()
 endif()
 
 #--------------------------------------------------------------------------------
@@ -1148,7 +1190,7 @@ endif()
 
 # Windows does not add the tests/ subtree, so register the focused interface-name
 # test here as well. The test remains build-on-demand through its CTest runner.
-if(BUILD_TESTING AND WIN32)
+if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND WIN32)
   add_executable(wtime_epoch_test EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/wtime_epoch_test.c)
   set_target_properties(wtime_epoch_test PROPERTIES
@@ -1173,6 +1215,8 @@ if(BUILD_TESTING AND WIN32)
     TIMEOUT 120
     LABELS "unit;libc;time;epoch;overflow;windows"
     RESOURCE_LOCK waterwall_unit_test_build)
+  waterwall_register_platform_native_unit(
+    waterwall.wtime_epoch_unit wtime_epoch_test "unit;libc;time;epoch;overflow;windows")
 
   add_executable(wsocket_windows_interface_test EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/wsocket_windows_interface_test.c)
@@ -1198,12 +1242,14 @@ if(BUILD_TESTING AND WIN32)
     TIMEOUT 120
     LABELS "unit;net;socket;windows;interface"
     RESOURCE_LOCK waterwall_unit_test_build)
+  waterwall_register_platform_native_unit(
+    waterwall.wsocket_windows_interface_unit wsocket_windows_interface_test "unit;net;socket;windows;interface")
 endif()
 
 # Native-IOCP-only tests. The Linux tests/ subdirectory is not added on Windows,
 # so the native IOCP backend registers its own test executable here, and only
 # when that backend is actually selected (windows-iocp preset).
-if(BUILD_TESTING AND WIN32 AND WITH_NATIVE_IOCP)
+if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND WIN32 AND WITH_NATIVE_IOCP)
   # Narrow AcceptEx fault-injection seam. PUBLIC so the ww static library and the
   # test executable agree on the declaration; it stays out of production builds
   # because this block only runs for a testing-enabled native IOCP configuration.
@@ -1231,8 +1277,39 @@ if(BUILD_TESTING AND WIN32 AND WITH_NATIVE_IOCP)
   )
   set_tests_properties(waterwall.iocp_native PROPERTIES
     TIMEOUT 120
-    LABELS "unit;net;iocp;windows"
+    LABELS "unit;net;iocp;windows;native"
     RESOURCE_LOCK waterwall_unit_test_build)
+  waterwall_register_platform_native_unit(
+    waterwall.iocp_native iocp_native_test "unit;net;iocp;windows;native")
 endif()
+
+if(TARGET waterwall_platform_unit_tests)
+  set(waterwall_platform_lto_artifacts "")
+  foreach(waterwall_platform_lto_target IN ITEMS ww ww_lwip TlsClient)
+    if(TARGET ${waterwall_platform_lto_target})
+      add_dependencies(waterwall_platform_unit_tests ${waterwall_platform_lto_target})
+      string(APPEND waterwall_platform_lto_artifacts
+        "${waterwall_platform_lto_target}\t$<TARGET_FILE:${waterwall_platform_lto_target}>\n")
+    endif()
+  endforeach()
+  file(GENERATE
+    OUTPUT "${CMAKE_BINARY_DIR}/unit_lto_contract-$<CONFIG>.tsv"
+    CONTENT "${waterwall_platform_lto_artifacts}")
+
+  add_test(
+    NAME waterwall.unit_release_no_lto_policy
+    COMMAND
+      "${WATERWALL_POLICY_TEST_PYTHON}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_release_no_lto_policy_test.py"
+      --unit-build "${CMAKE_BINARY_DIR}"
+      --configuration "$<CONFIG>"
+      --target waterwall_platform_unit_tests
+      --manifest "${CMAKE_BINARY_DIR}/unit_lto_contract-$<CONFIG>.tsv"
+    CONFIGURATIONS Release)
+  set_tests_properties(waterwall.unit_release_no_lto_policy PROPERTIES
+    TIMEOUT 120
+    LABELS "unit;policy;build;ipo;lto")
+endif()
+
 
 message(STATUS "Waterwall version: ${Waterwall_VERSION}")

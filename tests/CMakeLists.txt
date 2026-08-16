@@ -7,7 +7,47 @@ option(
   ON
 )
 
-add_subdirectory(unittests EXCLUDE_FROM_ALL)
+set(waterwall_production_lto_artifacts "")
+foreach(waterwall_production_lto_target IN ITEMS ww ww_lwip TlsClient)
+  if(TARGET ${waterwall_production_lto_target})
+    string(APPEND waterwall_production_lto_artifacts
+      "${waterwall_production_lto_target}\t$<TARGET_FILE:${waterwall_production_lto_target}>\n")
+  endif()
+endforeach()
+file(GENERATE
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/production_lto_contract-$<CONFIG>.tsv"
+  CONTENT "${waterwall_production_lto_artifacts}"
+)
+
+if(WW_BUILD_UNIT_TESTS)
+  add_subdirectory(unittests EXCLUDE_FROM_ALL)
+
+  set(waterwall_unit_lto_artifacts "")
+  foreach(waterwall_unit_lto_target IN ITEMS ww ww_lwip TlsClient)
+    if(TARGET ${waterwall_unit_lto_target})
+      add_dependencies(waterwall_unit_tests ${waterwall_unit_lto_target})
+      string(APPEND waterwall_unit_lto_artifacts
+        "${waterwall_unit_lto_target}\t$<TARGET_FILE:${waterwall_unit_lto_target}>\n")
+    endif()
+  endforeach()
+  file(GENERATE
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/unit_lto_contract-$<CONFIG>.tsv"
+    CONTENT "${waterwall_unit_lto_artifacts}")
+
+  add_test(
+    NAME waterwall.unit_release_no_lto_policy
+    COMMAND
+      "${PYTHON3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/unit_release_no_lto_policy_test.py"
+      --unit-build "${CMAKE_BINARY_DIR}"
+      --configuration "$<CONFIG>"
+      --target waterwall_unit_tests
+      --manifest "${CMAKE_CURRENT_BINARY_DIR}/unit_lto_contract-$<CONFIG>.tsv"
+    CONFIGURATIONS Release)
+  set_tests_properties(waterwall.unit_release_no_lto_policy PROPERTIES
+    TIMEOUT 120
+    LABELS "unit;policy;build;ipo;lto")
+endif()
 add_subdirectory(benchmarks)
 
 # Every runner now copies its case directory into a private run directory, so

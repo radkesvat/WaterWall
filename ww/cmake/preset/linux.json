@@ -15,6 +15,42 @@
             ]
         },
         {
+            "name": "linux-unit-tests",
+            "inherits": [
+                "host-linux",
+                "target-linux",
+                "ninja",
+                "ccache",
+                "native-unit-tests",
+                "default"
+            ],
+            "cacheVariables": {}
+        },
+        {
+            "name": "linux-software-crypto-unit",
+            "inherits": ["linux-software-crypto", "native-unit-tests"]
+        },
+        {
+            "name": "linux-sodium-crypto-unit",
+            "inherits": ["linux-sodium-crypto", "native-unit-tests"]
+        },
+        {
+            "name": "linux-openssl-crypto-unit",
+            "inherits": ["linux-openssl-crypto", "native-unit-tests"]
+        },
+        {
+            "name": "linux-combined-crypto-unit",
+            "inherits": ["linux-combined-crypto", "native-unit-tests"]
+        },
+        {
+            "name": "linux-software-crypto-tls-unit",
+            "inherits": ["linux-software-crypto-tls", "native-unit-tests"]
+        },
+        {
+            "name": "linux-software-crypto-sanitize-unit",
+            "inherits": ["linux-software-crypto-sanitize", "native-unit-tests"]
+        },
+        {
             "name": "linux-software-crypto",
             "inherits": [
                 "host-linux",
@@ -171,6 +207,28 @@
         {
             "name": "linux",
             "configurePreset": "linux",
+            "inherits": [
+                "host-linux"
+            ]
+        },
+        {
+            "name": "linux-unit-release",
+            "configurePreset": "linux-unit-tests",
+            "configuration": "Release",
+            "targets": [
+                "waterwall_unit_tests"
+            ],
+            "inherits": [
+                "host-linux"
+            ]
+        },
+        {
+            "name": "linux-unit-debug",
+            "configurePreset": "linux-unit-tests",
+            "configuration": "Debug",
+            "targets": [
+                "waterwall_unit_tests"
+            ],
             "inherits": [
                 "host-linux"
             ]
@@ -377,6 +435,34 @@
         {
             "name": "linux",
             "configurePreset": "linux",
+            "inherits": [
+                "host-linux",
+                "options"
+            ]
+        },
+        {
+            "name": "linux-unit-release",
+            "configurePreset": "linux-unit-tests",
+            "configuration": "Release",
+            "filter": {
+                "include": {
+                    "label": "unit"
+                }
+            },
+            "inherits": [
+                "host-linux",
+                "options"
+            ]
+        },
+        {
+            "name": "linux-unit-debug",
+            "configurePreset": "linux-unit-tests",
+            "configuration": "Debug",
+            "filter": {
+                "include": {
+                    "label": "unit"
+                }
+            },
             "inherits": [
                 "host-linux",
                 "options"

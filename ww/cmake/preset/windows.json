@@ -41,6 +41,22 @@
             }
         },
         {
+            "name": "windows-iocp-unit",
+            "inherits": [
+                "host-windows",
+                "target-windows",
+                "ninja",
+                "ccache",
+                "native-unit-tests",
+                "native-unit-windows-x64",
+                "default"
+            ],
+            "cacheVariables": {
+                "WITH_NATIVE_IOCP": true,
+                "WITH_WEPOLL": false
+            }
+        },
+        {
             "name": "windows-arm32",
             "inherits": [
                 "host-windows",
@@ -74,6 +90,18 @@
             ]
         },
         {
+            "name": "windows-x86-unit",
+            "inherits": [
+                "host-windows",
+                "target-windows",
+                "ninja",
+                "ccache",
+                "native-unit-tests",
+                "native-unit-windows-x86",
+                "default"
+            ]
+        },
+        {
             "name": "windows-x86-64",
             "inherits": [
                 "host-windows",
@@ -81,6 +109,18 @@
                 "vs2026",
                 "ccache",
                 "unity",
+                "default"
+            ]
+        },
+        {
+            "name": "windows-x86-64-unit",
+            "inherits": [
+                "host-windows",
+                "target-windows",
+                "ninja",
+                "ccache",
+                "native-unit-tests",
+                "native-unit-windows-x64",
                 "default"
             ]
         },

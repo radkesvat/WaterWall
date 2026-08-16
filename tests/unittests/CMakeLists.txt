@@ -1,18 +1,5 @@
-# Unit-test executables are build-time diagnostics rather than production
-# artifacts. Keep IPO disabled in every configuration so linker wrapping and
-# failure-injection seams remain deterministic, while the production libraries
-# and Waterwall executable retain their configured IPO policy.
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF)
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF)
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL OFF)
-
-# Clang still needs its ThinLTO driver flag at the final Release link to load
-# LLVM bitcode from production libraries. This is link-only: unit-test sources
-# continue to compile without IPO.
-if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-  add_link_options($<$<CONFIG:Release>:-flto=thin>)
+if(NOT WW_BUILD_UNIT_TESTS)
+  message(FATAL_ERROR "tests/unittests requires WW_BUILD_UNIT_TESTS=ON")
 endif()
 
 include_directories(

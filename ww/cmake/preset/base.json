@@ -17,6 +17,30 @@
             }
         },
         {
+            "name": "native-unit-tests",
+            "hidden": true,
+            "cacheVariables": {
+                "BUILD_TESTING": true,
+                "WW_BUILD_UNIT_TESTS": true,
+                "WW_ENABLE_IPO": false,
+                "WW_NATIVE_UNIT_TEST_EXECUTABLE_RUNNABLE": true
+            }
+        },
+        {
+            "name": "native-unit-windows-x86",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_SYSTEM_PROCESSOR": "x86"
+            }
+        },
+        {
+            "name": "native-unit-windows-x64",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_SYSTEM_PROCESSOR": "AMD64"
+            }
+        },
+        {
             "name": "host-linux",
             "hidden": true,
             "condition": {
