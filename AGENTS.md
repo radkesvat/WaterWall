@@ -126,9 +126,22 @@ A correct tunnel is never "just" a parser or encoder. It must preserve callback
     inspect a global termination phase or assume the request ran cleanup.
     Origin and cleanup scope are separate: requests before the explicit runtime
     commit select `StartupRollback`, requests after it select `ProcessShutdown`.
-    Startup failures propagate through scoped results to the top boundary.
-    `abortProgramNow()` is the independent lock-free fatal path and deliberately
-    skips orderly cleanup and logging.
+    Startup failures propagate through explicit stage results to the top
+    boundary. A synchronous top-level startup stage may use the nested,
+    thread-local startup result collector; it is restored before runtime and is
+    not process-termination state. Immediate delayed-message refusal retains
+    caller ownership when that API is selected, while accepted work always
+    settles through callback or cleanup. Nested normal-callback authority is
+    valid only for the exact event loop that admitted it; independent WIO writes
+    acquire that target loop's admission across send and queue/publication, and
+    synchronous write callbacks run with target-loop authority. Custom-event
+    authority comes from its destination, while control callbacks inherit no
+    normal authority. Canceled or staging-refused IdleTable delivery restores an
+    attached item, and item creation publishes its map and heap entries
+    atomically. POSIX startup-failure arbitration keeps graceful signals blocked
+    across mailbox take and controller publication. `abortProgramNow()` uses
+    only an always-lock-free relaxed status atomic and deliberately skips orderly
+    cleanup and logging.
 
 > If a proposed change cannot explain how it preserves all of the above, it is not
 > ready.
@@ -477,6 +490,16 @@ with `memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)))
 `node.c` flags: `kNodeFlagChainHead`, `kNodeFlagChainEnd`, `kNodeFlagNoChain`,
 `kNodeFlagSingleton`. Layer groups: `kNodeLayer3` (packet), `kNodeLayer4` (stream),
 `kNodeLayerAnything`. A `kNodeLayer3` node makes the chain a packet chain.
+A bridge between the two layers states which side is which rather than claiming
+`kNodeLayerAnything`: `ConnectionToPackets` is L4 on `prev` and L3 on `next`,
+`PacketsToConnection` is L3 on `prev` and L4 on `next`.
+
+`tunnelCreate()`, `adapterCreate()` and `packettunnelCreate()` all return `NULL` on
+a state-size overflow or a failed allocation. A constructor must check the result
+before touching any callback or `tunnelGetState()`, and return `NULL` itself.
+Callbacks a node hands to lwIP, timers or worker messages should observe the
+tunnel through `ww/net/tunnel_async_session.h` rather than capturing the pointer
+directly.
 
 **HTTP tunnels** (`HttpClient`/`HttpServer`): HTTP/1.x and **single-stream** HTTP/2
 only. No HTTP/3, no multiple H2 streams. For h2c upgrade, stream `1` is the original
